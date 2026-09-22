@@ -45,6 +45,38 @@
     [(local_ipc.LocalIpcIoResult.Eof) true]
     [_ false]))
 
+(define (status-host-code [status : local_ipc.LocalIpcStatus]) : i64
+  (match status
+    [(local_ipc.LocalIpcStatus.Err failure) failure.host-code]
+    [_ -1]))
+
+;; Sum of the bytes of `text`.
+(define (text-byte-sum [text : (& text str)]) : i64
+  (let
+    [index : i64 0]
+    [total : i64 0]
+    (begin
+      (while (< index (string.string-length text))
+        (begin
+          (set! total (+ total (cast (string.string-ref text index) : i64)))
+          (set! index (+ index 1))))
+      total)))
+
+;; Sum of the first `count` bytes of `buffer`.
+(define (prefix-sum [buffer : (& buffer byte_buf.ByteBuf)] [count : i64]) : i64
+  (let
+    [index : i64 0]
+    [total : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set! total (+ total (cast (byte_buf.ref buffer index) : i64)))
+          (set! index (+ index 1))))
+      total)))
+
+(define (byte-at [buffer : (& buffer byte_buf.ByteBuf)] [index : i64]) : i64
+  (cast (byte_buf.ref buffer index) : i64))
+
 ;; Bytes 1, 2, 3, ... count.
 (define (counted-buf [count : i64]) : byte_buf.ByteBuf
   (let
@@ -280,6 +312,62 @@
           failed
           (not (local_ipc.windows-pipe-valid? (& pipe-long-bad)))
           15))
+      ;; Win32 rewrites these names before opening them, so they are rejected.
+      (set!
+        failed
+        (first-failure
+          failed
+          (not (local_ipc.windows-pipe-valid? "\\\\.\\pipe\\a/b"))
+          16))
+      (set!
+        failed
+        (first-failure
+          failed
+          (not (local_ipc.windows-pipe-valid? "\\\\.\\pipe\\agent."))
+          17))
+      (set!
+        failed
+        (first-failure
+          failed
+          (not (local_ipc.windows-pipe-valid? "\\\\.\\pipe\\agent "))
+          18))
+      (set!
+        failed
+        (first-failure
+          failed
+          (not (local_ipc.windows-pipe-valid? "\\\\.\\pipe\\."))
+          19))
+      (set!
+        failed
+        (first-failure
+          failed
+          (not (local_ipc.windows-pipe-valid? "\\\\.\\pipe\\.."))
+          24))
+      (set!
+        failed
+        (first-failure
+          failed
+          (not (local_ipc.windows-pipe-valid? "\\\\.\\pipe\\/agent"))
+          25))
+      ;; Inner and leading dots and inner spaces are ordinary name bytes.
+      (set!
+        failed
+        (first-failure
+          failed
+          (local_ipc.windows-pipe-valid? "\\\\.\\pipe\\openssh-ssh-agent")
+          26))
+      (set!
+        failed
+        (first-failure
+          failed
+          (local_ipc.windows-pipe-valid? "\\\\.\\pipe\\a.b c")
+          27))
+      (set!
+        failed
+        (first-failure
+          failed
+          (local_ipc.windows-pipe-valid? "\\\\.\\pipe\\.agent")
+          28))
       failed)))
 
 ;; An invalid endpoint never reaches the adapter.
@@ -368,6 +456,15 @@
               failed
               (= (fake.get context fake.slot-last-name-len) 15)
               35))
+          ;; The adapter received exactly the endpoint bytes.
+          (set!
+            failed
+            (first-failure
+              failed
+              (=
+                (fake.get context fake.slot-last-name-sum)
+                (text-byte-sum "/run/agent.sock"))
+              47))
           (set!
             failed
             (first-failure
@@ -531,6 +628,14 @@
             failed
             (= (fake.get context fake.slot-last-name-len) 14)
             62))
+        (set!
+          failed
+          (first-failure
+            failed
+            (=
+              (fake.get context fake.slot-last-name-sum)
+              (text-byte-sum "\\\\.\\pipe\\agent"))
+            63))
         failed))))
 
 ;; RetryConnect publishes nothing, pauses one bounded slice and tries afresh.
@@ -879,7 +984,7 @@
               138))
           failed)))))
 
-;; A pending operation owns the buffer until its terminal completion: the
+;; A pending operation stays in flight until its terminal completion: the
 ;; contract requests cancellation, then drains in bounded slices and issues no
 ;; other host call meanwhile.
 (define (case-pending) : i64
@@ -933,7 +1038,7 @@
       failed)))
 
 ;; An operation that never completes ends with a forced close, not a return
-;; that would leave the buffer owned by the adapter.
+;; that would leave it in flight.
 (define (case-pending-never-completes) : i64
   (let
     [context : i64 (fake.new)]
@@ -1399,6 +1504,364 @@
           224))
       failed)))
 
+;; Every attempt hands the adapter exactly the validated name, even after an
+;; attempt handed back a damaged buffer. A buffer too short for the name is
+;; adapter corruption and ends the connect without another attempt.
+(define (case-connect-name-handback) : i64
+  (let
+    [zeroed : i64 (fake.new)]
+    [_a : unit (fake.push! zeroed fake.queue-connect 97)]
+    [_b : unit (fake.push! zeroed fake.queue-connect 0)]
+    [first : i64 (connect-kind zeroed far-deadline 16)]
+    [emptied : i64 (fake.new)]
+    [_c : unit (fake.push! emptied fake.queue-connect 98)]
+    [_d : unit (fake.push! emptied fake.queue-connect 0)]
+    [second : i64 (connect-kind emptied far-deadline 16)]
+    [failed : i64 0]
+    (begin
+      (set! failed (first-failure failed (= first 0) 49))
+      (set!
+        failed
+        (first-failure
+          failed
+          (= (fake.get zeroed fake.slot-connect-calls) 2)
+          53))
+      (set!
+        failed
+        (first-failure
+          failed
+          (=
+            (fake.get zeroed fake.slot-last-name-sum)
+            (text-byte-sum "/run/agent.sock"))
+          54))
+      (set! failed (first-failure failed (= second 10) 59))
+      (set!
+        failed
+        (first-failure
+          failed
+          (= (fake.get emptied fake.slot-connect-calls) 1)
+          64))
+      (set!
+        failed
+        (first-failure failed (= (fake.get emptied fake.slot-close-calls) 0) 76))
+      failed)))
+
+(define (connect-host-code [context : i64]) : i64
+  (with
+    ([connection (open context) local_ipc.cleanup-local-ipc-connection])
+    (status-host-code (local_ipc.connection-result (& connection)))))
+
+(define (close-status [context : i64]) : local_ipc.LocalIpcStatus
+  (with
+    ([connection (open context) local_ipc.cleanup-local-ipc-connection])
+    (local_ipc.close! (&mut connection))))
+
+;; `LocalIpcError` is an ordinary struct, so an adapter can put any host code in
+;; one. Every adapter-built error is re-bounded before a caller sees it: connect,
+;; peer, data, pending poll, readiness wait and close.
+(define (case-host-codes) : i64
+  (let
+    [connect-big : i64 (fake.new)]
+    [_a : unit (fake.push! connect-big fake.queue-connect 102)]
+    [_b : unit (fake.put! connect-big fake.slot-host-code 70000)]
+    [connect-max : i64 (fake.new)]
+    [_c : unit (fake.push! connect-max fake.queue-connect 102)]
+    [_d : unit (fake.put! connect-max fake.slot-host-code 65535)]
+    [peer-negative : i64 (fake.new)]
+    [_e : unit (fake.put! peer-negative fake.slot-peer-kind 2)]
+    [_f : unit (fake.put! peer-negative fake.slot-host-code -5)]
+    [read-big : i64 (fake.new)]
+    [_g : unit (fake.push! read-big fake.queue-data -108)]
+    [_h : unit (fake.put! read-big fake.slot-host-code 65536)]
+    [read-result : local_ipc.LocalIpcIoResult (pending-read read-big)]
+    [poll-big : i64 (fake.new)]
+    [_i : unit (fake.push! poll-big fake.queue-data -4)]
+    [_j : unit (fake.push! poll-big fake.queue-pending -115)]
+    [_k : unit (fake.put! poll-big fake.slot-host-code 4294967296)]
+    [poll-result : local_ipc.LocalIpcIoResult (pending-read poll-big)]
+    [wait-big : i64 (fake.new)]
+    [_l : unit (fake.push! wait-big fake.queue-data -1)]
+    [_m : unit (fake.push! wait-big fake.queue-wait 103)]
+    [_n : unit (fake.put! wait-big fake.slot-host-code 99999999)]
+    [wait-result : local_ipc.LocalIpcIoResult
+      (read-wait-case wait-big far-deadline 16 false)]
+    [close-big : i64 (fake.new)]
+    [_o : unit (fake.put! close-big fake.slot-close-kind 15)]
+    [_p : unit (fake.put! close-big fake.slot-host-code 1099511627776)]
+    [closed : local_ipc.LocalIpcStatus (close-status close-big)]
+    [failed : i64 0]
+    (begin
+      (set!
+        failed
+        (first-failure failed (= (connect-host-code connect-big) 0) 239))
+      (set!
+        failed
+        (first-failure failed (= (connect-host-code connect-max) 65535) 240))
+      (set!
+        failed
+        (first-failure failed (= (connect-host-code peer-negative) 0) 241))
+      (set!
+        failed
+        (first-failure
+          failed
+          (and (= (io-kind read-result) 8) (= (io-host-code read-result) 0))
+          242))
+      (set!
+        failed
+        (first-failure
+          failed
+          (and (= (io-kind poll-result) 15) (= (io-host-code poll-result) 0))
+          243))
+      (set!
+        failed
+        (first-failure
+          failed
+          (and (= (io-kind wait-result) 3) (= (io-host-code wait-result) 0))
+          244))
+      (set!
+        failed
+        (first-failure
+          failed
+          (and (= (kind-of closed) 15) (= (status-host-code closed) 0))
+          245))
+      failed)))
+
+;; One attempt moves at most `transfer-max` bytes, the size of the connection's
+;; transfer array; a longer range moves in several attempts. The bytes cross in
+;; both directions exactly.
+(define (case-transfer-bound) : i64
+  (let
+    [size : i64 (+ local_ipc.transfer-max 5)]
+    [reader : i64 (fake.new)]
+    [_a : unit (fake.push! reader fake.queue-data 1000000)]
+    [writer : i64 (fake.new)]
+    [_b : unit (fake.push! writer fake.queue-data 1000000)]
+    [exact : i64 (fake.new)]
+    [_c : unit (fake.push! exact fake.queue-data 1000000)]
+    [buffer : byte_buf.ByteBuf (zero-buf size)]
+    [failed : i64 0]
+    (begin
+      (with
+        ([connection (open reader) local_ipc.cleanup-local-ipc-connection])
+        (let
+          [result : local_ipc.LocalIpcIoResult
+            (local_ipc.read-some!
+              (&mut connection)
+              (byte_buf.as-mut-bytes (&mut buffer))
+              0
+              size)]
+          (begin
+            (set!
+              failed
+              (first-failure
+                failed
+                (= (io-done result) local_ipc.transfer-max)
+                112))
+            (set!
+              failed
+              (first-failure
+                failed
+                (=
+                  (fake.get reader fake.slot-last-request)
+                  local_ipc.transfer-max)
+                113))
+            ;; The fake fills 1, 2, 3, ... as bytes; nothing lands past the bound.
+            (set!
+              failed
+              (first-failure
+                failed
+                (and
+                  (= (byte-at (& buffer) 0) 1)
+                  (= (byte-at (& buffer) (- local_ipc.transfer-max 2)) 255)
+                  (= (byte-at (& buffer) local_ipc.transfer-max) 0))
+                114)))))
+      (with
+        ([connection (open writer) local_ipc.cleanup-local-ipc-connection])
+        (let
+          [result : local_ipc.LocalIpcIoResult
+            (local_ipc.write-some!
+              (&mut connection)
+              (byte_buf.as-bytes (& buffer))
+              0
+              size)]
+          (begin
+            (set!
+              failed
+              (first-failure
+                failed
+                (= (io-done result) local_ipc.transfer-max)
+                115))
+            (set!
+              failed
+              (first-failure
+                failed
+                (=
+                  (fake.get writer fake.slot-last-request)
+                  local_ipc.transfer-max)
+                116))
+            (set!
+              failed
+              (first-failure
+                failed
+                (=
+                  (fake.get writer fake.slot-written-sum)
+                  (prefix-sum (& buffer) local_ipc.transfer-max))
+                98)))))
+      (with
+        ([connection (open exact) local_ipc.cleanup-local-ipc-connection])
+        (let
+          [transfer : local_ipc.LocalIpcTransfer
+            (local_ipc.read-exact!
+              (&mut connection)
+              (byte_buf.as-mut-bytes (&mut buffer))
+              0
+              size
+              far-deadline
+              local_ipc.never-canceled
+              16)]
+          (begin
+            (set!
+              failed
+              (first-failure
+                failed
+                (and (= transfer.count size) (= (kind-of transfer.status) 0))
+                117))
+            (set!
+              failed
+              (first-failure
+                failed
+                (= (fake.get exact fake.slot-read-calls) 2)
+                118))
+            ;; The second attempt continued after the bound with the last 5 bytes.
+            (set!
+              failed
+              (first-failure
+                failed
+                (and
+                  (= (fake.get exact fake.slot-last-request) 5)
+                  (= (byte-at (& buffer) local_ipc.transfer-max) 1)
+                  (= (byte-at (& buffer) (- size 1)) 5))
+                119)))))
+      failed)))
+
+;; A pending operation runs on adapter storage. A read's bytes arrive with the
+;; terminal poll, which is handed the same range as the original request; a
+;; write's bytes were handed over when it was issued.
+(define (case-pending-delivers) : i64
+  (let
+    [reader : i64 (fake.new)]
+    [_a : unit (fake.push! reader fake.queue-data -4)]
+    [_b : unit (fake.push! reader fake.queue-pending -4)]
+    [_c : unit (fake.push! reader fake.queue-pending 5)]
+    [writer : i64 (fake.new)]
+    [_d : unit (fake.push! writer fake.queue-data -4)]
+    [_e : unit (fake.push! writer fake.queue-pending 3)]
+    [buffer : byte_buf.ByteBuf (zero-buf 8)]
+    [source : byte_buf.ByteBuf (counted-buf 6)]
+    [failed : i64 0]
+    (begin
+      (with
+        ([connection (open reader) local_ipc.cleanup-local-ipc-connection])
+        (let
+          [result : local_ipc.LocalIpcIoResult
+            (local_ipc.read-some!
+              (&mut connection)
+              (byte_buf.as-mut-bytes (&mut buffer))
+              2
+              6)]
+          (begin
+            (set! failed (first-failure failed (= (io-done result) 5) 155))
+            (set!
+              failed
+              (first-failure
+                failed
+                (and
+                  (= (byte-at (& buffer) 1) 0)
+                  (= (byte-at (& buffer) 2) 1)
+                  (= (byte-at (& buffer) 6) 5)
+                  (= (byte-at (& buffer) 7) 0))
+                156))
+            (set!
+              failed
+              (first-failure
+                failed
+                (= (fake.get reader fake.slot-last-poll-request) 6)
+                157))
+            (set!
+              failed
+              (first-failure
+                failed
+                (= (fake.get reader fake.slot-calls-while-pending) 0)
+                158)))))
+      (with
+        ([connection (open writer) local_ipc.cleanup-local-ipc-connection])
+        (let
+          [result : local_ipc.LocalIpcIoResult
+            (local_ipc.write-some!
+              (&mut connection)
+              (byte_buf.as-bytes (& source))
+              0
+              6)]
+          (set!
+            failed
+            (first-failure
+              failed
+              (and
+                (= (io-done result) 3)
+                (= (fake.get writer fake.slot-written-sum) 6))
+              159))))
+      failed)))
+
+;; An adapter that hands back a buffer too small for its count is corrupt:
+;; nothing is copied, and with the transfer array gone no later attempt reaches
+;; the adapter.
+(define (case-corrupt-reply) : i64
+  (let
+    [context : i64 (fake.new)]
+    [_a : unit (fake.push! context fake.queue-data -7)]
+    [_b : unit (fake.push! context fake.queue-data 4)]
+    [buffer : byte_buf.ByteBuf (zero-buf 8)]
+    [failed : i64 0]
+    (with
+      ([connection (open context) local_ipc.cleanup-local-ipc-connection])
+      (let
+        [first : local_ipc.LocalIpcIoResult
+          (local_ipc.read-some!
+            (&mut connection)
+            (byte_buf.as-mut-bytes (&mut buffer))
+            0
+            8)]
+        [calls : i64 (fake.get context fake.slot-read-calls)]
+        [second : local_ipc.LocalIpcIoResult
+          (local_ipc.read-some!
+            (&mut connection)
+            (byte_buf.as-mut-bytes (&mut buffer))
+            0
+            8)]
+        [waited : local_ipc.LocalIpcIoResult
+          (local_ipc.read-wait!
+            (&mut connection)
+            (byte_buf.as-mut-bytes (&mut buffer))
+            0
+            8
+            far-deadline
+            local_ipc.never-canceled
+            8)]
+        (begin
+          (set! failed (first-failure failed (= (io-kind first) 10) 176))
+          (set! failed (first-failure failed (= calls 1) 177))
+          (set! failed (first-failure failed (= (io-kind second) 10) 178))
+          (set!
+            failed
+            (first-failure
+              failed
+              (and
+                (= (io-kind waited) 10)
+                (= (fake.get context fake.slot-read-calls) 1))
+              179))
+          (set! failed (first-failure failed (= (byte-at (& buffer) 0) 0) 186))
+          failed)))))
+
 (define (first-nonzero [current : i64] [next : i64]) : i64
   (if (= current 0)
     next
@@ -1436,6 +1899,11 @@
       (set! failed (first-nonzero failed (case-transfer-stops)))
       (set! failed (first-nonzero failed (case-read-exact-and-ranges)))
       (set! failed (first-nonzero failed (case-stable-errors)))
+      (set! failed (first-nonzero failed (case-connect-name-handback)))
+      (set! failed (first-nonzero failed (case-host-codes)))
+      (set! failed (first-nonzero failed (case-transfer-bound)))
+      (set! failed (first-nonzero failed (case-pending-delivers)))
+      (set! failed (first-nonzero failed (case-corrupt-reply)))
       (if (= failed 0)
         42
         failed))))

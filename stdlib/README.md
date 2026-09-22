@@ -333,50 +333,65 @@ Vec bang place macros as available yet.
   reads no environment, probes nothing and has no server surface; platform
   leaves implement the injected `LocalIpcAdapter` (a struct of function values)
   and everything observable is defined here. Endpoints are validated before the
-  adapter is reached (empty, oversized, NUL-bearing, relative or
-  abstract-namespace Unix paths and remote or malformed pipe names are
-  rejected). `LocalIpcConnection` is move-only and cleanup-owning, so it is
-  bound with `with`: its native identity lives behind a private pointer safe
-  code cannot forge, `close!` poisons the handle before exactly one adapter
-  close and returns a typed result, lexical cleanup is idempotent and
-  non-reporting, and any use after close fails before dispatch. Fields are not
-  private in TypeLisp, so safe code can copy a connection's owner words into a
-  second `LocalIpcConnection`; the owner is therefore generation-checked: every
-  mutating operation atomically advances the state's generation from the
-  value's own, so once either value operates, closes or is cleaned up the other
-  is stale, fails with `Closed` before dispatch and closes nothing. There is
-  always one effective owner, one in-flight operation and one adapter close. `read-some!` and
-  `write-some!` take a borrowed byte view and a range, make one adapter attempt,
-  keep partial progress, distinguish would-block, interrupted, EOF and stable
-  failures, reject invalid ranges and adapter counts outside the request, and
-  answer a zero-length range without a host call. `connect`, `read-wait!`,
-  `write-wait!`, `read-exact!` and `write-all!` take one absolute monotonic
-  deadline, a `(-> bool)` cancellation probe and a work budget: before every
-  host attempt cancellation wins over timeout and an expired deadline wins over
-  a new attempt, committed progress is returned even if cancellation became
-  visible meanwhile, waits are at most 100 ms and recomputed after every wake,
-  and the whole-buffer helpers keep the completed count whatever stops them.
-  `RetryConnect` (full backlog, busy pipe, interrupted connect) publishes
-  nothing and owns no storage: the helper re-checks its limits, pauses one
-  bounded slice and makes a fresh attempt. A connected handle is published only
-  after its bounded peer facts pass the caller's policy; otherwise it is closed
-  exactly once. An operation the adapter reports `Pending` owns the caller's
-  buffer until its terminal completion. A primitive makes one attempt, so it
-  requests cancellation at once; a wait-capable helper first polls the
-  operation in bounded slices while cancellation, deadline and budget allow.
-  Once a stop reason appears no new data operation is issued: cancellation is
-  requested (which is not completion), the operation is drained in bounded
-  slices without any other host call, and the stop reason is the result unless
-  positive progress won the race. If the adapter never completes, the
-  connection is force-closed, which ends the operation. Errors are a stable kind plus a host code
-  bounded to `0..65535`; they never carry endpoint text, payload bytes, handles
-  or host strings. Import it with `(import stdlib.local_ipc)`.
+  adapter is reached: empty, oversized, NUL-bearing, relative or
+  abstract-namespace Unix paths are rejected, and so are remote or malformed
+  pipe names and pipe names Win32 would rewrite before opening (a `/`, or a
+  trailing `.` or space). The adapter's functions are ordinary safe function
+  values anyone holding the adapter can call, so no address crosses that
+  boundary: contexts, handles and slices are plain integers the adapter
+  validates, and bytes cross as owned `ByteBuf` values that each call hands
+  back in its reply. Each connection owns one `transfer-max`-byte (16 KiB)
+  transfer array, and this module copies between it and the caller's borrowed
+  view, so one attempt moves at most that many bytes. The internals that take
+  a raw address are unsafe declarations. `LocalIpcConnection` is move-only and
+  cleanup-owning, so it is bound with `with`: its native identity lives behind
+  a private pointer safe code cannot forge, `close!` poisons the handle before
+  exactly one adapter close and returns a typed result, lexical cleanup is
+  idempotent and non-reporting, and any use after close fails before dispatch.
+  Fields are not private in TypeLisp, so safe code can copy a connection's
+  owner words into a second `LocalIpcConnection`; the owner is therefore
+  generation-checked: every mutating operation atomically advances the state's
+  generation from the value's own, so once either value operates, closes or is
+  cleaned up the other is stale, fails with `Closed` before dispatch and closes
+  nothing. There is always one effective owner, one in-flight operation and one
+  adapter close. `read-some!` and `write-some!` take a borrowed byte view and a
+  range, make one adapter attempt, keep partial progress, distinguish
+  would-block, interrupted, EOF and stable failures, reject invalid ranges and
+  adapter counts outside the request, and answer a zero-length range without a
+  host call. `connect`, `read-wait!`, `write-wait!`, `read-exact!` and
+  `write-all!` take one absolute monotonic deadline, a `(-> bool)` cancellation
+  probe and a work budget: before every host attempt cancellation wins over
+  timeout and an expired deadline wins over a new attempt, committed progress
+  is returned even if cancellation became visible meanwhile, waits are at most
+  100 ms and recomputed after every wake, and the whole-buffer helpers keep the
+  completed count whatever stops them. `RetryConnect` (full backlog, busy pipe,
+  interrupted connect) publishes nothing and owns no storage: the helper
+  re-checks its limits, pauses one bounded slice and makes a fresh attempt,
+  handing the adapter the validated name again. A connected handle is
+  published only after its bounded peer facts pass the caller's policy;
+  otherwise it is closed exactly once. An operation the adapter reports
+  `Pending` runs on storage the adapter owns, since an adapter never keeps a
+  buffer after the call that handed it over; a pending read delivers its bytes
+  with the terminal poll. A primitive makes one attempt, so it requests
+  cancellation at once; a wait-capable helper first polls the operation in
+  bounded slices while cancellation, deadline and budget allow. Once a stop
+  reason appears no new data operation is issued: cancellation is requested
+  (which is not completion), the operation is drained in bounded slices without
+  any other host call, and the stop reason is the result unless positive
+  progress won the race. If the adapter never completes, the connection is
+  force-closed, which ends the operation. Errors are a stable kind plus a host
+  code bounded to `0..65535`, including errors an adapter builds itself; they
+  never carry endpoint text, payload bytes, handles or host strings. Import it
+  with `(import stdlib.local_ipc)`.
 - `local_ipc_fake.tl`: test support for the contract above: a scripted
   `LocalIpcAdapter` with a virtual clock, step queues for connect, data,
-  pending-poll and readiness calls, and counters for every adapter entry, the
-  requested slices, close handles and host calls made while an operation was
-  pending. The Linux and Windows leaves drive the same traces. Import it with
-  `(import stdlib.local_ipc_fake)`.
+  pending-poll and readiness calls, counters for every adapter entry, the
+  requested slices and byte counts, the exact name bytes, close handles and
+  host calls made while an operation was pending, scriptable unbounded host
+  codes, and replies that hand back a damaged buffer. A fake's context is a row
+  number in a process-lifetime table that every access checks, so the fake has
+  no `unsafe` code and a forged context traps. The Linux and Windows leaves
+  drive the same traces. Import it with `(import stdlib.local_ipc_fake)`.
 - `fs_rooted_linux.tl`: private Linux leaf for capability-relative staging-tree
   construction. A trusted root prefix is opened once with a final-node
   `O_NOFOLLOW` directory check; descendants accept one validated component and
@@ -930,7 +945,7 @@ borrowed process runtime wrappers likewise copy at their owned boundary.
 |-----------|---------------------|
 | `string.is-char-whitespace`, `string.char-eq`, `string.index-of-byte`, `string.contains`, `string.contains-char`, `string.is-string-prefix-at` | Non-allocating string/char inspection; text parameters are borrowed `str` inputs. |
 | `string.append`, `string.concat`, `string.copy`, `string.substring`, `string.slice`, `string.concat-all` | Copying string helpers allocate fresh active-arena `String` storage and copy bytes from borrowed `str` inputs. Owned `String` places auto-borrow at call sites, and stdlib code that already has `(& r str)` values calls the same public helpers directly. `string.concat-all` accepts a borrowed native `Slice String`; long `str-cat` expansions pass a live-prefix Slice over one compiler-private packed buffer. |
-| `local_ipc.connect` | Allocates one private connection state cell in the active arena, including on failure, and nothing per retry; the connection must stay inside that arena (the checker enforces it for `with-arena`; `arena.destroy-safe!` does not yet invalidate `with`-bound owners, #7944). `close!`, the primitive and wait-capable reads and writes, the whole-buffer helpers and every accessor are non-allocating. |
+| `local_ipc.connect` | Allocates one private connection state cell in the active arena, including on failure; for a valid endpoint also one copy of the endpoint name, and for a connected handle one `transfer-max`-byte transfer array; nothing per retry. The connection must stay inside that arena (the checker enforces it for `with-arena`; `arena.destroy-safe!` does not yet invalidate `with`-bound owners, #7944). `close!`, the primitive and wait-capable reads and writes, the whole-buffer helpers and every accessor are non-allocating. |
 | `int->string` | Allocates fresh active-arena `String` storage, writes decimal bytes directly, and returns the zero, positive, negative, and signed edge-case spelling without calling the legacy runtime helper. Project callers should import the stdlib helper instead of relying on an unimported compiler default. |
 | `format.args` | Parses the same literal plan once and returns a structural, borrow-checked Arguments package containing one capture-free renderer plus shared anchors. Supplied and captured expressions are evaluated exactly once; replay does not move caller-owned lvalues, nested Arguments replay directly, and lifetime checking prevents a package from escaping any borrowed source. Construction allocates only aggregate package storage, never the final rendered text. |
 | `format.format` | Parses a deterministic literal plan and binds every selected value/count once. Display uses the shared decimal/radix/fixed/exponent converters and canonical owner hooks. Primitive `?`/`x?`/`X?` reuse those integer, exact-float, exponent-normalization, pointer, and byte-escape cores; quoted text ignores outer options and retained Arguments replay their stored plan. Nominal Debug remains independent from Display and unsupported until its hook layer lands. Each rendered scalar piece and any changed option-layout piece allocate exact active-arena Strings; finite floats additionally use the documented bignum scratch storage before final layout. Materializing the full result allocates its final String. |

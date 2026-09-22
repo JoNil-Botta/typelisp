@@ -291,6 +291,7 @@ stdlib/tests/concurrency_registry_exhaustion.tl|42|-|-|-
 stdlib/tests/format_api.tl|42|-|-|-
 stdlib/tests/local_ipc_api.tl|42|-|-|-
 stdlib/tests/local_ipc_owner_api.tl|42|-|-|-
+stdlib/tests/local_ipc_fake_forged_context.tl|134|-|printf:tl: array index out of bounds\n|-
 stdlib/tests/format_debug_bytes.tl|42|-|-|-
 stdlib/tests/format_debug_length_overflow.tl|134|-|literal:format: Debug output length overflow|-
 stdlib/tests/format_primitive_debug.tl|42|-|-|-
@@ -352,6 +353,7 @@ stdlib/tests/crypto_sha512_unsafe_adapter_reject.tl|fail|requires unsafe context
 stdlib/tests/env_api.tl|pass|-
 stdlib/tests/local_ipc_forged_connection_reject.tl|fail|int->ptr requires unsafe context
 stdlib/tests/local_ipc_connection_copy_reject.tl|fail|cleanup-required resource already has a cleanup owner
+stdlib/tests/local_ipc_raw_helper_reject.tl|fail|local_ipc/io-once requires unsafe context
 stdlib/tests/format_nonliteral_template_reject.tl|fail|format: template must be a string literal
 stdlib/tests/format_println_nonliteral_template_reject.tl|fail|format: template must be a string literal
 stdlib/tests/format_eprintln_nonliteral_template_reject.tl|fail|format: template must be a string literal

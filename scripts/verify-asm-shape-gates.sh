@@ -2228,6 +2228,28 @@ check_licm_memclean_promote() {
     assert_contains "$_writer" "call ${_sym}_mix_writing" licm-memclean-promote
 }
 
+check_global_cell_writer_loop_reads() {
+    _src=tests/integration/global_cell_writer_loop_reads.tl
+    _asm=$(compile_gate global_cell_writer_loop_reads "$_src")
+    _sym=_tl_global_cell_writer_loop_reads
+    _bumped=$(function_body "$_asm" "${_sym}_bumped_records")
+    # #7926: the loop stores `cursor`, so no loop pass can hoist or collapse
+    # its reads; the region-scoped cell read has to. Per iteration the cell is
+    # read for an element index, a call stores it, and it is then read for a
+    # second element index, for the running sum and for its own increment.
+    # The call must separate the regions (this is the fixture's wrong-answer
+    # guard), and the three reads behind it share one load: two register loads
+    # in the whole function and no memory-operand read. Pre-change the sum read
+    # the cell a third time (`addq cursor(%rip), %reg`) across the element store.
+    assert_contains "$_bumped" "call ${_sym}_bump_cursor" global-cell-writer-loop
+    assert_regex_count_eq "$_bumped" \
+        "^[[:space:]]+movq ${_sym}_cursor\\(%rip\\), %r[a-z0-9]+$" 2 \
+        global-cell-writer-loop
+    assert_regex_count_eq "$_bumped" \
+        "^[[:space:]]+[a-z]+ ${_sym}_cursor\\(%rip\\), %r[a-z0-9]+$" 2 \
+        global-cell-writer-loop
+}
+
 check_group_copy_direct() {
     _asm=$(compile_gate group_copy_direct tests/integration/group_copy_direct.tl)
     _body=$(function_body "$_asm" _tl_group_copy_direct_wrap)
@@ -3426,6 +3448,7 @@ check_rbp_sixth_csr
 check_win64_rbp_eighth_csr
 check_licm_desc_hoist
 check_licm_memclean_promote
+check_global_cell_writer_loop_reads
 check_group_copy_direct
 check_dead_result_store
 check_param_csr_home

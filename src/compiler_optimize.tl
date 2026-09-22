@@ -180986,7 +180986,11 @@
   ;; var -> 1 + the block that defines this cell value, indexed by var id over
   ;; the frame plus the promotion budget. Covers both the vars this pass mints
   ;; and the ones it ADOPTS from an existing `Mov v <- @g`.
-  (def-blocks (__tl_dyn-array i64)))
+  (def-blocks (__tl_dyn-array i64))
+  ;; candidate cell -> the union of the loop masks of the blocks that `Store`
+  ;; it: the natural loops whose own body writes the cell (see
+  ;; opt-load-cell-placement-ok?).
+  (cell-write-masks opt_i64_i64_map.Map))
 
 (define (opt-load-cell-promote-inactive
   [loop-masks : (__tl_dyn-array i64)]
@@ -181004,7 +181008,8 @@
       frame
       (__tl_make-array i64 1)
       (compiler-opt-global-shared-view empty)
-      (compiler-opt-global-shared-view empty))))
+      (compiler-opt-global-shared-view empty)
+      (opt_i64_i64_map.with-capacity 1))))
 
 (define (opt-load-cell-promote-count [promote : OptLoadCellPromote]) : i64
   (array-ref promote.counters 0))
@@ -181138,10 +181143,40 @@
         index
         ref-list)]))
 
+;; A `Store g` of a candidate cell marks every natural loop around its block as
+;; a writer of g.
+(define (opt-load-cell-record-write!
+  [candidates : opt_i64_i64_map.Map]
+  [write-masks-input : opt_i64_i64_map.Map]
+  [loop-mask : i64]
+  [instr : ir.CompilerIrInstr]) : unit
+  (let
+    [write-masks : opt_i64_i64_map.Map
+      (compiler-opt-global-shared-view write-masks-input)]
+    (match (compiler-opt-global-shared-view instr)
+      [(ir.CompilerIrInstr.Store name _ _)
+        (let
+          [global : i64 (ir.compiler-ir-symbol-id name)]
+          (if (and
+            (not (= loop-mask 0))
+            (opt_i64_i64_map.contains? (& candidates) global))
+            (opt_i64_i64_map.insert-ref!
+              (&mut write-masks)
+              global
+              (bit-or
+                loop-mask
+                (match (opt_i64_i64_map.get (& write-masks) global)
+                  [(opt_i64_i64_map.LookupFound seen) seen]
+                  [(opt_i64_i64_map.LookupMissing) 0])))
+            unit))]
+      [_ unit])))
+
 (define (opt-load-cell-record-block-reads!
   [candidates : opt_i64_i64_map.Map]
   [reads : (__tl_dyn-array i64)]
   [counters : (__tl_dyn-array i64)]
+  [write-masks : opt_i64_i64_map.Map]
+  [loop-mask : i64]
   [block-id : i64]
   [instrs : ir.CompilerIrInstrSeq]) : unit
   (let
@@ -181156,6 +181191,13 @@
           (compiler-opt-global-shared-view counters)
           block-id
           index
+          (ir.compiler-ir-instr-seq-ref
+            (compiler-opt-global-shared-view instrs)
+            index))
+        (opt-load-cell-record-write!
+          (compiler-opt-global-shared-view candidates)
+          (compiler-opt-global-shared-view write-masks)
+          loop-mask
           (ir.compiler-ir-instr-seq-ref
             (compiler-opt-global-shared-view instrs)
             index))
@@ -181196,6 +181238,7 @@
       [starts : (__tl_dyn-array i64) (__tl_make-array i64 block-count)]
       [counts : (__tl_dyn-array i64) (__tl_make-array i64 block-count)]
       [counters : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+      [write-masks : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 8)]
       [id : i64 0]
       (begin
         (while (< id block-count)
@@ -181212,6 +181255,10 @@
                       (compiler-opt-global-shared-view candidates)
                       (compiler-opt-global-shared-view reads)
                       (compiler-opt-global-shared-view counters)
+                      (compiler-opt-global-shared-view write-masks)
+                      (if (< id (array-length loop-masks))
+                        (array-ref loop-masks id)
+                        0)
                       id
                       instrs)])])
             (set!
@@ -181235,7 +181282,8 @@
               frame
               counters
               (__tl_make-array i64 (* (opt-load-cell-promote-cap) 3))
-              (__tl_make-array i64 (+ frame (opt-load-cell-promote-cap))))))))))
+              (__tl_make-array i64 (+ frame (opt-load-cell-promote-cap)))
+              write-masks)))))))
 
 ;; Materialization is refused inside a natural loop, whatever the price test
 ;; says. A loop's `Global` operands belong to the loop passes:
@@ -181250,13 +181298,34 @@
 ;; scripts/verify-asm-shape-gates.sh gates on. Every measured win of this
 ;; promotion is in straight-line code, so the gate costs nothing on the
 ;; benchmark corpus (all 20 rows byte-identical with and without it).
-(define (opt-load-cell-outside-loops?
+;;
+;; The one in-loop placement that refusal has no reason to cover: every natural
+;; loop around the block itself `Store`s the cell. Such a read is not invariant
+;; in any of those loops, so neither LICM nor opt-licm-global-promote can take
+;; the materialized Mov out of them -- the value cannot come to span a loop,
+;; which is the only thing the refusal protects -- and no loop pass will ever
+;; collapse those reads either, so without this they stay one rip-relative load
+;; each: an append cursor read for `buf[n]`, `buf[n + 1]`, `buf[n + 2]` before
+;; `n` is advanced (#7926; ssa_construct -0.47%, sccp_lattice +0.41% when the
+;; refusal is dropped for every loop instead). The shared overflow bit of loops
+;; past the mask width names no particular loop, so a block in one of those is
+;; never admitted.
+(define (opt-load-cell-placement-ok?
   [promote : OptLoadCellPromote]
-  [block-id : i64]) : bool
-  (and
-    (>= block-id 0)
-    (< block-id (array-length promote.loop-masks))
-    (= (array-ref promote.loop-masks block-id) 0)))
+  [block-id : i64]
+  [global : i64]) : bool
+  (if (or (< block-id 0) (>= block-id (array-length promote.loop-masks)))
+    false
+    (let
+      [mask : i64 (array-ref promote.loop-masks block-id)]
+      (if (= mask 0)
+        true
+        (match (opt_i64_i64_map.get (& promote.cell-write-masks) global)
+          [(opt_i64_i64_map.LookupMissing) false]
+          [(opt_i64_i64_map.LookupFound writers)
+            (and
+              (= (bit-and mask (shl 1 62)) 0)
+              (= (bit-and mask writers) mask))])))))
 
 ;; May a read in `block-id` reuse the value `var`? Only a value THIS pass
 ;; materialized (its var is at or above the pre-pass frame) and only from a
@@ -181389,9 +181458,11 @@
 ;; may contain it, and the clears-all family (which includes every indirect
 ;; call). Element stores and typed field stores are deliberately NOT kills here:
 ;; the load table decides those precisely, and treating them as kills would
-;; refuse the very regions this promotion is for. The test is only a price
-;; estimate -- a region the table ends anyway simply leaves the second read
-;; alone, at the cost of one materialized Mov.
+;; refuse the very regions this promotion is for. They carry a `MemoryWrite`
+;; effect, so they are named before the clears-all fallthrough rather than left
+;; to it (#7926: the fallthrough used to end every region at a `StorePtr`). The
+;; test is only a price estimate -- a region the table ends anyway simply
+;; leaves the second read alone, at the cost of one materialized Mov.
 (define (opt-load-cell-region-kill?
   [call-memory : opt_i64_i64_map.Map]
   [cells : OptGlobalCellSummary]
@@ -181412,6 +181483,8 @@
         (compiler-opt-global-shared-view cells)
         global
         name)]
+    [(ir.CompilerIrInstr.StorePtr _ _ _) false]
+    [(ir.CompilerIrInstr.StoreOwned _ _ _) false]
     [_ (opt-alias-instr-clears-all? (compiler-opt-global-shared-view instr))]))
 
 (define (opt-load-cell-region-clear?
@@ -181675,9 +181748,10 @@
     (if (or
       (not more?)
       (not
-        (opt-load-cell-outside-loops?
+        (opt-load-cell-placement-ok?
           (compiler-opt-global-shared-view promote)
-          block-id))
+          block-id
+          global))
       (>= slot (opt-load-cell-promote-cap)))
       (OptLoadCellStep.Step
         (compiler-opt-global-shared-view state)

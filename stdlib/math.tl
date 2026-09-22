@@ -3268,10 +3268,10 @@
   [nx : i64]
   [precision : i64]) : MathTrigReduction
   (let
-    [iq : (Array i64 20) (init)]
-    [f : (Array f64 20) (init)]
-    [fq : (Array f64 20) (init)]
-    [q : (Array f64 20) (init)]
+    [iq : (Array i64 20) (make-array i64 20)]
+    [f : (Array f64 20) (make-array f64 20)]
+    [fq : (Array f64 20) (make-array f64 20)]
+    [q : (Array f64 20) (make-array f64 20)]
     [jk : i64
       (if (= precision 0)
         3

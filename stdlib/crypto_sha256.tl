@@ -101,7 +101,7 @@
       0x9b05688c
       0x1f83d9ab
       0x5be0cd19)
-    (init)
+    (make-array u8 64)
     0
     (cast 0 : u64)
     false))
@@ -272,7 +272,7 @@
         0xa4506ceb
         0xbef9a3f7
         0xc67178f2)]
-    [schedule : (Array u32 64) (init)]
+    [schedule : (Array u32 64) (make-array u32 64)]
     [index : i64 0]
     (begin
       (while (< index 16)
@@ -409,7 +409,7 @@
 
 ;: Construct the poisoned all-zero replacement installed after consumption.
 (define (wiped-state) : Sha256State
-  (Sha256State (init) (init) 0 (cast 0 : u64) true))
+  (Sha256State (make-array u32 8) (make-array u8 64) 0 (cast 0 : u64) true))
 
 ;: Poison the caller's state, then volatile-wipe its prior chaining words,
 ;: partial block, byte counter, and cursor.
@@ -495,7 +495,7 @@
 ;: Finalize `state` exactly once into an ordinary public 32-byte digest.
 (define (finalize! [state : (&mut state Sha256State)]) : Sha256FinalizeResult
   (let
-    [octets : (Array u8 32) (init)]
+    [octets : (Array u8 32) (make-array u8 32)]
     [output : (MutPtr u8)
       (unsafe
         (ptr-cast (ptr-addr-of octets) : (MutPtr u8)))]
@@ -580,7 +580,8 @@
 ;: Zero the caller's digest, volatile-wiping its previous by-value contents.
 (define (wipe-digest! [digest : (&mut digest Sha256Digest)]) : unit
   (let
-    [previous : Sha256Digest (replace! (deref digest) (Sha256Digest (init)))]
+    [previous : Sha256Digest
+      (replace! (deref digest) (Sha256Digest (make-array u8 32)))]
     [data : (MutPtr u32)
       (unsafe
         (ptr-cast (ptr-addr-of previous.octets) : (MutPtr u32)))]

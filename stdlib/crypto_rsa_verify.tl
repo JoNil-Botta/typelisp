@@ -196,7 +196,7 @@
           [db-length : i64 (- em-length 33)]
           [unused-bits : i64 (- (* em-length 8) em-bits)]
           [low-mask : u8 (cast (shr (cast 255 : u64) unused-bits) : u8)]
-          [h-bytes : (Array u8 32) (init)]
+          [h-bytes : (Array u8 32) (make-array u8 32)]
           [index : i64 0]
           [valid : bool true]
           (begin

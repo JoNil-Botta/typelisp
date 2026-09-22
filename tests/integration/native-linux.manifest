@@ -191,6 +191,7 @@ scalar_indexed_snapshot|tests/integration/scalar_indexed_snapshot.tl|42|-|-|stdl
 crossblock_reload_elide|tests/integration/crossblock_reload_elide.tl|42|-|-|stdlib/io.tl
 licm_desc_hoist|tests/integration/licm_desc_hoist.tl|42|-|-|stdlib/io.tl
 licm_memclean_global_promote|tests/integration/licm_memclean_global_promote.tl|42|-|-|stdlib/io.tl
+cpuid_operand_homes|tests/integration/cpuid_operand_homes.tl|42|-|-|stdlib/io.tl
 global_cell_writer_loop_reads|tests/integration/global_cell_writer_loop_reads.tl|42|-|-|stdlib/io.tl stdlib/vector.tl
 lftr_counter_retire|tests/integration/lftr_counter_retire.tl|42|-|-|stdlib/io.tl
 licm_alias_stress|tests/integration/licm_alias_stress.tl|42|-|-|stdlib/io.tl

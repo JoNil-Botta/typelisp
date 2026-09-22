@@ -310,6 +310,10 @@ run_gate \
     scripts/check-instruction-counts.sh \
     --self-test
 run_gate \
+    compiler-scaling-comparison-self-tests \
+    scripts/check-compiler-scaling.sh \
+    --self-test
+run_gate \
     cli-tools-benchmark-repetition-self-test \
     sh \
     scripts/benchmark-cli-tools.sh \
@@ -830,6 +834,8 @@ if [ "$HOST_OS" = linux ]; then
         --benchmarks-only \
         --runs 1 \
         --output target/instruction-count-heavy
+    run_with_compiler "$STAGE2_BIN" linux-compiler-scaling-budgets \
+        scripts/check-compiler-scaling.sh "$STAGE2_BIN"
     run_with_compiler "$STAGE2_BIN" stage2-native-link-generated-programs scripts/verify-native-link-linux.sh
     run_with_compiler "$STAGE2_BIN" stage2-rooted-linux-filesystem-boundary scripts/verify-fs-rooted-linux.sh
     run_with_compiler "$STAGE2_BIN" stage2-linux-process-failure-boundary scripts/verify-process-runtime-linux.sh

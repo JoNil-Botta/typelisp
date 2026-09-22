@@ -20,7 +20,7 @@ if [ "${1:-}" = --list-gates ]; then
         exit 2
     fi
     ci_gate_ledger_load "$ROOT/scripts/ci-gates.tsv" "$2"
-    printf 'id\thosts\tlabel\n%s\n' "$CI_GATE_LEDGER_ROWS"
+    printf 'id\thosts\tlabel\tneeds\n%s\n' "$CI_GATE_LEDGER_ROWS"
     exit 0
 fi
 
@@ -308,6 +308,10 @@ run_gate \
 run_gate \
     instruction-count-comparison-self-tests \
     scripts/check-instruction-counts.sh \
+    --self-test
+run_gate \
+    compiler-scaling-comparison-self-tests \
+    scripts/check-compiler-scaling.sh \
     --self-test
 run_gate \
     cli-tools-benchmark-repetition-self-test \
@@ -830,6 +834,8 @@ if [ "$HOST_OS" = linux ]; then
         --benchmarks-only \
         --runs 1 \
         --output target/instruction-count-heavy
+    run_with_compiler "$STAGE2_BIN" linux-compiler-scaling-budgets \
+        scripts/check-compiler-scaling.sh "$STAGE2_BIN"
     run_with_compiler "$STAGE2_BIN" stage2-native-link-generated-programs scripts/verify-native-link-linux.sh
     run_with_compiler "$STAGE2_BIN" stage2-rooted-linux-filesystem-boundary scripts/verify-fs-rooted-linux.sh
     run_with_compiler "$STAGE2_BIN" stage2-linux-process-failure-boundary scripts/verify-process-runtime-linux.sh

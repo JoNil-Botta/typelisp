@@ -196,6 +196,12 @@ validate_checked_in_inventory() {
         }
         END {if (failed) exit 1}
     ' "$ROOT/scripts/ci-gates.tsv" "$rows" || return $?
+    # Every cross-gate artifact handoff recorded here is a scheduling dependency
+    # in the ledger, and the ledger declares no artifact dependency that this
+    # inventory does not record.
+    ci_gate_ledger_validate_needs \
+        "$ROOT/scripts/ci-gates.tsv" "$ROOT/scripts/ci-verify.sh" \
+        "$INVENTORY" bootstrap-fixpoint || return $?
 
     for group in \
         bootstrap-converged \

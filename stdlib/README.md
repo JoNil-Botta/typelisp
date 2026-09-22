@@ -247,7 +247,8 @@ Vec bang place macros as available yet.
   wrappers, argv access, panic/error, deterministic float parse/format support,
   and monomorphic Result-style I/O error APIs built as stdlib extern wrappers
   over backend runtime symbols. Its `print-format` macro formats a literal
-  template without adding a newline and `println` appends exactly one. These are
+  template without adding a newline and `println` appends exactly one;
+  `(println)` and `(eprintln)` without a template write exactly one LF. These are
   the module's public value-output conveniences; borrowed raw bytes use
   `stdout-write` / `stderr-write`. Import it with `(import stdlib.io)`.
 - `io_core.tl`: private backing module for `io.tl` file-handle table storage.
@@ -274,8 +275,14 @@ Vec bang place macros as available yet.
   for invalid names (empty, `=`, or NUL), and `set!` also rejects NUL values.
   Linux mutations publish process-lifetime replacement `envp` storage that is
   also inherited by `process` children; Windows uses
-  `SetEnvironmentVariableA`. Environment access/mutation and process spawning
-  must not race across threads.
+  `SetEnvironmentVariableA`. Lookups, `set!`/`unset!` and process spawning are
+  safe to call concurrently from any thread. On Linux mutators are serialized by
+  a futex lock, each rebuilds from its predecessor's table and publishes one
+  complete immutable table with a single atomic store, so updates to different
+  names are never lost and a lookup or spawned child sees one admitted table:
+  possibly older, never partial or dangling. A read-modify-write spanning
+  several calls is not one transaction. On Windows kernel32 owns and locks the
+  block. Foreign code that edits `environ` directly is outside the contract.
   `path-list`, `path-split`, and `path-join` remain list-compatible
   wrappers; new append-heavy callers should use the `StringVec` variants
   `path-list-vec`, `path-split-vec`, and `path-join-vec`. Import it
@@ -880,7 +887,7 @@ borrowed process runtime wrappers likewise copy at their owned boundary.
 | `int->string` | Allocates fresh active-arena `String` storage, writes decimal bytes directly, and returns the zero, positive, negative, and signed edge-case spelling without calling the legacy runtime helper. Project callers should import the stdlib helper instead of relying on an unimported compiler default. |
 | `format.args` | Parses the same literal plan once and returns a structural, borrow-checked Arguments package containing one capture-free renderer plus shared anchors. Supplied and captured expressions are evaluated exactly once; replay does not move caller-owned lvalues, nested Arguments replay directly, and lifetime checking prevents a package from escaping any borrowed source. Construction allocates only aggregate package storage, never the final rendered text. |
 | `format.format` | Parses a deterministic literal plan and binds every selected value/count once. Display uses the shared decimal/radix/fixed/exponent converters and canonical owner hooks. Primitive `?`/`x?`/`X?` reuse those integer, exact-float, exponent-normalization, pointer, and byte-escape cores; quoted text ignores outer options and retained Arguments replay their stored plan. Nominal Debug remains independent from Display and unsupported until its hook layer lands. Each rendered scalar piece and any changed option-layout piece allocate exact active-arena Strings; finite floats additionally use the documented bignum scratch storage before final layout. Materializing the full result allocates its final String. |
-| `format.write!`, `format.writeln!`, `io.print`, `io.println`, `io.eprint`, `io.eprintln` | Reuse the same literal scanner, selection rules, Display/Debug options, conversions, and canonical nominal Display hooks, but send each plan piece through one `Formatter` callback instead of materializing the final combined String. Stateful writer cells are registered behind generation-checked scalar capabilities; their raw address adapters require `unsafe`, while the safe first-class callback rejects forged, stale, wrong-writer, reentrant, and concurrent tokens. Retained Arguments under any outer Debug mode replay directly and ignore those outer options. Newline variants append exactly one newline after a successful body; writer calls return `FormatOk` or the first `FormatErr status` and skip later pieces after failure. The optional exact `format-write` / `format-write-<NominalName>` owner hook handles default Display only; Debug never reuses it or `to-string`. `print-format` is a migration alias for `print`. |
+| `format.write!`, `format.writeln!`, `io.print`, `io.println`, `io.eprint`, `io.eprintln` | Reuse the same literal scanner, selection rules, Display/Debug options, conversions, and canonical nominal Display hooks, but send each plan piece through one `Formatter` callback instead of materializing the final combined String. Stateful writer cells are registered behind generation-checked scalar capabilities; their raw address adapters require `unsafe`, while the safe first-class callback rejects forged, stale, wrong-writer, reentrant, and concurrent tokens. Retained Arguments under any outer Debug mode replay directly and ignore those outer options. Newline variants append exactly one newline after a successful body, and accept no template at all (`(io.println)`, `(io.eprintln)`, `(format.writeln! writer)`) to write exactly one LF through the same sink and error path; writer calls return `FormatOk` or the first `FormatErr status` and skip later pieces after failure. The optional exact `format-write` / `format-write-<NominalName>` owner hook handles default Display only; Debug never reuses it or `to-string`. `print-format` is a migration alias for `print`. |
 | `string-trim-left`, `string-trim-right`, `string-trim` | Borrow the input text and return fresh `String` storage from `substring`, allocated in the active arena. |
 | `string-replace` | Compatibility wrapper: returns fresh `String` storage from `substring`/`string-append` when a replacement is made; returns the caller-provided `s` when `old` is not present. `string_caller_result.tl` exposes the `string-replace-result` caller-result shape that preserves the no-match borrow until explicit materialization. |
 | `read-file`, `try-read-file` | `read-file` returns an active-arena `ByteBuf`. The recoverable form returns `OkIoBytes ByteBuf` when the path is readable, or `ErrIoBytes` for empty paths, expected absence, permission failures, interrupted reads, and target status-code failures. Text consumers call `byte_buf.to-string` explicitly. |

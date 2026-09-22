@@ -50,15 +50,175 @@
 (unsafe
   (extern (env-arena-set [arena : i64]) : unit (:symbol "tl_arena_set")))
 
-;: Address of the current Linux `char**` replacement, or zero while the initial
-;: stack-captured environment remains current.
-(define env-linux-current-environ-addr : i64
-  0)
-
 ;: Process-lifetime storage for Linux replacement arrays and entries. Windows
-;: keeps its environment in kernel32 and does not allocate this arena.
+;: keeps its environment in kernel32 and does not allocate this arena. It is an
+;: ordinary arena, not a concurrent allocation target: only the holder of the
+;: mutation lock below ever allocates from it, and nothing is rewound or freed.
 (define env-linux-persistent-arena : i64
   (cfg windows 0 (env-arena-make)))
+
+;: Slot of the Linux mutation lock word in the control block: 0 free, 1 held,
+;: 2 held with at least one waiter parked on the futex.
+(define env-linux-control-lock-slot : i64
+  0)
+
+;: Slot holding the address of the published Linux `char**` table, or zero while
+;: the initial stack-captured environment remains current.
+(define env-linux-control-environ-slot : i64
+  1)
+
+;: Slot holding the address of an installed publication gate, or zero. See
+;: `linux-publication-gate-set!`.
+(define env-linux-control-gate-slot : i64
+  2)
+
+;: Allocate the process-lifetime Linux control block inside `arena` and return
+;: its address. Runs once, from module initialization, before any worker thread
+;: exists. Every slot starts at zero: the lock is free, the initial environment
+;: is current, and no gate is installed.
+(define (linux-control-create [arena : i64]) : i64
+  (let
+    [home : i64 (env-arena-current)]
+    (begin
+      (unsafe
+        (env-arena-set arena))
+      (let
+        [slots : (__tl_dyn-array i64) (__tl_make-array i64 3)]
+        [_lock : unit (set! (array-ref slots 0) 0)]
+        [_environ : unit (set! (array-ref slots 1) 0)]
+        [_gate : unit (set! (array-ref slots 2) 0)]
+        [addr : i64
+          (unsafe
+            (cast
+              (ptr->int (ptr-cast (__tl_array-data slots) : (Ptr u8)))
+              : i64))]
+        (begin
+          (unsafe
+            (env-arena-set home))
+          addr)))))
+
+;: Address of the Linux control block. Threads share the block, never this
+;: binding's storage: it is written once during single-threaded initialization
+;: and only read afterwards. Every access to a slot is an atomic operation.
+(define env-linux-control-addr : i64
+  (cfg windows 0 (linux-control-create env-linux-persistent-arena)))
+
+;: Pointer to one slot of the Linux control block.
+(unsafe
+  (define (linux-control-slot [slot : i64]) : (MutPtr i64)
+    (unsafe
+      (ptr-offset
+        (int->ptr (cast env-linux-control-addr : u64) : (MutPtr i64))
+        slot))))
+
+;: Block in the kernel while the 32-bit word at `addr` still equals `expected`.
+;: Spurious returns are fine: every caller rechecks its condition.
+(unsafe
+  (define (linux-futex-wait [addr : i64] [expected : i64]) : unit
+    (begin
+      (unsafe
+        (syscall 202 addr 0 expected 0 0 0))
+      unit)))
+
+;: Wake every thread parked on the word at `addr`.
+(unsafe
+  (define (linux-futex-wake-all [addr : i64]) : unit
+    (begin
+      (unsafe
+        (syscall 202 addr 1 2147483647 0 0 0))
+      unit)))
+
+;: Acquire the Linux mutation lock, parking on the lock word under contention.
+;: The critical section never blocks, so waiters are released promptly. Lock
+;: values stay below 2^31, so the futex's 32-bit comparison sees the whole state
+;: in the little-endian low half of the i64 word.
+(define (linux-lock!) : unit
+  (let
+    [word : (MutPtr i64)
+      (unsafe
+        (linux-control-slot env-linux-control-lock-slot))]
+    [seen : i64
+      (unsafe
+        (atomic-cas! word 0 1))]
+    (while (not (= seen 0))
+      (begin
+        ;; Mark the lock contended before parking so the holder knows to wake.
+        (if (or
+          (= seen 2)
+          (not
+            (=
+              (unsafe
+                (atomic-cas! word 1 2))
+              0)))
+          (unsafe
+            (linux-futex-wait
+              (unsafe
+                (cast (ptr->int word) : i64))
+              2))
+          unit)
+        (set!
+          seen
+          (unsafe
+            (atomic-cas! word 0 2)))))))
+
+;: Release the Linux mutation lock and wake parked waiters when there are any.
+(define (linux-unlock!) : unit
+  (let
+    [word : (MutPtr i64)
+      (unsafe
+        (linux-control-slot env-linux-control-lock-slot))]
+    (if (=
+      (unsafe
+        (atomic-fetch-add! word -1))
+      1)
+      unit
+      (begin
+        (unsafe
+          (atomic-store! word 0))
+        (unsafe
+          (linux-futex-wake-all
+            (unsafe
+              (cast (ptr->int word) : i64))))))))
+
+;: Install (`gate-addr` nonzero) or remove (zero) a publication gate: two live
+;: `i64` cells that outlive every mutation performed while installed. With a gate
+;: installed, a mutator that has built its complete replacement table, and still
+;: holds the mutation lock, stores 1 into cell 0, wakes cell 0's waiters, and then
+;: parks until cell 1 becomes nonzero before it publishes. This is the
+;: deterministic interleaving point for tests that must observe "replacement
+;: built, not yet published". It is unsafe because the caller owns the cells'
+;: lifetime and must open the gate, or every later mutation blocks forever.
+(unsafe
+  (define (linux-publication-gate-set! [gate-addr : i64]) : unit
+    (unsafe
+      (atomic-store! (linux-control-slot env-linux-control-gate-slot) gate-addr))))
+
+;: Park at an installed publication gate until a test opens it.
+(define (linux-publication-gate-pass!) : unit
+  (let
+    [gate-addr : i64
+      (unsafe
+        (atomic-load (linux-control-slot env-linux-control-gate-slot)))]
+    (if (= gate-addr 0)
+      unit
+      (let
+        [reached : (MutPtr i64)
+          (unsafe
+            (int->ptr (cast gate-addr : u64) : (MutPtr i64)))]
+        [open : (MutPtr i64)
+          (unsafe
+            (ptr-offset reached 1))]
+        (begin
+          (unsafe
+            (atomic-store! reached 1))
+          (unsafe
+            (linux-futex-wake-all gate-addr))
+          (while (=
+            (unsafe
+              (atomic-load open))
+            0)
+            (unsafe
+              (linux-futex-wait (+ gate-addr 8) 0))))))))
 
 ;: Length of the NUL-terminated C string at `ptr` (a freestanding `strlen`).
 (unsafe
@@ -134,17 +294,25 @@
                 (ptr-offset entry (+ n 1)))
               (ptr-null : (Ptr u8)))))))))
 
-;: Return the current Linux environment array. Before the first mutation this is
-;: the SysV stack-captured `envp`; afterwards it is the most recently published
-;: process-lifetime replacement. This raw boundary is also consumed by
-;: `stdlib/process_runtime.tl` when it constructs an `execve` environment.
+;: Return one admitted Linux environment table. Before the first mutation this
+;: is the SysV stack-captured `envp`; afterwards it is the most recently published
+;: replacement. A table is complete before its address is published with one
+;: atomic store, and tables and entries are immutable and live for the rest of
+;: the process, so a caller may keep walking the table it loaded while mutators
+;: publish newer ones: its view can be older, never partial and never dangling.
+;: Lookups and the `execve` environment built by `stdlib/process_runtime.tl`
+;: each load exactly one table through this boundary.
 (unsafe
   (define (linux-environ) : (Ptr (Ptr u8))
-    (if (= env-linux-current-environ-addr 0)
-      (unsafe
-        (ptr-offset (program-argv) (+ (program-argc) 1)))
-      (unsafe
-        (int->ptr (cast env-linux-current-environ-addr : u64) : (Ptr (Ptr u8)))))))
+    (let
+      [published : i64
+        (unsafe
+          (atomic-load (linux-control-slot env-linux-control-environ-slot)))]
+      (if (= published 0)
+        (unsafe
+          (ptr-offset (program-argv) (+ (program-argc) 1)))
+        (unsafe
+          (int->ptr (cast published : u64) : (Ptr (Ptr u8))))))))
 
 ;: Linux `getenv`: walk the current environment. The initial SysV stack lays out
 ;: argc, argv[0..], a NULL, then envp[0..]; later mutations publish a replacement
@@ -350,8 +518,10 @@
       (unsafe
         (cast (ptr->int (array-u8-ptr bytes)) : i64)))))
 
-;: Publish a Linux replacement environment containing all nonmatching current
-;: entries and, when `present` is true, one new value for `name`.
+;: Build and publish a Linux replacement environment containing all nonmatching
+;: current entries and, when `present` is true, one new value for `name`. The
+;: caller holds the mutation lock with the persistent arena active, so the table
+;: read here is the newest one and no other thread allocates beside this one.
 (define (linux-rebuild!
   [name : (& name str)]
   [value : (& value str)]
@@ -402,13 +572,21 @@
           (set! write-index (+ write-index 1)))
         unit)
       (set! (array-ref slots write-index) (cast 0 : u64))
-      (set!
-        env-linux-current-environ-addr
-        (unsafe
-          (array-u64-addr slots))))))
+      (linux-publication-gate-pass!)
+      ;; The table and its new entry are fully written; this sequentially
+      ;; consistent store is the only point where other threads can see them.
+      (unsafe
+        (atomic-store!
+          (linux-control-slot env-linux-control-environ-slot)
+          (unsafe
+            (array-u64-addr slots)))))))
 
 ;: Set or remove one Linux environment entry while retaining replacement
-;: storage for the process lifetime.
+;: storage for the process lifetime. Mutators are serialized: each one rebuilds
+;: from the table its predecessor published, so concurrent updates to different
+;: names are never lost. The caller's thread-local active arena is restored
+;: before the lock is released; nothing between the two arena switches can fail
+;: short of an allocation abort, which ends the process.
 (define (linux-mutate!
   [name : (& name str)]
   [value : (& value str)]
@@ -416,11 +594,13 @@
   (let
     [home : i64 (env-arena-current)]
     (begin
+      (linux-lock!)
       (unsafe
         (env-arena-set env-linux-persistent-arena))
       (linux-rebuild! name value present)
       (unsafe
         (env-arena-set home))
+      (linux-unlock!)
       true)))
 
 ;: Set one Windows environment entry. Kernel32 copies both C strings before the
@@ -459,16 +639,27 @@
 
 ;: Set `name` to `value` in the current process environment. Empty values remain
 ;: present. Returns false for an empty name, `=` or NUL in the name, NUL in the
-;: value, or a Windows host failure. Mutation must not race environment reads,
-;: mutation, or process spawning from another thread.
+;: value, or a Windows host failure.
+;:
+;: Safe to call from any thread, concurrently with lookups, other mutations and
+;: process spawning. On Linux mutations are serialized and each publishes one
+;: complete immutable table, so updates to different names are never lost and
+;: the last writer of one name wins; a concurrent lookup or spawned child sees
+;: either the table before this call or a later one, never a partial one. A
+;: read-modify-write spanning several calls (`var-value` then `set!`) is not one
+;: transaction. On Windows the environment block is owned and locked by
+;: kernel32: `SetEnvironmentVariableA` is atomic per variable and each lookup
+;: walks a private `GetEnvironmentStringsA` copy. Only this module's calls are
+;: coordinated; foreign code that edits `environ` or the initial stack strings
+;: directly is outside the contract.
 (define (set! [name : (& name str)] [value : (& value str)]) : bool
   (if (and (valid-name? name) (valid-value? value))
     (cfg windows (windows-set! name value) (linux-mutate! name value true))
     false))
 
 ;: Remove `name` from the current process environment. Removing a missing name
-;: succeeds. Returns false for an invalid name or a Windows host failure.
-;: Mutation must not race environment reads, mutation, or process spawning.
+;: succeeds. Returns false for an invalid name or a Windows host failure. The
+;: threading contract is the one documented on `set!`.
 (define (unset! [name : (& name str)]) : bool
   (if (valid-name? name)
     (cfg windows (windows-unset! name) (linux-mutate! name "" false))

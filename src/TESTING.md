@@ -79,6 +79,29 @@ field, `match` and loop `break` forms when changing either join. The join fast
 path runs for every branch in a self-compile; measure typecheck-only
 instruction counts on identical source when touching it.
 
+## Discarded speculative errors
+
+Macro operand capture type-probes each operand and keeps only a successful
+type; about a thousand probes fail during a self-compile and their errors are
+dropped. `tc-expr-discarding-errors` opens a job-owned suppression scope so such
+an error is not finalized with a near-miss scan over every visible name (2.7%
+of the self-compile before #7868). The `tc-unbound-suggestion-suppression-scope`
+inline test checks nesting, that only the owning job is silenced, that the memo
+is not filled with suppressed answers, and that the suggestion returns after the
+scope; `tc-expr-discarding-errors-balances-its-scope` checks both outcomes close
+the scope. `macro_operand_unbound_suggestion_reject` is the user-visible half: a
+name that fails the probe and then fails for real must still report "did you
+mean". Only a caller that drops the error unconditionally may use the wrapper;
+wrapping a path whose diagnostic can reach the user silently removes suggestions
+and only that safety row would notice.
+
+The opposite mistake, a new speculative caller that forgets the wrapper, is
+caught by `scripts/verify-compile-profile.sh`: it checks a nine-line program
+whose stdlib format macros discard 86 probe errors while compiling cleanly, and
+requires `typecheck.env.unbound_finalizers` to be positive (the fixture reaches
+the path) and every `typecheck.env.unbound_scans` row to be zero. Before #7868
+that program performed 12 scans.
+
 ## Vector reduction source ownership
 
 The backend smoke checks AVX2 i64 min/max with both ordinary and explicit
@@ -639,7 +662,9 @@ complete opt2 workloads: the existing singleton batch compilation of
 `compiler_codegen_smoke_suite.tl` and a standalone build of
 `compiler_backend_tests.tl`. The codegen assembly still participates in the
 ordinary opt1-built/opt2-built byte comparison; it is not compiled again just
-to measure memory. The gate requires exactly one bounded codegen invocation.
+to measure memory. Its report name belongs to that one invocation: a report
+that already exists fails the compile, and the gate fails without both
+complete-fixture reports.
 Each runs through
 `scripts/run-memory-bounded.sh` with an 8 GiB process-tree limit, requires the
 `systemd-user-cgroup` backend with swap disabled, and fails if enforcement,
@@ -1541,7 +1566,31 @@ digests must remain unchanged through the gate. Reuse never crosses chunks or
 compiler identities, and all four independently timed selfhost compiles and
 both compilers' standalone sentinels remain mandatory. The 64-entry limit counts
 logical cases, including aliases. Run `scripts/verify-build-invariance-batch.sh`
-for the planner, boundary, ownership and fresh-output failure checks. CI runs
+for the planner, boundary, ownership and fresh-output failure checks.
+
+The four selfhost compiles whose wall time `scripts/check-ci-timing-budgets.sh`
+budgets run alone, before anything else, so concurrency never enters those
+rows. Every other chunk of both producers and the backend-tests build are jobs
+of one worker pool (`TYPELISP_BUILD_INVARIANCE_WORKERS`, 1-3, default 2; 1
+reproduces the serial order). Each pooled job runs through
+`scripts/run-memory-bounded.sh` with swap disabled and a 600 s timeout: 8192 MiB
+for the backend-tests build and both producers' complete codegen smoke (measured
+peaks 7.3 and 5.2 GiB), 4096 MiB for every other chunk (largest measured peak
+2.7 GiB, ordinary 64-case chunks about 0.4 GiB). A job starts only while the
+caps of all running jobs fit 12288 MiB, so no two 8 GiB jobs overlap and the
+bound holds for every worker count; a job whose cap does not fit waits while
+later jobs that fit run. Chunk metrics and the chunk log lines carry each pooled
+chunk's peak, and the reports land in `target/build-invariance/backend-memory/`.
+
+The gate compares a chunk as soon as both producers have emitted it. It passes
+only with exactly one successful result per queued job: a failed, missing or
+foreign result, a job left running, an aborted pool and a worker that exits
+without reporting all fail. After any failure the running jobs finish, no
+further job starts, and the rows that did run are still published. Jobs write
+private timing and metric rows that the gate merges in queue order, so the
+published rows do not depend on scheduling. The same script covers the queue,
+budget, exactly-once, failed-job, killed-worker and caller-abort cases with
+real concurrent workers. CI runs
 these helper checks on Linux only, like the gate they serve: the negative cases
 need real symbolic links, which Git Bash on the Windows runner cannot create.
 

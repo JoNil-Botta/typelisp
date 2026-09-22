@@ -7657,15 +7657,34 @@
     0))
 
 ;: Stream formatted bytes into a mutable writer and append exactly one newline.
-(defmacro (writeln!
-  [writer : comptime.Expr]
-  [template : comptime.Expr]
-  [values : comptime.Expr ...]) : FormatResult
-  `(stdlib.format.format-write-expand
-    ,writer
-    ,template
-    (__tl_format_arguments ,@values)
-    1))
+;:
+;: The operands after the writer are an optional literal template followed by
+;: its values. `(writeln! writer)` writes exactly one LF byte through the same
+;: writer adapter and returns its `FormatResult`.
+(defmacro (writeln! [writer : comptime.Expr] [operands : comptime.Expr ...]) : FormatResult
+  (let
+    [empty? : bool (= (comptime.expr-list-length operands) 0)]
+    [template : comptime.Expr
+      (if empty?
+        `""
+        (comptime.expr-list-nth operands 0))]
+    [index : i64 (comptime.expr-list-length operands)]
+    [values : comptime.ExprList (comptime.expr-list-empty)]
+    (begin
+      ;; The values are every operand after the template, in source order.
+      (while (> index 1)
+        (begin
+          (set! index (- index 1))
+          (set!
+            values
+            (comptime.expr-list-cons
+              (comptime.expr-list-nth operands index)
+              values))))
+      `(stdlib.format.format-write-expand
+        ,writer
+        ,template
+        (__tl_format_arguments ,@values)
+        1))))
 
 ;: Count decimal digits in an unsigned 64-bit value.
 (define (format-u64-digit-count [value : u64]) : i64

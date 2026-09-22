@@ -65,6 +65,14 @@ reject_diag() {
             printf 'requires unsafe context' ;;
         stdlib/tests/format_nonliteral_template_reject.tl)
             printf 'format: template must be a string literal' ;;
+        stdlib/tests/format_println_nonliteral_template_reject.tl)
+            printf 'format: template must be a string literal' ;;
+        stdlib/tests/format_eprintln_nonliteral_template_reject.tl)
+            printf 'format: template must be a string literal' ;;
+        stdlib/tests/format_writeln_nonliteral_template_reject.tl)
+            printf 'format: template must be a string literal' ;;
+        stdlib/tests/format_writeln_missing_writer_reject.tl)
+            printf 'macro call has too few arguments' ;;
         stdlib/tests/format_bare_capture_reject.tl)
             printf "format: bare '_' is not a captured identifier" ;;
         stdlib/tests/format_duplicate_named_reject.tl)

@@ -284,6 +284,9 @@ tail_aggregate_return|tests/integration/tail_aggregate_return.tl|42|-|-|-
 aggregate_return_no_alloc|tests/integration/aggregate_return_no_alloc.tl|42|-|-|stdlib/profile.tl stdlib/string.tl
 aggregate_return_no_alloc_opt0|tests/integration/aggregate_return_no_alloc.tl|42|-|-|stdlib/profile.tl stdlib/string.tl|opt-level:0+stage-stdlib
 aggregate_return_no_alloc_opt2|tests/integration/aggregate_return_no_alloc.tl|42|-|-|stdlib/profile.tl stdlib/string.tl|opt-level:2+stage-stdlib
+c_abi_aggregate_arg_no_alloc|tests/integration/c_abi_aggregate_arg_no_alloc.tl|42|-|-|benchmarks/c_abi_aggregate_arg_no_alloc/baseline.c stdlib/profile.tl
+c_abi_aggregate_arg_no_alloc_opt0|tests/integration/c_abi_aggregate_arg_no_alloc.tl|42|-|-|benchmarks/c_abi_aggregate_arg_no_alloc/baseline.c stdlib/profile.tl|opt-level:0+stage-stdlib
+c_abi_aggregate_arg_no_alloc_opt2|tests/integration/c_abi_aggregate_arg_no_alloc.tl|42|-|-|benchmarks/c_abi_aggregate_arg_no_alloc/baseline.c stdlib/profile.tl|opt-level:2+stage-stdlib
 tuple_inline_storage_lifetime|tests/integration/tuple_inline_storage_lifetime.tl|42|-|-|stdlib/string.tl
 tuple_inline_storage_lifetime_opt0|tests/integration/tuple_inline_storage_lifetime.tl|42|-|-|stdlib/string.tl|opt-level:0+stage-stdlib
 tuple_inline_storage_lifetime_opt2|tests/integration/tuple_inline_storage_lifetime.tl|42|-|-|stdlib/string.tl|opt-level:2+stage-stdlib

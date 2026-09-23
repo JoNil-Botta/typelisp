@@ -22,6 +22,7 @@ benchmark	opt_runtime_string_ops
 benchmark	opt_string_scan
 benchmark	opt_struct_enum_dispatch
 benchmark	phys_nbody
+benchmark	pure_call_join
 benchmark	route_http
 benchmark	spmd_reduce
 benchmark	spmd_scan

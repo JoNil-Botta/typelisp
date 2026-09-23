@@ -57980,7 +57980,7 @@
 ;;          %8 = pure(x); %9 = x < y; branch %9, b3, b4
 ;;   b3:    %10 = pure(x)        <- copy of %8
 ;;   b4:    %11 = pure(y)        <- a different argument: kept
-;;   b5:    %12 = pure(x)        <- two predecessors: kept
+;;   b5:    %12 = pure(x)        <- both paths retain %8: copy of %8
 ;;          unitpure(x) twice    <- unit-typed: never a candidate
 (define opt-pcd-test-frame : i64
   32)
@@ -58282,13 +58282,13 @@
             8))
         3]
       ;; the first, the one after the impure call, the one after the store,
-      ;; the other-argument one and the join one stay: five of eight
+      ;; and the other-argument one stay: four of eight; the join reuses %8
       [(not
           (=
             (opt-pcd-test-calls
               (compiler_ir_types.compiler-ir-global-shared-view out)
               (opt-pcd-test-pure))
-            5))
+            4))
         4]
       ;; unit-typed calls are never candidates
       [(not
@@ -58327,7 +58327,156 @@
             2))
         9]
       [(not (= (opt-pcd-test-calls redef (opt-pcd-test-agg)) 2)) 10]
+      [(not
+          (opt-pcd-test-mov-at?
+            out
+            (compiler_ir_types.compiler-ir-label "b5")
+            0
+            12
+            8))
+        11]
       [else 42])))
+
+;; Join variants use the same call/branch fixture above. A write or unknown
+;; call on just one arm invalidates the shared result. Re-executing pure(x)
+;; after that write produces a different result definition, so it cannot be
+;; merged with the other arm's earlier call. A predecessor laid out after the
+;; join, including a back edge, is deliberately unknown to this one-pass walk.
+(define (opt-pcd-join-test-block
+  [block : compiler_ir_types.CompilerIrBlock]
+  [variant : i64]) : compiler_ir_types.CompilerIrBlock
+  (match block
+    [(compiler_ir_types.CompilerIrBlock.Block label instrs)
+      (if (not (= label (compiler_ir_types.compiler-ir-label "b3")))
+        (if (and
+          (>= variant 6)
+          (= label (compiler_ir_types.compiler-ir-label "b2")))
+          (let
+            [changed : compiler_ir_types.CompilerIrInstrSeq
+              (opt-test-instr-seq-copy instrs)]
+            (begin
+              (compiler_ir_types.compiler-ir-instr-seq-set!
+                (compiler_ir_types.compiler-ir-global-shared-view changed)
+                2
+                (compiler_ir_types.CompilerIrInstr.Mov
+                  8
+                  (compiler_ir_types.CompilerIrValue.I64 0)
+                  (compiler_ast_types.AstType.I64)))
+              (compiler_ir_types.CompilerIrBlock.Block label changed)))
+          (if (and
+            (= variant 7)
+            (= label (compiler_ir_types.compiler-ir-label "b4")))
+            (compiler_ir_types.CompilerIrBlock.Block
+              label
+              (opt-test-instrs
+                (opt-pcd-test-call 11 (opt-pcd-test-pure) 0)
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "b5"))))
+            (compiler_ir_types.CompilerIrBlock.Block label instrs)))
+        (let
+          [count : i64 (compiler_ir_types.compiler-ir-instr-seq-count instrs)]
+          [builder : compiler_ir_types.CompilerIrInstrBuilder
+            (compiler_ir_types.compiler-ir-instr-builder-with-capacity 5)]
+          (begin
+            (compiler_ir_types.compiler-ir-instr-builder-append-seq-range!
+              (&mut builder)
+              instrs
+              0
+              (- count 1))
+            (when
+              (or (= variant 1) (= variant 3))
+              (compiler_ir_types.compiler-ir-instr-builder-push!
+                (&mut builder)
+                (compiler_ir_types.CompilerIrInstr.StorePtr
+                  (compiler_ir_types.CompilerIrValue.Var 1)
+                  (compiler_ir_types.CompilerIrValue.Var 0)
+                  (compiler_ast_types.AstType.I64))))
+            (when
+              (= variant 2)
+              (compiler_ir_types.compiler-ir-instr-builder-push!
+                (&mut builder)
+                (opt-pcd-test-call 17 (opt-pcd-test-impure) 0)))
+            (when
+              (= variant 3)
+              (compiler_ir_types.compiler-ir-instr-builder-push!
+                (&mut builder)
+                (opt-pcd-test-call 17 (opt-pcd-test-pure) 0)))
+            (compiler_ir_types.compiler-ir-instr-builder-push!
+              (&mut builder)
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label
+                  (if (= variant 5)
+                    "b2"
+                    "b5"))))
+            (compiler_ir_types.CompilerIrBlock.Block
+              label
+              (compiler_ir_types.compiler-ir-instr-builder-to-seq builder)))))]))
+
+(define (opt-pcd-join-test-run [variant : i64]) : compiler_ir_types.CompilerIrBlockList
+  (let
+    [index : compiler_optimize.OptCfgIndex
+      (compiler_optimize.opt-cfg-index-build (opt-pcd-test-blocks))]
+    [builder : compiler_ir_types.CompilerIrBlockBuilder
+      (compiler_ir_types.compiler-ir-block-builder-with-capacity 6)]
+    [cursor : i64 0]
+    (begin
+      (while (< cursor 6)
+        (let
+          [at : i64
+            (if (and (= variant 4) (>= cursor 4))
+              (- 9 cursor)
+              cursor)]
+          (begin
+            (compiler_ir_types.compiler-ir-block-builder-push!
+              (&mut builder)
+              (opt-pcd-join-test-block
+                (compiler_optimize.compiler-opt-global-array-element-shared-view
+                  index.blocks
+                  at)
+                variant))
+            (set! cursor (+ cursor 1)))))
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.opt-pure-call-dedupe-function
+          (opt-pcd-test-map false)
+          (compiler_ir_types.CompilerIrFunction.Function
+            (opt-test-symbol "pcd_join_fixture")
+            (opt-pcd-test-params)
+            (compiler_ast_types.AstType.I64)
+            opt-pcd-test-frame
+            (compiler_ir_types.compiler-ir-block-builder-to-list builder)
+            compiler_ir_types.CompilerIrFunctionAbi.Ordinary))))))
+
+(cfg
+  test
+  (test
+    pure-call-join-requires-the-same-result-on-every-path
+    (let
+      [variant : i64 0]
+      (while (< variant 8)
+        (let
+          [out : compiler_ir_types.CompilerIrBlockList
+            (opt-pcd-join-test-run variant)]
+          (begin
+            (if (= variant 5)
+              (test.assert-bool-eq
+                (opt-pcd-test-mov-at?
+                  out
+                  (compiler_ir_types.compiler-ir-label "b2")
+                  0
+                  7
+                  6)
+                false
+                "loop back edge must not inherit an outer call across a write")
+              (test.assert-bool-eq
+                (opt-pcd-test-mov-at?
+                  out
+                  (compiler_ir_types.compiler-ir-label "b5")
+                  0
+                  12
+                  8)
+                (= variant 0)
+                "only the write-free, fully visited diamond retains the result"))
+            (set! variant (+ variant 1))))))))
 
 ;; --- merged-body exit-join versioning -----------------------------------------
 ;;

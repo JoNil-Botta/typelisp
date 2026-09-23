@@ -180826,11 +180826,12 @@
 ;; `refcount name` twice per function, once directly and once inside the absorb
 ;; class it inlined, and pays the second probe whole.
 ;;
-;; SOUNDNESS. A table of (callee, arguments, result) entries is carried along a
-;; SINGLE-PREDECESSOR chain only: a block with exactly one predecessor, laid out
-;; after it, inherits that predecessor's exit table; every other block starts
-;; empty. Such a predecessor dominates the block, so the entry's result var
-;; dominates the copy that reads it. The table is dropped at every instruction
+;; SOUNDNESS. A table of (callee, arguments, result) entries is carried across
+;; a block edge only after the predecessor was processed. At a join, only the
+;; same single-definition result present in EVERY predecessor table survives.
+;; Its definition therefore dominates the join, and every path from that call
+;; to the replacement preserves memory. An unprocessed predecessor, including
+;; a loop back edge, starts the block empty. The table is dropped at every instruction
 ;; that may write memory (opt-alias-instr-clears-all?: every store form, every
 ;; call that is not a summarized write-free direct call, every unknown effect),
 ;; so nothing the callee could read changes between the two calls. The callee
@@ -181239,8 +181240,39 @@
               0
               acc)]))]))
 
-;; The table a block starts from: its single predecessor's exit table when that
-;; predecessor is laid out (and so processed) before it, else empty.
+;; An entry's result has a single definition in this function. Matching that
+;; exact result, rather than merely matching callees and arguments, proves the
+;; same completed call is available on both paths. Distinct branch-local calls
+;; would need a new phi and are deliberately not merged here.
+(define (opt-pure-call-table-has-result? [table : OptPureCallTable] [dst : i64]) : bool
+  (match table
+    [(OptPureCallTable.Nil) false]
+    [(OptPureCallTable.Cons entry rest)
+      (or
+        (= entry.dst dst)
+        (opt-pure-call-table-has-result?
+          (compiler-opt-box-shared-view rest)
+          dst))]))
+
+(define (opt-pure-call-table-intersect
+  [table : OptPureCallTable]
+  [other : OptPureCallTable]) : OptPureCallTable
+  (match table
+    [(OptPureCallTable.Nil) (OptPureCallTable.Nil)]
+    [(OptPureCallTable.Cons entry rest)
+      (let
+        [tail : OptPureCallTable
+          (opt-pure-call-table-intersect
+            (compiler-opt-box-shared-view rest)
+            (compiler-opt-global-shared-view other))]
+        (if (opt-pure-call-table-has-result? other entry.dst)
+          (OptPureCallTable.Cons entry (box tail))
+          tail))]))
+
+;; The table a block starts from: entries available at EVERY predecessor.
+;; A predecessor not processed yet (including a loop back edge) refuses the
+;; join. Existing stores and unknown calls clear their path's table, so one
+;; writing arm removes the stale result even if the other arm retains it.
 (define (opt-pure-call-entry-table
   [index : OptCfgIndex]
   [exits : (__tl_dyn-array OptPureCallTable)]
@@ -181252,11 +181284,32 @@
     [edges : (__tl_dyn-array i64) (compiler-opt-global-shared-view preds.edges)]
     [start : i64 (array-ref offsets id)]
     [end : i64 (array-ref offsets (+ id 1))]
-    (if (and (= (- end start) 1) (< (array-ref edges start) id))
-      (compiler-opt-global-array-element-shared-view
-        exits
-        (array-ref edges start))
-      (OptPureCallTable.Nil))))
+    (if (or (= start end) (>= (array-ref edges start) id))
+      (OptPureCallTable.Nil)
+      (let
+        [table : OptPureCallTable
+          (compiler-opt-global-array-element-shared-view
+            exits
+            (array-ref edges start))]
+        [cursor : i64 (+ start 1)]
+        (begin
+          (while (and
+            (< cursor end)
+            (not
+              (opt-pure-call-sites-empty?
+                (compiler-opt-global-shared-view table))))
+            (let
+              [pred : i64 (array-ref edges cursor)]
+              (begin
+                (set!
+                  table
+                  (if (>= pred id)
+                    (OptPureCallTable.Nil)
+                    (opt-pure-call-table-intersect
+                      table
+                      (compiler-opt-global-array-element-shared-view exits pred))))
+                (set! cursor (+ cursor 1)))))
+          table)))))
 
 ;; One block: rewrite its duplicate pure calls, return the rewritten
 ;; instructions and the exit table. The copy env is the function's own and is

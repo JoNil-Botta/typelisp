@@ -30947,7 +30947,7 @@
 ;; must have exactly one definition (`sources`), or its definition says nothing
 ;; about the value the load sees.
 (defstruct OptLicmDerefFacts
-  (sources opt_i64_i64_map.Map)
+  (sources OptValueSources)
   ;; Declared global types, for a header-typed global's element type.
   (cells OptGlobalCellSummary)
   ;; var -> the Gep, Load, LoadOwned, Mov or BinOp defining it.
@@ -30988,7 +30988,7 @@
 
 (define (opt-licm-deref-def
   [defs : (__tl_dyn-array OptBoolBranchDef)]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [var : i64]) : OptBoolBranchDef
   (if (opt-gvn-stable-var? sources var)
     (opt-bool-branch-def defs var)
@@ -30997,7 +30997,7 @@
 ;; `value` with single-definition copies looked through.
 (define (opt-licm-deref-resolve
   [defs : (__tl_dyn-array OptBoolBranchDef)]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [value : ir.CompilerIrValue]
   [fuel : i64]) : ir.CompilerIrValue
   (match (compiler-opt-global-shared-view value)
@@ -31063,7 +31063,7 @@
 (define (opt-licm-deref-row!
   [sink : OptLicmDerefSink]
   [defs : (__tl_dyn-array OptBoolBranchDef)]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [index : ir.CompilerIrValue]
   [len : ir.CompilerIrValue]
   [block : i64]) : unit
@@ -31114,7 +31114,7 @@
 (define (opt-licm-deref-cond-rows!
   [sink : OptLicmDerefSink]
   [defs : (__tl_dyn-array OptBoolBranchDef)]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [cond : ir.CompilerIrValue]
   [taken? : bool]
   [block : i64]
@@ -31234,7 +31234,7 @@
 (define (opt-licm-deref-scan-block!
   [sink : OptLicmDerefSink]
   [defs : (__tl_dyn-array OptBoolBranchDef)]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [index : OptCfgIndex]
   [label : i64]
   [instrs : ir.CompilerIrInstrSeq]) : unit
@@ -31298,7 +31298,7 @@
 (define (opt-licm-deref-scan-blocks!
   [sink : OptLicmDerefSink]
   [defs : (__tl_dyn-array OptBoolBranchDef)]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [index : OptCfgIndex]
   [blocks : ir.CompilerIrBlockList]) : unit
   (match blocks
@@ -31329,7 +31329,7 @@
         (ir.compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-licm-deref-facts
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [cells : OptGlobalCellSummary]
   [index : OptCfgIndex]
   [frame : i64]

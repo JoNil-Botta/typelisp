@@ -55,3 +55,12 @@ valgrind --tool=cachegrind --cache-sim=no --branch-sim=no \
 - Focused coverage checks counter growth, duplicate definitions, absent IDs,
   the candidate sentinel, maximum-i64 lookup, and independent inventories.
 - Changed TypeLisp sources pass formatting and lint checks.
+
+## Upstream refresh
+
+Merged `e2206a24` and changed the new LICM dereference-fact helpers to consume
+`OptValueSources`. The rebuilt compiler passes all 141 optimizer inline tests
+and all 670 Linux integration cases. All 44 paired benchmark assemblies remain
+byte-identical to an opt 2 compiler built from `e2206a24`. Formatting and lint
+pass for the updated optimizer. Earlier timing and instruction measurements
+retain their explicitly named base.

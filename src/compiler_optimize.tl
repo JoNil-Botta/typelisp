@@ -72256,7 +72256,422 @@
     blocks)
     [(OptBoundsDomResult.Result result _) result]))
 
+;; --- flag values a dominating branch decided ---------------------------------
+;;
+;; A `bool` a branch tests is known on each of that branch's arms: true below
+;; the true edge, false below the false one. The verdicts below decide a later
+;; branch whose condition is a COMPARISON a dominating branch implies, but a
+;; condition that is a flag -- a phi carrying `(set! ok false)` round a loop --
+;; has no comparison behind it, so what its own test established was recorded
+;; nowhere.
+;;
+;; The shape that pays for that is a nested flag loop: `(while (and (< k n) ok)
+;; ...)` whose body runs an inner `(while (and (< b m) ok) ...)` on the same
+;; flag. The inner loop's flag phi is seeded with the OUTER flag -- a value the
+;; outer loop's own test has just proved true -- and flag_exit converts a loop
+;; only off a seed it can decide, so neither loop converts and both re-test the
+;; flag at the top of every iteration. With the seed spelled `true` both
+;; convert: route_http's matcher, which C compiles to direct exits.
+;;
+;; THE FACT. A block X whose only predecessor P ends in `branch v, T, F` with
+;; T != F learns `v = (X == T)`, and every block X dominates inherits it: this
+;; pass only runs on a verified function, so v has one definition and names one
+;; value everywhere it is read. THE REWRITE puts the literal in two places:
+;;   * the condition of a branch in a block the fact holds in;
+;;   * a LOOP-HEADER phi's input on a forward edge (one the header does not
+;;     dominate the source of) -- the seed the loop enters with -- when the
+;;     fact holds in that source block, which is where the value crosses.
+;; Only seeds: inside a loop the flag's own web has to stay the flag, since
+;; flag_exit recognises a loop by the latch carrying the flag (or a copy of it)
+;; on every keep-going path, and a `true` spelled there instead hides the loop
+;; from it -- intern_table's `it-slice-eq?` stops converting and pays 25%.
+;; `branch <literal>` is folded, and its dead edge dropped, by `cfg` below, the
+;; same as for the comparison verdicts.
+;;
+;; Facts are inherited down the dominator tree, so each block keeps only the
+;; one it adds and a link to the nearest dominator that added one: `head` is
+;; that nearest block (itself when it adds a fact), `link` the next one up.
+(defstruct OptFlagFacts
+  (head (__tl_dyn-array i64))
+  (link (__tl_dyn-array i64))
+  (var (__tl_dyn-array i64))
+  (value (__tl_dyn-array bool)))
+
+(define (opt-flag-facts-lookup [facts : OptFlagFacts] [id : i64] [var : i64]) : i64
+  (let
+    [heads : (__tl_dyn-array i64) facts.head]
+    [links : (__tl_dyn-array i64) facts.link]
+    [vars : (__tl_dyn-array i64) facts.var]
+    [values : (__tl_dyn-array bool) facts.value]
+    [at : i64
+      (if (and (>= id 0) (< id (array-length heads)))
+        (array-ref heads id)
+        (- 0 1))]
+    [found : i64 (- 0 1)]
+    (begin
+      (while (and (< found 0) (>= at 0))
+        (if (= (array-ref vars at) var)
+          (set!
+            found
+            (if (array-ref values at)
+              1
+              0))
+          (set! at (array-ref links at))))
+      found)))
+
+;; The one reachable predecessor of `id`, or -1.
+(define (opt-flag-facts-sole-pred [index : OptCfgIndex] [id : i64]) : i64
+  (let
+    [offsets : (__tl_dyn-array i64) index.preds.offsets]
+    [edges : (__tl_dyn-array i64) index.preds.edges]
+    [edge : i64 (array-ref offsets id)]
+    [end : i64 (array-ref offsets (+ id 1))]
+    [found : i64 (- 0 1)]
+    [ok? : bool true]
+    (begin
+      (while (and ok? (< edge end))
+        (let
+          [pred : i64 (array-ref edges edge)]
+          (begin
+            (cond
+              [(not (array-ref index.reachable pred)) unit]
+              [(< found 0) (set! found pred)]
+              [(= found pred) unit]
+              [else (set! ok? false)])
+            (set! edge (+ edge 1)))))
+      (if ok?
+        found
+        (- 0 1)))))
+
+(define (opt-flag-facts-build
+  [index : OptCfgIndex]
+  [doms : OptDomInfo]
+  [sources : opt_i64_i64_map.Map]) : OptFlagFacts
+  (let
+    [count : i64 (array-length index.labels)]
+    [heads : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [links : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [vars : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [values : (__tl_dyn-array bool) (__tl_make-array bool count)]
+    [idoms : (__tl_dyn-array i64) doms.idom]
+    [i : i64 0]
+    (begin
+      (while (< i count)
+        (begin
+          (set! (array-ref heads i) (- 0 1))
+          (set! (array-ref links i) (- 0 1))
+          (set! (array-ref vars i) (- 0 1))
+          (set! i (+ i 1))))
+      ;; Reverse post-order puts every dominator ahead of what it dominates.
+      (set! i 0)
+      (while (< i index.reach-count)
+        (let
+          [id : i64 (array-ref index.rpo i)]
+          [idom : i64
+            (if (< id (array-length idoms))
+              (array-ref idoms id)
+              (- 0 1))]
+          [inherited : i64
+            (if (and (>= idom 0) (not (= idom id)))
+              (array-ref heads idom)
+              (- 0 1))]
+          [pred : i64
+            (opt-flag-facts-sole-pred
+              (compiler-opt-global-shared-view index)
+              id)]
+          [label : i64 (array-ref index.labels id)]
+          [side : i64
+            (if (< pred 0)
+              (- 0 1)
+              (match (opt-cfg-index-block
+                (compiler-opt-global-shared-view index)
+                pred)
+                [(OptMaybeBlock.No) (- 0 1)]
+                [(OptMaybeBlock.Some block)
+                  (match block
+                    [(ir.CompilerIrBlock.Block _ instrs)
+                      (let
+                        [n : i64 (ir.compiler-ir-instr-seq-count instrs)]
+                        (if (< n 1)
+                          (- 0 1)
+                          (match (ir.compiler-ir-instr-seq-ref instrs (- n 1))
+                            [(ir.CompilerIrInstr.Branch
+                                (ir.CompilerIrValue.Var var)
+                                true-label
+                                false-label)
+                              (cond
+                                [(or
+                                    (= true-label false-label)
+                                    (not
+                                      (opt-gvn-stable-var?
+                                        (compiler-opt-global-shared-view
+                                          sources)
+                                        var)))
+                                  (- 0 1)]
+                                [(= label true-label)
+                                  (begin
+                                    (set! (array-ref vars id) var)
+                                    1)]
+                                [(= label false-label)
+                                  (begin
+                                    (set! (array-ref vars id) var)
+                                    0)]
+                                [else (- 0 1)])]
+                            [_ (- 0 1)])))])]))]
+          (begin
+            (if (< side 0)
+              (set! (array-ref heads id) inherited)
+              (begin
+                (set! (array-ref values id) (= side 1))
+                (set! (array-ref links id) inherited)
+                (set! (array-ref heads id) id)))
+            (set! i (+ i 1)))))
+      (OptFlagFacts heads links vars values))))
+
+(define (opt-flag-facts-value
+  [facts : OptFlagFacts]
+  [id : i64]
+  [value : ir.CompilerIrValue]) : ir.CompilerIrValue
+  (match (compiler-opt-global-shared-view value)
+    [(ir.CompilerIrValue.Var var)
+      (let
+        [known : i64 (opt-flag-facts-lookup facts id var)]
+        (if (< known 0)
+          value
+          (ir.CompilerIrValue.Bool (= known 1))))]
+    [_ value]))
+
+(define (opt-flag-facts-rewrite-instrs
+  [index : OptCfgIndex]
+  [doms : OptDomInfo]
+  [facts : OptFlagFacts]
+  [id : i64]
+  [instrs : ir.CompilerIrInstrSeq]
+  [changed : (__tl_dyn-array bool)]) : ir.CompilerIrInstrSeq
+  (let
+    [count : i64
+      (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs))]
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity (+ count 1))]
+    [pos : i64 0]
+    (begin
+      (while (< pos count)
+        (let
+          [instr : ir.CompilerIrInstr
+            (ir.compiler-ir-instr-seq-ref
+              (compiler-opt-global-shared-view instrs)
+              pos)]
+          (begin
+            (match (compiler-opt-global-shared-view instr)
+              [(ir.CompilerIrInstr.Branch
+                  (ir.CompilerIrValue.Var var)
+                  true-label
+                  false-label)
+                (let
+                  [known : i64
+                    (opt-flag-facts-lookup
+                      (compiler-opt-global-shared-view facts)
+                      id
+                      var)]
+                  (if (< known 0)
+                    (ir.compiler-ir-instr-builder-push! (&mut builder) instr)
+                    (begin
+                      (set! (array-ref changed 0) true)
+                      (ir.compiler-ir-instr-builder-push!
+                        (&mut builder)
+                        (ir.CompilerIrInstr.Branch
+                          (ir.CompilerIrValue.Bool (= known 1))
+                          true-label
+                          false-label)))))]
+              [(ir.CompilerIrInstr.Phi dst inputs ty)
+                (let
+                  [n : i64
+                    (ir.compiler-ir-phi-input-seq-count
+                      (compiler-opt-global-shared-view inputs))]
+                  [out : ir.CompilerIrPhiInputBuilder
+                    (ir.compiler-ir-phi-input-builder-with-capacity (+ n 1))]
+                  [k : i64 0]
+                  [hit : bool false]
+                  ;; A loop header: some input arrives on a back edge, from a
+                  ;; block this one dominates.
+                  [header? : bool
+                    (let
+                      [j : i64 0]
+                      [found : bool false]
+                      (begin
+                        (while (and (not found) (< j n))
+                          (begin
+                            (match (opt-cfg-index-id
+                              (compiler-opt-global-shared-view index)
+                              (ir.compiler-ir-phi-input-seq-ref
+                                (compiler-opt-global-shared-view inputs)
+                                j).label)
+                              [(option_i64.Some pred)
+                                (if (opt-dom-info-dominates-id?
+                                  (compiler-opt-global-shared-view doms)
+                                  id
+                                  pred)
+                                  (set! found true)
+                                  unit)]
+                              [(option_i64.None) unit])
+                            (set! j (+ j 1))))
+                        found))]
+                  (begin
+                    (while (< k n)
+                      (let
+                        [input : ir.CompilerIrPhiInput
+                          (ir.compiler-ir-phi-input-seq-ref
+                            (compiler-opt-global-shared-view inputs)
+                            k)]
+                        [from : i64
+                          (match (opt-cfg-index-id
+                            (compiler-opt-global-shared-view index)
+                            input.label)
+                            [(option_i64.Some pred) pred]
+                            [(option_i64.None) (- 0 1)])]
+                        [value : ir.CompilerIrValue
+                          (if (and
+                            header?
+                            (>= from 0)
+                            (not
+                              (opt-dom-info-dominates-id?
+                                (compiler-opt-global-shared-view doms)
+                                id
+                                from)))
+                            (opt-flag-facts-value
+                              (compiler-opt-global-shared-view facts)
+                              from
+                              (compiler-opt-global-shared-view input.value))
+                            (compiler-opt-global-shared-view input.value))]
+                        (begin
+                          (if (opt-value-eq
+                            (compiler-opt-global-shared-view value)
+                            (compiler-opt-global-shared-view input.value))
+                            unit
+                            (set! hit true))
+                          (ir.compiler-ir-phi-input-builder-push!
+                            (&mut out)
+                            (ir.CompilerIrPhiInput value input.label))
+                          (set! k (+ k 1)))))
+                    (if hit
+                      (begin
+                        (set! (array-ref changed 0) true)
+                        (ir.compiler-ir-instr-builder-push!
+                          (&mut builder)
+                          (ir.CompilerIrInstr.Phi
+                            dst
+                            (ir.compiler-ir-phi-input-builder-to-seq out)
+                            ty)))
+                      (ir.compiler-ir-instr-builder-push! (&mut builder) instr))))]
+              [_ (ir.compiler-ir-instr-builder-push! (&mut builder) instr)])
+            (set! pos (+ pos 1)))))
+      (ir.compiler-ir-instr-builder-to-seq builder))))
+
+;; The flag rewrite over the whole function; `blocks` is returned untouched
+;; (not rebuilt) when no block holds a fact that reaches a use.
+(define (opt-flag-facts-rewrite-blocks
+  [index : OptCfgIndex]
+  [doms : OptDomInfo]
+  [sources : opt_i64_i64_map.Map]
+  [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
+  (let
+    ;; The dense block values are read for each predecessor's terminator, so
+    ;; they must be this list's, not whatever the context last indexed.
+    [_refresh : unit
+      (opt-cfg-index-refresh-blocks!
+        (compiler-opt-global-shared-view index)
+        (compiler-opt-global-shared-view blocks))]
+    [facts : OptFlagFacts
+      (opt-flag-facts-build
+        (compiler-opt-global-shared-view index)
+        (compiler-opt-global-shared-view doms)
+        (compiler-opt-global-shared-view sources))]
+    [any? : bool
+      (let
+        [vars : (__tl_dyn-array i64) facts.var]
+        [i : i64 0]
+        [found : bool false]
+        (begin
+          (while (and (not found) (< i (array-length vars)))
+            (begin
+              (if (>= (array-ref vars i) 0)
+                (set! found true)
+                unit)
+              (set! i (+ i 1))))
+          found))]
+    (if (not any?)
+      blocks
+      (let
+        [seq : ir.CompilerIrBlockSeq
+          (ir.compiler-ir-block-seq-from-list
+            (compiler-opt-global-shared-view blocks))]
+        [count : i64
+          (ir.compiler-ir-block-seq-count (compiler-opt-global-shared-view seq))]
+        [builder : ir.CompilerIrBlockBuilder
+          (ir.compiler-ir-block-builder-with-capacity (+ count 1))]
+        [changed : (__tl_dyn-array bool) (__tl_make-array bool 1)]
+        [i : i64 0]
+        (begin
+          (while (< i count)
+            (begin
+              (match (ir.compiler-ir-block-seq-ref
+                (compiler-opt-global-shared-view seq)
+                i)
+                [(ir.CompilerIrBlock.Block label instrs)
+                  (let
+                    [id : i64
+                      (match (opt-cfg-index-id
+                        (compiler-opt-global-shared-view index)
+                        label)
+                        [(option_i64.Some found) found]
+                        [(option_i64.None) (- 0 1)])]
+                    (ir.compiler-ir-block-builder-push!
+                      (&mut builder)
+                      (ir.CompilerIrBlock.Block
+                        label
+                        (if (< id 0)
+                          instrs
+                          (opt-flag-facts-rewrite-instrs
+                            (compiler-opt-global-shared-view index)
+                            (compiler-opt-global-shared-view doms)
+                            (compiler-opt-global-shared-view facts)
+                            id
+                            instrs
+                            (compiler-opt-global-shared-view changed))))))])
+              (set! i (+ i 1))))
+          (if (array-ref changed 0)
+            (ir.compiler-ir-block-builder-to-list builder)
+            blocks))))))
+
 (define (opt-bounds-dom-blocks-with-context-result
+  [type-segment-bases : i64]
+  [context : OptCfgContext]
+  [params : ir.CompilerIrParamSeq]
+  [frame : i64]
+  [nonneg : opt_i64_i64_map.Map]
+  [len-eq : OptLenEqUse]
+  [blocks : ir.CompilerIrBlockList]) : OptBoundsDomResult
+  (let
+    [flagged : ir.CompilerIrBlockList
+      (opt-flag-facts-rewrite-blocks
+        (compiler-opt-global-shared-view context.index)
+        (compiler-opt-global-shared-view context.doms)
+        (opt-gvn-sources-blocks
+          (compiler-opt-global-shared-view blocks)
+          (opt-gvn-sources-params
+            (compiler-opt-global-shared-view params)
+            (opt_i64_i64_map.with-capacity 64)))
+        blocks)]
+    (opt-bounds-dom-blocks-with-context-result-core
+      type-segment-bases
+      context
+      params
+      frame
+      nonneg
+      len-eq
+      flagged)))
+
+(define (opt-bounds-dom-blocks-with-context-result-core
   [type-segment-bases : i64]
   [context : OptCfgContext]
   [params : ir.CompilerIrParamSeq]

@@ -700,3 +700,6 @@ global_reference_initializers_opt2|tests/integration/global_reference_initialize
 generated_import_global_initializers|tests/integration/generated_import_global_initializers.tl|42|-|-|decls_generated_import_dep.tl decls_generated_import_empty.tl generated_import_alias_other_dep.tl
 generated_import_global_initializers_opt0|tests/integration/generated_import_global_initializers.tl|42|-|-|decls_generated_import_dep.tl decls_generated_import_empty.tl generated_import_alias_other_dep.tl|opt-level:0+stage-stdlib
 generated_import_global_initializers_opt2|tests/integration/generated_import_global_initializers.tl|42|-|-|decls_generated_import_dep.tl decls_generated_import_empty.tl generated_import_alias_other_dep.tl|opt-level:2+stage-stdlib
+
+literal_loop_call_opt0|tests/integration/literal_loop_call.tl|0|0 0 54 190 215 0 0\n|-|-|opt-level:0+stage-stdlib
+literal_loop_call_opt2|tests/integration/literal_loop_call.tl|0|0 0 54 190 215 0 0\n|-|-|opt-level:2+stage-stdlib

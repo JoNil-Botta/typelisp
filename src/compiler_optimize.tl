@@ -181413,13 +181413,70 @@
 ;; flag starts false in the dedicated loop preheader, so a zero-trip loop or
 ;; a skipped call stays skipped, and a first-call trap keeps its ordering.
 ;; Every instruction in the loop must be write-free, and arguments must have
-;; one definition outside the loop. This runs before inlining and SSA; the
-;; later SSA construction supplies the flag/result phis. One site per caller
+;; one definition outside the loop or a single scalar-literal assignment.
+;; This runs before inlining; later SSA construction supplies the flag/result
+;; phis. One site per caller
 ;; bounds code growth. Splitting a block repairs its successor phi labels;
 ;; large callers are left unchanged.
 (defenum OptLoopCallSite
   (No)
   (Some i64 i64 i64))
+
+;; A lowering temporary assigned one scalar literal has the same value at
+;; every execution of its defining instruction. Keep the assignment in place;
+;; only omit its destination from the set of varying loop definitions. Global
+;; reads, allocated literals, copies and multiply-defined names stay varying.
+(define (opt-loop-call-literal-def?
+  [defs : (__tl_dyn-array i64)]
+  [instr : ir.CompilerIrInstr]) : bool
+  (match instr
+    [(ir.CompilerIrInstr.Mov dst value _)
+      (and
+        (opt-pure-call-single-def? defs dst)
+        (match value
+          [(ir.CompilerIrValue.I64 _) true]
+          [(ir.CompilerIrValue.F64 _) true]
+          [(ir.CompilerIrValue.Bool _) true]
+          [(ir.CompilerIrValue.Char _) true]
+          [_ false]))]
+    [_ false]))
+
+(define (opt-loop-call-variant-defs
+  [defs : (__tl_dyn-array i64)]
+  [blocks : ir.CompilerIrBlockList]
+  [set : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) set]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-loop-call-variant-defs
+        defs
+        (ir.compiler-ir-block-seq-to-list seq)
+        set)]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (let
+            [out : opt_i64_i64_map.Map set]
+            [i : i64 0]
+            (begin
+              (while (< i instrs.len)
+                (let
+                  [instr : ir.CompilerIrInstr
+                    (ir.compiler-ir-instr-seq-ref instrs i)]
+                  (begin
+                    (unless
+                      (opt-loop-call-literal-def?
+                        (compiler-opt-global-shared-view defs)
+                        (compiler-opt-global-shared-view instr))
+                      (match (opt-instr-def-var instr)
+                        [(option_i64.Some var)
+                          (opt_i64_i64_map.insert-ref! (&mut out) var 1)]
+                        [(option_i64.None) unit]))
+                    (set! i (+ i 1)))))
+              (opt-loop-call-variant-defs
+                defs
+                (compiler-opt-box-shared-view rest)
+                out)))])]))
 
 (define (opt-loop-call-value-invariant?
   [defs : (__tl_dyn-array i64)]
@@ -181588,7 +181645,8 @@
                   (compiler-opt-global-shared-view functions)
                   (compiler-opt-global-shared-view memory)
                   (compiler-opt-global-shared-view defs)
-                  (opt-licm-collect-defs-blocks
+                  (opt-loop-call-variant-defs
+                    (compiler-opt-global-shared-view defs)
                     (compiler-opt-global-shared-view body)
                     (opt_i64_i64_map.with-capacity
                       (opt-licm-body-map-capacity

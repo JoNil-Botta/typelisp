@@ -60,3 +60,4 @@ instruction-heavy	spmd_mask
 instruction-heavy	spmd_short_tail
 instruction-heavy	spmd_zip
 instruction-heavy	string_scan
+instruction-main	loop_call_literal

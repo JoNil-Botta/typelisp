@@ -578,6 +578,34 @@
 
 (cfg
   test
+  (define (winsock-test-identity-tag [result : WinsockIdentityResult]) : i64
+    (match result
+      [(WinsockIdentityOk) 0]
+      [(WinsockIdentityQueryFailed) 1]
+      [(WinsockIdentityWrongModule) 2])))
+
+;: Report which identity case disagreed, so a hosted failure names the input
+;: and the result instead of only the aggregate check.
+(cfg
+  test
+  (define (winsock-test-identity-case-ok?
+    [case : i64]
+    [expected : i64]
+    [result : WinsockIdentityResult]) : bool
+    (let
+      [actual : i64 (winsock-test-identity-tag result)]
+      (if (= actual expected)
+        true
+        (begin
+          (io.eprintln
+            "winsock: identity case {} returned tag {}, expected {} (0 ok, 1 query-failed, 2 wrong-module)"
+            case
+            actual
+            expected)
+          false)))))
+
+(cfg
+  test
   (define (winsock-test-shadow-path-rejected?) : bool
     (let
       [system : String "C:\\Windows\\System32"]
@@ -587,34 +615,38 @@
       [shadow-path : (Array u16 1024) (winsock-test-wide (& shadow))]
       [real-path : (Array u16 1024) (winsock-test-wide (& real))]
       (and
-        (match (winsock-identity-from-paths
-          shadow-path
-          (string.string-length (& shadow))
-          system-path
-          (string.string-length (& system)))
-          [(WinsockIdentityWrongModule) true]
-          [_ false])
-        (match (winsock-identity-from-paths
-          real-path
-          (string.string-length (& real))
-          system-path
-          (string.string-length (& system)))
-          [(WinsockIdentityOk) true]
-          [_ false])
-        (match (winsock-identity-from-paths
-          real-path
-          1024
-          system-path
-          (string.string-length (& system)))
-          [(WinsockIdentityQueryFailed) true]
-          [_ false])
-        (match (winsock-identity-from-paths
-          real-path
-          -1
-          system-path
-          (string.string-length (& system)))
-          [(WinsockIdentityQueryFailed) true]
-          [_ false])))))
+        (winsock-test-identity-case-ok?
+          1
+          2
+          (winsock-identity-from-paths
+            shadow-path
+            (string.string-length (& shadow))
+            system-path
+            (string.string-length (& system))))
+        (winsock-test-identity-case-ok?
+          2
+          0
+          (winsock-identity-from-paths
+            real-path
+            (string.string-length (& real))
+            system-path
+            (string.string-length (& system))))
+        (winsock-test-identity-case-ok?
+          3
+          1
+          (winsock-identity-from-paths
+            real-path
+            1024
+            system-path
+            (string.string-length (& system))))
+        (winsock-test-identity-case-ok?
+          4
+          1
+          (winsock-identity-from-paths
+            real-path
+            -1
+            system-path
+            (string.string-length (& system))))))))
 
 ;: Resolve the fixed schema in order. A failed slot stops before the next lookup.
 ;: The injected index is -1 in production and is used only by bounded tests.

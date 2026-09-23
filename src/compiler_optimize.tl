@@ -151533,7 +151533,8 @@
   [functions : ir.CompilerIrFunctionSeq]) : opt_i64_i64_map.Map
   (opt-const-globals-disqualified-from disq functions 0))
 
-;; A constant only earns substitution when it fits a signed 32-bit immediate, so
+;; An ordinary operand only earns substitution when it fits a signed 32-bit
+;; immediate, so
 ;; the backend can fold it directly into the instruction (`and reg, $imm32`)
 ;; instead of loading it. A wider constant has to be materialized into a
 ;; register with `movabs` at every use, and -- decisively -- the global form it
@@ -151572,12 +151573,18 @@
 ;; No variant is a net win and each moves a row by more than the 0.05% this
 ;; tree gates on, so the rule stays until the allocator can rematerialize a
 ;; `movabs`.
+;;
+;; A narrow exception is a positive wide power of two used by a 64-bit multiply:
+;; consume it as a shift count in [31, 62], so no wide literal is materialized.
+;; The table retains those powers, but ordinary substitutions still check imm32.
 (define (opt-const-globals-imm32-fits? [n : i64]) : bool
   (and (>= n (- 0 2147483648)) (<= n 2147483647)))
 
 ;; Build the constant table: literal `CompilerIrValue.I64` globals that are not
 ;; disqualified (stored anywhere / address-taken anywhere) and are
-;; imm32-encodable. ZERO is a member like any other value. It used to be
+;; imm32-encodable or positive powers of two. Wide powers are consumed only by
+;; the multiply-to-shift rewrite; all ordinary positions retain the imm32 gate.
+;; ZERO is a member like any other value. It used to be
 ;; excluded here so a substituted divisor could never become a literal `0`, but
 ;; that is a property of the DIVISOR POSITION and not of the global, so the
 ;; refusal now lives at the substitution site
@@ -151621,7 +151628,10 @@
           (match value
             [(ir.CompilerIrValue.I64 n)
               (if (or
-                (not (opt-const-globals-imm32-fits? n))
+                (not
+                  (or
+                    (opt-const-globals-imm32-fits? n)
+                    (opt-bounds-dom-positive-power-of-two? n)))
                 (opt_i64_i64_map.contains?
                   (& disq)
                   (ir.compiler-ir-symbol-id name)))
@@ -153229,7 +153239,10 @@
       (match (opt_i64_i64_map.get
         (& const-divisors)
         (ir.compiler-ir-symbol-id name))
-        [(opt_i64_i64_map.LookupFound n) (ir.CompilerIrValue.I64 n)]
+        [(opt_i64_i64_map.LookupFound n)
+          (if (opt-const-globals-imm32-fits? n)
+            (ir.CompilerIrValue.I64 n)
+            v)]
         [(opt_i64_i64_map.LookupMissing) v])]
     [_ v]))
 
@@ -153274,6 +153287,63 @@
     (opt-const-global-subst-divisor-value const-divisors v)
     (opt-const-global-subst-value const-divisors v)))
 
+;; The caller immediately consumes a wide power as a shift, never as movabs.
+(define (opt-const-global-subst-mul-value
+  [constants : opt_i64_i64_map.Map]
+  [value : ir.CompilerIrValue]) : ir.CompilerIrValue
+  (match (compiler-opt-global-shared-view value)
+    [(ir.CompilerIrValue.Global name)
+      (match (opt_i64_i64_map.get (& constants) (ir.compiler-ir-symbol-id name))
+        [(opt_i64_i64_map.LookupFound n) (ir.CompilerIrValue.I64 n)]
+        [_ value])]
+    [_ value]))
+
+(define (opt-const-global-wide-power-shift [value : ir.CompilerIrValue]) : i64
+  (match value
+    [(ir.CompilerIrValue.I64 n)
+      (if (and (> n 2147483647) (opt-bounds-dom-positive-power-of-two? n))
+        (let
+          [power : i64 n]
+          [shift : i64 0]
+          (begin
+            (while (> power 1)
+              (begin
+                (set! power (shr power 1))
+                (set! shift (+ shift 1))))
+            shift))
+        -1)]
+    [_ -1]))
+
+;; Called only for i64/u64 multiplication. Shifting by the constant's exponent
+;; computes the same low 64 bits for every input, including signed overflow.
+;; Counts are valid i64 literals; no new checked-shift trap can fire.
+(define (opt-const-global-mul-instr
+  [dst : i64]
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]
+  [ty : ast.AstType]) : ir.CompilerIrInstr
+  (let
+    [right-shift : i64
+      (opt-const-global-wide-power-shift (compiler-opt-global-shared-view rhs))]
+    [left-shift : i64
+      (opt-const-global-wide-power-shift (compiler-opt-global-shared-view lhs))]
+    (cond
+      [(>= right-shift 0)
+        (ir.CompilerIrInstr.BinOp
+          dst
+          (ir.CompilerIrBinOp.Shl (ast.AstType.I64))
+          lhs
+          (ir.CompilerIrValue.I64 right-shift)
+          ty)]
+      [(>= left-shift 0)
+        (ir.CompilerIrInstr.BinOp
+          dst
+          (ir.CompilerIrBinOp.Shl (ast.AstType.I64))
+          rhs
+          (ir.CompilerIrValue.I64 left-shift)
+          ty)]
+      [else (ir.CompilerIrInstr.BinOp dst (ir.CompilerIrBinOp.Mul) lhs rhs ty)])))
+
 ;; The early rewrite substitutes every scalar operand position whose literal
 ;; the round-1 local fold and the loop passes can both consume: BinOp operands
 ;; (compare operands feeding branches included), UnOp sources, Cast/Bitcast
@@ -153292,22 +153362,47 @@
 ;; other passes). Load/StorePtr/Gep and the vector arms keep the global's
 ;; hidden-load form: their operand is an address or a descriptor pointer, not
 ;; a scalar the fold can use.
+;; Restrict the shift exception to a global operand. Rewriting literal products
+;; synthesized by unrolling would introduce checked-shift nodes after reduction;
+;; DCE conservatively retains those nodes even when their counts are valid.
 (define (opt-const-divisor-rewrite-instr
   [const-divisors : opt_i64_i64_map.Map]
   [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
   (match (compiler-opt-global-shared-view instr)
     [(ir.CompilerIrInstr.BinOp dst op lhs rhs ty)
-      (ir.CompilerIrInstr.BinOp
-        dst
-        (compiler-opt-global-shared-view op)
-        (opt-const-global-subst-value
-          (compiler-opt-global-shared-view const-divisors)
-          lhs)
-        (opt-const-global-subst-rhs-value
-          const-divisors
+      (if (and
+        (opt-binop-eq
           (compiler-opt-global-shared-view op)
-          rhs)
-        ty)]
+          (ir.CompilerIrBinOp.Mul))
+        (or
+          (match (compiler-opt-global-shared-view lhs)
+            [(ir.CompilerIrValue.Global _) true]
+            [_ false])
+          (match (compiler-opt-global-shared-view rhs)
+            [(ir.CompilerIrValue.Global _) true]
+            [_ false]))
+        (match (compiler-opt-global-shared-view ty)
+          [(ast.AstType.I64) true]
+          [(ast.AstType.U64) true]
+          [_ false]))
+        (opt-const-global-mul-instr
+          dst
+          (opt-const-global-subst-mul-value
+            (compiler-opt-global-shared-view const-divisors)
+            lhs)
+          (opt-const-global-subst-mul-value const-divisors rhs)
+          ty)
+        (ir.CompilerIrInstr.BinOp
+          dst
+          (compiler-opt-global-shared-view op)
+          (opt-const-global-subst-value
+            (compiler-opt-global-shared-view const-divisors)
+            lhs)
+          (opt-const-global-subst-rhs-value
+            const-divisors
+            (compiler-opt-global-shared-view op)
+            rhs)
+          ty))]
     [(ir.CompilerIrInstr.Mov dst src ty)
       (ir.CompilerIrInstr.Mov
         dst

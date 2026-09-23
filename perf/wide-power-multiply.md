@@ -79,3 +79,28 @@ Merged upstream `e2206a24`, including the global-initializer and LICM element-
 bound correctness fixes. Rebuilt the opt 2 compiler and passed all 673 Linux
 integration cases. The measurements above retain their explicitly named base;
 they are not reinterpreted as measurements of the combined upstream changes.
+
+## Review revision: shift in the final pipeline slot
+
+Rewriting the product to an IR `Shl` in the early constant-global pass
+regressed codegen. Every pass that asks `opt-binop-traps?` treats any shift as a
+possible abort, so LICM recomputed an invariant product on every trip, a loop
+tested on a product stayed unrotated, and a dead product survived. The early
+rewrite now leaves the wide power a Global operand like every other wide
+constant. `opt-const-global-mul-shift-final` performs the rewrite after unswitch
+and `iv_aff`, when no pass that asks that question remains and the
+whole-program inline stage has already run. It reads the multiplier directly
+or through the single-definition preheader copy that global-cell promotion
+leaves. A literal times the global stays a multiply: as a shift of two
+literals, it folded into a wide literal that a loop rematerialized on every
+trip.
+
+Same host, base `e2206a24`, both compilers fresh opt 2 fixpoints:
+
+- The three regression shapes match base's opt 2 assembly structure, with
+  `shl` in place of `imul`: the invariant product computed once, the rotated
+  loop, and no dead product.
+- `mul_wide_power`, 11 interleaved rounds pinned to one core: base 76.27 ms,
+  revised 38.53 ms, Clang `-O2` 39.84 ms.
+- All 23 `perf/insn-exec-baseline.tsv` and 5 heavy TypeLisp rows are exact.
+  The opt1 self-compile is 96,344,444,536 -> 96,372,202,328 Ir (+0.029%).

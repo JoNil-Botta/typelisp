@@ -39984,10 +39984,10 @@ g:
             "    call tl_div_abort_at\n")
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
-            "    cmpq %r10, %rax\n    jne 1f\n")
+            "    cmpq $1, %rax\n    jno 1f\n")
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
-            "    cmpq %r9, %r8\n    jne 1f\n")
+            "    cmpq $-1, %r8\n    jne 1f\n")
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
             "    cqto\n")
@@ -56233,10 +56233,15 @@ g:
             "%rax"))
         (compiler_backend.compiler-backend-string-contains?
           (owned_view.compiler-owned-shared-view div-guard)
-          "%r12")
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view div-guard)
-          "%r13")
+          "    cmpq $1, %rax\n    jno 1f\n    cmpq $-1, %r8\n")
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view div-guard)
+            "%r12"))
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view div-guard)
+            "%r13"))
         literal-ok
         non-divmod-lazy?
         non-divmod-dst-lazy?
@@ -59100,8 +59105,72 @@ b_keep:
           [(object_asm.ResultCompilerObjectAsm.Err _) false]))]
     [(compiler_backend.ResultCompilerBackendObject.Err _) false]))
 
+(define (compiler-backend-signed-div-guard-shape-ok?
+  [ty : compiler_ast_types.AstType]
+  [suffix : String]
+  [lhs : String]
+  [rhs : String]) : bool
+  (let
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [asm : String
+      (compiler_backend.compiler-backend-div-overflow-guard-asm-with-plan
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        ty
+        "%r8"
+        "%r12"
+        "%r13"
+        backend-state)]
+    (string.eq
+      asm
+      (str_cat.str-cat
+        "    cmp"
+        (owned_view.compiler-owned-shared-view suffix)
+        " $1, "
+        lhs
+        "\n    jno 1f\n    cmp"
+        suffix
+        " $-1, "
+        rhs
+        "\n    jne 1f\n    call tl_div_abort\n1:\n"))))
+
+(define (compiler-backend-signed-div-guard-shapes-ok?) : bool
+  (and
+    (compiler-backend-signed-div-guard-shape-ok?
+      (compiler_ast_types.AstType.I8)
+      "b"
+      "%al"
+      "%r8b")
+    (compiler-backend-signed-div-guard-shape-ok?
+      (compiler_ast_types.AstType.I16)
+      "w"
+      "%ax"
+      "%r8w")
+    (compiler-backend-signed-div-guard-shape-ok?
+      (compiler_ast_types.AstType.I32)
+      "l"
+      "%eax"
+      "%r8d")
+    (compiler-backend-signed-div-guard-shape-ok?
+      (compiler_ast_types.AstType.I64)
+      "q"
+      "%rax"
+      "%r8")
+    (string.eq
+      (compiler_backend.compiler-backend-div-overflow-guard-asm-with-plan
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (compiler_ast_types.AstType.U64)
+        "%r8"
+        "%r12"
+        "%r13"
+        (compiler_backend.compiler-backend-state-new
+          (ci.intern-compat-state-capture-active)))
+      "")))
+
 (define (compiler-backend-self-test) : i64
   (if (and
+    (compiler-backend-signed-div-guard-shapes-ok?)
     (compiler-backend-avx2-i64-reduce-source-ok?)
     (compiler-backend-avx2-i64-reduce-spilled-source-ok?)
     (compiler-backend-i64-reduce-mask-plan-ok?)

@@ -163,7 +163,11 @@ full-run order, labels and each gate's `needs` (the earlier gates whose
 artifacts it consumes, checked against the runner and the artifact inventory).
 Missing, duplicate, wrong-host or failed obligations prevent verification
 success. Internal corpus and artifact proofs remain
-required; listing does not execute or certify them. See the
+required; listing does not execute or certify them.
+`sh scripts/ci-verify.sh --gates <id>[,<id>...]` reproduces one gate locally:
+it runs the named gates plus every gate their `needs` reach, in order, and ends
+with a partial result rather than verification success (add `--list-gates linux`
+before `--gates` to print that closure without running it). See the
 [gate ledger contract](../scripts/README.md#core-development-loop).
 
 ## Documentation site

@@ -77,11 +77,13 @@ instead, which the sweep does not require to be reachable.
 `ci-gates.tsv` owns the stable top-level gate IDs, exact timing/display labels,
 host applicability and complete sequential order. `ci-verify.sh` binds those
 IDs to the existing commands and compiler/provenance setup. This table is a
-map, not another manifest. List either host without a compiler or side effects:
+map, not another manifest. List either host without a compiler or side effects,
+optionally narrowed to a dependency-closed selection:
 
 ```sh
 sh scripts/ci-verify.sh --list-gates linux
 sh scripts/ci-verify.sh --list-gates windows
+sh scripts/ci-verify.sh --list-gates linux --gates stage2-deterministic-assembly
 ```
 
 The TSV projection has `id`, `hosts`, `label` and `needs` columns. The original `all`
@@ -90,7 +92,28 @@ produce the same LF output; the repository checkout pins this catalog to LF.
 Listing validates the
 entire catalog, including the other host's records, before emitting anything;
 it does not initialize targets, timing, traces, capabilities or the seed.
-It is an inventory report, not a successful verification or a shard executor.
+It is an inventory report, not a successful verification.
+
+`--gates ID[,ID...]` runs a dependency-closed subset of the same runner: the
+named gates of this host plus every gate their `needs` reach, in ledger order,
+each with the setup it owns (a producer's capture and provenance handoff, a
+consumer's validation). It is the local reproduction command for one gate or
+one shard:
+
+```sh
+sh scripts/ci-verify.sh --gates stage2-deterministic-assembly
+```
+
+That example runs `bootstrap-fixpoint`, `stage2-selfhost-compile-manifest` and
+then the named gate. Empty, malformed, unknown, duplicate and other-host IDs
+fail before any gate starts. The seed is resolved only when the closure contains
+`bootstrap-fixpoint`. Setup is guarded by the ID of the gate that owns it, and
+a guard naming no gate of the host poisons completion. A compiler or artifact
+path whose producer did not run names a path that cannot exist, so its consumer
+fails rather than falling back to another compiler. Unless the closure is the
+whole host inventory, the run ends with `CI verification partial: ...`: it
+records no verification-complete timing row and never prints the success
+message. Hosted CI still runs the complete inventory in one job per host.
 
 The full runner resolves each ID against the next required ledger row. Unknown,
 duplicate, wrong-host and out-of-order gates fail; a command failure retains its
@@ -105,25 +128,31 @@ shows only the edges that apply there. A need must name an earlier gate that
 runs wherever the consumer does, so ledger order is a topological order by
 construction. The column is not an independent opinion:
 `ci_gate_ledger_validate_needs` (run by the ledger self-test and by the artifact
-inventory validation) requires every gate after `bootstrap-fixpoint` to need it,
-because `run_with_compiler` exports the converged compiler to all later gates;
-forbids needs and produced-compiler arguments before it; and requires the
-remaining edges to match the consume records of `ci-compiler-artifacts.tsv`
-exactly, in both directions and per host. A dependency that is not an artifact
-handoff (a directory one gate leaves for another, an exported variable) must
-first become an inventory record. The column describes the sequential runner;
-it does not yet authorize running gates apart, which #7766 still owns.
+inventory validation) requires a gate after `bootstrap-fixpoint` to need it
+exactly when one of its bindings names a produced compiler (`$STAGE1_BIN`,
+`$STAGE2_BIN` or `$COMPILE_PROFILE_BIN`); forbids needs and produced-compiler
+arguments before it; and requires the remaining edges to match the consume
+records of `ci-compiler-artifacts.tsv` exactly, in both directions and per host.
+That first rule holds because a gate's environment does not depend on earlier
+gates: `run_with_compiler` passes its compiler to that one gate as
+`TYPELISP_BIN`, and `run_gate` passes the entry environment. A gate that uses a
+compiler must name it. A dependency that is not an artifact handoff (a
+directory one gate leaves for another, an exported variable) must first become
+an inventory record. `--gates` executes the column in one checkout; running
+gates in separate jobs and the mandatory shard aggregate remain #7766.
 
 A new gate needs one ledger row and an executable binding in the matching host
 position. Update the three declared counts intentionally; duplicate IDs/labels,
 invalid hosts, fields, needs, counts and truncated records are rejected.
-`test-ci-gate-ledger.sh` exercises these boundaries and the real listing CLI.
+`test-ci-gate-ledger.sh` exercises these boundaries, selection closure and
+diagnostics, the real listing CLI, and a real `--gates` run in a stub checkout
+on both host branches.
 
 Nested corpora, targets, optimization levels, compiler producers and artifact
 handoffs remain owned by their existing gates/manifests and provenance helpers.
-The ledger does not infer dependency independence or authorize concurrent
-execution; dependency records, balanced shards and mandatory shard aggregation
-remain in #7766. Workflow-level setup/checks/uploads remain in the workflow.
+The ledger does not authorize concurrent execution; balanced shards, their
+artifact transfer and mandatory shard aggregation remain in #7766.
+Workflow-level setup/checks/uploads remain in the workflow.
 
 Every full `ci-verify.sh` execution creates a fresh same-run artifact token and
 initializes `target/ci-compiler-artifacts/trace.tsv`, including local runs.

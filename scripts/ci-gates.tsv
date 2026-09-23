@@ -44,13 +44,13 @@ stage2-regalloc-census-compiler-build	all	stage2 regalloc census compiler build	
 embedded-stdlib-build-payload	all	embedded stdlib build payload	bootstrap-fixpoint
 embedded-stdlib-tlci-image	all	embedded stdlib tlci image	bootstrap-fixpoint
 stage2-deterministic-assembly	all	stage2 deterministic assembly	bootstrap-fixpoint,stage2-selfhost-compile-manifest
-typelisp-format-compiler-selection-control	all	TypeLisp format compiler selection control	bootstrap-fixpoint
+typelisp-format-compiler-selection-control	all	TypeLisp format compiler selection control	-
 typelisp-source-formatting	all	TypeLisp source formatting	bootstrap-fixpoint
 large-crlf-formatter-diff	all	large CRLF formatter diff	bootstrap-fixpoint
-typelisp-lint-gate-coverage-self-tests	all	TypeLisp lint gate coverage self-tests	bootstrap-fixpoint
+typelisp-lint-gate-coverage-self-tests	all	TypeLisp lint gate coverage self-tests	-
 typelisp-source-lint	all	TypeLisp source lint	bootstrap-fixpoint
 no-libc-dependency-guard	all	no-libc dependency guard	bootstrap-fixpoint
-package-lock-writer-observation-self-tests	all	package-lock writer observation self-tests	bootstrap-fixpoint
+package-lock-writer-observation-self-tests	all	package-lock writer observation self-tests	-
 stage2-cli-build-run-and-chooser-smoke	all	stage2 cli build/run and chooser smoke	bootstrap-fixpoint
 stage2-public-tool-surface	all	stage2 public tool surface	bootstrap-fixpoint
 ir-observability-golden	all	IR observability golden	bootstrap-fixpoint
@@ -89,14 +89,14 @@ stage2-windows-coff-batch-plan	all	stage2 Windows COFF batch plan	bootstrap-fixp
 stage2-pic-relocation-verifier	all	stage2 PIC relocation verifier	bootstrap-fixpoint
 stage2-coff-relocation-overflow-verifier	all	stage2 COFF relocation-overflow verifier	bootstrap-fixpoint
 stage2-safety-corpus	all	stage2 safety corpus	bootstrap-fixpoint
-integration-manifest-validator-self-tests	all	integration manifest validator self-tests	bootstrap-fixpoint
-windows-coff-plan-validator-self-tests	all	Windows COFF plan validator self-tests	bootstrap-fixpoint
-docs-site-search-manifest-validator-self-tests	all	docs-site search manifest validator self-tests	bootstrap-fixpoint
-integration-batch-observability	all	integration batch observability	bootstrap-fixpoint
-integration-windows-path-normalization	all	integration Windows path normalization	bootstrap-fixpoint
+integration-manifest-validator-self-tests	all	integration manifest validator self-tests	-
+windows-coff-plan-validator-self-tests	all	Windows COFF plan validator self-tests	-
+docs-site-search-manifest-validator-self-tests	all	docs-site search manifest validator self-tests	-
+integration-batch-observability	all	integration batch observability	-
+integration-windows-path-normalization	all	integration Windows path normalization	-
 integration-compile-failure-diagnostics	all	integration compile-failure diagnostics	bootstrap-fixpoint
-integration-signal-notice-capture	linux	integration signal notice capture	bootstrap-fixpoint
-windows-integration-linker-queue-self-test	windows	Windows integration linker queue self-test	bootstrap-fixpoint
+integration-signal-notice-capture	linux	integration signal notice capture	-
+windows-integration-linker-queue-self-test	windows	Windows integration linker queue self-test	-
 stage2-native-integration-corpus	all	stage2 native integration corpus	bootstrap-fixpoint
 stage2-must-use-metadata-and-abi-codegen	all	stage2 must-use metadata and ABI/codegen	bootstrap-fixpoint
 stage2-regalloc-backend-asm-shape-gates	linux	stage2 regalloc/backend asm shape gates	bootstrap-fixpoint

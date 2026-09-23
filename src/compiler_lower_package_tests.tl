@@ -37,7 +37,7 @@
           (match (compiler_ir_types.compiler-ir-function-seq-ref
             (compiler_ir_types.compiler-ir-global-shared-view functions)
             index)
-            [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ _)
+            [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ _ _)
               (let
                 [name-text : String
                   (compiler_ir_types.compiler-ir-symbol-text name)]
@@ -116,7 +116,7 @@
           (compiler_ir_types.compiler-ir-global-shared-view functions)
           index)]
       (match (compiler_ir_types.compiler-ir-global-shared-view function)
-        [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ _)
+        [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ _ _)
           (if (compiler_lower.lower-string-prefix-at?
             (compiler_ir_types.compiler-ir-symbol-text name)
             "__tl_spmd_ret_uniform___tl_spmd_pkg_"
@@ -753,6 +753,31 @@
       "lower: :spmd-callable index-param must name an i64 parameter")
     (compiler-lower-spmd-package-symbol-collision-ok?)))
 
+;; Package producers are built by the same private helper lowering, so they
+;; carry the private ABI as well. A declared `index-param` reuses that varying
+;; source parameter where a same-program call site would append an index base;
+;; the scalar backend never maps an index (#7405).
+(define (compiler-lower-spmd-package-private-abi-ok?
+  [mode : compiler_lower.CompilerLowerMode]
+  [expected : String]) : bool
+  (match (compiler_lower.lower-compiler-source-with-mode-and-package
+    (compiler-lower-spmd-package-callable-source)
+    mode
+    "spmd_fixture")
+    [(compiler_lower.ResultCompilerLower.Ok program _)
+      (match program
+        [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
+          (and
+            (string.eq
+              (compiler_ir_types.compiler-ir-spmd-private-abi-program-error
+                (compiler_ir_types.compiler-ir-global-shared-view functions))
+              "")
+            (string.eq
+              (compiler_ir_types.compiler-ir-test-spmd-private-abi-shapes
+                functions)
+              expected))])]
+    [(compiler_lower.ResultCompilerLower.Err _) false]))
+
 (define (compiler-lower-spmd-package-callable-tests-ok?) : bool
   (and
     (compiler-lower-spmd-structural-symbols-ok?)
@@ -772,4 +797,18 @@
       (compiler-lower-spmd-package-scalar-collapse-source)
       (compiler_lower.CompilerLowerMode.Avx512)
       2)
-    (compiler-lower-spmd-package-return-context-ok?)))
+    (compiler-lower-spmd-package-return-context-ok?)
+    (compiler-lower-spmd-package-private-abi-ok?
+      (compiler_lower.CompilerLowerMode.Avx512)
+      (str_cat.str-cat
+        "avx512 lanes 8 [0 active-mask : bool, 1 source 0 varying i64 : i64,"
+        " 2 source 1 uniform i64 : i64] index source 0 result varying i64 | "
+        "avx512 lanes 8 [0 active-mask : bool, 1 source 0 uniform i64 : i64,"
+        " 2 source 1 varying i64 : i64] index source 1 result varying i64"))
+    (compiler-lower-spmd-package-private-abi-ok?
+      (compiler_lower.CompilerLowerMode.Scalar)
+      (str_cat.str-cat
+        "scalar lanes 1 [0 active-mask : bool, 1 source 0 varying i64 : i64,"
+        " 2 source 1 uniform i64 : i64] index none result varying i64 | "
+        "scalar lanes 1 [0 active-mask : bool, 1 source 0 uniform i64 : i64,"
+        " 2 source 1 varying i64 : i64] index none result varying i64"))))

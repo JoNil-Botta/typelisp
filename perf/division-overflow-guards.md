@@ -49,9 +49,8 @@ workload, and this change does not establish LLVM parity.
 - Backend guard-shape tests cover each signed width and the unsigned refusal;
   backend smoke and the consolidated codegen smoke suite pass.
 - All 44 paired benchmarks retain exact output/status parity.
-- The Linux integration suite passed 683/684 cases on its first run; its one
-  failure was the backend smoke assertion for the old register-based guard.
-  After updating that assertion, the backend and consolidated smoke suites pass.
+- All 693 Linux integration cases pass after merging upstream `e2206a24`,
+  including the global-initializer and LICM element-bound correctness fixes.
 - Linux/Windows IR parity (14 files, three levels) and assembly parity (six
   files, three levels, with the established allowlist) pass.
 
@@ -60,3 +59,12 @@ Reproduce the corpus checks with `scripts/bench.sh --correctness` and
 `TYPELISP_BIN` and `TYPELISP_IR_CHECK_COMPILER` to the candidate. The local
 instruction gate also reports C-baseline differences from the hosted clang
 version; those are independent of this change and are not ratcheted here.
+
+## Upstream refresh
+
+After the `e2206a24` merge, all twelve compiler-kernel TypeLisp instruction
+counts were remeasured. `regalloc_greedy` changes from upstream
+574,276,989 to 573,957,264 (-319,725); `sccp_lattice` retains its -96
+instruction improvement. The other ten match upstream exactly. Only the
+affected TypeLisp baseline rows were updated. Earlier timing and physics
+measurements above retain their explicitly named base.

@@ -62,7 +62,9 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
   plans, empty completion trailers, and advancing an owned input buffer once a
   view is dead. `http_body_decode_view_{escape,retained,mutation}_reject.tl`
   prove a view cannot outlive its input, be kept in a longer-lived holder, or
-  stay live while its owner is moved.
+  stay live while its owner is moved;
+  `http_body_decode_view_{if,begin,let}_mutation_reject.tl` repeat the last
+  with the input passed through an `if`, a `begin` and a `let` local (#7979).
 - `http_head_codec.tl` covers strict byte-oriented HTTP/1.1 request-head
   serialization and incremental response-head parsing: every split boundary,
   exact consumption with one-byte and 32 KiB coalesced body suffixes, bounded

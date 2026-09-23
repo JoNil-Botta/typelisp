@@ -196,6 +196,12 @@ reject_diag() {
             printf 'source lifetime `wire` does not outlive required lifetime `fallback`' ;;
         stdlib/tests/http_body_decode_view_mutation_reject.tl)
             printf 'typecheck: cannot move borrowed place `wire`' ;;
+        stdlib/tests/http_body_decode_view_if_mutation_reject.tl)
+            printf 'typecheck: cannot move borrowed place `wire`' ;;
+        stdlib/tests/http_body_decode_view_begin_mutation_reject.tl)
+            printf 'typecheck: cannot move borrowed place `wire`' ;;
+        stdlib/tests/http_body_decode_view_let_mutation_reject.tl)
+            printf 'typecheck: cannot move borrowed place `wire`' ;;
         stdlib/tests/hashmap_value_borrow_escape.tl)
             printf 'typecheck: reference value would escape lexical scope' ;;
         stdlib/tests/hashmap_value_borrow_insert_live.tl)

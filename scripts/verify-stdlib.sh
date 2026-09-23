@@ -433,6 +433,9 @@ stdlib/tests/msvc_api.tl|pass|-
 stdlib/tests/http_body_decode_view_escape_reject.tl|fail|source lifetime `wire` does not outlive required lifetime `outer`
 stdlib/tests/http_body_decode_view_retained_reject.tl|fail|source lifetime `wire` does not outlive required lifetime `fallback`
 stdlib/tests/http_body_decode_view_mutation_reject.tl|fail|typecheck: cannot move borrowed place `wire`
+stdlib/tests/http_body_decode_view_if_mutation_reject.tl|fail|typecheck: cannot move borrowed place `wire`
+stdlib/tests/http_body_decode_view_begin_mutation_reject.tl|fail|typecheck: cannot move borrowed place `wire`
+stdlib/tests/http_body_decode_view_let_mutation_reject.tl|fail|typecheck: cannot move borrowed place `wire`
 stdlib/tests/hashmap_value_borrow_escape.tl|fail|typecheck: reference value would escape lexical scope
 stdlib/tests/hashmap_value_borrow_insert_live.tl|fail|typecheck: cannot mutably borrow borrowed place `m`
 stdlib/tests/hashmap_value_borrow_remove_live.tl|fail|typecheck: cannot mutably borrow borrowed place `m`

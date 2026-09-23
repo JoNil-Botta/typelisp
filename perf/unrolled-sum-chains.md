@@ -83,3 +83,10 @@ Scratch artifacts: `target/exp/sum-chains/` in this worktree (`paired-times.tsv`
 `full-bench/`, `counts/`, `counts-extra/`, `counts-heavy/`, `valid-2.ir`, and the
 integration/parity logs). LLVM parity remains unestablished across the corpus;
 this closes the measured array-sum gap rather than establishing general parity.
+
+## Upstream refresh
+
+Merged upstream `e2206a24`, rebuilt the opt 2 compiler, and passed all 674
+Linux integration cases, including the new LICM element-bound and global-
+initializer regressions. Earlier performance measurements retain their
+explicitly named base.

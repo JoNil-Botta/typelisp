@@ -3597,6 +3597,10 @@
       (compiler_optimize_tests.compiler-optimize-licm-multi-exit-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-licm-element-bound-self-test"
+      (compiler_optimize_tests.compiler-optimize-licm-element-bound-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-bce-version-self-test"
       (compiler_optimize_tests.compiler-optimize-bce-version-self-test)
       42)

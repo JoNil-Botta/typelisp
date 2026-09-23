@@ -77198,31 +77198,41 @@
       (let
         [logical-id : i64
           (lower-name-cache-resolve-logical-id (& names) name name)]
-        [display-name : String
-          (match (lower-name-cache-resolve-id-display
-            (lower-global-shared-view names)
-            name)
-            [(tc_core.TcMaybeString.Some resolved) resolved]
-            [(tc_core.TcMaybeString.No)
-              (lower-name-cache-intern-str
-                names
-                (tc_core.macro-hygiene-global-source-name-id-or
-                  (lower-name-cache-structural-session (& names))
-                  name
-                  name))])]
-        [symbol : i64
-          (lower-name-cache-ir-symbol names logical-id name display-name)]
-        (ResultLowerValue.Ok
-          (if (and
-            (lower-function-type? (lower-global-shared-view ty))
-            (lower-symbol-function-value-id?
-              (lower-global-shared-view ctx)
-              logical-id))
-            ;; Function values are closure-descriptor pointers. A plain Global
-            ;; initializer names the function's code symbol instead, which makes
-            ;; the first indirect call interpret instruction bytes as a closure.
-            (ir.CompilerIrValue.Function symbol)
-            (ir.CompilerIrValue.Global symbol))))]
+        (if (lower-symbol-function-value-id?
+          (lower-global-shared-view ctx)
+          logical-id)
+          (let
+            [display-name : String
+              (match (lower-name-cache-resolve-id-display
+                (lower-global-shared-view names)
+                name)
+                [(tc_core.TcMaybeString.Some resolved) resolved]
+                [(tc_core.TcMaybeString.No)
+                  (lower-name-cache-intern-str
+                    names
+                    (tc_core.macro-hygiene-global-source-name-id-or
+                      (lower-name-cache-structural-session (& names))
+                      name
+                      name))])]
+            [symbol : i64
+              (lower-name-cache-ir-symbol names logical-id name display-name)]
+            (ResultLowerValue.Ok
+              (if (lower-function-type? (lower-global-shared-view ty))
+                ;; Function values are closure-descriptor pointers. A plain
+                ;; Global initializer names the function's code symbol instead,
+                ;; which makes the first indirect call interpret instruction
+                ;; bytes as a closure.
+                (ir.CompilerIrValue.Function symbol)
+                (ir.CompilerIrValue.Global symbol))))
+          ;; Any other name is a global variable, an extern data symbol or an
+          ;; enum variant, and the initializer wants its value. Static data can
+          ;; only hold the symbol's address (`.quad symbol`), so the value is
+          ;; read by the runtime initializer the caller builds for non-constant
+          ;; initializers (#7804).
+          (ResultLowerValue.Err
+            (box
+              (lower-diagnostic
+                "lower: global initializer reads a value at startup")))))]
     [_
       (ResultLowerValue.Err
         (box (lower-diagnostic "lower: unsupported global initializer")))]))

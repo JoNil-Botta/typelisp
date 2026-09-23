@@ -24718,39 +24718,15 @@
   [type-segment-bases : i64]
   [ty : compiler_ast_types.AstType]
   [divisor-reg : String]
-  [planned-min : String]
-  [planned-neg : String]
+  [_planned-min : String]
+  [_planned-neg : String]
   [backend-state : CompilerBackendState]) : String
   (if (compiler-backend-type-signed? (compiler-backend-global-shared-view ty))
     (let
-      ;; The two guard temps (INT_MIN, -1) are transient (dead before the idiv).
-      ;; Scavenge them instead of hardcoding guard temps, excluding the dividend
-      ;; (%rax), %rdx, the divisor, and each other.
-      [min-excl : (__tl_dyn-array String)
-        (__tl_make-array
-          "%rax"
-          "%rdx"
-          (compiler-backend-global-shared-view divisor-reg))]
-      [min-full : String
-        (compiler-backend-planned-or-scavenge-reg-here
-          planned-min
-          min-excl
-          3
-          "%r10"
-          backend-state)]
-      [neg-excl : (__tl_dyn-array String)
-        (__tl_make-array
-          "%rax"
-          "%rdx"
-          (compiler-backend-global-shared-view divisor-reg)
-          (compiler-backend-global-shared-view min-full))]
-      [neg-full : String
-        (compiler-backend-planned-or-scavenge-reg-here
-          planned-neg
-          neg-excl
-          4
-          "%r9"
-          backend-state)]
+      [suffix : String
+        (compiler-backend-int-instruction-suffix
+          type-segment-bases
+          (compiler-backend-global-shared-view ty))]
       [lhs : String
         (compiler-backend-sized-reg
           type-segment-bases
@@ -24761,37 +24737,24 @@
           type-segment-bases
           (compiler-backend-global-shared-view divisor-reg)
           (compiler-backend-global-shared-view ty))]
-      [min-reg : String
-        (compiler-backend-sized-reg
-          type-segment-bases
-          (compiler-backend-global-shared-view min-full)
-          (compiler-backend-global-shared-view ty))]
-      [neg-one-reg : String
-        (compiler-backend-sized-reg
-          type-segment-bases
-          (compiler-backend-global-shared-view neg-full)
-          (compiler-backend-global-shared-view ty))]
+      ;; CMP computes lhs - 1 without changing lhs. At the operand's signed
+      ;; width this sets OF exactly when lhs is INT_MIN. The only overflowing
+      ;; signed quotient is INT_MIN / -1, so two immediate compares prove the
+      ;; same condition without materializing either constant in a scratch
+      ;; register. The zero guard still runs first, and both operands survive
+      ;; for the original source-located overflow diagnostic.
       (str_cat.str-cat
-        (compiler-backend-emit-load-i64-absolute
-          (compiler-backend-signed-min-value
-            type-segment-bases
-            (compiler-backend-global-shared-view ty))
-          min-full)
-        (compiler-backend-binop-cmp-reg-asm
-          type-segment-bases
-          (compiler-backend-global-shared-view ty)
-          min-reg
-          lhs)
-        "    jne 1f\n"
-        (compiler-backend-emit-load-i64-absolute (- 0 1) neg-full)
-        (compiler-backend-binop-cmp-reg-asm
-          type-segment-bases
-          (compiler-backend-global-shared-view ty)
-          neg-one-reg
-          rhs)
+        "    cmp"
+        (compiler-backend-global-shared-view suffix)
+        " $1, "
+        lhs
+        "\n    jno 1f\n    cmp"
+        suffix
+        " $-1, "
+        rhs
         (if (compiler-backend-abort-site-active? backend-state)
           (str_cat.str-cat
-            "    jne 1f\n"
+            "\n    jne 1f\n"
             (compiler-backend-abort-call-three-asm
               "tl_div_abort_at"
               "div_overflow"
@@ -24806,7 +24769,7 @@
               0
               backend-state)
             "1:\n")
-          "    jne 1f\n    call tl_div_abort\n1:\n")))
+          "\n    jne 1f\n    call tl_div_abort\n1:\n")))
     ""))
 
 (define (compiler-backend-divmod-guard-asm-with-plan
@@ -30838,7 +30801,8 @@
 ;; (2/4/8) becomes a flags-free `leaq (,%lhs,scale), %dst` and a larger power
 ;; of two whose source already sits in the destination register becomes a bare
 ;; `shlq` -- both the same instruction count as the imulq they replace and
-;; strictly cheaper to execute. Every other constant keeps the imulq (a
+;; cheaper to execute. Factors 3/5/9 use base + scaled index in one LEA.
+;; Every other constant keeps the imulq (a
 ;; mov+shl pair would trade latency for count, which the Ir gate weighs).
 ;; `leaq (,%rbp,scale)` is safe under the FPO rsp-rebase pass: the rebased
 ;; frame shape is `disp(%rbp)`, and the no-base SIB spelling is exactly the
@@ -30850,16 +30814,30 @@
   [rhs : compiler_ir_types.CompilerIrValue]) : String
   (match rhs
     [(compiler_ir_types.CompilerIrValue.I64 n)
-      (if (or (= n 2) (= n 4) (= n 8))
-        (str_cat.str-cat
-          "    leaq (,"
-          lhs-reg
-          ","
-          (string.int->string n)
-          "), "
-          dst-home
-          "\n")
-        (if (and (> n 8) (string.eq lhs-reg dst-home))
+      (cond
+        [(or (= n 2) (= n 4) (= n 8))
+          (str_cat.str-cat
+            "    leaq (,"
+            lhs-reg
+            ","
+            (string.int->string n)
+            "), "
+            dst-home
+            "\n")]
+        ;; A value in %rbp must never look like a frame address to the final
+        ;; rsp-rebase pass. It cannot occupy both SIB roles without doing so.
+        [(and (or (= n 3) (= n 5) (= n 9)) (not (string.eq lhs-reg "%rbp")))
+          (str_cat.str-cat
+            "    leaq ("
+            (compiler-backend-global-shared-view lhs-reg)
+            ","
+            lhs-reg
+            ","
+            (string.int->string (- n 1))
+            "), "
+            dst-home
+            "\n")]
+        [(and (> n 8) (string.eq lhs-reg dst-home))
           (match (compiler-backend-power-of-two-shift n)
             [(option_i64.Some count)
               (str_cat.str-cat
@@ -30869,8 +30847,9 @@
                 dst-home
                 "\n")]
             [(option_i64.None)
-              (str_cat.str-cat "    imulq " imm ", " lhs-reg ", " dst-home "\n")])
-          (str_cat.str-cat "    imulq " imm ", " lhs-reg ", " dst-home "\n")))]
+              (str_cat.str-cat "    imulq " imm ", " lhs-reg ", " dst-home "\n")])]
+        [else
+          (str_cat.str-cat "    imulq " imm ", " lhs-reg ", " dst-home "\n")])]
     [_ (str_cat.str-cat "    imulq " imm ", " lhs-reg ", " dst-home "\n")]))
 
 ;; The three-operand form for `dst = lhs OP imm` when the destination is not the

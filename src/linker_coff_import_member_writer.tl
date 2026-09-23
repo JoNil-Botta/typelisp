@@ -131,7 +131,9 @@
     [dll-len : i64 (coff-import-len dll)]
     [stem-len : i64 (coff-import-len stem)]
     (or
-      (string.eq dll stem)
+      (and
+        (string.eq dll stem)
+        (= (string.index-of-byte dll 0 (cast '.' : u8)) -1))
       (and
         (> dll-len (+ stem-len 1))
         (= (coff-import-char dll stem-len) '.')
@@ -760,6 +762,19 @@
             (& none)
             "DLL basename/stem mismatch")
           "stem mismatch rejected")
+        (test.assert-true
+          (coff-import-rejects?
+            "example.dll"
+            "example.dll"
+            (& none)
+            "DLL basename/stem mismatch")
+          "stem cannot retain the DLL extension")
+        (match (coff-import-members "example" "example" (& none))
+          [(ResultCoffImportMembers.Ok members)
+            (test.assert-true
+              (= (array-length members) 3)
+              "extensionless DLL keeps its complete stem")]
+          [_ (test.assert-true false "extensionless DLL accepts")])
         (set! (array-ref one 0) (CoffImportPlan "_Func@8" "Func" 0 9 0 3))
         (match (coff-import-members "example.dll" "example" (& one))
           [(ResultCoffImportMembers.Err _)

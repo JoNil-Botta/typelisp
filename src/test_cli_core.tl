@@ -5248,12 +5248,14 @@
 ;; emits vector IR that only the matching backend mode can encode. The scalar
 ;; default keeps the target-neutral lower mode the harness has always used; a
 ;; SIMD request follows the driver's shared target/mode policy.
+;; A test harness lowers exactly as `compile`/`build`/`run` do for the same
+;; target and backend mode. The target-neutral `Scalar` mode has no C or Win64
+;; aggregate ABI, so a Windows harness lowered in it passed memory-class
+;; by-value arguments without the caller's copy (#8009).
 (define (tltest-harness-lower-mode
   [target : compiler_backend.CompilerBackendTarget]
   [backend-mode : compiler_backend.CompilerBackendMode]) : lower.CompilerLowerMode
-  (if (compiler_backend.compiler-backend-mode-scalar? backend-mode)
-    (lower.CompilerLowerMode.Scalar)
-    (driver.compiler-driver-lower-mode-for-target target backend-mode)))
+  (driver.compiler-driver-lower-mode-for-target target backend-mode))
 
 (define (tltest-run-harness-in-temp-with-lower-state
   [lower-state : lower.CompilerLowerState]
@@ -7280,6 +7282,8 @@
     [(lower.CompilerLowerMode.WindowsAvx2) 2]
     [(lower.CompilerLowerMode.LinuxAvx512) 3]
     [(lower.CompilerLowerMode.WindowsAvx512) 4]
+    [(lower.CompilerLowerMode.LinuxScalar) 5]
+    [(lower.CompilerLowerMode.WindowsScalar) 6]
     [_ -1]))
 
 (test
@@ -7291,13 +7295,13 @@
           (tltest-harness-lower-mode
             (compiler_backend.CompilerBackendTarget.Linux)
             (compiler_backend.CompilerBackendMode.Scalar)))
-        0)
+        5)
       (=
         (tltest-lower-mode-tag
           (tltest-harness-lower-mode
             (compiler_backend.CompilerBackendTarget.Windows)
             (compiler_backend.CompilerBackendMode.Scalar)))
-        0)
+        6)
       (=
         (tltest-lower-mode-tag
           (tltest-harness-lower-mode

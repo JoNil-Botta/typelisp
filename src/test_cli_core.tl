@@ -4740,7 +4740,7 @@
       (while (and (< index funcs.len) (not found))
         (begin
           (match (array-ref funcs.slots index)
-            [(ir.CompilerIrFunction.Function name _ _ _ _)
+            [(ir.CompilerIrFunction.Function name _ _ _ _ _)
               (let
                 [name-text : String (ir.compiler-ir-symbol-text name)]
                 (if (string.contains (& name-text) (& base))

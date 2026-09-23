@@ -65,6 +65,30 @@ planned homes through the shared preservation-aware scratch selector, so an
 occupied home receives the same save/restore contract as other scratch roles.
 AVX-512 native min/max and the other reduction shapes retain two scratch roles.
 
+Every `CompilerIrFunction` states its calling convention as a
+`CompilerIrFunctionAbi`: `Ordinary`, or `SpmdPrivate` for a generated
+same-program SPMD helper (scalar, AVX2, AVX-512, and package producer helpers
+alike). The private descriptor, `CompilerIrSpmdPrivateAbi`, is immutable facts
+under its own schema (`spmd-private-v1`, distinct from the imported catalog's
+`spmd-call-v1` row): callee, backend, lanes, every physical parameter in
+signature order with its ordinal, role (active mask; source parameter with its
+source ordinal, value class and source type; appended index base) and physical
+type, the index mapping (none, a reused varying source parameter, or the
+appended base), and the result class and type. Lowering builds it once per
+helper from the helper's emitted signature and argument classification, and
+every same-program `SpmdCall` to that helper carries an equal copy through
+`CompilerIrSpmdCallOrigin.Private`; imported calls keep #7317's catalog row.
+Every pass that rebuilds a function passes the matched ABI through, and arena
+escapes deep-clone it with the pool-aware `compiler-ir-clone-function-abi` and
+`compiler-ir-clone-spmd-call-origin`. `compiler-backend-validate-program`
+admits a program on both the assembly and object paths only after
+`compiler-ir-spmd-private-abi-program-error` accepts it: each helper's
+descriptor against its own signature, each call's payload against its
+descriptor, and each call's descriptor structurally equal to its callee's.
+The optimizer's per-call integrity check applies the call-side half. Backend
+and register-allocation decisions still read generated helper and parameter
+spellings; #7493 moves them onto the descriptor.
+
 The lowerer's checked expression dispatcher delegates complete families to
 focused helpers. The [expression-family ledger](compiler-lowering-dispatch.md)
 records routing, residual inline bodies and the state/evaluation/provenance

@@ -111628,20 +111628,43 @@
       (if unsigned?
         (compiler_ast_types.AstType.U64)
         (compiler_ast_types.AstType.I64))]
-    [out : compiler_ir_types.CompilerIrInstr
+    [product : compiler_ir_types.CompilerIrInstr
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        9
+        (compiler_ir_types.CompilerIrBinOp.Mul)
+        (if left?
+          (compiler_optimize.compiler-opt-global-shared-view constant)
+          (compiler_optimize.compiler-opt-global-shared-view variable))
+        (if left?
+          (compiler_optimize.compiler-opt-global-shared-view variable)
+          (compiler_optimize.compiler-opt-global-shared-view constant))
+        (compiler_optimize.compiler-opt-global-shared-view ty))]
+    ;; The early rewrite keeps the product a pure Mul of the Global operand,
+    ;; so LICM, rotation and DCE still see a non-trapping BinOp.
+    [early : compiler_ir_types.CompilerIrInstr
       (compiler_optimize.opt-const-divisor-rewrite-instr
         (compiler_optimize.compiler-opt-global-shared-view table)
-        (compiler_ir_types.CompilerIrInstr.BinOp
-          9
-          (compiler_ir_types.CompilerIrBinOp.Mul)
-          (if left?
-            (compiler_optimize.compiler-opt-global-shared-view constant)
-            (compiler_optimize.compiler-opt-global-shared-view variable))
-          (if left?
-            variable
-            constant)
-          ty))]
+        (compiler_optimize.compiler-opt-global-shared-view product))]
+    [out : compiler_ir_types.CompilerIrInstr
+      (compiler_optimize.opt-const-global-mul-shift-instr
+        (compiler_optimize.compiler-opt-global-shared-view table)
+        (opt_i64_i64_map.with-capacity 1)
+        (opt_i64_i64_map.with-capacity 1)
+        product)]
     (and
+      (match early
+        [(compiler_ir_types.CompilerIrInstr.BinOp
+            9
+            (compiler_ir_types.CompilerIrBinOp.Mul)
+            lhs
+            rhs
+            _)
+          (opt-const-divisor-test-is-global?
+            (if left?
+              lhs
+              rhs)
+            "wide_power")]
+        [_ false])
       (match out
         [(compiler_ir_types.CompilerIrInstr.BinOp
             9
@@ -111656,6 +111679,90 @@
           table
           (compiler_ir_types.CompilerIrValue.Global name))
         "wide_power"))))
+
+;; `instr` passes through the final slot unchanged, with the wide_power table.
+(define (opt-wide-power-mul-shift-kept?
+  [instr : compiler_ir_types.CompilerIrInstr]
+  [copies : opt_i64_i64_map.Map]
+  [counts : opt_i64_i64_map.Map]) : bool
+  (match (compiler_optimize.opt-const-global-mul-shift-instr
+    (opt-wide-power-table 34)
+    copies
+    counts
+    instr)
+    [(compiler_ir_types.CompilerIrInstr.BinOp
+        9
+        (compiler_ir_types.CompilerIrBinOp.Mul)
+        _
+        _
+        _)
+      true]
+    [_ false]))
+
+(define (opt-wide-power-table [power : i64]) : opt_i64_i64_map.Map
+  (let
+    [builder : compiler_ir_types.CompilerIrGlobalBuilder
+      (compiler_ir_types.compiler-ir-global-builder-with-capacity 1)]
+    (begin
+      (opt-test-global-builder-push!
+        (&mut builder)
+        (opt-test-symbol "wide_power")
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.I64 (shl 1 power)))
+      (compiler_optimize.opt-const-divisors-build
+        (compiler_ir_types.compiler-ir-global-builder-to-seq builder)
+        (compiler_ir_types.compiler-ir-function-seq-empty)))))
+
+;; Global-cell promotion leaves `%5 = mov @wide_power` in a preheader and the
+;; product reads %5. With `definitions` copies of %5 in the function.
+(define (opt-wide-power-mul-shift-copy? [definitions : i64]) : bool
+  (let
+    [copies : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 1)]
+    [counts : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 1)]
+    (begin
+      (opt_i64_i64_map.insert-ref!
+        (&mut copies)
+        5
+        (compiler_ir_types.compiler-ir-symbol-id (opt-test-symbol "wide_power")))
+      (opt_i64_i64_map.insert-ref! (&mut counts) 5 definitions)
+      (match (compiler_optimize.opt-const-global-mul-shift-instr
+        (opt-wide-power-table 34)
+        copies
+        counts
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          9
+          (compiler_ir_types.CompilerIrBinOp.Mul)
+          (compiler_ir_types.CompilerIrValue.Var 7)
+          (compiler_ir_types.CompilerIrValue.Var 5)
+          (compiler_ast_types.AstType.I64)))
+        [(compiler_ir_types.CompilerIrInstr.BinOp
+            9
+            (compiler_ir_types.CompilerIrBinOp.Shl _)
+            (compiler_ir_types.CompilerIrValue.Var 7)
+            (compiler_ir_types.CompilerIrValue.I64 34)
+            _)
+          true]
+        [_ false]))))
+
+(define (opt-wide-power-mul-shift-both?) : bool
+  (match (compiler_optimize.opt-const-global-mul-shift-instr
+    (opt-wide-power-table 34)
+    (opt_i64_i64_map.with-capacity 1)
+    (opt_i64_i64_map.with-capacity 1)
+    (compiler_ir_types.CompilerIrInstr.BinOp
+      9
+      (compiler_ir_types.CompilerIrBinOp.Mul)
+      (compiler_ir_types.CompilerIrValue.Global (opt-test-symbol "wide_power"))
+      (compiler_ir_types.CompilerIrValue.Global (opt-test-symbol "wide_power"))
+      (compiler_ast_types.AstType.I64)))
+    [(compiler_ir_types.CompilerIrInstr.BinOp
+        9
+        (compiler_ir_types.CompilerIrBinOp.Shl _)
+        (compiler_ir_types.CompilerIrValue.Global _)
+        (compiler_ir_types.CompilerIrValue.I64 34)
+        _)
+      true]
+    [_ false]))
 
 (test
   wide-power-global-multiply
@@ -111695,6 +111802,62 @@
             true]
           [_ false])
         "literal products from unrolling stay in their existing reduction path")
+      (test.assert-true
+        (opt-wide-power-mul-shift-kept?
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            9
+            (compiler_ir_types.CompilerIrBinOp.Mul)
+            (compiler_ir_types.CompilerIrValue.Var 7)
+            (compiler_ir_types.CompilerIrValue.I64 281474976710656)
+            (compiler_ast_types.AstType.I64))
+          (opt_i64_i64_map.with-capacity 1)
+          (opt_i64_i64_map.with-capacity 1))
+        "the final slot does not rewrite a literal product either")
+      (test.assert-true
+        (opt-wide-power-mul-shift-kept?
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            9
+            (compiler_ir_types.CompilerIrBinOp.Mul)
+            (compiler_ir_types.CompilerIrValue.Var 7)
+            (compiler_ir_types.CompilerIrValue.Global
+              (opt-test-symbol "wide_power"))
+            (compiler_ast_types.AstType.I32))
+          (opt_i64_i64_map.with-capacity 1)
+          (opt_i64_i64_map.with-capacity 1))
+        "an i32 multiply is not rewritten")
+      (test.assert-true
+        (opt-wide-power-mul-shift-kept?
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            9
+            (compiler_ir_types.CompilerIrBinOp.Mul)
+            (compiler_ir_types.CompilerIrValue.Var 7)
+            (compiler_ir_types.CompilerIrValue.Global
+              (opt-test-symbol "wide_power"))
+            (compiler_ast_types.AstType.U32))
+          (opt_i64_i64_map.with-capacity 1)
+          (opt_i64_i64_map.with-capacity 1))
+        "a u32 multiply is not rewritten")
+      (test.assert-true
+        (opt-wide-power-mul-shift-copy? 1)
+        "a single-definition copy of the global in a preheader is the multiplier")
+      (test.assert-true
+        (not (opt-wide-power-mul-shift-copy? 2))
+        "a copy with two definitions names no single value")
+      (test.assert-true
+        (opt-wide-power-mul-shift-both?)
+        "with wide powers on both sides the right one is the count")
+      (test.assert-true
+        (opt-wide-power-mul-shift-kept?
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            9
+            (compiler_ir_types.CompilerIrBinOp.Mul)
+            (compiler_ir_types.CompilerIrValue.I64 5)
+            (compiler_ir_types.CompilerIrValue.Global
+              (opt-test-symbol "wide_power"))
+            (compiler_ast_types.AstType.I64))
+          (opt_i64_i64_map.with-capacity 1)
+          (opt_i64_i64_map.with-capacity 1))
+        "a constant product stays a multiply, not a wide literal to rematerialize")
       (test.assert-i64-eq
         (compiler_optimize.opt-const-global-wide-power-shift
           (compiler_ir_types.CompilerIrValue.I64 1099511628211))

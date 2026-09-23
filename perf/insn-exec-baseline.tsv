@@ -39,9 +39,9 @@ benchmark/typelisp/callgraph_scc	472272745
 benchmark/c-scalar/callgraph_scc	341685484
 benchmark/typelisp/ssa_construct	628838750
 benchmark/c-scalar/ssa_construct	448154599
-benchmark/typelisp/sccp_lattice	557467872
+benchmark/typelisp/sccp_lattice	557467776
 benchmark/c-scalar/sccp_lattice	400603744
-benchmark/typelisp/regalloc_greedy	566087361
+benchmark/typelisp/regalloc_greedy	565767636
 benchmark/c-scalar/regalloc_greedy	404020977
 benchmark/typelisp/asm_render	748804912
 benchmark/c-scalar/asm_render	644231943

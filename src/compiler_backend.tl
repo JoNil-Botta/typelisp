@@ -24718,39 +24718,15 @@
   [type-segment-bases : i64]
   [ty : compiler_ast_types.AstType]
   [divisor-reg : String]
-  [planned-min : String]
-  [planned-neg : String]
+  [_planned-min : String]
+  [_planned-neg : String]
   [backend-state : CompilerBackendState]) : String
   (if (compiler-backend-type-signed? (compiler-backend-global-shared-view ty))
     (let
-      ;; The two guard temps (INT_MIN, -1) are transient (dead before the idiv).
-      ;; Scavenge them instead of hardcoding guard temps, excluding the dividend
-      ;; (%rax), %rdx, the divisor, and each other.
-      [min-excl : (__tl_dyn-array String)
-        (__tl_make-array
-          "%rax"
-          "%rdx"
-          (compiler-backend-global-shared-view divisor-reg))]
-      [min-full : String
-        (compiler-backend-planned-or-scavenge-reg-here
-          planned-min
-          min-excl
-          3
-          "%r10"
-          backend-state)]
-      [neg-excl : (__tl_dyn-array String)
-        (__tl_make-array
-          "%rax"
-          "%rdx"
-          (compiler-backend-global-shared-view divisor-reg)
-          (compiler-backend-global-shared-view min-full))]
-      [neg-full : String
-        (compiler-backend-planned-or-scavenge-reg-here
-          planned-neg
-          neg-excl
-          4
-          "%r9"
-          backend-state)]
+      [suffix : String
+        (compiler-backend-int-instruction-suffix
+          type-segment-bases
+          (compiler-backend-global-shared-view ty))]
       [lhs : String
         (compiler-backend-sized-reg
           type-segment-bases
@@ -24761,37 +24737,24 @@
           type-segment-bases
           (compiler-backend-global-shared-view divisor-reg)
           (compiler-backend-global-shared-view ty))]
-      [min-reg : String
-        (compiler-backend-sized-reg
-          type-segment-bases
-          (compiler-backend-global-shared-view min-full)
-          (compiler-backend-global-shared-view ty))]
-      [neg-one-reg : String
-        (compiler-backend-sized-reg
-          type-segment-bases
-          (compiler-backend-global-shared-view neg-full)
-          (compiler-backend-global-shared-view ty))]
+      ;; CMP computes lhs - 1 without changing lhs. At the operand's signed
+      ;; width this sets OF exactly when lhs is INT_MIN. The only overflowing
+      ;; signed quotient is INT_MIN / -1, so two immediate compares prove the
+      ;; same condition without materializing either constant in a scratch
+      ;; register. The zero guard still runs first, and both operands survive
+      ;; for the original source-located overflow diagnostic.
       (str_cat.str-cat
-        (compiler-backend-emit-load-i64-absolute
-          (compiler-backend-signed-min-value
-            type-segment-bases
-            (compiler-backend-global-shared-view ty))
-          min-full)
-        (compiler-backend-binop-cmp-reg-asm
-          type-segment-bases
-          (compiler-backend-global-shared-view ty)
-          min-reg
-          lhs)
-        "    jne 1f\n"
-        (compiler-backend-emit-load-i64-absolute (- 0 1) neg-full)
-        (compiler-backend-binop-cmp-reg-asm
-          type-segment-bases
-          (compiler-backend-global-shared-view ty)
-          neg-one-reg
-          rhs)
+        "    cmp"
+        (compiler-backend-global-shared-view suffix)
+        " $1, "
+        lhs
+        "\n    jno 1f\n    cmp"
+        suffix
+        " $-1, "
+        rhs
         (if (compiler-backend-abort-site-active? backend-state)
           (str_cat.str-cat
-            "    jne 1f\n"
+            "\n    jne 1f\n"
             (compiler-backend-abort-call-three-asm
               "tl_div_abort_at"
               "div_overflow"
@@ -24806,7 +24769,7 @@
               0
               backend-state)
             "1:\n")
-          "    jne 1f\n    call tl_div_abort\n1:\n")))
+          "\n    jne 1f\n    call tl_div_abort\n1:\n")))
     ""))
 
 (define (compiler-backend-divmod-guard-asm-with-plan

@@ -16302,6 +16302,171 @@
     (compiler-lower-name-env-dense-snapshots-ok?)
     "dense lower-name snapshots preserve overlays, append order, and names"))
 
+(define (compiler-lower-alias-overlay-map-reuse-ok?) : bool
+  (let
+    [state : compiler_lower.CompilerLowerState
+      (compiler_lower.compiler-lower-state-new)]
+    [scratch : arena.Arena (arena.make)]
+    [index : i64 0]
+    (begin
+      ;; Grow while entry scratch is active, then retire it. The state and
+      ;; reused table must still be valid for the next batch entry.
+      (in-arena
+        scratch
+        (while (< index 128)
+          (begin
+            (compiler_lower.lower-alias-overlay-record!
+              state
+              index
+              (+ index 1000))
+            (set! index (+ index 1)))))
+      (unsafe
+        (arena.tl_arena_destroy (arena.raw-handle scratch)))
+      (let
+        [before : lower_i64_i64_map.Map
+          (compiler_lower.compiler-lower-state-read
+            state
+            lower_i64_i64_map.Map
+            compiler_lower.alias-overlay-ids)]
+        [capacity : i64 (lower_i64_i64_map.capacity (& before))]
+        [storage : i64
+          (cast
+            (unsafe
+              (ptr->int (ptr-cast (__tl_array-data before.slots) : (Ptr i64))))
+            : i64)]
+        (begin
+          (compiler_lower.lower-alias-overlay-reset! state)
+          (compiler_lower.lower-alias-overlay-seed-from-env!
+            state
+            compiler_lower.LowerNameEnv.Nil)
+          (let
+            [after : lower_i64_i64_map.Map
+              (compiler_lower.compiler-lower-state-read
+                state
+                lower_i64_i64_map.Map
+                compiler_lower.alias-overlay-ids)]
+            [empty : bool
+              (and
+                (= (lower_i64_i64_map.capacity (& after)) capacity)
+                (=
+                  (cast
+                    (unsafe
+                      (ptr->int
+                        (ptr-cast (__tl_array-data after.slots) : (Ptr i64))))
+                    : i64)
+                  storage)
+                (= (lower_i64_i64_map.len (& after)) 0)
+                (=
+                  (compiler_lower.lower-alias-overlay-logical-id-or state 31 -1)
+                  -1))]
+            (begin
+              (compiler_lower.lower-alias-overlay-record! state 31 2031)
+              (and
+                empty
+                (=
+                  (compiler_lower.lower-alias-overlay-logical-id-or state 31 -1)
+                  2031)))))))))
+
+(test
+  compiler-lower-alias-overlay-map-reuse
+  (test.assert-true
+    (compiler-lower-alias-overlay-map-reuse-ok?)
+    "alias overlay reset and seed reuse storage, clear old entries, and accept new ones"))
+
+(define (compiler-lower-alias-overlay-negative-id-scan-ok?) : bool
+  (let
+    [state : compiler_lower.CompilerLowerState
+      (compiler_lower.compiler-lower-state-new)]
+    [source-id : i64
+      (ci.intern-generated-canonical-name "alias-overlay-positive-source")]
+    [symbol-id : i64
+      (ci.intern-generated-canonical-name "alias-overlay-positive-symbol")]
+    [names : compiler_lower.LowerNameEnv
+      (compiler_lower.lower-name-env-bind-logical-symbol-id
+        source-id
+        source-id
+        symbol-id
+        (compiler_lower.lower-name-env-bind-logical-symbol-id
+          -1
+          -1
+          symbol-id
+          compiler_lower.LowerNameEnv.Nil))]
+    (begin
+      (compiler_lower.lower-alias-overlay-seed-from-env!
+        state
+        (compiler_lower.lower-global-shared-view names))
+      (let
+        [degraded : bool
+          (not
+            (compiler_lower.compiler-lower-state-read
+              state
+              bool
+              compiler_lower.alias-overlay-valid))]
+        [positive : compiler_lower.LowerNameEnv
+          (compiler_lower.lower-name-env-add-import-alias-binding-symbol-id
+            state
+            (compiler_lower.lower-global-shared-view names)
+            ""
+            ""
+            source-id
+            ""
+            source-id
+            symbol-id)]
+        [negative : compiler_lower.LowerNameEnv
+          (compiler_lower.lower-name-env-add-import-alias-binding-symbol-id
+            state
+            (compiler_lower.lower-global-shared-view names)
+            ""
+            ""
+            -1
+            ""
+            -1
+            symbol-id)]
+        (and
+          degraded
+          (= (compiler_lower.lower-name-env-count positive) 2)
+          (= (compiler_lower.lower-name-env-count negative) 3)
+          (=
+            (compiler_lower.lower-alias-overlay-logical-id-or
+              state
+              source-id
+              -1)
+            source-id))))))
+
+(test
+  compiler-lower-alias-overlay-negative-id-scan
+  (test.assert-true
+    (compiler-lower-alias-overlay-negative-id-scan-ok?)
+    "negative source id degrades to exact scan while interned duplicate still resolves"))
+
+(define (compiler-lower-name-cache-capacity-ok?) : bool
+  (let
+    [count : i64 0]
+    (begin
+      (while (<= count 256)
+        (let
+          [ids : lower_i64_i64_map.Map
+            (lower_i64_i64_map.with-capacity
+              (compiler_lower.lower-name-cache-capacity count))]
+          [initial-capacity : i64 (lower_i64_i64_map.capacity (& ids))]
+          [key : i64 0]
+          (begin
+            (while (< key count)
+              (begin
+                (lower_i64_i64_map.insert-ref! (&mut ids) key key)
+                (set! key (+ key 1))))
+            (when
+              (not (= (lower_i64_i64_map.capacity (& ids)) initial-capacity))
+              (return false))
+            (set! count (+ count 1)))))
+      true)))
+
+(test
+  compiler-lower-name-cache-capacity
+  (test.assert-true
+    (compiler-lower-name-cache-capacity-ok?)
+    "name cache capacity admits every counted entry without a grow"))
+
 ;; The id-keyed compat prescan walker must agree with the two string-keyed
 ;; walks it replaces on every env-key family the prescan can meet: pool ids,
 ;; hygiene-local ids (post-splice trees), structural-local ids, and
@@ -19160,6 +19325,15 @@
         unit
         (set! ok false))
       (if (compiler-lower-name-env-dense-snapshots-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-alias-overlay-map-reuse-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-alias-overlay-negative-id-scan-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-name-cache-capacity-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-slice-reference-layout-ok?)

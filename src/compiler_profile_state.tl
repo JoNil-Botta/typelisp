@@ -11,7 +11,7 @@
 (define compiler-profile-state-metric-capacity : i64
   (cfg
     (any compile-profile test)
-    374
+    378
     (cfg
       regalloc-census
       223
@@ -207,7 +207,8 @@
           : (Ptr i64))))
     `(cast 0 : u64)))
 
-;; Typecheck owns slots 242-373 as one raw metrics view. Slots 350-361 and
+;; Typecheck owns slots 242-373 as one raw metrics view. Lowering's retained
+;; name-cache storage counters use 374-377. Slots 350-361 and
 ;; 368-369 are also
 ;; addressed by the driver/loader lifetime ledger, while typecheck owns the
 ;; macro boundary starts in 362-367 and 370-373. Keeping the offset

@@ -669,3 +669,9 @@ wide_enum_variants_opt2|tests/integration/wide_enum_variants.tl|42|-|-|wide_aggr
 wide_struct_literal|tests/integration/wide_struct_literal.tl|42|-|-|wide_struct_literal_decls.tl
 wide_struct_literal_opt0|tests/integration/wide_struct_literal.tl|42|-|-|wide_struct_literal_decls.tl|opt-level:0+stage-stdlib
 wide_struct_literal_opt2|tests/integration/wide_struct_literal.tl|42|-|-|wide_struct_literal_decls.tl|opt-level:2+stage-stdlib
+global_reference_initializers|tests/integration/global_reference_initializers.tl|42|-|-|global_reference_initializer_dep.tl
+global_reference_initializers_opt0|tests/integration/global_reference_initializers.tl|42|-|-|global_reference_initializer_dep.tl|opt-level:0+stage-stdlib
+global_reference_initializers_opt2|tests/integration/global_reference_initializers.tl|42|-|-|global_reference_initializer_dep.tl|opt-level:2+stage-stdlib
+generated_import_global_initializers|tests/integration/generated_import_global_initializers.tl|42|-|-|decls_generated_import_dep.tl decls_generated_import_empty.tl generated_import_alias_other_dep.tl
+generated_import_global_initializers_opt0|tests/integration/generated_import_global_initializers.tl|42|-|-|decls_generated_import_dep.tl decls_generated_import_empty.tl generated_import_alias_other_dep.tl|opt-level:0+stage-stdlib
+generated_import_global_initializers_opt2|tests/integration/generated_import_global_initializers.tl|42|-|-|decls_generated_import_dep.tl decls_generated_import_empty.tl generated_import_alias_other_dep.tl|opt-level:2+stage-stdlib

@@ -472,6 +472,21 @@
 (define (main) : i64
   (+ (apply1 inc 41) (shadow-inc inc 1)))")
 
+;; Globals initialized from other globals (#7804): a variable's value is read by
+;; a runtime initializer, while a function name keeps its closure-descriptor
+;; initializer.
+(define (compiler-lower-global-reference-initializer-source) : String
+  "(define (inc [x : i64]) : i64 (+ x 1))
+(defenum Color (Red) (Green))
+(define base : i64 14)
+(define copy : i64 base)
+(define widened : i64 (cast base : i64))
+(define color : Color Green)
+(define callback : (-> i64 i64) inc)
+(define callback-copy : (-> i64 i64) callback)
+(define (main) : i64
+  (+ copy (callback-copy widened)))")
+
 (define (compiler-lower-mutable-global-function-value-source) : String
   "(define (initial [x : i64]) : i64 x)
 (define (replacement [x : i64]) : i64 (- x 1))
@@ -9705,6 +9720,91 @@
     (compiler-lower-mutable-global-function-value-mode-shape-ok?
       (compiler_lower.CompilerLowerMode.LinuxScalar))
     (compiler-lower-mutable-global-function-value-mode-shape-ok?
+      (compiler_lower.CompilerLowerMode.WindowsScalar))))
+
+;; The initializer of global `global-name`, classified as "i64", "runtime",
+;; "function:<symbol>", "global:<symbol>", "other" or "missing".
+(define (lower-test-global-initializer-kind-at
+  [globals : compiler_ir_types.CompilerIrGlobalSeq]
+  [global-name : String]
+  [index : i64]) : String
+  (if (>= index globals.len)
+    "missing"
+    (match (compiler_ir_types.compiler-ir-global-seq-ref
+      (owned_view.compiler-owned-shared-view globals)
+      index)
+      [(compiler_ir_types.CompilerIrGlobal.Global name _ initial)
+        (if (string.eq
+          (compiler_ir_types.compiler-ir-symbol-text name)
+          (owned_view.compiler-owned-shared-view global-name))
+          (match initial
+            [(compiler_ir_types.CompilerIrValue.I64 _) "i64"]
+            [(compiler_ir_types.CompilerIrValue.RuntimeGlobal _) "runtime"]
+            [(compiler_ir_types.CompilerIrValue.Function found)
+              (str_cat.str-cat
+                "function:"
+                (compiler_ir_types.compiler-ir-symbol-text found))]
+            [(compiler_ir_types.CompilerIrValue.Global found)
+              (str_cat.str-cat
+                "global:"
+                (compiler_ir_types.compiler-ir-symbol-text found))]
+            [_ "other"])
+          (lower-test-global-initializer-kind-at
+            globals
+            global-name
+            (+ index 1)))])))
+
+(define (lower-test-global-initializer-kind
+  [globals : compiler_ir_types.CompilerIrGlobalSeq]
+  [global-name : String]) : String
+  (lower-test-global-initializer-kind-at globals global-name 0))
+
+(define (compiler-lower-global-reference-initializer-mode-shape-ok?
+  [mode : compiler_lower.CompilerLowerMode]) : bool
+  (match (compiler_lower.lower-compiler-source-with-mode
+    (compiler-lower-global-reference-initializer-source)
+    mode)
+    [(compiler_lower.ResultCompilerLower.Ok program _)
+      (match program
+        [(compiler_ir_types.CompilerIrProgram.Program globals _ _)
+          (and
+            (string.eq
+              (lower-test-global-initializer-kind
+                (compiler_ir_types.compiler-ir-global-shared-view globals)
+                "base")
+              "i64")
+            (string.eq
+              (lower-test-global-initializer-kind
+                (compiler_ir_types.compiler-ir-global-shared-view globals)
+                "copy")
+              "runtime")
+            (string.eq
+              (lower-test-global-initializer-kind
+                (compiler_ir_types.compiler-ir-global-shared-view globals)
+                "widened")
+              "runtime")
+            (string.eq
+              (lower-test-global-initializer-kind
+                (compiler_ir_types.compiler-ir-global-shared-view globals)
+                "color")
+              "runtime")
+            (string.eq
+              (lower-test-global-initializer-kind
+                (compiler_ir_types.compiler-ir-global-shared-view globals)
+                "callback")
+              "function:inc")
+            (string.eq
+              (lower-test-global-initializer-kind
+                (compiler_ir_types.compiler-ir-global-shared-view globals)
+                "callback-copy")
+              "runtime"))])]
+    [(compiler_lower.ResultCompilerLower.Err _) false]))
+
+(define (compiler-lower-global-reference-initializer-shape-ok?) : bool
+  (and
+    (compiler-lower-global-reference-initializer-mode-shape-ok?
+      (compiler_lower.CompilerLowerMode.LinuxScalar))
+    (compiler-lower-global-reference-initializer-mode-shape-ok?
       (compiler_lower.CompilerLowerMode.WindowsScalar))))
 
 (define (compiler-lower-noncapturing-lambda-value-ok?) : bool

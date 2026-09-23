@@ -93994,9 +93994,9 @@
 ;; A composite call argument returns one of its children (#7979). The loans
 ;; of every child that can produce the value may feed the stored lifetime; an
 ;; `if` condition and the forms before a `begin`'s last never do. `let` and
-;; `match` children are checked in the environment that binds their locals,
-;; and a `let` initializer or `match` scrutinee is itself a producing child:
-;; a returned local carries exactly its initializer's or scrutinee's loans.
+;; `match` children are checked in the environment that binds their locals.
+;; An initializer or scrutinee contributes when a value bound from it reaches
+;; the returned expression.
 ;; Each leaf applies its own lifetime-overlap test, so a child whose type
 ;; stores none of the result's lifetimes keeps nothing borrowed.
 (define (tc-borrow-check-add-composite-arg-leaf
@@ -94087,6 +94087,246 @@
         (ast.ast-expr-list-get (& exprs) (- exprs.len 1) 0))
       result-lifetimes)))
 
+;; A binding contributes to a composite argument only through a child whose
+;; value reaches the argument. In particular, using a reference in a branch
+;; condition or an earlier sequence form does not lend it to the call result.
+(define (tc-borrow-check-composite-value-uses-name-in-list?
+  [expr-bases : i64]
+  [exprs : (& exprs ast.AstExprList)]
+  [name : i64]
+  [index : i64]) : bool
+  (if (>= index exprs.len)
+    false
+    (or
+      (tc-borrow-check-composite-value-uses-name?
+        expr-bases
+        (ast.ast-expr-segment-bases-get
+          expr-bases
+          (ast.ast-expr-list-get exprs index 0))
+        name)
+      (tc-borrow-check-composite-value-uses-name-in-list?
+        expr-bases
+        exprs
+        name
+        (+ index 1)))))
+
+(define (tc-borrow-check-composite-value-uses-name-in-last?
+  [expr-bases : i64]
+  [exprs : ast.AstExprList]
+  [name : i64]) : bool
+  (and
+    (> exprs.len 0)
+    (tc-borrow-check-composite-value-uses-name?
+      expr-bases
+      (ast.ast-expr-segment-bases-get
+        expr-bases
+        (ast.ast-expr-list-get (& exprs) (- exprs.len 1) 0))
+      name)))
+
+(define (tc-borrow-check-composite-value-uses-name?
+  [expr-bases : i64]
+  [expr : ast.AstExpr]
+  [name : i64]) : bool
+  (match (ast.ast-expr-unspan (tc-global-shared-view expr))
+    [(ast.AstExpr.Var var-name) (= var-name name)]
+    [(ast.AstExpr.If _ then-box else-box)
+      (or
+        (tc-borrow-check-composite-value-uses-name?
+          expr-bases
+          (ast.ast-expr-segment-bases-get expr-bases then-box)
+          name)
+        (tc-borrow-check-composite-value-uses-name?
+          expr-bases
+          (ast.ast-expr-segment-bases-get expr-bases else-box)
+          name))]
+    [(ast.AstExpr.Begin exprs)
+      (tc-borrow-check-composite-value-uses-name-in-last? expr-bases exprs name)]
+    [(ast.AstExpr.Unsafe exprs)
+      (tc-borrow-check-composite-value-uses-name-in-last? expr-bases exprs name)]
+    [(ast.AstExpr.Let let-box)
+      (match (__tl-box-place let-box)
+        [(ast.AstLet.Let bindings body-box)
+          (tc-borrow-check-composite-value-uses-name-in-let?
+            expr-bases
+            (& bindings)
+            body-box
+            name)])]
+    [(ast.AstExpr.WithRegion _ exprs)
+      (tc-borrow-check-composite-value-uses-name-in-last? expr-bases exprs name)]
+    [(ast.AstExpr.WithEscape _ exprs)
+      (tc-borrow-check-composite-value-uses-name-in-last? expr-bases exprs name)]
+    [(ast.AstExpr.InArena _ exprs)
+      (tc-borrow-check-composite-value-uses-name-in-last? expr-bases exprs name)]
+    [(ast.AstExpr.WithScratch exprs)
+      (tc-borrow-check-composite-value-uses-name-in-last? expr-bases exprs name)]
+    [(ast.AstExpr.WithResource wr-box)
+      (match (ast.ast-with-resource-box-shared-view wr-box)
+        [(ast.AstWithResource.WithResource _ exprs)
+          (tc-borrow-check-composite-value-uses-name-in-last?
+            expr-bases
+            exprs
+            name)])]
+    [(ast.AstExpr.Ann inner-box _)
+      (tc-borrow-check-composite-value-uses-name?
+        expr-bases
+        (ast.ast-expr-segment-bases-get expr-bases inner-box)
+        name)]
+    [(ast.AstExpr.Cast inner-box _)
+      (tc-borrow-check-composite-value-uses-name?
+        expr-bases
+        (ast.ast-expr-segment-bases-get expr-bases inner-box)
+        name)]
+    [(ast.AstExpr.Try inner-box)
+      (tc-borrow-check-composite-value-uses-name?
+        expr-bases
+        (ast.ast-expr-segment-bases-get expr-bases inner-box)
+        name)]
+    [(ast.AstExpr.Box inner-box)
+      (tc-borrow-check-composite-value-uses-name?
+        expr-bases
+        (ast.ast-expr-segment-bases-get expr-bases inner-box)
+        name)]
+    [(ast.AstExpr.BoxGet inner-box)
+      (tc-borrow-check-composite-value-uses-name?
+        expr-bases
+        (ast.ast-expr-segment-bases-get expr-bases inner-box)
+        name)]
+    [(ast.AstExpr.BoxTake inner-box)
+      (tc-borrow-check-composite-value-uses-name?
+        expr-bases
+        (ast.ast-expr-segment-bases-get expr-bases inner-box)
+        name)]
+    [(ast.AstExpr.StructGet base-box _)
+      (tc-borrow-check-composite-value-uses-name?
+        expr-bases
+        (ast.ast-expr-segment-bases-get expr-bases base-box)
+        name)]
+    [(ast.AstExpr.ArrayRef base-box _)
+      (tc-borrow-check-composite-value-uses-name?
+        expr-bases
+        (ast.ast-expr-segment-bases-get expr-bases base-box)
+        name)]
+    [(ast.AstExpr.TupleRef base-box index)
+      (let
+        [base : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases base-box)]
+        (match (ast.ast-expr-unspan (tc-global-shared-view base))
+          [(ast.AstExpr.Tuple items)
+            (if (and (>= index 0) (< index items.len))
+              (tc-borrow-check-composite-value-uses-name?
+                expr-bases
+                (ast.ast-expr-segment-bases-get
+                  expr-bases
+                  (ast.ast-expr-list-get (& items) index 0))
+                name)
+              (tc-borrow-check-composite-value-uses-name? expr-bases base name))]
+          [_ (tc-borrow-check-composite-value-uses-name? expr-bases base name)]))]
+    [(ast.AstExpr.Tuple exprs)
+      (tc-borrow-check-composite-value-uses-name-in-list?
+        expr-bases
+        (& exprs)
+        name
+        0)]
+    [(ast.AstExpr.Array exprs)
+      (tc-borrow-check-composite-value-uses-name-in-list?
+        expr-bases
+        (& exprs)
+        name
+        0)]
+    [(ast.AstExpr.DynArray exprs)
+      (tc-borrow-check-composite-value-uses-name-in-list?
+        expr-bases
+        (& exprs)
+        name
+        0)]
+    [(ast.AstExpr.Call func-box args)
+      (or
+        (tc-borrow-check-composite-value-uses-name?
+          expr-bases
+          (ast.ast-expr-segment-bases-get expr-bases func-box)
+          name)
+        (tc-borrow-check-composite-value-uses-name-in-list?
+          expr-bases
+          (& args)
+          name
+          0))]
+    ;; Unsupported shapes remain conservative rather than dropping a loan.
+    [_
+      (tc-expr-uses-free-name?
+        expr-bases
+        expr
+        (tc-env-key-name-text name)
+        TcStringList.Nil)]))
+
+(define (tc-borrow-check-composite-let-binding-feeds?
+  [expr-bases : i64]
+  [bindings : (& bindings ast.AstLetBindingList)]
+  [body-box : i64]
+  [index : i64]
+  [name : i64]) : bool
+  (let
+    [body : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases body-box)]
+    [later : i64 (+ index 1)]
+    [feeds : bool
+      (tc-borrow-check-composite-value-uses-name? expr-bases body name)]
+    (begin
+      (while (and (not feeds) (< later (ast.ast-let-binding-list-len bindings)))
+        (begin
+          (match (ast.ast-let-binding-list-get
+            bindings
+            later
+            (ast.ast-let-binding-fallback))
+            [(ast.AstLetBinding.Binding later-name _ later-init-box)
+              (when
+                (and
+                  (tc-borrow-check-composite-let-binding-feeds?
+                    expr-bases
+                    bindings
+                    body-box
+                    later
+                    later-name)
+                  (tc-borrow-check-composite-value-uses-name?
+                    expr-bases
+                    (ast.ast-expr-segment-bases-get expr-bases later-init-box)
+                    name))
+                (set! feeds true))])
+          (set! later (+ later 1))))
+      feeds)))
+
+(define (tc-borrow-check-composite-value-uses-name-in-let?
+  [expr-bases : i64]
+  [bindings : (& bindings ast.AstLetBindingList)]
+  [body-box : i64]
+  [name : i64]) : bool
+  (let
+    [body : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases body-box)]
+    [index : i64 0]
+    [uses : bool
+      (tc-borrow-check-composite-value-uses-name? expr-bases body name)]
+    (begin
+      (while (and (not uses) (< index (ast.ast-let-binding-list-len bindings)))
+        (begin
+          (match (ast.ast-let-binding-list-get
+            bindings
+            index
+            (ast.ast-let-binding-fallback))
+            [(ast.AstLetBinding.Binding binding-name _ init-box)
+              (when
+                (and
+                  (tc-borrow-check-composite-let-binding-feeds?
+                    expr-bases
+                    bindings
+                    body-box
+                    index
+                    binding-name)
+                  (tc-borrow-check-composite-value-uses-name?
+                    expr-bases
+                    (ast.ast-expr-segment-bases-get expr-bases init-box)
+                    name))
+                (set! uses true))])
+          (set! index (+ index 1))))
+      uses)))
+
 (define (tc-borrow-check-add-composite-let-arg-at
   [ctx : TcContext]
   [expr-bases : i64]
@@ -94118,16 +94358,23 @@
         (let
           [init : ast.AstExpr
             (ast.ast-expr-segment-bases-get expr-bases init-box)]
-          (match (tc-borrow-check-add-composite-arg-leaf
-            (tc-global-shared-view ctx)
+          (match (if (tc-borrow-check-composite-let-binding-feeds?
             expr-bases
-            (tc-global-shared-view env)
-            (tc-global-shared-view locals)
-            borrowed
-            bound?
-            binding-id
-            (tc-global-shared-view init)
-            (tc-global-shared-view result-lifetimes))
+            bindings
+            body-box
+            index
+            name)
+            (tc-borrow-check-add-composite-arg-leaf
+              (tc-global-shared-view ctx)
+              expr-bases
+              (tc-global-shared-view env)
+              (tc-global-shared-view locals)
+              borrowed
+              bound?
+              binding-id
+              (tc-global-shared-view init)
+              (tc-global-shared-view result-lifetimes))
+            (TcBorrowCheckResult.Ok borrowed))
             [(TcBorrowCheckResult.Ok borrowed1)
               (let
                 [binding-ty : ast.AstType
@@ -94156,6 +94403,44 @@
                   result-lifetimes))]
             [(TcBorrowCheckResult.Err message)
               (TcBorrowCheckResult.Err message)]))])))
+
+(define (tc-borrow-check-composite-match-arm-uses-pattern?
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [scrut-ty : ast.AstType]
+  [arms : (& arms ast.AstMatchArmList)]
+  [index : i64]) : bool
+  (if (>= index arms.len)
+    false
+    (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
+      [(ast.AstMatchArm.Arm pattern body-box)
+        (let
+          [names : TcNameIdList
+            (tc-borrow-check-pattern-bound-names
+              (tc-global-shared-view ctx)
+              (tc-global-shared-view scrut-ty)
+              (tc-global-shared-view pattern))]
+          [body : ast.AstExpr
+            (ast.ast-expr-segment-bases-get expr-bases body-box)]
+          [uses : bool false]
+          (begin
+            (while (and (not uses) (not (tc-name-id-list-empty? names)))
+              (begin
+                (when
+                  (tc-borrow-check-composite-value-uses-name?
+                    expr-bases
+                    (tc-global-shared-view body)
+                    (tc-name-id-list-head names))
+                  (set! uses true))
+                (set! names (tc-name-id-list-rest names))))
+            (or
+              uses
+              (tc-borrow-check-composite-match-arm-uses-pattern?
+                ctx
+                expr-bases
+                scrut-ty
+                arms
+                (+ index 1)))))])))
 
 (define (tc-borrow-check-add-composite-match-arms-at
   [ctx : TcContext]
@@ -94232,22 +94517,29 @@
   [result-lifetimes : TcNameIdList]) : TcBorrowCheckResult
   (let
     [scrut : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases scrut-box)]
-    (match (tc-borrow-check-add-composite-arg-leaf
+    (match (tc-expr
       (tc-global-shared-view ctx)
-      expr-bases
       (tc-global-shared-view env)
-      (tc-global-shared-view locals)
-      borrowed
-      bound?
-      binding-id
-      (tc-global-shared-view scrut)
-      (tc-global-shared-view result-lifetimes))
-      [(TcBorrowCheckResult.Ok borrowed1)
-        (match (tc-expr
+      (tc-global-shared-view scrut))
+      [(ResultTcType.Ok scrut-ty)
+        (match (if (tc-borrow-check-composite-match-arm-uses-pattern?
           (tc-global-shared-view ctx)
-          (tc-global-shared-view env)
-          scrut)
-          [(ResultTcType.Ok scrut-ty)
+          expr-bases
+          (tc-global-shared-view scrut-ty)
+          (& arms)
+          0)
+          (tc-borrow-check-add-composite-arg-leaf
+            (tc-global-shared-view ctx)
+            expr-bases
+            (tc-global-shared-view env)
+            (tc-global-shared-view locals)
+            borrowed
+            bound?
+            binding-id
+            (tc-global-shared-view scrut)
+            (tc-global-shared-view result-lifetimes))
+          (TcBorrowCheckResult.Ok borrowed))
+          [(TcBorrowCheckResult.Ok borrowed1)
             (tc-borrow-check-add-composite-match-arms-at
               ctx
               expr-bases
@@ -94260,8 +94552,8 @@
               (& arms)
               0
               result-lifetimes)]
-          [(ResultTcType.Err _) (TcBorrowCheckResult.Ok borrowed1)])]
-      [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)])))
+          [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)])]
+      [(ResultTcType.Err _) (TcBorrowCheckResult.Ok borrowed)])))
 
 ;; Every element of a constructed aggregate can reach the value a later
 ;; projection returns, so each keeps the loans its own type stores.
@@ -94423,18 +94715,70 @@
         binding-id
         exprs
         result-lifetimes)]
+    [(ast.AstExpr.WithResource wr-box)
+      (match (ast.ast-with-resource-box-shared-view wr-box)
+        [(ast.AstWithResource.WithResource bindings exprs)
+          (match (tc-borrow-check-resource-bindings
+            (tc-global-shared-view ctx)
+            expr-bases
+            (tc-global-shared-view env)
+            (tc-global-shared-view locals)
+            (tc-moved-clone (tc-global-shared-view borrowed))
+            bindings)
+            [(TcBorrowCheckResourceBindings.Ok body-env body-locals _)
+              (tc-borrow-check-add-composite-last-arg
+                ctx
+                expr-bases
+                body-env
+                body-locals
+                borrowed
+                bound?
+                binding-id
+                exprs
+                result-lifetimes)]
+            [(TcBorrowCheckResourceBindings.Err message)
+              (TcBorrowCheckResult.Err message)])])]
     ;; A projection returns part of its base's value.
-    [(ast.AstExpr.TupleRef base-box _)
-      (tc-borrow-check-add-composite-arg-leaf
-        ctx
-        expr-bases
-        env
-        locals
-        borrowed
-        bound?
-        binding-id
-        (ast.ast-expr-segment-bases-get expr-bases base-box)
-        result-lifetimes)]
+    [(ast.AstExpr.TupleRef base-box index)
+      (let
+        [base : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases base-box)]
+        (match (ast.ast-expr-unspan (tc-global-shared-view base))
+          [(ast.AstExpr.Tuple items)
+            (if (and (>= index 0) (< index items.len))
+              (tc-borrow-check-add-composite-arg-leaf
+                ctx
+                expr-bases
+                env
+                locals
+                borrowed
+                bound?
+                binding-id
+                (ast.ast-expr-segment-bases-get
+                  expr-bases
+                  (ast.ast-expr-list-get (& items) index 0))
+                result-lifetimes)
+              (tc-borrow-check-add-composite-arg-leaf
+                ctx
+                expr-bases
+                env
+                locals
+                borrowed
+                bound?
+                binding-id
+                base
+                result-lifetimes))]
+          [_
+            (tc-borrow-check-add-composite-arg-leaf
+              ctx
+              expr-bases
+              env
+              locals
+              borrowed
+              bound?
+              binding-id
+              base
+              result-lifetimes)]))]
     [(ast.AstExpr.StructGet base-box _)
       (tc-borrow-check-add-composite-arg-leaf
         ctx
@@ -94469,6 +94813,19 @@
         (ast.ast-expr-segment-bases-get expr-bases inner-box)
         result-lifetimes)]
     [(ast.AstExpr.BoxGet inner-box)
+      (tc-borrow-check-add-composite-arg-leaf
+        ctx
+        expr-bases
+        env
+        locals
+        borrowed
+        bound?
+        binding-id
+        (ast.ast-expr-segment-bases-get expr-bases inner-box)
+        result-lifetimes)]
+    ;; `try` returns the success payload of its operand. The error path exits
+    ;; the function, so it cannot contribute to this call's result.
+    [(ast.AstExpr.Try inner-box)
       (tc-borrow-check-add-composite-arg-leaf
         ctx
         expr-bases

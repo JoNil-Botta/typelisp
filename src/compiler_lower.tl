@@ -5075,22 +5075,30 @@
   [names : LowerNameEnv]
   [cache : LowerNameCache]) : LowerNameCache
   (let
-    [cur : LowerNameEnv names]
     [out : LowerNameCache (lower-global-shared-view cache)]
     (begin
-      (while (match (lower-global-shared-view cur)
-        [(LowerNameEnv.Nil) false]
-        [_ true])
-        (match (lower-name-env-view (lower-global-shared-view cur))
-          [(LowerNameEnvView.Nil) unit]
-          [(LowerNameEnvView.Bind source-id logical-id symbol-id rest)
-            (begin
-              (lower-name-cache-add-id!
-                (&mut out)
-                source-id
-                logical-id
-                symbol-id)
-              (set! cur rest))]))
+      ;; Walk the dense chain in place, head first, in the order
+      ;; `lower-name-env-view` yields it, without rebuilding a view per binding.
+      (match (lower-global-shared-view names)
+        [(LowerNameEnv.Nil) unit]
+        [(LowerNameEnv.Inline source-id logical-id symbol-id)
+          (lower-name-cache-add-id! (&mut out) source-id logical-id symbol-id)]
+        [(LowerNameEnv.Dense store head _)
+          (let
+            [cursor : i64 head]
+            (while (>= cursor 0)
+              (let
+                [binding : LowerNameBinding
+                  (lower-name-store-binding-at
+                    (& (__tl-box-place store))
+                    cursor)]
+                (begin
+                  (lower-name-cache-add-id!
+                    (&mut out)
+                    binding.source-id
+                    binding.logical-id
+                    binding.symbol-id)
+                  (set! cursor binding.parent)))))])
       (cfg
         (any compile-profile test)
         (lower-name-cache-map-growth-profile

@@ -110,6 +110,19 @@ Vec bang place macros as available yet.
   rules; import it with `(import stdlib.net.http_trailer_policy)`. The response
   trailer parser retains approved fields separately, stops at the exact final
   CRLF, and is imported with `(import stdlib.net.http_trailer)`.
+- `net/http_body_decode.tl`: bounded borrowed response-body decoding for the
+  no-body (HEAD, 1xx, 204, 304, CONNECT tunnel), fixed-length, and
+  close-delimited plans the head parser selects. Each feed consumes an exact
+  prefix of the caller's input and returns one of `NeedInput`, a `Data` view of
+  that same input (tied to its lifetime, never copied or retained), terminal
+  `Complete` with a reuse-eligible or must-close disposition, or terminal
+  `Error`. Bytes after a self-delimited body stay with the caller. A
+  close-delimited body completes only on a plain orderly EOF or an
+  authenticated TLS `close_notify`; any other terminal signal, and every signal
+  before a fixed body is complete, leaves it incomplete. Limits bound the data
+  per step and, optionally, the total, and are checked before any body byte.
+  Chunked framing is rejected until #7324. Import it with
+  `(import stdlib.net.http_body_decode)`.
 - `net/ip.tl`: copyable IPv4, IPv6, and family-tagged IP values backed by
   authoritative network-order bytes, plus allocation-free strict borrowed-text
   parsers and deterministic canonical formatters. IPv4 uses RFC 3986 decimal
@@ -986,6 +999,7 @@ borrowed process runtime wrappers likewise copy at their owned boundary.
 | `byte-buf-*` and `bytes-*` helpers in `byte_buf.tl` | `ByteBuf` construction, copy-in, reserve, growth, and copy-out allocate in the active arena. `byte-buf-ref`, `byte-buf-get`, length/capacity inspection, clear, and in-place set are non-allocating. `byte-buf-as-bytes`, `byte-buf-as-mut-bytes`, `str-as-bytes`, `bytes-slice-view`, and `bytes-mut-slice-view` return fixed-length borrowed views; mutable views are exclusive and can update existing bytes without growing the owner. `bytes-to-string` and the `byte-buf-from/append-bytes*` helpers are explicit copy boundaries; public binary APIs do not expose private dynamic buffers. |
 | `byte-buf-builder-*` helpers in `byte_buf_core.tl` | `ByteBufBuilder` construction, reserve, growth, append from private dynamic-buffer storage or strings, and finish/copy boundaries allocate in the active arena. Length/capacity inspection is non-allocating, and `byte-buf-builder-push` mutates the existing builder through `&mut` unless growth replaces its backing storage. The module is an internal compiler/runtime core and spells that storage `__tl_dyn-array`; it intentionally omits borrowed `bytes` views and in-place indexed mutation. |
 | `net/http_types.tl`, `net/http_head_codec.tl`, `net/http_trailer.tl`, and `net/http_trailer_policy.tl` | Checked protocol tokens, retained field bytes, ordered header/trailer-name storage, policy entries, incremental parser buffering, response-head/trailer results, and serialized request heads allocate in the active arena. Head parsing copies only the bounded head prefix; trailer parsing retains only approved name/value bytes plus reusable current-line scratch. Both stop before a coalesced suffix and never rescan completed lines. Field-line range validation, header lookup, syntax/framing inspection, trailer-policy lookup/list validation, sensitivity checks, and body-plan selection are otherwise non-allocating over retained bytes. Policy construction copies normalized approved names in deterministic insertion order. Request serialization validates all fields and the complete bounded output length before allocating its final `ByteBuf`; framing fields are emitted once in canonical form. |
+| `net/http_body_decode.tl` | Decoder construction, feeds, terminal signals, and disposition queries allocate nothing except the completion record's empty trailer collection. Decoder state is constant size, and `Data` results are borrowed views of the caller's input: no body byte is copied. |
 | `net/ip.tl` | Address construction, byte access, equality, ordering, hashing, and strict borrowed-text parsing are non-allocating. IPv4 and IPv6 formatting use bounded stack scratch storage, then allocate exactly the returned active-arena `String` backing bytes and handle; no growable intermediate buffer is allocated. |
 | `crypto_rsa_core.tl` | Key parsing rejects negative, noncanonical, undersized, oversized, or even public values before arithmetic allocation. Limb arrays allocate only at a selected 2048/3072/4096/8192-bit public capacity. Setup retains modulus and `R^2 mod n`; each public exponentiation allocates one exact-width result plus bounded 32-bit-limb results and 64-bit `2n+2` REDC scratch in the active arena. `public-exponentiation-retained-bytes-upper-bound` reports a conservative per-call bound from the checked public class, actual modulus limbs, and at-most-32-bit exponent. No routine accepts secret operands or claims constant-time behavior. |
 | `crypto_rsa_verify.tl` | Both public message verifiers reuse `crypto_rsa_core`'s checked exact-width exponentiation and one SHA-256 digest. PKCS#1 compares the complete fixed DER encoding without another output buffer. PSS bounds its MGF1 mask to the RSA maximum of 1024 bytes before allocation, then retains one mask, one decoded DB, a 72-byte recomputation input, and at most one 36-byte seed/counter input per mask digest block in the active arena. Rejection never publishes a partial result. |

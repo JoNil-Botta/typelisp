@@ -190,6 +190,12 @@ reject_diag() {
             printf 'math.mul-add: expected f64 or f32, found i64' ;;
         stdlib/tests/math_mul_add_mismatched_types_reject.tl)
             printf 'math.mul-add: operand types must match f64, found f32' ;;
+        stdlib/tests/http_body_decode_view_escape_reject.tl)
+            printf 'source lifetime `wire` does not outlive required lifetime `outer`' ;;
+        stdlib/tests/http_body_decode_view_retained_reject.tl)
+            printf 'source lifetime `wire` does not outlive required lifetime `fallback`' ;;
+        stdlib/tests/http_body_decode_view_mutation_reject.tl)
+            printf 'typecheck: cannot move borrowed place `wire`' ;;
         stdlib/tests/hashmap_value_borrow_escape.tl)
             printf 'typecheck: reference value would escape lexical scope' ;;
         stdlib/tests/hashmap_value_borrow_insert_live.tl)

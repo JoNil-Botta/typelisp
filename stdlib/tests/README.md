@@ -51,6 +51,18 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
   by hot compiler/runtime modules, including reserve, push, array and string
   append, binary NUL/high-byte preservation, and explicit array/string finish
   boundaries.
+- `http_body_decode.tl` covers the borrowed response-body decoder: no-body
+  plans (HEAD, 1xx, 204, 304, CONNECT tunnel, zero length) parsed from real
+  response heads, fixed bodies of one, five and 1,000 bytes in bounded steps
+  with exact same-buffer suffixes, every input partition under step bounds 1
+  to 4, close-delimited completion and failure under every terminal signal on
+  plain and TLS transports, non-retroactive completion, idempotent terminal
+  feeds, invalid limits and fixed-over-cap before input, atomic total-cap
+  failure, checked counter overflow before any view, chunked and unsupported
+  plans, empty completion trailers, and advancing an owned input buffer once a
+  view is dead. `http_body_decode_view_{escape,retained,mutation}_reject.tl`
+  prove a view cannot outlive its input, be kept in a longer-lived holder, or
+  stay live while its owner is moved.
 - `http_head_codec.tl` covers strict byte-oriented HTTP/1.1 request-head
   serialization and incremental response-head parsing: every split boundary,
   exact consumption with one-byte and 32 KiB coalesced body suffixes, bounded

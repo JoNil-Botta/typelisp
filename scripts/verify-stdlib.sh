@@ -229,6 +229,7 @@ format_writer_core.tl
 ffi.tl
 hash.tl
 hashmap.tl
+net/http_body_decode.tl
 net/http_head_codec.tl
 net/http_trailer.tl
 net/http_trailer_policy.tl
@@ -305,6 +306,7 @@ stdlib/tests/format_integer_radix.tl|42|-|-|-
 stdlib/tests/format_integer_radix_io.tl|42|printf:0x2a/00000101\n|literal:0xFF|-
 stdlib/tests/format_precision_io.tl|42|printf:abc/   tr\n1.25/-0000.00\n|literal:er/1.2|-
 stdlib/tests/format_primitive_display.tl|42|-|-|-
+stdlib/tests/http_body_decode.tl|42|-|-|-
 stdlib/tests/http_head_codec.tl|42|-|-|-
 stdlib/tests/http_trailer.tl|42|-|-|-
 stdlib/tests/http_trailer_policy.tl|42|-|-|-
@@ -428,6 +430,9 @@ stdlib/tests/math_pow_mismatched_types_reject.tl|fail|math.pow: exponent type mu
 stdlib/tests/math_mul_add_non_float_reject.tl|fail|math.mul-add: expected f64 or f32, found i64
 stdlib/tests/math_mul_add_mismatched_types_reject.tl|fail|math.mul-add: operand types must match f64, found f32
 stdlib/tests/msvc_api.tl|pass|-
+stdlib/tests/http_body_decode_view_escape_reject.tl|fail|source lifetime `wire` does not outlive required lifetime `outer`
+stdlib/tests/http_body_decode_view_retained_reject.tl|fail|source lifetime `wire` does not outlive required lifetime `fallback`
+stdlib/tests/http_body_decode_view_mutation_reject.tl|fail|typecheck: cannot move borrowed place `wire`
 stdlib/tests/hashmap_value_borrow_escape.tl|fail|typecheck: reference value would escape lexical scope
 stdlib/tests/hashmap_value_borrow_insert_live.tl|fail|typecheck: cannot mutably borrow borrowed place `m`
 stdlib/tests/hashmap_value_borrow_remove_live.tl|fail|typecheck: cannot mutably borrow borrowed place `m`

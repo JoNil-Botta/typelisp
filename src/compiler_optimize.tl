@@ -3699,6 +3699,81 @@
         blocks)
       items)))
 
+;; Vars whose storage an `addr_of` exposes (#7972). A store through that
+;; address redefines the var without any instruction naming it as a dst, so
+;; its single `mov` does not pin its value across the function: a pass that
+;; forwards values by def must neither forward it nor forward through it.
+(define (opt-addr-taken-mark-instr-seq!
+  [marks : (__tl_dyn-array bool)]
+  [instrs : ir.CompilerIrInstrSeq]) : unit
+  (let
+    [slots : (__tl_dyn-array ir.CompilerIrInstr)
+      (compiler-opt-global-shared-view instrs.slots)]
+    [count : i64 instrs.len]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (match (compiler-opt-global-array-element-shared-view slots index)
+            [(ir.CompilerIrInstr.AddrOf _ src)
+              (if (and (>= src 0) (< src (array-length marks)))
+                (set! (array-ref marks src) true)
+                unit)]
+            [_ unit])
+          (set! index (+ index 1))))
+      unit)))
+
+(define (opt-addr-taken-mark-blocks!
+  [marks : (__tl_dyn-array bool)]
+  [blocks : ir.CompilerIrBlockList]) : unit
+  (match (compiler-opt-global-shared-view blocks)
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match (compiler-opt-global-shared-view block)
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (begin
+            (opt-addr-taken-mark-instr-seq!
+              (compiler-opt-global-shared-view marks)
+              instrs)
+            (opt-addr-taken-mark-blocks!
+              marks
+              (compiler-opt-box-shared-view rest)))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (let
+        [index : i64 0]
+        [count : i64
+          (ir.compiler-ir-block-seq-count (compiler-opt-global-shared-view seq))]
+        (while (< index count)
+          (begin
+            (match (ir.compiler-ir-block-seq-ref
+              (compiler-opt-global-shared-view seq)
+              index)
+              [(ir.CompilerIrBlock.Block _ instrs)
+                (opt-addr-taken-mark-instr-seq!
+                  (compiler-opt-global-shared-view marks)
+                  instrs)])
+            (set! index (+ index 1)))))]))
+
+(define (opt-addr-taken-vars [vars : i64] [blocks : ir.CompilerIrBlockList]) : (__tl_dyn-array
+    bool)
+  (let
+    [marks : (__tl_dyn-array bool) (__tl_make-array bool vars)]
+    (begin
+      (opt-addr-taken-mark-blocks!
+        (compiler-opt-global-shared-view marks)
+        blocks)
+      marks)))
+
+(define (opt-addr-taken-var? [marks : (__tl_dyn-array bool)] [var : i64]) : bool
+  (and (>= var 0) (< var (array-length marks)) (array-ref marks var)))
+
+(define (opt-addr-taken-value?
+  [marks : (__tl_dyn-array bool)]
+  [value : ir.CompilerIrValue]) : bool
+  (match (compiler-opt-global-shared-view value)
+    [(ir.CompilerIrValue.Var id) (opt-addr-taken-var? marks id)]
+    [_ false]))
+
 ;; Comparisons whose negation is another comparison on the same operands. Used
 ;; to turn `not (cmp a b)` into the inverted compare instead of a `xorq $1` over
 ;; the materialised boolean. Float operands are rejected by the caller: NaN
@@ -20185,6 +20260,7 @@
     [(option_i64.None) (- 0 1)]))
 
 (define (opt-global-copy-facts-from-instr-seq-from
+  [addr-taken : (__tl_dyn-array bool)]
   [block-id : i64]
   [slots : (__tl_dyn-array ir.CompilerIrInstr)]
   [index : i64]
@@ -20198,32 +20274,46 @@
       [next-tail : OptGlobalCopyFacts
         (match (compiler-opt-global-shared-view instr)
           [(ir.CompilerIrInstr.Mov dst src _)
+            ;; An address-taken dst or source can change through a store
+            ;; after this `mov`, so the copy only holds at its def.
             (if (and
               (opt-copy-safe-source? (compiler-opt-global-shared-view src))
               (not
-                (opt-value-is-var? (compiler-opt-global-shared-view src) dst)))
+                (opt-value-is-var? (compiler-opt-global-shared-view src) dst))
+              (not
+                (opt-addr-taken-var?
+                  (compiler-opt-global-shared-view addr-taken)
+                  dst))
+              (not
+                (opt-addr-taken-value?
+                  (compiler-opt-global-shared-view addr-taken)
+                  (compiler-opt-global-shared-view src))))
               (opt-global-copy-facts-prepend
                 rest-facts
                 (OptGlobalCopyFact.Fact dst src block-id (+ index 1)))
               rest-facts)]
           [_ rest-facts])]
       (opt-global-copy-facts-from-instr-seq-from
+        addr-taken
         block-id
         slots
         (- index 1)
         next-tail))))
 
 (define (opt-global-copy-facts-from-instr-seq
+  [addr-taken : (__tl_dyn-array bool)]
   [block-id : i64]
   [instrs : ir.CompilerIrInstrSeq]
   [tail : OptGlobalCopyFacts]) : OptGlobalCopyFacts
   (opt-global-copy-facts-from-instr-seq-from
+    addr-taken
     block-id
     instrs.slots
     (- instrs.len 1)
     tail))
 
 (define (opt-global-copy-facts-from-blocks
+  [addr-taken : (__tl_dyn-array bool)]
   [blocks : ir.CompilerIrBlockList]
   [block-id : i64]
   [tail : OptGlobalCopyFacts]) : OptGlobalCopyFacts
@@ -20233,14 +20323,20 @@
       (let
         [rest-facts : OptGlobalCopyFacts
           (opt-global-copy-facts-from-blocks
+            (compiler-opt-global-shared-view addr-taken)
             (compiler-opt-box-shared-view rest)
             (+ block-id 1)
             tail)]
         (match block
           [(ir.CompilerIrBlock.Block _ instrs)
-            (opt-global-copy-facts-from-instr-seq block-id instrs rest-facts)]))]
+            (opt-global-copy-facts-from-instr-seq
+              addr-taken
+              block-id
+              instrs
+              rest-facts)]))]
     [(ir.CompilerIrBlockList.Array seq)
       (opt-global-copy-facts-from-blocks
+        addr-taken
         (ir.compiler-ir-block-seq-to-list seq)
         block-id
         tail)]))
@@ -21396,6 +21492,7 @@
         block-id)]))
 
 (define (opt-global-expr-facts-from-instr-seq-from
+  [addr-taken : (__tl_dyn-array bool)]
   [block-id : i64]
   [slots : (__tl_dyn-array ir.CompilerIrInstr)]
   [index : i64]
@@ -21412,28 +21509,42 @@
           [(OptMaybeGlobalExprKey.Some key)
             (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
               [(option_i64.Some dst)
-                (opt-global-expr-facts-prepend
+                ;; Like the copy facts: an address-taken operand or result
+                ;; can change through a store after the def.
+                (if (or
+                  (opt-addr-taken-var?
+                    (compiler-opt-global-shared-view addr-taken)
+                    dst)
+                  (opt-global-key-uses-addr-taken?
+                    (compiler-opt-global-shared-view addr-taken)
+                    (compiler-opt-global-shared-view key)))
                   rest-facts
-                  (OptGlobalExprFact.Fact key dst block-id (+ index 1)))]
+                  (opt-global-expr-facts-prepend
+                    rest-facts
+                    (OptGlobalExprFact.Fact key dst block-id (+ index 1))))]
               [(option_i64.None) rest-facts])]
           [(OptMaybeGlobalExprKey.No) rest-facts])]
       (opt-global-expr-facts-from-instr-seq-from
+        addr-taken
         block-id
         slots
         (- index 1)
         next-tail))))
 
 (define (opt-global-expr-facts-from-instr-seq
+  [addr-taken : (__tl_dyn-array bool)]
   [block-id : i64]
   [instrs : ir.CompilerIrInstrSeq]
   [tail : OptGlobalExprFacts]) : OptGlobalExprFacts
   (opt-global-expr-facts-from-instr-seq-from
+    addr-taken
     block-id
     instrs.slots
     (- instrs.len 1)
     tail))
 
 (define (opt-global-expr-facts-from-blocks
+  [addr-taken : (__tl_dyn-array bool)]
   [blocks : ir.CompilerIrBlockList]
   [block-id : i64]
   [tail : OptGlobalExprFacts]) : OptGlobalExprFacts
@@ -21443,17 +21554,43 @@
       (let
         [rest-facts : OptGlobalExprFacts
           (opt-global-expr-facts-from-blocks
+            (compiler-opt-global-shared-view addr-taken)
             (compiler-opt-box-shared-view rest)
             (+ block-id 1)
             tail)]
         (match block
           [(ir.CompilerIrBlock.Block _ instrs)
-            (opt-global-expr-facts-from-instr-seq block-id instrs rest-facts)]))]
+            (opt-global-expr-facts-from-instr-seq
+              addr-taken
+              block-id
+              instrs
+              rest-facts)]))]
     [(ir.CompilerIrBlockList.Array seq)
       (opt-global-expr-facts-from-blocks
+        addr-taken
         (ir.compiler-ir-block-seq-to-list seq)
         block-id
         tail)]))
+
+(define (opt-global-key-uses-addr-taken?
+  [addr-taken : (__tl_dyn-array bool)]
+  [key : OptGlobalExprKey]) : bool
+  (match (compiler-opt-global-shared-view key)
+    [(OptGlobalExprKey.MovKey value _) (opt-addr-taken-value? addr-taken value)]
+    [(OptGlobalExprKey.GepKey base offset _)
+      (or
+        (opt-addr-taken-value?
+          (compiler-opt-global-shared-view addr-taken)
+          base)
+        (opt-addr-taken-value? addr-taken offset))]
+    [(OptGlobalExprKey.CastKey value _ _)
+      (opt-addr-taken-value? addr-taken value)]
+    [(OptGlobalExprKey.BinKey _ lhs rhs _)
+      (or
+        (opt-addr-taken-value? (compiler-opt-global-shared-view addr-taken) lhs)
+        (opt-addr-taken-value? addr-taken rhs))]
+    [(OptGlobalExprKey.UnKey _ value _)
+      (opt-addr-taken-value? addr-taken value)]))
 
 (define (opt-global-fact-bucket-capacity [count : i64]) : i64
   (let
@@ -21797,8 +21934,13 @@
   (let
     [doms : OptDomInfo
       (compiler-opt-global-shared-view (__tl-project-field context doms))]
+    ;; Rewrites below never add or drop an `addr_of`, so one scan serves every
+    ;; fact table.
+    [addr-taken : (__tl_dyn-array bool)
+      (opt-addr-taken-vars frame (compiler-opt-global-shared-view blocks))]
     [copy-fact-list : OptGlobalCopyFacts
       (opt-global-copy-facts-from-blocks
+        (compiler-opt-global-shared-view addr-taken)
         (compiler-opt-global-shared-view blocks)
         0
         (opt-global-copy-facts-new))]
@@ -21825,6 +21967,7 @@
         0)]
     [expr-fact-list : OptGlobalExprFacts
       (opt-global-expr-facts-from-blocks
+        (compiler-opt-global-shared-view addr-taken)
         (compiler-opt-global-shared-view copied)
         0
         (opt-global-expr-facts-new))]
@@ -21840,6 +21983,7 @@
         0)]
     [cse-copy-fact-list : OptGlobalCopyFacts
       (opt-global-copy-facts-from-blocks
+        (compiler-opt-global-shared-view addr-taken)
         (compiler-opt-global-shared-view cse)
         0
         (opt-global-copy-facts-new))]
@@ -57113,8 +57257,15 @@
       (opt-sccp-mark-branch-targets state cond true-label false-label)]
     [(ir.CompilerIrInstr.Alloc dst _)
       (opt-sccp-state-bind state dst (OptSccpValue.Overdefined))]
-    [(ir.CompilerIrInstr.AddrOf dst _)
-      (opt-sccp-state-bind state dst (OptSccpValue.Overdefined))]
+    ;; Anything holding the address can store through it, so the source's
+    ;; own defs no longer describe its value: lower it too (#7972). The
+    ;; lattice is flow-insensitive, and a read the fixpoint visited before this
+    ;; escape is revisited once the source changes.
+    [(ir.CompilerIrInstr.AddrOf dst src)
+      (opt-sccp-state-bind
+        (opt-sccp-state-bind state dst (OptSccpValue.Overdefined))
+        src
+        (OptSccpValue.Overdefined))]
     [(ir.CompilerIrInstr.Gep dst _ _ _)
       (opt-sccp-state-bind state dst (OptSccpValue.Overdefined))]
     [(ir.CompilerIrInstr.Load dst _ _)
@@ -78023,15 +78174,37 @@
 
 (defstruct OptAffineState
   (indices (__tl_dyn-array i64))
-  (bindings opt_affine_binding_vec.Vec))
+  (bindings opt_affine_binding_vec.Vec)
+  ;; Address-taken vars (#7972): a store through the address redefines them
+  ;; without a def instruction, so no record is keyed by or based on one.
+  (addr-taken (__tl_dyn-array bool)))
 
 (defenum OptAffineEnv
   (Dense (Box OptAffineState)))
 
-(define (opt-affine-env-new [frame : i64]) : OptAffineEnv
+(define (opt-affine-env-new [frame : i64] [addr-taken : (__tl_dyn-array bool)]) : OptAffineEnv
   (OptAffineEnv.Dense
     (box
-      (OptAffineState (__tl_make-array i64 frame) (opt_affine_binding_vec.new)))))
+      (OptAffineState
+        (__tl_make-array i64 frame)
+        (opt_affine_binding_vec.new)
+        addr-taken))))
+
+(define (opt-affine-env-opaque?
+  [env : OptAffineEnv]
+  [rec : OptAffineRec]
+  [dst : i64]) : bool
+  (match env
+    [(OptAffineEnv.Dense state)
+      (let
+        [addr-taken : (__tl_dyn-array bool)
+          (compiler-opt-box-field-shared-view state addr-taken)]
+        (or
+          (opt-addr-taken-var? (compiler-opt-global-shared-view addr-taken) dst)
+          (match rec
+            [(OptAffineRec.No) false]
+            [(OptAffineRec.AddC base _) (opt-addr-taken-var? addr-taken base)]
+            [(OptAffineRec.MulC base _ _) (opt-addr-taken-var? addr-taken base)])))]))
 
 (define (opt-affine-env-clear [env : OptAffineEnv]) : OptAffineEnv
   (match env
@@ -78167,7 +78340,12 @@
     (match rec
       [(OptAffineRec.No) (OptAffineStep.Result purged binds)]
       [_
-        (if (opt-affine-rec-mentions? rec dst)
+        (if (or
+          (opt-affine-rec-mentions? rec dst)
+          (opt-affine-env-opaque?
+            (compiler-opt-global-shared-view purged)
+            (compiler-opt-global-shared-view rec)
+            dst))
           (OptAffineStep.Result purged binds)
           (if (>= binds (opt-affine-env-cap))
             (OptAffineStep.Result (opt-affine-env-clear purged) 0)
@@ -78552,7 +78730,9 @@
         (opt-collect-blocks-uses-array
           frame
           (compiler-opt-global-shared-view blocks))
-        (opt-affine-env-new frame)
+        (opt-affine-env-new
+          frame
+          (opt-addr-taken-vars frame (compiler-opt-global-shared-view blocks)))
         (compiler-opt-global-shared-view blocks))
       blocks)
     blocks))

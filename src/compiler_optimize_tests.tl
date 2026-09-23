@@ -38188,6 +38188,109 @@
                   (compiler_ir_types.CompilerIrValue.Var 3)))))
           (compiler_ir_types.CompilerIrBlockList.Nil))))))
 
+;; A local whose address escapes into a call can be written through that
+;; address, so its single `mov` is not its only definition (#7972). sccp must
+;; keep the `le %0, 0` read after the call and the `add` on the else arm
+;; instead of folding both through the initializer.
+(define (opt-sccp-addr-of-call-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Mov
+          0
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.AddrOf 1 0)
+        (compiler_ir_types.CompilerIrInstr.Call
+          2
+          (opt-test-symbol "write-through")
+          (compiler_ir_types.CompilerIrCallArgs.One
+            (compiler_ir_types.CompilerIrValue.Var 1))
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          3
+          (compiler_ir_types.CompilerIrBinOp.Le)
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ast_types.AstType.Bool))
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 3)
+          (compiler_ir_types.compiler-ir-label "then")
+          (compiler_ir_types.compiler-ir-label "else"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "then")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Return
+            (compiler_ir_types.CompilerIrMaybeValue.Some
+              (compiler_ir_types.CompilerIrValue.I64 2)))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "else")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              4
+              (compiler_ir_types.CompilerIrBinOp.Add)
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              (compiler_ir_types.CompilerIrValue.I64 35)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.Var 4)))))
+        (compiler_ir_types.CompilerIrBlockList.Nil)))))
+
+;; The same escape, but the loop header reads the local before the body takes
+;; its address. The first sweep still sees the initializer and marks only the
+;; body executable; the body's `addr_of` must then lower the local so the next
+;; sweep keeps the header branch and the exit.
+(define (opt-sccp-addr-of-loop-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Mov
+          0
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "loop"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "loop")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            1
+            (compiler_ir_types.CompilerIrBinOp.Eq)
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            (compiler_ast_types.AstType.Bool))
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (compiler_ir_types.compiler-ir-label "body")
+            (compiler_ir_types.compiler-ir-label "exit"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "body")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.AddrOf 2 0)
+            (compiler_ir_types.CompilerIrInstr.Call
+              3
+              (opt-test-symbol "write-through")
+              (compiler_ir_types.CompilerIrCallArgs.One
+                (compiler_ir_types.CompilerIrValue.Var 2))
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "loop"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "exit")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var 0)))))
+          (compiler_ir_types.CompilerIrBlockList.Nil))))))
+
 (define (compiler-optimize-sccp-self-test) : i64
   (let
     [cross : compiler_ir_types.CompilerIrBlockList
@@ -38251,6 +38354,16 @@
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (opt-sccp-dynamic-bounds-params)
         (opt-sccp-dynamic-bounds-blocks))]
+    [addr-of-call : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-sccp-blocks
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (compiler_ir_types.compiler-ir-param-seq-empty)
+        (opt-sccp-addr-of-call-blocks))]
+    [addr-of-loop : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-sccp-blocks
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (compiler_ir_types.compiler-ir-param-seq-empty)
+        (opt-sccp-addr-of-loop-blocks))]
     (cond
       [(not
           (=
@@ -38356,6 +38469,219 @@
         23]
       [(not (= (compiler_optimize.opt-count-bounds-blocks dynamic-bounds) 1))
         24]
+      [(not
+          (=
+            (opt-count-branches-blocks
+              (compiler_optimize.compiler-opt-global-shared-view addr-of-call))
+            1))
+        25]
+      [(not
+          (opt-block-list-has-label?
+            (compiler_optimize.compiler-opt-global-shared-view addr-of-call)
+            (compiler_ir_types.compiler-ir-label "else")))
+        26]
+      [(not
+          (=
+            (opt-blocks-mov-dst-i64-value
+              (compiler_optimize.compiler-opt-global-shared-view addr-of-call)
+              4
+              (- 0 999))
+            (- 0 999)))
+        27]
+      [(not
+          (=
+            (opt-count-branches-blocks
+              (compiler_optimize.compiler-opt-global-shared-view addr-of-loop))
+            1))
+        28]
+      [(not
+          (opt-block-list-has-label?
+            addr-of-loop
+            (compiler_ir_types.compiler-ir-label "exit")))
+        29]
+      [else 42])))
+
+;; --- address-taken locals are never forwarded (#7972) -----------------------
+;;
+;; `%3` copies the `lhs` parameter and then has its address passed to a call,
+;; which may store through it. The global copy must not forward `%1` into `%3`'s
+;; later reads, nor `%3` into the copy `%4` made before the call; global CSE must
+;; not reuse the pre-call `mul %3, 3` for the post-call one; and affine folding
+;; must not rewrite `add %3, 1` through `%3 = mov %1`. `%11`/`%12` are the same
+;; shapes on the untouched `rhs` parameter, which both passes still forward.
+(define (opt-addr-taken-gvn-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Mov
+          3
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Mov
+          4
+          (compiler_ir_types.CompilerIrValue.Var 3)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          5
+          (compiler_ir_types.CompilerIrBinOp.Mul)
+          (compiler_ir_types.CompilerIrValue.Var 3)
+          (compiler_ir_types.CompilerIrValue.I64 3)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Mov
+          11
+          (compiler_ir_types.CompilerIrValue.Var 2)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.AddrOf 6 3)
+        (compiler_ir_types.CompilerIrInstr.Call
+          7
+          (opt-test-symbol "write-through")
+          (compiler_ir_types.CompilerIrCallArgs.One
+            (compiler_ir_types.CompilerIrValue.Var 6))
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "next"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "next")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            8
+            (compiler_ir_types.CompilerIrBinOp.Mul)
+            (compiler_ir_types.CompilerIrValue.Var 3)
+            (compiler_ir_types.CompilerIrValue.I64 3)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            9
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 3)
+            (compiler_ir_types.CompilerIrValue.Var 4)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            12
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 11)
+            (compiler_ir_types.CompilerIrValue.Var 9)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            10
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 8)
+            (compiler_ir_types.CompilerIrValue.Var 12)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Return
+            (compiler_ir_types.CompilerIrMaybeValue.Some
+              (compiler_ir_types.CompilerIrValue.Var 10)))))
+      (compiler_ir_types.CompilerIrBlockList.Nil))))
+
+(define (opt-addr-taken-affine-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Mov
+          3
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Mov
+          10
+          (compiler_ir_types.CompilerIrValue.Var 2)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.AddrOf 5 3)
+        (compiler_ir_types.CompilerIrInstr.Call
+          6
+          (opt-test-symbol "write-through")
+          (compiler_ir_types.CompilerIrCallArgs.One
+            (compiler_ir_types.CompilerIrValue.Var 5))
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          7
+          (compiler_ir_types.CompilerIrBinOp.Add)
+          (compiler_ir_types.CompilerIrValue.Var 3)
+          (compiler_ir_types.CompilerIrValue.I64 1)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          11
+          (compiler_ir_types.CompilerIrBinOp.Add)
+          (compiler_ir_types.CompilerIrValue.Var 10)
+          (compiler_ir_types.CompilerIrValue.I64 4)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          9
+          (compiler_ir_types.CompilerIrBinOp.Add)
+          (compiler_ir_types.CompilerIrValue.Var 7)
+          (compiler_ir_types.CompilerIrValue.Var 11)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Return
+          (compiler_ir_types.CompilerIrMaybeValue.Some
+            (compiler_ir_types.CompilerIrValue.Var 9)))))
+    (compiler_ir_types.CompilerIrBlockList.Nil)))
+
+(define (compiler-optimize-addr-taken-forwarding-self-test) : i64
+  (let
+    [global : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.opt-global-value-number-function
+          (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+          (opt-gvn-function
+            "addr_taken_gvn"
+            (opt-gvn-scalar-params)
+            (compiler_ast_types.AstType.I64)
+            (opt-addr-taken-gvn-blocks))))]
+    [affine : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-affine-fold-blocks
+        16
+        (opt-addr-taken-affine-blocks))]
+    (cond
+      ;; Global CSE kept the post-call multiply ...
+      [(not
+          (=
+            (opt-count-mov-dst-blocks
+              (compiler_optimize.compiler-opt-global-shared-view global)
+              8)
+            0))
+        1]
+      ;; ... and the global copy left every read of %3, and the pre-call copy
+      ;; %4, in place.
+      [(not
+          (=
+            (opt-wide-literal-lhs-var
+              (compiler_optimize.compiler-opt-global-shared-view global)
+              8)
+            3))
+        2]
+      [(not
+          (=
+            (opt-wide-literal-lhs-var
+              (compiler_optimize.compiler-opt-global-shared-view global)
+              9)
+            3))
+        3]
+      [(not
+          (=
+            (opt-wide-literal-rhs-var
+              (compiler_optimize.compiler-opt-global-shared-view global)
+              9)
+            4))
+        4]
+      ;; Control: the untouched copy %11 of `rhs` is still forwarded.
+      [(not
+          (=
+            (opt-wide-literal-lhs-var
+              (compiler_optimize.compiler-opt-global-shared-view global)
+              12)
+            2))
+        5]
+      ;; Affine folding left the post-call read of %3 alone ...
+      [(not
+          (=
+            (opt-wide-literal-lhs-var
+              (compiler_optimize.compiler-opt-global-shared-view affine)
+              7)
+            3))
+        6]
+      ;; ... and still folded the control chain through %10 = mov %2.
+      [(not (= (opt-wide-literal-lhs-var affine 11) 2)) 7]
       [else 42])))
 
 ;; --- sccp honours the wide-literal left-operand refusal ----------------------
@@ -69416,7 +69742,7 @@
   (let
     [frame : i64 33]
     [env : compiler_optimize.OptAffineEnv
-      (compiler_optimize.opt-affine-env-new frame)]
+      (compiler_optimize.opt-affine-env-new frame (__tl_make-array bool frame))]
     [expected : (__tl_dyn-array compiler_optimize.OptAffineRec)
       (__tl_make-array compiler_optimize.OptAffineRec frame)]
     [binds : i64 0]
@@ -69523,9 +69849,9 @@
 (define (compiler-optimize-affine-env-boundary-self-test) : i64
   (let
     [env : compiler_optimize.OptAffineEnv
-      (compiler_optimize.opt-affine-env-new 1100)]
+      (compiler_optimize.opt-affine-env-new 1100 (__tl_make-array bool 1100))]
     [other : compiler_optimize.OptAffineEnv
-      (compiler_optimize.opt-affine-env-new 4)]
+      (compiler_optimize.opt-affine-env-new 4 (__tl_make-array bool 4))]
     [empty : compiler_optimize.OptAffineEnv (init)]
     [binds : i64 0]
     [index : i64 1]

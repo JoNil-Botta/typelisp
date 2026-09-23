@@ -574,6 +574,9 @@ loop_carried_enum_payload_snapshot_opt2|tests/integration/loop_carried_enum_payl
 loop_carried_raw_read_snapshot_opt0|tests/integration/loop_carried_raw_read_snapshot.tl|42|-|-|-|opt-level:0+stage-stdlib
 loop_carried_raw_read_snapshot_opt1|tests/integration/loop_carried_raw_read_snapshot.tl|42|-|-|-|opt-level:1+stage-stdlib
 loop_carried_raw_read_snapshot_opt2|tests/integration/loop_carried_raw_read_snapshot.tl|42|-|-|-|opt-level:2+stage-stdlib
+addr_taken_local_forwarding_opt0|tests/integration/addr_taken_local_forwarding.tl|42|-|-|-|opt-level:0+stage-stdlib
+addr_taken_local_forwarding_opt1|tests/integration/addr_taken_local_forwarding.tl|42|-|-|-|opt-level:1+stage-stdlib
+addr_taken_local_forwarding_opt2|tests/integration/addr_taken_local_forwarding.tl|42|-|-|-|opt-level:2+stage-stdlib
 register_resident_reference|tests/integration/register_resident_reference.tl|95|-|-|-
 mixed_group_stack_homes_opt0|tests/integration/mixed_group_stack_homes.tl|42|-|-|stdlib/io.tl|opt-level:0+stage-stdlib
 mixed_group_stack_homes_opt1|tests/integration/mixed_group_stack_homes.tl|42|-|-|stdlib/io.tl|opt-level:1+stage-stdlib

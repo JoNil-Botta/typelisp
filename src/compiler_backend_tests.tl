@@ -40026,12 +40026,14 @@ g:
 ;; deterministic.  The local context wrapper keeps the scratch/liveness and
 ;; Gep-fold globals hermetic: this predicate is also run after tests that seed
 ;; those tables deliberately.
-(define (compiler-backend-divmod-polish-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+(define (compiler-backend-divmod-polish-assignments [rbp-lhs : bool]) : compiler_regalloc.CompilerRegAssignmentTable
   (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
-        compiler_abi.compiler-reg-id-r12))
+        (if rbp-lhs
+          compiler_abi.compiler-reg-id-rbp
+          compiler_abi.compiler-reg-id-r12)))
     (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
@@ -40071,7 +40073,8 @@ g:
 
 (define (compiler-backend-divmod-polish-instrs
   [multi-use-result : bool]
-  [multi-use-producer : bool]) : compiler_ir_types.CompilerIrInstrSeq
+  [multi-use-producer : bool]
+  [immediate : bool]) : compiler_ir_types.CompilerIrInstrSeq
   (let
     [after-store : compiler_ir_types.CompilerIrInstrSeq
       (if multi-use-result
@@ -40094,7 +40097,9 @@ g:
         2
         (compiler_ir_types.CompilerIrBinOp.Add)
         (compiler_ir_types.CompilerIrValue.Var 0)
-        (compiler_ir_types.CompilerIrValue.Var 1)
+        (if immediate
+          (compiler_ir_types.CompilerIrValue.I64 62)
+          (compiler_ir_types.CompilerIrValue.Var 1))
         (compiler_ast_types.AstType.I64))
       (compiler-backend-test-instr-seq-prepend
         (compiler_ir_types.CompilerIrInstr.BinOp
@@ -40118,7 +40123,9 @@ g:
 
 (define (compiler-backend-divmod-polish-asm
   [multi-use-result : bool]
-  [multi-use-producer : bool]) : compiler_backend.ResultCompilerBackend
+  [multi-use-producer : bool]
+  [immediate : bool]
+  [rbp-lhs : bool]) : compiler_backend.ResultCompilerBackend
   (let
     [backend-state : compiler_backend.CompilerBackendState
       (compiler_backend.compiler-backend-state-new
@@ -40178,11 +40185,12 @@ g:
       (compiler_backend.compiler-backend-test-get-compiler-backend-emit-home-override1-reg
         backend-state)]
     [assignments : compiler_regalloc.CompilerRegAssignmentTable
-      (compiler-backend-divmod-polish-assignments)]
+      (compiler-backend-divmod-polish-assignments rbp-lhs)]
     [instrs : compiler_ir_types.CompilerIrInstrSeq
       (compiler-backend-divmod-polish-instrs
         multi-use-result
-        multi-use-producer)]
+        multi-use-producer
+        immediate)]
     [count : i64 (compiler_ir_types.compiler-ir-instr-seq-count instrs)]
     [blocks : compiler_ir_types.CompilerIrBlockList
       (compiler_ir_types.compiler-ir-block-cons
@@ -40260,11 +40268,11 @@ g:
     result))
 
 (define (compiler-backend-divmod-producer-result-forwarding-ok?) : bool
-  (match (compiler-backend-divmod-polish-asm false false)
+  (match (compiler-backend-divmod-polish-asm false false false false)
     [(compiler_backend.ResultCompilerBackend.Ok forwarded)
-      (match (compiler-backend-divmod-polish-asm true false)
+      (match (compiler-backend-divmod-polish-asm true false false false)
         [(compiler_backend.ResultCompilerBackend.Ok multi-result)
-          (match (compiler-backend-divmod-polish-asm false true)
+          (match (compiler-backend-divmod-polish-asm false true false false)
             [(compiler_backend.ResultCompilerBackend.Ok multi-producer)
               (and
                 ;; Positive: producer lands in SRC and the single-use result is
@@ -40304,6 +40312,28 @@ g:
                     multi-producer
                     "    leaq (%r12,%r13), %r9\n")))]
             [(compiler_backend.ResultCompilerBackend.Err _) false])]
+        [(compiler_backend.ResultCompilerBackend.Err _) false])]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+;; #7978: an immediate Add producer whose left operand lives in %rbp must not
+;; spell `K(%rbp)`, which the final rsp rebase reads as a frame address. The
+;; no-base SIB form computes the same sum; any other base keeps the plain form.
+(define (compiler-backend-divmod-producer-rbp-immediate-ok?) : bool
+  (match (compiler-backend-divmod-polish-asm false false true true)
+    [(compiler_backend.ResultCompilerBackend.Ok rbp-asm)
+      (match (compiler-backend-divmod-polish-asm false false true false)
+        [(compiler_backend.ResultCompilerBackend.Ok r12-asm)
+          (and
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view rbp-asm)
+              "    leaq 62(,%rbp,1), %r9\n")
+            (not
+              (compiler_backend.compiler-backend-string-contains?
+                rbp-asm
+                "(%rbp)"))
+            (compiler_backend.compiler-backend-string-contains?
+              r12-asm
+              "    leaq 62(%r12), %r9\n"))]
         [(compiler_backend.ResultCompilerBackend.Err _) false])]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
@@ -59334,6 +59364,7 @@ b_keep:
         (compiler-backend-constant-divisor-strength-ok?)
         (compiler-backend-signed-constant-divisor-clang-shape-ok?)
         (compiler-backend-divmod-producer-result-forwarding-ok?)
+        (compiler-backend-divmod-producer-rbp-immediate-ok?)
         (compiler-backend-c22-divmod-store-clobber-rejected-ok?)
         (compiler-backend-literal-div-compactions-ok?)
         (compiler-backend-divrem-rax-rhs-preserved-ok?)

@@ -64786,6 +64786,8 @@
       (compiler-backend-global-shared-view rhs))
       [(CompilerBackendMaybeImmediate.Some imm)
         (match op
+          ;; `K(%rbp)` would read as a frame address to the final rsp rebase
+          ;; (#7978); the no-base SIB form computes the same sum.
           [(compiler_ir_types.CompilerIrBinOp.Add)
             (ResultCompilerBackend.Ok
               (str_cat.str-cat
@@ -64793,7 +64795,9 @@
                   "    leaq "
                   (string.substring imm 1 (- (string.string-length imm) 1))
                   "("
-                  lhs-reg)
+                  (if (string.eq lhs-reg "%rbp")
+                    ",%rbp,1"
+                    lhs-reg))
                 (str_cat.str-cat "), " src "\n")))]
           [(compiler_ir_types.CompilerIrBinOp.Mul)
             (ResultCompilerBackend.Ok

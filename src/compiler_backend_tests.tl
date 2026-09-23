@@ -13215,127 +13215,6 @@
     "    cmpq $3, %rax\n    jne .Lf0_keep\n    movq $1, %rax\n"
     ".Lf0_keep:\n    ret\n    .size f, . - f\n"))
 
-(define (compiler-backend-compact-loop-source
-  [copies : i64]
-  [extra : String]
-  [cold : bool]
-  [jumped : bool]) : String
-  (let
-    [out : text_buf.TextBuf
-      (text_buf.append
-        (text_buf.empty)
-        ".text\n.globl f\n    .type f,@function\nf:\n")]
-    [i : i64 0]
-    (begin
-      (when
-        cold
-        (set!
-          out
-          (text_buf.append
-            out
-            "    cmpq %r8, %rax\n    jb .Lok\n    call tl_oob_abort\n.Lok:\n")))
-      ;; `jumped` enters the loop by a jump, with the exit's `ret` laid out in
-      ;; front of the header, so nothing falls into `.Lloop`.
-      (when
-        jumped
-        (set! out (text_buf.append out "    jmp .Lloop\n.Lexit:\n    ret\n")))
-      (set! out (text_buf.append out ".Lloop:\n"))
-      (while (< i copies)
-        (begin
-          (set!
-            out
-            (text_buf.append
-              out
-              (str_cat.str-cat
-                "    movq %rsi, %rcx\n    addq "
-                (string.int->string (* i 8))
-                "(%rdi,%rax,8), %rcx\n    movq %rcx, "
-                (string.int->string (* i 8))
-                "(%r9,%rax,8)\n")))
-          (set! i (+ i 1))))
-      (text_buf.render
-        (text_buf.append
-          (text_buf.append out extra)
-          (if jumped
-            "    addq $4, %rax\n    cmpq $4092, %rax\n    jl .Lloop\n    jmp .Lexit\n    .size f, . - f\n"
-            "    addq $4, %rax\n    cmpq $4092, %rax\n    jl .Lloop\n.Lexit:\n    ret\n    .size f, . - f\n"))))))
-
-(define (compiler-backend-compact-loop-case-ok?
-  [copies : i64]
-  [extra : String]
-  [cold : bool]
-  [jumped : bool]
-  [aligned : bool]) : bool
-  (let
-    [source : String
-      (compiler-backend-compact-loop-source copies extra cold jumped)]
-    [out : String
-      (text_buf.render
-        (compiler_backend.compiler-backend-peephole-text-buf-once
-          (text_buf.append (text_buf.empty) source)))]
-    [again : String
-      (text_buf.render
-        (compiler_backend.compiler-backend-peephole-text-buf-once
-          (text_buf.append
-            (text_buf.empty)
-            (owned_view.compiler-owned-shared-view out))))]
-    (and
-      (=
-        (compiler_backend.compiler-backend-string-count
-          (owned_view.compiler-owned-shared-view out)
-          "    .p2align 4\n")
-        (if aligned
-          1
-          0))
-      (or
-        (not aligned)
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view out)
-          "    .p2align 4\n.Lloop:\n"))
-      (string.eq out again))))
-
-(define (compiler-backend-compact-loop-alignment-ok?) : bool
-  (and
-    (compiler-backend-compact-loop-case-ok? 3 "" true true true)
-    (compiler-backend-compact-loop-case-ok? 4 "" true true true)
-    (compiler-backend-compact-loop-case-ok?
-      4
-      "    addq $1, %r13\n"
-      true
-      true
-      true)
-    (compiler-backend-compact-loop-case-ok? 2 "" true true false)
-    (compiler-backend-compact-loop-case-ok? 5 "" true true false)
-    (compiler-backend-compact-loop-case-ok? 4 "" false true false)
-    (compiler-backend-compact-loop-case-ok?
-      4
-      "    call helper\n"
-      true
-      true
-      false)
-    (compiler-backend-compact-loop-case-ok?
-      3
-      "    pushq %r13\n    popq %r13\n"
-      true
-      true
-      false)
-    (compiler-backend-compact-loop-case-ok?
-      4
-      "    jne .Lexit\n"
-      true
-      true
-      false)
-    (compiler-backend-compact-loop-case-ok?
-      4
-      "    .loc 1 4 0\n"
-      true
-      true
-      false)
-    (compiler-backend-compact-loop-case-ok? 4 ".Lalias:\n" true true false)
-    ;; Entered by falling in: the padding would be executed, so none is
-    ;; emitted even for an otherwise eligible loop.
-    (compiler-backend-compact-loop-case-ok? 4 "" true false false)))
-
 (define (compiler-backend-cold-split-ok?) : bool
   (let
     [out : String
@@ -15496,7 +15375,6 @@ g:
     (compiler-backend-r10-dead-scan-long-gap-ok?)
     (compiler-backend-chunked-peephole-equivalent?)
     (compiler-backend-cold-split-ok?)
-    (compiler-backend-compact-loop-alignment-ok?)
     (compiler-backend-peephole-flags-branch-ok?)
     (compiler-backend-streamed-final-output-equivalent?)
     (compiler-backend-streamed-final-batch-equivalent?)

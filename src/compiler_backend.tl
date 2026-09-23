@@ -100872,7 +100872,6 @@
       (+ pos (+ n 1)))))
 
 ;; Emit planned stubs [from, to) out of line.
-
 ;; A stub's records, copied out of line. Its abort call never returns, so
 ;; nothing after the call is reached: the `jmp` that stepped over the site
 ;; descriptor, and the continuation label that jump was the only reader of, are
@@ -101011,230 +101010,18 @@
             (set! k (+ k 1)))))
       pos)))
 
-;; Protect compact machine loops from layout shifts caused by COLD-1. This is
-;; decided after every textual optimizer: padding must not become a barrier
-;; to the existing block-layout or peephole passes. A candidate is one named
-;; label followed by 12..16 ordinary instructions and a conditional backedge
-;; to that label. Calls, other branches, stack operations, directives and
-;; intervening labels refuse the hint. Short loops do not amortize padding;
-;; larger or multi-block loops need a different layout policy.
-(defstruct CompilerBackendLoopAlignment
-  (labels (__tl_dyn-array i64))
-  (count i64))
-
-(define (compiler-backend-compact-loop-header?
-  [v : CompilerBackendPeepholeLineVec]
-  [at : i64]) : bool
-  (let
-    [label : CompilerBackendPeepholeLineRecord
-      (compiler-backend-global-array-element-shared-view v.lines at)]
-    [ld : (Ptr u8)
-      (compiler-backend-peephole-record-data
-        (compiler-backend-global-shared-view label))]
-    [ls : i64
-      (compiler-backend-peephole-record-start
-        (compiler-backend-global-shared-view label))]
-    [le : i64
-      (compiler-backend-cold-line-last
-        ld
-        ls
-        (compiler-backend-peephole-record-end label))]
-    [j : i64 (+ at 1)]
-    [instructions : i64 0]
-    (if (not
-      (and
-        (> (- le ls) 3)
-        (compiler-backend-cold-prefix? ld ls le ".L")
-        (= (compiler-backend-peephole-byte-at ld (- le 1)) 58)))
-      false
-      (begin
-        (while (and (< j v.len) (<= (- j at) 32) (< instructions 16))
-          (begin
-            (when
-              (= (array-ref v.live j) 1)
-              (let
-                [rec : CompilerBackendPeepholeLineRecord
-                  (compiler-backend-global-array-element-shared-view v.lines j)]
-                [kind : i64
-                  (compiler-backend-peephole-record-kind
-                    (compiler-backend-global-shared-view rec))]
-                [data : (Ptr u8)
-                  (compiler-backend-peephole-record-data
-                    (compiler-backend-global-shared-view rec))]
-                [start : i64
-                  (compiler-backend-peephole-record-mnemonic-start
-                    (compiler-backend-global-shared-view rec))]
-                [end : i64
-                  (compiler-backend-cold-line-last
-                    data
-                    start
-                    (compiler-backend-peephole-record-end rec))]
-                (begin
-                  (when
-                    (or
-                      (!= kind compiler-backend-sweep-line-kind-instruction)
-                      (>= start end))
-                    (return false))
-                  (set! instructions (+ instructions 1))
-                  (when
-                    (= (compiler-backend-peephole-byte-at data start) 106)
-                    (let
-                      [token-end : i64
-                        (compiler-backend-layout-token-end data start end)]
-                      [operand : i64
-                        (compiler-backend-layout-skip-spaces data token-end end)]
-                      (return
-                        (and
-                          (>= instructions 12)
-                          (not
-                            (compiler-backend-peephole-range-eq?
-                              data
-                              start
-                              token-end
-                              "jmp"))
-                          (compiler-backend-peephole-ranges-eq?
-                            data
-                            operand
-                            end
-                            ld
-                            ls
-                            (- le 1))))))
-                  (when
-                    (or
-                      (compiler-backend-cold-prefix? data start end "call")
-                      (compiler-backend-cold-prefix? data start end "ret")
-                      (compiler-backend-cold-prefix? data start end "push")
-                      (compiler-backend-cold-prefix? data start end "pop"))
-                    (return false)))))
-            (set! j (+ j 1))))
-        false))))
-
-
-;; Padding in front of a label is executed by whatever falls into it, and a
-;; nop is an instruction the count sees -- so the hint is only given where
-;; nothing falls in: the closest live record before the label is an
-;; unconditional `jmp` or a `ret`. Every entry into such a loop is a jump
-;; (the rotated guard's, the back edge's), and the padding costs bytes only.
-(define (compiler-backend-loop-header-unreached-by-fallthrough?
-  [v : CompilerBackendPeepholeLineVec]
-  [at : i64]) : bool
-  (let
-    [j : i64 (- at 1)]
-    [result : i64 (- 0 2)]
-    (begin
-      (while (= result (- 0 2))
-        (cond
-          [(< j 0) (set! result 0)]
-          [(not (= (array-ref v.live j) 1)) (set! j (- j 1))]
-          [else
-            (let
-              [rec : CompilerBackendPeepholeLineRecord
-                (compiler-backend-global-array-element-shared-view v.lines j)]
-              [data : (Ptr u8)
-                (compiler-backend-peephole-record-data
-                  (compiler-backend-global-shared-view rec))]
-              [start : i64
-                (compiler-backend-peephole-record-mnemonic-start
-                  (compiler-backend-global-shared-view rec))]
-              [kind : i64
-                (compiler-backend-peephole-record-kind
-                  (compiler-backend-global-shared-view rec))]
-              [end : i64
-                (compiler-backend-cold-line-last
-                  data
-                  start
-                  (compiler-backend-peephole-record-end rec))]
-              (set!
-                result
-                (if (and
-                  (= kind compiler-backend-sweep-line-kind-instruction)
-                  (or
-                    (compiler-backend-cold-prefix? data start end "jmp ")
-                    (compiler-backend-peephole-range-eq? data start end "ret")))
-                  1
-                  0)))]))
-      (= result 1))))
-
-(define (compiler-backend-loop-alignment-plan
-  [v : CompilerBackendPeepholeLineVec]) : CompilerBackendLoopAlignment
-  (let
-    [labels : (__tl_dyn-array i64) (__tl_make-array i64 0)]
-    [count : i64 0]
-    [i : i64 0]
-    (begin
-      (while (< i v.len)
-        (begin
-          (when
-            (and
-              (= (array-ref v.live i) 1)
-              (=
-                (compiler-backend-peephole-record-kind
-                  (compiler-backend-global-array-element-shared-view v.lines i))
-                compiler-backend-sweep-line-kind-label)
-              (compiler-backend-compact-loop-header?
-                (compiler-backend-global-shared-view v)
-                i)
-              (compiler-backend-loop-header-unreached-by-fallthrough?
-                (compiler-backend-global-shared-view v)
-                i))
-            (begin
-              (set! labels (compiler-backend-cold-grow-i64 labels count))
-              (set! (array-ref labels count) i)
-              (set! count (+ count 1))))
-          (set! i (+ i 1))))
-      (CompilerBackendLoopAlignment labels count))))
-
-;; Loop bodies contain no call or intervening branch, so none can be inside a
-;; relocated abort stub. Every admitted label is rendered once in a hot range.
-(define (compiler-backend-loop-aligned-blit-range!
-  [v : CompilerBackendPeepholeLineVec]
-  [alignment : CompilerBackendLoopAlignment]
-  [from : i64]
-  [to : i64]
-  [dst : (MutPtr u8)]
-  [start-pos : i64]) : i64
-  (let
-    [cursor : i64 from]
-    [pos : i64 start-pos]
-    [i : i64 0]
-    (begin
-      (while (< i alignment.count)
-        (let
-          [at : i64 (array-ref alignment.labels i)]
-          (begin
-            (when
-              (and (>= at from) (< at to))
-              (begin
-                (set!
-                  pos
-                  (compiler-backend-peephole-records-blit-range!
-                    (compiler-backend-global-shared-view v)
-                    cursor
-                    at
-                    dst
-                    pos))
-                (set!
-                  pos
-                  (compiler-backend-cold-write-line! dst pos "    .p2align 4"))
-                (set! cursor at)))
-            (set! i (+ i 1)))))
-      (compiler-backend-peephole-records-blit-range! v cursor to dst pos))))
-
 ;; Render the group in COLD-1 order: the plain render's bytes, ranges of
 ;; records blitted in place, with each stub's jump inverted and the stubs
 ;; themselves emitted at their flush points.
 (define (compiler-backend-cold-render
   [v : CompilerBackendPeepholeLineVec]
-  [plan : CompilerBackendColdPlan]
-  [alignment : CompilerBackendLoopAlignment]) : String
+  [plan : CompilerBackendColdPlan]) : String
   (let
     [total : i64
       (+
         (compiler-backend-peephole-records-length
           (compiler-backend-global-shared-view v))
-        (+
-          plan.extra
-          (* alignment.count (string.string-length "    .p2align 4\n"))))]
+        plan.extra)]
     [count : i64 v.len]
     [out : (__tl_dyn-array u8) (__tl_make-array u8 total)]
     [dst : (MutPtr u8)
@@ -101258,9 +101045,8 @@
                 (begin
                   (set!
                     pos
-                    (compiler-backend-loop-aligned-blit-range!
+                    (compiler-backend-peephole-records-blit-range!
                       (compiler-backend-global-shared-view v)
-                      (compiler-backend-global-shared-view alignment)
                       cursor
                       at
                       dst
@@ -101279,9 +101065,8 @@
                   (set! f (+ f 1)))))
             (set!
               pos
-              (compiler-backend-loop-aligned-blit-range!
+              (compiler-backend-peephole-records-blit-range!
                 (compiler-backend-global-shared-view v)
-                (compiler-backend-global-shared-view alignment)
                 cursor
                 jcc
                 dst
@@ -101303,9 +101088,8 @@
           (begin
             (set!
               pos
-              (compiler-backend-loop-aligned-blit-range!
+              (compiler-backend-peephole-records-blit-range!
                 (compiler-backend-global-shared-view v)
-                (compiler-backend-global-shared-view alignment)
                 cursor
                 at
                 dst
@@ -101324,9 +101108,8 @@
             (set! f (+ f 1)))))
       (set!
         pos
-        (compiler-backend-loop-aligned-blit-range!
+        (compiler-backend-peephole-records-blit-range!
           (compiler-backend-global-shared-view v)
-          (compiler-backend-global-shared-view alignment)
           cursor
           count
           dst
@@ -101360,11 +101143,6 @@
             [plan : CompilerBackendColdPlan
               (compiler-backend-cold-plan
                 (compiler-backend-global-shared-view v))]
-            [alignment : CompilerBackendLoopAlignment
-              (if (> plan.stubs 0)
-                (compiler-backend-loop-alignment-plan
-                  (compiler-backend-global-shared-view v))
-                (CompilerBackendLoopAlignment (__tl_make-array i64 0) 0))]
             (begin
               (set!
                 rendered
@@ -101372,8 +101150,7 @@
                   output-arena
                   (compiler-backend-cold-render
                     (compiler-backend-global-shared-view v)
-                    plan
-                    alignment)))
+                    plan)))
               unit)))
         rendered))))
 

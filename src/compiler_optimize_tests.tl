@@ -111158,3 +111158,120 @@
             (opt-spmd-map-test-case mode count)
             (set! count (+ count 1))))
         (set! mode (+ mode 1))))))
+
+;; Changing a recurrence is legal only when its intermediate values are private.
+(define (opt-unroll-sum-test-site [mode : i64] [copies : i64]) : compiler_optimize.OptUnrollSumChains
+  (let
+    [ty : compiler_ast_types.AstType
+      (cond
+        [(= mode 9) (compiler_ast_types.AstType.F64)]
+        [(= mode 10) (compiler_ast_types.AstType.U64)]
+        [else (compiler_ast_types.AstType.I64)])]
+    [copied? : bool (or (= mode 1) (= mode 5))]
+    [back : i64
+      (if copied?
+        13
+        12)]
+    [builder : compiler_ir_types.CompilerIrInstrBuilder
+      (compiler_ir_types.compiler-ir-instr-builder-with-capacity 8)]
+    (begin
+      (compiler_ir_types.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (compiler_ir_types.CompilerIrInstr.Load
+          11
+          (compiler_ir_types.CompilerIrValue.Var 2)
+          (compiler_optimize.compiler-opt-global-shared-view ty)))
+      (compiler_ir_types.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          12
+          (if (= mode 6)
+            (compiler_ir_types.CompilerIrBinOp.Sub)
+            (compiler_ir_types.CompilerIrBinOp.Add))
+          (compiler_ir_types.CompilerIrValue.Var 10)
+          (compiler_ir_types.CompilerIrValue.Var
+            (if (= mode 2)
+              10
+              11))
+          (compiler_optimize.compiler-opt-global-shared-view ty)))
+      (when
+        copied?
+        (compiler_ir_types.compiler-ir-instr-builder-push!
+          (&mut builder)
+          (compiler_ir_types.CompilerIrInstr.Mov
+            13
+            (compiler_ir_types.CompilerIrValue.Var 12)
+            (compiler_optimize.compiler-opt-global-shared-view ty))))
+      (when
+        (or (= mode 3) (= mode 4) (= mode 5))
+        (compiler_ir_types.compiler-ir-instr-builder-push!
+          (&mut builder)
+          (compiler_ir_types.CompilerIrInstr.Gep
+            20
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (compiler_ir_types.CompilerIrValue.Var
+              (if (= mode 3)
+                10
+                (if (= mode 4)
+                  back
+                  12)))
+            (compiler_ast_types.AstType.I64))))
+      (when
+        (= mode 7)
+        (compiler_ir_types.compiler-ir-instr-builder-push!
+          (&mut builder)
+          (compiler_ir_types.CompilerIrInstr.LoadOwned
+            20
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            10
+            (compiler_ast_types.AstType.I64))))
+      (when
+        (= mode 8)
+        (compiler_ir_types.compiler-ir-instr-builder-push!
+          (&mut builder)
+          (compiler_ir_types.CompilerIrInstr.BoundsCheck
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (compiler_ir_types.CompilerIrValue.I64 32)
+            (compiler_ir_types.compiler-ir-label "sum-test-bound"))))
+      (let
+        [instrs : compiler_ir_types.CompilerIrInstrSeq
+          (compiler_ir_types.compiler-ir-instr-builder-to-seq builder)]
+        [others : compiler_optimize.OptUnrollPhiList
+          (compiler_optimize.opt-unroll-phi-list-cons
+            (compiler_optimize.OptUnrollPhi.Phi
+              10
+              (compiler_ir_types.CompilerIrValue.I64 7)
+              (compiler_ir_types.CompilerIrValue.Var back)
+              ty)
+            (compiler_optimize.OptUnrollPhiList.Nil))]
+        (compiler_optimize.opt-unroll-sum-chains
+          (compiler_optimize.compiler-opt-global-shared-view instrs)
+          0
+          instrs.len
+          others
+          (__tl_make-array 44)
+          copies)))))
+
+(test
+  unrolled-sum-chain-admission
+  (begin
+    (test.assert-true
+      (>= (opt-unroll-sum-test-site 0 16).phi 0)
+      "a direct i64 sum admits independent partial sums")
+    (test.assert-true
+      (>= (opt-unroll-sum-test-site 1 16).phi 0)
+      "a private copy of the update remains a sum")
+    (test.assert-true
+      (>= (opt-unroll-sum-test-site 10 16).phi 0)
+      "u64 addition has the same wrapping reassociation")
+    (test.assert-true
+      (< (opt-unroll-sum-test-site 0 4).phi 0)
+      "short unroll groups keep the existing recurrence")
+    (let
+      [mode : i64 2]
+      (while (<= mode 9)
+        (begin
+          (test.assert-true
+            (< (opt-unroll-sum-test-site mode 16).phi 0)
+            "dependent, observed, trapping, non-additive and floating recurrences stay ordered")
+          (set! mode (+ mode 1)))))))

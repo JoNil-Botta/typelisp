@@ -83912,6 +83912,181 @@
             suffix-base
             builder))))))
 
+;; Four independent partial sums inside an unrolled integer reduction group.
+;; Only the completed sum crosses the group's back edge or enters its tail.
+;; The source phi and its update must have no other body users, so no memory
+;; address, stored value or branch can observe a partial sum. Integer addition
+;; wraps; floating-point reassociation is deliberately outside this proof.
+(defstruct OptUnrollSumChains
+  (phi i64)
+  (back i64)
+  (ty ast.AstType)
+  (partials (__tl_dyn-array ir.CompilerIrValue)))
+
+(define (opt-unroll-sum-chains-none) : OptUnrollSumChains
+  (OptUnrollSumChains
+    -1
+    -1
+    (ast.AstType.I64)
+    (__tl_make-array ir.CompilerIrValue 0)))
+
+(define (opt-unroll-sum-chain-private?
+  [instrs : ir.CompilerIrInstrSeq]
+  [first : i64]
+  [last : i64]
+  [update : i64]
+  [phi : i64]
+  [back : i64]
+  [result : i64]
+  [writeback : i64]) : bool
+  (let
+    [index : i64 first]
+    [ok : bool true]
+    (begin
+      (while (and ok (< index last))
+        (begin
+          (unless
+            (= index update)
+            (let
+              [instr : ir.CompilerIrInstr
+                (ir.compiler-ir-instr-seq-ref instrs index)]
+              (when
+                (or
+                  (opt-cmp-sink-instr-uses-var?
+                    (compiler-opt-global-shared-view instr)
+                    phi)
+                  (opt-cmp-sink-instr-uses-var?
+                    (compiler-opt-global-shared-view instr)
+                    back)
+                  (and
+                    (!= index writeback)
+                    (opt-cmp-sink-instr-uses-var? instr result)))
+                (set! ok false))))
+          (set! index (+ index 1))))
+      ok)))
+
+(define (opt-unroll-sum-chains
+  [instrs : ir.CompilerIrInstrSeq]
+  [first : i64]
+  [last : i64]
+  [others : OptUnrollPhiList]
+  [ku-ids : (__tl_dyn-array i64)]
+  [copies : i64]) : OptUnrollSumChains
+  (if (or
+    (< copies 16)
+    (> (- last first) 12)
+    (!= (opt-unroll-phi-list-count (compiler-opt-global-shared-view others)) 1))
+    (opt-unroll-sum-chains-none)
+    (match (opt-unroll-phi-list-ref others 0)
+      [(OptUnrollPhi.Phi phi _ back ty)
+        (if (not
+          (match (compiler-opt-global-shared-view ty)
+            [(ast.AstType.I64) true]
+            [(ast.AstType.U64) true]
+            [_ false]))
+          (opt-unroll-sum-chains-none)
+          (match back
+            [(ir.CompilerIrValue.Var back-var)
+              (let
+                [writeback : i64
+                  (opt-unroll-def-index
+                    (compiler-opt-global-shared-view instrs.slots)
+                    first
+                    last
+                    back-var)]
+                [result : i64
+                  (if (< writeback 0)
+                    back-var
+                    (match (ir.compiler-ir-instr-seq-ref instrs writeback)
+                      [(ir.CompilerIrInstr.Mov _ (ir.CompilerIrValue.Var src) _)
+                        src]
+                      [_ back-var]))]
+                [update : i64
+                  (opt-unroll-def-index
+                    (compiler-opt-global-shared-view instrs.slots)
+                    first
+                    last
+                    result)]
+                (if (< update 0)
+                  (opt-unroll-sum-chains-none)
+                  (match (ir.compiler-ir-instr-seq-ref instrs update)
+                    [(ir.CompilerIrInstr.BinOp
+                        _
+                        (ir.CompilerIrBinOp.Add)
+                        lhs
+                        rhs
+                        _)
+                      (if (and
+                        (!=
+                          (opt-value-is-var?
+                            (compiler-opt-global-shared-view lhs)
+                            phi)
+                          (opt-value-is-var?
+                            (compiler-opt-global-shared-view rhs)
+                            phi))
+                        (not (opt-value-is-var? lhs back-var))
+                        (not (opt-value-is-var? rhs back-var))
+                        (opt-unroll-sum-chain-private?
+                          instrs
+                          first
+                          last
+                          update
+                          phi
+                          back-var
+                          result
+                          writeback))
+                        (OptUnrollSumChains
+                          phi
+                          back-var
+                          ty
+                          (__tl_make-array
+                            (ir.CompilerIrValue.Var (array-ref ku-ids 0))
+                            (ir.CompilerIrValue.I64 0)
+                            (ir.CompilerIrValue.I64 0)
+                            (ir.CompilerIrValue.I64 0)))
+                        (opt-unroll-sum-chains-none))]
+                    [_ (opt-unroll-sum-chains-none)])))]
+            [_ (opt-unroll-sum-chains-none)]))])))
+
+(define (opt-unroll-sum-chains-finish!
+  [sums : OptUnrollSumChains]
+  [remap : (__tl_dyn-array ir.CompilerIrValue)]
+  [cell : (__tl_dyn-array i64)]
+  [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
+  (when
+    (>= sums.phi 0)
+    (let
+      [left : i64 (opt-unroll-alloc-var (compiler-opt-global-shared-view cell))]
+      [right : i64
+        (opt-unroll-alloc-var (compiler-opt-global-shared-view cell))]
+      [joined : i64 (opt-unroll-alloc-var cell)]
+      (begin
+        (ir.compiler-ir-instr-builder-push!
+          builder
+          (ir.CompilerIrInstr.BinOp
+            left
+            (ir.CompilerIrBinOp.Add)
+            (compiler-opt-global-array-element-shared-view sums.partials 0)
+            (compiler-opt-global-array-element-shared-view sums.partials 1)
+            (compiler-opt-global-shared-view sums.ty)))
+        (ir.compiler-ir-instr-builder-push!
+          builder
+          (ir.CompilerIrInstr.BinOp
+            right
+            (ir.CompilerIrBinOp.Add)
+            (compiler-opt-global-array-element-shared-view sums.partials 2)
+            (compiler-opt-global-array-element-shared-view sums.partials 3)
+            (compiler-opt-global-shared-view sums.ty)))
+        (ir.compiler-ir-instr-builder-push!
+          builder
+          (ir.CompilerIrInstr.BinOp
+            joined
+            (ir.CompilerIrBinOp.Add)
+            (ir.CompilerIrValue.Var left)
+            (ir.CompilerIrValue.Var right)
+            sums.ty))
+        (opt-unroll-remap-set remap sums.back (ir.CompilerIrValue.Var joined))))))
+
 (define (opt-unroll-push-copies!
   [instrs : ir.CompilerIrInstrSeq]
   [phi-count : i64]
@@ -83928,9 +84103,10 @@
   [copies : i64]
   [suffix-base : i64]
   [copy : i64]
+  [sums : OptUnrollSumChains]
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
   (if (>= copy copies)
-    unit
+    (opt-unroll-sum-chains-finish! sums remap cell builder)
     (let
       ;; Copy 0 reads the fresh U phis; later copies read the previous copy's
       ;; remapped back-edge values. All seeds are computed before any is
@@ -83961,6 +84137,14 @@
           (compiler-opt-global-shared-view others)
           other-seeds)]
       (begin
+        (when
+          (>= sums.phi 0)
+          (opt-unroll-remap-set
+            (compiler-opt-global-shared-view remap)
+            sums.phi
+            (compiler-opt-global-array-element-shared-view
+              sums.partials
+              (bit-and copy 3))))
         (opt-unroll-push-copy-body!
           (compiler-opt-global-shared-view instrs)
           phi-count
@@ -83971,6 +84155,13 @@
           copy
           suffix-base
           builder)
+        (when
+          (>= sums.phi 0)
+          (set!
+            (array-ref sums.partials (bit-and copy 3))
+            (opt-unroll-subst-value
+              (compiler-opt-global-shared-view remap)
+              (ir.CompilerIrValue.Var sums.back))))
         (opt-unroll-push-copies!
           instrs
           phi-count
@@ -83987,6 +84178,7 @@
           copies
           suffix-base
           (+ copy 1)
+          sums
           builder)))))
 
 (define (opt-unroll-copies
@@ -84005,6 +84197,14 @@
   [copies : i64]
   [suffix-base : i64]) : ir.CompilerIrInstrSeq
   (let
+    [sums : OptUnrollSumChains
+      (opt-unroll-sum-chains
+        (compiler-opt-global-shared-view instrs)
+        phi-count
+        last
+        (compiler-opt-global-shared-view others)
+        (compiler-opt-global-shared-view ku-ids)
+        copies)]
     [builder : ir.CompilerIrInstrBuilder
       (ir.compiler-ir-instr-builder-with-capacity (* copies (- last phi-count)))]
     (begin
@@ -84024,6 +84224,7 @@
         copies
         suffix-base
         0
+        sums
         (&mut builder))
       (ir.compiler-ir-instr-builder-to-seq builder))))
 

@@ -12080,6 +12080,24 @@
         (OptLabelSet.Nil)
         (OptLabelSet.Dense items (- len 1)))]))
 
+;; `opt-label-tail` for a set whose longer views are all dead -- a worklist its
+;; caller owns outright and pops like a stack. The popped slot is released with
+;; the high-water mark, so the next `opt-label-cons` writes it in place: a plain
+;; tail is below the high-water, and consing onto it copies the whole array,
+;; which makes a pop/push worklist quadratic in its length. The views it returns
+;; hold exactly what `opt-label-tail`'s would.
+(define (opt-label-pop-owned [set : OptLabelSet]) : OptLabelSet
+  (match set
+    [(OptLabelSet.Nil) (OptLabelSet.Nil)]
+    [(OptLabelSet.Dense items len)
+      (if (<= len 1)
+        (OptLabelSet.Nil)
+        (begin
+          (if (= (array-ref items 0) len)
+            (set! (array-ref items 0) (- len 1))
+            unit)
+          (OptLabelSet.Dense items (- len 1))))]))
+
 (define (opt-label-cons [label : i64] [set : OptLabelSet]) : OptLabelSet
   (match set
     [(OptLabelSet.Nil)
@@ -22469,30 +22487,114 @@
 
 ;; `blocks` is the list `index` was built from, so the walk position is the
 ;; block id. `opt-loop-body-member-array-contains-id?` range-checks it, which is
-;; what the old missing-label arm did.
+;; what the old missing-label arm did. At most `limit` blocks are members, so the
+;; walk stops at the last one instead of running to the end of the function;
+;; this runs once per loop, and was one recursive frame per block of the whole
+;; function.
 (define (opt-loop-body-blocks-from
   [members : (__tl_dyn-array bool)]
   [blocks : ir.CompilerIrBlockList]
-  [block-id : i64]) : ir.CompilerIrBlockList
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) (ir.CompilerIrBlockList.Nil)]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match (compiler-opt-global-shared-view block)
-        [(ir.CompilerIrBlock.Block _ _)
-          (let
-            [tail : ir.CompilerIrBlockList
-              (opt-loop-body-blocks-from
-                (compiler-opt-global-shared-view members)
-                (compiler-opt-box-shared-view rest)
-                (+ block-id 1))]
-            (if (opt-loop-body-member-array-contains-id? members block-id)
-              (ir.compiler-ir-block-cons block tail)
-              tail))])]
+  [block-id : i64]
+  [limit : i64]) : ir.CompilerIrBlockList
+  (match (compiler-opt-global-shared-view blocks)
     [(ir.CompilerIrBlockList.Array seq)
-      (opt-loop-body-blocks-from
-        members
-        (ir.compiler-ir-block-seq-to-list seq)
-        block-id)]))
+      (opt-loop-body-blocks-from-seq members seq block-id)]
+    [_
+      (let
+        [cursor : ir.CompilerIrBlockList blocks]
+        [id : i64 block-id]
+        [remaining : i64 limit]
+        [reversed : ir.CompilerIrBlockList (ir.CompilerIrBlockList.Nil)]
+        (begin
+          (while (> remaining 0)
+            (match cursor
+              [(ir.CompilerIrBlockList.Nil) (set! remaining 0)]
+              [(ir.CompilerIrBlockList.Cons block rest)
+                (begin
+                  (if (opt-loop-body-member-array-contains-id?
+                    (compiler-opt-global-shared-view members)
+                    id)
+                    (begin
+                      (set!
+                        reversed
+                        (ir.compiler-ir-block-cons
+                          (compiler-opt-global-shared-view block)
+                          reversed))
+                      (set! remaining (- remaining 1)))
+                    unit)
+                  (set! id (+ id 1))
+                  (set! cursor (compiler-opt-box-shared-view rest)))]
+              [(ir.CompilerIrBlockList.Array seq)
+                (begin
+                  (set!
+                    reversed
+                    (opt-loop-body-seq-members-onto
+                      (compiler-opt-global-shared-view members)
+                      seq
+                      id
+                      reversed))
+                  (set! remaining 0))]))
+          (ir.compiler-ir-block-list-reverse-onto
+            reversed
+            (ir.CompilerIrBlockList.Nil))))]))
+
+;; Conses `seq`'s member blocks onto `acc` front to back, so they come out in
+;; reverse block order.
+(define (opt-loop-body-seq-members-onto
+  [members : (__tl_dyn-array bool)]
+  [seq : ir.CompilerIrBlockSeq]
+  [block-id : i64]
+  [acc : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
+  (let
+    [index : i64 0]
+    [count : i64
+      (ir.compiler-ir-block-seq-count (compiler-opt-global-shared-view seq))]
+    [out : ir.CompilerIrBlockList acc]
+    (begin
+      (while (< index count)
+        (begin
+          (if (opt-loop-body-member-array-contains-id?
+            (compiler-opt-global-shared-view members)
+            (+ block-id index))
+            (set!
+              out
+              (ir.compiler-ir-block-cons
+                (ir.compiler-ir-block-seq-ref
+                  (compiler-opt-global-shared-view seq)
+                  index)
+                out))
+            unit)
+          (set! index (+ index 1))))
+      out)))
+
+;; Walks `seq` back to front so member blocks cons up in block order without
+;; first converting the whole function's block array into a list per loop.
+(define (opt-loop-body-blocks-from-seq
+  [members : (__tl_dyn-array bool)]
+  [seq : ir.CompilerIrBlockSeq]
+  [block-id : i64]) : ir.CompilerIrBlockList
+  (let
+    [index : i64
+      (-
+        (ir.compiler-ir-block-seq-count (compiler-opt-global-shared-view seq))
+        1)]
+    [out : ir.CompilerIrBlockList (ir.CompilerIrBlockList.Nil)]
+    (begin
+      (while (>= index 0)
+        (begin
+          (if (opt-loop-body-member-array-contains-id?
+            (compiler-opt-global-shared-view members)
+            (+ block-id index))
+            (set!
+              out
+              (ir.compiler-ir-block-cons
+                (ir.compiler-ir-block-seq-ref
+                  (compiler-opt-global-shared-view seq)
+                  index)
+                out))
+            unit)
+          (set! index (- index 1))))
+      out)))
 
 (define (opt-loop-body-build
   [blocks : ir.CompilerIrBlockList]
@@ -22503,6 +22605,7 @@
       (__tl_make-array
         bool
         (opt-cfg-index-block-count (compiler-opt-global-shared-view index)))]
+    [count : i64 (opt-label-count (compiler-opt-global-shared-view labels))]
     (begin
       (opt-loop-body-fill-members!
         index
@@ -22511,7 +22614,7 @@
       (OptLoopBody
         labels
         (compiler-opt-global-shared-view members)
-        (opt-loop-body-blocks-from members blocks 0)))))
+        (opt-loop-body-blocks-from members blocks 0 count)))))
 
 (define (opt-loop-body-labels [body : OptLoopBody]) : OptLabelSet
   body.labels)
@@ -22685,7 +22788,11 @@
             (opt-pred-map-lookup
               (compiler-opt-global-shared-view pred-map)
               label)
-            (OptNaturalLoopCollectState.State body (opt-label-tail worklist)))]
+            ;; The worklist is this walk's own (seeded fresh by the caller),
+            ;; so no other view of it outlives a pop.
+            (OptNaturalLoopCollectState.State
+              body
+              (opt-label-pop-owned worklist)))]
         (match state
           [(OptNaturalLoopCollectState.State next-body next-worklist)
             (opt-natural-loop-collect-body
@@ -30750,31 +30857,41 @@
 ;; A consumer inside a loop nested in the one being processed can execute many
 ;; times per iteration of the outer loop, so it pays for an outer-loop hoist
 ;; even when its block does not dominate the outer latch.
-(define (opt-licm-label-in-nested-loop?
+;; The loops nested in the one headed by `header`: every other loop whose header
+;; lies in `body`. Filtered once per loop, so the per-block question below scans
+;; only nested bodies.
+(define (opt-licm-nested-loops
   [loops : OptNaturalLoopList]
   [header : i64]
-  [body : OptLabelSet]
-  [label : i64]) : bool
-  (match loops
+  [body : OptLabelSet]) : OptNaturalLoopList
+  (match (compiler-opt-global-shared-view loops)
+    [(OptNaturalLoopList.Nil) (OptNaturalLoopList.Nil)]
+    [(OptNaturalLoopList.Cons inner rest)
+      (let
+        [tail : OptNaturalLoopList
+          (opt-licm-nested-loops
+            (compiler-opt-box-shared-view rest)
+            header
+            (compiler-opt-global-shared-view body))]
+        [inner-header : i64
+          (opt-natural-loop-header (compiler-opt-global-shared-view inner))]
+        (if (and
+          (not (= inner-header header))
+          (opt-label-contains
+            (compiler-opt-global-shared-view body)
+            inner-header))
+          (OptNaturalLoopList.Cons inner (box tail))
+          tail))]))
+
+(define (opt-licm-label-in-loops? [loops : OptNaturalLoopList] [label : i64]) : bool
+  (match (compiler-opt-global-shared-view loops)
     [(OptNaturalLoopList.Nil) false]
     [(OptNaturalLoopList.Cons inner rest)
-      (if (and
-        (not
-          (=
-            (opt-natural-loop-header (compiler-opt-global-shared-view inner))
-            header))
-        (opt-label-contains
-          (compiler-opt-global-shared-view body)
-          (opt-natural-loop-header (compiler-opt-global-shared-view inner)))
-        (opt-label-contains
-          (opt-natural-loop-body (compiler-opt-global-shared-view inner))
-          label))
+      (if (opt-label-contains
+        (opt-natural-loop-body (compiler-opt-global-shared-view inner))
+        label)
         true
-        (opt-licm-label-in-nested-loop?
-          (compiler-opt-box-shared-view rest)
-          header
-          (compiler-opt-global-shared-view body)
-          label))]))
+        (opt-licm-label-in-loops? (compiler-opt-box-shared-view rest) label))]))
 
 ;; A BRANCH CONDITION is not a consumer that can pay for a hoist, and it is the
 ;; one use kind where moving the definition out is never a per-iteration win. A
@@ -30862,16 +30979,33 @@
   [gate? : bool]
   [blocks : ir.CompilerIrBlockList]
   [set : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
+  (opt-licm-hot-use-vars-from
+    context
+    latch-id
+    (opt-licm-nested-loops loops header (compiler-opt-global-shared-view body))
+    body
+    gate?
+    blocks
+    set))
+
+;; `nested` is `opt-licm-nested-loops` of the loop whose body is `body`.
+(define (opt-licm-hot-use-vars-from
+  [context : OptCfgContext]
+  [latch-id : i64]
+  [nested : OptNaturalLoopList]
+  [body : OptLabelSet]
+  [gate? : bool]
+  [blocks : ir.CompilerIrBlockList]
+  [set : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
   (match (compiler-opt-global-shared-view blocks)
     [(ir.CompilerIrBlockList.Nil) set]
     [(ir.CompilerIrBlockList.Cons block rest)
       (match block
         [(ir.CompilerIrBlock.Block label instrs)
-          (opt-licm-hot-use-vars
+          (opt-licm-hot-use-vars-from
             (compiler-opt-global-shared-view context)
             latch-id
-            (compiler-opt-global-shared-view loops)
-            header
+            (compiler-opt-global-shared-view nested)
             (compiler-opt-global-shared-view body)
             gate?
             (compiler-opt-box-shared-view rest)
@@ -30880,10 +31014,8 @@
                 (opt-label-contains
                   (compiler-opt-global-shared-view body)
                   label))
-              (opt-licm-label-in-nested-loop?
-                (compiler-opt-global-shared-view loops)
-                header
-                (compiler-opt-global-shared-view body)
+              (opt-licm-label-in-loops?
+                (compiler-opt-global-shared-view nested)
                 label))
               (opt-collect-instr-seq-uses
                 (compiler-opt-global-shared-view set)
@@ -30899,11 +31031,10 @@
                   instrs)
                 set)))])]
     [(ir.CompilerIrBlockList.Array seq)
-      (opt-licm-hot-use-vars
+      (opt-licm-hot-use-vars-from
         (compiler-opt-global-shared-view context)
         latch-id
-        (compiler-opt-global-shared-view loops)
-        header
+        (compiler-opt-global-shared-view nested)
         (compiler-opt-global-shared-view body)
         gate?
         (ir.compiler-ir-block-seq-to-list seq)

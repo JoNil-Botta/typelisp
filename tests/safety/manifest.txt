@@ -778,3 +778,24 @@ decls_generated_wildcard_selected_conflict_reject|check-fail|tests/safety/decls_
 module_generated_selected_conflict_reject|check-fail|tests/safety/module_generated_selected_conflict_reject.tl|-|ambiguous unqualified import
 module_generated_wildcard_conflict_reject|check-fail|tests/safety/module_generated_wildcard_conflict_reject.tl|-|ambiguous unqualified import
 module_generated_wildcard_selected_conflict_reject|check-fail|tests/safety/module_generated_wildcard_selected_conflict_reject.tl|-|ambiguous unqualified import
+
+# Struct fields and enum variants past the former 1000-member registry stride
+# (#7921) resolve through their own declaration, never a later one's members:
+# each probe is the ordinary type error for its own i64 member, at widths
+# 1001-2500 with and without a later declaration. wide_aggregates.tl generates
+# the wide declarations; wide_struct_literal_decls.tl writes the issue's
+# reproducer out by hand. The well-typed twins run as the wide_struct_members,
+# wide_enum_variants and wide_struct_literal native rows.
+wide_struct_1001_next_reject|check-fail|tests/safety/wide_struct_1001_next_reject.tl|-|if condition must be bool: expected bool, found i64
+wide_struct_1002_next_reject|check-fail|tests/safety/wide_struct_1002_next_reject.tl|-|if condition must be bool: expected bool, found i64
+wide_struct_1002_alone_reject|check-fail|tests/safety/wide_struct_1002_alone_reject.tl|-|if condition must be bool: expected bool, found i64
+wide_struct_1003_next_reject|check-fail|tests/safety/wide_struct_1003_next_reject.tl|-|if condition must be bool: expected bool, found i64
+wide_struct_1003_alone_reject|check-fail|tests/safety/wide_struct_1003_alone_reject.tl|-|if condition must be bool: expected bool, found i64
+wide_struct_2500_next_reject|check-fail|tests/safety/wide_struct_2500_next_reject.tl|-|if condition must be bool: expected bool, found i64
+wide_struct_2500_next_span_reject|check-fail|tests/safety/wide_struct_2500_next_reject.tl|-|wide_struct_2500_next_reject.tl:20:3
+wide_struct_2500_alone_reject|check-fail|tests/safety/wide_struct_2500_alone_reject.tl|-|if condition must be bool: expected bool, found i64
+wide_struct_literal_reject|check-fail|tests/safety/wide_struct_literal_reject.tl|-|if condition must be bool: expected bool, found i64
+wide_enum_1003_next_constructor_reject|check-fail|tests/safety/wide_enum_1003_next_constructor_reject.tl|-|call `Big.V1001` argument 1 type mismatch: expected i64, found bool
+wide_enum_1003_next_match_reject|check-fail|tests/safety/wide_enum_1003_next_match_reject.tl|-|if condition must be bool: expected bool, found i64
+wide_enum_2500_alone_constructor_reject|check-fail|tests/safety/wide_enum_2500_alone_constructor_reject.tl|-|call `Big.V2499` argument 1 type mismatch: expected i64, found bool
+wide_aggregates_count_reject|check-fail|tests/safety/wide_aggregates_count_reject.tl|-|unbound name wide-aggregates-count-must-be-an-integer-literal

@@ -18,5 +18,7 @@ correctly before treating it as a measurement.
 
 The required gate that uses these fixtures, its metrics and its budget file
 are described under "Compiler scaling budgets" in
-[`../../perf/README.md`](../../perf/README.md). `fields` stays at or below 1,000
-fields there: members past index 1000 are affected by #7921.
+[`../../perf/README.md`](../../perf/README.md). Struct members past index 1000
+resolve through their own struct since #7921, and every `fields` size is within
+the member limit in SPEC.md §3.5.2. The compiler's intern pool is exhausted
+before that limit, though: `fields 999999` aborts in `check`.

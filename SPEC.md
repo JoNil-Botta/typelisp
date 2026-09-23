@@ -625,6 +625,15 @@ Examples:
 - Struct globals use ordinary global storage and support the same dotted
   projections as local and parameter roots.
 
+A struct declares at most 1,048,576 (2^20) fields and an enum at most
+1,048,576 variants. Up to that width every field and variant resolves through
+its own declaration. A declaration past it is rejected with `E0200` at its
+first member beyond the limit, with the message `symbols: struct NAME has more
+than 1048576 fields; a struct or enum declares at most 1048576 members` (`enum
+NAME has more than 1048576 variants` for an enum), and no member of it gets a
+handle. Other compile-time capacities, such as the intern pool, can be reached
+before this limit.
+
 #### 3.5.3 Default inline aggregate layout and `(:repr c)` compatibility
 
 Ordinary TypeLisp structs use a stable C-compatible inline field layout by

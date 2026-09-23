@@ -112,7 +112,7 @@ stage2-optimization-corpus-opt2-runtime-correctness	all	stage2 optimization corp
 stage2-stdlib-modules-and-fixtures	all	stage2 stdlib modules and fixtures	bootstrap-fixpoint
 stage2-stdlib-selfhost-verifier	all	stage2 stdlib selfhost verifier	bootstrap-fixpoint
 stage2-spmd-simd-comparison	all	stage2 SPMD SIMD comparison	bootstrap-fixpoint
-stage2-cross-mode-semantic-abi-differential	all	stage2 cross-mode semantic/ABI differential	bootstrap-fixpoint
+stage2-cross-mode-semantic-abi-differential	all	stage2 cross-mode semantic/ABI differential	bootstrap-fixpoint,stage2-compile-profile-verifier,stage2-windows-coff-batch-plan@windows,stage2-native-integration-corpus,stage2-spmd-simd-comparison
 stage2-spmd-lane-identity	all	stage2 SPMD lane identity	bootstrap-fixpoint
 stage2-spmd-broadcast	all	stage2 SPMD broadcast	bootstrap-fixpoint
 stage2-docs-pages-build-path	all	stage2 docs Pages build path	bootstrap-fixpoint

@@ -354,26 +354,28 @@ expect_failure unknown-binding ci_gate_ledger_validate_bindings "$ROOT/scripts/c
 # The needs column must follow the runner and the artifact inventory in both
 # directions. Each mutation changes one production fact and must be rejected.
 INVENTORY="$ROOT/scripts/ci-compiler-artifacts.tsv"
-ci_gate_ledger_validate_needs "$ROOT/scripts/ci-gates.tsv" "$ROOT/scripts/ci-verify.sh" "$INVENTORY" bootstrap-fixpoint
+REUSE_CONSUMER=stage2-cross-mode-semantic-abi-differential
+REUSE_MANIFEST="$ROOT/tests/cross-mode/corpus.tsv"
+ci_gate_ledger_validate_needs "$ROOT/scripts/ci-gates.tsv" "$ROOT/scripts/ci-verify.sh" "$INVENTORY" bootstrap-fixpoint "$REUSE_CONSUMER" "$REUSE_MANIFEST"
 tab=$(printf '\t')
 sed "s/^\\(stage2-safety-corpus${tab}.*${tab}\\)bootstrap-fixpoint\$/\\1-/" "$ROOT/scripts/ci-gates.tsv" > "$WORKDIR/needs-missing-compiler.tsv"
 cmp -s "$ROOT/scripts/ci-gates.tsv" "$WORKDIR/needs-missing-compiler.tsv" && fail 'compiler-need mutation did not apply'
-expect_failure needs-missing-compiler ci_gate_ledger_validate_needs "$WORKDIR/needs-missing-compiler.tsv" "$ROOT/scripts/ci-verify.sh" "$INVENTORY" bootstrap-fixpoint
+expect_failure needs-missing-compiler ci_gate_ledger_validate_needs "$WORKDIR/needs-missing-compiler.tsv" "$ROOT/scripts/ci-verify.sh" "$INVENTORY" bootstrap-fixpoint "$REUSE_CONSUMER" "$REUSE_MANIFEST"
 sed "s/^\\(stage2-deterministic-assembly${tab}.*${tab}\\)bootstrap-fixpoint,stage2-selfhost-compile-manifest\$/\\1bootstrap-fixpoint/" "$ROOT/scripts/ci-gates.tsv" > "$WORKDIR/needs-missing-artifact.tsv"
 cmp -s "$ROOT/scripts/ci-gates.tsv" "$WORKDIR/needs-missing-artifact.tsv" && fail 'artifact-need mutation did not apply'
-expect_failure needs-missing-artifact ci_gate_ledger_validate_needs "$WORKDIR/needs-missing-artifact.tsv" "$ROOT/scripts/ci-verify.sh" "$INVENTORY" bootstrap-fixpoint
+expect_failure needs-missing-artifact ci_gate_ledger_validate_needs "$WORKDIR/needs-missing-artifact.tsv" "$ROOT/scripts/ci-verify.sh" "$INVENTORY" bootstrap-fixpoint "$REUSE_CONSUMER" "$REUSE_MANIFEST"
 sed "s/^\\(stage2-safety-corpus${tab}.*${tab}\\)bootstrap-fixpoint\$/\\1bootstrap-fixpoint,embedded-stdlib-tlci-image/" "$ROOT/scripts/ci-gates.tsv" > "$WORKDIR/needs-unjustified.tsv"
 cmp -s "$ROOT/scripts/ci-gates.tsv" "$WORKDIR/needs-unjustified.tsv" && fail 'unjustified-need mutation did not apply'
-expect_failure needs-unjustified ci_gate_ledger_validate_needs "$WORKDIR/needs-unjustified.tsv" "$ROOT/scripts/ci-verify.sh" "$INVENTORY" bootstrap-fixpoint
+expect_failure needs-unjustified ci_gate_ledger_validate_needs "$WORKDIR/needs-unjustified.tsv" "$ROOT/scripts/ci-verify.sh" "$INVENTORY" bootstrap-fixpoint "$REUSE_CONSUMER" "$REUSE_MANIFEST"
 # A gate whose binding names no produced compiler does not need the bootstrap;
 # scheduling it behind one would hide that it is independent.
 sed "s/^\\(integration-manifest-validator-self-tests${tab}.*${tab}\\)-\$/\\1bootstrap-fixpoint/" "$ROOT/scripts/ci-gates.tsv" > "$WORKDIR/needs-compiler-unnamed.tsv"
 cmp -s "$ROOT/scripts/ci-gates.tsv" "$WORKDIR/needs-compiler-unnamed.tsv" && fail 'unnamed-compiler mutation did not apply'
-expect_failure needs-compiler-unnamed ci_gate_ledger_validate_needs "$WORKDIR/needs-compiler-unnamed.tsv" "$ROOT/scripts/ci-verify.sh" "$INVENTORY" bootstrap-fixpoint
+expect_failure needs-compiler-unnamed ci_gate_ledger_validate_needs "$WORKDIR/needs-compiler-unnamed.tsv" "$ROOT/scripts/ci-verify.sh" "$INVENTORY" bootstrap-fixpoint "$REUSE_CONSUMER" "$REUSE_MANIFEST"
 # Dropping a compiler from a binding without dropping the need is drift too.
 sed 's|^run_with_compiler "$STAGE2_BIN" benchmark-wall-clock-harness-self-tests |run_gate benchmark-wall-clock-harness-self-tests |' "$ROOT/scripts/ci-verify.sh" > "$WORKDIR/unnamed-compiler.sh"
 cmp -s "$ROOT/scripts/ci-verify.sh" "$WORKDIR/unnamed-compiler.sh" && fail 'unnamed-compiler binding mutation did not apply'
-expect_failure unnamed-compiler-binding ci_gate_ledger_validate_needs "$ROOT/scripts/ci-gates.tsv" "$WORKDIR/unnamed-compiler.sh" "$INVENTORY" bootstrap-fixpoint
+expect_failure unnamed-compiler-binding ci_gate_ledger_validate_needs "$ROOT/scripts/ci-gates.tsv" "$WORKDIR/unnamed-compiler.sh" "$INVENTORY" bootstrap-fixpoint "$REUSE_CONSUMER" "$REUSE_MANIFEST"
 # A host-qualified edge must not be widened away: the Windows opt2 gate does not
 # consume the Linux-only build-invariance reference.
 sed 's/stage2-opt1-opt2-build-invariance@linux$/stage2-opt1-opt2-build-invariance/' "$ROOT/scripts/ci-gates.tsv" > "$WORKDIR/needs-widened-host.tsv"
@@ -381,13 +383,55 @@ cmp -s "$ROOT/scripts/ci-gates.tsv" "$WORKDIR/needs-widened-host.tsv" && fail 'h
 expect_failure needs-widened-host ci_gate_ledger_load "$WORKDIR/needs-widened-host.tsv" windows
 # The inventory gaining a consumer the ledger does not know about is drift too.
 awk -F '\t' 'BEGIN {OFS=FS} {print} $2 == "manifest-deterministic-consumer" {$2="drifted-consumer"; $3="stage2 safety corpus"; print}' "$INVENTORY" > "$WORKDIR/inventory-new-consumer.tsv"
-expect_failure inventory-new-consumer ci_gate_ledger_validate_needs "$ROOT/scripts/ci-gates.tsv" "$ROOT/scripts/ci-verify.sh" "$WORKDIR/inventory-new-consumer.tsv" bootstrap-fixpoint
+expect_failure inventory-new-consumer ci_gate_ledger_validate_needs "$ROOT/scripts/ci-gates.tsv" "$ROOT/scripts/ci-verify.sh" "$WORKDIR/inventory-new-consumer.tsv" bootstrap-fixpoint "$REUSE_CONSUMER" "$REUSE_MANIFEST"
 # A harness gate that starts naming the produced compiler has moved behind it.
 sed 's|^run_gate ci-timing-helper-self-tests scripts/verify-ci-timing.sh$|run_gate ci-timing-helper-self-tests scripts/verify-ci-timing.sh "$STAGE2_BIN"|' "$ROOT/scripts/ci-verify.sh" > "$WORKDIR/early-compiler.sh"
 cmp -s "$ROOT/scripts/ci-verify.sh" "$WORKDIR/early-compiler.sh" && fail 'early-compiler mutation did not apply'
-expect_failure early-compiler ci_gate_ledger_validate_needs "$ROOT/scripts/ci-gates.tsv" "$WORKDIR/early-compiler.sh" "$INVENTORY" bootstrap-fixpoint
-expect_failure unknown-compiler-gate ci_gate_ledger_validate_needs "$ROOT/scripts/ci-gates.tsv" "$ROOT/scripts/ci-verify.sh" "$INVENTORY" absent-gate
-expect_failure missing-inventory ci_gate_ledger_validate_needs "$ROOT/scripts/ci-gates.tsv" "$ROOT/scripts/ci-verify.sh" "$WORKDIR/absent-inventory.tsv" bootstrap-fixpoint
+expect_failure early-compiler ci_gate_ledger_validate_needs "$ROOT/scripts/ci-gates.tsv" "$WORKDIR/early-compiler.sh" "$INVENTORY" bootstrap-fixpoint "$REUSE_CONSUMER" "$REUSE_MANIFEST"
+expect_failure unknown-compiler-gate ci_gate_ledger_validate_needs "$ROOT/scripts/ci-gates.tsv" "$ROOT/scripts/ci-verify.sh" "$INVENTORY" absent-gate "$REUSE_CONSUMER" "$REUSE_MANIFEST"
+expect_failure missing-inventory ci_gate_ledger_validate_needs "$ROOT/scripts/ci-gates.tsv" "$ROOT/scripts/ci-verify.sh" "$WORKDIR/absent-inventory.tsv" bootstrap-fixpoint "$REUSE_CONSUMER" "$REUSE_MANIFEST"
+# The cross-mode differential reuses artifacts that other gates leave behind;
+# its corpus names each producer gate, and the ledger must follow it exactly.
+expect_failure missing-reuse-manifest ci_gate_ledger_validate_needs "$ROOT/scripts/ci-gates.tsv" "$ROOT/scripts/ci-verify.sh" "$INVENTORY" bootstrap-fixpoint "$REUSE_CONSUMER" "$WORKDIR/absent-reuse.tsv"
+expect_failure unknown-reuse-consumer ci_gate_ledger_validate_needs "$ROOT/scripts/ci-gates.tsv" "$ROOT/scripts/ci-verify.sh" "$INVENTORY" bootstrap-fixpoint absent-gate "$REUSE_MANIFEST"
+reuse_mutation() {
+    reuse_name=$1
+    reuse_catalog=$2
+    reuse_manifest=$3
+    expect_failure "$reuse_name" ci_gate_ledger_validate_needs "$reuse_catalog" "$ROOT/scripts/ci-verify.sh" "$INVENTORY" bootstrap-fixpoint "$REUSE_CONSUMER" "$reuse_manifest"
+}
+mutate_reuse_needs() {
+    awk -F '\t' -v from="$1" -v to="$2" 'BEGIN {OFS=FS} $1 == "stage2-cross-mode-semantic-abi-differential" {changed=sub(from, to, $4)} {print} END {if (!changed) exit 1}' \
+        "$ROOT/scripts/ci-gates.tsv" > "$WORKDIR/$3.tsv" || fail "reuse needs mutation did not apply: $3"
+}
+mutate_reuse_row() {
+    awk -F '\t' -v case_name="$1" -v field="$2" -v value="$3" 'BEGIN {OFS=FS} $1 == case_name {$field=value; changed=1} {print} END {if (!changed) exit 1}' \
+        "${5:-$REUSE_MANIFEST}" > "$WORKDIR/$4.tsv" || fail "reuse row mutation did not apply: $4"
+}
+mutate_reuse_needs ',stage2-spmd-simd-comparison$' '' reuse-missing-need
+reuse_mutation reuse-missing-need "$WORKDIR/reuse-missing-need.tsv" "$REUSE_MANIFEST"
+mutate_reuse_needs 'stage2-windows-coff-batch-plan@windows' 'stage2-windows-coff-batch-plan' reuse-widened-need
+reuse_mutation reuse-widened-need "$WORKDIR/reuse-widened-need.tsv" "$REUSE_MANIFEST"
+mutate_reuse_needs 'stage2-windows-coff-batch-plan@windows' 'stage2-windows-coff-batch-plan@linux' reuse-wrong-host-need
+reuse_mutation reuse-wrong-host-need "$WORKDIR/reuse-wrong-host-need.tsv" "$REUSE_MANIFEST"
+mutate_reuse_needs 'stage2-native-integration-corpus,' 'stage2-native-integration-corpus,stage2-examples,' reuse-unjustified-need
+reuse_mutation reuse-unjustified-need "$WORKDIR/reuse-unjustified-need.tsv" "$REUSE_MANIFEST"
+mutate_reuse_row spmd-tail-avx2 10 stage2-examples reuse-unneeded-producer
+reuse_mutation reuse-unneeded-producer "$ROOT/scripts/ci-gates.tsv" "$WORKDIR/reuse-unneeded-producer.tsv"
+mutate_reuse_row spmd-tail-avx2 10 absent-gate reuse-unknown-producer
+reuse_mutation reuse-unknown-producer "$ROOT/scripts/ci-gates.tsv" "$WORKDIR/reuse-unknown-producer.tsv"
+mutate_reuse_row spmd-tail-avx2 10 stage2-spmd-lane-identity reuse-later-producer
+reuse_mutation reuse-later-producer "$ROOT/scripts/ci-gates.tsv" "$WORKDIR/reuse-later-producer.tsv"
+mutate_reuse_row windows-direct-object 3 linux reuse-row-host-mismatch
+reuse_mutation reuse-row-host-mismatch "$ROOT/scripts/ci-gates.tsv" "$WORKDIR/reuse-row-host-mismatch.tsv"
+# A Windows-only producer cannot serve a Linux row.
+mutate_reuse_row windows-direct-object 10 windows-integration-linker-queue-self-test reuse-producer-host-step
+mutate_reuse_row windows-direct-object 3 linux reuse-producer-host "$WORKDIR/reuse-producer-host-step.tsv"
+reuse_mutation reuse-producer-host "$ROOT/scripts/ci-gates.tsv" "$WORKDIR/reuse-producer-host.tsv"
+grep -F 'reuse manifest producer does not run on linux: windows-integration-linker-queue-self-test' \
+    "$WORKDIR/reuse-producer-host.err" >/dev/null || fail 'producer host coverage is not diagnosed'
+mutate_reuse_row spmd-tail-avx2 3 macos reuse-invalid-hosts
+reuse_mutation reuse-invalid-hosts "$ROOT/scripts/ci-gates.tsv" "$WORKDIR/reuse-invalid-hosts.tsv"
 # Execute the real runner on a selection in a fixture checkout whose only gate
 # commands are stubs for the two selected gates, one before and one after the
 # bootstrap position. Every other binding and all setup those two gates do not

@@ -131,12 +131,15 @@ construction. The column is not an independent opinion:
 inventory validation) requires a gate after `bootstrap-fixpoint` to need it
 exactly when one of its bindings names a produced compiler (`$STAGE1_BIN`,
 `$STAGE2_BIN` or `$COMPILE_PROFILE_BIN`); forbids needs and produced-compiler
-arguments before it; and requires the remaining edges to match the consume
-records of `ci-compiler-artifacts.tsv` exactly, in both directions and per host.
+arguments before it; and requires the remaining edges to match exactly, in both
+directions and per host, the consume records of `ci-compiler-artifacts.tsv` and
+the producer rows of `tests/cross-mode/corpus.tsv` for the cross-mode
+differential, which reuses artifacts its producer gates leave in `target/`.
 That first rule holds because a gate's environment does not depend on earlier
 gates: `run_with_compiler` passes its compiler to that one gate as
-`TYPELISP_BIN`, and `run_gate` passes the entry environment. A gate that uses a
-compiler must name it. A dependency that is not an artifact handoff (a
+`TYPELISP_BIN`, and `run_gate` gives its gate a `TYPELISP_BIN` under
+`target/ci-verify-unproduced/` that cannot exist, so a gate that uses a
+compiler without naming one fails instead of resolving the fetched seed. A dependency that is not an artifact handoff (a
 directory one gate leaves for another, an exported variable) must first become
 an inventory record. `--gates` executes the column in one checkout; running
 gates in separate jobs and the mandatory shard aggregate remain #7766.
@@ -168,7 +171,9 @@ through a probe child on both host branches before any compiler work.
 `tests/cross-mode/corpus.tsv` after its producer gates have run. It reuses the
 integration, TLCI, SPMD, Windows COFF, and same-run bootstrap artifacts instead
 of rebuilding their exhaustive corpora. Every manifest row records its axes,
-observations, route metadata, producer, and host/ISA applicability; the gate
+observations, route metadata, producer gate (the ledger ID it reuses, which the
+ledger requires this gate to need on the row's hosts), and host/ISA
+applicability; the gate
 writes the evaluated state to
 `target/cross-mode-differential/applicability.tsv`. Use `--case NAME` to
 reproduce the first reported difference with retained producer artifacts, or

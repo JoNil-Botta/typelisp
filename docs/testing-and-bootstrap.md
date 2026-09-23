@@ -102,9 +102,12 @@ or artifact digest—rather than requiring unrelated machine code to be
 byte-identical.
 
 The corpus deliberately reuses binaries and observations left by integration,
-TLCI, SPMD, and Windows COFF gates. Its only fresh compiles are one compact
-fixture with the previous and successor compiler binaries already built by the
-same bootstrap. Host and ISA exclusions are written to
+TLCI, SPMD, and Windows COFF gates. Each row names its producer's ledger gate
+ID, and the gate ledger requires the cross-mode gate to need exactly those
+gates on the rows' hosts, so `scripts/ci-verify.sh --gates
+stage2-cross-mode-semantic-abi-differential` runs them first. Its only fresh
+compiles are one compact fixture with the previous and successor compiler
+binaries already built by the same bootstrap. Host and ISA exclusions are written to
 `target/cross-mode-differential/applicability.tsv`; an absent prerequisite for
 an active row is a failure, never a silent skip. Run a retained failing row
 with:

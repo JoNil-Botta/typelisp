@@ -327,7 +327,10 @@ ci_gate_ledger_validate_bindings() (
 #      No earlier gate needs anything, and no earlier binding names one.
 #   2. A gate needs another gate's artifact exactly when the inventory has a
 #      consume record whose reuse group is produced by that other gate, on the
-#      hosts of that record.
+#      hosts of that record, or when the reuse manifest of that consuming gate
+#      (the cross-mode corpus: one row per reused observation, with `hosts` and
+#      a `producer` gate ID) has a row naming that other gate, on exactly the
+#      hosts of its rows.
 #   3. Only the closing gate needs every gate.
 # Run in a subshell so validation cannot reset an active execution plan.
 ci_gate_ledger_validate_needs() (
@@ -335,10 +338,13 @@ ci_gate_ledger_validate_needs() (
     _ci_needs_source=$2
     _ci_needs_inventory=$3
     _ci_needs_compiler_gate=$4
+    _ci_needs_reuse_consumer=$5
+    _ci_needs_reuse_manifest=$6
     ci_gate_ledger_load "$_ci_needs_catalog" linux || exit 1
     [ -s "$_ci_needs_source" ] || { ci_gate_ledger_error "missing execution source: $_ci_needs_source"; exit 1; }
     [ -s "$_ci_needs_inventory" ] || { ci_gate_ledger_error "missing artifact inventory: $_ci_needs_inventory"; exit 1; }
-    awk -F '\t' -v compiler_gate="$_ci_needs_compiler_gate" '
+    [ -s "$_ci_needs_reuse_manifest" ] || { ci_gate_ledger_error "missing reuse manifest: $_ci_needs_reuse_manifest"; exit 1; }
+    awk -F '\t' -v compiler_gate="$_ci_needs_compiler_gate" -v reuse_consumer="$_ci_needs_reuse_consumer" '
         function fail(message) {
             print "CI gate ledger: " message > "/dev/stderr"
             invalid=1
@@ -356,6 +362,7 @@ ci_gate_ledger_validate_needs() (
             if (FNR <= 5) next
             order[$1]=++gates
             id_of[$3]=$1
+            gate_hosts[$1]=$2
             needs_of[$1]=$4
             if ($4 == "-" || $4 == "*") next
             count=split($4, list, ",")
@@ -380,10 +387,21 @@ ci_gate_ledger_validate_needs() (
             if (line ~ /\$\{?(STAGE1_BIN|STAGE2_BIN|COMPILE_PROFILE_BIN)/) uses_compiler[id]=1
             next
         }
-        {
+        FILENAME == ARGV[3] {
             if (FNR <= 2) next
             if ($5 == "produce") { if ($13 != "none") producer_label[$13]=$3; next }
             if ($5 == "consume") { consumers++; consume_label[consumers]=$3; consume_host[consumers]=$4; consume_group[consumers]=$13 }
+            next
+        }
+        FNR == 1 {
+            for (f=1; f<=NF; f++) { if ($f == "hosts") hosts_field=f; if ($f == "producer") producer_field=f }
+            if (!hosts_field || !producer_field) fail("reuse manifest lacks hosts/producer columns")
+            next
+        }
+        hosts_field && producer_field {
+            reuse_rows++
+            reuse_producer[reuse_rows]=$producer_field
+            reuse_hosts[reuse_rows]=$hosts_field
         }
         END {
             if (!(compiler_gate in order)) fail("unknown converged-compiler gate: " compiler_gate)
@@ -409,12 +427,39 @@ ci_gate_ledger_validate_needs() (
                     fail("artifact consumer does not need its producer: " consumer " needs " producer " (" consume_host[c] ")")
                 justified[consumer SUBSEP producer]=1
             }
+            if (!(reuse_consumer in order)) fail("unknown reuse-manifest consumer gate: " reuse_consumer)
+            if (!reuse_rows) fail("reuse manifest has no rows")
+            for (r=1; r<=reuse_rows; r++) {
+                producer=reuse_producer[r]
+                hosts=reuse_hosts[r]
+                if (hosts != "all" && hosts != "linux" && hosts != "windows") { fail("invalid reuse manifest hosts: " hosts); continue }
+                if (!(producer in order)) { fail("reuse manifest producer is not a ledger gate: " producer); continue }
+                if (order[producer] >= order[reuse_consumer]) { fail("reuse manifest producer does not run before " reuse_consumer ": " producer); continue }
+                if (gate_hosts[producer] != "all" && gate_hosts[producer] != hosts)
+                    fail("reuse manifest producer does not run on " hosts ": " producer)
+                if (!has_need(reuse_consumer, producer, hosts))
+                    fail("reuse consumer does not need its producer: " reuse_consumer " needs " producer " (" hosts ")")
+                reuse_covers[producer SUBSEP hosts]=1
+                if (hosts != "windows") reuse_covers[producer SUBSEP "linux"]=1
+                if (hosts != "linux") reuse_covers[producer SUBSEP "windows"]=1
+                if (!((reuse_consumer SUBSEP producer) in justified)) reuse_only[producer]=1
+            }
+            for (producer in reuse_only) {
+                justified[reuse_consumer SUBSEP producer]=1
+                # A manifest edge is exactly as wide as the rows that need it.
+                if (has_need(reuse_consumer, producer, "all") &&
+                    !(reuse_covers[producer SUBSEP "linux"] && reuse_covers[producer SUBSEP "windows"]))
+                    fail("need is wider than its reuse manifest rows: " reuse_consumer " needs " producer)
+            }
             for (key in artifact_need) {
                 split(key, parts, SUBSEP)
                 if (!((parts[1] SUBSEP parts[2]) in justified))
-                    fail("need has no artifact inventory record: " parts[1] " needs " parts[2])
+                    fail("need has no artifact inventory or reuse manifest record: " parts[1] " needs " parts[2])
+                if (parts[1] == reuse_consumer && (parts[2] in reuse_only) && parts[3] != "" &&
+                    !reuse_covers[parts[2] SUBSEP parts[3]])
+                    fail("need has no reuse manifest row on " parts[3] ": " parts[1] " needs " parts[2])
             }
             if (invalid) exit 1
         }
-    ' "$_ci_needs_catalog" "$_ci_needs_source" "$_ci_needs_inventory"
+    ' "$_ci_needs_catalog" "$_ci_needs_source" "$_ci_needs_inventory" "$_ci_needs_reuse_manifest"
 )

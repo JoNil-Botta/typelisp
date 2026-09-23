@@ -3864,18 +3864,18 @@
           "    call tl_cabi_wide_arg_score\n")
         (compiler-backend-register-indirect-call?
           (owned_view.compiler-owned-shared-view asm))
-        ;; With inline-by-value aggregates, a WideArg construction
-        ;; no longer heap-allocates -- the value is built in inline storage. So
-        ;; the two by-value call sites need exactly the two 16-byte byref buffers
-        ;; the Win64 ABI requires (down from four, when each construction also
-        ;; allocated). The 16-byte buffer size is asserted just below.
-        (>=
+        ;; A WideArg construction is built in inline storage, and the
+        ;; by-reference copy the Win64 ABI requires at each of the two call
+        ;; sites is a frame temporary (#7885), so nothing here allocates: no
+        ;; allocator call and no inline 16-byte arena bump.
+        (=
           (compiler-backend-alloc-call-count
             (owned_view.compiler-owned-shared-view asm))
-          2)
-        (compiler-backend-string-contains-alloc-size?
-          (owned_view.compiler-owned-shared-view asm)
-          16)
+          0)
+        (not
+          (compiler-backend-string-contains-alloc-size?
+            (owned_view.compiler-owned-shared-view asm)
+            16))
         (not
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
@@ -3972,9 +3972,14 @@
             "    call tl_win64_return_choice_make\n")
           (compiler-backend-register-indirect-call?
             (owned_view.compiler-owned-shared-view asm))
-          (compiler-backend-string-contains-alloc-size?
-            (owned_view.compiler-owned-shared-view asm)
-            16)
+          ;; The by-reference `SmallChoice` (16 bytes) and `WideChoice` (24
+          ;; bytes) arguments are frame temporaries (#7885). The only
+          ;; allocations left are the two 24-byte hidden-sret buffers for the
+          ;; `ReturnChoice` results (#7990).
+          (not
+            (compiler-backend-string-contains-alloc-size?
+              (owned_view.compiler-owned-shared-view asm)
+              16))
           (compiler-backend-string-contains-alloc-size?
             (owned_view.compiler-owned-shared-view asm)
             24)
@@ -3986,7 +3991,10 @@
             (compiler_backend.compiler-backend-string-contains?
               (owned_view.compiler-owned-shared-view asm)
               (compiler-backend-todo-marker)))
-          true)
+          (=
+            (compiler-backend-alloc-call-count
+              (owned_view.compiler-owned-shared-view asm))
+            2))
         true)]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 

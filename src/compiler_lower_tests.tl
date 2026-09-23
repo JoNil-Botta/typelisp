@@ -6016,6 +6016,94 @@
         [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
           (lower-test-blocks-addr-of-count blocks)])]))
 
+(define (lower-test-values-distinct-vars
+  [a : compiler_ir_types.CompilerIrValue]
+  [b : compiler_ir_types.CompilerIrValue]) : i64
+  (match a
+    [(compiler_ir_types.CompilerIrValue.Var a-id)
+      (match b
+        [(compiler_ir_types.CompilerIrValue.Var b-id)
+          (if (= a-id b-id)
+            0
+            1)]
+        [_ 0])]
+    [_ 0]))
+
+(define (lower-test-call-args-array-distinct-vars
+  [values : (__tl_dyn-array compiler_ir_types.CompilerIrValue)]) : i64
+  (if (< (array-length values) 2)
+    0
+    (lower-test-values-distinct-vars
+      (compiler_ir_types.compiler-ir-array-shared-view values 0)
+      (compiler_ir_types.compiler-ir-array-shared-view values 1))))
+
+;; 1 when the call's first two arguments are two different variables.
+(define (lower-test-call-args-distinct-vars
+  [args : compiler_ir_types.CompilerIrCallArgs]) : i64
+  (match args
+    [(compiler_ir_types.CompilerIrCallArgs.Two a b)
+      (lower-test-values-distinct-vars a b)]
+    [(compiler_ir_types.CompilerIrCallArgs.Array values)
+      (lower-test-call-args-array-distinct-vars values)]
+    [(compiler_ir_types.CompilerIrCallArgs.Sret values _)
+      (lower-test-call-args-array-distinct-vars values)]
+    [_ 0]))
+
+(define (lower-test-instr-seq-distinct-arg-call-count
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [call-name : String]) : i64
+  (let
+    [count : i64 instrs.len]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (match (compiler_ir_types.compiler-ir-array-shared-view slots index)
+            [(compiler_ir_types.CompilerIrInstr.Call _ found args _)
+              (when
+                (string.eq
+                  (compiler_ir_types.compiler-ir-symbol-text found)
+                  call-name)
+                (set! acc (+ acc (lower-test-call-args-distinct-vars args))))]
+            [_ unit])
+          (set! index (+ index 1))))
+      acc)))
+
+(define (lower-test-blocks-distinct-arg-call-count
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [call-name : String]) : i64
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil) 0]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (+
+            (lower-test-instr-seq-distinct-arg-call-count
+              instrs
+              (owned_view.compiler-owned-shared-view call-name))
+            (lower-test-blocks-distinct-arg-call-count
+              (compiler_ir_types.compiler-ir-box-shared-view rest)
+              call-name))])]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (lower-test-blocks-distinct-arg-call-count
+        (compiler_ir_types.compiler-ir-block-seq-to-list seq)
+        call-name)]))
+
+;; How many `call-name` calls in `name` pass two different variables as their
+;; first two arguments.
+(define (lower-test-function-distinct-arg-call-count
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
+  [name : String]
+  [call-name : String]) : i64
+  (match (lower-test-function-seq-find funcs name)
+    [(LowerTestMaybeFunction.No) (- 0 1)]
+    [(LowerTestMaybeFunction.Some func)
+      (match func
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
+          (lower-test-blocks-distinct-arg-call-count blocks call-name)])]))
+
 (define (lower-test-function-vector-load-count
   [funcs : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]) : i64
@@ -7283,14 +7371,78 @@
             ;; `Big` is a 16-byte all-integer struct, register-resident,
             ;; so building `(Big 1 2)` does not heap-allocate -- the value is
             ;; constructed in a register pair. The Win64 C ABI still requires the
-            ;; >8 B aggregate to be passed BY REFERENCE, so exactly one tl_alloc
-            ;; remains: the byref buffer the register pair is spilled into before
-            ;; the call (down from two when construction also allocated).
-            (>=
+            ;; >8 B aggregate to be passed BY REFERENCE: the register pair is
+            ;; spilled into a frame temporary (two 8-byte slots and their
+            ;; address), not an arena buffer, so nothing calls tl_alloc (#7885).
+            (=
               (lower-test-function-call-count
                 (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "main"
                 "tl_alloc")
+              0)
+            (>=
+              (lower-test-function-alloc-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main")
+              2)
+            (>=
+              (lower-test-function-addr-of-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main")
+              1))])]
+    [(compiler_lower.ResultCompilerLower.Err _) false]))
+
+(define (compiler-lower-c-abi-windows-byref-aggregate-temps-source) : String
+  "(defstruct Big (lo i64) (hi i64))
+(defstruct Wide (a i64) (b i64) (c i64))
+(extern (big-pair-use [arg0 : Big] [arg1 : Big]) : i64 (:symbol \"tl_cabi_big_pair_use\"))
+(extern (wide-pair-use [arg0 : Wide] [arg1 : Wide]) : i64 (:symbol \"tl_cabi_wide_pair_use\"))
+(extern (made-pair-use [arg0 : Big] [arg1 : Big]) : i64 (:symbol \"tl_cabi_made_pair_use\"))
+(extern (big-make [seed : i64]) : Big (:symbol \"tl_cabi_big_make\"))
+(define (main) : i64
+  (let
+    [big : Big (Big 1 2)]
+    [wide : Wide (Wide 3 4 5)]
+    (+
+      (big-pair-use big big)
+      (+ (wide-pair-use wide wide) (made-pair-use (big-make 7) (big-make 8))))))")
+
+;; Every Win64 by-reference argument gets its own frame temporary: the callee
+;; may write through either pointer, so two arguments built from the same value,
+;; register-resident or memory-class, and call results passed straight on,
+;; never share one copy. None of the six copies allocates (#7885); the two
+;; allocations left are the hidden-sret result buffers of `big-make` (#7990).
+(define (compiler-lower-c-abi-windows-byref-aggregate-temps-shape-ok?) : bool
+  (match (compiler_lower.lower-compiler-source-with-mode
+    (compiler-lower-c-abi-windows-byref-aggregate-temps-source)
+    (compiler_lower.CompilerLowerMode.WindowsScalar))
+    [(compiler_lower.ResultCompilerLower.Ok program _)
+      (match program
+        [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
+          (and
+            (=
+              (lower-test-function-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main"
+                "tl_alloc")
+              2)
+            (=
+              (lower-test-function-distinct-arg-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main"
+                "big-pair-use")
+              1)
+            (=
+              (lower-test-function-distinct-arg-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main"
+                "wide-pair-use")
+              1)
+            (=
+              (lower-test-function-distinct-arg-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main"
+                "made-pair-use")
               1))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
@@ -7659,12 +7811,15 @@
                 (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "main")
               4)
-            (>=
+            ;; The two by-reference `WideChoice` arguments are copied into
+            ;; frame temporaries (#7885). The two allocations left are the
+            ;; hidden-sret result buffers of the `ReturnChoice` calls (#7990).
+            (=
               (lower-test-function-call-count
                 (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "main"
                 "tl_alloc")
-              3))])]
+              2))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-global-source) : String

@@ -20,6 +20,7 @@ src/compiler_lower.tl	lower-simd-lanes-for-elem	backend-mode	CompilerLowerMode[.
 src/compiler_lower_tests.tl	compiler-lower-c-abi-linux-payload-enum-shape-ok?	test-only	CompilerLowerMode.LinuxScalar	1	Inline lowerer test asserts Linux C ABI payload enum aggregate shape.
 src/compiler_lower_tests.tl	compiler-lower-c-abi-linux-tag-only-enum-shape-ok?	test-only	CompilerLowerMode.LinuxScalar	1	Inline lowerer test asserts Linux C ABI enum aggregate shape.
 src/compiler_lower_tests.tl	compiler-lower-c-abi-windows-byref-aggregate-shape-ok?	test-only	CompilerLowerMode.WindowsScalar	1	Inline lowerer test asserts Win64 by-reference aggregate shape.
+src/compiler_lower_tests.tl	compiler-lower-c-abi-windows-byref-aggregate-temps-shape-ok?	test-only	CompilerLowerMode.WindowsScalar	1	Inline lowerer test asserts distinct Win64 by-reference argument temporaries.
 src/compiler_lower_tests.tl	compiler-lower-c-abi-windows-enum-aggregate-shape-ok?	test-only	CompilerLowerMode.WindowsScalar	1	Inline lowerer test asserts Win64 enum aggregate shape.
 src/compiler_lower_tests.tl	compiler-lower-c-abi-windows-nested-small-aggregate-shape-ok?	test-only	CompilerLowerMode.WindowsScalar	1	Inline lowerer test asserts Win64 nested scalar aggregate shape.
 src/compiler_lower_tests.tl	compiler-lower-c-abi-windows-small-float-aggregate-shape-ok?	test-only	CompilerLowerMode.WindowsScalar	1	Inline lowerer test asserts Win64 small float aggregate shape.

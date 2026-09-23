@@ -20577,12 +20577,29 @@
     [(ResultLowerSize.Err message)
       (ResultLowerExpr.Err (box (lower-diagnostic message)))]))
 
-(define (lower-copy-inline-aggregate-to-heap-as
+;; The frame copy with its address typed as `storage-ty`. The Win64 C-ABI
+;; by-reference argument passes that address as a plain `u64`, so direct
+;; extern-call register assignment never reclassifies the pointer as a
+;; multi-word register group. The callee may write through it; the frame slot
+;; is private to this call site and covers the call (#7885).
+(define (lower-copy-inline-aggregate-to-inline-as
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [value : ir.CompilerIrValue]
   [ty : ast.AstType]
   [storage-ty : ast.AstType]) : ResultLowerExpr
+  (match (lower-copy-inline-aggregate-to-inline ctx state value ty)
+    [(ResultLowerExpr.Ok copied)
+      (match copied
+        [(LowerExpr.Expr copy-state copy-value _)
+          (ResultLowerExpr.Ok (LowerExpr.Expr copy-state copy-value storage-ty))])]
+    [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
+
+(define (lower-copy-inline-aggregate-to-heap
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [value : ir.CompilerIrValue]
+  [ty : ast.AstType]) : ResultLowerExpr
   (match (lower-inline-aggregate-copy-size
     (lower-global-shared-view ctx)
     (lower-global-shared-view ty))
@@ -20590,13 +20607,12 @@
       (match (lower-reserve-heap-storage
         state
         size
-        (lower-global-shared-view storage-ty))
+        (lower-global-shared-view ty))
         [(LowerExpr.Expr copy-state copy-value _)
           (ResultLowerExpr.Ok
             (LowerExpr.Expr
-              ;; Group-aware store here too -- the Win64 C-ABI byref
-              ;; path spills register-resident aggregates through this copy,
-              ;; and a 2-word group must write BOTH words.
+              ;; Group-aware store: a 2-word register group must write BOTH
+              ;; words.
               (if (lower-type-register-resident?
                 (lower-global-shared-view ctx)
                 (lower-global-shared-view ty))
@@ -20606,7 +20622,7 @@
                   (lower-global-shared-view copy-value)
                   0
                   value
-                  ty
+                  (lower-global-shared-view ty)
                   size)
                 (lower-copy-bytes-compact
                   copy-state
@@ -20616,21 +20632,9 @@
                   0
                   size))
               copy-value
-              storage-ty))])]
+              ty))])]
     [(ResultLowerSize.Err message)
       (ResultLowerExpr.Err (box (lower-diagnostic message)))]))
-
-(define (lower-copy-inline-aggregate-to-heap
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [value : ir.CompilerIrValue]
-  [ty : ast.AstType]) : ResultLowerExpr
-  (lower-copy-inline-aggregate-to-heap-as
-    ctx
-    state
-    value
-    (lower-global-shared-view ty)
-    ty))
 
 (define (lower-inline-aggregate-abi-copy-needed?
   [ctx : tc_core.TcContext]
@@ -39404,11 +39408,11 @@
                       [(ResultLowerArgs.Err message)
                         (ResultLowerArgs.Err message)])]
                   [(LowerCAbiAggregate.ByRef _)
-                    ;; The ABI argument is the address of the copied object,
-                    ;; not the aggregate itself. Type the value as u64 so
-                    ;; direct extern-call register assignment does not
-                    ;; reclassify this pointer as a multi-word group.
-                    (match (lower-copy-inline-aggregate-to-heap-as
+                    ;; The ABI argument is the address of a caller-owned copy,
+                    ;; not the aggregate itself. The copy lives in this
+                    ;; function's frame, not the arena, so a call in a loop
+                    ;; allocates nothing (#7885).
+                    (match (lower-copy-inline-aggregate-to-inline-as
                       (lower-global-shared-view ctx)
                       arg-state
                       value

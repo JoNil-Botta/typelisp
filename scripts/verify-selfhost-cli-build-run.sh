@@ -175,37 +175,7 @@ assert_occurrences() {
     fi
 }
 
-wait_for_package_lock_stage() {
-    _wait_root=$1
-    _wait_pid=$2
-    _wait_label=$3
-    _wait_attempt=0
-    while [ "$_wait_attempt" -lt 600 ]; do
-        _wait_stage=$(find "$_wait_root" -maxdepth 1 -type f -name 'typelisp.lock.stage.*' -print -quit)
-        [ -z "$_wait_stage" ] || return 0
-        kill -0 "$_wait_pid" 2>/dev/null || fail "$_wait_label exited before publishing its staging file"
-        sleep 0.1
-        _wait_attempt=$((_wait_attempt + 1))
-    done
-    fail "$_wait_label did not publish a staging file within 60s"
-}
-
-wait_for_package_lock_text() {
-    _wait_path=$1
-    _wait_text=$2
-    _wait_pid=$3
-    _wait_label=$4
-    _wait_attempt=0
-    while [ "$_wait_attempt" -lt 600 ]; do
-        if [ -f "$_wait_path" ] && grep -F -- "$_wait_text" "$_wait_path" >/dev/null; then
-            return 0
-        fi
-        kill -0 "$_wait_pid" 2>/dev/null || fail "$_wait_label exited before committing the expected lock"
-        sleep 0.1
-        _wait_attempt=$((_wait_attempt + 1))
-    done
-    fail "$_wait_label did not commit the expected lock within 60s"
-}
+. "$ROOT/scripts/lib-package-lock-test-wait.sh"
 
 generated_path() {
     if command -v cygpath >/dev/null 2>&1; then
@@ -2240,6 +2210,32 @@ set -e
 assert_status work-queue-chooser "$status" 0
 assert_empty work-queue-chooser "$WORKDIR/work-queue-chooser.err"
 assert_contains work-queue-chooser "$WORKDIR/work-queue-chooser.out" "research/triage issue #7: Fallback issue"
+
+set +e
+# cli-gate-case selfhost-cli-work-queue-claimed direct "$COMPILER"
+"$COMPILER" run "$ROOT/tools/work-queue-chooser/chooser.tl" --stdlib-root "$ROOT/stdlib" \
+    < "$ROOT/tools/work-queue-chooser/fixtures/claimed-wait.json" \
+    > "$WORKDIR/work-queue-claimed.out" 2> "$WORKDIR/work-queue-claimed.err"
+status=$?
+set -e
+assert_status work-queue-claimed "$status" 0
+assert_empty work-queue-claimed "$WORKDIR/work-queue-claimed.err"
+printf '%s\n' \
+    "wait: review claims; review-claimed: 1; recheck when PR labels, checks, draft/base state, or issue readiness change" \
+    | cmp - "$WORKDIR/work-queue-claimed.out" \
+    || fail "work-queue-claimed expected exactly one stable wait line"
+
+set +e
+# cli-gate-case selfhost-cli-work-queue-invalid-labels direct "$COMPILER"
+"$COMPILER" run "$ROOT/tools/work-queue-chooser/chooser.tl" --stdlib-root "$ROOT/stdlib" \
+    < "$ROOT/tools/work-queue-chooser/fixtures/malformed-labels.json" \
+    > "$WORKDIR/work-queue-invalid-labels.out" 2> "$WORKDIR/work-queue-invalid-labels.err"
+status=$?
+set -e
+assert_status work-queue-invalid-labels "$status" 1
+assert_empty work-queue-invalid-labels "$WORKDIR/work-queue-invalid-labels.out"
+assert_contains work-queue-invalid-labels "$WORKDIR/work-queue-invalid-labels.err" \
+    "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots"
 
 run_cli_command_surface_matrix
 assert_cli_surface_timing_rows

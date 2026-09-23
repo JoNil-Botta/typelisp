@@ -247,7 +247,8 @@ Vec bang place macros as available yet.
   wrappers, argv access, panic/error, deterministic float parse/format support,
   and monomorphic Result-style I/O error APIs built as stdlib extern wrappers
   over backend runtime symbols. Its `print-format` macro formats a literal
-  template without adding a newline and `println` appends exactly one. These are
+  template without adding a newline and `println` appends exactly one;
+  `(println)` and `(eprintln)` without a template write exactly one LF. These are
   the module's public value-output conveniences; borrowed raw bytes use
   `stdout-write` / `stderr-write`. Import it with `(import stdlib.io)`.
 - `io_core.tl`: private backing module for `io.tl` file-handle table storage.
@@ -274,8 +275,14 @@ Vec bang place macros as available yet.
   for invalid names (empty, `=`, or NUL), and `set!` also rejects NUL values.
   Linux mutations publish process-lifetime replacement `envp` storage that is
   also inherited by `process` children; Windows uses
-  `SetEnvironmentVariableA`. Environment access/mutation and process spawning
-  must not race across threads.
+  `SetEnvironmentVariableA`. Lookups, `set!`/`unset!` and process spawning are
+  safe to call concurrently from any thread. On Linux mutators are serialized by
+  a futex lock, each rebuilds from its predecessor's table and publishes one
+  complete immutable table with a single atomic store, so updates to different
+  names are never lost and a lookup or spawned child sees one admitted table:
+  possibly older, never partial or dangling. A read-modify-write spanning
+  several calls is not one transaction. On Windows kernel32 owns and locks the
+  block. Foreign code that edits `environ` directly is outside the contract.
   `path-list`, `path-split`, and `path-join` remain list-compatible
   wrappers; new append-heavy callers should use the `StringVec` variants
   `path-list-vec`, `path-split-vec`, and `path-join-vec`. Import it
@@ -320,6 +327,71 @@ Vec bang place macros as available yet.
   is a narrow, reparse-refusing `NtCreateFile` boundary whose private NTSTATUS
   values map once into stable filesystem outcomes. Import it with
   `(import stdlib.fs)`.
+- `local_ipc.tl`: internal, target-independent contract for one client byte
+  stream over an explicitly selected local endpoint: a filesystem Unix-domain
+  socket path or a local Windows `\\.\pipe\...` name. It performs no OS calls,
+  reads no environment, probes nothing and has no server surface; platform
+  leaves implement the injected `LocalIpcAdapter` (a struct of function values)
+  and everything observable is defined here. Endpoints are validated before the
+  adapter is reached: empty, oversized, NUL-bearing, relative or
+  abstract-namespace Unix paths are rejected, and so are remote or malformed
+  pipe names and pipe names Win32 would rewrite before opening (a `/`, or a
+  trailing `.` or space). The adapter's functions are ordinary safe function
+  values anyone holding the adapter can call, so no address crosses that
+  boundary: contexts, handles and slices are plain integers the adapter
+  validates, and bytes cross as owned `ByteBuf` values that each call hands
+  back in its reply. Each connection owns one `transfer-max`-byte (16 KiB)
+  transfer array, and this module copies between it and the caller's borrowed
+  view, so one attempt moves at most that many bytes. The internals that take
+  a raw address are unsafe declarations. `LocalIpcConnection` is move-only and
+  cleanup-owning, so it is bound with `with`: its native identity lives behind
+  a private pointer safe code cannot forge, `close!` poisons the handle before
+  exactly one adapter close and returns a typed result, lexical cleanup is
+  idempotent and non-reporting, and any use after close fails before dispatch.
+  Fields are not private in TypeLisp, so safe code can copy a connection's
+  owner words into a second `LocalIpcConnection`; the owner is therefore
+  generation-checked: every mutating operation atomically advances the state's
+  generation from the value's own, so once either value operates, closes or is
+  cleaned up the other is stale, fails with `Closed` before dispatch and closes
+  nothing. There is always one effective owner, one in-flight operation and one
+  adapter close. `read-some!` and `write-some!` take a borrowed byte view and a
+  range, make one adapter attempt, keep partial progress, distinguish
+  would-block, interrupted, EOF and stable failures, reject invalid ranges and
+  adapter counts outside the request, and answer a zero-length range without a
+  host call. `connect`, `read-wait!`, `write-wait!`, `read-exact!` and
+  `write-all!` take one absolute monotonic deadline, a `(-> bool)` cancellation
+  probe and a work budget: before every host attempt cancellation wins over
+  timeout and an expired deadline wins over a new attempt, committed progress
+  is returned even if cancellation became visible meanwhile, waits are at most
+  100 ms and recomputed after every wake, and the whole-buffer helpers keep the
+  completed count whatever stops them. `RetryConnect` (full backlog, busy pipe,
+  interrupted connect) publishes nothing and owns no storage: the helper
+  re-checks its limits, pauses one bounded slice and makes a fresh attempt,
+  handing the adapter the validated name again. A connected handle is
+  published only after its bounded peer facts pass the caller's policy;
+  otherwise it is closed exactly once. An operation the adapter reports
+  `Pending` runs on storage the adapter owns, since an adapter never keeps a
+  buffer after the call that handed it over; a pending read delivers its bytes
+  with the terminal poll. A primitive makes one attempt, so it requests
+  cancellation at once; a wait-capable helper first polls the operation in
+  bounded slices while cancellation, deadline and budget allow. Once a stop
+  reason appears no new data operation is issued: cancellation is requested
+  (which is not completion), the operation is drained in bounded slices without
+  any other host call, and the stop reason is the result unless positive
+  progress won the race. If the adapter never completes, the connection is
+  force-closed, which ends the operation. Errors are a stable kind plus a host
+  code bounded to `0..65535`, including errors an adapter builds itself; they
+  never carry endpoint text, payload bytes, handles or host strings. Import it
+  with `(import stdlib.local_ipc)`.
+- `local_ipc_fake.tl`: test support for the contract above: a scripted
+  `LocalIpcAdapter` with a virtual clock, step queues for connect, data,
+  pending-poll and readiness calls, counters for every adapter entry, the
+  requested slices and byte counts, the exact name bytes, close handles and
+  host calls made while an operation was pending, scriptable unbounded host
+  codes, and replies that hand back a damaged buffer. A fake's context is a row
+  number in a process-lifetime table that every access checks, so the fake has
+  no `unsafe` code and a forged context traps. The Linux and Windows leaves
+  drive the same traces. Import it with `(import stdlib.local_ipc_fake)`.
 - `fs_rooted_linux.tl`: private Linux leaf for capability-relative staging-tree
   construction. A trusted root prefix is opened once with a final-node
   `O_NOFOLLOW` directory check; descendants accept one validated component and
@@ -463,7 +535,11 @@ Vec bang place macros as available yet.
   value construction and sign copying; and `f64-scalbn` / `f32-scalbn`
   power-of-two scaling. `f64-sqrt` and `f32-sqrt` expose typed hardware square
   root, while the single-evaluation `sqrt` macro preserves an `f64` or `f32`
-  operand type. Freestanding `f64-exp` and `f32-exp` use deterministic
+  operand type. `f64-mul-add` / `f32-mul-add` and the type-preserving `mul-add`
+  macro are the explicit fused multiply-add: `a * b + c` rounded once, computed
+  exactly in integer arithmetic so every target returns the same bits;
+  ordinary `(+ (* a b) c)` is never contracted into it. Freestanding `f64-exp`
+  and `f32-exp` use deterministic
   table/range reduction and polynomial evaluation with at most one ULP error
   in default round-to-nearest mode; the one-evaluation `exp` macro preserves
   operand precision. Freestanding `f64-log` and `f32-log` use non-FMA
@@ -873,10 +949,11 @@ borrowed process runtime wrappers likewise copy at their owned boundary.
 |-----------|---------------------|
 | `string.is-char-whitespace`, `string.char-eq`, `string.index-of-byte`, `string.contains`, `string.contains-char`, `string.is-string-prefix-at` | Non-allocating string/char inspection; text parameters are borrowed `str` inputs. |
 | `string.append`, `string.concat`, `string.copy`, `string.substring`, `string.slice`, `string.concat-all` | Copying string helpers allocate fresh active-arena `String` storage and copy bytes from borrowed `str` inputs. Owned `String` places auto-borrow at call sites, and stdlib code that already has `(& r str)` values calls the same public helpers directly. `string.concat-all` accepts a borrowed native `Slice String`; long `str-cat` expansions pass a live-prefix Slice over one compiler-private packed buffer. |
+| `local_ipc.connect` | Allocates one private connection state cell in the active arena, including on failure; for a valid endpoint also one copy of the endpoint name, and for a connected handle one `transfer-max`-byte transfer array; nothing per retry. The connection must stay inside that arena (the checker enforces it for `with-arena`; `arena.destroy-safe!` does not yet invalidate `with`-bound owners, #7944). `close!`, the primitive and wait-capable reads and writes, the whole-buffer helpers and every accessor are non-allocating. |
 | `int->string` | Allocates fresh active-arena `String` storage, writes decimal bytes directly, and returns the zero, positive, negative, and signed edge-case spelling without calling the legacy runtime helper. Project callers should import the stdlib helper instead of relying on an unimported compiler default. |
 | `format.args` | Parses the same literal plan once and returns a structural, borrow-checked Arguments package containing one capture-free renderer plus shared anchors. Supplied and captured expressions are evaluated exactly once; replay does not move caller-owned lvalues, nested Arguments replay directly, and lifetime checking prevents a package from escaping any borrowed source. Construction allocates only aggregate package storage, never the final rendered text. |
 | `format.format` | Parses a deterministic literal plan and binds every selected value/count once. Display uses the shared decimal/radix/fixed/exponent converters and canonical owner hooks. Primitive `?`/`x?`/`X?` reuse those integer, exact-float, exponent-normalization, pointer, and byte-escape cores; quoted text ignores outer options and retained Arguments replay their stored plan. Nominal Debug remains independent from Display and unsupported until its hook layer lands. Each rendered scalar piece and any changed option-layout piece allocate exact active-arena Strings; finite floats additionally use the documented bignum scratch storage before final layout. Materializing the full result allocates its final String. |
-| `format.write!`, `format.writeln!`, `io.print`, `io.println`, `io.eprint`, `io.eprintln` | Reuse the same literal scanner, selection rules, Display/Debug options, conversions, and canonical nominal Display hooks, but send each plan piece through one `Formatter` callback instead of materializing the final combined String. Stateful writer cells are registered behind generation-checked scalar capabilities; their raw address adapters require `unsafe`, while the safe first-class callback rejects forged, stale, wrong-writer, reentrant, and concurrent tokens. Retained Arguments under any outer Debug mode replay directly and ignore those outer options. Newline variants append exactly one newline after a successful body; writer calls return `FormatOk` or the first `FormatErr status` and skip later pieces after failure. The optional exact `format-write` / `format-write-<NominalName>` owner hook handles default Display only; Debug never reuses it or `to-string`. `print-format` is a migration alias for `print`. |
+| `format.write!`, `format.writeln!`, `io.print`, `io.println`, `io.eprint`, `io.eprintln` | Reuse the same literal scanner, selection rules, Display/Debug options, conversions, and canonical nominal Display hooks, but send each plan piece through one `Formatter` callback instead of materializing the final combined String. Stateful writer cells are registered behind generation-checked scalar capabilities; their raw address adapters require `unsafe`, while the safe first-class callback rejects forged, stale, wrong-writer, reentrant, and concurrent tokens. Retained Arguments under any outer Debug mode replay directly and ignore those outer options. Newline variants append exactly one newline after a successful body, and accept no template at all (`(io.println)`, `(io.eprintln)`, `(format.writeln! writer)`) to write exactly one LF through the same sink and error path; writer calls return `FormatOk` or the first `FormatErr status` and skip later pieces after failure. The optional exact `format-write` / `format-write-<NominalName>` owner hook handles default Display only; Debug never reuses it or `to-string`. `print-format` is a migration alias for `print`. |
 | `string-trim-left`, `string-trim-right`, `string-trim` | Borrow the input text and return fresh `String` storage from `substring`, allocated in the active arena. |
 | `string-replace` | Compatibility wrapper: returns fresh `String` storage from `substring`/`string-append` when a replacement is made; returns the caller-provided `s` when `old` is not present. `string_caller_result.tl` exposes the `string-replace-result` caller-result shape that preserves the no-match borrow until explicit materialization. |
 | `read-file`, `try-read-file` | `read-file` returns an active-arena `ByteBuf`. The recoverable form returns `OkIoBytes ByteBuf` when the path is readable, or `ErrIoBytes` for empty paths, expected absence, permission failures, interrupted reads, and target status-code failures. Text consumers call `byte_buf.to-string` explicitly. |
@@ -896,7 +973,7 @@ borrowed process runtime wrappers likewise copy at their owned boundary.
 | `path-join`, `path-join-owned-pair`, `path-join-many`, `dirname`, `basename`, `extension`, `path-absolute?`, `path-normalize`, `path-safe-relative?`, `try-current-dir`, `try-mkdir`, `try-mkdir-if-missing`, `try-remove-file`, `try-remove-dir`, `try-rename`, `try-atomic-replace`, `file-lock-acquire`, `file-lock-release`, `try-read-dir`, `try-read-dir-vec`, `try-file-kind`, `try-file-metadata`, `try-create-temp-dir` | Path joins allocate active-arena Strings when a separator is inserted or duplicate separator is removed. `path-join` remains the two-argument borrowed function; `path-join-owned-pair` accepts two owned `String` segments and delegates to it; `path-join-many` is the variadic macro alias for owned `String` segments, expanding zero segments to `""`, one segment to that segment, and two or more segments to pairwise joins that delegate to `path-join`. `dirname`/`basename`/`extension` are pure separator-agnostic string helpers (no allocation beyond the returned substring; `extension` operates on the basename and treats a leading-dot name as extensionless). `path-absolute?` is non-allocating and treats `/...`, `\\...`, `C:/...`, and `C:\\...` as absolute/rooted while leaving drive-relative `C:...` non-absolute. `path-normalize` is lexical only: it accepts `/` and `\\`, collapses repeated separators, removes `.`, resolves `..` against normal segments with a `StringVec` stack, preserves relative leading `..`, preserves roots and drive roots, renders `/` as the stable separator on every host, and returns `"."` for empty relative paths. `path-safe-relative?` allocates through normalization and returns true only for non-empty relative suffixes that remain below a caller-chosen root after lexical normalization; it rejects rooted, drive-qualified, empty/`.` and leading-parent paths. `try-current-dir` returns the host-reported cwd as an owned active-arena `String` on Linux and Windows through stdlib FFI, without symlink canonicalization. Recoverable filesystem helpers map host/runtime status codes into `IoError`; `try-file-kind` returns `FsFileRegular`, `FsFileDirectory`, or `FsFileOther` on Linux and Windows. `try-file-metadata` returns `FsMetadata` with coarse kind and regular-file byte size on Linux and Windows; directory and other node sizes are zero in this first slice. `try-mkdir` works on Linux and Windows, and `try-mkdir-if-missing` treats an already-existing path as success. `try-atomic-replace` uses `rename(2)` or MoveFileExA replacement without delete-then-rename and promises atomic reader visibility, but not power-loss durability without a directory flush. Advisory file locks block across processes, release automatically when a process exits, and require a stable coordination path that callers do not unlink. `try-read-dir` and `try-read-dir-vec` return entry names only in a `StringVec`, filter `.` and `..`, preserve host directory order without promising stable sorting, and allocate returned storage and entry strings in the active arena; Linux reads directories directly through syscalls, while Windows uses kernel32 `FindFirstFileA`/`FindNextFileA`. Linux temp directories are created under `$TMPDIR` or `/tmp` with process-id and retry suffixes. Windows temp directories are created under `%TEMP%`, `%TMP%`, or `.` with process-id and retry suffixes. |
 | `ffi-c-bytes-*`, `ffi-cbytes`, `ffi-c-string-*`, `ffi-cstr` helpers | `ffi-c-bytes-required-bytes`, `ffi-c-bytes-interior-nul?`, and `ffi-c-bytes-copy!` inspect or copy borrowed `(& r bytes)` into caller-owned `(MutPtr u8)` storage without allocating. `ffi-c-bytes-copy!` validates interior NUL bytes and capacity before writing, appends the trailing NUL on success, and leaves raw-pointer validity/lifetime with the caller. `ffi-c-bytes-alloc` and `ffi-cbytes` allocate a NUL-terminated byte buffer in the active arena, return null for interior NUL input, and keep the returned `(Ptr u8)` valid only until the owning arena is rewound, reset, or destroyed. The `ffi-c-string-*` and `ffi-cstr` compatibility wrappers borrow `String` inputs as bytes and delegate to the same implementation. |
 | `hash-*` helpers | Deterministic, non-cryptographic hash and key equality helpers are non-allocating; string hash/equality helpers borrow text inputs. Hashes are stable bucket hints only; collection users must still compare colliding candidate keys with the matching equality predicate. |
-| `math-*` helpers | Pure scalar arithmetic/comparison and IEEE-754 helpers are non-allocating and import no runtime or platform externs. Typed bit reinterpretation preserves every `f64`/`f32` bit, classification distinguishes finite/infinity/NaN/normal/subnormal/signed zero, copy-sign preserves zero and NaN signs, and `f64-scalbn` / `f32-scalbn` scale across normal/subnormal/overflow boundaries. `f64-sqrt`, `f32-sqrt`, and the type-preserving one-evaluation `sqrt` macro lower directly to scalar SSE2. `f64-exp`/`f32-exp` and `f64-log`/`f32-log`, plus the one-evaluation `exp`/`log` macros, provide deterministic table/polynomial natural exponentials and logarithms within one ULP. These paths have no allocation, runtime call, libm, or CRT dependency. The `abs` macro covers typed `f64` and `f32` expressions; `i64` uses `math-i64-abs`/`math-i64-abs-or` for explicit signed-min behavior. Remaining transcendental functions land as separate freestanding slices. |
+| `math-*` helpers | Pure scalar arithmetic/comparison and IEEE-754 helpers are non-allocating and import no runtime or platform externs. Typed bit reinterpretation preserves every `f64`/`f32` bit, classification distinguishes finite/infinity/NaN/normal/subnormal/signed zero, copy-sign preserves zero and NaN signs, and `f64-scalbn` / `f32-scalbn` scale across normal/subnormal/overflow boundaries. `f64-sqrt`, `f32-sqrt`, and the type-preserving one-evaluation `sqrt` macro lower directly to scalar SSE2. `f64-mul-add`, `f32-mul-add`, and the one-evaluation `mul-add` macro return the IEEE 754 fused multiply-add (one rounding, ties to even, gradual underflow, signed infinities on overflow, NaN for NaN operands, infinity times zero and opposite infinities) through exact integer arithmetic; no target substitutes multiply-then-add. `f64-exp`/`f32-exp` and `f64-log`/`f32-log`, plus the one-evaluation `exp`/`log` macros, provide deterministic table/polynomial natural exponentials and logarithms within one ULP. These paths have no allocation, runtime call, libm, or CRT dependency. The `abs` macro covers typed `f64` and `f32` expressions; `i64` uses `math-i64-abs`/`math-i64-abs-or` for explicit signed-min behavior. Remaining transcendental functions land as separate freestanding slices. |
 | Fixed-array core forms | Import-free `make-array` initializes a fixed `(Array T N)` without heap allocation, `length` / `array-length` lower to constant `N`, `array-ref` performs a checked read/place projection, and element mutation uses `set!` on that place. Growable collections use generated vectors; compiler-private dynamic buffers retain their internal intrinsics. |
 | Scalar `(hashmap K V)` module helpers in `hashmap.tl` | Map construction, growth, resize, and rehash allocate backing slot arrays in the active arena. `insert!`, `insert-or-update!`, `insert-if-absent!`, `remove!`, `remove-borrowed!`, and `entry-or-insert!` macros evaluate their arguments once and update `Map` through explicit `&mut` helpers. Lookup, containment, len/capacity/deleted accessors, and bucket-order cursor helpers are non-allocating aside from caller-provided owned keys or fallback values. String-key borrowed lookup/removal variants inspect borrowed key text without copying it. `get-value-borrowed` returns a lifetime-parameterized lookup whose found branch borrows the map-owned value; mutating, removing, or growing the map while that result is live is rejected by the checker. Mutable-entry helpers borrow the backing table uniquely and update existing entries in place; another mutable entry, a value borrow, or any structural mutation is rejected while the entry is live. Missing mutable entries are explicit no-ops. |
 | `(set T)` generated modules in `set.tl` | Set constructors, `insert!`, `remove!`, growth, resize, and rehash allocate/mutate the backing open-addressed table through the same active-arena policy as `hashmap.tl`. Public bang mutators take a storage place and expand to explicit `&mut` `*-ref!` calls. Duplicate inserts keep `len` unchanged. Lookup, containment, len/capacity accessors, and bucket-order cursor helpers take `&` and are non-allocating aside from caller-provided owned keys. String-key borrowed contains/remove variants inspect borrowed key text without copying it. |

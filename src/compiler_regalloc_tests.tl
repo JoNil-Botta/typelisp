@@ -154,7 +154,7 @@
 (define (compiler-reg-function-ref-counts [func : ir.CompilerIrFunction]) : (__tl_dyn-array
     i64)
   (match func
-    [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+    [(ir.CompilerIrFunction.Function _ _ _ vars blocks _)
       (let
         [counts : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
         (begin
@@ -170,7 +170,7 @@
   [func : ir.CompilerIrFunction]
   [coalesce : reg.CompilerRegCoalesceMap]) : (__tl_dyn-array i64)
   (match (reg.compiler-reg-global-shared-view func)
-    [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+    [(ir.CompilerIrFunction.Function _ _ _ vars blocks _)
       (let
         [counts : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
         [def-status : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
@@ -342,14 +342,15 @@
                     (compiler-reg-test-instr-seq-prepend
                       (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "entry"))
                       (ir.compiler-ir-instr-seq-empty))))
-                ir.CompilerIrBlockList.Nil))))))))
+                ir.CompilerIrBlockList.Nil)))))
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
   (define (compiler-reg-early-exit-general-ok?) : bool
     (match (reg.compiler-reg-early-exit-shrinkwrap-function
       (compiler-reg-early-exit-general-test-function))
-      [(ir.CompilerIrFunction.Function _ params ret-ty _ blocks)
+      [(ir.CompilerIrFunction.Function _ params ret-ty _ blocks _)
         (let
           [seq : ir.CompilerIrBlockSeq
             (live.compiler-live-ir-block-list-to-seq blocks)]
@@ -456,14 +457,15 @@
                 (compiler-reg-test-instr-seq-prepend
                   (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
                   (ir.compiler-ir-instr-seq-empty))))
-            ir.CompilerIrBlockList.Nil))))))
+            ir.CompilerIrBlockList.Nil)))
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
   (define (compiler-reg-early-exit-float-guard-refused-ok?) : bool
     (match (reg.compiler-reg-early-exit-shrinkwrap-function
       (compiler-reg-early-exit-float-guard-test-function))
-      [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+      [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
         (and
           (=
             (ir.compiler-ir-block-seq-count
@@ -553,7 +555,8 @@
                         (ir.CompilerIrMaybeValue.Some
                           (ir.CompilerIrValue.Var 5)))
                       (ir.compiler-ir-instr-seq-empty)))
-                  ir.CompilerIrBlockList.Nil)))))))))
+                  ir.CompilerIrBlockList.Nil))))))
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
@@ -581,7 +584,7 @@
         (reg.compiler-reg-cold-call-rewrite-temp-start
           (reg.compiler-reg-global-shared-view rewrite))]
       (match (ir.compiler-ir-global-shared-view rewritten)
-        [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+        [(ir.CompilerIrFunction.Function _ _ _ vars blocks _)
           (let
             [seq : ir.CompilerIrBlockSeq
               (live.compiler-live-ir-block-list-to-seq blocks)]
@@ -735,13 +738,14 @@
                         (ir.CompilerIrMaybeValue.Some
                           (ir.CompilerIrValue.I64 0)))
                       (ir.compiler-ir-instr-seq-empty)))
-                  ir.CompilerIrBlockList.Nil)))))))))
+                  ir.CompilerIrBlockList.Nil))))))
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
   (define (compiler-reg-call-hole-weights-ok?) : bool
     (match (compiler-reg-call-hole-loop-shape-function)
-      [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+      [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
         (let
           [weights : (__tl_dyn-array i64)
             (reg.compiler-reg-call-hole-block-weights
@@ -998,13 +1002,14 @@
                             (ir.CompilerIrMaybeValue.Some
                               (ir.CompilerIrValue.I64 0)))
                           (ir.compiler-ir-instr-seq-empty)))
-                      ir.CompilerIrBlockList.Nil)))))))))))
+                      ir.CompilerIrBlockList.Nil))))))))
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
   (define (compiler-reg-call-hole-cold-arm-weight-ok?) : bool
     (match (compiler-reg-call-hole-cold-arm-function)
-      [(ir.CompilerIrFunction.Function self-name _ _ _ blocks)
+      [(ir.CompilerIrFunction.Function self-name _ _ _ blocks _)
         (let
           [arms : reg.CompilerRegCallHoleWeights
             (reg.compiler-reg-call-hole-cold-arm-weights
@@ -1092,13 +1097,14 @@
                   (ir.CompilerIrInstr.Return
                     (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 0)))
                   (ir.compiler-ir-instr-seq-empty)))
-              ir.CompilerIrBlockList.Nil)))))))
+              ir.CompilerIrBlockList.Nil))))
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
   (define (compiler-reg-call-hole-bypass-loop-ok?) : bool
     (match (compiler-reg-call-hole-bypass-loop-function)
-      [(ir.CompilerIrFunction.Function self-name _ _ _ blocks)
+      [(ir.CompilerIrFunction.Function self-name _ _ _ blocks _)
         (let
           [arms : reg.CompilerRegCallHoleWeights
             (reg.compiler-reg-call-hole-cold-arm-weights
@@ -1196,7 +1202,8 @@
                             (ir.CompilerIrMaybeValue.Some
                               (ir.CompilerIrValue.I64 0)))
                           (ir.compiler-ir-instr-seq-empty)))
-                      ir.CompilerIrBlockList.Nil)))))))))))
+                      ir.CompilerIrBlockList.Nil))))))))
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 ;; What the in-loop discount is FOR: a memory-class value whose references sit
 ;; on the loop body and whose only crossing sits on a halved arm now satisfies
@@ -1208,7 +1215,7 @@
   test
   (define (compiler-reg-call-hole-loop-arm-weight-ok?) : bool
     (match (compiler-reg-call-hole-loop-arm-bypass-loop-function)
-      [(ir.CompilerIrFunction.Function self-name _ _ _ blocks)
+      [(ir.CompilerIrFunction.Function self-name _ _ _ blocks _)
         (let
           [arms : reg.CompilerRegCallHoleWeights
             (reg.compiler-reg-call-hole-cold-arm-weights
@@ -1503,7 +1510,8 @@
                             (ir.CompilerIrMaybeValue.Some
                               (ir.CompilerIrValue.Var 5)))
                           (ir.compiler-ir-instr-seq-empty))))))))))
-        ir.CompilerIrBlockList.Nil))))
+        ir.CompilerIrBlockList.Nil)
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 ;; Run the rewrite over a whole function with `%0..%(selected-count-1)` carried,
 ;; building the flow the same way `compiler-reg-call-hole-split-round` does.
@@ -1514,7 +1522,7 @@
     [selected : (__tl_dyn-array i64)]
     [selected-count : i64]) : ir.CompilerIrBlockSeq
     (match (reg.compiler-reg-global-shared-view func)
-      [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+      [(ir.CompilerIrFunction.Function _ _ _ vars blocks _)
         (let
           [width : i64 (+ vars selected-count)]
           [carrier : (__tl_dyn-array i64) (__tl_make-array i64 width)]
@@ -1705,7 +1713,8 @@
                   (compiler-reg-i64-ty))
                 (ir.CompilerIrInstr.Return
                   (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 5)))))
-            ir.CompilerIrBlockList.Nil))))))
+            ir.CompilerIrBlockList.Nil)))
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
@@ -1870,7 +1879,8 @@
                     (compiler-reg-i64-ty))
                   (ir.CompilerIrInstr.Return
                     (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 3)))))
-              ir.CompilerIrBlockList.Nil)))))))
+              ir.CompilerIrBlockList.Nil))))
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
@@ -1999,7 +2009,8 @@
                 (compiler-reg-i64-ty))
               (ir.CompilerIrInstr.Return
                 (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 4)))))
-          ir.CompilerIrBlockList.Nil)))))
+          ir.CompilerIrBlockList.Nil))
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
@@ -2093,7 +2104,7 @@
   test
   (define (compiler-reg-call-hole-flow-conservative-ok?) : bool
     (match (compiler-reg-call-hole-cross-block-function)
-      [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+      [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
         (let
           [func : ir.CompilerIrFunction
             (compiler-reg-call-hole-cross-block-function)]
@@ -2418,7 +2429,8 @@
                       (ir.CompilerIrMaybeValue.Some
                         (ir.CompilerIrValue.Var acc)))
                     (ir.compiler-ir-instr-seq-empty)))
-                ir.CompilerIrBlockList.Nil))))))))
+                ir.CompilerIrBlockList.Nil))))
+        ir.CompilerIrFunctionAbi.Ordinary))))
 
 (cfg
   test
@@ -2523,7 +2535,7 @@
           plan
           (- 0 1))]
       (match (reg.compiler-reg-global-shared-view func)
-        [(ir.CompilerIrFunction.Function _ _ _ vars _)
+        [(ir.CompilerIrFunction.Function _ _ _ vars _ _)
           (and
             (=
               (reg.compiler-reg-call-hole-split-vars
@@ -2615,7 +2627,8 @@
                     (ir.CompilerIrInstr.Return
                       (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 7)))
                     (ir.compiler-ir-instr-seq-empty)))))
-            ir.CompilerIrBlockList.Nil))))))
+            ir.CompilerIrBlockList.Nil)))
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
@@ -2806,7 +2819,8 @@
         (ir.compiler-ir-param-seq-empty))
       (ast.AstType.I64)
       (+ arms 2)
-      (compiler-reg-call-hole-cold-arms-chain 0 arms callee))))
+      (compiler-reg-call-hole-cold-arms-chain 0 arms callee)
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
@@ -2893,7 +2907,7 @@
   test
   (define (compiler-reg-call-hole-recursive-arm-weights [callee : i64]) : reg.CompilerRegCallHoleWeights
     (match (compiler-reg-call-hole-cold-arms-function 1 callee)
-      [(ir.CompilerIrFunction.Function self-name _ _ _ blocks)
+      [(ir.CompilerIrFunction.Function self-name _ _ _ blocks _)
         (reg.compiler-reg-call-hole-cold-arm-weights
           (ast.ast-node-pool-reader-type-segment-bases)
           self-name
@@ -3071,7 +3085,8 @@
                           (ir.CompilerIrMaybeValue.Some
                             (ir.CompilerIrValue.Var 7)))
                         (ir.compiler-ir-instr-seq-empty))))
-                  ir.CompilerIrBlockList.Nil)))))))))
+                  ir.CompilerIrBlockList.Nil))))))
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
@@ -3216,7 +3231,8 @@
                                 (ir.CompilerIrMaybeValue.Some
                                   (ir.CompilerIrValue.Var 9)))
                               (ir.compiler-ir-instr-seq-empty)))))
-                      ir.CompilerIrBlockList.Nil)))))))))))
+                      ir.CompilerIrBlockList.Nil))))))))
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
@@ -3247,7 +3263,7 @@
   test
   (define (compiler-reg-loop-park-detect-ok?) : bool
     (match (compiler-reg-loop-park-direct-function)
-      [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+      [(ir.CompilerIrFunction.Function _ _ _ vars blocks _)
         (let
           [seq : ir.CompilerIrBlockSeq
             (live.compiler-live-ir-block-list-to-seq blocks)]
@@ -3410,11 +3426,11 @@
       [direct-seq : ir.CompilerIrBlockSeq
         (live.compiler-live-ir-block-list-to-seq
           (match (reg.compiler-reg-global-shared-view direct-func)
-            [(ir.CompilerIrFunction.Function _ _ _ _ blocks) blocks]))]
+            [(ir.CompilerIrFunction.Function _ _ _ _ blocks _) blocks]))]
       [splice-seq : ir.CompilerIrBlockSeq
         (live.compiler-live-ir-block-list-to-seq
           (match (reg.compiler-reg-global-shared-view splice-func)
-            [(ir.CompilerIrFunction.Function _ _ _ _ blocks) blocks]))]
+            [(ir.CompilerIrFunction.Function _ _ _ _ blocks _) blocks]))]
       [direct-nest : reg.CompilerRegLoopNest
         (reg.compiler-reg-loop-nest-build-seq
           (ir.compiler-ir-global-shared-view direct-seq))]
@@ -3591,7 +3607,7 @@
   test
   (define (compiler-reg-loop-park-direct-rewrite-ok?) : bool
     (match (compiler-reg-loop-park-direct-function)
-      [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+      [(ir.CompilerIrFunction.Function _ _ _ vars blocks _)
         (let
           [seq : ir.CompilerIrBlockSeq
             (live.compiler-live-ir-block-list-to-seq blocks)]
@@ -3689,7 +3705,7 @@
   test
   (define (compiler-reg-loop-park-splice-rewrite-ok?) : bool
     (match (compiler-reg-loop-park-splice-function)
-      [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+      [(ir.CompilerIrFunction.Function _ _ _ vars blocks _)
         (let
           [seq : ir.CompilerIrBlockSeq
             (live.compiler-live-ir-block-list-to-seq blocks)]
@@ -3915,7 +3931,7 @@
           (- 0 1)
           false)]
       (match (reg.compiler-reg-global-shared-view func)
-        [(ir.CompilerIrFunction.Function _ _ _ vars _)
+        [(ir.CompilerIrFunction.Function _ _ _ vars _ _)
           (and
             (=
               (reg.compiler-reg-call-hole-split-vars
@@ -3963,7 +3979,7 @@
           (- 0 1)
           false)]
       (match (reg.compiler-reg-global-shared-view func)
-        [(ir.CompilerIrFunction.Function _ _ _ vars _)
+        [(ir.CompilerIrFunction.Function _ _ _ vars _ _)
           (and
             (=
               (reg.compiler-reg-call-hole-split-vars
@@ -4366,7 +4382,8 @@
             (ir.compiler-ir-param-seq-empty))
           (ast.AstType.I64)
           80
-          (ir.CompilerIrBlockList.Array (ir.CompilerIrBlockSeq blocks write)))))))
+          (ir.CompilerIrBlockList.Array (ir.CompilerIrBlockSeq blocks write))
+          ir.CompilerIrFunctionAbi.Ordinary)))))
 
 ;; Two small builders for a hand-written plan, so the fixture can say exactly
 ;; which values the greedy is imagined to have homed.
@@ -4484,7 +4501,7 @@
       [split : reg.CompilerRegCallHoleSplit
         (compiler-reg-loop-park-deep-nest-split false)]
       (match (compiler-reg-loop-park-deep-nest-function)
-        [(ir.CompilerIrFunction.Function _ _ _ vars _)
+        [(ir.CompilerIrFunction.Function _ _ _ vars _ _)
           (and
             ;; one park per base: a parked value frees ONE register over the
             ;; loop and the loop has two operands that each need one
@@ -4534,7 +4551,7 @@
       [split : reg.CompilerRegCallHoleSplit
         (compiler-reg-loop-park-deep-nest-split true)]
       (match (compiler-reg-loop-park-deep-nest-function)
-        [(ir.CompilerIrFunction.Function _ _ _ vars _)
+        [(ir.CompilerIrFunction.Function _ _ _ vars _ _)
           (and
             (=
               (reg.compiler-reg-call-hole-split-vars
@@ -4675,7 +4692,8 @@
                     (ir.CompilerIrInstr.Return
                       (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 3)))
                     (ir.compiler-ir-instr-seq-empty)))))
-            ir.CompilerIrBlockList.Nil))))))
+            ir.CompilerIrBlockList.Nil)))
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 ;; Rotated layout: entry -> body -> latch -> {body, exit}. Var 1 is READ in
 ;; `latch` (laid out second) and DEFINED in `body` (laid out third).
@@ -4727,7 +4745,8 @@
                   (ir.CompilerIrInstr.Return
                     (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 1)))
                   (ir.compiler-ir-instr-seq-empty)))
-              ir.CompilerIrBlockList.Nil)))))))
+              ir.CompilerIrBlockList.Nil))))
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
@@ -4885,7 +4904,8 @@
                 (compiler-reg-test-instr-seq-prepend
                   (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
                   (ir.compiler-ir-instr-seq-empty))))))
-        ir.CompilerIrBlockList.Nil))))
+        ir.CompilerIrBlockList.Nil)
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
@@ -4922,7 +4942,8 @@
                 (compiler-reg-test-instr-seq-prepend
                   (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
                   (ir.compiler-ir-instr-seq-empty))))))
-        ir.CompilerIrBlockList.Nil))))
+        ir.CompilerIrBlockList.Nil)
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
@@ -4951,7 +4972,8 @@
               (compiler-reg-test-instr-seq-prepend
                 (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
                 (ir.compiler-ir-instr-seq-empty)))))
-        ir.CompilerIrBlockList.Nil))))
+        ir.CompilerIrBlockList.Nil)
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
@@ -4994,7 +5016,8 @@
                   (compiler-reg-test-instr-seq-prepend
                     (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
                     (ir.compiler-ir-instr-seq-empty)))))))
-        ir.CompilerIrBlockList.Nil))))
+        ir.CompilerIrBlockList.Nil)
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
@@ -5067,7 +5090,8 @@
                 (compiler-reg-test-instr-seq-prepend
                   (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
                   (ir.compiler-ir-instr-seq-empty))))
-            ir.CompilerIrBlockList.Nil))))))
+            ir.CompilerIrBlockList.Nil)
+          ir.CompilerIrFunctionAbi.Ordinary)))))
 
 (cfg
   test
@@ -5121,7 +5145,8 @@
           8
           (ir.compiler-ir-block-cons
             (ir.CompilerIrBlock.Block (ir.compiler-ir-label "entry") instrs)
-            ir.CompilerIrBlockList.Nil))))))
+            ir.CompilerIrBlockList.Nil)
+          ir.CompilerIrFunctionAbi.Ordinary)))))
 
 (cfg
   test
@@ -5273,7 +5298,8 @@
           13
           (ir.compiler-ir-block-cons
             (ir.CompilerIrBlock.Block (ir.compiler-ir-label "entry") instrs)
-            ir.CompilerIrBlockList.Nil))))))
+            ir.CompilerIrBlockList.Nil)
+          ir.CompilerIrFunctionAbi.Ordinary)))))
 
 (cfg
   test
@@ -5298,7 +5324,8 @@
               (ir.CompilerIrInstr.Return
                 (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
               (ir.compiler-ir-instr-seq-empty))))
-        ir.CompilerIrBlockList.Nil))))
+        ir.CompilerIrBlockList.Nil)
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
@@ -5320,7 +5347,8 @@
               (compiler-reg-test-instr-seq-prepend
                 (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
                 (ir.compiler-ir-instr-seq-empty))))
-          ir.CompilerIrBlockList.Nil)))))
+          ir.CompilerIrBlockList.Nil)
+        ir.CompilerIrFunctionAbi.Ordinary))))
 
 (cfg
   test
@@ -5358,7 +5386,8 @@
                 (ir.CompilerIrInstr.Return
                   (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 2)))
                 (ir.compiler-ir-instr-seq-empty)))))
-        ir.CompilerIrBlockList.Nil))))
+        ir.CompilerIrBlockList.Nil)
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
@@ -5396,7 +5425,8 @@
                 (ir.CompilerIrInstr.Return
                   (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 2)))
                 (ir.compiler-ir-instr-seq-empty)))))
-        ir.CompilerIrBlockList.Nil))))
+        ir.CompilerIrBlockList.Nil)
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
@@ -5502,7 +5532,8 @@
                   (ir.CompilerIrInstr.Return
                     (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 3)))
                   (ir.compiler-ir-instr-seq-empty))))))
-        ir.CompilerIrBlockList.Nil))))
+        ir.CompilerIrBlockList.Nil)
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
@@ -5581,7 +5612,8 @@
                   (ir.CompilerIrInstr.Return
                     (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 5)))
                   (ir.compiler-ir-instr-seq-empty))))))
-        ir.CompilerIrBlockList.Nil))))
+        ir.CompilerIrBlockList.Nil)
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
@@ -5672,7 +5704,8 @@
                     (ir.CompilerIrInstr.Return
                       (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 7)))
                     (ir.compiler-ir-instr-seq-empty)))))))
-        ir.CompilerIrBlockList.Nil))))
+        ir.CompilerIrBlockList.Nil)
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
@@ -5753,7 +5786,8 @@
                   (compiler-reg-test-instr-seq-prepend
                     (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
                     (ir.compiler-ir-instr-seq-empty)))))))
-        ir.CompilerIrBlockList.Nil))))
+        ir.CompilerIrBlockList.Nil)
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
@@ -6447,7 +6481,8 @@
                   (ir.CompilerIrInstr.Return
                     (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 5)))
                   (ir.compiler-ir-instr-seq-empty))))
-            ir.CompilerIrBlockList.Nil))))))
+            ir.CompilerIrBlockList.Nil)
+          ir.CompilerIrFunctionAbi.Ordinary)))))
 
 (cfg
   test
@@ -6623,7 +6658,8 @@
                     (compiler-reg-test-instr-seq-prepend
                       (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
                       (ir.compiler-ir-instr-seq-empty))))))))
-        ir.CompilerIrBlockList.Nil))))
+        ir.CompilerIrBlockList.Nil)
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
@@ -6651,7 +6687,8 @@
               (compiler-reg-test-instr-seq-prepend
                 (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
                 (ir.compiler-ir-instr-seq-empty)))))
-        ir.CompilerIrBlockList.Nil))))
+        ir.CompilerIrBlockList.Nil)
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 ;; ---------------------------------------------------------------------------
 ;; R5: invariant-load facts.
@@ -6721,7 +6758,8 @@
                             (ir.CompilerIrValue.I64 0)
                             (compiler-reg-i64-ty))
                           extra)))))))))
-        ir.CompilerIrBlockList.Nil))))
+        ir.CompilerIrBlockList.Nil)
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
@@ -7232,7 +7270,8 @@
               (compiler-reg-i64-ty))
             (ir.CompilerIrInstr.AddrOf 1 0)
             (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)))
-        ir.CompilerIrBlockList.Nil))))
+        ir.CompilerIrBlockList.Nil)
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
@@ -7262,7 +7301,8 @@
               (ir.CompilerIrValue.Var 0)
               (compiler-reg-i64-ty))
             (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)))
-        ir.CompilerIrBlockList.Nil))))
+        ir.CompilerIrBlockList.Nil)
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 ;; W3 step (c). The frozen-global answer is a PROGRAM fact the backend seeds, so
 ;; the gates are: unseeded (the default) refuses; seeded-and-not-a-cell-writer
@@ -7517,7 +7557,8 @@
           7
           (ir.compiler-ir-block-cons
             (ir.CompilerIrBlock.Block (ir.compiler-ir-label "entry") instrs)
-            ir.CompilerIrBlockList.Nil))))))
+            ir.CompilerIrBlockList.Nil)
+          ir.CompilerIrFunctionAbi.Ordinary)))))
 
 (cfg
   test
@@ -7739,7 +7780,8 @@
           7
           (ir.compiler-ir-block-cons
             (ir.CompilerIrBlock.Block (ir.compiler-ir-label "entry") instrs)
-            ir.CompilerIrBlockList.Nil))))))
+            ir.CompilerIrBlockList.Nil)
+          ir.CompilerIrFunctionAbi.Ordinary)))))
 
 (cfg
   test
@@ -7868,7 +7910,8 @@
                   (compiler-reg-test-instr-seq-prepend
                     (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
                     (ir.compiler-ir-instr-seq-empty))))
-              ir.CompilerIrBlockList.Nil)))))))
+              ir.CompilerIrBlockList.Nil))))
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
@@ -8053,14 +8096,15 @@
                         (compiler-reg-test-instr-seq-prepend
                           (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
                           (ir.compiler-ir-instr-seq-empty)))
-                      ir.CompilerIrBlockList.Nil)))))))))))
+                      ir.CompilerIrBlockList.Nil))))))))
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
   (define (compiler-reg-foldable-rebate-array [func : ir.CompilerIrFunction]) : (__tl_dyn-array
       i64)
     (match (reg.compiler-reg-global-shared-view func)
-      [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+      [(ir.CompilerIrFunction.Function _ _ _ vars blocks _)
         (reg.compiler-reg-function-foldable-rebates
           (reg.compiler-reg-global-shared-view blocks)
           (reg.compiler-reg-function-block-weights blocks)
@@ -8071,7 +8115,7 @@
   (define (compiler-reg-foldable-rebate-combined [func : ir.CompilerIrFunction]) : (__tl_dyn-array
       i64)
     (match (reg.compiler-reg-global-shared-view func)
-      [(ir.CompilerIrFunction.Function _ _ _ vars _)
+      [(ir.CompilerIrFunction.Function _ _ _ vars _ _)
         (reg.compiler-reg-function-spill-weights-combined
           func
           (reg.CompilerRegCoalesceMap (__tl_make-array i64 0))
@@ -8504,7 +8548,8 @@
                 (compiler-reg-test-instr-seq-prepend
                   (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
                   (ir.compiler-ir-instr-seq-empty))))))
-        ir.CompilerIrBlockList.Nil))))
+        ir.CompilerIrBlockList.Nil)
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
@@ -8540,7 +8585,8 @@
                   (compiler-reg-test-instr-seq-prepend
                     (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
                     (ir.compiler-ir-instr-seq-empty)))))))
-        ir.CompilerIrBlockList.Nil))))
+        ir.CompilerIrBlockList.Nil)
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
@@ -8568,7 +8614,8 @@
               (compiler-reg-test-instr-seq-prepend
                 (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
                 (ir.compiler-ir-instr-seq-empty)))))
-        ir.CompilerIrBlockList.Nil))))
+        ir.CompilerIrBlockList.Nil)
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
@@ -8596,7 +8643,8 @@
                 (compiler-reg-test-instr-seq-prepend
                   (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
                   (ir.compiler-ir-instr-seq-empty))))))
-        ir.CompilerIrBlockList.Nil))))
+        ir.CompilerIrBlockList.Nil)
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
@@ -8619,7 +8667,8 @@
               (ir.CompilerIrInstr.Return
                 (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
               (ir.compiler-ir-instr-seq-empty))))
-        ir.CompilerIrBlockList.Nil))))
+        ir.CompilerIrBlockList.Nil)
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
@@ -8642,7 +8691,8 @@
               (ir.CompilerIrInstr.Return
                 (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
               (ir.compiler-ir-instr-seq-empty))))
-        ir.CompilerIrBlockList.Nil))))
+        ir.CompilerIrBlockList.Nil)
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
@@ -8666,7 +8716,8 @@
               (ir.CompilerIrInstr.Return
                 (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
               (ir.compiler-ir-instr-seq-empty))))
-        ir.CompilerIrBlockList.Nil))))
+        ir.CompilerIrBlockList.Nil)
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
@@ -8694,7 +8745,8 @@
                 (ir.CompilerIrInstr.Return
                   (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
                 (ir.compiler-ir-instr-seq-empty)))))
-        ir.CompilerIrBlockList.Nil))))
+        ir.CompilerIrBlockList.Nil)
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
@@ -8723,7 +8775,8 @@
               (ir.CompilerIrInstr.Return
                 (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 2)))
               (ir.compiler-ir-instr-seq-empty))))
-        ir.CompilerIrBlockList.Nil))))
+        ir.CompilerIrBlockList.Nil)
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
@@ -8768,7 +8821,7 @@
         (compiler-reg-remat-single-spill-plan
           (ir.compiler-ir-global-shared-view func))]
       (match (ir.compiler-ir-global-shared-view func)
-        [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+        [(ir.CompilerIrFunction.Function _ _ _ vars blocks _)
           (match (reg.compiler-reg-remat-rewrite-blocks
             (ast.ast-node-pool-reader-type-segment-bases)
             (ir.compiler-ir-global-shared-view func)
@@ -8853,7 +8906,7 @@
         (compiler-reg-remat-conflict-plan
           (ir.compiler-ir-global-shared-view func))]
       (match (ir.compiler-ir-global-shared-view func)
-        [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+        [(ir.CompilerIrFunction.Function _ _ _ vars blocks _)
           (match (reg.compiler-reg-remat-rewrite-blocks
             (ast.ast-node-pool-reader-type-segment-bases)
             (ir.compiler-ir-global-shared-view func)
@@ -8888,7 +8941,7 @@
         (compiler-reg-remat-single-spill-plan
           (ir.compiler-ir-global-shared-view func))]
       (match (ir.compiler-ir-global-shared-view func)
-        [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+        [(ir.CompilerIrFunction.Function _ _ _ vars blocks _)
           (match (reg.compiler-reg-remat-rewrite-blocks
             (ast.ast-node-pool-reader-type-segment-bases)
             (ir.compiler-ir-global-shared-view func)
@@ -8922,7 +8975,7 @@
         (compiler-reg-remat-single-spill-plan
           (ir.compiler-ir-global-shared-view func))]
       (match (ir.compiler-ir-global-shared-view func)
-        [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+        [(ir.CompilerIrFunction.Function _ _ _ vars blocks _)
           (match (reg.compiler-reg-remat-rewrite-blocks
             (ast.ast-node-pool-reader-type-segment-bases)
             (ir.compiler-ir-global-shared-view func)
@@ -8957,7 +9010,7 @@
         (compiler-reg-remat-single-spill-plan
           (ir.compiler-ir-global-shared-view func))]
       (match (ir.compiler-ir-global-shared-view func)
-        [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+        [(ir.CompilerIrFunction.Function _ _ _ vars blocks _)
           (match (reg.compiler-reg-remat-rewrite-blocks
             (ast.ast-node-pool-reader-type-segment-bases)
             (ir.compiler-ir-global-shared-view func)
@@ -8996,7 +9049,7 @@
         (compiler-reg-remat-single-spill-plan
           (ir.compiler-ir-global-shared-view func))]
       (match (ir.compiler-ir-global-shared-view func)
-        [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+        [(ir.CompilerIrFunction.Function _ _ _ vars blocks _)
           (match (reg.compiler-reg-remat-rewrite-blocks
             (ast.ast-node-pool-reader-type-segment-bases)
             (ir.compiler-ir-global-shared-view func)
@@ -9035,7 +9088,7 @@
         (compiler-reg-remat-single-spill-plan
           (ir.compiler-ir-global-shared-view func))]
       (match (ir.compiler-ir-global-shared-view func)
-        [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+        [(ir.CompilerIrFunction.Function _ _ _ vars blocks _)
           (match (reg.compiler-reg-remat-rewrite-blocks
             (ast.ast-node-pool-reader-type-segment-bases)
             (ir.compiler-ir-global-shared-view func)
@@ -9077,7 +9130,7 @@
         (compiler-reg-remat-single-spill-plan
           (ir.compiler-ir-global-shared-view func))]
       (match (ir.compiler-ir-global-shared-view func)
-        [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+        [(ir.CompilerIrFunction.Function _ _ _ vars blocks _)
           (match (reg.compiler-reg-remat-rewrite-blocks
             (ast.ast-node-pool-reader-type-segment-bases)
             (ir.compiler-ir-global-shared-view func)
@@ -9160,7 +9213,7 @@
         (compiler-reg-remat-single-spill-plan
           (ir.compiler-ir-global-shared-view func))]
       (match (ir.compiler-ir-global-shared-view func)
-        [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+        [(ir.CompilerIrFunction.Function _ _ _ vars blocks _)
           (match (reg.compiler-reg-remat-rewrite-blocks
             (ast.ast-node-pool-reader-type-segment-bases)
             (ir.compiler-ir-global-shared-view func)
@@ -9329,7 +9382,8 @@
                 (compiler-reg-test-instr-seq-prepend
                   (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
                   (ir.compiler-ir-instr-seq-empty)))
-              ir.CompilerIrBlockList.Nil)))))))
+              ir.CompilerIrBlockList.Nil)))
+        ir.CompilerIrFunctionAbi.Ordinary))))
 
 (cfg
   test
@@ -9362,7 +9416,8 @@
                 (compiler-reg-test-instr-seq-prepend
                   (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
                   (ir.compiler-ir-instr-seq-empty)))
-              ir.CompilerIrBlockList.Nil)))))))
+              ir.CompilerIrBlockList.Nil)))
+        ir.CompilerIrFunctionAbi.Ordinary))))
 
 (cfg
   test
@@ -9501,7 +9556,8 @@
                 (compiler-reg-test-instr-seq-prepend
                   (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
                   (ir.compiler-ir-instr-seq-empty)))
-              ir.CompilerIrBlockList.Nil)))))))
+              ir.CompilerIrBlockList.Nil)))
+        ir.CompilerIrFunctionAbi.Ordinary))))
 
 ;; Collect loop rows for var 0 (marked a full-grade candidate) and return the
 ;; bucket the collector filled.
@@ -9511,7 +9567,7 @@
     [define-in-loop? : bool]
     [call-in-loop? : bool]) : reg.CompilerRegCallRegionStatSeq
     (match (compiler-reg-loop-region-fixture define-in-loop? call-in-loop?)
-      [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+      [(ir.CompilerIrFunction.Function _ _ _ vars blocks _)
         (let
           [cand : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
           [order : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
@@ -9956,7 +10012,8 @@
                   (compiler-reg-test-instr-seq-prepend
                     (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
                     (ir.compiler-ir-instr-seq-empty))))
-              ir.CompilerIrBlockList.Nil)))))))
+              ir.CompilerIrBlockList.Nil)))
+        ir.CompilerIrFunctionAbi.Ordinary))))
 
 ;; r12/r13: two callee-saved homes that clear the loop-pool hazard filter.
 (cfg
@@ -10034,7 +10091,7 @@
     [out-points : (__tl_dyn-array i64)]
     [out-saves : (__tl_dyn-array i64)]) : reg.CompilerRegCallEvictPick
     (match (compiler-reg-evict-fixture victim-in-loop?)
-      [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+      [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
         (let
           [occ-var : (__tl_dyn-array i64) (__tl_make-array i64 4)]
           [occ-reg : (__tl_dyn-array i64) (__tl_make-array i64 4)]
@@ -10396,7 +10453,7 @@
   test
   (define (compiler-reg-evict-class-mention-ok?) : bool
     (match (compiler-reg-evict-fixture false)
-      [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+      [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
         (let
           [seq : ir.CompilerIrBlockSeq
             (live.compiler-live-ir-block-list-to-seq blocks)]
@@ -10454,7 +10511,7 @@
   test
   (define (compiler-reg-evict-rewrite-shape-ok?) : bool
     (match (compiler-reg-evict-fixture false)
-      [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+      [(ir.CompilerIrFunction.Function _ _ _ vars blocks _)
         (let
           [shadow-regs : (__tl_dyn-array i64) (__tl_make-array i64 7)]
           [split : reg.CompilerRegCallSplit
@@ -10636,7 +10693,8 @@
               (ir.CompilerIrInstr.Return
                 (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
               (ir.compiler-ir-instr-seq-empty)))
-          ir.CompilerIrBlockList.Nil)))))
+          ir.CompilerIrBlockList.Nil))
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
@@ -10667,7 +10725,7 @@
               10
               true)
             (match (ir.compiler-ir-global-shared-view func)
-              [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+              [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
                 (match (reg.compiler-reg-edge-copy-apply
                   blocks
                   (reg.compiler-reg-global-shared-view copies))
@@ -10727,7 +10785,8 @@
                   (ir.CompilerIrInstr.Return
                     (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
                   (ir.compiler-ir-instr-seq-empty)))
-              ir.CompilerIrBlockList.Nil)))))))
+              ir.CompilerIrBlockList.Nil))))
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
@@ -10765,7 +10824,7 @@
               0
               true)
             (match (ir.compiler-ir-global-shared-view func)
-              [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+              [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
                 (match (reg.compiler-reg-edge-copy-apply
                   blocks
                   (reg.compiler-reg-global-shared-view copies))
@@ -10823,7 +10882,8 @@
                   (ir.CompilerIrInstr.Return
                     (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 0)))
                   (ir.compiler-ir-instr-seq-empty)))
-              ir.CompilerIrBlockList.Nil)))))))
+              ir.CompilerIrBlockList.Nil))))
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
@@ -10989,7 +11049,8 @@
                   (ir.CompilerIrInstr.Return
                     (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 0)))
                   (ir.compiler-ir-instr-seq-empty)))
-              ir.CompilerIrBlockList.Nil)))))))
+              ir.CompilerIrBlockList.Nil))))
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
@@ -11000,7 +11061,7 @@
         (compiler-reg-leaf-csr-split-plan
           (ir.compiler-ir-global-shared-view func))]
       (match (ir.compiler-ir-global-shared-view func)
-        [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+        [(ir.CompilerIrFunction.Function _ _ _ vars blocks function-abi)
           (let
             [rewrite : reg.CompilerRegCallSaveRewrite
               (reg.compiler-reg-leaf-csr-split-rewrite-one
@@ -11026,7 +11087,8 @@
                       (ir.compiler-ir-param-seq-empty)
                       (ast.AstType.I64)
                       out-vars
-                      (ir.compiler-ir-global-shared-view rewritten))]
+                      (ir.compiler-ir-global-shared-view rewritten)
+                      function-abi)]
                   [rewritten-types : reg.CompilerRegVarTypes
                     (reg.compiler-reg-function-var-types
                       (ir.compiler-ir-global-shared-view rewritten-func))]
@@ -11138,7 +11200,8 @@
                   (ir.CompilerIrInstr.Return
                     (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
                   (ir.compiler-ir-instr-seq-empty)))
-              ir.CompilerIrBlockList.Nil)))))))
+              ir.CompilerIrBlockList.Nil))))
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
@@ -11206,7 +11269,8 @@
                   (ir.CompilerIrInstr.Return
                     (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
                   (ir.compiler-ir-instr-seq-empty)))
-              ir.CompilerIrBlockList.Nil)))))))
+              ir.CompilerIrBlockList.Nil))))
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
@@ -11254,7 +11318,8 @@
                   (ir.CompilerIrInstr.Return
                     (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
                   (ir.compiler-ir-instr-seq-empty)))
-              ir.CompilerIrBlockList.Nil)))))))
+              ir.CompilerIrBlockList.Nil))))
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
@@ -11315,7 +11380,8 @@
                   (ir.CompilerIrInstr.Return
                     (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
                   (ir.compiler-ir-instr-seq-empty)))
-              ir.CompilerIrBlockList.Nil)))))))
+              ir.CompilerIrBlockList.Nil))))
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
@@ -11325,7 +11391,7 @@
       [plan : reg.CompilerRegPlan
         (compiler-reg-loop-split-plan (ir.compiler-ir-global-shared-view func))]
       (match (ir.compiler-ir-global-shared-view func)
-        [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+        [(ir.CompilerIrFunction.Function _ _ _ vars blocks _)
           (let
             [rewrite : reg.CompilerRegCallSaveRewrite
               (reg.compiler-reg-loop-split-rewrite-blocks
@@ -11384,7 +11450,7 @@
         (compiler-reg-loop-split-two-plan
           (ir.compiler-ir-global-shared-view func))]
       (match (ir.compiler-ir-global-shared-view func)
-        [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+        [(ir.CompilerIrFunction.Function _ _ _ vars blocks _)
           (let
             [rewrite : reg.CompilerRegCallSaveRewrite
               (reg.compiler-reg-loop-split-rewrite-blocks
@@ -11447,7 +11513,7 @@
       [plan : reg.CompilerRegPlan
         (compiler-reg-loop-split-plan (ir.compiler-ir-global-shared-view func))]
       (match (ir.compiler-ir-global-shared-view func)
-        [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+        [(ir.CompilerIrFunction.Function _ _ _ vars blocks _)
           (match (reg.compiler-reg-loop-split-rewrite-blocks
             (ast.ast-node-pool-reader-type-segment-bases)
             (ir.compiler-ir-global-shared-view func)
@@ -11487,7 +11553,7 @@
       [plan : reg.CompilerRegPlan
         (compiler-reg-loop-split-plan (ir.compiler-ir-global-shared-view func))]
       (match (ir.compiler-ir-global-shared-view func)
-        [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+        [(ir.CompilerIrFunction.Function _ _ _ vars blocks _)
           (match (reg.compiler-reg-loop-split-rewrite-blocks
             (ast.ast-node-pool-reader-type-segment-bases)
             (ir.compiler-ir-global-shared-view func)
@@ -11569,7 +11635,8 @@
                     (ir.CompilerIrInstr.Return
                       (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
                     (ir.compiler-ir-instr-seq-empty)))
-                ir.CompilerIrBlockList.Nil))))))))
+                ir.CompilerIrBlockList.Nil)))))
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
@@ -11643,7 +11710,8 @@
                         (ir.CompilerIrMaybeValue.Some
                           (ir.CompilerIrValue.Var 0)))
                       (ir.compiler-ir-instr-seq-empty)))
-                  ir.CompilerIrBlockList.Nil)))))))))
+                  ir.CompilerIrBlockList.Nil))))))
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
@@ -11660,7 +11728,7 @@
       [plan : reg.CompilerRegPlan
         (compiler-reg-loop-split-plan (ir.compiler-ir-global-shared-view func))]
       (match (ir.compiler-ir-global-shared-view func)
-        [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+        [(ir.CompilerIrFunction.Function _ _ _ vars blocks _)
           (let
             [rewrite : reg.CompilerRegCallSaveRewrite
               (reg.compiler-reg-loop-split-rewrite-blocks
@@ -11766,7 +11834,8 @@
                     (compiler-reg-test-instr-seq-prepend
                       (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "loop"))
                       (ir.compiler-ir-instr-seq-empty))))))))
-        ir.CompilerIrBlockList.Nil))))
+        ir.CompilerIrBlockList.Nil)
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
@@ -11925,7 +11994,8 @@
                           (ir.CompilerIrMaybeValue.Some
                             (ir.CompilerIrValue.Var 5)))
                         (ir.compiler-ir-instr-seq-empty)))))))))
-        ir.CompilerIrBlockList.Nil))))
+        ir.CompilerIrBlockList.Nil)
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
@@ -12406,7 +12476,8 @@
                 (ir.CompilerIrInstr.Return
                   (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 1)))
                 (ir.compiler-ir-instr-seq-empty))))
-          ir.CompilerIrBlockList.Nil)))))
+          ir.CompilerIrBlockList.Nil))
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
@@ -13246,7 +13317,8 @@
                         (ir.CompilerIrMaybeValue.Some
                           (ir.CompilerIrValue.Var 3)))
                       (ir.compiler-ir-instr-seq-empty))))))))
-        ir.CompilerIrBlockList.Nil))))
+        ir.CompilerIrBlockList.Nil)
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
@@ -14117,7 +14189,8 @@
     (ir.compiler-ir-param-seq-empty)
     (ast.AstType.I64)
     1
-    (compiler-reg-switch-scratch-test-blocks)))
+    (compiler-reg-switch-scratch-test-blocks)
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-reg-switch-scratch-test-plan) : reg.CompilerRegPlan
   (reg.CompilerRegPlan.Plan
@@ -14192,7 +14265,8 @@
     (ir.compiler-ir-param-seq-empty)
     (ast.AstType.I64)
     1
-    (compiler-reg-bounds-scratch-test-blocks)))
+    (compiler-reg-bounds-scratch-test-blocks)
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-reg-bounds-scratch-vregs-ok?) : bool
   (cfg
@@ -14273,7 +14347,8 @@
             (ir.CompilerIrValue.Var 1)
             7)
           (ir.compiler-ir-instr-seq-empty)))
-      ir.CompilerIrBlockList.Nil)))
+      ir.CompilerIrBlockList.Nil)
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-reg-memory-scratch-vregs-ok?) : bool
   (cfg
@@ -14392,7 +14467,8 @@
               (compiler-reg-test-instr-seq-prepend
                 (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
                 (ir.compiler-ir-instr-seq-empty))))
-          ir.CompilerIrBlockList.Nil))]
+          ir.CompilerIrBlockList.Nil)
+        ir.CompilerIrFunctionAbi.Ordinary)]
     [types : reg.CompilerRegVarTypes
       (reg.compiler-reg-function-var-types
         (ir.compiler-ir-global-shared-view func))]
@@ -14441,7 +14517,8 @@
             (ir.CompilerIrValue.Var 0)
             (ast.AstType.I32))
           (ir.compiler-ir-instr-seq-empty)))
-      ir.CompilerIrBlockList.Nil)))
+      ir.CompilerIrBlockList.Nil)
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-reg-scalar-mov-scratch-vregs-ok?) : bool
   (cfg
@@ -14499,7 +14576,8 @@
             (ir.CompilerIrInstr.Return
               (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
             (ir.compiler-ir-instr-seq-empty))))
-      ir.CompilerIrBlockList.Nil)))
+      ir.CompilerIrBlockList.Nil)
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-reg-fast-alloc-scratch-vregs-ok?) : bool
   (cfg
@@ -14587,7 +14665,8 @@
             (ir.CompilerIrInstr.Return
               (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 2)))
             (ir.compiler-ir-instr-seq-empty))))
-      ir.CompilerIrBlockList.Nil)))
+      ir.CompilerIrBlockList.Nil)
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-reg-return-compare-rax-rhs-scratch-vregs-ok?) : bool
   (cfg
@@ -14659,7 +14738,8 @@
                 (ir.CompilerIrInstr.Return
                   (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 4)))
                 (ir.compiler-ir-instr-seq-empty))))))
-      ir.CompilerIrBlockList.Nil)))
+      ir.CompilerIrBlockList.Nil)
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-reg-binop-global-rhs-scratch-test-plan) : reg.CompilerRegPlan
   (let
@@ -14815,7 +14895,8 @@
               (ir.CompilerIrInstr.Return
                 (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 1)))
               (ir.compiler-ir-instr-seq-empty)))))
-      ir.CompilerIrBlockList.Nil)))
+      ir.CompilerIrBlockList.Nil)
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-reg-early-scratch-nontarget-blocks) : ir.CompilerIrBlockList
   (ir.compiler-ir-block-cons
@@ -15626,7 +15707,8 @@
                 (ir.CompilerIrInstr.Return
                   (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 1)))
                 (ir.compiler-ir-instr-seq-empty))))))
-      ir.CompilerIrBlockList.Nil)))
+      ir.CompilerIrBlockList.Nil)
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-reg-f64-reuse-function) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
@@ -15656,7 +15738,8 @@
                 (ir.CompilerIrInstr.Return
                   (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 1)))
                 (ir.compiler-ir-instr-seq-empty))))))
-      ir.CompilerIrBlockList.Nil)))
+      ir.CompilerIrBlockList.Nil)
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-reg-overlap-function) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
@@ -15741,7 +15824,8 @@
                                       (ir.CompilerIrInstr.Return
                                         ir.CompilerIrMaybeValue.No)
                                       (ir.compiler-ir-instr-seq-empty)))))))))))))))))
-      ir.CompilerIrBlockList.Nil)))
+      ir.CompilerIrBlockList.Nil)
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-reg-f64-overlap-function) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
@@ -15806,7 +15890,8 @@
                               (ir.CompilerIrInstr.Return
                                 ir.CompilerIrMaybeValue.No)
                               (ir.compiler-ir-instr-seq-empty)))))))))))))
-      ir.CompilerIrBlockList.Nil)))
+      ir.CompilerIrBlockList.Nil)
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-reg-call-live-function) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
@@ -15837,7 +15922,8 @@
                 (ir.CompilerIrInstr.Return
                   (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 2)))
                 (ir.compiler-ir-instr-seq-empty))))))
-      ir.CompilerIrBlockList.Nil)))
+      ir.CompilerIrBlockList.Nil)
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-reg-f64-call-live-function) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
@@ -15868,7 +15954,8 @@
                 (ir.CompilerIrInstr.Return
                   (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 2)))
                 (ir.compiler-ir-instr-seq-empty))))))
-      ir.CompilerIrBlockList.Nil)))
+      ir.CompilerIrBlockList.Nil)
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-reg-call-arg-function) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
@@ -15906,7 +15993,8 @@
                   (ir.CompilerIrInstr.Return
                     (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 3)))
                   (ir.compiler-ir-instr-seq-empty)))))))
-      ir.CompilerIrBlockList.Nil)))
+      ir.CompilerIrBlockList.Nil)
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-reg-f64-call-arg-function) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
@@ -15937,7 +16025,8 @@
                 (ir.CompilerIrInstr.Return
                   (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 2)))
                 (ir.compiler-ir-instr-seq-empty))))))
-      ir.CompilerIrBlockList.Nil)))
+      ir.CompilerIrBlockList.Nil)
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 ;; M-A2 fixture: a direct call mixing a HANDLE arg (8-byte Array descriptor
 ;; pointer, var 0, produced by a call so it is not remat-classified) with a
@@ -15979,7 +16068,8 @@
                 (compiler-reg-test-instr-seq-prepend
                   (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
                   (ir.compiler-ir-instr-seq-empty)))))))
-      ir.CompilerIrBlockList.Nil)))
+      ir.CompilerIrBlockList.Nil)
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-reg-func2-ty) : ast.AstType
   (ast.ast-ty-func
@@ -16026,7 +16116,8 @@
             (ir.CompilerIrInstr.Return
               (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 3)))
             (ir.compiler-ir-instr-seq-empty))))
-      ir.CompilerIrBlockList.Nil)))
+      ir.CompilerIrBlockList.Nil)
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-reg-indirect-call-arg4-function) : ir.CompilerIrFunction
   (let
@@ -16065,7 +16156,8 @@
                 (ir.CompilerIrInstr.Return
                   (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 5)))
                 (ir.compiler-ir-instr-seq-empty))))
-          ir.CompilerIrBlockList.Nil)))))
+          ir.CompilerIrBlockList.Nil)
+        ir.CompilerIrFunctionAbi.Ordinary))))
 
 (define (compiler-reg-c-abi-store-result-arg-function) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
@@ -16095,7 +16187,8 @@
           (compiler-reg-test-instr-seq-prepend
             (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
             (ir.compiler-ir-instr-seq-empty))))
-      ir.CompilerIrBlockList.Nil)))
+      ir.CompilerIrBlockList.Nil)
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-reg-ineligible-function) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
@@ -16146,7 +16239,8 @@
                           (ir.CompilerIrMaybeValue.Some
                             (ir.CompilerIrValue.Var 5)))
                         (ir.compiler-ir-instr-seq-empty))))))))))
-      ir.CompilerIrBlockList.Nil)))
+      ir.CompilerIrBlockList.Nil)
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-reg-param-livein-gap-function) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
@@ -16174,7 +16268,8 @@
               (ir.CompilerIrInstr.Return
                 (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
               (ir.compiler-ir-instr-seq-empty))))
-        ir.CompilerIrBlockList.Nil))))
+        ir.CompilerIrBlockList.Nil))
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-reg-single-block-livein-gap-function) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
@@ -16196,7 +16291,8 @@
             (ir.CompilerIrInstr.Return
               (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
             (ir.compiler-ir-instr-seq-empty))))
-      ir.CompilerIrBlockList.Nil)))
+      ir.CompilerIrBlockList.Nil)
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-reg-move-chain-function) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
@@ -16226,7 +16322,8 @@
                 (ir.CompilerIrInstr.Return
                   (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 2)))
                 (ir.compiler-ir-instr-seq-empty))))))
-      ir.CompilerIrBlockList.Nil)))
+      ir.CompilerIrBlockList.Nil)
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-reg-same-value-multi-def-census-function) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
@@ -16253,7 +16350,8 @@
                 (ir.CompilerIrInstr.Return
                   (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 1)))
                 (ir.compiler-ir-instr-seq-empty))))))
-      ir.CompilerIrBlockList.Nil)))
+      ir.CompilerIrBlockList.Nil)
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-reg-phi-join-function) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
@@ -16287,7 +16385,8 @@
               (ir.CompilerIrInstr.Return
                 (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 1)))
               (ir.compiler-ir-instr-seq-empty))))
-        ir.CompilerIrBlockList.Nil))))
+        ir.CompilerIrBlockList.Nil))
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-reg-loop-backedge-function) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
@@ -16344,7 +16443,8 @@
                 (ir.CompilerIrInstr.Return
                   (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 2)))
                 (ir.compiler-ir-instr-seq-empty)))
-            ir.CompilerIrBlockList.Nil))))))
+            ir.CompilerIrBlockList.Nil))))
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 ;; Single-block accumulator carry plus a loop counter. The accumulator back-edge
 ;; value is defined in the block and only feeds successor phis, so EP relaxation
@@ -16434,7 +16534,8 @@
               (ir.CompilerIrInstr.Return
                 (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 3)))
               (ir.compiler-ir-instr-seq-empty)))
-          ir.CompilerIrBlockList.Nil)))))
+          ir.CompilerIrBlockList.Nil)))
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-reg-self-loop-exit-live-phi-mask-shape-ok?
   [mask : (__tl_dyn-array i64)]) : bool
@@ -16500,7 +16601,8 @@
               (ir.CompilerIrInstr.Return
                 (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
               (ir.compiler-ir-instr-seq-empty)))
-          ir.CompilerIrBlockList.Nil)))))
+          ir.CompilerIrBlockList.Nil)))
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 ;; Negative counter shape 2: the PHI RESULT v0 is read AGAIN inside the block,
 ;; after the increment v1 that feeds the back edge. The increment would destroy
@@ -16565,7 +16667,8 @@
               (ir.CompilerIrInstr.Return
                 (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 2)))
               (ir.compiler-ir-instr-seq-empty)))
-          ir.CompilerIrBlockList.Nil)))))
+          ir.CompilerIrBlockList.Nil)))
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-reg-destructive-straight-chain-function) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
@@ -16599,7 +16702,8 @@
                 (ir.CompilerIrInstr.Return
                   (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 2)))
                 (ir.compiler-ir-instr-seq-empty))))))
-      ir.CompilerIrBlockList.Nil)))
+      ir.CompilerIrBlockList.Nil)
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-reg-destructive-noncommutative-function) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
@@ -16638,7 +16742,8 @@
                   (ir.CompilerIrInstr.Return
                     (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 3)))
                   (ir.compiler-ir-instr-seq-empty)))))))
-      ir.CompilerIrBlockList.Nil)))
+      ir.CompilerIrBlockList.Nil)
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-reg-destructive-commutative-rhs-function) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
@@ -16672,7 +16777,8 @@
                 (ir.CompilerIrInstr.Return
                   (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 2)))
                 (ir.compiler-ir-instr-seq-empty))))))
-      ir.CompilerIrBlockList.Nil)))
+      ir.CompilerIrBlockList.Nil)
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-reg-destructive-div-exclusion-function) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
@@ -16706,7 +16812,8 @@
                 (ir.CompilerIrInstr.Return
                   (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 2)))
                 (ir.compiler-ir-instr-seq-empty))))))
-      ir.CompilerIrBlockList.Nil)))
+      ir.CompilerIrBlockList.Nil)
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-reg-destructive-chain-ok?) : bool
   (let
@@ -16874,7 +16981,8 @@
                               (ir.CompilerIrMaybeValue.Some
                                 (ir.CompilerIrValue.Var 7)))
                             (ir.compiler-ir-instr-seq-empty))))))))))))
-      ir.CompilerIrBlockList.Nil)))
+      ir.CompilerIrBlockList.Nil)
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 ;; Both operands loaded is the backend's PAIR fold, which needs no operand tie:
 ;;
@@ -16956,7 +17064,8 @@
                                 (ir.CompilerIrMaybeValue.Some
                                   (ir.CompilerIrValue.Var 9)))
                               (ir.compiler-ir-instr-seq-empty)))))))))))))
-      ir.CompilerIrBlockList.Nil)))
+      ir.CompilerIrBlockList.Nil)
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-reg-alu-load-lhs-moves
   [op : ir.CompilerIrBinOp]
@@ -17083,7 +17192,8 @@
                 (ir.CompilerIrInstr.Return
                   (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 2)))
                 (ir.compiler-ir-instr-seq-empty))))))
-      ir.CompilerIrBlockList.Nil)))
+      ir.CompilerIrBlockList.Nil)
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 ;; M-C (part 1) census shapes for the extended (mutable-source) same-value
 ;; relation. `safe`: the source's second def lies OUTSIDE the copy's liveness
@@ -17123,7 +17233,8 @@
                   (ir.CompilerIrInstr.Return
                     (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
                   (ir.compiler-ir-instr-seq-empty)))))))
-      ir.CompilerIrBlockList.Nil)))
+      ir.CompilerIrBlockList.Nil)
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-reg-sv-multi-reject-function) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
@@ -17158,7 +17269,8 @@
                   (ir.CompilerIrInstr.Return
                     (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
                   (ir.compiler-ir-instr-seq-empty)))))))
-      ir.CompilerIrBlockList.Nil)))
+      ir.CompilerIrBlockList.Nil)
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-reg-sv-multi-chain-function) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
@@ -17198,7 +17310,8 @@
                     (ir.CompilerIrInstr.Return
                       (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
                     (ir.compiler-ir-instr-seq-empty))))))))
-      ir.CompilerIrBlockList.Nil)))
+      ir.CompilerIrBlockList.Nil)
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-reg-sv-multi-cast-function) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
@@ -17234,7 +17347,8 @@
                   (ir.CompilerIrInstr.Return
                     (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
                   (ir.compiler-ir-instr-seq-empty)))))))
-      ir.CompilerIrBlockList.Nil)))
+      ir.CompilerIrBlockList.Nil)
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 ;; ---------------------------------------------------------------------------
 ;; P22: nested value-identical copies coalesce ACROSS a call.
@@ -17283,7 +17397,8 @@
                     (ir.CompilerIrInstr.Return
                       (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
                     (ir.compiler-ir-instr-seq-empty))))))))
-      ir.CompilerIrBlockList.Nil)))
+      ir.CompilerIrBlockList.Nil)
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 ;; The mutable-source hazard must survive the relaxation: `0` is redefined
 ;; INSIDE the copy's liveness, so the two are not the same value at the copy's
@@ -17333,7 +17448,8 @@
                         (ir.CompilerIrMaybeValue.Some
                           (ir.CompilerIrValue.Var 0)))
                       (ir.compiler-ir-instr-seq-empty)))))))))
-      ir.CompilerIrBlockList.Nil)))
+      ir.CompilerIrBlockList.Nil)
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-reg-p22-nested-same-home? [func : ir.CompilerIrFunction]) : bool
   (match (reg.compiler-reg-plan-function-scalar func)
@@ -17424,7 +17540,8 @@
                 (ir.CompilerIrInstr.Return
                   (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 1)))
                 (ir.compiler-ir-instr-seq-empty))))))
-      ir.CompilerIrBlockList.Nil)))
+      ir.CompilerIrBlockList.Nil)
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-reg-spill-coalesce-function) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
@@ -17490,7 +17607,8 @@
                                 (ir.CompilerIrMaybeValue.Some
                                   (ir.CompilerIrValue.Var 5)))
                               (ir.compiler-ir-instr-seq-empty)))))))))))))
-      ir.CompilerIrBlockList.Nil)))
+      ir.CompilerIrBlockList.Nil)
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-reg-vector-home-function) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
@@ -17541,7 +17659,8 @@
                   (compiler-reg-test-instr-seq-prepend
                     (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
                     (ir.compiler-ir-instr-seq-empty))))))))
-      ir.CompilerIrBlockList.Nil)))
+      ir.CompilerIrBlockList.Nil)
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 ;; CpuId clobbers fixed GP registers but preserves the XMM bank. A vector live
 ;; across it must therefore keep an ordinary volatile vector home on SysV.
@@ -17577,7 +17696,8 @@
               (compiler-reg-test-instr-seq-prepend
                 (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
                 (ir.compiler-ir-instr-seq-empty))))))
-      ir.CompilerIrBlockList.Nil)))
+      ir.CompilerIrBlockList.Nil)
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-reg-vector-select-false-home-function) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
@@ -17639,7 +17759,8 @@
                       (compiler-reg-test-instr-seq-prepend
                         (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
                         (ir.compiler-ir-instr-seq-empty))))))))))
-      ir.CompilerIrBlockList.Nil)))
+      ir.CompilerIrBlockList.Nil)
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-reg-mask-home-function) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
@@ -17681,7 +17802,8 @@
                     (ir.CompilerIrInstr.Return
                       (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 4)))
                     (ir.compiler-ir-instr-seq-empty))))))))
-      ir.CompilerIrBlockList.Nil)))
+      ir.CompilerIrBlockList.Nil)
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-reg-mask-pressure-uses [index : i64]) : ir.CompilerIrInstrSeq
   (if (>= index 7)
@@ -17718,7 +17840,8 @@
       (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "entry")
         (compiler-reg-mask-pressure-defs 0))
-      ir.CompilerIrBlockList.Nil)))
+      ir.CompilerIrBlockList.Nil)
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-reg-reuse-ok?) : bool
   (match (reg.compiler-reg-plan-function (compiler-reg-reuse-function))
@@ -18321,7 +18444,8 @@
                                     (ir.CompilerIrInstr.Return
                                       ir.CompilerIrMaybeValue.No)
                                     (ir.compiler-ir-instr-seq-empty))))))))))))))))
-      ir.CompilerIrBlockList.Nil)))
+      ir.CompilerIrBlockList.Nil)
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-reg-call-spanning-caller-saved-function) : ir.CompilerIrFunction
   (let
@@ -18476,7 +18600,8 @@
         8
         (ir.compiler-ir-block-cons
           (ir.CompilerIrBlock.Block (ir.compiler-ir-label "entry") instrs)
-          ir.CompilerIrBlockList.Nil)))))
+          ir.CompilerIrBlockList.Nil)
+        ir.CompilerIrFunctionAbi.Ordinary))))
 
 (define (compiler-reg-scalar-zero-call-caller-saved-ok?) : bool
   (match (reg.compiler-reg-plan-function-scalar (compiler-reg-overlap-function))
@@ -19536,7 +19661,8 @@
                   (ir.CompilerIrValue.Var 0))
                 (compiler-reg-i64-ty))
               (ir.compiler-ir-instr-seq-empty)))
-          ir.CompilerIrBlockList.Nil)))))
+          ir.CompilerIrBlockList.Nil)))
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 ;; Same dispatcher with a REAL call in the arm that runs FIRST in block order,
 ;; and both parameters live across it. Nothing may be un-pinned here.
@@ -19600,7 +19726,8 @@
                   (ir.CompilerIrValue.Var 0))
                 (compiler-reg-i64-ty))
               (ir.compiler-ir-instr-seq-empty)))
-          ir.CompilerIrBlockList.Nil)))))
+          ir.CompilerIrBlockList.Nil)))
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 ;; MIXED. `call_arm` runs first in block order and holds a real call that only
 ;; `v` is live across; `k` is referenced at entry and again in the LAST block,
@@ -19659,7 +19786,8 @@
                 (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.Var 0))
                 (compiler-reg-i64-ty))
               (ir.compiler-ir-instr-seq-empty)))
-          ir.CompilerIrBlockList.Nil)))))
+          ir.CompilerIrBlockList.Nil)))
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 ;; Kind 0 counts the whole call-like family; kind 6 drops the tail calls and
 ;; keeps every resuming call. The pure dispatcher has TWO kind-0 points and NO
@@ -20446,7 +20574,8 @@
                             (ir.CompilerIrInstr.Return
                               ir.CompilerIrMaybeValue.No)
                             (ir.compiler-ir-instr-seq-empty)))))))))))
-        ir.CompilerIrBlockList.Nil))))
+        ir.CompilerIrBlockList.Nil)
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 ;; Stack-only planning still needs enough lifetime information to color the
 ;; frame. The two inline-storage ranges below live on mutually exclusive CFG
@@ -20527,7 +20656,8 @@
                 (compiler-reg-test-instr-seq-prepend
                   (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
                   (ir.compiler-ir-instr-seq-empty)))
-              ir.CompilerIrBlockList.Nil)))))))
+              ir.CompilerIrBlockList.Nil))))
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 ;; The first address remains live across construction of the second range and
 ;; escapes through a call. Its backing range must stay private even though the
@@ -20576,7 +20706,8 @@
                               (ir.CompilerIrInstr.Return
                                 ir.CompilerIrMaybeValue.No)
                               (ir.compiler-ir-instr-seq-empty))))))))))))
-        ir.CompilerIrBlockList.Nil))))
+        ir.CompilerIrBlockList.Nil)
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (define (compiler-reg-color-pointer-assignments) : reg.CompilerRegAssignmentTable
   (reg.compiler-reg-assignment-insert
@@ -20952,11 +21083,12 @@
               (compiler-reg-test-instr-seq-prepend
                 (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
                 (ir.compiler-ir-instr-seq-empty))))))
-      ir.CompilerIrBlockList.Nil)))
+      ir.CompilerIrBlockList.Nil)
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-reg-color-vector-stack-slots-ok?) : bool
   (match (compiler-reg-color-vector-stack-function)
-    [(ir.CompilerIrFunction.Function _ params _ vars blocks)
+    [(ir.CompilerIrFunction.Function _ params _ vars blocks _)
       (match (reg.compiler-reg-color-stack-slots
         (ast.ast-node-pool-reader-type-segment-bases)
         (reg.CompilerRegPlan.Plan
@@ -21089,7 +21221,8 @@
                     (compiler-reg-test-instr-seq-prepend
                       (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
                       (ir.compiler-ir-instr-seq-empty)))))))))
-      ir.CompilerIrBlockList.Nil)))
+      ir.CompilerIrBlockList.Nil)
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-reg-simd-copy-classes-and-widths-ok?) : bool
   (let
@@ -21099,7 +21232,7 @@
         (reg.compiler-reg-global-shared-view func))]
     [words : (__tl_dyn-array i64) (__tl_make-array i64 6)]
     (match (reg.compiler-reg-global-shared-view func)
-      [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+      [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
         (begin
           (reg.compiler-reg-vector-stack-words-blocks!
             (reg.compiler-reg-global-shared-view blocks)
@@ -21149,7 +21282,7 @@
 
 (define (compiler-reg-color-storage-ranges-ok?) : bool
   (match (compiler-reg-color-storage-function)
-    [(ir.CompilerIrFunction.Function _ params _ vars blocks)
+    [(ir.CompilerIrFunction.Function _ params _ vars blocks _)
       (match (reg.compiler-reg-color-stack-slots
         (ast.ast-node-pool-reader-type-segment-bases)
         (reg.CompilerRegPlan.Plan
@@ -21423,7 +21556,7 @@
         (reg.compiler-reg-plan-intervals
           (reg.compiler-reg-global-shared-view plan)))]
     (match func
-      [(ir.CompilerIrFunction.Function _ params _ vars blocks)
+      [(ir.CompilerIrFunction.Function _ params _ vars blocks _)
         (match (reg.compiler-reg-color-stack-slots
           (ast.ast-node-pool-reader-type-segment-bases)
           plan
@@ -21461,7 +21594,7 @@
         (reg.compiler-reg-plan-intervals
           (reg.compiler-reg-global-shared-view plan)))]
     (match func
-      [(ir.CompilerIrFunction.Function _ params _ vars blocks)
+      [(ir.CompilerIrFunction.Function _ params _ vars blocks _)
         (match (reg.compiler-reg-color-stack-slots
           (ast.ast-node-pool-reader-type-segment-bases)
           plan
@@ -22650,7 +22783,8 @@
               (ir.CompilerIrValue.I64 9)
               (compiler-reg-i64-ty))
             (compiler-reg-loop-nest-jump "use"))
-          ir.CompilerIrBlockList.Nil)))))
+          ir.CompilerIrBlockList.Nil)))
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-reg-live-in-call-ok?) : bool
   (let
@@ -23443,7 +23577,8 @@
                                     (ir.CompilerIrMaybeValue.Some
                                       (ir.CompilerIrValue.Var 8)))
                                   (ir.compiler-ir-instr-seq-empty))))))))))))))
-        ir.CompilerIrBlockList.Nil))))
+        ir.CompilerIrBlockList.Nil)
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
@@ -23963,3 +24098,212 @@
       (compiler-regalloc-self-test)
       42
       "regalloc call-span census fixture result")))
+
+(cfg
+  test
+  (define (compiler-reg-check-returned-plan-profile-owner
+    [func : ir.CompilerIrFunction]) : unit
+    (let
+      [state : profile_state.CompilerProfileState
+        (profile_state.compiler-profile-state-new)]
+      [metrics : profile_state.CompilerProfileMetrics
+        (profile_state.compiler-profile-state-metrics state)]
+      [types : reg.CompilerRegVarTypes
+        (reg.compiler-reg-function-var-types-with-metrics
+          (owned_view.compiler-owned-shared-view func)
+          (owned_view.compiler-owned-shared-view metrics))]
+      [plan : reg.CompilerRegPlan
+        (reg.compiler-reg-plan-function-scalar-forced-spill-with-types
+          (ast.ast-node-pool-reader-type-segment-bases)
+          cabi.CompilerRegTargetAbi.Linux
+          func
+          (- 0 1)
+          false
+          types
+          (reg.compiler-reg-assignment-table-make 0))]
+      (begin
+        (test.assert-i64-eq
+          (reg.compiler-reg-liveness-census-baseline-count
+            (owned_view.compiler-owned-shared-view metrics))
+          1
+          "planning records baseline liveness in the caller's owner")
+        (test.assert-i64-eq
+          (reg.compiler-reg-liveness-census-edge-precise-count
+            (owned_view.compiler-owned-shared-view metrics))
+          1
+          "planning records edge-precise liveness in the caller's owner")
+        (match plan
+          [(reg.CompilerRegPlan.Plan _ _ _ returned-types _ _)
+            (reg.compiler-reg-liveness-census-reset! returned-types.metrics)])
+        (test.assert-i64-eq
+          (reg.compiler-reg-liveness-census-baseline-count
+            (owned_view.compiler-owned-shared-view metrics))
+          0
+          "reset through the returned plan reaches the original owner")
+        (test.assert-i64-eq
+          (reg.compiler-reg-liveness-census-edge-precise-count
+            (owned_view.compiler-owned-shared-view metrics))
+          0
+          "returned plan does not carry a cloned metrics owner")))))
+
+(cfg
+  test
+  (test
+    compiler-reg-returned-plan-profile-owner
+    (begin
+      (compiler-reg-check-returned-plan-profile-owner
+        (compiler-reg-liveness-handle-phi-fixture))
+      ;; The same phi analysis crosses the scratch budget with an unused
+      ;; frame suffix. Its returned metrics must still refer to the caller.
+      (compiler-reg-check-returned-plan-profile-owner
+        (match (compiler-reg-liveness-handle-phi-fixture)
+          [(ir.CompilerIrFunction.Function
+              symbol
+              params
+              result
+              _
+              blocks
+              function-abi)
+            (ir.CompilerIrFunction.Function
+              symbol
+              params
+              result
+              262144
+              blocks
+              function-abi)])))))
+
+(cfg
+  test
+  (test
+    compiler-reg-retained-plan-survives-later-planning
+    (let
+      [first : reg.CompilerRegPlan
+        (reg.compiler-reg-plan-function-scalar-for-abi
+          cabi.CompilerRegTargetAbi.Linux
+          (compiler-reg-trace-fixture-function))]
+      [saved : reg.CompilerRegAssignmentTable
+        (clone
+          (reg.compiler-reg-plan-assignments
+            (owned_view.compiler-owned-shared-view first)))]
+      [round : i64 0]
+      (begin
+        (test.assert-true
+          (reg.compiler-reg-assignment-table-prefix-eq?
+            (owned_view.compiler-owned-shared-view saved)
+            (reg.compiler-reg-plan-assignments
+              (owned_view.compiler-owned-shared-view first))
+            9
+            0)
+          "fixture has comparable register/spill homes")
+        (while (< round 32)
+          (let
+            [_later : reg.CompilerRegPlan
+              (reg.compiler-reg-plan-function-scalar-for-abi
+                cabi.CompilerRegTargetAbi.Windows
+                (compiler-reg-trace-fixture-function))]
+            (set! round (+ round 1))))
+        (test.assert-true
+          (reg.compiler-reg-assignment-table-prefix-eq?
+            saved
+            (reg.compiler-reg-plan-assignments first)
+            9
+            0)
+          "retained plan keeps its homes after later analysis arenas retire")))))
+
+;; Widen only the unused frame suffix: identical live vregs must keep their
+;; homes when auxiliary liveness storage crosses its scratch-owner budget.
+(cfg
+  test
+  (define (compiler-reg-analysis-owner-fixture [vars : i64]) : ir.CompilerIrFunction
+    (match (compiler-reg-trace-fixture-function)
+      [(ir.CompilerIrFunction.Function
+          symbol
+          params
+          result
+          _
+          blocks
+          function-abi)
+        (ir.CompilerIrFunction.Function
+          symbol
+          params
+          result
+          vars
+          blocks
+          function-abi)])))
+
+(cfg
+  test
+  (define (compiler-reg-analysis-owner-homes-ok?
+    [abi : cabi.CompilerRegTargetAbi]) : bool
+    (let
+      [_trace-on : unit (reg.compiler-reg-debug-set-trace-homes! true)]
+      [small : reg.CompilerRegPlan
+        (reg.compiler-reg-plan-function-scalar-for-abi
+          abi
+          (compiler-reg-analysis-owner-fixture 9))]
+      [first-reason : i64 (reg.compiler-reg-trace-reason-at 0)]
+      [sixth-reason : i64 (reg.compiler-reg-trace-reason-at 5)]
+      [below : reg.CompilerRegPlan
+        (reg.compiler-reg-plan-function-scalar-for-abi
+          abi
+          (compiler-reg-analysis-owner-fixture 87359))]
+      [above : reg.CompilerRegPlan
+        (reg.compiler-reg-plan-function-scalar-for-abi
+          abi
+          (compiler-reg-analysis-owner-fixture 87360))]
+      ;; Force another scratch lifetime before reading the first escaped plan.
+      [again : reg.CompilerRegPlan
+        (reg.compiler-reg-plan-function-scalar-for-abi
+          abi
+          (compiler-reg-analysis-owner-fixture 87360))]
+      [_trace-off : unit (reg.compiler-reg-debug-set-trace-homes! false)]
+      (and
+        (= first-reason (reg.compiler-reg-trace-reason-at 0))
+        (= sixth-reason (reg.compiler-reg-trace-reason-at 5))
+        (reg.compiler-reg-assignment-table-prefix-eq?
+          (reg.compiler-reg-plan-assignments
+            (owned_view.compiler-owned-shared-view small))
+          (reg.compiler-reg-plan-assignments below)
+          9
+          0)
+        (reg.compiler-reg-assignment-table-prefix-eq?
+          (reg.compiler-reg-plan-assignments small)
+          (reg.compiler-reg-plan-assignments
+            (owned_view.compiler-owned-shared-view above))
+          9
+          0)
+        (reg.compiler-reg-assignment-table-prefix-eq?
+          (reg.compiler-reg-plan-assignments above)
+          (reg.compiler-reg-plan-assignments again)
+          9
+          0)))))
+
+(cfg
+  test
+  (test
+    compiler-reg-analysis-owner-boundary-homes
+    (begin
+      (match (compiler-reg-trace-fixture-function)
+        [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
+          (begin
+            (test.assert-i64-eq
+              (ir.compiler-ir-block-list-instruction-count
+                (owned_view.compiler-owned-shared-view blocks))
+              12
+              "fixture keeps the exact ownership-budget boundary")
+            (test.assert-true
+              (not
+                (reg.compiler-reg-analysis-needs-scratch?
+                  87359
+                  (owned_view.compiler-owned-shared-view blocks)))
+              "lower boundary uses the existing owner")
+            (test.assert-true
+              (reg.compiler-reg-analysis-needs-scratch? 87360 blocks)
+              "upper boundary uses an independent scratch owner"))])
+      (test.assert-true
+        (compiler-reg-analysis-owner-homes-ok? cabi.CompilerRegTargetAbi.Linux)
+        "Linux homes survive both ownership paths and later planning")
+      (test.assert-true
+        (compiler-reg-analysis-owner-homes-ok?
+          cabi.CompilerRegTargetAbi.Windows)
+        "Windows homes survive both ownership paths and later planning"))))

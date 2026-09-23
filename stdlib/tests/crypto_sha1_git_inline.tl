@@ -8,7 +8,7 @@
   (define (test-zero-digest [message : String]) : sha.GitSha1Digest
     (begin
       (test.assert-true false message)
-      (sha.GitSha1Digest (init)))))
+      (sha.GitSha1Digest (make-array u8 20)))))
 
 ;: Require one successful streaming update.
 (cfg
@@ -437,7 +437,7 @@
             "Git SHA-1 rejected update preserves block")
           (sha.wipe-state! (&mut state))))
       (let
-        [block : (Array u8 64) (init)]
+        [block : (Array u8 64) (make-array u8 64)]
         (begin
           (sha.write-bit-length! (&mut block) (cast 0x100000002 : u64))
           (test.assert-i64-eq
@@ -488,7 +488,7 @@
       [input : (& text bytes) (byte_buf.str-as-bytes (& text))]
       [expected : sha.GitSha1Digest (test-digest input)]
       [state : sha.GitSha1State (sha.new)]
-      [output : (Array u8 20) (init)]
+      [output : (Array u8 20) (make-array u8 20)]
       [source : (Ptr u8)
         (unsafe
           (byte_buf.bytes-data input))]
@@ -517,7 +517,7 @@
           (= (array-ref state.words 0) (cast 0 : u32))
           "Git SHA-1 consumed state wipe")
         (let
-          [duplicate-output : (Array u8 20) (init)]
+          [duplicate-output : (Array u8 20) (make-array u8 20)]
           [duplicate-sink : (MutPtr u8)
             (unsafe
               (ptr-cast (ptr-addr-of duplicate-output) : (MutPtr u8)))]
@@ -532,7 +532,7 @@
               "Git SHA-1 duplicate finalize leaves sink unchanged")))
         (let
           [rejected-state : sha.GitSha1State (sha.new)]
-          [rejected-output : (Array u8 20) (init)]
+          [rejected-output : (Array u8 20) (make-array u8 20)]
           [rejected-sink : (MutPtr u8)
             (unsafe
               (ptr-cast (ptr-addr-of rejected-output) : (MutPtr u8)))]
@@ -558,7 +558,7 @@
               "Git SHA-1 rejected sink consumes state")))
         (let
           [oversized-state : sha.GitSha1State (sha.new)]
-          [oversized-output : (Array u8 21) (init)]
+          [oversized-output : (Array u8 21) (make-array u8 21)]
           [oversized-sink : (MutPtr u8)
             (unsafe
               (ptr-cast (ptr-addr-of oversized-output) : (MutPtr u8)))]

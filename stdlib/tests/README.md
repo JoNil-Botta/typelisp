@@ -67,6 +67,42 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
   sensitivity and all multiplicity rules, declared-versus-approved behavior,
   allocation-free typed-field validation, deterministic first errors, and
   preservation of separate trailer field spelling/value/order.
+- `local_ipc_api.tl` is the conformance matrix for `stdlib.local_ipc`, driven
+  by `stdlib.local_ipc_fake`: endpoint validation boundaries (including pipe
+  names Win32 would rewrite) and no dispatch for an invalid endpoint; connect
+  success with the exact name bytes, retry, timeout slices, cancellation
+  between attempts, cancel-over-timeout and expired-deadline precedence, clock
+  unavailable, budget exhaustion, host failure, policy rejection, peer failure,
+  corrupt peer facts and corrupt handles with exact close counts, and a name
+  buffer handed back zeroed or empty; explicit close, close failure, double
+  close, use after close and lexical cleanup; every primitive transition
+  (partial, would-block, interrupted, EOF, host failure, oversized and zero
+  adapter counts, zero-length and invalid ranges); the `transfer-max` bound
+  per attempt in both directions and a whole-buffer read across it; pending
+  operations (progress winning cancellation, canceled completion, another
+  terminal error, oversized completion, a read delivering its bytes at the
+  terminal poll, a write completing, and one that never completes); a reply
+  that hands back a buffer too small for its count; wait retries, slice
+  bounds, precedence, budget and wait failure; whole-buffer transfers that
+  keep their count on EOF, timeout, budget, error and cancellation; and
+  unbounded adapter host codes re-bounded at connect, peer, data, poll, wait
+  and close. Platform leaves must pass the same traces.
+- `local_ipc_owner_api.tl` pins the one-owner rule of `stdlib.local_ipc`: a
+  second `LocalIpcConnection` built from a copy of the owner words loses to
+  whichever value operates first (data, accessors and close all report
+  `Closed` without reaching the adapter, and a stale value's cleanup closes
+  nothing), an idle copy's cleanup is the one close, and the adapter's close
+  runs exactly once in every order. It also pins that a zero-length range
+  succeeds without a host or clock call in all three tiers and reports
+  `Closed` on a closed connection in all three.
+- `local_ipc_forged_connection_reject.tl`,
+  `local_ipc_connection_copy_reject.tl` and `local_ipc_raw_helper_reject.tl`
+  are check-only rejections: safe code cannot build a connection from a forged
+  state pointer, a connection cannot gain a second cleanup owner, and the
+  internals that take a raw address require an unsafe context.
+- `local_ipc_fake_forged_context.tl` traps (status 134, array bounds
+  diagnostic): a fake context no `fake.new` returned is checked, never used as
+  an address.
 - `net_ip_api.tl` covers network-order constructors, exact borrowed byte
   lengths, family-sensitive equality/order/hash behavior, strict IPv4 and IPv6
   positive and negative text tables with byte offsets, RFC 5952 formatting,
@@ -319,6 +355,18 @@ Inline stdlib coverage:
   Formatter ABI across ByteBuf, TextBuf, FileHandle, stdout, and stderr;
   exactly-once/lvalue/rvalue/repeated formatting; zero final-String allocation
   for a preallocated literal sink; first-error retention; and newline behavior.
+  `tests/integration/format_stdio_empty_newline.tl`,
+  `format_stdio_empty_newline_raw.tl` and `format_writeln_empty.tl` cover the
+  zero-template forms `(io.println)`, `(io.eprintln)` and
+  `(format.writeln! writer)`: one LF per call on the right stream, a
+  preallocated ByteBuf and a TextBuf with no allocation, and the same first
+  `FormatErr` as the template-bearing form for a failing writer. The `_raw`
+  fixture runs itself as a child and compares the captured bytes, because the
+  Windows harness drops carriage returns before comparing manifest streams;
+  it is the row that proves LF rather than CRLF there. The
+  `format_{println,eprintln,writeln}_nonliteral_template_reject.tl` and
+  `format_writeln_missing_writer_reject.tl` package tests pin the unchanged
+  diagnostics of the nonempty forms.
   `tests/integration/format_arguments.tl` and `format_arguments_stdio.tl`
   additionally cover retained plan reuse, nesting, explicit named and lexical
   captures, hidden temporary owners, package lifetime rejection, allocation

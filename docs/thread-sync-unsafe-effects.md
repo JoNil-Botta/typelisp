@@ -22,11 +22,12 @@ externs, platform ABI symbols, allocation paths, and syscalls are unchanged.
 | `linux-default-worker-count`, `thread-windows-default-worker-count`, `default-worker-count`, `thread-windows-active-processor-count`, `thread-windows-switch-to-thread`, `thread-linux-runtime-init` | safe | Fixed OS query or TLS setup; raw scratch storage is private, bounded, and live for the call. |
 | `linux-exit-current`, `test-fail`, `test-assert`, `test-assert-i64-eq`, `test-assert-semaphore-err` | safe | No caller-supplied address/handle is dereferenced; test assertions and termination are not memory-safety adapters. |
 
-`thread-windows-entry` remains a plain backend-owned callable because the
-checker currently forbids passing an unsafe callable as a foreign
-function-pointer argument to `CreateThread`. This is the one outstanding
-effect gap, tracked by #7742; callers must not invoke this backend symbol
-directly.
+`thread-windows-entry` has type `(CFunc unsafe-non-null (-> i64 i64))`.
+The unsafe `CreateThread` adapter accepts that exact type, preserving the effect
+while passing its code address. A safe direct call is rejected, and assigning
+it to an ordinary `(-> i64 i64)` value is a type mismatch. #7725 owns the common
+representation; #7742 retains the full source/native-publication and Windows
+runtime acceptance checks for this consumer.
 
 ## `stdlib.sync`
 

@@ -9,6 +9,7 @@
 (import compiler_owned_view as owned_view)
 (import stdlib.arena)
 (import stdlib.byte_buf)
+(import stdlib.cpu)
 (import stdlib.io)
 (import stdlib.process)
 (import stdlib.random)
@@ -46,9 +47,28 @@
   (Check))
 
 (defenum TestConfig
-  (File String String String cli_svec.Vec i64 TestMode)
-  (Batch cli_svec.Vec String String cli_svec.Vec i64 TestMode)
-  (Package String bool String String cli_svec.Vec i64 TestMode))
+  (File
+    String
+    String
+    compiler_backend.CompilerBackendMode
+    cli_svec.Vec
+    i64
+    TestMode)
+  (Batch
+    cli_svec.Vec
+    String
+    compiler_backend.CompilerBackendMode
+    cli_svec.Vec
+    i64
+    TestMode)
+  (Package
+    String
+    bool
+    String
+    compiler_backend.CompilerBackendMode
+    cli_svec.Vec
+    i64
+    TestMode))
 
 (defenum ResultTestConfig
   (Ok TestConfig)
@@ -348,12 +368,6 @@
 (define (tltest-unknown-target [value : String]) : String
   (str_cat.str-cat "test: unknown target " value ""))
 
-(define (tltest-unknown-mode [value : String]) : String
-  (str_cat.str-cat "test: unknown backend mode " value ""))
-
-(define (tltest-unsupported-mode [value : String]) : String
-  (str_cat.str-cat "test: backend mode " value " is not implemented"))
-
 (define (tltest-invalid-opt-level [value : String]) : String
   (str_cat.str-cat "test: invalid --opt-level " value "; expected 0, 1, or 2"))
 
@@ -459,7 +473,7 @@
   [manifest-path : String]
   [has-manifest : bool]
   [target : String]
-  [mode : String]
+  [mode : compiler_backend.CompilerBackendMode]
   [roots : cli_svec.Vec]
   [opt-level : i64]
   [test-mode : TestMode]
@@ -517,12 +531,6 @@
     [(build_run_core.ResultSourceToolTarget.Ok _) true]
     [(build_run_core.ResultSourceToolTarget.Err _) false]))
 
-(define (tltest-backend-mode-valid? [value : String]) : bool
-  (or
-    (string.eq value "scalar")
-    (string.eq value "avx2")
-    (string.eq value "avx512")))
-
 (define (tltest-check-mode? [mode : TestMode]) : bool
   (match mode
     [(TestMode.Check) true]
@@ -538,7 +546,7 @@
   [manifest-path : String]
   [has-manifest : bool]
   [target : String]
-  [mode : String]
+  [mode : compiler_backend.CompilerBackendMode]
   [roots : cli_svec.Vec]
   [has-opt-level : bool]
   [opt-level : i64]
@@ -632,7 +640,7 @@
   [manifest-path : String]
   [has-manifest : bool]
   [target : String]
-  [mode : String]
+  [mode : compiler_backend.CompilerBackendMode]
   [roots : cli_svec.Vec]
   [has-opt-level : bool]
   [opt-level : i64]
@@ -863,9 +871,13 @@
                 (ResultTestConfig.Err "test: --backend-mode requires a value")
                 (let
                   [value : String (io.arg (+ idx 1))]
-                  (if (tltest-backend-mode-valid?
+                  ;; The shared source-tool parser owns the accepted
+                  ;; spellings, so `test` cannot drift from build and run.
+                  (match (build_run_core.source-tool-backend-mode
+                    "test"
                     (owned_view.compiler-owned-shared-view value))
-                    (if (string.eq value "scalar")
+                    [(build_run_core.ResultSourceToolBackendMode.Ok
+                        selected-mode)
                       (tltest-parse-options
                         (+ idx 2)
                         count
@@ -874,14 +886,14 @@
                         manifest-path
                         has-manifest
                         target
-                        value
+                        selected-mode
                         roots
                         has-opt-level
                         opt-level
                         test-mode
-                        batch-list)
-                      (ResultTestConfig.Err (tltest-unsupported-mode value)))
-                    (ResultTestConfig.Err (tltest-unknown-mode value)))))]
+                        batch-list)]
+                    [(build_run_core.ResultSourceToolBackendMode.Err message)
+                      (ResultTestConfig.Err message)])))]
             [(string.eq current "--manifest-path")
               (if (>= (+ idx 1) count)
                 (ResultTestConfig.Err "test: --manifest-path requires a value")
@@ -985,7 +997,7 @@
       ""
       false
       (build_run_core.source-tool-default-target-name)
-      "scalar"
+      (compiler_backend.CompilerBackendMode.Scalar)
       (cli_svec.new)
       false
       (compiler_optimize.compiler-optimize-default-level)
@@ -1860,19 +1872,84 @@
 ;; Source calls may carry module qualification or an import-alias dot path.
 ;; Runtime declarations use the bare source ID, so retain that parsed leaf ID
 ;; alongside the full structural identity without reconstructing any spelling.
+(define (tltest-reach-name-source-base-id
+  [session : cis.InternStructuralSessionHandle]
+  [name-id : i64]) : i64
+  (let
+    ;; The initial syntax unwrap must use this owner too: a compatibility
+    ;; classifier can mistake a colliding installed-pool ID for a macro global.
+    [source-id : i64
+      (if (cis.intern-structural-session-source-name-component-valid?
+        session
+        name-id)
+        name-id
+        (cis.intern-structural-session-syntax-source-name-id-or
+          session
+          name-id
+          name-id))]
+    [source-names : ci.InternSourceNameSessionHandle
+      (cis.intern-structural-session-handle-source-names session)]
+    (if (cis.intern-structural-session-source-name-component-valid?
+      session
+      source-id)
+      (if (ci.intern-source-name-session-handle-qualified?
+        source-names
+        source-id)
+        (ci.intern-source-name-session-handle-qualified-base-id
+          source-names
+          source-id)
+        source-id)
+      (match (cis.intern-structural-session-record-for-raw session source-id)
+        [(cis.InternMaybeStructuralRecord.Some record)
+          (cond
+            [(= record.kind (ci.intern-structural-kind-pair)) record.right-id]
+            [(= record.kind (ci.intern-structural-kind-triple))
+              (cis.intern-structural-key-raw
+                (cis.intern-structural-session-composite-pair-key
+                  session
+                  record.middle-id
+                  record.right-id))]
+            [else source-id])]
+        [(cis.InternMaybeStructuralRecord.No) source-id]))))
+
 (define (tltest-reach-name-dot-leaf-id
   [session : cis.InternStructuralSessionHandle]
   [name-id : i64]) : i64
   (let
-    [source-id : i64
-      (tc_core.macro-hygiene-global-source-name-id-or session name-id name-id)]
-    [base-id : i64 (tc_core.tc-qualified-name-base-id source-id)]
+    [base-id : i64 (tltest-reach-name-source-base-id session name-id)]
+    [source-names : ci.InternSourceNameSessionHandle
+      (cis.intern-structural-session-handle-source-names session)]
     (if (and
-      (>= base-id 0)
-      (< base-id (ci.intern-capacity))
-      (ci.intern-dotted? base-id))
-      (ci.intern-dotted-final-id base-id)
+      (cis.intern-structural-session-source-name-component-valid?
+        session
+        base-id)
+      (ci.intern-source-name-session-handle-dotted? source-names base-id))
+      (ci.intern-source-name-session-handle-dotted-final-id
+        source-names
+        base-id)
       base-id)))
+
+;; Before typechecking, a dotted name can project from global storage rather
+;; than name an imported member. Retain its first source component as a possible
+;; owner; keeping only the final leaf drops the global and its initializer.
+(define (tltest-reach-mark-dotted-root
+  [session : cis.InternStructuralSessionHandle]
+  [names : tltest_name_map.Map]
+  [name-id : i64]) : tltest_name_map.Map
+  (let
+    [source-names : ci.InternSourceNameSessionHandle
+      (cis.intern-structural-session-handle-source-names session)]
+    (if (and
+      (cis.intern-structural-session-source-name-component-valid?
+        session
+        name-id)
+      (ci.intern-source-name-session-handle-dotted? source-names name-id))
+      (tltest-reach-mark-name-id
+        names
+        (ci.intern-source-name-session-handle-leading-dot-id
+          source-names
+          name-id))
+      names)))
 
 (define (tltest-reach-mark-source-name
   [session : cis.InternStructuralSessionHandle]
@@ -1880,15 +1957,20 @@
   [name-id : i64]) : tltest_name_map.Map
   (let
     [marked : tltest_name_map.Map (tltest-reach-mark-name-id names name-id)]
-    [base-id : i64 (tc_core.tc-qualified-name-base-id name-id)]
+    [base-id : i64 (tltest-reach-name-source-base-id session name-id)]
     [with-slash-base : tltest_name_map.Map
-      (if (tc_core.tc-name-qualified-id? session name-id)
+      (if (not (= base-id name-id))
         (tltest-reach-mark-name-id marked base-id)
         marked)]
+    [with-root : tltest_name_map.Map
+      (tltest-reach-mark-dotted-root
+        session
+        with-slash-base
+        (tltest-reach-name-source-base-id session name-id))]
     [leaf-id : i64 (tltest-reach-name-dot-leaf-id session name-id)]
     (if (= leaf-id base-id)
-      with-slash-base
-      (tltest-reach-mark-name-id with-slash-base leaf-id))))
+      with-root
+      (tltest-reach-mark-name-id with-root leaf-id))))
 
 (define (tltest-reachable-name-marked?
   [session : cis.InternStructuralSessionHandle]
@@ -1896,12 +1978,12 @@
   [name-id : i64]) : bool
   (let
     [key-id : i64 (csym.compiler-symbol-name-id-key name-id)]
-    [base-id : i64 (tc_core.tc-qualified-name-base-id name-id)]
+    [base-id : i64 (tltest-reach-name-source-base-id session name-id)]
     [leaf-id : i64 (tltest-reach-name-dot-leaf-id session name-id)]
     (or
       (tltest_name_map.contains? (& names) key-id)
       (and
-        (tc_core.tc-name-qualified-id? session name-id)
+        (not (= base-id name-id))
         (tltest_name_map.contains?
           (& names)
           (csym.compiler-symbol-name-id-key base-id)))
@@ -3227,62 +3309,54 @@
             1)]))
     0))
 
-(defstruct TltestCfgNames
-  (slots (__tl_dyn-array String))
-  (values (__tl_dyn-array i64))
-  (len i64))
-
-(define (tltest-cfg-env-count [cfgs : sym_i64_env.SymI64Env]) : i64
-  (match (sym_i64_env.sym-i64-view cfgs)
-    [(sym_i64_env.SymI64ViewNil) 0]
-    [(sym_i64_env.SymI64ViewBind _ _ rest) (+ 1 (tltest-cfg-env-count rest))]))
-
-(define (tltest-cfg-names-fill!
-  [cfgs : sym_i64_env.SymI64Env]
-  [slots : (__tl_dyn-array String)]
-  [values : (__tl_dyn-array i64)]
-  [index : i64]) : unit
-  (match (sym_i64_env.sym-i64-view cfgs)
-    [(sym_i64_env.SymI64ViewNil) unit]
-    [(sym_i64_env.SymI64ViewBind key value rest)
+(define (tltest-inline-typecheck-package-source-scoped
+  [source : String]
+  [roots : cli_svec.Vec]
+  [manifest-dir : String]
+  [package-owner : String]
+  [deps : compiler_load.CompilerPkgDeps]
+  [cfg-names : cfg_core.CompilerCfgSnapshot]
+  [cache-scope-prefix : String]) : i64
+  (let
+    [home : arena.Arena (arena.current)]
+    (with-scratch
       (begin
-        (set! (array-ref slots index) (cfg_core.compiler-cfg-name key))
-        (set! (array-ref values index) value)
-        (tltest-cfg-names-fill! rest slots values (+ index 1)))]))
-
-(define (tltest-cfg-names-from-env [cfgs : sym_i64_env.SymI64Env]) : TltestCfgNames
-  (let
-    [count : i64
-      (tltest-cfg-env-count (owned_view.compiler-owned-shared-view cfgs))]
-    [slots : (__tl_dyn-array String) (__tl_make-array String count)]
-    [values : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-    (begin
-      (tltest-cfg-names-fill!
-        cfgs
-        (owned_view.compiler-owned-shared-view slots)
-        (owned_view.compiler-owned-shared-view values)
-        0)
-      (TltestCfgNames slots values count))))
-
-(define (tltest-cfg-names-to-env [names : TltestCfgNames]) : sym_i64_env.SymI64Env
-  (let
-    [env : sym_i64_env.SymI64Env (sym_i64_env.sym-i64-empty)]
-    [index : i64 names.len]
-    (begin
-      (while (> index 0)
-        (begin
-          (set! index (- index 1))
-          (set!
-            env
-            (cfg_core.compiler-cfg-bind
-              env
-              (owned_view.compiler-owned-array-element-shared-view
-                names.slots
-                index)
-              (owned_view.compiler-owned-array-element-shared-view
-                names.values
-                index)))))
-      env)))
+        (tltest-inline-clear-load-only-caches!)
+        (driver.compiler-driver-reset-file-state!)
+        (compiler_load.compiler-load-session-state-dependency-surfaces-release!
+          (compiler_load.compiler-load-active-session-state-shared-view))
+        (ci.intern-persistent-arena-reset!)
+        (compiler_load.compiler-load-transfer-frontend-handoff!)
+        (let
+          [pools : ast.AstNodePoolContext
+            (driver.compiler-driver-state-new-checked-lower-pools)]
+          [_install : unit (ast.ast-node-pool-context-install! pools)]
+          [status : i64
+            (tltest-inline-typecheck-package-source-with-cfg
+              source
+              roots
+              manifest-dir
+              package-owner
+              deps
+              (cfg_core.compiler-cfg-snapshot-to-env cfg-names)
+              cache-scope-prefix)]
+          [retired : ast.AstNodePoolContext
+            (ast.ast-node-pool-context-capture-active)]
+          (begin
+            ;; Retire all references before returning pool storage. Replacement
+            ;; session/cache carriers must live outside the entry scratch arena.
+            (in-arena
+              home
+              (begin
+                (tltest-inline-clear-load-only-caches!)
+                (driver.compiler-driver-reset-file-state!)
+                (compiler_load.compiler-load-session-state-dependency-surfaces-release!
+                  (compiler_load.compiler-load-active-session-state-shared-view))
+                (driver.compiler-driver-state-destroy-uncommitted-pools!
+                  retired)
+                (ci.intern-persistent-arena-reset!)
+                (compiler_load.compiler-load-transfer-frontend-handoff!)))
+            status))))))
 
 (define (tltest-inline-typecheck-package-sources-from
   [sources : cli_svec.Vec]
@@ -3297,7 +3371,8 @@
     [count : i64 (cli_svec.len (& sources))]
     [cursor : i64 index]
     [status : i64 0]
-    [cfg-names : TltestCfgNames (tltest-cfg-names-from-env cfgs)]
+    [cfg-names : cfg_core.CompilerCfgSnapshot
+      (cfg_core.compiler-cfg-snapshot-from-env cfgs)]
     (begin
       (while (and (= status 0) (< cursor count))
         (let
@@ -3307,33 +3382,16 @@
               (owned_view.compiler-owned-shared-view source))]
           (begin
             (if has-inline-tests
-              (begin
-                (tltest-inline-clear-load-caches!)
-                (set!
-                  status
-                  ;; Match package `test --check`: isolate each inline preflight
-                  ;; source so package builds do not retain every loaded/test AST
-                  ;; until the end of the package. The full file reset refreshes
-                  ;; interns, so rebuild cfg ids from the saved string snapshot.
-                  (with-scratch
-                    (begin
-                      (tltest-inline-clear-load-only-caches!)
-                      (driver.compiler-driver-reset-file-state!)
-                      (tltest-inline-typecheck-package-source-with-cfg
-                        (owned_view.compiler-owned-shared-view source)
-                        (owned_view.compiler-owned-shared-view roots)
-                        (owned_view.compiler-owned-shared-view manifest-dir)
-                        (owned_view.compiler-owned-shared-view package-owner)
-                        (owned_view.compiler-owned-shared-view deps)
-                        (tltest-cfg-names-to-env
-                          (owned_view.compiler-owned-shared-view cfg-names))
-                        (owned_view.compiler-owned-shared-view
-                          cache-scope-prefix)))))
-                ;; The reset inside `with-scratch` installs a scratch-owned
-                ;; active-session wrapper. Restore it in the enclosing arena
-                ;; before the post-entry cache clear dereferences the wrapper.
-                (compiler_load.compiler-load-default-session-use!)
-                (tltest-inline-clear-load-caches!))
+              (set!
+                status
+                (tltest-inline-typecheck-package-source-scoped
+                  (owned_view.compiler-owned-shared-view source)
+                  (owned_view.compiler-owned-shared-view roots)
+                  (owned_view.compiler-owned-shared-view manifest-dir)
+                  (owned_view.compiler-owned-shared-view package-owner)
+                  (owned_view.compiler-owned-shared-view deps)
+                  (owned_view.compiler-owned-shared-view cfg-names)
+                  (owned_view.compiler-owned-shared-view cache-scope-prefix)))
               (set! status 0))
             (if (= status 0)
               unit
@@ -3605,6 +3663,164 @@
   (if (tltest-vector-builders-self-test?)
     unit
     (io.panic "test CLI vector builder order mismatch")))
+
+(define (tltest-global-field-reachability-self-test?) : bool
+  (let
+    [_builtin-init : unit (cbi.compiler-builtin-initialize-for-parse!)]
+    [seed : i64 (ci.intern "field-root-seed")]
+    [owner : i64 (ci.intern "field-root-owner")]
+    [dead : i64 (ci.intern "field-root-unrelated")]
+    [field : i64 (ci.intern "field-root-owner.nested.value")]
+    [unit-expr : i64
+      (ast.ast-node-push (ast.AstExpr.Literal (ast.AstLiteral.Unit)))]
+    [decls : ast.AstDeclList
+      (ast.ast-decl-cons
+        (ast.ast-decl-def-id seed (ast.AstMaybeType.No) unit-expr)
+        (ast.ast-decl-cons
+          (ast.ast-decl-def-id
+            owner
+            (ast.AstMaybeType.No)
+            (ast.ast-node-push (ast.AstExpr.Var seed)))
+          (ast.ast-decl-cons
+            (ast.ast-decl-def-id dead (ast.AstMaybeType.No) unit-expr)
+            (ast.ast-decl-cons
+              (ast.ast-decl-test-id
+                (ci.intern "uses-global-field-root")
+                (ast.ast-node-push (ast.AstExpr.Var field))
+                (ast.ast-source-span 1 1 1 1))
+              (ast.ast-decl-list-new)))))]
+    [paths : ast.AstDeclPathList
+      (ast.ast-decl-root-path-cons
+        "field-root.tl"
+        (ast.ast-decl-root-path-cons
+          "field-root.tl"
+          (ast.ast-decl-root-path-cons
+            "field-root.tl"
+            (ast.ast-decl-root-path-cons
+              "field-root.tl"
+              (ast.ast-decl-path-list-new)))))]
+    (match (tltest-build-harness "field-root.tl" decls paths)
+      [(InlineHarness.Harness program _ count)
+        (match program
+          [(ast.AstProgram.Program harness-decls-box)
+            (let
+              [kept : ast.AstDeclList
+                (ast.ast-decl-list-box-shared-view harness-decls-box)]
+              (and
+                (= count 1)
+                (tltest-decl-list-has-name?
+                  (owned_view.compiler-owned-shared-view kept)
+                  "field-root-owner")
+                (tltest-decl-list-has-name?
+                  (owned_view.compiler-owned-shared-view kept)
+                  "field-root-seed")
+                (not
+                  (tltest-decl-list-has-name?
+                    (owned_view.compiler-owned-shared-view kept)
+                    "field-root-unrelated"))))])])))
+
+(test
+  test-cli-inline-harness-keeps-global-field-roots
+  (if (tltest-global-field-reachability-self-test?)
+    unit
+    (io.panic "test CLI global field root reachability mismatch")))
+
+(define (tltest-structural-field-reachability-self-test?) : bool
+  (let
+    [_builtin-init : unit (cbi.compiler-builtin-initialize-for-parse!)]
+    [owner-state : ci.InternCompatState (ci.intern-compat-state-new)]
+    [root-id : i64
+      (ci.intern-compat-state-intern (&mut owner-state) "structural-field-root")]
+    [field-id : i64
+      (ci.intern-compat-state-intern
+        (&mut owner-state)
+        "structural-field-root.nested.value")]
+    [module-id : i64
+      (ci.intern-compat-state-intern (&mut owner-state) "field-module")]
+    [dead-id : i64
+      (ci.intern-compat-state-intern (&mut owner-state) "unrelated-field-root")]
+    [session : cis.InternStructuralSessionHandle
+      (cis.intern-structural-session-handle-from-source-names
+        (ci.intern-source-name-session-handle
+          (ci.intern-source-name-session-from-state owner-state)))]
+    [pair-id : i64
+      (cis.intern-structural-key-raw
+        (cis.intern-structural-session-composite-pair-key
+          session
+          module-id
+          field-id))]
+    [triple-id : i64
+      (cis.intern-structural-key-raw
+        (cis.intern-structural-session-composite-triple-key
+          session
+          module-id
+          module-id
+          field-id))]
+    [owner-id : i64
+      (cis.intern-structural-key-raw
+        (cis.intern-structural-session-composite-pair-key
+          session
+          module-id
+          root-id))]
+    [marked : tltest_name_map.Map
+      (tltest-reach-mark-source-name
+        session
+        (tltest_name_map.with-capacity 8)
+        pair-id)]
+    (and
+      (= (tltest-reach-name-source-base-id session pair-id) field-id)
+      (= (tltest-reach-name-source-base-id session triple-id) pair-id)
+      (tltest-reachable-name-marked? session (& marked) owner-id)
+      (not (tltest-reachable-name-marked? session (& marked) dead-id)))))
+
+(test
+  test-cli-inline-harness-keeps-structural-global-field-roots
+  (if (tltest-structural-field-reachability-self-test?)
+    unit
+    (io.panic "test CLI structural field owner reachability mismatch")))
+
+(define (tltest-inactive-field-owner-self-test?) : bool
+  (let
+    [home : ci.InternCompatState (ci.intern-compat-state-capture-active)]
+    [decoy : ci.InternCompatState (ci.intern-compat-state-new)]
+    [decoy-id : i64
+      (ci.intern-compat-state-intern
+        (&mut decoy)
+        "__tl_macro_global$probe/foreign")]
+    [owner : ci.InternCompatState (ci.intern-compat-state-new)]
+    [index : i64 0]
+    [_fill : unit
+      (while (< (ci.intern-compat-state-pool-len (& owner)) decoy-id)
+        (begin
+          (ci.intern-compat-state-intern
+            (&mut owner)
+            (string.int->string index))
+          (set! index (+ index 1))))]
+    [field-id : i64 (ci.intern-compat-state-intern (&mut owner) "owner.field")]
+    [session : cis.InternStructuralSessionHandle
+      (cis.intern-structural-session-handle-from-source-names
+        (ci.intern-source-name-session-handle
+          (ci.intern-source-name-session-from-state owner)))]
+    (begin
+      (unless (= decoy-id field-id) (io.panic "probe setup IDs differ"))
+      (ci.intern-compat-state-install! decoy)
+      (unless
+        (and
+          (ci.intern-qualified? field-id)
+          (ci.intern-macro-global-name-id? field-id))
+        (io.panic "probe setup decoy not classified"))
+      (let
+        [valid : bool
+          (= (tltest-reach-name-source-base-id session field-id) field-id)]
+        (begin
+          (ci.intern-compat-state-install! home)
+          valid)))))
+
+(test
+  test-cli-inline-harness-normalizes-inactive-field-owner
+  (if (tltest-inactive-field-owner-self-test?)
+    unit
+    (io.panic "test CLI field owner normalization consulted the installed pool")))
 
 (define (tltest-generated-runtime-reachability-self-test?) : bool
   (let
@@ -4526,7 +4742,7 @@
       (while (and (< index funcs.len) (not found))
         (begin
           (match (array-ref funcs.slots index)
-            [(ir.CompilerIrFunction.Function name _ _ _ _)
+            [(ir.CompilerIrFunction.Function name _ _ _ _ _)
               (let
                 [name-text : String (ir.compiler-ir-symbol-text name)]
                 (if (string.contains (& name-text) (& base))
@@ -5028,7 +5244,19 @@
     (tltest-stdlib-env-fixture-self-test?)
     (io.panic "test CLI stdlib/env fixture routing mismatch")))
 
-(define (tltest-run-harness-in-temp
+;; The lower mode and the backend mode are one selection: a SIMD lower mode
+;; emits vector IR that only the matching backend mode can encode. The scalar
+;; default keeps the target-neutral lower mode the harness has always used; a
+;; SIMD request follows the driver's shared target/mode policy.
+(define (tltest-harness-lower-mode
+  [target : compiler_backend.CompilerBackendTarget]
+  [backend-mode : compiler_backend.CompilerBackendMode]) : lower.CompilerLowerMode
+  (if (compiler_backend.compiler-backend-mode-scalar? backend-mode)
+    (lower.CompilerLowerMode.Scalar)
+    (driver.compiler-driver-lower-mode-for-target target backend-mode)))
+
+(define (tltest-run-harness-in-temp-with-lower-state
+  [lower-state : lower.CompilerLowerState]
   [source : String]
   [entry-path : String]
   [program : ast.AstProgram]
@@ -5036,6 +5264,7 @@
   [roots : cli_svec.Vec]
   [target : compiler_backend.CompilerBackendTarget]
   [opt-level : i64]
+  [backend-mode : compiler_backend.CompilerBackendMode]
   [inline-harness : bool]
   [temp-dir : String]) : i64
   (let
@@ -5054,11 +5283,12 @@
         (owned_view.compiler-owned-shared-view source)
         target)]
     [legacy-roots : cli_svec.Vec (clone roots)]
-    (match (lower.lower-compiler-program-with-decl-paths-mode-cache
+    (match (lower.lower-compiler-program-with-decl-paths-mode-cache-and-state
+      lower-state
       entry-path
       program
       paths
-      (lower.CompilerLowerMode.Scalar)
+      (tltest-harness-lower-mode target backend-mode)
       (owned_view.compiler-owned-shared-view legacy-roots)
       (tltest-cfgs target)
       (compiler_typecheck_api.compiler-typecheck-prefix-cache-scope
@@ -5066,12 +5296,13 @@
         (owned_view.compiler-owned-shared-view legacy-roots)
         (tltest-cfgs target)))
       [(lower.ResultCompilerLower.Ok ir spans)
-        (match (build_run_core.source-tool-lowered-object-or-assembly-and-link
+        (match (build_run_core.source-tool-lowered-object-or-assembly-and-link-with-mode
           (owned_view.compiler-owned-shared-view source)
           ir
           spans
           target
           opt-level
+          backend-mode
           (build_run_core.source-tool-link-inputs-empty)
           (owned_view.compiler-owned-shared-view asm-path)
           (owned_view.compiler-owned-shared-view obj-path)
@@ -5151,6 +5382,38 @@
             2
             1))])))
 
+(define (tltest-run-harness-in-temp
+  [source : String]
+  [entry-path : String]
+  [program : ast.AstProgram]
+  [paths : ast.AstDeclPathList]
+  [roots : cli_svec.Vec]
+  [target : compiler_backend.CompilerBackendTarget]
+  [opt-level : i64]
+  [backend-mode : compiler_backend.CompilerBackendMode]
+  [inline-harness : bool]
+  [temp-dir : String]) : i64
+  (let
+    [lower-state : lower.CompilerLowerState (lower.compiler-lower-state-new)]
+    [status : i64
+      (tltest-run-harness-in-temp-with-lower-state
+        lower-state
+        source
+        entry-path
+        program
+        paths
+        roots
+        target
+        opt-level
+        backend-mode
+        inline-harness
+        temp-dir)]
+    (begin
+      (lower.compiler-lower-state-reset! lower-state)
+      (lower.compiler-lower-arena-state-release!
+        (lower.compiler-lower-state-arenas lower-state))
+      status)))
+
 (define (tltest-run-direct-with-entry
   [source : String]
   [entry-path : String]
@@ -5159,6 +5422,7 @@
   [roots : cli_svec.Vec]
   [target : String]
   [opt-level : i64]
+  [backend-mode : compiler_backend.CompilerBackendMode]
   [inline-harness : bool]) : i64
   (match (build_run_core.source-tool-target
     (owned_view.compiler-owned-shared-view target))
@@ -5177,6 +5441,7 @@
             roots
             backend-target
             opt-level
+            backend-mode
             inline-harness
             temp-dir)]
         [(build_run_core.ResultSourceToolString.Err message)
@@ -5191,7 +5456,8 @@
   [paths : ast.AstDeclPathList]
   [roots : cli_svec.Vec]
   [target : String]
-  [opt-level : i64]) : i64
+  [opt-level : i64]
+  [backend-mode : compiler_backend.CompilerBackendMode]) : i64
   (tltest-run-direct-with-entry
     (owned_view.compiler-owned-shared-view source)
     source
@@ -5200,6 +5466,7 @@
     roots
     target
     opt-level
+    backend-mode
     true))
 
 (define (tltest-no-tests-check
@@ -5236,12 +5503,13 @@
   [program : ast.AstProgram]
   [paths : ast.AstDeclPathList]
   [roots : cli_svec.Vec]
-  [opt-level : i64]) : i64
+  [opt-level : i64]
+  [backend-mode : compiler_backend.CompilerBackendMode]) : i64
   ;; `test --check` owns source typechecking. Run the zero-test harness built
   ;; from the pruned runtime declarations so backend-emitted allocator calls
   ;; still have their exported abort handlers; the harness replaces the source
   ;; `main` with the generated zero-test runner.
-  (tltest-run-direct source program paths roots target opt-level))
+  (tltest-run-direct source program paths roots target opt-level backend-mode))
 
 (define (tltest-source-prefix-space? [c : char]) : bool
   (or (= c ' ') (= c '\t')))
@@ -5309,13 +5577,14 @@
       found)))
 
 (define (tltest-source-has-inline-tests? [source : String]) : bool
-  (let
-    [text : String (byte_buf.to-string (io.read-file source))]
-    (tltest-source-has-inline-tests-from
-      (owned_view.compiler-owned-shared-view text)
-      0
-      (string.string-length text)
-      true)))
+  (with-scratch
+    (let
+      [text : String (byte_buf.to-string (io.read-file source))]
+      (tltest-source-has-inline-tests-from
+        (owned_view.compiler-owned-shared-view text)
+        0
+        (string.string-length text)
+        true))))
 
 (define (tltest-string-prefix? [text : String] [prefix : String]) : bool
   (let
@@ -5553,6 +5822,7 @@
   [target : String]
   [roots : cli_svec.Vec]
   [opt-level : i64]
+  [backend-mode : compiler_backend.CompilerBackendMode]
   [test-mode : TestMode]
   [backend-target : compiler_backend.CompilerBackendTarget]
   [decls : ast.AstDeclList]
@@ -5605,7 +5875,8 @@
                       harness-paths
                       roots
                       target
-                      opt-level)])]
+                      opt-level
+                      backend-mode)])]
               (if (= status 0)
                 (ResultTestPackageTotals.Ok 1 count)
                 (if (and (= status 1) (not (tltest-check-mode? test-mode)))
@@ -5688,6 +5959,7 @@
   [target : String]
   [roots : cli_svec.Vec]
   [opt-level : i64]
+  [backend-mode : compiler_backend.CompilerBackendMode]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]) : ResultTestPackageTotals
   (begin
@@ -5706,6 +5978,7 @@
             roots
             target
             opt-level
+            backend-mode
             false)]
         (if (= status 0)
           (ResultTestPackageTotals.Ok 1 1)
@@ -5719,6 +5992,7 @@
   [target : String]
   [roots : cli_svec.Vec]
   [opt-level : i64]
+  [backend-mode : compiler_backend.CompilerBackendMode]
   [test-mode : TestMode]
   [backend-target : compiler_backend.CompilerBackendTarget]
   [manifest-dir : String]
@@ -5753,6 +6027,7 @@
                 target
                 roots
                 opt-level
+                backend-mode
                 decls
                 paths)])]
         [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
@@ -5765,36 +6040,97 @@
             (ResultTestPackageTotals.Err 1))]))
     (ResultTestPackageTotals.Ok 0 0)))
 
-(define (tltest-package-finish-entry
-  [entry-arena : arena.Arena]
-  [entry-result : i64]) : i64
-  ;; Reset while the entry arena remains alive but allocation has returned to
-  ;; the parent. Compiler globals may still inspect entry-owned state while
-  ;; installing their replacement state.
+;; A test entry borrows its inputs from the caller and owns every temporary
+;; compiler carrier. Serial selectors are a scoped compatibility bridge: they
+;; are restored before the entry owner is destroyed, including failure exits.
+(defstruct TlTestEntry
+  (owner arena.Arena)
+  (parent-load compiler_load.CompilerLoadSessionState)
+  (parent-default compiler_load.CompilerLoadSessionState)
+  (parent-job tc_core.TcJobState))
+
+(define (tltest-entry-new) : TlTestEntry
+  (let
+    [owner : arena.Arena (arena.make)]
+    [parent-load : compiler_load.CompilerLoadSessionState
+      (compiler_load.compiler-load-serial-test-session-state)]
+    [parent-default : compiler_load.CompilerLoadSessionState
+      (compiler_load.compiler-load-global-array-element-shared-view
+        compiler_load.compiler-load-default-session-state
+        0)]
+    [parent-job : tc_core.TcJobState (tc_core.tc-serial-job-state)]
+    [entry-load : compiler_load.CompilerLoadSessionState
+      (in-arena
+        owner
+        (compiler_load.compiler-load-standalone-session-state-new))]
+    [entry-job : tc_core.TcJobState (in-arena owner (tc_core.tc-job-state-new))]
+    [pools : ast.AstNodePoolContext
+      (driver.compiler-driver-state-new-checked-lower-pools)]
+    (begin
+      (set!
+        (array-ref compiler_load.compiler-load-default-session-state 0)
+        (owned_view.compiler-owned-shared-view entry-load))
+      (compiler_load.compiler-load-session-state-use!
+        (owned_view.compiler-owned-shared-view entry-load))
+      (compiler_load.compiler-load-session-cache-enable!)
+      (compiler_load.compiler-load-session-program-cache-disable!)
+      (set!
+        (array-ref tc_core.tc-serial-job-state-cell 0)
+        (owned_view.compiler-owned-shared-view entry-job))
+      (ast.ast-node-pool-context-install! pools)
+      (TlTestEntry owner parent-load parent-default parent-job))))
+
+(define (tltest-entry-finish [entry : TlTestEntry] [result : i64]) : i64
   (begin
-    (driver.compiler-driver-reset-file-state!)
-    (compiler_load.compiler-load-session-fresh-reset!)
-    (compiler_load.compiler-load-session-cache-enable!)
-    (compiler_load.compiler-load-session-program-cache-disable!)
+    (in-arena
+      entry.owner
+      (let
+        [pools : ast.AstNodePoolContext
+          (ast.ast-node-pool-context-capture-active)]
+        (begin
+          ;; Reset walkers can inspect entry-owned values. Their replacement
+          ;; empty carriers also belong here; no selector retains them below.
+          (driver.compiler-driver-reset-file-state!)
+          (compiler_load.compiler-load-session-state-dotted-path-cache-reset!
+            (compiler_load.compiler-load-serial-test-session-state))
+          (compiler_load.compiler-load-session-fresh-reset!)
+          (tc_core.tc-job-state-retire-owned-storage!
+            (tc_core.tc-serial-job-state))
+          (driver.compiler-driver-state-destroy-uncommitted-pools! pools))))
+    (set!
+      (array-ref tc_core.tc-serial-job-state-cell 0)
+      (owned_view.compiler-owned-shared-view entry.parent-job))
+    (set!
+      (array-ref compiler_load.compiler-load-default-session-state 0)
+      (owned_view.compiler-owned-shared-view entry.parent-default))
+    (if (array-ref entry.parent-load.intern-state-ready 0)
+      (compiler_load.compiler-load-session-state-use-with-intern-state!
+        (owned_view.compiler-owned-shared-view entry.parent-load)
+        (owned_view.compiler-owned-array-element-shared-view
+          entry.parent-load.intern-state
+          0))
+      (compiler_load.compiler-load-session-state-use!
+        (owned_view.compiler-owned-shared-view entry.parent-load)))
     (unsafe
-      (arena.destroy entry-arena))
-    entry-result))
+      (arena.destroy entry.owner))
+    result))
 
 (define (tltest-package-run-integration-source-isolated-count
   [source : String]
   [target : String]
   [roots : cli_svec.Vec]
   [opt-level : i64]
+  [backend-mode : compiler_backend.CompilerBackendMode]
   [test-mode : TestMode]
   [backend-target : compiler_backend.CompilerBackendTarget]
   [manifest-dir : String]
   [package-owner : String]
   [deps : compiler_load.CompilerPkgDeps]) : i64
   (let
-    [entry-arena : arena.Arena (arena.make)]
+    [entry : TlTestEntry (tltest-entry-new)]
     [entry-result : i64
       (in-arena
-        entry-arena
+        entry.owner
         (begin
           (driver.compiler-driver-reset-file-state!)
           (match (tltest-package-run-integration-source
@@ -5802,6 +6138,7 @@
             target
             roots
             opt-level
+            backend-mode
             test-mode
             backend-target
             manifest-dir
@@ -5811,13 +6148,14 @@
             [(ResultTestPackageTotals.Failed _ tests _)
               (- 0 (+ tltest-failed-count-offset tests))]
             [(ResultTestPackageTotals.Ok _ tests) tests])))]
-    (tltest-package-finish-entry entry-arena entry-result)))
+    (tltest-entry-finish entry entry-result)))
 
 (define (tltest-package-run-source
   [source : String]
   [target : String]
   [roots : cli_svec.Vec]
   [opt-level : i64]
+  [backend-mode : compiler_backend.CompilerBackendMode]
   [test-mode : TestMode]
   [backend-target : compiler_backend.CompilerBackendTarget]
   [manifest-dir : String]
@@ -5848,6 +6186,7 @@
               target
               roots
               opt-level
+              backend-mode
               test-mode
               backend-target
               decls
@@ -5867,16 +6206,17 @@
   [target : String]
   [roots : cli_svec.Vec]
   [opt-level : i64]
+  [backend-mode : compiler_backend.CompilerBackendMode]
   [test-mode : TestMode]
   [backend-target : compiler_backend.CompilerBackendTarget]
   [manifest-dir : String]
   [package-owner : String]
   [deps : compiler_load.CompilerPkgDeps]) : i64
   (let
-    [entry-arena : arena.Arena (arena.make)]
+    [entry : TlTestEntry (tltest-entry-new)]
     [entry-result : i64
       (in-arena
-        entry-arena
+        entry.owner
         (begin
           (driver.compiler-driver-reset-file-state!)
           (match (tltest-package-run-source
@@ -5884,6 +6224,7 @@
             target
             roots
             opt-level
+            backend-mode
             test-mode
             backend-target
             manifest-dir
@@ -5893,7 +6234,7 @@
             [(ResultTestPackageTotals.Failed _ tests _)
               (- 0 (+ tltest-failed-count-offset tests))]
             [(ResultTestPackageTotals.Ok _ tests) tests])))]
-    (tltest-package-finish-entry entry-arena entry-result)))
+    (tltest-entry-finish entry entry-result)))
 
 (define (tltest-package-run-sources-from
   [sources : cli_svec.Vec]
@@ -5902,6 +6243,7 @@
   [target : String]
   [roots : cli_svec.Vec]
   [opt-level : i64]
+  [backend-mode : compiler_backend.CompilerBackendMode]
   [test-mode : TestMode]
   [backend-target : compiler_backend.CompilerBackendTarget]
   [manifest-dir : String]
@@ -5926,6 +6268,7 @@
           target
           roots
           opt-level
+          backend-mode
           test-mode
           backend-target
           manifest-dir
@@ -5941,6 +6284,7 @@
               (owned_view.compiler-owned-shared-view target)
               (owned_view.compiler-owned-shared-view roots)
               opt-level
+              backend-mode
               test-mode
               backend-target
               (owned_view.compiler-owned-shared-view manifest-dir)
@@ -5957,6 +6301,7 @@
                 target
                 roots
                 opt-level
+                backend-mode
                 test-mode
                 backend-target
                 manifest-dir
@@ -5974,6 +6319,7 @@
                 target
                 roots
                 opt-level
+                backend-mode
                 test-mode
                 backend-target
                 manifest-dir
@@ -5991,6 +6337,7 @@
   [target : String]
   [roots : cli_svec.Vec]
   [opt-level : i64]
+  [backend-mode : compiler_backend.CompilerBackendMode]
   [test-mode : TestMode]
   [backend-target : compiler_backend.CompilerBackendTarget]
   [manifest-dir : String]
@@ -6005,6 +6352,7 @@
     target
     roots
     opt-level
+    backend-mode
     test-mode
     backend-target
     manifest-dir
@@ -6021,6 +6369,7 @@
   [target : String]
   [roots : cli_svec.Vec]
   [opt-level : i64]
+  [backend-mode : compiler_backend.CompilerBackendMode]
   [test-mode : TestMode]
   [backend-target : compiler_backend.CompilerBackendTarget]
   [manifest-dir : String]
@@ -6045,6 +6394,7 @@
               (owned_view.compiler-owned-shared-view target)
               (owned_view.compiler-owned-shared-view roots)
               opt-level
+              backend-mode
               test-mode
               backend-target
               (owned_view.compiler-owned-shared-view manifest-dir)
@@ -6061,6 +6411,7 @@
                 target
                 roots
                 opt-level
+                backend-mode
                 test-mode
                 backend-target
                 manifest-dir
@@ -6078,6 +6429,7 @@
                 target
                 roots
                 opt-level
+                backend-mode
                 test-mode
                 backend-target
                 manifest-dir
@@ -6095,6 +6447,7 @@
           target
           roots
           opt-level
+          backend-mode
           test-mode
           backend-target
           manifest-dir
@@ -6110,6 +6463,7 @@
   [target : String]
   [roots : cli_svec.Vec]
   [opt-level : i64]
+  [backend-mode : compiler_backend.CompilerBackendMode]
   [test-mode : TestMode]
   [backend-target : compiler_backend.CompilerBackendTarget]
   [manifest-dir : String]
@@ -6129,6 +6483,7 @@
       target
       roots
       opt-level
+      backend-mode
       test-mode
       backend-target
       manifest-dir
@@ -6177,6 +6532,7 @@
   [target : String]
   [roots : cli_svec.Vec]
   [opt-level : i64]
+  [backend-mode : compiler_backend.CompilerBackendMode]
   [test-mode : TestMode]
   [backend-target : compiler_backend.CompilerBackendTarget]
   [manifest-dir : String]
@@ -6191,6 +6547,7 @@
     target
     roots
     opt-level
+    backend-mode
     test-mode
     backend-target
     manifest-dir
@@ -6221,6 +6578,7 @@
   [target : String]
   [roots : cli_svec.Vec]
   [opt-level : i64]
+  [backend-mode : compiler_backend.CompilerBackendMode]
   [test-mode : TestMode]) : i64
   (match (build_run_core.source-tool-target
     (owned_view.compiler-owned-shared-view target))
@@ -6263,6 +6621,7 @@
                   (owned_view.compiler-owned-shared-view target)
                   (owned_view.compiler-owned-shared-view roots)
                   opt-level
+                  backend-mode
                   test-mode
                   backend-target
                   (owned_view.compiler-owned-shared-view manifest-dir)
@@ -6281,6 +6640,7 @@
                       target
                       roots
                       opt-level
+                      backend-mode
                       test-mode
                       backend-target
                       manifest-dir
@@ -6298,6 +6658,7 @@
                       target
                       roots
                       opt-level
+                      backend-mode
                       test-mode
                       backend-target
                       manifest-dir
@@ -6362,6 +6723,7 @@
   [target : String]
   [roots : cli_svec.Vec]
   [opt-level : i64]
+  [backend-mode : compiler_backend.CompilerBackendMode]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]) : ResultTestFileCheck
   (match (tltest-build-harness
@@ -6384,14 +6746,16 @@
                 program
                 harness-paths
                 roots
-                opt-level)
+                opt-level
+                backend-mode)
               (tltest-run-direct
                 source
                 program
                 harness-paths
                 roots
                 target
-                opt-level))]
+                opt-level
+                backend-mode))]
           (if (= status 0)
             (ResultTestFileCheck.Ok count)
             (if (and (> count 0) (= status 1))
@@ -6403,13 +6767,21 @@
   [target : String]
   [roots : cli_svec.Vec]
   [opt-level : i64]
+  [backend-mode : compiler_backend.CompilerBackendMode]
   [backend-target : compiler_backend.CompilerBackendTarget]) : ResultTestFileCheck
   (match (driver.compiler-driver-load-file-with-runtime
     (owned_view.compiler-owned-shared-view source)
     (owned_view.compiler-owned-shared-view roots)
     (tltest-cfgs backend-target))
     [(compiler_load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
-      (tltest-run-file-loaded source target roots opt-level decls paths)]
+      (tltest-run-file-loaded
+        source
+        target
+        roots
+        opt-level
+        backend-mode
+        decls
+        paths)]
     [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
       (begin
         (io.print-error
@@ -6452,39 +6824,21 @@
       (string.int->string test-count)
       " test(s)\n")))
 
-(define (tltest-batch-finish-entry
-  [entry-arena : arena.Arena]
-  [entry-result : i64]) : i64
-  ;; Reset while the entry arena is still alive but allocation has returned to
-  ;; the parent. Reset walkers may inspect the entry's globals; replacement
-  ;; empty state must outlive destruction of the entry arena.
-  (begin
-    (driver.compiler-driver-reset-file-state!)
-    ;; A cache floor may still retain the just-finished entry's compiler state.
-    ;; Retire the complete session before destroying that entry arena so long
-    ;; batches cannot accumulate floors or retain pointers into reclaimed pages.
-    (compiler_load.compiler-load-session-fresh-reset!)
-    (compiler_load.compiler-load-session-cache-enable!)
-    (compiler_load.compiler-load-session-program-cache-disable!)
-    (unsafe
-      (arena.destroy entry-arena))
-    entry-result))
-
 (define (tltest-run-batch-check-path
   [source : String]
   [roots : cli_svec.Vec]
   [backend-target : compiler_backend.CompilerBackendTarget]) : i64
   (let
-    [entry-arena : arena.Arena (arena.make)]
+    [entry : TlTestEntry (tltest-entry-new)]
     [entry-result : i64
       (in-arena
-        entry-arena
+        entry.owner
         (match (tltest-check-file-source source roots backend-target)
           [(ResultTestFileCheck.Err status) (- 0 status)]
           [(ResultTestFileCheck.Failed count)
             (- 0 (+ tltest-failed-count-offset count))]
           [(ResultTestFileCheck.Ok count) count]))]
-    (tltest-batch-finish-entry entry-arena entry-result)))
+    (tltest-entry-finish entry entry-result)))
 
 (define (tltest-run-batch-check-paths-from
   [paths : cli_svec.Vec]
@@ -6575,32 +6929,35 @@
   [target : String]
   [roots : cli_svec.Vec]
   [opt-level : i64]
+  [backend-mode : compiler_backend.CompilerBackendMode]
   [backend-target : compiler_backend.CompilerBackendTarget]) : i64
   ;; Keep every entry's loader pools, harness AST, lowered IR, backend scratch,
   ;; and captured child output inside one destroyable arena. Only the scalar
   ;; test count crosses the boundary.
   (let
-    [entry-arena : arena.Arena (arena.make)]
+    [entry : TlTestEntry (tltest-entry-new)]
     [entry-result : i64
       (in-arena
-        entry-arena
+        entry.owner
         (match (tltest-run-file-source
           source
           target
           roots
           opt-level
+          backend-mode
           backend-target)
           [(ResultTestFileCheck.Err status) (- 0 status)]
           [(ResultTestFileCheck.Failed count)
             (- 0 (+ tltest-failed-count-offset count))]
           [(ResultTestFileCheck.Ok count) count]))]
-    (tltest-batch-finish-entry entry-arena entry-result)))
+    (tltest-entry-finish entry entry-result)))
 
 (define (tltest-run-batch-run-paths
   [paths : cli_svec.Vec]
   [target : String]
   [roots : cli_svec.Vec]
   [opt-level : i64]
+  [backend-mode : compiler_backend.CompilerBackendMode]
   [backend-target : compiler_backend.CompilerBackendTarget]) : i64
   (let
     [count : i64 (cli_svec.len (& paths))]
@@ -6619,6 +6976,7 @@
               (owned_view.compiler-owned-shared-view target)
               (owned_view.compiler-owned-shared-view roots)
               opt-level
+              backend-mode
               backend-target)]
           (if (<= entry-result (- 0 tltest-failed-count-offset))
             (begin
@@ -6652,7 +7010,8 @@
   [paths : cli_svec.Vec]
   [target : String]
   [roots : cli_svec.Vec]
-  [opt-level : i64]) : i64
+  [opt-level : i64]
+  [backend-mode : compiler_backend.CompilerBackendMode]) : i64
   (begin
     (compiler_load.compiler-load-session-cache-enable!)
     (compiler_load.compiler-load-session-program-cache-disable!)
@@ -6675,6 +7034,7 @@
                 target
                 roots
                 opt-level
+                backend-mode
                 backend-target)]
             (begin
               (if tltest-prefix-cache-stats
@@ -6711,7 +7071,7 @@
 
 (define (tltest-run-config-ready [config : TestConfig]) : i64
   (match config
-    [(TestConfig.File source target mode roots opt-level test-mode)
+    [(TestConfig.File source target backend-mode roots opt-level test-mode)
       (match (build_run_core.source-tool-target
         (owned_view.compiler-owned-shared-view target))
         [(build_run_core.ResultSourceToolTarget.Err _)
@@ -6754,7 +7114,8 @@
                             program
                             harness-paths
                             roots
-                            opt-level)])
+                            opt-level
+                            backend-mode)])
                       (match test-mode
                         [(TestMode.Check)
                           (tltest-check-only
@@ -6770,24 +7131,26 @@
                             harness-paths
                             roots
                             target
-                            opt-level)]))]))]
+                            opt-level
+                            backend-mode)]))]))]
             [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
               (begin
                 (io.print-error
                   (driver.compiler-driver-render-source-diagnostic
                     (owned_view.compiler-owned-box-shared-view diag)))
                 1)])])]
-    [(TestConfig.Batch paths target _ roots opt-level test-mode)
+    [(TestConfig.Batch paths target backend-mode roots opt-level test-mode)
       (if tltest-list-only
         (tltest-run-batch-check paths target roots)
         (match test-mode
           [(TestMode.Check) (tltest-run-batch-check paths target roots)]
-          [(TestMode.Run) (tltest-run-batch-run paths target roots opt-level)]))]
+          [(TestMode.Run)
+            (tltest-run-batch-run paths target roots opt-level backend-mode)]))]
     [(TestConfig.Package
         manifest-path
         has-manifest
         target
-        _
+        backend-mode
         roots
         opt-level
         test-mode)
@@ -6797,11 +7160,185 @@
         target
         roots
         opt-level
+        backend-mode
         test-mode)]))
 
+;; Host-ISA policy for executing SIMD harnesses: the same CPUID-plus-OS-state
+;; contract the SPMD gates use (`stdlib.cpu`; AVX-512 means F+BW+DQ). The
+;; capabilities are parameters so the refusal is testable on every host.
+(define (tltest-host-isa-refusal
+  [backend-mode : compiler_backend.CompilerBackendMode]
+  [runs-avx2 : bool]
+  [runs-avx512 : bool]) : TestMaybeString
+  (match backend-mode
+    [(compiler_backend.CompilerBackendMode.Scalar) (TestMaybeString.No)]
+    [(compiler_backend.CompilerBackendMode.Avx2)
+      (if runs-avx2
+        (TestMaybeString.No)
+        (TestMaybeString.Some
+          "test: backend mode avx2 cannot run on this host: AVX2 with OS ymm state is required; use --check, --list, or another --backend-mode"))]
+    [(compiler_backend.CompilerBackendMode.Avx512)
+      (if runs-avx512
+        (TestMaybeString.No)
+        (TestMaybeString.Some
+          "test: backend mode avx512 cannot run on this host: AVX-512 F, BW, and DQ with OS zmm state are required; use --check, --list, or another --backend-mode"))]))
+
+;; `--check` and `--list` never execute a harness, so they accept every mode
+;; on every host and never probe the CPU.
+(define (tltest-backend-mode-executes?
+  [backend-mode : compiler_backend.CompilerBackendMode]
+  [test-mode : TestMode]
+  [list-only : bool]) : bool
+  (and
+    (not (compiler_backend.compiler-backend-mode-scalar? backend-mode))
+    (not list-only)
+    (not (tltest-check-mode? test-mode))))
+
+;; A run is refused once per process, before any compilation, instead of
+;; trapping on the first vector instruction of some harness.
+(define (tltest-host-isa-permits?
+  [backend-mode : compiler_backend.CompilerBackendMode]
+  [test-mode : TestMode]) : bool
+  (if (tltest-backend-mode-executes? backend-mode test-mode tltest-list-only)
+    (match (tltest-host-isa-refusal
+      backend-mode
+      (cpu.runs-avx2?)
+      (cpu.runs-avx512?))
+      [(TestMaybeString.No) true]
+      [(TestMaybeString.Some message)
+        (begin
+          (io.print-error message)
+          false)])
+    true))
+
+(define (tltest-maybe-string-some? [value : TestMaybeString]) : bool
+  (match value
+    [(TestMaybeString.Some _) true]
+    [(TestMaybeString.No) false]))
+
+(test
+  test-cli-backend-mode-host-isa-policy
+  (begin
+    (unless
+      (and
+        (not
+          (tltest-maybe-string-some?
+            (tltest-host-isa-refusal
+              (compiler_backend.CompilerBackendMode.Scalar)
+              false
+              false)))
+        (tltest-maybe-string-some?
+          (tltest-host-isa-refusal
+            (compiler_backend.CompilerBackendMode.Avx2)
+            false
+            true))
+        (not
+          (tltest-maybe-string-some?
+            (tltest-host-isa-refusal
+              (compiler_backend.CompilerBackendMode.Avx2)
+              true
+              false)))
+        (tltest-maybe-string-some?
+          (tltest-host-isa-refusal
+            (compiler_backend.CompilerBackendMode.Avx512)
+            true
+            false))
+        (not
+          (tltest-maybe-string-some?
+            (tltest-host-isa-refusal
+              (compiler_backend.CompilerBackendMode.Avx512)
+              true
+              true))))
+      (io.panic "test CLI host-ISA refusal policy mismatch"))
+    (unless
+      (and
+        (tltest-backend-mode-executes?
+          (compiler_backend.CompilerBackendMode.Avx512)
+          TestMode.Run
+          false)
+        (not
+          (tltest-backend-mode-executes?
+            (compiler_backend.CompilerBackendMode.Avx512)
+            TestMode.Check
+            false))
+        (not
+          (tltest-backend-mode-executes?
+            (compiler_backend.CompilerBackendMode.Avx512)
+            TestMode.Run
+            true))
+        (not
+          (tltest-backend-mode-executes?
+            (compiler_backend.CompilerBackendMode.Scalar)
+            TestMode.Run
+            false)))
+      (io.panic "test CLI backend-mode execution policy mismatch"))))
+
+(define (tltest-lower-mode-tag [mode : lower.CompilerLowerMode]) : i64
+  (match mode
+    [(lower.CompilerLowerMode.Scalar) 0]
+    [(lower.CompilerLowerMode.LinuxAvx2) 1]
+    [(lower.CompilerLowerMode.WindowsAvx2) 2]
+    [(lower.CompilerLowerMode.LinuxAvx512) 3]
+    [(lower.CompilerLowerMode.WindowsAvx512) 4]
+    [_ -1]))
+
+(test
+  test-cli-backend-mode-selects-paired-lower-mode
+  (unless
+    (and
+      (=
+        (tltest-lower-mode-tag
+          (tltest-harness-lower-mode
+            (compiler_backend.CompilerBackendTarget.Linux)
+            (compiler_backend.CompilerBackendMode.Scalar)))
+        0)
+      (=
+        (tltest-lower-mode-tag
+          (tltest-harness-lower-mode
+            (compiler_backend.CompilerBackendTarget.Windows)
+            (compiler_backend.CompilerBackendMode.Scalar)))
+        0)
+      (=
+        (tltest-lower-mode-tag
+          (tltest-harness-lower-mode
+            (compiler_backend.CompilerBackendTarget.Linux)
+            (compiler_backend.CompilerBackendMode.Avx2)))
+        1)
+      (=
+        (tltest-lower-mode-tag
+          (tltest-harness-lower-mode
+            (compiler_backend.CompilerBackendTarget.Windows)
+            (compiler_backend.CompilerBackendMode.Avx2)))
+        2)
+      (=
+        (tltest-lower-mode-tag
+          (tltest-harness-lower-mode
+            (compiler_backend.CompilerBackendTarget.Linux)
+            (compiler_backend.CompilerBackendMode.Avx512)))
+        3)
+      (=
+        (tltest-lower-mode-tag
+          (tltest-harness-lower-mode
+            (compiler_backend.CompilerBackendTarget.Windows)
+            (compiler_backend.CompilerBackendMode.Avx512)))
+        4))
+    (io.panic "test CLI backend mode did not select its paired lower mode")))
+
+(define (tltest-config-host-isa-permits? [config : TestConfig]) : bool
+  (match config
+    [(TestConfig.File _ _ backend-mode _ _ test-mode)
+      (tltest-host-isa-permits? backend-mode test-mode)]
+    [(TestConfig.Batch _ _ backend-mode _ _ test-mode)
+      (tltest-host-isa-permits? backend-mode test-mode)]
+    [(TestConfig.Package _ _ _ backend-mode _ _ test-mode)
+      (tltest-host-isa-permits? backend-mode test-mode)]))
+
 (define (tltest-run-config [config : TestConfig]) : i64
-  (if (tltest-prepare-shuffle!)
-    (tltest-run-config-ready config)
+  (if (tltest-config-host-isa-permits?
+    (owned_view.compiler-owned-shared-view config))
+    (if (tltest-prepare-shuffle!)
+      (tltest-run-config-ready config)
+      1)
     1))
 
 ;; Run the `test` command over arguments starting at `start`.

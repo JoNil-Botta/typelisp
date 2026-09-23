@@ -2511,7 +2511,7 @@
 
 (define (compiler-live-analyze-function [func : ir.CompilerIrFunction]) : CompilerFunctionLiveness
   (match func
-    [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+    [(ir.CompilerIrFunction.Function _ _ _ vars blocks _)
       (let
         [seq : ir.CompilerIrBlockSeq
           (compiler-live-ir-block-list-to-seq blocks)]
@@ -2759,7 +2759,7 @@
 (define (compiler-live-analyze-function-edge-precise
   [func : ir.CompilerIrFunction]) : CompilerFunctionLiveness
   (match func
-    [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+    [(ir.CompilerIrFunction.Function _ _ _ vars blocks _)
       (compiler-live-analyze-blocks-edge-precise blocks vars)]))
 
 (define (compiler-live-function-block-index

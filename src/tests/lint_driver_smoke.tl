@@ -197,6 +197,10 @@
 (define (lint-driver-smoke-unused-variable-source) : String
   "(defmacro (emit [quoted-only : Expr] [used-macro : Expr]) : Expr
   `(quoted-only ,used-macro))
+(defmacro (unused-type [T : type]) : Expr
+  `(init : i64))
+(defmacro (delayed-type [T : type]) : Expr
+  ``(init : ,T))
 (define (lambda-case) : i64
   (let
     [f (lambda ([x : i64] [unused-lambda : i64]) : i64 x)]
@@ -222,6 +226,30 @@
     p.x))
 (define (tagged [owner : i64]) : (TaggedPair owner)
   (TaggedPair 1))
+(defmacro (empty [T : type (:kind c-function)]) : Expr
+  `(init : ,T))
+(defmacro (pointer [T : type]) : Expr
+  `(init : (CFunc nullable (-> ,T ,T))))
+(defmacro (null-value [T : type (:kind c-function)]) : Expr
+  `(ptr-null : ,T))
+(defmacro (type-value [T : type]) : Expr
+  `(type (CFunc nullable (-> T T))))
+(defmacro (array-value [T : type]) : Expr
+  `(make-array ,T 1))
+(defmacro (dynamic-value [T : type]) : Expr
+  `(__tl_make-array ,T 1))
+(defmacro (pointer-cast [T : type]) : Expr
+  `(ptr-cast (ptr-null : (Ptr i64)) : (Ptr ,T)))
+(defmacro (pointer-address [T : type]) : Expr
+  `(int->ptr 0 : (Ptr ,T)))
+(defmacro (typed [T : type]) : Expr
+  `(ann 0 : ,T))
+(defmacro (converted [T : type]) : Expr
+  `(cast 0 : ,T))
+(defmacro (local [T : type]) : Expr
+  `(let [value : ,T 0] value))
+(defmacro (function [T : type]) : Expr
+  `(lambda ([value : ,T]) : ,T value))
 (define (main [_unused-param : i64] [used-param : i64]) : i64
   (let
     [_unused-local : i64 0]
@@ -998,13 +1026,18 @@
         (lint-driver-smoke-prefix-unused-variable-source)
         (lint_svec.new)
         false)]
-    [status : i64 42]
+    [status : i64
+      (match (parse_core.parse-ast-source-diagnostic
+        "lint_driver_unused_variable_clean.tl"
+        (lint-driver-smoke-clean-unused-variable-source))
+        [(parse_core.ResultAstProgramDiagnostic.Ok _) 42]
+        [(parse_core.ResultAstProgramDiagnostic.Err _) 49])]
     (begin
       (if (not
         (=
           (lint_core.lint-findings-count
             (owned_view.compiler-owned-shared-view reported))
-          4))
+          6))
         (set! status 50)
         unit)
       (if (and

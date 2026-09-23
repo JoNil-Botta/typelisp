@@ -65,6 +65,14 @@ reject_diag() {
             printf 'requires unsafe context' ;;
         stdlib/tests/format_nonliteral_template_reject.tl)
             printf 'format: template must be a string literal' ;;
+        stdlib/tests/format_println_nonliteral_template_reject.tl)
+            printf 'format: template must be a string literal' ;;
+        stdlib/tests/format_eprintln_nonliteral_template_reject.tl)
+            printf 'format: template must be a string literal' ;;
+        stdlib/tests/format_writeln_nonliteral_template_reject.tl)
+            printf 'format: template must be a string literal' ;;
+        stdlib/tests/format_writeln_missing_writer_reject.tl)
+            printf 'macro call has too few arguments' ;;
         stdlib/tests/format_bare_capture_reject.tl)
             printf "format: bare '_' is not a captured identifier" ;;
         stdlib/tests/format_duplicate_named_reject.tl)
@@ -162,6 +170,12 @@ reject_diag() {
             printf 'format: width integer overflow' ;;
         stdlib/tests/io_caller_result_escape.tl)
             printf 'typecheck: reference value would escape lexical scope' ;;
+        stdlib/tests/local_ipc_forged_connection_reject.tl)
+            printf 'int->ptr requires unsafe context' ;;
+        stdlib/tests/local_ipc_connection_copy_reject.tl)
+            printf 'cleanup-required resource already has a cleanup owner' ;;
+        stdlib/tests/local_ipc_raw_helper_reject.tl)
+            printf 'local_ipc/io-once requires unsafe context' ;;
         stdlib/tests/math_sqrt_non_float_reject.tl)
             printf 'math.sqrt: expected f64 or f32, found i64' ;;
         stdlib/tests/math_exp_non_float_reject.tl)
@@ -172,6 +186,10 @@ reject_diag() {
             printf 'math.pow: expected f64 or f32, found i64' ;;
         stdlib/tests/math_pow_mismatched_types_reject.tl)
             printf 'math.pow: exponent type must match base type f64, found f32' ;;
+        stdlib/tests/math_mul_add_non_float_reject.tl)
+            printf 'math.mul-add: expected f64 or f32, found i64' ;;
+        stdlib/tests/math_mul_add_mismatched_types_reject.tl)
+            printf 'math.mul-add: operand types must match f64, found f32' ;;
         stdlib/tests/hashmap_value_borrow_escape.tl)
             printf 'typecheck: reference value would escape lexical scope' ;;
         stdlib/tests/hashmap_value_borrow_insert_live.tl)

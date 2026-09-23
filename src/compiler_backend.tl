@@ -249,7 +249,7 @@
     [backend-state : CompilerBackendState]
     [func : compiler_ir_types.CompilerIrFunction]) : String
     (match func
-      [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ _)
+      [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ _ _)
         (compiler-backend-symbol-text-state backend-state name)])))
 
 (defenum ResultBackendReg
@@ -905,12 +905,44 @@
 ;; lowering is incremental. Direct ELF/COFF callers consume this result before
 ;; choosing an object artifact; internal object-image consumers that do not
 ;; link the image retain their existing lower-level contract.
+(defenum CompilerBackendObjectAbiContext
+  (Call)
+  (FunctionEntry)
+  (FunctionReturn))
+
+;; A closed route vocabulary shared by object emitters and package callers.
+;; Context is target/kind enums or a numeric resource bound, never a path or
+;; user-controlled symbol.
+(defenum CompilerDirectObjectArtifactKind
+  (Bin)
+  (StaticLib))
+
+(defenum CompilerDirectObjectFallbackReason
+  (ArtifactKindUnavailable
+    CompilerBackendTarget
+    CompilerDirectObjectArtifactKind)
+  (DebugMetadata)
+  (BackendMode)
+  (PrivateSpmdAbi)
+  (ResourceBudget i64 i64)
+  (UnsupportedSemantics)
+  (UnsupportedAbi CompilerBackendTarget CompilerBackendObjectAbiContext)
+  (ObjectEncoding)
+  (UnsupportedCoffImage)
+  (ObjectFixup)
+  (ObjectRelocation)
+  (MissingEntrySymbol)
+  (MissingRuntimeEntry)
+  (EmptyTextSection)
+  (TargetMismatch)
+  (ForcedAssembly))
+
 (defenum CompilerBackendObjectEligibility
   (Eligible)
-  (Unsupported String))
+  (Unsupported CompilerDirectObjectFallbackReason))
 
-(define (compiler-backend-object-unsupported-semantics-category) : String
-  "unsupported-object-semantics")
+(define (compiler-backend-object-unsupported-semantics-category) : CompilerDirectObjectFallbackReason
+  CompilerDirectObjectFallbackReason.UnsupportedSemantics)
 
 (defenum CompilerBackendSwitchValidation
   (Ok)
@@ -1179,6 +1211,43 @@
             (ptr->int
               (ptr-cast (__tl_array-data cell) : (Ptr CompilerBackendStateData))))
           : i64)))))
+
+;; Complete results use emission-arena; these private tables have no result
+;; consumer. Unpublish their views before retiring the one-shot backend state.
+;; The caller retains its intern capability, metrics and advisory sink.
+(define (compiler-backend-state-release-final-arenas!
+  [state : CompilerBackendState]) : unit
+  (let
+    [data : CompilerBackendStateData (compiler-backend-state-data state)]
+    [lazy-owner : i64 data.lazy-table-arena]
+    [representation-owner : i64 data.representation-arena]
+    (begin
+      (set! data.lazy-table-arena 0)
+      (set! data.slot-cache-values (__tl_make-array String 0))
+      (set! data.slot-cache-epochs (__tl_make-array i64 0))
+      (set! data.frame-offset-cache-values (__tl_make-array String 0))
+      (set! data.frame-offset-cache-epochs (__tl_make-array i64 0))
+      (set! data.immediate-cache-values (__tl_make-array String 0))
+      (set! data.immediate-cache-epochs (__tl_make-array i64 0))
+      (set! data.function-state-address 0)
+      (set! data.stream-state-address 0)
+      (set!
+        data.representations
+        (compiler_ir_types.compiler-ir-representation-index-empty))
+      (set! data.has-representations false)
+      (set! data.representation-arena 0)
+      (set! data.representation-mark 0)
+      (compiler-backend-state-data-set! state data)
+      (if (> lazy-owner 0)
+        (unsafe
+          (arena.tl_arena_destroy lazy-owner))
+        unit)
+      (if (and
+        (> representation-owner 0)
+        (not (= representation-owner lazy-owner)))
+        (unsafe
+          (arena.tl_arena_destroy representation-owner))
+        unit))))
 
 (define (compiler-backend-state-new [intern-state : ci.InternCompatState]) : CompilerBackendState
   (compiler-backend-state-new-with-metrics
@@ -4775,7 +4844,7 @@
   [backend-state : CompilerBackendState]
   [func : compiler_ir_types.CompilerIrFunction]) : CompilerBackendMode
   (match func
-    [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ _)
+    [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ _ _)
       (compiler-backend-effective-mode-for-function-name
         mode
         (compiler-backend-symbol-text-state backend-state name))]))
@@ -12243,6 +12312,7 @@
   [elem-ty : compiler_ast_types.AstType]
   [planned-acc-xmm : String]
   [planned-scratch-xmm : String]
+  [planned-mask-xmm : String]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (compiler-backend-avx512-shape-ok?
@@ -12270,6 +12340,7 @@
       elem-ty
       planned-acc-xmm
       planned-scratch-xmm
+      planned-mask-xmm
       instr-diag
       backend-state)))
 
@@ -16246,11 +16317,11 @@
             [else (+ vars 4)]))
         vars))))
 
-;; Reserve a contiguous group region for stack-resident register-group vars.
-;; Each var gets two adjacent words in the region so taking the address of a
-;; group value exposes a real aggregate byte layout: word0 at base, word1 at
-;; base+8. The ordinary var slot remains reserved for non-group values; group
-;; stack accesses use compiler-backend-group-word{0,1}-slot.
+;; Reserve enough space for either group-home mode. Functions with exposed
+;; group addresses need the canonical pair region, with word0 at base and
+;; word1 at base+8. Every second word uses that region in a mixed function;
+;; ordinary first words keep their scalar slots. Without exposed groups the
+;; compact second-word map also fits this unchanged reservation.
 (define (compiler-backend-frame-slots-with-groups
   [vars : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -19726,6 +19797,7 @@
     [(compiler_ast_types.AstType.Never) 0]
     [(compiler_ast_types.AstType.Expr) 0]
     [(compiler_ast_types.AstType.ExprList) 0]
+    [(compiler_ast_types.AstType.CFunc _ _) 8]
     [(compiler_ast_types.AstType.Func _ _) 8]
     [(compiler_ast_types.AstType.Tuple _) 8]
     [(compiler_ast_types.AstType.Array _ _) 8]
@@ -19951,7 +20023,7 @@
     (match (compiler-backend-global-array-element-shared-view
       functions.slots
       index)
-      [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ _)
+      [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ _ _)
         (match (compiler-backend-index-function-slot
           (compiler-backend-global-shared-view program-index)
           name)
@@ -21703,7 +21775,8 @@
   [xmm : String]
   [elem-ty : compiler_ast_types.AstType]
   [acc-xmm : String]
-  [scratch-xmm : String]) : String
+  [scratch-xmm : String]
+  [mask-xmm : String]) : String
   (match (compiler-backend-global-shared-view elem-ty)
     [(compiler_ast_types.AstType.F32)
       (str_cat.str-cat
@@ -21861,9 +21934,9 @@
               ", "
               lane-compare-right
               ", "
-              (compiler-backend-global-shared-view xmm)
+              (compiler-backend-global-shared-view mask-xmm)
               "\n    vpblendvb "
-              xmm
+              mask-xmm
               ", "
               scratch-xmm
               ", "
@@ -21930,6 +22003,7 @@
   [elem-ty : compiler_ast_types.AstType]
   [planned-acc-xmm : String]
   [planned-scratch-xmm : String]
+  [planned-mask-xmm : String]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (compiler-backend-avx2-shape-ok?
@@ -21972,26 +22046,44 @@
                     (compiler-backend-vector-reg-lower-xmm
                       (compiler-backend-global-shared-view ymm))]
                   [acc-xmm : String
-                    (if (> (string.string-length planned-acc-xmm) 0)
+                    (compiler-backend-planned-or-scavenge-xmm-reg
                       planned-acc-xmm
-                      (compiler-backend-scavenge-xmm-reg
-                        dst
-                        (compiler-backend-one-exclude
-                          (compiler-backend-global-shared-view
-                            planned-scratch-xmm))
-                        1
-                        "%xmm2"
-                        backend-state))]
+                      dst
+                      (compiler-backend-three-exclude
+                        (compiler-backend-global-shared-view xmm)
+                        (compiler-backend-global-shared-view planned-mask-xmm)
+                        (compiler-backend-global-shared-view
+                          planned-scratch-xmm))
+                      3
+                      "%xmm2"
+                      backend-state)]
                   [scratch-xmm : String
-                    (if (> (string.string-length planned-scratch-xmm) 0)
+                    (compiler-backend-planned-or-scavenge-xmm-reg
                       planned-scratch-xmm
-                      (compiler-backend-scavenge-xmm-reg
+                      dst
+                      (compiler-backend-three-exclude
+                        (compiler-backend-global-shared-view xmm)
+                        (compiler-backend-global-shared-view planned-mask-xmm)
+                        (compiler-backend-global-shared-view acc-xmm))
+                      3
+                      "%xmm3"
+                      backend-state)]
+                  [mask-xmm : String
+                    (if (compiler_regalloc.compiler-reg-vector-reduce-mask-scratch?
+                      op
+                      lanes
+                      (compiler-backend-global-shared-view elem-ty))
+                      (compiler-backend-planned-or-scavenge-xmm-reg
+                        planned-mask-xmm
                         dst
-                        (compiler-backend-one-exclude
-                          (compiler-backend-global-shared-view acc-xmm))
-                        1
-                        "%xmm3"
-                        backend-state))]
+                        (compiler-backend-three-exclude
+                          (compiler-backend-global-shared-view xmm)
+                          (compiler-backend-global-shared-view acc-xmm)
+                          (compiler-backend-global-shared-view scratch-xmm))
+                        3
+                        "%xmm4"
+                        backend-state)
+                      "")]
                   (if (= (string.string-length xmm) 0)
                     (ResultCompilerBackend.Err
                       (box
@@ -22009,7 +22101,8 @@
                           xmm
                           (compiler-backend-global-shared-view elem-ty)
                           (compiler-backend-global-shared-view acc-xmm)
-                          scratch-xmm)
+                          scratch-xmm
+                          mask-xmm)
                         (compiler-backend-vector-reduce-store-scalar
                           (compiler-backend-global-shared-view assignments)
                           dst
@@ -22849,12 +22942,16 @@
               [(ResultCompilerBackend.Err m) (ResultCompilerBackend.Err m)])]
           [(ResultCompilerBackend.Err m) (ResultCompilerBackend.Err m)]))]))
 
-;; Legacy stack-slot offsets for an ordinary group var with no register home:
-;; word0 reuses the var's ordinary slot, and word1 lives in the second group
-;; region below the callee-save area.
+;; An ordinary group keeps word0 in its scalar var slot. Functions without
+;; address-exposed groups can retain the compact second-word region. Once any
+;; group exposes its address, every word1 must instead use the canonical pair
+;; region: mixing the one-word and two-word strides aliases distinct values.
 (define (compiler-backend-group-legacy-word0-slot [var : i64]) : i64
   (- 0 (* 8 (+ var 1))))
 
+;; Precondition: the function's addressable-group bitmap has no storage. A
+;; retained nonempty bitmap can conservatively select canonical pair slots;
+;; only zero words prove that no exposed pair can overlap this compact map.
 (define (compiler-backend-group-legacy-word1-slot
   [var : i64]
   [vars : i64]
@@ -22868,8 +22965,10 @@
         (compiler-backend-frame-slots vars assignments backend-state)
         (+ var 1)))))
 
-;; Stack-slot offsets for an address-exposed group var's two words when it has
-;; no register home. The pair lives in a dedicated contiguous region below the
+;; Canonical pair offsets for a group var without a register home. In functions
+;; with exposed groups, both storage modes use word1; exposed values also use
+;; word0 here.
+;; The pair lives in a dedicated contiguous region below the
 ;; ordinary var/callee-save region so `AddrOf group-var` plus `Gep 8` reaches
 ;; word1. `frame-slots` depends only on the allocator plan, so this base is
 ;; stable across body emission.
@@ -23204,21 +23303,26 @@
           (if (compiler-backend-group-var? backend-state var)
             (compiler-backend-frame-offset-with-backend-state
               backend-state
-              (if (compiler-backend-addressable-group-var? backend-state var)
-                (if (= index 0)
+              (if (= index 0)
+                (if (compiler-backend-addressable-group-var? backend-state var)
                   (compiler-backend-group-word0-slot
                     var
                     vars
                     assignments
                     backend-state)
-                  (compiler-backend-group-word1-slot
+                  (compiler-backend-group-legacy-word0-slot var))
+                (if (=
+                  (compiler_liveness.compiler-live-set-word-count
+                    (compiler-backend-function-state-live-set
+                      (compiler-backend-state-function-state backend-state)
+                      compiler-backend-function-live-set-addressable-group-vars))
+                  0)
+                  (compiler-backend-group-legacy-word1-slot
                     var
                     vars
                     assignments
-                    backend-state))
-                (if (= index 0)
-                  (compiler-backend-group-legacy-word0-slot var)
-                  (compiler-backend-group-legacy-word1-slot
+                    backend-state)
+                  (compiler-backend-group-word1-slot
                     var
                     vars
                     assignments
@@ -41500,7 +41604,7 @@
     (match (compiler-backend-global-array-element-shared-view
       functions.slots
       seq-index)
-      [(compiler_ir_types.CompilerIrFunction.Function name params ret-ty _ _)
+      [(compiler_ir_types.CompilerIrFunction.Function name params ret-ty _ _ _)
         (begin
           (set!
             (array-ref names out-index)
@@ -41527,6 +41631,16 @@
   [type-segment-bases : i64]
   [ty : compiler_ast_types.AstType]) : CompilerBackendMaybeSignature
   (match ty
+    [(compiler_ast_types.AstType.CFunc signature _)
+      (compiler-backend-program-index-extern-signature
+        type-segment-bases
+        (compiler_ast_types.ast-type-segment-bases-get
+          type-segment-bases
+          signature))]
+    [(compiler_ast_types.AstType.Region _ inner)
+      (compiler-backend-program-index-extern-signature
+        type-segment-bases
+        (compiler_ast_types.ast-type-segment-bases-get type-segment-bases inner))]
     [(compiler_ast_types.AstType.Func args ret-ty)
       (CompilerBackendMaybeSignature.Some
         (compiler_ir_types.compiler-ir-box-shared-view args)
@@ -41908,7 +42022,7 @@
   [state : CompilerBackendCollectState]
   [func : compiler_ir_types.CompilerIrFunction]) : CompilerBackendCollectState
   (match (compiler-backend-global-shared-view func)
-    [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+    [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
       (compiler-backend-collect-blocks-shared state blocks)]))
 
 (define (compiler-backend-collect-function-seq-shared
@@ -41992,7 +42106,7 @@
       (match (compiler-backend-global-array-element-shared-view
         functions.slots
         index)
-        [(compiler_ir_types.CompilerIrFunction.Function name params _ _ _)
+        [(compiler_ir_types.CompilerIrFunction.Function name params _ _ _ _)
           (if (compiler-backend-param-seq-has-private-memory?
             type-segment-bases
             params)
@@ -42787,7 +42901,7 @@
     (match (compiler-backend-global-array-element-shared-view
       functions.slots
       seq-index)
-      [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ _)
+      [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ _ _)
         (let
           [symbol : String
             (compiler-backend-function-symbol-index
@@ -42957,6 +43071,31 @@
           (ResultCompilerBackendSymbolValidation.Err message)])]
     [(ResultCompilerBackendSymbolValidation.Err message)
       (ResultCompilerBackendSymbolValidation.Err message)]))
+
+;; Program admission before any emission: every same-program private SPMD
+;; helper and call must satisfy its explicit ABI descriptor (#7405), then the
+;; symbol tables must be consistent. Both the assembly and object paths admit a
+;; program only through here.
+(define (compiler-backend-validate-program
+  [globals : compiler_ir_types.CompilerIrGlobalSeq]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
+  [externs : compiler_ir_types.CompilerIrExternSeq]
+  [plan : CompilerBackendRuntimePlan]
+  [index : CompilerBackendProgramIndex]) : ResultCompilerBackendSymbolValidation
+  (let
+    [spmd-abi-error : String
+      (compiler_ir_types.compiler-ir-spmd-private-abi-program-error
+        (compiler-backend-global-shared-view functions))]
+    (if (> (string.string-length spmd-abi-error) 0)
+      (ResultCompilerBackendSymbolValidation.Err
+        (box
+          (compiler_diagnostic.compiler-diagnostic-at-start "" spmd-abi-error)))
+      (compiler-backend-validate-function-symbols
+        globals
+        functions
+        externs
+        plan
+        index))))
 
 (define (compiler-backend-runtime-param-types-id [name-id : i64]) : compiler_ast_types.AstTypeList
   (cond
@@ -53958,6 +54097,25 @@
     [(= reg-index 3) "    movl %edx, %eax\n"]
     [else "    xorq %rax, %rax\n"]))
 
+(define (compiler-backend-cpuid-operand-moves
+  [leaf : compiler_ir_types.CompilerIrValue]
+  [subleaf : compiler_ir_types.CompilerIrValue]) : CompilerBackendArgMoveSeq
+  (let
+    [out : CompilerBackendArgMoveSeq
+      (compiler-backend-arg-move-seq-with-capacity 2)]
+    (begin
+      (compiler-backend-arg-move-push!
+        (&mut out)
+        (BackendArgMove
+          compiler_abi.compiler-reg-id-rcx
+          (BackendArgMoveValue subleaf)))
+      (compiler-backend-arg-move-push!
+        (&mut out)
+        (BackendArgMove
+          compiler_abi.compiler-reg-id-rax
+          (BackendArgMoveValue leaf)))
+      out)))
+
 (define (compiler-backend-emit-cpuid
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
@@ -53966,55 +54124,52 @@
   [reg-index : i64]
   [planned-save : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (match (compiler-backend-emit-load-value-with-plan
+  ;; The two operand registers are allocator-pooled, so the leaf can be homed in
+  ;; %rcx (every non-inlined Win64 wrapper: it is the first argument register)
+  ;; or the subleaf in %rax. Two independent loads would overwrite one of them
+  ;; before it is read -- `movq %rdx, %rcx; movq %rcx, %rax` ran every such
+  ;; cpuid with the subleaf as its leaf (#7927). The call path's parallel-move
+  ;; solver orders the moves and breaks a true cycle through a temp; the
+  ;; subleaf-first list keeps every conflict-free site byte-identical.
+  (match (compiler-backend-emit-arg-move-list
     (compiler-backend-global-shared-view assignments)
-    subleaf
-    "%rcx"
+    (compiler-backend-cpuid-operand-moves leaf subleaf)
     backend-state)
-    [(ResultCompilerBackend.Ok subleaf-asm)
-      (match (compiler-backend-emit-load-value-with-plan
-        (compiler-backend-global-shared-view assignments)
-        leaf
-        "%rax"
-        backend-state)
-        [(ResultCompilerBackend.Ok leaf-asm)
+    [(ResultCompilerBackend.Ok operand-asm)
+      (let
+        [ex : (__tl_dyn-array String) (__tl_make-array String 3)]
+        (begin
+          (set! (array-ref ex 0) "%rcx")
+          (set! (array-ref ex 1) "%rdx")
+          (set! (array-ref ex 2) "%rbx")
           (let
-            [ex : (__tl_dyn-array String) (__tl_make-array String 3)]
-            (begin
-              (set! (array-ref ex 0) "%rcx")
-              (set! (array-ref ex 1) "%rdx")
-              (set! (array-ref ex 2) "%rbx")
-              (let
-                ;; cpuid clobbers rax/rbx/rcx/rdx; preserve the caller's %rbx in a
-                ;; scavenged free reg instead of pushq/popq (the no-stack-staging
-                ;; goal). rax/rsi/rdi aren't scavenge candidates, so excluding
-                ;; rcx/rdx/rbx leaves the temp in {r8-r15}, none of which cpuid
-                ;; touches. Falls back to %r8 / the emergency wrap if none free.
-                [scav : String
-                  (compiler-backend-planned-or-scavenge-reg-here
-                    planned-save
-                    ex
-                    3
-                    "%r8"
-                    backend-state)]
-                (ResultCompilerBackend.Ok
-                  (str_cat.str-cat
-                    subleaf-asm
-                    leaf-asm
-                    (str_cat.str-cat
-                      "    movq %rbx, "
-                      (compiler-backend-global-shared-view scav)
-                      "\n    cpuid\n")
-                    (compiler-backend-cpuid-result-move reg-index)
-                    (str_cat.str-cat "    movq " scav ", %rbx\n")
-                    (compiler-backend-emit-store-typed-var-with-plan
-                      assignments
-                      dst
-                      "%rax"
-                      (compiler_ast_types.AstType.I64)
-                      backend-state))))))]
-        [(ResultCompilerBackend.Err message)
-          (ResultCompilerBackend.Err message)])]
+            ;; cpuid clobbers rax/rbx/rcx/rdx; preserve the caller's %rbx in a
+            ;; scavenged free reg instead of pushq/popq (the no-stack-staging
+            ;; goal). rax/rsi/rdi aren't scavenge candidates, so excluding
+            ;; rcx/rdx/rbx leaves the temp in {r8-r15}, none of which cpuid
+            ;; touches. Falls back to %r8 / the emergency wrap if none free.
+            [scav : String
+              (compiler-backend-planned-or-scavenge-reg-here
+                planned-save
+                ex
+                3
+                "%r8"
+                backend-state)]
+            (ResultCompilerBackend.Ok
+              (str_cat.str-cat
+                operand-asm
+                (str_cat.str-cat
+                  "    movq %rbx, "
+                  (compiler-backend-global-shared-view scav)
+                  "\n    cpuid\n")
+                (compiler-backend-cpuid-result-move reg-index)
+                (str_cat.str-cat "    movq " scav ", %rbx\n")
+                (compiler-backend-emit-store-typed-var-with-plan
+                  assignments
+                  dst
+                  "%rax"
+                  (compiler_ast_types.AstType.I64)
+                  backend-state))))))]
     [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
 
 (define (compiler-backend-emit-xgetbv
@@ -54641,7 +54796,7 @@
     (match (compiler-backend-global-array-element-shared-view
       functions.slots
       index)
-      [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ blocks)
+      [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ blocks _)
         (let
           [_phi-targets : unit
             (compiler-backend-function-state-install-phi-targets!
@@ -55434,7 +55589,7 @@
     (match (compiler-backend-global-array-element-shared-view
       functions.slots
       index)
-      [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+      [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
         (let
           [targets : BackendSymbolSeq
             (compiler-backend-phi-target-labels-for-blocks
@@ -55893,6 +56048,7 @@
           (compiler-backend-global-shared-view elem-ty)
           planned-scratch0
           planned-scratch1
+          planned-scratch2
           instr-diag
           ctx.backend-state)]
       [(compiler_ir_types.CompilerIrInstr.VectorCompare payload-box)
@@ -63560,6 +63716,7 @@
               (compiler-backend-global-shared-view instr-diag))))])))
 
 (define (compiler-backend-indirect-call-param-types
+  [type-segment-bases : i64]
   [types : compiler_regalloc.CompilerRegVarTypes]
   [func : compiler_ir_types.CompilerIrValue]
   [_functions : compiler_ir_types.CompilerIrFunctionSeq]
@@ -63577,10 +63734,12 @@
         (CompilerBackendGlobalTypeTable.Empty)
         func)
         [(compiler_regalloc.CompilerRegMaybeType.Some ty)
-          (match ty
-            [(compiler_ast_types.AstType.Func param-types _)
-              (compiler_ir_types.compiler-ir-box-shared-view param-types)]
-            [_ (compiler_ast_types.ast-type-list-new)])]
+          (match (compiler-backend-program-index-extern-signature
+            type-segment-bases
+            ty)
+            [(CompilerBackendMaybeSignature.Some param-types _) param-types]
+            [(CompilerBackendMaybeSignature.No)
+              (compiler_ast_types.ast-type-list-new)])]
         [(compiler_regalloc.CompilerRegMaybeType.No)
           (compiler_ast_types.ast-type-list-new)])]))
 
@@ -63627,6 +63786,7 @@
   (let
     [declared : compiler_ast_types.AstTypeList
       (compiler-backend-indirect-call-param-types
+        type-segment-bases
         (compiler-backend-global-shared-view types)
         (compiler-backend-global-shared-view func)
         (compiler-backend-global-shared-view functions)
@@ -64157,6 +64317,7 @@
   (let
     [declared-param-types : compiler_ast_types.AstTypeList
       (compiler-backend-indirect-call-param-types
+        type-segment-bases
         (compiler-backend-global-shared-view types)
         (compiler-backend-global-shared-view func)
         functions
@@ -64415,6 +64576,7 @@
   (let
     [declared-param-types : compiler_ast_types.AstTypeList
       (compiler-backend-indirect-call-param-types
+        type-segment-bases
         (compiler-backend-global-shared-view types)
         (compiler-backend-global-shared-view func)
         functions
@@ -64649,6 +64811,8 @@
       (compiler-backend-global-shared-view rhs))
       [(CompilerBackendMaybeImmediate.Some imm)
         (match op
+          ;; `K(%rbp)` would read as a frame address to the final rsp rebase
+          ;; (#7978); the no-base SIB form computes the same sum.
           [(compiler_ir_types.CompilerIrBinOp.Add)
             (ResultCompilerBackend.Ok
               (str_cat.str-cat
@@ -64656,7 +64820,9 @@
                   "    leaq "
                   (string.substring imm 1 (- (string.string-length imm) 1))
                   "("
-                  lhs-reg)
+                  (if (string.eq lhs-reg "%rbp")
+                    ",%rbp,1"
+                    lhs-reg))
                 (str_cat.str-cat "), " src "\n")))]
           [(compiler_ir_types.CompilerIrBinOp.Mul)
             (ResultCompilerBackend.Ok
@@ -73725,6 +73891,7 @@
     [ret-ty : compiler_ast_types.AstType]
     [slot-vars : i64]
     [emit-blocks : compiler_ir_types.CompilerIrBlockList]
+    [function-abi : compiler_ir_types.CompilerIrFunctionAbi]
     [assignments : compiler_regalloc.CompilerRegAssignmentTable]) : unit
     (if (< slot-vars 1)
       unit
@@ -73735,7 +73902,8 @@
             params
             ret-ty
             slot-vars
-            emit-blocks)]
+            emit-blocks
+            (compiler-backend-global-shared-view function-abi))]
         [liveness : compiler_liveness.CompilerFunctionLiveness
           (compiler_liveness.compiler-live-analyze-function func)]
         [starts : (__tl_dyn-array i64) (__tl_make-array i64 slot-vars)]
@@ -82260,7 +82428,8 @@
         params
         ret-ty
         vars
-        raw-blocks)
+        raw-blocks
+        function-abi)
       ;; The provenance fallback diagnostic for this function: backend
       ;; errors raised while emitting its body stamp this function's source span
       ;; (or `1:1` when none was recorded) rather than always `1:1`.
@@ -82304,7 +82473,8 @@
                 (compiler-backend-global-shared-view params)
                 (compiler-backend-global-shared-view ret-ty)
                 vars
-                folded-blocks)]
+                folded-blocks
+                (compiler-backend-global-shared-view function-abi))]
             (if (and
               shrinkwrap-enabled
               (compiler-backend-mode-scalar? mode)
@@ -82334,11 +82504,17 @@
             (compiler-backend-global-shared-view cold-call-rewrite))]
         [blocks : compiler_ir_types.CompilerIrBlockList
           (match (compiler-backend-global-shared-view cold-call-func)
-            [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ out-blocks)
+            [(compiler_ir_types.CompilerIrFunction.Function
+                _
+                _
+                _
+                _
+                out-blocks
+                _)
               out-blocks])]
         [walk-vars : i64
           (match (compiler-backend-global-shared-view cold-call-func)
-            [(compiler_ir_types.CompilerIrFunction.Function _ _ _ out-vars _)
+            [(compiler_ir_types.CompilerIrFunction.Function _ _ _ out-vars _ _)
               out-vars])]
         [cold-call-temp-start : i64
           (compiler_regalloc.compiler-reg-cold-call-rewrite-temp-start
@@ -82349,7 +82525,8 @@
             (compiler-backend-global-shared-view params)
             (compiler-backend-global-shared-view ret-ty)
             walk-vars
-            (compiler-backend-global-shared-view blocks))]
+            (compiler-backend-global-shared-view blocks)
+            (compiler-backend-global-shared-view function-abi))]
         [func-diag : compiler_diagnostic.CompilerDiagnostic
           (compiler-backend-function-diagnostic-index
             (compiler-backend-global-shared-view span-index)
@@ -82603,7 +82780,8 @@
             (compiler-backend-global-shared-view params)
             (compiler-backend-global-shared-view ret-ty)
             alloc-vars
-            (compiler-backend-global-shared-view alloc-blocks))]
+            (compiler-backend-global-shared-view alloc-blocks)
+            (compiler-backend-global-shared-view function-abi))]
         [alloc-types : compiler_regalloc.CompilerRegVarTypes
           (if (= alloc-vars split-vars)
             split-types
@@ -82706,7 +82884,8 @@
             (compiler-backend-global-shared-view params)
             (compiler-backend-global-shared-view ret-ty)
             call-save-vars
-            (compiler-backend-global-shared-view call-save-blocks))]
+            (compiler-backend-global-shared-view call-save-blocks)
+            (compiler-backend-global-shared-view function-abi))]
         [loop-split-rewrite : compiler_regalloc.CompilerRegCallSaveRewrite
           (if non-split-passes-enabled
             (compiler_regalloc.compiler-reg-loop-split-rewrite-blocks
@@ -82758,7 +82937,8 @@
             (compiler-backend-global-shared-view params)
             (compiler-backend-global-shared-view ret-ty)
             rewritten-vars
-            (compiler-backend-global-shared-view rewritten-blocks))]
+            (compiler-backend-global-shared-view rewritten-blocks)
+            (compiler-backend-global-shared-view function-abi))]
         [remat0-rewrite : compiler_regalloc.CompilerRegCallSaveRewrite
           (if call-save-enabled
             (compiler_regalloc.compiler-reg-remat-rewrite-blocks
@@ -82883,7 +83063,8 @@
               (compiler-backend-global-shared-view params)
               (compiler-backend-global-shared-view ret-ty)
               scratch-vars
-              (compiler-backend-global-shared-view remat-blocks))
+              (compiler-backend-global-shared-view remat-blocks)
+              (compiler-backend-global-shared-view function-abi))
             (compiler-backend-global-shared-view plan-types))]
         [has-group-vars : bool
           (>
@@ -83100,26 +83281,30 @@
           ;; segment rows give the occupancy table the allocator's own notion of
           ;; where a register actually carries a live value, instead of a hull
           ;; that saturates every register in a merged body.
-          (if (compiler-backend-assignments-have-register-home?
-            (compiler-backend-global-shared-view scavenge-assignments))
-            (let
-              [scavenge-func : compiler_ir_types.CompilerIrFunction
-                (compiler_ir_types.CompilerIrFunction.Function
-                  (compiler-backend-global-shared-view name)
-                  (compiler-backend-global-shared-view emit-params)
-                  (compiler-backend-global-shared-view ret-ty)
-                  scratch-vars
-                  (compiler-backend-global-shared-view emit-blocks-list))]
-              (compiler_regalloc.compiler-reg-live-interval-selection-with-live-in
-                (compiler-backend-global-shared-view scavenge-func)
-                (compiler_liveness.compiler-live-analyze-function
-                  (compiler-backend-global-shared-view scavenge-func))
-                false))
-            (compiler_regalloc.CompilerRegIntervalSelection.Selection
-              (compiler_regalloc.compiler-reg-interval-seq-empty)
-              (compiler_regalloc.compiler-reg-interval-index-build
+          (compiler_regalloc.compiler-reg-with-analysis-scratch
+            scratch-vars
+            (compiler-backend-global-shared-view emit-blocks-list)
+            (if (compiler-backend-assignments-have-register-home?
+              (compiler-backend-global-shared-view scavenge-assignments))
+              (let
+                [scavenge-func : compiler_ir_types.CompilerIrFunction
+                  (compiler_ir_types.CompilerIrFunction.Function
+                    (compiler-backend-global-shared-view name)
+                    (compiler-backend-global-shared-view emit-params)
+                    (compiler-backend-global-shared-view ret-ty)
+                    scratch-vars
+                    (compiler-backend-global-shared-view emit-blocks-list)
+                    (compiler-backend-global-shared-view function-abi))]
+                (compiler_regalloc.compiler-reg-live-interval-selection-with-live-in
+                  (compiler-backend-global-shared-view scavenge-func)
+                  (compiler_liveness.compiler-live-analyze-function
+                    (compiler-backend-global-shared-view scavenge-func))
+                  false))
+              (compiler_regalloc.CompilerRegIntervalSelection.Selection
                 (compiler_regalloc.compiler-reg-interval-seq-empty)
-                0)))]
+                (compiler_regalloc.compiler-reg-interval-index-build
+                  (compiler_regalloc.compiler-reg-interval-seq-empty)
+                  0))))]
         [scavenge-intervals : compiler_regalloc.CompilerRegIntervalSeq
           (match (compiler-backend-global-shared-view scavenge-selection)
             [(compiler_regalloc.CompilerRegIntervalSelection.Selection hulls _)
@@ -83178,7 +83363,8 @@
                 (compiler-backend-global-shared-view emit-params)
                 (compiler-backend-global-shared-view ret-ty)
                 scratch-vars
-                (compiler-backend-global-shared-view emit-blocks-list))
+                (compiler-backend-global-shared-view emit-blocks-list)
+                (compiler-backend-global-shared-view function-abi))
               (compiler-backend-global-shared-view emit-group-vars)
               scratch-base-plan
               scratch-vars)
@@ -83480,6 +83666,7 @@
               (compiler-backend-global-shared-view ret-ty)
               scratch-vars
               (compiler-backend-global-shared-view emit-blocks-list)
+              (compiler-backend-global-shared-view function-abi)
               (compiler-backend-global-shared-view assignments))
             unit)]
         (if (compiler-backend-inline-memory-call-name?
@@ -84623,7 +84810,7 @@
 (define (compiler-backend-emit-function-direct?
   [func : compiler_ir_types.CompilerIrFunction]) : bool
   (match (compiler-backend-global-shared-view func)
-    [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+    [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
       (<=
         (compiler_ir_types.compiler-ir-block-list-instruction-count blocks)
         (compiler-backend-direct-emit-instr-limit))]))
@@ -84792,7 +84979,8 @@
             (compiler_ir_types.CompilerIrInstr.Return
               (compiler_ir_types.CompilerIrMaybeValue.Some
                 (compiler_ir_types.CompilerIrValue.I64 0)))))
-        compiler_ir_types.CompilerIrBlockList.Nil))))
+        compiler_ir_types.CompilerIrBlockList.Nil))
+    compiler_ir_types.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-backend-functions-with-implicit-main
   [functions : compiler_ir_types.CompilerIrFunctionSeq]
@@ -86773,7 +86961,7 @@
       (match (compiler-backend-global-array-element-shared-view
         functions.slots
         slot)
-        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
           (let
             [ret-var : i64
               (compiler-backend-iag-scan-blocks
@@ -87893,7 +88081,7 @@
     (match (compiler-backend-global-array-element-shared-view
       functions.slots
       index)
-      [(compiler_ir_types.CompilerIrFunction.Function func-name _ _ _ _)
+      [(compiler_ir_types.CompilerIrFunction.Function func-name _ _ _ _ _)
         (if (compiler_ir_types.compiler-ir-symbol-eq? func-name name)
           true
           (compiler-backend-function-seq-defines-from?
@@ -87933,7 +88121,7 @@
     (match (compiler-backend-global-array-element-shared-view
       functions.slots
       index)
-      [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ _)
+      [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ _ _)
         (if (compiler-backend-runtime-prelude-helper-function?
           (compiler-backend-symbol-text-state backend-state name)
           (compiler-backend-global-shared-view helper))
@@ -88122,7 +88310,7 @@
     (match (compiler-backend-global-array-element-shared-view
       functions.slots
       seq-index)
-      [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ blocks)
+      [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ blocks _)
         (compiler-backend-runtime-index-function-seq
           (compiler-backend-runtime-index-blocks
             (compiler-backend-runtime-index-add-define index name)
@@ -88517,6 +88705,10 @@
       (compiler-backend-runtime-index-calls?
         (compiler-backend-global-shared-view index)
         cbi.compiler-builtin-id-tl-arena-debug-protect-never-reset)]
+    [calls-arena-debug-retire : bool
+      (compiler-backend-runtime-index-calls?
+        (compiler-backend-global-shared-view index)
+        cbi.compiler-builtin-id-tl-arena-debug-retire-protected)]
     [calls-arena-debug-pool-install : bool
       (compiler-backend-runtime-index-calls?
         (compiler-backend-global-shared-view index)
@@ -88557,7 +88749,10 @@
           (not defines-profile-alloc-reset-peak)
           (or extern-profile-alloc-reset-peak calls-profile-alloc-reset-peak)))]
     [needs-arena-debug : bool
-      (or calls-arena-debug-protect calls-arena-debug-pool-install)]
+      (or
+        calls-arena-debug-protect
+        calls-arena-debug-pool-install
+        calls-arena-debug-retire)]
     [needs-tlci-macro-entry : bool
       (let
         [call-id : i64 index.tlci-macro-entry-call-id]
@@ -89927,7 +90122,7 @@
                             (compiler-backend-profile-start
                               (profile_state.compiler-profile-state-shared-view
                                 profile-state)))
-                          (match (compiler-backend-validate-function-symbols
+                          (match (compiler-backend-validate-program
                             (compiler-backend-global-shared-view globals)
                             (compiler-backend-global-shared-view
                               entry-functions)
@@ -92811,7 +93006,8 @@
           params
           ret-ty
           vars
-          blocks)
+          blocks
+          function-abi)
         (let
           [symbol : String
             (compiler-backend-function-symbol-index
@@ -92828,7 +93024,8 @@
                 (compiler-backend-global-shared-view params)
                 (compiler-backend-global-shared-view ret-ty)
                 vars
-                (compiler-backend-global-shared-view blocks))
+                (compiler-backend-global-shared-view blocks)
+                (compiler-backend-global-shared-view function-abi))
               (compiler-backend-state-metrics program-index.backend-state))]
           [groups : compiler_liveness.CompilerLiveI64Set
             (compiler_regalloc.compiler-reg-function-group-vars
@@ -92838,7 +93035,8 @@
                 (compiler-backend-global-shared-view params)
                 (compiler-backend-global-shared-view ret-ty)
                 vars
-                (compiler-backend-global-shared-view blocks))
+                (compiler-backend-global-shared-view blocks)
+                (compiler-backend-global-shared-view function-abi))
               types)]
           [_group-enable : unit
             (begin
@@ -93454,6 +93652,10 @@
         (compiler-backend-plan-provides-id?
           plan
           cbi.compiler-builtin-id-tl-arena-debug-protect-never-reset)]
+      [(string.eq name "tl_arena_debug_retire_protected")
+        (compiler-backend-plan-provides-id?
+          plan
+          cbi.compiler-builtin-id-tl-arena-debug-retire-protected)]
       [(string.eq name "tl_arena_debug_assert_pool_install")
         (compiler-backend-plan-provides-id?
           plan
@@ -93889,7 +94091,7 @@
           (match (compiler-backend-global-array-element-shared-view
             functions.slots
             index)
-            [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ blocks)
+            [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ blocks _)
               (when
                 (not
                   (or
@@ -93902,34 +94104,90 @@
           (set! index (+ index 1))))
       true)))
 
-(defenum CompilerBackendObjectAbiContext
-  (Call)
-  (FunctionEntry)
-  (FunctionReturn))
-
 ;; Object-only ordinary-call lowering predates the shared ABI planner. Keep its
 ;; diagnostic vocabulary fixed and bounded: no user-controlled symbol text is
 ;; copied into a fallback category consumed by batch manifests and drivers.
 (define (compiler-backend-object-unsupported-abi-category
   [target : CompilerBackendTarget]
-  [context : CompilerBackendObjectAbiContext]) : String
-  (match target
-    [(CompilerBackendTarget.Linux)
-      (match context
-        [(CompilerBackendObjectAbiContext.Call)
-          "unsupported-object-abi:linux-x86_64:call"]
-        [(CompilerBackendObjectAbiContext.FunctionEntry)
-          "unsupported-object-abi:linux-x86_64:function-entry"]
-        [(CompilerBackendObjectAbiContext.FunctionReturn)
-          "unsupported-object-abi:linux-x86_64:function-return"])]
-    [(CompilerBackendTarget.Windows)
-      (match context
-        [(CompilerBackendObjectAbiContext.Call)
-          "unsupported-object-abi:windows-x86_64:call"]
-        [(CompilerBackendObjectAbiContext.FunctionEntry)
-          "unsupported-object-abi:windows-x86_64:function-entry"]
-        [(CompilerBackendObjectAbiContext.FunctionReturn)
-          "unsupported-object-abi:windows-x86_64:function-return"])]))
+  [context : CompilerBackendObjectAbiContext]) : CompilerDirectObjectFallbackReason
+  (CompilerDirectObjectFallbackReason.UnsupportedAbi target context))
+
+(define (compiler-direct-object-fallback-category
+  [reason : CompilerDirectObjectFallbackReason]) : String
+  (match reason
+    [(CompilerDirectObjectFallbackReason.ArtifactKindUnavailable _ _)
+      "artifact-kind-unavailable"]
+    [(CompilerDirectObjectFallbackReason.DebugMetadata) "debug-metadata"]
+    [(CompilerDirectObjectFallbackReason.BackendMode) "backend-mode"]
+    [(CompilerDirectObjectFallbackReason.PrivateSpmdAbi) "private-spmd-abi"]
+    [(CompilerDirectObjectFallbackReason.ResourceBudget _ _) "resource-budget"]
+    [(CompilerDirectObjectFallbackReason.UnsupportedSemantics)
+      "unsupported-object-semantics"]
+    [(CompilerDirectObjectFallbackReason.UnsupportedAbi target context)
+      (match target
+        [(CompilerBackendTarget.Linux)
+          (match context
+            [(CompilerBackendObjectAbiContext.Call)
+              "unsupported-object-abi:linux-x86_64:call"]
+            [(CompilerBackendObjectAbiContext.FunctionEntry)
+              "unsupported-object-abi:linux-x86_64:function-entry"]
+            [(CompilerBackendObjectAbiContext.FunctionReturn)
+              "unsupported-object-abi:linux-x86_64:function-return"])]
+        [(CompilerBackendTarget.Windows)
+          (match context
+            [(CompilerBackendObjectAbiContext.Call)
+              "unsupported-object-abi:windows-x86_64:call"]
+            [(CompilerBackendObjectAbiContext.FunctionEntry)
+              "unsupported-object-abi:windows-x86_64:function-entry"]
+            [(CompilerBackendObjectAbiContext.FunctionReturn)
+              "unsupported-object-abi:windows-x86_64:function-return"])])]
+    [(CompilerDirectObjectFallbackReason.ObjectEncoding)
+      "unsupported-object-encoding"]
+    [(CompilerDirectObjectFallbackReason.UnsupportedCoffImage)
+      "unsupported-coff-image"]
+    [(CompilerDirectObjectFallbackReason.ObjectFixup)
+      "unsupported-object-fixup"]
+    [(CompilerDirectObjectFallbackReason.ObjectRelocation)
+      "unsupported-external-relocation"]
+    [(CompilerDirectObjectFallbackReason.MissingEntrySymbol)
+      "missing-entry-symbol"]
+    [(CompilerDirectObjectFallbackReason.MissingRuntimeEntry)
+      "missing-runtime-entry"]
+    [(CompilerDirectObjectFallbackReason.EmptyTextSection) "empty-text-section"]
+    [(CompilerDirectObjectFallbackReason.TargetMismatch) "target-mismatch"]
+    [(CompilerDirectObjectFallbackReason.ForcedAssembly) "forced-assembly"]))
+
+(define (compiler-direct-object-fallback-context
+  [reason : CompilerDirectObjectFallbackReason]) : String
+  (match reason
+    [(CompilerDirectObjectFallbackReason.ArtifactKindUnavailable target kind)
+      (str_cat.str-cat
+        "target="
+        (match target
+          [(CompilerBackendTarget.Linux) "linux-x86_64"]
+          [(CompilerBackendTarget.Windows) "windows-x86_64"])
+        "|kind="
+        (match kind
+          [(CompilerDirectObjectArtifactKind.Bin) "bin"]
+          [(CompilerDirectObjectArtifactKind.StaticLib) "staticlib"]))]
+    [(CompilerDirectObjectFallbackReason.ResourceBudget count limit)
+      (str_cat.str-cat
+        "owned-paths="
+        (string.int->string count)
+        "|limit="
+        (string.int->string limit))]
+    [_ ""]))
+
+(define (compiler-direct-object-fallback-transcript
+  [reason : CompilerDirectObjectFallbackReason]) : String
+  (let
+    [category : String
+      (compiler-direct-object-fallback-category
+        (owned_view.compiler-owned-shared-view reason))]
+    [context : String (compiler-direct-object-fallback-context reason)]
+    (if (string.eq context "")
+      category
+      (str_cat.str-cat category "|" context))))
 
 (define (compiler-backend-object-abi-capacity [target : CompilerBackendTarget]) : i64
   (match target
@@ -94314,7 +94572,13 @@
   [global-types : CompilerBackendGlobalTypeTable]
   [func : compiler_ir_types.CompilerIrFunction]) : CompilerBackendObjectEligibility
   (match (compiler-backend-global-shared-view func)
-    [(compiler_ir_types.CompilerIrFunction.Function name params ret-ty _ blocks)
+    [(compiler_ir_types.CompilerIrFunction.Function
+        name
+        params
+        ret-ty
+        _
+        blocks
+        _)
       (if (compiler-backend-stdlib-runtime-function-name?
         (compiler-backend-symbol-text-index
           (compiler-backend-global-shared-view program-index)
@@ -94506,7 +94770,7 @@
                   (compiler-backend-global-shared-view entry-functions)
                   (compiler-backend-global-shared-view externs)
                   profile-state)]
-              (match (compiler-backend-validate-function-symbols
+              (match (compiler-backend-validate-program
                 (compiler-backend-global-shared-view globals)
                 (compiler-backend-global-shared-view entry-functions)
                 (compiler-backend-global-shared-view externs)
@@ -104959,7 +105223,8 @@
               (compiler_ir_types.CompilerIrInstr.Return
                 (compiler_ir_types.CompilerIrMaybeValue.Some
                   (compiler_ir_types.CompilerIrValue.I64 42)))))
-          compiler_ir_types.CompilerIrBlockList.Nil))
+          compiler_ir_types.CompilerIrBlockList.Nil)
+        compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
       (compiler_ir_types.compiler-ir-function-seq-empty))
     (compiler-backend-runtime-helper-externs)))
 
@@ -105398,7 +105663,8 @@
               (compiler_ir_types.CompilerIrInstr.Return
                 (compiler_ir_types.CompilerIrMaybeValue.Some
                   (compiler_ir_types.CompilerIrValue.I64 7)))))
-          compiler_ir_types.CompilerIrBlockList.Nil))
+          compiler_ir_types.CompilerIrBlockList.Nil)
+        compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
       (compiler_ir_types.compiler-ir-function-seq-prepend
         (compiler_ir_types.CompilerIrFunction.Function
           cbi.compiler-builtin-id-fix-main
@@ -105412,7 +105678,8 @@
                 (compiler_ir_types.CompilerIrInstr.Return
                   (compiler_ir_types.CompilerIrMaybeValue.Some
                     (compiler_ir_types.CompilerIrValue.I64 42)))))
-            compiler_ir_types.CompilerIrBlockList.Nil))
+            compiler_ir_types.CompilerIrBlockList.Nil)
+          compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
         (compiler_ir_types.compiler-ir-function-seq-empty)))
     (compiler_ir_types.compiler-ir-extern-seq1
       (compiler_ir_types.compiler-ir-extern-default-id
@@ -105457,7 +105724,8 @@
                 (compiler_ir_types.CompilerIrInstr.Return
                   (compiler_ir_types.CompilerIrMaybeValue.Some
                     (compiler_ir_types.CompilerIrValue.I64 42)))))
-            compiler_ir_types.CompilerIrBlockList.Nil))
+            compiler_ir_types.CompilerIrBlockList.Nil)
+          compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
         (compiler_ir_types.compiler-ir-function-seq-empty))
       (compiler_ir_types.compiler-ir-extern-seq1
         (compiler_ir_types.CompilerIrExtern.Extern
@@ -105510,7 +105778,8 @@
                   (compiler_ir_types.CompilerIrInstr.Return
                     (compiler_ir_types.CompilerIrMaybeValue.Some
                       (compiler_ir_types.CompilerIrValue.I64 42)))))
-              compiler_ir_types.CompilerIrBlockList.Nil))
+              compiler_ir_types.CompilerIrBlockList.Nil)
+            compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
           (compiler_ir_types.compiler-ir-function-seq-empty))
         (compiler_ir_types.compiler-ir-extern-seq1
           (compiler_ir_types.CompilerIrExtern.Extern
@@ -105814,7 +106083,8 @@
               (compiler_ir_types.CompilerIrInstr.Return
                 (compiler_ir_types.CompilerIrMaybeValue.Some
                   (compiler_ir_types.CompilerIrValue.I64 7)))))
-          compiler_ir_types.CompilerIrBlockList.Nil))
+          compiler_ir_types.CompilerIrBlockList.Nil)
+        compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
       (compiler_ir_types.compiler-ir-function-seq-prepend
         (compiler_ir_types.CompilerIrFunction.Function
           cbi.compiler-builtin-id-fix-main
@@ -105833,7 +106103,8 @@
                 (compiler_ir_types.CompilerIrInstr.Return
                   (compiler_ir_types.CompilerIrMaybeValue.Some
                     (compiler_ir_types.CompilerIrValue.Var 0)))))
-            compiler_ir_types.CompilerIrBlockList.Nil))
+            compiler_ir_types.CompilerIrBlockList.Nil)
+          compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
         (compiler_ir_types.compiler-ir-function-seq-empty)))
     (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
@@ -105878,7 +106149,8 @@
               (compiler_ir_types.CompilerIrInstr.Return
                 (compiler_ir_types.CompilerIrMaybeValue.Some
                   (compiler_ir_types.CompilerIrValue.I64 7)))))
-          compiler_ir_types.CompilerIrBlockList.Nil))
+          compiler_ir_types.CompilerIrBlockList.Nil)
+        compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
       (compiler_ir_types.compiler-ir-function-seq-prepend
         (compiler_ir_types.CompilerIrFunction.Function
           cbi.compiler-builtin-id-fix-main
@@ -105906,7 +106178,8 @@
                 (compiler_ir_types.CompilerIrInstr.Return
                   (compiler_ir_types.CompilerIrMaybeValue.Some
                     (compiler_ir_types.CompilerIrValue.Var 0)))))
-            compiler_ir_types.CompilerIrBlockList.Nil))
+            compiler_ir_types.CompilerIrBlockList.Nil)
+          compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
         (compiler_ir_types.compiler-ir-function-seq-empty)))
     (compiler_ir_types.compiler-ir-extern-seq1
       (compiler_ir_types.compiler-ir-extern-default-id
@@ -105970,7 +106243,8 @@
               (compiler_ir_types.CompilerIrInstr.Return
                 (compiler_ir_types.CompilerIrMaybeValue.Some
                   (compiler_ir_types.CompilerIrValue.I64 7)))))
-          compiler_ir_types.CompilerIrBlockList.Nil))
+          compiler_ir_types.CompilerIrBlockList.Nil)
+        compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
       (compiler_ir_types.compiler-ir-function-seq-prepend
         (compiler_ir_types.CompilerIrFunction.Function
           cbi.compiler-builtin-id-fix-main
@@ -105989,7 +106263,8 @@
                 (compiler_ir_types.CompilerIrInstr.Return
                   (compiler_ir_types.CompilerIrMaybeValue.Some
                     (compiler_ir_types.CompilerIrValue.Var 0)))))
-            compiler_ir_types.CompilerIrBlockList.Nil))
+            compiler_ir_types.CompilerIrBlockList.Nil)
+          compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
         (compiler_ir_types.compiler-ir-function-seq-empty)))
     (compiler_ir_types.compiler-ir-extern-seq-empty)))
 

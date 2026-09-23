@@ -4,6 +4,13 @@ The `scripts/` directory contains CI entry points, focused verification gates,
 bootstrap helpers, benchmarks, and optional local diagnostics. A filename
 prefix alone does not determine whether a script is required by CI.
 
+`fetch-work-queue.sh [OWNER/REPO]` is the optional GitHub worker-queue fetch
+wrapper. It requires `gh` and `jq`, retains complete raw open issue/PR state,
+and fails rather than silently accepting a reached list limit. See the
+[chooser caller contract](../tools/work-queue-chooser/README.md) for capture,
+filtering and selection. `test-fetch-work-queue.sh` checks the boundary using a
+local fake `gh`; it never authenticates or accesses the network.
+
 ## What is a CI gate?
 
 The workflow files are authoritative:
@@ -65,10 +72,68 @@ instead, which the sweep does not require to be reachable.
 | Check gate wiring | `check-gate-reachability.sh`, `check-cli-gate-coverage.sh` |
 | Check docs and stdlib | `verify-doc-site.sh`, `verify-docs-workflow-policy.sh`, `verify-doc-tests.sh`, `verify-stdlib.sh` (owns `check-stdlib-concat-lint.sh`), `verify-stdlib-selfhost.sh`, `verify-stdlib-docs.sh` |
 | Check handwritten x86-64 template ownership | `check-x64-executable-template-registry.sh` pins every runtime/startup composition gate, all target-owned opaque byte helpers, structured contribution boundaries, and Windows data-only unwind relations. |
-| Check performance policy | `check-instruction-counts.sh`, `check-opt2-cli-regression.sh`, `check-build-invariance.sh`, `check-tlci-native-route-size.sh`, `analyze-ci-timing-trends.sh`, `bench.sh`, `run-optimization-benchmarks.sh` |
+| Check performance policy | `check-instruction-counts.sh`, `check-compiler-scaling.sh` (compiler cost growth per input dimension against `perf/compiler-scaling-budgets.tsv`), `check-opt2-cli-regression.sh`, `check-build-invariance.sh`, `check-tlci-native-route-size.sh`, `analyze-ci-timing-trends.sh`, `bench.sh`, `run-optimization-benchmarks.sh` |
 
-The complete and current invocation order remains in `ci-verify.sh`; this table
-is a map, not a second manifest.
+`ci-gates.tsv` owns the stable top-level gate IDs, exact timing/display labels,
+host applicability and complete sequential order. `ci-verify.sh` binds those
+IDs to the existing commands and compiler/provenance setup. This table is a
+map, not another manifest. List either host without a compiler or side effects:
+
+```sh
+sh scripts/ci-verify.sh --list-gates linux
+sh scripts/ci-verify.sh --list-gates windows
+```
+
+The TSV projection has `id`, `hosts`, `label` and `needs` columns. The original `all`
+applicability remains visible in either host projection. LF and CRLF catalogs
+produce the same LF output; the repository checkout pins this catalog to LF.
+Listing validates the
+entire catalog, including the other host's records, before emitting anything;
+it does not initialize targets, timing, traces, capabilities or the seed.
+It is an inventory report, not a successful verification or a shard executor.
+
+The full runner resolves each ID against the next required ledger row. Unknown,
+duplicate, wrong-host and out-of-order gates fail; a command failure retains its
+exit status and poisons completion. Missing or active gates prevent both the
+verification-complete timing row and the final success message. Keep IDs stable
+when changing wording; preserve labels unless their timing consumers are updated.
+`needs` records what a gate consumes from earlier gates: `-`, a comma-separated
+list of gate IDs, or `*` on the closing gate, which needs everything before it.
+The final record must be that closing gate, and no other record may use `*`.
+`id@linux` / `id@windows` limits an edge to one host, and a host projection
+shows only the edges that apply there. A need must name an earlier gate that
+runs wherever the consumer does, so ledger order is a topological order by
+construction. The column is not an independent opinion:
+`ci_gate_ledger_validate_needs` (run by the ledger self-test and by the artifact
+inventory validation) requires every gate after `bootstrap-fixpoint` to need it,
+because `run_with_compiler` exports the converged compiler to all later gates;
+forbids needs and produced-compiler arguments before it; and requires the
+remaining edges to match the consume records of `ci-compiler-artifacts.tsv`
+exactly, in both directions and per host. A dependency that is not an artifact
+handoff (a directory one gate leaves for another, an exported variable) must
+first become an inventory record. The column describes the sequential runner;
+it does not yet authorize running gates apart, which #7766 still owns.
+
+A new gate needs one ledger row and an executable binding in the matching host
+position. Update the three declared counts intentionally; duplicate IDs/labels,
+invalid hosts, fields, needs, counts and truncated records are rejected.
+`test-ci-gate-ledger.sh` exercises these boundaries and the real listing CLI.
+
+Nested corpora, targets, optimization levels, compiler producers and artifact
+handoffs remain owned by their existing gates/manifests and provenance helpers.
+The ledger does not infer dependency independence or authorize concurrent
+execution; dependency records, balanced shards and mandatory shard aggregation
+remain in #7766. Workflow-level setup/checks/uploads remain in the workflow.
+
+Every full `ci-verify.sh` execution creates a fresh same-run artifact token and
+initializes `target/ci-compiler-artifacts/trace.tsv`, including local runs.
+Set `TYPELISP_CI_COMPILER_ARTIFACT_TRACE` to choose another destination;
+relative paths resolve against the checkout root, and an empty value uses the
+default. The trace is replaced at startup and checked for complete producer and
+consumer coverage at the end. Child gates inherit both token and trace.
+Standalone native-link verification can omit both variables; supplying only
+one remains an error. `test-ci-artifact-run-setup.sh` exercises actual CI startup
+through a probe child on both host branches before any compiler work.
 
 `verify-cross-mode-differential.sh` reads
 `tests/cross-mode/corpus.tsv` after its producer gates have run. It reuses the

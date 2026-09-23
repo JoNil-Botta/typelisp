@@ -3268,10 +3268,10 @@
   [nx : i64]
   [precision : i64]) : MathTrigReduction
   (let
-    [iq : (Array i64 20) (init)]
-    [f : (Array f64 20) (init)]
-    [fq : (Array f64 20) (init)]
-    [q : (Array f64 20) (init)]
+    [iq : (Array i64 20) (make-array i64 20)]
+    [f : (Array f64 20) (make-array f64 20)]
+    [fq : (Array f64 20) (make-array f64 20)]
+    [q : (Array f64 20) (make-array f64 20)]
     [jk : i64
       (if (= precision 0)
         3
@@ -4143,6 +4143,511 @@
 (define (f64-positive? [value : f64]) : bool
   (> value 0.0))
 
+;: Unsigned 192-bit magnitude, low limb first, used by the exact fused
+;: multiply-add. 192 bits hold every aligned sum the algorithm forms.
+(defstruct MathFmaWide
+  (lo u64)
+  (mid u64)
+  (hi u64))
+
+;: Number of significant bits in `value`; zero has none.
+(define (math-fma-u64-bit-length [value : u64]) : i64
+  (let
+    [rest : u64 value]
+    [bits : i64 0]
+    (begin
+      (while (not (= rest (cast 0 : u64)))
+        (begin
+          (set! rest (shr rest 1))
+          (set! bits (+ bits 1))))
+      bits)))
+
+;: Full 128-bit product of two unsigned 64-bit values.
+(define (math-fma-mul-u64 [a : u64] [b : u64]) : MathFmaWide
+  (let
+    [mask : u64 0xffffffff]
+    [a-lo : u64 (bit-and a mask)]
+    [a-hi : u64 (shr a 32)]
+    [b-lo : u64 (bit-and b mask)]
+    [b-hi : u64 (shr b 32)]
+    [ll : u64 (* a-lo b-lo)]
+    [lh : u64 (* a-lo b-hi)]
+    [hl : u64 (* a-hi b-lo)]
+    [hh : u64 (* a-hi b-hi)]
+    [cross : u64 (+ (+ (shr ll 32) (bit-and lh mask)) (bit-and hl mask))]
+    [lo : u64 (bit-or (bit-and ll mask) (shl (bit-and cross mask) 32))]
+    [hi : u64 (+ (+ (+ hh (shr lh 32)) (shr hl 32)) (shr cross 32))]
+    (MathFmaWide lo hi (cast 0 : u64))))
+
+;: Number of significant bits in a wide magnitude.
+(define (math-fma-wide-bit-length [value : MathFmaWide]) : i64
+  (if (not (= value.hi (cast 0 : u64)))
+    (+ 128 (math-fma-u64-bit-length value.hi))
+    (if (not (= value.mid (cast 0 : u64)))
+      (+ 64 (math-fma-u64-bit-length value.mid))
+      (math-fma-u64-bit-length value.lo))))
+
+;: Shift a wide magnitude left by `count` bits, `0 <= count < 192`. The caller
+;: guarantees that no significant bit leaves the 192-bit window.
+(define (math-fma-wide-shl [value : MathFmaWide] [count : i64]) : MathFmaWide
+  (let
+    [limbs : i64 (/ count 64)]
+    [bits : i64 (- count (* limbs 64))]
+    [zero : u64 0]
+    [l0 : u64
+      (if (= limbs 0)
+        value.lo
+        zero)]
+    [l1 : u64
+      (if (= limbs 0)
+        value.mid
+        (if (= limbs 1)
+          value.lo
+          zero))]
+    [l2 : u64
+      (if (= limbs 0)
+        value.hi
+        (if (= limbs 1)
+          value.mid
+          value.lo))]
+    (if (= bits 0)
+      (MathFmaWide l0 l1 l2)
+      (MathFmaWide
+        (shl l0 bits)
+        (bit-or (shl l1 bits) (shr l0 (- 64 bits)))
+        (bit-or (shl l2 bits) (shr l1 (- 64 bits)))))))
+
+;: Low 64 bits of `value` shifted right by `count`, `0 <= count < 192`.
+(define (math-fma-wide-shr-low [value : MathFmaWide] [count : i64]) : u64
+  (let
+    [limbs : i64 (/ count 64)]
+    [bits : i64 (- count (* limbs 64))]
+    [zero : u64 0]
+    [l0 : u64
+      (if (= limbs 0)
+        value.lo
+        (if (= limbs 1)
+          value.mid
+          value.hi))]
+    [l1 : u64
+      (if (= limbs 0)
+        value.mid
+        (if (= limbs 1)
+          value.hi
+          zero))]
+    (if (= bits 0)
+      l0
+      (bit-or (shr l0 bits) (shl l1 (- 64 bits))))))
+
+;: True when any of the low `below` bits of one limb is set; `below` may lie
+;: outside `0..=64`.
+(define (math-fma-limb-low-bits-set? [limb : u64] [below : i64]) : bool
+  (if (<= below 0)
+    false
+    (if (>= below 64)
+      (not (= limb (cast 0 : u64)))
+      (not
+        (=
+          (bit-and limb (- (shl (cast 1 : u64) below) (cast 1 : u64)))
+          (cast 0 : u64))))))
+
+;: True when any of the low `count` bits of `value` is set, `0 <= count <= 192`.
+(define (math-fma-wide-low-bits-set? [value : MathFmaWide] [count : i64]) : bool
+  (or
+    (math-fma-limb-low-bits-set? value.lo count)
+    (math-fma-limb-low-bits-set? value.mid (- count 64))
+    (math-fma-limb-low-bits-set? value.hi (- count 128))))
+
+;: Sum of two wide magnitudes. The caller guarantees that it fits.
+(define (math-fma-wide-add [a : MathFmaWide] [b : MathFmaWide]) : MathFmaWide
+  (let
+    [zero : u64 0]
+    [one : u64 1]
+    [lo : u64 (+ a.lo b.lo)]
+    [carry-lo : u64
+      (if (< lo a.lo)
+        one
+        zero)]
+    [mid-sum : u64 (+ a.mid b.mid)]
+    [carry-mid-a : u64
+      (if (< mid-sum a.mid)
+        one
+        zero)]
+    [mid : u64 (+ mid-sum carry-lo)]
+    [carry-mid-b : u64
+      (if (< mid mid-sum)
+        one
+        zero)]
+    (MathFmaWide lo mid (+ (+ (+ a.hi b.hi) carry-mid-a) carry-mid-b))))
+
+;: Difference `a - b` of two wide magnitudes with `a >= b`.
+(define (math-fma-wide-sub [a : MathFmaWide] [b : MathFmaWide]) : MathFmaWide
+  (let
+    [zero : u64 0]
+    [one : u64 1]
+    [lo : u64 (- a.lo b.lo)]
+    [borrow-lo : u64
+      (if (< a.lo b.lo)
+        one
+        zero)]
+    [mid-diff : u64 (- a.mid b.mid)]
+    [borrow-mid-a : u64
+      (if (< a.mid b.mid)
+        one
+        zero)]
+    [mid : u64 (- mid-diff borrow-lo)]
+    [borrow-mid-b : u64
+      (if (< mid-diff borrow-lo)
+        one
+        zero)]
+    (MathFmaWide lo mid (- (- (- a.hi b.hi) borrow-mid-a) borrow-mid-b))))
+
+;: True when wide magnitude `a` is smaller than `b`.
+(define (math-fma-wide-less? [a : MathFmaWide] [b : MathFmaWide]) : bool
+  (if (not (= a.hi b.hi))
+    (< a.hi b.hi)
+    (if (not (= a.mid b.mid))
+      (< a.mid b.mid)
+      (< a.lo b.lo))))
+
+;: Round the exact value `magnitude * 2^exponent` (nonzero) to a format with
+;: `precision` significand bits and `exponent-bits` exponent bits, to nearest
+;: with ties to even, and return its encoding with `sign` in the top bit.
+(define (math-fma-round
+  [sign : u64]
+  [magnitude : MathFmaWide]
+  [exponent : i64]
+  [precision : i64]
+  [exponent-bits : i64]) : u64
+  (let
+    [one : u64 1]
+    [bias : i64 (- (shl 1 (- exponent-bits 1)) 1)]
+    [quantum-min : i64 (- (- 1 bias) (- precision 1))]
+    [max-biased : i64 (- (shl 1 exponent-bits) 1)]
+    [sign-bits : u64 (shl sign (- (+ precision exponent-bits) 1))]
+    [length : i64 (math-fma-wide-bit-length magnitude)]
+    [natural : i64 (- (+ exponent length) precision)]
+    [quantum : i64
+      (if (< natural quantum-min)
+        quantum-min
+        natural)]
+    [shift : i64 (- quantum exponent)]
+    [significand : u64 0]
+    (begin
+      (if (<= shift 0)
+        ;; The value is already a multiple of the quantum: exact.
+        (set! significand (shl (math-fma-wide-shr-low magnitude 0) (- 0 shift)))
+        (if (> shift length)
+          ;; Entirely below half of the smallest quantum: rounds to zero.
+          (set! significand (cast 0 : u64))
+          (let
+            [kept : u64
+              (if (= shift length)
+                (cast 0 : u64)
+                (math-fma-wide-shr-low magnitude shift))]
+            [half? : bool
+              (=
+                (bit-and (math-fma-wide-shr-low magnitude (- shift 1)) one)
+                one)]
+            [sticky? : bool (math-fma-wide-low-bits-set? magnitude (- shift 1))]
+            [odd? : bool (= (bit-and kept one) one)]
+            (set!
+              significand
+              (if (and half? (or sticky? odd?))
+                (+ kept one)
+                kept)))))
+      (if (= significand (shl one precision))
+        (begin
+          (set! significand (shr significand 1))
+          (set! quantum (+ quantum 1)))
+        unit)
+      (if (< significand (shl one (- precision 1)))
+        ;; Zero or subnormal: the biased exponent field is zero.
+        (bit-or sign-bits significand)
+        (let
+          [biased : i64 (+ (- quantum quantum-min) 1)]
+          (if (>= biased max-biased)
+            (bit-or sign-bits (shl (cast max-biased : u64) (- precision 1)))
+            (bit-or
+              sign-bits
+              (bit-or
+                (shl (cast biased : u64) (- precision 1))
+                (- significand (shl one (- precision 1)))))))))))
+
+;: Exact `a * b + c` for finite operands with a nonzero product, given as
+;: integer significands and the exponents of their lowest bits.
+(define (math-fma-finite
+  [product-sign : u64]
+  [a-significand : u64]
+  [a-exponent : i64]
+  [b-significand : u64]
+  [b-exponent : i64]
+  [c-sign : u64]
+  [c-significand : u64]
+  [c-exponent : i64]
+  [precision : i64]
+  [exponent-bits : i64]) : u64
+  (let
+    [zero : u64 0]
+    [one : u64 1]
+    [product : MathFmaWide (math-fma-mul-u64 a-significand b-significand)]
+    [product-exponent : i64 (+ a-exponent b-exponent)]
+    (if (= c-significand zero)
+      (math-fma-round
+        product-sign
+        product
+        product-exponent
+        precision
+        exponent-bits)
+      (let
+        [product-length : i64 (math-fma-wide-bit-length product)]
+        [c-length : i64 (math-fma-u64-bit-length c-significand)]
+        [product-top : i64 (+ product-exponent product-length)]
+        [c-top : i64 (+ c-exponent c-length)]
+        ;; An operand that lies entirely below both the other operand's lowest
+        ;; bit and a quarter of the smallest quantum the result can have only
+        ;; decides inexactness and tie direction. Replace it by one unit three
+        ;; bits below that boundary so the aligned sum stays inside 192 bits.
+        [c-floor : i64
+          (let
+            [window : i64 (- (- product-top 1) precision)]
+            (if (< product-exponent window)
+              product-exponent
+              window))]
+        [product-floor : i64
+          (let
+            [window : i64 (- (- c-top 1) precision)]
+            (if (< c-exponent window)
+              c-exponent
+              window))]
+        [c-sticky? : bool (<= c-top (- c-floor 2))]
+        [product-sticky? : bool (<= product-top (- product-floor 2))]
+        [p-mag : MathFmaWide
+          (if product-sticky?
+            (MathFmaWide one zero zero)
+            product)]
+        [p-exp : i64
+          (if product-sticky?
+            (- product-floor 3)
+            product-exponent)]
+        [c-mag : MathFmaWide
+          (if c-sticky?
+            (MathFmaWide one zero zero)
+            (MathFmaWide c-significand zero zero))]
+        [c-exp : i64
+          (if c-sticky?
+            (- c-floor 3)
+            c-exponent)]
+        [low-exponent : i64
+          (if (< p-exp c-exp)
+            p-exp
+            c-exp)]
+        [p-aligned : MathFmaWide
+          (math-fma-wide-shl p-mag (- p-exp low-exponent))]
+        [c-aligned : MathFmaWide
+          (math-fma-wide-shl c-mag (- c-exp low-exponent))]
+        (cond
+          [(= product-sign c-sign)
+            (math-fma-round
+              product-sign
+              (math-fma-wide-add p-aligned c-aligned)
+              low-exponent
+              precision
+              exponent-bits)]
+          [(math-fma-wide-less? p-aligned c-aligned)
+            (math-fma-round
+              c-sign
+              (math-fma-wide-sub c-aligned p-aligned)
+              low-exponent
+              precision
+              exponent-bits)]
+          [(math-fma-wide-less? c-aligned p-aligned)
+            (math-fma-round
+              product-sign
+              (math-fma-wide-sub p-aligned c-aligned)
+              low-exponent
+              precision
+              exponent-bits)]
+          ;; Exact cancellation of nonzero terms is positive zero.
+          [else zero])))))
+
+;: Fused multiply-add on IEEE-754 encodings with `precision` significand bits
+;: and `exponent-bits` exponent bits, zero-extended into `u64`.
+(define (math-fma-bits
+  [a : u64]
+  [b : u64]
+  [c : u64]
+  [precision : i64]
+  [exponent-bits : i64]) : u64
+  (let
+    [zero : u64 0]
+    [one : u64 1]
+    [sign-shift : i64 (- (+ precision exponent-bits) 1)]
+    [fraction-bits : i64 (- precision 1)]
+    [fraction-mask : u64 (- (shl one fraction-bits) one)]
+    [exponent-mask : u64 (- (shl one exponent-bits) one)]
+    [bias : i64 (- (shl 1 (- exponent-bits 1)) 1)]
+    [quantum-min : i64 (- (- 1 bias) fraction-bits)]
+    [a-sign : u64 (shr a sign-shift)]
+    [b-sign : u64 (shr b sign-shift)]
+    [c-sign : u64 (shr c sign-shift)]
+    [a-biased : u64 (bit-and (shr a fraction-bits) exponent-mask)]
+    [b-biased : u64 (bit-and (shr b fraction-bits) exponent-mask)]
+    [c-biased : u64 (bit-and (shr c fraction-bits) exponent-mask)]
+    [a-fraction : u64 (bit-and a fraction-mask)]
+    [b-fraction : u64 (bit-and b fraction-mask)]
+    [c-fraction : u64 (bit-and c fraction-mask)]
+    [a-special? : bool (= a-biased exponent-mask)]
+    [b-special? : bool (= b-biased exponent-mask)]
+    [c-special? : bool (= c-biased exponent-mask)]
+    [a-nan? : bool (and a-special? (not (= a-fraction zero)))]
+    [b-nan? : bool (and b-special? (not (= b-fraction zero)))]
+    [c-nan? : bool (and c-special? (not (= c-fraction zero)))]
+    [a-zero? : bool (and (= a-biased zero) (= a-fraction zero))]
+    [b-zero? : bool (and (= b-biased zero) (= b-fraction zero))]
+    [c-zero? : bool (and (= c-biased zero) (= c-fraction zero))]
+    [product-sign : u64 (bit-xor a-sign b-sign)]
+    [infinity : u64 (shl exponent-mask fraction-bits)]
+    [quiet-nan : u64 (bit-or infinity (shl one (- fraction-bits 1)))]
+    (cond
+      [(or a-nan? b-nan? c-nan?) quiet-nan]
+      [(or a-special? b-special?)
+        ;; An infinite product: invalid against a zero factor or an opposite
+        ;; infinite addend, otherwise it decides the result.
+        (if (or a-zero? b-zero?)
+          quiet-nan
+          (if (and c-special? (not (= c-sign product-sign)))
+            quiet-nan
+            (bit-or (shl product-sign sign-shift) infinity)))]
+      [c-special? c]
+      [(or a-zero? b-zero?)
+        ;; An exact zero product leaves `c`; two zeros keep a shared sign and
+        ;; are otherwise positive under round-to-nearest.
+        (if c-zero?
+          (if (= product-sign c-sign)
+            (shl product-sign sign-shift)
+            zero)
+          c)]
+      [else
+        (let
+          [a-significand : u64
+            (if (= a-biased zero)
+              a-fraction
+              (bit-or a-fraction (shl one fraction-bits)))]
+          [b-significand : u64
+            (if (= b-biased zero)
+              b-fraction
+              (bit-or b-fraction (shl one fraction-bits)))]
+          [c-significand : u64
+            (if (= c-biased zero)
+              c-fraction
+              (bit-or c-fraction (shl one fraction-bits)))]
+          [a-exponent : i64
+            (if (= a-biased zero)
+              quantum-min
+              (+ (- (cast a-biased : i64) 1) quantum-min))]
+          [b-exponent : i64
+            (if (= b-biased zero)
+              quantum-min
+              (+ (- (cast b-biased : i64) 1) quantum-min))]
+          [c-exponent : i64
+            (if (= c-biased zero)
+              quantum-min
+              (+ (- (cast c-biased : i64) 1) quantum-min))]
+          (math-fma-finite
+            product-sign
+            a-significand
+            a-exponent
+            b-significand
+            b-exponent
+            c-sign
+            c-significand
+            c-exponent
+            precision
+            exponent-bits))])))
+
+;: Return `a * b + c` computed as if with unbounded precision and rounded
+;: once to `f64` (round to nearest, ties to even).
+;:
+;: This is the fused multiply-add of IEEE 754-2019: the product is not
+;: rounded before the addition, so the result can differ from
+;: `(+ (* a b) c)`, which rounds twice and is never contracted into this
+;: operation. Overflow returns the signed infinity and underflow is gradual
+;: through subnormals. A NaN operand, an infinite factor times a zero factor,
+;: and an infinite product plus the opposite infinity produce NaN; the sign and
+;: payload of a NaN result are not part of the contract. When the exact value
+;: is zero the result is negative zero only if the product is a negative zero
+;: and `c` is negative zero; nonzero terms that cancel exactly give positive
+;: zero. A nonzero exact value that underflows to zero keeps its sign. The
+;: implementation is pure integer arithmetic: it allocates nothing and uses no
+;: runtime, libc, libm, or FMA instruction, so every target returns the same
+;: bits.
+(define (f64-mul-add [a : f64] [b : f64] [c : f64]) : f64
+  (stdlib.math.f64-from-bits
+    (math-fma-bits
+      (stdlib.math.f64-to-bits a)
+      (stdlib.math.f64-to-bits b)
+      (stdlib.math.f64-to-bits c)
+      53
+      11)))
+
+;: Binary32 fused multiply-add: `a * b + c` rounded once to `f32`.
+;:
+;: Behavior matches `f64-mul-add` at binary32 precision.
+(define (f32-mul-add [a : f32] [b : f32] [c : f32]) : f32
+  (stdlib.math.f32-from-bits
+    (cast
+      (math-fma-bits
+        (cast (stdlib.math.f32-to-bits a) : u64)
+        (cast (stdlib.math.f32-to-bits b) : u64)
+        (cast (stdlib.math.f32-to-bits c) : u64)
+        24
+        8)
+      : u32)))
+
+;: Return the fused multiply-add of three `f64` or three `f32` expressions,
+;: preserving their type.
+;:
+;: Each expression is evaluated exactly once, left to right. Mixed or other
+;: operand types are rejected with a compile-time diagnostic.
+(defmacro (mul-add [a : comptime.Expr] [b : comptime.Expr] [c : comptime.Expr]) : comptime.Expr
+  (match (type-kind (comptime.expr-type a))
+    ["f64"
+      (match (type-kind (comptime.expr-type b))
+        ["f64"
+          (match (type-kind (comptime.expr-type c))
+            ["f64" `(stdlib.math.f64-mul-add ,a ,b ,c)]
+            [_
+              (comptime.comptime-error
+                (comptime.string-append
+                  "math.mul-add: operand types must match f64, found "
+                  (type-kind (comptime.expr-type c))))])]
+        [_
+          (comptime.comptime-error
+            (comptime.string-append
+              "math.mul-add: operand types must match f64, found "
+              (type-kind (comptime.expr-type b))))])]
+    ["f32"
+      (match (type-kind (comptime.expr-type b))
+        ["f32"
+          (match (type-kind (comptime.expr-type c))
+            ["f32" `(stdlib.math.f32-mul-add ,a ,b ,c)]
+            [_
+              (comptime.comptime-error
+                (comptime.string-append
+                  "math.mul-add: operand types must match f32, found "
+                  (type-kind (comptime.expr-type c))))])]
+        [_
+          (comptime.comptime-error
+            (comptime.string-append
+              "math.mul-add: operand types must match f32, found "
+              (type-kind (comptime.expr-type b))))])]
+    [_
+      (comptime.comptime-error
+        (comptime.string-append
+          "math.mul-add: expected f64 or f32, found "
+          (type-kind (comptime.expr-type a))))]))
+
 (test
   math-trig-reduction-and-special-values
   (let
@@ -4514,6 +5019,78 @@
         (stdlib.math.f32-nan?
           (stdlib.math.f32-sqrt (stdlib.math.f32-negative-infinity)))
         (stdlib.math.f32-nan? (stdlib.math.f32-sqrt nan32)))
+        unit
+        (fail)))))
+
+(test
+  math-float-mul-add
+  (let
+    [fail : (-> unit)
+      (lambda () : unit
+        (begin
+          (/ 1 0)
+          unit))]
+    [x : f64 (stdlib.math.f64-from-bits 0x3ff0000000400000)]
+    [minus-one : f64 -1.0]
+    [x32 : f32 (stdlib.math.f32-from-bits (cast 0x3f800200 : u32))]
+    [minus-one32 : f32 -1.0]
+    [max : f64 (stdlib.math.f64-from-bits 0x7fefffffffffffff)]
+    [min-subnormal : f64 (stdlib.math.f64-from-bits 0x0000000000000001)]
+    [negative-zero : f64 (stdlib.math.f64-from-bits 0x8000000000000000)]
+    (begin
+      ;; One rounding keeps the 2^-60 term that the rounded product loses.
+      (if (=
+        (stdlib.math.f64-to-bits (stdlib.math.f64-mul-add x x minus-one))
+        0x3e20000000200000)
+        unit
+        (fail))
+      (if (= (stdlib.math.f64-to-bits (+ (* x x) minus-one)) 0x3e20000000000000)
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits (stdlib.math.mul-add x32 x32 minus-one32))
+        (cast 0x39000100 : u32))
+        unit
+        (fail))
+      ;; The exact sum is finite although the product alone overflows.
+      (if (=
+        (stdlib.math.f64-to-bits (stdlib.math.mul-add max 2.0 (- 0.0 max)))
+        0x7fefffffffffffff)
+        unit
+        (fail))
+      ;; Half of the smallest subnormal ties to even, which is zero.
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-mul-add min-subnormal 0.5 0.0))
+        0)
+        unit
+        (fail))
+      ;; Signed zeros, exact cancellation, and invalid operations.
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-mul-add negative-zero 5.0 negative-zero))
+        0x8000000000000000)
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits (stdlib.math.f64-mul-add 3.0 5.0 -15.0))
+        0)
+        unit
+        (fail))
+      (if (stdlib.math.f64-nan?
+        (stdlib.math.f64-mul-add (stdlib.math.f64-positive-infinity) 0.0 1.0))
+        unit
+        (fail))
+      (if (stdlib.math.f64-nan?
+        (stdlib.math.f64-mul-add
+          (stdlib.math.f64-positive-infinity)
+          1.0
+          (stdlib.math.f64-negative-infinity)))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-mul-add 2.0 3.0 (stdlib.math.f64-negative-infinity))
+        (stdlib.math.f64-negative-infinity))
         unit
         (fail)))))
 

@@ -1,0 +1,18 @@
+# Compiler scaling budgets, checked by scripts/check-compiler-scaling.sh.
+# Columns (tab separated):
+#   dimension phase small medium large marginal_ir growth_milli owner
+# marginal_ir is Cachegrind Ir per added unit between `medium` and `large`;
+# growth_milli is 1000 x (that marginal cost / the marginal cost between `small`
+# and `medium`): 1000 is linear, 2000 is quadratic for sizes in ratio 1:2:4.
+# A row whose growth is not linear names the issue that owns the defect; the PR
+# that fixes it refreshes the row. Refresh with --update-budgets and review the
+# diff: a changed number needs its measured cause in the PR.
+decls	check	250	500	1000	95702	982	-
+decls	opt1	250	500	1000	355576	1005	-
+decls	opt2	125	250	500	562941	1009	-
+cfg	check	250	500	1000	107194	1003	-
+cfg	opt1	250	500	1000	2423233	1677	#7919
+cfg	opt2	125	250	500	23967112	4947	#7874
+fields	check	250	500	1000	335044	1674	#7922
+fields	opt1	250	500	1000	2637049	1834	#7922
+fields	opt2	125	250	500	2927984	1719	#7922

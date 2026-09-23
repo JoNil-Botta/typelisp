@@ -183,10 +183,10 @@
   (stdout-handle i64)
   (stderr-handle i64))
 
-;: Internal result of registering a newly spawned native child.
-(defenum ProcessRuntimeChildRegistration
-  (:cleanup cleanup-process-runtime-child-registration)
-  (ProcessRuntimeChildRegistered ProcessRuntimeChild (:owned))
+;: Internal result of reserving capacity before any native spawn operation.
+(defenum ProcessRuntimeChildReservation
+  (:cleanup cleanup-process-runtime-child-reservation)
+  (ProcessRuntimeChildReserved ProcessRuntimeChild (:owned))
   (ProcessRuntimeChildRegistryExhausted))
 
 ;: Move-preserving snapshot of a boxed authority's private identity.
@@ -321,13 +321,11 @@
               (set! offset (+ offset 1)))))
         found))))
 
-;: Register newly spawned native resources and issue their unique move-only
-;: authority. Slot, generation, and Box identity must all match at claim time.
+;: Reserve a slot and its unique boxed authority before preparing or spawning.
+;: State 3 is reserved, state 1 owns native resources, state 2 is retired.
+;: Cleanup of a reserved authority frees capacity without any native operation.
 (unsafe
-  (define (process-runtime-child-register
-    [pid : i64]
-    [stdout-handle : i64]
-    [stderr-handle : i64]) : ProcessRuntimeChildRegistration
+  (define (process-runtime-child-reserve) : ProcessRuntimeChildReservation
     (begin
       (unsafe
         (process-runtime-child-registry-lock!))
@@ -358,10 +356,7 @@
                 (unsafe
                   (process-runtime-child-registry-unlock!))
                 (unsafe
-                  (process-runtime-child-register
-                    pid
-                    stdout-handle
-                    stderr-handle)))
+                  (process-runtime-child-reserve)))
               (let
                 [token : i64
                   (+
@@ -384,28 +379,28 @@
                     (process-runtime-child-registry-set!
                       process-runtime-child-registry-pids
                       slot
-                      pid))
+                      -1))
                   (unsafe
                     (process-runtime-child-registry-set!
                       process-runtime-child-registry-stdout
                       slot
-                      stdout-handle))
+                      -1))
                   (unsafe
                     (process-runtime-child-registry-set!
                       process-runtime-child-registry-stderr
                       slot
-                      stderr-handle))
+                      -1))
                   (unsafe
                     (process-runtime-child-registry-set!
                       process-runtime-child-registry-states
                       slot
-                      1))
+                      3))
                   (set!
                     process-runtime-child-registry-next
                     (% (+ slot 1) process-runtime-child-registry-capacity))
                   (unsafe
                     (process-runtime-child-registry-unlock!))
-                  (ProcessRuntimeChildRegistered
+                  (ProcessRuntimeChildReserved
                     (ProcessRuntimeChild identity.authority)))))))))))
 
 ;: Atomically consume an authority and detach its native resources. Invalid,
@@ -431,12 +426,19 @@
               (>= slot 0)
               (< slot process-runtime-child-registry-capacity)
               (> generation 0)
-              (=
-                (unsafe
-                  (process-runtime-child-registry-ref
-                    process-runtime-child-registry-states
-                    slot))
-                1)
+              (or
+                (=
+                  (unsafe
+                    (process-runtime-child-registry-ref
+                      process-runtime-child-registry-states
+                      slot))
+                  1)
+                (=
+                  (unsafe
+                    (process-runtime-child-registry-ref
+                      process-runtime-child-registry-states
+                      slot))
+                  3))
               (=
                 (unsafe
                   (process-runtime-child-registry-ref
@@ -453,7 +455,12 @@
                 (set!
                   claim
                   (ProcessRuntimeChildClaim
-                    true
+                    (=
+                      (unsafe
+                        (process-runtime-child-registry-ref
+                          process-runtime-child-registry-states
+                          slot))
+                      1)
                     (unsafe
                       (process-runtime-child-registry-ref
                         process-runtime-child-registry-pids
@@ -692,23 +699,48 @@
 (define (output-ok [status : i64] [stdout : String] [stderr : String]) : ResultProcessRuntimeOutput
   (OkProcessRuntimeOutput (ProcessRuntimeOutput status stdout stderr)))
 
-;: Register native child resources and construct their issued capability.
-;: Registry exhaustion consumes the unregistered child before returning an
-;: ordinary spawn failure, so no native resource loses its owner.
-(define (child-ok [pid : i64] [stdout-handle : i64] [stderr-handle : i64]) : ResultProcessRuntimeChild
-  (begin
-    (cfg
-      process-linux-test-hooks
-      (process_linux_test_hooks.record-child! pid stdout-handle stderr-handle)
-      unit)
-    (match (unsafe
-      (process-runtime-child-register pid stdout-handle stderr-handle))
-      [(ProcessRuntimeChildRegistered child) (OkProcessRuntimeChild child)]
-      [(ProcessRuntimeChildRegistryExhausted)
+;: Publish native resources into the caller-owned reserved authority. The caller
+;: must hold the unique reservation across prepare/exec; it cannot be exhausted
+;: or claimed by another start. No registry lock crosses a native operation.
+(unsafe
+  (define (child-ok
+    [reservation : (&mut reservation ProcessRuntimeChild)]
+    [pid : i64]
+    [stdout-handle : i64]
+    [stderr-handle : i64]) : ResultProcessRuntimeChild
+    (unsafe
+      (let
+        [identity : ProcessRuntimeChildAuthorityIdentity
+          (process-runtime-child-authority-identity
+            (replace! reservation.authority (box 0)))]
+        [slot : i64 (% identity.token process-runtime-child-registry-capacity)]
         (begin
-          (unsafe
-            (linux-wait-native pid stdout-handle stderr-handle))
-          (child-spawn-failed "process: child capability registry exhausted"))])))
+          (process-runtime-child-registry-lock!)
+          (process-runtime-child-registry-set!
+            process-runtime-child-registry-pids
+            slot
+            pid)
+          (process-runtime-child-registry-set!
+            process-runtime-child-registry-stdout
+            slot
+            stdout-handle)
+          (process-runtime-child-registry-set!
+            process-runtime-child-registry-stderr
+            slot
+            stderr-handle)
+          (process-runtime-child-registry-set!
+            process-runtime-child-registry-states
+            slot
+            1)
+          (process-runtime-child-registry-unlock!)
+          (cfg
+            process-linux-test-hooks
+            (process_linux_test_hooks.record-child!
+              pid
+              stdout-handle
+              stderr-handle)
+            unit)
+          (OkProcessRuntimeChild (ProcessRuntimeChild identity.authority)))))))
 
 ;: Construct a runtime output error result.
 (define (output-error [error : ProcessRuntimeError]) : ResultProcessRuntimeOutput
@@ -2988,7 +3020,10 @@
 ;: Parent path for the asynchronous start runtime: feed stdin, detect immediate
 ;: `execve` failure, otherwise return a child owning the capture descriptors.
 (unsafe
-  (define (linux-start-parent [spawn : ProcessLinuxSpawn] [pid : i64]) : ResultProcessRuntimeChild
+  (define (linux-start-parent
+    [reservation : (&mut reservation ProcessRuntimeChild)]
+    [spawn : ProcessLinuxSpawn]
+    [pid : i64]) : ResultProcessRuntimeChild
     (unsafe
       (cfg
         windows
@@ -3020,6 +3055,7 @@
             (set! failure (linux-record-exec-outcome exec-outcome failure))
             (if (and exec-succeeded (not (linux-failure-present? (& failure))))
               (stdlib.process_runtime.child-ok
+                (&mut reservation)
                 pid
                 spawn.stdout-fd
                 spawn.stderr-fd)
@@ -3203,7 +3239,9 @@
 
 ;: Linux asynchronous start runtime: prepare, vfork, and dispatch parent/child.
 (unsafe
-  (define (linux-start [command : ProcessRuntimeCommand]) : ResultProcessRuntimeChild
+  (define (linux-start-reserved
+    [reservation : (&mut reservation ProcessRuntimeChild)]
+    [command : ProcessRuntimeCommand]) : ResultProcessRuntimeChild
     (unsafe
       (cfg
         windows
@@ -3239,7 +3277,26 @@
                       pid)))
                 (if (= pid 0)
                   (stdlib.process_runtime.linux-exec-child spawn)
-                  (stdlib.process_runtime.linux-start-parent spawn pid))))))))))
+                  (stdlib.process_runtime.linux-start-parent
+                    (&mut reservation)
+                    spawn
+                    pid))))))))))
+
+;: Reserve capacity before preparing descriptors or executing any child. Every
+;: unsuccessful start drops the reservation; success moves its authority out.
+(unsafe
+  (define (linux-start [command : ProcessRuntimeCommand]) : ResultProcessRuntimeChild
+    (unsafe
+      (cfg
+        windows
+        (stdlib.process_runtime.async-unsupported-child)
+        (match (process-runtime-child-reserve)
+          [(ProcessRuntimeChildRegistryExhausted)
+            (child-spawn-failed "process: child capability registry exhausted")]
+          [(ProcessRuntimeChildReserved child)
+            (with
+              ([reservation child cleanup-process-runtime-child])
+              (linux-start-reserved (&mut reservation) command))])))))
 
 ;: Consume already-claimed Linux native resources: reap the child, read the
 ;: memfd captures, release both descriptors, and decode the exit status.

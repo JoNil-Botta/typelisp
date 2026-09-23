@@ -3730,8 +3730,11 @@
 
 (define (compiler-typecheck-smoke-surface-macro-provider-source) : String
   "(module tc_surface_macro_provider)
-(defmacro (hook) : Expr `42)
-(define value : i64 1)")
+(defmacro (first) : Expr `0)
+(define value : i64 1)
+(define (wide [p0 : i64] [p1 : i64] [p2 : i64] [p3 : i64] [p4 : i64] [p5 : i64] [p6 : i64] [p7 : i64] [p8 : i64] [p9 : i64] [p10 : i64] [p11 : i64] [p12 : i64] [p13 : i64] [p14 : i64] [p15 : i64]) : i64 p0)
+(defmacro (hook [value : i64]) : i64 `(+ ,value 1))
+(defmacro (last) : Expr `42)")
 
 (define (compiler-typecheck-smoke-surface-macro-entry-source) : String
   "(import tc_surface_macro_provider as provider)
@@ -3784,15 +3787,36 @@
               [generated-provider-id : i64
                 (ci.intern-generated-name "tc_surface_macro_provider")]
               [generated-hook-id : i64 (ci.intern-generated-name "hook")]
+              [retained : tc_core.MacroMaybeDecl
+                (tc_core.macro-surface-call-decl-in-module
+                  (tc_core.tc-global-shared-view macro-state)
+                  provider-id
+                  hook-id)]
               [before-reset : bool
                 (and
                   (tc_core.tc-name-id-list-contains names hook-id)
                   (tc_core.macro-surface-macro-in-module? provider-id hook-id)
+                  (tc_core.macro-surface-macro-in-module?
+                    provider-id
+                    (ci.intern "first"))
+                  (tc_core.macro-surface-macro-in-module?
+                    provider-id
+                    (ci.intern "last"))
                   (not
                     (tc_core.macro-surface-macro-in-module?
                       provider-id
                       missing-id))
                   (tc_core.macro-surface-module-has-macro? provider-id)
+                  (not
+                    (tc_core.macro-surface-macro-in-module?
+                      provider-id
+                      (ci.intern "wide")))
+                  (match (tc_core.macro-surface-call-decl-in-module
+                    (tc_core.tc-global-shared-view macro-state)
+                    provider-id
+                    (ci.intern "wide"))
+                    [(tc_core.MacroMaybeDecl.No) true]
+                    [_ false])
                   (string.eq
                     (ci.intern-str generated-provider-id)
                     (ci.intern-str provider-id))
@@ -3839,6 +3863,29 @@
                   (tc_core.tc-global-shared-view macro-state))
                 (and
                   before-reset
+                  ;; The selected signature owns its parameter payload even after
+                  ;; the loader destroys the summary arena used by the scan.
+                  (match retained
+                    [(tc_core.MacroMaybeDecl.Some name module _ params ret _)
+                      (and
+                        (= name hook-id)
+                        (= module provider-id)
+                        (= (ast.ast-macro-param-list-len (& params)) 1)
+                        (match (ast.ast-macro-param-list-get
+                          (& params)
+                          0
+                          (ast.ast-macro-param-fallback))
+                          [(ast.AstMacroParam.Param
+                              parameter
+                              (ast.AstType.I64)
+                              false
+                              _)
+                            (= parameter (ci.intern "value"))]
+                          [_ false])
+                        (match ret
+                          [(ast.AstType.I64) true]
+                          [_ false]))]
+                    [(tc_core.MacroMaybeDecl.No) false])
                   (not
                     (tc_core.macro-surface-macro-in-module? provider-id hook-id))
                   (not (tc_core.macro-surface-module-has-macro? provider-id))

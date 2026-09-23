@@ -4,10 +4,9 @@
   (b f64))
 
 (extern (wide-arg-score [arg : WideArg] [tag : u64]) : i64 (:symbol "tl_cabi_wide_arg_score"))
-(extern wide-arg-scorer (:symbol "tl_cabi_wide_arg_score_ptr") : (->
-  WideArg
-  u64
-  i64))
+(extern wide-arg-scorer (:symbol "tl_cabi_wide_arg_score_ptr") : (CFunc
+  non-null
+  (-> WideArg u64 i64)))
 
 (define (main) : i64
   (let

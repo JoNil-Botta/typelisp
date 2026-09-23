@@ -1,5 +1,6 @@
 ;; compiler_lower_tests.tl - Selfhost lowering fixtures split from production.
 (import compiler_lower)
+(import compiler_optimize)
 (import stdlib.vector)
 (import (vector.vector String) as svec)
 (import compiler_builtin_ids as cbi)
@@ -1264,6 +1265,82 @@
     (compiler-lower-slice-split-at-mode-shape-ok?
       (compiler_lower.CompilerLowerMode.LinuxScalar))
     (compiler-lower-slice-split-at-mode-shape-ok?
+      (compiler_lower.CompilerLowerMode.WindowsScalar))))
+
+;; Tuple values are inline (#7070): building one, returning one through the
+;; register or sret path, and the CPUID result tuple never call `tl_alloc`.
+(define (compiler-lower-tuple-inline-storage-source) : String
+  "(define (wide [x : i64]) : (Tuple i64 i64 i64 i64)
+  (tuple x x x x))
+(define (pair [x : i64]) : (Tuple i64 i64)
+  (tuple x x))
+(define (local [x : i64]) : i64
+  (let
+    [t : (Tuple i64 i64 i64 i64) (tuple x x x x)]
+    (tuple-ref t 3)))
+(define (leaf) : i64
+  (let
+    [r : (Tuple i32 i32 i32 i32) (cpuid 0 0)]
+    (cast (tuple-ref r 0) : i64)))
+(define (main) : i64 (+ (local 1) (leaf)))")
+
+(define (compiler-lower-tuple-inline-storage-no-heap?
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
+  [name : String]) : bool
+  (=
+    (lower-test-function-call-count
+      (compiler_ir_types.compiler-ir-global-shared-view functions)
+      name
+      "tl_alloc")
+    0))
+
+(define (compiler-lower-tuple-inline-storage-frame?
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
+  [name : String]) : bool
+  (>
+    (lower-test-function-alloc-count
+      (compiler_ir_types.compiler-ir-global-shared-view functions)
+      name)
+    0))
+
+(define (compiler-lower-tuple-inline-storage-mode-ok?
+  [mode : compiler_lower.CompilerLowerMode]) : bool
+  (match (compiler_lower.lower-compiler-source-with-mode
+    (compiler-lower-tuple-inline-storage-source)
+    mode)
+    [(compiler_lower.ResultCompilerLower.Ok program _)
+      (match program
+        [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
+          (and
+            (compiler-lower-tuple-inline-storage-no-heap?
+              (compiler_ir_types.compiler-ir-global-shared-view functions)
+              "wide")
+            (compiler-lower-tuple-inline-storage-frame?
+              (compiler_ir_types.compiler-ir-global-shared-view functions)
+              "wide")
+            (compiler-lower-tuple-inline-storage-no-heap?
+              (compiler_ir_types.compiler-ir-global-shared-view functions)
+              "pair")
+            (compiler-lower-tuple-inline-storage-frame?
+              (compiler_ir_types.compiler-ir-global-shared-view functions)
+              "pair")
+            (compiler-lower-tuple-inline-storage-no-heap?
+              (compiler_ir_types.compiler-ir-global-shared-view functions)
+              "local")
+            (compiler-lower-tuple-inline-storage-frame?
+              (compiler_ir_types.compiler-ir-global-shared-view functions)
+              "local")
+            (compiler-lower-tuple-inline-storage-no-heap?
+              (compiler_ir_types.compiler-ir-global-shared-view functions)
+              "leaf")
+            (compiler-lower-tuple-inline-storage-frame? functions "leaf"))])]
+    [(compiler_lower.ResultCompilerLower.Err _) false]))
+
+(define (compiler-lower-tuple-inline-storage-ok?) : bool
+  (and
+    (compiler-lower-tuple-inline-storage-mode-ok?
+      (compiler_lower.CompilerLowerMode.LinuxScalar))
+    (compiler-lower-tuple-inline-storage-mode-ok?
       (compiler_lower.CompilerLowerMode.WindowsScalar))))
 
 (define (compiler-lower-mut-ref-array-access-source) : String
@@ -3641,7 +3718,13 @@
       (while (and (< index count) (< result 0))
         (begin
           (match (compiler_ir_types.compiler-ir-array-shared-view slots index)
-            [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
+            [(compiler_ir_types.CompilerIrFunction.Function
+                fname
+                _
+                _
+                _
+                blocks
+                _)
               (if (string.eq
                 (compiler_ir_types.compiler-ir-symbol-text fname)
                 name)
@@ -5500,7 +5583,7 @@
           (compiler_ir_types.compiler-ir-global-shared-view funcs)
           index)]
       (match (compiler_ir_types.compiler-ir-global-shared-view func)
-        [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ _)
+        [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ _ _)
           (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
             (LowerTestMaybeFunction.Some func)
             (lower-test-function-seq-find-from funcs name (+ index 1)))]))))
@@ -5524,7 +5607,7 @@
     [(LowerTestMaybeFunction.No) (- 0 1)]
     [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ params _ _ _)
+        [(compiler_ir_types.CompilerIrFunction.Function _ params _ _ _ _)
           (compiler_ir_types.compiler-ir-param-seq-count params)])]))
 
 (define (lower-test-param-name-at
@@ -5543,7 +5626,7 @@
     [(LowerTestMaybeFunction.No) ""]
     [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ params _ _ _)
+        [(compiler_ir_types.CompilerIrFunction.Function _ params _ _ _ _)
           (lower-test-param-name-at params index)])]))
 
 (define (lower-test-function-phi-count
@@ -5553,7 +5636,7 @@
     [(LowerTestMaybeFunction.No) (- 0 1)]
     [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
           (lower-test-blocks-phi-count blocks)])]))
 
 (define (lower-test-function-load-count
@@ -5563,7 +5646,7 @@
     [(LowerTestMaybeFunction.No) (- 0 1)]
     [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
           (lower-test-blocks-load-count blocks)])]))
 
 (define (lower-test-function-splat-shape-count
@@ -5575,7 +5658,7 @@
     [(LowerTestMaybeFunction.No) (- 0 1)]
     [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
           (lower-test-blocks-splat-shape-count blocks lanes elem-ty)])]))
 
 (define (lower-test-function-label-load-count
@@ -5586,7 +5669,7 @@
     [(LowerTestMaybeFunction.No) (- 0 1)]
     [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
           (lower-test-blocks-label-load-count blocks want-label)])]))
 
 (define (lower-test-function-branch-count
@@ -5596,7 +5679,7 @@
     [(LowerTestMaybeFunction.No) (- 0 1)]
     [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
           (lower-test-blocks-branch-count blocks)])]))
 
 (define (lower-test-function-total-enum-branch-count
@@ -5606,7 +5689,7 @@
     [(LowerTestMaybeFunction.No) (- 0 1)]
     [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
           (lower-test-blocks-total-enum-branch-count blocks)])]))
 
 (define (lower-test-function-bounds-count
@@ -5616,7 +5699,7 @@
     [(LowerTestMaybeFunction.No) (- 0 1)]
     [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
           (lower-test-blocks-bounds-count blocks)])]))
 
 (define (lower-test-function-return-count
@@ -5626,7 +5709,7 @@
     [(LowerTestMaybeFunction.No) (- 0 1)]
     [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
           (lower-test-blocks-return-count blocks)])]))
 
 (define (lower-test-function-pack-count
@@ -5636,7 +5719,7 @@
     [(LowerTestMaybeFunction.No) (- 0 1)]
     [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
           (lower-test-blocks-pack-count blocks)])]))
 
 (define (lower-test-function-pack-shape-count
@@ -5647,7 +5730,7 @@
     [(LowerTestMaybeFunction.No) (- 0 1)]
     [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
           (lower-test-blocks-pack-shape-count blocks pools)])]))
 
 (define (lower-test-functions-call-count
@@ -5662,7 +5745,7 @@
           (match (compiler_ir_types.compiler-ir-function-seq-ref
             (compiler_ir_types.compiler-ir-global-shared-view funcs)
             index)
-            [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+            [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
               (set!
                 count
                 (+
@@ -5684,7 +5767,7 @@
           (match (compiler_ir_types.compiler-ir-function-seq-ref
             (compiler_ir_types.compiler-ir-global-shared-view funcs)
             index)
-            [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+            [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
               (set! count (+ count (lower-test-blocks-branch-count blocks)))])
           (set! index (+ index 1))))
       count)))
@@ -5700,7 +5783,7 @@
           (match (compiler_ir_types.compiler-ir-function-seq-ref
             (compiler_ir_types.compiler-ir-global-shared-view funcs)
             index)
-            [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+            [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
               (set! count (+ count (lower-test-blocks-return-count blocks)))])
           (set! index (+ index 1))))
       count)))
@@ -5717,7 +5800,7 @@
           (match (compiler_ir_types.compiler-ir-function-seq-ref
             (compiler_ir_types.compiler-ir-global-shared-view funcs)
             index)
-            [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+            [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
               (set!
                 count
                 (+
@@ -5748,7 +5831,7 @@
           (match (compiler_ir_types.compiler-ir-function-seq-ref
             (compiler_ir_types.compiler-ir-global-shared-view funcs)
             index)
-            [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+            [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
               (set! count (+ count (lower-test-blocks-cpuid-count blocks)))])
           (set! index (+ index 1))))
       count)))
@@ -5764,7 +5847,7 @@
           (match (compiler_ir_types.compiler-ir-function-seq-ref
             (compiler_ir_types.compiler-ir-global-shared-view funcs)
             index)
-            [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+            [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
               (set! count (+ count (lower-test-blocks-xgetbv-count blocks)))])
           (set! index (+ index 1))))
       count)))
@@ -5777,7 +5860,7 @@
     [(LowerTestMaybeFunction.No) (- 0 1)]
     [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
           (lower-test-blocks-call-count blocks call-name)])]))
 
 (define (lower-test-function-call-before?
@@ -5789,7 +5872,7 @@
     [(LowerTestMaybeFunction.No) false]
     [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
           (lower-test-blocks-call-before? blocks first second)])]))
 
 (define (lower-test-function-indirect-call-count
@@ -5799,7 +5882,7 @@
     [(LowerTestMaybeFunction.No) (- 0 1)]
     [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
           (lower-test-blocks-indirect-call-count blocks)])]))
 
 (define (lower-test-function-indirect-tail-call-count
@@ -5809,7 +5892,7 @@
     [(LowerTestMaybeFunction.No) (- 0 1)]
     [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
           (lower-test-blocks-indirect-tail-call-count blocks)])]))
 
 (define (lower-test-function-indirect-c-call-count
@@ -5819,7 +5902,7 @@
     [(LowerTestMaybeFunction.No) (- 0 1)]
     [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
           (lower-test-blocks-indirect-c-call-count blocks)])]))
 
 (define (lower-test-function-indirect-unit-count
@@ -5829,7 +5912,7 @@
     [(LowerTestMaybeFunction.No) (- 0 1)]
     [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
           (lower-test-blocks-indirect-unit-count blocks)])]))
 
 (define (lower-test-function-return-function-count
@@ -5840,7 +5923,7 @@
     [(LowerTestMaybeFunction.No) (- 0 1)]
     [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
           (lower-test-blocks-return-function-count blocks function-name)])]))
 
 (define (lower-test-function-indirect-callee-function-count
@@ -5851,7 +5934,7 @@
     [(LowerTestMaybeFunction.No) (- 0 1)]
     [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
           (lower-test-blocks-indirect-callee-function-count
             blocks
             function-name)])]))
@@ -5865,7 +5948,7 @@
     [(LowerTestMaybeFunction.No) (- 0 1)]
     [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
           (lower-test-blocks-call-arg-function-count
             blocks
             call-name
@@ -5879,7 +5962,7 @@
     [(LowerTestMaybeFunction.No) (- 0 1)]
     [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
           (lower-test-blocks-tail-call-count blocks call-name)])]))
 
 (define (lower-test-function-direct-call-count
@@ -5900,7 +5983,7 @@
     [(LowerTestMaybeFunction.No) (- 0 1)]
     [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
           (lower-test-blocks-store-ptr-count blocks)])]))
 
 (define (lower-test-function-copy-bytes-count
@@ -5910,7 +5993,7 @@
     [(LowerTestMaybeFunction.No) (- 0 1)]
     [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
           (lower-test-blocks-copy-bytes-count blocks)])]))
 
 (define (lower-test-function-alloc-count
@@ -5920,7 +6003,7 @@
     [(LowerTestMaybeFunction.No) (- 0 1)]
     [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
           (lower-test-blocks-alloc-count blocks)])]))
 
 (define (lower-test-function-addr-of-count
@@ -5930,7 +6013,7 @@
     [(LowerTestMaybeFunction.No) (- 0 1)]
     [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
           (lower-test-blocks-addr-of-count blocks)])]))
 
 (define (lower-test-function-vector-load-count
@@ -5940,7 +6023,7 @@
     [(LowerTestMaybeFunction.No) (- 0 1)]
     [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
           (lower-test-blocks-vector-load-count blocks)])]))
 
 (define (lower-test-function-vector-binop-count
@@ -5950,7 +6033,7 @@
     [(LowerTestMaybeFunction.No) (- 0 1)]
     [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
           (lower-test-blocks-vector-binop-count blocks)])]))
 
 (define (lower-test-function-vector-binop-op-count
@@ -5961,7 +6044,7 @@
     [(LowerTestMaybeFunction.No) (- 0 1)]
     [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
           (lower-test-blocks-vector-binop-op-count blocks want)])]))
 
 (define (lower-test-function-vector-reduce-count
@@ -5971,7 +6054,7 @@
     [(LowerTestMaybeFunction.No) (- 0 1)]
     [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
           (lower-test-blocks-vector-reduce-count blocks)])]))
 
 (define (lower-test-function-vector-store-count
@@ -5981,7 +6064,7 @@
     [(LowerTestMaybeFunction.No) (- 0 1)]
     [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
           (lower-test-blocks-vector-store-count blocks)])]))
 
 (define (lower-test-function-predicated-load-count
@@ -5991,7 +6074,7 @@
     [(LowerTestMaybeFunction.No) (- 0 1)]
     [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
           (lower-test-blocks-predicated-load-count blocks)])]))
 
 (define (lower-test-function-predicated-store-count
@@ -6001,7 +6084,7 @@
     [(LowerTestMaybeFunction.No) (- 0 1)]
     [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
           (lower-test-blocks-predicated-store-count blocks)])]))
 
 (define (lower-test-function-select-count
@@ -6011,7 +6094,7 @@
     [(LowerTestMaybeFunction.No) (- 0 1)]
     [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
           (lower-test-blocks-select-count blocks)])]))
 
 (define (lower-test-function-tail-mask-count
@@ -6021,7 +6104,7 @@
     [(LowerTestMaybeFunction.No) (- 0 1)]
     [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
           (lower-test-blocks-tail-mask-count blocks)])]))
 
 (define (lower-test-function-vector-shape-count
@@ -6033,7 +6116,7 @@
     [(LowerTestMaybeFunction.No) (- 0 1)]
     [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
           (lower-test-blocks-vector-shape-count blocks lanes elem-ty)])]))
 
 (define (lower-test-function-u64-mov-count
@@ -6043,7 +6126,7 @@
     [(LowerTestMaybeFunction.No) (- 0 1)]
     [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
           (lower-test-blocks-u64-mov-count blocks)])]))
 
 (define (lower-test-function-binop-op-count
@@ -6054,7 +6137,7 @@
     [(LowerTestMaybeFunction.No) (- 0 1)]
     [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
           (lower-test-blocks-binop-op-count blocks op)])]))
 
 (define (lower-test-function-i64-binop-op-count
@@ -6065,7 +6148,7 @@
     [(LowerTestMaybeFunction.No) (- 0 1)]
     [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
           (lower-test-blocks-i64-binop-op-count blocks op)])]))
 
 (define (lower-test-function-cast-count
@@ -6075,7 +6158,7 @@
     [(LowerTestMaybeFunction.No) (- 0 1)]
     [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
           (lower-test-blocks-cast-count blocks)])]))
 
 (define (lower-test-function-bitcast-count
@@ -6085,7 +6168,7 @@
     [(LowerTestMaybeFunction.No) (- 0 1)]
     [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
           (lower-test-blocks-bitcast-count blocks)])]))
 
 (define (lower-test-functions-bitcast-count
@@ -6099,7 +6182,7 @@
           (match (compiler_ir_types.compiler-ir-function-seq-ref
             (compiler_ir_types.compiler-ir-global-shared-view funcs)
             index)
-            [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+            [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
               (set! count (+ count (lower-test-blocks-bitcast-count blocks)))])
           (set! index (+ index 1))))
       count)))
@@ -6112,7 +6195,7 @@
     [(LowerTestMaybeFunction.No) (- 0 1)]
     [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
           (lower-test-blocks-store-global-count blocks global-name)])]))
 
 (define (lower-test-global-seq-has-name-at?
@@ -7312,13 +7395,13 @@
 
 (define (compiler-lower-extern-value-fnptr-source) : String
   "(extern raw-value (:symbol \"tl_test_raw_value\") : i64)
-(extern raw-fn (:symbol \"tl_test_raw_fn\") : (-> i64 i64))
+(extern raw-fn (:symbol \"tl_test_raw_fn\") : (CFunc non-null (-> i64 i64)))
 (extern (direct-fn [x : i64]) : i64 (:symbol \"tl_test_direct_fn\"))
-(extern (resolve [name : (Ptr u8)]) : (-> i64 i64) (:symbol \"tl_test_resolve\"))
+(extern (resolve [name : (Ptr u8)]) : (CFunc non-null (-> i64 i64)) (:symbol \"tl_test_resolve\"))
 (define (main) : i64
   (let
-    [copied : (-> i64 i64) raw-fn]
-    [resolved : (-> i64 i64) (resolve (ptr-null : (Ptr u8)))]
+    [copied : (CFunc non-null (-> i64 i64)) raw-fn]
+    [resolved : (CFunc non-null (-> i64 i64)) (resolve (ptr-null : (Ptr u8)))]
     (+ raw-value (+ (raw-fn 41) (+ (copied 40) (+ (resolved 39) (direct-fn 1)))))))")
 
 (define (compiler-lower-extern-value-fnptr-shape-ok?) : bool
@@ -7376,16 +7459,16 @@
   (test.assert-true
     (compiler-lower-error-ok?
       (compiler-lower-extern-returned-fnptr-to-tl-param-source)
-      "typecheck: raw C function pointer cannot be used as a TypeLisp function value")
+      "typecheck: raw C function pointer requires an explicit CFunc type")
     "dynamically returned raw C function pointers cannot flow into TypeLisp callback positions"))
 
 (define (compiler-lower-c-abi-linux-tag-only-enum-source) : String
   "(defenum Status (Ready) (Done) (Failed))
 (extern (status-next [arg0 : Status]) : Status (:symbol \"tl_cabi_status_next\"))
-(extern status-score-ptr (:symbol \"tl_cabi_status_score_ptr\") : (->
+(extern status-score-ptr (:symbol \"tl_cabi_status_score_ptr\") : (CFunc non-null (->
   Status
   i64
-  i64))
+  i64)))
 (define (status-rank [s : Status]) : i64
   (match s
     [Ready 1]
@@ -7393,7 +7476,7 @@
     [Failed 3]))
 (define (main) : i64
   (let
-    [score-copy : (-> Status i64 i64) status-score-ptr]
+    [score-copy : (CFunc non-null (-> Status i64 i64)) status-score-ptr]
     [ready : Status (Ready)]
     [done : Status (status-next ready)]
     [failed : Status (status-next done)]
@@ -7432,7 +7515,7 @@
 (defstruct SmallBox (choice SmallChoice))
 (defenum WideChoice (None) (Some u64 u64))
 (extern (small-score [arg : SmallChoice]) : i64 (:symbol \"tl_cabi_small_score\"))
-(extern small-score-ptr (:symbol \"tl_cabi_small_score_ptr\") : (-> SmallChoice i64))
+(extern small-score-ptr (:symbol \"tl_cabi_small_score_ptr\") : (CFunc non-null (-> SmallChoice i64)))
 (extern (box-score [arg : SmallBox]) : i64 (:symbol \"tl_cabi_box_score\"))
 (extern (box-make [seed : i64]) : SmallBox (:symbol \"tl_cabi_box_make\"))
 (extern (wide-make [seed : u64]) : WideChoice (:symbol \"tl_cabi_wide_make\"))
@@ -7442,7 +7525,7 @@
     [(WideChoice.Some lo hi) (+ (cast lo : i64) (cast hi : i64))]))
 (define (main) : i64
   (let
-    [copy : (-> SmallChoice i64) small-score-ptr]
+    [copy : (CFunc non-null (-> SmallChoice i64)) small-score-ptr]
     [boxed : SmallBox (box-make 5)]
     [made : WideChoice (wide-make (cast 10 : u64))]
     (+ (small-score (SmallChoice.Some 11)) (+ (copy SmallChoice.None) (+ (box-score boxed) (wide-score made))))))")
@@ -7492,37 +7575,37 @@
 (defenum WideChoice (None) (Some u64 f64))
 (defenum ReturnChoice (None) (Pair u64 u64))
 (extern (status-pick [arg0 : Status] [arg1 : Status] [choose-second : i64]) : Status (:symbol \"tl_win64_status_pick\"))
-(extern status-pick-ptr (:symbol \"tl_win64_status_pick_ptr\") : (->
+(extern status-pick-ptr (:symbol \"tl_win64_status_pick_ptr\") : (CFunc non-null (->
   Status
   Status
   i64
-  Status))
+  Status)))
 (extern (small-score [arg : SmallChoice] [bias : i64]) : i64 (:symbol \"tl_win64_small_score\"))
-(extern small-scorer (:symbol \"tl_win64_small_score_ptr\") : (->
+(extern small-scorer (:symbol \"tl_win64_small_score_ptr\") : (CFunc non-null (->
   SmallChoice
   i64
-  i64))
+  i64)))
 (extern (wide-score [arg : WideChoice] [tag : u64]) : i64 (:symbol \"tl_win64_wide_score\"))
-(extern wide-scorer (:symbol \"tl_win64_wide_score_ptr\") : (->
+(extern wide-scorer (:symbol \"tl_win64_wide_score_ptr\") : (CFunc non-null (->
   WideChoice
   u64
-  i64))
+  i64)))
 (extern (return-choice-make [a : u32] [b : u32] [tag : u64]) : ReturnChoice (:symbol \"tl_win64_return_choice_make\"))
-(extern return-choice-maker (:symbol \"tl_win64_return_choice_make_ptr\") : (->
+(extern return-choice-maker (:symbol \"tl_win64_return_choice_make_ptr\") : (CFunc non-null (->
   u32
   u32
   u64
-  ReturnChoice))
+  ReturnChoice)))
 (define (return-score [r : ReturnChoice]) : i64
   (match r
     [ReturnChoice.None 0]
     [(ReturnChoice.Pair lo hi) (+ (cast lo : i64) (cast hi : i64))]))
 (define (main) : i64
   (let
-    [status-copy : (-> Status Status i64 Status) status-pick-ptr]
-    [small-copy : (-> SmallChoice i64 i64) small-scorer]
-    [wide-copy : (-> WideChoice u64 i64) wide-scorer]
-    [return-copy : (-> u32 u32 u64 ReturnChoice) return-choice-maker]
+    [status-copy : (CFunc non-null (-> Status Status i64 Status)) status-pick-ptr]
+    [small-copy : (CFunc non-null (-> SmallChoice i64 i64)) small-scorer]
+    [wide-copy : (CFunc non-null (-> WideChoice u64 i64)) wide-scorer]
+    [return-copy : (CFunc non-null (-> u32 u32 u64 ReturnChoice)) return-choice-maker]
     [picked : Status (status-pick (Ready) (Done) 1)]
     [picked-via-ptr : Status (status-copy (Ready) (Failed) 1)]
     [small-direct : i64 (small-score (SmallChoice.Some 11) 5)]
@@ -8353,7 +8436,7 @@
     [(LowerTestMaybeFunction.No) 0]
     [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
           (lower-test-blocks-i64-mov-count blocks want)])]))
 
 (define (lower-test-function-f64-mov-count-bits
@@ -8364,7 +8447,7 @@
     [(LowerTestMaybeFunction.No) 0]
     [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
           (lower-test-blocks-f64-mov-count blocks want)])]))
 
 (define (lower-test-function-binop-count
@@ -8374,7 +8457,7 @@
     [(LowerTestMaybeFunction.No) (- 0 1)]
     [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
           (lower-test-blocks-binop-count blocks)])]))
 
 (define (lower-test-function-gep-offset-count
@@ -8385,7 +8468,7 @@
     [(LowerTestMaybeFunction.No) (- 0 1)]
     [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
           (lower-test-blocks-gep-offset-count blocks want)])]))
 
 (define (compiler-lower-comptime-fold-ok? [src : String] [want : i64]) : bool
@@ -13295,6 +13378,7 @@
 (define (compiler-lower-spmd-scalar-call-shape-ok?) : bool
   (and
     (compiler-lower-imported-spmd-selection-smoke-ok?)
+    (compiler-lower-spmd-scalar-private-abi-descriptors-ok?)
     (match (compiler_lower.lower-compiler-source-with-mode
       (compiler-lower-spmd-scalar-call-shape-source)
       (compiler_lower.CompilerLowerMode.Scalar))
@@ -13345,6 +13429,285 @@
                 (compiler_ir_types.CompilerIrBinOp.Add))
               5))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
+
+;; --- private SPMD ABI descriptors (#7405) ------------------------------------
+(define (lower-test-function-abi-ordinary?
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
+  [name : String]) : bool
+  (let
+    [found : bool false]
+    [ordinary : bool false]
+    [index : i64 0]
+    (begin
+      (while (< index functions.len)
+        (begin
+          (match (compiler_ir_types.compiler-ir-function-seq-ref
+            (compiler_ir_types.compiler-ir-global-shared-view functions)
+            index)
+            [(compiler_ir_types.CompilerIrFunction.Function
+                fname
+                _
+                _
+                _
+                _
+                function-abi)
+              (if (string.eq
+                (compiler_ir_types.compiler-ir-symbol-text fname)
+                name)
+                (begin
+                  (set! found true)
+                  (set!
+                    ordinary
+                    (compiler_ir_types.compiler-ir-function-abi-ordinary?
+                      (compiler_ir_types.compiler-ir-global-shared-view
+                        function-abi))))
+                unit)])
+          (set! index (+ index 1))))
+      (and found ordinary))))
+
+;; Lower `src` in `mode`; the whole program must pass private ABI admission,
+;; `caller` must keep the ordinary ABI, and the private helpers must have
+;; exactly the `expected` shapes.
+(define (compiler-lower-spmd-private-abi-case-ok?
+  [src : String]
+  [mode : compiler_lower.CompilerLowerMode]
+  [caller : String]
+  [expected : String]) : bool
+  (match (compiler_lower.lower-compiler-source-with-mode src mode)
+    [(compiler_lower.ResultCompilerLower.Ok program _)
+      (match program
+        [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
+          (and
+            (string.eq
+              (compiler_ir_types.compiler-ir-spmd-private-abi-program-error
+                (compiler_ir_types.compiler-ir-global-shared-view functions))
+              "")
+            (lower-test-function-abi-ordinary?
+              (compiler_ir_types.compiler-ir-global-shared-view functions)
+              caller)
+            (string.eq
+              (compiler_ir_types.compiler-ir-test-spmd-private-abi-shapes
+                functions)
+              expected))])]
+    [(compiler_lower.ResultCompilerLower.Err _) false]))
+
+;; Optimization must keep every helper's descriptor and every call's copy of it:
+;; admission still passes and the helper shapes are unchanged.
+(define (compiler-lower-spmd-private-abi-optimized-ok?
+  [src : String]
+  [mode : compiler_lower.CompilerLowerMode]
+  [level : i64]) : bool
+  (match (compiler_lower.lower-compiler-source-with-mode src mode)
+    [(compiler_lower.ResultCompilerLower.Ok program _)
+      (let
+        [before : String
+          (match (compiler_ir_types.compiler-ir-global-shared-view program)
+            [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
+              (compiler_ir_types.compiler-ir-test-spmd-private-abi-shapes
+                functions)])]
+        [optimized : compiler_ir_types.CompilerIrProgram
+          (compiler_optimize.optimize-program-with-level program level)]
+        (match optimized
+          [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
+            (and
+              (> (string.string-length before) 0)
+              (string.eq
+                (compiler_ir_types.compiler-ir-spmd-private-abi-program-error
+                  (compiler_ir_types.compiler-ir-global-shared-view functions))
+                "")
+              (string.eq
+                (compiler_ir_types.compiler-ir-test-spmd-private-abi-shapes
+                  functions)
+                before))]))]
+    [(compiler_lower.ResultCompilerLower.Err _) false]))
+
+(define (lower-test-twice [shape : String]) : String
+  (str_cat.str-cat (clone shape) " | " shape))
+
+;; Uniform `&mut` reference, varying i64, and two mask (varying bool) sources.
+(define (compiler-lower-spmd-private-abi-mask-arg-source) : String
+  "(define (heavy-store [out : (&mut out (__tl_dyn-array i64))] [i : i64] [take0 : bool] [take1 : bool]) : unit
+  (if take0
+    (if take1
+      (set! (array-ref out i) (+ (+ (+ (+ (+ (+ (+ i 1) 2) 3) 4) 5) 6) 7))
+      (set! (array-ref out i) (- (- (- (- (- (- (- i 1) 2) 3) 4) 5) 6) 7)))
+    (set! (array-ref out i) 0)))
+(define (fill [out : (&mut out (__tl_dyn-array i64))] [n : i64]) : unit
+  (foreach ([i : i64 0 n]) (heavy-store out i (< i 7) (= (% i 3) 0))))")
+
+;; A varying bool result is a mask.
+(define (compiler-lower-spmd-private-abi-bool-result-source) : String
+  "(define (large-enough? [x : i64]) : bool
+  (> (+ (+ (+ (+ (+ (+ (+ x 1) 2) 3) 4) 5) 6) 7) 30))
+(define (fill [out : (&mut out (__tl_dyn-array i64))] [n : i64]) : unit
+  (foreach ([i : i64 0 n]) (if (large-enough? i) (set! (array-ref out i) 1) (set! (array-ref out i) 0))))")
+
+;; The result depends only on the uniform argument.
+(define (compiler-lower-spmd-private-abi-uniform-result-source) : String
+  "(define (heavy [x : i64] [k : i64]) : i64
+  (+ (+ (+ (+ (+ (+ (+ k 1) 2) 3) 4) 5) 6) 7))
+(define (fill [out : (__tl_dyn-array i64)] [n : i64] [k : i64]) : unit
+  (foreach ([i : i64 0 n]) (set! (array-ref out i) (heavy i k))))")
+
+;; f64 sources and result, and a varying argument that is not the index.
+(define (compiler-lower-spmd-private-abi-f64-source) : String
+  "(define (heavy [x : f64] [s : f64]) : f64
+  (+ (+ (+ (+ (+ (+ (+ (* x s) 1.0) 2.0) 3.0) 4.0) 5.0) 6.0) 7.0))
+(define (fill [out : (__tl_dyn-array f64)] [xs : (__tl_dyn-array f64)] [n : i64] [s : f64]) : unit
+  (foreach ([i : i64 0 n]) (set! (array-ref out i) (heavy (array-ref xs i) s))))")
+
+;; Every generated same-program helper carries the private ABI and every call
+;; to it an equal copy (admission passes); the caller stays ordinary. Each
+;; case pins the full descriptor: roles, physical ordinals and types, source
+;; classes and types, index mapping, and result class. SIMD modes emit one
+;; helper for the full gang and one for the tail.
+(define (compiler-lower-spmd-private-abi-descriptors-ok?) : bool
+  (let
+    [mask : String "[0 active-mask : bool, "]
+    [varying-i64 : String "source 0 varying i64 : i64"]
+    [mask-arg-sources : String
+      (str_cat.str-cat
+        "1 source 0 uniform (&mut out (__tl_dyn-array i64)) : (&mut out (__tl_dyn-array i64)), "
+        "2 source 1 varying i64 : i64, 3 source 2 mask bool : bool, "
+        "4 source 3 mask bool : bool")]
+    (and
+      (compiler-lower-spmd-private-abi-case-ok?
+        (compiler-lower-spmd-out-of-line-value-source)
+        (compiler_lower.CompilerLowerMode.Avx512)
+        "fill"
+        (lower-test-twice
+          (str_cat.str-cat
+            "avx512 lanes 8 "
+            (clone mask)
+            "1 "
+            (clone varying-i64)
+            ", 2 index-base : i64] index appended 2 result varying i64")))
+      (compiler-lower-spmd-private-abi-case-ok?
+        (compiler-lower-spmd-out-of-line-value-source)
+        (compiler_lower.CompilerLowerMode.Avx2)
+        "fill"
+        (lower-test-twice
+          (str_cat.str-cat
+            "avx2 lanes 4 "
+            (clone mask)
+            "1 "
+            (clone varying-i64)
+            ", 2 index-base : i64] index appended 2 result varying i64")))
+      (compiler-lower-spmd-private-abi-case-ok?
+        (compiler-lower-spmd-out-of-line-unit-source)
+        (compiler_lower.CompilerLowerMode.Avx512)
+        "fill"
+        (lower-test-twice
+          (str_cat.str-cat
+            "avx512 lanes 8 "
+            (clone mask)
+            "1 "
+            (clone varying-i64)
+            ", 2 index-base : i64] index appended 2 result unit")))
+      (compiler-lower-spmd-private-abi-case-ok?
+        (compiler-lower-spmd-varying-local-call-source)
+        (compiler_lower.CompilerLowerMode.Avx2)
+        "fill"
+        (lower-test-twice
+          (str_cat.str-cat
+            "avx2 lanes 4 "
+            (clone mask)
+            "1 "
+            (clone varying-i64)
+            "] index none result varying i64")))
+      (compiler-lower-spmd-private-abi-case-ok?
+        (compiler-lower-spmd-private-abi-mask-arg-source)
+        (compiler_lower.CompilerLowerMode.Avx512)
+        "fill"
+        (lower-test-twice
+          (str_cat.str-cat
+            "avx512 lanes 8 "
+            (clone mask)
+            (clone mask-arg-sources)
+            ", 5 index-base : i64] index appended 5 result unit")))
+      (compiler-lower-spmd-private-abi-case-ok?
+        (compiler-lower-spmd-private-abi-bool-result-source)
+        (compiler_lower.CompilerLowerMode.Avx2)
+        "fill"
+        (lower-test-twice
+          (str_cat.str-cat
+            "avx2 lanes 4 "
+            (clone mask)
+            "1 "
+            (clone varying-i64)
+            ", 2 index-base : i64] index appended 2 result mask bool")))
+      (compiler-lower-spmd-private-abi-case-ok?
+        (compiler-lower-spmd-private-abi-uniform-result-source)
+        (compiler_lower.CompilerLowerMode.Avx512)
+        "fill"
+        (lower-test-twice
+          (str_cat.str-cat
+            "avx512 lanes 8 "
+            (clone mask)
+            "1 "
+            (clone varying-i64)
+            ", 2 source 1 uniform i64 : i64, 3 index-base : i64]"
+            " index appended 3 result uniform i64")))
+      (compiler-lower-spmd-private-abi-case-ok?
+        (compiler-lower-spmd-private-abi-f64-source)
+        (compiler_lower.CompilerLowerMode.Avx512)
+        "fill"
+        (lower-test-twice
+          (str_cat.str-cat
+            "avx512 lanes 8 "
+            (clone mask)
+            "1 source 0 varying f64 : f64, 2 source 1 uniform f64 : f64]"
+            " index none result varying f64")))
+      (compiler-lower-spmd-private-abi-optimized-ok?
+        (compiler-lower-spmd-private-abi-mask-arg-source)
+        (compiler_lower.CompilerLowerMode.Avx512)
+        1)
+      (compiler-lower-spmd-private-abi-optimized-ok?
+        (compiler-lower-spmd-private-abi-uniform-result-source)
+        (compiler_lower.CompilerLowerMode.Avx2)
+        2)
+      (compiler-lower-spmd-private-abi-optimized-ok?
+        (compiler-lower-spmd-private-abi-bool-result-source)
+        (compiler_lower.CompilerLowerMode.Avx512)
+        2))))
+
+;; The scalar backend runs one lane, prepends the active bool, and never maps a
+;; logical index.
+(define (compiler-lower-spmd-scalar-private-abi-descriptors-ok?) : bool
+  (and
+    (compiler-lower-spmd-private-abi-case-ok?
+      (compiler-lower-spmd-out-of-line-value-source)
+      (compiler_lower.CompilerLowerMode.Scalar)
+      "fill"
+      "scalar lanes 1 [0 active-mask : bool, 1 source 0 varying i64 : i64] index none result varying i64")
+    (compiler-lower-spmd-private-abi-case-ok?
+      (compiler-lower-spmd-out-of-line-unit-source)
+      (compiler_lower.CompilerLowerMode.Scalar)
+      "fill"
+      "scalar lanes 1 [0 active-mask : bool, 1 source 0 varying i64 : i64] index none result unit")
+    (compiler-lower-spmd-private-abi-case-ok?
+      (compiler-lower-spmd-private-abi-mask-arg-source)
+      (compiler_lower.CompilerLowerMode.Scalar)
+      "fill"
+      (str_cat.str-cat
+        "scalar lanes 1 [0 active-mask : bool, "
+        "1 source 0 uniform (&mut out (__tl_dyn-array i64)) : (&mut out (__tl_dyn-array i64)), "
+        "2 source 1 varying i64 : i64, 3 source 2 mask bool : bool, "
+        "4 source 3 mask bool : bool] index none result unit"))
+    (compiler-lower-spmd-private-abi-case-ok?
+      (compiler-lower-spmd-private-abi-bool-result-source)
+      (compiler_lower.CompilerLowerMode.Scalar)
+      "fill"
+      "scalar lanes 1 [0 active-mask : bool, 1 source 0 varying i64 : i64] index none result mask bool")
+    (compiler-lower-spmd-private-abi-case-ok?
+      (compiler-lower-spmd-private-abi-uniform-result-source)
+      (compiler_lower.CompilerLowerMode.Scalar)
+      "fill"
+      "scalar lanes 1 [0 active-mask : bool, 1 source 0 varying i64 : i64, 2 source 1 uniform i64 : i64] index none result uniform i64")
+    (compiler-lower-spmd-private-abi-optimized-ok?
+      (compiler-lower-spmd-private-abi-mask-arg-source)
+      (compiler_lower.CompilerLowerMode.Scalar)
+      1)))
 
 (define (compiler-lower-spmd-out-of-line-call-shape-ok?) : bool
   (and
@@ -13399,7 +13762,8 @@
         (compiler_lower.CompilerLowerMode.Avx2))
       2)
     (compiler-lower-spmd-varying-local-call-shape-ok?)
-    (compiler-lower-spmd-uniform-arg-call-shape-ok?)))
+    (compiler-lower-spmd-uniform-arg-call-shape-ok?)
+    (compiler-lower-spmd-private-abi-descriptors-ok?)))
 
 (define (compiler-lower-foreach-tests-ok?) : bool
   (and
@@ -18844,6 +19208,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-slice-split-at-shape-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-tuple-inline-storage-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-boxed-helper-lists-ok?)

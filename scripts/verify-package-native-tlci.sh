@@ -24,9 +24,10 @@ native_link_detect_host
 # generation adds seven public declaration macros to the loaded prefix. Test
 # declaration metadata adds two source-visible declarations to that prefix.
 # Removing the generic shared-view bridge subtracts one on both hosts.
+# The checked C function-pointer null abort adds one runtime declaration.
 case "$NL_HOST_OS" in
-    windows) TRUSTED_PREFIX_SKIPPED=223 ;;
-    *) TRUSTED_PREFIX_SKIPPED=218 ;;
+    windows) TRUSTED_PREFIX_SKIPPED=224 ;;
+    *) TRUSTED_PREFIX_SKIPPED=219 ;;
 esac
 
 COMPILER=${1:-${TYPELISP_BIN:-}}
@@ -288,6 +289,10 @@ TYPELISP_DEPENDENCY_TLCI_VERIFY=1
 export TYPELISP_DEPENDENCY_TLCI_VERIFY
 unset TYPELISP_DEPENDENCY_TLCI_FORCE_SOURCE || true
 
+echo "[package-native-tlci] capture error lifetime"
+"$COMPILER" test src/compiler_package_surface_producer.tl \
+    --cfg compiler-surface-producer --stdlib-root src --stdlib-root stdlib
+
 echo "[package-native-tlci] trusted native dependency build"
 if ! "$COMPILER" build \
     --manifest-path "$CONSUMER/typelisp.pkg" \
@@ -304,7 +309,9 @@ fi
 grep -F "dependency-tlci-verification|phase=prepared|requests=1|entries=1" \
     "$NATIVE_ERR" | grep -F "|metadata=0|code=1|" >/dev/null ||
     fail "consumer did not admit one code-bearing dependency catalog"
-grep -F "dependency-tlci-verification|phase=finished|requests=-1|entries=1" \
+[ "$(grep -Fc 'dependency-tlci-verification|phase=runtime-finished|requests=-1|entries=1|' "$NATIVE_ERR")" -eq 1 ] ||
+    fail "trusted dependency runtime observation is missing or duplicated"
+grep -F "dependency-tlci-verification|phase=runtime-finished|requests=-1|entries=1" \
     "$NATIVE_ERR" |
     grep -F "|surface-enabled=1|surface-fragments=1|surface-hits=1|surface-fallbacks=0|surface-decls=20|surface-macro-skipped=$TRUSTED_PREFIX_SKIPPED|surface-typecheck-skipped=$TRUSTED_PREFIX_SKIPPED" \
     >/dev/null || fail "trusted dependency frontend surface route mismatch"
@@ -387,7 +394,9 @@ fi
 grep -F "dependency-tlci-verification|phase=prepared|requests=1|entries=1" \
     "$SOURCE_ERR" | grep -F "|unavailable=1|metadata=0|code=0|" >/dev/null ||
     fail "forced-source control did not stay on the consumer job"
-grep -F "dependency-tlci-verification|phase=finished|requests=-1|entries=1" \
+[ "$(grep -Fc 'dependency-tlci-verification|phase=runtime-finished|requests=-1|entries=1|' "$SOURCE_ERR")" -eq 1 ] ||
+    fail "forced-source dependency runtime observation is missing or duplicated"
+grep -F "dependency-tlci-verification|phase=runtime-finished|requests=-1|entries=1" \
     "$SOURCE_ERR" |
     grep -F "|surface-enabled=0|surface-fragments=1|surface-hits=0|surface-fallbacks=1|surface-decls=0|surface-macro-skipped=0|surface-typecheck-skipped=0" \
     >/dev/null || fail "forced-source dependency frontend route mismatch"

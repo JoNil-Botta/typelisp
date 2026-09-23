@@ -185,24 +185,13 @@
   windows
   (extern (windows-load-library [name : (Ptr u8)]) : i64 (:symbol "LoadLibraryA")))
 
-;: Windows kernel32 exported-symbol resolver used for null validation.
+;: Resolve the typed BCryptGenRandom entry once while its DLL is retained.
+;: A nullable C pointer preserves lookup failure and the unsafe call effect.
 (cfg
   windows
-  (extern (windows-get-proc-address-address [module : i64] [name : (Ptr u8)]) : i64 (:symbol "GetProcAddress")))
-
-;: Typed C-function-pointer view of the Windows exported-symbol resolver.
-;:
-;: This second declaration uses the same kernel32 symbol after the integer
-;: address lookup has proved it non-null. A direct C-ABI extern call returning a
-;: function type preserves raw C-function-pointer provenance in the compiler.
-(cfg
-  windows
-  (extern (windows-get-proc-address-function [module : i64] [name : (Ptr u8)]) : (->
-    i64
-    (MutPtr u8)
-    u32
-    u32
-    i32) (:symbol "GetProcAddress")))
+  (extern (windows-get-proc-address-function [module : i64] [name : (Ptr u8)]) : (CFunc
+    unsafe-nullable
+    (-> i64 (MutPtr u8) u32 u32 i32)) (:symbol "GetProcAddress")))
 
 ;: Windows kernel32 module-reference release.
 (cfg
@@ -267,29 +256,29 @@
             (CryptoRandomWindowsLibraryUnavailable (windows-get-last-error)))
           (let
             [symbol-name : (Array u8 16) (windows-bcrypt-symbol-name)]
-            [address : i64
-              (windows-get-proc-address-address
+            [entry : (CFunc unsafe-nullable (-> i64 (MutPtr u8) u32 u32 i32))
+              (windows-get-proc-address-function
                 module
                 (unsafe
                   (ptr-cast (__tl_array-data symbol-name) : (Ptr u8))))]
-            (if (= address 0)
+            (if (ptr-null? entry)
               (let
                 [error : u32 (windows-get-last-error)]
                 [_released : i32 (windows-free-library module)]
                 (CryptoRandomHostFailure
                   (CryptoRandomWindowsSymbolUnavailable error)))
               (let
-                [bcrypt-gen-random : (-> i64 (MutPtr u8) u32 u32 i32)
-                  (windows-get-proc-address-function
-                    module
-                    (unsafe
-                      (ptr-cast (__tl_array-data symbol-name) : (Ptr u8))))]
+                [bcrypt-gen-random : (CFunc
+                  unsafe-non-null
+                  (-> i64 (MutPtr u8) u32 u32 i32))
+                  (c-fn-check entry)]
                 [status : i32
-                  (bcrypt-gen-random
-                    0
-                    data
-                    (cast requested : u32)
-                    (cast 2 : u32))]
+                  (unsafe
+                    (bcrypt-gen-random
+                      0
+                      data
+                      (cast requested : u32)
+                      (cast 2 : u32)))]
                 [released : i32 (windows-free-library module)]
                 (cond
                   [(!= status (cast 0 : i32))

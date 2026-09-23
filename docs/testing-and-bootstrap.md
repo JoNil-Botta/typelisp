@@ -156,6 +156,16 @@ discovery. The Windows package archive gate also requires `llvm-ar` and checks
 the deterministic `TYPELISP_WINDOWS_LIB` contract documented in
 [`packages.md`](packages.md).
 
+The required top-level host inventories can be inspected without running tests
+or fetching a compiler: `sh scripts/ci-verify.sh --list-gates linux` (or
+`windows`). The same validated [`ci-gates.tsv`](../scripts/ci-gates.tsv) owns
+full-run order, labels and each gate's `needs` (the earlier gates whose
+artifacts it consumes, checked against the runner and the artifact inventory).
+Missing, duplicate, wrong-host or failed obligations prevent verification
+success. Internal corpus and artifact proofs remain
+required; listing does not execute or certify them. See the
+[gate ledger contract](../scripts/README.md#core-development-loop).
+
 ## Documentation site
 
 A static language-reference and stdlib/API site is generated entirely in

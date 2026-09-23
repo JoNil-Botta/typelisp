@@ -1054,7 +1054,10 @@
           (ast.AstStructCleanup.No)
           (ast.ast-field-def-list-new)))]
     [diag : cdiag.CompilerDiagnostic
-      (tc_core.tc-decl-diag decl "typecheck: policy fallback")]
+      (tc_core.tc-decl-diag
+        (ast.ast-node-pool-active-expr-segment-bases)
+        decl
+        "typecheck: policy fallback")]
     [message-ok : bool
       (string.eq
         (cdiag.compiler-diagnostic-message diag)
@@ -4845,10 +4848,10 @@
   "(defenum Status (Ready) (Done) (Failed))
 (extern (status-echo [arg0 : Status]) : Status (:abi c) (:symbol \"status_echo\"))
 (extern (status-varargs [arg0 : Status] [arg1 : ...Status]) : i64 (:abi c) (:symbol \"status_varargs\"))
-(extern status-echo-ptr (:symbol \"status_echo_ptr\") : (-> Status Status))
+(extern status-echo-ptr (:symbol \"status_echo_ptr\") : (CFunc non-null (-> Status Status)))
 (define (main) : i64
   (let
-    [copied : (-> Status Status) status-echo-ptr]
+    [copied : (CFunc non-null (-> Status Status)) status-echo-ptr]
     [echoed : Status (status-echo (Ready))]
     [copied-echoed : Status (copied echoed)]
     (status-varargs copied-echoed (Done) (Failed))))")
@@ -4896,9 +4899,9 @@
     (apply1 copied 41)))")
 
 (define (compiler-typecheck-extern-returned-raw-fnptr-source) : String
-  "(extern (resolve [name : (Ptr u8)]) : (-> i64 i64) (:symbol \"resolve\"))
+  "(extern (resolve [name : (Ptr u8)]) : (CFunc non-null (-> i64 i64)) (:symbol \"resolve\"))
 (define (main) : i64
-  (let [resolved : (-> i64 i64) (resolve (ptr-null : (Ptr u8)))]
+  (let [resolved : (CFunc non-null (-> i64 i64)) (resolve (ptr-null : (Ptr u8)))]
     (resolved 41)))")
 
 (define (compiler-typecheck-extern-returned-raw-fnptr-to-tl-param-source) : String
@@ -4936,10 +4939,10 @@
       (compiler-typecheck-extern-returned-raw-fnptr-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-extern-raw-fnptr-to-tl-param-source)
-      "typecheck: raw C function pointer cannot be used as a TypeLisp function value")
+      "typecheck: raw C function pointer requires an explicit CFunc type")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-extern-returned-raw-fnptr-to-tl-param-source)
-      "typecheck: raw C function pointer cannot be used as a TypeLisp function value")))
+      "typecheck: raw C function pointer requires an explicit CFunc type")))
 
 (define (compiler-typecheck-extern-abi-tests-ok?) : bool
   (and
@@ -5944,10 +5947,12 @@
     [wrapped : i64 (ast.ast-expr-ann spanned-inner (ast.AstType.I64))]
     [diag : cdiag.CompilerDiagnostic
       (tc_core.tc-expr-diag
+        (ast.ast-node-pool-active-expr-segment-bases)
         (ast.ast-node-get wrapped)
         "typecheck: nested expression diagnostic")]
     [located : String
       (tc_core.tc-locate-error-at-expr
+        (ast.ast-node-pool-active-expr-segment-bases)
         (ast.ast-node-get (ast.ast-expr-return spanned-inner))
         "typecheck: nested located error")]
     [located-diag : cdiag.CompilerDiagnostic
@@ -11627,6 +11632,87 @@
   (with ([h (FileHandle fd) cleanup-file-handle])
     h.fd))")
 
+(define (compiler-typecheck-move-diverging-if-source) : String
+  "(defstruct Token (id i64) (name String))
+(define (consume [t : Token]) : i64 t.id)
+(define (pick [flag : bool]) : i64
+  (let
+    [t : Token (Token 41 \"t\")]
+    (begin
+      (if flag (return (consume t)) unit)
+      (+ (consume t) 1))))")
+
+(define (compiler-typecheck-move-diverging-match-source) : String
+  "(defstruct Token (id i64) (name String))
+(defenum Mode (Fast) (Slow))
+(define (consume [t : Token]) : i64 t.id)
+(define (pick [mode : Mode]) : i64
+  (let
+    [t : Token (Token 41 \"t\")]
+    (begin
+      (match mode
+        [(Mode.Fast) (return (consume t))]
+        [(Mode.Slow) unit])
+      (+ (consume t) 1))))")
+
+(define (compiler-typecheck-move-diverging-reinit-source) : String
+  "(defstruct Token (id i64) (name String))
+(define (consume [t : Token]) : i64 t.id)
+(define (pick [flag : bool]) : i64
+  (let
+    [t : Token (Token 1 \"t\")]
+    [spent : i64 (consume t)]
+    (begin
+      (if flag (return spent) (set! t (Token 41 \"fresh\")))
+      (+ (consume t) spent))))")
+
+(define (compiler-typecheck-move-normal-arm-source) : String
+  "(defstruct Token (id i64) (name String))
+(define (consume [t : Token]) : i64 t.id)
+(define (pick [flag : bool]) : i64
+  (let
+    [t : Token (Token 41 \"t\")]
+    (begin
+      (if flag (begin (consume t) unit) unit)
+      (+ (consume t) 1))))")
+
+(define (compiler-typecheck-move-diverging-and-normal-arm-source) : String
+  "(defstruct Token (id i64) (name String))
+(define (consume [t : Token]) : i64 t.id)
+(define (pick [flag : bool]) : i64
+  (let
+    [t : Token (Token 41 \"t\")]
+    (begin
+      (if flag (return (consume t)) (begin (consume t) unit))
+      (+ (consume t) 1))))")
+
+(define (compiler-typecheck-move-with-cleanup-owner-returning-arm-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(define (take-handle [h : FileHandle]) : i64 0)
+(define (bad-with-cleanup-owner-returning-arm [flag : bool]) : i64
+  (with ([h (FileHandle 3) cleanup-file-handle])
+    (begin
+      (if flag (return (take-handle h)) unit)
+      7)))")
+
+(define (compiler-typecheck-move-with-cleanup-owner-returning-match-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(defenum Mode (Fast) (Slow))
+(define (take-handle [h : FileHandle]) : i64 0)
+(define (bad-with-cleanup-owner-returning-match [mode : Mode]) : i64
+  (with ([h (FileHandle 3) cleanup-file-handle])
+    (begin
+      (match mode
+        [(Mode.Fast) (return (take-handle h))]
+        [(Mode.Slow) unit])
+      7)))")
+
 (define (compiler-typecheck-move-with-cleanup-owner-whole-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
 (defstruct FileHandle
@@ -12891,6 +12977,39 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-move-with-cleanup-owner-whole-source)
+        "typecheck: cleanup owner `h` moved before with scope exit")
+        unit
+        (set! ok false))
+      ;; A diverging arm leaves the join, but not the enclosing with scope's
+      ;; fallthrough-only owner check.
+      (if (compiler-typecheck-ok? (compiler-typecheck-move-diverging-if-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-move-diverging-match-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-move-diverging-reinit-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-normal-arm-source)
+        "typecheck: use of moved value `t`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-diverging-and-normal-arm-source)
+        "typecheck: use of moved value `t`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-with-cleanup-owner-returning-arm-source)
+        "typecheck: cleanup owner `h` moved before with scope exit")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-with-cleanup-owner-returning-match-source)
         "typecheck: cleanup owner `h` moved before with scope exit")
         unit
         (set! ok false))

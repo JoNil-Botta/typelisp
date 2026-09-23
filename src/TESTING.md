@@ -33,6 +33,15 @@ unused generated imports to reach the resolver for both result kinds.
 
 ## Intern-ID provenance
 
+Inline-test reachability must preserve global storage roots before typechecking
+field projections. `tests/inline/global_field_reachability.tl` covers nested
+fields, initializer dependencies, imported helpers and hygienic macro references.
+Run it at all optimization levels, alongside the harness retention test in
+`test_cli_core.tl`, which also proves unrelated globals remain pruned. The intern
+source-session tests exercise dotted-root lookup through an inactive owner.
+The harness normalization regression installs a colliding macro-global decoy
+pool and checks that the captured owner still determines the source name.
+
 Name ids in `AstDecl`, `AstExpr`, patterns, parameters, fields, and nominal
 `AstType` nodes are owned by one `InternCompatState` table. Parsed token slices,
 compiler-generated module/hygiene/builtin names, and String-taking compatibility
@@ -58,7 +67,99 @@ pointer/length pairs as name identity across scratch/region reset: address
 equality is only a fast path while both live operands are in scope. Interning
 must own/canonicalize any spelling that survives its source arena.
 
+## Call-memory block traversal
+
+The optimizer smoke and `call-memory-dense-scan` inline test compare linked,
+dense and mixed blocks across growth, empty inputs and retained rescans. They
+check the two forward root passes, single-source rejection, summary accumulation
+and call/write classification. Spare slots contain observable poison; an
+later write must not change an already true predicate or unresolved candidate.
+Visit-counter mutation probes verify the cutoff without relying on invalid IR. Keep these storage checks alongside the existing
+call-memory semantic fixtures when changing traversal or block representation.
+
+## Move joins and diverging arms
+
+`tests/safety/move_diverging_*` and `move_*_reject` run the programs that an
+early `return`, `break`, `continue` or `never` call used to poison, next to the
+rejections that must survive: a move in an arm that completes normally, in both
+a diverging and a normal arm, inside the diverging arm itself, and before the
+branch. Two rows pin what is *not* divergence: an arm containing `try`, which
+may propagate but may also continue, and an arm whose only `return` belongs to
+a lambda defined in it. `move_diverging_reinit_other_arm_ok` keeps an arm that changes nothing
+but diverges opposite an arm that reinitializes; skipping unchanged arms
+unconditionally breaks it.
+
+The `with_owner_*_reject` rows are the soundness half. A `with` scope checks
+its owner only against the body's fallthrough state while lowering cleans the
+owner on every exit edge, so dropping a returning or breaking arm's facts
+without `tc-moved-retain-active-cleanup-owners` accepts a double cleanup: with
+the retention disabled all four rows type-check. Keep whole-owner, `(:owned)`
+field, `match` and loop `break` forms when changing either join. The join fast
+path runs for every branch in a self-compile; measure typecheck-only
+instruction counts on identical source when touching it.
+
+## Discarded speculative errors
+
+Macro operand capture type-probes each operand and keeps only a successful
+type; about a thousand probes fail during a self-compile and their errors are
+dropped. `tc-expr-discarding-errors` opens a job-owned suppression scope so such
+an error is not finalized with a near-miss scan over every visible name (2.7%
+of the self-compile before #7868). The `tc-unbound-suggestion-suppression-scope`
+inline test checks nesting, that only the owning job is silenced, that the memo
+is not filled with suppressed answers, and that the suggestion returns after the
+scope; `tc-expr-discarding-errors-balances-its-scope` checks both outcomes close
+the scope. `macro_operand_unbound_suggestion_reject` is the user-visible half: a
+name that fails the probe and then fails for real must still report "did you
+mean". Only a caller that drops the error unconditionally may use the wrapper;
+wrapping a path whose diagnostic can reach the user silently removes suggestions
+and only that safety row would notice.
+
+The opposite mistake, a new speculative caller that forgets the wrapper, is
+caught by `scripts/verify-compile-profile.sh`: it checks a nine-line program
+whose stdlib format macros discard 86 probe errors while compiling cleanly, and
+requires `typecheck.env.unbound_finalizers` to be positive (the fixture reaches
+the path) and every `typecheck.env.unbound_scans` row to be zero. Before #7868
+that program performed 12 scans.
+
+## Vector reduction source ownership
+
+The backend smoke checks AVX2 i64 min/max with both ordinary and explicit
+planned scratch homes. It checks the scalar destination and forbids writes to
+the source's XMM/YMM family; checking only the reduction result missed #7821.
+The scratch-vreg smoke keeps the source live through a second reduction and
+through a coalesced phi home. It checks the mask role against source, destination
+and sibling homes on SysV and Win64. A full allocatable-XMM-pressure fixture
+requires the mask's full-width save/restore, and call-adjacent spill fixtures
+require independent reloads without overwriting the retained stack source.
+The source and call fixtures run in both normal and modeled-scratch modes.
+Preserve both the source-ownership and signed-comparison checks when changing
+horizontal reduction emission.
+
+## Borrowed macro surface searches
+
+The typecheck smoke suite's surface-macro provider covers first/last/missing
+names, a non-macro function with a larger signature, and distinct intern IDs.
+It retains a selected macro signature across destruction of the loader's
+summary arena, then checks its parameter and return type. Read-only candidates
+must use borrowed declarations; selected signatures must own their payloads.
+The complete inline batch and `windows_param_preassign_backend.tl` exercise the
+compiler-sized search workload that exposed copying during failed lookups.
+
 ## Compiler arena ownership
+
+`src/tests/scan_storage_growth.tl` exercises geometric lexer and unspanned
+reader growth with fixed storage budgets. It checks every token payload and
+position across growth, nested reader builders while either array grows,
+post-growth lexer/reader failures, empty and successful reuse, and transient
+caller retirement. Run its inline tests at opt0/1/2; the two storage budgets
+also serve as negative controls against the former retained-capacity policy.
+The required compile-profile gate additionally runs the allocation guard: after
+a large file warms the node pool, growing a wide builder must stay within 4 MiB
+of cumulative allocation and preserve its elements. Run with `--cfg compile-profile`
+to enable this counter-based guard; ordinary tests still cover retained storage.
+The compiler-check smoke's loader suite covers cached imports and session
+resets, while the compile-profile gate verifies scratch owners are zero at
+load handoff and retains the separate reader-origin lifetime contract.
 
 Literal classification and contextual numeric checking must read expression
 children from the caller's pool. The `tc-literal-expression-pool-isolation`
@@ -69,6 +170,18 @@ the explicit compatibility-pool route and the canonical/sparse-view span
 oracle. Keep those owner and source-view checks when changing literal walkers or
 their lowering callers; an unwrapped literal alone cannot detect a wrong-pool
 read.
+
+The call-argument type memo keys a body fact by the immediate payload of the
+first source view under the argument's expansion wrappers, and both the owning
+and an unrelated pool can hold a valid view at the same ID. The
+`tc-call-arg-fact-key-pool-isolation` inline test builds two pools with seven
+colliding IDs, seeds distinct types under the owning and decoy-selected keys,
+and calls `tc-call-arg-expr-type` with an unchanged context and argument across
+pool installs in recording and consuming modes. It covers direct and nested
+views, expansion chains, a non-view whose decoy twin is a view, the explicit
+compatibility route, and a clear followed by a restarted recording. Run it at
+opt0/1/2. A key-only check is not enough: keep the seeded-fact phases, which
+show that a wrong owner selects another entry rather than merely missing.
 
 Compiler state must be allocated in an owner whose lifetime covers every state
 transition that can occur before the last use. Use these operational classes:
@@ -96,19 +209,35 @@ owned keys/values, and every capacity growth in that same dedicated arena.
 Restore the caller's active arena after each operation, but never reclaim the
 dedicated arena until its complete required lifetime ends.
 
-`compiler-load-provenance-arena` in
-[`compiler_load.tl`](compiler_load.tl) is the process-lifetime positive example:
-the embedded-module provenance set and equivalence/catalog caches allocate and
-regrow there, while resets clear their logical bindings without resetting the
-arena. Its integer keys must be interned through the owning
-`CompilerLoadSessionState`; an explicitly targeted load operation must not use
-an unrelated compatibility table that another job installed. The load
-self-test proves this with colliding A/B IDs and an installed decoy whose pool
-length and table identity remain unchanged. A dedicated arena is not
-automatically never-reset;
-`tc-hygiene-module-env-cache-arena` in
-[`compiler_typecheck_core.tl`](compiler_typecheck_core.tl) only needs to cross
-scratch rewinds and therefore has an explicit phase reset/teardown.
+Standalone load sessions give embedded provenance and dotted-path payloads
+separate session-owned arenas. These survive caller scratch rewinds, and their
+reset boundaries clear the dependent maps/slots before releasing storage. Path
+lookups copy both hits and misses into the caller's arena. Explicit provenance
+operations use the intern domain bound to their `CompilerLoadSessionState`; an
+installed decoy must not change that identity. The load self-test exercises
+colliding A/B IDs and an installed decoy whose pool length and table identity
+remain unchanged.
+
+`test --batch` and package test entries own their compiler pool context, load
+session and serial typecheck job. Their common finish boundary consumes the
+scalar result, clears aliases while the entry is alive, retires private storage,
+restores the parent selectors, then destroys the entry owner. A reusable cache
+reset is insufficient here: aggregate-layout payloads normally wait for another
+lookup, and empty-env resets can recreate the scoped-environment arena. Terminal
+job retirement releases those owners after the last reset.
+`test_cli_entry_memory_smoke.tl` exercises twelve ordinary inline entries in
+one process and checks retained bytes after four warm-up entries. The small
+leaf still compiles and executes its test each time; all eight measured entries
+must retain at most 1 MiB in total. Both native manifests cover this resource
+boundary, and the original main implementation fails its retained-byte check.
+`test_cli_entry_state_smoke.tl` checks parent selectors and explicit intern
+bindings after success/error scalar results, and verifies copied cache hits and
+misses survive cache reset after the caller scratch arena has been destroyed.
+Macro hygiene retirement requires no active root; the debug runtime permits that explicit
+retirement while continuing to reject ordinary reset/destroy of protected roots.
+`scripts/verify-compiler-arena-debug.sh` builds a test-enabled emitter (which
+contains the optional debug templates) and checks all fifteen native fixture
+operations on each CI host, including grown-owner retirement and invalid handles.
 
 For a regression test of retained mid-walk state, exercise the invalidating
 sequence rather than only testing insertion and lookup in one context:
@@ -232,6 +361,15 @@ modules with dedicated smokes, #2651/#2671/#2657), plus
 `decision` rows in the compile manifest.
 
 ### Inline tests
+
+`compiler_optimize_tests.tl`'s `inline-literal-dense-scan` compares the inliner's
+complete definition/literal counters across linked, dense, and mixed block
+storage, with independent expected results. It covers empty sequences, builder
+growth, duplicate and nonliteral definitions, missing and boundary IDs, traversal
+order, and rescanning retained input. `compiler_optimize_smoke.tl` also invokes
+the differential fixture alongside the existing literal-specialization and
+tail-only literal-site workflows. Keep both the counter and admission coverage
+when changing this scanner.
 
 Top-level `(test name body...)` items are source-owned executable checks. Normal
 `check`, `compile`, `build`, and `run` ignore them. `typelisp test <file.tl>`
@@ -358,7 +496,9 @@ Compiler-development builds expose three opt-in `typelisp compile` diagnostics:
   input's `.ir` path).
 - `--dump-ir after-<pass>` writes every function snapshot observed immediately
   after the named optimizer pass. Pass names use the trace spelling, including
-  `fold`, `ssa`, `gvn`, `licm`, `global_gvn`, and `dce`.
+  `fold`, `ssa`, `gvn`, `licm`, `global_gvn`, `dce`, and the post-prune
+  `uniform_phi`. A last per-function observation is not necessarily the final
+  program: later whole-program or post-prune rewrites must also be inspected.
 - `--trace-passes` writes one
   `optimizer-pass|<function>|<pass>|blocks=<n>|instructions=<n>` record per
   observed boundary to stderr.
@@ -522,6 +662,38 @@ Completed regalloc census harnesses for move traffic, call spans, and emergency
 scavenging are preserved under
 [`../scripts/attic/`](../scripts/attic/README.md). They are historical
 reproduction tools, not current CI gates.
+
+Register-plan ownership has source-local inline tests in
+`compiler_regalloc_tests.tl`. `compiler-reg-returned-plan-profile-owner` checks
+that resetting metrics through a returned plan reaches the caller's original
+owner on both sides of the scratch budget.
+`compiler-reg-retained-plan-survives-later-planning` preserves a Linux
+plan across repeated Windows planning calls and compares its retained homes to
+an independent snapshot. `compiler-reg-analysis-owner-boundary-homes` widens
+only unused frame space across the budget boundary; Linux and Windows homes
+and post-plan trace reasons must match the small fixture after the scratch
+owner retires. The native register-allocation smoke also needs
+`--cfg test` to exercise its post-plan trace journal and liveness-census checks;
+that flag alone does not run source-local inline test declarations.
+
+The Linux build-invariance gate reuses its freshly built opt1 compiler for two
+complete opt2 workloads: the existing singleton batch compilation of
+`compiler_codegen_smoke_suite.tl` and a standalone build of
+`compiler_backend_tests.tl`. The codegen assembly still participates in the
+ordinary opt1-built/opt2-built byte comparison; it is not compiled again just
+to measure memory. Its report name belongs to that one invocation: a report
+that already exists fails the compile, and the gate fails without both
+complete-fixture reports.
+Each runs through
+`scripts/run-memory-bounded.sh` with an 8 GiB process-tree limit, requires the
+`systemd-user-cgroup` backend with swap disabled, and fails if enforcement,
+compilation, or its machine-readable report is unavailable. Linux CI starts
+the runner's user manager and verifies this backend before running the gates. The
+stress function, optimization level and ordinary invariance corpus remain
+intact. Reports and command logs are retained in
+`target/build-invariance/backend-memory/` and uploaded by Linux CI; large
+assembly/executable outputs remain local. The memory gate selects the hard
+backend explicitly; the wrapper's RSS fallback cannot satisfy this regression.
 
 `scripts/measure-instruction-counts.sh` is the Linux-only dynamic instruction
 counter for local deterministic performance measurements. It builds TypeLisp
@@ -1162,6 +1334,20 @@ the CI runner exercises the same import graph reviewers see locally. The
 same script also owns host-specific backend/compiler-driver fixture checks that
 are too low-level for a manifest row.
 
+The `c_function_pointer_flow` row uses a native C provider from
+`benchmarks/c_function_pointer_flow/baseline.c` to exercise typed code addresses
+through a higher-order resolver, globals, an imported relay, struct and enum
+fields, and an escaping closure. It checks the provider's resolver counter to
+catch repeated evaluation and passes a pointer-containing struct back to C.
+The `c_function_pointer_publication` row uses a writer thread to fill a pointer
+table and publish a sequentially consistent ready flag. The reader calls through
+assigned and branch-selected entries after acquiring ready and before joining the
+writer; no atomic pointer loads or integer callable casts are used.
+The `c_function_pointer_null` row requires exit 134, empty stdout and the exact
+null diagnostic even when the checked result is unused. Both rows belong to
+both target manifests; assembly generation alone does not replace their native
+execution checks.
+
 Generated import regressions must exercise both `Module` and `Decls` output.
 An import has namespace effects even without a visible declaration name; the
 canonical generated wrapper must preserve the metadata that causes the macro
@@ -1177,6 +1363,21 @@ bindings, while repeated selections remain idempotent. The missing and conflicti
 import controls in the safety corpus must fail even when no
 generated binding is used. Run affected fixtures at opt0/1/2; an unused missing
 import that compiles successfully is not evidence of valid expansion.
+
+Source selected imports of generated exports are the mirror case. The
+`source_selected_generated_export` native row selects values, a function, a
+struct, an enum and its constructors that exist only after the provider's
+module-scope generators have run, through a direct generator, an imported
+declaration macro with operands, nested generation, a target-conditional
+generator, a repeated selection, and a qualified import of the same module
+placed after the selections. The `source_selected_generated_*` safety rows keep
+the rejections: a missing item from a generating module fails although unused,
+an already loaded generating module does not suppress that (the span row pins
+the import's own line), and `source_selected_plain_missing_reject` pins the
+unchanged load-time failure for a module without generators. The loader
+self-test loads a generating provider through both the source and the package
+walker. Deferring without the completed-expansion check would accept missing
+items, so keep both halves together.
 
 For Windows import-only regressions that fail before a native executable is
 linked, use the published stage0 directly from PowerShell:
@@ -1289,23 +1490,23 @@ the artifact.
 
 ### CI expectations
 
-Pull requests get Linux and Windows coverage from the single self-hosted
-verification gate `scripts/ci-verify.sh` (wired in
-[`../.github/workflows/ci.yml`](../.github/workflows/ci.yml)). Both jobs first
-build a fresh `src/main.tl` binary from the published stage0 compiler and
-smoke-test public `compile`, `build`, `run`, package build, staticlib build, and
-the work-queue chooser through `typelisp run`. The Linux job then bootstraps a
-compile-only stage1 compiler and runs deterministic assembly, the selfhost
-compile manifest, borrowed-str source checks, the safety corpus, native
-integration manifests, standalone examples, and stdlib modules/fixtures through
-that bootstrapped artifact. Command-tier gates such as public-tool host-action
-coverage, stdlib documentation, doctests, inline tests, docs Pages build,
-native link generated programs, and the external selfhost corpus use their
-explicit seed/fresh-cli fallback or skip paths until #1662 and related resource
-blockers are closed. The Windows job runs host-supported gates against the
-published stage0 compiler, verifies the fresh CLI build/run smoke, runs the
-Windows bootstrap stage2/stage3 fixpoint when staged runtime symbols are present,
-and explicitly skips the Linux-only src/docs checks.
+Pull requests get Linux and Windows coverage from the self-hosted verification
+entry point `scripts/ci-verify.sh` (wired in
+[`../.github/workflows/ci.yml`](../.github/workflows/ci.yml)). Each host fetches
+the published seed unless `TYPELISP_BIN` supplies one, then bootstraps the full
+`src/main.tl` CLI. The normal proof compares stage2/stage3 assembly, with a
+stage3/stage4 fallback when needed. All downstream gates receive the converged
+compiler, including public tools, inline tests, doctests and native integration.
+The previous bootstrap generation is retained for the cross-mode differential.
+
+Configured and mutation proofs retain their independent builds: the separate
+scratch-vreg/TLCI mutation bootstrap must converge and prove its changed macro
+runs through the embedded native route. Other specialized producer roles and
+validated handoffs are inventoried below. Both hosts must run every applicable
+gate. Linux-only obligations include build invariance, instruction counts and
+Linux runtime boundaries; Windows executes its native link/run gates. A missing
+compiler capability or required tool fails verification, rather than selecting
+a fallback that silently omits required coverage.
 
 CI sets `TYPELISP_CI_TIMING=1` for that serial verification flow. Each host
 uploads one compact `ci-timing-<host>` TSV artifact with columns `gate`,
@@ -1347,6 +1548,21 @@ digest for every validated handoff. The final CI gate rejects missing,
 duplicate, wrong-role, wrong-host, or unowned records and requires every member
 of a reuse group to have the same provenance key and output digest.
 
+Published handoff `.path` files use the same literal `{root}/...` representation
+as metadata and digest manifests for checkout-owned outputs. Consumers resolve
+that prefix against their checkout before validating the unchanged metadata,
+producer, source set, output digest and run token. A path file must contain
+exactly one newline-terminated path. Relative producer and output arguments
+resolve against the declared checkout, independently of the caller's working
+directory. Existing absolute paths remain supported; external outputs do not
+become portable. Consumers use the absolute
+`CI_COMPILER_ARTIFACT_PATH` returned by successful validation, rather than
+executing the path-file text. The relocation tests move binary and manifest
+bundles between roots containing spaces, make the old root unavailable, and
+reject changed inputs, payloads, run tokens and malformed path files. This
+same-run portability does not authorize cross-run cache reuse or replace the
+complete coverage aggregate required by #7766.
+
 The current exact reuse groups are the converged bootstrap compiler, the
 selfhost compile-manifest assembly set, the canonical embedded-stdlib TLCI
 image bundle, Linux build-invariance's opt1 reference assembly, the
@@ -1356,6 +1572,46 @@ fallbacks. Any new required-flow command that produces `src/main.tl`, an
 embedded compiler image, or a reusable compiler reference must add a ledger
 row and either publish validated metadata or state the independent assertion
 that makes reuse unsound.
+
+Within each Linux build-invariance chunk, identical compile-input paths at the
+same optimization level share one fresh output from that chunk's compiler.
+The original logical case records still drive every opt1-built/opt2-built byte
+comparison. The complete chunk inventory must match the corpus, including
+multiplicity, so a duplicated chunk cannot replace a missing one. The plan is
+reconstructed and checked before invocation; existing
+outputs fail rather than acting as cache hits. Alias copies require a nonempty
+regular canonical output and exact byte equality. Source-set and compiler
+digests must remain unchanged through the gate. Reuse never crosses chunks or
+compiler identities, and all four independently timed selfhost compiles and
+both compilers' standalone sentinels remain mandatory. The 64-entry limit counts
+logical cases, including aliases. Run `scripts/verify-build-invariance-batch.sh`
+for the planner, boundary, ownership and fresh-output failure checks.
+
+The four selfhost compiles whose wall time `scripts/check-ci-timing-budgets.sh`
+budgets run alone, before anything else, so concurrency never enters those
+rows. Every other chunk of both producers and the backend-tests build are jobs
+of one worker pool (`TYPELISP_BUILD_INVARIANCE_WORKERS`, 1-3, default 2; 1
+reproduces the serial order). Each pooled job runs through
+`scripts/run-memory-bounded.sh` with swap disabled and a 600 s timeout: 8192 MiB
+for the backend-tests build and both producers' complete codegen smoke (measured
+peaks 7.3 and 5.2 GiB), 4096 MiB for every other chunk (largest measured peak
+2.7 GiB, ordinary 64-case chunks about 0.4 GiB). A job starts only while the
+caps of all running jobs fit 12288 MiB, so no two 8 GiB jobs overlap and the
+bound holds for every worker count; a job whose cap does not fit waits while
+later jobs that fit run. Chunk metrics and the chunk log lines carry each pooled
+chunk's peak, and the reports land in `target/build-invariance/backend-memory/`.
+
+The gate compares a chunk as soon as both producers have emitted it. It passes
+only with exactly one successful result per queued job: a failed, missing or
+foreign result, a job left running, an aborted pool and a worker that exits
+without reporting all fail. After any failure the running jobs finish, no
+further job starts, and the rows that did run are still published. Jobs write
+private timing and metric rows that the gate merges in queue order, so the
+published rows do not depend on scheduling. The same script covers the queue,
+budget, exactly-once, failed-job, killed-worker and caller-abort cases with
+real concurrent workers. CI runs
+these helper checks on Linux only, like the gate they serve: the negative cases
+need real symbolic links, which Git Bash on the Windows runner cannot create.
 
 `verify-tlci-native-route-stress.sh` additionally appends successful or failed
 `native-compile` and `source-compile` rows with their real process statuses, plus
@@ -1412,9 +1668,24 @@ TYPELISP_BIN=$tl ./scripts/check-codegen-target-parity.sh
 scripts/ci-verify.sh
 ```
 
-`scripts/check-tl-lint.sh` runs one batched `typelisp lint --check` over tracked
-TypeLisp source units and fails CI on any finding. Plain `typelisp lint
-<file.tl>` remains warn-only for reviewable cleanup slices.
+The package-lock CLI fixtures wait for exact staging/commit observations with a
+60-second bound, rechecking the file predicate after a writer terminates to avoid
+a publication/exit race. Readiness does not replace the final child exit-status,
+lock-content, conflict-diagnostic or stage-cleanup assertions. Premature exit and
+timeout print the captured child logs; a staging-directory observation error
+fails immediately with those same diagnostics. `sh scripts/test-package-lock-wait.sh`
+exercises both publication races, unsuccessful writers and the unchanged timeout;
+it is a required gate on Linux and Windows. Refs #7828.
+
+`scripts/check-tl-lint.sh` checks each selected tracked TypeLisp source unit
+once, in batches of at most 32 files by default, and fails CI on any finding.
+Batches split at `src/` boundaries: all files receive the normal, redundant-name
+and supported name-case rules; only tracked compiler/tooling sources receive
+`--deprecated-string-concat` in that same invocation. The concat rejection
+probe remains independent. `TYPELISP_LINT_BATCH_SIZE` must be a positive integer.
+`sh scripts/test-tl-lint-gate.sh` checks exact file/rule coverage, batch bounds,
+legacy capability paths and failure propagation on both CI hosts. Plain
+`typelisp lint <file.tl>` remains warn-only for reviewable cleanup slices.
 
 Run the tests that match the layer you touched. On non-Linux platforms, scripts
 that require native `as`/`ld` either no-op by design or should be run through a
@@ -1437,3 +1708,22 @@ Linux environment.
 - Prefer naming conventions and representative examples in docs and comments;
   avoid maintaining long file lists that will go stale.
 - Run the focused tests for the layer touched, plus `typelisp fmt --check`.
+
+
+## Linux async process reservation
+
+`scripts/verify-process-runtime-linux.sh` builds and runs two modes of
+`tests/integration/process_runtime_linux_failures.tl` through the assembly fallback.
+The fault mode enables `process-linux-test-hooks`, reducing registry capacity to
+four. It holds four child capabilities, verifies exhaustion returns the typed
+spawn error before any process syscall, and checks slot reuse and cleanup. Four
+threads also reserve all slots concurrently, reject cloned authority, and release
+and reuse the reservations. Existing syscall faults, reverse waits and stale
+capability checks remain in the same mode.
+
+The `process-child-concurrency-test` mode does not enable fault hooks: their
+counters are deliberately single-threaded. Four threads each perform 32 failed
+execs and 32 successful starts/waits against the native runtime. The final check
+requires unchanged descriptor count and no remaining children. Both modes must
+exit 42 with the exact metrics line and empty stderr; a compiler or runtime
+failure in either fails the gate.

@@ -11,6 +11,19 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
+. "$ROOT/scripts/lib-ci-gate-ledger.sh"
+
+# Listing is read-only and must return before any runtime initialization.
+if [ "${1:-}" = --list-gates ]; then
+    if [ "$#" -ne 2 ]; then
+        echo "usage: scripts/ci-verify.sh --list-gates linux|windows" >&2
+        exit 2
+    fi
+    ci_gate_ledger_load "$ROOT/scripts/ci-gates.tsv" "$2"
+    printf 'id\thosts\tlabel\tneeds\n%s\n' "$CI_GATE_LEDGER_ROWS"
+    exit 0
+fi
+
 . "$ROOT/scripts/lib-linux-entry.sh"
 . "$ROOT/scripts/lib-ci-timing.sh"
 . "$ROOT/scripts/lib-benchmark-ci-cases.sh"
@@ -18,7 +31,9 @@ cd "$ROOT"
 
 usage() {
     cat >&2 <<'EOF'
-usage: scripts/ci-verify.sh
+usage: scripts/ci-verify.sh [--list-gates linux|windows]
+
+--list-gates prints the validated required host inventory without running CI.
 
 Runs the repository's CI verification gate.
 If TYPELISP_BIN is unset, downloads stage0-latest with scripts/fetch-stage0.sh.
@@ -48,19 +63,20 @@ case "$(uname -s)" in
         ;;
 esac
 
+ci_gate_ledger_load "$ROOT/scripts/ci-gates.tsv" "$HOST_OS"
+
 # Same-run compiler reuse is fail-closed.  The token prevents a prior run's
 # path/metadata pair from being accepted even when it happens to name an
-# identical file, while the optional trace omits the token and stays diffable.
+# identical file. Every CI run owns a paired trace; the journal omits the token
+# and stays diffable. Standalone gates may still run without either setting.
 TYPELISP_CI_COMPILER_ARTIFACT_RUN_TOKEN="${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-$HOST_OS-$$"
-export TYPELISP_CI_COMPILER_ARTIFACT_RUN_TOKEN
-if [ -n "${TYPELISP_CI_COMPILER_ARTIFACT_TRACE:-}" ]; then
-    case "$TYPELISP_CI_COMPILER_ARTIFACT_TRACE" in
-        /* | [A-Za-z]:[/\\]*) ;;
-        *) TYPELISP_CI_COMPILER_ARTIFACT_TRACE="$ROOT/$TYPELISP_CI_COMPILER_ARTIFACT_TRACE" ;;
-    esac
-    export TYPELISP_CI_COMPILER_ARTIFACT_TRACE
-    ci_compiler_artifact_trace_init "$TYPELISP_CI_COMPILER_ARTIFACT_TRACE"
-fi
+TYPELISP_CI_COMPILER_ARTIFACT_TRACE="${TYPELISP_CI_COMPILER_ARTIFACT_TRACE:-$ROOT/target/ci-compiler-artifacts/trace.tsv}"
+case "$TYPELISP_CI_COMPILER_ARTIFACT_TRACE" in
+    /* | [A-Za-z]:[/\\]*) ;;
+    *) TYPELISP_CI_COMPILER_ARTIFACT_TRACE="$ROOT/$TYPELISP_CI_COMPILER_ARTIFACT_TRACE" ;;
+esac
+export TYPELISP_CI_COMPILER_ARTIFACT_RUN_TOKEN TYPELISP_CI_COMPILER_ARTIFACT_TRACE
+ci_compiler_artifact_trace_init "$TYPELISP_CI_COMPILER_ARTIFACT_TRACE"
 
 BENCHMARK_CORRECTNESS_CASES=
 OPT2_CORRECTNESS_CASES=
@@ -107,7 +123,8 @@ ensure_executable() {
 ensure_executable "seed" "$SEED_TYPELISP_BIN"
 
 run_gate() {
-    label=$1
+    ci_gate_ledger_enter "$1" || return $?
+    label=$CI_GATE_LEDGER_LABEL
     shift
     previous_timing_gate=${TYPELISP_CI_TIMING_GATE:-}
     TYPELISP_CI_TIMING_GATE=$label
@@ -147,6 +164,7 @@ run_gate() {
     else
         echo "[ci-verify] FAIL $label (${elapsed}s, exit $status)" >&2
     fi
+    ci_gate_ledger_leave "$status" || return $?
     return "$status"
 }
 
@@ -187,45 +205,53 @@ required_gate_unavailable() {
 # Validate the complete CLI gate inventory before the bootstrap and all of its
 # expensive owners. --self-test exercises fail-closed diagnostics, then checks
 # production annotations, counts, duplicates, and delegated fixture counts.
-run_gate "CLI gate inventory and ownership" scripts/check-cli-gate-coverage.sh --self-test
-run_gate "x64 executable template registry coverage" scripts/check-x64-executable-template-registry.sh
+run_gate cli-gate-inventory-and-ownership scripts/check-cli-gate-coverage.sh --self-test
+run_gate ci-gate-ledger-self-tests sh scripts/test-ci-gate-ledger.sh
+run_gate x64-executable-template-registry-coverage scripts/check-x64-executable-template-registry.sh
 
 # Harness-only checks run before the expensive bootstrap. Source-owned payload
 # verification uses the branch-built compiler because compression is part of
 # the new loader surface.
-run_gate "CI timing helper self-tests" scripts/verify-ci-timing.sh
+run_gate ci-timing-helper-self-tests scripts/verify-ci-timing.sh
+run_gate work-queue-fetch-boundary-self-tests sh scripts/test-fetch-work-queue.sh
 run_gate \
-    "cross-mode differential oracle self-tests" \
+    cross-mode-differential-oracle-self-tests \
     scripts/verify-cross-mode-differential.sh \
     --self-test
 if [ "$HOST_OS" = linux ]; then
     run_gate \
-        "Linux resident memory limit helper self-tests" \
+        linux-resident-memory-limit-helper-self-tests \
         scripts/verify-linux-memory-limit.sh
 else
     run_gate \
-        "Windows Job Object memory limit helper self-tests" \
+        windows-job-object-memory-limit-helper-self-tests \
         powershell.exe -NoProfile -ExecutionPolicy Bypass \
         -File scripts/verify-windows-memory-limit.ps1
 fi
 run_gate \
-    "semantic-index benchmark report and termination self-tests" \
+    semantic-index-benchmark-report-and-termination-self-tests \
     scripts/benchmark-semantic-index.sh \
     --self-test
 run_gate \
-    "embedded stdlib TLCI resource verifier self-tests" \
+    embedded-stdlib-tlci-resource-verifier-self-tests \
     scripts/verify-embedded-stdlib-tlci-resources.sh --self-test
 # The stage0, fixpoint, and embedded-image builds all stamp the HEAD commit into
 # their output. CI only ever runs the success path, so the diagnostic for a
 # checkout git cannot resolve has no other coverage.
-run_gate "build provenance helper self-tests" scripts/verify-build-provenance.sh
+run_gate build-provenance-helper-self-tests scripts/verify-build-provenance.sh
+# The batch plan helper serves only the Linux build-invariance gate, and its
+# negative cases need real symbolic links, which Git Bash cannot create.
+if [ "$HOST_OS" = linux ]; then
+    run_gate build-invariance-batch-reuse-self-tests scripts/verify-build-invariance-batch.sh
+fi
 run_gate \
-    "CI compiler artifact provenance self-tests" \
+    ci-compiler-artifact-provenance-self-tests \
     scripts/verify-ci-compiler-artifacts.sh
+run_gate ci-compiler-artifact-startup-self-tests sh scripts/test-ci-artifact-run-setup.sh
 # Keep current-mangling module/clone attribution pinned without making code
 # size itself a CI budget. Linked-object measurement remains an opt-in report.
 run_gate \
-    "selfhost linked-size attribution parser self-tests" \
+    selfhost-linked-size-attribution-parser-self-tests \
     scripts/analyze-selfhost-build-asm-size.sh \
     --self-test
 # The seed capability probe that decides the legacy global shared-view cfg only
@@ -234,73 +260,77 @@ run_gate \
 # with stub compilers so a mis-selected cfg fails here, not in the publication
 # workflow that CI never rehearses.
 run_gate \
-    "bootstrap seed global shared-view probe self-tests" \
+    bootstrap-seed-global-shared-view-probe-self-tests \
     scripts/verify-bootstrap-seed-global-views.sh
 # Help text lives in src/main.tl and option parsing in src/<name>_cli_core.tl,
 # so a flag can be added without the text moving. The existing CLI gates assert
 # that help output exists, not that it matches what the parser accepts.
 run_gate \
-    "CLI help surface" \
+    cli-help-surface \
     scripts/check-cli-help-surface.sh \
     --self-test
 run_gate \
-    "CI timing budget self-tests" \
+    ci-timing-budget-self-tests \
     scripts/check-ci-timing-budgets.sh \
     --self-test
 run_gate \
-    "TLCI native route size ratchet self-tests" \
+    tlci-native-route-size-ratchet-self-tests \
     scripts/check-tlci-native-route-size.sh \
     --self-test
 # A verify-*/check-* script that nothing invokes fails nothing. Two ISPC
 # correctness gates survived that way for months (#5690); this sweep makes the
 # next one a red CI run instead of silent dead weight.
 run_gate \
-    "gate reachability" \
+    gate-reachability \
     scripts/check-gate-reachability.sh \
     --self-test
 run_gate \
-    "zero-cons structural classifier self-tests" \
+    zero-cons-structural-classifier-self-tests \
     scripts/check-zero-cons.sh \
     --self-test
 run_gate \
-    "zero-cons fixture and embedded source invariant" \
+    zero-cons-fixture-and-embedded-source-invariant \
     scripts/check-zero-cons.sh \
     --fixtures
 run_gate \
-    "SPMD AVX-512 instruction harness self-tests" \
+    spmd-avx-512-instruction-harness-self-tests \
     scripts/measure-spmd-avx512-instructions.sh \
     --self-test
 run_gate \
-    "SPMD mode instruction-count harness self-tests" \
+    spmd-mode-instruction-count-harness-self-tests \
     scripts/measure-spmd-mode-instruction-counts.sh \
     --self-test
 run_gate \
-    "C measured-region instruction harness self-tests" \
+    c-measured-region-instruction-harness-self-tests \
     scripts/measure-instruction-counts.sh \
     --self-test \
     --output target/instruction-count-c-region-self-test
 run_gate \
-    "instruction-count comparison self-tests" \
+    instruction-count-comparison-self-tests \
     scripts/check-instruction-counts.sh \
     --self-test
 run_gate \
-    "CLI tools benchmark repetition self-test" \
+    compiler-scaling-comparison-self-tests \
+    scripts/check-compiler-scaling.sh \
+    --self-test
+run_gate \
+    cli-tools-benchmark-repetition-self-test \
     sh \
     scripts/benchmark-cli-tools.sh \
     --self-test
 run_gate \
-    "stage0 release publication verifier self-tests" \
+    stage0-release-publication-verifier-self-tests \
     scripts/verify-stage0-release.sh \
     --self-test
 run_gate \
-    "stage0 latest staged publication self-tests" \
+    stage0-latest-staged-publication-self-tests \
     scripts/publish-stage0-latest.sh \
     --self-test
 run_gate \
-    "stage0 publication workflow policy" \
+    stage0-publication-workflow-policy \
     scripts/verify-stage0-workflow-policy.sh
 run_gate \
-    "docs publication workflow policy" \
+    docs-publication-workflow-policy \
     scripts/verify-docs-workflow-policy.sh
 if [ "$HOST_OS" = windows ]; then
     BOOTSTRAP_BENCH_POWERSHELL=powershell.exe
@@ -313,7 +343,7 @@ if ! command -v "$BOOTSTRAP_BENCH_POWERSHELL" >/dev/null 2>&1; then
         "missing PowerShell executable: $BOOTSTRAP_BENCH_POWERSHELL"
 fi
 run_gate \
-    "bootstrap benchmark command-construction self-test" \
+    bootstrap-benchmark-command-construction-self-test \
     "$BOOTSTRAP_BENCH_POWERSHELL" \
     -NoProfile \
     -ExecutionPolicy Bypass \
@@ -433,8 +463,8 @@ rm -f "$STAGE1_PATH_FILE" "$STAGE2_PATH_FILE" "$STAGE2_METADATA_FILE"
 TYPELISP_BOOTSTRAP_STAGE1_PATH_FILE=$STAGE1_PATH_FILE
 TYPELISP_BOOTSTRAP_STAGE2_PATH_FILE=$STAGE2_PATH_FILE
 export TYPELISP_BOOTSTRAP_STAGE1_PATH_FILE TYPELISP_BOOTSTRAP_STAGE2_PATH_FILE
-run_gate "bootstrap adaptive control flow" scripts/verify-bootstrap-fixpoint-control.sh
-run_gate "bootstrap fixpoint" scripts/check-bootstrap-fixpoint.sh "$SEED_TYPELISP_BIN"
+run_gate bootstrap-adaptive-control-flow scripts/verify-bootstrap-fixpoint-control.sh
+run_gate bootstrap-fixpoint scripts/check-bootstrap-fixpoint.sh "$SEED_TYPELISP_BIN"
 unset TYPELISP_BOOTSTRAP_STAGE1_PATH_FILE TYPELISP_BOOTSTRAP_STAGE2_PATH_FILE
 if [ ! -s "$STAGE1_PATH_FILE" ]; then
     required_gate_unavailable "bootstrap previous-stage compiler capture" \
@@ -484,7 +514,7 @@ TYPELISP_BOOTSTRAP_TLCI_MUTATION=1
 export TYPELISP_BOOTSTRAP_CFG TYPELISP_BOOTSTRAP_WORKDIR
 export TYPELISP_BOOTSTRAP_SKIP_CLI_SMOKE TYPELISP_BOOTSTRAP_TLCI_MUTATION
 run_gate \
-    "scratch-vreg + TLCI mutation bootstrap fixpoint" \
+    scratch-vreg-tlci-mutation-bootstrap-fixpoint \
     scripts/check-bootstrap-fixpoint.sh \
     "$STAGE2_BIN"
 unset TYPELISP_BOOTSTRAP_CFG TYPELISP_BOOTSTRAP_WORKDIR
@@ -512,7 +542,7 @@ fi
 # identical while limiting job-level memory pressure before the gate.
 # The current cli.tl emits stage1-qualified symbols, so the manifest uses the
 # stage1 expectation mode on both hosts.
-run_with_compiler "$STAGE2_BIN" "stage2 selfhost compile manifest" env TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE=stage1 scripts/verify-selfhost-compile-manifest.sh
+run_with_compiler "$STAGE2_BIN" stage2-selfhost-compile-manifest env TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE=stage1 scripts/verify-selfhost-compile-manifest.sh
 MANIFEST_ASSEMBLY_DIGESTS="$ROOT/target/ci-verify-selfhost-manifest.sha256"
 MANIFEST_ASSEMBLY_PATH_FILE="$ROOT/target/ci-verify-selfhost-manifest.path"
 MANIFEST_ASSEMBLY_METADATA_FILE="$ROOT/target/ci-verify-selfhost-manifest.meta"
@@ -531,9 +561,9 @@ ci_compiler_artifact_publish \
     'TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE=stage1,TYPELISP_COMPILE_MANIFEST_BATCH_SIZE=host-default' \
     assembly-set-manifest "$MANIFEST_ASSEMBLY_DIGESTS" \
     "$CI_ARTIFACT_MANIFEST_ARGV"
-run_with_compiler "$STAGE2_BIN" "stage2 regalloc census compiler build" scripts/verify-regalloc-census.sh
-run_with_compiler "$STAGE2_BIN" "embedded stdlib build payload" scripts/verify-embedded-stdlib-payload.sh
-run_with_compiler "$STAGE2_BIN" "embedded stdlib tlci image" scripts/verify-embedded-stdlib-tlci.sh
+run_with_compiler "$STAGE2_BIN" stage2-regalloc-census-compiler-build scripts/verify-regalloc-census.sh
+run_with_compiler "$STAGE2_BIN" embedded-stdlib-build-payload scripts/verify-embedded-stdlib-payload.sh
+run_with_compiler "$STAGE2_BIN" embedded-stdlib-tlci-image scripts/verify-embedded-stdlib-tlci.sh
 EMBEDDED_TLCI_BUNDLE="$ROOT/target/ci-verify-embedded-stdlib-tlci.sha256"
 EMBEDDED_TLCI_PATH_FILE="$ROOT/target/ci-verify-embedded-stdlib-tlci.path"
 EMBEDDED_TLCI_METADATA_FILE="$ROOT/target/ci-verify-embedded-stdlib-tlci.meta"
@@ -568,28 +598,31 @@ ci_compiler_artifact_require \
     assembly-set-manifest - "$CI_ARTIFACT_MANIFEST_ARGV"
 ci_compiler_artifact_verify_sha256_manifest \
     "$ROOT" "$CI_COMPILER_ARTIFACT_PATH"
-run_with_compiler "$STAGE2_BIN" "stage2 deterministic assembly" env TYPELISP_DETERMINISTIC_ASM_MANIFEST_DIR="$ROOT/target/selfhost-compile-manifest" scripts/check-deterministic-asm.sh
-run_gate "TypeLisp format compiler selection control" scripts/check-tl-format.sh --self-test-current-compiler-mode
-run_with_compiler "$STAGE2_BIN" "TypeLisp source formatting" env TYPELISP_FORMAT_COMPILER_IS_CURRENT_TREE=1 scripts/check-tl-format.sh
-run_with_compiler "$STAGE2_BIN" "large CRLF formatter diff" scripts/verify-format-large-crlf.sh
-run_with_compiler "$STAGE2_BIN" "TypeLisp source lint" scripts/check-tl-lint.sh
+run_with_compiler "$STAGE2_BIN" stage2-deterministic-assembly env TYPELISP_DETERMINISTIC_ASM_MANIFEST_DIR="$ROOT/target/selfhost-compile-manifest" scripts/check-deterministic-asm.sh
+run_gate typelisp-format-compiler-selection-control scripts/check-tl-format.sh --self-test-current-compiler-mode
+run_with_compiler "$STAGE2_BIN" typelisp-source-formatting env TYPELISP_FORMAT_COMPILER_IS_CURRENT_TREE=1 scripts/check-tl-format.sh
+run_with_compiler "$STAGE2_BIN" large-crlf-formatter-diff scripts/verify-format-large-crlf.sh
+run_gate typelisp-lint-gate-coverage-self-tests sh scripts/test-tl-lint-gate.sh
+run_with_compiler "$STAGE2_BIN" typelisp-source-lint scripts/check-tl-lint.sh
 # The freshly bootstrapped compiler (and the programs it builds) must depend on
 # no C runtime: kernel32 only on Windows, nothing dynamic on Linux.
-run_with_compiler "$STAGE2_BIN" "no-libc dependency guard" scripts/verify-no-libc.sh
-run_with_compiler "$STAGE2_BIN" "stage2 cli build/run and chooser smoke" scripts/verify-selfhost-cli-build-run.sh
-run_with_compiler "$STAGE2_BIN" "stage2 public tool surface" scripts/verify-public-tools.sh
-run_with_compiler "$STAGE2_BIN" "IR observability golden" scripts/verify-ir-observability.sh
-run_with_compiler "$STAGE2_BIN" "backend safety contract manifest" scripts/verify-backend-safety-manifest.sh
-run_with_compiler "$STAGE2_BIN" "TLCI format corpus" scripts/verify-tlci-corpus.sh
-run_with_compiler "$STAGE2_BIN" "TLCI native boundary manifest" scripts/verify-tlci-boundary-manifest.sh
-run_with_compiler "$STAGE2_BIN" "stage2 result-import harness integrity" scripts/verify-result-import-harness.sh
+run_with_compiler "$STAGE2_BIN" no-libc-dependency-guard scripts/verify-no-libc.sh
+run_gate package-lock-writer-observation-self-tests sh scripts/test-package-lock-wait.sh
+run_with_compiler "$STAGE2_BIN" stage2-cli-build-run-and-chooser-smoke scripts/verify-selfhost-cli-build-run.sh
+run_with_compiler "$STAGE2_BIN" stage2-public-tool-surface scripts/verify-public-tools.sh
+run_with_compiler "$STAGE2_BIN" ir-observability-golden scripts/verify-ir-observability.sh
+run_with_compiler "$STAGE2_BIN" backend-safety-contract-manifest scripts/verify-backend-safety-manifest.sh
+run_with_compiler "$STAGE2_BIN" compiler-arena-debug-native-matrix scripts/verify-compiler-arena-debug.sh
+run_with_compiler "$STAGE2_BIN" tlci-format-corpus scripts/verify-tlci-corpus.sh
+run_with_compiler "$STAGE2_BIN" tlci-native-boundary-manifest scripts/verify-tlci-boundary-manifest.sh
+run_with_compiler "$STAGE2_BIN" stage2-result-import-harness-integrity scripts/verify-result-import-harness.sh
 if [ "$HOST_OS" = linux ]; then
     OPT2_REFERENCE_PATH_FILE="$ROOT/target/ci-verify-opt2-reference.path"
     OPT2_REFERENCE_METADATA_FILE="$ROOT/target/ci-verify-opt2-reference.meta"
     rm -f "$OPT2_REFERENCE_PATH_FILE" "$OPT2_REFERENCE_METADATA_FILE"
     run_with_compiler \
         "$STAGE2_BIN" \
-        "stage2 opt1/opt2 build-invariance" \
+        stage2-opt1-opt2-build-invariance \
         env TYPELISP_BUILD_INVARIANCE_OPT1_REFERENCE_PATH_FILE="$OPT2_REFERENCE_PATH_FILE" \
         scripts/check-build-invariance.sh
     if [ ! -s "$OPT2_REFERENCE_PATH_FILE" ]; then
@@ -601,7 +634,7 @@ if [ "$HOST_OS" = linux ]; then
         required_gate_unavailable "build-invariance opt1 reference handoff" \
             "published assembly is missing or empty: $OPT2_REFERENCE_ASM"
     fi
-    CI_ARTIFACT_INVARIANCE_SOURCES='src,stdlib,tests/integration/native-linux.manifest,scripts/check-build-invariance.sh'
+    CI_ARTIFACT_INVARIANCE_SOURCES='src,stdlib,tests/integration/native-linux.manifest,scripts/check-build-invariance.sh,scripts/lib-build-invariance-batch.sh,scripts/lib-bounded-pool.sh'
     CI_ARTIFACT_INVARIANCE_ARGV='compile src/main.tl -o {output} --target linux-x86_64 --cfg host-defaults --backend-mode scalar --opt-level 1 --stdlib-root stdlib --stdlib-root src'
     ci_compiler_artifact_publish \
         "$ROOT" "$OPT2_REFERENCE_METADATA_FILE" "$OPT2_REFERENCE_PATH_FILE" \
@@ -620,7 +653,7 @@ if [ "$HOST_OS" = linux ]; then
     echo "[ci-verify] opt2 gate reuses build-invariance reference: $OPT2_REFERENCE_ASM"
     run_with_compiler \
         "$STAGE2_BIN" \
-        "stage2 opt2-built CLI compile + cross-fixpoint regression" \
+        stage2-opt2-built-cli-compile-cross-fixpoint-regression \
         env TYPELISP_OPT2_CLI_REFERENCE_ASM="$OPT2_REFERENCE_ASM" \
         scripts/check-opt2-cli-regression.sh
 else
@@ -628,19 +661,19 @@ else
     # standalone reference compile.
     run_with_compiler \
         "$STAGE2_BIN" \
-        "stage2 opt2-built CLI compile + cross-fixpoint regression" \
+        stage2-opt2-built-cli-compile-cross-fixpoint-regression \
         scripts/check-opt2-cli-regression.sh
 fi
-run_with_compiler "$STAGE2_BIN" "stage2 SPMD runtime dispatch" scripts/verify-spmd-runtime-dispatch.sh
-run_with_compiler "$STAGE2_BIN" "stage2 SPMD package calls" scripts/verify-spmd-package-calls.sh
-run_with_compiler "$STAGE2_BIN" "ISPC perfbench loads corpus contract" scripts/verify-ispc-perfbench-loads.sh
-run_with_compiler "$STAGE2_BIN" "ISPC perfbench stores corpus contract" scripts/verify-ispc-perfbench-stores.sh
-run_with_compiler "$STAGE2_BIN" "ISPC perfbench gathers corpus contract" scripts/verify-ispc-perfbench-gathers.sh
-run_with_compiler "$STAGE2_BIN" "ISPC Mandelbrot corpus contract" scripts/verify-ispc-mandelbrot.sh
-run_with_compiler "$STAGE2_BIN" "ISPC point-transform corpus contract" scripts/verify-ispc-point-transform.sh
-run_with_compiler "$STAGE2_BIN" "stage2 repository doctests" scripts/verify-doc-tests.sh
-run_with_compiler "$STAGE2_BIN" "stage2 inline TypeLisp tests" scripts/verify-inline-tests.sh
-run_with_compiler "$STAGE2_BIN" "stage2 prelude macro mutation guard" scripts/verify-prelude-mutation.sh
+run_with_compiler "$STAGE2_BIN" stage2-spmd-runtime-dispatch scripts/verify-spmd-runtime-dispatch.sh
+run_with_compiler "$STAGE2_BIN" stage2-spmd-package-calls scripts/verify-spmd-package-calls.sh
+run_with_compiler "$STAGE2_BIN" ispc-perfbench-loads-corpus-contract scripts/verify-ispc-perfbench-loads.sh
+run_with_compiler "$STAGE2_BIN" ispc-perfbench-stores-corpus-contract scripts/verify-ispc-perfbench-stores.sh
+run_with_compiler "$STAGE2_BIN" ispc-perfbench-gathers-corpus-contract scripts/verify-ispc-perfbench-gathers.sh
+run_with_compiler "$STAGE2_BIN" ispc-mandelbrot-corpus-contract scripts/verify-ispc-mandelbrot.sh
+run_with_compiler "$STAGE2_BIN" ispc-point-transform-corpus-contract scripts/verify-ispc-point-transform.sh
+run_with_compiler "$STAGE2_BIN" stage2-repository-doctests scripts/verify-doc-tests.sh
+run_with_compiler "$STAGE2_BIN" stage2-inline-typelisp-tests scripts/verify-inline-tests.sh
+run_with_compiler "$STAGE2_BIN" stage2-prelude-macro-mutation-guard scripts/verify-prelude-mutation.sh
 COMPILE_PROFILE_CLI_PATH_FILE="$ROOT/target/ci-verify-compile-profile-cli.path"
 COMPILE_PROFILE_CLI_METADATA_FILE="$ROOT/target/ci-verify-compile-profile-cli.meta"
 rm -f "$COMPILE_PROFILE_CLI_PATH_FILE" "$COMPILE_PROFILE_CLI_METADATA_FILE"
@@ -658,7 +691,7 @@ ci_compiler_artifact_verify_sha256_manifest \
     "$ROOT" "$CI_COMPILER_ARTIFACT_PATH"
 run_with_compiler \
     "$STAGE2_BIN" \
-    "stage2 compile-profile verifier" \
+    stage2-compile-profile-verifier \
     env TYPELISP_COMPILE_PROFILE_EMBEDDED_TLCI_REUSE=1 \
     scripts/verify-compile-profile.sh
 unset TYPELISP_COMPILE_PROFILE_CLI_PATH_FILE
@@ -692,108 +725,108 @@ require_compile_profile_cli() {
 }
 run_with_compiler \
     "$STAGE2_BIN" \
-    "embedded stdlib TLCI bounded resource report" \
+    embedded-stdlib-tlci-bounded-resource-report \
     scripts/verify-embedded-stdlib-tlci-resources.sh
 require_compile_profile_cli compile-profile-stress
 run_with_compiler \
     "$COMPILE_PROFILE_BIN" \
-    "TLCI native route sustained stress" \
+    tlci-native-route-sustained-stress \
     scripts/verify-tlci-native-route-stress.sh
 require_compile_profile_cli compile-profile-metadata
 run_with_compiler \
     "$COMPILE_PROFILE_BIN" \
-    "package metadata-only TLCI dependency catalogs" \
+    package-metadata-only-tlci-dependency-catalogs \
     scripts/verify-package-metadata-tlci.sh
 require_compile_profile_cli compile-profile-native-package
 run_with_compiler \
     "$COMPILE_PROFILE_BIN" \
-    "package native TLCI dependency macros" \
+    package-native-tlci-dependency-macros \
     scripts/verify-package-native-tlci.sh
 require_compile_profile_cli compile-profile-surface-package
 run_with_compiler \
     "$COMPILE_PROFILE_BIN" \
-    "package dependency TLCI frontend surfaces" \
+    package-dependency-tlci-frontend-surfaces \
     scripts/verify-package-surface-tlci.sh
-run_with_compiler "$STAGE2_BIN" "stage2 compile-startup-profile verifier" scripts/verify-compile-startup-profile.sh
-run_with_compiler "$STAGE2_BIN" "stage2 allocation-profile verifier" scripts/verify-allocation-profile.sh
-run_with_compiler "$STAGE2_BIN" "stage2 math exp codegen verifier" scripts/verify-math-exp-codegen.sh
-run_with_compiler "$STAGE2_BIN" "stage2 math log codegen verifier" scripts/verify-math-log-codegen.sh
-run_with_compiler "$STAGE2_BIN" "stage2 math pow codegen verifier" scripts/verify-math-pow-codegen.sh
-run_with_compiler "$STAGE2_BIN" "stage2 math trig codegen verifier" scripts/verify-math-trig-codegen.sh
-run_with_compiler "$STAGE2_BIN" "stage2 codegen target parity" scripts/check-codegen-target-parity.sh
-run_with_compiler "$STAGE2_BIN" "stage2 backend target assembly parity" scripts/check-backend-target-asm-parity.sh
-run_with_compiler "$STAGE2_BIN" "stage2 Windows COFF batch plan" scripts/verify-compile-batch-windows-coff.sh
-run_with_compiler "$STAGE2_BIN" "stage2 PIC relocation verifier" scripts/verify-pic-relocations.sh
-run_with_compiler "$STAGE2_BIN" "stage2 COFF relocation-overflow verifier" scripts/verify-coff-relocation-overflow.sh
-run_with_compiler "$STAGE2_BIN" "stage2 safety corpus" scripts/verify-safety-corpus.sh
-run_gate "integration manifest validator self-tests" scripts/verify-integration-manifest-validator.sh
-run_gate "Windows COFF plan validator self-tests" scripts/verify-windows-coff-plan-validator.sh
-run_gate "docs-site search manifest validator self-tests" scripts/verify-doc-site.sh --self-test-search-manifests
-run_gate "integration batch observability" scripts/verify-integration.sh --self-test-batch-observability
-run_gate "integration Windows path normalization" scripts/verify-integration.sh --self-test-path-normalization
-run_with_compiler "$STAGE2_BIN" "integration compile-failure diagnostics" scripts/verify-integration.sh --self-test-empty-compile-diagnostic
+run_with_compiler "$STAGE2_BIN" stage2-compile-startup-profile-verifier scripts/verify-compile-startup-profile.sh
+run_with_compiler "$STAGE2_BIN" stage2-allocation-profile-verifier scripts/verify-allocation-profile.sh
+run_with_compiler "$STAGE2_BIN" stage2-math-exp-codegen-verifier scripts/verify-math-exp-codegen.sh
+run_with_compiler "$STAGE2_BIN" stage2-math-log-codegen-verifier scripts/verify-math-log-codegen.sh
+run_with_compiler "$STAGE2_BIN" stage2-math-pow-codegen-verifier scripts/verify-math-pow-codegen.sh
+run_with_compiler "$STAGE2_BIN" stage2-math-trig-codegen-verifier scripts/verify-math-trig-codegen.sh
+run_with_compiler "$STAGE2_BIN" stage2-codegen-target-parity scripts/check-codegen-target-parity.sh
+run_with_compiler "$STAGE2_BIN" stage2-backend-target-assembly-parity scripts/check-backend-target-asm-parity.sh
+run_with_compiler "$STAGE2_BIN" stage2-windows-coff-batch-plan scripts/verify-compile-batch-windows-coff.sh
+run_with_compiler "$STAGE2_BIN" stage2-pic-relocation-verifier scripts/verify-pic-relocations.sh
+run_with_compiler "$STAGE2_BIN" stage2-coff-relocation-overflow-verifier scripts/verify-coff-relocation-overflow.sh
+run_with_compiler "$STAGE2_BIN" stage2-safety-corpus scripts/verify-safety-corpus.sh
+run_gate integration-manifest-validator-self-tests scripts/verify-integration-manifest-validator.sh
+run_gate windows-coff-plan-validator-self-tests scripts/verify-windows-coff-plan-validator.sh
+run_gate docs-site-search-manifest-validator-self-tests scripts/verify-doc-site.sh --self-test-search-manifests
+run_gate integration-batch-observability scripts/verify-integration.sh --self-test-batch-observability
+run_gate integration-windows-path-normalization scripts/verify-integration.sh --self-test-path-normalization
+run_with_compiler "$STAGE2_BIN" integration-compile-failure-diagnostics scripts/verify-integration.sh --self-test-empty-compile-diagnostic
 if [ "$HOST_OS" = linux ]; then
-    run_gate "integration signal notice capture" scripts/verify-integration.sh --self-test-signal-notice-capture
+    run_gate integration-signal-notice-capture scripts/verify-integration.sh --self-test-signal-notice-capture
 else
     run_gate \
-        "Windows integration linker queue self-test" \
+        windows-integration-linker-queue-self-test \
         powershell.exe \
         -NoProfile \
         -ExecutionPolicy Bypass \
         -File scripts/windows-integration-linker-self-test.ps1
 fi
-run_with_compiler "$STAGE2_BIN" "stage2 native integration corpus" scripts/verify-integration.sh
-run_with_compiler "$STAGE2_BIN" "stage2 must-use metadata and ABI/codegen" scripts/verify-must-use-abi.sh
+run_with_compiler "$STAGE2_BIN" stage2-native-integration-corpus scripts/verify-integration.sh
+run_with_compiler "$STAGE2_BIN" stage2-must-use-metadata-and-abi-codegen scripts/verify-must-use-abi.sh
 if [ "$HOST_OS" = linux ]; then
-    run_with_compiler "$STAGE2_BIN" "stage2 regalloc/backend asm shape gates" scripts/verify-asm-shape-gates.sh
-    run_with_compiler "$STAGE2_BIN" "stage2 Git SHA-1 fixed-round/wipe asm shape gate" scripts/verify-crypto-sha1-git-shape.sh
-    run_with_compiler "$STAGE2_BIN" "stage2 SHA-256 fixed-round/wipe asm shape gate" scripts/verify-crypto-sha256-shape.sh
-    run_with_compiler "$STAGE2_BIN" "stage2 SHA-512 wipe asm shape gate" scripts/verify-crypto-sha512-shape.sh
-    run_with_compiler "$STAGE2_BIN" "stage2 by-value aggregate ABI shape gate" scripts/verify-by-value-aggregate-abi.sh
+    run_with_compiler "$STAGE2_BIN" stage2-regalloc-backend-asm-shape-gates scripts/verify-asm-shape-gates.sh
+    run_with_compiler "$STAGE2_BIN" stage2-git-sha-1-fixed-round-wipe-asm-shape-gate scripts/verify-crypto-sha1-git-shape.sh
+    run_with_compiler "$STAGE2_BIN" stage2-sha-256-fixed-round-wipe-asm-shape-gate scripts/verify-crypto-sha256-shape.sh
+    run_with_compiler "$STAGE2_BIN" stage2-sha-512-wipe-asm-shape-gate scripts/verify-crypto-sha512-shape.sh
+    run_with_compiler "$STAGE2_BIN" stage2-by-value-aggregate-abi-shape-gate scripts/verify-by-value-aggregate-abi.sh
 fi
-run_with_compiler "$STAGE2_BIN" "stage2 examples" scripts/verify-examples.sh
-run_gate "benchmark wall-clock harness self-tests" scripts/bench.sh --self-test
+run_with_compiler "$STAGE2_BIN" stage2-examples scripts/verify-examples.sh
+run_gate benchmark-wall-clock-harness-self-tests scripts/bench.sh --self-test
 if [ "$HOST_OS" = linux ]; then
-    run_with_compiler "$STAGE2_BIN" "stage2 benchmark comparison correctness" \
+    run_with_compiler "$STAGE2_BIN" stage2-benchmark-comparison-correctness \
         scripts/bench.sh --correctness --cases "$BENCHMARK_CORRECTNESS_CASES"
 else
-    run_with_compiler "$STAGE2_BIN" "stage2 benchmark comparison correctness" \
+    run_with_compiler "$STAGE2_BIN" stage2-benchmark-comparison-correctness \
         scripts/bench.sh --correctness
 fi
-run_with_compiler "$STAGE2_BIN" "stage2 optimization corpus correctness" scripts/run-optimization-benchmarks.sh --correctness
+run_with_compiler "$STAGE2_BIN" stage2-optimization-corpus-correctness scripts/run-optimization-benchmarks.sh --correctness
 if [ "$HOST_OS" = linux ]; then
-    run_with_compiler "$STAGE2_BIN" "stage2 optimization corpus opt2 runtime correctness" \
+    run_with_compiler "$STAGE2_BIN" stage2-optimization-corpus-opt2-runtime-correctness \
         scripts/run-optimization-benchmarks.sh --correctness --tl-opt-level 2 \
         --cases "$OPT2_CORRECTNESS_CASES"
 else
-    run_with_compiler "$STAGE2_BIN" "stage2 optimization corpus opt2 runtime correctness" \
+    run_with_compiler "$STAGE2_BIN" stage2-optimization-corpus-opt2-runtime-correctness \
         scripts/run-optimization-benchmarks.sh --correctness --tl-opt-level 2
 fi
-run_with_compiler "$STAGE2_BIN" "stage2 stdlib modules and fixtures" scripts/verify-stdlib.sh
-run_with_compiler "$STAGE2_BIN" "stage2 stdlib selfhost verifier" scripts/verify-stdlib-selfhost.sh
-run_with_compiler "$STAGE2_BIN" "stage2 SPMD SIMD comparison" scripts/verify-spmd-simd.sh
+run_with_compiler "$STAGE2_BIN" stage2-stdlib-modules-and-fixtures scripts/verify-stdlib.sh
+run_with_compiler "$STAGE2_BIN" stage2-stdlib-selfhost-verifier scripts/verify-stdlib-selfhost.sh
+run_with_compiler "$STAGE2_BIN" stage2-spmd-simd-comparison scripts/verify-spmd-simd.sh
 run_with_compiler \
     "$STAGE2_BIN" \
-    "stage2 cross-mode semantic/ABI differential" \
+    stage2-cross-mode-semantic-abi-differential \
     env TYPELISP_CROSS_MODE_PREVIOUS_COMPILER="$STAGE1_BIN" \
     scripts/verify-cross-mode-differential.sh
-run_with_compiler "$STAGE2_BIN" "stage2 SPMD lane identity" scripts/verify-spmd-lane-identity.sh
-run_with_compiler "$STAGE2_BIN" "stage2 SPMD broadcast" scripts/verify-spmd-broadcast.sh
+run_with_compiler "$STAGE2_BIN" stage2-spmd-lane-identity scripts/verify-spmd-lane-identity.sh
+run_with_compiler "$STAGE2_BIN" stage2-spmd-broadcast scripts/verify-spmd-broadcast.sh
 DOC_SITE_OUT="$ROOT/target/ci-verify-docs-pages-site"
 export DOC_SITE_OUT
-run_with_compiler "$STAGE2_BIN" "stage2 docs Pages build path" scripts/verify-doc-site.sh
+run_with_compiler "$STAGE2_BIN" stage2-docs-pages-build-path scripts/verify-doc-site.sh
 unset DOC_SITE_OUT
 
 if [ "$HOST_OS" = linux ]; then
-    run_with_compiler "$STAGE2_BIN" "stage2 CLI host-action smoke" scripts/check-stage1-wrapper.sh
-    run_with_compiler "$STAGE2_BIN" "stage2 stdlib documentation" scripts/verify-stdlib-docs.sh
+    run_with_compiler "$STAGE2_BIN" stage2-cli-host-action-smoke scripts/check-stage1-wrapper.sh
+    run_with_compiler "$STAGE2_BIN" stage2-stdlib-documentation scripts/verify-stdlib-docs.sh
     if ! command -v valgrind >/dev/null 2>&1; then
         required_gate_unavailable "Linux instruction-count baseline" \
             "valgrind is required on Linux; install valgrind rather than skipping this gate"
     fi
-    run_with_compiler "$STAGE2_BIN" "Linux instruction-count baseline" \
+    run_with_compiler "$STAGE2_BIN" linux-instruction-count-baseline \
         env TYPELISP_IR_CHECK_COMPILER="$STAGE2_BIN" scripts/check-instruction-counts.sh
-    run_with_compiler "$STAGE2_BIN" "Linux heavy instruction-count baseline" \
+    run_with_compiler "$STAGE2_BIN" linux-heavy-instruction-count-baseline \
         env TYPELISP_IR_CHECK_COMPILER="$STAGE2_BIN" \
         scripts/check-instruction-counts.sh \
         --baseline perf/insn-exec-heavy-baseline.tsv \
@@ -801,11 +834,13 @@ if [ "$HOST_OS" = linux ]; then
         --benchmarks-only \
         --runs 1 \
         --output target/instruction-count-heavy
-    run_with_compiler "$STAGE2_BIN" "stage2 native link generated programs" scripts/verify-native-link-linux.sh
-    run_with_compiler "$STAGE2_BIN" "stage2 rooted Linux filesystem boundary" scripts/verify-fs-rooted-linux.sh
-    run_with_compiler "$STAGE2_BIN" "stage2 Linux process failure boundary" scripts/verify-process-runtime-linux.sh
+    run_with_compiler "$STAGE2_BIN" linux-compiler-scaling-budgets \
+        scripts/check-compiler-scaling.sh "$STAGE2_BIN"
+    run_with_compiler "$STAGE2_BIN" stage2-native-link-generated-programs scripts/verify-native-link-linux.sh
+    run_with_compiler "$STAGE2_BIN" stage2-rooted-linux-filesystem-boundary scripts/verify-fs-rooted-linux.sh
+    run_with_compiler "$STAGE2_BIN" stage2-linux-process-failure-boundary scripts/verify-process-runtime-linux.sh
 else
-    run_with_compiler "$STAGE2_BIN" "windows native link build/run" scripts/verify-native-link-windows.sh
+    run_with_compiler "$STAGE2_BIN" windows-native-link-build-run scripts/verify-native-link-windows.sh
     echo
     echo "[ci-verify] Linux-only gates not applicable on Windows:"
     echo "[ci-verify]   opt1/opt2 build-invariance, host-action smoke (as/ld),"
@@ -814,12 +849,12 @@ else
     echo "[ci-verify]   rooted Linux filesystem and process failure boundaries"
 fi
 
-if [ -n "${TYPELISP_CI_COMPILER_ARTIFACT_TRACE:-}" ]; then
-    run_gate \
-        "CI compiler artifact hosted trace completeness" \
-        scripts/verify-ci-compiler-artifacts.sh \
-        --trace "$TYPELISP_CI_COMPILER_ARTIFACT_TRACE" "$HOST_OS"
-fi
+run_gate \
+    ci-compiler-artifact-hosted-trace-completeness \
+    scripts/verify-ci-compiler-artifacts.sh \
+    --trace "$TYPELISP_CI_COMPILER_ARTIFACT_TRACE" "$HOST_OS"
+
+ci_gate_ledger_finish
 
 if ci_timing_enabled; then
     ci_timing_record_verification_complete "$CI_VERIFY_STARTED_MS" 0

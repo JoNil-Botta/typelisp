@@ -8,7 +8,7 @@
   (define (test-zero-digest [message : String]) : sha.Sha256Digest
     (begin
       (test.assert-true false message)
-      (sha.Sha256Digest (init)))))
+      (sha.Sha256Digest (make-array u8 32)))))
 
 ;: Require one successful streaming update.
 (cfg
@@ -334,7 +334,7 @@
             1
             "SHA-256 invalid state remains unchanged")))
       (let
-        [block : (Array u8 64) (init)]
+        [block : (Array u8 64) (make-array u8 64)]
         (begin
           (sha.write-bit-length! (&mut block) (cast 1 : u64))
           (test.assert-i64-eq
@@ -379,7 +379,7 @@
       [input : (& text bytes) (byte_buf.str-as-bytes (& text))]
       [expected : sha.Sha256Digest (test-digest input)]
       [state : sha.Sha256State (sha.new)]
-      [output : (Array u8 32) (init)]
+      [output : (Array u8 32) (make-array u8 32)]
       [source : (Ptr u8)
         (unsafe
           (byte_buf.bytes-data input))]
@@ -406,7 +406,7 @@
           (= (array-ref state.words 0) (cast 0 : u32))
           "SHA-256 consumed state wipe")
         (let
-          [duplicate-output : (Array u8 32) (init)]
+          [duplicate-output : (Array u8 32) (make-array u8 32)]
           [duplicate-sink : (MutPtr u8)
             (unsafe
               (ptr-cast (ptr-addr-of duplicate-output) : (MutPtr u8)))]
@@ -421,7 +421,7 @@
               "SHA-256 duplicate finalize leaves sink unchanged")))
         (let
           [rejected-state : sha.Sha256State (sha.new)]
-          [rejected-output : (Array u8 33) (init)]
+          [rejected-output : (Array u8 33) (make-array u8 33)]
           [rejected-sink : (MutPtr u8)
             (unsafe
               (ptr-cast (ptr-addr-of rejected-output) : (MutPtr u8)))]

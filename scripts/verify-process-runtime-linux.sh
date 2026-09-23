@@ -50,43 +50,45 @@ fail() {
 }
 
 SOURCE="$ROOT/tests/integration/process_runtime_linux_failures.tl"
-ASM="$WORKDIR/process-runtime-linux.s"
-OBJ="$WORKDIR/process-runtime-linux.o"
-BIN="$WORKDIR/process-runtime-linux"
+for MODE in faults concurrency; do
+    ASM="$WORKDIR/$MODE.s"
+    OBJ="$WORKDIR/$MODE.o"
+    BIN="$WORKDIR/$MODE"
+    case "$MODE" in
+        faults) CFG=process-linux-test-hooks ;;
+        concurrency) CFG=process-child-concurrency-test ;;
+    esac
+    echo "[process-runtime-linux] compile assembly fallback: $MODE"
+    "$COMPILER" compile "$SOURCE" -o "$ASM" \
+        --target linux-x86_64 --backend-mode scalar \
+        --cfg "$CFG" --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT" \
+        > "$WORKDIR/$MODE.compile.stdout" 2> "$WORKDIR/$MODE.compile.stderr" || {
+            cat "$WORKDIR/$MODE.compile.stdout" "$WORKDIR/$MODE.compile.stderr" >&2
+            fail "$MODE fixture compile failed"
+        }
+    as "$ASM" -o "$OBJ"
+    ld "$OBJ" -o "$BIN" -e _tl_start
 
-echo "[process-runtime-linux] compile assembly fallback with fault hooks"
-"$COMPILER" compile "$SOURCE" -o "$ASM" \
-    --target linux-x86_64 --backend-mode scalar \
-    --cfg process-linux-test-hooks --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT" \
-    > "$WORKDIR/compile.stdout" 2> "$WORKDIR/compile.stderr" || {
-        [ ! -s "$WORKDIR/compile.stdout" ] || cat "$WORKDIR/compile.stdout" >&2
-        [ ! -s "$WORKDIR/compile.stderr" ] || cat "$WORKDIR/compile.stderr" >&2
-        fail "process runtime fixture compile failed"
+    set +e
+    "$BIN" > "$WORKDIR/$MODE.stdout" 2> "$WORKDIR/$MODE.stderr"
+    STATUS=$?
+    set -e
+    [ "$STATUS" -eq 42 ] || {
+        cat "$WORKDIR/$MODE.stdout" "$WORKDIR/$MODE.stderr" >&2
+        fail "$MODE fixture expected exit 42, got $STATUS"
     }
-as "$ASM" -o "$OBJ"
-ld "$OBJ" -o "$BIN" -e _tl_start
-
-set +e
-"$BIN" > "$WORKDIR/run.stdout" 2> "$WORKDIR/run.stderr"
-STATUS=$?
-set -e
-
-[ "$STATUS" -eq 42 ] || {
-    [ ! -s "$WORKDIR/run.stdout" ] || cat "$WORKDIR/run.stdout" >&2
-    [ ! -s "$WORKDIR/run.stderr" ] || cat "$WORKDIR/run.stderr" >&2
-    fail "process runtime fixture expected exit 42, got $STATUS"
-}
-[ ! -s "$WORKDIR/run.stderr" ] || {
-    cat "$WORKDIR/run.stderr" >&2
-    fail "process runtime fixture wrote stderr"
-}
-[ "$(wc -l < "$WORKDIR/run.stdout")" -eq 1 ] ||
-    fail "process runtime fixture did not write one metrics line"
-METRICS=$(sed -n '1p' "$WORKDIR/run.stdout")
-case "$METRICS" in
-    "process-linux-metrics ticks="*" alloc-bytes="*" fds="*" zombies=0 syscalls=15") ;;
-    *) fail "unexpected process runtime metrics: $METRICS" ;;
-esac
-
-echo "[process-runtime-linux] $METRICS"
+    [ ! -s "$WORKDIR/$MODE.stderr" ] || {
+        cat "$WORKDIR/$MODE.stderr" >&2
+        fail "$MODE fixture wrote stderr"
+    }
+    [ "$(wc -l < "$WORKDIR/$MODE.stdout")" -eq 1 ] ||
+        fail "$MODE fixture did not write one metrics line"
+    METRICS=$(sed -n '1p' "$WORKDIR/$MODE.stdout")
+    case "$MODE:$METRICS" in
+        "faults:process-linux-metrics ticks="*" alloc-bytes="*" fds="*" zombies=0 syscalls=15") ;;
+        "concurrency:process-linux-concurrency workers=4 starts=128 failed-execs=128 zombies=0") ;;
+        *) fail "unexpected $MODE metrics: $METRICS" ;;
+    esac
+    echo "[process-runtime-linux] $METRICS"
+done
 echo "Process runtime Linux verification passed"

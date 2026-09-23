@@ -6,6 +6,7 @@
 ;; %rsp/%rbp reserved and admit caller-saved integer/XMM registers only for
 ;; values that cannot be clobbered by call emission.
 (import stdlib.io)
+(import stdlib.arena)
 (import stdlib.comptime)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
@@ -327,7 +328,7 @@
             (if (and
               need-edge-precise
               (match func
-                [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+                [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
                   (compiler-reg-blocks-have-phi? blocks)]))
               "regalloc-liveness-census|baseline=1|edge-precise=1\n"
               "regalloc-liveness-census|baseline=1|edge-precise=0\n")]
@@ -335,7 +336,7 @@
         unit)
       (if need-edge-precise
         (match (compiler-reg-global-shared-view func)
-          [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+          [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
             ;; Edge-precise liveness differs from the baseline only at Phi
             ;; instructions (phi inputs attribute to predecessor edges instead
             ;; of the phi block). A phi-free function has identical analyses,
@@ -2107,7 +2108,7 @@
   [representations : ir.CompilerIrRepresentationIndex]
   [metrics : profile_state.CompilerProfileMetrics]) : CompilerRegVarTypes
   (match func
-    [(ir.CompilerIrFunction.Function _ params _ vars blocks)
+    [(ir.CompilerIrFunction.Function _ params _ vars blocks _)
       (let
         [present : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
         [types : (__tl_dyn-array ast.AstType)
@@ -2403,7 +2404,7 @@
   [func : ir.CompilerIrFunction]
   [strict-pairs : bool]) : CompilerRegMoveSeq
   (match (compiler-reg-global-shared-view func)
-    [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+    [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
       (compiler-reg-block-list-moves
         blocks
         (compiler-reg-move-seq-empty)
@@ -2726,7 +2727,7 @@
 (define (compiler-reg-function-alu-prefer-rhs [func : ir.CompilerIrFunction]) : (__tl_dyn-array
     i64)
   (match (compiler-reg-global-shared-view func)
-    [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+    [(ir.CompilerIrFunction.Function _ _ _ vars blocks _)
       (let
         [none : (__tl_dyn-array i64) (__tl_make-array i64 0)]
         [probe : i64
@@ -3179,7 +3180,7 @@
   [eligible : (__tl_dyn-array i64)]
   [prefer-rhs : (__tl_dyn-array i64)]) : CompilerRegMoveSeq
   (match (compiler-reg-global-shared-view func)
-    [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+    [(ir.CompilerIrFunction.Function _ _ _ vars blocks _)
       (let
         [anchors : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
         [defs : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
@@ -3211,7 +3212,7 @@
   [eligible : (__tl_dyn-array i64)]
   [prefer-rhs : (__tl_dyn-array i64)]) : CompilerRegMoveSeq
   (match (compiler-reg-global-shared-view func)
-    [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+    [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
       (compiler-reg-block-list-moves
         (compiler-reg-global-shared-view blocks)
         (compiler-reg-function-destructive-tie-moves
@@ -3225,7 +3226,7 @@
   [func : ir.CompilerIrFunction]
   [strict-pairs : bool]) : CompilerRegMoveSeq
   (match (compiler-reg-global-shared-view func)
-    [(ir.CompilerIrFunction.Function _ _ _ vars _)
+    [(ir.CompilerIrFunction.Function _ _ _ vars _ _)
       (let
         [eligible : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
         (begin
@@ -3354,7 +3355,7 @@
         (compiler-reg-global-shared-view preferences)
         -1)
       (match func
-        [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+        [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
           (compiler-reg-select-false-preference-blocks!
             blocks
             (compiler-reg-global-shared-view preferences))])
@@ -4515,7 +4516,7 @@
   [func : ir.CompilerIrFunction]
   [liveness : live.CompilerFunctionLiveness]) : CompilerRegIntervalSeq
   (match func
-    [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+    [(ir.CompilerIrFunction.Function _ _ _ vars blocks _)
       (let
         [starts : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
         [ends : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
@@ -4702,7 +4703,7 @@
   [liveness : live.CompilerFunctionLiveness]
   [seed-live-in? : bool]) : CompilerRegIntervalSelection
   (match func
-    [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+    [(ir.CompilerIrFunction.Function _ _ _ vars blocks _)
       (let
         [starts : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
         [ends : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
@@ -5352,7 +5353,7 @@
   [mask : (__tl_dyn-array i64)]
   [seed-live-in? : bool]) : (__tl_dyn-array CompilerRegIntervalSeq)
   (match func
-    [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+    [(ir.CompilerIrFunction.Function _ _ _ vars blocks _)
       (let
         [segments : (__tl_dyn-array CompilerRegIntervalSeq)
           (__tl_make-array CompilerRegIntervalSeq vars)]
@@ -5808,7 +5809,7 @@
   [liveness : live.CompilerFunctionLiveness]
   [allow-exit-live-self-loop : bool]) : (__tl_dyn-array i64)
   (match func
-    [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+    [(ir.CompilerIrFunction.Function _ _ _ vars blocks _)
       (let
         [mask : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
         (begin
@@ -6510,7 +6511,7 @@
 ;; (including a self-loop) keeps the full CFG fixpoint.
 (define (compiler-reg-stack-only-block-intervals [func : ir.CompilerIrFunction]) : CompilerRegIntervalSeq
   (match (compiler-reg-global-shared-view func)
-    [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+    [(ir.CompilerIrFunction.Function _ _ _ vars blocks _)
       (match (compiler-reg-global-shared-view blocks)
         [(ir.CompilerIrBlockList.Cons block rest)
           (match (ir.compiler-ir-box-shared-view rest)
@@ -6549,7 +6550,7 @@
 
 (define (compiler-reg-block-intervals [func : ir.CompilerIrFunction]) : CompilerRegIntervalSeq
   (match (compiler-reg-global-shared-view func)
-    [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+    [(ir.CompilerIrFunction.Function _ _ _ vars blocks _)
       (compiler-reg-block-intervals-full vars blocks)]))
 
 ;; When handles-ok? is true (scalar path) 8-byte aggregate handles are register
@@ -7295,7 +7296,7 @@
   [vars : i64]
   [ignore-single-cold-call? : bool]) : CompilerRegParamAssignPlan
   (match (compiler-reg-global-shared-view func)
-    [(ir.CompilerIrFunction.Function _ params _ _ _)
+    [(ir.CompilerIrFunction.Function _ params _ _ _ _)
       (let
         [assignments : CompilerRegAssignmentTable
           (compiler-reg-assignment-table-make vars)]
@@ -8179,24 +8180,51 @@
 ;; prologue/epilogue, or a runtime helper that push/pops them) preserves across
 ;; the call. The scalar zero-call extension is layered on later and separately
 ;; rejects any interval spanning a modeled caller-clobber point.
+;; Register analyses run inside an existing function/planning owner. Avoid
+;; extra arena creation and result cloning for small liveness snapshots; large
+;; snapshots still need an independent lifetime before later analyses begin.
+;; Count 32-bit-set words per instruction conservatively and compare by division
+;; so the estimate cannot overflow. This selects ownership only, never analysis
+;; precision, optimizer work, or register-allocation policy.
+(define (compiler-reg-analysis-needs-scratch?
+  [vars : i64]
+  [blocks : ir.CompilerIrBlockList]) : bool
+  (let
+    [words : i64
+      (if (> vars 0)
+        (+ (/ vars 32) 1)
+        1)]
+    (> (ir.compiler-ir-block-list-instruction-count blocks) (/ 32768 words))))
+
+(defmacro (compiler-reg-with-analysis-scratch
+  [vars : Expr]
+  [blocks : Expr]
+  [body : Expr]) : Expr
+  `(if (compiler-reg-analysis-needs-scratch? ,vars ,blocks)
+    (with-scratch ,body)
+    ,body))
+
 (define (compiler-reg-ineligible-vars-non-params
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]
   [types : CompilerRegVarTypes]
   [target-abi : cabi.CompilerRegTargetAbi]) : live.CompilerLiveI64Set
   (match (compiler-reg-global-shared-view func)
-    [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
-      (compiler-reg-ineligible-memory
+    [(ir.CompilerIrFunction.Function _ _ _ vars blocks _)
+      (compiler-reg-with-analysis-scratch
+        vars
         (compiler-reg-global-shared-view blocks)
-        (compiler-reg-call-arg-vars-blocks-scalar
-          type-segment-bases
-          blocks
-          (compiler-reg-ineligible-non-scalars
-            (compiler-reg-global-shared-view types)
-            (live.compiler-live-set-empty)
-            true)
-          types
-          target-abi))]))
+        (compiler-reg-ineligible-memory
+          (compiler-reg-global-shared-view blocks)
+          (compiler-reg-call-arg-vars-blocks-scalar
+            type-segment-bases
+            blocks
+            (compiler-reg-ineligible-non-scalars
+              (compiler-reg-global-shared-view types)
+              (live.compiler-live-set-empty)
+              true)
+            types
+            target-abi)))]))
 
 ;; SIMD/AVX register planning shares the integer GP allocation quality of the
 ;; scalar path: a value live across a call is NOT force-spilled. The SIMD integer
@@ -8222,7 +8250,7 @@
   [types : CompilerRegVarTypes]
   [intervals : CompilerRegIntervalSeq]) : live.CompilerLiveI64Set
   (match (compiler-reg-global-shared-view func)
-    [(ir.CompilerIrFunction.Function _ params _ _ blocks)
+    [(ir.CompilerIrFunction.Function _ params _ _ blocks _)
       ;; Mask registers have no ABI-nonvolatile subset and remain ineligible
       ;; across calls. Float/vector call constraints are applied by their greedy
       ;; allocators instead: SysV forces a spill, while Win64 admits XMM6-XMM15.
@@ -8669,7 +8697,7 @@
 
 (define (compiler-reg-function-vector-mask-defs [func : ir.CompilerIrFunction]) : live.CompilerLiveUseDef
   (match (compiler-reg-global-shared-view func)
-    [(ir.CompilerIrFunction.Function _ params _ _ blocks)
+    [(ir.CompilerIrFunction.Function _ params _ _ blocks _)
       (let
         [defs : live.CompilerLiveUseDef
           (compiler-reg-spmd-private-param-defs
@@ -9652,7 +9680,7 @@
 (define (compiler-reg-function-def-counts [func : ir.CompilerIrFunction]) : (__tl_dyn-array
     i64)
   (match (compiler-reg-global-shared-view func)
-    [(ir.CompilerIrFunction.Function _ params _ vars blocks)
+    [(ir.CompilerIrFunction.Function _ params _ vars blocks _)
       (let
         [counts : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
         (begin
@@ -9811,7 +9839,7 @@
   [func : ir.CompilerIrFunction]
   [eligible : (__tl_dyn-array i64)]) : (__tl_dyn-array i64)
   (match (compiler-reg-global-shared-view func)
-    [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+    [(ir.CompilerIrFunction.Function _ _ _ vars blocks _)
       (let
         [counts : (__tl_dyn-array i64) (compiler-reg-function-def-counts func)]
         [phi-defs : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
@@ -10364,7 +10392,7 @@
   [type-info : CompilerRegVarTypes]
   [interval-index : CompilerRegIntervalIndex]) : (__tl_dyn-array i64)
   (match (compiler-reg-global-shared-view func)
-    [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+    [(ir.CompilerIrFunction.Function _ _ _ vars blocks _)
       (let
         [counts : (__tl_dyn-array i64) (compiler-reg-function-def-counts func)]
         [phi-defs : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
@@ -11184,7 +11212,7 @@
   [parents : (__tl_dyn-array i64)]
   [prefer-rhs : (__tl_dyn-array i64)]) : unit
   (match func
-    [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+    [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
       (compiler-reg-copy-hints-from-binops-blocks!
         blocks
         hints
@@ -11514,7 +11542,7 @@
 
 (define (compiler-reg-call-points [func : ir.CompilerIrFunction]) : live.CompilerLiveI64Set
   (match func
-    [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+    [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
       (match (compiler-reg-call-points-blocks
         blocks
         0
@@ -11929,7 +11957,7 @@
   [func : ir.CompilerIrFunction]
   [kind : i64]) : live.CompilerLiveI64Set
   (match func
-    [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+    [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
       (match (compiler-reg-clobber-kind-points-blocks
         type-segment-bases
         blocks
@@ -12211,7 +12239,7 @@
 
 (define (compiler-reg-direct-call-points [func : ir.CompilerIrFunction]) : live.CompilerLiveI64Set
   (match func
-    [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+    [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
       (match (compiler-reg-direct-call-points-blocks
         blocks
         0
@@ -14305,7 +14333,7 @@
         (compiler-reg-global-shared-view vals)
         vars)
       (match (compiler-reg-global-shared-view func)
-        [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+        [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
           (match (compiler-reg-global-shared-view blocks)
             [(ir.CompilerIrBlockList.Array seq)
               (compiler-reg-collect-remat-seq-from!
@@ -14463,7 +14491,7 @@
 
 (define (compiler-reg-remat-invariant-loads-ok? [func : ir.CompilerIrFunction]) : bool
   (match func
-    [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+    [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
       (not (compiler-reg-remat-blocks-mutates-memory? blocks))]))
 
 ;; ============================================================================
@@ -14983,7 +15011,7 @@
   [func : ir.CompilerIrFunction]
   [types : CompilerRegVarTypes]) : CompilerRegInvariantFacts
   (match (compiler-reg-global-shared-view func)
-    [(ir.CompilerIrFunction.Function _ params _ vars blocks)
+    [(ir.CompilerIrFunction.Function _ params _ vars blocks _)
       (let
         [n : i64
           (if (< vars 1)
@@ -15652,7 +15680,7 @@
 (define (compiler-reg-function-spill-weights [func : ir.CompilerIrFunction]) : (__tl_dyn-array
     i64)
   (match func
-    [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+    [(ir.CompilerIrFunction.Function _ _ _ vars blocks _)
       (let
         [counts : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
         [weights : (__tl_dyn-array i64)
@@ -15671,7 +15699,7 @@
   [coalesce : CompilerRegCoalesceMap]
   [vars : i64]) : (__tl_dyn-array i64)
   (match (compiler-reg-global-shared-view func)
-    [(ir.CompilerIrFunction.Function _ _ _ fn-vars blocks)
+    [(ir.CompilerIrFunction.Function _ _ _ fn-vars blocks _)
       (let
         [raw : (__tl_dyn-array i64) (__tl_make-array i64 fn-vars)]
         [def-status : (__tl_dyn-array i64) (__tl_make-array i64 fn-vars)]
@@ -17126,7 +17154,7 @@
   [start : i64]
   [end : i64]) : bool
   (match func
-    [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+    [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
       (compiler-reg-loop-split-region-crosses-kind-blocks?
         type-segment-bases
         (compiler-reg-global-shared-view blocks)
@@ -19154,7 +19182,7 @@
   [func : ir.CompilerIrFunction]
   [var : i64]) : bool
   (match func
-    [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+    [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
       (let
         [facts : CompilerRegLeafCsrFuseFacts
           (compiler-reg-leaf-csr-fuse-facts-blocks blocks var 0 0)]
@@ -20063,7 +20091,7 @@
             (compiler-reg-global-shared-view seq.slots)]
           [param-vars : live.CompilerLiveI64Set
             (match (compiler-reg-global-shared-view func)
-              [(ir.CompilerIrFunction.Function _ params _ _ _)
+              [(ir.CompilerIrFunction.Function _ params _ _ _ _)
                 (compiler-reg-ineligible-params
                   (compiler-reg-global-shared-view params)
                   (live.compiler-live-set-empty))])]
@@ -20368,7 +20396,8 @@
                                 params
                                 ret-ty
                                 _
-                                _)
+                                _
+                                function-abi)
                               (let
                                 [new-func : ir.CompilerIrFunction
                                   (ir.CompilerIrFunction.Function
@@ -20376,7 +20405,9 @@
                                     params
                                     ret-ty
                                     new-vars
-                                    (compiler-reg-global-shared-view new-blocks))]
+                                    (compiler-reg-global-shared-view new-blocks)
+                                    (compiler-reg-global-shared-view
+                                      function-abi))]
                                 [new-plan : CompilerRegPlan
                                   (compiler-reg-plan-with-call-save-rewrite
                                     (compiler-reg-global-shared-view plan)
@@ -21002,7 +21033,13 @@
                       (ir.compiler-ir-block-list-count
                         (compiler-reg-global-shared-view blocks)))
                       (match func
-                        [(ir.CompilerIrFunction.Function name params ret-ty _ _)
+                        [(ir.CompilerIrFunction.Function
+                            name
+                            params
+                            ret-ty
+                            _
+                            _
+                            function-abi)
                           (compiler-reg-loop-split-rewrite-rounds
                             type-segment-bases
                             target-abi
@@ -21011,7 +21048,8 @@
                               params
                               ret-ty
                               current-vars
-                              (compiler-reg-global-shared-view spliced))
+                              (compiler-reg-global-shared-view spliced)
+                              (compiler-reg-global-shared-view function-abi))
                             spliced
                             in-vars
                             current-vars
@@ -21026,7 +21064,13 @@
                         extra-assignments
                         extra-types))))
                 (match func
-                  [(ir.CompilerIrFunction.Function name params ret-ty _ _)
+                  [(ir.CompilerIrFunction.Function
+                      name
+                      params
+                      ret-ty
+                      _
+                      _
+                      function-abi)
                     (let
                       [merged-assignments : CompilerRegAssignmentTable
                         (compiler-reg-assignment-table-merge
@@ -21040,7 +21084,8 @@
                           params
                           ret-ty
                           next-vars
-                          (compiler-reg-global-shared-view next-blocks))]
+                          (compiler-reg-global-shared-view next-blocks)
+                          (compiler-reg-global-shared-view function-abi))]
                       (compiler-reg-loop-split-rewrite-rounds
                         type-segment-bases
                         target-abi
@@ -21664,7 +21709,13 @@
     (set! compiler-reg-early-exit-bare-label "")
     (set! compiler-reg-early-exit-prefix-count 0)
     (match (compiler-reg-global-shared-view func)
-      [(ir.CompilerIrFunction.Function name params ret-ty vars blocks)
+      [(ir.CompilerIrFunction.Function
+          name
+          params
+          ret-ty
+          vars
+          blocks
+          function-abi)
         (let
           [seq : ir.CompilerIrBlockSeq
             (live.compiler-live-ir-block-list-to-seq blocks)]
@@ -22042,7 +22093,8 @@
                               ret-ty
                               vars
                               (ir.CompilerIrBlockList.Array
-                                (ir.CompilerIrBlockSeq out out-count))))))]))))))])))
+                                (ir.CompilerIrBlockSeq out out-count))
+                              (compiler-reg-global-shared-view function-abi)))))]))))))])))
 
 ;; ---------------------------------------------------------------------------
 ;; Cycle 20: cold-call clobber splitting.
@@ -22424,7 +22476,13 @@
   [func : ir.CompilerIrFunction]
   [representations : ir.CompilerIrRepresentationIndex]) : CompilerRegColdCallRewrite
   (match (compiler-reg-global-shared-view func)
-    [(ir.CompilerIrFunction.Function name params ret-ty vars blocks)
+    [(ir.CompilerIrFunction.Function
+        name
+        params
+        ret-ty
+        vars
+        blocks
+        function-abi)
       (let
         [seq : ir.CompilerIrBlockSeq
           (live.compiler-live-ir-block-list-to-seq
@@ -22519,7 +22577,8 @@
                           ret-ty
                           (+ vars selected-count)
                           (ir.CompilerIrBlockList.Array
-                            (ir.CompilerIrBlockSeq out count)))
+                            (ir.CompilerIrBlockSeq out count))
+                          (compiler-reg-global-shared-view function-abi))
                         vars))))))]))]))
 
 (define (compiler-reg-cold-call-rewrite-function
@@ -22616,7 +22675,7 @@
 
 (define (compiler-reg-call-hole-split-blocks [split : CompilerRegCallHoleSplit]) : ir.CompilerIrBlockList
   (match (compiler-reg-call-hole-split-function split)
-    [(ir.CompilerIrFunction.Function _ _ _ _ blocks) blocks]))
+    [(ir.CompilerIrFunction.Function _ _ _ _ blocks _) blocks]))
 
 (define (compiler-reg-call-hole-split-vars [split : CompilerRegCallHoleSplit]) : i64
   (match split
@@ -25428,7 +25487,7 @@
 
 (define (compiler-reg-function-params [func : ir.CompilerIrFunction]) : ir.CompilerIrParamSeq
   (match func
-    [(ir.CompilerIrFunction.Function _ params _ _ _) params]))
+    [(ir.CompilerIrFunction.Function _ params _ _ _ _) params]))
 
 ;; The weight of the function's entry block -- the frequency at which a prologue
 ;; instruction runs. Block 0 is the entry by construction of every IR builder in
@@ -25552,7 +25611,13 @@
         (if (= selected-count 0)
           none
           (match (compiler-reg-global-shared-view ctx.func)
-            [(ir.CompilerIrFunction.Function name params ret-ty _ _)
+            [(ir.CompilerIrFunction.Function
+                name
+                params
+                ret-ty
+                _
+                _
+                function-abi)
               (let
                 [_carriers : unit
                   (compiler-reg-call-hole-assign-carriers!
@@ -25586,7 +25651,8 @@
                     (compiler-reg-global-shared-view params)
                     ret-ty
                     split-vars
-                    (compiler-reg-global-shared-view split-blocks))]
+                    (compiler-reg-global-shared-view split-blocks)
+                    (compiler-reg-global-shared-view function-abi))]
                 [split-types : CompilerRegVarTypes
                   (compiler-reg-function-var-types-with-representations-and-metrics
                     (compiler-reg-global-shared-view split-func)
@@ -25671,7 +25737,7 @@
   [plan : CompilerRegPlan]
   [temp-start : i64]) : CompilerRegCallHoleSplit
   (match (compiler-reg-global-shared-view func)
-    [(ir.CompilerIrFunction.Function self-name _ _ vars blocks)
+    [(ir.CompilerIrFunction.Function self-name _ _ vars blocks _)
       (let
         [none : CompilerRegCallHoleSplit
           (compiler-reg-call-hole-split-none
@@ -27911,7 +27977,13 @@
         (if (= parked 0)
           none
           (match (compiler-reg-global-shared-view rd.func)
-            [(ir.CompilerIrFunction.Function name params ret-ty _ _)
+            [(ir.CompilerIrFunction.Function
+                name
+                params
+                ret-ty
+                _
+                _
+                function-abi)
               (let
                 [park-blocks : ir.CompilerIrBlockList
                   (compiler-reg-loop-park-rewrite-blocks
@@ -27925,7 +27997,8 @@
                     params
                     ret-ty
                     park-vars
-                    (compiler-reg-global-shared-view park-blocks))]
+                    (compiler-reg-global-shared-view park-blocks)
+                    (compiler-reg-global-shared-view function-abi))]
                 [park-types : CompilerRegVarTypes
                   (compiler-reg-function-var-types-with-representations-and-metrics
                     (compiler-reg-global-shared-view park-func)
@@ -28001,7 +28074,7 @@
   [temp-start : i64]
   [cold-split : bool]) : CompilerRegCallHoleSplit
   (match (compiler-reg-global-shared-view func)
-    [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+    [(ir.CompilerIrFunction.Function _ _ _ vars blocks _)
       (let
         [none : CompilerRegCallHoleSplit
           (compiler-reg-call-hole-split-none
@@ -30763,7 +30836,7 @@
               assignments
               (compiler-reg-call-split-empty))
             (match func
-              [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+              [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
                 (let
                   [depths : (__tl_dyn-array i64)
                     (compiler-reg-function-loop-depths
@@ -32824,7 +32897,7 @@
   [func : ir.CompilerIrFunction]
   [types : CompilerRegVarTypes]) : live.CompilerLiveI64Set
   (match func
-    [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+    [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
       (compiler-reg-group-vars-fixpoint
         (compiler-reg-group-vars-from-types
           type-segment-bases
@@ -35945,7 +36018,7 @@
     (begin
       (compiler-reg-fill-i64-array (compiler-reg-global-shared-view prefs) -1)
       (match func
-        [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+        [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
           (begin
             (compiler-reg-arg-pref-blocks!
               target-abi
@@ -36283,7 +36356,7 @@
     (begin
       (compiler-reg-fill-i64-array (compiler-reg-global-shared-view prefs) -1)
       (match func
-        [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+        [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
           (compiler-reg-float-arg-pref-blocks!
             target-abi
             pool
@@ -36574,7 +36647,7 @@
   [coalesce : CompilerRegCoalesceMap]
   [assignments : CompilerRegAssignmentTable]) : unit
   (match func
-    [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+    [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
       (compiler-reg-float-arg-demote-blocks!
         target-abi
         blocks
@@ -37493,7 +37566,7 @@
     0)
     assignments
     (match (compiler-reg-global-shared-view func)
-      [(ir.CompilerIrFunction.Function _ params _ _ blocks)
+      [(ir.CompilerIrFunction.Function _ params _ _ blocks _)
         (let
           [starts : (__tl_dyn-array i64) interval-index.starts]
           [ends : (__tl_dyn-array i64) interval-index.ends]
@@ -37839,7 +37912,7 @@
   [shift-points : live.CompilerLiveI64Set]
   [low-xmm-points : live.CompilerLiveI64Set]) : unit
   (match func
-    [(ir.CompilerIrFunction.Function _ params _ _ _)
+    [(ir.CompilerIrFunction.Function _ params _ _ _ _)
       (compiler-reg-param-pins-demote-walk!
         params
         assignments
@@ -38198,12 +38271,12 @@
   [call-split : CompilerRegCallSplit]
   [forced-spill-from : i64]) : unit
   (match (compiler-reg-global-shared-view func)
-    [(ir.CompilerIrFunction.Function name _ _ vars blocks)
+    [(ir.CompilerIrFunction.Function name _ _ vars blocks _)
       (let
         [text : String (ir.compiler-ir-symbol-text name)]
         [param-vars : live.CompilerLiveI64Set
           (match (compiler-reg-global-shared-view func)
-            [(ir.CompilerIrFunction.Function _ params _ _ _)
+            [(ir.CompilerIrFunction.Function _ params _ _ _ _)
               (compiler-reg-ineligible-params
                 (compiler-reg-global-shared-view params)
                 (live.compiler-live-set-empty))])]
@@ -38321,20 +38394,20 @@
     [_trace-reset : unit
       (compiler-reg-trace-reasons-reset!
         (match (compiler-reg-global-shared-view func)
-          [(ir.CompilerIrFunction.Function _ _ _ fn-vars _) fn-vars]))]
+          [(ir.CompilerIrFunction.Function _ _ _ fn-vars _ _) fn-vars]))]
     [storage-identity-vars : live.CompilerLiveI64Set
       (let
         [base : live.CompilerLiveI64Set
           (if allow-caller-saved-zero-call
             (match (compiler-reg-global-shared-view func)
-              [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+              [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
                 (compiler-reg-ineligible-memory
                   (compiler-reg-global-shared-view blocks)
                   (live.compiler-live-set-empty))])
             (live.compiler-live-set-empty))]
         (if (>= forced-spill-from 0)
           (match (compiler-reg-global-shared-view func)
-            [(ir.CompilerIrFunction.Function _ _ _ fn-vars _)
+            [(ir.CompilerIrFunction.Function _ _ _ fn-vars _ _)
               (compiler-reg-live-set-insert-range
                 (compiler-reg-global-shared-view base)
                 forced-spill-from
@@ -38605,7 +38678,7 @@
                   [(CompilerRegIntervalSelection.Selection _ cons-idx)
                     (begin
                       (match (compiler-reg-global-shared-view func)
-                        [(ir.CompilerIrFunction.Function _ params _ _ _)
+                        [(ir.CompilerIrFunction.Function _ params _ _ _ _)
                           (compiler-reg-param-intervals-extend-entry!
                             (compiler-reg-global-shared-view params)
                             (compiler-reg-global-shared-view cons-idx))])
@@ -38789,7 +38862,7 @@
         (compiler-reg-coalesce-root-set-from-vars
           (compiler-reg-global-shared-view coalesce)
           (match (compiler-reg-global-shared-view func)
-            [(ir.CompilerIrFunction.Function _ params _ _ _)
+            [(ir.CompilerIrFunction.Function _ params _ _ _ _)
               (compiler-reg-ineligible-params
                 (compiler-reg-global-shared-view params)
                 (live.compiler-live-set-empty))]))
@@ -38802,7 +38875,7 @@
     [param-entry-forbidden : (__tl_dyn-array CompilerRegIdSeq)
       (if allow-caller-saved-zero-call
         (match (compiler-reg-global-shared-view func)
-          [(ir.CompilerIrFunction.Function _ params _ _ _)
+          [(ir.CompilerIrFunction.Function _ params _ _ _ _)
             (compiler-reg-param-entry-forbidden
               type-segment-bases
               (compiler-reg-global-shared-view type-info.representations)
@@ -38856,7 +38929,7 @@
               (array-length interval-index.starts))]
           (begin
             (match (compiler-reg-global-shared-view func)
-              [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+              [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
                 (compiler-reg-priority-keys!
                   (compiler-reg-global-shared-view weights)
                   blocks
@@ -39304,7 +39377,7 @@
         (compiler-reg-global-shared-view intervals))]
     [vars : i64
       (match (compiler-reg-global-shared-view func)
-        [(ir.CompilerIrFunction.Function _ _ _ function-vars _) function-vars])]
+        [(ir.CompilerIrFunction.Function _ _ _ function-vars _ _) function-vars])]
     (compiler-reg-plan-from
       type-segment-bases
       (compiler-reg-global-shared-view func)
@@ -39399,7 +39472,7 @@
         (compiler-reg-global-shared-view intervals))]
     [vars : i64
       (match (compiler-reg-global-shared-view func)
-        [(ir.CompilerIrFunction.Function _ _ _ function-vars _) function-vars])]
+        [(ir.CompilerIrFunction.Function _ _ _ function-vars _ _) function-vars])]
     (compiler-reg-plan-from
       type-segment-bases
       (compiler-reg-global-shared-view func)
@@ -39464,7 +39537,7 @@
 
 (define (compiler-reg-scalar-full-intervals? [func : ir.CompilerIrFunction]) : bool
   (match func
-    [(ir.CompilerIrFunction.Function _ _ _ _ _) true]))
+    [(ir.CompilerIrFunction.Function _ _ _ _ _ _) true]))
 
 ;; M-A (RC1) correctness requirement: a register-homed param's home register is
 ;; WRITTEN by the backend's entry copy in the prologue, before the first
@@ -39619,7 +39692,232 @@
 ;; read the edge-precise index. The call-hole split mints its carriers in a
 ;; function that still contains every one of its calls, so it forces them to
 ;; memory with `cold-split?` FALSE and both gates keep their real inputs.
+;; Result copies below are the ownership boundary for temporary scalar planning.
+;; Caller-owned type/representation/profile state retains its original identity.
+(defmacro (compiler-reg-owned-copy-array
+  ;; The type operand is spliced into generated array types.
+  ;; lint-allow: unused-variable
+  [T : type]
+  [source : Expr]
+  [count : Expr]
+  [copy-item : Expr]) : Expr
+  `(let
+    [items : (__tl_dyn-array ,T) ,source]
+    [n : i64 ,count]
+    [out : (__tl_dyn-array ,T) (__tl_make-array ,T n)]
+    [i : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (set!
+            (array-ref out i)
+            (,copy-item (compiler-reg-global-array-element-shared-view items i)))
+          (set! i (+ i 1))))
+      out)))
+
+(define (compiler-reg-owned-copy-words [items : (__tl_dyn-array i64)]) : (__tl_dyn-array
+    i64)
+  (let
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 (array-length items))]
+    (begin
+      (compiler-reg-copy-i64-array!
+        (compiler-reg-global-shared-view out)
+        items
+        0)
+      out)))
+
+;; Typed scalar reconstruction makes these escape copies fail to compile if
+;; a record gains an owned payload. New variants also require an explicit arm.
+;; A shallow copy of a future String/array field would outlive the plan arena.
+(define (compiler-reg-owned-copy-i64 [value : i64]) : i64
+  value)
+
+(define (compiler-reg-owned-copy-interval [item : CompilerRegInterval]) : CompilerRegInterval
+  (CompilerRegInterval
+    (compiler-reg-owned-copy-i64 item.var)
+    (compiler-reg-owned-copy-i64 item.start)
+    (compiler-reg-owned-copy-i64 item.end)))
+
+(define (compiler-reg-owned-copy-region [item : CompilerRegCallRegion]) : CompilerRegCallRegion
+  (match item
+    [(CompilerRegCallRegion a b c d e)
+      (CompilerRegCallRegion
+        (compiler-reg-owned-copy-i64 a)
+        (compiler-reg-owned-copy-i64 b)
+        (compiler-reg-owned-copy-i64 c)
+        (compiler-reg-owned-copy-i64 d)
+        (compiler-reg-owned-copy-i64 e))]))
+
+(define (compiler-reg-owned-copy-eviction [item : CompilerRegCallEvict]) : CompilerRegCallEvict
+  (match item
+    [(CompilerRegCallEvict a b c)
+      (CompilerRegCallEvict
+        (compiler-reg-owned-copy-i64 a)
+        (compiler-reg-owned-copy-i64 b)
+        (compiler-reg-owned-copy-i64 c))]))
+
+(define (compiler-reg-owned-copy-occupant [item : CompilerRegOccupantSplit]) : CompilerRegOccupantSplit
+  (match item
+    [(CompilerRegOccupantSplit a b c d e)
+      (CompilerRegOccupantSplit
+        (compiler-reg-owned-copy-i64 a)
+        (compiler-reg-owned-copy-i64 b)
+        (compiler-reg-owned-copy-i64 c)
+        (compiler-reg-owned-copy-i64 d)
+        (compiler-reg-owned-copy-i64 e))]))
+
+(define (compiler-reg-owned-copy-set [set : live.CompilerLiveI64Set]) : live.CompilerLiveI64Set
+  (live.CompilerLiveI64Set
+    (live.compiler-live-set-copy-with-capacity
+      (compiler-reg-global-shared-view set)
+      (live.compiler-live-set-word-count set))))
+
+(define (compiler-reg-owned-copy-call-split [split : CompilerRegCallSplit]) : CompilerRegCallSplit
+  (match split
+    [(CompilerRegCallSplit shadows regs regions evictions)
+      (CompilerRegCallSplit
+        (compiler-reg-owned-copy-set shadows)
+        (compiler-reg-owned-copy-words regs)
+        (CompilerRegCallRegionSeq
+          (compiler-reg-owned-copy-array
+            CompilerRegCallRegion
+            regions.slots
+            regions.len
+            compiler-reg-owned-copy-region)
+          regions.len)
+        (CompilerRegCallEvictSeq
+          (compiler-reg-owned-copy-array
+            CompilerRegCallEvict
+            evictions.slots
+            evictions.len
+            compiler-reg-owned-copy-eviction)
+          evictions.len))]))
+
+(define (compiler-reg-owned-copy-split [split : CompilerRegSplitPlan]) : CompilerRegSplitPlan
+  (CompilerRegSplitPlan
+    (compiler-reg-owned-copy-words split.piece-of)
+    (compiler-reg-owned-copy-words split.piece-start)
+    (compiler-reg-owned-copy-words split.piece-end)
+    (compiler-reg-owned-copy-words split.piece-reg)
+    (compiler-reg-owned-copy-words split.piece-writeback)
+    (compiler-reg-owned-copy-array
+      CompilerRegOccupantSplit
+      (compiler-reg-global-shared-view split.occupant-split)
+      (array-length split.occupant-split)
+      compiler-reg-owned-copy-occupant)
+    (compiler-reg-owned-copy-words split.coalesce-parents)))
+
+(define (compiler-reg-owned-copy-plan
+  [plan : CompilerRegPlan]
+  [types : CompilerRegVarTypes]) : CompilerRegPlan
+  (match plan
+    [(CompilerRegPlan.Plan assignments ineligible intervals _ calls split)
+      (let
+        [copied : CompilerRegAssignmentTable
+          (compiler-reg-assignment-table-copy-with-capacity
+            (& assignments)
+            (array-length assignments.present))]
+        [i : i64 0]
+        (begin
+          (while (< i (array-length copied.present))
+            (begin
+              (when
+                (not (= (array-ref copied.present i) 0))
+                (match (compiler-reg-global-array-element-shared-view
+                  copied.items
+                  i)
+                  [(CompilerRegLocation.Remat value)
+                    (set!
+                      (array-ref copied.items i)
+                      (CompilerRegLocation.Remat
+                        (ir.compiler-ir-clone-value value)))]
+                  [_ unit]))
+              (set! i (+ i 1))))
+          (CompilerRegPlan.Plan
+            copied
+            (compiler-reg-owned-copy-set ineligible)
+            (CompilerRegIntervalSeq
+              (compiler-reg-owned-copy-array
+                CompilerRegInterval
+                intervals.slots
+                intervals.len
+                compiler-reg-owned-copy-interval)
+              intervals.len)
+            types
+            (compiler-reg-owned-copy-call-split calls)
+            (compiler-reg-owned-copy-split split))))]))
+
 (define (compiler-reg-plan-function-scalar-forced-spill-with-types
+  [type-segment-bases : i64]
+  [target-abi : cabi.CompilerRegTargetAbi]
+  [func : ir.CompilerIrFunction]
+  [forced-spill-from : i64]
+  [cold-split? : bool]
+  [type-info : CompilerRegVarTypes]
+  [forced-assignments : CompilerRegAssignmentTable]) : CompilerRegPlan
+  (match (compiler-reg-global-shared-view func)
+    [(ir.CompilerIrFunction.Function _ _ _ vars blocks _)
+      (if (compiler-reg-analysis-needs-scratch?
+        vars
+        (compiler-reg-global-shared-view blocks))
+        (compiler-reg-plan-function-scalar-forced-spill-with-types-in-scratch
+          type-segment-bases
+          target-abi
+          func
+          forced-spill-from
+          cold-split?
+          type-info
+          forced-assignments)
+        (compiler-reg-plan-function-scalar-forced-spill-with-types-in-current-arena
+          type-segment-bases
+          target-abi
+          func
+          forced-spill-from
+          cold-split?
+          type-info
+          forced-assignments))]))
+
+(define (compiler-reg-plan-function-scalar-forced-spill-with-types-in-scratch
+  [type-segment-bases : i64]
+  [target-abi : cabi.CompilerRegTargetAbi]
+  [func : ir.CompilerIrFunction]
+  [forced-spill-from : i64]
+  [cold-split? : bool]
+  [type-info : CompilerRegVarTypes]
+  [forced-assignments : CompilerRegAssignmentTable]) : CompilerRegPlan
+  (let
+    [scratch : arena.Arena (arena.Arena (arena.tl_arena_make_small))]
+    [raw : CompilerRegPlan
+      (in-arena
+        scratch
+        (compiler-reg-plan-function-scalar-forced-spill-with-types-in-current-arena
+          type-segment-bases
+          target-abi
+          func
+          forced-spill-from
+          cold-split?
+          (compiler-reg-global-shared-view type-info)
+          forced-assignments))]
+    [result : CompilerRegPlan (compiler-reg-owned-copy-plan raw type-info)]
+    (begin
+      (when
+        compiler-reg-debug-trace-homes
+        (set!
+          compiler-reg-trace-reasons
+          (compiler-reg-owned-copy-words
+            ;; This is a global place. Keep its view independent of the
+            ;; temporary reference cell used by the borrowed-inline seed bridge.
+            (owned_view.compiler-owned-place-shared-view
+              compiler-reg-trace-reasons))))
+      (unsafe
+        ;; The retained plan payloads and trace journal have been copied into
+        ;; the caller above. The caller's type/profile owner was never moved.
+        ;; No scratch-backed handle is used after this audited escape boundary.
+        ;; lint-allow: raw-arena-op
+        (arena.tl_arena_destroy (arena.raw-handle scratch)))
+      result)))
+
+(define (compiler-reg-plan-function-scalar-forced-spill-with-types-in-current-arena
   [type-segment-bases : i64]
   [target-abi : cabi.CompilerRegTargetAbi]
   [func : ir.CompilerIrFunction]
@@ -39635,7 +39933,7 @@
         (compiler-reg-global-shared-view type-info.metrics))]
     [vars : i64
       (match (compiler-reg-global-shared-view func)
-        [(ir.CompilerIrFunction.Function _ _ _ function-vars _) function-vars])]
+        [(ir.CompilerIrFunction.Function _ _ _ function-vars _ _) function-vars])]
     [interval-selection : CompilerRegIntervalSelection
       (if (compiler-reg-scalar-full-intervals?
         (compiler-reg-global-shared-view func))
@@ -39680,7 +39978,7 @@
           ;; builder's sequence when no param moved.
           [_param-extend : unit
             (match (compiler-reg-global-shared-view func)
-              [(ir.CompilerIrFunction.Function _ params _ _ _)
+              [(ir.CompilerIrFunction.Function _ params _ _ _ _)
                 (compiler-reg-param-intervals-extend-entry!
                   (compiler-reg-global-shared-view params)
                   (compiler-reg-global-shared-view interval-index))])]
@@ -43903,6 +44201,31 @@
   [slot-candidate-vars : i64]
   [identity-pinned : live.CompilerLiveI64Set]
   [stack-only? : bool]) : CompilerRegColoring
+  (compiler-reg-with-analysis-scratch
+    vars
+    (compiler-reg-global-shared-view blocks)
+    (compiler-reg-color-stack-slots-with-stack-only-in-current-arena
+      type-segment-bases
+      plan
+      group-vars
+      params
+      blocks
+      vars
+      slot-candidate-vars
+      identity-pinned
+      stack-only?)))
+
+;; Only the result-owning wrapper above calls this analysis implementation.
+(define (compiler-reg-color-stack-slots-with-stack-only-in-current-arena
+  [type-segment-bases : i64]
+  [plan : CompilerRegPlan]
+  [group-vars : live.CompilerLiveI64Set]
+  [params : ir.CompilerIrParamSeq]
+  [blocks : ir.CompilerIrBlockList]
+  [vars : i64]
+  [slot-candidate-vars : i64]
+  [identity-pinned : live.CompilerLiveI64Set]
+  [stack-only? : bool]) : CompilerRegColoring
   (let
     [intervals : CompilerRegIntervalSeq
       (compiler-reg-plan-intervals (compiler-reg-global-shared-view plan))]
@@ -45305,6 +45628,7 @@
   (VectorPrefixWork1)
   (VectorReduceAccumulator)
   (VectorReduceScratch)
+  (VectorReduceMask)
   (FloatCastValueXmm)
   (FloatCastValueGp)
   (FloatCastScratchGp)
@@ -46095,6 +46419,22 @@
             word)]
         [_ false]))))
 
+;; AVX2 i64 min/max needs a third family for its comparison mask. The
+;; reduction source is an input, never an implicit scratch home (#7821).
+(define (compiler-reg-vector-reduce-mask-scratch?
+  [op : ir.CompilerIrVectorReduceOp]
+  [lanes : i64]
+  [elem-ty : ast.AstType]) : bool
+  (and
+    (= lanes 4)
+    (match elem-ty
+      [(ast.AstType.I64) true]
+      [_ false])
+    (match op
+      [(ir.CompilerIrVectorReduceOp.Min) true]
+      [(ir.CompilerIrVectorReduceOp.Max) true]
+      [_ false])))
+
 (define (compiler-reg-scratch-vreg-slots-with-groups
   [_type-segment-bases : i64]
   [_abi : cabi.CompilerRegTargetAbi]
@@ -46508,7 +46848,10 @@
                 2
                 4)]
             [_ 4]))]
-      [(ir.CompilerIrInstr.VectorReduce _ _ _ _ _) 2]
+      [(ir.CompilerIrInstr.VectorReduce _ op _ lanes elem-ty)
+        (if (compiler-reg-vector-reduce-mask-scratch? op lanes elem-ty)
+          3
+          2)]
       [_ 0])
     0))
 
@@ -48527,9 +48870,10 @@
       (CompilerRegScratchRequirement
         point
         ordinal
-        (if (= ordinal 0)
-          (CompilerRegScratchRole.VectorReduceAccumulator)
-          (CompilerRegScratchRole.VectorReduceScratch))
+        (cond
+          [(= ordinal 0) (CompilerRegScratchRole.VectorReduceAccumulator)]
+          [(= ordinal 1) (CompilerRegScratchRole.VectorReduceScratch)]
+          [else (CompilerRegScratchRole.VectorReduceMask)])
         (compiler-reg-scratch-xmm-constraint
           (compiler-reg-global-shared-view assignments)
           instr)
@@ -49981,7 +50325,7 @@
   [base-assignments : CompilerRegAssignmentTable]
   [enabled : bool]) : CompilerRegEarlyScratchModel
   (match func
-    [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+    [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
       (let
         [scratch-base : i64 (array-length base-index.starts)]
         [scratch-count : i64
@@ -50340,6 +50684,7 @@
       (io.print-error "vector-reduce")]
     [(CompilerRegScratchRole.VectorReduceScratch)
       (io.print-error "vector-reduce")]
+    [(CompilerRegScratchRole.VectorReduceMask) (io.print-error "vector-reduce")]
     [(CompilerRegScratchRole.FloatCastValueXmm) (io.print-error "float-cast")]
     [(CompilerRegScratchRole.FloatCastValueGp) (io.print-error "float-cast")]
     [(CompilerRegScratchRole.FloatCastScratchGp) (io.print-error "float-cast")]
@@ -51469,7 +51814,7 @@
   (cfg
     scratch-vreg
     (match (compiler-reg-global-shared-view _func)
-      [(ir.CompilerIrFunction.Function function-name _ _ _ blocks)
+      [(ir.CompilerIrFunction.Function function-name _ _ _ blocks _)
         (let
           [phi-targets : CompilerRegLabelSeq
             (compiler-reg-scratch-phi-targets-blocks
@@ -52080,7 +52425,7 @@
   [temp-start : i64]
   [cold-split : bool]) : CompilerRegCallHoleSplit
   (match (compiler-reg-global-shared-view func)
-    [(ir.CompilerIrFunction.Function _ params _ vars blocks)
+    [(ir.CompilerIrFunction.Function _ params _ vars blocks _)
       (let
         [none : CompilerRegCallHoleSplit
           (compiler-reg-call-hole-split-none
@@ -53013,7 +53358,7 @@
   [func : ir.CompilerIrFunction]
   [var-types : CompilerRegVarTypes]) : CompilerRegRematTable
   (match (compiler-reg-global-shared-view func)
-    [(ir.CompilerIrFunction.Function _ params _ vars blocks)
+    [(ir.CompilerIrFunction.Function _ params _ vars blocks _)
       (let
         [def-counts : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
         [candidates : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
@@ -54091,15 +54436,19 @@
           type-segment-bases
           (compiler-reg-global-shared-view func)
           (compiler-reg-global-shared-view type-info))]
-      [liveness-handle : CompilerRegLivenessHandle
-        (compiler-reg-liveness-handle-make
-          (compiler-reg-global-shared-view func)
-          false
-          (compiler-reg-global-shared-view type-info.metrics))]
-      [liveness : live.CompilerFunctionLiveness liveness-handle.baseline]
-      (match (compiler-reg-live-interval-selection
-        (compiler-reg-global-shared-view func)
-        liveness)
+      (match (compiler-reg-with-analysis-scratch
+        vars
+        (compiler-reg-global-shared-view blocks)
+        (let
+          [liveness-handle : CompilerRegLivenessHandle
+            (compiler-reg-liveness-handle-make
+              (compiler-reg-global-shared-view func)
+              false
+              (compiler-reg-global-shared-view type-info.metrics))]
+          [liveness : live.CompilerFunctionLiveness liveness-handle.baseline]
+          (compiler-reg-live-interval-selection
+            (compiler-reg-global-shared-view func)
+            liveness)))
         [(CompilerRegIntervalSelection.Selection intervals interval-index)
           (let
             [coalesce : CompilerRegCoalesceMap

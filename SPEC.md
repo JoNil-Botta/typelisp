@@ -585,8 +585,9 @@ Examples:
   different enums when uses are enum-qualified; duplicate variant names
   within the same enum are rejected.
 - Pattern matching via `match` (§5.13) is exhaustive and type-checked.
-- Enum values are heap-allocated when returned from functions (to avoid
-  variable-sized stack slots).
+- Returning an enum value never allocates. It is an ordinary by-value result,
+  transported in registers or written into caller-owned result storage
+  (sections 7.2 and 11).
 - Module-qualified imported variants use the same dotted member form, for
   example `json.Json.Null` through an alias or `pkg.json.Json.Null` through a
   visible full module path. `Color::Red` is not TypeLisp syntax.
@@ -619,10 +620,19 @@ Examples:
   `(set! (array-ref place index) value)`.
 - Dotted numeric segments such as `p.0` are not index sugar; use `tuple-ref`
   or `array-ref`.
-- Structs are heap-allocated when returned from functions (same rule as
-  enums).
+- Returning a struct never allocates (same rule as enums): the value is
+  transported in registers or written into caller-owned result storage.
 - Struct globals use ordinary global storage and support the same dotted
   projections as local and parameter roots.
+
+A struct declares at most 1,048,576 (2^20) fields and an enum at most
+1,048,576 variants. Up to that width every field and variant resolves through
+its own declaration. A declaration past it is rejected with `E0200` at its
+first member beyond the limit, with the message `symbols: struct NAME has more
+than 1048576 fields; a struct or enum declares at most 1048576 members` (`enum
+NAME has more than 1048576 variants` for an enum), and no member of it gets a
+handle. Other compile-time capacities, such as the intern pool, can be reached
+before this limit.
 
 #### 3.5.3 Default inline aggregate layout and `(:repr c)` compatibility
 
@@ -2783,16 +2793,28 @@ Defines a named function.
 Declares an external symbol to link against. The function-head form writes fixed
 parameters directly on the extern head and uses the return type after `:`; it is
 a direct external function declaration. The bare-name form declares an external
-data symbol whose value is loaded when the name is used. If that bare-name type
-is a function type, the loaded value is a raw C function pointer and calling the
-name or a local copy of that value emits an indirect C ABI call through the
-loaded pointer. Raw C function-pointer values are ABI-distinct from ordinary
-TypeLisp function and closure descriptor values. A direct C-ABI extern call
-whose declared return type is a function type likewise returns a raw C function
-pointer; that provenance is retained through local bindings, annotations,
-`begin`, and branches whose alternatives are both raw C function pointers. This
-supports validated dynamic symbol resolvers without treating the returned
-address as an ordinary TypeLisp callable.
+data symbol whose value is loaded when the name is used. Native code-pointer
+data and native code-pointer results require an explicit `CFunc` type. A plain
+`(-> ...)` in either position is rejected with a migration diagnostic, because
+ordinary TypeLisp functions and closure descriptors use a different runtime
+representation. Direct extern functions still use their function-head syntax;
+their code-pointer results must name `CFunc` explicitly.
+
+An explicit C function-pointer type is `(CFunc mode (-> argument-types... result-type))`.
+Modes are `nullable`, `non-null`, `unsafe-nullable`, and `unsafe-non-null`.
+These values are one-word C code addresses, distinct from ordinary function
+values. Nullable values cannot be called. `(c-fn-check value)` evaluates its
+operand once and returns the corresponding non-null type, retaining the exact
+signature and unsafe-call effect. A null operand terminates with status 134 and
+`tl: null C function pointer`; a non-null operand is returned unchanged. Checking
+an already non-null value is permitted. Calling an unsafe mode still requires
+an explicit `(unsafe ...)` at the call site.
+
+`ptr-null?` can select a recovery branch before checked conversion; it does not
+implicitly refine a variable's type. `c-fn-check` accepts exactly one typed C
+function pointer, rejects ordinary functions and integers, and can be shadowed
+by a source binding. Numeric `cast`, raw pointer casts and integer-to-pointer
+conversion do not establish typed C callability.
 
 The name is a TypeLisp identifier used for source lookup; it defaults to the
 target C ABI and uses the local name as the external linker symbol unless
@@ -2825,7 +2847,7 @@ For bare-name external data declarations, metadata appears before the `:`:
 
 ```lisp test=ignore name=extern-value-and-function-pointer reason="requires native symbols"
 (extern foreign-counter (:symbol "foreign_counter") : i64)
-(extern foreign-add-ptr (:symbol "foreign_add_ptr") : (-> i64 i64))
+(extern foreign-add-ptr (:symbol "foreign_add_ptr") : (CFunc non-null (-> i64 i64)))
 (define (main) : i64 (+ foreign-counter (foreign-add-ptr 35)))
 ```
 
@@ -3304,6 +3326,19 @@ name, or with the complete normalized integration path in package mode;
 the selected names, declaration locations, run/ignored/slow-skipped state, and
 ignore reasons without compiling or running a harness; it may be combined with
 either selector but not `--check`.
+
+`--backend-mode scalar|avx2|avx512` selects one code-generation mode for every
+harness of the invocation: a source file, each `--batch` entry, package inline
+tests, and package integration tests. The default is `scalar`. A SIMD request
+lowers and emits that mode as one selection and never falls back to scalar, so
+`(program-count)` and the other lane identity forms observe the requested gang
+shape. `--check` and `--list` accept every mode on every host because they
+execute nothing. A run in `avx2` or `avx512` first requires the host CPU and
+operating system to execute that ISA (`stdlib.cpu` `runs-avx2?` and
+`runs-avx512?`, the latter meaning AVX-512 F, BW, and DQ); otherwise the
+command prints `test: backend mode <mode> cannot run on this host` and exits
+`1` before compiling any harness. An unknown spelling is the separate
+diagnostic `test: unknown backend mode <value>`.
 
 Repeatable `--cfg <name>` values compose with the automatic `test` and target
 cfg predicates used while loading and type-checking. `--shuffle` applies a
@@ -3888,11 +3923,14 @@ move-only values and as copies for copyable values:
   caller. Returning from a `with` owner scope is still rejected when it would
   bypass required cleanup.
 - `set!` right-hand sides. Assigning a move-only value into a definitely moved
-  or definitely uninitialized local moves the value into that slot. Assigning
-  over an initialized move-only slot is rejected in v1: there is no implicit
-  drop, destructor, or replacement cleanup. Whole-place assignment to an
-  ordinary non-cleanup-owning global instead replaces that permanent place's
-  stored value; it does not move the previous value out or run cleanup.
+  or definitely uninitialized local moves the value into that slot. An
+  initialized ordinary non-Copy arena-owned value may also be overwritten;
+  its old storage becomes unreachable until arena reclamation. Assignment does
+  not implicitly run cleanup or a destructor. Overwriting an initialized
+  cleanup-owning slot remains rejected without the required ownership transfer
+  or discharge. Whole-place assignment to an ordinary non-cleanup-owning
+  global replaces that permanent place's stored value; it does not move the
+  previous value out or run cleanup.
   Cleanup-owning global replacement remains rejected without explicit cleanup
   transfer. In every case, the right-hand side is checked independently and
   cannot move a non-Copy value out of another global.
@@ -3984,6 +4022,46 @@ is not propagated as a zero-trip substitute. Owners created inside the body
 remain available for moves confined to that iteration. These scalar rules do
 not relax the SPMD early-exit restrictions in section 5.15.
 
+Outside loop bodies the same divergence rule applies to `if` and `match`
+joins. A branch or arm whose type is `never` (it ends in `return`, `break`,
+`continue`, or a call whose result type is `never`) cannot complete normally
+and does not reach the code after the join, so its moves, borrows, and
+reinitializations do not affect that code:
+
+```lisp test=run name=move-diverging-branch exit=42 stdout=""
+(defstruct Token (id i64) (name String))
+
+(define (consume [t : Token]) : i64
+  t.id)
+
+(define (pick [failed : bool]) : i64
+  (let
+    [token : Token (Token 41 "t")]
+    (begin
+      (if failed
+        (return (consume token)) ; does not reach the join
+        unit)
+      (+ (consume token) 1))))   ; accepted: `token` is still initialized here
+
+(define (main) : i64
+  (pick false))
+```
+
+When exactly one `if` branch diverges, the state after the `if` is the other
+branch's state, including a reinitialization performed there. When both
+branches complete normally the join remains the conservative union of the
+moved places; when both diverge the code after the `if` is unreachable. A
+`match` joins the state before the match with every arm that can complete
+normally. A branch of any other type is treated as completing normally, even
+when it cannot in fact return (an endless loop, for example). A use after a
+move inside the diverging branch itself is still rejected.
+
+One fact survives a diverging branch: a move of an active non-move-aware `with`
+owner (section 5.19). The owner's cleanup runs on every `return`, `try`,
+`break`, and `continue` that leaves its scope, so moving it in a branch that
+leaves the scope is rejected with the same `cleanup owner ... moved before with
+scope exit` diagnostic as a move on the fallthrough path.
+
 **Borrowing use sites.** A borrowing use may inspect a move-only value without
 moving it. These are limited to:
 
@@ -4073,6 +4151,23 @@ move-out continues to use `(array-ref place literal-index)`.
 Move-while-borrowed and assignment-while-borrowed diagnostics are produced by
 the borrow checker (section 3.10), not by move checking. `str` borrowing and
 the owned/borrowed text distinction are specified in section 3.11.
+
+An ordinary move-only local can be replaced without an implicit cleanup:
+
+```lisp test=check name=move-ordinary-local-overwrite
+(define (replace-owned-local) : i64
+  (let [owner : (Box i64) (box 1)]
+    (begin
+      (set! owner (box 42))
+      (deref owner))))
+```
+
+The old box storage is reclaimed with its arena. The compiler's
+[`compiler-typecheck-move-ordinary-overwrite-source` and
+`compiler-typecheck-move-cleanup-overwrite-source` regression fixtures](src/compiler_typecheck.tl)
+check ordinary field replacement and rejection of initialized cleanup-owning
+replacement, respectively. The right-hand-side move checks and live-borrow
+restrictions still apply to either kind of assignment.
 
 ```lisp test=check name=move-copyable-scalar-reuse
 (define (copyable-scalar [x : i64]) : i64
@@ -4595,7 +4690,8 @@ fully typed replacement; unlike `array-take!`, it never synthesizes one.
   nullary variant name. It is not a fresh catch-all binding; use `_` for that.
 - The `_` wildcard matches any remaining value (used for exhaustiveness).
 - All arms must return the same type.
-- Enum values are heap-allocated on return from functions (see §3.5.1).
+- A `match` that produces an enum or other aggregate result does not allocate
+  it; aggregate results follow the return rule in §3.5.1.
 
 ### 5.14 `(lambda ([param : type] ...) [: ret_type] body...)` — anonymous function
 
@@ -5569,10 +5665,14 @@ diagnostic names the primitive and the expected kind, for example
 
 - Builtins: `i64`, `i32`, `i16`, `i8`, `u64`, `u32`, `u16`, `u8`, `f64`,
   `f32`, `bool`, `char`, `string`, `unit`, `never`.
-- Shapes: `array`, `dyn-array`, `box`, `function`, `tuple`, `struct`, `enum`,
+- Shapes: `array`, `dyn-array`, `box`, `function`, `c-function`, `tuple`, `struct`, `enum`,
   `slice`.
 - Reserved/partial shapes: `str`, `ptr`, `mut-ptr`, `ref`, `mut-ref`,
   `region`, `type-var`.
+
+`CFunc` reports `c-function`; its `type-key` retains the signature and mode.
+The `function-param-count`, `function-param-type`, and `function-return-type`
+operations require ordinary TypeLisp function types and reject `CFunc`.
 
 Reserved/partial shapes are classified by `type-kind` and `type-key`.
 `reference-element-type` additionally exposes the referent of shared and mutable
@@ -6311,7 +6411,9 @@ The unsafe operation set:
 | Form | Safe? | Type rule | Notes |
 |------|-------|-----------|-------|
 | `(ptr-null : (Ptr T))` / `(ptr-null : (MutPtr T))` | Yes | returns the requested raw pointer type | Constructs a typed null pointer. |
-| `(ptr-null? p)` | Yes | raw pointer -> `bool` | Does not dereference `p`. |
+| `(ptr-null : (CFunc mode signature))` | Yes | returns the requested `CFunc` type | Requires `nullable` or `unsafe-nullable` mode; the other modes reject null construction even inside `unsafe`. |
+| `(c-fn-check f)` | Yes | `CFunc` -> corresponding non-null `CFunc` | Evaluates `f` once; exits with status 134 and a null C function pointer diagnostic if zero. Preserves signature and unsafe-call effect. |
+| `(ptr-null? p)` | Yes | raw pointer or `CFunc` -> `bool` | Does not dereference or call `p`; does not refine its type. |
 | `(ptr-read p)` | Unsafe | `(Ptr T)` or `(MutPtr T)` -> `T` | Reads `sizeof(T)` bytes at `p`; alignment, validity, initialization, and lifetime are caller obligations. |
 | `(ptr-write! p value)` | Unsafe | `(MutPtr T)` and `T` -> `unit` | Writes `sizeof(T)` bytes; writing through `(Ptr T)` is rejected. |
 | `(ptr-offset p n)` | Unsafe | raw pointer and integer -> same raw pointer type | Adds `n * sizeof(T)` bytes. Negative offsets are allowed but unsafe. |
@@ -6404,6 +6506,36 @@ arguments without rendering the final text. `format.format` accepts either a
 literal template plus values or one retained Arguments package and returns the
 formatted text as a `String`; `format.write!`/`format.writeln!` accept the same
 two forms, stream into a mutable writer, and return `FormatResult`.
+The three newline forms also accept no template at all: `(io.println)`,
+`(io.eprintln)` and `(format.writeln! writer)` write exactly one LF byte
+(`0x0a`, never CRLF, on every target) through the same sink, error path and
+allocation policy as their template-bearing forms. Only the template is
+optional; `writeln!` still requires its writer, and `print`, `eprint` and
+`write!` still require a template.
+
+```lisp test=run name=format-empty-newline-forms exit=42 stdout="\na\n\n"
+(import stdlib.byte_buf)
+(import stdlib.format)
+(import stdlib.io)
+(import stdlib.string)
+
+(define (main) : i64
+  (let
+    [bytes : byte_buf.ByteBuf (byte_buf.with-capacity 4)]
+    [result : format.FormatResult (format.writeln! bytes)]
+    [text : String (byte_buf.to-string bytes)]
+    (begin
+      (io.println)
+      (io.println "a")
+      (io.println)
+      (match result
+        [(format.FormatOk)
+          (if (string.eq (& text) "\n")
+            42
+            1)]
+        [(format.FormatErr _) 2]))))
+```
+
 `stdout-write` and `stderr-write` provide lower-level
 borrowed-byte output, while `print-error`, `panic`, and `error` accept borrowed text. These
 are ordinary standard-library definitions; unimported uses are unbound source
@@ -6491,6 +6623,44 @@ Floating exception flags and signaling-NaN payload behavior are outside the
 initial contract. The implementations allocate no storage and reference no
 runtime, libc, libm, CRT, x87 transcendental, or FMA facility.
 
+`stdlib.math.f64-mul-add` and `stdlib.math.f32-mul-add` are the explicit fused
+multiply-add: `(f64-mul-add a b c)` is `a * b + c` evaluated as if with
+unbounded precision and rounded once to the result type, to nearest with ties
+to even. `stdlib.math.mul-add` requires three operands of one `f64` or `f32`
+type, preserves that type, and evaluates each operand once, left to right.
+Overflow returns the signed infinity; underflow is gradual through subnormals,
+and a nonzero exact value that rounds to zero keeps its sign. When the exact
+value is zero, the result is negative zero only if the product is a negative
+zero and `c` is negative zero; nonzero terms that cancel exactly give positive
+zero. A NaN operand, an infinite factor times a zero factor (whatever `c` is),
+and an infinite product plus the opposite infinity produce NaN, whose sign and
+payload are outside the contract; an infinite product otherwise decides the
+result, and a finite product plus an infinite `c` returns `c`. Every target,
+backend mode and optimization level returns the same bits: the operation is
+defined by exact integer arithmetic, and an implementation may use a hardware
+fused multiply-add instruction only where it produces those bits. The
+compiler never contracts ordinary arithmetic such as `(+ (* a b) c)` into
+this operation, and never expands this operation into a multiply followed by
+an add; the two expressions round differently:
+
+```lisp test=run name=math-mul-add-rounds-once exit=42 stdout=""
+(import stdlib.math)
+
+(define (main) : i64
+  (let
+    [x : f64 (math.f64-from-bits 0x3ff0000000400000)]
+    [minus-one : f64 -1.0]
+    ;; x = 1 + 2^-30, so x * x = 1 + 2^-29 + 2^-60 exactly. The product alone
+    ;; rounds the last term away; the fused form keeps it.
+    [two-roundings : f64 (+ (* x x) minus-one)]
+    [fused : f64 (math.mul-add x x minus-one)]
+    (if (and
+      (= (math.f64-to-bits two-roundings) 0x3e20000000000000)
+      (= (math.f64-to-bits fused) 0x3e20000000200000))
+      42
+      1)))
+```
+
 **Array and borrowed-Slice element operations.** The public `Array` type is the
 fixed `(Array T N)` form. Core element operations also accept the immediate
 borrowed Slice reference forms described in section 3.2:
@@ -6565,6 +6735,10 @@ compiler-private packed buffer, so long calls allocate no chunk intermediates.
 The deprecated `string-append` and
 `string-concat` names remain staged lint targets for old source, while
 `tl_string_concat*` remains a runtime-plan compatibility ABI documented below.
+They are bare builtin spellings only: `stdlib.string` does not export them, so a
+module-qualified `string.string-append` or `string.string-concat` (through any
+alias or the full module path) is rejected as an unbound name, like any other
+name a module does not declare.
 
 **Literal formatting and nominal display.** `stdlib.format` owns the literal
 `args`, `format`, `write!`, and `writeln!` macros, their template scanner, all
@@ -6811,7 +6985,8 @@ fail as ambiguous. Programs must retain exactly one applicable spelling in
 each family they implement.
 
 `format.write! writer template ...` and `format.writeln!` accept a mutable
-nominal writer place. The writer's canonical owner module defines exactly one
+nominal writer place; `format.writeln! writer` without a template writes one
+LF and reports a failing writer exactly as the template-bearing form does. The writer's canonical owner module defines exactly one
 of `format-write-raw` or `format-write-raw-<NominalName>` with signature
 `(i64, String) -> i64`. Stateful writers additionally define the corresponding
 `format-writer-cell` or `format-writer-cell-<NominalName>` helper with signature
@@ -7351,11 +7526,16 @@ low-level exception and carry no safety guarantees.
 
 ### 7.2 Heap
 
-- `ByteBuf` backing stores, dynamic-buffer element storage, and escaping
-  returned aggregates (enums, structs, strings, dynamic-buffer fat values)
-  are heap-allocated.
-- Non-escaping aggregate fat/inline storage is usually kept in the current
-  stack frame.
+- `ByteBuf` backing stores, string bytes produced by allocating string
+  operations, dynamic-buffer element storage, `box` payloads, and capturing
+  closure environments are heap-allocated by the operation that creates them.
+- Tuple, fixed-array, struct, and enum values are inline values. Constructing
+  one reserves storage in the current stack frame, and returning one never
+  allocates: a register-class result travels in the result registers, and a
+  memory-class result is written into caller-owned storage through a hidden
+  result pointer that the callee fully initializes before a normal return
+  (section 11). A returned aggregate is moved or copied under the ordinary
+  `Copyable`/`MoveOnly` rules; transport never clones it.
 - Allocation goes through `tl_alloc`, a backend-emitted bump allocator.
   Compiler-generated over-aligned storage may explicitly select the private
   `tl_alloc_aligned` entry described in §6.2; no source-level allocator API is
@@ -7794,6 +7974,12 @@ mutable, or valid for the requested type.
   supported targets.
 - Raw pointers are nullable and copyable. `ptr-null` creates a typed null
   pointer, and `ptr-null?` checks for null without dereferencing.
+- Typed C code pointers also support `ptr-null?`. `ptr-null` accepts
+  `(CFunc nullable (-> ...))` and `(CFunc unsafe-nullable (-> ...))`;
+  `init` produces the same zero value for these modes. Neither form can create
+  `non-null` or `unsafe-non-null` values. Testing a pointer does not call it or
+  remove its unsafe-call effect, and a boolean test does not implicitly change
+  a nullable variable's type.
 - Pointer equality, ordering, provenance, and bounds are otherwise
   unspecified. Only null testing is part of the safe surface.
 - `ptr-read`, `ptr-write!`, `ptr-offset`, `ptr-cast`, `ptr->int`,
@@ -7856,9 +8042,11 @@ and not a general manual memory management feature.
   owned storage places or mutable references. Enum payloads are consumed by a
   by-value `match`; borrowing a scrutinee for non-consuming pattern
   inspection is governed by the borrow rules.
-- Returning an aggregate may heap-promote storage that would otherwise be
-  frame-local. This is storage placement for safety; ownership transfer is
-  still governed by the source-level move rules.
+- Returning an aggregate never allocates and never extends a lifetime. The
+  result is transported in registers or moved into caller-owned result storage
+  (section 7.2); ownership transfer is governed by the source-level move rules,
+  and no returned value may rely on hidden heap placement to outlive its
+  lexical owner.
 - Deep copying is an explicit owner-generated operation. In a nominal type's
   canonical module, `(gen-clone Point)` emits the ordinary public function
   `clone-point : (& Point) -> Point`; acronym-bearing names use deterministic
@@ -8813,7 +9001,7 @@ macro-type-kind ::= "i64" | "i32" | "i16" | "i8"
                   | "u64" | "u32" | "u16" | "u8"
                   | "f64" | "f32" | "bool" | "char"
                   | "string" | "unit" | "never"
-                  | "array" | "dyn-array" | "box" | "function" | "tuple"
+                  | "array" | "dyn-array" | "box" | "function" | "c-function" | "tuple"
                   | "struct" | "enum" | "slice" | "str" | "ptr" | "mut-ptr"
                   | "ref" | "mut-ref" | "region" | "type-var"
 macro-result-type ::= type

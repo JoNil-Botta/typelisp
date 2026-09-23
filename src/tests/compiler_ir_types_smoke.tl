@@ -152,7 +152,7 @@
     (match (compiler_ir_types.compiler-ir-function-seq-ref
       (compiler_ir_types.compiler-ir-global-shared-view functions)
       0)
-      [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ _)
+      [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ _ _)
         (string.eq (ci.intern-str name) want)])))
 
 (define (compiler-ir-smoke-function-seq-name-at?
@@ -164,7 +164,7 @@
     (match (compiler_ir_types.compiler-ir-function-seq-ref
       (compiler_ir_types.compiler-ir-global-shared-view functions)
       index)
-      [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ _)
+      [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ _ _)
         (string.eq (ci.intern-str name) want)])))
 
 (define (compiler-ir-smoke-block-list-label-at?
@@ -243,14 +243,15 @@
         params
         (ast.AstType.Unit)
         6
-        compiler_ir_types.CompilerIrBlockList.Nil)]
+        compiler_ir_types.CompilerIrBlockList.Nil
+        compiler_ir_types.CompilerIrFunctionAbi.Ordinary)]
     [cloned : compiler_ir_types.CompilerIrFunction
       (compiler_ir_types.compiler-ir-clone-function
         (ast.ast-node-pool-reader-context-current)
         (compiler_ir_types.compiler-ir-global-shared-view func))]
     (and
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ stored _ _ _)
+        [(compiler_ir_types.CompilerIrFunction.Function _ stored _ _ _ _)
           (and
             (=
               (compiler_ir_types.compiler-ir-param-seq-count
@@ -263,7 +264,7 @@
               2)
             (compiler-ir-smoke-param-seq-entry-bool? stored 1 "flag" 5))])
       (match cloned
-        [(compiler_ir_types.CompilerIrFunction.Function _ stored _ _ _)
+        [(compiler_ir_types.CompilerIrFunction.Function _ stored _ _ _ _)
           (and
             (=
               (compiler_ir_types.compiler-ir-param-seq-count
@@ -434,14 +435,16 @@
         (compiler_ir_types.compiler-ir-param-seq-empty)
         (ast.AstType.I64)
         2
-        (compiler_ir_types.compiler-ir-global-shared-view blocks))]
+        (compiler_ir_types.compiler-ir-global-shared-view blocks)
+        compiler_ir_types.CompilerIrFunctionAbi.Ordinary)]
     [second : compiler_ir_types.CompilerIrFunction
       (compiler_ir_types.CompilerIrFunction.Function
         (compiler-ir-smoke-symbol-id "second")
         (compiler_ir_types.compiler-ir-param-seq-empty)
         (ast.AstType.I64)
         2
-        blocks)]
+        blocks
+        compiler_ir_types.CompilerIrFunctionAbi.Ordinary)]
     [functions : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_ir_types.compiler-ir-function-seq-prepend
         first
@@ -521,21 +524,24 @@
         (compiler_ir_types.compiler-ir-param-seq-empty)
         (ast.AstType.Unit)
         0
-        (compiler_ir_types.compiler-ir-global-shared-view compact-blocks))]
+        (compiler_ir_types.compiler-ir-global-shared-view compact-blocks)
+        compiler_ir_types.CompilerIrFunctionAbi.Ordinary)]
     [second-func : compiler_ir_types.CompilerIrFunction
       (compiler_ir_types.CompilerIrFunction.Function
         (compiler-ir-smoke-symbol-id "second-func")
         (compiler_ir_types.compiler-ir-param-seq-empty)
         (ast.AstType.Unit)
         0
-        (compiler_ir_types.compiler-ir-global-shared-view compact-blocks))]
+        (compiler_ir_types.compiler-ir-global-shared-view compact-blocks)
+        compiler_ir_types.CompilerIrFunctionAbi.Ordinary)]
     [third-func : compiler_ir_types.CompilerIrFunction
       (compiler_ir_types.CompilerIrFunction.Function
         (compiler-ir-smoke-symbol-id "third-func")
         (compiler_ir_types.compiler-ir-param-seq-empty)
         (ast.AstType.Unit)
         0
-        (compiler_ir_types.compiler-ir-global-shared-view compact-blocks))]
+        (compiler_ir_types.compiler-ir-global-shared-view compact-blocks)
+        compiler_ir_types.CompilerIrFunctionAbi.Ordinary)]
     [reversed-functions : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_ir_types.compiler-ir-function-seq-prepend
         (compiler_ir_types.compiler-ir-global-shared-view third-func)
@@ -971,7 +977,7 @@
     [args : compiler_ir_types.CompilerIrSpmdCallArgSeq
       (compiler-ir-smoke-spmd-call-args)]
     [instr : compiler_ir_types.CompilerIrInstr
-      (compiler_ir_types.ir-instr-spmd-call
+      (compiler_ir_types.compiler-ir-test-spmd-private-call
         (compiler-ir-smoke-symbol-id "helper")
         (compiler_ir_types.CompilerIrSpmdBackend.Avx2)
         8
@@ -996,7 +1002,11 @@
           (cis.InternStructuralSessionHandle 0)
           (ast.ast-node-pool-reader-type-segment-bases)
           (compiler_ir_types.compiler-ir-global-shared-view instr))
-        "  spmd_call helper backend avx2 lanes 8 mask %20(uniform %21 : i64, varying %22 : i64) : varying i64")
+        (str_cat.str-cat
+          "  spmd_call helper backend avx2 lanes 8 mask %20(uniform %21 : i64, varying %22 : i64) : varying i64"
+          " private spmd-private-v1 @helper avx2 lanes 8 [0 active-mask : bool,"
+          " 1 source 0 uniform i64 : i64, 2 source 1 varying i64 : i64]"
+          " index none result varying i64"))
       (string.eq
         (compiler_ir_types.compiler-ir-instr-describe
           (ast.ast-node-pool-reader-type-segment-bases)
@@ -1094,7 +1104,7 @@
                   (string.eq origin.package-owner "fixture")
                   (string.eq origin.package-version "1.0.0")
                   (string.eq origin.link-symbol "_tl_helper")))]
-            [(compiler_ir_types.CompilerIrSpmdCallOrigin.Private) false])]
+            [(compiler_ir_types.CompilerIrSpmdCallOrigin.Private _) false])]
         [_ false])
       (>
         (string.string-length
@@ -2014,7 +2024,8 @@
               (compiler_ir_types.CompilerIrBlock.Block
                 (compiler_ir_types.compiler-ir-label "entry")
                 instrs)
-              compiler_ir_types.CompilerIrBlockList.Nil))
+              compiler_ir_types.CompilerIrBlockList.Nil)
+            compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
           (compiler_ir_types.compiler-ir-function-seq-empty))
         (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [bases : i64 (ast.ast-node-pool-context-type-segment-bases pools)]
@@ -2092,6 +2103,981 @@
         (return 9))
       0)))
 
+;; --- private SPMD ABI integrity (#7405) ---------------------------------------
+;;
+;; The base fixture is an AVX-512 helper `@helper` with physical parameters
+;; [active mask bool, source 0 varying i64, source 1 uniform i64, index base
+;; i64], an appended index mapping, and a varying i64 result, plus a caller
+;; `@caller` whose one `spmd_call` passes the three matching arguments. Each
+;; case below changes one fact and names the check that must reject it.
+(define (pabi-sym [name : String]) : i64
+  (compiler-ir-smoke-symbol-id name))
+
+(define (pabi-param
+  [ordinal : i64]
+  [role : compiler_ir_types.CompilerIrSpmdPrivateParamRole]
+  [ty : ast.AstType]) : compiler_ir_types.CompilerIrSpmdPrivateParam
+  (compiler_ir_types.CompilerIrSpmdPrivateParam.Param ordinal role ty))
+
+(define (pabi-source
+  [source : i64]
+  [class : compiler_ir_types.CompilerIrSpmdValueClass]
+  [ty : ast.AstType]) : compiler_ir_types.CompilerIrSpmdPrivateParamRole
+  (compiler_ir_types.CompilerIrSpmdPrivateParamRole.Source source class ty))
+
+;; Parameter `index` of parameter layout `variant`. Variant 0 is the base
+;; layout; 10 drops the index base; the others each break one rule.
+(define (pabi-param-at [variant : i64] [index : i64]) : compiler_ir_types.CompilerIrSpmdPrivateParam
+  (cond
+    [(= index 0)
+      (cond
+        [(= variant 3)
+          (pabi-param
+            0
+            (pabi-source
+              0
+              (compiler_ir_types.CompilerIrSpmdValueClass.Varying)
+              (ast.AstType.I64))
+            (ast.AstType.I64))]
+        [(= variant 4)
+          (pabi-param
+            0
+            (compiler_ir_types.CompilerIrSpmdPrivateParamRole.ActiveMask)
+            (ast.AstType.I64))]
+        [else
+          (pabi-param
+            0
+            (compiler_ir_types.CompilerIrSpmdPrivateParamRole.ActiveMask)
+            (ast.AstType.Bool))])]
+    [(= index 1)
+      (cond
+        [(= variant 2)
+          (pabi-param
+            1
+            (pabi-source
+              1
+              (compiler_ir_types.CompilerIrSpmdValueClass.Varying)
+              (ast.AstType.I64))
+            (ast.AstType.I64))]
+        [(= variant 5)
+          (pabi-param
+            1
+            (compiler_ir_types.CompilerIrSpmdPrivateParamRole.IndexBase)
+            (ast.AstType.I64))]
+        [(= variant 8)
+          (pabi-param
+            1
+            (pabi-source
+              0
+              (compiler_ir_types.CompilerIrSpmdValueClass.Varying)
+              (ast.AstType.Bool))
+            (ast.AstType.Bool))]
+        [(= variant 9)
+          (pabi-param
+            1
+            (compiler_ir_types.CompilerIrSpmdPrivateParamRole.ActiveMask)
+            (ast.AstType.Bool))]
+        [else
+          (pabi-param
+            1
+            (pabi-source
+              0
+              (compiler_ir_types.CompilerIrSpmdValueClass.Varying)
+              (ast.AstType.I64))
+            (ast.AstType.I64))])]
+    [(= index 2)
+      (cond
+        [(= variant 1)
+          (pabi-param
+            5
+            (pabi-source
+              1
+              (compiler_ir_types.CompilerIrSpmdValueClass.Uniform)
+              (ast.AstType.I64))
+            (ast.AstType.I64))]
+        [(= variant 2)
+          (pabi-param
+            2
+            (pabi-source
+              0
+              (compiler_ir_types.CompilerIrSpmdValueClass.Uniform)
+              (ast.AstType.I64))
+            (ast.AstType.I64))]
+        [(= variant 7)
+          (pabi-param
+            2
+            (pabi-source
+              1
+              (compiler_ir_types.CompilerIrSpmdValueClass.Mask)
+              (ast.AstType.I64))
+            (ast.AstType.I64))]
+        [(= variant 11)
+          (pabi-param
+            2
+            (pabi-source
+              1
+              (compiler_ir_types.CompilerIrSpmdValueClass.Uniform)
+              (ast.AstType.I64))
+            (ast.AstType.U64))]
+        [else
+          (pabi-param
+            2
+            (pabi-source
+              1
+              (compiler_ir_types.CompilerIrSpmdValueClass.Uniform)
+              (ast.AstType.I64))
+            (ast.AstType.I64))])]
+    [else
+      (pabi-param
+        3
+        (compiler_ir_types.CompilerIrSpmdPrivateParamRole.IndexBase)
+        (if (= variant 6)
+          (ast.AstType.I32)
+          (ast.AstType.I64)))]))
+
+(define (pabi-params [variant : i64]) : compiler_ir_types.CompilerIrSpmdPrivateParamSeq
+  (let
+    [count : i64
+      (if (= variant 10)
+        3
+        4)]
+    [params : compiler_ir_types.CompilerIrSpmdPrivateParamSeq
+      (compiler_ir_types.compiler-ir-spmd-private-param-seq-with-capacity count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (compiler_ir_types.compiler-ir-spmd-private-param-seq-push!
+            (&mut params)
+            (pabi-param-at variant index))
+          (set! index (+ index 1))))
+      params)))
+
+(define (pabi-result-varying-i64) : compiler_ir_types.CompilerIrSpmdPrivateResult
+  (compiler_ir_types.CompilerIrSpmdPrivateResult.Value
+    (compiler_ir_types.CompilerIrSpmdValueClass.Varying)
+    (ast.AstType.I64)))
+
+(define (pabi
+  [callee : String]
+  [backend : compiler_ir_types.CompilerIrSpmdBackend]
+  [lanes : i64]
+  [variant : i64]
+  [index : compiler_ir_types.CompilerIrSpmdPrivateIndex]
+  [result : compiler_ir_types.CompilerIrSpmdPrivateResult]) : compiler_ir_types.CompilerIrSpmdPrivateAbi
+  (compiler_ir_types.CompilerIrSpmdPrivateAbi
+    (compiler_ir_types.CompilerIrSpmdPrivateAbiSchema.V1)
+    (pabi-sym callee)
+    backend
+    lanes
+    (pabi-params variant)
+    index
+    result))
+
+(define (pabi-base) : compiler_ir_types.CompilerIrSpmdPrivateAbi
+  (pabi
+    "helper"
+    (compiler_ir_types.CompilerIrSpmdBackend.Avx512)
+    8
+    0
+    (compiler_ir_types.CompilerIrSpmdPrivateIndex.Appended 3)
+    (pabi-result-varying-i64)))
+
+(define (pabi-with-params [variant : i64]) : compiler_ir_types.CompilerIrSpmdPrivateAbi
+  (pabi
+    "helper"
+    (compiler_ir_types.CompilerIrSpmdBackend.Avx512)
+    8
+    variant
+    (compiler_ir_types.CompilerIrSpmdPrivateIndex.Appended 3)
+    (pabi-result-varying-i64)))
+
+(define (pabi-contains? [text : String] [fragment : String]) : bool
+  (string.contains text fragment))
+
+(define (pabi-shape-rejects?
+  [abi : compiler_ir_types.CompilerIrSpmdPrivateAbi]
+  [fragment : String]) : bool
+  (pabi-contains?
+    (compiler_ir_types.compiler-ir-spmd-private-abi-shape-error abi)
+    fragment))
+
+;; The helper's actual parameters for the base fixture; `variant` 1 drops the
+;; index base and 2 retypes parameter 2 as i32.
+(define (pabi-signature-params [variant : i64]) : compiler_ir_types.CompilerIrParamSeq
+  (let
+    [builder : compiler_ir_types.CompilerIrParamBuilder
+      (compiler_ir_types.compiler-ir-param-builder-with-capacity 4)]
+    (begin
+      (compiler_ir_types.compiler-ir-param-builder-push!
+        (&mut builder)
+        (compiler_ir_types.CompilerIrParam.Param "mask" (ast.AstType.Bool) 0))
+      (compiler_ir_types.compiler-ir-param-builder-push!
+        (&mut builder)
+        (compiler_ir_types.CompilerIrParam.Param "x" (ast.AstType.I64) 1))
+      (compiler_ir_types.compiler-ir-param-builder-push!
+        (&mut builder)
+        (compiler_ir_types.CompilerIrParam.Param
+          "k"
+          (if (= variant 2)
+            (ast.AstType.I32)
+            (ast.AstType.I64))
+          2))
+      (if (= variant 1)
+        unit
+        (compiler_ir_types.compiler-ir-param-builder-push!
+          (&mut builder)
+          (compiler_ir_types.CompilerIrParam.Param "base" (ast.AstType.I64) 3)))
+      (compiler_ir_types.compiler-ir-param-builder-to-seq builder))))
+
+(define (pabi-signature-rejects?
+  [name : String]
+  [variant : i64]
+  [ret : ast.AstType]
+  [abi : compiler_ir_types.CompilerIrSpmdPrivateAbi]
+  [fragment : String]) : bool
+  (let
+    [message : String
+      (compiler_ir_types.compiler-ir-spmd-private-abi-signature-error
+        (pabi-sym name)
+        (pabi-signature-params variant)
+        ret
+        abi)]
+    (and
+      (pabi-contains? (clone message) "private SPMD ABI of @")
+      (pabi-contains? message fragment))))
+
+;; Call arguments for the base fixture; `variant` 1 drops the index base, 2
+;; makes argument 0 uniform, 3 retypes argument 0 as i32, 4 swaps arguments
+;; 0 and 1, 5 makes the index base varying.
+(define (pabi-call-args [variant : i64]) : compiler_ir_types.CompilerIrSpmdCallArgSeq
+  (let
+    [builder : compiler_ir_types.CompilerIrSpmdCallArgBuilder
+      (compiler_ir_types.compiler-ir-spmd-call-arg-builder-with-capacity 3)]
+    (begin
+      (compiler_ir_types.compiler-ir-spmd-call-arg-builder-push!
+        (&mut builder)
+        (compiler_ir_types.CompilerIrSpmdCallArg.Arg
+          (if (or (= variant 2) (= variant 4))
+            (compiler_ir_types.CompilerIrSpmdValueClass.Uniform)
+            (compiler_ir_types.CompilerIrSpmdValueClass.Varying))
+          (compiler_ir_types.CompilerIrValue.Var 21)
+          (if (= variant 3)
+            (ast.AstType.I32)
+            (ast.AstType.I64))))
+      (compiler_ir_types.compiler-ir-spmd-call-arg-builder-push!
+        (&mut builder)
+        (compiler_ir_types.CompilerIrSpmdCallArg.Arg
+          (if (= variant 4)
+            (compiler_ir_types.CompilerIrSpmdValueClass.Varying)
+            (compiler_ir_types.CompilerIrSpmdValueClass.Uniform))
+          (compiler_ir_types.CompilerIrValue.Var 22)
+          (ast.AstType.I64)))
+      (if (= variant 1)
+        unit
+        (compiler_ir_types.compiler-ir-spmd-call-arg-builder-push!
+          (&mut builder)
+          (compiler_ir_types.CompilerIrSpmdCallArg.Arg
+            (if (= variant 5)
+              (compiler_ir_types.CompilerIrSpmdValueClass.Varying)
+              (compiler_ir_types.CompilerIrSpmdValueClass.Uniform))
+            (compiler_ir_types.CompilerIrValue.Var 23)
+            (ast.AstType.I64))))
+      (compiler_ir_types.compiler-ir-spmd-call-arg-builder-to-seq builder))))
+
+(define (pabi-call-result [variant : i64]) : compiler_ir_types.CompilerIrSpmdCallResult
+  (cond
+    [(= variant 1) (compiler_ir_types.CompilerIrSpmdCallResult.Unit)]
+    [(= variant 2)
+      (compiler_ir_types.CompilerIrSpmdCallResult.Value
+        6
+        (compiler_ir_types.CompilerIrSpmdValueClass.Uniform)
+        (ast.AstType.I64))]
+    [(= variant 3)
+      (compiler_ir_types.CompilerIrSpmdCallResult.Value
+        6
+        (compiler_ir_types.CompilerIrSpmdValueClass.Varying)
+        (ast.AstType.I32))]
+    [else
+      (compiler_ir_types.CompilerIrSpmdCallResult.Value
+        6
+        (compiler_ir_types.CompilerIrSpmdValueClass.Varying)
+        (ast.AstType.I64))]))
+
+(define (pabi-call-payload
+  [callee : String]
+  [backend : compiler_ir_types.CompilerIrSpmdBackend]
+  [lanes : i64]
+  [mask : compiler_ir_types.CompilerIrValue]
+  [args-variant : i64]
+  [result-variant : i64]
+  [origin : compiler_ir_types.CompilerIrSpmdCallOrigin]) : compiler_ir_types.CompilerIrInstrSpmdCallPayload
+  (compiler_ir_types.CompilerIrInstrSpmdCallPayload
+    (pabi-sym callee)
+    backend
+    lanes
+    mask
+    (pabi-call-args args-variant)
+    (pabi-call-result result-variant)
+    origin))
+
+(define (pabi-base-payload [args-variant : i64] [result-variant : i64]) : compiler_ir_types.CompilerIrInstrSpmdCallPayload
+  (pabi-call-payload
+    "helper"
+    (compiler_ir_types.CompilerIrSpmdBackend.Avx512)
+    8
+    (compiler_ir_types.CompilerIrValue.Var 20)
+    args-variant
+    result-variant
+    (compiler_ir_types.compiler-ir-spmd-call-origin-private (pabi-base))))
+
+(define (pabi-call-rejects?
+  [payload : compiler_ir_types.CompilerIrInstrSpmdCallPayload]
+  [abi : compiler_ir_types.CompilerIrSpmdPrivateAbi]
+  [fragment : String]) : bool
+  (let
+    [message : String
+      (compiler_ir_types.compiler-ir-spmd-private-call-error payload abi)]
+    (and
+      (pabi-contains? (clone message) "private SPMD call to @")
+      (pabi-contains? message fragment))))
+
+(define (pabi-helper-function
+  [name : String]
+  [function-abi : compiler_ir_types.CompilerIrFunctionAbi]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (pabi-sym name)
+    (pabi-signature-params 0)
+    (ast.AstType.I64)
+    4
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-instr-seq1
+          (compiler_ir_types.CompilerIrInstr.Return
+            (compiler_ir_types.CompilerIrMaybeValue.Some
+              (compiler_ir_types.CompilerIrValue.Var 1)))))
+      compiler_ir_types.CompilerIrBlockList.Nil)
+    function-abi))
+
+(define (pabi-caller-function
+  [payload : compiler_ir_types.CompilerIrInstrSpmdCallPayload]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (pabi-sym "caller")
+    (compiler_ir_types.compiler-ir-param-seq-empty)
+    (ast.AstType.Unit)
+    30
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-instr-seq2
+          (compiler_ir_types.CompilerIrInstr.SpmdCall (box payload))
+          (compiler_ir_types.CompilerIrInstr.Return
+            compiler_ir_types.CompilerIrMaybeValue.No)))
+      compiler_ir_types.CompilerIrBlockList.Nil)
+    compiler_ir_types.CompilerIrFunctionAbi.Ordinary))
+
+(define (pabi-program-error
+  [helper : compiler_ir_types.CompilerIrFunction]
+  [payload : compiler_ir_types.CompilerIrInstrSpmdCallPayload]) : String
+  (let
+    [builder : compiler_ir_types.CompilerIrFunctionBuilder
+      (compiler_ir_types.compiler-ir-function-builder-new)]
+    (begin
+      (compiler_ir_types.compiler-ir-function-builder-push!
+        (&mut builder)
+        (pabi-caller-function payload))
+      (compiler_ir_types.compiler-ir-function-builder-push!
+        (&mut builder)
+        helper)
+      (compiler_ir_types.compiler-ir-spmd-private-abi-program-error
+        (compiler_ir_types.compiler-ir-function-builder-to-seq builder)))))
+
+(define (pabi-program-rejects?
+  [helper : compiler_ir_types.CompilerIrFunction]
+  [payload : compiler_ir_types.CompilerIrInstrSpmdCallPayload]
+  [fragment : String]) : bool
+  (pabi-contains? (pabi-program-error helper payload) fragment))
+
+(define (pabi-private-helper) : compiler_ir_types.CompilerIrFunction
+  (pabi-helper-function
+    "helper"
+    (compiler_ir_types.compiler-ir-function-abi-private (pabi-base))))
+
+(define (pabi-render-function [func : compiler_ir_types.CompilerIrFunction]) : String
+  (compiler_ir_types.compiler-ir-function-render
+    (cis.InternStructuralSessionHandle 0)
+    (ast.ast-node-pool-reader-type-segment-bases)
+    func))
+
+(define (pabi-function-private-abi
+  [func : compiler_ir_types.CompilerIrFunction]) : compiler_ir_types.CompilerIrSpmdPrivateAbi
+  (match (compiler_ir_types.compiler-ir-function-abi func)
+    [(compiler_ir_types.CompilerIrFunctionAbi.SpmdPrivate private-box)
+      (compiler_ir_types.compiler-ir-box-shared-view private-box)]
+    [(compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
+      (pabi
+        "ordinary"
+        (compiler_ir_types.CompilerIrSpmdBackend.Scalar)
+        1
+        10
+        (compiler_ir_types.CompilerIrSpmdPrivateIndex.None)
+        (compiler_ir_types.CompilerIrSpmdPrivateResult.Unit))]))
+
+;; 0 when every case holds, else the number of the first failing case.
+(define (compiler-ir-smoke-spmd-private-abi-failure) : i64
+  (let
+    [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-reader-context-current)]
+    [i64-ty : ast.AstType (ast.AstType.I64)]
+    (cond
+      ;; The base fixture is valid on every level.
+      [(not
+          (string.eq
+            (compiler_ir_types.compiler-ir-spmd-private-abi-shape-error
+              (pabi-base))
+            ""))
+        1]
+      [(not
+          (string.eq
+            (compiler_ir_types.compiler-ir-spmd-private-abi-signature-error
+              (pabi-sym "helper")
+              (pabi-signature-params 0)
+              (clone i64-ty)
+              (pabi-base))
+            ""))
+        2]
+      [(not
+          (string.eq
+            (compiler_ir_types.compiler-ir-spmd-private-call-error
+              (pabi-base-payload 0 0)
+              (pabi-base))
+            ""))
+        3]
+      [(not
+          (string.eq
+            (pabi-program-error (pabi-private-helper) (pabi-base-payload 0 0))
+            ""))
+        4]
+      [(not
+          (string.eq
+            (compiler_ir_types.compiler-ir-spmd-call-descriptor-error
+              (pabi-base-payload 0 0))
+            ""))
+        5]
+      ;; Descriptor shape: lanes, parameter roles and ordinals, index mapping,
+      ;; and result class.
+      [(not
+          (pabi-shape-rejects?
+            (pabi
+              "helper"
+              (compiler_ir_types.CompilerIrSpmdBackend.Scalar)
+              8
+              10
+              (compiler_ir_types.CompilerIrSpmdPrivateIndex.None)
+              (pabi-result-varying-i64))
+            "scalar descriptor has 8 lanes"))
+        6]
+      [(not
+          (pabi-shape-rejects?
+            (pabi
+              "helper"
+              (compiler_ir_types.CompilerIrSpmdBackend.Avx512)
+              6
+              0
+              (compiler_ir_types.CompilerIrSpmdPrivateIndex.Appended 3)
+              (pabi-result-varying-i64))
+            "not a power of two"))
+        7]
+      [(not (pabi-shape-rejects? (pabi-with-params 1) "records ordinal 5")) 8]
+      [(not
+          (pabi-shape-rejects?
+            (pabi-with-params 2)
+            "maps source parameter 1, not 0"))
+        9]
+      [(not
+          (pabi-shape-rejects?
+            (pabi-with-params 3)
+            "physical parameter 0 is not the active mask"))
+        10]
+      [(not
+          (pabi-shape-rejects?
+            (pabi-with-params 4)
+            "active mask parameter is not bool"))
+        11]
+      [(not
+          (pabi-shape-rejects? (pabi-with-params 5) "is not the last parameter"))
+        12]
+      [(not
+          (pabi-shape-rejects?
+            (pabi-with-params 6)
+            "index base parameter is not i64"))
+        13]
+      [(not
+          (pabi-shape-rejects?
+            (pabi-with-params 7)
+            "mask source parameter 1 is not bool"))
+        14]
+      [(not
+          (pabi-shape-rejects? (pabi-with-params 8) "a varying bool is a mask"))
+        15]
+      [(not
+          (pabi-shape-rejects?
+            (pabi-with-params 9)
+            "active mask at physical parameter 1"))
+        16]
+      [(not
+          (pabi-shape-rejects?
+            (pabi
+              "helper"
+              (compiler_ir_types.CompilerIrSpmdBackend.Avx512)
+              8
+              0
+              (compiler_ir_types.CompilerIrSpmdPrivateIndex.None)
+              (pabi-result-varying-i64))
+            "without an appended index mapping"))
+        17]
+      [(not
+          (pabi-shape-rejects?
+            (pabi
+              "helper"
+              (compiler_ir_types.CompilerIrSpmdBackend.Avx512)
+              8
+              10
+              (compiler_ir_types.CompilerIrSpmdPrivateIndex.Appended 2)
+              (pabi-result-varying-i64))
+            "appended index mapping without an index base parameter"))
+        18]
+      [(not
+          (pabi-shape-rejects?
+            (pabi
+              "helper"
+              (compiler_ir_types.CompilerIrSpmdBackend.Avx512)
+              8
+              0
+              (compiler_ir_types.CompilerIrSpmdPrivateIndex.Appended 2)
+              (pabi-result-varying-i64))
+            "not the last"))
+        19]
+      [(not
+          (pabi-shape-rejects?
+            (pabi
+              "helper"
+              (compiler_ir_types.CompilerIrSpmdBackend.Avx512)
+              8
+              10
+              (compiler_ir_types.CompilerIrSpmdPrivateIndex.ReuseSource 1)
+              (pabi-result-varying-i64))
+            "reused index source parameter 1 is not varying"))
+        20]
+      [(not
+          (pabi-shape-rejects?
+            (pabi
+              "helper"
+              (compiler_ir_types.CompilerIrSpmdBackend.Avx512)
+              8
+              10
+              (compiler_ir_types.CompilerIrSpmdPrivateIndex.ReuseSource 2)
+              (pabi-result-varying-i64))
+            "reused index source parameter 2 is out of range"))
+        21]
+      [(not
+          (pabi-shape-rejects?
+            (pabi
+              "helper"
+              (compiler_ir_types.CompilerIrSpmdBackend.Avx512)
+              8
+              0
+              (compiler_ir_types.CompilerIrSpmdPrivateIndex.ReuseSource 0)
+              (pabi-result-varying-i64))
+            "index base parameter with a reused source index"))
+        22]
+      [(not
+          (pabi-shape-rejects?
+            (pabi
+              "helper"
+              (compiler_ir_types.CompilerIrSpmdBackend.Scalar)
+              1
+              10
+              (compiler_ir_types.CompilerIrSpmdPrivateIndex.ReuseSource 0)
+              (pabi-result-varying-i64))
+            "scalar descriptor maps a logical index"))
+        23]
+      [(not
+          (pabi-shape-rejects?
+            (pabi
+              "helper"
+              (compiler_ir_types.CompilerIrSpmdBackend.Avx512)
+              8
+              0
+              (compiler_ir_types.CompilerIrSpmdPrivateIndex.Appended 3)
+              (compiler_ir_types.CompilerIrSpmdPrivateResult.Value
+                (compiler_ir_types.CompilerIrSpmdValueClass.Mask)
+                (ast.AstType.I64)))
+            "mask result is not bool"))
+        24]
+      [(not
+          (pabi-shape-rejects?
+            (pabi
+              "helper"
+              (compiler_ir_types.CompilerIrSpmdBackend.Avx512)
+              8
+              0
+              (compiler_ir_types.CompilerIrSpmdPrivateIndex.Appended 3)
+              (compiler_ir_types.CompilerIrSpmdPrivateResult.Value
+                (compiler_ir_types.CompilerIrSpmdValueClass.Varying)
+                (ast.AstType.Bool)))
+            "varying result is bool"))
+        25]
+      [(not
+          (pabi-shape-rejects?
+            (pabi
+              "helper"
+              (compiler_ir_types.CompilerIrSpmdBackend.Avx512)
+              8
+              0
+              (compiler_ir_types.CompilerIrSpmdPrivateIndex.Appended 3)
+              (compiler_ir_types.CompilerIrSpmdPrivateResult.Value
+                (compiler_ir_types.CompilerIrSpmdValueClass.Uniform)
+                (ast.AstType.Unit)))
+            "valued result has type unit"))
+        26]
+      ;; Helper side: the descriptor against the actual signature.
+      [(not
+          (pabi-signature-rejects?
+            "other"
+            0
+            (clone i64-ty)
+            (pabi-base)
+            "descriptor names callee @helper"))
+        27]
+      [(not
+          (pabi-signature-rejects?
+            "helper"
+            1
+            (clone i64-ty)
+            (pabi-base)
+            "descriptor has 4 physical parameters, the signature has 3"))
+        28]
+      [(not
+          (pabi-signature-rejects?
+            "helper"
+            2
+            (clone i64-ty)
+            (pabi-base)
+            "physical parameter 2 type differs from the signature"))
+        29]
+      [(not
+          (pabi-signature-rejects?
+            "helper"
+            0
+            (ast.AstType.I32)
+            (pabi-base)
+            "result type differs from the signature"))
+        30]
+      [(not
+          (pabi-signature-rejects?
+            "helper"
+            0
+            (clone i64-ty)
+            (pabi
+              "helper"
+              (compiler_ir_types.CompilerIrSpmdBackend.Avx512)
+              8
+              0
+              (compiler_ir_types.CompilerIrSpmdPrivateIndex.Appended 3)
+              (compiler_ir_types.CompilerIrSpmdPrivateResult.Unit))
+            "unit result but the signature returns a value"))
+        31]
+      ;; Call side: the payload against the descriptor it carries.
+      [(not
+          (pabi-call-rejects?
+            (pabi-call-payload
+              "other"
+              (compiler_ir_types.CompilerIrSpmdBackend.Avx512)
+              8
+              (compiler_ir_types.CompilerIrValue.Var 20)
+              0
+              0
+              (compiler_ir_types.compiler-ir-spmd-call-origin-private
+                (pabi-base)))
+            (pabi-base)
+            "the descriptor names callee @helper"))
+        32]
+      [(not
+          (pabi-call-rejects?
+            (pabi-call-payload
+              "helper"
+              (compiler_ir_types.CompilerIrSpmdBackend.Avx2)
+              8
+              (compiler_ir_types.CompilerIrValue.Var 20)
+              0
+              0
+              (compiler_ir_types.compiler-ir-spmd-call-origin-private
+                (pabi-base)))
+            (pabi-base)
+            "call backend avx2, the descriptor says avx512"))
+        33]
+      [(not
+          (pabi-call-rejects?
+            (pabi-call-payload
+              "helper"
+              (compiler_ir_types.CompilerIrSpmdBackend.Avx512)
+              16
+              (compiler_ir_types.CompilerIrValue.Var 20)
+              0
+              0
+              (compiler_ir_types.compiler-ir-spmd-call-origin-private
+                (pabi-base)))
+            (pabi-base)
+            "call has 16 lanes, the descriptor 8"))
+        34]
+      [(not
+          (pabi-call-rejects?
+            (pabi-call-payload
+              "helper"
+              (compiler_ir_types.CompilerIrSpmdBackend.Avx512)
+              8
+              (compiler_ir_types.CompilerIrValue.I64 1)
+              0
+              0
+              (compiler_ir_types.compiler-ir-spmd-call-origin-private
+                (pabi-base)))
+            (pabi-base)
+            "active mask is not a bool value"))
+        35]
+      [(not
+          (pabi-call-rejects?
+            (pabi-base-payload 1 0)
+            (pabi-base)
+            "call has 2 arguments, the descriptor 3"))
+        36]
+      [(not
+          (pabi-call-rejects?
+            (pabi-base-payload 2 0)
+            (pabi-base)
+            "argument 0 is uniform, the descriptor says varying"))
+        37]
+      [(not
+          (pabi-call-rejects?
+            (pabi-base-payload 3 0)
+            (pabi-base)
+            "argument 0 type differs from the descriptor"))
+        38]
+      [(not
+          (pabi-call-rejects?
+            (pabi-base-payload 4 0)
+            (pabi-base)
+            "argument 0 is uniform, the descriptor says varying"))
+        39]
+      [(not
+          (pabi-call-rejects?
+            (pabi-base-payload 5 0)
+            (pabi-base)
+            "argument 2 is not the uniform i64 index base"))
+        40]
+      [(not
+          (pabi-call-rejects?
+            (pabi-base-payload 0 1)
+            (pabi-base)
+            "unit call of a valued helper"))
+        41]
+      [(not
+          (pabi-call-rejects?
+            (pabi-base-payload 0 2)
+            (pabi-base)
+            "result is uniform, the descriptor says varying"))
+        42]
+      [(not
+          (pabi-call-rejects?
+            (pabi-base-payload 0 3)
+            (pabi-base)
+            "result type differs from the descriptor"))
+        43]
+      [(not
+          (pabi-call-rejects?
+            (pabi-base-payload 0 0)
+            (pabi
+              "helper"
+              (compiler_ir_types.CompilerIrSpmdBackend.Avx512)
+              8
+              0
+              (compiler_ir_types.CompilerIrSpmdPrivateIndex.Appended 3)
+              (compiler_ir_types.CompilerIrSpmdPrivateResult.Unit))
+            "valued call of a unit helper"))
+        44]
+      ;; The optimizer's per-call integrity check sees the same call-side error.
+      [(not
+          (pabi-contains?
+            (compiler_ir_types.compiler-ir-spmd-call-descriptor-error
+              (pabi-base-payload 2 0))
+            "argument 0 is uniform"))
+        45]
+      ;; Whole program: the call's descriptor must be its callee's.
+      [(not
+          (pabi-program-rejects?
+            (pabi-helper-function
+              "helper"
+              compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
+            (pabi-base-payload 0 0)
+            "in @caller: private SPMD call to @helper: the callee has the ordinary ABI"))
+        46]
+      [(not
+          (pabi-program-rejects?
+            (pabi-helper-function
+              "elsewhere"
+              compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
+            (pabi-base-payload 0 0)
+            "no same-program private helper has that name"))
+        47]
+      [(not
+          (pabi-program-rejects?
+            (pabi-helper-function
+              "helper"
+              (compiler_ir_types.compiler-ir-function-abi-private
+                (pabi-with-params 11)))
+            (pabi-base-payload 0 0)
+            "private SPMD ABI of @helper: physical parameter 2 type differs from the signature"))
+        48]
+      [(not
+          (pabi-program-rejects?
+            (compiler_ir_types.CompilerIrFunction.Function
+              (pabi-sym "helper")
+              (let
+                [builder : compiler_ir_types.CompilerIrParamBuilder
+                  (compiler_ir_types.compiler-ir-param-builder-with-capacity 4)]
+                (begin
+                  (compiler_ir_types.compiler-ir-param-builder-push!
+                    (&mut builder)
+                    (compiler_ir_types.CompilerIrParam.Param
+                      "mask"
+                      (ast.AstType.Bool)
+                      0))
+                  (compiler_ir_types.compiler-ir-param-builder-push!
+                    (&mut builder)
+                    (compiler_ir_types.CompilerIrParam.Param
+                      "x"
+                      (ast.AstType.I64)
+                      1))
+                  (compiler_ir_types.compiler-ir-param-builder-push!
+                    (&mut builder)
+                    (compiler_ir_types.CompilerIrParam.Param
+                      "k"
+                      (ast.AstType.U64)
+                      2))
+                  (compiler_ir_types.compiler-ir-param-builder-push!
+                    (&mut builder)
+                    (compiler_ir_types.CompilerIrParam.Param
+                      "base"
+                      (ast.AstType.I64)
+                      3))
+                  (compiler_ir_types.compiler-ir-param-builder-to-seq builder)))
+              (ast.AstType.I64)
+              4
+              compiler_ir_types.CompilerIrBlockList.Nil
+              (compiler_ir_types.compiler-ir-function-abi-private
+                (pabi-with-params 11)))
+            (pabi-base-payload 0 0)
+            "the call's descriptor differs from the helper's"))
+        49]
+      [(not
+          (pabi-program-rejects?
+            (pabi-private-helper)
+            (pabi-call-payload
+              "helper"
+              (compiler_ir_types.CompilerIrSpmdBackend.Avx512)
+              8
+              (compiler_ir_types.CompilerIrValue.Var 20)
+              0
+              0
+              (compiler_ir_types.CompilerIrSpmdCallOrigin.Imported
+                (box
+                  (compiler_ir_types.CompilerIrImportedSpmdCall
+                    "fixture"
+                    "1.0.0"
+                    "fixture/helper"
+                    "(-> i64 i64 i64)"
+                    "spmd-call-v1"
+                    "avx512"
+                    8
+                    "vuu"
+                    "v"
+                    -1
+                    "helper"))))
+            "imported call targets a same-program private helper"))
+        50]
+      [(not
+          (pabi-program-rejects?
+            (pabi-private-helper)
+            (pabi-base-payload 3 0)
+            "in @caller: private SPMD call to @helper: argument 0 type differs"))
+        51]
+      ;; Round trips: clone, compaction, and rendering keep the exact record.
+      [(not
+          (compiler_ir_types.compiler-ir-spmd-private-abi-eq?
+            bases
+            (pabi-function-private-abi
+              (compiler_ir_types.compiler-ir-clone-function
+                (compiler_ir_types.compiler-ir-global-shared-view pools)
+                (pabi-private-helper)))
+            (pabi-base)))
+        52]
+      [(not
+          (compiler_ir_types.compiler-ir-spmd-private-abi-eq?
+            bases
+            (pabi-function-private-abi
+              (compiler_ir_types.compiler-ir-function-compact-blocks
+                (pabi-private-helper)))
+            (pabi-base)))
+        53]
+      [(compiler_ir_types.compiler-ir-spmd-private-abi-eq?
+          bases
+          (pabi-with-params 11)
+          (pabi-base))
+        54]
+      [(not
+          (string.eq
+            (pabi-render-function
+              (compiler_ir_types.compiler-ir-clone-function
+                (compiler_ir_types.compiler-ir-global-shared-view pools)
+                (pabi-private-helper)))
+            (pabi-render-function (pabi-private-helper))))
+        55]
+      [(not
+          (pabi-contains?
+            (pabi-render-function (pabi-private-helper))
+            (str_cat.str-cat
+              "vars 4 abi spmd-private-v1 @helper avx512 lanes 8 [0 active-mask : bool,"
+              " 1 source 0 varying i64 : i64, 2 source 1 uniform i64 : i64,"
+              " 3 index-base : i64] index appended 3 result varying i64 {")))
+        56]
+      [(pabi-contains?
+          (pabi-render-function
+            (pabi-helper-function
+              "helper"
+              compiler_ir_types.CompilerIrFunctionAbi.Ordinary))
+          " abi ")
+        57]
+      [(not
+          (match (compiler_ir_types.compiler-ir-clone-instr
+            (compiler_ir_types.compiler-ir-global-shared-view pools)
+            (compiler_ir_types.CompilerIrInstr.SpmdCall
+              (box (pabi-base-payload 0 0))))
+            [(compiler_ir_types.CompilerIrInstr.SpmdCall payload-box)
+              (match (compiler_ir_types.compiler-ir-box-field-shared-view
+                payload-box
+                origin)
+                [(compiler_ir_types.CompilerIrSpmdCallOrigin.Private
+                    private-box)
+                  (compiler_ir_types.compiler-ir-spmd-private-abi-eq?
+                    bases
+                    (compiler_ir_types.compiler-ir-box-shared-view private-box)
+                    (pabi-base))]
+                [_ false])]
+            [_ false]))
+        58]
+      [else 0])))
+
 (define (main) : i64
   (begin
     (unless (compiler-ir-smoke-function-seq-roundtrip-ok?) (return 1))
@@ -2117,4 +3103,7 @@
     (unless (compiler-ir-smoke-call-arg-map-visit-ok?) (return 22))
     (unless (compiler-ir-smoke-spmd-map-visit-ok?) (return 23))
     (unless (compiler-ir-smoke-value-seq-map-visit-ok?) (return 24))
+    (let
+      [private-abi-failure : i64 (compiler-ir-smoke-spmd-private-abi-failure)]
+      (unless (= private-abi-failure 0) (return (+ 100 private-abi-failure))))
     (compiler_ir_types.compiler-ir-effect-self-test)))

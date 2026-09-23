@@ -1,0 +1,128 @@
+# ci-gate-ledger-schema	2
+# count	all	123
+# count	linux	120
+# count	windows	106
+id	hosts	label	needs
+cli-gate-inventory-and-ownership	all	CLI gate inventory and ownership	-
+ci-gate-ledger-self-tests	all	CI gate ledger self-tests	-
+x64-executable-template-registry-coverage	all	x64 executable template registry coverage	-
+ci-timing-helper-self-tests	all	CI timing helper self-tests	-
+work-queue-fetch-boundary-self-tests	all	work queue fetch boundary self-tests	-
+cross-mode-differential-oracle-self-tests	all	cross-mode differential oracle self-tests	-
+linux-resident-memory-limit-helper-self-tests	linux	Linux resident memory limit helper self-tests	-
+windows-job-object-memory-limit-helper-self-tests	windows	Windows Job Object memory limit helper self-tests	-
+semantic-index-benchmark-report-and-termination-self-tests	all	semantic-index benchmark report and termination self-tests	-
+embedded-stdlib-tlci-resource-verifier-self-tests	all	embedded stdlib TLCI resource verifier self-tests	-
+build-provenance-helper-self-tests	all	build provenance helper self-tests	-
+build-invariance-batch-reuse-self-tests	linux	build-invariance batch reuse self-tests	-
+ci-compiler-artifact-provenance-self-tests	all	CI compiler artifact provenance self-tests	-
+ci-compiler-artifact-startup-self-tests	all	CI compiler artifact startup self-tests	-
+selfhost-linked-size-attribution-parser-self-tests	all	selfhost linked-size attribution parser self-tests	-
+bootstrap-seed-global-shared-view-probe-self-tests	all	bootstrap seed global shared-view probe self-tests	-
+cli-help-surface	all	CLI help surface	-
+ci-timing-budget-self-tests	all	CI timing budget self-tests	-
+tlci-native-route-size-ratchet-self-tests	all	TLCI native route size ratchet self-tests	-
+gate-reachability	all	gate reachability	-
+zero-cons-structural-classifier-self-tests	all	zero-cons structural classifier self-tests	-
+zero-cons-fixture-and-embedded-source-invariant	all	zero-cons fixture and embedded source invariant	-
+spmd-avx-512-instruction-harness-self-tests	all	SPMD AVX-512 instruction harness self-tests	-
+spmd-mode-instruction-count-harness-self-tests	all	SPMD mode instruction-count harness self-tests	-
+c-measured-region-instruction-harness-self-tests	all	C measured-region instruction harness self-tests	-
+instruction-count-comparison-self-tests	all	instruction-count comparison self-tests	-
+compiler-scaling-comparison-self-tests	all	compiler scaling comparison self-tests	-
+cli-tools-benchmark-repetition-self-test	all	CLI tools benchmark repetition self-test	-
+stage0-release-publication-verifier-self-tests	all	stage0 release publication verifier self-tests	-
+stage0-latest-staged-publication-self-tests	all	stage0 latest staged publication self-tests	-
+stage0-publication-workflow-policy	all	stage0 publication workflow policy	-
+docs-publication-workflow-policy	all	docs publication workflow policy	-
+bootstrap-benchmark-command-construction-self-test	all	bootstrap benchmark command-construction self-test	-
+bootstrap-adaptive-control-flow	all	bootstrap adaptive control flow	-
+bootstrap-fixpoint	all	bootstrap fixpoint	-
+scratch-vreg-tlci-mutation-bootstrap-fixpoint	all	scratch-vreg + TLCI mutation bootstrap fixpoint	bootstrap-fixpoint
+stage2-selfhost-compile-manifest	all	stage2 selfhost compile manifest	bootstrap-fixpoint
+stage2-regalloc-census-compiler-build	all	stage2 regalloc census compiler build	bootstrap-fixpoint
+embedded-stdlib-build-payload	all	embedded stdlib build payload	bootstrap-fixpoint
+embedded-stdlib-tlci-image	all	embedded stdlib tlci image	bootstrap-fixpoint
+stage2-deterministic-assembly	all	stage2 deterministic assembly	bootstrap-fixpoint,stage2-selfhost-compile-manifest
+typelisp-format-compiler-selection-control	all	TypeLisp format compiler selection control	bootstrap-fixpoint
+typelisp-source-formatting	all	TypeLisp source formatting	bootstrap-fixpoint
+large-crlf-formatter-diff	all	large CRLF formatter diff	bootstrap-fixpoint
+typelisp-lint-gate-coverage-self-tests	all	TypeLisp lint gate coverage self-tests	bootstrap-fixpoint
+typelisp-source-lint	all	TypeLisp source lint	bootstrap-fixpoint
+no-libc-dependency-guard	all	no-libc dependency guard	bootstrap-fixpoint
+package-lock-writer-observation-self-tests	all	package-lock writer observation self-tests	bootstrap-fixpoint
+stage2-cli-build-run-and-chooser-smoke	all	stage2 cli build/run and chooser smoke	bootstrap-fixpoint
+stage2-public-tool-surface	all	stage2 public tool surface	bootstrap-fixpoint
+ir-observability-golden	all	IR observability golden	bootstrap-fixpoint
+backend-safety-contract-manifest	all	backend safety contract manifest	bootstrap-fixpoint
+compiler-arena-debug-native-matrix	all	compiler arena debug native matrix	bootstrap-fixpoint
+tlci-format-corpus	all	TLCI format corpus	bootstrap-fixpoint
+tlci-native-boundary-manifest	all	TLCI native boundary manifest	bootstrap-fixpoint
+stage2-result-import-harness-integrity	all	stage2 result-import harness integrity	bootstrap-fixpoint
+stage2-opt1-opt2-build-invariance	linux	stage2 opt1/opt2 build-invariance	bootstrap-fixpoint
+stage2-opt2-built-cli-compile-cross-fixpoint-regression	all	stage2 opt2-built CLI compile + cross-fixpoint regression	bootstrap-fixpoint,stage2-opt1-opt2-build-invariance@linux
+stage2-spmd-runtime-dispatch	all	stage2 SPMD runtime dispatch	bootstrap-fixpoint
+stage2-spmd-package-calls	all	stage2 SPMD package calls	bootstrap-fixpoint
+ispc-perfbench-loads-corpus-contract	all	ISPC perfbench loads corpus contract	bootstrap-fixpoint
+ispc-perfbench-stores-corpus-contract	all	ISPC perfbench stores corpus contract	bootstrap-fixpoint
+ispc-perfbench-gathers-corpus-contract	all	ISPC perfbench gathers corpus contract	bootstrap-fixpoint
+ispc-mandelbrot-corpus-contract	all	ISPC Mandelbrot corpus contract	bootstrap-fixpoint
+ispc-point-transform-corpus-contract	all	ISPC point-transform corpus contract	bootstrap-fixpoint
+stage2-repository-doctests	all	stage2 repository doctests	bootstrap-fixpoint
+stage2-inline-typelisp-tests	all	stage2 inline TypeLisp tests	bootstrap-fixpoint
+stage2-prelude-macro-mutation-guard	all	stage2 prelude macro mutation guard	bootstrap-fixpoint
+stage2-compile-profile-verifier	all	stage2 compile-profile verifier	bootstrap-fixpoint,embedded-stdlib-tlci-image
+embedded-stdlib-tlci-bounded-resource-report	all	embedded stdlib TLCI bounded resource report	bootstrap-fixpoint
+tlci-native-route-sustained-stress	all	TLCI native route sustained stress	bootstrap-fixpoint,stage2-compile-profile-verifier
+package-metadata-only-tlci-dependency-catalogs	all	package metadata-only TLCI dependency catalogs	bootstrap-fixpoint,stage2-compile-profile-verifier
+package-native-tlci-dependency-macros	all	package native TLCI dependency macros	bootstrap-fixpoint,stage2-compile-profile-verifier
+package-dependency-tlci-frontend-surfaces	all	package dependency TLCI frontend surfaces	bootstrap-fixpoint,stage2-compile-profile-verifier
+stage2-compile-startup-profile-verifier	all	stage2 compile-startup-profile verifier	bootstrap-fixpoint
+stage2-allocation-profile-verifier	all	stage2 allocation-profile verifier	bootstrap-fixpoint
+stage2-math-exp-codegen-verifier	all	stage2 math exp codegen verifier	bootstrap-fixpoint
+stage2-math-log-codegen-verifier	all	stage2 math log codegen verifier	bootstrap-fixpoint
+stage2-math-pow-codegen-verifier	all	stage2 math pow codegen verifier	bootstrap-fixpoint
+stage2-math-trig-codegen-verifier	all	stage2 math trig codegen verifier	bootstrap-fixpoint
+stage2-codegen-target-parity	all	stage2 codegen target parity	bootstrap-fixpoint
+stage2-backend-target-assembly-parity	all	stage2 backend target assembly parity	bootstrap-fixpoint
+stage2-windows-coff-batch-plan	all	stage2 Windows COFF batch plan	bootstrap-fixpoint
+stage2-pic-relocation-verifier	all	stage2 PIC relocation verifier	bootstrap-fixpoint
+stage2-coff-relocation-overflow-verifier	all	stage2 COFF relocation-overflow verifier	bootstrap-fixpoint
+stage2-safety-corpus	all	stage2 safety corpus	bootstrap-fixpoint
+integration-manifest-validator-self-tests	all	integration manifest validator self-tests	bootstrap-fixpoint
+windows-coff-plan-validator-self-tests	all	Windows COFF plan validator self-tests	bootstrap-fixpoint
+docs-site-search-manifest-validator-self-tests	all	docs-site search manifest validator self-tests	bootstrap-fixpoint
+integration-batch-observability	all	integration batch observability	bootstrap-fixpoint
+integration-windows-path-normalization	all	integration Windows path normalization	bootstrap-fixpoint
+integration-compile-failure-diagnostics	all	integration compile-failure diagnostics	bootstrap-fixpoint
+integration-signal-notice-capture	linux	integration signal notice capture	bootstrap-fixpoint
+windows-integration-linker-queue-self-test	windows	Windows integration linker queue self-test	bootstrap-fixpoint
+stage2-native-integration-corpus	all	stage2 native integration corpus	bootstrap-fixpoint
+stage2-must-use-metadata-and-abi-codegen	all	stage2 must-use metadata and ABI/codegen	bootstrap-fixpoint
+stage2-regalloc-backend-asm-shape-gates	linux	stage2 regalloc/backend asm shape gates	bootstrap-fixpoint
+stage2-git-sha-1-fixed-round-wipe-asm-shape-gate	linux	stage2 Git SHA-1 fixed-round/wipe asm shape gate	bootstrap-fixpoint
+stage2-sha-256-fixed-round-wipe-asm-shape-gate	linux	stage2 SHA-256 fixed-round/wipe asm shape gate	bootstrap-fixpoint
+stage2-sha-512-wipe-asm-shape-gate	linux	stage2 SHA-512 wipe asm shape gate	bootstrap-fixpoint
+stage2-by-value-aggregate-abi-shape-gate	linux	stage2 by-value aggregate ABI shape gate	bootstrap-fixpoint
+stage2-examples	all	stage2 examples	bootstrap-fixpoint
+benchmark-wall-clock-harness-self-tests	all	benchmark wall-clock harness self-tests	bootstrap-fixpoint
+stage2-benchmark-comparison-correctness	all	stage2 benchmark comparison correctness	bootstrap-fixpoint
+stage2-optimization-corpus-correctness	all	stage2 optimization corpus correctness	bootstrap-fixpoint
+stage2-optimization-corpus-opt2-runtime-correctness	all	stage2 optimization corpus opt2 runtime correctness	bootstrap-fixpoint
+stage2-stdlib-modules-and-fixtures	all	stage2 stdlib modules and fixtures	bootstrap-fixpoint
+stage2-stdlib-selfhost-verifier	all	stage2 stdlib selfhost verifier	bootstrap-fixpoint
+stage2-spmd-simd-comparison	all	stage2 SPMD SIMD comparison	bootstrap-fixpoint
+stage2-cross-mode-semantic-abi-differential	all	stage2 cross-mode semantic/ABI differential	bootstrap-fixpoint
+stage2-spmd-lane-identity	all	stage2 SPMD lane identity	bootstrap-fixpoint
+stage2-spmd-broadcast	all	stage2 SPMD broadcast	bootstrap-fixpoint
+stage2-docs-pages-build-path	all	stage2 docs Pages build path	bootstrap-fixpoint
+stage2-cli-host-action-smoke	linux	stage2 CLI host-action smoke	bootstrap-fixpoint
+stage2-stdlib-documentation	linux	stage2 stdlib documentation	bootstrap-fixpoint
+linux-instruction-count-baseline	linux	Linux instruction-count baseline	bootstrap-fixpoint
+linux-heavy-instruction-count-baseline	linux	Linux heavy instruction-count baseline	bootstrap-fixpoint
+linux-compiler-scaling-budgets	linux	Linux compiler scaling budgets	bootstrap-fixpoint
+stage2-native-link-generated-programs	linux	stage2 native link generated programs	bootstrap-fixpoint
+stage2-rooted-linux-filesystem-boundary	linux	stage2 rooted Linux filesystem boundary	bootstrap-fixpoint
+stage2-linux-process-failure-boundary	linux	stage2 Linux process failure boundary	bootstrap-fixpoint
+windows-native-link-build-run	windows	windows native link build/run	bootstrap-fixpoint
+ci-compiler-artifact-hosted-trace-completeness	all	CI compiler artifact hosted trace completeness	*

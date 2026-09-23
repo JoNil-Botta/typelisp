@@ -176,8 +176,8 @@ created:
   lifetime. Create it once, allocate the collection and every later regrowth in
   it, and do not rewind or destroy it while any consumer may retain the state.
   Clear logical contents by rebinding the collection or resetting its metadata,
-  not by reclaiming the arena. `compiler-load-provenance-arena` in
-  [`src/compiler_load.tl`](src/compiler_load.tl) is the current process-lifetime
+  not by reclaiming the arena. `compiler-ir-label-arena` in
+  [`src/compiler_ir_types.tl`](src/compiler_ir_types.tl) is the process-lifetime
   example.
 
 Never use `node-pool-base-arena` or the intern persistent arena as convenient

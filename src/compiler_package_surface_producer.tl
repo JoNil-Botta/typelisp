@@ -44,15 +44,27 @@
   (Ready PackageSurfacePayloads)
   (Err String))
 
-(define package-surface-capture-state : PackageSurfaceCaptureState
-  (PackageSurfaceCaptureState.Inactive))
+;; The carrier stays live across frontend retirement, including failed lower.
+;; Its payloads still obey the capture lifetime: encoded bytes and diagnostics
+;; belong to the caller's result arena; expanded AST references are consumed
+;; before the frontend owner is released.
+(define package-surface-capture-state : (__tl_dyn-array
+    PackageSurfaceCaptureState)
+  (__tl_make-array (PackageSurfaceCaptureState.Inactive)))
+(define package-surface-capture-result-arena : i64
+  0)
 
 (define (package-surface-capture-state-shared-view) : PackageSurfaceCaptureState
-  (cfg
-    stage0-seed-bootstrap
+  (owned_view.compiler-owned-array-element-shared-view
     package-surface-capture-state
-    (unsafe
-      (ptr-read (ptr-addr-of package-surface-capture-state)))))
+    0))
+
+(define (package-surface-capture-error! [message : String]) : unit
+  (in-arena
+    (arena.Arena package-surface-capture-result-arena)
+    (set!
+      (array-ref package-surface-capture-state 0)
+      (PackageSurfaceCaptureState.Err (string.copy message)))))
 
 (define (package-surface-identity-key
   [package-name : String]
@@ -116,8 +128,9 @@
   [seen : sym_i64_env.SymI64Env]) : unit
   (begin
     (surface_facts.surface-typecheck-facts-recording-abort!)
+    (set! package-surface-capture-result-arena (arena.tl_arena_current))
     (set!
-      package-surface-capture-state
+      (array-ref package-surface-capture-state 0)
       (PackageSurfaceCaptureState.Pending key seen (arena.tl_arena_current)))))
 
 (define (package-surface-program-decl-count [program : ast.AstProgram]) : i64
@@ -159,7 +172,7 @@
         (begin
           (surface_facts.surface-typecheck-facts-recording-start! result-arena)
           (set!
-            package-surface-capture-state
+            (array-ref package-surface-capture-state 0)
             (PackageSurfaceCaptureState.Expanded
               key
               structural-session
@@ -174,10 +187,8 @@
     [_
       (begin
         (surface_facts.surface-typecheck-facts-recording-abort!)
-        (set!
-          package-surface-capture-state
-          (PackageSurfaceCaptureState.Err
-            "package surface: duplicate checked compilation capture")))]))
+        (package-surface-capture-error!
+          "package surface: duplicate checked compilation capture"))]))
 
 (define (package-surface-capture-store-encoded!
   [key : surface_identity.SurfaceIdentityKey]
@@ -197,9 +208,7 @@
       (package-surface-modules (owned_view.compiler-owned-shared-view program))]
     (match (surface_identity.surface-identity-encode identity-payload)
       [(surface_identity.ResultSurfaceIdentityBytes.Err message)
-        (set!
-          package-surface-capture-state
-          (PackageSurfaceCaptureState.Err message))]
+        (package-surface-capture-error! message)]
       [(surface_identity.ResultSurfaceIdentityBytes.Ok identity-bytes)
         (match program
           [(ast.AstProgram.Program decls-box)
@@ -213,9 +222,7 @@
               source-count
               identity-count)
               [(surface_ast.ResultSurfaceAstBytes.Err message)
-                (set!
-                  package-surface-capture-state
-                  (PackageSurfaceCaptureState.Err message))]
+                (package-surface-capture-error! message)]
               [(surface_ast.ResultSurfaceAstBytes.Ok ast-bytes)
                 (match (surface_facts.surface-typecheck-facts-encode
                   facts
@@ -223,12 +230,10 @@
                   source-count
                   identity-count)
                   [(surface_facts.ResultSurfaceTypecheckFactBytes.Err message)
-                    (set!
-                      package-surface-capture-state
-                      (PackageSurfaceCaptureState.Err message))]
+                    (package-surface-capture-error! message)]
                   [(surface_facts.ResultSurfaceTypecheckFactBytes.Ok fact-bytes)
                     (set!
-                      package-surface-capture-state
+                      (array-ref package-surface-capture-state 0)
                       (PackageSurfaceCaptureState.Ready
                         (PackageSurfacePayloads
                           identity-bytes
@@ -272,10 +277,8 @@
     [_
       (begin
         (surface_facts.surface-typecheck-facts-recording-abort!)
-        (set!
-          package-surface-capture-state
-          (PackageSurfaceCaptureState.Err
-            "package surface: checked frontend capture was not armed")))]))
+        (package-surface-capture-error!
+          "package surface: checked frontend capture was not armed"))]))
 
 (define (package-surface-capture-abort! [message : String]) : unit
   (match (package-surface-capture-state-shared-view)
@@ -283,24 +286,28 @@
     [_
       (begin
         (surface_facts.surface-typecheck-facts-recording-abort!)
-        (set!
-          package-surface-capture-state
-          (PackageSurfaceCaptureState.Err message)))]))
+        (package-surface-capture-error! message))]))
 
 (define (package-surface-capture-take) : ResultPackageSurfacePayloads
   (match (package-surface-capture-state-shared-view)
     [(PackageSurfaceCaptureState.Ready payload)
-      (begin
-        (set!
-          package-surface-capture-state
-          (PackageSurfaceCaptureState.Inactive))
-        (ResultPackageSurfacePayloads.Ok payload))]
+      (let
+        [result : ResultPackageSurfacePayloads
+          (ResultPackageSurfacePayloads.Ok payload)]
+        (begin
+          (set!
+            (array-ref package-surface-capture-state 0)
+            (PackageSurfaceCaptureState.Inactive))
+          result))]
     [(PackageSurfaceCaptureState.Err message)
-      (begin
-        (set!
-          package-surface-capture-state
-          (PackageSurfaceCaptureState.Inactive))
-        (ResultPackageSurfacePayloads.Err message))]
+      (let
+        [result : ResultPackageSurfacePayloads
+          (ResultPackageSurfacePayloads.Err message)]
+        (begin
+          (set!
+            (array-ref package-surface-capture-state 0)
+            (PackageSurfaceCaptureState.Inactive))
+          result))]
     [(PackageSurfaceCaptureState.Inactive)
       (ResultPackageSurfacePayloads.Err
         "package surface: no checked frontend capture was requested")]
@@ -308,7 +315,7 @@
       (begin
         (surface_facts.surface-typecheck-facts-recording-abort!)
         (set!
-          package-surface-capture-state
+          (array-ref package-surface-capture-state 0)
           (PackageSurfaceCaptureState.Inactive))
         (ResultPackageSurfacePayloads.Err
           "package surface: checked frontend capture did not complete"))]))
@@ -342,6 +349,47 @@
         (array-ref sections 3)
         (tlci.tlci-package-source-binding-section source-digest))
       (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) sections))))
+
+(cfg
+  (all
+    test
+    (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci))
+  (test
+    package-surface-abort-survives-scratch-retirement
+    (let
+      [round : i64 0]
+      (while (< round 8)
+        (begin
+          (with-scratch
+            (begin
+              (package-surface-capture-start!
+                (surface_identity.SurfaceIdentityKey
+                  "capture"
+                  (__tl_make-array "capture")
+                  "source"
+                  "compiler"
+                  "linux-x86_64")
+                (sym_i64_env.sym-i64-empty))
+              (with-scratch
+                (package-surface-capture-abort!
+                  (string.copy "retained diagnostic")))
+              (unless
+                (match (package-surface-capture-take)
+                  [(ResultPackageSurfacePayloads.Err message)
+                    (string.eq message "retained diagnostic")]
+                  [_ false])
+                (io.panic "package capture lost its retired error"))))
+          ;; The inactive carrier must also survive its former result arena.
+          (package-surface-capture-abort! "inactive abort")
+          (unless
+            (match (package-surface-capture-take)
+              [(ResultPackageSurfacePayloads.Err message)
+                (string.eq
+                  message
+                  "package surface: no checked frontend capture was requested")]
+              [_ false])
+            (io.panic "package capture retained a retired active state"))
+          (set! round (+ round 1)))))))
 
 (cfg
   test

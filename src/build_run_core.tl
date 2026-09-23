@@ -872,64 +872,111 @@
 (define (source-tool-linux-direct-object-enabled?) : bool
   (source-tool-env-command-set? (source-tool-linux-direct-object-env-name)))
 
+(defenum SourceToolLinuxDirectObjectEligibility
+  (Eligible)
+  (Fallback backend.CompilerDirectObjectFallbackReason))
+
+(defenum ResultSourceToolLinuxDirectObject
+  (Ok String)
+  (Fallback backend.CompilerDirectObjectFallbackReason))
+
+;; One ELF capability boundary for source and package artifacts. The package
+;; policy preflight must not duplicate these serializer/linkability checks.
+(define (source-tool-linux-direct-object-eligibility
+  [kind : backend.CompilerDirectObjectArtifactKind]
+  [image : cobj.CompilerObjectImage]) : SourceToolLinuxDirectObjectEligibility
+  (cond
+    [(not
+        (compiler_object_elf.compiler-object-elf-sections-supported?
+          (owned_view.compiler-owned-shared-view image.sections)))
+      (SourceToolLinuxDirectObjectEligibility.Fallback
+        backend.CompilerDirectObjectFallbackReason.ObjectEncoding)]
+    [(not
+        (compiler_object_elf.compiler-object-elf-relocation-list-supported?
+          (owned_view.compiler-owned-shared-view image.relocations)))
+      (SourceToolLinuxDirectObjectEligibility.Fallback
+        backend.CompilerDirectObjectFallbackReason.ObjectRelocation)]
+    [(not
+        (and
+          (compiler_object_elf.compiler-object-elf-relocation-sites-known?
+            (owned_view.compiler-owned-shared-view image)
+            (owned_view.compiler-owned-shared-view image.relocations))
+          (compiler_object_elf.compiler-object-elf-text-targets-known?
+            (owned_view.compiler-owned-shared-view image))
+          (compiler_object_elf.compiler-object-elf-text-relocation-count-matches?
+            (owned_view.compiler-owned-shared-view image))))
+      (SourceToolLinuxDirectObjectEligibility.Fallback
+        backend.CompilerDirectObjectFallbackReason.ObjectFixup)]
+    [(not
+        (compiler_object_elf.compiler-object-elf-image-supported?
+          (owned_view.compiler-owned-shared-view image)))
+      (SourceToolLinuxDirectObjectEligibility.Fallback
+        backend.CompilerDirectObjectFallbackReason.ObjectEncoding)]
+    [(match kind
+        [(backend.CompilerDirectObjectArtifactKind.Bin)
+          (not
+            (or
+              (cobj.compiler-object-symbol-list-contains?
+                (owned_view.compiler-owned-shared-view image.symbols)
+                "_tl_start"
+                (cobj.CompilerObjectSymbolBinding.Export)
+                (cobj.CompilerObjectSymbolKind.Function))
+              (cobj.compiler-object-symbol-list-contains?
+                (owned_view.compiler-owned-shared-view image.symbols)
+                "main"
+                (cobj.CompilerObjectSymbolBinding.Export)
+                (cobj.CompilerObjectSymbolKind.Function))))]
+        [(backend.CompilerDirectObjectArtifactKind.StaticLib) false])
+      (SourceToolLinuxDirectObjectEligibility.Fallback
+        backend.CompilerDirectObjectFallbackReason.MissingEntrySymbol)]
+    [(match kind
+        [(backend.CompilerDirectObjectArtifactKind.Bin)
+          (<=
+            (compiler_object_elf.compiler-object-elf-section-raw-size
+              (owned_view.compiler-owned-shared-view image)
+              (cobj.CompilerObjectSectionKind.Text))
+            0)]
+        [(backend.CompilerDirectObjectArtifactKind.StaticLib) false])
+      (SourceToolLinuxDirectObjectEligibility.Fallback
+        backend.CompilerDirectObjectFallbackReason.EmptyTextSection)]
+    [else SourceToolLinuxDirectObjectEligibility.Eligible]))
+
+(define (source-tool-render-linux-direct-object
+  [kind : backend.CompilerDirectObjectArtifactKind]
+  [image : cobj.CompilerObjectImage]) : ResultSourceToolLinuxDirectObject
+  (match (source-tool-linux-direct-object-eligibility
+    kind
+    (owned_view.compiler-owned-shared-view image))
+    [(SourceToolLinuxDirectObjectEligibility.Fallback reason)
+      (ResultSourceToolLinuxDirectObject.Fallback reason)]
+    [(SourceToolLinuxDirectObjectEligibility.Eligible)
+      (match (compiler_object_elf.compiler-object-elf-render image)
+        [(compiler_object_elf.ResultCompilerObjectElf.Ok object)
+          (ResultSourceToolLinuxDirectObject.Ok object)]
+        [(compiler_object_elf.ResultCompilerObjectElf.Err _)
+          (ResultSourceToolLinuxDirectObject.Fallback
+            backend.CompilerDirectObjectFallbackReason.ObjectEncoding)])]))
+
 (define (source-tool-linux-direct-object-linkable?
   [image : cobj.CompilerObjectImage]) : bool
-  (and
-    (compiler_object_elf.compiler-object-elf-image-supported?
-      (owned_view.compiler-owned-shared-view image))
-    (or
-      (cobj.compiler-object-symbol-list-contains?
-        (owned_view.compiler-owned-shared-view image.symbols)
-        "_tl_start"
-        (cobj.CompilerObjectSymbolBinding.Export)
-        (cobj.CompilerObjectSymbolKind.Function))
-      (cobj.compiler-object-symbol-list-contains?
-        (owned_view.compiler-owned-shared-view image.symbols)
-        "main"
-        (cobj.CompilerObjectSymbolBinding.Export)
-        (cobj.CompilerObjectSymbolKind.Function)))
-    (>
-      (compiler_object_elf.compiler-object-elf-section-raw-size
-        (owned_view.compiler-owned-shared-view image)
-        (cobj.CompilerObjectSectionKind.Text))
-      0)))
-
-(define (source-tool-linux-direct-object-archivable?
-  [image : cobj.CompilerObjectImage]) : bool
-  (compiler_object_elf.compiler-object-elf-image-supported?
-    (owned_view.compiler-owned-shared-view image)))
-
-(define (source-tool-linux-direct-object-unavailable-message) : String
-  "linux direct object unavailable: object image lacks encoded .text or entry symbol")
-
-(define (source-tool-linux-direct-object-archive-unavailable-message) : String
-  "linux direct object unavailable: object image has unsupported ELF records")
+  (match (source-tool-linux-direct-object-eligibility
+    backend.CompilerDirectObjectArtifactKind.Bin
+    image)
+    [(SourceToolLinuxDirectObjectEligibility.Eligible) true]
+    [(SourceToolLinuxDirectObjectEligibility.Fallback _) false]))
 
 (define (source-tool-render-linkable-linux-elf-object
   [image : cobj.CompilerObjectImage]) : ResultSourceToolString
-  (if (source-tool-linux-direct-object-linkable?
-    (owned_view.compiler-owned-shared-view image))
-    (match (compiler_object_elf.compiler-object-elf-render
-      (owned_view.compiler-owned-shared-view image))
-      [(compiler_object_elf.ResultCompilerObjectElf.Ok obj)
-        (ResultSourceToolString.Ok obj)]
-      [(compiler_object_elf.ResultCompilerObjectElf.Err message)
-        (ResultSourceToolString.Err message)])
-    (ResultSourceToolString.Err
-      (source-tool-linux-direct-object-unavailable-message))))
-
-(define (source-tool-render-archivable-linux-elf-object
-  [image : cobj.CompilerObjectImage]) : ResultSourceToolString
-  (if (source-tool-linux-direct-object-archivable?
-    (owned_view.compiler-owned-shared-view image))
-    (match (compiler_object_elf.compiler-object-elf-render
-      (owned_view.compiler-owned-shared-view image))
-      [(compiler_object_elf.ResultCompilerObjectElf.Ok obj)
-        (ResultSourceToolString.Ok obj)]
-      [(compiler_object_elf.ResultCompilerObjectElf.Err message)
-        (ResultSourceToolString.Err message)])
-    (ResultSourceToolString.Err
-      (source-tool-linux-direct-object-archive-unavailable-message))))
+  (match (source-tool-render-linux-direct-object
+    backend.CompilerDirectObjectArtifactKind.Bin
+    image)
+    [(ResultSourceToolLinuxDirectObject.Ok object)
+      (ResultSourceToolString.Ok object)]
+    [(ResultSourceToolLinuxDirectObject.Fallback reason)
+      (ResultSourceToolString.Err
+        (str_cat.str-cat
+          "linux direct object unavailable: "
+          (backend.compiler-direct-object-fallback-transcript reason)))]))
 
 (define (source-tool-emit-linux-elf-object
   [source : String]
@@ -968,7 +1015,8 @@
             [(compiler_driver_core.ResultCompilerDriverObject.Unavailable
                 category
                 _)
-              (ResultSourceToolString.Err category)]
+              (ResultSourceToolString.Err
+                (backend.compiler-direct-object-fallback-category category))]
             [(compiler_driver_core.ResultCompilerDriverObject.Err
                 diag
                 advisories)
@@ -1010,7 +1058,8 @@
         [(compiler_driver_core.ResultCompilerDriverObject.Unavailable
             category
             _)
-          (ResultSourceToolString.Err category)]
+          (ResultSourceToolString.Err
+            (backend.compiler-direct-object-fallback-category category))]
         [(compiler_driver_core.ResultCompilerDriverObject.Err diag advisories)
           (begin
             (compiler_driver_core.compiler-driver-print-advisories
@@ -1095,7 +1144,8 @@
             [(compiler_driver_core.ResultCompilerDriverObject.Unavailable
                 category
                 _)
-              (ResultSourceToolString.Err category)]
+              (ResultSourceToolString.Err
+                (backend.compiler-direct-object-fallback-category category))]
             [(compiler_driver_core.ResultCompilerDriverObject.Err
                 diag
                 advisories)
@@ -1136,7 +1186,8 @@
         [(compiler_driver_core.ResultCompilerDriverObject.Unavailable
             category
             _)
-          (ResultSourceToolString.Err category)]
+          (ResultSourceToolString.Err
+            (backend.compiler-direct-object-fallback-category category))]
         [(compiler_driver_core.ResultCompilerDriverObject.Err diag advisories)
           (begin
             (compiler_driver_core.compiler-driver-print-advisories
@@ -1432,7 +1483,7 @@
     "(extern (unused-direct [value : i64]) : i64
   (:symbol \"typelisp_unused_direct\"))
 (extern unused-data (:symbol \"typelisp_unused_data\") : i64)
-(extern unused-fnptr (:symbol \"typelisp_unused_fnptr\") : (-> i64 i64))
+(extern unused-fnptr (:symbol \"typelisp_unused_fnptr\") : (CFunc non-null (-> i64 i64)))
 (define (main) : i64 0)"
     (backend.CompilerBackendTarget.Windows))
     [(backend.ResultCompilerBackendObject.Ok image)
@@ -2083,7 +2134,47 @@
             bin-path
             write-context)])]))
 
-(define (source-tool-lowered-object-or-assembly-and-link
+;; Assembly route for an already lowered program. `mode` is the backend mode
+;; the program was lowered for.
+(define (source-tool-lowered-assembly-and-link
+  [source : String]
+  [program : ir.CompilerIrProgram]
+  [spans : ir.CompilerSourceSpans]
+  [target : backend.CompilerBackendTarget]
+  [opt-level : i64]
+  [mode : backend.CompilerBackendMode]
+  [link-inputs : SourceToolLinkInputs]
+  [asm-path : String]
+  [obj-path : String]
+  [bin-path : String]
+  [write-context : String]) : SourceToolCommandStatus
+  (match (compiler_driver_core.compiler-driver-emit-lowered-with-level-and-mode
+    source
+    program
+    spans
+    target
+    true
+    mode
+    opt-level)
+    [(compiler_driver_core.ResultCompilerDriver.Ok asm advisories)
+      (begin
+        (compiler_driver_core.compiler-driver-print-advisories (& advisories))
+        (source-tool-write-assembly-and-link
+          target
+          asm-path
+          obj-path
+          bin-path
+          link-inputs
+          (source-tool-augment-assembly-for-target asm target)
+          write-context))]
+    [(compiler_driver_core.ResultCompilerDriver.Err diag advisories)
+      (begin
+        (compiler_driver_core.compiler-driver-print-advisories (& advisories))
+        (SourceToolCommandStatus.Err
+          (compiler_driver_core.compiler-driver-render-source-diagnostic
+            (owned_view.compiler-owned-box-shared-view diag))))]))
+
+(define (source-tool-lowered-scalar-object-or-assembly-and-link
   [source : String]
   [program : ir.CompilerIrProgram]
   [spans : ir.CompilerSourceSpans]
@@ -2120,32 +2211,59 @@
         [(SourceToolDirectObjectStatus.Err message)
           (SourceToolCommandStatus.Err message)]
         [(SourceToolDirectObjectStatus.Unavailable _)
-          (match (compiler_driver_core.compiler-driver-emit-lowered-with-level
+          (source-tool-lowered-assembly-and-link
             source
             program
             spans
             target
-            true
-            opt-level)
-            [(compiler_driver_core.ResultCompilerDriver.Ok asm advisories)
-              (begin
-                (compiler_driver_core.compiler-driver-print-advisories
-                  (& advisories))
-                (source-tool-write-assembly-and-link
-                  target
-                  asm-path
-                  obj-path
-                  bin-path
-                  link-inputs
-                  (source-tool-augment-assembly-for-target asm target)
-                  write-context))]
-            [(compiler_driver_core.ResultCompilerDriver.Err diag advisories)
-              (begin
-                (compiler_driver_core.compiler-driver-print-advisories
-                  (& advisories))
-                (SourceToolCommandStatus.Err
-                  (compiler_driver_core.compiler-driver-render-source-diagnostic
-                    (owned_view.compiler-owned-box-shared-view diag))))])])]))
+            opt-level
+            (backend.CompilerBackendMode.Scalar)
+            link-inputs
+            asm-path
+            obj-path
+            bin-path
+            write-context)])]))
+
+;; The lowered direct-object emitters encode scalar IR only (SIMD parity is
+;; #7030), so a SIMD request goes straight to assembly with its mode intact
+;; instead of being offered to an emitter that would pair vector IR with the
+;; scalar backend.
+(define (source-tool-lowered-object-or-assembly-and-link-with-mode
+  [source : String]
+  [program : ir.CompilerIrProgram]
+  [spans : ir.CompilerSourceSpans]
+  [target : backend.CompilerBackendTarget]
+  [opt-level : i64]
+  [mode : backend.CompilerBackendMode]
+  [link-inputs : SourceToolLinkInputs]
+  [asm-path : String]
+  [obj-path : String]
+  [bin-path : String]
+  [write-context : String]) : SourceToolCommandStatus
+  (if (backend.compiler-backend-mode-scalar? mode)
+    (source-tool-lowered-scalar-object-or-assembly-and-link
+      source
+      program
+      spans
+      target
+      opt-level
+      link-inputs
+      asm-path
+      obj-path
+      bin-path
+      write-context)
+    (source-tool-lowered-assembly-and-link
+      source
+      program
+      spans
+      target
+      opt-level
+      mode
+      link-inputs
+      asm-path
+      obj-path
+      bin-path
+      write-context)))
 
 (define (source-tool-build-source-in-temp
   [source : String]

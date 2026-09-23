@@ -896,6 +896,27 @@ tl_arena_debug_protect_never_reset:
     jmp tl_arena_debug_protect_abort
     .size tl_arena_debug_protect_never_reset, . - tl_arena_debug_protect_never_reset
 
+    .globl tl_arena_debug_retire_protected
+tl_arena_debug_retire_protected:
+    testq %rdi, %rdi
+    jz .L_tl_arena_debug_protect_invalid
+    leaq .L_tl_arena_debug_roots(%rip), %r8
+    xorq %rcx, %rcx
+.L_tl_arena_debug_retire_find:
+    cmpq $4096, %rcx
+    jae .L_tl_arena_debug_protect_invalid
+    cmpq %rdi, (%r8,%rcx,8)
+    je .L_tl_arena_debug_retire_found
+    incq %rcx
+    jmp .L_tl_arena_debug_retire_find
+.L_tl_arena_debug_retire_found:
+    cmpq %rdi, 40(%rdi)
+    jne .L_tl_arena_debug_protect_invalid
+    testq $8, 48(%rdi)
+    jz .L_tl_arena_debug_protect_invalid
+    andq $-9, 48(%rdi)
+    jmp tl_arena_destroy
+
     .globl tl_arena_debug_assert_pool_install
     .type tl_arena_debug_assert_pool_install,@function
 tl_arena_debug_assert_pool_install:

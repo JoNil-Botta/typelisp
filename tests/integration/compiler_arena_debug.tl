@@ -119,12 +119,42 @@
       (compiler_ast_types.compiler-arena-debug-protect-never-reset! handle)
       0)))
 
+(define (compiler-arena-debug-fixture-retire [grow : bool]) : i64
+  (let
+    [home : i64 (arena.tl_arena_current)]
+    [handle : i64 (arena.tl_arena_make_small)]
+    (begin
+      (compiler_ast_types.compiler-arena-debug-protect-never-reset! handle)
+      (when
+        grow
+        (begin
+          (unsafe
+            (arena.tl_arena_set handle))
+          (tl_alloc 16777216)
+          (unsafe
+            (arena.tl_arena_set home))))
+      (compiler_ast_types.compiler-arena-retire-protected-owner! handle)
+      42)))
+
 (define (main) : i64
   (if (< (io.arg-count) 2)
     2
     (let
       [operation : String (io.arg 1)]
       (cond
+        [(string.eq operation "retire")
+          (compiler-arena-debug-fixture-retire false)]
+        [(string.eq operation "retire-grown")
+          (compiler-arena-debug-fixture-retire true)]
+        [(string.eq operation "retire-unprotected")
+          (begin
+            (compiler_ast_types.compiler-arena-retire-protected-owner!
+              (arena.tl_arena_make_small))
+            0)]
+        [(string.eq operation "retire-invalid-address")
+          (begin
+            (compiler_ast_types.compiler-arena-retire-protected-owner! 4096)
+            0)]
         [(string.eq operation "allowed") (compiler-arena-debug-fixture-allowed)]
         [(string.eq operation "reset-mark")
           (compiler-arena-debug-fixture-reset-mark)]

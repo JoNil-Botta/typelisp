@@ -18,10 +18,9 @@
   (tail u64))
 
 (extern (wide-mem-score [arg0 : WideMem] [salt : u64]) : i64 (:symbol "tl_cabi_wide_mem_score"))
-(extern wide-mem-scorer (:symbol "tl_cabi_wide_mem_score_ptr") : (->
-  WideMem
-  u64
-  i64))
+(extern wide-mem-scorer (:symbol "tl_cabi_wide_mem_score_ptr") : (CFunc
+  non-null
+  (-> WideMem u64 i64)))
 (extern (wide-mem-make [seed : u64]) : WideMem (:symbol "tl_cabi_wide_mem_make"))
 (extern (nested-mem-score [arg0 : NestedMem]) : i64 (:symbol "tl_cabi_nested_mem_score"))
 
@@ -32,7 +31,7 @@
     [ptr-arg : WideMem (WideMem (cast 5 : u64) (cast 6 : u64) (cast 7 : u64))]
     [nested : NestedMem
       (NestedMem (InnerMem (cast 3 : u64) (cast 4 : u64)) (cast 5 : u64))]
-    [score-copy : (-> WideMem u64 i64) wide-mem-scorer]
+    [score-copy : (CFunc non-null (-> WideMem u64 i64)) wide-mem-scorer]
     [direct : i64 (wide-mem-score direct-arg (cast 4 : u64))]
     [via-ptr : i64 (score-copy ptr-arg (cast 8 : u64))]
     [made : WideMem (wide-mem-make (cast 9 : u64))]

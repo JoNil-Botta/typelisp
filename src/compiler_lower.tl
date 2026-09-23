@@ -18763,6 +18763,7 @@
     [(ast.AstType.Never) 0]
     [(ast.AstType.Expr) 0]
     [(ast.AstType.ExprList) 0]
+    [(ast.AstType.CFunc _ _) 8]
     [(ast.AstType.Func _ _) 8]
     [(ast.AstType.Tuple _) (lower-inline-layout-size-or ctx ty 8)]
     [(ast.AstType.Array _ _) (lower-inline-layout-size-or ctx ty 8)]
@@ -18820,6 +18821,7 @@
     [(ast.AstType.Never) 1]
     [(ast.AstType.Expr) 1]
     [(ast.AstType.ExprList) 1]
+    [(ast.AstType.CFunc _ _) 8]
     [(ast.AstType.Func _ _) 8]
     [(ast.AstType.Tuple _) (lower-inline-layout-align-or ctx ty 8)]
     [(ast.AstType.Array _ _) (lower-inline-layout-align-or ctx ty 8)]
@@ -24997,8 +24999,14 @@
       (lower-disarm-move-aware-resource-name state env name)]
     [_ state]))
 
+(define (lower-c-function-type? [ty : ast.AstType]) : bool
+  (match (tc_core.tc-type-strip-region ty)
+    [(ast.AstType.CFunc _ _) true]
+    [_ false]))
+
 (define (lower-function-type? [ty : ast.AstType]) : bool
   (match (tc_core.tc-type-strip-region ty)
+    [(ast.AstType.CFunc _ _) true]
     [(ast.AstType.Func _ _) true]
     [_ false]))
 
@@ -25377,6 +25385,7 @@
     [(ast.AstType.MutPtr _) true]
     [(ast.AstType.Ref _ _) true]
     [(ast.AstType.MutRef _ _) true]
+    [(ast.AstType.CFunc _ _) true]
     [(ast.AstType.Func _ _) true]
     [(ast.AstType.Tuple _) true]
     [(ast.AstType.Array _ _) true]
@@ -26545,7 +26554,8 @@
                                 (lower-state-next-var
                                   (lower-global-shared-view final-state))
                                 (lower-state-build-function-blocks
-                                  (lower-global-shared-view final-state))))
+                                  (lower-global-shared-view final-state))
+                                ir.CompilerIrFunctionAbi.Ordinary))
                             (lower-state-spans final-state)))]
                       [(ResultLowerState.Err message)
                         (ResultLowerFunction.Err message)])]
@@ -30937,6 +30947,18 @@
                   (ResultLowerExpr.Ok
                     (LowerExpr.Expr null-state null-value expr-ty))])]
             [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
+        [(ast.AstType.CFunc _ mode)
+          (if (ast.ast-c-function-mode-nullable? mode)
+            (lower-init-scalar
+              ctx
+              state
+              (ir.CompilerIrValue.I64 0)
+              expr-ty
+              origin)
+            (ResultLowerExpr.Err
+              (box
+                (lower-diagnostic
+                  "lower: init cannot create a non-null C function pointer"))))]
         [(ast.AstType.DynArray elem)
           (lower-make-array-from-len
             (lower-global-shared-view ctx)
@@ -31722,7 +31744,7 @@
               (lower-let-bindings-type-env-fast-at
                 (lower-global-shared-view ctx)
                 (sym_i64_env.sym-i64-bind-id env name-id 0)
-                (tc_core.tc-bind-c-abi-fnptr-if-needed-id
+                (tc_core.tc-bind-initialized-value-id
                   ctx
                   type-env
                   name-id
@@ -32925,6 +32947,67 @@
 ;; Keeping their lowering helpers adjacent makes the shared representation rule
 ;; visible: pointers are scalar values, while pointee aggregates and register
 ;; groups still use the ordinary storage helpers on reads and writes.
+(define (lower-c-fn-check-call
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [args : ast.AstExprList]
+  [result-ty : ast.AstType]) : ResultLowerExpr
+  (if (= args.len 1)
+    (match (lower-expr
+      (lower-global-shared-view ctx)
+      state
+      env
+      type-env
+      (lower-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0)))
+      [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]
+      [(ResultLowerExpr.Ok lowered)
+        (match lowered
+          [(LowerExpr.Expr value-state value _)
+            (match (lower-emit-binop
+              value-state
+              ir.CompilerIrBinOp.Eq
+              (lower-global-shared-view value)
+              (ir.CompilerIrValue.I64 0)
+              (ast.AstType.Bool))
+              [(LowerExpr.Expr condition-state condition _)
+                (match (lower-state-fresh-label condition-state "c_fn_null")
+                  [(LowerLabel.Label fail-state fail-label)
+                    (match (lower-state-fresh-label fail-state "c_fn_checked")
+                      [(LowerLabel.Label labels-state checked-label)
+                        (let
+                          [fail-start : LowerState
+                            (lower-state-finish-block
+                              (lower-state-emit
+                                labels-state
+                                (ir.CompilerIrInstr.Branch
+                                  condition
+                                  fail-label
+                                  checked-label))
+                              fail-label)]
+                          (match (lower-state-alloc-var fail-start)
+                            [(LowerAlloc.Alloc allocated ignored)
+                              (begin
+                                (cbi.compiler-builtin-refresh!)
+                                (ResultLowerExpr.Ok
+                                  (LowerExpr.Expr
+                                    (lower-state-finish-block
+                                      (lower-state-emit
+                                        (lower-state-emit
+                                          allocated
+                                          (ir.CompilerIrInstr.Call
+                                            ignored
+                                            cbi.compiler-builtin-id-tl-c-fn-null-abort
+                                            (ir.CompilerIrCallArgs.Nil)
+                                            (ast.AstType.Never)))
+                                        (ir.CompilerIrInstr.Jump checked-label))
+                                      checked-label)
+                                    value
+                                    result-ty)))]))])])])])])
+    (ResultLowerExpr.Err
+      (box (lower-diagnostic "lower: c-fn-check expects exactly one argument")))))
+
 (define (lower-ptr-null-expr [state : LowerState] [expr-ty : ast.AstType]) : ResultLowerExpr
   (match (lower-materialize state (ir.CompilerIrValue.I64 0) (ast.AstType.U64))
     [(ResultLowerExpr.Ok lowered)
@@ -33537,6 +33620,183 @@
               expr-ty)])]
       [(ctfe.ResultCtfe.Err diag) (ResultLowerExpr.Err diag)])))
 
+;; Operand context determines how the child is lowered; both paths share the
+;; same fresh result and source-attributed emission after child lowering.
+(define (lower-unary-expr
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [op : ast.AstUnOp]
+  [inner-box : i64]
+  [origin : ast.AstExpr]
+  [expr-ty : ast.AstType]) : ResultLowerExpr
+  (let
+    [inner : ast.AstExpr
+      (lower-context-expr-get (lower-global-shared-view ctx) inner-box)]
+    (match (lower-unop-type-with-result
+      (lower-global-shared-view ctx)
+      type-env
+      op
+      (lower-global-shared-view inner)
+      expr-ty)
+      [(tc_core.ResultTcType.Ok result-ty)
+        (match (match (tc_core.tc-unop-contextual-operand-type
+          op
+          (lower-global-shared-view result-ty))
+          [(ast.AstMaybeType.No)
+            (lower-expr
+              (lower-global-shared-view ctx)
+              state
+              (lower-global-shared-view env)
+              type-env
+              inner)]
+          [(ast.AstMaybeType.Some operand-ty)
+            (lower-expr-expected
+              (lower-global-shared-view ctx)
+              (lower-global-shared-view state)
+              (lower-global-shared-view env)
+              type-env
+              (lower-global-shared-view inner)
+              operand-ty
+              inner)])
+          [(ResultLowerExpr.Ok lowered)
+            (match lowered
+              [(LowerExpr.Expr inner-state value _)
+                (match (lower-state-alloc-var inner-state)
+                  [(LowerAlloc.Alloc allocated var-id)
+                    (ResultLowerExpr.Ok
+                      (LowerExpr.Expr
+                        (lower-state-emit-at-expr
+                          ctx
+                          allocated
+                          (ir.CompilerIrInstr.UnOp
+                            var-id
+                            (lower-unop op)
+                            value
+                            (lower-global-shared-view result-ty))
+                          origin)
+                        (ir.CompilerIrValue.Var var-id)
+                        result-ty))])])]
+          [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
+      [(tc_core.ResultTcType.Err message)
+        (ResultLowerExpr.Err
+          (box (lower-diagnostic-at-expr ctx origin message)))])))
+
+;; Logical operators lower through the existing conditional path. Other
+;; operators lower left then right, carrying the returned state forward once.
+(define (lower-binary-expr
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [op : ast.AstBinOp]
+  [left-box : i64]
+  [right-box : i64]
+  [origin : ast.AstExpr]
+  [expr-ty : ast.AstType]) : ResultLowerExpr
+  (let
+    [left : ast.AstExpr
+      (lower-context-expr-get (lower-global-shared-view ctx) left-box)]
+    [right : ast.AstExpr
+      (lower-context-expr-get (lower-global-shared-view ctx) right-box)]
+    (match op
+      [(ast.AstBinOp.And)
+        (lower-if
+          (lower-global-shared-view ctx)
+          state
+          (lower-global-shared-view env)
+          type-env
+          left
+          right
+          (ast.AstExpr.Literal (ast.AstLiteral.Bool false))
+          expr-ty)]
+      [(ast.AstBinOp.Or)
+        (lower-if
+          (lower-global-shared-view ctx)
+          state
+          (lower-global-shared-view env)
+          type-env
+          left
+          (ast.AstExpr.Literal (ast.AstLiteral.Bool true))
+          right
+          expr-ty)]
+      [_
+        (match (lower-binop-types-with-result
+          (lower-global-shared-view ctx)
+          type-env
+          op
+          (lower-global-shared-view left)
+          (lower-global-shared-view right)
+          expr-ty)
+          [(tc_core.ResultTcBinOpTypes.Ok binop-types)
+            (match binop-types
+              [(tc_core.TcBinOpTypes left-ty right-ty result-ty)
+                (match (lower-expr-expected
+                  (lower-global-shared-view ctx)
+                  state
+                  (lower-global-shared-view env)
+                  type-env
+                  (lower-global-shared-view left)
+                  (lower-global-shared-view left-ty)
+                  left)
+                  [(ResultLowerExpr.Ok left-lowered)
+                    (match left-lowered
+                      [(LowerExpr.Expr left-state left-value _)
+                        (match (lower-expr-expected
+                          (lower-global-shared-view ctx)
+                          left-state
+                          (lower-global-shared-view env)
+                          type-env
+                          (lower-global-shared-view right)
+                          (lower-global-shared-view right-ty)
+                          right)
+                          [(ResultLowerExpr.Ok right-lowered)
+                            (match right-lowered
+                              [(LowerExpr.Expr right-state right-value _)
+                                (if (and
+                                  (lower-binop-group-eq? op)
+                                  (lower-type-register-group?
+                                    (lower-global-shared-view ctx)
+                                    (lower-global-shared-view left-ty)))
+                                  (lower-group-equality
+                                    (lower-global-shared-view ctx)
+                                    right-state
+                                    op
+                                    left-value
+                                    right-value
+                                    left-ty
+                                    result-ty
+                                    origin)
+                                  (match (lower-state-alloc-var right-state)
+                                    [(LowerAlloc.Alloc allocated var-id)
+                                      (ResultLowerExpr.Ok
+                                        (LowerExpr.Expr
+                                          (lower-state-emit-at-expr
+                                            ctx
+                                            allocated
+                                            (ir.CompilerIrInstr.BinOp
+                                              var-id
+                                              (lower-binop
+                                                op
+                                                (lower-global-shared-view
+                                                  right-ty))
+                                              left-value
+                                              right-value
+                                              (if (ir.compiler-ir-binop-compare?
+                                                (lower-binop op right-ty))
+                                                left-ty
+                                                result-ty))
+                                            origin)
+                                          (ir.CompilerIrValue.Var var-id)
+                                          result-ty))]))])]
+                          [(ResultLowerExpr.Err message)
+                            (ResultLowerExpr.Err message)])])]
+                  [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])])]
+          [(tc_core.ResultTcBinOpTypes.Err message)
+            (ResultLowerExpr.Err
+              (box (lower-diagnostic-at-expr ctx origin message)))])])))
+
 (define (lower-expr-with-type
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -33692,184 +33952,18 @@
           origin
           expr-ty))]
     [(ast.AstExpr.Unary op inner-box)
-      (let
-        [inner : ast.AstExpr
-          (lower-context-expr-get (lower-global-shared-view ctx) inner-box)]
-        (match (lower-unop-type-with-result
-          (lower-global-shared-view ctx)
-          type-env
-          op
-          (lower-global-shared-view inner)
-          expr-ty)
-          [(tc_core.ResultTcType.Ok result-ty)
-            (match (tc_core.tc-unop-contextual-operand-type
-              op
-              (lower-global-shared-view result-ty))
-              [(ast.AstMaybeType.No)
-                (match (lower-expr
-                  (lower-global-shared-view ctx)
-                  state
-                  (lower-global-shared-view env)
-                  type-env
-                  inner)
-                  [(ResultLowerExpr.Ok lowered)
-                    (match lowered
-                      [(LowerExpr.Expr inner-state value _)
-                        (match (lower-state-alloc-var inner-state)
-                          [(LowerAlloc.Alloc allocated var-id)
-                            (ResultLowerExpr.Ok
-                              (LowerExpr.Expr
-                                (lower-state-emit-at-expr
-                                  ctx
-                                  allocated
-                                  (ir.CompilerIrInstr.UnOp
-                                    var-id
-                                    (lower-unop op)
-                                    value
-                                    (lower-global-shared-view result-ty))
-                                  origin)
-                                (ir.CompilerIrValue.Var var-id)
-                                result-ty))])])]
-                  [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
-              [(ast.AstMaybeType.Some operand-ty)
-                (match (lower-expr-expected
-                  (lower-global-shared-view ctx)
-                  (lower-global-shared-view state)
-                  (lower-global-shared-view env)
-                  type-env
-                  (lower-global-shared-view inner)
-                  operand-ty
-                  inner)
-                  [(ResultLowerExpr.Ok lowered)
-                    (match lowered
-                      [(LowerExpr.Expr inner-state value _)
-                        (match (lower-state-alloc-var inner-state)
-                          [(LowerAlloc.Alloc allocated var-id)
-                            (ResultLowerExpr.Ok
-                              (LowerExpr.Expr
-                                (lower-state-emit-at-expr
-                                  ctx
-                                  allocated
-                                  (ir.CompilerIrInstr.UnOp
-                                    var-id
-                                    (lower-unop op)
-                                    value
-                                    (lower-global-shared-view result-ty))
-                                  origin)
-                                (ir.CompilerIrValue.Var var-id)
-                                result-ty))])])]
-                  [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])])]
-          [(tc_core.ResultTcType.Err message)
-            (ResultLowerExpr.Err
-              (box (lower-diagnostic-at-expr ctx origin message)))]))]
+      (lower-unary-expr ctx state env type-env op inner-box origin expr-ty)]
     [(ast.AstExpr.Binary op left-box right-box)
-      ;; `and`/`or` short-circuit: desugar to a conditional branch so the right
-      ;; operand is evaluated only when the left does not already decide the
-      ;; result, matching the Rust lowerer in `src/lower.rs`:
-      ;; `(and a b)` -> `(if a b false)`, `(or a b)` -> `(if a true b)`. Every
-      ;; other binop evaluates both operands eagerly into an `CompilerIrInstr.BinOp`.
-      (let
-        [left : ast.AstExpr
-          (lower-context-expr-get (lower-global-shared-view ctx) left-box)]
-        [right : ast.AstExpr
-          (lower-context-expr-get (lower-global-shared-view ctx) right-box)]
-        (match op
-          [(ast.AstBinOp.And)
-            (lower-if
-              (lower-global-shared-view ctx)
-              state
-              (lower-global-shared-view env)
-              type-env
-              left
-              right
-              (ast.AstExpr.Literal (ast.AstLiteral.Bool false))
-              expr-ty)]
-          [(ast.AstBinOp.Or)
-            (lower-if
-              (lower-global-shared-view ctx)
-              state
-              (lower-global-shared-view env)
-              type-env
-              left
-              (ast.AstExpr.Literal (ast.AstLiteral.Bool true))
-              right
-              expr-ty)]
-          [_
-            (match (lower-binop-types-with-result
-              (lower-global-shared-view ctx)
-              type-env
-              op
-              (lower-global-shared-view left)
-              (lower-global-shared-view right)
-              expr-ty)
-              [(tc_core.ResultTcBinOpTypes.Ok binop-types)
-                (match binop-types
-                  [(tc_core.TcBinOpTypes left-ty right-ty result-ty)
-                    (match (lower-expr-expected
-                      (lower-global-shared-view ctx)
-                      state
-                      (lower-global-shared-view env)
-                      type-env
-                      (lower-global-shared-view left)
-                      (lower-global-shared-view left-ty)
-                      left)
-                      [(ResultLowerExpr.Ok left-lowered)
-                        (match left-lowered
-                          [(LowerExpr.Expr left-state left-value _)
-                            (match (lower-expr-expected
-                              (lower-global-shared-view ctx)
-                              left-state
-                              (lower-global-shared-view env)
-                              type-env
-                              (lower-global-shared-view right)
-                              (lower-global-shared-view right-ty)
-                              right)
-                              [(ResultLowerExpr.Ok right-lowered)
-                                (match right-lowered
-                                  [(LowerExpr.Expr right-state right-value _)
-                                    (if (and
-                                      (lower-binop-group-eq? op)
-                                      (lower-type-register-group?
-                                        (lower-global-shared-view ctx)
-                                        (lower-global-shared-view left-ty)))
-                                      (lower-group-equality
-                                        (lower-global-shared-view ctx)
-                                        right-state
-                                        op
-                                        left-value
-                                        right-value
-                                        left-ty
-                                        result-ty
-                                        origin)
-                                      (match (lower-state-alloc-var right-state)
-                                        [(LowerAlloc.Alloc allocated var-id)
-                                          (ResultLowerExpr.Ok
-                                            (LowerExpr.Expr
-                                              (lower-state-emit-at-expr
-                                                ctx
-                                                allocated
-                                                (ir.CompilerIrInstr.BinOp
-                                                  var-id
-                                                  (lower-binop
-                                                    op
-                                                    (lower-global-shared-view
-                                                      right-ty))
-                                                  left-value
-                                                  right-value
-                                                  (if (ir.compiler-ir-binop-compare?
-                                                    (lower-binop op right-ty))
-                                                    left-ty
-                                                    result-ty))
-                                                origin)
-                                              (ir.CompilerIrValue.Var var-id)
-                                              result-ty))]))])]
-                              [(ResultLowerExpr.Err message)
-                                (ResultLowerExpr.Err message)])])]
-                      [(ResultLowerExpr.Err message)
-                        (ResultLowerExpr.Err message)])])]
-              [(tc_core.ResultTcBinOpTypes.Err message)
-                (ResultLowerExpr.Err
-                  (box (lower-diagnostic-at-expr ctx origin message)))])]))]
+      (lower-binary-expr
+        ctx
+        state
+        env
+        type-env
+        op
+        left-box
+        right-box
+        origin
+        expr-ty)]
     [(ast.AstExpr.Call func-box args)
       (let
         [func : ast.AstExpr
@@ -36273,7 +36367,9 @@
     (lower-global-shared-view ctx)
     (lower-global-shared-view result-ty))
     [(ast.AstType.Tuple elem-tys)
-      (match (lower-reserve-heap-storage
+      ;; A tuple literal is an ordinary inline value, like a fixed-array
+      ;; literal: constructing or returning one never allocates (#7070).
+      (match (lower-reserve-inline-storage
         state
         (lower-type-list-storage-size
           (lower-global-shared-view ctx)
@@ -37879,6 +37975,7 @@
     [(ast.AstType.U8) true]
     [(ast.AstType.Bool) true]
     [(ast.AstType.Char) true]
+    [(ast.AstType.CFunc _ _) true]
     [(ast.AstType.Ptr _) true]
     [(ast.AstType.MutPtr _) true]
     [_ false]))
@@ -40776,6 +40873,28 @@
           (tc_core.tc-resolve-type
             (lower-global-shared-view ctx)
             (lower-global-shared-view fn-ty)))
+          [(ast.AstType.CFunc _ _)
+            (match (lower-var-or-nullary-variant-id
+              (lower-global-shared-view ctx)
+              state
+              env
+              type-env
+              source-id
+              (lower-global-shared-view fn-ty))
+              [(ResultLowerExpr.Ok lowered)
+                (match lowered
+                  [(LowerExpr.Expr value-state value _)
+                    (lower-indirect-c-abi-call
+                      ctx
+                      value-state
+                      env
+                      type-env
+                      fn-ty
+                      value
+                      args
+                      result-ty
+                      origin)])]
+              [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
           [(ast.AstType.Func param-types _)
             (match (lower-direct-call-param-types
               (lower-global-shared-view ctx)
@@ -40982,54 +41101,65 @@
   [args : ast.AstExprList]
   [result-ty : ast.AstType]
   [origin : ast.AstExpr]) : ResultLowerExpr
-  (match (lower-indirect-call-args-with-writebacks
-    (lower-global-shared-view ctx)
-    state
-    env
-    type-env
-    args
-    (lower-global-shared-view func-ty))
-    [(ResultLowerCallArgs.Ok args-state values writebacks)
-      (match (tc_core.tc-type-strip-region
-        (tc_core.tc-resolve-type (lower-global-shared-view ctx) func-ty))
-        [(ast.AstType.Func param-types _)
-          (match (lower-internal-indirect-call-values
-            (lower-global-shared-view ctx)
-            args-state
-            func-value
-            values
-            (tc_core.tc-resolve-type-list
+  (if (lower-c-function-type? (lower-global-shared-view func-ty))
+    (lower-indirect-c-abi-call
+      ctx
+      state
+      env
+      type-env
+      func-ty
+      func-value
+      args
+      result-ty
+      origin)
+    (match (lower-indirect-call-args-with-writebacks
+      (lower-global-shared-view ctx)
+      state
+      env
+      type-env
+      args
+      (lower-global-shared-view func-ty))
+      [(ResultLowerCallArgs.Ok args-state values writebacks)
+        (match (tc_core.tc-type-strip-region
+          (tc_core.tc-resolve-type (lower-global-shared-view ctx) func-ty))
+          [(ast.AstType.Func param-types _)
+            (match (lower-internal-indirect-call-values
               (lower-global-shared-view ctx)
-              (lower-box-shared-view param-types))
-            result-ty
-            origin)
-            [(ResultLowerExpr.Ok lowered)
-              (match lowered
-                [(LowerExpr.Expr call-state call-value call-ty)
-                  (ResultLowerExpr.Ok
-                    (LowerExpr.Expr
-                      (lower-apply-arg-writebacks ctx call-state writebacks)
-                      call-value
-                      call-ty))])]
-            [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
-        [_
-          (match (lower-indirect-call-values
-            (lower-global-shared-view ctx)
-            args-state
-            func-value
-            values
-            result-ty
-            origin)
-            [(ResultLowerExpr.Ok lowered)
-              (match lowered
-                [(LowerExpr.Expr call-state call-value call-ty)
-                  (ResultLowerExpr.Ok
-                    (LowerExpr.Expr
-                      (lower-apply-arg-writebacks ctx call-state writebacks)
-                      call-value
-                      call-ty))])]
-            [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])])]
-    [(ResultLowerCallArgs.Err message) (ResultLowerExpr.Err message)]))
+              args-state
+              func-value
+              values
+              (tc_core.tc-resolve-type-list
+                (lower-global-shared-view ctx)
+                (lower-box-shared-view param-types))
+              result-ty
+              origin)
+              [(ResultLowerExpr.Ok lowered)
+                (match lowered
+                  [(LowerExpr.Expr call-state call-value call-ty)
+                    (ResultLowerExpr.Ok
+                      (LowerExpr.Expr
+                        (lower-apply-arg-writebacks ctx call-state writebacks)
+                        call-value
+                        call-ty))])]
+              [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
+          [_
+            (match (lower-indirect-call-values
+              (lower-global-shared-view ctx)
+              args-state
+              func-value
+              values
+              result-ty
+              origin)
+              [(ResultLowerExpr.Ok lowered)
+                (match lowered
+                  [(LowerExpr.Expr call-state call-value call-ty)
+                    (ResultLowerExpr.Ok
+                      (LowerExpr.Expr
+                        (lower-apply-arg-writebacks ctx call-state writebacks)
+                        call-value
+                        call-ty))])]
+              [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])])]
+      [(ResultLowerCallArgs.Err message) (ResultLowerExpr.Err message)])))
 
 (define (lower-indirect-c-abi-call
   [ctx : tc_core.TcContext]
@@ -41045,6 +41175,29 @@
     (tc_core.tc-resolve-type
       (lower-global-shared-view ctx)
       (lower-global-shared-view func-ty)))
+    [(ast.AstType.CFunc signature _)
+      (let
+        [signature-type : ast.AstType
+          (tc_core.tc-context-type-get (lower-global-shared-view ctx) signature)]
+        (match (lower-global-shared-view signature-type)
+          [(ast.AstType.Func _ _)
+            (lower-indirect-c-abi-call
+              ctx
+              state
+              env
+              type-env
+              signature-type
+              func-value
+              args
+              result-ty
+              origin)]
+          [_
+            (ResultLowerExpr.Err
+              (box
+                (lower-diagnostic-at-expr
+                  ctx
+                  origin
+                  "lower: invalid C function signature")))]))]
     [(ast.AstType.Func param-types _)
       (match (lower-c-abi-args-as
         (lower-global-shared-view ctx)
@@ -42104,9 +42257,9 @@
     (lower-global-shared-view ctx)
     lookup-name-id)
     ;; A top-level value cell remains mutable through `set!`. Even when its
-    ;; declared type is a function, the symbol names DATA holding the current
-    ;; closure descriptor, not executable code. Lower the variable read first
-    ;; so calls observe the latest stored value.
+    ;; declared type is callable, the symbol names DATA holding the current
+    ;; callable value. Lower the variable read first so calls observe the latest
+    ;; stored value; indirect dispatch selects C code or a closure from its type.
     (match (lower-lookup-type-id
       (lower-global-shared-view ctx)
       (lower-state-type-cache (lower-global-shared-view state))
@@ -42960,7 +43113,7 @@
                             hidden-name
                             params
                             ret
-                            false
+                            result-varying
                             body
                             (ir.CompilerIrSpmdBackend.Scalar)
                             (lower-global-shared-view call-args)
@@ -42974,34 +43127,47 @@
                             (lower-state-mode
                               (lower-global-shared-view named-state)))
                             [(ResultLowerFunction.Ok functions helper-spans)
-                              (match (lower-avx512-emit-spmd-call
-                                (lower-global-shared-view ctx)
-                                (lower-state-add-functions
-                                  named-state
-                                  functions
-                                  helper-spans)
-                                hidden-name
-                                (ir.CompilerIrSpmdBackend.Scalar)
-                                (ir.CompilerIrValue.Bool true)
-                                1
-                                call-args
-                                result-ty
-                                result-varying
-                                origin
-                                ir.CompilerIrSpmdCallOrigin.Private)
-                                [(ResultLowerExpr.Ok lowered)
-                                  (match lowered
-                                    [(LowerExpr.Expr call-state value ty)
-                                      (LowerMaybeSpmdCall.Some
-                                        (LowerExpr.Expr
-                                          (lower-apply-arg-writebacks
-                                            ctx
-                                            call-state
-                                            writebacks)
-                                          value
-                                          ty))])]
-                                [(ResultLowerExpr.Err message)
-                                  (LowerMaybeSpmdCall.Err message)])]
+                              (match (lower-spmd-generated-helper-abi
+                                (lower-global-shared-view functions)
+                                hidden-name)
+                                [(ir.CompilerIrFunctionAbi.SpmdPrivate
+                                    helper-abi)
+                                  (match (lower-avx512-emit-spmd-call
+                                    (lower-global-shared-view ctx)
+                                    (lower-state-add-functions
+                                      named-state
+                                      functions
+                                      helper-spans)
+                                    hidden-name
+                                    (ir.CompilerIrSpmdBackend.Scalar)
+                                    (ir.CompilerIrValue.Bool true)
+                                    1
+                                    call-args
+                                    result-ty
+                                    result-varying
+                                    origin
+                                    (ir.CompilerIrSpmdCallOrigin.Private
+                                      helper-abi))
+                                    [(ResultLowerExpr.Ok lowered)
+                                      (match lowered
+                                        [(LowerExpr.Expr call-state value ty)
+                                          (LowerMaybeSpmdCall.Some
+                                            (LowerExpr.Expr
+                                              (lower-apply-arg-writebacks
+                                                ctx
+                                                call-state
+                                                writebacks)
+                                              value
+                                              ty))])]
+                                    [(ResultLowerExpr.Err message)
+                                      (LowerMaybeSpmdCall.Err message)])]
+                                [(ir.CompilerIrFunctionAbi.Ordinary)
+                                  (LowerMaybeSpmdCall.Err
+                                    (box
+                                      (lower-diagnostic-at-expr
+                                        ctx
+                                        origin
+                                        "lower: generated SPMD helper has no private ABI descriptor")))])]
                             [(ResultLowerFunction.Err message)
                               (LowerMaybeSpmdCall.Err message)]))])]
                   [(ResultLowerCallArgs.Err message)
@@ -43113,30 +43279,16 @@
               (match lowered-func
                 [(LowerExpr.Expr func-state func-value func-ty)
                   (if (lower-function-type? (lower-global-shared-view func-ty))
-                    (if (tc_core.tc-expr-c-abi-fnptr?
+                    (lower-indirect-call
                       (lower-global-shared-view ctx)
+                      func-state
+                      env
                       type-env
-                      func)
-                      (lower-indirect-c-abi-call
-                        (lower-global-shared-view ctx)
-                        func-state
-                        env
-                        type-env
-                        func-ty
-                        func-value
-                        args
-                        result-ty
-                        origin)
-                      (lower-indirect-call
-                        (lower-global-shared-view ctx)
-                        func-state
-                        env
-                        type-env
-                        func-ty
-                        func-value
-                        args
-                        result-ty
-                        origin))
+                      func-ty
+                      func-value
+                      args
+                      result-ty
+                      origin)
                     (ResultLowerExpr.Err
                       (box
                         (lower-diagnostic-at-expr
@@ -43154,27 +43306,16 @@
               (match (tc_core.tc-lookup-id type-env raw-name)
                 [(tc_core.ResultTcType.Ok fn-ty)
                   (if (lower-function-type? (lower-global-shared-view fn-ty))
-                    (if (tc_core.tc-binding-c-abi-fnptr-id? type-env raw-name)
-                      (lower-indirect-c-abi-call
-                        (lower-global-shared-view ctx)
-                        state
-                        env
-                        type-env
-                        fn-ty
-                        (ir.CompilerIrValue.Var local-id)
-                        args
-                        result-ty
-                        origin)
-                      (lower-indirect-call
-                        (lower-global-shared-view ctx)
-                        state
-                        env
-                        type-env
-                        fn-ty
-                        (ir.CompilerIrValue.Var local-id)
-                        args
-                        result-ty
-                        origin))
+                    (lower-indirect-call
+                      (lower-global-shared-view ctx)
+                      state
+                      env
+                      type-env
+                      fn-ty
+                      (ir.CompilerIrValue.Var local-id)
+                      args
+                      result-ty
+                      origin)
                     (ResultLowerExpr.Err
                       (box
                         (lower-diagnostic-at-expr
@@ -43480,6 +43621,16 @@
                             origin)]
                         [(and
                             builtin-available
+                            (cbi.compiler-builtin-c-fn-check-id? name-id))
+                          (lower-c-fn-check-call
+                            ctx
+                            state
+                            env
+                            type-env
+                            args
+                            result-ty)]
+                        [(and
+                            builtin-available
                             (cbi.compiler-builtin-lower-clone-id? name-id))
                           (if (= args.len 1)
                             (lower-clone-call
@@ -43603,30 +43754,16 @@
           (match lowered-func
             [(LowerExpr.Expr func-state func-value func-ty)
               (if (lower-function-type? (lower-global-shared-view func-ty))
-                (if (tc_core.tc-expr-c-abi-fnptr?
+                (lower-indirect-call
                   (lower-global-shared-view ctx)
+                  func-state
+                  env
                   type-env
-                  func)
-                  (lower-indirect-c-abi-call
-                    (lower-global-shared-view ctx)
-                    func-state
-                    env
-                    type-env
-                    func-ty
-                    func-value
-                    args
-                    result-ty
-                    origin)
-                  (lower-indirect-call
-                    (lower-global-shared-view ctx)
-                    func-state
-                    env
-                    type-env
-                    func-ty
-                    func-value
-                    args
-                    result-ty
-                    origin))
+                  func-ty
+                  func-value
+                  args
+                  result-ty
+                  origin)
                 (ResultLowerExpr.Err
                   (box
                     (lower-diagnostic-at-expr
@@ -44113,7 +44250,8 @@
     (lower-global-shared-view ctx)
     (lower-global-shared-view result-ty))
     [(ast.AstType.Tuple elem-tys)
-      (match (lower-reserve-heap-storage
+      ;; The CPUID result tuple is an ordinary inline value (#7070).
+      (match (lower-reserve-inline-storage
         state
         (lower-type-list-storage-size ctx (lower-box-shared-view elem-tys))
         (lower-global-shared-view result-ty))
@@ -45387,6 +45525,7 @@
         [(ast.AstType.String) true]
         [(ast.AstType.Ptr _) true]
         [(ast.AstType.MutPtr _) true]
+        [(ast.AstType.CFunc _ mode) (ast.ast-c-function-mode-nullable? mode)]
         [(ast.AstType.Tuple elems)
           (lower-init-default-share-safe-type-list?
             ctx
@@ -48932,7 +49071,7 @@
                       [(LowerAlloc.Alloc allocated var-id)
                         (let
                           [next-type-env : tc_core.TcTypeEnv
-                            (tc_core.tc-bind-c-abi-fnptr-if-needed-id
+                            (tc_core.tc-bind-initialized-value-id
                               (lower-global-shared-view ctx)
                               type-env
                               name-id
@@ -67888,6 +68027,96 @@
   [extra : ir.CompilerIrSpmdCallArg]) : ir.CompilerIrSpmdCallArgSeq
   (ir.compiler-ir-spmd-call-arg-seq-append args extra))
 
+;; The private SPMD ABI descriptor of a generated helper (#7405), built from
+;; the helper's physical signature and the call argument classification it was
+;; specialized for. `physical-params` is the signature exactly as emitted: the
+;; active mask, one parameter per declared source parameter in order, then the
+;; hidden index base when `index` is `Appended`. `call-args` supplies each
+;; source parameter's class and source type. The helper and every call to it
+;; carry this one record.
+(define (lower-spmd-private-abi
+  [callee : i64]
+  [backend : ir.CompilerIrSpmdBackend]
+  [lanes : i64]
+  [physical-params : ir.CompilerIrParamSeq]
+  [call-args : ir.CompilerIrSpmdCallArgSeq]
+  [index : ir.CompilerIrSpmdPrivateIndex]
+  [ret-ty : ast.AstType]
+  [result-varying : bool]) : ir.CompilerIrSpmdPrivateAbi
+  (let
+    [params : ir.CompilerIrSpmdPrivateParamSeq
+      (ir.compiler-ir-spmd-private-param-seq-with-capacity physical-params.len)]
+    [appended : bool
+      (match index
+        [(ir.CompilerIrSpmdPrivateIndex.Appended _) true]
+        [_ false])]
+    [ordinal : i64 0]
+    (begin
+      (while (< ordinal physical-params.len)
+        (begin
+          (match (ir.compiler-ir-param-seq-ref
+            (lower-global-shared-view physical-params)
+            ordinal)
+            [(ir.CompilerIrParam.Param _ ty _)
+              (ir.compiler-ir-spmd-private-param-seq-push!
+                (&mut params)
+                (ir.CompilerIrSpmdPrivateParam.Param
+                  ordinal
+                  (cond
+                    [(= ordinal 0)
+                      (ir.CompilerIrSpmdPrivateParamRole.ActiveMask)]
+                    [(and appended (= ordinal (- physical-params.len 1)))
+                      (ir.CompilerIrSpmdPrivateParamRole.IndexBase)]
+                    [else
+                      (match (lower-spmd-call-arg-at
+                        (lower-global-shared-view call-args)
+                        (- ordinal 1))
+                        [(ir.CompilerIrSpmdCallArg.Arg class _ source-ty)
+                          (ir.CompilerIrSpmdPrivateParamRole.Source
+                            (- ordinal 1)
+                            class
+                            source-ty)])])
+                  ty))])
+          (set! ordinal (+ ordinal 1))))
+      (ir.CompilerIrSpmdPrivateAbi
+        (ir.CompilerIrSpmdPrivateAbiSchema.V1)
+        callee
+        backend
+        lanes
+        params
+        index
+        (if (tc_core.tc-type-eq
+          (lower-global-shared-view ret-ty)
+          (ast.AstType.Unit))
+          (ir.CompilerIrSpmdPrivateResult.Unit)
+          (ir.CompilerIrSpmdPrivateResult.Value
+            (lower-spmd-ir-value-class
+              (lower-global-shared-view ret-ty)
+              result-varying)
+            ret-ty))))))
+
+;; The ABI of the generated helper named `helper` among the functions its
+;; lowering produced. The helper itself is pushed last, after any functions its
+;; body lifted, so the search starts there.
+(define (lower-spmd-generated-helper-abi
+  [functions : ir.CompilerIrFunctionSeq]
+  [helper : i64]) : ir.CompilerIrFunctionAbi
+  (let
+    [index : i64 (- functions.len 1)]
+    [found : ir.CompilerIrFunctionAbi ir.CompilerIrFunctionAbi.Ordinary]
+    (begin
+      (while (>= index 0)
+        (match (ir.compiler-ir-function-seq-ref
+          (lower-global-shared-view functions)
+          index)
+          [(ir.CompilerIrFunction.Function name _ _ _ _ function-abi)
+            (if (ir.compiler-ir-symbol-eq? name helper)
+              (begin
+                (set! found (clone function-abi))
+                (set! index -1))
+              (set! index (- index 1)))]))
+      found)))
+
 (define (lower-spmd-private-param-list-append-index
   [params : ir.CompilerIrParamSeq]
   [var-id : i64]) : ir.CompilerIrParamSeq
@@ -67905,6 +68134,7 @@
   [ret : ast.AstType]
   [result-varying : bool]
   [body : ast.AstExpr]
+  [backend : ir.CompilerIrSpmdBackend]
   [call-args : ir.CompilerIrSpmdCallArgSeq]
   [lanes : i64]
   [helper-index : String]
@@ -68021,39 +68251,61 @@
                       (ast.AstType.Unit))
                       (ir.CompilerIrMaybeValue.No)
                       (ir.CompilerIrMaybeValue.Some return-value))))]
+              [physical-params : ir.CompilerIrParamSeq
+                (ir.compiler-ir-param-seq-prepend
+                  (ir.CompilerIrParam.Param
+                    (if (lower-mode-avx2? mode)
+                      "__tl_spmd_active_mask_avx2"
+                      "__tl_spmd_active_mask")
+                    (ast.AstType.Bool)
+                    0)
+                  (let
+                    [source-params : ir.CompilerIrParamSeq
+                      (lower-spmd-private-param-list
+                        (compiler-lower-state-from-name-cache names)
+                        ctx
+                        params
+                        (lower-global-shared-view call-args)
+                        mode
+                        1)]
+                    (if (or
+                      (= (string.string-length helper-index) 0)
+                      (>= helper-index-source-param 0))
+                      source-params
+                      (lower-spmd-private-param-list-append-index
+                        source-params
+                        source-param-count))))]
+              [index-mapping : ir.CompilerIrSpmdPrivateIndex
+                (cond
+                  [(= (string.string-length helper-index) 0)
+                    (ir.CompilerIrSpmdPrivateIndex.None)]
+                  [(>= helper-index-source-param 0)
+                    (ir.CompilerIrSpmdPrivateIndex.ReuseSource
+                      helper-index-source-param)]
+                  [else
+                    (ir.CompilerIrSpmdPrivateIndex.Appended source-param-count)])]
+              [abi : ir.CompilerIrSpmdPrivateAbi
+                (lower-spmd-private-abi
+                  hidden-name
+                  backend
+                  lanes
+                  (lower-global-shared-view physical-params)
+                  call-args
+                  index-mapping
+                  (lower-global-shared-view ret-ty)
+                  result-varying)]
               (ResultLowerFunction.Ok
                 (lower-state-build-functions-with
                   (lower-global-shared-view final-state)
                   (ir.CompilerIrFunction.Function
                     hidden-name
-                    (ir.compiler-ir-param-seq-prepend
-                      (ir.CompilerIrParam.Param
-                        (if (lower-mode-avx2? mode)
-                          "__tl_spmd_active_mask_avx2"
-                          "__tl_spmd_active_mask")
-                        (ast.AstType.Bool)
-                        0)
-                      (let
-                        [source-params : ir.CompilerIrParamSeq
-                          (lower-spmd-private-param-list
-                            (compiler-lower-state-from-name-cache names)
-                            ctx
-                            params
-                            call-args
-                            mode
-                            1)]
-                        (if (or
-                          (= (string.string-length helper-index) 0)
-                          (>= helper-index-source-param 0))
-                          source-params
-                          (lower-spmd-private-param-list-append-index
-                            source-params
-                            source-param-count))))
+                    physical-params
                     ret-ty
                     (lower-state-next-var
                       (lower-global-shared-view final-state))
                     (lower-state-build-function-blocks
-                      (lower-global-shared-view final-state))))
+                      (lower-global-shared-view final-state))
+                    (ir.compiler-ir-function-abi-private abi)))
                 (lower-state-spans final-state)))])]
       [(ResultLowerExpr.Err message) (ResultLowerFunction.Err message)])))
 
@@ -68065,7 +68317,9 @@
   [hidden-name : i64]
   [params : ast.AstParamList]
   [ret : ast.AstType]
+  [result-varying : bool]
   [body : ast.AstExpr]
+  [call-args : ir.CompilerIrSpmdCallArgSeq]
   [spans : ir.CompilerSourceSpans]
   [names : LowerNameCache]
   [mode : CompilerLowerMode]) : ResultLowerFunction
@@ -68120,22 +68374,36 @@
       (lower-global-shared-view ret-ty)
       (- 0 1))
       [(ResultLowerState.Ok final-state)
-        (ResultLowerFunction.Ok
-          (lower-state-build-functions-with
-            (lower-global-shared-view final-state)
-            (ir.CompilerIrFunction.Function
+        (let
+          [physical-params : ir.CompilerIrParamSeq
+            (ir.compiler-ir-param-seq-prepend
+              (ir.CompilerIrParam.Param
+                "__tl_spmd_active_mask"
+                (ast.AstType.Bool)
+                0)
+              (lower-param-list ctx params 1))]
+          [abi : ir.CompilerIrSpmdPrivateAbi
+            (lower-spmd-private-abi
               hidden-name
-              (ir.compiler-ir-param-seq-prepend
-                (ir.CompilerIrParam.Param
-                  "__tl_spmd_active_mask"
-                  (ast.AstType.Bool)
-                  0)
-                (lower-param-list ctx params 1))
-              ret-ty
-              (lower-state-next-var (lower-global-shared-view final-state))
-              (lower-state-build-function-blocks
-                (lower-global-shared-view final-state))))
-          (lower-state-spans final-state))]
+              (ir.CompilerIrSpmdBackend.Scalar)
+              1
+              (lower-global-shared-view physical-params)
+              call-args
+              (ir.CompilerIrSpmdPrivateIndex.None)
+              (lower-global-shared-view ret-ty)
+              result-varying)]
+          (ResultLowerFunction.Ok
+            (lower-state-build-functions-with
+              (lower-global-shared-view final-state)
+              (ir.CompilerIrFunction.Function
+                hidden-name
+                physical-params
+                ret-ty
+                (lower-state-next-var (lower-global-shared-view final-state))
+                (lower-state-build-function-blocks
+                  (lower-global-shared-view final-state))
+                (ir.compiler-ir-function-abi-private abi)))
+            (lower-state-spans final-state)))]
       [(ResultLowerState.Err message) (ResultLowerFunction.Err message)])))
 
 (define (lower-spmd-specialized-helper-function
@@ -68166,7 +68434,9 @@
         hidden-name
         params
         ret
+        result-varying
         body
+        call-args
         spans
         names
         mode)]
@@ -68181,6 +68451,7 @@
         ret
         result-varying
         body
+        (ir.CompilerIrSpmdBackend.Avx512)
         call-args
         lanes
         helper-index
@@ -68199,6 +68470,7 @@
         ret
         result-varying
         body
+        (ir.CompilerIrSpmdBackend.Avx2)
         call-args
         lanes
         helper-index
@@ -68467,7 +68739,7 @@
                   ir.CompilerIrSpmdBackend.Scalar)]
               [count : i64
                 (ast.ast-spmd-specialization-list-len (& specializations))]
-              (lower-spmd-package-specializations-from
+              (match (lower-spmd-package-specializations-from
                 ctx
                 top-env
                 type-cache
@@ -68483,7 +68755,16 @@
                 spans
                 names
                 mode
-                (ir.compiler-ir-function-builder-with-capacity count)))))])))
+                (ir.compiler-ir-function-builder-with-capacity count))
+                [(ResultLowerFunction.Err message)
+                  (ResultLowerFunction.Err message)]
+                [(ResultLowerFunction.Ok functions next-spans)
+                  ;; Generated package functions bypass lower-function-escaping.
+                  ;; Their parameters, blocks and instructions need the same
+                  ;; retained IR owner before checked frontend retirement.
+                  (ResultLowerFunction.Ok
+                    (lower-function-seq-escape-to-ir-arena functions)
+                    next-spans)]))))])))
 
 (define (lower-avx512-emit-spmd-call
   [ctx : tc_core.TcContext]
@@ -68914,21 +69195,34 @@
                                 (lower-state-mode
                                   (lower-global-shared-view named-state)))
                                 [(ResultLowerFunction.Ok functions helper-spans)
-                                  (lower-avx512-emit-spmd-call-active
-                                    ctx
-                                    (lower-state-add-functions
-                                      named-state
-                                      functions
-                                      helper-spans)
-                                    private-name
-                                    backend
-                                    active-mask
-                                    lanes
-                                    abi-call-args
-                                    result-ty
-                                    result-varying
-                                    expr
-                                    ir.CompilerIrSpmdCallOrigin.Private)]
+                                  (match (lower-spmd-generated-helper-abi
+                                    (lower-global-shared-view functions)
+                                    private-name)
+                                    [(ir.CompilerIrFunctionAbi.SpmdPrivate
+                                        helper-abi)
+                                      (lower-avx512-emit-spmd-call-active
+                                        ctx
+                                        (lower-state-add-functions
+                                          named-state
+                                          functions
+                                          helper-spans)
+                                        private-name
+                                        backend
+                                        active-mask
+                                        lanes
+                                        abi-call-args
+                                        result-ty
+                                        result-varying
+                                        expr
+                                        (ir.CompilerIrSpmdCallOrigin.Private
+                                          helper-abi))]
+                                    [(ir.CompilerIrFunctionAbi.Ordinary)
+                                      (ResultLowerExpr.Err
+                                        (box
+                                          (lower-diagnostic-at-expr
+                                            ctx
+                                            expr
+                                            "lower: generated SPMD helper has no private ABI descriptor")))])]
                                 [(ResultLowerFunction.Err message)
                                   (ResultLowerExpr.Err message)]))]))]
                     [(ResultLowerSpmdCallArgs.Err message)
@@ -76616,7 +76910,8 @@
                               (lower-state-next-var
                                 (lower-global-shared-view final-state))
                               (lower-state-build-function-blocks
-                                (lower-global-shared-view final-state))))
+                                (lower-global-shared-view final-state))
+                              ir.CompilerIrFunctionAbi.Ordinary))
                           (lower-state-spans final-state)))]
                     [(ResultLowerState.Err message)
                       (ResultLowerFunction.Err message)])]
@@ -78618,7 +78913,8 @@
                         leading-sret?)
                       physical-ret-ty
                       (+ param-count 41)
-                      (ir.compiler-ir-block-builder-to-list blocks)))
+                      (ir.compiler-ir-block-builder-to-list blocks)
+                      ir.CompilerIrFunctionAbi.Ordinary))
                   spans)))]
           [(LowerMaybeIrSymbol.No)
             (ResultLowerFunction.Err
@@ -80531,19 +80827,39 @@
                   (compiler-lower-state-profile lower-state)))
               (cfg compile-profile (compiler-lower-profile-start lower-state))
               (let
+                ;; The environment over the specialized declarations serves
+                ;; the reachability walk only: lowering keeps `names`, in which
+                ;; specialized instances stay private symbols. Its store grows
+                ;; in its owner arena, so give it one of its own and retire it
+                ;; as soon as the walk returns instead of carrying it to the
+                ;; end of lowering (22 MB on a self-compile, #7882).
+                [prune-names-arena : i64
+                  (if needs-specialization
+                    (arena.tl_arena_make)
+                    0)]
                 [prune-names : LowerNameEnv
                   (if needs-specialization
-                    (match (lower-global-shared-view specialized)
-                      [(ast.AstProgram.Program decls-box)
-                        (let
-                          [decls : ast.AstDeclList
-                            (lower-box-shared-view decls-box)]
-                          (lower-name-env-from-decls-with-state
-                            lower-state
-                            decls
-                            (lower-global-shared-view specialized-paths)
-                            (lower-global-shared-view entry-path)
-                            LowerNameEnv.Nil))])
+                    (let
+                      [enclosing : i64 (arena.tl_arena_current)]
+                      [_enter : unit
+                        (unsafe
+                          (arena.tl_arena_set prune-names-arena))]
+                      [built : LowerNameEnv
+                        (match (lower-global-shared-view specialized)
+                          [(ast.AstProgram.Program decls-box)
+                            (let
+                              [decls : ast.AstDeclList
+                                (lower-box-shared-view decls-box)]
+                              (lower-name-env-from-decls-with-state
+                                lower-state
+                                decls
+                                (lower-global-shared-view specialized-paths)
+                                (lower-global-shared-view entry-path)
+                                LowerNameEnv.Nil))])]
+                      [_leave : unit
+                        (unsafe
+                          (arena.tl_arena_set enclosing))]
+                      built)
                     names)]
                 ;; Typecheck remains complete and whole-program while lower,
                 ;; optimize, and codegen are gated on reachability. This up-front
@@ -80562,6 +80878,19 @@
                       _reach-paths
                       reach-keep-plan)
                     (begin
+                      (if (= prune-names-arena 0)
+                        unit
+                        (unsafe
+                          (arena.tl_arena_destroy prune-names-arena)))
+                      ;; The lowering metric slots are a fixed range shared with
+                      ;; the interner's, so this one fact is reported directly.
+                      (cfg
+                        compile-profile
+                        (compiler-lower-profile-counter
+                          "name_env.prune_arena_releases"
+                          (if (= prune-names-arena 0)
+                            0
+                            1)))
                       (cfg
                         compile-profile
                         (compiler-lower-profile-finish lower-state "prune"))

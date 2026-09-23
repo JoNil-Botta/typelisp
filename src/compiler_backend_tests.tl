@@ -282,7 +282,8 @@
             params
             ret-ty
             slot-vars
-            (owned_view.compiler-owned-shared-view emit-blocks))]
+            (owned_view.compiler-owned-shared-view emit-blocks)
+            compiler_ir_types.CompilerIrFunctionAbi.Ordinary)]
         [liveness : compiler_liveness.CompilerFunctionLiveness
           (compiler_liveness.compiler-live-analyze-function func)]
         [starts : (__tl_dyn-array i64) (__tl_make-array i64 slot-vars)]
@@ -1689,10 +1690,9 @@
         (profile_state.compiler-profile-state-new))
         [(compiler_backend.CompilerBackendObjectEligibility.Eligible) false]
         [(compiler_backend.CompilerBackendObjectEligibility.Unsupported
-            category)
-          (string.eq
-            category
-            (compiler_backend.compiler-backend-object-unsupported-semantics-category))])
+            (compiler_backend.CompilerDirectObjectFallbackReason.UnsupportedSemantics))
+          true]
+        [_ false])
       (compiler_backend.backend-and8
         (compiler_backend.compiler-backend-object-semantic-value-supported?
           (compiler_ir_types.CompilerIrValue.I64 -2147483648))
@@ -1744,7 +1744,7 @@
   (match (compiler_lower.lower-compiler-source source)
     [(compiler_lower.ResultCompilerLower.Err _)
       (compiler_backend.CompilerBackendObjectEligibility.Unsupported
-        "test-lowering-failed")]
+        compiler_backend.CompilerDirectObjectFallbackReason.UnsupportedSemantics)]
     [(compiler_lower.ResultCompilerLower.Ok program _)
       (let
         [backend-state : compiler_backend.CompilerBackendState
@@ -1764,7 +1764,9 @@
   (match (compiler-backend-object-source-eligibility source target)
     [(compiler_backend.CompilerBackendObjectEligibility.Eligible) false]
     [(compiler_backend.CompilerBackendObjectEligibility.Unsupported category)
-      (string.eq category expected)]))
+      (string.eq
+        (compiler_backend.compiler-direct-object-fallback-category category)
+        expected)]))
 
 (define (compiler-backend-object-source-eligible?
   [source : String]
@@ -1784,7 +1786,8 @@
       (compiler_ir_types.CompilerIrBlock.Block
         (compiler_ir_types.compiler-ir-label "entry")
         instrs)
-      compiler_ir_types.CompilerIrBlockList.Nil)))
+      compiler_ir_types.CompilerIrBlockList.Nil)
+    compiler_ir_types.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-backend-object-test-call-category?
   [index : compiler_backend.CompilerBackendProgramIndex]
@@ -1805,7 +1808,9 @@
     ret-ty)
     [(compiler_backend.CompilerBackendObjectEligibility.Eligible) false]
     [(compiler_backend.CompilerBackendObjectEligibility.Unsupported category)
-      (string.eq category expected)]))
+      (string.eq
+        (compiler_backend.compiler-direct-object-fallback-category category)
+        expected)]))
 
 (define (compiler-backend-object-corrupt-call-abi-eligibility-ok?) : bool
   (let
@@ -1823,14 +1828,16 @@
           (compiler_ir_types.compiler-ir-param-seq-empty))
         (compiler_ast_types.AstType.I64)
         1
-        compiler_ir_types.CompilerIrBlockList.Nil)]
+        compiler_ir_types.CompilerIrBlockList.Nil
+        compiler_ir_types.CompilerIrFunctionAbi.Ordinary)]
     [bool-result-function : compiler_ir_types.CompilerIrFunction
       (compiler_ir_types.CompilerIrFunction.Function
         bool-result-name
         (compiler_ir_types.compiler-ir-param-seq-empty)
         (compiler_ast_types.AstType.Bool)
         0
-        compiler_ir_types.CompilerIrBlockList.Nil)]
+        compiler_ir_types.CompilerIrBlockList.Nil
+        compiler_ir_types.CompilerIrFunctionAbi.Ordinary)]
     [functions : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_ir_types.compiler-ir-function-seq-prepend
         bool-param-function
@@ -2027,9 +2034,9 @@
   "(extern (foreign-call [arg0 : i64]) : i64 (:abi c) (:symbol \"foreign_exact\"))
 (extern (unused-foreign-call [arg0 : i64]) : i64 (:symbol \"unused_foreign_exact\"))
 (extern unused-foreign-data (:symbol \"unused_foreign_data\") : i64)
-(extern unused-foreign-fn (:symbol \"unused_foreign_fn\") : (-> i64 i64))
+(extern unused-foreign-fn (:symbol \"unused_foreign_fn\") : (CFunc non-null (-> i64 i64)))
 (extern foreign-data (:symbol \"foreign_data_exact\") : i64)
-(extern foreign-fn (:symbol \"foreign_fn_exact\") : (-> i64 i64))
+(extern foreign-fn (:symbol \"foreign_fn_exact\") : (CFunc non-null (-> i64 i64)))
 (define answer : i64 40)
 (define greeting : String \"hi\")
 (define pi : f64 3.5)
@@ -3760,7 +3767,7 @@
   (a u64)
   (b u64))
 (extern (wide-make [a : u32] [b : u32] [c : u32] [d : u32] [tag : u64]) : Wide (:symbol \"tl_cabi_wide_make\"))
-(extern wide-maker (:symbol \"tl_cabi_wide_make_ptr\") : (-> u32 u32 u32 u32 u64 Wide))
+(extern wide-maker (:symbol \"tl_cabi_wide_make_ptr\") : (CFunc non-null (-> u32 u32 u32 u32 u64 Wide)))
 (define (wide-score [value : Wide]) : i64
   (+ (cast value.a : i64) (cast value.b : i64)))
 (define (main) : i64
@@ -3829,7 +3836,7 @@
   (a u64)
   (b f64))
 (extern (wide-arg-score [arg : WideArg] [tag : u64]) : i64 (:symbol \"tl_cabi_wide_arg_score\"))
-(extern wide-arg-scorer (:symbol \"tl_cabi_wide_arg_score_ptr\") : (-> WideArg u64 i64))
+(extern wide-arg-scorer (:symbol \"tl_cabi_wide_arg_score_ptr\") : (CFunc non-null (-> WideArg u64 i64)))
 (define (main) : i64
   (let
     [direct-arg : WideArg (WideArg (cast 10 : u64) 1.5)]
@@ -3885,37 +3892,37 @@
 (defenum WideChoice (None) (Some u64 f64))
 (defenum ReturnChoice (None) (Pair u64 u64))
 (extern (status-pick [arg0 : Status] [arg1 : Status] [choose-second : i64]) : Status (:symbol \"tl_win64_status_pick\"))
-(extern status-pick-ptr (:symbol \"tl_win64_status_pick_ptr\") : (->
+(extern status-pick-ptr (:symbol \"tl_win64_status_pick_ptr\") : (CFunc non-null (->
   Status
   Status
   i64
-  Status))
+  Status)))
 (extern (small-score [arg : SmallChoice] [bias : i64]) : i64 (:symbol \"tl_win64_small_score\"))
-(extern small-scorer (:symbol \"tl_win64_small_score_ptr\") : (->
+(extern small-scorer (:symbol \"tl_win64_small_score_ptr\") : (CFunc non-null (->
   SmallChoice
   i64
-  i64))
+  i64)))
 (extern (wide-score [arg : WideChoice] [tag : u64]) : i64 (:symbol \"tl_win64_wide_score\"))
-(extern wide-scorer (:symbol \"tl_win64_wide_score_ptr\") : (->
+(extern wide-scorer (:symbol \"tl_win64_wide_score_ptr\") : (CFunc non-null (->
   WideChoice
   u64
-  i64))
+  i64)))
 (extern (return-choice-make [a : u32] [b : u32] [tag : u64]) : ReturnChoice (:symbol \"tl_win64_return_choice_make\"))
-(extern return-choice-maker (:symbol \"tl_win64_return_choice_make_ptr\") : (->
+(extern return-choice-maker (:symbol \"tl_win64_return_choice_make_ptr\") : (CFunc non-null (->
   u32
   u32
   u64
-  ReturnChoice))
+  ReturnChoice)))
 (define (return-score [r : ReturnChoice]) : i64
   (match r
     [ReturnChoice.None 0]
     [(ReturnChoice.Pair lo hi) (+ (cast lo : i64) (cast hi : i64))]))
 (define (main) : i64
   (let
-    [status-copy : (-> Status Status i64 Status) status-pick-ptr]
-    [small-copy : (-> SmallChoice i64 i64) small-scorer]
-    [wide-copy : (-> WideChoice u64 i64) wide-scorer]
-    [return-copy : (-> u32 u32 u64 ReturnChoice) return-choice-maker]
+    [status-copy : (CFunc non-null (-> Status Status i64 Status)) status-pick-ptr]
+    [small-copy : (CFunc non-null (-> SmallChoice i64 i64)) small-scorer]
+    [wide-copy : (CFunc non-null (-> WideChoice u64 i64)) wide-scorer]
+    [return-copy : (CFunc non-null (-> u32 u32 u64 ReturnChoice)) return-choice-maker]
     [picked : Status (status-pick (Ready) (Done) 1)]
     [picked-via-ptr : Status (status-copy (Ready) (Failed) 1)]
     [small-direct : i64 (small-score (SmallChoice.Some 11) 5)]
@@ -4066,10 +4073,10 @@
   (inner InnerMem)
   (tail u64))
 (extern (wide-mem-score [arg0 : WideMem] [salt : u64]) : i64 (:symbol \"tl_cabi_wide_mem_score\"))
-(extern wide-mem-scorer (:symbol \"tl_cabi_wide_mem_score_ptr\") : (->
+(extern wide-mem-scorer (:symbol \"tl_cabi_wide_mem_score_ptr\") : (CFunc non-null (->
   WideMem
   u64
-  i64))
+  i64)))
 (extern (wide-mem-make [seed : u64]) : WideMem (:symbol \"tl_cabi_wide_mem_make\"))
 (extern (nested-mem-score [arg0 : NestedMem]) : i64 (:symbol \"tl_cabi_nested_mem_score\"))
 (define (main) : i64
@@ -4080,7 +4087,7 @@
       (NestedMem
         (InnerMem (cast 4 : u64) (cast 5 : u64))
         (cast 6 : u64))]
-    [score-copy : (-> WideMem u64 i64) wide-mem-scorer]
+    [score-copy : (CFunc non-null (-> WideMem u64 i64)) wide-mem-scorer]
     [direct : i64 (wide-mem-score wide (cast 7 : u64))]
     [via-ptr : i64 (score-copy wide (cast 8 : u64))]
     [made : WideMem (wide-mem-make (cast 9 : u64))]
@@ -4179,7 +4186,7 @@
 (defstruct MixIF (:repr c) (tag u64) (value f64))
 (defstruct PairF64 (:repr c) (x f64) (y f64))
 (extern (pair-i64-make [seed : i64]) : PairI64 (:symbol \"tl_cabi_pair_i64_make\"))
-(extern pair-i64-maker (:symbol \"tl_cabi_pair_i64_make_ptr\") : (-> i64 PairI64))
+(extern pair-i64-maker (:symbol \"tl_cabi_pair_i64_make_ptr\") : (CFunc non-null (-> i64 PairI64)))
 (extern (mix-if-make [seed : i64]) : MixIF (:symbol \"tl_cabi_mix_if_make\"))
 (extern (pair-f64-make [seed : i64]) : PairF64 (:symbol \"tl_cabi_pair_f64_make\"))
 (define (main) : i64
@@ -4411,7 +4418,7 @@
 
 (define (compiler-backend-extern-value-fnptr-source) : String
   "(extern raw-value (:symbol \"tl_test_raw_value\") : i64)
-(extern raw-fn (:symbol \"tl_test_raw_fn\") : (-> i64 i64))
+(extern raw-fn (:symbol \"tl_test_raw_fn\") : (CFunc non-null (-> i64 i64)))
 (extern (direct-fn [x : i64]) : i64 (:symbol \"tl_test_direct_fn\"))
 (define (main) : i64
   (+ raw-value (+ (raw-fn 41) (direct-fn 1))))")
@@ -6278,7 +6285,8 @@
               (compiler_ir_types.CompilerIrInstr.Return
                 compiler_ir_types.CompilerIrMaybeValue.No)
               (compiler_ir_types.compiler-ir-instr-seq-empty)))
-          compiler_ir_types.CompilerIrBlockList.Nil))
+          compiler_ir_types.CompilerIrBlockList.Nil)
+        compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
       (compiler_ir_types.compiler-ir-function-seq-prepend
         (compiler_ir_types.CompilerIrFunction.Function
           (ci.intern "main")
@@ -6289,7 +6297,8 @@
             (compiler_ir_types.CompilerIrBlock.Block
               (compiler_ir_types.compiler-ir-label "entry")
               (compiler-backend-call-save-main-instrs))
-            compiler_ir_types.CompilerIrBlockList.Nil))
+            compiler_ir_types.CompilerIrBlockList.Nil)
+          compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
         (compiler_ir_types.compiler-ir-function-seq-empty)))
     (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
@@ -9251,7 +9260,8 @@
           (compiler_ir_types.compiler-ir-param-seq-empty)
           (compiler_ast_types.AstType.I64)
           2
-          blocks)
+          blocks
+          compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
         (compiler_ir_types.compiler-ir-function-seq-empty))]
     [index : compiler_backend.CompilerBackendProgramIndex
       (compiler_backend.compiler-backend-program-index-build
@@ -9392,7 +9402,8 @@
           params
           (owned_view.compiler-owned-shared-view type3)
           4
-          compiler_ir_types.CompilerIrBlockList.Nil)
+          compiler_ir_types.CompilerIrBlockList.Nil
+          compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
         (compiler_ir_types.compiler-ir-function-seq-empty))]
     [index : compiler_backend.CompilerBackendProgramIndex
       (compiler_backend.compiler-backend-program-index-build
@@ -9816,7 +9827,8 @@
               params
               (compiler_ast_types.AstType.I64)
               1
-              compiler_ir_types.CompilerIrBlockList.Nil)
+              compiler_ir_types.CompilerIrBlockList.Nil
+              compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
             (compiler_ir_types.compiler-ir-function-seq-empty))
           (compiler_ir_types.compiler-ir-extern-seq-empty))]
       [indirect-slots : i64
@@ -10159,7 +10171,8 @@
                       (compiler_ir_types.compiler-ir-value-seq-empty)))
                   ty)
                 (compiler_ir_types.compiler-ir-instr-seq-empty)))
-            compiler_ir_types.CompilerIrBlockList.Nil))
+            compiler_ir_types.CompilerIrBlockList.Nil)
+          compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
         (compiler_ir_types.compiler-ir-function-seq-empty))
       (compiler_ir_types.compiler-ir-extern-seq-empty))))
 
@@ -10193,7 +10206,8 @@
                       (compiler_ir_types.compiler-ir-value-seq-empty)))
                   ty)
                 (compiler_ir_types.compiler-ir-instr-seq-empty)))
-            compiler_ir_types.CompilerIrBlockList.Nil))
+            compiler_ir_types.CompilerIrBlockList.Nil)
+          compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
         (compiler_ir_types.compiler-ir-function-seq-empty))
       (compiler_ir_types.compiler-ir-extern-seq-empty))))
 
@@ -10311,7 +10325,8 @@
                 (compiler_ir_types.CompilerIrMaybeValue.Some
                   (compiler_ir_types.CompilerIrValue.Var 2)))
               (compiler_ir_types.compiler-ir-instr-seq-empty)))))
-      compiler_ir_types.CompilerIrBlockList.Nil)))
+      compiler_ir_types.CompilerIrBlockList.Nil)
+    compiler_ir_types.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-backend-descriptor-pair-main) : compiler_ir_types.CompilerIrFunction
   (let
@@ -10447,7 +10462,8 @@
                                                             (compiler_ir_types.CompilerIrValue.Var
                                                               17)))
                                                         (compiler_ir_types.compiler-ir-instr-seq-empty)))))))))))))))))))))))))
-        compiler_ir_types.CompilerIrBlockList.Nil))))
+        compiler_ir_types.CompilerIrBlockList.Nil)
+      compiler_ir_types.CompilerIrFunctionAbi.Ordinary)))
 
 (define (compiler-backend-descriptor-pair-program) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
@@ -10748,7 +10764,8 @@
                       (compiler_ir_types.CompilerIrMaybeValue.Some
                         (compiler_ir_types.CompilerIrValue.Var 3)))
                     (compiler_ir_types.compiler-ir-instr-seq-empty)))))))
-        compiler_ir_types.CompilerIrBlockList.Nil))))
+        compiler_ir_types.CompilerIrBlockList.Nil)
+      compiler_ir_types.CompilerIrFunctionAbi.Ordinary)))
 
 (define (compiler-backend-descriptor-pair-object-program) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
@@ -11338,7 +11355,8 @@
               (compiler_ir_types.compiler-ir-param-seq-empty)
               (compiler_ast_types.AstType.I64)
               3
-              blocks)
+              blocks
+              compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
             (compiler_ir_types.compiler-ir-function-seq-empty))]
         [globals : compiler_ir_types.CompilerIrGlobalSeq
           (compiler-backend-test-global-seq-single
@@ -11472,7 +11490,8 @@
           (compiler_ir_types.compiler-ir-param-seq-empty)
           (compiler_ast_types.AstType.I64)
           5
-          blocks)
+          blocks
+          compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
         (compiler_ir_types.compiler-ir-function-seq-empty))]
     [index : compiler_backend.CompilerBackendProgramIndex
       (compiler_backend.compiler-backend-program-index-build
@@ -13421,7 +13440,8 @@
                       (compiler_ir_types.compiler-ir-value-seq-empty)))
                   (owned_view.compiler-owned-shared-view ty))
                 (compiler_ir_types.compiler-ir-instr-seq-empty)))
-            compiler_ir_types.CompilerIrBlockList.Nil))
+            compiler_ir_types.CompilerIrBlockList.Nil)
+          compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
         (compiler_ir_types.compiler-ir-function-seq-prepend
           (compiler_ir_types.CompilerIrFunction.Function
             (ci.intern "consume_group")
@@ -13430,7 +13450,8 @@
               (compiler_ir_types.compiler-ir-param-seq-empty))
             (compiler_ast_types.AstType.I64)
             1
-            compiler_ir_types.CompilerIrBlockList.Nil)
+            compiler_ir_types.CompilerIrBlockList.Nil
+            compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
           (compiler_ir_types.compiler-ir-function-seq-empty)))
       (compiler_ir_types.compiler-ir-extern-seq-empty))))
 
@@ -15292,7 +15313,8 @@ g:
                   (compiler_ir_types.CompilerIrMaybeValue.Some
                     (compiler_ir_types.CompilerIrValue.I64 7)))
                 (compiler_ir_types.compiler-ir-instr-seq-empty)))
-            compiler_ir_types.CompilerIrBlockList.Nil)))
+            compiler_ir_types.CompilerIrBlockList.Nil))
+        compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
       (compiler_ir_types.compiler-ir-function-seq-empty))
     (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
@@ -16144,7 +16166,8 @@ g:
                 (compiler_ir_types.CompilerIrMaybeValue.Some
                   (compiler_ir_types.CompilerIrValue.I64 7)))
               (compiler_ir_types.compiler-ir-instr-seq-empty)))
-          compiler_ir_types.CompilerIrBlockList.Nil))
+          compiler_ir_types.CompilerIrBlockList.Nil)
+        compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
       (compiler_ir_types.compiler-ir-function-seq-prepend
         (compiler_ir_types.CompilerIrFunction.Function
           (ci.intern "main")
@@ -16165,7 +16188,8 @@ g:
                     (compiler_ir_types.CompilerIrMaybeValue.Some
                       (compiler_ir_types.CompilerIrValue.Var 0)))
                   (compiler_ir_types.compiler-ir-instr-seq-empty))))
-            compiler_ir_types.CompilerIrBlockList.Nil))
+            compiler_ir_types.CompilerIrBlockList.Nil)
+          compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
         (compiler_ir_types.compiler-ir-function-seq-empty)))
     (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
@@ -19375,7 +19399,8 @@ g:
                 (compiler_ir_types.CompilerIrMaybeValue.Some
                   (compiler_ir_types.CompilerIrValue.I64 0)))
               (compiler_ir_types.compiler-ir-instr-seq-empty)))
-          compiler_ir_types.CompilerIrBlockList.Nil))
+          compiler_ir_types.CompilerIrBlockList.Nil)
+        compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
       (compiler_ir_types.compiler-ir-function-seq-empty))
     (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
@@ -19397,7 +19422,8 @@ g:
                 (compiler_ir_types.CompilerIrMaybeValue.Some
                   (compiler_ir_types.CompilerIrValue.I64 0)))
               (compiler_ir_types.compiler-ir-instr-seq-empty)))
-          compiler_ir_types.CompilerIrBlockList.Nil))
+          compiler_ir_types.CompilerIrBlockList.Nil)
+        compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
       (compiler_ir_types.compiler-ir-function-seq-prepend
         (compiler_ir_types.CompilerIrFunction.Function
           name-id
@@ -19412,7 +19438,8 @@ g:
                   (compiler_ir_types.CompilerIrMaybeValue.Some
                     (compiler_ir_types.CompilerIrValue.I64 0)))
                 (compiler_ir_types.compiler-ir-instr-seq-empty)))
-            compiler_ir_types.CompilerIrBlockList.Nil))
+            compiler_ir_types.CompilerIrBlockList.Nil)
+          compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
         (compiler_ir_types.compiler-ir-function-seq-empty)))
     (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
@@ -20120,7 +20147,8 @@ g:
                 (compiler-backend-test-instr-seq-prepend
                   instr
                   (compiler_ir_types.compiler-ir-instr-seq-empty)))
-              compiler_ir_types.CompilerIrBlockList.Nil))
+              compiler_ir_types.CompilerIrBlockList.Nil)
+            compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
           (compiler_ir_types.compiler-ir-function-seq-empty))
         (compiler_ir_types.compiler-ir-extern-seq-empty))]
     (match (compiler_backend.compiler-backend-emit-program-linux-with-spans
@@ -20206,7 +20234,8 @@ g:
         (compiler_ir_types.compiler-ir-param-seq-empty)
         (compiler_ast_types.AstType.I64)
         1
-        (compiler-backend-switch-test-blocks))
+        (compiler-backend-switch-test-blocks)
+        compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
       (compiler_ir_types.compiler-ir-function-seq-empty))
     (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
@@ -20325,7 +20354,8 @@ g:
         (compiler_ir_types.compiler-ir-param-seq-empty)
         (compiler_ast_types.AstType.I64)
         2
-        (compiler-backend-total-switch-test-blocks true))
+        (compiler-backend-total-switch-test-blocks true)
+        compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
       (compiler_ir_types.compiler-ir-function-seq-empty))
     (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
@@ -20390,7 +20420,8 @@ g:
         (compiler_ir_types.compiler-ir-param-seq-empty)
         (compiler_ast_types.AstType.I64)
         2
-        (compiler-backend-forwarded-total-switch-test-blocks))
+        (compiler-backend-forwarded-total-switch-test-blocks)
+        compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
       (compiler_ir_types.compiler-ir-function-seq-empty))
     (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
@@ -20403,7 +20434,8 @@ g:
         (compiler_ir_types.compiler-ir-param-seq-empty)
         (compiler_ast_types.AstType.I64)
         2
-        (compiler-backend-total-switch-test-blocks false))
+        (compiler-backend-total-switch-test-blocks false)
+        compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
       (compiler_ir_types.compiler-ir-function-seq-empty))
     (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
@@ -20690,7 +20722,8 @@ g:
                       (compiler_ir_types.CompilerIrMaybeValue.Some
                         (compiler_ir_types.CompilerIrValue.I64 0)))
                     (compiler_ir_types.compiler-ir-instr-seq-empty)))
-                compiler_ir_types.CompilerIrBlockList.Nil)))))
+                compiler_ir_types.CompilerIrBlockList.Nil))))
+        compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
       (compiler_ir_types.compiler-ir-function-seq-empty))
     (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
@@ -20754,7 +20787,8 @@ g:
                     (compiler_ir_types.compiler-ir-label "two")))
                 (compiler_ir_types.compiler-ir-label "other"))
               (compiler_ir_types.compiler-ir-instr-seq-empty)))
-          compiler_ir_types.CompilerIrBlockList.Nil))
+          compiler_ir_types.CompilerIrBlockList.Nil)
+        compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
       (compiler_ir_types.compiler-ir-function-seq-empty))
     (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
@@ -20808,7 +20842,8 @@ g:
                     (compiler_ir_types.CompilerIrMaybeValue.Some
                       (compiler_ir_types.CompilerIrValue.Var 1)))
                   (compiler_ir_types.compiler-ir-instr-seq-empty))))
-            compiler_ir_types.CompilerIrBlockList.Nil)))
+            compiler_ir_types.CompilerIrBlockList.Nil))
+        compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
       (compiler_ir_types.compiler-ir-function-seq-empty))
     (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
@@ -20901,7 +20936,8 @@ g:
                     (compiler_ir_types.CompilerIrMaybeValue.Some
                       (compiler_ir_types.CompilerIrValue.Var 1)))
                   (compiler_ir_types.compiler-ir-instr-seq-empty))))
-            compiler_ir_types.CompilerIrBlockList.Nil)))
+            compiler_ir_types.CompilerIrBlockList.Nil))
+        compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
       (compiler_ir_types.compiler-ir-function-seq-empty))
     (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
@@ -22621,6 +22657,7 @@ g:
     (compiler_ast_types.AstType.I64)
     ""
     ""
+    ""
     (compiler_diagnostic.compiler-diagnostic-at-start "" "")
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active)))
@@ -23959,6 +23996,534 @@ g:
       "%zmm")
     (compiler-backend-shuffle-vector-check-reduction-ok?)))
 
+;; The reduction result alone cannot detect a write through the source alias.
+;; Keep the full source family read-only in both late and planned emission.
+(define (compiler-backend-avx2-i64-reduce-source-case-ok?
+  [op : compiler_ir_types.CompilerIrVectorReduceOp]
+  [planned : bool]
+  [spilled : bool]
+  [compare : String]) : bool
+  (match (compiler_backend.compiler-backend-emit-avx2-vector-reduce
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (if spilled
+      (compiler_regalloc.compiler-reg-assignments-prepend
+        (compiler_regalloc.CompilerRegAssignment
+          0
+          (compiler_regalloc.CompilerRegLocation.Spill -64))
+        (compiler-backend-vector-reduce-direct-assignments
+          (compiler_regalloc.CompilerRegLocation.Register
+            compiler_abi.compiler-reg-id-r12)))
+      (compiler-backend-vector-reduce-direct-assignments
+        (compiler_regalloc.CompilerRegLocation.Register
+          compiler_abi.compiler-reg-id-r12)))
+    1
+    op
+    (compiler_ir_types.CompilerIrValue.Var 0)
+    4
+    (compiler_ast_types.AstType.I64)
+    (if planned
+      "%xmm10"
+      "")
+    (if planned
+      "%xmm11"
+      "")
+    (if planned
+      "%xmm12"
+      "")
+    (compiler_diagnostic.compiler-diagnostic-at-start "" "")
+    (compiler_backend.compiler-backend-state-new
+      (ci.intern-compat-state-capture-active)))
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (and
+        (compiler_backend.compiler-backend-string-contains?
+          (owned_view.compiler-owned-shared-view asm)
+          compare)
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            ", %xmm6\n"))
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            ", %ymm6\n"))
+        (if spilled
+          (and
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view asm)
+              "    vmovdqu -64(%rbp), %ymm14\n")
+            (not
+              (compiler_backend.compiler-backend-string-contains?
+                (owned_view.compiler-owned-shared-view asm)
+                ", -64(%rbp)\n")))
+          true)
+        (compiler_backend.compiler-backend-string-contains?
+          asm
+          (if planned
+            "    vmovq %xmm10, %r12\n"
+            "    vmovq %xmm2, %r12\n")))]
+    [_ false]))
+
+(define (compiler-backend-avx2-i64-reduce-storage-cases-ok? [spilled : bool]) : bool
+  (and
+    (cfg
+      scratch-vreg
+      true
+      (compiler-backend-avx2-i64-reduce-source-case-ok?
+        (compiler_ir_types.CompilerIrVectorReduceOp.Min)
+        false
+        spilled
+        "    vpcmpgtq %xmm3, %xmm2, %xmm4\n    vpblendvb %xmm4, %xmm3, %xmm2, %xmm2\n"))
+    (cfg
+      scratch-vreg
+      true
+      (compiler-backend-avx2-i64-reduce-source-case-ok?
+        (compiler_ir_types.CompilerIrVectorReduceOp.Max)
+        false
+        spilled
+        "    vpcmpgtq %xmm2, %xmm3, %xmm4\n    vpblendvb %xmm4, %xmm3, %xmm2, %xmm2\n"))
+    (compiler-backend-avx2-i64-reduce-source-case-ok?
+      (compiler_ir_types.CompilerIrVectorReduceOp.Min)
+      true
+      spilled
+      "    vpcmpgtq %xmm11, %xmm10, %xmm12\n    vpblendvb %xmm12, %xmm11, %xmm10, %xmm10\n")
+    (compiler-backend-avx2-i64-reduce-source-case-ok?
+      (compiler_ir_types.CompilerIrVectorReduceOp.Max)
+      true
+      spilled
+      "    vpcmpgtq %xmm10, %xmm11, %xmm12\n    vpblendvb %xmm12, %xmm11, %xmm10, %xmm10\n")))
+
+(define (compiler-backend-avx2-i64-reduce-source-ok?) : bool
+  (compiler-backend-avx2-i64-reduce-storage-cases-ok? false))
+
+(define (compiler-backend-avx2-i64-reduce-spilled-source-ok?) : bool
+  (compiler-backend-avx2-i64-reduce-storage-cases-ok? true))
+
+(define (compiler-backend-i64-reduce-live-source-blocks
+  [op : compiler_ir_types.CompilerIrVectorReduceOp]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler-backend-test-instr-seq-prepend
+        (compiler_ir_types.CompilerIrInstr.VectorReduce
+          1
+          op
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          4
+          (compiler_ast_types.AstType.I64))
+        (compiler-backend-test-instr-seq-prepend
+          (compiler_ir_types.CompilerIrInstr.VectorReduce
+            2
+            (compiler_ir_types.CompilerIrVectorReduceOp.Sum)
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            4
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-seq-empty))))
+    compiler_ir_types.CompilerIrBlockList.Nil))
+
+(define (compiler-backend-i64-reduce-mask-plan-case-ok?
+  [_abi : compiler_abi.CompilerRegTargetAbi]
+  [_op : compiler_ir_types.CompilerIrVectorReduceOp]) : bool
+  (cfg
+    scratch-vreg
+    (let
+      [result : compiler_regalloc.CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result-for-abi
+          _abi
+          "reduce_live_source_mask"
+          (compiler-backend-i64-reduce-live-source-blocks _op)
+          3
+          (compiler_regalloc.compiler-reg-assignments-prepend
+            (compiler_regalloc.CompilerRegAssignment
+              2
+              (compiler_regalloc.CompilerRegLocation.Spill -16))
+            (compiler-backend-scratch-vreg-reduce-test-assignments)))]
+      [acc : String
+        (compiler-backend-scratch-test-register
+          (owned_view.compiler-owned-shared-view result)
+          0)]
+      [sibling : String
+        (compiler-backend-scratch-test-register
+          (owned_view.compiler-owned-shared-view result)
+          1)]
+      [mask : String
+        (compiler-backend-scratch-test-register
+          (owned_view.compiler-owned-shared-view result)
+          2)]
+      (and
+        (=
+          (compiler-backend-scratch-test-plan-count
+            (owned_view.compiler-owned-shared-view result))
+          5)
+        (=
+          (compiler-backend-scratch-test-success-count
+            (owned_view.compiler-owned-shared-view result))
+          5)
+        (not (string.eq (owned_view.compiler-owned-shared-view mask) ""))
+        (not
+          (compiler-backend-scratch-test-registers-overlap?
+            (owned_view.compiler-owned-shared-view acc)
+            (owned_view.compiler-owned-shared-view mask)))
+        (not
+          (compiler-backend-scratch-test-registers-overlap?
+            (owned_view.compiler-owned-shared-view sibling)
+            (owned_view.compiler-owned-shared-view mask)))
+        (not
+          (compiler-backend-scratch-test-registers-overlap?
+            (owned_view.compiler-owned-shared-view mask)
+            "%ymm6"))
+        (not (compiler-backend-scratch-test-registers-overlap? mask "%xmm2"))
+        (match result
+          [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
+            (match (__tl-project-field
+              (__tl-project-field (array-ref plan.items 2) requirement)
+              role)
+              [(compiler_regalloc.CompilerRegScratchRole.VectorReduceMask) true]
+              [_ false])])))
+    true))
+
+(define (compiler-backend-i64-reduce-mask-plan-ok?) : bool
+  (and
+    (compiler-backend-i64-reduce-mask-plan-case-ok?
+      (compiler_abi.CompilerRegTargetAbi.Linux)
+      (compiler_ir_types.CompilerIrVectorReduceOp.Min))
+    (compiler-backend-i64-reduce-mask-plan-case-ok?
+      (compiler_abi.CompilerRegTargetAbi.Linux)
+      (compiler_ir_types.CompilerIrVectorReduceOp.Max))
+    (compiler-backend-i64-reduce-mask-plan-case-ok?
+      (compiler_abi.CompilerRegTargetAbi.Windows)
+      (compiler_ir_types.CompilerIrVectorReduceOp.Min))
+    (compiler-backend-i64-reduce-mask-plan-case-ok?
+      (compiler_abi.CompilerRegTargetAbi.Windows)
+      (compiler_ir_types.CompilerIrVectorReduceOp.Max))))
+
+;; Keep every allocatable XMM family live across the first reduction. XMM0/1
+;; carry scalars; XMM14/15 remain reserved spill temporaries. A modeled scratch
+;; selection must preserve all three borrowed homes, including the mask role.
+(define (compiler-backend-i64-reduce-pressure-assignments [index : i64]) : compiler_regalloc.CompilerRegAssignmentTable
+  (if (= index 29)
+    (compiler_regalloc.compiler-reg-assignment-table-empty)
+    (compiler_regalloc.compiler-reg-assignments-prepend
+      (compiler_regalloc.CompilerRegAssignment
+        index
+        (cond
+          [(< index 2)
+            (compiler_regalloc.CompilerRegLocation.Register
+              (compiler_abi.compiler-abi-xmm-register-id index))]
+          [(< index 14)
+            (compiler_regalloc.CompilerRegLocation.Register
+              (compiler_abi.compiler-abi-vector-register-id index))]
+          [(= index 14)
+            (compiler_regalloc.CompilerRegLocation.Register
+              compiler_abi.compiler-reg-id-r12)]
+          [else
+            (compiler_regalloc.CompilerRegLocation.Spill (* -8 (- index 14)))]))
+      (compiler-backend-i64-reduce-pressure-assignments (+ index 1)))))
+
+(define (compiler-backend-i64-reduce-pressure-tail [index : i64]) : compiler_ir_types.CompilerIrInstrSeq
+  (if (= index 14)
+    (compiler-backend-test-instr-seq-prepend
+      (compiler_ir_types.CompilerIrInstr.Return
+        (compiler_ir_types.CompilerIrMaybeValue.Some
+          (compiler_ir_types.CompilerIrValue.Var 14)))
+      (compiler_ir_types.compiler-ir-instr-seq-empty))
+    (compiler-backend-test-instr-seq-prepend
+      (if (< index 2)
+        (compiler_ir_types.CompilerIrInstr.Mov
+          (+ index 15)
+          (compiler_ir_types.CompilerIrValue.Var index)
+          (compiler_ast_types.AstType.F64))
+        (compiler_ir_types.CompilerIrInstr.VectorReduce
+          (+ index 15)
+          (compiler_ir_types.CompilerIrVectorReduceOp.Sum)
+          (compiler_ir_types.CompilerIrValue.Var index)
+          4
+          (compiler_ast_types.AstType.I64)))
+      (compiler-backend-i64-reduce-pressure-tail (+ index 1)))))
+
+(define (compiler-backend-i64-reduce-pressure-case-ok?
+  [_target : compiler_backend.CompilerBackendTarget]
+  [_op : compiler_ir_types.CompilerIrVectorReduceOp]) : bool
+  (cfg
+    scratch-vreg
+    (let
+      [instrs : compiler_ir_types.CompilerIrInstrSeq
+        (compiler-backend-test-instr-seq-prepend
+          (compiler_ir_types.CompilerIrInstr.VectorReduce
+            14
+            _op
+            (compiler_ir_types.CompilerIrValue.Var 6)
+            4
+            (compiler_ast_types.AstType.I64))
+          (compiler-backend-i64-reduce-pressure-tail 0))]
+      [assignments : compiler_regalloc.CompilerRegAssignmentTable
+        (compiler-backend-i64-reduce-pressure-assignments 0)]
+      [result : compiler_regalloc.CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result-for-abi
+          (compiler_backend.compiler-backend-target-abi _target)
+          "i64_reduce_mask_pressure"
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "entry")
+              (owned_view.compiler-owned-shared-view instrs))
+            compiler_ir_types.CompilerIrBlockList.Nil)
+          29
+          (owned_view.compiler-owned-shared-view assignments))]
+      [plan : compiler_regalloc.CompilerRegScratchPlan
+        (match result
+          [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ scratch)
+            scratch])]
+      [mask : i64
+        (compiler_regalloc.compiler-reg-scratch-plan-register
+          (owned_view.compiler-owned-shared-view plan)
+          0
+          2)]
+      [state : compiler_backend.CompilerBackendState
+        (compiler_backend.compiler-backend-state-new
+          (ci.intern-compat-state-capture-active))]
+      [_mode : unit
+        (compiler_backend.compiler-backend-set-current-mode!
+          (compiler_backend.compiler-backend-state-function-state state)
+          (compiler_backend.CompilerBackendMode.Avx2))]
+      [_slot : unit
+        (compiler_backend.compiler-backend-function-scratch-fixture-set-emergency-slot-offset!
+          (compiler_backend.compiler-backend-state-function-state state)
+          -1024)]
+      (and
+        (compiler_regalloc.compiler-reg-scratch-plan-preserve?
+          (owned_view.compiler-owned-shared-view plan)
+          0
+          0)
+        (compiler_regalloc.compiler-reg-scratch-plan-preserve?
+          (owned_view.compiler-owned-shared-view plan)
+          0
+          1)
+        (compiler_regalloc.compiler-reg-scratch-plan-preserve? plan 0 2)
+        (match (compiler-backend-emit-test-instrs-target-with-backend-state
+          instrs
+          assignments
+          29
+          _target
+          state)
+          [(compiler_backend.ResultCompilerBackend.Ok asm)
+            (let
+              [ymm : String
+                (compiler_backend.compiler-backend-vector-home-to-reg
+                  mask
+                  "ymm")]
+              (and
+                (compiler_backend.compiler-backend-string-contains?
+                  (owned_view.compiler-owned-shared-view asm)
+                  (str_cat.str-cat
+                    "    vmovdqu "
+                    (owned_view.compiler-owned-shared-view ymm)
+                    ", -1152(%rbp)\n"))
+                (compiler_backend.compiler-backend-string-contains?
+                  asm
+                  (str_cat.str-cat "    vmovdqu -1152(%rbp), " ymm "\n"))))]
+          [_ false])))
+    true))
+
+(define (compiler-backend-i64-reduce-pressure-ok?) : bool
+  (and
+    (compiler-backend-i64-reduce-pressure-case-ok?
+      (compiler_backend.CompilerBackendTarget.Linux)
+      (compiler_ir_types.CompilerIrVectorReduceOp.Min))
+    (compiler-backend-i64-reduce-pressure-case-ok?
+      (compiler_backend.CompilerBackendTarget.Linux)
+      (compiler_ir_types.CompilerIrVectorReduceOp.Max))
+    (compiler-backend-i64-reduce-pressure-case-ok?
+      (compiler_backend.CompilerBackendTarget.Windows)
+      (compiler_ir_types.CompilerIrVectorReduceOp.Min))
+    (compiler-backend-i64-reduce-pressure-case-ok?
+      (compiler_backend.CompilerBackendTarget.Windows)
+      (compiler_ir_types.CompilerIrVectorReduceOp.Max))))
+
+(define (compiler-backend-i64-reduce-coalesced-blocks
+  [op : compiler_ir_types.CompilerIrVectorReduceOp]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler-backend-test-instr-seq-prepend
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "join"))
+        (compiler_ir_types.compiler-ir-instr-seq-empty)))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "join")
+        (compiler-backend-test-instr-seq-prepend
+          (compiler_ir_types.CompilerIrInstr.Phi
+            3
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              (compiler_ir_types.compiler-ir-label "entry")
+              (compiler_ir_types.compiler-ir-phi-input-seq-empty))
+            (compiler_ast_types.AstType.I64))
+          (compiler-backend-test-instr-seq-prepend
+            (compiler_ir_types.CompilerIrInstr.VectorReduce
+              1
+              op
+              (compiler_ir_types.CompilerIrValue.Var 3)
+              4
+              (compiler_ast_types.AstType.I64))
+            (compiler-backend-test-instr-seq-prepend
+              (compiler_ir_types.CompilerIrInstr.VectorReduce
+                2
+                (compiler_ir_types.CompilerIrVectorReduceOp.Sum)
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                4
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.compiler-ir-instr-seq-empty)))))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+(define (compiler-backend-i64-reduce-coalesced-case-ok?
+  [_abi : compiler_abi.CompilerRegTargetAbi]
+  [_op : compiler_ir_types.CompilerIrVectorReduceOp]) : bool
+  (cfg
+    scratch-vreg
+    (match (compiler-backend-scratch-test-result-for-abi
+      _abi
+      "reduce_coalesced_source"
+      (compiler-backend-i64-reduce-coalesced-blocks _op)
+      4
+      (compiler_regalloc.compiler-reg-assignments-prepend
+        (compiler_regalloc.CompilerRegAssignment
+          3
+          (compiler_regalloc.CompilerRegLocation.Register
+            (compiler_abi.compiler-abi-vector-register-id 6)))
+        (compiler_regalloc.compiler-reg-assignments-prepend
+          (compiler_regalloc.CompilerRegAssignment
+            2
+            (compiler_regalloc.CompilerRegLocation.Spill -16))
+          (compiler-backend-vector-reduce-direct-assignments
+            (compiler_regalloc.CompilerRegLocation.Register
+              compiler_abi.compiler-reg-id-r12)))))
+      [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
+        (let
+          [acc : i64
+            (compiler_regalloc.compiler-reg-scratch-plan-register
+              (owned_view.compiler-owned-shared-view plan)
+              4
+              0)]
+          [sibling : i64
+            (compiler_regalloc.compiler-reg-scratch-plan-register
+              (owned_view.compiler-owned-shared-view plan)
+              4
+              1)]
+          [mask : i64
+            (compiler_regalloc.compiler-reg-scratch-plan-register plan 4 2)]
+          (and
+            (not (= mask compiler_abi.compiler-reg-id-invalid))
+            (not (compiler_regalloc.compiler-reg-registers-overlap? mask acc))
+            (not
+              (compiler_regalloc.compiler-reg-registers-overlap? mask sibling))
+            (not
+              (compiler_regalloc.compiler-reg-registers-overlap?
+                mask
+                (compiler_abi.compiler-abi-vector-register-id 6)))))])
+    true))
+
+(define (compiler-backend-i64-reduce-coalesced-ok?) : bool
+  (and
+    (compiler-backend-i64-reduce-coalesced-case-ok?
+      (compiler_abi.CompilerRegTargetAbi.Linux)
+      (compiler_ir_types.CompilerIrVectorReduceOp.Min))
+    (compiler-backend-i64-reduce-coalesced-case-ok?
+      (compiler_abi.CompilerRegTargetAbi.Linux)
+      (compiler_ir_types.CompilerIrVectorReduceOp.Max))
+    (compiler-backend-i64-reduce-coalesced-case-ok?
+      (compiler_abi.CompilerRegTargetAbi.Windows)
+      (compiler_ir_types.CompilerIrVectorReduceOp.Min))
+    (compiler-backend-i64-reduce-coalesced-case-ok?
+      (compiler_abi.CompilerRegTargetAbi.Windows)
+      (compiler_ir_types.CompilerIrVectorReduceOp.Max))))
+
+(define (compiler-backend-i64-reduce-call-instrs
+  [op : compiler_ir_types.CompilerIrVectorReduceOp]) : compiler_ir_types.CompilerIrInstrSeq
+  (compiler-backend-test-instr-seq-prepend
+    (compiler_ir_types.CompilerIrInstr.Call
+      3
+      (ci.intern "side_effect")
+      compiler_ir_types.CompilerIrCallArgs.Nil
+      (compiler_ast_types.AstType.I64))
+    (compiler-backend-test-instr-seq-prepend
+      (compiler_ir_types.CompilerIrInstr.VectorReduce
+        1
+        op
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        4
+        (compiler_ast_types.AstType.I64))
+      (compiler-backend-test-instr-seq-prepend
+        (compiler_ir_types.CompilerIrInstr.Call
+          4
+          (ci.intern "side_effect")
+          compiler_ir_types.CompilerIrCallArgs.Nil
+          (compiler_ast_types.AstType.I64))
+        (compiler-backend-test-instr-seq-prepend
+          (compiler_ir_types.CompilerIrInstr.VectorReduce
+            2
+            (compiler_ir_types.CompilerIrVectorReduceOp.Sum)
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            4
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-seq-empty))))))
+
+(define (compiler-backend-i64-reduce-call-assignments [index : i64]) : compiler_regalloc.CompilerRegAssignmentTable
+  (if (= index 5)
+    (compiler_regalloc.compiler-reg-assignment-table-empty)
+    (compiler_regalloc.compiler-reg-assignments-prepend
+      (compiler_regalloc.CompilerRegAssignment
+        index
+        (cond
+          [(= index 0) (compiler_regalloc.CompilerRegLocation.Spill -64)]
+          [(= index 1)
+            (compiler_regalloc.CompilerRegLocation.Register
+              compiler_abi.compiler-reg-id-r12)]
+          [else (compiler_regalloc.CompilerRegLocation.Spill (* -8 index))]))
+      (compiler-backend-i64-reduce-call-assignments (+ index 1)))))
+
+(define (compiler-backend-i64-reduce-call-case-ok?
+  [target : compiler_backend.CompilerBackendTarget]
+  [op : compiler_ir_types.CompilerIrVectorReduceOp]) : bool
+  (match (compiler-backend-emit-test-instrs-target-with-backend-state
+    (compiler-backend-i64-reduce-call-instrs op)
+    (compiler-backend-i64-reduce-call-assignments 0)
+    5
+    target
+    (compiler_backend.compiler-backend-state-new
+      (ci.intern-compat-state-capture-active)))
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (and
+        (=
+          (compiler_backend.compiler-backend-string-count
+            (owned_view.compiler-owned-shared-view asm)
+            "call _tl_side_effect")
+          2)
+        (=
+          (compiler_backend.compiler-backend-string-count
+            (owned_view.compiler-owned-shared-view asm)
+            "    vmovdqu -64(%rbp), %ymm14\n")
+          2)
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            ", -64(%rbp)\n")))]
+    [_ false]))
+
+(define (compiler-backend-i64-reduce-call-ok?) : bool
+  (and
+    (compiler-backend-i64-reduce-call-case-ok?
+      (compiler_backend.CompilerBackendTarget.Linux)
+      (compiler_ir_types.CompilerIrVectorReduceOp.Min))
+    (compiler-backend-i64-reduce-call-case-ok?
+      (compiler_backend.CompilerBackendTarget.Linux)
+      (compiler_ir_types.CompilerIrVectorReduceOp.Max))
+    (compiler-backend-i64-reduce-call-case-ok?
+      (compiler_backend.CompilerBackendTarget.Windows)
+      (compiler_ir_types.CompilerIrVectorReduceOp.Min))
+    (compiler-backend-i64-reduce-call-case-ok?
+      (compiler_backend.CompilerBackendTarget.Windows)
+      (compiler_ir_types.CompilerIrVectorReduceOp.Max))))
+
 (define (compiler-backend-avx2-vector-reduce-ok?) : bool
   (and
     (compiler-backend-avx2-reduce-asm-contains?
@@ -24233,6 +24798,7 @@ g:
     (compiler_ast_types.AstType.I64)
     ""
     ""
+    ""
     (compiler_diagnostic.compiler-diagnostic-at-start "" "")
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active)))
@@ -24273,6 +24839,7 @@ g:
     (compiler_ir_types.CompilerIrValue.Var 0)
     4
     (compiler_ast_types.AstType.I64)
+    ""
     ""
     ""
     (compiler_diagnostic.compiler-diagnostic-at-start "" "")
@@ -24446,7 +25013,8 @@ g:
                 (compiler_ir_types.CompilerIrInstr.Return
                   compiler_ir_types.CompilerIrMaybeValue.No)
                 (compiler_ir_types.compiler-ir-instr-seq-empty))))))
-      compiler_ir_types.CompilerIrBlockList.Nil)))
+      compiler_ir_types.CompilerIrBlockList.Nil)
+    compiler_ir_types.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-backend-avx2-vector-homes-ok?) : bool
   (match (compiler_backend.compiler-backend-emit-program-target-with-mode
@@ -25354,7 +25922,8 @@ g:
           (compiler-backend-avx512-mask-spill-reduces
             0
             (compiler-backend-avx512-mask-spill-sums))))
-      compiler_ir_types.CompilerIrBlockList.Nil)))
+      compiler_ir_types.CompilerIrBlockList.Nil)
+    compiler_ir_types.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-backend-maybe-location-mask-stack?
   [location : compiler_regalloc.CompilerRegMaybeLocation]) : bool
@@ -25672,7 +26241,8 @@ g:
                   (compiler_ir_types.CompilerIrInstr.Return
                     compiler_ir_types.CompilerIrMaybeValue.No)
                   (compiler_ir_types.compiler-ir-instr-seq-empty))))))
-        compiler_ir_types.CompilerIrBlockList.Nil))))
+        compiler_ir_types.CompilerIrBlockList.Nil)
+      compiler_ir_types.CompilerIrFunctionAbi.Ordinary)))
 
 (define (compiler-backend-vector-load-binop-fold-program
   [op : compiler_ir_types.CompilerIrBinOp]
@@ -26734,7 +27304,8 @@ g:
                         (compiler_ir_types.CompilerIrMaybeValue.Some
                           (compiler_ir_types.CompilerIrValue.Var 0)))
                       (compiler_ir_types.compiler-ir-instr-seq-empty))))
-                compiler_ir_types.CompilerIrBlockList.Nil)))
+                compiler_ir_types.CompilerIrBlockList.Nil))
+            compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
           (compiler_ir_types.compiler-ir-function-seq-empty))
         (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [spans : compiler_ir_types.CompilerSourceSpans
@@ -27919,7 +28490,8 @@ g:
                     (compiler_ir_types.CompilerIrMaybeValue.Some
                       (compiler_ir_types.CompilerIrValue.Var 0)))
                   (compiler_ir_types.compiler-ir-instr-seq-empty))))
-            compiler_ir_types.CompilerIrBlockList.Nil))
+            compiler_ir_types.CompilerIrBlockList.Nil)
+          compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
         (compiler_ir_types.compiler-ir-function-seq-empty))]
     (match (compiler_backend.compiler-backend-runtime-plan-for
       functions
@@ -28004,12 +28576,10 @@ g:
               [(compiler_backend.ResultBackendRuntimePlan.Err _) false])))]
       [(compiler_backend.ResultBackendRuntimePlan.Err _) false])))
 
-(define (compiler-backend-arena-debug-runtime-plan-ok?) : bool
+(define (compiler-backend-arena-debug-runtime-plan-for-id-ok? [debug-id : i64]) : bool
   (let
-    [protect-id : i64
-      cbi.compiler-builtin-id-tl-arena-debug-protect-never-reset]
-    [local-protect-id : i64
-      (ci.intern "compiler-arena-debug-plan-local-protect")]
+    [local-debug-id : i64
+      (ci.intern "compiler-arena-debug-plan-local-operation")]
     [functions : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_ir_types.compiler-ir-function-seq-prepend
         (compiler_ir_types.CompilerIrFunction.Function
@@ -28023,7 +28593,7 @@ g:
               (compiler-backend-test-instr-seq-prepend
                 (compiler_ir_types.CompilerIrInstr.Call
                   0
-                  local-protect-id
+                  local-debug-id
                   (compiler_ir_types.CompilerIrCallArgs.One
                     (compiler_ir_types.CompilerIrValue.I64 1))
                   (compiler_ast_types.AstType.Unit))
@@ -28031,21 +28601,22 @@ g:
                   (compiler_ir_types.CompilerIrInstr.Return
                     compiler_ir_types.CompilerIrMaybeValue.No)
                   (compiler_ir_types.compiler-ir-instr-seq-empty))))
-            compiler_ir_types.CompilerIrBlockList.Nil))
+            compiler_ir_types.CompilerIrBlockList.Nil)
+          compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
         (compiler_ir_types.compiler-ir-function-seq-empty))]
     [externs : compiler_ir_types.CompilerIrExternSeq
       (compiler_ir_types.compiler-ir-extern-seq1
         (compiler_ir_types.CompilerIrExtern.Extern
-          local-protect-id
-          local-protect-id
-          "compiler-arena-debug-plan-local-protect"
+          local-debug-id
+          local-debug-id
+          "compiler-arena-debug-plan-local-operation"
           (compiler_ast_types.ast-ty-func
             (compiler_ast_types.ast-type-cons
               (compiler_ast_types.AstType.I64)
               (compiler_ast_types.ast-type-list-new))
             (compiler_ast_types.AstType.Unit))
           (compiler_ast_types.AstExternAbi.C)
-          protect-id
+          debug-id
           (compiler_ast_types.ast-extern-link-input-list-new)
           false))]
     (match (compiler_backend.compiler-backend-runtime-plan-for
@@ -28064,13 +28635,21 @@ g:
               (& features))
             (compiler_backend.compiler-backend-plan-provides-id?
               (owned_view.compiler-owned-shared-view plan)
-              protect-id)
+              debug-id)
             (compiler_backend.compiler-backend-plan-provides-id?
               plan
               cbi.compiler-builtin-id-tl-arena-debug-assert-pool-install)
-            (compiler_backend.compiler-backend-runtime-helper-core-id?
-              protect-id)))]
+            (compiler_backend.compiler-backend-runtime-helper-core-id? debug-id)))]
       [(compiler_backend.ResultBackendRuntimePlan.Err _) false])))
+
+(define (compiler-backend-arena-debug-runtime-plan-ok?) : bool
+  (and
+    (compiler-backend-arena-debug-runtime-plan-for-id-ok?
+      cbi.compiler-builtin-id-tl-arena-debug-protect-never-reset)
+    (compiler-backend-arena-debug-runtime-plan-for-id-ok?
+      cbi.compiler-builtin-id-tl-arena-debug-assert-pool-install)
+    (compiler-backend-arena-debug-runtime-plan-for-id-ok?
+      cbi.compiler-builtin-id-tl-arena-debug-retire-protected)))
 
 (define (compiler-backend-runtime-prelude-test-function [name : String]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
@@ -28078,7 +28657,8 @@ g:
     (compiler_ir_types.compiler-ir-param-seq-empty)
     (compiler_ast_types.AstType.Unit)
     0
-    compiler_ir_types.CompilerIrBlockList.Nil))
+    compiler_ir_types.CompilerIrBlockList.Nil
+    compiler_ir_types.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-backend-runtime-prelude-validation-plan-ok?) : bool
   (let
@@ -33546,6 +34126,136 @@ g:
       (compiler-backend-instr-contains? instr "    orq %rdx, %rax\n")
       true)))
 
+;; #7927: the cpuid operand registers are allocator-pooled. A leaf homed in
+;; %rcx -- the first Win64 argument register, so every non-inlined wrapper --
+;; must reach %rax BEFORE the subleaf is moved into %rcx; the old subleaf-first
+;; pair of independent loads ran such a cpuid with the subleaf as its leaf. A
+;; conflict-free pair keeps the subleaf-first order it always had.
+(define (compiler-backend-cpuid-operand-asm
+  [leaf-home : i64]
+  [subleaf-home : i64]) : String
+  (compiler-backend-cpuid-operand-asm-for
+    leaf-home
+    subleaf-home
+    (compiler_ir_types.CompilerIrValue.Var 0)
+    (compiler_ir_types.CompilerIrValue.Var 1)))
+
+(define (compiler-backend-cpuid-operand-asm-for
+  [leaf-home : i64]
+  [subleaf-home : i64]
+  [leaf : compiler_ir_types.CompilerIrValue]
+  [subleaf : compiler_ir_types.CompilerIrValue]) : String
+  (let
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
+        (compiler_regalloc.CompilerRegAssignment
+          0
+          (compiler_regalloc.CompilerRegLocation.Register leaf-home))
+        (compiler_regalloc.compiler-reg-assignments-prepend
+          (compiler_regalloc.CompilerRegAssignment
+            1
+            (compiler_regalloc.CompilerRegLocation.Register subleaf-home))
+          (compiler_regalloc.compiler-reg-assignments-prepend
+            (compiler_regalloc.CompilerRegAssignment
+              2
+              (compiler_regalloc.CompilerRegLocation.Register
+                compiler_abi.compiler-reg-id-r12))
+            (compiler_regalloc.compiler-reg-assignment-table-empty))))]
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    (match (compiler_backend.compiler-backend-emit-cpuid
+      assignments
+      2
+      leaf
+      subleaf
+      1
+      "%r14"
+      backend-state)
+      [(compiler_backend.ResultCompilerBackend.Ok asm) asm]
+      [(compiler_backend.ResultCompilerBackend.Err _) ""])))
+
+(define (compiler-backend-cpuid-operand-moves-ok?) : bool
+  (let
+    [win64-wrapper : String
+      (compiler-backend-cpuid-operand-asm
+        compiler_abi.compiler-reg-id-rcx
+        compiler_abi.compiler-reg-id-rdx)]
+    [sysv-wrapper : String
+      (compiler-backend-cpuid-operand-asm
+        compiler_abi.compiler-reg-id-rdi
+        compiler_abi.compiler-reg-id-rsi)]
+    (and
+      (compiler_backend.compiler-backend-string-contains?
+        (owned_view.compiler-owned-shared-view win64-wrapper)
+        "    movq %rcx, %rax\n    movq %rdx, %rcx\n    movq %rbx, %r14\n    cpuid\n")
+      (not
+        (compiler_backend.compiler-backend-string-contains?
+          (owned_view.compiler-owned-shared-view win64-wrapper)
+          "    movq %rdx, %rcx\n    movq %rcx, %rax\n"))
+      (compiler_backend.compiler-backend-string-contains?
+        (owned_view.compiler-owned-shared-view sysv-wrapper)
+        "    movq %rsi, %rcx\n    movq %rdi, %rax\n    movq %rbx, %r14\n    cpuid\n")
+      (compiler-backend-cpuid-operand-boundaries-ok?))))
+
+;; The remaining operand-home shapes of #7927. A leaf in %rcx with the subleaf in
+;; %rax is a true cycle: it must go through a scratch register that is neither
+;; operand register. Operands
+;; already in place emit no move at all. A subleaf homed in %rax has to leave
+;; before the leaf lands there. The shape every `stdlib.cpu` wrapper has on
+;; Win64 -- a literal subleaf with the leaf in %rcx -- must read the leaf before
+;; the literal overwrites it.
+(define (compiler-backend-cpuid-operand-boundaries-ok?) : bool
+  (let
+    [swap : String
+      (compiler-backend-cpuid-operand-asm
+        compiler_abi.compiler-reg-id-rcx
+        compiler_abi.compiler-reg-id-rax)]
+    [in-place : String
+      (compiler-backend-cpuid-operand-asm
+        compiler_abi.compiler-reg-id-rax
+        compiler_abi.compiler-reg-id-rcx)]
+    [subleaf-in-rax : String
+      (compiler-backend-cpuid-operand-asm
+        compiler_abi.compiler-reg-id-rdx
+        compiler_abi.compiler-reg-id-rax)]
+    [literal-subleaf : String
+      (compiler-backend-cpuid-operand-asm-for
+        compiler_abi.compiler-reg-id-rcx
+        compiler_abi.compiler-reg-id-rdx
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ir_types.CompilerIrValue.I64 0))]
+    [literal-leaf : String
+      (compiler-backend-cpuid-operand-asm-for
+        compiler_abi.compiler-reg-id-rdx
+        compiler_abi.compiler-reg-id-rax
+        (compiler_ir_types.CompilerIrValue.I64 7)
+        (compiler_ir_types.CompilerIrValue.Var 1))]
+    (and
+      (compiler_backend.compiler-backend-string-contains?
+        (owned_view.compiler-owned-shared-view swap)
+        "    movq %rax, %r9\n    movq %rcx, %rax\n    movq %r9, %rcx\n    movq %rbx, %r14\n    cpuid\n")
+      (not
+        (compiler_backend.compiler-backend-string-contains?
+          (owned_view.compiler-owned-shared-view in-place)
+          ", %rcx\n"))
+      (not
+        (compiler_backend.compiler-backend-string-contains?
+          (owned_view.compiler-owned-shared-view in-place)
+          "    movq %rcx, %rax\n"))
+      (compiler_backend.compiler-backend-string-contains?
+        (owned_view.compiler-owned-shared-view in-place)
+        "    movq %rbx, %r14\n    cpuid\n")
+      (compiler_backend.compiler-backend-string-contains?
+        (owned_view.compiler-owned-shared-view subleaf-in-rax)
+        "    movq %rax, %rcx\n    movq %rdx, %rax\n    movq %rbx, %r14\n    cpuid\n")
+      (compiler_backend.compiler-backend-string-contains?
+        (owned_view.compiler-owned-shared-view literal-subleaf)
+        "    movq %rcx, %rax\n    xorl %ecx, %ecx\n    movq %rbx, %r14\n    cpuid\n")
+      (compiler_backend.compiler-backend-string-contains?
+        (owned_view.compiler-owned-shared-view literal-leaf)
+        "    movq %rax, %rcx\n    movl $7, %eax\n    movq %rbx, %r14\n    cpuid\n"))))
+
 (define (compiler-backend-low-level-instr-ok?) : bool
   (and
     (compiler_backend.backend-and8
@@ -33582,6 +34292,7 @@ g:
         "    movl %edx, %eax\n")
       (compiler-backend-xgetbv-zero-index-ok?))
     (compiler-backend-cpuid-direct-subleaf-ok?)
+    (compiler-backend-cpuid-operand-moves-ok?)
     (compiler_backend.backend-and8
       ;; A one-operand syscall loads the number into %rax and issues `syscall`.
       (compiler-backend-instr-contains?
@@ -39355,12 +40066,14 @@ g:
 ;; deterministic.  The local context wrapper keeps the scratch/liveness and
 ;; Gep-fold globals hermetic: this predicate is also run after tests that seed
 ;; those tables deliberately.
-(define (compiler-backend-divmod-polish-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+(define (compiler-backend-divmod-polish-assignments [rbp-lhs : bool]) : compiler_regalloc.CompilerRegAssignmentTable
   (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
-        compiler_abi.compiler-reg-id-r12))
+        (if rbp-lhs
+          compiler_abi.compiler-reg-id-rbp
+          compiler_abi.compiler-reg-id-r12)))
     (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
@@ -39400,7 +40113,8 @@ g:
 
 (define (compiler-backend-divmod-polish-instrs
   [multi-use-result : bool]
-  [multi-use-producer : bool]) : compiler_ir_types.CompilerIrInstrSeq
+  [multi-use-producer : bool]
+  [immediate : bool]) : compiler_ir_types.CompilerIrInstrSeq
   (let
     [after-store : compiler_ir_types.CompilerIrInstrSeq
       (if multi-use-result
@@ -39423,7 +40137,9 @@ g:
         2
         (compiler_ir_types.CompilerIrBinOp.Add)
         (compiler_ir_types.CompilerIrValue.Var 0)
-        (compiler_ir_types.CompilerIrValue.Var 1)
+        (if immediate
+          (compiler_ir_types.CompilerIrValue.I64 62)
+          (compiler_ir_types.CompilerIrValue.Var 1))
         (compiler_ast_types.AstType.I64))
       (compiler-backend-test-instr-seq-prepend
         (compiler_ir_types.CompilerIrInstr.BinOp
@@ -39447,7 +40163,9 @@ g:
 
 (define (compiler-backend-divmod-polish-asm
   [multi-use-result : bool]
-  [multi-use-producer : bool]) : compiler_backend.ResultCompilerBackend
+  [multi-use-producer : bool]
+  [immediate : bool]
+  [rbp-lhs : bool]) : compiler_backend.ResultCompilerBackend
   (let
     [backend-state : compiler_backend.CompilerBackendState
       (compiler_backend.compiler-backend-state-new
@@ -39507,11 +40225,12 @@ g:
       (compiler_backend.compiler-backend-test-get-compiler-backend-emit-home-override1-reg
         backend-state)]
     [assignments : compiler_regalloc.CompilerRegAssignmentTable
-      (compiler-backend-divmod-polish-assignments)]
+      (compiler-backend-divmod-polish-assignments rbp-lhs)]
     [instrs : compiler_ir_types.CompilerIrInstrSeq
       (compiler-backend-divmod-polish-instrs
         multi-use-result
-        multi-use-producer)]
+        multi-use-producer
+        immediate)]
     [count : i64 (compiler_ir_types.compiler-ir-instr-seq-count instrs)]
     [blocks : compiler_ir_types.CompilerIrBlockList
       (compiler_ir_types.compiler-ir-block-cons
@@ -39589,11 +40308,11 @@ g:
     result))
 
 (define (compiler-backend-divmod-producer-result-forwarding-ok?) : bool
-  (match (compiler-backend-divmod-polish-asm false false)
+  (match (compiler-backend-divmod-polish-asm false false false false)
     [(compiler_backend.ResultCompilerBackend.Ok forwarded)
-      (match (compiler-backend-divmod-polish-asm true false)
+      (match (compiler-backend-divmod-polish-asm true false false false)
         [(compiler_backend.ResultCompilerBackend.Ok multi-result)
-          (match (compiler-backend-divmod-polish-asm false true)
+          (match (compiler-backend-divmod-polish-asm false true false false)
             [(compiler_backend.ResultCompilerBackend.Ok multi-producer)
               (and
                 ;; Positive: producer lands in SRC and the single-use result is
@@ -39633,6 +40352,28 @@ g:
                     multi-producer
                     "    leaq (%r12,%r13), %r9\n")))]
             [(compiler_backend.ResultCompilerBackend.Err _) false])]
+        [(compiler_backend.ResultCompilerBackend.Err _) false])]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+;; #7978: an immediate Add producer whose left operand lives in %rbp must not
+;; spell `K(%rbp)`, which the final rsp rebase reads as a frame address. The
+;; no-base SIB form computes the same sum; any other base keeps the plain form.
+(define (compiler-backend-divmod-producer-rbp-immediate-ok?) : bool
+  (match (compiler-backend-divmod-polish-asm false false true true)
+    [(compiler_backend.ResultCompilerBackend.Ok rbp-asm)
+      (match (compiler-backend-divmod-polish-asm false false true false)
+        [(compiler_backend.ResultCompilerBackend.Ok r12-asm)
+          (and
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view rbp-asm)
+              "    leaq 62(,%rbp,1), %r9\n")
+            (not
+              (compiler_backend.compiler-backend-string-contains?
+                rbp-asm
+                "(%rbp)"))
+            (compiler_backend.compiler-backend-string-contains?
+              r12-asm
+              "    leaq 62(%r12), %r9\n"))]
         [(compiler_backend.ResultCompilerBackend.Err _) false])]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
@@ -40654,7 +41395,8 @@ g:
                     (compiler_ir_types.CompilerIrMaybeValue.Some
                       (compiler_ir_types.CompilerIrValue.I64 42)))
                   (compiler_ir_types.compiler-ir-instr-seq-empty)))
-              compiler_ir_types.CompilerIrBlockList.Nil))))
+              compiler_ir_types.CompilerIrBlockList.Nil)))
+        compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
       (compiler_ir_types.compiler-ir-function-seq-empty))
     (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
@@ -41497,7 +42239,8 @@ g:
           params
           (compiler_ast_types.AstType.I64)
           2
-          compiler_ir_types.CompilerIrBlockList.Nil)
+          compiler_ir_types.CompilerIrBlockList.Nil
+          compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
         (compiler_ir_types.compiler-ir-function-seq-empty))
       (compiler_ir_types.compiler-ir-extern-seq-empty))))
 
@@ -42115,8 +42858,77 @@ g:
           (owned_view.compiler-owned-shared-view exhausted-param)
           "    movsd %xmm0, %xmm3\n")))))
 
+;; Refs #7820. Exhaust every address-exposure mask for eight live groups.
+;; Compare the actual operand route used by copies/calls, so a legacy second
+;; word cannot alias either word of a different address-exposed pair.
+(define (compiler-backend-mixed-group-stack-homes-ok?) : bool
+  (let
+    [state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [groups : compiler_liveness.CompilerLiveI64Set
+      (compiler_liveness.compiler-live-set-empty)]
+    [slots : (__tl_dyn-array String) (__tl_make-array String 16)]
+    [index : i64 0]
+    [mask : i64 0]
+    (begin
+      (while (< index 8)
+        (begin
+          (set!
+            groups
+            (compiler_liveness.compiler-live-set-insert groups index))
+          (set! index (+ index 1))))
+      (while (< mask 256)
+        (let
+          [addressable : compiler_liveness.CompilerLiveI64Set
+            (compiler_liveness.compiler-live-set-empty)]
+          (begin
+            (set! index 0)
+            (while (< index 8)
+              (begin
+                (when
+                  (not (= (bit-and mask (shl 1 index)) 0))
+                  (set!
+                    addressable
+                    (compiler_liveness.compiler-live-set-insert
+                      addressable
+                      index)))
+                (set! index (+ index 1))))
+            (compiler_backend.compiler-backend-group-vars-enable!
+              (owned_view.compiler-owned-shared-view state)
+              (owned_view.compiler-owned-shared-view groups)
+              addressable)
+            (set! index 0)
+            (while (< index 16)
+              (begin
+                (match (compiler_backend.compiler-backend-group-word-operand-with-backend-state
+                  (compiler_regalloc.compiler-reg-assignment-table-empty)
+                  (/ index 2)
+                  (% index 2)
+                  8
+                  (owned_view.compiler-owned-shared-view state))
+                  [(compiler_backend.ResultCompilerBackend.Ok operand)
+                    (let
+                      [previous : i64 0]
+                      (begin
+                        (while (< previous index)
+                          (begin
+                            (when
+                              (string.eq
+                                (owned_view.compiler-owned-shared-view operand)
+                                (array-ref slots previous))
+                              (return false))
+                            (set! previous (+ previous 1))))
+                        (set! (array-ref slots index) operand)))]
+                  [(compiler_backend.ResultCompilerBackend.Err _)
+                    (return false)])
+                (set! index (+ index 1))))
+            (set! mask (+ mask 1)))))
+      true)))
+
 (define (compiler-backend-stack-args-ok?) : bool
   (and
+    (compiler-backend-mixed-group-stack-homes-ok?)
     (compiler-backend-stack-int-args-ok?)
     (compiler-backend-stack-f64-args-ok?)
     (compiler-backend-stack-mixed-args-ok?)
@@ -42931,7 +43743,8 @@ g:
         (compiler_ir_types.compiler-ir-param-seq-empty))
       (compiler_ast_types.AstType.I64)
       1
-      compiler_ir_types.CompilerIrBlockList.Nil)
+      compiler_ir_types.CompilerIrBlockList.Nil
+      compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
     (compiler_ir_types.compiler-ir-function-seq-empty)))
 
 (define (compiler-backend-known-function-call-index) : compiler_backend.CompilerBackendProgramIndex
@@ -43394,7 +44207,8 @@ g:
                 (compiler_ir_types.CompilerIrMaybeValue.Some
                   (compiler_ir_types.CompilerIrValue.I64 1)))
               (compiler_ir_types.compiler-ir-instr-seq-empty)))
-          compiler_ir_types.CompilerIrBlockList.Nil))
+          compiler_ir_types.CompilerIrBlockList.Nil)
+        compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
       (compiler_ir_types.compiler-ir-function-seq-prepend
         (compiler_ir_types.CompilerIrFunction.Function
           (ci.intern "pkg_a.tl::helper")
@@ -43409,7 +44223,8 @@ g:
                   (compiler_ir_types.CompilerIrMaybeValue.Some
                     (compiler_ir_types.CompilerIrValue.I64 2)))
                 (compiler_ir_types.compiler-ir-instr-seq-empty)))
-            compiler_ir_types.CompilerIrBlockList.Nil))
+            compiler_ir_types.CompilerIrBlockList.Nil)
+          compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
         (compiler_ir_types.compiler-ir-function-seq-empty)))
     (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
@@ -43551,11 +44366,13 @@ g:
             "    movq %rax, %rcx\n    addq $8, %rcx\n")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
+;; Tuple literals are inline frame values (#7070), so the fixed-size allocation
+;; these fast-path fixtures pin comes from an explicit `box`.
 (define (compiler-backend-inline-fast-alloc-source) : String
   "(define (main) : i64
   (let
-    [t : (Tuple bool i64) (tuple true 42)]
-    (tuple-ref t 1)))")
+    [b : (Box (Tuple bool i64)) (box (tuple true 42))]
+    (tuple-ref (deref b) 1)))")
 
 (define (compiler-backend-inline-fast-alloc-result-ok?) : bool
   (match (compiler_backend.compiler-backend-emit-source-for-target
@@ -43565,13 +44382,13 @@ g:
       (and
         (compiler_backend.compiler-backend-string-contains?
           (owned_view.compiler-owned-shared-view asm)
-          "    testq $1, 48(%r8)\n    jnz .Lf0_allocentry_i0_v2_slow\n    movq 56(%r8), %r9\n")
+          "    testq $1, 48(%r8)\n    jnz .Lf0_allocentry_i9_v3_slow\n    movq 56(%r8), %r9\n")
         (compiler_backend.compiler-backend-string-contains?
           (owned_view.compiler-owned-shared-view asm)
           "    movq 56(%r8), %r9\n    movq 16(%r9), %rax\n    leaq 16(%rax), %r8\n")
         (compiler_backend.compiler-backend-string-contains?
           (owned_view.compiler-owned-shared-view asm)
-          "    cmpq 64(%r9), %r8\n    ja .Lf0_allocentry_i0_v2_slow\n    movq %r8, 16(%r9)\n")
+          "    cmpq 64(%r9), %r8\n    ja .Lf0_allocentry_i9_v3_slow\n    movq %r8, 16(%r9)\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
@@ -43755,17 +44572,17 @@ g:
       [(compiler_backend.ResultCompilerBackend.Err _) false])))
 
 (define (compiler-backend-inline-fast-alloc-multi-size-source) : String
-  "(define (make3 [x : i64]) : (Tuple i64 i64 i64)
-  (tuple x (+ x 1) (+ x 2)))
+  "(define (make3 [x : i64]) : (Box (Tuple i64 i64 i64))
+  (box (tuple x (+ x 1) (+ x 2))))
 
-(define (make5 [x : i64]) : (Tuple i64 i64 i64 i64 i64)
-  (tuple x (+ x 1) (+ x 2) (+ x 3) (+ x 4)))
+(define (make5 [x : i64]) : (Box (Tuple i64 i64 i64 i64 i64))
+  (box (tuple x (+ x 1) (+ x 2) (+ x 3) (+ x 4))))
 
 (define (main) : i64
   (let
-    [a : (Tuple i64 i64 i64) (make3 10)]
-    [b : (Tuple i64 i64 i64 i64 i64) (make5 20)]
-    (+ (tuple-ref a 2) (tuple-ref b 4))))")
+    [a : (Box (Tuple i64 i64 i64)) (make3 10)]
+    [b : (Box (Tuple i64 i64 i64 i64 i64)) (make5 20)]
+    (+ (tuple-ref (deref a) 2) (tuple-ref (deref b) 4))))")
 
 (define (compiler-backend-inline-fast-alloc-multi-size-target-ok?
   [target : compiler_backend.CompilerBackendTarget]) : bool
@@ -44082,8 +44899,9 @@ g:
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 ;; Backend emit-shape coverage for local tuple construction/ref.
-;; `(tuple true 42)` allocates the tuple payload, materializes/stores the bool
-;; byte and i64 at their offsets, and `(tuple-ref t 1)` loads the i64 slot back.
+;; `(tuple true 42)` reserves inline frame storage without allocating (#7070),
+;; materializes/stores the bool byte and i64 at their offsets, and
+;; `(tuple-ref t 1)` loads the i64 slot back.
 (define (compiler-backend-tuple-source) : String
   "(define (main) : i64
   (let
@@ -44095,10 +44913,18 @@ g:
     (compiler-backend-tuple-source))
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
-        (compiler_backend.backend-and8
-          (compiler-backend-string-contains-alloc-size?
+        (=
+          (compiler-backend-alloc-call-count
+            (owned_view.compiler-owned-shared-view asm))
+          0)
+        (not
+          (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
-            16)
+            "_allocentry_"))
+        (compiler_backend.backend-and8
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            "(%rsp), %r8\n    movq %r8, ")
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
             "    movq $1,")
@@ -44453,14 +45279,16 @@ g:
         (compiler_ir_types.compiler-ir-param-seq-empty))
       (compiler_ast_types.AstType.I64)
       1
-      compiler_ir_types.CompilerIrBlockList.Nil)
+      compiler_ir_types.CompilerIrBlockList.Nil
+      compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
     (compiler_ir_types.compiler-ir-function-seq-prepend
       (compiler_ir_types.CompilerIrFunction.Function
         (ci.intern "short_fn")
         (compiler_ir_types.compiler-ir-param-seq-empty)
         (compiler_ast_types.AstType.Unit)
         0
-        compiler_ir_types.CompilerIrBlockList.Nil)
+        compiler_ir_types.CompilerIrBlockList.Nil
+        compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
       (compiler_ir_types.compiler-ir-function-seq-empty))))
 
 (define (compiler-backend-program-index-test-externs
@@ -45136,7 +45964,8 @@ g:
             (compiler_ir_types.compiler-ir-param-seq-empty)
             (compiler_ast_types.AstType.I64)
             0
-            compiler_ir_types.CompilerIrBlockList.Nil)
+            compiler_ir_types.CompilerIrBlockList.Nil
+            compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
           (compiler_ir_types.compiler-ir-function-seq-empty))
         (compiler_ir_types.compiler-ir-extern-seq-empty))]
     (and
@@ -45288,7 +46117,8 @@ g:
               (compiler_ir_types.compiler-ir-param-seq-empty)
               (compiler_ast_types.AstType.Unit)
               0
-              compiler_ir_types.CompilerIrBlockList.Nil)
+              compiler_ir_types.CompilerIrBlockList.Nil
+              compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
             (compiler_ir_types.compiler-ir-function-seq-empty))
           (compiler_ir_types.compiler-ir-extern-seq2
             (compiler_ir_types.CompilerIrExtern.Extern
@@ -47110,7 +47940,8 @@ g:
                       (compiler_ir_types.compiler-ir-value-seq-empty)))
                   ty)
                 (compiler_ir_types.compiler-ir-instr-seq-empty)))
-            compiler_ir_types.CompilerIrBlockList.Nil))
+            compiler_ir_types.CompilerIrBlockList.Nil)
+          compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
         (compiler_ir_types.compiler-ir-function-seq-empty))
       (compiler_ir_types.compiler-ir-extern-seq-empty))))
 
@@ -47451,7 +48282,8 @@ g:
       (compiler_ir_types.compiler-ir-param-seq-empty)
       (compiler_ast_types.AstType.I64)
       vars
-      blocks)
+      blocks
+      compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
     (compiler-backend-scratch-test-base-plan-with-types types assignments)
     vars))
 
@@ -47469,7 +48301,8 @@ g:
       (compiler_ir_types.compiler-ir-param-seq-empty)
       (compiler_ast_types.AstType.I64)
       vars
-      blocks)
+      blocks
+      compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
     (compiler-backend-scratch-test-base-plan vars assignments)
     vars))
 
@@ -47499,7 +48332,8 @@ g:
       (compiler_ir_types.compiler-ir-param-seq-empty)
       (compiler_ast_types.AstType.I64)
       vars
-      blocks)
+      blocks
+      compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
     (compiler-backend-scratch-test-base-plan-with-types
       (compiler_regalloc.compiler-reg-var-types-with-representations
         (compiler-backend-scratch-test-types-from 0 vars)
@@ -50435,6 +51269,7 @@ g:
             (compiler_ast_types.AstType.I64)
             "%xmm14"
             "%xmm15"
+            ""
             (owned_view.compiler-owned-shared-view diag)
             backend-state)
             [(compiler_backend.ResultCompilerBackend.Ok avx2)
@@ -50448,6 +51283,7 @@ g:
                 (compiler_ast_types.AstType.I64)
                 "%xmm14"
                 "%xmm15"
+                ""
                 (owned_view.compiler-owned-shared-view diag)
                 backend-state)
                 [(compiler_backend.ResultCompilerBackend.Ok avx512)
@@ -51343,7 +52179,8 @@ g:
                 (compiler_ir_types.CompilerIrInstr.Return
                   (compiler_ir_types.CompilerIrMaybeValue.No))
                 (compiler_ir_types.compiler-ir-instr-seq-empty)))
-            compiler_ir_types.CompilerIrBlockList.Nil))))))
+            compiler_ir_types.CompilerIrBlockList.Nil))))
+    compiler_ir_types.CompilerIrFunctionAbi.Ordinary))
 
 ;; A region's free candidate registers go to the constants with the most static
 ;; sites, because each hoisted site drops one in-region constant load. The
@@ -51635,7 +52472,7 @@ g:
               compiler_abi.compiler-reg-id-rbx))
           (= compiler_regalloc.compiler-reg-early-exit-prefix-count 2)
           (match rewritten
-            [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+            [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
               (let
                 [seq : compiler_ir_types.CompilerIrBlockSeq
                   (compiler_liveness.compiler-live-ir-block-list-to-seq blocks)]
@@ -57849,7 +58686,8 @@ b_keep:
                       (compiler_ir_types.CompilerIrInstr.Return
                         (compiler_ir_types.CompilerIrMaybeValue.Some
                           (compiler_ir_types.CompilerIrValue.Var 2)))))
-                  compiler_ir_types.CompilerIrBlockList.Nil)))))))))
+                  compiler_ir_types.CompilerIrBlockList.Nil)))))))
+    compiler_ir_types.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-backend-placement-seh-main) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
@@ -57872,7 +58710,8 @@ b_keep:
               (compiler_ir_types.CompilerIrInstr.Return
                 (compiler_ir_types.CompilerIrMaybeValue.Some
                   (compiler_ir_types.CompilerIrValue.Var 0)))))
-          compiler_ir_types.CompilerIrBlockList.Nil)))))
+          compiler_ir_types.CompilerIrBlockList.Nil)))
+    compiler_ir_types.CompilerIrFunctionAbi.Ordinary))
 
 ;; This fixture reaches emission without lowering a source first, so nothing
 ;; upstream has installed builtin ids for whatever intern table the checks
@@ -58208,6 +59047,12 @@ b_keep:
 
 (define (compiler-backend-self-test) : i64
   (if (and
+    (compiler-backend-avx2-i64-reduce-source-ok?)
+    (compiler-backend-avx2-i64-reduce-spilled-source-ok?)
+    (compiler-backend-i64-reduce-mask-plan-ok?)
+    (compiler-backend-i64-reduce-pressure-ok?)
+    (compiler-backend-i64-reduce-coalesced-ok?)
+    (compiler-backend-i64-reduce-call-ok?)
     (compiler-backend-lazy-table-storage-ok?)
     (compiler-backend-resetting-entry-live-session-guard-ok?)
     (compiler-backend-inline-aggregate-global-shape-ok?)
@@ -58575,6 +59420,7 @@ b_keep:
         (compiler-backend-constant-divisor-strength-ok?)
         (compiler-backend-signed-constant-divisor-clang-shape-ok?)
         (compiler-backend-divmod-producer-result-forwarding-ok?)
+        (compiler-backend-divmod-producer-rbp-immediate-ok?)
         (compiler-backend-c22-divmod-store-clobber-rejected-ok?)
         (compiler-backend-literal-div-compactions-ok?)
         (compiler-backend-divrem-rax-rhs-preserved-ok?)
@@ -58620,6 +59466,12 @@ b_keep:
 ;; independent of legacy direct-emitter coverage.
 (define (compiler-backend-scratch-vreg-self-test) : i64
   (if (and
+    (compiler-backend-avx2-i64-reduce-source-ok?)
+    (compiler-backend-avx2-i64-reduce-spilled-source-ok?)
+    (compiler-backend-i64-reduce-mask-plan-ok?)
+    (compiler-backend-i64-reduce-pressure-ok?)
+    (compiler-backend-i64-reduce-coalesced-ok?)
+    (compiler-backend-i64-reduce-call-ok?)
     (compiler-backend-scratch-vreg-call-target-plan-ok?)
     (compiler-backend-scratch-vreg-switch-plan-ok?)
     (compiler-backend-scratch-vreg-aggregate-plan-ok?)

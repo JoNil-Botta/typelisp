@@ -166,7 +166,7 @@
       (Ipv6Err
         (IpAddrError (IpInvalidByteLength) (invalid-byte-length-offset n 16)))
       (let
-        [out : (Array u8 16) (init)]
+        [out : (Array u8 16) (make-array u8 16)]
         [index : i64 0]
         (begin
           (while (< index 16)
@@ -349,7 +349,7 @@
 ;: Parse a strict dotted IPv4 range using absolute error offsets.
 (define (parse-ipv4-range [text : (& text str)] [start : i64] [end : i64]) : Ipv4AddrResult
   (let
-    [octets : (Array u8 4) (init)]
+    [octets : (Array u8 4) (make-array u8 4)]
     [component : i64 0]
     [cursor : i64 start]
     (begin
@@ -425,7 +425,7 @@
   [end : i64]
   [allow-embedded-ipv4 : bool]) : Ipv6PartResult
   (let
-    [segments : (Array u16 8) (init)]
+    [segments : (Array u16 8) (make-array u16 8)]
     [count : i64 0]
     [token-start : i64 start]
     (begin
@@ -553,7 +553,7 @@
                 (let
                   [total : i64 (+ left.count right.count)]
                   [zeros : i64 (- 8 total)]
-                  [segments : (Array u16 8) (init)]
+                  [segments : (Array u16 8) (make-array u16 8)]
                   [index : i64 0]
                   (begin
                     (when
@@ -605,7 +605,7 @@
 ;: Format an IPv4 address to strict minimal dotted decimal.
 (define (ipv4-to-string [address : (& address Ipv4Addr)]) : String
   (let
-    [storage : (Array u8 15) (init)]
+    [storage : (Array u8 15) (make-array u8 15)]
     [output : (MutPtr u8)
       (unsafe
         (ptr-cast (__tl_array-data storage) : (MutPtr u8)))]
@@ -698,7 +698,7 @@
                   unit))))
           (set! index (+ index 1))))
       (let
-        [storage : (Array u8 39) (init)]
+        [storage : (Array u8 39) (make-array u8 39)]
         [output : (MutPtr u8)
           (unsafe
             (ptr-cast (__tl_array-data storage) : (MutPtr u8)))]

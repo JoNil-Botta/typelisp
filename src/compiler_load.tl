@@ -130,6 +130,9 @@
 (define (compiler-load-reader-sexpr-pool-arena-handle) : i64
   (reader.sexpr-node-pool-base-arena-handle-value))
 
+(define (compiler-load-reader-sexpr-builder-arena-handle) : i64
+  (reader.sexpr-builder-base-arena-handle-value))
+
 ;; Retire the frontend scanning storage once a whole-program load has returned
 ;; its `ast.AstDeclList`. Both owners are pure scan scratch whose contents were
 ;; already copied out by value; see the no-dangling arguments at their release
@@ -451,6 +454,12 @@
   [decls : (& decls CompilerLoadSurfaceDeclList)]
   [index : i64]) : CompilerLoadSurfaceDecl
   (clone (array-ref decls.slots index)))
+
+;; Read-only searches borrow candidates; retained payloads use the owning accessor.
+(define (compiler-load-surface-decl-list-borrow-at
+  [decls : (& decls CompilerLoadSurfaceDeclList)]
+  [index : i64]) : (& decls CompilerLoadSurfaceDecl)
+  (& (array-ref decls.slots index)))
 
 (define (compiler-load-surface-summary-list-empty) : CompilerLoadSurfaceSummaryList
   (CompilerLoadSurfaceSummaryList
@@ -814,7 +823,9 @@
   ;; is itself an arena-backed handle, so reading this record preserves the
   ;; session identity without a reference-typed temporary during bootstrap.
   (owner-arena i64)
-  (shared-address u64))
+  (shared-address u64)
+  (dotted-path-cache-owner-arena (__tl_dyn-array i64))
+  (embedded-provenance-owner-arena (__tl_dyn-array i64)))
 
 ;; Per-source traversal data stays explicit without widening the hot recursive
 ;; declaration-loader call for each independently owned field.
@@ -906,8 +917,9 @@
     (__tl_make-array (sym_i64_env.sym-i64-empty))
     (compiler-load-session-state-bool-cell false)))
 
-(define (compiler-load-session-state-new-with-standalone-reset-safety
-  [standalone-reset-safe : bool]) : CompilerLoadSessionState
+(define (compiler-load-session-state-new-with-reset-safety-and-catalog
+  [standalone-reset-safe : bool]
+  [catalog : CompilerLoadDependencyCatalogRegistry]) : CompilerLoadSessionState
   (let
     [surface-summaries : (__tl_dyn-array CompilerLoadSurfaceSummaryList)
       (__tl_make-array (compiler-load-surface-summary-list-empty))]
@@ -942,7 +954,7 @@
         lazy-import-skip-record-count
         lazy-qualified-observer
         (compiler-load-embedded-stdlib-provenance-state-new)
-        (compiler-load-dependency-catalog-registry-new)
+        catalog
         (compiler-load-dependency-surface-state-new)
         (compiler-load-session-state-bool-cell false)
         (__tl_make-array ci.InternCompatState 1)
@@ -950,7 +962,9 @@
         (compiler-load-session-state-bool-cell standalone-reset-safe)
         (compiler-load-session-state-i64-cell 0)
         (arena.tl_arena_current)
-        0)]
+        0
+        (compiler-load-session-state-i64-cell 0)
+        (compiler-load-session-state-i64-cell 0))]
     [cell : (__tl_dyn-array CompilerLoadSessionState) (__tl_make-array initial)]
     [address : u64
       (unsafe
@@ -961,6 +975,28 @@
       (set! canonical.shared-address address)
       (set! (array-ref cell 0) canonical)
       (compiler-load-global-array-element-shared-view cell 0))))
+
+(define (compiler-load-session-state-new-with-standalone-reset-safety
+  [standalone-reset-safe : bool]) : CompilerLoadSessionState
+  (compiler-load-session-state-new-with-reset-safety-and-catalog
+    standalone-reset-safe
+    (compiler-load-dependency-catalog-registry-new)))
+
+;; A package child owns fresh parse caches and hydrated surfaces, but borrows the
+;; enclosing package's admitted images. Its teardown must release only those
+;; derived surfaces, never the enclosing catalog or its executable mappings.
+(define (compiler-load-session-state-new-for-package-child
+  [parent : CompilerLoadSessionState]) : CompilerLoadSessionState
+  (let
+    [state : CompilerLoadSessionState
+      (compiler-load-session-state-new-with-reset-safety-and-catalog
+        true
+        (owned_view.compiler-owned-shared-view parent.dependency-catalog))]
+    (begin
+      (compiler-load-session-state-set-dependency-tlci-force-source!
+        (compiler-load-session-state-shared-view (& state))
+        (compiler-load-session-state-dependency-tlci-force-source? parent))
+      state)))
 
 (define (compiler-load-session-state-new) : CompilerLoadSessionState
   (compiler-load-session-state-new-with-standalone-reset-safety false))
@@ -1197,33 +1233,19 @@
             message
             first-error))])))
 
-(define (compiler-load-session-state-dependency-catalog-release!
-  [state : CompilerLoadSessionState]) : ResultCompilerLoadDependencyCatalogUnit
+;; Retire only derived frontend views; admitted catalog mappings stay live.
+;; Call after clearing typecheck/prefix references, in the arena that should
+;; own the replacement empty session carriers.
+(define (compiler-load-session-state-dependency-surfaces-release!
+  [state : CompilerLoadSessionState]) : unit
   (let
-    [registry : CompilerLoadDependencyCatalogRegistry
-      (owned_view.compiler-owned-shared-view state.dependency-catalog)]
     [surface-state : CompilerLoadDependencySurfaceState
       (owned_view.compiler-owned-shared-view state.dependency-surfaces)]
-    [items : CompilerLoadDependencyCatalogList
-      (owned_view.compiler-owned-array-element-shared-view registry.entries 0)]
-    [owner : i64 (array-ref registry.owner-arena 0)]
-    [error : String (compiler-load-dependency-catalog-release-from! items 0 "")]
     (begin
       (compiler-load-dependency-surface-list-destroy-storage!
         (owned_view.compiler-owned-array-element-shared-view
           surface-state.fragments
           0))
-      (if (> owner 0)
-        (unsafe
-          (arena.tl_arena_destroy owner))
-        unit)
-      (set! (array-ref registry.owner-arena 0) 0)
-      (set!
-        (array-ref registry.entries 0)
-        (compiler-load-dependency-catalog-empty-list))
-      (set!
-        (array-ref registry.generation 0)
-        (+ (array-ref registry.generation 0) 1))
       (set!
         (array-ref surface-state.fragments 0)
         (compiler-load-dependency-surface-list-empty))
@@ -1240,7 +1262,31 @@
       (set! (array-ref surface-state.surface-decl-count 0) 0)
       (set! (array-ref surface-state.surface-provenance-count 0) 0)
       (set! (array-ref surface-state.macro-skip-count 0) 0)
-      (set! (array-ref surface-state.typecheck-skip-count 0) 0)
+      (set! (array-ref surface-state.typecheck-skip-count 0) 0))))
+
+(define (compiler-load-session-state-dependency-catalog-release!
+  [state : CompilerLoadSessionState]) : ResultCompilerLoadDependencyCatalogUnit
+  (let
+    [registry : CompilerLoadDependencyCatalogRegistry
+      (owned_view.compiler-owned-shared-view state.dependency-catalog)]
+    [items : CompilerLoadDependencyCatalogList
+      (owned_view.compiler-owned-array-element-shared-view registry.entries 0)]
+    [owner : i64 (array-ref registry.owner-arena 0)]
+    [error : String (compiler-load-dependency-catalog-release-from! items 0 "")]
+    (begin
+      (compiler-load-session-state-dependency-surfaces-release!
+        (owned_view.compiler-owned-shared-view state))
+      (if (> owner 0)
+        (unsafe
+          (arena.tl_arena_destroy owner))
+        unit)
+      (set! (array-ref registry.owner-arena 0) 0)
+      (set!
+        (array-ref registry.entries 0)
+        (compiler-load-dependency-catalog-empty-list))
+      (set!
+        (array-ref registry.generation 0)
+        (+ (array-ref registry.generation 0) 1))
       (if (= (string.string-length error) 0)
         ResultCompilerLoadDependencyCatalogUnit.Ok
         (ResultCompilerLoadDependencyCatalogUnit.Err error)))))
@@ -2651,42 +2697,25 @@
 ;; The owning session's intern table gives these ids meaning: embedded source
 ;; and byte-identical disk source may use the catalog, while modified or
 ;; otherwise untrusted roots must expand from their own source.
-(define compiler-load-provenance-arena-handle : i64
-  0)
-
-(define (compiler-load-provenance-arena-handle-value) : i64
-  compiler-load-provenance-arena-handle)
-
-;: Compatibility arena for standalone embedded-provenance adapters. Explicit
-;: compiler sessions allocate their bindings in their owned intern-persistent
-;: arena so the next entry reset reclaims them without affecting another job.
-(define (compiler-load-provenance-arena) : i64
-  (begin
-    (if (= compiler-load-provenance-arena-handle 0)
-      (begin
-        (set! compiler-load-provenance-arena-handle (arena.tl_arena_make_small))
-        (ast.compiler-arena-debug-protect-never-reset!
-          compiler-load-provenance-arena-handle))
-      unit)
-    ;; Re-enter the root-tracked newest segment after an overflow. Selecting
-    ;; the full root again would fork an unreachable sibling chain.
-    (let
-      [head : i64
-        (unsafe
-          (ptr-read
-            (ptr-offset
-              (int->ptr compiler-load-provenance-arena-handle : (Ptr i64))
-              7)))]
-      (if (= head 0)
-        compiler-load-provenance-arena-handle
-        head))))
+(define (compiler-load-session-state-provenance-arena-value
+  [state : CompilerLoadSessionState]) : i64
+  (if (array-ref state.intern-state-ready 0)
+    (ci.intern-compat-state-persistent-arena-current-head
+      (array-ref state.intern-state 0))
+    (array-ref state.embedded-provenance-owner-arena 0)))
 
 (define (compiler-load-session-state-embedded-provenance-arena
   [state : CompilerLoadSessionState]) : i64
   (if (array-ref state.intern-state-ready 0)
     (ci.intern-compat-state-persistent-arena-current-head
       (array-ref state.intern-state 0))
-    (compiler-load-provenance-arena)))
+    (begin
+      (if (= (array-ref state.embedded-provenance-owner-arena 0) 0)
+        (set!
+          (array-ref state.embedded-provenance-owner-arena 0)
+          (arena.tl_arena_make_small))
+        unit)
+      (array-ref state.embedded-provenance-owner-arena 0))))
 
 (define (compiler-load-session-state-embedded-module-ids-shared-view
   [state : CompilerLoadSessionState]) : sym_i64_env.SymI64Env
@@ -2709,7 +2738,15 @@
     (set!
       (array-ref state.embedded-stdlib-provenance.equivalence-cache 0)
       (sym_i64_env.sym-i64-empty))
-    (set! (array-ref state.embedded-stdlib-provenance.noted 0) false)))
+    (set! (array-ref state.embedded-stdlib-provenance.noted 0) false)
+    (let
+      [owner : i64 (array-ref state.embedded-provenance-owner-arena 0)]
+      (begin
+        (set! (array-ref state.embedded-provenance-owner-arena 0) 0)
+        (if (> owner 0)
+          (unsafe
+            (arena.tl_arena_destroy owner))
+          unit)))))
 
 (define (compiler-load-session-state-note-embedded-module!
   [state : CompilerLoadSessionState]
@@ -3559,9 +3596,20 @@
     unit
     (begin
       (set! (array-ref state.dotted-path-cache-ready index) false)
+      (set! (array-ref state.dotted-path-cache-values index) "")
       (compiler-load-session-state-dotted-path-cache-clear-ready!
         state
         (+ index 1)))))
+
+(define (compiler-load-session-state-dotted-path-arena-ensure!
+  [state : CompilerLoadSessionState]) : i64
+  (begin
+    (if (= (array-ref state.dotted-path-cache-owner-arena 0) 0)
+      (set!
+        (array-ref state.dotted-path-cache-owner-arena 0)
+        (arena.tl_arena_make_small))
+      unit)
+    (array-ref state.dotted-path-cache-owner-arena 0)))
 
 (define (compiler-load-session-state-dotted-path-cache-reset!
   [state : CompilerLoadSessionState]) : unit
@@ -3569,6 +3617,14 @@
     (compiler-load-session-state-dotted-path-cache-clear-ready!
       (compiler-load-session-state-shared-view (& state))
       0)
+    (let
+      [owner : i64 (array-ref state.dotted-path-cache-owner-arena 0)]
+      (begin
+        (set! (array-ref state.dotted-path-cache-owner-arena 0) 0)
+        (if (> owner 0)
+          (unsafe
+            (arena.tl_arena_destroy owner))
+          unit)))
     (set!
       (array-ref state.dotted-path-cache-generation 0)
       (ci.intern-generation))))
@@ -3644,21 +3700,25 @@
       module-id)
       [(CompilerLoadSomeString path) path]
       [(CompilerLoadNoString)
-        ;; Cache values must never point into an arena a caller can rewind
-        ;; (a top-level `with-arena` can mark/reset the pool base arena, and
-        ;; the next request would read the freed path back on a cache hit),
-        ;; so allocate them in the never-reset provenance arena.
-        (in-arena
-          (arena.Arena (compiler-load-provenance-arena))
-          (let
-            [path : String
-              (compiler-load-dotted-module-path-uncached module-name)]
-            (begin
-              (compiler-load-session-state-dotted-path-cache-store!
-                (compiler-load-session-state-shared-view (& state))
-                module-id
-                (string.copy path))
-              path)))])))
+        ;; Cache payloads own a generation independent of caller scratch.
+        ;; Both hit and miss paths copy results into the caller's arena before
+        ;; a later cache generation can retire this private storage.
+        (let
+          [retained : String
+            (in-arena
+              (arena.Arena
+                (compiler-load-session-state-dotted-path-arena-ensure!
+                  (compiler-load-session-state-shared-view (& state))))
+              (let
+                [path : String
+                  (compiler-load-dotted-module-path-uncached module-name)]
+                (begin
+                  (compiler-load-session-state-dotted-path-cache-store!
+                    (compiler-load-session-state-shared-view (& state))
+                    module-id
+                    (string.copy path))
+                  path)))]
+          (string.copy retained))])))
 
 (define (compiler-load-dotted-module-path-id
   [module-id : i64]
@@ -10067,6 +10127,65 @@
         [(ast.AstMaybeModuleName.No) false])]
     [_ true]))
 
+;; A module-scope generator parses as an import whose kind carries the macro
+;; call. Until the fixed-point expansion has run it, the module's parsed
+;; declarations are not its final export set.
+(define (compiler-load-decl-pending-generator? [decl : ast.AstDecl]) : bool
+  (match (ast.ast-decl-unwrapped decl)
+    [(ast.AstDecl.Import _ (ast.AstImportSpec.Spec kind _ _ _ _))
+      (match kind
+        [(ast.AstImportKind.Macro _ _) true]
+        [(ast.AstImportKind.MacroDecls _ _) true]
+        [_ false])]
+    [_ false]))
+
+(define (compiler-load-module-has-pending-generator?
+  [decls : ast.AstDeclList]
+  [target-module : i64]) : bool
+  (let
+    [count : i64 (ast.ast-decl-list-len (& decls))]
+    [cur-module : i64 cbi.compiler-builtin-id-fix-empty]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (let
+          [decl : ast.AstDecl
+            (ast.ast-array-shared-view decls.slots (+ decls.offset index))]
+          (begin
+            (match (ast.ast-place-shared-view decl)
+              [(ast.AstDecl.Module next-module) (set! cur-module next-module)]
+              [_
+                (when
+                  (and
+                    (= cur-module target-module)
+                    (compiler-load-decl-pending-generator? decl))
+                  (return true))])
+            (set! index (+ index 1)))))
+      false)))
+
+;; Load-time policy for both the source and the package walker. A selected item
+;; missing from a module that still has a pending generator is not an error
+;; yet: `compiler-load-check-expanded-unqualified-imports` requires every
+;; selected item against the completed expansion, which always runs for a
+;; program that contains a generator. A module without generators has its final
+;; declarations now, so its missing items keep failing here.
+(define (compiler-load-selected-item-present-or-pending?
+  [kind : ast.AstImportKind]
+  [expected-module : ast.AstMaybeModuleName]
+  [decls : ast.AstDeclList]) : bool
+  (if (compiler-load-selected-item-present?
+    (owned_view.compiler-owned-shared-view kind)
+    (owned_view.compiler-owned-shared-view expected-module)
+    (ast.ast-place-shared-view decls))
+    true
+    (match kind
+      [(ast.AstImportKind.ModuleItem _)
+        (match expected-module
+          [(ast.AstMaybeModuleName.Some target-module)
+            (compiler-load-module-has-pending-generator? decls target-module)]
+          [(ast.AstMaybeModuleName.No) false])]
+      [_ false])))
+
 (define (compiler-load-expected-module-seen?
   [seen : sym_i64_env.SymI64Env]
   [expected-module : ast.AstMaybeModuleName]) : bool
@@ -10526,7 +10645,7 @@
                                     (sym_i64_env.sym-i64-shared-view (& seen))
                                     (owned_view.compiler-owned-shared-view
                                       validated-module))
-                                  (compiler-load-selected-item-present?
+                                  (compiler-load-selected-item-present-or-pending?
                                     (owned_view.compiler-owned-shared-view kind)
                                     (owned_view.compiler-owned-shared-view
                                       validated-module)
@@ -11302,8 +11421,18 @@
   [path : String]
   [cfgs : sym_i64_env.SymI64Env]) : parser.ResultAstProgramDiagnostic
   (let
-    [source : String (compiler-load-read-file-text (string.copy path))]
-    (compiler-load-parse-source-diagnostic-escaping path source cfgs)))
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [result : parser.ResultAstProgramDiagnostic
+      (compiler-load-parse-file-diagnostic-detached-with-pools
+        path
+        cfgs
+        (ast.ast-place-shared-view pools))]
+    ;; Serial package loading reads the compatibility pools after this boundary.
+    ;; Publish the compacted destination before traversing imports; the parser's
+    ;; temporary pools and arena have already been retired by the shared helper.
+    (begin
+      (ast.ast-node-pool-context-install! pools)
+      result)))
 
 (define (compiler-load-parse-file-diagnostic-escaping-with-pools
   [path : String]
@@ -13956,7 +14085,7 @@
                                     (sym_i64_env.sym-i64-shared-view (& seen))
                                     (owned_view.compiler-owned-shared-view
                                       validated-module))
-                                  (compiler-load-selected-item-present?
+                                  (compiler-load-selected-item-present-or-pending?
                                     (owned_view.compiler-owned-shared-view kind)
                                     (owned_view.compiler-owned-shared-view
                                       validated-module)
@@ -16035,7 +16164,35 @@
 (import pkg.shared.*)
 (import pkg.shared.*)
 (define (main) : i64 value)")
+      ;; A module-scope generator leaves the parsed exports incomplete, so both
+      ;; walkers defer a selection from it (present or not) to the completed
+      ;; expansion instead of rejecting at load time.
+      (compiler-load-write-file-text
+        "target/cl_import_suffix_root/pkg/generated.tl"
+        "(module pkg.generated)
+(defmacro (emit-made) : Decls `(define made : i64 41))
+(emit-made)")
+      (compiler-load-write-file-text
+        "target/cl_import_suffix_generated.tl"
+        "(module suffix.generated)
+(import pkg.generated.made as chosen)
+(import pkg.generated.pending as unknown-yet)
+(define (main) : i64 chosen)")
       (and
+        (match (compiler-load-file-with-paths-and-roots
+          "target/cl_import_suffix_generated.tl"
+          (sym_i64_env.sym-i64-empty)
+          (ast.ast-place-shared-view roots))
+          [(ResultCompilerLoadWithPaths.Ok _ _ _ _) true]
+          [(ResultCompilerLoadWithPaths.Err _) false])
+        (match (compiler-load-package-file-with-paths-and-roots
+          "target/cl_import_suffix_generated.tl"
+          (sym_i64_env.sym-i64-empty)
+          (ast.ast-place-shared-view roots)
+          (owned_view.compiler-owned-shared-view root)
+          (compiler-pkg-deps-empty))
+          [(ResultCompilerLoadWithPaths.Ok _ _ _ _) true]
+          [(ResultCompilerLoadWithPaths.Err _) false])
         (match (compiler-load-file-with-paths-and-roots
           "target/cl_import_suffix_entry.tl"
           (sym_i64_env.sym-i64-empty)

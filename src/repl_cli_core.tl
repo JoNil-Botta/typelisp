@@ -242,6 +242,13 @@
         " "
         (repl-type-render (ast.ty-node-get ret))
         ")")]
+    [(ast.AstType.CFunc signature mode)
+      (str_cat.str-cat
+        "(CFunc "
+        (ast.ast-c-function-mode-name mode)
+        " "
+        (repl-type-render (ast.ty-node-get signature))
+        ")")]
     [(ast.AstType.Tuple elems)
       (str_cat.str-cat
         "(Tuple"

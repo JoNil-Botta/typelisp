@@ -84,6 +84,65 @@ GitHub Actions, the checker applies a 0.5% self-compile tolerance
 Intentional exact changes should still be reported and ratcheted rather than
 treated as runner noise.
 
+## Compiler scaling budgets
+
+`perf/compiler-scaling-budgets.tsv` is checked by the required Linux gate
+`scripts/check-compiler-scaling.sh`. The fixed-input instruction counts above
+cannot see a compiler cost that is acceptable at today's sizes and quadratic in
+the size of one function, struct or module; this gate measures growth directly.
+
+`tools/compiler-scaling` generates a deterministic program for a dimension and
+a size. One dimension varies one property and a size only changes how many
+units there are, never what a unit does:
+
+| dimension | varies | each unit |
+| --- | --- | --- |
+| `decls` | declaration count | one small function, all reachable from `main` through eight-way callers |
+| `cfg` | size of one function and its CFG | one two-armed branch on a running value, then a mask |
+| `fields` | width of one struct | one `i64` field, initialized once and read once |
+
+Every program checks itself: the generator evaluates the same arithmetic while
+it emits the source, and `main` returns 42 only if the compiled program
+reproduces that value. The gate builds and runs every program before it
+measures anything, so a miscompiled or substituted input is a failure, not a
+data point.
+
+For each budget row the gate measures the compiler under Cachegrind at three
+sizes `S < M < L` and derives two numbers in which the compiler's fixed
+start-up cost cancels:
+
+- **marginal**: `(Ir(L) - Ir(M)) / (L - M)`, instructions per added unit;
+- **growth**: that marginal cost divided by `(Ir(M) - Ir(S)) / (M - S)`. It is
+  1.0 for a linear cost and, with sizes in ratio 1:2:4, 2.0 for a quadratic one.
+
+Because both are differences of counts on one binary, the host's environment
+and paths (which move an absolute count by a few hundred instructions) do not
+reach them, so a local run reproduces the CI values. The rows move only when
+the compiler does: the published stage0 from two merges earlier (`2381c505`)
+measured every row within 0.4% marginal cost and 0.003 growth of the values
+checked in from `70958577`. A row fails when the
+marginal cost moves more than 10% or the growth more than 0.10 from its checked
+value, **in either direction**, matching the instruction-count baselines: an
+improvement is accepted by committing the refreshed row.
+
+```sh
+scripts/check-compiler-scaling.sh target/bootstrap-fixpoint/stage3
+scripts/check-compiler-scaling.sh --update-budgets target/bootstrap-fixpoint/stage3
+```
+
+`--update-budgets` rewrites only the two measured columns. Review the diff: a
+changed number needs its measured cause in the PR, and a baseline refresh never
+justifies a regression. A row whose growth is not linear names the issue that
+owns the defect in its `owner` column; the PR that fixes the defect refreshes
+the row, which turns the fix into a permanent regression check. New dimensions
+and phases are new rows; do not widen the tolerances to admit a slower
+compiler. The complete gate (generator build, 12 validated programs and 27
+Cachegrind runs) takes about one minute.
+
+This is the compiler-scaling half of #7773. It does not replace the
+self-compile row, the wall-clock budgets below or the memory checks: it bounds
+how cost grows, not how large it is on the compiler's own sources.
+
 ## CI wall-clock compile budgets
 
 Linux pull-request CI also gates the four selfhost compile rows already

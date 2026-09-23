@@ -5,6 +5,7 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
 . "$ROOT/scripts/lib-ci-compiler-artifact.sh"
+. "$ROOT/scripts/lib-ci-gate-ledger.sh"
 
 TRACE_VALIDATION_FILE=
 TRACE_VALIDATION_HOST=
@@ -112,10 +113,8 @@ expect_failure() {
 
 validate_checked_in_inventory() {
     rows="$FIXTURE/inventory-rows.tsv"
-    gates="$FIXTURE/inventory-gates.txt"
     : > "$rows"
-    : > "$gates"
-    awk -F '\t' -v rows="$rows" -v gates="$gates" '
+    awk -F '\t' -v rows="$rows" '
     function fail(message) {
         print "CI compiler artifact inventory: " message > "/dev/stderr"
         failed = 1
@@ -165,7 +164,6 @@ validate_checked_in_inventory() {
                 fail("reuse group " group " has mismatched provenance fields")
         }
         print $0 > rows
-        print $3 > gates
         count++
     }
     END {
@@ -180,15 +178,30 @@ validate_checked_in_inventory() {
         }
         if (failed) exit 1
     }
-    ' "$INVENTORY"
+    ' "$INVENTORY" || return $?
 
-    LC_ALL=C sort -u "$gates" -o "$gates"
-    while IFS= read -r gate; do
-        grep -F "\"$gate\"" "$ROOT/scripts/ci-verify.sh" >/dev/null || {
-            echo "inventory gate is not wired through ci-verify.sh: $gate" >&2
-            exit 1
+    # Display names in the artifact inventory reference the canonical ledger;
+    # only literal execution IDs bind commands in the full runner.
+    ci_gate_ledger_validate_bindings \
+        "$ROOT/scripts/ci-gates.tsv" "$ROOT/scripts/ci-verify.sh" || return $?
+    awk -F '\t' '
+        { sub(/\r$/, "", $0) }
+        FNR == NR { if (FNR > 5) hosts[$3]=$2; next }
+        {
+            gate=$3
+            if (!(gate in hosts) || (hosts[gate] != "all" && hosts[gate] != $4)) {
+                print "artifact inventory gate/host does not match CI gate ledger: " gate " / " $4 > "/dev/stderr"
+                failed=1
+            }
         }
-    done < "$gates"
+        END {if (failed) exit 1}
+    ' "$ROOT/scripts/ci-gates.tsv" "$rows" || return $?
+    # Every cross-gate artifact handoff recorded here is a scheduling dependency
+    # in the ledger, and the ledger declares no artifact dependency that this
+    # inventory does not record.
+    ci_gate_ledger_validate_needs \
+        "$ROOT/scripts/ci-gates.tsv" "$ROOT/scripts/ci-verify.sh" \
+        "$INVENTORY" bootstrap-fixpoint || return $?
 
     for group in \
         bootstrap-converged \
@@ -396,6 +409,21 @@ validate_hosted_trace() {
     ' "$INVENTORY" "$_trace_file"
 }
 
+validate_checked_in_inventory
+# Artifact gate references must remain valid when execution labels live in the
+# shared ledger. Check stale names and a valid-but-inapplicable host separately.
+CHECKED_IN_INVENTORY=$INVENTORY
+awk -F '\t' 'BEGIN {OFS=FS} $1 == 1 && !changed { $3="missing catalog gate"; changed=1 } {print}' \
+    "$CHECKED_IN_INVENTORY" > "$FIXTURE/stale-gate-inventory.tsv"
+INVENTORY="$FIXTURE/stale-gate-inventory.tsv"
+expect_failure stale-gate-reference 'artifact inventory gate/host does not match CI gate ledger' \
+    validate_checked_in_inventory
+awk -F '\t' 'BEGIN {OFS=FS} $3 == "Linux instruction-count baseline" {$4="windows"; changed=1} {print} END {if (!changed) exit 1}' \
+    "$CHECKED_IN_INVENTORY" > "$FIXTURE/wrong-host-inventory.tsv"
+INVENTORY="$FIXTURE/wrong-host-inventory.tsv"
+expect_failure wrong-gate-host 'artifact inventory gate/host does not match CI gate ledger' \
+    validate_checked_in_inventory
+INVENTORY=$CHECKED_IN_INVENTORY
 validate_checked_in_inventory
 validate_required_record_wiring \
     "$INVENTORY" \
@@ -702,5 +730,121 @@ awk -F '\t' -v OFS='\t' '
     ' "$HOSTED_TRACE" > "$HOSTED_TRACE_UNOWNED"
 expect_failure hosted-trace-unowned 'unexpected or ledger-only record' \
     validate_hosted_trace "$HOSTED_TRACE_UNOWNED" "$HOST"
+
+# Transfer complete bundles between independent checkout roots. The original
+# root becomes unavailable, so accidentally following its absolute paths fails.
+# Exercise both a binary and a digest manifest without rewriting metadata.
+verify_relocated_handoff() (
+    relocation_kind=$1
+    relocation_spelling=$2
+    relocation_parent="$WORKDIR/relocation-$relocation_kind-$relocation_spelling"
+    relocation_from="$relocation_parent/producer checkout"
+    relocation_to="$relocation_parent/consumer checkout"
+    mkdir -p "$relocation_from/fixture/src" "$relocation_from/fixture/stdlib"
+    cp "$SOURCE/input.tl" "$relocation_from/fixture/src/input.tl"
+    cp "$STDLIB/input.tl" "$relocation_from/fixture/stdlib/input.tl"
+    cp "$PRODUCER" "$relocation_from/fixture/producer"
+    chmod +x "$relocation_from/fixture/producer"
+    printf '%s\n' payload > "$relocation_from/fixture/payload file.bin"
+    WORKDIR=$relocation_from
+    PRODUCER="$WORKDIR/fixture/producer"
+    OUTPUT="$WORKDIR/fixture/output file.bin"
+    METADATA="$WORKDIR/fixture/handoff.meta"
+    PATH_FILE="$WORKDIR/fixture/handoff.path"
+    KIND=$relocation_kind
+    unset TYPELISP_CI_COMPILER_ARTIFACT_TRACE
+    if [ "$KIND" = compiler-binary ]; then
+        cp "$WORKDIR/fixture/payload file.bin" "$OUTPUT"
+    else
+        ci_compiler_artifact_write_files_manifest "$WORKDIR" "$OUTPUT" \
+            "$WORKDIR/fixture/payload file.bin"
+    fi
+    relocation_producer=$PRODUCER
+    relocation_output=$OUTPUT
+    if [ "$relocation_spelling" = relative ]; then
+        relocation_producer=fixture/producer
+        relocation_output='fixture/output file.bin'
+    fi
+    [ "$(pwd)" != "$WORKDIR" ] || exit 1
+    ci_compiler_artifact_publish \
+        "$WORKDIR" "$METADATA" "$PATH_FILE" "$LABEL" "$relocation_producer" \
+        "$TARGET" "$CFG" "$OPT" "$PROFILE" "$SOURCE_ROOTS" \
+        "$STDLIB_ROOTS" "$ENVIRONMENT" "$KIND" "$relocation_output" "$ARGV"
+    [ "$(cat "$PATH_FILE")" = '{root}/fixture/output file.bin' ] || {
+        echo "handoff output path is not checkout-relative" >&2
+        exit 1
+    }
+    mkdir -p "$relocation_to"
+    cp -R "$relocation_from/." "$relocation_to/"
+    mv "$relocation_from" "$relocation_parent/unavailable"
+    WORKDIR=$relocation_to
+    PRODUCER="$WORKDIR/fixture/producer"
+    OUTPUT="$WORKDIR/fixture/output file.bin"
+    METADATA="$WORKDIR/fixture/handoff.meta"
+    PATH_FILE="$WORKDIR/fixture/handoff.path"
+    require_fixture
+    [ "$CI_COMPILER_ARTIFACT_PATH" = "$OUTPUT" ] || exit 1
+    if [ "$relocation_spelling" = relative ]; then
+        PRODUCER=fixture/producer
+        require_fixture
+        [ "$CI_COMPILER_ARTIFACT_PATH" = "$OUTPUT" ] || exit 1
+        PRODUCER="$WORKDIR/fixture/producer"
+    fi
+    cmp "$METADATA" "$relocation_parent/unavailable/fixture/handoff.meta"
+    if [ "$KIND" = assembly-set-manifest ]; then
+        ci_compiler_artifact_verify_sha256_manifest "$WORKDIR" "$OUTPUT"
+        printf '%s\n' corrupt >> "$WORKDIR/fixture/payload file.bin"
+        expect_failure relocated-manifest-corruption 'manifest artifact digest mismatch' \
+            ci_compiler_artifact_verify_sha256_manifest "$WORKDIR" "$OUTPUT"
+    fi
+    cp "$OUTPUT" "$OUTPUT.base"
+    printf '%s\n' corrupt >> "$OUTPUT"
+    expect_failure relocated-output 'output_sha256 mismatch' require_fixture
+    mv "$OUTPUT.base" "$OUTPUT"
+    cp "$PRODUCER" "$PRODUCER.base"
+    printf '%s\n' '# changed producer' >> "$PRODUCER"
+    expect_failure relocated-producer 'producer_sha256 mismatch' require_fixture
+    mv "$PRODUCER.base" "$PRODUCER"
+    cp "$WORKDIR/fixture/src/input.tl" "$WORKDIR/fixture/input.base"
+    printf '%s\n' '; changed source' >> "$WORKDIR/fixture/src/input.tl"
+    expect_failure relocated-source 'source_set_sha256 mismatch' require_fixture
+    mv "$WORKDIR/fixture/input.base" "$WORKDIR/fixture/src/input.tl"
+    relocation_token=$TYPELISP_CI_COMPILER_ARTIFACT_RUN_TOKEN
+    TYPELISP_CI_COMPILER_ARTIFACT_RUN_TOKEN=another-run
+    expect_failure relocated-run 'run_token mismatch' require_fixture
+    TYPELISP_CI_COMPILER_ARTIFACT_RUN_TOKEN=$relocation_token
+    mv "$OUTPUT" "$OUTPUT.base"
+    expect_failure relocated-missing 'handoff artifact is missing or empty' require_fixture
+    mv "$OUTPUT.base" "$OUTPUT"
+    printf '%s\n' '{root}/fixture/output file.bin' '{root}/extra' > "$PATH_FILE"
+    expect_failure relocated-multiple-paths 'exactly one path' require_fixture
+    printf '%s\n%s' '{root}/fixture/output file.bin' unterminated > "$PATH_FILE"
+    expect_failure relocated-trailing-bytes 'exactly one path' require_fixture
+    printf '%s' '{root}/fixture/output file.bin' > "$PATH_FILE"
+    expect_failure relocated-unterminated-path 'exactly one path' require_fixture
+    printf '%s\n' '{root-bad}/fixture/output file.bin' > "$PATH_FILE"
+    expect_failure relocated-malformed-path 'handoff artifact is missing or empty' require_fixture
+    # Existing absolute-path handoffs remain accepted in their own checkout.
+    printf '%s\n' "$OUTPUT" > "$PATH_FILE"
+    require_fixture
+)
+verify_relocated_handoff compiler-binary absolute
+verify_relocated_handoff assembly-set-manifest absolute
+verify_relocated_handoff compiler-binary relative
+verify_relocated_handoff assembly-set-manifest relative
+
+# An output outside the declared checkout remains an absolute handoff. Source
+# provenance still belongs to WORKDIR; relocation must not silently rebase it.
+publish_fixture
+EXTERNAL_OUTPUT="$ROOT/target/ci-compiler-artifact-external.bin"
+cp "$OUTPUT" "$EXTERNAL_OUTPUT"
+ci_compiler_artifact_publish \
+    "$WORKDIR" "$METADATA" "$PATH_FILE" "$LABEL" "$PRODUCER" \
+    "$TARGET" "$CFG" "$OPT" "$PROFILE" "$SOURCE_ROOTS" \
+    "$STDLIB_ROOTS" "$ENVIRONMENT" "$KIND" "$EXTERNAL_OUTPUT" "$ARGV"
+[ "$(cat "$PATH_FILE")" = "$EXTERNAL_OUTPUT" ] || exit 1
+require_fixture
+[ "$CI_COMPILER_ARTIFACT_PATH" = "$EXTERNAL_OUTPUT" ] || exit 1
+rm -f "$EXTERNAL_OUTPUT"
 
 echo "CI compiler artifact handoff self-tests passed"

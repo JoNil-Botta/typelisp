@@ -4,13 +4,9 @@
   (b u64))
 
 (extern (wide-make [a : u32] [b : u32] [c : u32] [d : u32] [tag : u64]) : Wide (:symbol "tl_cabi_wide_make"))
-(extern wide-maker (:symbol "tl_cabi_wide_make_ptr") : (->
-  u32
-  u32
-  u32
-  u32
-  u64
-  Wide))
+(extern wide-maker (:symbol "tl_cabi_wide_make_ptr") : (CFunc
+  non-null
+  (-> u32 u32 u32 u32 u64 Wide)))
 
 (define (wide-score [value : Wide]) : i64
   (+ (cast value.a : i64) (cast value.b : i64)))
@@ -24,7 +20,7 @@
         (cast 3 : u32)
         (cast 4 : u32)
         (cast 10 : u64))]
-    [maker : (-> u32 u32 u32 u32 u64 Wide) wide-maker]
+    [maker : (CFunc non-null (-> u32 u32 u32 u32 u64 Wide)) wide-maker]
     [via-ptr : Wide
       (maker
         (cast 5 : u32)

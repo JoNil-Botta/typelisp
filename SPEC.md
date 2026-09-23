@@ -3318,6 +3318,19 @@ the selected names, declaration locations, run/ignored/slow-skipped state, and
 ignore reasons without compiling or running a harness; it may be combined with
 either selector but not `--check`.
 
+`--backend-mode scalar|avx2|avx512` selects one code-generation mode for every
+harness of the invocation: a source file, each `--batch` entry, package inline
+tests, and package integration tests. The default is `scalar`. A SIMD request
+lowers and emits that mode as one selection and never falls back to scalar, so
+`(program-count)` and the other lane identity forms observe the requested gang
+shape. `--check` and `--list` accept every mode on every host because they
+execute nothing. A run in `avx2` or `avx512` first requires the host CPU and
+operating system to execute that ISA (`stdlib.cpu` `runs-avx2?` and
+`runs-avx512?`, the latter meaning AVX-512 F, BW, and DQ); otherwise the
+command prints `test: backend mode <mode> cannot run on this host` and exits
+`1` before compiling any harness. An unknown spelling is the separate
+diagnostic `test: unknown backend mode <value>`.
+
 Repeatable `--cfg <name>` values compose with the automatic `test` and target
 cfg predicates used while loading and type-checking. `--shuffle` applies a
 portable xorshift64/Fisher-Yates permutation after inline name filtering and

@@ -61315,6 +61315,102 @@
         (compiler-backend-cmp-mem-operands-asm op "q" other-operand addr)]
       [else ""])))
 
+;; The direct narrow (M6-J) arm: a 1/2/4-byte `Load` compared at its OWN width,
+;; with no widening cast in between -- the shape a `char`/`u8` scanner has, e.g.
+;; `%b = load %p : char ; %c = ne %b, 47 : char`. Unfolded, the compare reads
+;; the low W bytes of the loaded value's register (`movzbq MEM, %r ; cmpb $47,
+;; %rb`), so reading those W bytes straight from memory is the same compare with
+;; the load folded in -- for ordered compares too, because the width and the
+;; signedness (and so the jcc) are the compare's own, not a widened value's.
+;; The other operand is a literal that the W-byte compare reads unchanged, or a
+;; register-homed value spelled at width W. With the memory operand on the
+;; compare's RIGHT the other operand must be the destination: a register, or a
+;; literal only when an equality compare lets the operands exchange.
+(define (compiler-backend-gep-load-direct-narrow-cmp-asm
+  [ctx : CompilerBackendEmissionContext]
+  [addr : String]
+  [load-ty : compiler_ast_types.AstType]
+  [cmp-ty : compiler_ast_types.AstType]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [mem-is-lhs? : bool]
+  [other : compiler_ir_types.CompilerIrValue]) : String
+  (let
+    [width : i64
+      (compiler-backend-type-size
+        (compiler-backend-global-shared-view ctx.type-segment-bases)
+        (compiler-backend-global-shared-view load-ty))]
+    [signed? : bool
+      (compiler-backend-type-signed?
+        (compiler-backend-global-shared-view load-ty))]
+    [suffix : String
+      (compiler-backend-int-instruction-suffix
+        (compiler-backend-global-shared-view ctx.type-segment-bases)
+        (compiler-backend-global-shared-view load-ty))]
+    (if (or
+      (not (or (= width 1) (= width 2) (= width 4)))
+      (compiler-backend-bit-test-op? (compiler-backend-global-shared-view op))
+      (compiler-backend-float-type?
+        (compiler-backend-global-shared-view load-ty))
+      (compiler-backend-float-type?
+        (compiler-backend-global-shared-view cmp-ty))
+      (not
+        (=
+          (compiler-backend-type-size
+            (compiler-backend-global-shared-view ctx.type-segment-bases)
+            (compiler-backend-global-shared-view cmp-ty))
+          width))
+      (not
+        (=
+          (if (compiler-backend-type-signed?
+            (compiler-backend-global-shared-view cmp-ty))
+            1
+            0)
+          (if signed?
+            1
+            0))))
+      ""
+      (match (compiler-backend-value-as-i64
+        (compiler-backend-global-shared-view other))
+        [(option_i64.Some k)
+          (if (and
+            (compiler-backend-narrow-cmp-literal-ok? width signed? k)
+            (or
+              mem-is-lhs?
+              (compiler-backend-compare-operands-commute?
+                (compiler-backend-global-shared-view op))))
+            (compiler-backend-cmp-mem-operands-asm
+              op
+              suffix
+              (str_cat.str-cat "$" (string.int->string k))
+              addr)
+            "")]
+        [(option_i64.None)
+          (let
+            [reg : String
+              (compiler-backend-value-scalar-register
+                (compiler-backend-global-shared-view ctx.backend-state)
+                (compiler-backend-global-shared-view ctx.assignments)
+                (compiler-backend-global-shared-view other))]
+            (if (string.eq reg "")
+              ""
+              (let
+                [narrow-reg : String
+                  (compiler-backend-sized-reg
+                    (compiler-backend-global-shared-view ctx.type-segment-bases)
+                    reg
+                    (compiler-backend-global-shared-view load-ty))]
+                (if mem-is-lhs?
+                  (compiler-backend-cmp-mem-operands-asm
+                    op
+                    suffix
+                    narrow-reg
+                    addr)
+                  (compiler-backend-cmp-mem-operands-asm
+                    op
+                    suffix
+                    addr
+                    narrow-reg)))))]))))
+
 ;; Walk `Load ; [Cast] ; BinOp compare ; Branch` and produce the folded
 ;; compare. Every destination in the chain is required to be single-use, which
 ;; is what makes dropping the load (and the cast the load already performed)
@@ -61384,6 +61480,17 @@
               (compiler-backend-global-shared-view ctx.use-counts)
               cast-dst))]
         [_ false])]
+    ;; M6-J: no cast, and the load itself narrow -- the compare then runs at
+    ;; the load's own width (checked with the rest of the shape below).
+    [direct? : bool
+      (and
+        (not narrow?)
+        (= value-var load-dst)
+        (<
+          (compiler-backend-type-size
+            (compiler-backend-global-shared-view ctx.type-segment-bases)
+            (compiler-backend-global-shared-view load-ty))
+          8))]
     [cmp-index : i64
       (if narrow?
         (+ index 1)
@@ -61400,6 +61507,7 @@
     (if (or
       (and
         (not narrow?)
+        (not direct?)
         (not
           (=
             (compiler-backend-type-size
@@ -61441,9 +61549,10 @@
                 cmp-dst)
               (or mem-is-lhs? mem-is-rhs?)
               ;; The wide arm renders `cmpq`, so the comparison itself must be
-              ;; at full word width; the narrow arm carries its own width table.
+              ;; at full word width; the narrow arms carry their own width tables.
               (or
                 narrow?
+                direct?
                 (=
                   (compiler-backend-type-size
                     (compiler-backend-global-shared-view ctx.type-segment-bases)
@@ -61482,12 +61591,21 @@
                               (compiler-backend-global-shared-view op)
                               other)]
                           [_ ""])
-                        (compiler-backend-gep-load-wide-cmp-asm
-                          (compiler-backend-global-shared-view ctx)
-                          addr
-                          (compiler-backend-global-shared-view op)
-                          mem-is-lhs?
-                          other))]
+                        (if direct?
+                          (compiler-backend-gep-load-direct-narrow-cmp-asm
+                            (compiler-backend-global-shared-view ctx)
+                            addr
+                            (compiler-backend-global-shared-view load-ty)
+                            (compiler-backend-global-shared-view cmp-ty)
+                            (compiler-backend-global-shared-view op)
+                            mem-is-lhs?
+                            other)
+                          (compiler-backend-gep-load-wide-cmp-asm
+                            (compiler-backend-global-shared-view ctx)
+                            addr
+                            (compiler-backend-global-shared-view op)
+                            mem-is-lhs?
+                            other)))]
                     [jcc-ty : compiler_ast_types.AstType
                       (if narrow?
                         (compiler-backend-global-shared-view load-ty)

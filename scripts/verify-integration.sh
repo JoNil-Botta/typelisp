@@ -15,6 +15,8 @@ cd "$ROOT"
 
 . "$ROOT/scripts/lib-linux-entry.sh"
 . "$ROOT/scripts/lib-ci-timing.sh"
+BOUNDED_POOL_LABEL=integration
+. "$ROOT/scripts/lib-bounded-pool.sh"
 
 usage() {
     cat >&2 <<'EOF'
@@ -221,43 +223,121 @@ mkdir -p "$WORKDIR"
 NORMALIZED_MANIFEST="$WORKDIR/manifest.normalized"
 tr -d '\r' < "$MANIFEST" > "$NORMALIZED_MANIFEST"
 
+# Batch chunks compile in a bounded pool (scripts/lib-bounded-pool.sh):
+# TYPELISP_INTEGRATION_WORKERS compiler processes at once (1-3, default 2), each
+# under an enforced memory cap and timeout (a user cgroup on Linux, a Job Object
+# on Windows), so at most workers x cap MiB of caps run concurrently.
+INTEGRATION_POOL_WORKERS=${TYPELISP_INTEGRATION_WORKERS:-2}
+case "$INTEGRATION_POOL_WORKERS" in
+    1 | 2 | 3) ;;
+    *)
+        echo "invalid TYPELISP_INTEGRATION_WORKERS: $INTEGRATION_POOL_WORKERS (expected 1-3)" >&2
+        exit 2
+        ;;
+esac
+INTEGRATION_POOL_CHUNK_CAP_MIB=4096
+INTEGRATION_POOL_BUDGET_MIB=$((INTEGRATION_POOL_WORKERS * INTEGRATION_POOL_CHUNK_CAP_MIB))
+INTEGRATION_POOL_JOB_TIMEOUT_SECONDS=900
+# Internal: only the batch observability self-test turns enforcement off, on
+# Windows, where the Job Object wrapper cannot launch its shell-script compiler.
+INTEGRATION_POOL_ENFORCE_CAPS=1
+INTEGRATION_POOL_DIR=
+INTEGRATION_POOL_WALL_MS=0
+INTEGRATION_POOL_PEAK_BYTES=0
+INTEGRATION_POOL_PEAK_LABEL=
+
 # Compile one batch chunk. The timing row deliberately describes the actual
 # compiler process rather than attributing its elapsed time to individual
 # cases, which would turn a measurement into a derived estimate (#5793).
-integration_batch_run_chunk() {
+#
+# This half runs inside a pool worker, so it touches no shared counter: it
+# leaves the compiler's status, its elapsed time and, when CAP_MIB is set, the
+# memory report of its bounded run in the chunk's own files. The parent reads
+# them back in chunk order through integration_batch_settle_chunk.
+integration_batch_compile_chunk() {
     _chunk_list=$1
     _chunk_label=$2
-    shift 2
-    INTEGRATION_BATCH_CHUNKS=$((INTEGRATION_BATCH_CHUNKS + 1))
+    _chunk_cap=$3
+    shift 3
     _chunk_stdout="$WORKDIR/batch-$_chunk_label.stdout"
     _chunk_stderr="$WORKDIR/batch-$_chunk_label.stderr"
-    _chunk_plan=
+    _chunk_status="$WORKDIR/batch-$_chunk_label.status"
+    _chunk_elapsed="$WORKDIR/batch-$_chunk_label.elapsed-ms"
+    _chunk_report="$WORKDIR/batch-$_chunk_label.memory"
+    rm -f "$_chunk_status" "$_chunk_elapsed" "$_chunk_report"
     if [ "$HOST_OS" = windows ]; then
         _chunk_plan="$WORKDIR/batch-$_chunk_label.plan"
         rm -f "$_chunk_plan"
-        ci_timing_set_now_ms
-        _windows_batch_started=$CI_TIMING_NOW_MS
-    fi
-    set +e
-    if [ "$HOST_OS" = windows ]; then
-        ci_timing_run "batch-$_chunk_label" compile \
-            "$COMPILER" compile --batch "$_chunk_list" \
-            --windows-coff-plan "$_chunk_plan" "$@" \
-            > "$_chunk_stdout" 2> "$_chunk_stderr"
+        set -- "$COMPILER" compile --batch "$_chunk_list" \
+            --windows-coff-plan "$_chunk_plan" "$@"
     else
-        ci_timing_run "batch-$_chunk_label" compile \
-            "$COMPILER" compile --batch "$_chunk_list" "$@" \
-            > "$_chunk_stdout" 2> "$_chunk_stderr"
+        set -- "$COMPILER" compile --batch "$_chunk_list" "$@"
     fi
+    if [ -n "$_chunk_cap" ]; then
+        set -- "$ROOT/scripts/run-memory-bounded.sh" \
+            --limit-mib "$_chunk_cap" --report "$_chunk_report" \
+            --timeout-seconds "$INTEGRATION_POOL_JOB_TIMEOUT_SECONDS" -- "$@"
+    fi
+    ci_timing_set_now_ms
+    _chunk_started=$CI_TIMING_NOW_MS
+    set +e
+    ci_timing_run "batch-$_chunk_label" compile "$@" \
+        > "$_chunk_stdout" 2> "$_chunk_stderr"
     _chunk_rc=$?
     set -e
+    ci_timing_set_now_ms
+    printf '%s\n' "$((CI_TIMING_NOW_MS - _chunk_started))" > "$_chunk_elapsed"
+    printf '%s\n' "$_chunk_rc" > "$_chunk_status"
+}
+
+# Account for one compiled chunk in the parent, in chunk order: counters,
+# Windows plan registration, and the standalone fallback of a failed chunk. A
+# chunk stopped by its memory cap or timeout, or one that left no status, fails
+# the gate instead of falling back: that is a resource regression, not a
+# compile diagnostic to replay.
+integration_batch_settle_chunk() {
+    _chunk_list=$1
+    _chunk_label=$2
+    _chunk_cap=$3
+    INTEGRATION_BATCH_CHUNKS=$((INTEGRATION_BATCH_CHUNKS + 1))
+    _chunk_stderr="$WORKDIR/batch-$_chunk_label.stderr"
+    _chunk_status="$WORKDIR/batch-$_chunk_label.status"
+    _chunk_elapsed="$WORKDIR/batch-$_chunk_label.elapsed-ms"
+    _chunk_report="$WORKDIR/batch-$_chunk_label.memory"
+    _chunk_plan=
+    [ "$HOST_OS" != windows ] || _chunk_plan="$WORKDIR/batch-$_chunk_label.plan"
+    if [ ! -s "$_chunk_status" ] || [ ! -s "$_chunk_elapsed" ]; then
+        echo "FAIL: batch chunk $_chunk_label left no compile status" >&2
+        exit 1
+    fi
+    _chunk_rc=$(cat "$_chunk_status")
+    if [ -n "$_chunk_cap" ]; then
+        _chunk_reason=$(sed -n 's/^reason=//p' "$_chunk_report" 2>/dev/null || true)
+        case "$_chunk_reason" in
+            success | command-failure) ;;
+            *)
+                echo "FAIL: batch chunk $_chunk_label was stopped by its bound" \
+                    "(reason=${_chunk_reason:-missing-report}, cap $_chunk_cap MiB," \
+                    "timeout $INTEGRATION_POOL_JOB_TIMEOUT_SECONDS s)" >&2
+                sed 's/^/  /' "$_chunk_stderr" >&2 || true
+                exit 1
+                ;;
+        esac
+        _chunk_peak=$(sed -n 's/^peak_memory_bytes=//p' "$_chunk_report")
+        case "$_chunk_peak" in
+            '' | *[!0-9]*)
+                echo "FAIL: batch chunk $_chunk_label memory report has no peak" >&2
+                exit 1
+                ;;
+        esac
+        if [ "$_chunk_peak" -gt "$INTEGRATION_POOL_PEAK_BYTES" ]; then
+            INTEGRATION_POOL_PEAK_BYTES=$_chunk_peak
+            INTEGRATION_POOL_PEAK_LABEL=$_chunk_label
+        fi
+    fi
     if [ "$HOST_OS" = windows ]; then
-        ci_timing_set_now_ms
-        _windows_batch_finished=$CI_TIMING_NOW_MS
         WINDOWS_MANIFEST_BATCH_COMPILE_MS=$((
-            WINDOWS_MANIFEST_BATCH_COMPILE_MS +
-            _windows_batch_finished -
-            _windows_batch_started
+            WINDOWS_MANIFEST_BATCH_COMPILE_MS + $(cat "$_chunk_elapsed")
         ))
         WINDOWS_MANIFEST_BATCH_COMPILES=$((WINDOWS_MANIFEST_BATCH_COMPILES + 1))
     fi
@@ -284,6 +364,95 @@ integration_batch_run_chunk() {
     done < "$_chunk_list"
     [ -z "$_chunk_plan" ] || rm -f "$_chunk_plan"
     return 0
+}
+
+# Compile and account for one chunk in this process, without a cap: the serial
+# route that the batch observability self-test pins next to the pooled one.
+integration_batch_run_chunk() {
+    _run_chunk_list=$1
+    _run_chunk_label=$2
+    shift 2
+    integration_batch_compile_chunk "$_run_chunk_list" "$_run_chunk_label" '' "$@"
+    integration_batch_settle_chunk "$_run_chunk_list" "$_run_chunk_label" ''
+}
+
+# The pool's job callback (see lib-bounded-pool.sh). A job is one chunk named
+# `batch-<group>-<index>`; its list sits at `$WORKDIR/<job>.list`, and its
+# timing rows go to a private file that integration_batch_run_pool merges in
+# queue order, so the published rows do not depend on scheduling.
+bounded_pool_run_job() {
+    _pool_job=$1
+    _pool_cap=$2
+    [ "$INTEGRATION_POOL_ENFORCE_CAPS" -eq 1 ] || _pool_cap=
+    _pool_label=${_pool_job#batch-}
+    if ci_timing_enabled; then
+        TYPELISP_CI_TIMING_FILE="$INTEGRATION_POOL_DIR/timing/$_pool_job.tsv"
+    fi
+    case "$_pool_label" in
+        embedded-*)
+            # shellcheck disable=SC2086
+            integration_batch_compile_chunk "$WORKDIR/$_pool_job.list" \
+                "$_pool_label" "$_pool_cap" $INTEGRATION_BATCH_TARGET_ARGS \
+                --stdlib-root "$ROOT/src"
+            ;;
+        stage-stdlib-*)
+            # shellcheck disable=SC2086
+            integration_batch_compile_chunk "$WORKDIR/$_pool_job.list" \
+                "$_pool_label" "$_pool_cap" $INTEGRATION_BATCH_TARGET_ARGS \
+                --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src"
+            ;;
+        *)
+            echo "[integration] pool job names no chunk group: $_pool_job" >&2
+            return 1
+            ;;
+    esac
+}
+
+# Publish the jobs' private timing rows in queue order. A passing pool requires
+# a row from every job; a failing one still publishes what ran.
+integration_batch_merge_pool_timing() {
+    ci_timing_enabled || return 0
+    while IFS='|' read -r _merge_job _merge_cap; do
+        _merge_rows="$INTEGRATION_POOL_DIR/timing/$_merge_job.tsv"
+        if [ -s "$_merge_rows" ]; then
+            cat "$_merge_rows" >> "$TYPELISP_CI_TIMING_FILE"
+        elif [ "$1" = required ]; then
+            echo "FAIL: batch pool job published no timing row: $_merge_job" >&2
+            exit 1
+        fi
+    done < "$INTEGRATION_POOL_DIR/queue"
+}
+
+# Compile every chunk queued in QUEUE (`batch-<group>-<index>|<cap MiB>` rows)
+# in the bounded pool, then settle them in queue order. The pool proves one
+# successful job per queued chunk; a chunk whose compiler failed is still a
+# successful job, and settling sends its entries to the standalone replay.
+integration_batch_run_pool() {
+    _pool_queue=$1
+    INTEGRATION_POOL_DIR="$WORKDIR/batch-pool"
+    bounded_pool_init "$INTEGRATION_POOL_DIR" "$INTEGRATION_POOL_BUDGET_MIB" \
+        "$_pool_queue" || exit 1
+    mkdir -p "$INTEGRATION_POOL_DIR/timing"
+    _pool_count=$(wc -l < "$_pool_queue" | tr -d ' ')
+    echo "[integration] batch pool: $_pool_count chunk(s)," \
+        "$INTEGRATION_POOL_WORKERS worker(s)," \
+        "$INTEGRATION_POOL_BUDGET_MIB MiB of enforced caps at once"
+    ci_timing_set_now_ms
+    _pool_started=$CI_TIMING_NOW_MS
+    bounded_pool_start "$INTEGRATION_POOL_DIR" "$INTEGRATION_POOL_WORKERS"
+    if ! bounded_pool_join "$INTEGRATION_POOL_DIR"; then
+        integration_batch_merge_pool_timing available
+        echo "FAIL: integration batch pool did not complete every chunk" >&2
+        exit 1
+    fi
+    ci_timing_set_now_ms
+    INTEGRATION_POOL_WALL_MS=$((INTEGRATION_POOL_WALL_MS + CI_TIMING_NOW_MS - _pool_started))
+    integration_batch_merge_pool_timing required
+    while IFS='|' read -r _pool_job _pool_cap; do
+        [ "$INTEGRATION_POOL_ENFORCE_CAPS" -eq 1 ] || _pool_cap=
+        integration_batch_settle_chunk "$WORKDIR/$_pool_job.list" \
+            "${_pool_job#batch-}" "$_pool_cap"
+    done < "$_pool_queue"
 }
 
 integration_batch_sentinel_entry() {
@@ -1683,6 +1852,75 @@ EOF
         [ "$INTEGRATION_BATCH_FAILED_CHUNKS" -ne 0 ]; then
         echo "FAIL: batch chunk counters changed during observability self-test" >&2
         exit 1
+    fi
+
+    # The pooled route: three chunks, one of whose compiles fails. Every chunk
+    # is settled in queue order, the failed chunk's candidate output is removed
+    # for the standalone replay, and every job publishes its own timing row.
+    cat > "$_fake_compiler" <<'EOF'
+#!/bin/sh
+[ "$1" = compile ] && [ "$2" = --batch ] && [ -s "$3" ] || exit 2
+if grep -q 'fail\.tl' "$3"; then
+    exit 1
+fi
+if grep -q 'slow\.tl' "$3"; then
+    sleep 5
+fi
+exit 0
+EOF
+    chmod +x "$_fake_compiler"
+    printf 'a.tl|%s/a.s\n' "$_dir" > "$_dir/batch-embedded-1.list"
+    printf 'fail.tl|%s/fail.s\n' "$_dir" > "$_dir/batch-embedded-2.list"
+    printf 'c.tl|%s/c.s\n' "$_dir" > "$_dir/batch-stage-stdlib-1.list"
+    : > "$_dir/fail.s"
+    printf '%s\n' 'batch-embedded-1|64' 'batch-embedded-2|64' \
+        'batch-stage-stdlib-1|64' > "$_dir/pool.queue"
+    INTEGRATION_BATCH_TARGET_ARGS=
+    INTEGRATION_POOL_CHUNK_CAP_MIB=64
+    INTEGRATION_POOL_BUDGET_MIB=$((INTEGRATION_POOL_WORKERS * 64))
+    _real_host=linux
+    case "$(uname -s)" in
+        MINGW* | MSYS* | CYGWIN*) _real_host=windows ;;
+    esac
+    [ "$_real_host" = linux ] || INTEGRATION_POOL_ENFORCE_CAPS=0
+    integration_batch_run_pool "$_dir/pool.queue"
+    if [ "$INTEGRATION_BATCH_CHUNKS" -ne 4 ] ||
+        [ "$INTEGRATION_BATCH_FAILED_CHUNKS" -ne 1 ]; then
+        echo "FAIL: pooled chunks settled as $INTEGRATION_BATCH_CHUNKS chunk(s)," \
+            "$INTEGRATION_BATCH_FAILED_CHUNKS failed; expected 4 and 1" >&2
+        exit 1
+    fi
+    if [ -e "$_dir/fail.s" ]; then
+        echo "FAIL: a failed pooled chunk kept its candidate output" >&2
+        exit 1
+    fi
+    _pool_rows=$(awk -F '\t' '$3 == "compile" { printf "%s:%s ", $2, $5 }' "$_timing")
+    if [ "$_pool_rows" != "batch-embedded-1:0 batch-embedded-1:0 batch-embedded-2:1 batch-stage-stdlib-1:0 " ]; then
+        echo "FAIL: pooled batch timing rows missing, reordered or wrong: $_pool_rows" >&2
+        cat "$_timing" >&2
+        exit 1
+    fi
+    if [ "$_real_host" = linux ] && [ "$INTEGRATION_POOL_PEAK_BYTES" -le 0 ]; then
+        echo "FAIL: pooled chunks recorded no bounded memory peak" >&2
+        exit 1
+    fi
+
+    # A chunk stopped by its bound fails the gate instead of replaying.
+    if [ "$_real_host" = linux ]; then
+        printf 'slow.tl|%s/slow.s\n' "$_dir" > "$_dir/batch-embedded-9.list"
+        printf '%s\n' 'batch-embedded-9|64' > "$_dir/slow.queue"
+        if (
+            INTEGRATION_POOL_JOB_TIMEOUT_SECONDS=1
+            integration_batch_run_pool "$_dir/slow.queue"
+        ) > "$_dir/slow.stdout" 2> "$_dir/slow.stderr"; then
+            echo "FAIL: a pooled chunk past its timeout did not fail the gate" >&2
+            exit 1
+        fi
+        if ! grep -q 'reason=timeout' "$_dir/slow.stderr"; then
+            echo "FAIL: a timed-out pooled chunk was not reported as a bound stop" >&2
+            cat "$_dir/slow.stderr" >&2
+            exit 1
+        fi
     fi
 
     printf '%s\n' "verify-integration batch observability self-test passed"
@@ -3691,6 +3929,11 @@ integration_batch_precompile() {
         fi
     done < "$NORMALIZED_MANIFEST"
 
+    # Every chunk is an independent compiler process writing only its own
+    # cases' outputs, so they are queued in chunk order and compiled in the
+    # bounded pool; settling afterwards walks the same order.
+    _pool_queue="$WORKDIR/batch-pool.queue"
+    : > "$_pool_queue"
     for _group in embedded stage-stdlib; do
         if [ "$_group" = embedded ]; then
             _group_list=$_group0
@@ -3706,20 +3949,19 @@ integration_batch_precompile() {
             _chunk="$WORKDIR/batch-$_group-$_index.list"
             sed -n "$((_offset + 1)),$((_offset + INTEGRATION_BATCH_SIZE))p" \
                 "$_group_list" > "$_chunk"
-            if [ "$_group" = embedded ]; then
-                integration_batch_run_chunk "$_chunk" "$_group-$_index" \
-                    $INTEGRATION_BATCH_TARGET_ARGS \
-                    --stdlib-root "$ROOT/src"
-            else
-                integration_batch_run_chunk "$_chunk" "$_group-$_index" \
-                    $INTEGRATION_BATCH_TARGET_ARGS \
-                    --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src"
-            fi
+            printf 'batch-%s-%s|%s\n' "$_group" "$_index" \
+                "$INTEGRATION_POOL_CHUNK_CAP_MIB" >> "$_pool_queue"
             _offset=$((_offset + INTEGRATION_BATCH_SIZE))
         done
     done
+    [ ! -s "$_pool_queue" ] || integration_batch_run_pool "$_pool_queue"
     echo "[integration] batched compile: $INTEGRATION_BATCH_CHUNKS chunk(s)" \
         "of up to $INTEGRATION_BATCH_SIZE, $INTEGRATION_BATCH_FAILED_CHUNKS failed"
+    if [ "$INTEGRATION_POOL_PEAK_BYTES" -gt 0 ]; then
+        echo "[integration] batch pool: ${INTEGRATION_POOL_WALL_MS}ms wall;" \
+            "largest chunk $((INTEGRATION_POOL_PEAK_BYTES / 1048576)) MiB" \
+            "($INTEGRATION_POOL_PEAK_LABEL) of a $INTEGRATION_POOL_CHUNK_CAP_MIB MiB cap"
+    fi
 }
 
 if [ "$HOST_OS" = windows ]; then

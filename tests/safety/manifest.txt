@@ -165,6 +165,12 @@ vector_invalid_capability_reject|check-fail|tests/safety/vector_invalid_capabili
 unbound_variable_reject|check-fail|tests/safety/unbound_variable_reject.tl|-|unbound name missing
 unbound_near_miss_reject|check-fail|tests/safety/unbound_near_miss_reject.tl|-|help: did you mean render-value?
 unbound_qualified_near_miss_reject|check-fail|tests/safety/unbound_qualified_near_miss_reject.tl|-|help: did you mean string.eq?
+qualified_string_append_unexported_reject|check-fail|tests/safety/qualified_string_append_unexported_reject.tl|-|typecheck: unbound name string.string-append
+qualified_string_concat_unexported_reject|check-fail|tests/safety/qualified_string_concat_unexported_reject.tl|-|typecheck: unbound name string.string-concat
+qualified_string_append_alias_reject|check-fail|tests/safety/qualified_string_append_alias_reject.tl|-|typecheck: unbound name s.string-append
+qualified_string_concat_full_path_reject|check-fail|tests/safety/qualified_string_concat_full_path_reject.tl|-|typecheck: unbound name stdlib.string.string-concat
+qualified_string_eq_unexported_reject|check-fail|tests/safety/qualified_string_eq_unexported_reject.tl|-|typecheck: unbound name string.string-eq
+qualified_string_helpers_check_ok|check-ok|tests/safety/qualified_string_helpers_check_ok.tl|-|-
 io_print_template_literal_reject|check-fail|tests/safety/io_print_template_literal_reject.tl|-|format: template must be a string literal
 removed_io_print_string_reject|check-fail|tests/safety/removed_io_print_string_reject.tl|-|typecheck: unbound name io.print-string
 removed_io_print_str_reject|check-fail|tests/safety/removed_io_print_str_reject.tl|-|typecheck: unbound name io.print-str
@@ -203,6 +209,13 @@ hashmap_bang_rvalue_reject|check-fail|tests/safety/hashmap_bang_rvalue_reject.tl
 vector_bang_rvalue_reject|check-fail|tests/safety/vector_bang_rvalue_reject.tl|-|borrow requires a local, parameter, or aggregate place
 hashmap_bang_shared_borrow_reject|check-fail|tests/safety/hashmap_bang_shared_borrow_reject.tl|-|cannot mutably borrow borrowed place `m`
 hashmap_bang_projected_shared_borrow_reject|check-fail|tests/safety/hashmap_bang_projected_shared_borrow_reject.tl|-|cannot mutably borrow borrowed place `holder.map`
+nested_call_loan_enum_reject|check-fail|tests/safety/nested_call_loan_enum_reject.tl|-|cannot mutably borrow borrowed place `wire`
+nested_call_loan_struct_reject|check-fail|tests/safety/nested_call_loan_struct_reject.tl|-|cannot mutably borrow borrowed place `wire`
+nested_call_loan_match_reject|check-fail|tests/safety/nested_call_loan_match_reject.tl|-|cannot mutably borrow borrowed place `wire`
+nested_call_loan_slice_reject|check-fail|tests/safety/nested_call_loan_slice_reject.tl|-|cannot mutably borrow borrowed place `wire`
+nested_call_loan_move_reject|check-fail|tests/safety/nested_call_loan_move_reject.tl|-|cannot move borrowed place `wire`
+nested_call_loan_scoped_ok|check-ok|tests/safety/nested_call_loan_scoped_ok.tl|-|-
+nested_call_loan_unrelated_ok|check-ok|tests/safety/nested_call_loan_unrelated_ok.tl|-|-
 hashmap_nominal_value_noncloneable_reject|check-fail|tests/safety/hashmap_nominal_value_noncloneable_reject.tl|-|typecheck: clone unsupported type HashmapNoncloneableValue at HashmapNoncloneableValue.choice.Raw[0].raw: (Ptr i64) has no clone capability
 hashmap_unsupported_value_kind_reject|check-fail|tests/safety/hashmap_unsupported_value_kind_reject.tl|-|hashmap: value type tuple_i64_i64_nil has unsupported value kind tuple
 hashmap_string_probe_forged_capacity_trap|run-trap|tests/safety/hashmap_string_probe_forged_capacity_trap.tl|134|array index out of bounds
@@ -775,3 +788,24 @@ decls_generated_wildcard_selected_conflict_reject|check-fail|tests/safety/decls_
 module_generated_selected_conflict_reject|check-fail|tests/safety/module_generated_selected_conflict_reject.tl|-|ambiguous unqualified import
 module_generated_wildcard_conflict_reject|check-fail|tests/safety/module_generated_wildcard_conflict_reject.tl|-|ambiguous unqualified import
 module_generated_wildcard_selected_conflict_reject|check-fail|tests/safety/module_generated_wildcard_selected_conflict_reject.tl|-|ambiguous unqualified import
+
+# Struct fields and enum variants past the former 1000-member registry stride
+# (#7921) resolve through their own declaration, never a later one's members:
+# each probe is the ordinary type error for its own i64 member, at widths
+# 1001-2500 with and without a later declaration. wide_aggregates.tl generates
+# the wide declarations; wide_struct_literal_decls.tl writes the issue's
+# reproducer out by hand. The well-typed twins run as the wide_struct_members,
+# wide_enum_variants and wide_struct_literal native rows.
+wide_struct_1001_next_reject|check-fail|tests/safety/wide_struct_1001_next_reject.tl|-|if condition must be bool: expected bool, found i64
+wide_struct_1002_next_reject|check-fail|tests/safety/wide_struct_1002_next_reject.tl|-|if condition must be bool: expected bool, found i64
+wide_struct_1002_alone_reject|check-fail|tests/safety/wide_struct_1002_alone_reject.tl|-|if condition must be bool: expected bool, found i64
+wide_struct_1003_next_reject|check-fail|tests/safety/wide_struct_1003_next_reject.tl|-|if condition must be bool: expected bool, found i64
+wide_struct_1003_alone_reject|check-fail|tests/safety/wide_struct_1003_alone_reject.tl|-|if condition must be bool: expected bool, found i64
+wide_struct_2500_next_reject|check-fail|tests/safety/wide_struct_2500_next_reject.tl|-|if condition must be bool: expected bool, found i64
+wide_struct_2500_next_span_reject|check-fail|tests/safety/wide_struct_2500_next_reject.tl|-|wide_struct_2500_next_reject.tl:20:3
+wide_struct_2500_alone_reject|check-fail|tests/safety/wide_struct_2500_alone_reject.tl|-|if condition must be bool: expected bool, found i64
+wide_struct_literal_reject|check-fail|tests/safety/wide_struct_literal_reject.tl|-|if condition must be bool: expected bool, found i64
+wide_enum_1003_next_constructor_reject|check-fail|tests/safety/wide_enum_1003_next_constructor_reject.tl|-|call `Big.V1001` argument 1 type mismatch: expected i64, found bool
+wide_enum_1003_next_match_reject|check-fail|tests/safety/wide_enum_1003_next_match_reject.tl|-|if condition must be bool: expected bool, found i64
+wide_enum_2500_alone_constructor_reject|check-fail|tests/safety/wide_enum_2500_alone_constructor_reject.tl|-|call `Big.V2499` argument 1 type mismatch: expected i64, found bool
+wide_aggregates_count_reject|check-fail|tests/safety/wide_aggregates_count_reject.tl|-|unbound name wide-aggregates-count-must-be-an-integer-literal

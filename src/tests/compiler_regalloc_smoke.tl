@@ -59,7 +59,7 @@
                   (ir.CompilerIrValue.I64 3)
                   (reg_tests.compiler-reg-i64-ty))
                 (compiler-regalloc-smoke-instr-seq-prepend
-                  (ir.ir-instr-spmd-call
+                  (ir.compiler-ir-test-spmd-private-call
                     (ci.intern-generated-canonical-name "spmd_helper")
                     (ir.CompilerIrSpmdBackend.Avx512)
                     8
@@ -79,14 +79,15 @@
                         (ir.CompilerIrMaybeValue.Some
                           (ir.CompilerIrValue.Var 4)))
                       (ir.compiler-ir-instr-seq-empty))))))))
-        ir.CompilerIrBlockList.Nil))))
+        ir.CompilerIrBlockList.Nil)
+      ir.CompilerIrFunctionAbi.Ordinary)))
 
 (define (compiler-reg-smoke-spmd-call-shape-ok?) : bool
   (let
     [func : ir.CompilerIrFunction (compiler-reg-smoke-spmd-call-function)]
     [blocks : ir.CompilerIrBlockList
       (match (clone func)
-        [(ir.CompilerIrFunction.Function _ _ _ _ inner) inner])]
+        [(ir.CompilerIrFunction.Function _ _ _ _ inner _) inner])]
     [call-args : live.CompilerLiveI64Set
       (reg.compiler-reg-call-arg-vars-blocks
         (clone blocks)
@@ -172,7 +173,8 @@
                           (ir.CompilerIrMaybeValue.Some
                             (ir.CompilerIrValue.Var 7)))
                         (ir.compiler-ir-instr-seq-empty))))))))))
-      ir.CompilerIrBlockList.Nil)))
+      ir.CompilerIrBlockList.Nil)
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-reg-smoke-descriptor-pair-group-ok?) : bool
   (let

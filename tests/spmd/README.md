@@ -297,7 +297,11 @@ Coverage map:
   `private_helper_*` fixtures execute the scalar, AVX2, and AVX-512 private
   ABIs for i64/f64/bool values, nested calls, direct helper loads/bounds
   checks, branch masks, and tails. Focused source-to-private-call IR coverage
-  also lives in `src/tests/compiler_spmd_call_lower_*_smoke.tl`.
+  also lives in `src/tests/compiler_spmd_call_lower_*_smoke.tl`, which pins
+  each helper's private ABI descriptor (roles, index mapping, result class)
+  for every backend and its survival through optimization; the descriptor's
+  integrity checks have one rejection case per field in
+  `src/tests/compiler_ir_types_smoke.tl`.
   Function-value/indirect varying calls remain rejected by the safety
   fixtures.
 - `spmd-reduce` and `spmd-scan` coverage for the documented

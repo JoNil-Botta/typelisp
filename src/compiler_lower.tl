@@ -26551,7 +26551,8 @@
                                 (lower-state-next-var
                                   (lower-global-shared-view final-state))
                                 (lower-state-build-function-blocks
-                                  (lower-global-shared-view final-state))))
+                                  (lower-global-shared-view final-state))
+                                ir.CompilerIrFunctionAbi.Ordinary))
                             (lower-state-spans final-state)))]
                       [(ResultLowerState.Err message)
                         (ResultLowerFunction.Err message)])]
@@ -43109,7 +43110,7 @@
                             hidden-name
                             params
                             ret
-                            false
+                            result-varying
                             body
                             (ir.CompilerIrSpmdBackend.Scalar)
                             (lower-global-shared-view call-args)
@@ -43123,34 +43124,47 @@
                             (lower-state-mode
                               (lower-global-shared-view named-state)))
                             [(ResultLowerFunction.Ok functions helper-spans)
-                              (match (lower-avx512-emit-spmd-call
-                                (lower-global-shared-view ctx)
-                                (lower-state-add-functions
-                                  named-state
-                                  functions
-                                  helper-spans)
-                                hidden-name
-                                (ir.CompilerIrSpmdBackend.Scalar)
-                                (ir.CompilerIrValue.Bool true)
-                                1
-                                call-args
-                                result-ty
-                                result-varying
-                                origin
-                                ir.CompilerIrSpmdCallOrigin.Private)
-                                [(ResultLowerExpr.Ok lowered)
-                                  (match lowered
-                                    [(LowerExpr.Expr call-state value ty)
-                                      (LowerMaybeSpmdCall.Some
-                                        (LowerExpr.Expr
-                                          (lower-apply-arg-writebacks
-                                            ctx
-                                            call-state
-                                            writebacks)
-                                          value
-                                          ty))])]
-                                [(ResultLowerExpr.Err message)
-                                  (LowerMaybeSpmdCall.Err message)])]
+                              (match (lower-spmd-generated-helper-abi
+                                (lower-global-shared-view functions)
+                                hidden-name)
+                                [(ir.CompilerIrFunctionAbi.SpmdPrivate
+                                    helper-abi)
+                                  (match (lower-avx512-emit-spmd-call
+                                    (lower-global-shared-view ctx)
+                                    (lower-state-add-functions
+                                      named-state
+                                      functions
+                                      helper-spans)
+                                    hidden-name
+                                    (ir.CompilerIrSpmdBackend.Scalar)
+                                    (ir.CompilerIrValue.Bool true)
+                                    1
+                                    call-args
+                                    result-ty
+                                    result-varying
+                                    origin
+                                    (ir.CompilerIrSpmdCallOrigin.Private
+                                      helper-abi))
+                                    [(ResultLowerExpr.Ok lowered)
+                                      (match lowered
+                                        [(LowerExpr.Expr call-state value ty)
+                                          (LowerMaybeSpmdCall.Some
+                                            (LowerExpr.Expr
+                                              (lower-apply-arg-writebacks
+                                                ctx
+                                                call-state
+                                                writebacks)
+                                              value
+                                              ty))])]
+                                    [(ResultLowerExpr.Err message)
+                                      (LowerMaybeSpmdCall.Err message)])]
+                                [(ir.CompilerIrFunctionAbi.Ordinary)
+                                  (LowerMaybeSpmdCall.Err
+                                    (box
+                                      (lower-diagnostic-at-expr
+                                        ctx
+                                        origin
+                                        "lower: generated SPMD helper has no private ABI descriptor")))])]
                             [(ResultLowerFunction.Err message)
                               (LowerMaybeSpmdCall.Err message)]))])]
                   [(ResultLowerCallArgs.Err message)
@@ -68010,6 +68024,96 @@
   [extra : ir.CompilerIrSpmdCallArg]) : ir.CompilerIrSpmdCallArgSeq
   (ir.compiler-ir-spmd-call-arg-seq-append args extra))
 
+;; The private SPMD ABI descriptor of a generated helper (#7405), built from
+;; the helper's physical signature and the call argument classification it was
+;; specialized for. `physical-params` is the signature exactly as emitted: the
+;; active mask, one parameter per declared source parameter in order, then the
+;; hidden index base when `index` is `Appended`. `call-args` supplies each
+;; source parameter's class and source type. The helper and every call to it
+;; carry this one record.
+(define (lower-spmd-private-abi
+  [callee : i64]
+  [backend : ir.CompilerIrSpmdBackend]
+  [lanes : i64]
+  [physical-params : ir.CompilerIrParamSeq]
+  [call-args : ir.CompilerIrSpmdCallArgSeq]
+  [index : ir.CompilerIrSpmdPrivateIndex]
+  [ret-ty : ast.AstType]
+  [result-varying : bool]) : ir.CompilerIrSpmdPrivateAbi
+  (let
+    [params : ir.CompilerIrSpmdPrivateParamSeq
+      (ir.compiler-ir-spmd-private-param-seq-with-capacity physical-params.len)]
+    [appended : bool
+      (match index
+        [(ir.CompilerIrSpmdPrivateIndex.Appended _) true]
+        [_ false])]
+    [ordinal : i64 0]
+    (begin
+      (while (< ordinal physical-params.len)
+        (begin
+          (match (ir.compiler-ir-param-seq-ref
+            (lower-global-shared-view physical-params)
+            ordinal)
+            [(ir.CompilerIrParam.Param _ ty _)
+              (ir.compiler-ir-spmd-private-param-seq-push!
+                (&mut params)
+                (ir.CompilerIrSpmdPrivateParam.Param
+                  ordinal
+                  (cond
+                    [(= ordinal 0)
+                      (ir.CompilerIrSpmdPrivateParamRole.ActiveMask)]
+                    [(and appended (= ordinal (- physical-params.len 1)))
+                      (ir.CompilerIrSpmdPrivateParamRole.IndexBase)]
+                    [else
+                      (match (lower-spmd-call-arg-at
+                        (lower-global-shared-view call-args)
+                        (- ordinal 1))
+                        [(ir.CompilerIrSpmdCallArg.Arg class _ source-ty)
+                          (ir.CompilerIrSpmdPrivateParamRole.Source
+                            (- ordinal 1)
+                            class
+                            source-ty)])])
+                  ty))])
+          (set! ordinal (+ ordinal 1))))
+      (ir.CompilerIrSpmdPrivateAbi
+        (ir.CompilerIrSpmdPrivateAbiSchema.V1)
+        callee
+        backend
+        lanes
+        params
+        index
+        (if (tc_core.tc-type-eq
+          (lower-global-shared-view ret-ty)
+          (ast.AstType.Unit))
+          (ir.CompilerIrSpmdPrivateResult.Unit)
+          (ir.CompilerIrSpmdPrivateResult.Value
+            (lower-spmd-ir-value-class
+              (lower-global-shared-view ret-ty)
+              result-varying)
+            ret-ty))))))
+
+;; The ABI of the generated helper named `helper` among the functions its
+;; lowering produced. The helper itself is pushed last, after any functions its
+;; body lifted, so the search starts there.
+(define (lower-spmd-generated-helper-abi
+  [functions : ir.CompilerIrFunctionSeq]
+  [helper : i64]) : ir.CompilerIrFunctionAbi
+  (let
+    [index : i64 (- functions.len 1)]
+    [found : ir.CompilerIrFunctionAbi ir.CompilerIrFunctionAbi.Ordinary]
+    (begin
+      (while (>= index 0)
+        (match (ir.compiler-ir-function-seq-ref
+          (lower-global-shared-view functions)
+          index)
+          [(ir.CompilerIrFunction.Function name _ _ _ _ function-abi)
+            (if (ir.compiler-ir-symbol-eq? name helper)
+              (begin
+                (set! found (clone function-abi))
+                (set! index -1))
+              (set! index (- index 1)))]))
+      found)))
+
 (define (lower-spmd-private-param-list-append-index
   [params : ir.CompilerIrParamSeq]
   [var-id : i64]) : ir.CompilerIrParamSeq
@@ -68027,6 +68131,7 @@
   [ret : ast.AstType]
   [result-varying : bool]
   [body : ast.AstExpr]
+  [backend : ir.CompilerIrSpmdBackend]
   [call-args : ir.CompilerIrSpmdCallArgSeq]
   [lanes : i64]
   [helper-index : String]
@@ -68143,39 +68248,61 @@
                       (ast.AstType.Unit))
                       (ir.CompilerIrMaybeValue.No)
                       (ir.CompilerIrMaybeValue.Some return-value))))]
+              [physical-params : ir.CompilerIrParamSeq
+                (ir.compiler-ir-param-seq-prepend
+                  (ir.CompilerIrParam.Param
+                    (if (lower-mode-avx2? mode)
+                      "__tl_spmd_active_mask_avx2"
+                      "__tl_spmd_active_mask")
+                    (ast.AstType.Bool)
+                    0)
+                  (let
+                    [source-params : ir.CompilerIrParamSeq
+                      (lower-spmd-private-param-list
+                        (compiler-lower-state-from-name-cache names)
+                        ctx
+                        params
+                        (lower-global-shared-view call-args)
+                        mode
+                        1)]
+                    (if (or
+                      (= (string.string-length helper-index) 0)
+                      (>= helper-index-source-param 0))
+                      source-params
+                      (lower-spmd-private-param-list-append-index
+                        source-params
+                        source-param-count))))]
+              [index-mapping : ir.CompilerIrSpmdPrivateIndex
+                (cond
+                  [(= (string.string-length helper-index) 0)
+                    (ir.CompilerIrSpmdPrivateIndex.None)]
+                  [(>= helper-index-source-param 0)
+                    (ir.CompilerIrSpmdPrivateIndex.ReuseSource
+                      helper-index-source-param)]
+                  [else
+                    (ir.CompilerIrSpmdPrivateIndex.Appended source-param-count)])]
+              [abi : ir.CompilerIrSpmdPrivateAbi
+                (lower-spmd-private-abi
+                  hidden-name
+                  backend
+                  lanes
+                  (lower-global-shared-view physical-params)
+                  call-args
+                  index-mapping
+                  (lower-global-shared-view ret-ty)
+                  result-varying)]
               (ResultLowerFunction.Ok
                 (lower-state-build-functions-with
                   (lower-global-shared-view final-state)
                   (ir.CompilerIrFunction.Function
                     hidden-name
-                    (ir.compiler-ir-param-seq-prepend
-                      (ir.CompilerIrParam.Param
-                        (if (lower-mode-avx2? mode)
-                          "__tl_spmd_active_mask_avx2"
-                          "__tl_spmd_active_mask")
-                        (ast.AstType.Bool)
-                        0)
-                      (let
-                        [source-params : ir.CompilerIrParamSeq
-                          (lower-spmd-private-param-list
-                            (compiler-lower-state-from-name-cache names)
-                            ctx
-                            params
-                            call-args
-                            mode
-                            1)]
-                        (if (or
-                          (= (string.string-length helper-index) 0)
-                          (>= helper-index-source-param 0))
-                          source-params
-                          (lower-spmd-private-param-list-append-index
-                            source-params
-                            source-param-count))))
+                    physical-params
                     ret-ty
                     (lower-state-next-var
                       (lower-global-shared-view final-state))
                     (lower-state-build-function-blocks
-                      (lower-global-shared-view final-state))))
+                      (lower-global-shared-view final-state))
+                    (ir.compiler-ir-function-abi-private abi)))
                 (lower-state-spans final-state)))])]
       [(ResultLowerExpr.Err message) (ResultLowerFunction.Err message)])))
 
@@ -68187,7 +68314,9 @@
   [hidden-name : i64]
   [params : ast.AstParamList]
   [ret : ast.AstType]
+  [result-varying : bool]
   [body : ast.AstExpr]
+  [call-args : ir.CompilerIrSpmdCallArgSeq]
   [spans : ir.CompilerSourceSpans]
   [names : LowerNameCache]
   [mode : CompilerLowerMode]) : ResultLowerFunction
@@ -68242,22 +68371,36 @@
       (lower-global-shared-view ret-ty)
       (- 0 1))
       [(ResultLowerState.Ok final-state)
-        (ResultLowerFunction.Ok
-          (lower-state-build-functions-with
-            (lower-global-shared-view final-state)
-            (ir.CompilerIrFunction.Function
+        (let
+          [physical-params : ir.CompilerIrParamSeq
+            (ir.compiler-ir-param-seq-prepend
+              (ir.CompilerIrParam.Param
+                "__tl_spmd_active_mask"
+                (ast.AstType.Bool)
+                0)
+              (lower-param-list ctx params 1))]
+          [abi : ir.CompilerIrSpmdPrivateAbi
+            (lower-spmd-private-abi
               hidden-name
-              (ir.compiler-ir-param-seq-prepend
-                (ir.CompilerIrParam.Param
-                  "__tl_spmd_active_mask"
-                  (ast.AstType.Bool)
-                  0)
-                (lower-param-list ctx params 1))
-              ret-ty
-              (lower-state-next-var (lower-global-shared-view final-state))
-              (lower-state-build-function-blocks
-                (lower-global-shared-view final-state))))
-          (lower-state-spans final-state))]
+              (ir.CompilerIrSpmdBackend.Scalar)
+              1
+              (lower-global-shared-view physical-params)
+              call-args
+              (ir.CompilerIrSpmdPrivateIndex.None)
+              (lower-global-shared-view ret-ty)
+              result-varying)]
+          (ResultLowerFunction.Ok
+            (lower-state-build-functions-with
+              (lower-global-shared-view final-state)
+              (ir.CompilerIrFunction.Function
+                hidden-name
+                physical-params
+                ret-ty
+                (lower-state-next-var (lower-global-shared-view final-state))
+                (lower-state-build-function-blocks
+                  (lower-global-shared-view final-state))
+                (ir.compiler-ir-function-abi-private abi)))
+            (lower-state-spans final-state)))]
       [(ResultLowerState.Err message) (ResultLowerFunction.Err message)])))
 
 (define (lower-spmd-specialized-helper-function
@@ -68288,7 +68431,9 @@
         hidden-name
         params
         ret
+        result-varying
         body
+        call-args
         spans
         names
         mode)]
@@ -68303,6 +68448,7 @@
         ret
         result-varying
         body
+        (ir.CompilerIrSpmdBackend.Avx512)
         call-args
         lanes
         helper-index
@@ -68321,6 +68467,7 @@
         ret
         result-varying
         body
+        (ir.CompilerIrSpmdBackend.Avx2)
         call-args
         lanes
         helper-index
@@ -69045,21 +69192,34 @@
                                 (lower-state-mode
                                   (lower-global-shared-view named-state)))
                                 [(ResultLowerFunction.Ok functions helper-spans)
-                                  (lower-avx512-emit-spmd-call-active
-                                    ctx
-                                    (lower-state-add-functions
-                                      named-state
-                                      functions
-                                      helper-spans)
-                                    private-name
-                                    backend
-                                    active-mask
-                                    lanes
-                                    abi-call-args
-                                    result-ty
-                                    result-varying
-                                    expr
-                                    ir.CompilerIrSpmdCallOrigin.Private)]
+                                  (match (lower-spmd-generated-helper-abi
+                                    (lower-global-shared-view functions)
+                                    private-name)
+                                    [(ir.CompilerIrFunctionAbi.SpmdPrivate
+                                        helper-abi)
+                                      (lower-avx512-emit-spmd-call-active
+                                        ctx
+                                        (lower-state-add-functions
+                                          named-state
+                                          functions
+                                          helper-spans)
+                                        private-name
+                                        backend
+                                        active-mask
+                                        lanes
+                                        abi-call-args
+                                        result-ty
+                                        result-varying
+                                        expr
+                                        (ir.CompilerIrSpmdCallOrigin.Private
+                                          helper-abi))]
+                                    [(ir.CompilerIrFunctionAbi.Ordinary)
+                                      (ResultLowerExpr.Err
+                                        (box
+                                          (lower-diagnostic-at-expr
+                                            ctx
+                                            expr
+                                            "lower: generated SPMD helper has no private ABI descriptor")))])]
                                 [(ResultLowerFunction.Err message)
                                   (ResultLowerExpr.Err message)]))]))]
                     [(ResultLowerSpmdCallArgs.Err message)
@@ -76747,7 +76907,8 @@
                               (lower-state-next-var
                                 (lower-global-shared-view final-state))
                               (lower-state-build-function-blocks
-                                (lower-global-shared-view final-state))))
+                                (lower-global-shared-view final-state))
+                              ir.CompilerIrFunctionAbi.Ordinary))
                           (lower-state-spans final-state)))]
                     [(ResultLowerState.Err message)
                       (ResultLowerFunction.Err message)])]
@@ -78749,7 +78910,8 @@
                         leading-sret?)
                       physical-ret-ty
                       (+ param-count 41)
-                      (ir.compiler-ir-block-builder-to-list blocks)))
+                      (ir.compiler-ir-block-builder-to-list blocks)
+                      ir.CompilerIrFunctionAbi.Ordinary))
                   spans)))]
           [(LowerMaybeIrSymbol.No)
             (ResultLowerFunction.Err

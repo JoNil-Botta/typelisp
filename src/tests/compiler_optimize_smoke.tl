@@ -209,7 +209,8 @@
     (opt-switch-test-params)
     (ast.AstType.I64)
     16
-    blocks))
+    blocks
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (opt-switch-test-compare-block
   [label : i64]
@@ -3191,7 +3192,8 @@
     (compiler_optimize_tests.opt-gvn-test-params)
     (ast.AstType.I64)
     4
-    (smoke-heavy-pass-large-blocks)))
+    (smoke-heavy-pass-large-blocks)
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (smoke-heavy-pass-large-gvn-self-test) : i64
   (let
@@ -3214,7 +3216,7 @@
           (opt.opt-heavy-pass-block-limit))
         (return 2))
       (match optimized
-        [(ir.CompilerIrFunction.Function _ _ _ _ optimized-blocks)
+        [(ir.CompilerIrFunction.Function _ _ _ _ optimized-blocks _)
           (if (=
             (compiler_optimize_tests.opt-gvn-count-binops-blocks
               optimized-blocks)
@@ -3387,6 +3389,10 @@
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-sccp-self-test"
       (compiler_optimize_tests.compiler-optimize-sccp-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-addr-taken-forwarding-self-test"
+      (compiler_optimize_tests.compiler-optimize-addr-taken-forwarding-self-test)
       42)
     42))
 
@@ -3678,7 +3684,8 @@
                 (smoke-inline-phi-exit (ir.compiler-ir-label "latch"))
                 (ir.CompilerIrInstr.Return
                   (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 2)))))
-            ir.CompilerIrBlockList.Nil))))))
+            ir.CompilerIrBlockList.Nil))))
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (smoke-inline-phi-params) : ir.CompilerIrParamSeq
   (ir.compiler-ir-param-seq-prepend
@@ -3713,7 +3720,8 @@
           (compiler_optimize_tests.opt-test-instrs
             (ir.CompilerIrInstr.Return
               (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 4)))))
-        ir.CompilerIrBlockList.Nil))))
+        ir.CompilerIrBlockList.Nil))
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (smoke-inline-phi-call
   [symbols : compiler_optimize_tests.OptInlineMultiTestSymbols]) : ir.CompilerIrInstr
@@ -4067,7 +4075,8 @@
                   (compiler_optimize_tests.opt-test-instrs
                     (ir.CompilerIrInstr.Return
                       (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 4)))))
-                (ir.CompilerIrBlockList.Nil)))))))))
+                (ir.CompilerIrBlockList.Nil)))))))
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (smoke-c27-count-scalar-selects-instrs
   [instrs : ir.CompilerIrInstrSeq]
@@ -4175,7 +4184,8 @@
             (ir.CompilerIrValue.Var 1)
             (ir.CompilerIrValue.I64 0)
             (ast.AstType.I64))))
-      (ir.CompilerIrBlockList.Nil))))
+      (ir.CompilerIrBlockList.Nil))
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (smoke-c27-if-convert-compare-self-test) : i64
   (let
@@ -4189,7 +4199,13 @@
         (smoke-c27-if-convert-function true))]
     [single-use : ir.CompilerIrFunction
       (match (smoke-c27-compare-function false)
-        [(ir.CompilerIrFunction.Function name params ret frame blocks)
+        [(ir.CompilerIrFunction.Function
+            name
+            params
+            ret
+            frame
+            blocks
+            function-abi)
           (ir.CompilerIrFunction.Function
             name
             params
@@ -4199,10 +4215,17 @@
               (opt.opt-collect-blocks-uses-array
                 frame
                 (opt.compiler-opt-global-shared-view blocks))
-              blocks))])]
+              blocks)
+            function-abi)])]
     [multi-use : ir.CompilerIrFunction
       (match (smoke-c27-compare-function true)
-        [(ir.CompilerIrFunction.Function name params ret frame blocks)
+        [(ir.CompilerIrFunction.Function
+            name
+            params
+            ret
+            frame
+            blocks
+            function-abi)
           (ir.CompilerIrFunction.Function
             name
             params
@@ -4212,7 +4235,8 @@
               (opt.opt-collect-blocks-uses-array
                 frame
                 (opt.compiler-opt-global-shared-view blocks))
-              blocks))])]
+              blocks)
+            function-abi)])]
     [converted-blocks : ir.CompilerIrBlockList
       (opt.opt-function-blocks converted)]
     [conditional-blocks : ir.CompilerIrBlockList
@@ -4284,12 +4308,19 @@
             (ast.AstType.I64))
           (ir.CompilerIrInstr.Return
             (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 3)))))
-      (ir.CompilerIrBlockList.Nil))))
+      (ir.CompilerIrBlockList.Nil))
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (smoke-c27-mask-dce-blocks [fn : ir.CompilerIrFunction]) : ir.CompilerIrBlockList
   (opt.opt-function-blocks
     (match fn
-      [(ir.CompilerIrFunction.Function name params ret frame blocks)
+      [(ir.CompilerIrFunction.Function
+          name
+          params
+          ret
+          frame
+          blocks
+          function-abi)
         (ir.CompilerIrFunction.Function
           name
           params
@@ -4299,7 +4330,8 @@
             (opt.opt-collect-blocks-uses-array
               frame
               (ir.compiler-ir-global-shared-view blocks))
-            blocks))])))
+            blocks)
+          function-abi)])))
 
 ;; 1 when the pair collapsed to BitTestNe, 2 when it collapsed to BitTestEq,
 ;; 0 when the `and` survived (the rewrite was refused), -1 for anything else.

@@ -309,11 +309,64 @@
 (define (compiler-symbol-kind-enum-cleanup) : i64
   11)
 
+;; A symbol handle is `kind * handle-stride + index`. A registry (member)
+;; handle splits the index into `owner-index * child-stride + child-index`.
+;; Both ranges are bounded so that no two (kind, owner, child) triples share a
+;; handle: child indexes stay below the child stride and owner indexes below
+;; handle-stride / child-stride. With a child stride of 1000, child 1001 of one
+;; declaration decoded as child 1 of the next and typed a field through the
+;; wrong struct (#7921). Both strides are powers of two (2^50 and 2^20), so
+;; typecheck's frequent handle decoding is shifts and masks rather than
+;; multiplications by 64-bit constants.
 (define (compiler-symbol-handle-stride) : i64
-  1000000000)
+  1125899906842624)
 
 (define (compiler-registry-child-stride) : i64
-  1000)
+  1048576)
+
+;; Owner (declaration) indexes a registry handle can encode.
+(define (compiler-registry-owner-limit) : i64
+  (/ (compiler-symbol-handle-stride) (compiler-registry-child-stride)))
+
+;; True when a registry handle can encode this owner and child without
+;; aliasing another member.
+(define (compiler-registry-indexes-encodable?
+  [owner-index : i64]
+  [child-index : i64]) : bool
+  (and
+    (>= owner-index 0)
+    (< owner-index (compiler-registry-owner-limit))
+    (>= child-index 0)
+    (< child-index (compiler-registry-child-stride))))
+
+;; Diagnostic for a declaration whose members exceed what a registry handle
+;; can encode. Registration reports it before any handle is built.
+(define (compiler-registry-limit-message
+  [declaration-kind : String]
+  [owner-name : String]
+  [member-kind : String]
+  [owner-index : i64]) : String
+  (if (and (>= owner-index 0) (< owner-index (compiler-registry-owner-limit)))
+    (str_cat.str-cat
+      "symbols: "
+      declaration-kind
+      " "
+      owner-name
+      " has more than "
+      (string.int->string (compiler-registry-child-stride))
+      " "
+      member-kind
+      "; a struct or enum declares at most "
+      (string.int->string (compiler-registry-child-stride))
+      " members")
+    (str_cat.str-cat
+      "symbols: "
+      declaration-kind
+      " "
+      owner-name
+      " is beyond the "
+      (string.int->string (compiler-registry-owner-limit))
+      "-declaration limit for structs and enums")))
 
 (define (compiler-symbol-make-handle [kind : i64] [index : i64]) : i64
   (+ (* kind (compiler-symbol-handle-stride)) index))
@@ -324,13 +377,17 @@
 (define (compiler-symbol-handle-index [handle : i64]) : i64
   (% handle (compiler-symbol-handle-stride)))
 
+;; Registration rejects unencodable indexes with a located diagnostic first;
+;; reaching the panic is a compiler bug, never an aliasing handle.
 (define (compiler-registry-make-handle
   [kind : i64]
   [owner-index : i64]
   [child-index : i64]) : i64
-  (+
-    (* kind (compiler-symbol-handle-stride))
-    (+ (* owner-index (compiler-registry-child-stride)) child-index)))
+  (if (compiler-registry-indexes-encodable? owner-index child-index)
+    (+
+      (* kind (compiler-symbol-handle-stride))
+      (+ (* owner-index (compiler-registry-child-stride)) child-index))
+    (io.panic "symbols: registry handle indexes are out of range")))
 
 (define (compiler-registry-handle-kind [handle : i64]) : i64
   (compiler-symbol-handle-kind handle))
@@ -1289,41 +1346,50 @@
   [name-id : i64]
   [enum-index : i64]
   [variant-index : i64]) : ResultCompilerSymbols
-  (let
-    [qualified-name-id : i64
-      (compiler-enum-qualified-variant-name-id enum-name-id name-id)]
-    [qualified-key-id : i64
-      (compiler-symbol-module-key-id-by-id module-id qualified-name-id)]
-    [flat-key-id : i64 (compiler-symbol-module-key-id-by-id module-id name-id)]
-    [handle : i64
-      (compiler-registry-make-handle
-        (compiler-symbol-kind-enum-variant)
-        enum-index
-        variant-index)]
-    (match (compiler-symbols-add-variant-value-key-in-module-id
-      symbols
-      qualified-key-id
-      module-id
-      qualified-name-id
-      handle)
-      [(ResultCompilerSymbols.Ok next)
-        (match (compiler-symbols-add-variant-flat-value-alias-key-in-module-id
-          next
-          flat-key-id
-          module-id
-          name-id
-          handle)
-          [(ResultCompilerSymbols.Ok with-flat)
-            (if (compiler-symbols-comptime-module-id? module-id)
-              (ResultCompilerSymbols.Ok with-flat)
-              (ResultCompilerSymbols.Ok
-                (compiler-symbols-add-value-alias-key-id
-                  with-flat
-                  (compiler-symbol-name-id-key name-id)
-                  handle)))]
-          [(ResultCompilerSymbols.Err message)
-            (ResultCompilerSymbols.Err message)])]
-      [(ResultCompilerSymbols.Err message) (ResultCompilerSymbols.Err message)])))
+  (if (not (compiler-registry-indexes-encodable? enum-index variant-index))
+    (ResultCompilerSymbols.Err
+      (compiler-registry-limit-message
+        "enum"
+        (compiler-symbol-module-key-by-id module-id enum-name-id)
+        "variants"
+        enum-index))
+    (let
+      [qualified-name-id : i64
+        (compiler-enum-qualified-variant-name-id enum-name-id name-id)]
+      [qualified-key-id : i64
+        (compiler-symbol-module-key-id-by-id module-id qualified-name-id)]
+      [flat-key-id : i64
+        (compiler-symbol-module-key-id-by-id module-id name-id)]
+      [handle : i64
+        (compiler-registry-make-handle
+          (compiler-symbol-kind-enum-variant)
+          enum-index
+          variant-index)]
+      (match (compiler-symbols-add-variant-value-key-in-module-id
+        symbols
+        qualified-key-id
+        module-id
+        qualified-name-id
+        handle)
+        [(ResultCompilerSymbols.Ok next)
+          (match (compiler-symbols-add-variant-flat-value-alias-key-in-module-id
+            next
+            flat-key-id
+            module-id
+            name-id
+            handle)
+            [(ResultCompilerSymbols.Ok with-flat)
+              (if (compiler-symbols-comptime-module-id? module-id)
+                (ResultCompilerSymbols.Ok with-flat)
+                (ResultCompilerSymbols.Ok
+                  (compiler-symbols-add-value-alias-key-id
+                    with-flat
+                    (compiler-symbol-name-id-key name-id)
+                    handle)))]
+            [(ResultCompilerSymbols.Err message)
+              (ResultCompilerSymbols.Err message)])]
+        [(ResultCompilerSymbols.Err message)
+          (ResultCompilerSymbols.Err message)]))))
 
 (define (compiler-symbols-add-variant-values-in-module-id
   [symbols : CompilerSymbols]
@@ -3515,50 +3581,57 @@
   [name-id : i64]
   [enum-index : i64]
   [variant-index : i64]) : ResultCompilerRegistries
-  (let
-    [qualified-name-id : i64
-      (compiler-enum-qualified-variant-name-id enum-name-id name-id)]
-    [qualified-key-id : i64
-      (compiler-symbol-module-key-id-by-id module-id qualified-name-id)]
-    [qualified-display-name : String
-      (compiler-symbol-module-key-by-id module-id qualified-name-id)]
-    [module-name-key-id : i64
-      (compiler-symbol-module-key-id-by-id module-id name-id)]
-    [name-key-id : i64 (compiler-symbol-name-id-key name-id)]
-    [handle : i64
-      (compiler-registry-make-handle
-        (compiler-symbol-kind-enum-variant)
-        enum-index
-        variant-index)]
-    (match (compiler-registries-shared-view registries)
-      [(CompilerRegistries variants fields identity)
-        (if (compiler-symbol-map-contains-id? (& variants) qualified-key-id)
-          (ResultCompilerRegistries.Err
-            (compiler-registries-duplicate-variant-message
-              qualified-display-name))
-          (begin
-            (compiler-symbol-map-bind-id!
-              (&mut variants)
-              qualified-key-id
-              handle)
-            (let
-              [aliases1 : CompilerRegistries
-                (if (= module-name-key-id qualified-key-id)
-                  (CompilerRegistries variants fields identity)
-                  (compiler-registries-add-variant-alias-key-id
+  (if (not (compiler-registry-indexes-encodable? enum-index variant-index))
+    (ResultCompilerRegistries.Err
+      (compiler-registry-limit-message
+        "enum"
+        (compiler-symbol-module-key-by-id module-id enum-name-id)
+        "variants"
+        enum-index))
+    (let
+      [qualified-name-id : i64
+        (compiler-enum-qualified-variant-name-id enum-name-id name-id)]
+      [qualified-key-id : i64
+        (compiler-symbol-module-key-id-by-id module-id qualified-name-id)]
+      [qualified-display-name : String
+        (compiler-symbol-module-key-by-id module-id qualified-name-id)]
+      [module-name-key-id : i64
+        (compiler-symbol-module-key-id-by-id module-id name-id)]
+      [name-key-id : i64 (compiler-symbol-name-id-key name-id)]
+      [handle : i64
+        (compiler-registry-make-handle
+          (compiler-symbol-kind-enum-variant)
+          enum-index
+          variant-index)]
+      (match (compiler-registries-shared-view registries)
+        [(CompilerRegistries variants fields identity)
+          (if (compiler-symbol-map-contains-id? (& variants) qualified-key-id)
+            (ResultCompilerRegistries.Err
+              (compiler-registries-duplicate-variant-message
+                qualified-display-name))
+            (begin
+              (compiler-symbol-map-bind-id!
+                (&mut variants)
+                qualified-key-id
+                handle)
+              (let
+                [aliases1 : CompilerRegistries
+                  (if (= module-name-key-id qualified-key-id)
                     (CompilerRegistries variants fields identity)
-                    module-name-key-id
-                    handle))]
-              [aliases2 : CompilerRegistries
-                (if (or
-                  (= name-key-id qualified-key-id)
-                  (= name-key-id module-name-key-id))
-                  aliases1
-                  (compiler-registries-add-variant-alias-key-id
+                    (compiler-registries-add-variant-alias-key-id
+                      (CompilerRegistries variants fields identity)
+                      module-name-key-id
+                      handle))]
+                [aliases2 : CompilerRegistries
+                  (if (or
+                    (= name-key-id qualified-key-id)
+                    (= name-key-id module-name-key-id))
                     aliases1
-                    name-key-id
-                    handle))]
-              (ResultCompilerRegistries.Ok aliases2))))])))
+                    (compiler-registries-add-variant-alias-key-id
+                      aliases1
+                      name-key-id
+                      handle))]
+                (ResultCompilerRegistries.Ok aliases2))))]))))
 
 (define (compiler-registries-add-field-in-module-id
   [registries : CompilerRegistries]
@@ -3567,29 +3640,36 @@
   [field-name-id : i64]
   [struct-index : i64]
   [field-index : i64]) : ResultCompilerRegistries
-  (match (compiler-registries-shared-view registries)
-    [(CompilerRegistries variants fields identity)
-      (let
-        [key-id : i64
-          (compiler-struct-field-key-id-in-module-by-id
-            module-id
-            struct-name-id
-            field-name-id)]
-        (if (compiler-symbol-map-contains-id? (& fields) key-id)
-          (ResultCompilerRegistries.Err
-            (compiler-registries-duplicate-field-message
-              (compiler-symbol-module-key-by-id module-id struct-name-id)
-              (ci.intern-str field-name-id)))
-          (begin
-            (compiler-symbol-map-bind-id!
-              (&mut fields)
-              key-id
-              (compiler-registry-make-handle
-                (compiler-symbol-kind-struct-field)
-                struct-index
-                field-index))
-            (ResultCompilerRegistries.Ok
-              (CompilerRegistries variants fields identity)))))]))
+  (if (not (compiler-registry-indexes-encodable? struct-index field-index))
+    (ResultCompilerRegistries.Err
+      (compiler-registry-limit-message
+        "struct"
+        (compiler-symbol-module-key-by-id module-id struct-name-id)
+        "fields"
+        struct-index))
+    (match (compiler-registries-shared-view registries)
+      [(CompilerRegistries variants fields identity)
+        (let
+          [key-id : i64
+            (compiler-struct-field-key-id-in-module-by-id
+              module-id
+              struct-name-id
+              field-name-id)]
+          (if (compiler-symbol-map-contains-id? (& fields) key-id)
+            (ResultCompilerRegistries.Err
+              (compiler-registries-duplicate-field-message
+                (compiler-symbol-module-key-by-id module-id struct-name-id)
+                (ci.intern-str field-name-id)))
+            (begin
+              (compiler-symbol-map-bind-id!
+                (&mut fields)
+                key-id
+                (compiler-registry-make-handle
+                  (compiler-symbol-kind-struct-field)
+                  struct-index
+                  field-index))
+              (ResultCompilerRegistries.Ok
+                (CompilerRegistries variants fields identity)))))])))
 
 (define (compiler-registries-add-field-alias
   [registries : CompilerRegistries]
@@ -5289,9 +5369,11 @@
                         [_ false])
                       (match (compiler-registries-struct-field-type-indexed
                         symbols
+                        ;; The largest encodable owner index names no
+                        ;; declaration of this program.
                         (compiler-registry-make-handle
                           (compiler-symbol-kind-struct-field)
-                          -1
+                          (- (compiler-registry-owner-limit) 1)
                           0))
                         [(parser.ResultAstType.Err message)
                           (string.eq
@@ -6289,6 +6371,117 @@
               [(ResultCompilerSymbols.Err _) false]))))]
     [(parser.ResultAstProgram.Err _) false]))
 
+;; Registry handle bounds (#7921): members round-trip through the handle at and
+;; around the old 1000 stride and at the new limits, distinct owners never share
+;; a handle, and a member index past the limit is a registration error rather
+;; than a handle.
+(define (compiler-registry-handle-roundtrip-ok?
+  [owner-index : i64]
+  [child-index : i64]) : bool
+  (let
+    [handle : i64
+      (compiler-registry-make-handle
+        (compiler-symbol-kind-struct-field)
+        owner-index
+        child-index)]
+    (and
+      (=
+        (compiler-registry-handle-kind handle)
+        (compiler-symbol-kind-struct-field))
+      (= (compiler-registry-handle-owner-index handle) owner-index)
+      (= (compiler-registry-handle-child-index handle) child-index))))
+
+(define (compiler-registry-handle-bounds-ok?) : bool
+  (let
+    [last-child : i64 (- (compiler-registry-child-stride) 1)]
+    [last-owner : i64 (- (compiler-registry-owner-limit) 1)]
+    (and
+      (compiler-registry-handle-roundtrip-ok? 0 0)
+      (compiler-registry-handle-roundtrip-ok? 5 999)
+      (compiler-registry-handle-roundtrip-ok? 5 1000)
+      (compiler-registry-handle-roundtrip-ok? 5 1001)
+      (compiler-registry-handle-roundtrip-ok? 5 last-child)
+      (compiler-registry-handle-roundtrip-ok? last-owner last-child)
+      (not
+        (=
+          (compiler-registry-make-handle
+            (compiler-symbol-kind-struct-field)
+            5
+            1001)
+          (compiler-registry-make-handle
+            (compiler-symbol-kind-struct-field)
+            6
+            1)))
+      (compiler-registry-indexes-encodable? last-owner last-child)
+      (not
+        (compiler-registry-indexes-encodable?
+          5
+          (compiler-registry-child-stride)))
+      (not
+        (compiler-registry-indexes-encodable? (compiler-registry-owner-limit) 0))
+      (not (compiler-registry-indexes-encodable? -1 0))
+      (not (compiler-registry-indexes-encodable? 0 -1))
+      (match (compiler-registries-add-field-in-module-id
+        (compiler-registries-empty)
+        cbi.compiler-builtin-id-fix-empty
+        (ci.intern "Wide")
+        (ci.intern "tail")
+        5
+        (compiler-registry-child-stride))
+        [(ResultCompilerRegistries.Err message)
+          (string.eq
+            message
+            (str_cat.str-cat
+              "symbols: struct Wide has more than "
+              (string.int->string (compiler-registry-child-stride))
+              " fields; a struct or enum declares at most "
+              (string.int->string (compiler-registry-child-stride))
+              " members"))]
+        [(ResultCompilerRegistries.Ok _) false])
+      (match (compiler-registries-add-field-in-module-id
+        (compiler-registries-empty)
+        cbi.compiler-builtin-id-fix-empty
+        (ci.intern "Wide")
+        (ci.intern "f0")
+        (compiler-registry-owner-limit)
+        0)
+        [(ResultCompilerRegistries.Err message)
+          (string.eq
+            message
+            (str_cat.str-cat
+              "symbols: struct Wide is beyond the "
+              (string.int->string (compiler-registry-owner-limit))
+              "-declaration limit for structs and enums"))]
+        [(ResultCompilerRegistries.Ok _) false])
+      (match (compiler-registries-add-variant-in-module-id
+        (compiler-registries-empty)
+        cbi.compiler-builtin-id-fix-empty
+        (ci.intern "Big")
+        (ci.intern "Last")
+        5
+        (compiler-registry-child-stride))
+        [(ResultCompilerRegistries.Err message)
+          (string.eq message (compiler-registry-variant-limit-message-for-test))]
+        [(ResultCompilerRegistries.Ok _) false])
+      (match (compiler-symbols-add-variant-value-in-module-id
+        (compiler-symbols-empty)
+        cbi.compiler-builtin-id-fix-empty
+        (ci.intern "Big")
+        (ci.intern "Last")
+        5
+        (compiler-registry-child-stride))
+        [(ResultCompilerSymbols.Err message)
+          (string.eq message (compiler-registry-variant-limit-message-for-test))]
+        [(ResultCompilerSymbols.Ok _) false]))))
+
+(define (compiler-registry-variant-limit-message-for-test) : String
+  (str_cat.str-cat
+    "symbols: enum Big has more than "
+    (string.int->string (compiler-registry-child-stride))
+    " variants; a struct or enum declares at most "
+    (string.int->string (compiler-registry-child-stride))
+    " members"))
+
 (define (compiler-symbols-self-test) : i64
   (begin
     (cbi.compiler-builtin-refresh!)
@@ -6310,6 +6503,9 @@
                         symbols
                         registries)
                       8)
+                      unit
+                      (set! ok false))
+                    (if (compiler-registry-handle-bounds-ok?)
                       unit
                       (set! ok false))
                     (if (compiler-symbols-duplicate-value-ok?)

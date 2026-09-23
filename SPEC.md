@@ -625,6 +625,15 @@ Examples:
 - Struct globals use ordinary global storage and support the same dotted
   projections as local and parameter roots.
 
+A struct declares at most 1,048,576 (2^20) fields and an enum at most
+1,048,576 variants. Up to that width every field and variant resolves through
+its own declaration. A declaration past it is rejected with `E0200` at its
+first member beyond the limit, with the message `symbols: struct NAME has more
+than 1048576 fields; a struct or enum declares at most 1048576 members` (`enum
+NAME has more than 1048576 variants` for an enum), and no member of it gets a
+handle. Other compile-time capacities, such as the intern pool, can be reached
+before this limit.
+
 #### 3.5.3 Default inline aggregate layout and `(:repr c)` compatibility
 
 Ordinary TypeLisp structs use a stable C-compatible inline field layout by
@@ -3317,6 +3326,19 @@ name, or with the complete normalized integration path in package mode;
 the selected names, declaration locations, run/ignored/slow-skipped state, and
 ignore reasons without compiling or running a harness; it may be combined with
 either selector but not `--check`.
+
+`--backend-mode scalar|avx2|avx512` selects one code-generation mode for every
+harness of the invocation: a source file, each `--batch` entry, package inline
+tests, and package integration tests. The default is `scalar`. A SIMD request
+lowers and emits that mode as one selection and never falls back to scalar, so
+`(program-count)` and the other lane identity forms observe the requested gang
+shape. `--check` and `--list` accept every mode on every host because they
+execute nothing. A run in `avx2` or `avx512` first requires the host CPU and
+operating system to execute that ISA (`stdlib.cpu` `runs-avx2?` and
+`runs-avx512?`, the latter meaning AVX-512 F, BW, and DQ); otherwise the
+command prints `test: backend mode <mode> cannot run on this host` and exits
+`1` before compiling any harness. An unknown spelling is the separate
+diagnostic `test: unknown backend mode <value>`.
 
 Repeatable `--cfg <name>` values compose with the automatic `test` and target
 cfg predicates used while loading and type-checking. `--shuffle` applies a
@@ -6713,6 +6735,10 @@ compiler-private packed buffer, so long calls allocate no chunk intermediates.
 The deprecated `string-append` and
 `string-concat` names remain staged lint targets for old source, while
 `tl_string_concat*` remains a runtime-plan compatibility ABI documented below.
+They are bare builtin spellings only: `stdlib.string` does not export them, so a
+module-qualified `string.string-append` or `string.string-concat` (through any
+alias or the full module path) is rejected as an unbound name, like any other
+name a module does not declare.
 
 **Literal formatting and nominal display.** `stdlib.format` owns the literal
 `args`, `format`, `write!`, and `writeln!` macros, their template scanner, all

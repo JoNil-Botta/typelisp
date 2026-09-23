@@ -2134,7 +2134,47 @@
             bin-path
             write-context)])]))
 
-(define (source-tool-lowered-object-or-assembly-and-link
+;; Assembly route for an already lowered program. `mode` is the backend mode
+;; the program was lowered for.
+(define (source-tool-lowered-assembly-and-link
+  [source : String]
+  [program : ir.CompilerIrProgram]
+  [spans : ir.CompilerSourceSpans]
+  [target : backend.CompilerBackendTarget]
+  [opt-level : i64]
+  [mode : backend.CompilerBackendMode]
+  [link-inputs : SourceToolLinkInputs]
+  [asm-path : String]
+  [obj-path : String]
+  [bin-path : String]
+  [write-context : String]) : SourceToolCommandStatus
+  (match (compiler_driver_core.compiler-driver-emit-lowered-with-level-and-mode
+    source
+    program
+    spans
+    target
+    true
+    mode
+    opt-level)
+    [(compiler_driver_core.ResultCompilerDriver.Ok asm advisories)
+      (begin
+        (compiler_driver_core.compiler-driver-print-advisories (& advisories))
+        (source-tool-write-assembly-and-link
+          target
+          asm-path
+          obj-path
+          bin-path
+          link-inputs
+          (source-tool-augment-assembly-for-target asm target)
+          write-context))]
+    [(compiler_driver_core.ResultCompilerDriver.Err diag advisories)
+      (begin
+        (compiler_driver_core.compiler-driver-print-advisories (& advisories))
+        (SourceToolCommandStatus.Err
+          (compiler_driver_core.compiler-driver-render-source-diagnostic
+            (owned_view.compiler-owned-box-shared-view diag))))]))
+
+(define (source-tool-lowered-scalar-object-or-assembly-and-link
   [source : String]
   [program : ir.CompilerIrProgram]
   [spans : ir.CompilerSourceSpans]
@@ -2171,32 +2211,59 @@
         [(SourceToolDirectObjectStatus.Err message)
           (SourceToolCommandStatus.Err message)]
         [(SourceToolDirectObjectStatus.Unavailable _)
-          (match (compiler_driver_core.compiler-driver-emit-lowered-with-level
+          (source-tool-lowered-assembly-and-link
             source
             program
             spans
             target
-            true
-            opt-level)
-            [(compiler_driver_core.ResultCompilerDriver.Ok asm advisories)
-              (begin
-                (compiler_driver_core.compiler-driver-print-advisories
-                  (& advisories))
-                (source-tool-write-assembly-and-link
-                  target
-                  asm-path
-                  obj-path
-                  bin-path
-                  link-inputs
-                  (source-tool-augment-assembly-for-target asm target)
-                  write-context))]
-            [(compiler_driver_core.ResultCompilerDriver.Err diag advisories)
-              (begin
-                (compiler_driver_core.compiler-driver-print-advisories
-                  (& advisories))
-                (SourceToolCommandStatus.Err
-                  (compiler_driver_core.compiler-driver-render-source-diagnostic
-                    (owned_view.compiler-owned-box-shared-view diag))))])])]))
+            opt-level
+            (backend.CompilerBackendMode.Scalar)
+            link-inputs
+            asm-path
+            obj-path
+            bin-path
+            write-context)])]))
+
+;; The lowered direct-object emitters encode scalar IR only (SIMD parity is
+;; #7030), so a SIMD request goes straight to assembly with its mode intact
+;; instead of being offered to an emitter that would pair vector IR with the
+;; scalar backend.
+(define (source-tool-lowered-object-or-assembly-and-link-with-mode
+  [source : String]
+  [program : ir.CompilerIrProgram]
+  [spans : ir.CompilerSourceSpans]
+  [target : backend.CompilerBackendTarget]
+  [opt-level : i64]
+  [mode : backend.CompilerBackendMode]
+  [link-inputs : SourceToolLinkInputs]
+  [asm-path : String]
+  [obj-path : String]
+  [bin-path : String]
+  [write-context : String]) : SourceToolCommandStatus
+  (if (backend.compiler-backend-mode-scalar? mode)
+    (source-tool-lowered-scalar-object-or-assembly-and-link
+      source
+      program
+      spans
+      target
+      opt-level
+      link-inputs
+      asm-path
+      obj-path
+      bin-path
+      write-context)
+    (source-tool-lowered-assembly-and-link
+      source
+      program
+      spans
+      target
+      opt-level
+      mode
+      link-inputs
+      asm-path
+      obj-path
+      bin-path
+      write-context)))
 
 (define (source-tool-build-source-in-temp
   [source : String]

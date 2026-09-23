@@ -9,6 +9,7 @@
 (import compiler_owned_view as owned_view)
 (import stdlib.arena)
 (import stdlib.byte_buf)
+(import stdlib.cpu)
 (import stdlib.io)
 (import stdlib.process)
 (import stdlib.random)
@@ -46,9 +47,28 @@
   (Check))
 
 (defenum TestConfig
-  (File String String String cli_svec.Vec i64 TestMode)
-  (Batch cli_svec.Vec String String cli_svec.Vec i64 TestMode)
-  (Package String bool String String cli_svec.Vec i64 TestMode))
+  (File
+    String
+    String
+    compiler_backend.CompilerBackendMode
+    cli_svec.Vec
+    i64
+    TestMode)
+  (Batch
+    cli_svec.Vec
+    String
+    compiler_backend.CompilerBackendMode
+    cli_svec.Vec
+    i64
+    TestMode)
+  (Package
+    String
+    bool
+    String
+    compiler_backend.CompilerBackendMode
+    cli_svec.Vec
+    i64
+    TestMode))
 
 (defenum ResultTestConfig
   (Ok TestConfig)
@@ -348,12 +368,6 @@
 (define (tltest-unknown-target [value : String]) : String
   (str_cat.str-cat "test: unknown target " value ""))
 
-(define (tltest-unknown-mode [value : String]) : String
-  (str_cat.str-cat "test: unknown backend mode " value ""))
-
-(define (tltest-unsupported-mode [value : String]) : String
-  (str_cat.str-cat "test: backend mode " value " is not implemented"))
-
 (define (tltest-invalid-opt-level [value : String]) : String
   (str_cat.str-cat "test: invalid --opt-level " value "; expected 0, 1, or 2"))
 
@@ -459,7 +473,7 @@
   [manifest-path : String]
   [has-manifest : bool]
   [target : String]
-  [mode : String]
+  [mode : compiler_backend.CompilerBackendMode]
   [roots : cli_svec.Vec]
   [opt-level : i64]
   [test-mode : TestMode]
@@ -517,12 +531,6 @@
     [(build_run_core.ResultSourceToolTarget.Ok _) true]
     [(build_run_core.ResultSourceToolTarget.Err _) false]))
 
-(define (tltest-backend-mode-valid? [value : String]) : bool
-  (or
-    (string.eq value "scalar")
-    (string.eq value "avx2")
-    (string.eq value "avx512")))
-
 (define (tltest-check-mode? [mode : TestMode]) : bool
   (match mode
     [(TestMode.Check) true]
@@ -538,7 +546,7 @@
   [manifest-path : String]
   [has-manifest : bool]
   [target : String]
-  [mode : String]
+  [mode : compiler_backend.CompilerBackendMode]
   [roots : cli_svec.Vec]
   [has-opt-level : bool]
   [opt-level : i64]
@@ -632,7 +640,7 @@
   [manifest-path : String]
   [has-manifest : bool]
   [target : String]
-  [mode : String]
+  [mode : compiler_backend.CompilerBackendMode]
   [roots : cli_svec.Vec]
   [has-opt-level : bool]
   [opt-level : i64]
@@ -863,9 +871,13 @@
                 (ResultTestConfig.Err "test: --backend-mode requires a value")
                 (let
                   [value : String (io.arg (+ idx 1))]
-                  (if (tltest-backend-mode-valid?
+                  ;; The shared source-tool parser owns the accepted
+                  ;; spellings, so `test` cannot drift from build and run.
+                  (match (build_run_core.source-tool-backend-mode
+                    "test"
                     (owned_view.compiler-owned-shared-view value))
-                    (if (string.eq value "scalar")
+                    [(build_run_core.ResultSourceToolBackendMode.Ok
+                        selected-mode)
                       (tltest-parse-options
                         (+ idx 2)
                         count
@@ -874,14 +886,14 @@
                         manifest-path
                         has-manifest
                         target
-                        value
+                        selected-mode
                         roots
                         has-opt-level
                         opt-level
                         test-mode
-                        batch-list)
-                      (ResultTestConfig.Err (tltest-unsupported-mode value)))
-                    (ResultTestConfig.Err (tltest-unknown-mode value)))))]
+                        batch-list)]
+                    [(build_run_core.ResultSourceToolBackendMode.Err message)
+                      (ResultTestConfig.Err message)])))]
             [(string.eq current "--manifest-path")
               (if (>= (+ idx 1) count)
                 (ResultTestConfig.Err "test: --manifest-path requires a value")
@@ -985,7 +997,7 @@
       ""
       false
       (build_run_core.source-tool-default-target-name)
-      "scalar"
+      (compiler_backend.CompilerBackendMode.Scalar)
       (cli_svec.new)
       false
       (compiler_optimize.compiler-optimize-default-level)
@@ -4728,7 +4740,7 @@
       (while (and (< index funcs.len) (not found))
         (begin
           (match (array-ref funcs.slots index)
-            [(ir.CompilerIrFunction.Function name _ _ _ _)
+            [(ir.CompilerIrFunction.Function name _ _ _ _ _)
               (let
                 [name-text : String (ir.compiler-ir-symbol-text name)]
                 (if (string.contains (& name-text) (& base))
@@ -5227,6 +5239,17 @@
     (tltest-stdlib-env-fixture-self-test?)
     (io.panic "test CLI stdlib/env fixture routing mismatch")))
 
+;; The lower mode and the backend mode are one selection: a SIMD lower mode
+;; emits vector IR that only the matching backend mode can encode. The scalar
+;; default keeps the target-neutral lower mode the harness has always used; a
+;; SIMD request follows the driver's shared target/mode policy.
+(define (tltest-harness-lower-mode
+  [target : compiler_backend.CompilerBackendTarget]
+  [backend-mode : compiler_backend.CompilerBackendMode]) : lower.CompilerLowerMode
+  (if (compiler_backend.compiler-backend-mode-scalar? backend-mode)
+    (lower.CompilerLowerMode.Scalar)
+    (driver.compiler-driver-lower-mode-for-target target backend-mode)))
+
 (define (tltest-run-harness-in-temp-with-lower-state
   [lower-state : lower.CompilerLowerState]
   [source : String]
@@ -5236,6 +5259,7 @@
   [roots : cli_svec.Vec]
   [target : compiler_backend.CompilerBackendTarget]
   [opt-level : i64]
+  [backend-mode : compiler_backend.CompilerBackendMode]
   [inline-harness : bool]
   [temp-dir : String]) : i64
   (let
@@ -5259,19 +5283,20 @@
       entry-path
       program
       paths
-      (lower.CompilerLowerMode.Scalar)
+      (tltest-harness-lower-mode target backend-mode)
       (owned_view.compiler-owned-shared-view legacy-roots)
       (compiler_typecheck_api.compiler-typecheck-prefix-cache-scope
         "typecheck-prefix-test-cli"
         (owned_view.compiler-owned-shared-view legacy-roots)
         (tltest-cfgs target)))
       [(lower.ResultCompilerLower.Ok ir spans)
-        (match (build_run_core.source-tool-lowered-object-or-assembly-and-link
+        (match (build_run_core.source-tool-lowered-object-or-assembly-and-link-with-mode
           (owned_view.compiler-owned-shared-view source)
           ir
           spans
           target
           opt-level
+          backend-mode
           (build_run_core.source-tool-link-inputs-empty)
           (owned_view.compiler-owned-shared-view asm-path)
           (owned_view.compiler-owned-shared-view obj-path)
@@ -5359,6 +5384,7 @@
   [roots : cli_svec.Vec]
   [target : compiler_backend.CompilerBackendTarget]
   [opt-level : i64]
+  [backend-mode : compiler_backend.CompilerBackendMode]
   [inline-harness : bool]
   [temp-dir : String]) : i64
   (let
@@ -5373,6 +5399,7 @@
         roots
         target
         opt-level
+        backend-mode
         inline-harness
         temp-dir)]
     (begin
@@ -5389,6 +5416,7 @@
   [roots : cli_svec.Vec]
   [target : String]
   [opt-level : i64]
+  [backend-mode : compiler_backend.CompilerBackendMode]
   [inline-harness : bool]) : i64
   (match (build_run_core.source-tool-target
     (owned_view.compiler-owned-shared-view target))
@@ -5407,6 +5435,7 @@
             roots
             backend-target
             opt-level
+            backend-mode
             inline-harness
             temp-dir)]
         [(build_run_core.ResultSourceToolString.Err message)
@@ -5421,7 +5450,8 @@
   [paths : ast.AstDeclPathList]
   [roots : cli_svec.Vec]
   [target : String]
-  [opt-level : i64]) : i64
+  [opt-level : i64]
+  [backend-mode : compiler_backend.CompilerBackendMode]) : i64
   (tltest-run-direct-with-entry
     (owned_view.compiler-owned-shared-view source)
     source
@@ -5430,6 +5460,7 @@
     roots
     target
     opt-level
+    backend-mode
     true))
 
 (define (tltest-no-tests-check
@@ -5465,12 +5496,13 @@
   [program : ast.AstProgram]
   [paths : ast.AstDeclPathList]
   [roots : cli_svec.Vec]
-  [opt-level : i64]) : i64
+  [opt-level : i64]
+  [backend-mode : compiler_backend.CompilerBackendMode]) : i64
   ;; `test --check` owns source typechecking. Run the zero-test harness built
   ;; from the pruned runtime declarations so backend-emitted allocator calls
   ;; still have their exported abort handlers; the harness replaces the source
   ;; `main` with the generated zero-test runner.
-  (tltest-run-direct source program paths roots target opt-level))
+  (tltest-run-direct source program paths roots target opt-level backend-mode))
 
 (define (tltest-source-prefix-space? [c : char]) : bool
   (or (= c ' ') (= c '\t')))
@@ -5783,6 +5815,7 @@
   [target : String]
   [roots : cli_svec.Vec]
   [opt-level : i64]
+  [backend-mode : compiler_backend.CompilerBackendMode]
   [test-mode : TestMode]
   [backend-target : compiler_backend.CompilerBackendTarget]
   [decls : ast.AstDeclList]
@@ -5835,7 +5868,8 @@
                       harness-paths
                       roots
                       target
-                      opt-level)])]
+                      opt-level
+                      backend-mode)])]
               (if (= status 0)
                 (ResultTestPackageTotals.Ok 1 count)
                 (if (and (= status 1) (not (tltest-check-mode? test-mode)))
@@ -5917,6 +5951,7 @@
   [target : String]
   [roots : cli_svec.Vec]
   [opt-level : i64]
+  [backend-mode : compiler_backend.CompilerBackendMode]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]) : ResultTestPackageTotals
   (begin
@@ -5935,6 +5970,7 @@
             roots
             target
             opt-level
+            backend-mode
             false)]
         (if (= status 0)
           (ResultTestPackageTotals.Ok 1 1)
@@ -5948,6 +5984,7 @@
   [target : String]
   [roots : cli_svec.Vec]
   [opt-level : i64]
+  [backend-mode : compiler_backend.CompilerBackendMode]
   [test-mode : TestMode]
   [backend-target : compiler_backend.CompilerBackendTarget]
   [manifest-dir : String]
@@ -5982,6 +6019,7 @@
                 target
                 roots
                 opt-level
+                backend-mode
                 decls
                 paths)])]
         [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
@@ -6074,6 +6112,7 @@
   [target : String]
   [roots : cli_svec.Vec]
   [opt-level : i64]
+  [backend-mode : compiler_backend.CompilerBackendMode]
   [test-mode : TestMode]
   [backend-target : compiler_backend.CompilerBackendTarget]
   [manifest-dir : String]
@@ -6091,6 +6130,7 @@
             target
             roots
             opt-level
+            backend-mode
             test-mode
             backend-target
             manifest-dir
@@ -6107,6 +6147,7 @@
   [target : String]
   [roots : cli_svec.Vec]
   [opt-level : i64]
+  [backend-mode : compiler_backend.CompilerBackendMode]
   [test-mode : TestMode]
   [backend-target : compiler_backend.CompilerBackendTarget]
   [manifest-dir : String]
@@ -6137,6 +6178,7 @@
               target
               roots
               opt-level
+              backend-mode
               test-mode
               backend-target
               decls
@@ -6156,6 +6198,7 @@
   [target : String]
   [roots : cli_svec.Vec]
   [opt-level : i64]
+  [backend-mode : compiler_backend.CompilerBackendMode]
   [test-mode : TestMode]
   [backend-target : compiler_backend.CompilerBackendTarget]
   [manifest-dir : String]
@@ -6173,6 +6216,7 @@
             target
             roots
             opt-level
+            backend-mode
             test-mode
             backend-target
             manifest-dir
@@ -6191,6 +6235,7 @@
   [target : String]
   [roots : cli_svec.Vec]
   [opt-level : i64]
+  [backend-mode : compiler_backend.CompilerBackendMode]
   [test-mode : TestMode]
   [backend-target : compiler_backend.CompilerBackendTarget]
   [manifest-dir : String]
@@ -6215,6 +6260,7 @@
           target
           roots
           opt-level
+          backend-mode
           test-mode
           backend-target
           manifest-dir
@@ -6230,6 +6276,7 @@
               (owned_view.compiler-owned-shared-view target)
               (owned_view.compiler-owned-shared-view roots)
               opt-level
+              backend-mode
               test-mode
               backend-target
               (owned_view.compiler-owned-shared-view manifest-dir)
@@ -6246,6 +6293,7 @@
                 target
                 roots
                 opt-level
+                backend-mode
                 test-mode
                 backend-target
                 manifest-dir
@@ -6263,6 +6311,7 @@
                 target
                 roots
                 opt-level
+                backend-mode
                 test-mode
                 backend-target
                 manifest-dir
@@ -6280,6 +6329,7 @@
   [target : String]
   [roots : cli_svec.Vec]
   [opt-level : i64]
+  [backend-mode : compiler_backend.CompilerBackendMode]
   [test-mode : TestMode]
   [backend-target : compiler_backend.CompilerBackendTarget]
   [manifest-dir : String]
@@ -6294,6 +6344,7 @@
     target
     roots
     opt-level
+    backend-mode
     test-mode
     backend-target
     manifest-dir
@@ -6310,6 +6361,7 @@
   [target : String]
   [roots : cli_svec.Vec]
   [opt-level : i64]
+  [backend-mode : compiler_backend.CompilerBackendMode]
   [test-mode : TestMode]
   [backend-target : compiler_backend.CompilerBackendTarget]
   [manifest-dir : String]
@@ -6334,6 +6386,7 @@
               (owned_view.compiler-owned-shared-view target)
               (owned_view.compiler-owned-shared-view roots)
               opt-level
+              backend-mode
               test-mode
               backend-target
               (owned_view.compiler-owned-shared-view manifest-dir)
@@ -6350,6 +6403,7 @@
                 target
                 roots
                 opt-level
+                backend-mode
                 test-mode
                 backend-target
                 manifest-dir
@@ -6367,6 +6421,7 @@
                 target
                 roots
                 opt-level
+                backend-mode
                 test-mode
                 backend-target
                 manifest-dir
@@ -6384,6 +6439,7 @@
           target
           roots
           opt-level
+          backend-mode
           test-mode
           backend-target
           manifest-dir
@@ -6399,6 +6455,7 @@
   [target : String]
   [roots : cli_svec.Vec]
   [opt-level : i64]
+  [backend-mode : compiler_backend.CompilerBackendMode]
   [test-mode : TestMode]
   [backend-target : compiler_backend.CompilerBackendTarget]
   [manifest-dir : String]
@@ -6418,6 +6475,7 @@
       target
       roots
       opt-level
+      backend-mode
       test-mode
       backend-target
       manifest-dir
@@ -6466,6 +6524,7 @@
   [target : String]
   [roots : cli_svec.Vec]
   [opt-level : i64]
+  [backend-mode : compiler_backend.CompilerBackendMode]
   [test-mode : TestMode]
   [backend-target : compiler_backend.CompilerBackendTarget]
   [manifest-dir : String]
@@ -6480,6 +6539,7 @@
     target
     roots
     opt-level
+    backend-mode
     test-mode
     backend-target
     manifest-dir
@@ -6510,6 +6570,7 @@
   [target : String]
   [roots : cli_svec.Vec]
   [opt-level : i64]
+  [backend-mode : compiler_backend.CompilerBackendMode]
   [test-mode : TestMode]) : i64
   (match (build_run_core.source-tool-target
     (owned_view.compiler-owned-shared-view target))
@@ -6552,6 +6613,7 @@
                   (owned_view.compiler-owned-shared-view target)
                   (owned_view.compiler-owned-shared-view roots)
                   opt-level
+                  backend-mode
                   test-mode
                   backend-target
                   (owned_view.compiler-owned-shared-view manifest-dir)
@@ -6570,6 +6632,7 @@
                       target
                       roots
                       opt-level
+                      backend-mode
                       test-mode
                       backend-target
                       manifest-dir
@@ -6587,6 +6650,7 @@
                       target
                       roots
                       opt-level
+                      backend-mode
                       test-mode
                       backend-target
                       manifest-dir
@@ -6651,6 +6715,7 @@
   [target : String]
   [roots : cli_svec.Vec]
   [opt-level : i64]
+  [backend-mode : compiler_backend.CompilerBackendMode]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]) : ResultTestFileCheck
   (match (tltest-build-harness
@@ -6673,14 +6738,16 @@
                 program
                 harness-paths
                 roots
-                opt-level)
+                opt-level
+                backend-mode)
               (tltest-run-direct
                 source
                 program
                 harness-paths
                 roots
                 target
-                opt-level))]
+                opt-level
+                backend-mode))]
           (if (= status 0)
             (ResultTestFileCheck.Ok count)
             (if (and (> count 0) (= status 1))
@@ -6692,13 +6759,21 @@
   [target : String]
   [roots : cli_svec.Vec]
   [opt-level : i64]
+  [backend-mode : compiler_backend.CompilerBackendMode]
   [backend-target : compiler_backend.CompilerBackendTarget]) : ResultTestFileCheck
   (match (driver.compiler-driver-load-file-with-runtime
     (owned_view.compiler-owned-shared-view source)
     (owned_view.compiler-owned-shared-view roots)
     (tltest-cfgs backend-target))
     [(compiler_load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
-      (tltest-run-file-loaded source target roots opt-level decls paths)]
+      (tltest-run-file-loaded
+        source
+        target
+        roots
+        opt-level
+        backend-mode
+        decls
+        paths)]
     [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
       (begin
         (io.print-error
@@ -6846,6 +6921,7 @@
   [target : String]
   [roots : cli_svec.Vec]
   [opt-level : i64]
+  [backend-mode : compiler_backend.CompilerBackendMode]
   [backend-target : compiler_backend.CompilerBackendTarget]) : i64
   ;; Keep every entry's loader pools, harness AST, lowered IR, backend scratch,
   ;; and captured child output inside one destroyable arena. Only the scalar
@@ -6860,6 +6936,7 @@
           target
           roots
           opt-level
+          backend-mode
           backend-target)
           [(ResultTestFileCheck.Err status) (- 0 status)]
           [(ResultTestFileCheck.Failed count)
@@ -6872,6 +6949,7 @@
   [target : String]
   [roots : cli_svec.Vec]
   [opt-level : i64]
+  [backend-mode : compiler_backend.CompilerBackendMode]
   [backend-target : compiler_backend.CompilerBackendTarget]) : i64
   (let
     [count : i64 (cli_svec.len (& paths))]
@@ -6890,6 +6968,7 @@
               (owned_view.compiler-owned-shared-view target)
               (owned_view.compiler-owned-shared-view roots)
               opt-level
+              backend-mode
               backend-target)]
           (if (<= entry-result (- 0 tltest-failed-count-offset))
             (begin
@@ -6923,7 +7002,8 @@
   [paths : cli_svec.Vec]
   [target : String]
   [roots : cli_svec.Vec]
-  [opt-level : i64]) : i64
+  [opt-level : i64]
+  [backend-mode : compiler_backend.CompilerBackendMode]) : i64
   (begin
     (compiler_load.compiler-load-session-cache-enable!)
     (compiler_load.compiler-load-session-program-cache-disable!)
@@ -6946,6 +7026,7 @@
                 target
                 roots
                 opt-level
+                backend-mode
                 backend-target)]
             (begin
               (if tltest-prefix-cache-stats
@@ -6982,7 +7063,7 @@
 
 (define (tltest-run-config-ready [config : TestConfig]) : i64
   (match config
-    [(TestConfig.File source target mode roots opt-level test-mode)
+    [(TestConfig.File source target backend-mode roots opt-level test-mode)
       (match (build_run_core.source-tool-target
         (owned_view.compiler-owned-shared-view target))
         [(build_run_core.ResultSourceToolTarget.Err _)
@@ -7025,7 +7106,8 @@
                             program
                             harness-paths
                             roots
-                            opt-level)])
+                            opt-level
+                            backend-mode)])
                       (match test-mode
                         [(TestMode.Check)
                           (tltest-check-only
@@ -7041,24 +7123,26 @@
                             harness-paths
                             roots
                             target
-                            opt-level)]))]))]
+                            opt-level
+                            backend-mode)]))]))]
             [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
               (begin
                 (io.print-error
                   (driver.compiler-driver-render-source-diagnostic
                     (owned_view.compiler-owned-box-shared-view diag)))
                 1)])])]
-    [(TestConfig.Batch paths target _ roots opt-level test-mode)
+    [(TestConfig.Batch paths target backend-mode roots opt-level test-mode)
       (if tltest-list-only
         (tltest-run-batch-check paths target roots)
         (match test-mode
           [(TestMode.Check) (tltest-run-batch-check paths target roots)]
-          [(TestMode.Run) (tltest-run-batch-run paths target roots opt-level)]))]
+          [(TestMode.Run)
+            (tltest-run-batch-run paths target roots opt-level backend-mode)]))]
     [(TestConfig.Package
         manifest-path
         has-manifest
         target
-        _
+        backend-mode
         roots
         opt-level
         test-mode)
@@ -7068,11 +7152,185 @@
         target
         roots
         opt-level
+        backend-mode
         test-mode)]))
 
+;; Host-ISA policy for executing SIMD harnesses: the same CPUID-plus-OS-state
+;; contract the SPMD gates use (`stdlib.cpu`; AVX-512 means F+BW+DQ). The
+;; capabilities are parameters so the refusal is testable on every host.
+(define (tltest-host-isa-refusal
+  [backend-mode : compiler_backend.CompilerBackendMode]
+  [runs-avx2 : bool]
+  [runs-avx512 : bool]) : TestMaybeString
+  (match backend-mode
+    [(compiler_backend.CompilerBackendMode.Scalar) (TestMaybeString.No)]
+    [(compiler_backend.CompilerBackendMode.Avx2)
+      (if runs-avx2
+        (TestMaybeString.No)
+        (TestMaybeString.Some
+          "test: backend mode avx2 cannot run on this host: AVX2 with OS ymm state is required; use --check, --list, or another --backend-mode"))]
+    [(compiler_backend.CompilerBackendMode.Avx512)
+      (if runs-avx512
+        (TestMaybeString.No)
+        (TestMaybeString.Some
+          "test: backend mode avx512 cannot run on this host: AVX-512 F, BW, and DQ with OS zmm state are required; use --check, --list, or another --backend-mode"))]))
+
+;; `--check` and `--list` never execute a harness, so they accept every mode
+;; on every host and never probe the CPU.
+(define (tltest-backend-mode-executes?
+  [backend-mode : compiler_backend.CompilerBackendMode]
+  [test-mode : TestMode]
+  [list-only : bool]) : bool
+  (and
+    (not (compiler_backend.compiler-backend-mode-scalar? backend-mode))
+    (not list-only)
+    (not (tltest-check-mode? test-mode))))
+
+;; A run is refused once per process, before any compilation, instead of
+;; trapping on the first vector instruction of some harness.
+(define (tltest-host-isa-permits?
+  [backend-mode : compiler_backend.CompilerBackendMode]
+  [test-mode : TestMode]) : bool
+  (if (tltest-backend-mode-executes? backend-mode test-mode tltest-list-only)
+    (match (tltest-host-isa-refusal
+      backend-mode
+      (cpu.runs-avx2?)
+      (cpu.runs-avx512?))
+      [(TestMaybeString.No) true]
+      [(TestMaybeString.Some message)
+        (begin
+          (io.print-error message)
+          false)])
+    true))
+
+(define (tltest-maybe-string-some? [value : TestMaybeString]) : bool
+  (match value
+    [(TestMaybeString.Some _) true]
+    [(TestMaybeString.No) false]))
+
+(test
+  test-cli-backend-mode-host-isa-policy
+  (begin
+    (unless
+      (and
+        (not
+          (tltest-maybe-string-some?
+            (tltest-host-isa-refusal
+              (compiler_backend.CompilerBackendMode.Scalar)
+              false
+              false)))
+        (tltest-maybe-string-some?
+          (tltest-host-isa-refusal
+            (compiler_backend.CompilerBackendMode.Avx2)
+            false
+            true))
+        (not
+          (tltest-maybe-string-some?
+            (tltest-host-isa-refusal
+              (compiler_backend.CompilerBackendMode.Avx2)
+              true
+              false)))
+        (tltest-maybe-string-some?
+          (tltest-host-isa-refusal
+            (compiler_backend.CompilerBackendMode.Avx512)
+            true
+            false))
+        (not
+          (tltest-maybe-string-some?
+            (tltest-host-isa-refusal
+              (compiler_backend.CompilerBackendMode.Avx512)
+              true
+              true))))
+      (io.panic "test CLI host-ISA refusal policy mismatch"))
+    (unless
+      (and
+        (tltest-backend-mode-executes?
+          (compiler_backend.CompilerBackendMode.Avx512)
+          TestMode.Run
+          false)
+        (not
+          (tltest-backend-mode-executes?
+            (compiler_backend.CompilerBackendMode.Avx512)
+            TestMode.Check
+            false))
+        (not
+          (tltest-backend-mode-executes?
+            (compiler_backend.CompilerBackendMode.Avx512)
+            TestMode.Run
+            true))
+        (not
+          (tltest-backend-mode-executes?
+            (compiler_backend.CompilerBackendMode.Scalar)
+            TestMode.Run
+            false)))
+      (io.panic "test CLI backend-mode execution policy mismatch"))))
+
+(define (tltest-lower-mode-tag [mode : lower.CompilerLowerMode]) : i64
+  (match mode
+    [(lower.CompilerLowerMode.Scalar) 0]
+    [(lower.CompilerLowerMode.LinuxAvx2) 1]
+    [(lower.CompilerLowerMode.WindowsAvx2) 2]
+    [(lower.CompilerLowerMode.LinuxAvx512) 3]
+    [(lower.CompilerLowerMode.WindowsAvx512) 4]
+    [_ -1]))
+
+(test
+  test-cli-backend-mode-selects-paired-lower-mode
+  (unless
+    (and
+      (=
+        (tltest-lower-mode-tag
+          (tltest-harness-lower-mode
+            (compiler_backend.CompilerBackendTarget.Linux)
+            (compiler_backend.CompilerBackendMode.Scalar)))
+        0)
+      (=
+        (tltest-lower-mode-tag
+          (tltest-harness-lower-mode
+            (compiler_backend.CompilerBackendTarget.Windows)
+            (compiler_backend.CompilerBackendMode.Scalar)))
+        0)
+      (=
+        (tltest-lower-mode-tag
+          (tltest-harness-lower-mode
+            (compiler_backend.CompilerBackendTarget.Linux)
+            (compiler_backend.CompilerBackendMode.Avx2)))
+        1)
+      (=
+        (tltest-lower-mode-tag
+          (tltest-harness-lower-mode
+            (compiler_backend.CompilerBackendTarget.Windows)
+            (compiler_backend.CompilerBackendMode.Avx2)))
+        2)
+      (=
+        (tltest-lower-mode-tag
+          (tltest-harness-lower-mode
+            (compiler_backend.CompilerBackendTarget.Linux)
+            (compiler_backend.CompilerBackendMode.Avx512)))
+        3)
+      (=
+        (tltest-lower-mode-tag
+          (tltest-harness-lower-mode
+            (compiler_backend.CompilerBackendTarget.Windows)
+            (compiler_backend.CompilerBackendMode.Avx512)))
+        4))
+    (io.panic "test CLI backend mode did not select its paired lower mode")))
+
+(define (tltest-config-host-isa-permits? [config : TestConfig]) : bool
+  (match config
+    [(TestConfig.File _ _ backend-mode _ _ test-mode)
+      (tltest-host-isa-permits? backend-mode test-mode)]
+    [(TestConfig.Batch _ _ backend-mode _ _ test-mode)
+      (tltest-host-isa-permits? backend-mode test-mode)]
+    [(TestConfig.Package _ _ _ backend-mode _ _ test-mode)
+      (tltest-host-isa-permits? backend-mode test-mode)]))
+
 (define (tltest-run-config [config : TestConfig]) : i64
-  (if (tltest-prepare-shuffle!)
-    (tltest-run-config-ready config)
+  (if (tltest-config-host-isa-permits?
+    (owned_view.compiler-owned-shared-view config))
+    (if (tltest-prepare-shuffle!)
+      (tltest-run-config-ready config)
+      1)
     1))
 
 ;; Run the `test` command over arguments starting at `start`.

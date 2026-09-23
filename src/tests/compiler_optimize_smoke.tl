@@ -3390,6 +3390,10 @@
       "compiler-optimize-sccp-self-test"
       (compiler_optimize_tests.compiler-optimize-sccp-self-test)
       42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-addr-taken-forwarding-self-test"
+      (compiler_optimize_tests.compiler-optimize-addr-taken-forwarding-self-test)
+      42)
     42))
 
 (define (smoke-optimizer-loop-self-tests) : i64

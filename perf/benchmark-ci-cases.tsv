@@ -23,12 +23,10 @@ benchmark	opt_runtime_string_ops
 benchmark	opt_string_scan
 benchmark	opt_struct_enum_dispatch
 benchmark	phys_nbody
-benchmark	pure_call_join
 benchmark	route_http
 benchmark	spmd_reduce
 benchmark	spmd_scan
 benchmark	spmd_shuffle
-optimization-opt2	pure_call_join
 optimization-opt2	graph_dijkstra
 optimization-opt2	opt_allocation_heavy
 optimization-opt2	opt_arithmetic_loops
@@ -63,3 +61,4 @@ instruction-heavy	spmd_mask
 instruction-heavy	spmd_short_tail
 instruction-heavy	spmd_zip
 instruction-heavy	string_scan
+instruction-main	pure_call_join

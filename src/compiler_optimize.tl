@@ -84855,8 +84855,8 @@
             suffix-base
             builder))))))
 
-;; Four independent partial sums inside an unrolled integer reduction group.
-;; Only the completed sum crosses the group's back edge or enters its tail.
+;; Four independent partial sums carried across an unrolled reduction loop.
+;; Only the completed sum enters the remainder; joining happens once on exit.
 ;; The source phi and its update must have no other body users, so no memory
 ;; address, stored value or branch can observe a partial sum. Integer addition
 ;; wraps; floating-point reassociation is deliberately outside this proof.
@@ -84864,6 +84864,7 @@
   (phi i64)
   (back i64)
   (ty ast.AstType)
+  (heads (__tl_dyn-array i64))
   (partials (__tl_dyn-array ir.CompilerIrValue)))
 
 (define (opt-unroll-sum-chains-none) : OptUnrollSumChains
@@ -84871,7 +84872,11 @@
     -1
     -1
     (ast.AstType.I64)
+    (__tl_make-array i64 0)
     (__tl_make-array ir.CompilerIrValue 0)))
+
+(define opt-unroll-sum-partial-count : i64
+  4)
 
 (define (opt-unroll-sum-chain-private?
   [instrs : ir.CompilerIrInstrSeq]
@@ -84916,7 +84921,7 @@
   [ku-ids : (__tl_dyn-array i64)]
   [copies : i64]) : OptUnrollSumChains
   (if (or
-    (< copies 16)
+    (< copies (opt-unroll-group-copies))
     (> (- last first) 12)
     (!= (opt-unroll-phi-list-count (compiler-opt-global-shared-view others)) 1))
     (opt-unroll-sum-chains-none)
@@ -84982,6 +84987,7 @@
                           phi
                           back-var
                           ty
+                          (__tl_make-array (array-ref ku-ids 0) -1 -1 -1)
                           (__tl_make-array
                             (ir.CompilerIrValue.Var (array-ref ku-ids 0))
                             (ir.CompilerIrValue.I64 0)
@@ -84990,6 +84996,51 @@
                         (opt-unroll-sum-chains-none))]
                     [_ (opt-unroll-sum-chains-none)])))]
             [_ (opt-unroll-sum-chains-none)]))])))
+
+;; The ordinary sum phi carries partial zero. Three fresh phis retain the
+;; remaining partials between groups, rather than resetting them every group.
+(define (opt-unroll-sum-chains-prepare!
+  [sums : OptUnrollSumChains]
+  [cell : (__tl_dyn-array i64)]) : unit
+  (when
+    (>= sums.phi 0)
+    (let
+      [i : i64 1]
+      (while (< i opt-unroll-sum-partial-count)
+        (let
+          [var : i64
+            (opt-unroll-alloc-var (compiler-opt-global-shared-view cell))]
+          (begin
+            (set! (array-ref sums.heads i) var)
+            (set! (array-ref sums.partials i) (ir.CompilerIrValue.Var var))
+            (set! i (+ i 1))))))))
+
+(define (opt-unroll-sum-chains-phis!
+  [sums : OptUnrollSumChains]
+  [guard-label : i64]
+  [loop-label : i64]
+  [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
+  (when
+    (>= sums.phi 0)
+    (let
+      [i : i64 1]
+      (while (< i opt-unroll-sum-partial-count)
+        (begin
+          (ir.compiler-ir-instr-builder-push!
+            builder
+            (ir.CompilerIrInstr.Phi
+              (array-ref sums.heads i)
+              (ir.compiler-ir-phi-input-seq-prepend
+                (ir.CompilerIrValue.I64 0)
+                guard-label
+                (ir.compiler-ir-phi-input-seq-prepend
+                  (compiler-opt-global-array-element-shared-view
+                    sums.partials
+                    i)
+                  loop-label
+                  (ir.compiler-ir-phi-input-seq-empty)))
+              (compiler-opt-global-shared-view sums.ty)))
+          (set! i (+ i 1)))))))
 
 (define (opt-unroll-sum-chains-finish!
   [sums : OptUnrollSumChains]
@@ -85049,7 +85100,12 @@
   [sums : OptUnrollSumChains]
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
   (if (>= copy copies)
-    (opt-unroll-sum-chains-finish! sums remap cell builder)
+    (when
+      (>= sums.phi 0)
+      (opt-unroll-remap-set
+        remap
+        sums.back
+        (compiler-opt-global-array-element-shared-view sums.partials 0)))
     (let
       ;; Copy 0 reads the fresh U phis; later copies read the previous copy's
       ;; remapped back-edge values. All seeds are computed before any is
@@ -85087,7 +85143,7 @@
             sums.phi
             (compiler-opt-global-array-element-shared-view
               sums.partials
-              (bit-and copy 3))))
+              (bit-and copy (- opt-unroll-sum-partial-count 1)))))
         (opt-unroll-push-copy-body!
           (compiler-opt-global-shared-view instrs)
           phi-count
@@ -85101,7 +85157,9 @@
         (when
           (>= sums.phi 0)
           (set!
-            (array-ref sums.partials (bit-and copy 3))
+            (array-ref
+              sums.partials
+              (bit-and copy (- opt-unroll-sum-partial-count 1)))
             (opt-unroll-subst-value
               (compiler-opt-global-shared-view remap)
               (ir.CompilerIrValue.Var sums.back))))
@@ -85138,16 +85196,9 @@
   [cell : (__tl_dyn-array i64)]
   [iu : i64]
   [copies : i64]
-  [suffix-base : i64]) : ir.CompilerIrInstrSeq
+  [suffix-base : i64]
+  [sums : OptUnrollSumChains]) : ir.CompilerIrInstrSeq
   (let
-    [sums : OptUnrollSumChains
-      (opt-unroll-sum-chains
-        (compiler-opt-global-shared-view instrs)
-        phi-count
-        last
-        (compiler-opt-global-shared-view others)
-        (compiler-opt-global-shared-view ku-ids)
-        copies)]
     [builder : ir.CompilerIrInstrBuilder
       (ir.compiler-ir-instr-builder-with-capacity (* copies (- last phi-count)))]
     (begin
@@ -85537,7 +85588,8 @@
         (compiler-opt-global-shared-view cell)
         iu2
         (opt-unroll-cascade-copies)
-        suffix-base)]
+        suffix-base
+        (opt-unroll-sum-chains-none))]
     [inext3-2 : ir.CompilerIrValue
       (opt-unroll-subst-value
         (compiler-opt-global-shared-view remap2)
@@ -85711,26 +85763,27 @@
 (define (opt-unroll-new-blocks
   [guard-block : ir.CompilerIrBlock]
   [unrolled-block : ir.CompilerIrBlock]
+  [sum-exit : OptMaybeBlock]
   [cascade : OptUnrollCascade]
   [tail-block : ir.CompilerIrBlock]
   [rest : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
-  (ir.compiler-ir-block-cons
-    (compiler-opt-global-shared-view guard-block)
-    (ir.compiler-ir-block-cons
-      (compiler-opt-global-shared-view unrolled-block)
+  (let
+    [tail : ir.CompilerIrBlockList
       (match (compiler-opt-global-shared-view cascade)
-        [(OptUnrollCascade.No)
-          (ir.compiler-ir-block-cons
-            (compiler-opt-global-shared-view tail-block)
-            rest)]
+        [(OptUnrollCascade.No) (ir.compiler-ir-block-cons tail-block rest)]
         [(OptUnrollCascade.Some cguard cunrolled _ _ _ _ _ _)
           (ir.compiler-ir-block-cons
             cguard
             (ir.compiler-ir-block-cons
               cunrolled
-              (ir.compiler-ir-block-cons
-                (compiler-opt-global-shared-view tail-block)
-                rest)))]))))
+              (ir.compiler-ir-block-cons tail-block rest)))])]
+    (ir.compiler-ir-block-cons
+      guard-block
+      (ir.compiler-ir-block-cons
+        unrolled-block
+        (match sum-exit
+          [(OptMaybeBlock.No) tail]
+          [(OptMaybeBlock.Some block) (ir.compiler-ir-block-cons block tail)])))))
 
 (define (opt-unroll-rewrite-blocks
   [blocks : ir.CompilerIrBlockList]
@@ -85738,6 +85791,7 @@
   [loop-label : i64]
   [guard-block : ir.CompilerIrBlock]
   [unrolled-block : ir.CompilerIrBlock]
+  [sum-exit : OptMaybeBlock]
   [cascade : OptUnrollCascade]
   [tail-block : ir.CompilerIrBlock]
   [guard-label : i64]) : ir.CompilerIrBlockList
@@ -85750,6 +85804,7 @@
             (opt-unroll-new-blocks
               (compiler-opt-global-shared-view guard-block)
               (compiler-opt-global-shared-view unrolled-block)
+              (compiler-opt-global-shared-view sum-exit)
               (compiler-opt-global-shared-view cascade)
               (compiler-opt-global-shared-view tail-block)
               (opt-unroll-rewrite-blocks
@@ -85758,6 +85813,7 @@
                 loop-label
                 guard-block
                 unrolled-block
+                sum-exit
                 cascade
                 tail-block
                 guard-label))
@@ -85773,6 +85829,7 @@
                 loop-label
                 guard-block
                 unrolled-block
+                sum-exit
                 cascade
                 tail-block
                 guard-label)))])]
@@ -85783,6 +85840,7 @@
         loop-label
         guard-block
         unrolled-block
+        sum-exit
         cascade
         tail-block
         guard-label)]))
@@ -85892,11 +85950,35 @@
             (compiler-opt-global-shared-view cell))]
         ;; One answer sizes the clone and the guard: the shape scan admitted
         ;; this body only because the same call returned at least two.
-        [copy-count : i64
+        [planned-copy-count : i64
           (opt-unroll-body-copies
             (compiler-opt-global-shared-view instrs.slots)
             phi-count
             last)]
+        [sums : OptUnrollSumChains
+          (opt-unroll-sum-chains
+            (compiler-opt-global-shared-view instrs)
+            phi-count
+            last
+            (compiler-opt-global-shared-view others)
+            (compiler-opt-global-shared-view ku-ids)
+            planned-copy-count)]
+        [_prepare-sums : unit
+          (opt-unroll-sum-chains-prepare!
+            (compiler-opt-global-shared-view sums)
+            (compiler-opt-global-shared-view cell))]
+        ;; Private sums amortize their single exit join over a wider group.
+        [copy-count : i64
+          (if (>= sums.phi 0)
+            (* 2 planned-copy-count)
+            planned-copy-count)]
+        [sum-exit-label : i64
+          (if (>= sums.phi 0)
+            (ir.compiler-ir-label
+              (str_cat.str-cat
+                (ir.compiler-ir-label-text label)
+                "__unroll_sum_exit"))
+            unrolled-label)]
         [copies : ir.CompilerIrInstrSeq
           (opt-unroll-copies
             (compiler-opt-global-shared-view instrs)
@@ -85912,7 +85994,8 @@
             (compiler-opt-global-shared-view cell)
             iu
             copy-count
-            0)]
+            0
+            (compiler-opt-global-shared-view sums))]
         ;; End-of-last-copy state: the counter and chain values the next group
         ;; iteration (and the remainder loop's phis) receive.
         [inext3 : ir.CompilerIrValue
@@ -85920,6 +86003,18 @@
             (compiler-opt-global-shared-view remap)
             (ir.CompilerIrValue.Var inext))]
         [chains : ir.CompilerIrValueSeq
+          (opt-unroll-phi-chain-values
+            (compiler-opt-global-shared-view remap)
+            (compiler-opt-global-shared-view others))]
+        [sum-exit-builder : ir.CompilerIrInstrBuilder
+          (ir.compiler-ir-instr-builder-with-capacity 4)]
+        [_join-sums : unit
+          (opt-unroll-sum-chains-finish!
+            (compiler-opt-global-shared-view sums)
+            (compiler-opt-global-shared-view remap)
+            (compiler-opt-global-shared-view cell)
+            (&mut sum-exit-builder))]
+        [exit-chains : ir.CompilerIrValueSeq
           (opt-unroll-phi-chain-values
             (compiler-opt-global-shared-view remap)
             (compiler-opt-global-shared-view others))]
@@ -85957,10 +86052,10 @@
               (compiler-opt-global-shared-view inits)
               label
               guard-label
-              unrolled-label
+              sum-exit-label
               (compiler-opt-global-shared-view seed)
               (compiler-opt-global-shared-view inext3)
-              (compiler-opt-global-shared-view chains)
+              (compiler-opt-global-shared-view exit-chains)
               (compiler-opt-global-shared-view cell)
               frame
               copy-count))]
@@ -85971,6 +86066,17 @@
           (opt-unroll-cascade-entry
             (compiler-opt-global-shared-view cascade)
             label)]
+        [sum-exit : OptMaybeBlock
+          (if (< sums.phi 0)
+            (OptMaybeBlock.No)
+            (begin
+              (ir.compiler-ir-instr-builder-push!
+                (&mut sum-exit-builder)
+                (ir.CompilerIrInstr.Jump next-label))
+              (OptMaybeBlock.Some
+                (ir.CompilerIrBlock.Block
+                  sum-exit-label
+                  (ir.compiler-ir-instr-builder-to-seq sum-exit-builder)))))]
         [ngroup : i64
           (opt-unroll-alloc-var (compiler-opt-global-shared-view cell))]
         [gwrap : i64
@@ -86077,6 +86183,11 @@
               guard-label
               unrolled-label
               (&mut unrolled-builder))
+            (opt-unroll-sum-chains-phis!
+              (compiler-opt-global-shared-view sums)
+              guard-label
+              unrolled-label
+              (&mut unrolled-builder))
             (ir.compiler-ir-instr-builder-append-seq-range!
               (&mut unrolled-builder)
               (compiler-opt-global-shared-view copies)
@@ -86095,7 +86206,9 @@
               (ir.CompilerIrInstr.Branch
                 (ir.CompilerIrValue.Var gu)
                 unrolled-label
-                next-label)))]
+                (if (>= sums.phi 0)
+                  sum-exit-label
+                  next-label))))]
         [unrolled-block : ir.CompilerIrBlock
           (ir.CompilerIrBlock.Block
             unrolled-label
@@ -86118,7 +86231,8 @@
             [(OptUnrollCascade.Some _ _ _ _ _ _ cnext _) cnext])]
         [tail-chains : ir.CompilerIrValueSeq
           (match (compiler-opt-global-shared-view cascade)
-            [(OptUnrollCascade.No) (compiler-opt-global-shared-view chains)]
+            [(OptUnrollCascade.No)
+              (compiler-opt-global-shared-view exit-chains)]
             [(OptUnrollCascade.Some _ _ _ _ _ _ _ cchains) cchains])]
         [tail-block : ir.CompilerIrBlock
           (ir.CompilerIrBlock.Block
@@ -86138,7 +86252,7 @@
                 guard-label)
               (opt-unroll-cascade-exit
                 (compiler-opt-global-shared-view cascade)
-                unrolled-label)))]
+                sum-exit-label)))]
         (OptUnrollResult.Result
           (opt-unroll-rewrite-blocks
             blocks
@@ -86146,6 +86260,7 @@
             label
             guard-block
             unrolled-block
+            sum-exit
             cascade
             tail-block
             guard-label)
@@ -90154,6 +90269,7 @@
                         label
                         guard-block
                         fast-block
+                        (OptMaybeBlock.No)
                         (OptUnrollCascade.No)
                         slow-block
                         guard-label)

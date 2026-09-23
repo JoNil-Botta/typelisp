@@ -1,4 +1,4 @@
-;; Runtime bounds exercise every remainder around the sixteen-copy group.
+;; Runtime bounds exercise every remainder around the thirty-two-copy group.
 (import stdlib.io)
 (import stdlib.string)
 

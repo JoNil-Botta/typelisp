@@ -53220,19 +53220,19 @@
             (compiler_optimize.opt-verify-function
               (compiler_optimize.compiler-opt-global-shared-view func))))
         1]
-      ;; entry, guard, unrolled body, remainder loop, exit.
+      ;; entry, guard, unrolled body, sum exit, remainder loop, exit.
       [(not
           (=
             (compiler_ir_types.compiler-ir-block-list-count
               (compiler_ir_types.compiler-ir-global-shared-view out))
-            5))
+            6))
         2]
-      ;; sixteen acc adds + sixteen counter adds.
+      ;; thirty-two acc adds + thirty-two counter adds.
       [(<
           (opt-unroll-test-count-add-in-block
             (compiler_ir_types.compiler-ir-global-shared-view out)
             (compiler_ir_types.compiler-ir-label "body__unroll_body"))
-          32)
+          64)
         3]
       ;; a non-unit counter step is not canonical: blocks stay untouched.
       [(not
@@ -96654,12 +96654,12 @@
               (compiler_optimize.compiler-opt-global-shared-view func))))
         1]
       ;; All THREE loops unrolled in one invocation (previously only the
-      ;; first): 7 original blocks + 2 per rewrite.
+      ;; first): 7 original blocks + guard, group and sum exit per rewrite.
       [(not
           (=
             (compiler_ir_types.compiler-ir-block-list-count
               (compiler_ir_types.compiler-ir-global-shared-view out))
-            13))
+            16))
         2]
       [(match (compiler_optimize.opt-cfg-find-block
           (compiler_ir_types.compiler-ir-global-shared-view out)
@@ -96691,7 +96691,7 @@
           (=
             (compiler_ir_types.compiler-ir-block-list-count
               (compiler_ir_types.compiler-ir-global-shared-view round2-out))
-            13))
+            16))
         7]
       [else 42])))
 
@@ -96912,7 +96912,7 @@
           (=
             (compiler_ir_types.compiler-ir-block-list-count
               (compiler_ir_types.compiler-ir-global-shared-view clean-out))
-            9))
+            11))
         1]
       ;; The first loop's rewrite fails the post-application verify (an
       ;; unrelated duplicate var definition), so the pass stops
@@ -109626,12 +109626,12 @@
             (compiler_optimize.opt-verify-function
               (compiler_optimize.compiler-opt-global-shared-view func))))
         1]
-      ;; entry, guard, group, cascade guard, cascade group, remainder, exit.
+      ;; entry, guard, group, sum exit, cascade guard, cascade, remainder, exit.
       [(not
           (=
             (compiler_ir_types.compiler-ir-block-list-count
               (compiler_ir_types.compiler-ir-global-shared-view out))
-            7))
+            8))
         2]
       [(match (compiler_optimize.opt-cfg-find-block
           (compiler_ir_types.compiler-ir-global-shared-view out)
@@ -109639,14 +109639,14 @@
           [(compiler_optimize.OptMaybeBlock.No) true]
           [(compiler_optimize.OptMaybeBlock.Some _) false])
         3]
-      ;; Sixteen element reads in the first group, FOUR in the cascade, and the
+      ;; Thirty-two element reads in the first group, FOUR in the cascade, and the
       ;; remainder loop still reads exactly one per trip.
       [(not
           (=
             (opt-unroll-test-count-load-in-block
               (compiler_ir_types.compiler-ir-global-shared-view out)
               (compiler_ir_types.compiler-ir-label "body__unroll_body"))
-            16))
+            32))
         4]
       [(not
           (=
@@ -109673,7 +109673,7 @@
           (=
             (compiler_ir_types.compiler-ir-block-list-count
               (compiler_ir_types.compiler-ir-global-shared-view round2-out))
-            7))
+            8))
         8]
       ;; The factor table itself.
       [(not (= (compiler_optimize.opt-unroll-cascade-copies) 4)) 9]
@@ -110235,7 +110235,7 @@
   (test.assert-i64-eq
     (compiler-optimize-unroll-cascade-self-test)
     42
-    "a store-free counted body that reads one element per trip gets a second, four-copy group between its sixteen-copy group and the one-at-a-time remainder, the rewrite stays idempotent, and the nearest store-only neighbour is refused a cascade so the load-and-store and word-merge tiers keep the factors they were measured at"))
+    "a store-free counted body that reads one element per trip gets a second, four-copy group between its reduction group and the one-at-a-time remainder, the rewrite stays idempotent, and the nearest store-only neighbour is refused a cascade so the load-and-store and word-merge tiers keep the factors they were measured at"))
 
 ;; --- clone-free check hoisting (loop predication) -----------------------------
 ;;
@@ -111660,6 +111660,8 @@
       (cond
         [(= mode 9) (compiler_ast_types.AstType.F64)]
         [(= mode 10) (compiler_ast_types.AstType.U64)]
+        [(= mode 11) (compiler_ast_types.AstType.I32)]
+        [(= mode 12) (compiler_ast_types.AstType.U8)]
         [else (compiler_ast_types.AstType.I64)])]
     [copied? : bool (or (= mode 1) (= mode 5))]
     [back : i64
@@ -111727,6 +111729,19 @@
             (compiler_ir_types.CompilerIrValue.Var 2)
             (compiler_ir_types.CompilerIrValue.I64 32)
             (compiler_ir_types.compiler-ir-label "sum-test-bound"))))
+      (when
+        (= mode 14)
+        (let
+          [i : i64 0]
+          (while (< i 11)
+            (begin
+              (compiler_ir_types.compiler-ir-instr-builder-push!
+                (&mut builder)
+                (compiler_ir_types.CompilerIrInstr.Mov
+                  (+ 30 i)
+                  (compiler_ir_types.CompilerIrValue.I64 i)
+                  (compiler_ast_types.AstType.I64)))
+              (set! i (+ i 1))))))
       (let
         [instrs : compiler_ir_types.CompilerIrInstrSeq
           (compiler_ir_types.compiler-ir-instr-builder-to-seq builder)]
@@ -111737,7 +111752,15 @@
               (compiler_ir_types.CompilerIrValue.I64 7)
               (compiler_ir_types.CompilerIrValue.Var back)
               ty)
-            (compiler_optimize.OptUnrollPhiList.Nil))]
+            (if (= mode 13)
+              (compiler_optimize.opt-unroll-phi-list-cons
+                (compiler_optimize.OptUnrollPhi.Phi
+                  21
+                  (compiler_ir_types.CompilerIrValue.I64 0)
+                  (compiler_ir_types.CompilerIrValue.Var 22)
+                  (compiler_ast_types.AstType.I64))
+                (compiler_optimize.OptUnrollPhiList.Nil))
+              (compiler_optimize.OptUnrollPhiList.Nil)))]
         (compiler_optimize.opt-unroll-sum-chains
           (compiler_optimize.compiler-opt-global-shared-view instrs)
           0
@@ -111763,9 +111786,175 @@
       "short unroll groups keep the existing recurrence")
     (let
       [mode : i64 2]
-      (while (<= mode 9)
+      (while (<= mode 14)
         (begin
-          (test.assert-true
-            (< (opt-unroll-sum-test-site mode 16).phi 0)
-            "dependent, observed, trapping, non-additive and floating recurrences stay ordered")
+          (unless
+            (= mode 10)
+            (test.assert-true
+              (< (opt-unroll-sum-test-site mode 16).phi 0)
+              "dependent, observed, unknown, narrow, floating, multi-phi and large bodies stay ordered"))
           (set! mode (+ mode 1)))))))
+
+(define (opt-unroll-sum-test-instrs
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [name : String]) : compiler_ir_types.CompilerIrInstrSeq
+  (match (compiler_optimize.opt-cfg-find-block
+    blocks
+    (compiler_ir_types.compiler-ir-label name))
+    [(compiler_optimize.OptMaybeBlock.No)
+      (compiler_ir_types.compiler-ir-instr-seq-empty)]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs) instrs])]))
+
+;; Verify the emitted graph, not only the admission predicate: four phi-backed
+;; chains survive the group backedge, and one balanced join feeds the cascade.
+(test
+  unrolled-sum-chain-loop-state
+  (let
+    [input : compiler_ir_types.CompilerIrFunction
+      (opt-unroll-cascade-test-function)]
+    [_input-ok : unit
+      (test.assert-true
+        (compiler_optimize.opt-verify-ok?
+          (compiler_optimize.opt-verify-function
+            (compiler_optimize.compiler-opt-global-shared-view input)))
+        "the reduction fixture is valid IR")]
+    [func : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-unroll-function
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        input)]
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view func))]
+    [group : compiler_ir_types.CompilerIrInstrSeq
+      (opt-unroll-sum-test-instrs
+        (compiler_optimize.compiler-opt-global-shared-view blocks)
+        "body__unroll_body")]
+    [joined : compiler_ir_types.CompilerIrInstrSeq
+      (opt-unroll-sum-test-instrs
+        (compiler_optimize.compiler-opt-global-shared-view blocks)
+        "body__unroll_sum_exit")]
+    [cascade : compiler_ir_types.CompilerIrInstrSeq
+      (opt-unroll-sum-test-instrs
+        (compiler_optimize.compiler-opt-global-shared-view blocks)
+        "body__unroll_guard2")]
+    [loop-label : i64 (compiler_ir_types.compiler-ir-label "body__unroll_body")]
+    [exit-label : i64
+      (compiler_ir_types.compiler-ir-label "body__unroll_sum_exit")]
+    [state : (__tl_dyn-array i64) (__tl_make-array i64 4)]
+    [backs : (__tl_dyn-array i64) (__tl_make-array i64 4)]
+    [k : i64 0]
+    (begin
+      (test.assert-true
+        (compiler_optimize.opt-verify-ok?
+          (compiler_optimize.opt-verify-function func))
+        "all generated edges and values verify")
+      (test.assert-i64-eq
+        (opt-unroll-test-count-add-in-block
+          (compiler_optimize.compiler-opt-global-shared-view blocks)
+          loop-label)
+        64
+        "32 counter steps and 32 updates; no join inside the group")
+      (while (< k 4)
+        (begin
+          (match (compiler_ir_types.compiler-ir-instr-seq-ref group (+ 1 k))
+            [(compiler_ir_types.CompilerIrInstr.Phi dst inputs _)
+              (begin
+                (set! (array-ref state k) dst)
+                (match (compiler_optimize.opt-thread-phi-input-value
+                  inputs
+                  loop-label)
+                  [(compiler_ir_types.CompilerIrMaybeValue.Some
+                      (compiler_ir_types.CompilerIrValue.Var back))
+                    (set! (array-ref backs k) back)]
+                  [_ (test.assert-true false "each sum has a group backedge")]))]
+            [_
+              (test.assert-true
+                false
+                "four independent sum phis follow the counter")])
+          (set! k (+ k 1))))
+      (let
+        [pos : i64 5]
+        [updates : i64 0]
+        (begin
+          (while (< pos group.len)
+            (begin
+              (match (compiler_ir_types.compiler-ir-instr-seq-ref group pos)
+                [(compiler_ir_types.CompilerIrInstr.BinOp
+                    dst
+                    (compiler_ir_types.CompilerIrBinOp.Add)
+                    (compiler_ir_types.CompilerIrValue.Var lhs)
+                    _
+                    _)
+                  (when
+                    (= lhs (array-ref state (bit-and updates 3)))
+                    (begin
+                      (set! (array-ref state (bit-and updates 3)) dst)
+                      (set! updates (+ updates 1))))]
+                [_ unit])
+              (set! pos (+ pos 1))))
+          (test.assert-i64-eq
+            updates
+            32
+            "all 32 updates rotate through the four chains")))
+      (set! k 0)
+      (while (< k 4)
+        (begin
+          (test.assert-i64-eq
+            (array-ref state k)
+            (array-ref backs k)
+            "each backedge preserves its own final partial")
+          (set! k (+ k 1))))
+      (test.assert-i64-eq
+        joined.len
+        4
+        "exactly three additions and a jump on group exit")
+      (let
+        [terms : (__tl_dyn-array i64) (__tl_make-array i64 3)]
+        (begin
+          (set! k 0)
+          (while (< k 3)
+            (begin
+              (match (compiler_ir_types.compiler-ir-instr-seq-ref joined k)
+                [(compiler_ir_types.CompilerIrInstr.BinOp
+                    dst
+                    (compiler_ir_types.CompilerIrBinOp.Add)
+                    (compiler_ir_types.CompilerIrValue.Var lhs)
+                    (compiler_ir_types.CompilerIrValue.Var rhs)
+                    _)
+                  (begin
+                    (test.assert-i64-eq
+                      lhs
+                      (if (< k 2)
+                        (array-ref state (* 2 k))
+                        (array-ref terms 0))
+                      "left join operand is the expected partial")
+                    (test.assert-i64-eq
+                      rhs
+                      (if (< k 2)
+                        (array-ref state (+ 1 (* 2 k)))
+                        (array-ref terms 1))
+                      "right join operand is the expected partial")
+                    (set! (array-ref terms k) dst))]
+                [_
+                  (test.assert-true
+                    false
+                    "only sum additions precede the exit jump")])
+              (set! k (+ k 1))))
+          (match (compiler_ir_types.compiler-ir-instr-seq-ref cascade 1)
+            [(compiler_ir_types.CompilerIrInstr.Phi _ inputs _)
+              (match (compiler_optimize.opt-thread-phi-input-value
+                inputs
+                exit-label)
+                [(compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.Var value))
+                  (test.assert-i64-eq
+                    value
+                    (array-ref terms 2)
+                    "the remainder receives the complete sum from the exit join")]
+                [_
+                  (test.assert-true
+                    false
+                    "the cascade must receive the sum exit edge")])]
+            [_ (test.assert-true false "the cascade has a sum phi")]))))))

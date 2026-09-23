@@ -20612,6 +20612,22 @@
           (set! cursor (tc-name-id-list-rest cursor))))
       found)))
 
+;; Names of `a` that `b` also contains, in `a`'s order.
+(define (tc-name-id-list-intersection [a : TcNameIdList] [b : TcNameIdList]) : TcNameIdList
+  (let
+    [out : TcNameIdList TcNameIdList.Nil]
+    [rest : TcNameIdList a]
+    (begin
+      (while (not (tc-name-id-list-empty? (tc-global-shared-view rest)))
+        (let
+          [name : i64 (tc-name-id-list-head (tc-global-shared-view rest))]
+          (begin
+            (if (tc-name-id-list-contains (tc-global-shared-view b) name)
+              (set! out (tc-name-id-list-add out name))
+              unit)
+            (set! rest (tc-name-id-list-rest rest)))))
+      out)))
+
 (define (tc-name-id-list-eq [a : TcNameIdList] [b : TcNameIdList]) : bool
   ;; Preserve the former predicate exactly: an empty left side only matches an
   ;; empty right side, while a non-empty left side tests membership in `b`.
@@ -94044,6 +94060,33 @@
         binding-id
         (ast.ast-expr-segment-bases-get expr-bases inner-box)
         result-lifetimes)]
+    ;; A nested call lends what its own result stores. When that result carries
+    ;; a lifetime this binding stores, the nested call's arguments keep their
+    ;; borrows too: `(first (as-bytes (& wire)))` lends `wire` (#7968).
+    [(ast.AstExpr.Call _ inner-args)
+      (match (tc-expr
+        (tc-global-shared-view ctx)
+        (tc-global-shared-view env)
+        (tc-global-shared-view arg))
+        [(ResultTcType.Ok inner-ty)
+          (let
+            [inner-lifetimes : TcNameIdList
+              (tc-name-id-list-intersection
+                (tc-type-collect-reference-lifetimes
+                  (tc-resolve-type (tc-global-shared-view ctx) inner-ty))
+                (tc-global-shared-view result-lifetimes))]
+            (if (tc-name-id-list-empty? (tc-global-shared-view inner-lifetimes))
+              (TcBorrowCheckResult.Ok borrowed)
+              (tc-borrow-check-add-bound-returned-call-borrows
+                ctx
+                expr-bases
+                env
+                locals
+                borrowed
+                binding-id
+                inner-args
+                inner-lifetimes)))]
+        [(ResultTcType.Err _) (TcBorrowCheckResult.Ok borrowed)])]
     [_ (TcBorrowCheckResult.Ok borrowed)]))
 
 (define (tc-borrow-check-add-bound-returned-call-borrows-at
@@ -97337,7 +97380,9 @@
     [(ResultTcType.Ok arg-ty)
       (if (tc-name-id-list-overlaps?
         (tc-type-collect-reference-lifetimes
-          (tc-resolve-type (tc-global-shared-view ctx) arg-ty))
+          (tc-resolve-type
+            (tc-global-shared-view ctx)
+            (tc-global-shared-view arg-ty)))
         (tc-global-shared-view result-lifetimes))
         (match (ast.ast-expr-unspan (tc-global-shared-view arg))
           [(ast.AstExpr.Borrow mutable _ place-box)
@@ -97375,6 +97420,22 @@
                 borrowed
                 inner
                 result-lifetimes))]
+          ;; A nested call lends what its own result stores (#7968).
+          [(ast.AstExpr.Call _ inner-args)
+            (let
+              [inner-lifetimes : TcNameIdList
+                (tc-name-id-list-intersection
+                  (tc-type-collect-reference-lifetimes
+                    (tc-resolve-type (tc-global-shared-view ctx) arg-ty))
+                  (tc-global-shared-view result-lifetimes))]
+              (tc-borrow-check-add-returned-call-borrows
+                ctx
+                expr-bases
+                env
+                locals
+                borrowed
+                inner-args
+                inner-lifetimes))]
           [_ (TcBorrowCheckResult.Ok borrowed)])
         (TcBorrowCheckResult.Ok borrowed))]
     [(ResultTcType.Err _) (TcBorrowCheckResult.Ok borrowed)]))

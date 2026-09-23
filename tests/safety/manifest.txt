@@ -200,6 +200,13 @@ hashmap_bang_rvalue_reject|check-fail|tests/safety/hashmap_bang_rvalue_reject.tl
 vector_bang_rvalue_reject|check-fail|tests/safety/vector_bang_rvalue_reject.tl|-|borrow requires a local, parameter, or aggregate place
 hashmap_bang_shared_borrow_reject|check-fail|tests/safety/hashmap_bang_shared_borrow_reject.tl|-|cannot mutably borrow borrowed place `m`
 hashmap_bang_projected_shared_borrow_reject|check-fail|tests/safety/hashmap_bang_projected_shared_borrow_reject.tl|-|cannot mutably borrow borrowed place `holder.map`
+nested_call_loan_enum_reject|check-fail|tests/safety/nested_call_loan_enum_reject.tl|-|cannot mutably borrow borrowed place `wire`
+nested_call_loan_struct_reject|check-fail|tests/safety/nested_call_loan_struct_reject.tl|-|cannot mutably borrow borrowed place `wire`
+nested_call_loan_match_reject|check-fail|tests/safety/nested_call_loan_match_reject.tl|-|cannot mutably borrow borrowed place `wire`
+nested_call_loan_slice_reject|check-fail|tests/safety/nested_call_loan_slice_reject.tl|-|cannot mutably borrow borrowed place `wire`
+nested_call_loan_move_reject|check-fail|tests/safety/nested_call_loan_move_reject.tl|-|cannot move borrowed place `wire`
+nested_call_loan_scoped_ok|check-ok|tests/safety/nested_call_loan_scoped_ok.tl|-|-
+nested_call_loan_unrelated_ok|check-ok|tests/safety/nested_call_loan_unrelated_ok.tl|-|-
 hashmap_nominal_value_noncloneable_reject|check-fail|tests/safety/hashmap_nominal_value_noncloneable_reject.tl|-|typecheck: clone unsupported type HashmapNoncloneableValue at HashmapNoncloneableValue.choice.Raw[0].raw: (Ptr i64) has no clone capability
 hashmap_unsupported_value_kind_reject|check-fail|tests/safety/hashmap_unsupported_value_kind_reject.tl|-|hashmap: value type tuple_i64_i64_nil has unsupported value kind tuple
 hashmap_string_probe_forged_capacity_trap|run-trap|tests/safety/hashmap_string_probe_forged_capacity_trap.tl|134|array index out of bounds

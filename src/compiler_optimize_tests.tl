@@ -67436,6 +67436,443 @@
         7]
       [else 42])))
 
+;; --- #7992: element-load dereferenceability ----------------------------------
+;;
+;; A loop reads `array[k]` in an arm it may not take, behind the arm's own
+;; bounds check. LICM may move that read to the preheader only where
+;; `k <u array.len` is PROVEN there; every mode below changes what the entry
+;; proves and nothing else.
+;;
+;;   entry:  len = array.len ; data = array.data ; olen = other.len
+;;           data2 = mov data ; <proof> ; jump pre (or branch)
+;;   pre:    jump loop                     (the preheader)
+;;   loop:   i = phi ; sum = phi ; branch cond, arm, latch
+;;   arm:    bounds_check k, len ; v = load (gep data, k) ; sum' = sum + v
+;;   latch:  sum'' = phi ; i' = i + 1 ; branch i' < 10, loop, exit
+;;
+;; Modes:
+;;   0  nothing outside the loop proves the bound
+;;   1  `bounds_check k, len` in the entry
+;;   2  the entry branches `lt k, len : u64` to `pre`, `pre`'s only predecessor
+;;   3  the same branch compared SIGNED, which bounds nothing below
+;;   4  `bounds_check k, olen`: another array's length
+;;   5  mode 2's branch, but `pre` is also reached from `alt`
+;;   6  the read is `data[3]`, and the entry checks the literal 5
+;;   7  the read is `data[3]`, and the entry checks only the literal 2
+;;   8  mode 1, with the read through `data2`, a copy of the data pointer
+;;   9  the arm reads `array.len`, a header word: no bound is needed
+;;  10  the arm reads byte `text[k]`, and the entry checks `k` against
+;;      `text.len`
+;;  11  mode 10, but the read is a whole word at that byte index: the bound
+;;      covers one byte, not eight
+;;  12  the arm reads `array`'s data re-strided as bytes, `data[k] : u8`: the
+;;      bound counts i64 elements, not the stride the address uses
+(define (opt-licm-bound-params) : compiler_ir_types.CompilerIrParamSeq
+  (compiler_ir_types.compiler-ir-param-seq-prepend
+    (compiler_ir_types.CompilerIrParam.Param
+      "cond"
+      (compiler_ast_types.AstType.Bool)
+      0)
+    (compiler_ir_types.compiler-ir-param-seq-prepend
+      (compiler_ir_types.CompilerIrParam.Param
+        "array"
+        (compiler_ast_types.AstType.DynArray 0)
+        1)
+      (compiler_ir_types.compiler-ir-param-seq-prepend
+        (compiler_ir_types.CompilerIrParam.Param
+          "k"
+          (compiler_ast_types.AstType.I64)
+          2)
+        (compiler_ir_types.compiler-ir-param-seq-prepend
+          (compiler_ir_types.CompilerIrParam.Param
+            "other"
+            (compiler_ast_types.AstType.DynArray 0)
+            3)
+          (compiler_ir_types.compiler-ir-param-seq-prepend
+            (compiler_ir_types.CompilerIrParam.Param
+              "text"
+              (compiler_ast_types.AstType.String)
+              23)
+            (compiler_ir_types.compiler-ir-param-seq-empty)))))))
+
+(define (opt-licm-bound-entry [mode : i64]) : compiler_ir_types.CompilerIrInstrSeq
+  (let
+    [builder : compiler_ir_types.CompilerIrInstrBuilder
+      (compiler_ir_types.compiler-ir-instr-builder-with-capacity 12)]
+    (begin
+      (compiler_ir_types.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (compiler_ir_types.CompilerIrInstr.Gep
+          4
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ir_types.CompilerIrValue.I64 1)
+          (compiler_ast_types.AstType.I64)))
+      (compiler_ir_types.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (compiler_ir_types.CompilerIrInstr.Load
+          5
+          (compiler_ir_types.CompilerIrValue.Var 4)
+          (compiler_ast_types.AstType.I64)))
+      (compiler_ir_types.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (compiler_ir_types.CompilerIrInstr.Gep
+          6
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ast_types.AstType.I64)))
+      (compiler_ir_types.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (compiler_ir_types.CompilerIrInstr.Load
+          7
+          (compiler_ir_types.CompilerIrValue.Var 6)
+          (compiler_ast_types.AstType.U64)))
+      (compiler_ir_types.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (compiler_ir_types.CompilerIrInstr.Gep
+          8
+          (compiler_ir_types.CompilerIrValue.Var 3)
+          (compiler_ir_types.CompilerIrValue.I64 1)
+          (compiler_ast_types.AstType.I64)))
+      (compiler_ir_types.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (compiler_ir_types.CompilerIrInstr.Load
+          9
+          (compiler_ir_types.CompilerIrValue.Var 8)
+          (compiler_ast_types.AstType.I64)))
+      (compiler_ir_types.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (compiler_ir_types.CompilerIrInstr.Mov
+          10
+          (compiler_ir_types.CompilerIrValue.Var 7)
+          (compiler_ast_types.AstType.U64)))
+      (compiler_ir_types.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (compiler_ir_types.CompilerIrInstr.Gep
+          24
+          (compiler_ir_types.CompilerIrValue.Var 23)
+          (compiler_ir_types.CompilerIrValue.I64 1)
+          (compiler_ast_types.AstType.I64)))
+      (compiler_ir_types.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (compiler_ir_types.CompilerIrInstr.Load
+          25
+          (compiler_ir_types.CompilerIrValue.Var 24)
+          (compiler_ast_types.AstType.I64)))
+      (compiler_ir_types.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (compiler_ir_types.CompilerIrInstr.Gep
+          26
+          (compiler_ir_types.CompilerIrValue.Var 23)
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ast_types.AstType.I64)))
+      (compiler_ir_types.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (compiler_ir_types.CompilerIrInstr.Load
+          27
+          (compiler_ir_types.CompilerIrValue.Var 26)
+          (compiler_ast_types.AstType.U64)))
+      (cond
+        [(or (= mode 1) (= mode 8) (= mode 12))
+          (compiler_ir_types.compiler-ir-instr-builder-push!
+            (&mut builder)
+            (compiler_ir_types.CompilerIrInstr.BoundsCheck
+              (compiler_ir_types.CompilerIrValue.Var 2)
+              (compiler_ir_types.CompilerIrValue.Var 5)
+              (compiler_ir_types.compiler-ir-label "entry_ok")))]
+        [(= mode 4)
+          (compiler_ir_types.compiler-ir-instr-builder-push!
+            (&mut builder)
+            (compiler_ir_types.CompilerIrInstr.BoundsCheck
+              (compiler_ir_types.CompilerIrValue.Var 2)
+              (compiler_ir_types.CompilerIrValue.Var 9)
+              (compiler_ir_types.compiler-ir-label "entry_ok")))]
+        [(or (= mode 10) (= mode 11))
+          (compiler_ir_types.compiler-ir-instr-builder-push!
+            (&mut builder)
+            (compiler_ir_types.CompilerIrInstr.BoundsCheck
+              (compiler_ir_types.CompilerIrValue.Var 2)
+              (compiler_ir_types.CompilerIrValue.Var 25)
+              (compiler_ir_types.compiler-ir-label "entry_ok")))]
+        [(or (= mode 6) (= mode 7))
+          (compiler_ir_types.compiler-ir-instr-builder-push!
+            (&mut builder)
+            (compiler_ir_types.CompilerIrInstr.BoundsCheck
+              (compiler_ir_types.CompilerIrValue.I64
+                (if (= mode 6)
+                  5
+                  2))
+              (compiler_ir_types.CompilerIrValue.Var 5)
+              (compiler_ir_types.compiler-ir-label "entry_ok")))]
+        [else unit])
+      (if (or (= mode 2) (= mode 3) (= mode 5))
+        (begin
+          (compiler_ir_types.compiler-ir-instr-builder-push!
+            (&mut builder)
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              11
+              (compiler_ir_types.CompilerIrBinOp.Lt)
+              (compiler_ir_types.CompilerIrValue.Var 2)
+              (compiler_ir_types.CompilerIrValue.Var 5)
+              (if (= mode 3)
+                (compiler_ast_types.AstType.I64)
+                (compiler_ast_types.AstType.U64))))
+          (compiler_ir_types.compiler-ir-instr-builder-push!
+            (&mut builder)
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 11)
+              (compiler_ir_types.compiler-ir-label "pre")
+              (compiler_ir_types.compiler-ir-label
+                (if (= mode 5)
+                  "alt"
+                  "exit")))))
+        (compiler_ir_types.compiler-ir-instr-builder-push!
+          (&mut builder)
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "pre"))))
+      (compiler_ir_types.compiler-ir-instr-builder-to-seq builder))))
+
+(define (opt-licm-bound-arm [mode : i64]) : compiler_ir_types.CompilerIrInstrSeq
+  (let
+    [builder : compiler_ir_types.CompilerIrInstrBuilder
+      (compiler_ir_types.compiler-ir-instr-builder-with-capacity 6)]
+    [index : compiler_ir_types.CompilerIrValue
+      (if (or (= mode 6) (= mode 7))
+        (compiler_ir_types.CompilerIrValue.I64 3)
+        (compiler_ir_types.CompilerIrValue.Var 2))]
+    (begin
+      (cond
+        [(= mode 9)
+          (compiler_ir_types.compiler-ir-instr-builder-push!
+            (&mut builder)
+            (compiler_ir_types.CompilerIrInstr.Gep
+              14
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ir_types.CompilerIrValue.I64 1)
+              (compiler_ast_types.AstType.I64)))]
+        [(>= mode 10)
+          (begin
+            (compiler_ir_types.compiler-ir-instr-builder-push!
+              (&mut builder)
+              (compiler_ir_types.CompilerIrInstr.BoundsCheck
+                (compiler_ir_types.CompilerIrValue.Var 2)
+                (compiler_ir_types.CompilerIrValue.Var
+                  (if (= mode 12)
+                    5
+                    25))
+                (compiler_ir_types.compiler-ir-label "arm_ok")))
+            (compiler_ir_types.compiler-ir-instr-builder-push!
+              (&mut builder)
+              (compiler_ir_types.CompilerIrInstr.Gep
+                14
+                (compiler_ir_types.CompilerIrValue.Var
+                  (if (= mode 12)
+                    7
+                    27))
+                (compiler_ir_types.CompilerIrValue.Var 2)
+                (compiler_ast_types.AstType.U8))))]
+        [else
+          (begin
+            (compiler_ir_types.compiler-ir-instr-builder-push!
+              (&mut builder)
+              (compiler_ir_types.CompilerIrInstr.BoundsCheck
+                (compiler_ir_types.compiler-ir-global-shared-view index)
+                (compiler_ir_types.CompilerIrValue.Var 5)
+                (compiler_ir_types.compiler-ir-label "arm_ok")))
+            (compiler_ir_types.compiler-ir-instr-builder-push!
+              (&mut builder)
+              (compiler_ir_types.CompilerIrInstr.Gep
+                14
+                (compiler_ir_types.CompilerIrValue.Var
+                  (if (= mode 8)
+                    10
+                    7))
+                index
+                (compiler_ast_types.AstType.I64))))])
+      (compiler_ir_types.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (compiler_ir_types.CompilerIrInstr.Load
+          15
+          (compiler_ir_types.CompilerIrValue.Var 14)
+          (if (or (= mode 10) (= mode 12))
+            (compiler_ast_types.AstType.U8)
+            (compiler_ast_types.AstType.I64))))
+      (compiler_ir_types.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          18
+          (compiler_ir_types.CompilerIrBinOp.Add)
+          (compiler_ir_types.CompilerIrValue.Var 13)
+          (compiler_ir_types.CompilerIrValue.Var 15)
+          (compiler_ast_types.AstType.I64)))
+      (compiler_ir_types.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "latch")))
+      (compiler_ir_types.compiler-ir-instr-builder-to-seq builder))))
+
+(define (opt-licm-bound-loop-blocks [mode : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "loop")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Phi
+          12
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            (compiler_ir_types.compiler-ir-label "pre")
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+              (compiler_ir_types.CompilerIrValue.Var 16)
+              (compiler_ir_types.compiler-ir-label "latch")
+              (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Phi
+          13
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            (compiler_ir_types.compiler-ir-label "pre")
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+              (compiler_ir_types.CompilerIrValue.Var 17)
+              (compiler_ir_types.compiler-ir-label "latch")
+              (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.compiler-ir-label "arm")
+          (compiler_ir_types.compiler-ir-label "latch"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "arm")
+        (opt-licm-bound-arm mode))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "latch")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Phi
+              17
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                (compiler_ir_types.CompilerIrValue.Var 18)
+                (compiler_ir_types.compiler-ir-label "arm")
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                  (compiler_ir_types.CompilerIrValue.Var 13)
+                  (compiler_ir_types.compiler-ir-label "loop")
+                  (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              16
+              (compiler_ir_types.CompilerIrBinOp.Add)
+              (compiler_ir_types.CompilerIrValue.Var 12)
+              (compiler_ir_types.CompilerIrValue.I64 1)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              19
+              (compiler_ir_types.CompilerIrBinOp.Lt)
+              (compiler_ir_types.CompilerIrValue.Var 16)
+              (compiler_ir_types.CompilerIrValue.I64 10)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 19)
+              (compiler_ir_types.compiler-ir-label "loop")
+              (compiler_ir_types.compiler-ir-label "exit"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "exit")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.I64 0)))))
+          (compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+(define (opt-licm-bound-blocks [mode : i64]) : compiler_ir_types.CompilerIrBlockList
+  (let
+    [pre-and-loop : compiler_ir_types.CompilerIrBlockList
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "pre")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "loop"))))
+        (opt-licm-bound-loop-blocks mode))]
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (opt-licm-bound-entry mode))
+      (if (= mode 5)
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "alt")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "pre"))))
+          pre-and-loop)
+        pre-and-loop))))
+
+(define (opt-licm-bound-function
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "licm_bound")
+    (opt-licm-bound-params)
+    (compiler_ast_types.AstType.I64)
+    32
+    blocks
+    compiler_ir_types.CompilerIrFunctionAbi.Ordinary))
+
+;; The loads left in `pre` (the preheader) and in `arm` after one LICM run,
+;; packed as `pre * 10 + arm`: 10 is a hoisted read, 1 one that stayed.
+(define (opt-licm-bound-run [mode : i64] [late? : bool]) : i64
+  (let
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (opt-licm-bound-blocks mode)]
+    [func : compiler_ir_types.CompilerIrFunction
+      (opt-licm-bound-function
+        (compiler_ir_types.compiler-ir-global-shared-view blocks))]
+    [result : compiler_ir_types.CompilerIrFunction
+      (match (compiler_optimize.opt-licm-function-with-context-result-and-direct-call-clean
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (compiler_optimize.opt-cfg-context-build
+          (compiler_ir_types.compiler-ir-global-shared-view blocks))
+        false
+        (opt_i64_i64_map.with-capacity 1)
+        (opt_i64_i64_map.with-capacity 1)
+        (compiler_optimize.opt-global-cell-summary-empty)
+        late?
+        func)
+        [(compiler_optimize.OptFunctionCtxResult.Result next _) next])]
+    [out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks result)]
+    (+
+      (*
+        (opt-licm-multi-exit-count-loads
+          (compiler_ir_types.compiler-ir-global-shared-view out)
+          (compiler_ir_types.compiler-ir-label "pre"))
+        10)
+      (opt-licm-multi-exit-count-loads
+        out
+        (compiler_ir_types.compiler-ir-label "arm")))))
+
+(define (compiler-optimize-licm-element-bound-self-test) : i64
+  (let
+    [hoisted : i64 10]
+    [kept : i64 1]
+    (cond
+      [(not (= (opt-licm-bound-run 0 false) kept)) 1]
+      [(not (= (opt-licm-bound-run 1 false) hoisted)) 2]
+      [(not (= (opt-licm-bound-run 2 false) hoisted)) 3]
+      [(not (= (opt-licm-bound-run 3 false) kept)) 4]
+      [(not (= (opt-licm-bound-run 4 false) kept)) 5]
+      [(not (= (opt-licm-bound-run 5 false) kept)) 6]
+      [(not (= (opt-licm-bound-run 6 false) hoisted)) 7]
+      [(not (= (opt-licm-bound-run 7 false) kept)) 8]
+      [(not (= (opt-licm-bound-run 8 false) hoisted)) 9]
+      [(not (= (opt-licm-bound-run 9 false) hoisted)) 10]
+      [(not (= (opt-licm-bound-run 10 false) hoisted)) 13]
+      [(not (= (opt-licm-bound-run 11 false) kept)) 14]
+      [(not (= (opt-licm-bound-run 12 false) kept)) 15]
+      ;; The post-BCE run takes the same rule: the versioner's guard is the
+      ;; proof a fast copy's read carries there.
+      [(not (= (opt-licm-bound-run 0 true) kept)) 11]
+      [(not (= (opt-licm-bound-run 2 true) hoisted)) 12]
+      [else 42])))
+
 ;; --- descriptor-header hoist past the return-shaped suppression ---------------
 ;;
 ;; The probe-shaped side-exit suppression (opt-licm-apply-loop) is a

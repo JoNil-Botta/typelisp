@@ -488,11 +488,13 @@ tracked with deterministic executed-instruction baselines under
 [`../perf/`](../perf), avoiding wall-clock noise in required CI gates.
 
 Required verification has one top-level metadata authority,
-[`scripts/ci-gates.tsv`](../scripts/ci-gates.tsv), consumed by both full execution
-and host inventory listing. The runner binds stable IDs to commands and rejects
-incomplete or failed execution before reporting success. Nested compiler,
-corpus and artifact-provenance invariants stay in their existing owners; a
-metadata row alone does not establish them. See the
+[`scripts/ci-gates.tsv`](../scripts/ci-gates.tsv), consumed by full execution,
+dependency-closed selection (`ci-verify.sh --gates`) and host inventory listing.
+The runner binds stable IDs to commands, scopes each produced compiler to the
+gate that names it, and rejects incomplete or failed execution before reporting
+success; a selection that is not the whole inventory is only a partial result.
+Nested compiler, corpus and artifact-provenance invariants stay in their
+existing owners; a metadata row alone does not establish them. See the
 [ledger boundary](../scripts/README.md#core-development-loop) before changing CI
 structure or introducing independent scheduling.
 

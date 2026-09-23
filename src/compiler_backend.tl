@@ -30800,7 +30800,8 @@
 ;; (2/4/8) becomes a flags-free `leaq (,%lhs,scale), %dst` and a larger power
 ;; of two whose source already sits in the destination register becomes a bare
 ;; `shlq` -- both the same instruction count as the imulq they replace and
-;; strictly cheaper to execute. Every other constant keeps the imulq (a
+;; cheaper to execute. Factors 3/5/9 use base + scaled index in one LEA.
+;; Every other constant keeps the imulq (a
 ;; mov+shl pair would trade latency for count, which the Ir gate weighs).
 ;; `leaq (,%rbp,scale)` is safe under the FPO rsp-rebase pass: the rebased
 ;; frame shape is `disp(%rbp)`, and the no-base SIB spelling is exactly the
@@ -30812,16 +30813,30 @@
   [rhs : compiler_ir_types.CompilerIrValue]) : String
   (match rhs
     [(compiler_ir_types.CompilerIrValue.I64 n)
-      (if (or (= n 2) (= n 4) (= n 8))
-        (str_cat.str-cat
-          "    leaq (,"
-          lhs-reg
-          ","
-          (string.int->string n)
-          "), "
-          dst-home
-          "\n")
-        (if (and (> n 8) (string.eq lhs-reg dst-home))
+      (cond
+        [(or (= n 2) (= n 4) (= n 8))
+          (str_cat.str-cat
+            "    leaq (,"
+            lhs-reg
+            ","
+            (string.int->string n)
+            "), "
+            dst-home
+            "\n")]
+        ;; A value in %rbp must never look like a frame address to the final
+        ;; rsp-rebase pass. It cannot occupy both SIB roles without doing so.
+        [(and (or (= n 3) (= n 5) (= n 9)) (not (string.eq lhs-reg "%rbp")))
+          (str_cat.str-cat
+            "    leaq ("
+            (compiler-backend-global-shared-view lhs-reg)
+            ","
+            lhs-reg
+            ","
+            (string.int->string (- n 1))
+            "), "
+            dst-home
+            "\n")]
+        [(and (> n 8) (string.eq lhs-reg dst-home))
           (match (compiler-backend-power-of-two-shift n)
             [(option_i64.Some count)
               (str_cat.str-cat
@@ -30831,8 +30846,9 @@
                 dst-home
                 "\n")]
             [(option_i64.None)
-              (str_cat.str-cat "    imulq " imm ", " lhs-reg ", " dst-home "\n")])
-          (str_cat.str-cat "    imulq " imm ", " lhs-reg ", " dst-home "\n")))]
+              (str_cat.str-cat "    imulq " imm ", " lhs-reg ", " dst-home "\n")])]
+        [else
+          (str_cat.str-cat "    imulq " imm ", " lhs-reg ", " dst-home "\n")])]
     [_ (str_cat.str-cat "    imulq " imm ", " lhs-reg ", " dst-home "\n")]))
 
 ;; The three-operand form for `dst = lhs OP imm` when the destination is not the

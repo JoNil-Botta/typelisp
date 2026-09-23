@@ -11866,7 +11866,7 @@
                               "    addq $5, %rax\n"))
                           (compiler_backend.compiler-backend-string-contains?
                             (owned_view.compiler-owned-shared-view mul-asm)
-                            "    imulq $3, %r12, %r13\n")
+                            "    leaq (%r12,%r12,2), %r13\n")
                           (not
                             (compiler_backend.compiler-backend-string-contains?
                               mul-asm
@@ -32219,6 +32219,7 @@ g:
       (compiler-backend-gep-fold-disp-shape-ok?)
       (compiler-backend-gep-fold-multi-use-keeps-add-ok?)
       (compiler-backend-gep-fold-builders-ok?))
+    (compiler-backend-mul-scale-add-shapes-ok?)
     (compiler-backend-gep-fold-sub-shape-ok?)
     (compiler-backend-gep-fold-zero-shape-ok?)
     (compiler-backend-gep-fold-drift-detected-ok?)
@@ -33806,6 +33807,52 @@ g:
             (owned_view.compiler-owned-shared-view asm)
             "imulq")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-mul-scale-add-shape-ok?
+  [factor : i64]
+  [dst-reg : i64]
+  [expected : String]) : bool
+  (match (compiler-backend-mul-pow2-test-asm factor dst-reg)
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (and
+        (compiler_backend.compiler-backend-string-contains?
+          (owned_view.compiler-owned-shared-view asm)
+          expected)
+        (not (compiler_backend.compiler-backend-string-contains? asm "imulq")))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-mul-scale-add-shapes-ok?) : bool
+  (and
+    (compiler-backend-mul-scale-add-shape-ok?
+      3
+      compiler_abi.compiler-reg-id-rcx
+      "    leaq (%r12,%r12,2), %rcx\n")
+    (compiler-backend-mul-scale-add-shape-ok?
+      5
+      compiler_abi.compiler-reg-id-rcx
+      "    leaq (%r12,%r12,4), %rcx\n")
+    (compiler-backend-mul-scale-add-shape-ok?
+      9
+      compiler_abi.compiler-reg-id-rcx
+      "    leaq (%r12,%r12,8), %rcx\n")
+    (compiler-backend-mul-scale-add-shape-ok?
+      5
+      compiler_abi.compiler-reg-id-r12
+      "    leaq (%r12,%r12,4), %r12\n")
+    (string.eq
+      (compiler_backend.compiler-backend-mul-immediate-direct-asm
+        "%rbp"
+        "%rcx"
+        "$3"
+        (compiler_ir_types.CompilerIrValue.I64 3))
+      "    imulq $3, %rbp, %rcx\n")
+    (string.eq
+      (compiler_backend.compiler-backend-mul-immediate-direct-asm
+        "%rbp"
+        "%rbp"
+        "$9"
+        (compiler_ir_types.CompilerIrValue.I64 9))
+      "    imulq $9, %rbp, %rbp\n")))
 
 (define (compiler-backend-mul-non-pow2-imul-shape-ok?) : bool
   (match (compiler-backend-mul-pow2-test-asm

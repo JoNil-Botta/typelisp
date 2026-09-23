@@ -180831,7 +180831,8 @@
 ;; same single-definition result present in EVERY predecessor table survives.
 ;; Its definition therefore dominates the join, and every path from that call
 ;; to the replacement preserves memory. An unprocessed predecessor, including
-;; a loop back edge, starts the block empty. The table is dropped at every instruction
+;; a loop back edge, starts the block empty. The table is dropped at every
+;; instruction
 ;; that may write memory (opt-alias-instr-clears-all?: every store form, every
 ;; call that is not a summarized write-free direct call, every unknown effect),
 ;; so nothing the callee could read changes between the two calls. The callee
@@ -181244,30 +181245,54 @@
 ;; exact result, rather than merely matching callees and arguments, proves the
 ;; same completed call is available on both paths. Distinct branch-local calls
 ;; would need a new phi and are deliberately not merged here.
-(define (opt-pure-call-table-has-result? [table : OptPureCallTable] [dst : i64]) : bool
-  (match table
-    [(OptPureCallTable.Nil) false]
-    [(OptPureCallTable.Cons entry rest)
-      (or
-        (= entry.dst dst)
-        (opt-pure-call-table-has-result?
-          (compiler-opt-box-shared-view rest)
-          dst))]))
+(define opt-pure-call-join-limit : i64
+  64)
+
+;; Bound both walks: a large function must not turn T available calls across
+;; J joins into O(J*T*T) work. Older entries are conservatively forgotten at
+;; joins; single-predecessor propagation and block-local CSE are unchanged.
+(define (opt-pure-call-table-has-result?
+  [table : OptPureCallTable]
+  [dst : i64]
+  [remaining : i64]) : bool
+  (if (<= remaining 0)
+    false
+    (match table
+      [(OptPureCallTable.Nil) false]
+      [(OptPureCallTable.Cons entry rest)
+        (or
+          (= entry.dst dst)
+          (opt-pure-call-table-has-result?
+            (compiler-opt-box-shared-view rest)
+            dst
+            (- remaining 1)))])))
+
+(define (opt-pure-call-table-intersect-bounded
+  [table : OptPureCallTable]
+  [other : OptPureCallTable]
+  [remaining : i64]) : OptPureCallTable
+  (if (<= remaining 0)
+    (OptPureCallTable.Nil)
+    (match table
+      [(OptPureCallTable.Nil) (OptPureCallTable.Nil)]
+      [(OptPureCallTable.Cons entry rest)
+        (let
+          [tail : OptPureCallTable
+            (opt-pure-call-table-intersect-bounded
+              (compiler-opt-box-shared-view rest)
+              (compiler-opt-global-shared-view other)
+              (- remaining 1))]
+          (if (opt-pure-call-table-has-result?
+            other
+            entry.dst
+            opt-pure-call-join-limit)
+            (OptPureCallTable.Cons entry (box tail))
+            tail))])))
 
 (define (opt-pure-call-table-intersect
   [table : OptPureCallTable]
   [other : OptPureCallTable]) : OptPureCallTable
-  (match table
-    [(OptPureCallTable.Nil) (OptPureCallTable.Nil)]
-    [(OptPureCallTable.Cons entry rest)
-      (let
-        [tail : OptPureCallTable
-          (opt-pure-call-table-intersect
-            (compiler-opt-box-shared-view rest)
-            (compiler-opt-global-shared-view other))]
-        (if (opt-pure-call-table-has-result? other entry.dst)
-          (OptPureCallTable.Cons entry (box tail))
-          tail))]))
+  (opt-pure-call-table-intersect-bounded table other opt-pure-call-join-limit))
 
 ;; The table a block starts from: entries available at EVERY predecessor.
 ;; A predecessor not processed yet (including a loop back edge) refuses the

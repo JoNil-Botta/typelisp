@@ -27,6 +27,7 @@ benchmark	route_http
 benchmark	spmd_reduce
 benchmark	spmd_scan
 benchmark	spmd_shuffle
+optimization-opt2	pure_call_join
 optimization-opt2	graph_dijkstra
 optimization-opt2	opt_allocation_heavy
 optimization-opt2	opt_arithmetic_loops

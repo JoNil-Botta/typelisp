@@ -57968,7 +57968,7 @@
 ;; --- pure direct-call dedupe (CSE-CALL) ---------------------------------------
 ;;
 ;; Two calls to a summarized write-free callee with the same argument, the
-;; second reached from the first along single-predecessor blocks with no memory
+;; second reached from the first along fully visited blocks with no memory
 ;; write between, collapse into one call and a copy. Layout:
 ;;
 ;;   entry: %2 = pure(x); %3 = mov x; jump b1
@@ -58208,6 +58208,22 @@
                 (match s
                   [(compiler_ir_types.CompilerIrValue.Var v) (= v src)]
                   [_ false]))]
+            [_ false])])]))
+
+;; Refusal must retain the call itself, regardless of which wrong result a
+;; broken join might choose to substitute.
+(define (opt-pcd-test-call-at?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : i64]
+  [index : i64]
+  [dst : i64]) : bool
+  (match (compiler_optimize.opt-cfg-find-block blocks label)
+    [(compiler_optimize.OptMaybeBlock.No) false]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+            [(compiler_ir_types.CompilerIrInstr.Call d _ _ _) (= d dst)]
             [_ false])])]))
 
 ;; Direct calls to `callee` in one block.
@@ -58457,26 +58473,90 @@
           [out : compiler_ir_types.CompilerIrBlockList
             (opt-pcd-join-test-run variant)]
           (begin
-            (if (= variant 5)
-              (test.assert-bool-eq
-                (opt-pcd-test-mov-at?
-                  out
-                  (compiler_ir_types.compiler-ir-label "b2")
-                  0
-                  7
-                  6)
-                false
-                "loop back edge must not inherit an outer call across a write")
-              (test.assert-bool-eq
+            (if (= variant 0)
+              (test.assert-true
                 (opt-pcd-test-mov-at?
                   out
                   (compiler_ir_types.compiler-ir-label "b5")
                   0
                   12
                   8)
-                (= variant 0)
-                "only the write-free, fully visited diamond retains the result"))
+                "the write-free, fully visited diamond retains the result")
+              (test.assert-true
+                (opt-pcd-test-call-at?
+                  out
+                  (compiler_ir_types.compiler-ir-label
+                    (if (= variant 5)
+                      "b2"
+                      "b5"))
+                  0
+                  (if (= variant 5)
+                    7
+                    12))
+                "a refused join must retain the original call"))
             (set! variant (+ variant 1))))))))
+
+(define (opt-pcd-join-test-table [start : i64] [count : i64]) : compiler_optimize.OptPureCallTable
+  (let
+    [table : compiler_optimize.OptPureCallTable
+      (compiler_optimize.OptPureCallTable.Nil)]
+    [i : i64 0]
+    (begin
+      (while (< i count)
+        (begin
+          (set!
+            table
+            (compiler_optimize.OptPureCallTable.Cons
+              (compiler_optimize.OptPureCallEntry
+                (opt-pcd-test-pure)
+                (compiler_ir_types.CompilerIrCallArgs.One
+                  (compiler_ir_types.CompilerIrValue.Var 0))
+                (+ start i))
+              (box table)))
+          (set! i (+ i 1))))
+      table)))
+
+(test
+  pure-call-join-work-bound
+  (let
+    [table : compiler_optimize.OptPureCallTable
+      (compiler_optimize.opt-pure-call-table-intersect
+        (opt-pcd-join-test-table 0 70)
+        (opt-pcd-join-test-table 0 70))]
+    [expected : i64 69]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match table
+          [(compiler_optimize.OptPureCallTable.Nil) (set! done true)]
+          [(compiler_optimize.OptPureCallTable.Cons entry rest)
+            (begin
+              (test.assert-i64-eq
+                entry.dst
+                expected
+                "the bounded intersection preserves available-result order")
+              (set! expected (- expected 1))
+              (set! table (compiler_optimize.compiler-opt-box-shared-view rest)))]))
+      (test.assert-i64-eq expected 5 "only the most recent 64 entries survive")
+      (test.assert-true
+        (compiler_optimize.opt-pure-call-sites-empty?
+          (compiler_optimize.opt-pure-call-table-intersect
+            (opt-pcd-join-test-table 0 1)
+            (opt-pcd-join-test-table 0 70)))
+        "the other predecessor's membership walk also stops at its bound")
+      (test.assert-true
+        (compiler_optimize.opt-pure-call-sites-empty?
+          (compiler_optimize.opt-pure-call-table-intersect
+            (opt-pcd-join-test-table 0 70)
+            (opt-pcd-join-test-table 0 1)))
+        "the left walk cannot reach a result beyond its bound")
+      (test.assert-true
+        (not
+          (compiler_optimize.opt-pure-call-sites-empty?
+            (compiler_optimize.opt-pure-call-table-intersect
+              (opt-pcd-join-test-table 6 1)
+              (opt-pcd-join-test-table 0 70))))
+        "the last admitted membership position still survives"))))
 
 ;; --- merged-body exit-join versioning -----------------------------------------
 ;;

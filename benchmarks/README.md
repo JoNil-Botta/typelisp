@@ -67,6 +67,7 @@ Linux opt2 pass uses its positive case list from the CI suite manifest.
 | `sccp_lattice` | Optimizer sparse conditional constant propagation with the compiler's constant folder over captured instruction tapes. |
 | `regalloc_greedy` | Register allocator RAGreedy selectOrSplit pass (spill-weight heap, occupancy union, eviction cascade) over captured live intervals. |
 | `asm_render` | Backend assembly text emission (`str-cat` line assembly, text buffer appends, operand rendering) re-rendering a captured self-compile assembly slice. |
+| `pure_call_join` | Repeated read-only mixing calls across a runtime branch join. |
 | `spmd_map` | Data-parallel elementwise map (`out[i] = a[i] + b[i] + r`) via `foreach`, establishing the SPMD/SIMD-vs-clang baseline (refs #1125). |
 | `spmd_zip` | Data-parallel three-input fused multiply-add (`out[i] = a[i] * b[i] + c[i] + r`) via `foreach` (refs #1125). |
 | `spmd_mask` | Data-parallel masked conditional (`out[i] = (a[i] odd) ? a[i]+r : a[i]-r`) via `foreach`, exercising a divergent lane body (refs #1125). |

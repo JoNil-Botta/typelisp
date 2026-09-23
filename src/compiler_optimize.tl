@@ -32206,7 +32206,7 @@
                   (compiler-opt-global-shared-view instr))
                 (set!
                   next-hoisted
-                  (opt-licm-add-hoisted-def (clone next-hoisted) instr))
+                  (opt-licm-add-hoisted-def next-hoisted instr))
                 (set! changed true))
               (ir.compiler-ir-instr-builder-push! (&mut kept) instr))
             (set! cursor (+ cursor 1)))))

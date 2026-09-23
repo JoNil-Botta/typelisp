@@ -10541,98 +10541,57 @@
         (compiler-reg-same-value-overlap-eligible? types left right)
         (compiler-reg-same-value-class? sv-parents left right)))))
 
+;; Class member chains. A coalescing class is tracked as a flat root array
+;; (`parents[v]` is v's class root), and every question a join asks is about
+;; the MEMBERS of one or two classes -- which the root array alone can only
+;; answer by scanning every var of the function, once per member of the other
+;; class. `next` threads each class's members starting at its root (a root is
+;; always a member of its own class: roots only ever absorb), `-1` terminated,
+;; and `tail[root]` is the chain's last member, so a merge splices the loser's
+;; chain behind the winner's in O(1) and relabels only the loser's members.
+;; Every use is an AND over a pure pairwise test, so walking a chain decides
+;; exactly what the index scan did, in any order.
+(define (compiler-reg-coalesce-chains-init!
+  [next : (__tl_dyn-array i64)]
+  [tail : (__tl_dyn-array i64)]) : unit
+  (let
+    [index : i64 0]
+    (while (< index (array-length next))
+      (begin
+        (set! (array-ref next index) (- 0 1))
+        (set! (array-ref tail index) index)
+        (set! index (+ index 1))))))
+
 (define (compiler-reg-coalesce-map-var-compatible-with-root?
-  [parents : (__tl_dyn-array i64)]
+  [next : (__tl_dyn-array i64)]
   [intervals : CompilerRegIntervalIndex]
   [types : CompilerRegVarTypes]
   [group-vars : live.CompilerLiveI64Set]
   [var : i64]
   [root : i64]
   [strict : bool]
-  [index : i64]
   [sv-parents : (__tl_dyn-array i64)]) : bool
-  (cond
-    [(>= index (array-length parents)) true]
-    [(= (array-ref parents index) root)
-      (if (compiler-reg-coalesce-vars-compatible?
-        (compiler-reg-global-shared-view intervals)
-        (compiler-reg-global-shared-view types)
-        (compiler-reg-global-shared-view group-vars)
-        var
-        index
-        strict
-        (compiler-reg-global-shared-view sv-parents))
-        (compiler-reg-coalesce-map-var-compatible-with-root?
-          parents
-          intervals
-          types
-          group-vars
-          var
-          root
-          strict
-          (+ index 1)
-          sv-parents)
-        false)]
-    [else
-      (compiler-reg-coalesce-map-var-compatible-with-root?
-        (compiler-reg-global-shared-view parents)
-        (compiler-reg-global-shared-view intervals)
-        (compiler-reg-global-shared-view types)
-        (compiler-reg-global-shared-view group-vars)
-        var
-        root
-        strict
-        (+ index 1)
-        sv-parents)]))
-
-(define (compiler-reg-coalesce-map-classes-compatible-from?
-  [parents : (__tl_dyn-array i64)]
-  [intervals : CompilerRegIntervalIndex]
-  [types : CompilerRegVarTypes]
-  [group-vars : live.CompilerLiveI64Set]
-  [left-root : i64]
-  [right-root : i64]
-  [strict : bool]
-  [index : i64]
-  [sv-parents : (__tl_dyn-array i64)]) : bool
-  (cond
-    [(>= index (array-length parents)) true]
-    [(= (array-ref parents index) left-root)
-      (if (compiler-reg-coalesce-map-var-compatible-with-root?
-        (compiler-reg-global-shared-view parents)
-        (compiler-reg-global-shared-view intervals)
-        (compiler-reg-global-shared-view types)
-        (compiler-reg-global-shared-view group-vars)
-        index
-        right-root
-        strict
-        0
-        (compiler-reg-global-shared-view sv-parents))
-        (compiler-reg-coalesce-map-classes-compatible-from?
-          parents
-          intervals
-          types
-          group-vars
-          left-root
-          right-root
-          strict
-          (+ index 1)
-          sv-parents)
-        false)]
-    [else
-      (compiler-reg-coalesce-map-classes-compatible-from?
-        parents
-        intervals
-        types
-        group-vars
-        left-root
-        right-root
-        strict
-        (+ index 1)
-        sv-parents)]))
+  (let
+    [member : i64 root]
+    [ok : bool true]
+    (begin
+      (while (and ok (>= member 0))
+        (begin
+          (if (compiler-reg-coalesce-vars-compatible?
+            (compiler-reg-global-shared-view intervals)
+            (compiler-reg-global-shared-view types)
+            (compiler-reg-global-shared-view group-vars)
+            var
+            member
+            strict
+            (compiler-reg-global-shared-view sv-parents))
+            unit
+            (set! ok false))
+          (set! member (array-ref next member))))
+      ok)))
 
 (define (compiler-reg-coalesce-map-classes-compatible?
-  [parents : (__tl_dyn-array i64)]
+  [next : (__tl_dyn-array i64)]
   [intervals : CompilerRegIntervalIndex]
   [types : CompilerRegVarTypes]
   [group-vars : live.CompilerLiveI64Set]
@@ -10640,33 +10599,25 @@
   [right-root : i64]
   [strict : bool]
   [sv-parents : (__tl_dyn-array i64)]) : bool
-  (compiler-reg-coalesce-map-classes-compatible-from?
-    parents
-    intervals
-    types
-    group-vars
-    left-root
-    right-root
-    strict
-    0
-    sv-parents))
-
-(define (compiler-reg-coalesce-map-merge-root-parents-into!
-  [parents : (__tl_dyn-array i64)]
-  [winner : i64]
-  [loser : i64]
-  [index : i64]) : unit
-  (if (>= index (array-length parents))
-    unit
+  (let
+    [member : i64 left-root]
+    [ok : bool true]
     (begin
-      (if (= (array-ref parents index) loser)
-        (set! (array-ref parents index) winner)
-        unit)
-      (compiler-reg-coalesce-map-merge-root-parents-into!
-        parents
-        winner
-        loser
-        (+ index 1)))))
+      (while (and ok (>= member 0))
+        (begin
+          (if (compiler-reg-coalesce-map-var-compatible-with-root?
+            (compiler-reg-global-shared-view next)
+            (compiler-reg-global-shared-view intervals)
+            (compiler-reg-global-shared-view types)
+            (compiler-reg-global-shared-view group-vars)
+            member
+            right-root
+            strict
+            (compiler-reg-global-shared-view sv-parents))
+            unit
+            (set! ok false))
+          (set! member (array-ref next member))))
+      ok)))
 
 ;; Per-pair join (LLVM joinVirtRegs structure): maintain a per-root merged COARSE
 ;; interval [start,end] -- the union extent of the class members. Two roots with
@@ -10722,6 +10673,8 @@
 (define (compiler-reg-coalesce-map-merge-root-into!
   [parents : (__tl_dyn-array i64)]
   [sizes : (__tl_dyn-array i64)]
+  [next : (__tl_dyn-array i64)]
+  [tail : (__tl_dyn-array i64)]
   [root-start : (__tl_dyn-array i64)]
   [root-end : (__tl_dyn-array i64)]
   [winner : i64]
@@ -10747,11 +10700,21 @@
         (if (> loser-end winner-end)
           (set! (array-ref root-end winner) loser-end)
           unit)))
-    (compiler-reg-coalesce-map-merge-root-parents-into! parents winner loser 0)))
+    (let
+      [member : i64 loser]
+      (begin
+        (while (>= member 0)
+          (begin
+            (set! (array-ref parents member) winner)
+            (set! member (array-ref next member))))
+        (set! (array-ref next (array-ref tail winner)) loser)
+        (set! (array-ref tail winner) (array-ref tail loser))))))
 
 (define (compiler-reg-coalesce-map-try-merge!
   [parents : (__tl_dyn-array i64)]
   [sizes : (__tl_dyn-array i64)]
+  [next : (__tl_dyn-array i64)]
+  [tail : (__tl_dyn-array i64)]
   [root-start : (__tl_dyn-array i64)]
   [root-end : (__tl_dyn-array i64)]
   [intervals : CompilerRegIntervalIndex]
@@ -10793,7 +10756,7 @@
             left-root
             right-root)
           (compiler-reg-coalesce-map-classes-compatible?
-            (compiler-reg-global-shared-view parents)
+            (compiler-reg-global-shared-view next)
             intervals
             types
             group-vars
@@ -10814,6 +10777,8 @@
             (compiler-reg-coalesce-map-merge-root-into!
               parents
               sizes
+              next
+              tail
               root-start
               root-end
               winner
@@ -10824,6 +10789,8 @@
 (define (compiler-reg-coalesce-map-merge-moves!
   [parents : (__tl_dyn-array i64)]
   [sizes : (__tl_dyn-array i64)]
+  [next : (__tl_dyn-array i64)]
+  [tail : (__tl_dyn-array i64)]
   [root-start : (__tl_dyn-array i64)]
   [root-end : (__tl_dyn-array i64)]
   [moves : CompilerRegMoveSeq]
@@ -10845,6 +10812,8 @@
               (compiler-reg-coalesce-map-try-merge!
                 (compiler-reg-global-shared-view parents)
                 (compiler-reg-global-shared-view sizes)
+                (compiler-reg-global-shared-view next)
+                (compiler-reg-global-shared-view tail)
                 (compiler-reg-global-shared-view root-start)
                 (compiler-reg-global-shared-view root-end)
                 (compiler-reg-global-shared-view intervals)
@@ -10861,6 +10830,8 @@
 (define (compiler-reg-coalesce-map-fixpoint!
   [parents : (__tl_dyn-array i64)]
   [sizes : (__tl_dyn-array i64)]
+  [next : (__tl_dyn-array i64)]
+  [tail : (__tl_dyn-array i64)]
   [root-start : (__tl_dyn-array i64)]
   [root-end : (__tl_dyn-array i64)]
   [moves : CompilerRegMoveSeq]
@@ -10872,6 +10843,8 @@
     (compiler-reg-coalesce-map-merge-moves!
       parents
       sizes
+      next
+      tail
       root-start
       root-end
       moves
@@ -10900,11 +10873,16 @@
       [sizes : (__tl_dyn-array i64) (__tl_make-array i64 n)]
       [root-start : (__tl_dyn-array i64) (__tl_make-array i64 n)]
       [root-end : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+      [next : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+      [tail : (__tl_dyn-array i64) (__tl_make-array i64 n)]
       (begin
         (compiler-reg-coalesce-map-init!
           (compiler-reg-global-shared-view parents)
           (compiler-reg-global-shared-view sizes)
           0)
+        (compiler-reg-coalesce-chains-init!
+          (compiler-reg-global-shared-view next)
+          (compiler-reg-global-shared-view tail))
         (compiler-reg-coalesce-init-coarse!
           (compiler-reg-global-shared-view root-start)
           (compiler-reg-global-shared-view root-end)
@@ -10914,6 +10892,8 @@
         (compiler-reg-coalesce-map-fixpoint!
           (compiler-reg-global-shared-view parents)
           (compiler-reg-global-shared-view sizes)
+          (compiler-reg-global-shared-view next)
+          (compiler-reg-global-shared-view tail)
           (compiler-reg-global-shared-view root-start)
           (compiler-reg-global-shared-view root-end)
           (compiler-reg-global-shared-view moves)
@@ -16473,8 +16453,9 @@
 ;; SplitKit step 2 (phi-carried homing). The bitset of every coalesce-group
 ;; member of `root` (every v in [0,vars) with parents[v] == root, root included).
 ;; The coalescer keeps `parents` flat (every member points directly at its root --
-;; see merge-root-parents-into!), so membership is a single array read. Used for
-;; group-aware liveness on region-boundary edges and for the group mention count.
+;; see compiler-reg-coalesce-map-merge-root-into!), so membership is a single
+;; array read. Used for group-aware liveness on region-boundary edges and for the
+;; group mention count.
 (define (compiler-reg-loop-split-group-member-set
   [parents : (__tl_dyn-array i64)]
   [root : i64]

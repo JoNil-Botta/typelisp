@@ -13,7 +13,9 @@
 ;; (maximum leaf and vendor string) and leaf 7 subleaf 0 (structured extended
 ;; features) are identical on every core of a package, so a thread migration
 ;; between the two queries cannot change the answer; leaf 7's EBX never equals
-;; leaf 0's, which is what a clobbered leaf would return.
+;; leaf 0's, which is what a clobbered leaf would return. Leaf 1 is compared
+;; through EAX, ECX and EDX only: bits 31-24 of its EBX are the initial APIC id
+;; of the logical processor that ran the query, which does change on migration.
 (define (probe-eax [leaf : i64] [subleaf : i64] [depth : i64]) : i64
   (if (> depth 0)
     (probe-eax leaf subleaf (- depth 1))
@@ -43,13 +45,17 @@
 (define (main) : i64
   (let
     [zero : i64 (- (io.arg-count) (io.arg-count))]
+    [one : i64 (+ zero 1)]
     [seven : i64 (+ zero 7)]
     [max-leaf : i64 (cpuid-eax 0 0)]
     (if (< max-leaf 7)
       ;; No structured extended feature leaf: only leaf 0 can be compared.
       (if (and
         (= (probe-eax zero zero 2) (cpuid-eax 0 0))
-        (= (probe-ebx zero zero 2) (cpuid-ebx 0 0)))
+        (= (probe-ebx zero zero 2) (cpuid-ebx 0 0))
+        (= (probe-eax one zero 2) (cpuid-eax 1 0))
+        (= (probe-ecx one zero 2) (cpuid-ecx 1 0))
+        (= (probe-edx one zero 2) (cpuid-edx 1 0)))
         42
         2)
       (if (and
@@ -57,6 +63,10 @@
         (= (probe-ebx zero zero 2) (cpuid-ebx 0 0))
         (= (probe-ecx zero zero 2) (cpuid-ecx 0 0))
         (= (probe-edx zero zero 2) (cpuid-edx 0 0))
+        (= (probe-eax one zero 2) (cpuid-eax 1 0))
+        (= (probe-ecx one zero 2) (cpuid-ecx 1 0))
+        (= (probe-edx one zero 2) (cpuid-edx 1 0))
+        (not (= (probe-eax one zero 2) (cpuid-eax 0 0)))
         (= (probe-eax seven zero 2) (cpuid-eax 7 0))
         (= (probe-ebx seven zero 2) (cpuid-ebx 7 0))
         (= (probe-ecx seven zero 2) (cpuid-ecx 7 0))

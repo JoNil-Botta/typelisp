@@ -6614,6 +6614,44 @@ Floating exception flags and signaling-NaN payload behavior are outside the
 initial contract. The implementations allocate no storage and reference no
 runtime, libc, libm, CRT, x87 transcendental, or FMA facility.
 
+`stdlib.math.f64-mul-add` and `stdlib.math.f32-mul-add` are the explicit fused
+multiply-add: `(f64-mul-add a b c)` is `a * b + c` evaluated as if with
+unbounded precision and rounded once to the result type, to nearest with ties
+to even. `stdlib.math.mul-add` requires three operands of one `f64` or `f32`
+type, preserves that type, and evaluates each operand once, left to right.
+Overflow returns the signed infinity; underflow is gradual through subnormals,
+and a nonzero exact value that rounds to zero keeps its sign. When the exact
+value is zero, the result is negative zero only if the product is a negative
+zero and `c` is negative zero; nonzero terms that cancel exactly give positive
+zero. A NaN operand, an infinite factor times a zero factor (whatever `c` is),
+and an infinite product plus the opposite infinity produce NaN, whose sign and
+payload are outside the contract; an infinite product otherwise decides the
+result, and a finite product plus an infinite `c` returns `c`. Every target,
+backend mode and optimization level returns the same bits: the operation is
+defined by exact integer arithmetic, and an implementation may use a hardware
+fused multiply-add instruction only where it produces those bits. The
+compiler never contracts ordinary arithmetic such as `(+ (* a b) c)` into
+this operation, and never expands this operation into a multiply followed by
+an add; the two expressions round differently:
+
+```lisp test=run name=math-mul-add-rounds-once exit=42 stdout=""
+(import stdlib.math)
+
+(define (main) : i64
+  (let
+    [x : f64 (math.f64-from-bits 0x3ff0000000400000)]
+    [minus-one : f64 -1.0]
+    ;; x = 1 + 2^-30, so x * x = 1 + 2^-29 + 2^-60 exactly. The product alone
+    ;; rounds the last term away; the fused form keeps it.
+    [two-roundings : f64 (+ (* x x) minus-one)]
+    [fused : f64 (math.mul-add x x minus-one)]
+    (if (and
+      (= (math.f64-to-bits two-roundings) 0x3e20000000000000)
+      (= (math.f64-to-bits fused) 0x3e20000000200000))
+      42
+      1)))
+```
+
 **Array and borrowed-Slice element operations.** The public `Array` type is the
 fixed `(Array T N)` form. Core element operations also accept the immediate
 borrowed Slice reference forms described in section 3.2:

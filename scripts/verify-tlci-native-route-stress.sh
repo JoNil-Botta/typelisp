@@ -425,15 +425,17 @@ assert_macro_profile_counts \
 assert_macro_profile_counts \
     "$NATIVE_STDERR" stdlib.core_macros/__tl-box-place 1 1 1 "$ROW_COUNT"
 # The generation-checked formatter writer registry contributes one shared
-# two-operand conjunction to every stress entry. Refs #7655.
+# two-operand conjunction to every stress entry. Refs #7655. The exact fused
+# multiply-add in stdlib.math, which stdlib.io imports, adds eight more
+# two-operand conjunctions and four two-operand disjunctions. Refs #7005.
 assert_macro_profile_counts \
-    "$NATIVE_STDERR" stdlib.core_macros/and 2 72 72 "$ROW_COUNT"
+    "$NATIVE_STDERR" stdlib.core_macros/and 2 80 80 "$ROW_COUNT"
 # #6984's Windows open-error mapping adds two `or` expansions to every Windows
-# compiler batch entry. The Linux route remains at 14; the authoritative
-# Windows stress artifact pins 16.
-CORE_OR_CALLS=14
+# compiler batch entry. The Linux route is at 18 with #7005's four; the
+# Windows route pins 20.
+CORE_OR_CALLS=18
 if [ "$NL_HOST_OS" = windows ]; then
-    CORE_OR_CALLS=16
+    CORE_OR_CALLS=20
 fi
 assert_macro_profile_counts \
     "$NATIVE_STDERR" stdlib.core_macros/or 2 \

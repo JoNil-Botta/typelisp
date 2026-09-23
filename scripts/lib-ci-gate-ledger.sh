@@ -107,10 +107,122 @@ ci_gate_ledger_load() {
     CI_GATE_LEDGER_TAB=$(printf '\t')
     CI_GATE_LEDGER_NEWLINE='
 '
+    CI_GATE_LEDGER_FILE=$_ci_ledger_file
+    CI_GATE_LEDGER_HOST=$_ci_ledger_host
+    CI_GATE_LEDGER_HOST_IDS=,$(printf '%s\n' "$CI_GATE_LEDGER_ROWS" | awk -F '\t' '{printf "%s,", $1}')
+    CI_GATE_LEDGER_HOST_COUNT=$(printf '%s\n' "$CI_GATE_LEDGER_ROWS" | awk 'END {print NR}')
+    # Until ci_gate_ledger_select narrows it, the plan is the complete inventory.
+    CI_GATE_LEDGER_SELECTED_IDS=$CI_GATE_LEDGER_HOST_IDS
+    CI_GATE_LEDGER_SELECTED_COUNT=$CI_GATE_LEDGER_HOST_COUNT
+    CI_GATE_LEDGER_COMPLETE=1
     CI_GATE_LEDGER_REMAINING=$CI_GATE_LEDGER_ROWS
     CI_GATE_LEDGER_ACTIVE=
     CI_GATE_LEDGER_FAILED=0
     CI_GATE_LEDGER_LOADED=1
+}
+
+# Narrow a freshly loaded plan to the requested gates plus the transitive closure
+# of their host-projected needs, in ledger order. The request is a comma-separated
+# list of IDs; empty elements, invalid or unknown IDs, gates that do not run on
+# this host and duplicates fail before the plan changes. `*` on the closing gate
+# selects everything before it, so a selection whose closure is the whole host
+# inventory is a complete plan (CI_GATE_LEDGER_COMPLETE=1) and any other is
+# partial. Enter/leave/finish then enforce order and completion of the selection.
+ci_gate_ledger_select() {
+    _ci_select_request=$1
+    if [ "${CI_GATE_LEDGER_LOADED:-0}" != 1 ] || [ "${CI_GATE_LEDGER_FAILED:-0}" != 0 ] ||
+        [ -n "${CI_GATE_LEDGER_ACTIVE:-}" ] ||
+        [ "$CI_GATE_LEDGER_REMAINING" != "$CI_GATE_LEDGER_ROWS" ] ||
+        [ "$CI_GATE_LEDGER_COMPLETE" != 1 ]; then
+        CI_GATE_LEDGER_FAILED=1
+        ci_gate_ledger_error "gate selection requires a freshly loaded, unstarted inventory"
+        return 1
+    fi
+    _ci_select_rows=$(printf '%s\n' "$CI_GATE_LEDGER_ROWS" | awk -F '\t' \
+        -v request="$_ci_select_request" -v host="$CI_GATE_LEDGER_HOST" '
+        function fail(message) {
+            print "CI gate ledger: " message > "/dev/stderr"
+            invalid=1
+            exit 1
+        }
+        # The catalog names every host so an other-host request is diagnosed
+        # as such rather than as an unknown ID.
+        NR == FNR {
+            sub(/\r$/, "", $0)
+            if (FNR > 5) catalog_hosts[$1]=$2
+            next
+        }
+        { rows++; row[rows]=$0; needs[rows]=$4; position[$1]=rows }
+        END {
+            if (invalid) exit 1
+            if (request == "") fail("empty gate selection")
+            count=split(request, requested, ",")
+            for (r=1; r<=count; r++) {
+                id=requested[r]
+                if (id == "") fail("empty gate ID in selection: " request)
+                if (id !~ /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/) fail("invalid gate ID in selection: " id)
+                if (seen[id]++) fail("duplicate gate in selection: " id)
+            }
+            for (r=1; r<=count; r++) {
+                id=requested[r]
+                if (!(id in position)) {
+                    if (id in catalog_hosts) fail("gate does not run on " host " (" catalog_hosts[id] "): " id)
+                    fail("unknown gate in selection: " id)
+                }
+                selected[position[id]]=1
+            }
+            # Needs name earlier gates only, so one reverse pass is a closure.
+            for (k=rows; k>=1; k--) {
+                if (!selected[k] || needs[k] == "-") continue
+                if (needs[k] == "*") { for (j=1; j<k; j++) selected[j]=1; continue }
+                need_count=split(needs[k], need_list, ",")
+                for (n=1; n<=need_count; n++) {
+                    if (!(need_list[n] in position)) fail("need is not a " host " gate: " need_list[n])
+                    selected[position[need_list[n]]]=1
+                }
+            }
+            for (k=1; k<=rows; k++) if (selected[k]) print row[k]
+        }
+    ' "$CI_GATE_LEDGER_FILE" -) || { CI_GATE_LEDGER_FAILED=1; return 1; }
+    CI_GATE_LEDGER_REMAINING=$_ci_select_rows
+    CI_GATE_LEDGER_SELECTED_IDS=,$(printf '%s\n' "$_ci_select_rows" | awk -F '\t' '{printf "%s,", $1}')
+    CI_GATE_LEDGER_SELECTED_COUNT=$(printf '%s\n' "$_ci_select_rows" | awk 'END {print NR}')
+    CI_GATE_LEDGER_COMPLETE=0
+    if [ "$CI_GATE_LEDGER_SELECTED_COUNT" = "$CI_GATE_LEDGER_HOST_COUNT" ]; then
+        CI_GATE_LEDGER_COMPLETE=1
+    fi
+}
+
+# Whether the plan runs a gate. Execution setup that belongs to one gate is
+# guarded by that gate's ID, so a guard naming anything other than a gate of
+# this host is a runner defect: it poisons completion instead of silently
+# skipping the setup.
+ci_gate_selected() {
+    case "${CI_GATE_LEDGER_HOST_IDS:-}" in
+        *",$1,"*) ;;
+        *)
+            CI_GATE_LEDGER_FAILED=1
+            ci_gate_ledger_error "selection guard names no ${CI_GATE_LEDGER_HOST:-loaded} gate: $1"
+            return 1
+            ;;
+    esac
+    case "$CI_GATE_LEDGER_SELECTED_IDS" in
+        *",$1,"*) return 0 ;;
+    esac
+    return 1
+}
+
+# True only for a gate of this host that the plan leaves out. Unknown and
+# wrong-host IDs return false so ci_gate_ledger_enter reports them.
+ci_gate_ledger_unselected() {
+    case "${CI_GATE_LEDGER_HOST_IDS:-}" in
+        *",$1,"*) ;;
+        *) return 1 ;;
+    esac
+    case "$CI_GATE_LEDGER_SELECTED_IDS" in
+        *",$1,"*) return 1 ;;
+    esac
+    return 0
 }
 
 ci_gate_ledger_enter() {
@@ -209,12 +321,16 @@ ci_gate_ledger_validate_bindings() (
 
 # The needs column must describe the runner and the compiler-artifact inventory,
 # not an independent opinion. Three rules, each checked in both directions:
-#   1. Every gate after the converged-compiler producer needs it, because
-#      `run_with_compiler` exports that compiler to every later gate; no earlier
-#      gate needs anything, and no earlier binding names a produced compiler.
+#   1. A gate after the converged-compiler producer needs it exactly when one of
+#      its bindings names a produced compiler (`run_with_compiler` passes that
+#      compiler to its own gate only; `run_gate` passes the entry environment).
+#      No earlier gate needs anything, and no earlier binding names one.
 #   2. A gate needs another gate's artifact exactly when the inventory has a
 #      consume record whose reuse group is produced by that other gate, on the
-#      hosts of that record.
+#      hosts of that record, or when the reuse manifest of that consuming gate
+#      (the cross-mode corpus: one row per reused observation, with `hosts` and
+#      a `producer` gate ID) has a row naming that other gate, on exactly the
+#      hosts of its rows.
 #   3. Only the closing gate needs every gate.
 # Run in a subshell so validation cannot reset an active execution plan.
 ci_gate_ledger_validate_needs() (
@@ -222,10 +338,13 @@ ci_gate_ledger_validate_needs() (
     _ci_needs_source=$2
     _ci_needs_inventory=$3
     _ci_needs_compiler_gate=$4
+    _ci_needs_reuse_consumer=$5
+    _ci_needs_reuse_manifest=$6
     ci_gate_ledger_load "$_ci_needs_catalog" linux || exit 1
     [ -s "$_ci_needs_source" ] || { ci_gate_ledger_error "missing execution source: $_ci_needs_source"; exit 1; }
     [ -s "$_ci_needs_inventory" ] || { ci_gate_ledger_error "missing artifact inventory: $_ci_needs_inventory"; exit 1; }
-    awk -F '\t' -v compiler_gate="$_ci_needs_compiler_gate" '
+    [ -s "$_ci_needs_reuse_manifest" ] || { ci_gate_ledger_error "missing reuse manifest: $_ci_needs_reuse_manifest"; exit 1; }
+    awk -F '\t' -v compiler_gate="$_ci_needs_compiler_gate" -v reuse_consumer="$_ci_needs_reuse_consumer" '
         function fail(message) {
             print "CI gate ledger: " message > "/dev/stderr"
             invalid=1
@@ -243,6 +362,7 @@ ci_gate_ledger_validate_needs() (
             if (FNR <= 5) next
             order[$1]=++gates
             id_of[$3]=$1
+            gate_hosts[$1]=$2
             needs_of[$1]=$4
             if ($4 == "-" || $4 == "*") next
             count=split($4, list, ",")
@@ -264,13 +384,24 @@ ci_gate_ledger_validate_needs() (
             if (line !~ /^(run_gate|run_with_compiler)[ \t]+/ || line == "run_gate \"$@\"") next
             split(line, words, /[ \t]+/)
             id=words[words[1] == "run_gate" ? 2 : 3]
-            if (line ~ /\$\{?(STAGE2_BIN|COMPILE_PROFILE_BIN)/) uses_compiler[id]=1
+            if (line ~ /\$\{?(STAGE1_BIN|STAGE2_BIN|COMPILE_PROFILE_BIN)/) uses_compiler[id]=1
             next
         }
-        {
+        FILENAME == ARGV[3] {
             if (FNR <= 2) next
             if ($5 == "produce") { if ($13 != "none") producer_label[$13]=$3; next }
             if ($5 == "consume") { consumers++; consume_label[consumers]=$3; consume_host[consumers]=$4; consume_group[consumers]=$13 }
+            next
+        }
+        FNR == 1 {
+            for (f=1; f<=NF; f++) { if ($f == "hosts") hosts_field=f; if ($f == "producer") producer_field=f }
+            if (!hosts_field || !producer_field) fail("reuse manifest lacks hosts/producer columns")
+            next
+        }
+        hosts_field && producer_field {
+            reuse_rows++
+            reuse_producer[reuse_rows]=$producer_field
+            reuse_hosts[reuse_rows]=$hosts_field
         }
         END {
             if (!(compiler_gate in order)) fail("unknown converged-compiler gate: " compiler_gate)
@@ -278,8 +409,11 @@ ci_gate_ledger_validate_needs() (
                 if (order[id] <= order[compiler_gate]) {
                     if (needs_of[id] != "-") fail("gate runs before the converged compiler exists but declares needs: " id)
                     if (uses_compiler[id]) fail("binding names a produced compiler before it exists: " id)
-                } else if (needs_of[id] != "*" && !has_need(id, compiler_gate, "all")) {
-                    fail("gate runs with the converged compiler but does not need " compiler_gate ": " id)
+                } else if (needs_of[id] != "*") {
+                    if (uses_compiler[id] && !has_need(id, compiler_gate, "all"))
+                        fail("binding names a produced compiler but does not need " compiler_gate ": " id)
+                    if (!uses_compiler[id] && (has_need(id, compiler_gate, "linux") || has_need(id, compiler_gate, "windows")))
+                        fail("gate names no produced compiler but needs " compiler_gate ": " id)
                 }
             }
             for (c=1; c<=consumers; c++) {
@@ -293,12 +427,39 @@ ci_gate_ledger_validate_needs() (
                     fail("artifact consumer does not need its producer: " consumer " needs " producer " (" consume_host[c] ")")
                 justified[consumer SUBSEP producer]=1
             }
+            if (!(reuse_consumer in order)) fail("unknown reuse-manifest consumer gate: " reuse_consumer)
+            if (!reuse_rows) fail("reuse manifest has no rows")
+            for (r=1; r<=reuse_rows; r++) {
+                producer=reuse_producer[r]
+                hosts=reuse_hosts[r]
+                if (hosts != "all" && hosts != "linux" && hosts != "windows") { fail("invalid reuse manifest hosts: " hosts); continue }
+                if (!(producer in order)) { fail("reuse manifest producer is not a ledger gate: " producer); continue }
+                if (order[producer] >= order[reuse_consumer]) { fail("reuse manifest producer does not run before " reuse_consumer ": " producer); continue }
+                if (gate_hosts[producer] != "all" && gate_hosts[producer] != hosts)
+                    fail("reuse manifest producer does not run on " hosts ": " producer)
+                if (!has_need(reuse_consumer, producer, hosts))
+                    fail("reuse consumer does not need its producer: " reuse_consumer " needs " producer " (" hosts ")")
+                reuse_covers[producer SUBSEP hosts]=1
+                if (hosts != "windows") reuse_covers[producer SUBSEP "linux"]=1
+                if (hosts != "linux") reuse_covers[producer SUBSEP "windows"]=1
+                if (!((reuse_consumer SUBSEP producer) in justified)) reuse_only[producer]=1
+            }
+            for (producer in reuse_only) {
+                justified[reuse_consumer SUBSEP producer]=1
+                # A manifest edge is exactly as wide as the rows that need it.
+                if (has_need(reuse_consumer, producer, "all") &&
+                    !(reuse_covers[producer SUBSEP "linux"] && reuse_covers[producer SUBSEP "windows"]))
+                    fail("need is wider than its reuse manifest rows: " reuse_consumer " needs " producer)
+            }
             for (key in artifact_need) {
                 split(key, parts, SUBSEP)
                 if (!((parts[1] SUBSEP parts[2]) in justified))
-                    fail("need has no artifact inventory record: " parts[1] " needs " parts[2])
+                    fail("need has no artifact inventory or reuse manifest record: " parts[1] " needs " parts[2])
+                if (parts[1] == reuse_consumer && (parts[2] in reuse_only) && parts[3] != "" &&
+                    !reuse_covers[parts[2] SUBSEP parts[3]])
+                    fail("need has no reuse manifest row on " parts[3] ": " parts[1] " needs " parts[2])
             }
             if (invalid) exit 1
         }
-    ' "$_ci_needs_catalog" "$_ci_needs_source" "$_ci_needs_inventory"
+    ' "$_ci_needs_catalog" "$_ci_needs_source" "$_ci_needs_inventory" "$_ci_needs_reuse_manifest"
 )

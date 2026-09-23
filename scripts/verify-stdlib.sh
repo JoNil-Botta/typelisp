@@ -234,6 +234,7 @@ net/http_trailer.tl
 net/http_trailer_policy.tl
 net/http_types.tl
 net/ip.tl
+net_windows_winsock.tl
 ssh_known_hosts_parse.tl
 json.tl
 local_ipc.tl

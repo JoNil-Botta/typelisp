@@ -101,14 +101,17 @@
   (WinsockSocketCallFailed i32)
   (WinsockDuplicateCallFailed i32))
 
+;: A complete validated table or the first candidate error.
 (defenum WinsockTableResult
   (WinsockTableOk WinsockTable)
   (WinsockTableErr WinsockError))
 
+;: Native socket construction returns the pointer-width descriptor or an error.
 (defenum WinsockSocketResult
   (WinsockSocketOk u64)
   (WinsockSocketErr WinsockError))
 
+;: Same-process socket duplication reports its native call result.
 (defenum WinsockDuplicateResult
   (WinsockDuplicateOk)
   (WinsockDuplicateErr WinsockError))
@@ -118,20 +121,30 @@
   [name : (Ptr u16)]
   [file : u64]
   [flags : u32]) : u64 (:symbol "LoadLibraryExW"))
+
+;: Query the path of the exact HMODULE returned by the secure load.
 (extern (winsock-get-module-file-name-w
   [module : u64]
   [buffer : (MutPtr u16)]
   [capacity : u32]) : u32 (:symbol "GetModuleFileNameW"))
+
+;: Supply the trusted System32 directory for exact module identity checking.
 (extern (winsock-get-system-directory-w
   [buffer : (MutPtr u16)]
   [capacity : u32]) : u32 (:symbol "GetSystemDirectoryW"))
+
+;: Compare the full UTF-16 paths without locale-dependent casing.
 (extern (winsock-compare-string-ordinal
   [left : (Ptr u16)]
   [left-length : i32]
   [right : (Ptr u16)]
   [right-length : i32]
   [ignore-case : i32]) : i32 (:symbol "CompareStringOrdinal"))
+
+;: Release only an unpublished candidate module reference.
 (extern (winsock-free-library [module : u64]) : i32 (:symbol "FreeLibrary"))
+
+;: Capture the loader's native failure code before another call changes it.
 (extern (winsock-get-last-error) : u32 (:symbol "GetLastError"))
 (cfg
   test
@@ -141,60 +154,98 @@
 (extern (winsock-lookup-startup [module : u64] [name : (Ptr u8)]) : (CFunc
   unsafe-nullable
   (-> u16 (MutPtr WinsockWsaData) i32)) (:symbol "GetProcAddress"))
+
+;: Resolve WSACleanup with its no-argument integer return signature.
 (extern (winsock-lookup-cleanup [module : u64] [name : (Ptr u8)]) : (CFunc
   unsafe-nullable
   (-> i32)) (:symbol "GetProcAddress"))
+
+;: Resolve WSAGetLastError with its no-argument integer return signature.
 (extern (winsock-lookup-last-error [module : u64] [name : (Ptr u8)]) : (CFunc
   unsafe-nullable
   (-> i32)) (:symbol "GetProcAddress"))
+
+;: Resolve WSASocketW with pointer-width SOCKET and typed protocol storage.
 (extern (winsock-lookup-socket [module : u64] [name : (Ptr u8)]) : (CFunc
   unsafe-nullable
   (-> i32 i32 i32 (MutPtr WinsockProtocolInfoW) u32 u32 u64)) (:symbol "GetProcAddress"))
+
+;: Resolve closesocket for an unsigned pointer-width SOCKET.
 (extern (winsock-lookup-close [module : u64] [name : (Ptr u8)]) : (CFunc
   unsafe-nullable
   (-> u64 i32)) (:symbol "GetProcAddress"))
+
+;: Resolve ioctlsocket with its mutable ULONG argument.
 (extern (winsock-lookup-ioctl [module : u64] [name : (Ptr u8)]) : (CFunc
   unsafe-nullable
   (-> u64 i32 (MutPtr u32) i32)) (:symbol "GetProcAddress"))
+
+;: Resolve bind with a typed base sockaddr pointer and integer length.
 (extern (winsock-lookup-bind [module : u64] [name : (Ptr u8)]) : (CFunc
   unsafe-nullable
   (-> u64 (Ptr WinsockSockAddr) i32 i32)) (:symbol "GetProcAddress"))
+
+;: Resolve listen with its integer backlog.
 (extern (winsock-lookup-listen [module : u64] [name : (Ptr u8)]) : (CFunc
   unsafe-nullable
   (-> u64 i32 i32)) (:symbol "GetProcAddress"))
+
+;: Resolve accept with mutable address and length outputs.
 (extern (winsock-lookup-accept [module : u64] [name : (Ptr u8)]) : (CFunc
   unsafe-nullable
   (-> u64 (MutPtr WinsockSockAddr) (MutPtr i32) u64)) (:symbol "GetProcAddress"))
+
+;: Resolve connect with a typed base sockaddr pointer.
 (extern (winsock-lookup-connect [module : u64] [name : (Ptr u8)]) : (CFunc
   unsafe-nullable
   (-> u64 (Ptr WinsockSockAddr) i32 i32)) (:symbol "GetProcAddress"))
+
+;: Resolve getsockname with mutable address and length outputs.
 (extern (winsock-lookup-local-name [module : u64] [name : (Ptr u8)]) : (CFunc
   unsafe-nullable
   (-> u64 (MutPtr WinsockSockAddr) (MutPtr i32) i32)) (:symbol "GetProcAddress"))
+
+;: Resolve getpeername with mutable address and length outputs.
 (extern (winsock-lookup-peer-name [module : u64] [name : (Ptr u8)]) : (CFunc
   unsafe-nullable
   (-> u64 (MutPtr WinsockSockAddr) (MutPtr i32) i32)) (:symbol "GetProcAddress"))
+
+;: Resolve recv with a mutable byte buffer and integer flags.
 (extern (winsock-lookup-receive [module : u64] [name : (Ptr u8)]) : (CFunc
   unsafe-nullable
   (-> u64 (MutPtr u8) i32 i32 i32)) (:symbol "GetProcAddress"))
+
+;: Resolve send with a borrowed byte buffer and integer flags.
 (extern (winsock-lookup-send [module : u64] [name : (Ptr u8)]) : (CFunc
   unsafe-nullable
   (-> u64 (Ptr u8) i32 i32 i32)) (:symbol "GetProcAddress"))
+
+;: Resolve recvfrom with mutable bytes, address, and address length.
 (extern (winsock-lookup-receive-from [module : u64] [name : (Ptr u8)]) : (CFunc
   unsafe-nullable
   (-> u64 (MutPtr u8) i32 i32 (MutPtr WinsockSockAddr) (MutPtr i32) i32)) (:symbol "GetProcAddress"))
+
+;: Resolve sendto with borrowed bytes and a typed destination address.
 (extern (winsock-lookup-send-to [module : u64] [name : (Ptr u8)]) : (CFunc
   unsafe-nullable
   (-> u64 (Ptr u8) i32 i32 (Ptr WinsockSockAddr) i32 i32)) (:symbol "GetProcAddress"))
+
+;: Resolve shutdown with its integer direction selector.
 (extern (winsock-lookup-shutdown [module : u64] [name : (Ptr u8)]) : (CFunc
   unsafe-nullable
   (-> u64 i32 i32)) (:symbol "GetProcAddress"))
+
+;: Resolve getsockopt with a mutable option buffer and length.
 (extern (winsock-lookup-get-option [module : u64] [name : (Ptr u8)]) : (CFunc
   unsafe-nullable
   (-> u64 i32 i32 (MutPtr u8) (MutPtr i32) i32)) (:symbol "GetProcAddress"))
+
+;: Resolve setsockopt with a borrowed option buffer and integer length.
 (extern (winsock-lookup-set-option [module : u64] [name : (Ptr u8)]) : (CFunc
   unsafe-nullable
   (-> u64 i32 i32 (Ptr u8) i32 i32)) (:symbol "GetProcAddress"))
+
+;: Resolve select with Windows fd_set and timeval pointer layouts.
 (extern (winsock-lookup-select [module : u64] [name : (Ptr u8)]) : (CFunc
   unsafe-nullable
   (->
@@ -204,6 +255,8 @@
     (MutPtr WinsockFdSet)
     (Ptr WinsockTimeval)
     i32)) (:symbol "GetProcAddress"))
+
+;: Resolve WSADuplicateSocketW with typed protocol-info output.
 (extern (winsock-lookup-duplicate-socket [module : u64] [name : (Ptr u8)]) : (CFunc
   unsafe-nullable
   (-> u64 u32 (MutPtr WinsockProtocolInfoW) i32)) (:symbol "GetProcAddress"))
@@ -336,6 +389,7 @@
       unit)
     (winsock-load-library-ex-w name (cast 0 : u64) winsock-system32-search)))
 
+;: Balance exactly the reference acquired for a rejected candidate.
 (define (winsock-release-candidate [module : u64]) : unit
   (begin
     (cfg
@@ -1106,6 +1160,7 @@
   (:cleanup cleanup-winsock-lease)
   (token (Box i64) (:cleanup winsock-token-cleanup)))
 
+;: Acquisition transfers one cleanup-owning lease only after successful startup.
 (defenum WinsockAcquireResult
   (:cleanup cleanup-winsock-acquire-result)
   (WinsockAcquired WinsockLease (:owned))
@@ -1116,14 +1171,20 @@
 ;: access prevents safe callers from manufacturing an issued address.
 (define winsock-lease-capacity : i64
   4096)
+
+;: Issued Box addresses remain in private process-lifetime raw storage.
 (define winsock-lease-addresses : (MutPtr u64)
   (let
     [storage : (__tl_dyn-array u64)
       (__tl_make-array u64 winsock-lease-capacity)]
     (unsafe
       (__tl_array-data storage))))
+
+;: Serialize registry insertion, validation, and revocation.
 (define winsock-lease-lock : i64
   0)
+
+;: Next registry probe position for bounded insertion.
 (define winsock-lease-next : i64
   0)
 
@@ -1157,6 +1218,7 @@
   (address u64)
   (hint i64))
 
+;: Read the owned Box address and its mutable slot hint together.
 (define (winsock-owned-box-identity [box : (Box i64)]) : WinsockBoxIdentity
   (let
     [address : u64

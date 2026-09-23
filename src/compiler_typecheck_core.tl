@@ -25087,24 +25087,36 @@
                   [else false]))))
           false))]))
 
-;; A module-qualified `stdlib.string` name reaches the builtin helper only when
-;; the module really declares it, so the qualified name is bound in `env`.
-;; Otherwise ordinary resolution reports it unbound: `string.string-append`,
-;; `string.string-concat` and `string.string-eq` name no stdlib.string export,
-;; and treating them as builtins made them typecheck and then fail at link
-;; against a module symbol that does not exist (#7883).
+;; The builtin string helpers a module-qualified `stdlib.string` call may
+;; reach: exactly the helper names stdlib.string exports. `string-append`,
+;; `string-concat` and `string-eq` are bare-only spellings with no stdlib.string
+;; export, so `string.string-append`, `string.string-concat` and
+;; `string.string-eq` fall through to ordinary resolution and are reported
+;; unbound. Treating them as builtins made them typecheck and then fail at link
+;; against a module symbol that does not exist (#7883). The set is fixed by the
+;; module's source rather than read from the environment, so every path that
+;; types a qualified call (the loader's and the single-program lowering
+;; fixtures', which bind module-qualified imports differently) routes the same
+;; calls. The `qualified_string_*` safety rows pin it against the real module.
+(define (tc-stdlib-string-exported-helper-base-id? [base-id : i64]) : bool
+  (or
+    (= base-id cbi.compiler-builtin-id-string-length)
+    (= base-id cbi.compiler-builtin-id-string-ref)
+    (= base-id cbi.compiler-builtin-id-char-at)
+    (= base-id cbi.compiler-builtin-id-eq)
+    (= base-id cbi.compiler-builtin-id-string-eq-question)))
+
 (define (tc-stdlib-string-qualified-helper-id?
   [session : cis.InternStructuralSessionHandle]
-  [env : TcTypeEnv]
   [lookup-id : i64]
   [base-id : i64]
   [_base : String]) : bool
   (and
+    (tc-stdlib-string-exported-helper-base-id? base-id)
     (tc-name-qualified-id? session lookup-id)
     (= (tc-qualified-name-base-id lookup-id) base-id)
     (tc-stdlib-string-module-name?
-      (tc-nominal-name-id-display (tc-qualified-name-module-id lookup-id)))
-    (tc-name-bound-id? env lookup-id)))
+      (tc-nominal-name-id-display (tc-qualified-name-module-id lookup-id)))))
 
 ;; --- per-epoch module -> decl-position index ----------------------------------
 ;; tc-module-local-env-list and tc-decl-list-module-imports-stdlib-string? both
@@ -25430,13 +25442,11 @@
         (tc-global-shared-view base))
       (tc-stdlib-string-qualified-helper-id?
         (tc-context-structural-session ctx)
-        env
         lookup-id
         base-id
         (tc-global-shared-view base)))
     (tc-stdlib-string-qualified-helper-id?
       (tc-context-structural-session ctx)
-      env
       lookup-id
       base-id
       base)))

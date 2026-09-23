@@ -2761,7 +2761,16 @@ initializers can be emitted directly as static data. `String` and aggregate
 initializers, including struct, enum, tuple, fixed-array, and private
 dynamic-buffer values, are lowered through generated runtime initializer
 functions when static data emission is not sufficient. Those initializer
-functions run before the selected `main`.
+functions run before the selected `main`, in declaration order within a module
+and after the initializers of the modules it imports.
+
+An initializer that names another global, directly or through `ann`, `cast`,
+an import alias or a generated module, reads that global's value like any
+other by-value use, so only Copy globals qualify (see Global places in §4.7.2).
+The value is read by a runtime initializer. A copy therefore does not observe
+later mutation of the original, and never holds the original's address. A
+function name used as a function value is the exception: it initializes the
+global statically with that function's closure descriptor.
 
 Global initializers are typechecked like ordinary expressions but must be
 closed over top-level declarations that are safe to evaluate during global

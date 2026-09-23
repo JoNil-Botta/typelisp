@@ -195,6 +195,9 @@ cpuid_operand_homes|tests/integration/cpuid_operand_homes.tl|42|-|-|stdlib/io.tl
 global_cell_writer_loop_reads|tests/integration/global_cell_writer_loop_reads.tl|42|-|-|stdlib/io.tl stdlib/vector.tl
 lftr_counter_retire|tests/integration/lftr_counter_retire.tl|42|-|-|stdlib/io.tl
 licm_alias_stress|tests/integration/licm_alias_stress.tl|42|-|-|stdlib/io.tl
+licm_element_bound|tests/integration/licm_element_bound.tl|42|0\n0\n0\n0\n|4 0|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
+licm_element_bound_opt2|tests/integration/licm_element_bound.tl|42|0\n0\n0\n0\n|4 0|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|opt-level:2+stage-stdlib
+licm_element_bound_abort_opt2|tests/integration/licm_element_bound.tl|134|0\n0\n0\n|4 1|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|opt-level:2+expected-stderr:tl: target/integration-verify/linux/licm_element_bound_abort_opt2/licm_element_bound_abort_opt2.tl:88:62: array index out of bounds: index=4398046511104 length=4\n
 loadcse_forward|tests/integration/loadcse_forward.tl|42|-|-|stdlib/io.tl
 loadcse_alias|tests/integration/loadcse_alias.tl|42|-|-|stdlib/io.tl
 rotate_multi_exit_live_out|tests/integration/rotate_multi_exit_live_out.tl|42|-|-|stdlib/io.tl
@@ -672,3 +675,9 @@ wide_enum_variants_opt2|tests/integration/wide_enum_variants.tl|42|-|-|wide_aggr
 wide_struct_literal|tests/integration/wide_struct_literal.tl|42|-|-|wide_struct_literal_decls.tl
 wide_struct_literal_opt0|tests/integration/wide_struct_literal.tl|42|-|-|wide_struct_literal_decls.tl|opt-level:0+stage-stdlib
 wide_struct_literal_opt2|tests/integration/wide_struct_literal.tl|42|-|-|wide_struct_literal_decls.tl|opt-level:2+stage-stdlib
+global_reference_initializers|tests/integration/global_reference_initializers.tl|42|-|-|global_reference_initializer_dep.tl
+global_reference_initializers_opt0|tests/integration/global_reference_initializers.tl|42|-|-|global_reference_initializer_dep.tl|opt-level:0+stage-stdlib
+global_reference_initializers_opt2|tests/integration/global_reference_initializers.tl|42|-|-|global_reference_initializer_dep.tl|opt-level:2+stage-stdlib
+generated_import_global_initializers|tests/integration/generated_import_global_initializers.tl|42|-|-|decls_generated_import_dep.tl decls_generated_import_empty.tl generated_import_alias_other_dep.tl
+generated_import_global_initializers_opt0|tests/integration/generated_import_global_initializers.tl|42|-|-|decls_generated_import_dep.tl decls_generated_import_empty.tl generated_import_alias_other_dep.tl|opt-level:0+stage-stdlib
+generated_import_global_initializers_opt2|tests/integration/generated_import_global_initializers.tl|42|-|-|decls_generated_import_dep.tl decls_generated_import_empty.tl generated_import_alias_other_dep.tl|opt-level:2+stage-stdlib

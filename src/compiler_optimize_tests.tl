@@ -7689,6 +7689,136 @@
         [_ (- 0 1)])]
     [(compiler_optimize.OptMaybeBlock.No) (- 0 1)]))
 
+;; Reordering the independent source increment ahead of the shift must not
+;; leave the replacement add/copy reading BitLength's result before it exists.
+;; Check the verifier as well as admission, with literal and runtime seeds.
+(define (opt-bitlen-order-function
+  [ty : compiler_ast_types.AstType]
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "bitlen_order")
+    (opt-divrem-test-params
+      (compiler_optimize.compiler-opt-global-shared-view ty))
+    ty
+    10
+    blocks
+    compiler_ir_types.CompilerIrFunctionAbi.Ordinary))
+
+(define (opt-bitlen-counter-first-ok?
+  [ty : compiler_ast_types.AstType]
+  [seed : compiler_ir_types.CompilerIrValue]) : bool
+  (let
+    [seq : compiler_ir_types.CompilerIrBlockSeq
+      (compiler_ir_types.compiler-ir-block-seq-from-list
+        (opt-bitlen-test-blocks
+          (compiler_optimize.compiler-opt-global-shared-view ty)
+          (compiler_ir_types.CompilerIrBinOp.Gt)
+          true
+          true
+          (compiler_ir_types.CompilerIrBinOp.Gt)
+          1
+          1
+          false))]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrBlock)
+      (compiler_optimize.compiler-opt-global-shared-view seq.slots)]
+    (begin
+      (match (compiler_ir_types.compiler-ir-block-seq-ref seq 2)
+        [(compiler_ir_types.CompilerIrBlock.Block label instrs)
+          (set!
+            (array-ref slots 2)
+            (compiler_ir_types.CompilerIrBlock.Block
+              label
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Phi
+                  3
+                  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                    seed
+                    (compiler_ir_types.compiler-ir-label "pre")
+                    (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                      (compiler_ir_types.CompilerIrValue.Var 6)
+                      (compiler_ir_types.compiler-ir-label "loop")
+                      (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+                  (compiler_optimize.compiler-opt-global-shared-view ty))
+                (compiler_ir_types.compiler-ir-instr-seq-ref instrs 1)
+                (compiler_ir_types.compiler-ir-instr-seq-ref instrs 3)
+                (compiler_ir_types.compiler-ir-instr-seq-ref instrs 4)
+                (compiler_ir_types.compiler-ir-instr-seq-ref instrs 2)
+                (compiler_ir_types.compiler-ir-instr-seq-ref instrs 5)
+                (compiler_ir_types.compiler-ir-instr-seq-ref instrs 6))))])
+      (let
+        [blocks : compiler_ir_types.CompilerIrBlockList
+          (compiler_ir_types.CompilerIrBlockList.Array seq)]
+        [rewritten : compiler_ir_types.CompilerIrBlockList
+          (compiler_optimize.opt-bit-length-idiom-blocks
+            10
+            (compiler_optimize.compiler-opt-global-shared-view blocks))]
+        (and
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function
+              (opt-bitlen-order-function
+                (compiler_optimize.compiler-opt-global-shared-view ty)
+                blocks)))
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function
+              (opt-bitlen-order-function
+                ty
+                (compiler_optimize.compiler-opt-global-shared-view rewritten))))
+          (match (compiler_optimize.opt-cfg-find-block
+            rewritten
+            (compiler_ir_types.compiler-ir-label "loop"))
+            [(compiler_optimize.OptMaybeBlock.Some
+                (compiler_ir_types.CompilerIrBlock.Block _ instrs))
+              (and
+                (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs 2)
+                  [(compiler_ir_types.CompilerIrInstr.UnOp
+                      _
+                      (compiler_ir_types.CompilerIrUnOp.BitLength)
+                      _
+                      _)
+                    true]
+                  [_ false])
+                (match (compiler_ir_types.compiler-ir-instr-seq-ref
+                  instrs
+                  (- instrs.len 1))
+                  [(compiler_ir_types.CompilerIrInstr.Jump _) true]
+                  [_ false]))]
+            [_ false]))))))
+
+(cfg
+  test
+  (test
+    bit-length-counter-first-has-valid-definition-order
+    (let
+      [kind : i64 0]
+      (while (< kind 2)
+        (let
+          [ty : compiler_ast_types.AstType
+            (if (= kind 0)
+              (compiler_ast_types.AstType.I64)
+              (compiler_ast_types.AstType.U64))]
+          (begin
+            (test.assert-true
+              (opt-bitlen-counter-first-ok?
+                (compiler_optimize.compiler-opt-global-shared-view ty)
+                (compiler_ir_types.CompilerIrValue.I64 0))
+              "zero seed")
+            (test.assert-true
+              (opt-bitlen-counter-first-ok?
+                (compiler_optimize.compiler-opt-global-shared-view ty)
+                (compiler_ir_types.CompilerIrValue.I64 100))
+              "nonzero seed")
+            (test.assert-true
+              (opt-bitlen-counter-first-ok?
+                (compiler_optimize.compiler-opt-global-shared-view ty)
+                (compiler_ir_types.CompilerIrValue.Var 1))
+              "runtime seed")
+            (test.assert-true
+              (opt-bitlen-counter-first-ok?
+                ty
+                (compiler_ir_types.CompilerIrValue.I64 9223372036854775807))
+              "wrapping seed")
+            (set! kind (+ kind 1))))))))
+
 (define (compiler-optimize-bit-length-self-test) : i64
   (cond
     ;; the idiom behind a `probe > 0` guard, signed and unsigned

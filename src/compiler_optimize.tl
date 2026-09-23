@@ -1877,7 +1877,6 @@
 ;;       %ps = bit_length %p : T
 ;;       %ca = add %c, %ps : T
 ;;      [%cn = mov %ca : T]
-;;       %k  = gt %ps, 0 : T                 (now dead)
 ;;       jump E
 ;;
 ;; which the backend emits as `bsr` plus one. The rewrite is admitted only when
@@ -2101,9 +2100,7 @@
         [pred : i64 (- 0 1)]
         [phis : i64 0]
         [ps : i64 (- 0 1)]
-        [ps-at : i64 (- 0 1)]
         [ca : i64 (- 0 1)]
-        [ca-at : i64 (- 0 1)]
         [ca-src : i64 (- 0 1)]
         [cn : i64 (- 0 1)]
         [cn-src : i64 (- 0 1)]
@@ -2214,7 +2211,6 @@
                         (set! bad true)
                         (begin
                           (set! ps dst)
-                          (set! ps-at i)
                           (set! shr-ty (compiler-opt-global-shared-view op-ty))
                           ;; Swap the provisional roles when the shift reads
                           ;; the first phi.
@@ -2254,7 +2250,6 @@
                         (set! bad true)
                         (begin
                           (set! ca dst)
-                          (set! ca-at i)
                           (set!
                             ca-src
                             (if (opt-bitlen-literal?
@@ -2380,60 +2375,70 @@
               (if (not guarded)
                 (OptMaybeBlock.No)
                 (let
+                  [size : i64
+                    (if (>= cn 0)
+                      6
+                      5)]
                   [slots : (__tl_dyn-array ir.CompilerIrInstr)
-                    (__tl_make-array ir.CompilerIrInstr n)]
-                  [j : i64 0]
+                    (__tl_make-array ir.CompilerIrInstr size)]
                   (begin
-                    (while (< j (- n 1))
-                      (begin
-                        (set!
-                          (array-ref slots j)
-                          (match (ir.compiler-ir-instr-seq-ref instrs j)
-                            [(ir.CompilerIrInstr.Phi dst _ phi-ty)
-                              (ir.CompilerIrInstr.Mov
-                                dst
-                                (if (= dst c)
-                                  (compiler-opt-global-shared-view c0)
-                                  (compiler-opt-global-shared-view p0))
-                                phi-ty)]
-                            [_
-                              (cond
-                                [(= j ps-at)
-                                  (ir.CompilerIrInstr.UnOp
-                                    ps
-                                    (ir.CompilerIrUnOp.BitLength)
-                                    (ir.CompilerIrValue.Var p)
-                                    (compiler-opt-global-shared-view ty))]
-                                ;; A counter that starts at a literal adds
-                                ;; it directly (none at all for 0), so
-                                ;; nothing is left for a later fold.
-                                [(= j ca-at)
-                                  (if (opt-bitlen-literal?
-                                    (compiler-opt-global-shared-view c0)
-                                    0)
-                                    (ir.CompilerIrInstr.Mov
-                                      ca
-                                      (ir.CompilerIrValue.Var ps)
-                                      (compiler-opt-global-shared-view ty))
-                                    (ir.CompilerIrInstr.BinOp
-                                      ca
-                                      (ir.CompilerIrBinOp.Add)
-                                      (ir.CompilerIrValue.Var ps)
-                                      (match (compiler-opt-global-shared-view
-                                        c0)
-                                        [(ir.CompilerIrValue.I64 lit)
-                                          (ir.CompilerIrValue.I64 lit)]
-                                        [_ (ir.CompilerIrValue.Var c)])
-                                      (compiler-opt-global-shared-view ty)))]
-                                [else (ir.compiler-ir-instr-seq-ref instrs j)])]))
-                        (set! j (+ j 1))))
+                    ;; The source may increment the counter before shifting
+                    ;; the probe. Build the dependency order explicitly: the
+                    ;; new counter update reads BitLength's result, even when
+                    ;; the old independent increment preceded the old shift.
                     (set!
-                      (array-ref slots (- n 1))
+                      (array-ref slots 0)
+                      (ir.CompilerIrInstr.Mov
+                        c
+                        (compiler-opt-global-shared-view c0)
+                        (compiler-opt-global-shared-view ty)))
+                    (set!
+                      (array-ref slots 1)
+                      (ir.CompilerIrInstr.Mov
+                        p
+                        p0
+                        (compiler-opt-global-shared-view ty)))
+                    (set!
+                      (array-ref slots 2)
+                      (ir.CompilerIrInstr.UnOp
+                        ps
+                        (ir.CompilerIrUnOp.BitLength)
+                        (ir.CompilerIrValue.Var p)
+                        (compiler-opt-global-shared-view ty)))
+                    (set!
+                      (array-ref slots 3)
+                      (if (opt-bitlen-literal?
+                        (compiler-opt-global-shared-view c0)
+                        0)
+                        (ir.CompilerIrInstr.Mov
+                          ca
+                          (ir.CompilerIrValue.Var ps)
+                          (compiler-opt-global-shared-view ty))
+                        (ir.CompilerIrInstr.BinOp
+                          ca
+                          (ir.CompilerIrBinOp.Add)
+                          (ir.CompilerIrValue.Var ps)
+                          (match c0
+                            [(ir.CompilerIrValue.I64 lit)
+                              (ir.CompilerIrValue.I64 lit)]
+                            [_ (ir.CompilerIrValue.Var c)])
+                          (compiler-opt-global-shared-view ty))))
+                    (when
+                      (>= cn 0)
+                      (set!
+                        (array-ref slots 4)
+                        (ir.CompilerIrInstr.Mov
+                          cn
+                          (ir.CompilerIrValue.Var ca)
+                          (compiler-opt-global-shared-view ty))))
+                    ;; The old predicate's only reader was the removed branch.
+                    (set!
+                      (array-ref slots (- size 1))
                       (ir.CompilerIrInstr.Jump exit))
                     (OptMaybeBlock.Some
                       (ir.CompilerIrBlock.Block
                         label
-                        (ir.CompilerIrInstrSeq slots n))))))))))]))
+                        (ir.CompilerIrInstrSeq slots size))))))))))]))
 
 ;; The single predecessor of the block labelled `label`, as a block index, or
 ;; -1 when it has none or several.

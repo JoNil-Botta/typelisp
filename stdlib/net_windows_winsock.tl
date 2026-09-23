@@ -611,42 +611,57 @@
       [system : String "C:\\Windows\\System32"]
       [shadow : String "C:\\app\\Ws2_32.dll"]
       [real : String "c:\\WINDOWS\\system32\\WS2_32.DLL"]
+      [expected : String "C:\\Windows\\System32\\Ws2_32.dll"]
       [system-path : (Array u16 1024) (winsock-test-wide (& system))]
       [shadow-path : (Array u16 1024) (winsock-test-wide (& shadow))]
       [real-path : (Array u16 1024) (winsock-test-wide (& real))]
-      (and
-        (winsock-test-identity-case-ok?
-          1
-          2
-          (winsock-identity-from-paths
-            shadow-path
-            (string.string-length (& shadow))
-            system-path
-            (string.string-length (& system))))
-        (winsock-test-identity-case-ok?
-          2
-          0
-          (winsock-identity-from-paths
-            real-path
-            (string.string-length (& real))
-            system-path
-            (string.string-length (& system))))
-        (winsock-test-identity-case-ok?
-          3
-          1
-          (winsock-identity-from-paths
-            real-path
-            1024
-            system-path
-            (string.string-length (& system))))
-        (winsock-test-identity-case-ok?
-          4
-          1
-          (winsock-identity-from-paths
-            real-path
-            -1
-            system-path
-            (string.string-length (& system))))))))
+      [expected-path : (Array u16 1024) (winsock-test-wide (& expected))]
+      [system-length : i64 (string.string-length (& system))]
+      [real-length : i64 (string.string-length (& real))]
+      [shadow-result : WinsockIdentityResult
+        (winsock-identity-from-paths
+          shadow-path
+          (string.string-length (& shadow))
+          system-path
+          system-length)]
+      ;; Every argument is passed by value: the callee's writes into its
+      ;; `system-path` copy must never reach this frame's buffer.
+      [system-after-call : i64
+        (cast (array-ref system-path system-length) : i64)]
+      [real-result : WinsockIdentityResult
+        (winsock-identity-from-paths
+          real-path
+          real-length
+          system-path
+          system-length)]
+      [truncated-result : WinsockIdentityResult
+        (winsock-identity-from-paths real-path 1024 system-path system-length)]
+      [failed-result : WinsockIdentityResult
+        (winsock-identity-from-paths real-path -1 system-path system-length)]
+      [ok : bool
+        (and
+          (winsock-test-identity-case-ok? 1 2 shadow-result)
+          (winsock-test-identity-case-ok? 2 0 real-result)
+          (winsock-test-identity-case-ok? 3 1 truncated-result)
+          (winsock-test-identity-case-ok? 4 1 failed-result))]
+      (begin
+        (when
+          (not ok)
+          (io.eprintln
+            "winsock: caller system-path[{}] after a by-value call = {} (must be 0); real-path[{}] = {}; direct CompareStringOrdinal(real, expected) = {}"
+            system-length
+            system-after-call
+            real-length
+            (cast (array-ref real-path real-length) : i64)
+            (winsock-compare-string-ordinal
+              (unsafe
+                (ptr-cast (__tl_array-data real-path) : (Ptr u16)))
+              (cast real-length : i32)
+              (unsafe
+                (ptr-cast (__tl_array-data expected-path) : (Ptr u16)))
+              (cast (string.string-length (& expected)) : i32)
+              (cast 1 : i32))))
+        ok))))
 
 ;: Resolve the fixed schema in order. A failed slot stops before the next lookup.
 ;: The injected index is -1 in production and is used only by bounded tests.

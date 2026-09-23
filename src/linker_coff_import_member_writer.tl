@@ -374,6 +374,26 @@
         unit)
       (CoffImportMember dll payload symbols))))
 
+(define (coff-import-plan-strings-fit?
+  [plans : (& plans (__tl_dyn-array CoffImportPlan))]
+  [max-string : i64]) : bool
+  (let
+    [i : i64 0]
+    [fit : bool true]
+    (begin
+      (while (and fit (< i (array-length plans)))
+        (begin
+          (if (or
+            (> (coff-import-len (array-ref plans i).public-name) max-string)
+            (> (coff-import-len (array-ref plans i).import-name) max-string)
+            (>
+              (+ 6 (coff-import-len (array-ref plans i).public-name))
+              max-string))
+            (set! fit false)
+            unit)
+          (set! i (+ i 1))))
+      fit)))
+
 (define (coff-import-members-validated
   [dll : String]
   [stem : String]
@@ -404,12 +424,6 @@
           [j : i64 0]
           (begin
             (set! error (coff-import-plan-error (clone p)))
-            (if (or
-              (> (coff-import-len p.public-name) limits.max-string)
-              (> (coff-import-len p.import-name) limits.max-string)
-              (> (+ 6 (coff-import-len p.public-name)) limits.max-string))
-              (set! error "import symbol length limit")
-              unit)
             (if (and
               (= p.kind 0)
               (or
@@ -533,6 +547,8 @@
         (> (+ 17 (coff-import-len stem)) limits.max-string)
         (> 24 limits.max-string))
       (ResultCoffImportMembers.Err "support symbol length limit")]
+    [(not (coff-import-plan-strings-fit? plans limits.max-string))
+      (ResultCoffImportMembers.Err "import symbol length limit")]
     [else (coff-import-members-validated dll stem plans limits)]))
 
 (define (coff-import-members

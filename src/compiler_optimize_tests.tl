@@ -63593,13 +63593,16 @@
 
 ;; --- flag values a dominating branch decided ----------------------------------
 ;; entry tests the flag %0 and only `outer` is below its true edge, so %0 is
-;; true in `outer` and everything it dominates:
-;;   * the loop header's SEED input (from `outer`, a forward edge) becomes true;
-;;   * the header's back-edge input is left alone;
+;; true in `outer` and everything it dominates. bounds_dom's rewrite
+;; (branches only):
 ;;   * `body`'s re-test of %0 becomes `branch true`;
+;;   * the loop header's seed is left for flag_exit, so it stays %0;
 ;;   * `join` is not a loop header, so its %0 input stays %0 even though the
 ;;     fact holds in `left` -- a flag's in-loop web is flag_exit's to read;
 ;;   * entry's own test, above the fact, stays %0.
+;; flag_exit's seed trial for `head`:
+;;   * the header's SEED input (from `outer`, a forward edge) becomes true;
+;;   * the header's back-edge input, `body`'s branch and `join` are untouched.
 (define (opt-flag-facts-test-blocks) : compiler_ir_types.CompilerIrBlockList
   (compiler_ir_types.compiler-ir-block-cons
     (compiler_ir_types.CompilerIrBlock.Block
@@ -63753,51 +63756,86 @@
         (compiler_optimize.opt-gvn-sources-params
           (opt-flag-facts-test-params)
           (compiler_optimize.opt-value-sources-new)))]
-    [out : compiler_ir_types.CompilerIrBlockList
+    ;; bounds_dom's half: dominated re-tests only.
+    [branches : compiler_ir_types.CompilerIrBlockList
       (compiler_optimize.opt-flag-facts-rewrite-blocks
         (compiler_optimize.compiler-opt-global-shared-view context.index)
         (compiler_optimize.compiler-opt-global-shared-view context.doms)
+        (compiler_optimize.compiler-opt-global-shared-view sources)
+        (compiler_ir_types.compiler-ir-global-shared-view blocks))]
+    ;; flag_exit's half: one header's forward seed.
+    [seeded : compiler_ir_types.CompilerIrBlockList
+      (match (compiler_optimize.opt-flag-facts-rewrite-seeds
+        (compiler_optimize.compiler-opt-global-shared-view context.index)
+        (compiler_optimize.compiler-opt-global-shared-view context.doms)
         sources
-        blocks)]
+        (compiler_ir_types.compiler-ir-label "head")
+        (compiler_ir_types.compiler-ir-global-shared-view blocks))
+        [(compiler_optimize.OptFlagSeeded.Some out) out]
+        [(compiler_optimize.OptFlagSeeded.No)
+          compiler_ir_types.CompilerIrBlockList.Nil])]
     (cond
       [(not
           (compiler_optimize.opt-value-eq
-            (opt-flag-facts-test-phi-input
-              (compiler_ir_types.compiler-ir-global-shared-view out)
-              "head"
-              "outer")
+            (opt-flag-facts-test-branch-cond
+              (compiler_ir_types.compiler-ir-global-shared-view branches)
+              "body")
             (compiler_ir_types.CompilerIrValue.Bool true)))
         1]
       [(not
           (compiler_optimize.opt-value-eq
             (opt-flag-facts-test-phi-input
-              (compiler_ir_types.compiler-ir-global-shared-view out)
+              (compiler_ir_types.compiler-ir-global-shared-view branches)
               "head"
-              "join")
-            (compiler_ir_types.CompilerIrValue.Var 3)))
+              "outer")
+            (compiler_ir_types.CompilerIrValue.Var 0)))
         2]
       [(not
           (compiler_optimize.opt-value-eq
-            (opt-flag-facts-test-branch-cond
-              (compiler_ir_types.compiler-ir-global-shared-view out)
-              "body")
-            (compiler_ir_types.CompilerIrValue.Bool true)))
+            (opt-flag-facts-test-phi-input
+              (compiler_ir_types.compiler-ir-global-shared-view branches)
+              "join"
+              "left")
+            (compiler_ir_types.CompilerIrValue.Var 0)))
         3]
       [(not
           (compiler_optimize.opt-value-eq
-            (opt-flag-facts-test-phi-input
-              (compiler_ir_types.compiler-ir-global-shared-view out)
-              "join"
-              "left")
+            (opt-flag-facts-test-branch-cond
+              (compiler_ir_types.compiler-ir-global-shared-view branches)
+              "entry")
             (compiler_ir_types.CompilerIrValue.Var 0)))
         4]
       [(not
           (compiler_optimize.opt-value-eq
-            (opt-flag-facts-test-branch-cond
-              (compiler_ir_types.compiler-ir-global-shared-view out)
-              "entry")
-            (compiler_ir_types.CompilerIrValue.Var 0)))
+            (opt-flag-facts-test-phi-input
+              (compiler_ir_types.compiler-ir-global-shared-view seeded)
+              "head"
+              "outer")
+            (compiler_ir_types.CompilerIrValue.Bool true)))
         5]
+      [(not
+          (compiler_optimize.opt-value-eq
+            (opt-flag-facts-test-phi-input
+              (compiler_ir_types.compiler-ir-global-shared-view seeded)
+              "head"
+              "join")
+            (compiler_ir_types.CompilerIrValue.Var 3)))
+        6]
+      [(not
+          (compiler_optimize.opt-value-eq
+            (opt-flag-facts-test-branch-cond
+              (compiler_ir_types.compiler-ir-global-shared-view seeded)
+              "body")
+            (compiler_ir_types.CompilerIrValue.Var 0)))
+        7]
+      [(not
+          (compiler_optimize.opt-value-eq
+            (opt-flag-facts-test-phi-input
+              (compiler_ir_types.compiler-ir-global-shared-view seeded)
+              "join"
+              "left")
+            (compiler_ir_types.CompilerIrValue.Var 0)))
+        8]
       [else 42])))
 
 (test
@@ -63805,7 +63843,7 @@
   (test.assert-i64-eq
     (compiler-optimize-flag-facts-self-test)
     42
-    "a flag its own dominating test decided is a literal in a loop header's seed and in a dominated re-test, and nowhere else"))
+    "a flag its own dominating test decided is a literal in a dominated re-test (bounds_dom) and, when flag_exit asks, in that loop header's forward seed -- and nowhere else"))
 
 ;; Entry has an implicit incoming edge that is not a CFG predecessor. Neither
 ;; a self-edge nor a separate latch can decide its condition on the first call.

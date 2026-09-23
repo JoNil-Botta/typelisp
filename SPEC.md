@@ -6713,6 +6713,10 @@ compiler-private packed buffer, so long calls allocate no chunk intermediates.
 The deprecated `string-append` and
 `string-concat` names remain staged lint targets for old source, while
 `tl_string_concat*` remains a runtime-plan compatibility ABI documented below.
+They are bare builtin spellings only: `stdlib.string` does not export them, so a
+module-qualified `string.string-append` or `string.string-concat` (through any
+alias or the full module path) is rejected as an unbound name, like any other
+name a module does not declare.
 
 **Literal formatting and nominal display.** `stdlib.format` owns the literal
 `args`, `format`, `write!`, and `writeln!` macros, their template scanner, all

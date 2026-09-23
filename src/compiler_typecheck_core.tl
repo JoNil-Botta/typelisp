@@ -25087,8 +25087,15 @@
                   [else false]))))
           false))]))
 
+;; A module-qualified `stdlib.string` name reaches the builtin helper only when
+;; the module really declares it, so the qualified name is bound in `env`.
+;; Otherwise ordinary resolution reports it unbound: `string.string-append`,
+;; `string.string-concat` and `string.string-eq` name no stdlib.string export,
+;; and treating them as builtins made them typecheck and then fail at link
+;; against a module symbol that does not exist (#7883).
 (define (tc-stdlib-string-qualified-helper-id?
   [session : cis.InternStructuralSessionHandle]
+  [env : TcTypeEnv]
   [lookup-id : i64]
   [base-id : i64]
   [_base : String]) : bool
@@ -25096,7 +25103,8 @@
     (tc-name-qualified-id? session lookup-id)
     (= (tc-qualified-name-base-id lookup-id) base-id)
     (tc-stdlib-string-module-name?
-      (tc-nominal-name-id-display (tc-qualified-name-module-id lookup-id)))))
+      (tc-nominal-name-id-display (tc-qualified-name-module-id lookup-id)))
+    (tc-name-bound-id? env lookup-id)))
 
 ;; --- per-epoch module -> decl-position index ----------------------------------
 ;; tc-module-local-env-list and tc-decl-list-module-imports-stdlib-string? both
@@ -25422,11 +25430,13 @@
         (tc-global-shared-view base))
       (tc-stdlib-string-qualified-helper-id?
         (tc-context-structural-session ctx)
+        env
         lookup-id
         base-id
         (tc-global-shared-view base)))
     (tc-stdlib-string-qualified-helper-id?
       (tc-context-structural-session ctx)
+      env
       lookup-id
       base-id
       base)))

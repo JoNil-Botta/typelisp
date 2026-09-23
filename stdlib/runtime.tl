@@ -841,7 +841,7 @@
               (unsafe
                 (ptr->int (program-envp)))
               : i64))]
-        [addresses : (Array i64 64) (init)]
+        [addresses : (Array i64 64) (make-array i64 64)]
         [count : i64 0]
         [done : bool (= mode 0)]
         (begin
@@ -894,7 +894,7 @@
           (if (= mode 1)
             8
             64)]
-        [addresses : (Array i64 64) (init)]
+        [addresses : (Array i64 64) (make-array i64 64)]
         [count : u16
           (if (= mode 0)
             (cast 0 : u16)

@@ -634,7 +634,7 @@ if [ "$HOST_OS" = linux ]; then
         required_gate_unavailable "build-invariance opt1 reference handoff" \
             "published assembly is missing or empty: $OPT2_REFERENCE_ASM"
     fi
-    CI_ARTIFACT_INVARIANCE_SOURCES='src,stdlib,tests/integration/native-linux.manifest,scripts/check-build-invariance.sh,scripts/lib-build-invariance-batch.sh'
+    CI_ARTIFACT_INVARIANCE_SOURCES='src,stdlib,tests/integration/native-linux.manifest,scripts/check-build-invariance.sh,scripts/lib-build-invariance-batch.sh,scripts/lib-bounded-pool.sh'
     CI_ARTIFACT_INVARIANCE_ARGV='compile src/main.tl -o {output} --target linux-x86_64 --cfg host-defaults --backend-mode scalar --opt-level 1 --stdlib-root stdlib --stdlib-root src'
     ci_compiler_artifact_publish \
         "$ROOT" "$OPT2_REFERENCE_METADATA_FILE" "$OPT2_REFERENCE_PATH_FILE" \

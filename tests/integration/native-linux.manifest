@@ -195,6 +195,9 @@ cpuid_operand_homes|tests/integration/cpuid_operand_homes.tl|42|-|-|stdlib/io.tl
 global_cell_writer_loop_reads|tests/integration/global_cell_writer_loop_reads.tl|42|-|-|stdlib/io.tl stdlib/vector.tl
 lftr_counter_retire|tests/integration/lftr_counter_retire.tl|42|-|-|stdlib/io.tl
 licm_alias_stress|tests/integration/licm_alias_stress.tl|42|-|-|stdlib/io.tl
+licm_element_bound|tests/integration/licm_element_bound.tl|42|0\n0\n0\n0\n|4 0|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
+licm_element_bound_opt2|tests/integration/licm_element_bound.tl|42|0\n0\n0\n0\n|4 0|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|opt-level:2+stage-stdlib
+licm_element_bound_abort_opt2|tests/integration/licm_element_bound.tl|134|0\n0\n0\n|4 1|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|opt-level:2+expected-stderr:tl: target/integration-verify/linux/licm_element_bound_abort_opt2/licm_element_bound_abort_opt2.tl:88:62: array index out of bounds: index=4398046511104 length=4\n
 loadcse_forward|tests/integration/loadcse_forward.tl|42|-|-|stdlib/io.tl
 loadcse_alias|tests/integration/loadcse_alias.tl|42|-|-|stdlib/io.tl
 rotate_multi_exit_live_out|tests/integration/rotate_multi_exit_live_out.tl|42|-|-|stdlib/io.tl

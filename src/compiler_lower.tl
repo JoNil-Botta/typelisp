@@ -4665,24 +4665,37 @@
     (+ count (shr count 1))))
 
 ;; Only nonidentity names can enter `logical-symbols`. Count an upper bound
-;; before allocating a view so its map never grows in the lowering arena.
+;; before allocating a view so its map never grows in the lowering arena. The
+;; dense chain is read in place, as `lower-name-env-copy-chain-into!` does:
+;; stepping through `lower-name-env-view` rebuilt a view per binding and cost
+;; more than the growth it avoids.
+(define (lower-name-binding-logical-alias? [source-id : i64] [logical-id : i64]) : bool
+  (and (>= source-id 0) (not (= source-id logical-id))))
+
 (define (lower-name-env-logical-alias-count [names : LowerNameEnv]) : i64
-  (let
-    [cur : LowerNameEnv names]
-    [count : i64 0]
-    (begin
-      (while (match (lower-global-shared-view cur)
-        [(LowerNameEnv.Nil) false]
-        [_ true])
-        (match (lower-name-env-view (lower-global-shared-view cur))
-          [(LowerNameEnvView.Nil) unit]
-          [(LowerNameEnvView.Bind source-id logical-id _ rest)
-            (begin
-              (when
-                (and (>= source-id 0) (not (= source-id logical-id)))
-                (set! count (+ count 1)))
-              (set! cur rest))]))
-      count)))
+  (match names
+    [(LowerNameEnv.Nil) 0]
+    [(LowerNameEnv.Inline source-id logical-id _)
+      (if (lower-name-binding-logical-alias? source-id logical-id)
+        1
+        0)]
+    [(LowerNameEnv.Dense store head _)
+      (let
+        [cursor : i64 head]
+        [count : i64 0]
+        (begin
+          (while (>= cursor 0)
+            (let
+              [binding : LowerNameBinding
+                (lower-name-store-binding-at (& (__tl-box-place store)) cursor)]
+              (begin
+                (when
+                  (lower-name-binding-logical-alias?
+                    binding.source-id
+                    binding.logical-id)
+                  (set! count (+ count 1)))
+                (set! cursor binding.parent))))
+          count))]))
 
 (cfg
   (any compile-profile test)
@@ -6096,6 +6109,25 @@
       (compiler-lower-function-memo-storage lower-state)]
     (arena.Arena storage.arena)))
 
+;; Only an insert that grows the table allocates, so only that insert needs
+;; the retained arena; the rest skip the arena switch.
+(define (lower-alias-overlay-insert!
+  [lower-state : CompilerLowerState]
+  [ids : (&mut ids lower_i64_i64_map.Map)]
+  [source-id : i64]
+  [logical-id : i64]) : unit
+  (if (>= ids.len ids.growth-limit)
+    (in-arena
+      (lower-alias-overlay-owner-arena lower-state)
+      (lower_i64_i64_map.insert-ref! ids source-id logical-id))
+    (lower_i64_i64_map.insert-ref! ids source-id logical-id)))
+
+;; The overlay set is insert-only, so an empty table has no tombstones and
+;; already has its full growth limit. Clearing costs its whole capacity, so
+;; skip it for a table that is already empty.
+(define (lower-alias-overlay-clear! [ids : (&mut ids lower_i64_i64_map.Map)]) : unit
+  (when (> ids.len 0) (lower_i64_i64_map.clear-ref! ids)))
+
 (define (lower-alias-overlay-reset! [lower-state : CompilerLowerState]) : unit
   (let
     [ids : lower_i64_i64_map.Map
@@ -6107,7 +6139,7 @@
       ;; The set is consulted only while constructing the current overlay.
       ;; Keep its largest table for the next build instead of stranding every
       ;; grown table in the lowering arena.
-      (lower_i64_i64_map.clear-ref! (&mut ids))
+      (lower-alias-overlay-clear! (&mut ids))
       (cfg
         (any compile-profile test)
         (profile_state.compiler-profile-metrics-add!
@@ -6158,9 +6190,7 @@
         lower_i64_i64_map.Map
         alias-overlay-ids)]
     (begin
-      (in-arena
-        (lower-alias-overlay-owner-arena lower-state)
-        (lower_i64_i64_map.insert-ref! (&mut ids) source-id logical-id))
+      (lower-alias-overlay-insert! lower-state (&mut ids) source-id logical-id)
       (cfg
         (any compile-profile test)
         (lower-alias-overlay-growth-profile lower-state (& ids))
@@ -6184,7 +6214,7 @@
     [valid : bool true]
     [cur : LowerNameEnv names]
     (begin
-      (lower_i64_i64_map.clear-ref! (&mut ids))
+      (lower-alias-overlay-clear! (&mut ids))
       (while (match (lower-global-shared-view cur)
         [(LowerNameEnv.Nil) false]
         [_ true])
@@ -6194,9 +6224,11 @@
             (begin
               (if (< bind-id 0)
                 (set! valid false)
-                (in-arena
-                  (lower-alias-overlay-owner-arena lower-state)
-                  (lower_i64_i64_map.insert-ref! (&mut ids) bind-id logical-id)))
+                (lower-alias-overlay-insert!
+                  lower-state
+                  (&mut ids)
+                  bind-id
+                  logical-id))
               (set! cur rest))]))
       (cfg
         (any compile-profile test)

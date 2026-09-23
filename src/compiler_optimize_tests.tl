@@ -111158,3 +111158,129 @@
             (opt-spmd-map-test-case mode count)
             (set! count (+ count 1))))
         (set! mode (+ mode 1))))))
+
+(define (opt-dead-shift-test
+  [ty : compiler_ast_types.AstType]
+  [count-ty : compiler_ast_types.AstType]
+  [count : compiler_ir_types.CompilerIrValue]
+  [right? : bool]
+  [live? : bool]
+  [want : bool]) : unit
+  (let
+    [used : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 8)]
+    [uses : (__tl_dyn-array i64) (__tl_make-array i64 8)]
+    [instr : compiler_ir_types.CompilerIrInstr
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        3
+        (if right?
+          (compiler_ir_types.CompilerIrBinOp.Shr count-ty)
+          (compiler_ir_types.CompilerIrBinOp.Shl count-ty))
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        count
+        ty)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
+      (__tl_make-array
+        (compiler_optimize.compiler-opt-global-shared-view instr))]
+    (begin
+      (when
+        live?
+        (begin
+          (opt_i64_i64_map.insert-ref! (&mut used) 3 1)
+          (set! (array-ref uses 3) 1)))
+      (test.assert-bool-eq
+        (compiler_optimize.opt-instr-dead?
+          used
+          (compiler_optimize.compiler-opt-global-shared-view instr))
+        want
+        "map DCE preserves live values and possible count traps")
+      (test.assert-bool-eq
+        (compiler_optimize.opt-instr-dead-array?
+          uses
+          (compiler_optimize.opt-dce-no-mirror-shared-view)
+          slots
+          1
+          0
+          instr)
+        want
+        "array DCE agrees on typed shift bounds"))))
+
+(test
+  dead-valid-shift-counts
+  (let
+    [types : (__tl_dyn-array compiler_ast_types.AstType)
+      (__tl_make-array
+        (compiler_ast_types.AstType.I8)
+        (compiler_ast_types.AstType.U8)
+        (compiler_ast_types.AstType.I16)
+        (compiler_ast_types.AstType.U16)
+        (compiler_ast_types.AstType.I32)
+        (compiler_ast_types.AstType.U32)
+        (compiler_ast_types.AstType.I64)
+        (compiler_ast_types.AstType.U64))]
+    [index : i64 0]
+    (while (< index 8)
+      (let
+        [ty : compiler_ast_types.AstType
+          (compiler_optimize.compiler-opt-global-array-element-shared-view
+            types
+            index)]
+        [width : i64
+          (compiler_optimize.opt-int-width
+            (compiler_optimize.compiler-opt-global-shared-view ty))]
+        [side : i64 0]
+        (begin
+          (while (< side 2)
+            (let
+              [right? : bool (= side 1)]
+              (begin
+                (opt-dead-shift-test
+                  (compiler_optimize.compiler-opt-global-shared-view ty)
+                  (compiler_ast_types.AstType.I8)
+                  (compiler_ir_types.CompilerIrValue.I64 0)
+                  right?
+                  false
+                  true)
+                (opt-dead-shift-test
+                  (compiler_optimize.compiler-opt-global-shared-view ty)
+                  (compiler_ast_types.AstType.U64)
+                  (compiler_ir_types.CompilerIrValue.I64 (- width 1))
+                  right?
+                  false
+                  true)
+                (opt-dead-shift-test
+                  (compiler_optimize.compiler-opt-global-shared-view ty)
+                  (compiler_ast_types.AstType.I64)
+                  (compiler_ir_types.CompilerIrValue.I64 (- width 1))
+                  right?
+                  true
+                  false)
+                (opt-dead-shift-test
+                  (compiler_optimize.compiler-opt-global-shared-view ty)
+                  (compiler_ast_types.AstType.U8)
+                  (compiler_ir_types.CompilerIrValue.I64 width)
+                  right?
+                  false
+                  false)
+                (opt-dead-shift-test
+                  (compiler_optimize.compiler-opt-global-shared-view ty)
+                  (compiler_ast_types.AstType.I64)
+                  (compiler_ir_types.CompilerIrValue.I64 -1)
+                  right?
+                  false
+                  false)
+                (opt-dead-shift-test
+                  (compiler_optimize.compiler-opt-global-shared-view ty)
+                  (compiler_ast_types.AstType.U64)
+                  (compiler_ir_types.CompilerIrValue.I64 -1)
+                  right?
+                  false
+                  false)
+                (opt-dead-shift-test
+                  (compiler_optimize.compiler-opt-global-shared-view ty)
+                  (compiler_ast_types.AstType.I64)
+                  (compiler_ir_types.CompilerIrValue.Var 7)
+                  right?
+                  false
+                  false)
+                (set! side (+ side 1)))))
+          (set! index (+ index 1)))))))

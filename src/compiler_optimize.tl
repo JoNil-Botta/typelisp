@@ -2871,7 +2871,8 @@
 ;; Division, modulo, and shift can trap at runtime (zero divisor, signed
 ;; MIN / -1, shift count out of range), so a BinOp using one of those operators
 ;; is NOT pure: dropping it as dead would elide the trap the safe-code contract
-;; requires. These ops must stay in the IR even when their result is unused.
+;; requires. An unused result alone does not prove these instructions dead;
+;; the DCE-specific predicate below additionally proves valid literal counts.
 (define (opt-binop-traps? [op : ir.CompilerIrBinOp]) : bool
   (match (compiler-opt-global-shared-view op)
     [(ir.CompilerIrBinOp.Div) true]
@@ -2879,6 +2880,33 @@
     [(ir.CompilerIrBinOp.Shl _) true]
     [(ir.CompilerIrBinOp.Shr _) true]
     [_ false]))
+
+;; A dead scalar shift is removable when its literal count is in range for
+;; the independently typed count and the shifted operand's width. Unknown or
+;; invalid counts keep their language-level abort; other operators retain the
+;; conservative operator-only rule. This proof is used only by dead-code sweeps.
+(define (opt-dce-shift-count-valid?
+  [rhs : ir.CompilerIrValue]
+  [count-ty : ast.AstType]
+  [ty : ast.AstType]) : bool
+  (match rhs
+    [(ir.CompilerIrValue.I64 count)
+      (and
+        (>= count 0)
+        (opt-integer-type? (compiler-opt-global-shared-view ty))
+        (opt-shift-count-valid? count count-ty (opt-int-width ty)))]
+    [_ false]))
+
+(define (opt-dce-binop-traps?
+  [op : ir.CompilerIrBinOp]
+  [rhs : ir.CompilerIrValue]
+  [ty : ast.AstType]) : bool
+  (match (compiler-opt-global-shared-view op)
+    [(ir.CompilerIrBinOp.Shl count-ty)
+      (not (opt-dce-shift-count-valid? rhs count-ty ty))]
+    [(ir.CompilerIrBinOp.Shr count-ty)
+      (not (opt-dce-shift-count-valid? rhs count-ty ty))]
+    [_ (opt-binop-traps? op)]))
 
 (define (opt-instr-alloc-dst? [instr : ir.CompilerIrInstr] [dst : i64]) : bool
   (match (compiler-opt-global-shared-view instr)
@@ -2938,8 +2966,10 @@
     [(ir.CompilerIrInstr.Cast dst _ _ _) (not (opt-used-contains set dst))]
     [(ir.CompilerIrInstr.Load dst _ _) (not (opt-used-contains set dst))]
     [(ir.CompilerIrInstr.LoadOwned dst _ _ _) (not (opt-used-contains set dst))]
-    [(ir.CompilerIrInstr.BinOp dst op _ _ _)
-      (and (not (opt-binop-traps? op)) (not (opt-used-contains set dst)))]
+    [(ir.CompilerIrInstr.BinOp dst op _ rhs ty)
+      (and
+        (not (opt-dce-binop-traps? op rhs ty))
+        (not (opt-used-contains set dst)))]
     [(ir.CompilerIrInstr.UnOp dst _ _ _) (not (opt-used-contains set dst))]
     [(ir.CompilerIrInstr.Phi dst _ _) (not (opt-used-contains set dst))]
     [(ir.CompilerIrInstr.LaneId dst _ _) (not (opt-used-contains set dst))]
@@ -3878,7 +3908,7 @@
           (opt-used-array-contains (compiler-opt-global-shared-view items) dst))
           (match lhs
             [(ir.CompilerIrValue.Var and-var)
-              (match rhs
+              (match (compiler-opt-global-shared-view rhs)
                 [(ir.CompilerIrValue.I64 cmp-const)
                   (let
                     ;; A zero comparison accepts the existing Eq/Ne/Le/Gt
@@ -3934,7 +3964,7 @@
                                         (ir.CompilerIrBinOp.BitTestNe))
                                       value
                                       mask
-                                      ty)]
+                                      (compiler-opt-global-shared-view ty))]
                                   (begin
                                     (set! (array-ref slots index) next)
                                     (opt-used-array-dec
@@ -3952,8 +3982,8 @@
             [_ unit])
           unit)
         (and
-          (not (opt-binop-traps? op))
-          (not (opt-used-array-contains items dst))))]
+          (not (opt-used-array-contains items dst))
+          (not (opt-dce-binop-traps? op rhs ty))))]
     [(ir.CompilerIrInstr.UnOp dst op src _)
       (begin
         ;; `not` over an adjacent single-use comparison is the comparison with

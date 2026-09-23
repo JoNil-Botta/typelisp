@@ -24,6 +24,12 @@ Both compilers emitted byte-identical assembly. This is a local compiler-work
 measurement, not an LLVM parity claim or a replacement for the CI-owned
 `self_compile` baseline. Wall-clock samples on the shared host were noisy.
 
+Three alternating pairs compiling the same branch `src/main.tl` at opt2 took
+29.222 / 35.712 / 28.061 seconds with upstream and
+26.653 / 26.742 / 27.507 seconds with dense counts. Medians are 29.222 and
+26.742 seconds (8.49% lower), but the host was shared with other work, so these
+timings are supporting evidence rather than a deterministic gate.
+
 Compiler SHA-256 identities:
 
 - Upstream: `589e7fd523cf5057ac5d2aeff6299f4e670b49c7237ca2a285245980db3c9ed1`

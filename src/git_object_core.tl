@@ -226,6 +226,14 @@
             (>= (- length component-start) 5)
             (string.eq (string.substring name (- length 5) 5) ".lock")))))))
 
+;: A symbolic ref's target: a valid full ref under `refs/`. Git refuses to point
+;: HEAD outside refs/, and no advertisement names another pseudoref as a target.
+(define (git-object-symref-target-valid? [target : (& target str)]) : bool
+  (and
+    (git-object-refname-valid? target false)
+    (>= (string.string-length target) 5)
+    (string.eq (string.substring target 0 5) "refs/")))
+
 (defenum GitAdvertisedPeeled
   (Absent)
   (Present GitObjectId))
@@ -256,7 +264,7 @@
       (and
         (> (string.string-length symref-target) 0)
         (or
-          (not (git-object-refname-valid? symref-target false))
+          (not (git-object-symref-target-valid? symref-target))
           (string.eq name symref-target)))
       (return (ResultGitAdvertisedRef.Err "git object: invalid symref target")))
     (match (git-object-id-from-hex format hex)
@@ -343,6 +351,9 @@
 
 ;: Parses all headers before the first empty line. A continuation belongs to
 ;: its preceding header and is retained verbatim, including LF and leading SP.
+;: As in Git's verify_headers, an object may end right after its last header's
+;: LF: no body is not an error, and the message is then empty. A header line
+;: without its LF is.
 (define (git-object-read-headers
   [bytes : (& bytes str)]
   [limits : (& limits GitObjectLimits)]) : ResultGitObjectHeaders
@@ -426,8 +437,7 @@
                       items
                       (GitObjectHeader header-name header-value))
                     (set! cursor next))))))))
-      (ResultGitObjectHeaders.Err
-        "git object: missing header/message separator"))))
+      (ResultGitObjectHeaders.Ok (GitObjectHeaders items length)))))
 
 (defstruct GitCommit
   (tree GitObjectId)
@@ -452,6 +462,10 @@
         [tree-count : i64 0]
         [author-count : i64 0]
         [committer-count : i64 0]
+        ;; Git's fsck_commit order: `tree` first, then `parent` lines, then
+        ;; `author`, then `committer`; other headers only after `committer`.
+        ;; 0 before tree, 1 after tree, 2 after author, 3 after committer.
+        [stage : i64 0]
         [tree : GitObjectId (GitObjectId format "" "")]
         [parents : (__tl_dyn-array GitObjectId) (__tl_make-array GitObjectId 0)]
         [author : String ""]
@@ -465,9 +479,22 @@
               [header : (& parsed GitObjectHeader)
                 (& (array-ref parsed.items index))]
               (begin
+                (when
+                  (!=
+                    stage
+                    (cond
+                      [(string.eq header.name "tree") 0]
+                      [(string.eq header.name "parent") 1]
+                      [(string.eq header.name "author") 1]
+                      [(string.eq header.name "committer") 2]
+                      [else 3]))
+                  (return
+                    (ResultGitCommit.Err
+                      "git object: commit headers out of order")))
                 (cond
                   [(string.eq header.name "tree")
                     (begin
+                      (set! stage 1)
                       (set! tree-count (+ tree-count 1))
                       (when
                         (> tree-count 1)
@@ -485,6 +512,7 @@
                       [(ResultGitObjectId.Ok id) (__tl_array-push! parents id)])]
                   [(string.eq header.name "author")
                     (begin
+                      (set! stage 2)
                       (set! author-count (+ author-count 1))
                       (when
                         (> author-count 1)
@@ -504,6 +532,7 @@
                           (string.string-length (& header.value)))))]
                   [(string.eq header.name "committer")
                     (begin
+                      (set! stage 3)
                       (set! committer-count (+ committer-count 1))
                       (when
                         (> committer-count 1)
@@ -793,6 +822,11 @@
         [type-count : i64 0]
         [tag-count : i64 0]
         [tagger-count : i64 0]
+        ;; Git's fsck_tag order: `object`, `type`, `tag`, then an optional
+        ;; `tagger` immediately after `tag`; other headers only after those.
+        ;; 0 before object, 1 after object, 2 after type, 3 after tag, 4 after
+        ;; tagger or the first other header.
+        [stage : i64 0]
         [target : GitObjectId (GitObjectId format "" "")]
         [target-code : i64 0]
         [name : String ""]
@@ -806,6 +840,22 @@
               [header : (& parsed GitObjectHeader)
                 (& (array-ref parsed.items index))]
               (begin
+                (when
+                  (cond
+                    [(string.eq header.name "object") (!= stage 0)]
+                    [(string.eq header.name "type") (!= stage 1)]
+                    [(string.eq header.name "tag") (!= stage 2)]
+                    [(string.eq header.name "tagger") (!= stage 3)]
+                    [else (< stage 3)])
+                  (return
+                    (ResultGitTag.Err "git object: tag headers out of order")))
+                (set!
+                  stage
+                  (cond
+                    [(string.eq header.name "object") 1]
+                    [(string.eq header.name "type") 2]
+                    [(string.eq header.name "tag") 3]
+                    [else 4]))
                 (cond
                   [(string.eq header.name "object")
                     (begin
@@ -927,7 +977,7 @@
         (git-object-id-valid? format peeled-id)])
     (if advert.has-symref
       (and
-        (git-object-refname-valid? (& advert.symref-target) false)
+        (git-object-symref-target-valid? (& advert.symref-target))
         (not (string.eq (& advert.name) (& advert.symref-target))))
       (= (string.string-length (& advert.symref-target)) 0))))
 

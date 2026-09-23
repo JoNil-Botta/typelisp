@@ -484,11 +484,13 @@
           (git_object.GitObjectFormat.Sha256)
           (& body)
           (& limits)))
-      (git-object-test-tag-error?
-        (git_object.git-object-decode-tag
-          (git_object.GitObjectFormat.Sha1)
-          "object 1111111111111111111111111111111111111111\ntype commit\ntag v1\ntagger A\n"
-          (& limits))))))
+      (match (git_object.git-object-decode-tag
+        (git_object.GitObjectFormat.Sha1)
+        "object 1111111111111111111111111111111111111111\ntype commit\ntag v1\ntagger A\n"
+        (& limits))
+        [(git_object.ResultGitTag.Ok tag)
+          (and tag.has-tagger (= (string.string-length (& tag.message)) 0))]
+        [_ false]))))
 
 (define (git-object-test-identity-id
   [kind : git_object.GitObjectKind]
@@ -986,25 +988,232 @@
       (while (< index (- (string.string-length (& commit)) 7))
         (begin
           (unless
-            (git-object-test-commit-error?
-              (git_object.git-object-decode-commit
-                (git_object.GitObjectFormat.Sha1)
-                (string.substring (& commit) 0 index)
-                (& limits)))
+            (=
+              (git-object-test-commit-error?
+                (git_object.git-object-decode-commit
+                  (git_object.GitObjectFormat.Sha1)
+                  (string.substring (& commit) 0 index)
+                  (& limits)))
+              (!= index (- (string.string-length (& commit)) 8)))
             (set! ok false))
           (set! index (+ index 1))))
       (set! index 1)
       (while (< index (- (string.string-length (& tag)) 7))
         (begin
           (unless
-            (git-object-test-tag-error?
-              (git_object.git-object-decode-tag
-                (git_object.GitObjectFormat.Sha1)
-                (string.substring (& tag) 0 index)
-                (& limits)))
+            (=
+              (git-object-test-tag-error?
+                (git_object.git-object-decode-tag
+                  (git_object.GitObjectFormat.Sha1)
+                  (string.substring (& tag) 0 index)
+                  (& limits)))
+              ;; `tagger` is optional, so the tag also ends validly after
+              ;; its `tag` line.
+              (and
+                (!= index (- (string.string-length (& tag)) 8))
+                (!=
+                  index
+                  (-
+                    (string.string-length (& tag))
+                    (string.string-length "tagger A <a@b> 0 +0000\n\nmessage")))))
             (set! ok false))
           (set! index (+ index 1))))
       ok)))
+
+;; Git's fsck_commit and fsck_tag fix the header order; an object that breaks it
+;; is not a Git object, whatever its individual headers say.
+(define (git-object-test-header-order?) : bool
+  (let
+    [hex : String "1111111111111111111111111111111111111111"]
+    [parent : String "2222222222222222222222222222222222222222"]
+    [limits : git_object.GitObjectLimits (git-object-test-limits)]
+    [commit-bad : (__tl_dyn-array String) (__tl_make-array String 0)]
+    [tag-bad : (__tl_dyn-array String) (__tl_make-array String 0)]
+    [index : i64 0]
+    [ok : bool true]
+    (begin
+      ;; author before tree
+      (let
+        [text : String
+          (str_cat.str-cat
+            "author A\ntree "
+            (string.substring (& hex) 0 40)
+            "\ncommitter B\n\n")]
+        (__tl_array-push! commit-bad text))
+      ;; parent after author
+      (let
+        [text : String
+          (str_cat.str-cat
+            "tree "
+            (string.substring (& hex) 0 40)
+            "\nauthor A\nparent "
+            (string.substring (& parent) 0 40)
+            "\ncommitter B\n\n")]
+        (__tl_array-push! commit-bad text))
+      ;; committer before author
+      (let
+        [text : String
+          (str_cat.str-cat
+            "tree "
+            (string.substring (& hex) 0 40)
+            "\ncommitter B\nauthor A\n\n")]
+        (__tl_array-push! commit-bad text))
+      ;; another header before committer
+      (let
+        [text : String
+          (str_cat.str-cat
+            "tree "
+            (string.substring (& hex) 0 40)
+            "\nauthor A\nencoding UTF-8\ncommitter B\n\n")]
+        (__tl_array-push! commit-bad text))
+      ;; another header between tree and author
+      (let
+        [text : String
+          (str_cat.str-cat
+            "tree "
+            (string.substring (& hex) 0 40)
+            "\nx y\nauthor A\ncommitter B\n\n")]
+        (__tl_array-push! commit-bad text))
+      ;; type before object
+      (let
+        [text : String
+          (str_cat.str-cat
+            "type commit\nobject "
+            (string.substring (& hex) 0 40)
+            "\ntag v1\n\n")]
+        (__tl_array-push! tag-bad text))
+      ;; tag before type
+      (let
+        [text : String
+          (str_cat.str-cat
+            "object "
+            (string.substring (& hex) 0 40)
+            "\ntag v1\ntype commit\n\n")]
+        (__tl_array-push! tag-bad text))
+      ;; tagger not immediately after tag
+      (let
+        [text : String
+          (str_cat.str-cat
+            "object "
+            (string.substring (& hex) 0 40)
+            "\ntype commit\ntag v1\nx y\ntagger A\n\n")]
+        (__tl_array-push! tag-bad text))
+      ;; another header before tag
+      (let
+        [text : String
+          (str_cat.str-cat
+            "object "
+            (string.substring (& hex) 0 40)
+            "\ntype commit\nx y\ntag v1\n\n")]
+        (__tl_array-push! tag-bad text))
+      (while (< index (array-length commit-bad))
+        (begin
+          (unless
+            (git-object-test-commit-error?
+              (git_object.git-object-decode-commit
+                (git_object.GitObjectFormat.Sha1)
+                (& (array-ref commit-bad index))
+                (& limits)))
+            (set! ok false))
+          (set! index (+ index 1))))
+      (set! index 0)
+      (while (< index (array-length tag-bad))
+        (begin
+          (unless
+            (git-object-test-tag-error?
+              (git_object.git-object-decode-tag
+                (git_object.GitObjectFormat.Sha1)
+                (& (array-ref tag-bad index))
+                (& limits)))
+            (set! ok false))
+          (set! index (+ index 1))))
+      (and
+        ok
+        ;; parents between tree and author, extras after committer, in order
+        (match (git_object.git-object-decode-commit
+          (git_object.GitObjectFormat.Sha1)
+          (str_cat.str-cat
+            "tree "
+            (string.substring (& hex) 0 40)
+            "\nparent "
+            (string.substring (& parent) 0 40)
+            "\nparent "
+            (string.substring (& hex) 0 40)
+            "\nauthor A\ncommitter B\nencoding UTF-8\n\nm")
+          (& limits))
+          [(git_object.ResultGitCommit.Ok commit)
+            (and
+              (= (array-length commit.parents) 2)
+              (string.eq (& (array-ref commit.parents 0).hex) (& parent))
+              (= (array-length commit.extra-headers) 1))]
+          [_ false])
+        ;; a bodiless commit: the object ends at its committer line
+        (match (git_object.git-object-decode-commit
+          (git_object.GitObjectFormat.Sha1)
+          (str_cat.str-cat
+            "tree "
+            (string.substring (& hex) 0 40)
+            "\nauthor A\ncommitter B\n")
+          (& limits))
+          [(git_object.ResultGitCommit.Ok commit)
+            (= (string.string-length (& commit.message)) 0)]
+          [_ false])
+        ;; but the last header line still needs its LF, and an empty object
+        ;; has no required headers
+        (git-object-test-commit-error?
+          (git_object.git-object-decode-commit
+            (git_object.GitObjectFormat.Sha1)
+            (str_cat.str-cat
+              "tree "
+              (string.substring (& hex) 0 40)
+              "\nauthor A\ncommitter B")
+            (& limits)))
+        (git-object-test-commit-error?
+          (git_object.git-object-decode-commit
+            (git_object.GitObjectFormat.Sha1)
+            ""
+            (& limits)))
+        ;; a tag without a tagger, with a later header
+        (match (git_object.git-object-decode-tag
+          (git_object.GitObjectFormat.Sha1)
+          (str_cat.str-cat
+            "object "
+            (string.substring (& hex) 0 40)
+            "\ntype commit\ntag v1\nx y\n\n")
+          (& limits))
+          [(git_object.ResultGitTag.Ok tag)
+            (and (not tag.has-tagger) (= (array-length tag.extra-headers) 1))]
+          [_ false])))))
+
+;; A symref target is a full ref under refs/: HEAD never points elsewhere.
+(define (git-object-test-symref-targets?) : bool
+  (let
+    [id : String "ce013625030ba8dba906f756967f9e9ca394464a"]
+    (and
+      (match (git_object.git-object-advertised-ref
+        (git_object.GitObjectFormat.Sha1)
+        "HEAD"
+        (& id)
+        "heads/main"
+        "")
+        [(git_object.ResultGitAdvertisedRef.Err _) true]
+        [_ false])
+      (match (git_object.git-object-advertised-ref
+        (git_object.GitObjectFormat.Sha1)
+        "HEAD"
+        (& id)
+        "HEAD"
+        "")
+        [(git_object.ResultGitAdvertisedRef.Err _) true]
+        [_ false])
+      (match (git_object.git-object-advertised-ref
+        (git_object.GitObjectFormat.Sha1)
+        "refs/remotes/origin/HEAD"
+        (& id)
+        "refs/remotes/origin/main"
+        "")
+        [(git_object.ResultGitAdvertisedRef.Ok advert) advert.has-symref]
+        [_ false]))))
 
 (define (git-object-self-test) : i64
   (begin
@@ -1044,6 +1253,12 @@
     (git-object-test-require
       (git-object-test-deterministic-invalid-bytes?)
       "git object: deterministic malformed corpus mismatch")
+    (git-object-test-require
+      (git-object-test-header-order?)
+      "git object: header order fixture mismatch")
+    (git-object-test-require
+      (git-object-test-symref-targets?)
+      "git object: symref target fixture mismatch")
     42))
 
 (test
@@ -1085,3 +1300,15 @@
   (git-object-test-require
     (git-object-test-deterministic-invalid-bytes?)
     "git object: deterministic malformed corpus mismatch"))
+
+(test
+  git-object-header-order-and-bodiless-objects
+  (git-object-test-require
+    (git-object-test-header-order?)
+    "git object: header order fixture mismatch"))
+
+(test
+  git-object-symref-targets
+  (git-object-test-require
+    (git-object-test-symref-targets?)
+    "git object: symref target fixture mismatch"))

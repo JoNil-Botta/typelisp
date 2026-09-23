@@ -201,7 +201,9 @@ validate_checked_in_inventory() {
     # inventory does not record.
     ci_gate_ledger_validate_needs \
         "$ROOT/scripts/ci-gates.tsv" "$ROOT/scripts/ci-verify.sh" \
-        "$INVENTORY" bootstrap-fixpoint || return $?
+        "$INVENTORY" bootstrap-fixpoint \
+        stage2-cross-mode-semantic-abi-differential \
+        "$ROOT/tests/cross-mode/corpus.tsv" || return $?
 
     for group in \
         bootstrap-converged \

@@ -3206,7 +3206,7 @@ EOF
 
 run_backend_cmp_mem_fold_parity_fixtures() {
     _cmp_mem_source=src/tests/compiler_backend_cmp_mem_fold_smoke.tl
-    _cmp_mem_stdout='cmp-mem fold smoke: compares=35338 words=388 indirect=280 acc=1579\n'
+    _cmp_mem_stdout='cmp-mem fold smoke: bytes=4547\ncmp-mem fold smoke: compares=35338 words=388 indirect=280 acc=1579\n'
     _cmp_mem_levels=
 
     # Keep this as a fixed matrix rather than two host-specific call sites: CI

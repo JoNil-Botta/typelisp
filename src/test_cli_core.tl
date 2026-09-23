@@ -3177,6 +3177,7 @@
                     pruned-paths
                     (owned_view.compiler-owned-shared-view tests))
                   (owned_view.compiler-owned-shared-view legacy-roots)
+                  (owned_view.compiler-owned-shared-view cfgs)
                   (compiler_typecheck_api.compiler-typecheck-prefix-cache-scope
                     cache-scope-prefix
                     (owned_view.compiler-owned-shared-view legacy-roots)
@@ -4717,6 +4718,7 @@
       (tltest-program-with-print-runtime program target)
       (tltest-paths-with-print-runtime target harness-paths)
       (owned_view.compiler-owned-shared-view legacy-roots)
+      (tltest-cfgs target)
       (compiler_typecheck_api.compiler-typecheck-prefix-cache-scope
         "typecheck-prefix-test-cli"
         (owned_view.compiler-owned-shared-view legacy-roots)
@@ -4763,6 +4765,7 @@
       (tltest-paths-with-print-runtime target harness-paths)
       (lower.CompilerLowerMode.Scalar)
       (owned_view.compiler-owned-shared-view legacy-roots)
+      (tltest-cfgs target)
       (compiler_typecheck_api.compiler-typecheck-prefix-cache-scope
         "typecheck-prefix-test-cli"
         (owned_view.compiler-owned-shared-view legacy-roots)
@@ -5040,6 +5043,7 @@
                 paths
                 (lower.CompilerLowerMode.Scalar)
                 (owned_view.compiler-owned-shared-view roots)
+                (tltest-cfgs target)
                 (tltest-typecheck-cache-scope roots target))
                 [(lower.ResultCompilerLower.Ok _ _) true]
                 [(lower.ResultCompilerLower.Err diag)
@@ -5080,6 +5084,7 @@
       (tltest-program-with-print-runtime program target)
       (tltest-paths-with-print-runtime target paths)
       (owned_view.compiler-owned-shared-view legacy-roots)
+      (tltest-cfgs target)
       (compiler_typecheck_api.compiler-typecheck-prefix-cache-scope
         "typecheck-prefix-test-cli"
         (owned_view.compiler-owned-shared-view legacy-roots)
@@ -5285,6 +5290,7 @@
       paths
       (tltest-harness-lower-mode target backend-mode)
       (owned_view.compiler-owned-shared-view legacy-roots)
+      (tltest-cfgs target)
       (compiler_typecheck_api.compiler-typecheck-prefix-cache-scope
         "typecheck-prefix-test-cli"
         (owned_view.compiler-owned-shared-view legacy-roots)
@@ -5474,6 +5480,7 @@
       (ast.ast-program decls)
       paths
       (owned_view.compiler-owned-shared-view legacy-roots)
+      (tltest-cfgs target)
       (compiler_typecheck_api.compiler-typecheck-prefix-cache-scope
         "typecheck-prefix-test-cli"
         (owned_view.compiler-owned-shared-view legacy-roots)
@@ -5930,6 +5937,7 @@
           (ast.ast-program decls)
           paths
           (owned_view.compiler-owned-shared-view legacy-roots)
+          (tltest-cfgs target)
           (compiler_typecheck_api.compiler-typecheck-prefix-cache-scope
             "typecheck-prefix-test-cli"
             (owned_view.compiler-owned-shared-view legacy-roots)

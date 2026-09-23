@@ -1596,6 +1596,7 @@
               paths
               (lower.CompilerLowerMode.Scalar)
               stdlib-roots
+              (owned_view.compiler-owned-shared-view cfgs)
               (tc.tc-prefix-default-cache-scope)
               pools)
               [(lower.ResultCompilerLower.Ok program spans)

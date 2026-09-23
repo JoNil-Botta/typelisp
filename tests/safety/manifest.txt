@@ -216,6 +216,38 @@ nested_call_loan_slice_reject|check-fail|tests/safety/nested_call_loan_slice_rej
 nested_call_loan_move_reject|check-fail|tests/safety/nested_call_loan_move_reject.tl|-|cannot move borrowed place `wire`
 nested_call_loan_scoped_ok|check-ok|tests/safety/nested_call_loan_scoped_ok.tl|-|-
 nested_call_loan_unrelated_ok|check-ok|tests/safety/nested_call_loan_unrelated_ok.tl|-|-
+
+# A lifetime-parameterized result keeps the loans of every composite-argument
+# child that can produce its value: both `if` branches, the last `begin` form,
+# `let` initializers and body, `match` scrutinee and arms, and projections out
+# of constructed tuples, arrays and boxes. Conditions, earlier forms and unused
+# locals keep nothing (#7979). Each reject fails on main by acceptance.
+composite_arg_loan_if_then_reject|check-fail|tests/safety/composite_arg_loan_if_then_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_if_else_reject|check-fail|tests/safety/composite_arg_loan_if_else_reject.tl|-|cannot mutably borrow borrowed place `pair.right`
+composite_arg_loan_begin_reject|check-fail|tests/safety/composite_arg_loan_begin_reject.tl|-|cannot mutably borrow borrowed place `pair.right`
+composite_arg_loan_let_reject|check-fail|tests/safety/composite_arg_loan_let_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_match_arm_reject|check-fail|tests/safety/composite_arg_loan_match_arm_reject.tl|-|cannot mutably borrow borrowed place `pair.right`
+composite_arg_loan_match_scrutinee_reject|check-fail|tests/safety/composite_arg_loan_match_scrutinee_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_destructure_reject|check-fail|tests/safety/composite_arg_loan_destructure_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_nested_reject|check-fail|tests/safety/composite_arg_loan_nested_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_tuple_reject|check-fail|tests/safety/composite_arg_loan_tuple_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_array_reject|check-fail|tests/safety/composite_arg_loan_array_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_dynamic_array_index_reject|check-fail|tests/safety/composite_arg_loan_dynamic_array_index_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_box_reject|check-fail|tests/safety/composite_arg_loan_box_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_try_reject|check-fail|tests/safety/composite_arg_loan_try_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_with_resource_reject|check-fail|tests/safety/composite_arg_loan_with_resource_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_mut_lend_reject|check-fail|tests/safety/composite_arg_loan_mut_lend_reject.tl|-|cannot read mutably borrowed place `pair.left`
+composite_arg_loan_move_reject|check-fail|tests/safety/composite_arg_loan_move_reject.tl|-|cannot move borrowed place `pair`
+composite_arg_loan_returned_reject|check-fail|tests/safety/composite_arg_loan_returned_reject.tl|-|cannot mutably borrow borrowed place `pair.right`
+composite_arg_loan_unrelated_ok|check-ok|tests/safety/composite_arg_loan_unrelated_ok.tl|-|-
+composite_arg_loan_scoped_ok|check-ok|tests/safety/composite_arg_loan_scoped_ok.tl|-|-
+composite_arg_loan_unused_ref_let_ok|check-ok|tests/safety/composite_arg_loan_unused_ref_let_ok.tl|-|-
+composite_arg_loan_condition_only_ref_let_ok|check-ok|tests/safety/composite_arg_loan_condition_only_ref_let_ok.tl|-|-
+composite_arg_loan_nested_condition_only_ref_let_ok|check-ok|tests/safety/composite_arg_loan_nested_condition_only_ref_let_ok.tl|-|-
+composite_arg_loan_unselected_tuple_view_ok|check-ok|tests/safety/composite_arg_loan_unselected_tuple_view_ok.tl|-|-
+composite_arg_loan_unselected_array_view_ok|check-ok|tests/safety/composite_arg_loan_unselected_array_view_ok.tl|-|-
+composite_arg_loan_unselected_fixed_array_view_ok|check-ok|tests/safety/composite_arg_loan_unselected_fixed_array_view_ok.tl|-|-
+composite_arg_loan_unselected_match_scrutinee_ok|check-ok|tests/safety/composite_arg_loan_unselected_match_scrutinee_ok.tl|-|-
 hashmap_nominal_value_noncloneable_reject|check-fail|tests/safety/hashmap_nominal_value_noncloneable_reject.tl|-|typecheck: clone unsupported type HashmapNoncloneableValue at HashmapNoncloneableValue.choice.Raw[0].raw: (Ptr i64) has no clone capability
 hashmap_unsupported_value_kind_reject|check-fail|tests/safety/hashmap_unsupported_value_kind_reject.tl|-|hashmap: value type tuple_i64_i64_nil has unsupported value kind tuple
 hashmap_string_probe_forged_capacity_trap|run-trap|tests/safety/hashmap_string_probe_forged_capacity_trap.tl|134|array index out of bounds
@@ -764,6 +796,10 @@ sync_generated_raw_alias_safe_reject|check-fail|tests/safety/sync_generated_raw_
 sync_generated_mutex_raw_safe_reject|check-fail|tests/safety/sync_generated_mutex_raw_safe_reject.tl|-|mutex_alias/load-raw requires unsafe context
 thread_sync_raw_explicit_unsafe_ok|check-ok|tests/safety/thread_sync_raw_explicit_unsafe_ok.tl|-|-
 thread_sync_typed_safe_control_ok|check-ok|tests/safety/thread_sync_typed_safe_control_ok.tl|-|-
+
+# Enabled generated cfg imports must resolve before checking even if unused.
+generated_cfg_missing_module_import_reject|check-fail|tests/safety/generated_cfg_missing_module_import_reject.tl|-|cannot read import
+generated_cfg_invalid_predicate_reject|check-fail|tests/safety/generated_cfg_invalid_predicate_reject.tl|-|cfg not expects exactly one predicate
 decls_generated_missing_import_reject|check-fail|tests/safety/decls_generated_missing_import_reject.tl|-|compiler-load: cannot read import tests/safety/nonexistent_decls_generated_dependency.tl
 decls_generated_conflicting_import_reject|check-fail|tests/safety/decls_generated_conflicting_import_reject.tl|-|ambiguous import alias 'dep'
 module_generated_conflicting_import_reject|check-fail|tests/safety/module_generated_conflicting_import_reject.tl|-|ambiguous import alias 'dep'
@@ -788,6 +824,7 @@ decls_generated_wildcard_selected_conflict_reject|check-fail|tests/safety/decls_
 module_generated_selected_conflict_reject|check-fail|tests/safety/module_generated_selected_conflict_reject.tl|-|ambiguous unqualified import
 module_generated_wildcard_conflict_reject|check-fail|tests/safety/module_generated_wildcard_conflict_reject.tl|-|ambiguous unqualified import
 module_generated_wildcard_selected_conflict_reject|check-fail|tests/safety/module_generated_wildcard_selected_conflict_reject.tl|-|ambiguous unqualified import
+generated_cfg_missing_decls_import_reject|check-fail|tests/safety/generated_cfg_missing_decls_import_reject.tl|-|cannot read import
 
 # Struct fields and enum variants past the former 1000-member registry stride
 # (#7921) resolve through their own declaration, never a later one's members:

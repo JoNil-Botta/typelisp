@@ -4916,6 +4916,7 @@
           (compiler_ast_types.ast-decl-path-list-with-modules paths modules)
           (compiler-driver-lower-mode-for-target target mode)
           (owned_view.compiler-owned-shared-view stdlib-roots)
+          (owned_view.compiler-owned-shared-view cfgs)
           (compiler_load.compiler-load-prelude-cache-key
             "typecheck-prefix-lower"
             stdlib-roots
@@ -5002,6 +5003,7 @@
           (compiler_ast_types.ast-decl-path-list-with-modules paths modules)
           (compiler-driver-lower-mode-for-target target mode)
           (owned_view.compiler-owned-shared-view stdlib-roots)
+          (owned_view.compiler-owned-shared-view cfgs)
           (compiler_load.compiler-load-prelude-cache-key
             "typecheck-prefix-lower"
             stdlib-roots
@@ -5382,6 +5384,7 @@
                   modules)
                 (compiler-driver-lower-mode-for-target target mode)
                 (owned_view.compiler-owned-shared-view stdlib-roots)
+                (owned_view.compiler-owned-shared-view cfgs)
                 (compiler_load.compiler-load-prelude-cache-key
                   "typecheck-prefix-lower"
                   (owned_view.compiler-owned-shared-view stdlib-roots)
@@ -5642,6 +5645,7 @@
                   modules)
                 (compiler-driver-lower-mode-for-target target mode)
                 (owned_view.compiler-owned-shared-view stdlib-roots)
+                (owned_view.compiler-owned-shared-view cfgs)
                 (compiler_load.compiler-load-prelude-cache-key
                   "typecheck-prefix-lower"
                   (owned_view.compiler-owned-shared-view stdlib-roots)
@@ -6151,7 +6155,8 @@
   [target : compiler_backend.CompilerBackendTarget]
   [mode : compiler_backend.CompilerBackendMode]
   [decls : compiler_ast_types.AstDeclList]
-  [paths : compiler_ast_types.AstDeclPathList]) : ResultCompilerDriverLowered
+  [paths : compiler_ast_types.AstDeclPathList]
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriverLowered
   (let
     [state : CompilerDriverState
       (owned_view.compiler-owned-shared-view scope.state)]
@@ -6206,6 +6211,7 @@
         paths
         (compiler-driver-lower-mode-for-target target mode)
         (svec.new)
+        (owned_view.compiler-owned-shared-view cfgs)
         (compiler_typecheck_core.tc-prefix-default-cache-scope)
         (owned_view.compiler-owned-shared-view pools)
         source-names
@@ -6247,13 +6253,15 @@
   [target : compiler_backend.CompilerBackendTarget]
   [mode : compiler_backend.CompilerBackendMode]
   [decls : compiler_ast_types.AstDeclList]
-  [paths : compiler_ast_types.AstDeclPathList]) : ResultCompilerDriverLowered
+  [paths : compiler_ast_types.AstDeclPathList]
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriverLowered
   (match (compiler_lower.lower-compiler-program-with-decl-paths-mode-and-package
     input-path
     (compiler_ast_types.ast-program decls)
     paths
     (compiler-driver-lower-mode-for-target target mode)
-    package-name)
+    package-name
+    (owned_view.compiler-owned-shared-view cfgs))
     [(compiler_lower.ResultCompilerLower.Ok program spans)
       (compiler-driver-lowered-from-active-pools program spans)]
     [(compiler_lower.ResultCompilerLower.Err diag)

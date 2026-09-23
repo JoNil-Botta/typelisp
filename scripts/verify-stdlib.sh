@@ -236,6 +236,8 @@ net/http_types.tl
 net/ip.tl
 ssh_known_hosts_parse.tl
 json.tl
+local_ipc.tl
+local_ipc_fake.tl
 math.tl
 msvc.tl
 option.tl
@@ -287,6 +289,9 @@ stdlib/tests/crypto_rsa_verify_api.tl|42|-|-|-
 stdlib/tests/concurrency_registry_api.tl|42|-|-|-
 stdlib/tests/concurrency_registry_exhaustion.tl|42|-|-|-
 stdlib/tests/format_api.tl|42|-|-|-
+stdlib/tests/local_ipc_api.tl|42|-|-|-
+stdlib/tests/local_ipc_owner_api.tl|42|-|-|-
+stdlib/tests/local_ipc_fake_forged_context.tl|134|-|printf:tl: array index out of bounds\n|-
 stdlib/tests/format_debug_bytes.tl|42|-|-|-
 stdlib/tests/format_debug_length_overflow.tl|134|-|literal:format: Debug output length overflow|-
 stdlib/tests/format_primitive_debug.tl|42|-|-|-
@@ -346,6 +351,9 @@ stdlib/tests/crypto_sha256_unsafe_adapter_reject.tl|fail|requires unsafe context
 stdlib/tests/crypto_sha512_inline.tl|pass|-
 stdlib/tests/crypto_sha512_unsafe_adapter_reject.tl|fail|requires unsafe context
 stdlib/tests/env_api.tl|pass|-
+stdlib/tests/local_ipc_forged_connection_reject.tl|fail|int->ptr requires unsafe context
+stdlib/tests/local_ipc_connection_copy_reject.tl|fail|cleanup-required resource already has a cleanup owner
+stdlib/tests/local_ipc_raw_helper_reject.tl|fail|local_ipc/io-once requires unsafe context
 stdlib/tests/format_nonliteral_template_reject.tl|fail|format: template must be a string literal
 stdlib/tests/format_println_nonliteral_template_reject.tl|fail|format: template must be a string literal
 stdlib/tests/format_eprintln_nonliteral_template_reject.tl|fail|format: template must be a string literal
@@ -417,6 +425,8 @@ stdlib/tests/math_exp_non_float_reject.tl|fail|math.exp: expected f64 or f32, fo
 stdlib/tests/math_log_non_float_reject.tl|fail|math.log: expected f64 or f32, found i64
 stdlib/tests/math_pow_non_float_reject.tl|fail|math.pow: expected f64 or f32, found i64
 stdlib/tests/math_pow_mismatched_types_reject.tl|fail|math.pow: exponent type must match base type f64, found f32
+stdlib/tests/math_mul_add_non_float_reject.tl|fail|math.mul-add: expected f64 or f32, found i64
+stdlib/tests/math_mul_add_mismatched_types_reject.tl|fail|math.mul-add: operand types must match f64, found f32
 stdlib/tests/msvc_api.tl|pass|-
 stdlib/tests/hashmap_value_borrow_escape.tl|fail|typecheck: reference value would escape lexical scope
 stdlib/tests/hashmap_value_borrow_insert_live.tl|fail|typecheck: cannot mutably borrow borrowed place `m`

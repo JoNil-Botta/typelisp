@@ -305,6 +305,7 @@ stdlib/tests/format_integer_radix.tl|42|-|-|-
 stdlib/tests/format_integer_radix_io.tl|42|printf:0x2a/00000101\n|literal:0xFF|-
 stdlib/tests/format_precision_io.tl|42|printf:abc/   tr\n1.25/-0000.00\n|literal:er/1.2|-
 stdlib/tests/format_primitive_display.tl|42|-|-|-
+stdlib/tests/string_eq_lengths.tl|42|-|-|-
 stdlib/tests/http_head_codec.tl|42|-|-|-
 stdlib/tests/http_trailer.tl|42|-|-|-
 stdlib/tests/http_trailer_policy.tl|42|-|-|-

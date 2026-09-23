@@ -16841,10 +16841,20 @@
       (compiler-backend-global-shared-view params)
       position)
       [(compiler_ir_types.CompilerIrParam.Param _ ty var)
-        (if (compiler-backend-group-type?
-          type-segment-bases
-          (compiler-backend-global-shared-view program-index)
-          (compiler-backend-global-shared-view ty))
+        ;; Register groups and memory-class aggregates do not take one integer
+        ;; register each: a SysV memory-class parameter is passed on the stack
+        ;; and shifts every later scalar down a register. The guard cannot model
+        ;; either, so decline rather than test the wrong register (#7988).
+        (if (or
+          (compiler-backend-group-type?
+            type-segment-bases
+            (compiler-backend-global-shared-view program-index)
+            (compiler-backend-global-shared-view ty))
+          (>
+            (compiler-backend-abi-memory-size
+              type-segment-bases
+              (compiler-backend-global-shared-view ty))
+            0))
           false
           (let
             [is-float : bool

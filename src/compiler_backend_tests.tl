@@ -13218,7 +13218,8 @@
 (define (compiler-backend-compact-loop-source
   [copies : i64]
   [extra : String]
-  [cold : bool]) : String
+  [cold : bool]
+  [jumped : bool]) : String
   (let
     [out : text_buf.TextBuf
       (text_buf.append
@@ -13233,6 +13234,11 @@
           (text_buf.append
             out
             "    cmpq %r8, %rax\n    jb .Lok\n    call tl_oob_abort\n.Lok:\n")))
+      ;; `jumped` enters the loop by a jump, with the exit's `ret` laid out in
+      ;; front of the header, so nothing falls into `.Lloop`.
+      (when
+        jumped
+        (set! out (text_buf.append out "    jmp .Lloop\n.Lexit:\n    ret\n")))
       (set! out (text_buf.append out ".Lloop:\n"))
       (while (< i copies)
         (begin
@@ -13250,15 +13256,19 @@
       (text_buf.render
         (text_buf.append
           (text_buf.append out extra)
-          "    addq $4, %rax\n    cmpq $4092, %rax\n    jl .Lloop\n.Lexit:\n    ret\n    .size f, . - f\n")))))
+          (if jumped
+            "    addq $4, %rax\n    cmpq $4092, %rax\n    jl .Lloop\n    jmp .Lexit\n    .size f, . - f\n"
+            "    addq $4, %rax\n    cmpq $4092, %rax\n    jl .Lloop\n.Lexit:\n    ret\n    .size f, . - f\n"))))))
 
 (define (compiler-backend-compact-loop-case-ok?
   [copies : i64]
   [extra : String]
   [cold : bool]
+  [jumped : bool]
   [aligned : bool]) : bool
   (let
-    [source : String (compiler-backend-compact-loop-source copies extra cold)]
+    [source : String
+      (compiler-backend-compact-loop-source copies extra cold jumped)]
     [out : String
       (text_buf.render
         (compiler_backend.compiler-backend-peephole-text-buf-once
@@ -13286,21 +13296,45 @@
 
 (define (compiler-backend-compact-loop-alignment-ok?) : bool
   (and
-    (compiler-backend-compact-loop-case-ok? 3 "" true true)
-    (compiler-backend-compact-loop-case-ok? 4 "" true true)
-    (compiler-backend-compact-loop-case-ok? 4 "    addq $1, %r13\n" true true)
-    (compiler-backend-compact-loop-case-ok? 2 "" true false)
-    (compiler-backend-compact-loop-case-ok? 5 "" true false)
-    (compiler-backend-compact-loop-case-ok? 4 "" false false)
-    (compiler-backend-compact-loop-case-ok? 4 "    call helper\n" true false)
+    (compiler-backend-compact-loop-case-ok? 3 "" true true true)
+    (compiler-backend-compact-loop-case-ok? 4 "" true true true)
+    (compiler-backend-compact-loop-case-ok?
+      4
+      "    addq $1, %r13\n"
+      true
+      true
+      true)
+    (compiler-backend-compact-loop-case-ok? 2 "" true true false)
+    (compiler-backend-compact-loop-case-ok? 5 "" true true false)
+    (compiler-backend-compact-loop-case-ok? 4 "" false true false)
+    (compiler-backend-compact-loop-case-ok?
+      4
+      "    call helper\n"
+      true
+      true
+      false)
     (compiler-backend-compact-loop-case-ok?
       3
       "    pushq %r13\n    popq %r13\n"
       true
+      true
       false)
-    (compiler-backend-compact-loop-case-ok? 4 "    jne .Lexit\n" true false)
-    (compiler-backend-compact-loop-case-ok? 4 "    .loc 1 4 0\n" true false)
-    (compiler-backend-compact-loop-case-ok? 4 ".Lalias:\n" true false)))
+    (compiler-backend-compact-loop-case-ok?
+      4
+      "    jne .Lexit\n"
+      true
+      true
+      false)
+    (compiler-backend-compact-loop-case-ok?
+      4
+      "    .loc 1 4 0\n"
+      true
+      true
+      false)
+    (compiler-backend-compact-loop-case-ok? 4 ".Lalias:\n" true true false)
+    ;; Entered by falling in: the padding would be executed, so none is
+    ;; emitted even for an otherwise eligible loop.
+    (compiler-backend-compact-loop-case-ok? 4 "" true false false)))
 
 (define (compiler-backend-cold-split-ok?) : bool
   (let
@@ -13323,7 +13357,7 @@
     [div-stub-at : i64
       (compiler_backend.compiler-backend-string-find-from
         (owned_view.compiler-owned-shared-view out)
-        ".Lf0_bounds_ok.1.stub1.cold:\n    call tl_div_abort\n    jmp .Lf0_bounds_ok.1.stub1.back\n"
+        ".Lf0_bounds_ok.1.stub1.cold:\n    call tl_div_abort\n.Lf0_mixed.cold:\n"
         0)]
     [size-at : i64
       (compiler_backend.compiler-backend-string-find-from
@@ -13336,10 +13370,10 @@
         (owned_view.compiler-owned-shared-view out)
         "    cmpq %r9, %rdi\n    jae .Lf0_bounds_ok.1.cold\n.Lf0_bounds_ok.1:\n    testq %r8, %r8\n")
       ;; Numeric `1:` without a site label: named after the closest preceding
-      ;; label, returning through `.back`, with `1:` kept in place.
+      ;; label, with `1:` kept in place.
       (compiler_backend.compiler-backend-string-contains?
         (owned_view.compiler-owned-shared-view out)
-        "    je .Lf0_bounds_ok.1.stub1.cold\n.Lf0_bounds_ok.1.stub1.back:\n1:\n    cmpq $0, %rax\n")
+        "    je .Lf0_bounds_ok.1.stub1.cold\n1:\n    cmpq $0, %rax\n")
       ;; A guard whose skipped text holds a conditional jump is no stub; the
       ;; inner guard it skips is one, and still moves. A returning call in the
       ;; skipped text disqualifies it, and an ordinary branch is no guard:
@@ -13354,11 +13388,21 @@
         (owned_view.compiler-owned-shared-view out)
         "    jne .Lf0_keep\n    movq $1, %rax\n")
       ;; The stubs, descriptor data included, sit after the last hot
-      ;; instruction and inside the function's `.size` range, each returning
-      ;; to its continuation.
+      ;; instruction and inside the function's `.size` range. The abort call
+      ;; never returns, so nothing follows it but the descriptor: no jump over
+      ;; the descriptor, no jump back to the continuation, and no `.back`
+      ;; label for one.
       (compiler_backend.compiler-backend-string-contains?
         (owned_view.compiler-owned-shared-view out)
-        ".L_tl_abort_site_1_bounds_end:\n    jmp .Lf0_bounds_ok.1\n")
+        "    call tl_oob_abort_at\n    .balign 8\n.L_tl_abort_site_1_bounds:\n    .quad 7\n.Lf0_bounds_ok.1.stub1.cold:\n")
+      (not
+        (compiler_backend.compiler-backend-string-contains?
+          (owned_view.compiler-owned-shared-view out)
+          "_bounds_end"))
+      (not
+        (compiler_backend.compiler-backend-string-contains?
+          (owned_view.compiler-owned-shared-view out)
+          ".back"))
       (> ret-at 0)
       (> bounds-stub-at ret-at)
       (> div-stub-at bounds-stub-at)
@@ -40157,7 +40201,7 @@ g:
           ;; still skips the -1 test through the kept `1:`.
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
-            "    testq %r8, %r8\n    je .L_tl_abort_site_1_div_zero.cold\n.L_tl_abort_site_1_div_zero.back:\n1:\n")
+            "    testq %r8, %r8\n    je .L_tl_abort_site_1_div_zero.cold\n1:\n")
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
             "    call tl_div_abort_at\n")
@@ -40166,7 +40210,7 @@ g:
             "    cmpq $1, %rax\n    jno 1f\n")
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
-            "    cmpq $-1, %r8\n    je .L_tl_abort_site_2_div_overflow.cold\n.L_tl_abort_site_2_div_overflow.back:\n1:\n    cqto\n")
+            "    cmpq $-1, %r8\n    je .L_tl_abort_site_2_div_overflow.cold\n1:\n    cqto\n")
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
             "    cqto\n")

@@ -232,6 +232,13 @@ composite_arg_loan_array_reject|check-fail|tests/safety/composite_arg_loan_array
 composite_arg_loan_box_reject|check-fail|tests/safety/composite_arg_loan_box_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
 composite_arg_loan_try_reject|check-fail|tests/safety/composite_arg_loan_try_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
 composite_arg_loan_with_resource_reject|check-fail|tests/safety/composite_arg_loan_with_resource_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_assigned_view_begin_reject|check-fail|tests/safety/composite_arg_loan_assigned_view_begin_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_assigned_bound_view_reject|check-fail|tests/safety/composite_arg_loan_assigned_bound_view_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_assignment_chain_reject|check-fail|tests/safety/composite_arg_loan_assignment_chain_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_nested_assignment_chain_reject|check-fail|tests/safety/composite_arg_loan_nested_assignment_chain_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_nested_let_assignment_reject|check-fail|tests/safety/composite_arg_loan_nested_let_assignment_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_match_assignment_reject|check-fail|tests/safety/composite_arg_loan_match_assignment_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_conditional_assigned_view_reject|check-fail|tests/safety/composite_arg_loan_conditional_assigned_view_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
 composite_arg_loan_mut_lend_reject|check-fail|tests/safety/composite_arg_loan_mut_lend_reject.tl|-|cannot read mutably borrowed place `pair.left`
 composite_arg_loan_move_reject|check-fail|tests/safety/composite_arg_loan_move_reject.tl|-|cannot move borrowed place `pair`
 composite_arg_loan_returned_reject|check-fail|tests/safety/composite_arg_loan_returned_reject.tl|-|cannot mutably borrow borrowed place `pair.right`
@@ -242,6 +249,8 @@ composite_arg_loan_condition_only_ref_let_ok|check-ok|tests/safety/composite_arg
 composite_arg_loan_nested_condition_only_ref_let_ok|check-ok|tests/safety/composite_arg_loan_nested_condition_only_ref_let_ok.tl|-|-
 composite_arg_loan_unselected_tuple_view_ok|check-ok|tests/safety/composite_arg_loan_unselected_tuple_view_ok.tl|-|-
 composite_arg_loan_unselected_match_scrutinee_ok|check-ok|tests/safety/composite_arg_loan_unselected_match_scrutinee_ok.tl|-|-
+composite_arg_loan_unselected_assigned_view_ok|check-ok|tests/safety/composite_arg_loan_unselected_assigned_view_ok.tl|-|-
+composite_arg_loan_unrelated_nested_let_assignment_ok|check-ok|tests/safety/composite_arg_loan_unrelated_nested_let_assignment_ok.tl|-|-
 hashmap_nominal_value_noncloneable_reject|check-fail|tests/safety/hashmap_nominal_value_noncloneable_reject.tl|-|typecheck: clone unsupported type HashmapNoncloneableValue at HashmapNoncloneableValue.choice.Raw[0].raw: (Ptr i64) has no clone capability
 hashmap_unsupported_value_kind_reject|check-fail|tests/safety/hashmap_unsupported_value_kind_reject.tl|-|hashmap: value type tuple_i64_i64_nil has unsupported value kind tuple
 hashmap_string_probe_forged_capacity_trap|run-trap|tests/safety/hashmap_string_probe_forged_capacity_trap.tl|134|array index out of bounds

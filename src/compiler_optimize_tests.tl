@@ -63750,6 +63750,108 @@
     42
     "a flag its own dominating test decided is a literal in a loop header's seed and in a dominated re-test, and nowhere else"))
 
+;; Entry has an implicit incoming edge that is not a CFG predecessor. Neither
+;; a self-edge nor a separate latch can decide its condition on the first call.
+(define (opt-flag-facts-entry-cycle-test
+  [separate-latch : bool]
+  [backedge-true : bool]) : i64
+  (let
+    [entry : i64 (compiler_ir_types.compiler-ir-label "entry")]
+    [latch : i64 (compiler_ir_types.compiler-ir-label "latch")]
+    [done : i64 (compiler_ir_types.compiler-ir-label "done")]
+    [target : i64
+      (if separate-latch
+        latch
+        entry)]
+    [tail : compiler_ir_types.CompilerIrBlockList
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          done
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.I64 42)))))
+        (compiler_ir_types.CompilerIrBlockList.Nil))]
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          entry
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              (if backedge-true
+                target
+                done)
+              (if backedge-true
+                done
+                target))))
+        (if separate-latch
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              latch
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Branch
+                  (compiler_ir_types.CompilerIrValue.Var 0)
+                  (if backedge-true
+                    entry
+                    done)
+                  (if backedge-true
+                    done
+                    entry))))
+            tail)
+          tail))]
+    [func : compiler_ir_types.CompilerIrFunction
+      (compiler_ir_types.CompilerIrFunction.Function
+        (compiler_ir_types.compiler-ir-test-symbol "flag_entry_cycle")
+        (opt-flag-facts-test-params)
+        (compiler_ast_types.AstType.I64)
+        2
+        (compiler_ir_types.compiler-ir-global-shared-view blocks)
+        (compiler_ir_types.CompilerIrFunctionAbi.Ordinary))]
+    [valid : bool
+      (compiler_optimize.opt-verify-ok?
+        (compiler_optimize.opt-verify-function func))]
+    [context : compiler_optimize.OptCfgContext
+      (compiler_optimize.opt-cfg-context-build
+        (compiler_ir_types.compiler-ir-global-shared-view blocks))]
+    [out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-flag-facts-rewrite-blocks
+        (compiler_optimize.compiler-opt-global-shared-view context.index)
+        (compiler_optimize.compiler-opt-global-shared-view context.doms)
+        (compiler_optimize.opt-gvn-sources-blocks
+          (compiler_ir_types.compiler-ir-global-shared-view blocks)
+          (compiler_optimize.opt-gvn-sources-params
+            (opt-flag-facts-test-params)
+            (opt_i64_i64_map.with-capacity 8)))
+        blocks)]
+    (if (and
+      valid
+      (compiler_optimize.opt-value-eq
+        (opt-flag-facts-test-branch-cond out "entry")
+        (compiler_ir_types.CompilerIrValue.Var 0)))
+      42
+      1)))
+
+(test
+  flag-facts-entry-backedge
+  (begin
+    (test.assert-i64-eq
+      (opt-flag-facts-entry-cycle-test false true)
+      42
+      "a true self-edge cannot decide the entry flag")
+    (test.assert-i64-eq
+      (opt-flag-facts-entry-cycle-test false false)
+      42
+      "a false self-edge cannot decide the entry flag")
+    (test.assert-i64-eq
+      (opt-flag-facts-entry-cycle-test true true)
+      42
+      "a true latch edge cannot decide the entry flag")
+    (test.assert-i64-eq
+      (opt-flag-facts-entry-cycle-test true false)
+      42
+      "a false latch edge cannot decide the entry flag")))
+
 ;; --- generalized monotone-flag conversion self-tests --------------------------
 ;; The merged shape the inliner produces and the probe loops intern_table and
 ;; gvn_table are built from: the counter test leaves the loop through the SAME

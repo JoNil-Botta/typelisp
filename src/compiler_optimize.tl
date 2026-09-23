@@ -72319,7 +72319,8 @@
           (set! at (array-ref links at))))
       found)))
 
-;; The one reachable predecessor of `id`, or -1.
+;; The one reachable predecessor of `id`, or -1. Entry (id 0) also has an
+;; implicit external edge, so no backedge can establish a fact on entry.
 (define (opt-flag-facts-sole-pred [index : OptCfgIndex] [id : i64]) : i64
   (let
     [offsets : (__tl_dyn-array i64) index.preds.offsets]
@@ -72327,7 +72328,7 @@
     [edge : i64 (array-ref offsets id)]
     [end : i64 (array-ref offsets (+ id 1))]
     [found : i64 (- 0 1)]
-    [ok? : bool true]
+    [ok? : bool (not (= id 0))]
     (begin
       (while (and ok? (< edge end))
         (let

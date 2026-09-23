@@ -24726,39 +24726,15 @@
   [type-segment-bases : i64]
   [ty : compiler_ast_types.AstType]
   [divisor-reg : String]
-  [planned-min : String]
-  [planned-neg : String]
+  [_planned-min : String]
+  [_planned-neg : String]
   [backend-state : CompilerBackendState]) : String
   (if (compiler-backend-type-signed? (compiler-backend-global-shared-view ty))
     (let
-      ;; The two guard temps (INT_MIN, -1) are transient (dead before the idiv).
-      ;; Scavenge them instead of hardcoding guard temps, excluding the dividend
-      ;; (%rax), %rdx, the divisor, and each other.
-      [min-excl : (__tl_dyn-array String)
-        (__tl_make-array
-          "%rax"
-          "%rdx"
-          (compiler-backend-global-shared-view divisor-reg))]
-      [min-full : String
-        (compiler-backend-planned-or-scavenge-reg-here
-          planned-min
-          min-excl
-          3
-          "%r10"
-          backend-state)]
-      [neg-excl : (__tl_dyn-array String)
-        (__tl_make-array
-          "%rax"
-          "%rdx"
-          (compiler-backend-global-shared-view divisor-reg)
-          (compiler-backend-global-shared-view min-full))]
-      [neg-full : String
-        (compiler-backend-planned-or-scavenge-reg-here
-          planned-neg
-          neg-excl
-          4
-          "%r9"
-          backend-state)]
+      [suffix : String
+        (compiler-backend-int-instruction-suffix
+          type-segment-bases
+          (compiler-backend-global-shared-view ty))]
       [lhs : String
         (compiler-backend-sized-reg
           type-segment-bases
@@ -24769,37 +24745,24 @@
           type-segment-bases
           (compiler-backend-global-shared-view divisor-reg)
           (compiler-backend-global-shared-view ty))]
-      [min-reg : String
-        (compiler-backend-sized-reg
-          type-segment-bases
-          (compiler-backend-global-shared-view min-full)
-          (compiler-backend-global-shared-view ty))]
-      [neg-one-reg : String
-        (compiler-backend-sized-reg
-          type-segment-bases
-          (compiler-backend-global-shared-view neg-full)
-          (compiler-backend-global-shared-view ty))]
+      ;; CMP computes lhs - 1 without changing lhs. At the operand's signed
+      ;; width this sets OF exactly when lhs is INT_MIN. The only overflowing
+      ;; signed quotient is INT_MIN / -1, so two immediate compares prove the
+      ;; same condition without materializing either constant in a scratch
+      ;; register. The zero guard still runs first, and both operands survive
+      ;; for the original source-located overflow diagnostic.
       (str_cat.str-cat
-        (compiler-backend-emit-load-i64-absolute
-          (compiler-backend-signed-min-value
-            type-segment-bases
-            (compiler-backend-global-shared-view ty))
-          min-full)
-        (compiler-backend-binop-cmp-reg-asm
-          type-segment-bases
-          (compiler-backend-global-shared-view ty)
-          min-reg
-          lhs)
-        "    jne 1f\n"
-        (compiler-backend-emit-load-i64-absolute (- 0 1) neg-full)
-        (compiler-backend-binop-cmp-reg-asm
-          type-segment-bases
-          (compiler-backend-global-shared-view ty)
-          neg-one-reg
-          rhs)
+        "    cmp"
+        (compiler-backend-global-shared-view suffix)
+        " $1, "
+        lhs
+        "\n    jno 1f\n    cmp"
+        suffix
+        " $-1, "
+        rhs
         (if (compiler-backend-abort-site-active? backend-state)
           (str_cat.str-cat
-            "    jne 1f\n"
+            "\n    jne 1f\n"
             (compiler-backend-abort-call-three-asm
               "tl_div_abort_at"
               "div_overflow"
@@ -24814,7 +24777,7 @@
               0
               backend-state)
             "1:\n")
-          "    jne 1f\n    call tl_div_abort\n1:\n")))
+          "\n    jne 1f\n    call tl_div_abort\n1:\n")))
     ""))
 
 (define (compiler-backend-divmod-guard-asm-with-plan
@@ -30808,7 +30771,8 @@
 ;; (2/4/8) becomes a flags-free `leaq (,%lhs,scale), %dst` and a larger power
 ;; of two whose source already sits in the destination register becomes a bare
 ;; `shlq` -- both the same instruction count as the imulq they replace and
-;; strictly cheaper to execute. Every other constant keeps the imulq (a
+;; cheaper to execute. Factors 3/5/9 use base + scaled index in one LEA.
+;; Every other constant keeps the imulq (a
 ;; mov+shl pair would trade latency for count, which the Ir gate weighs).
 ;; `leaq (,%rbp,scale)` is safe under the FPO rsp-rebase pass: the rebased
 ;; frame shape is `disp(%rbp)`, and the no-base SIB spelling is exactly the
@@ -30820,16 +30784,30 @@
   [rhs : compiler_ir_types.CompilerIrValue]) : String
   (match rhs
     [(compiler_ir_types.CompilerIrValue.I64 n)
-      (if (or (= n 2) (= n 4) (= n 8))
-        (str_cat.str-cat
-          "    leaq (,"
-          lhs-reg
-          ","
-          (string.int->string n)
-          "), "
-          dst-home
-          "\n")
-        (if (and (> n 8) (string.eq lhs-reg dst-home))
+      (cond
+        [(or (= n 2) (= n 4) (= n 8))
+          (str_cat.str-cat
+            "    leaq (,"
+            lhs-reg
+            ","
+            (string.int->string n)
+            "), "
+            dst-home
+            "\n")]
+        ;; A value in %rbp must never look like a frame address to the final
+        ;; rsp-rebase pass. It cannot occupy both SIB roles without doing so.
+        [(and (or (= n 3) (= n 5) (= n 9)) (not (string.eq lhs-reg "%rbp")))
+          (str_cat.str-cat
+            "    leaq ("
+            (compiler-backend-global-shared-view lhs-reg)
+            ","
+            lhs-reg
+            ","
+            (string.int->string (- n 1))
+            "), "
+            dst-home
+            "\n")]
+        [(and (> n 8) (string.eq lhs-reg dst-home))
           (match (compiler-backend-power-of-two-shift n)
             [(option_i64.Some count)
               (str_cat.str-cat
@@ -30839,8 +30817,9 @@
                 dst-home
                 "\n")]
             [(option_i64.None)
-              (str_cat.str-cat "    imulq " imm ", " lhs-reg ", " dst-home "\n")])
-          (str_cat.str-cat "    imulq " imm ", " lhs-reg ", " dst-home "\n")))]
+              (str_cat.str-cat "    imulq " imm ", " lhs-reg ", " dst-home "\n")])]
+        [else
+          (str_cat.str-cat "    imulq " imm ", " lhs-reg ", " dst-home "\n")])]
     [_ (str_cat.str-cat "    imulq " imm ", " lhs-reg ", " dst-home "\n")]))
 
 ;; The three-operand form for `dst = lhs OP imm` when the destination is not the
@@ -100351,11 +100330,8 @@
   (jcc (__tl_dyn-array i64))
   (target (__tl_dyn-array i64))
   (loc (__tl_dyn-array i64))
-  (numeric (__tl_dyn-array i64))
   (inverse (__tl_dyn-array String))
-  (back (__tl_dyn-array String))
   (head (__tl_dyn-array String))
-  (tail (__tl_dyn-array String))
   (flushes i64)
   (flush-at (__tl_dyn-array i64))
   (flush-end (__tl_dyn-array i64))
@@ -100367,9 +100343,6 @@
     (__tl_make-array i64 0)
     (__tl_make-array i64 0)
     (__tl_make-array i64 0)
-    (__tl_make-array i64 0)
-    (__tl_make-array String 0)
-    (__tl_make-array String 0)
     (__tl_make-array String 0)
     (__tl_make-array String 0)
     0
@@ -100773,41 +100746,20 @@
                           (compiler-backend-cold-line-last data first end)]
                         [mend : i64
                           (compiler-backend-cold-token-end data first last)]
-                        [tfirst : i64
-                          (compiler-backend-cold-line-first data mend last)]
-                        [target : String
-                          (string.substring rec.src tfirst (- last tfirst))]
-                        [numeric? : bool (string.eq target "1f")]
                         [cold-label : String
                           (str_cat.str-cat
                             (compiler-backend-global-shared-view name)
                             ".cold")]
-                        [back-label : String
-                          (if numeric?
-                            (str_cat.str-cat
-                              (compiler-backend-global-shared-view name)
-                              ".back")
-                            (compiler-backend-global-shared-view target))]
                         [inverse : String
                           (str_cat.str-cat
                             "    "
                             (compiler-backend-cold-jcc-inverse data first mend)
                             " "
                             (compiler-backend-global-shared-view cold-label))]
-                        [back : String
-                          (if numeric?
-                            (str_cat.str-cat
-                              (compiler-backend-global-shared-view back-label)
-                              ":")
-                            "")]
                         [head : String
                           (str_cat.str-cat
                             (compiler-backend-global-shared-view cold-label)
                             ":")]
-                        [tail : String
-                          (str_cat.str-cat
-                            "    jmp "
-                            (compiler-backend-global-shared-view back-label))]
                         [loc : i64
                           (compiler-backend-cold-loc-before
                             (compiler-backend-global-shared-view v)
@@ -100825,14 +100777,7 @@
                             (-
                               (+ (string.string-length inverse) 1)
                               (compiler-backend-cold-record-bytes rec))
-                            (+
-                              (if numeric?
-                                (+ (string.string-length back) 1)
-                                0)
-                              (+
-                                (+ (string.string-length head) 1)
-                                (+ (string.string-length tail) 1)
-                                loc-bytes)))]
+                            (+ (+ (string.string-length head) 1) loc-bytes))]
                         [flush-at : i64 count]
                         (begin
                           ;; This stub's flush point: the first closing line
@@ -100877,32 +100822,16 @@
                             plan.loc
                             (compiler-backend-cold-grow-i64 plan.loc k))
                           (set!
-                            plan.numeric
-                            (compiler-backend-cold-grow-i64 plan.numeric k))
-                          (set!
                             plan.inverse
                             (compiler-backend-cold-grow-strings plan.inverse k))
                           (set!
-                            plan.back
-                            (compiler-backend-cold-grow-strings plan.back k))
-                          (set!
                             plan.head
                             (compiler-backend-cold-grow-strings plan.head k))
-                          (set!
-                            plan.tail
-                            (compiler-backend-cold-grow-strings plan.tail k))
                           (set! (array-ref plan.jcc k) j)
                           (set! (array-ref plan.target k) t)
                           (set! (array-ref plan.loc k) loc)
-                          (set!
-                            (array-ref plan.numeric k)
-                            (if numeric?
-                              1
-                              0))
                           (set! (array-ref plan.inverse k) inverse)
-                          (set! (array-ref plan.back k) back)
                           (set! (array-ref plan.head k) head)
-                          (set! (array-ref plan.tail k) tail)
                           (set! plan.stubs (+ k 1))
                           (set! plan.extra (+ plan.extra added))
                           (set! done-to t))))))))
@@ -100943,6 +100872,103 @@
       (+ pos (+ n 1)))))
 
 ;; Emit planned stubs [from, to) out of line.
+
+;; A stub's records, copied out of line. Its abort call never returns, so
+;; nothing after the call is reached: the `jmp` that stepped over the site
+;; descriptor, and the continuation label that jump was the only reader of, are
+;; left behind, and no jump back to the hot path is written. The descriptor
+;; itself stays -- the call's argument addresses it. A stub has no other exit
+;; (the planner admits only the abort sequence), so this drops no live path.
+(define (compiler-backend-cold-stub-body!
+  [v : CompilerBackendPeepholeLineVec]
+  [from : i64]
+  [to : i64]
+  [dst : (MutPtr u8)]
+  [start-pos : i64]) : i64
+  (let
+    [pos : i64 start-pos]
+    [cursor : i64 from]
+    [j : i64 from]
+    [after-call? : bool false]
+    [skip-label : String ""]
+    (begin
+      (while (< j to)
+        (begin
+          (when
+            (= (array-ref v.live j) 1)
+            (let
+              [rec : CompilerBackendPeepholeLineRecord
+                (compiler-backend-global-array-element-shared-view v.lines j)]
+              [data : (Ptr u8)
+                (compiler-backend-peephole-record-data
+                  (compiler-backend-global-shared-view rec))]
+              [start : i64
+                (compiler-backend-peephole-record-start
+                  (compiler-backend-global-shared-view rec))]
+              [end : i64
+                (compiler-backend-peephole-record-end
+                  (compiler-backend-global-shared-view rec))]
+              [first : i64 (compiler-backend-cold-line-first data start end)]
+              [last : i64 (compiler-backend-cold-line-last data first end)]
+              [kind : i64
+                (compiler-backend-peephole-record-kind
+                  (compiler-backend-global-shared-view rec))]
+              (cond
+                [(and
+                    (= kind compiler-backend-sweep-line-kind-instruction)
+                    (compiler-backend-peephole-line-noreturn-abort?
+                      data
+                      start
+                      end))
+                  (set! after-call? true)]
+                [(and
+                    after-call?
+                    (= kind compiler-backend-sweep-line-kind-instruction)
+                    (compiler-backend-cold-prefix? data first last "jmp "))
+                  (begin
+                    (set!
+                      pos
+                      (compiler-backend-peephole-records-blit-range!
+                        (compiler-backend-global-shared-view v)
+                        cursor
+                        j
+                        dst
+                        pos))
+                    (set! cursor (+ j 1))
+                    (set!
+                      skip-label
+                      (str_cat.str-cat
+                        (string.substring
+                          rec.src
+                          (+ first 4)
+                          (- last (+ first 4)))
+                        ":"))
+                    (set! after-call? false))]
+                [(and
+                    (= kind compiler-backend-sweep-line-kind-label)
+                    (> (string.string-length skip-label) 1)
+                    (compiler-backend-peephole-range-eq?
+                      data
+                      first
+                      last
+                      (compiler-backend-global-shared-view skip-label)))
+                  (begin
+                    (set!
+                      pos
+                      (compiler-backend-peephole-records-blit-range!
+                        (compiler-backend-global-shared-view v)
+                        cursor
+                        j
+                        dst
+                        pos))
+                    (set! cursor (+ j 1))
+                    (set! skip-label ""))]
+                [(= kind compiler-backend-sweep-line-kind-instruction)
+                  (set! after-call? false)]
+                [else unit])))
+          (set! j (+ j 1))))
+      (compiler-backend-peephole-records-blit-range! v cursor to dst pos))))
+
 (define (compiler-backend-cold-emit-stubs!
   [v : CompilerBackendPeepholeLineVec]
   [plan : CompilerBackendColdPlan]
@@ -100976,18 +101002,12 @@
                   pos)))
             (set!
               pos
-              (compiler-backend-peephole-records-blit-range!
+              (compiler-backend-cold-stub-body!
                 (compiler-backend-global-shared-view v)
                 (+ (array-ref plan.jcc k) 1)
                 (array-ref plan.target k)
                 dst
                 pos))
-            (set!
-              pos
-              (compiler-backend-cold-write-line!
-                dst
-                pos
-                (compiler-backend-global-array-element-shared-view plan.tail k)))
             (set! k (+ k 1)))))
       pos)))
 
@@ -101089,6 +101109,52 @@
             (set! j (+ j 1))))
         false))))
 
+
+;; Padding in front of a label is executed by whatever falls into it, and a
+;; nop is an instruction the count sees -- so the hint is only given where
+;; nothing falls in: the closest live record before the label is an
+;; unconditional `jmp` or a `ret`. Every entry into such a loop is a jump
+;; (the rotated guard's, the back edge's), and the padding costs bytes only.
+(define (compiler-backend-loop-header-unreached-by-fallthrough?
+  [v : CompilerBackendPeepholeLineVec]
+  [at : i64]) : bool
+  (let
+    [j : i64 (- at 1)]
+    [result : i64 (- 0 2)]
+    (begin
+      (while (= result (- 0 2))
+        (cond
+          [(< j 0) (set! result 0)]
+          [(not (= (array-ref v.live j) 1)) (set! j (- j 1))]
+          [else
+            (let
+              [rec : CompilerBackendPeepholeLineRecord
+                (compiler-backend-global-array-element-shared-view v.lines j)]
+              [data : (Ptr u8)
+                (compiler-backend-peephole-record-data
+                  (compiler-backend-global-shared-view rec))]
+              [start : i64
+                (compiler-backend-peephole-record-mnemonic-start
+                  (compiler-backend-global-shared-view rec))]
+              [kind : i64
+                (compiler-backend-peephole-record-kind
+                  (compiler-backend-global-shared-view rec))]
+              [end : i64
+                (compiler-backend-cold-line-last
+                  data
+                  start
+                  (compiler-backend-peephole-record-end rec))]
+              (set!
+                result
+                (if (and
+                  (= kind compiler-backend-sweep-line-kind-instruction)
+                  (or
+                    (compiler-backend-cold-prefix? data start end "jmp ")
+                    (compiler-backend-peephole-range-eq? data start end "ret")))
+                  1
+                  0)))]))
+      (= result 1))))
+
 (define (compiler-backend-loop-alignment-plan
   [v : CompilerBackendPeepholeLineVec]) : CompilerBackendLoopAlignment
   (let
@@ -101106,6 +101172,9 @@
                   (compiler-backend-global-array-element-shared-view v.lines i))
                 compiler-backend-sweep-line-kind-label)
               (compiler-backend-compact-loop-header?
+                (compiler-backend-global-shared-view v)
+                i)
+              (compiler-backend-loop-header-unreached-by-fallthrough?
                 (compiler-backend-global-shared-view v)
                 i))
             (begin
@@ -101225,27 +101294,7 @@
                 (compiler-backend-global-array-element-shared-view
                   plan.inverse
                   k)))
-            (if (= (array-ref plan.numeric k) 1)
-              (begin
-                (set!
-                  pos
-                  (compiler-backend-cold-write-line!
-                    dst
-                    pos
-                    (compiler-backend-global-array-element-shared-view
-                      plan.back
-                      k)))
-                (set!
-                  pos
-                  (compiler-backend-loop-aligned-blit-range!
-                    (compiler-backend-global-shared-view v)
-                    (compiler-backend-global-shared-view alignment)
-                    t
-                    (+ t 1)
-                    dst
-                    pos))
-                (set! cursor (+ t 1)))
-              (set! cursor t))
+            (set! cursor t)
             (set! k (+ k 1)))))
       (while (< f plan.flushes)
         (let

@@ -11868,7 +11868,7 @@
                               "    addq $5, %rax\n"))
                           (compiler_backend.compiler-backend-string-contains?
                             (owned_view.compiler-owned-shared-view mul-asm)
-                            "    imulq $3, %r12, %r13\n")
+                            "    leaq (%r12,%r12,2), %r13\n")
                           (not
                             (compiler_backend.compiler-backend-string-contains?
                               mul-asm
@@ -32396,6 +32396,7 @@ g:
       (compiler-backend-gep-fold-disp-shape-ok?)
       (compiler-backend-gep-fold-multi-use-keeps-add-ok?)
       (compiler-backend-gep-fold-builders-ok?))
+    (compiler-backend-mul-scale-add-shapes-ok?)
     (compiler-backend-gep-fold-sub-shape-ok?)
     (compiler-backend-gep-fold-zero-shape-ok?)
     (compiler-backend-gep-fold-drift-detected-ok?)
@@ -33983,6 +33984,52 @@ g:
             (owned_view.compiler-owned-shared-view asm)
             "imulq")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-mul-scale-add-shape-ok?
+  [factor : i64]
+  [dst-reg : i64]
+  [expected : String]) : bool
+  (match (compiler-backend-mul-pow2-test-asm factor dst-reg)
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (and
+        (compiler_backend.compiler-backend-string-contains?
+          (owned_view.compiler-owned-shared-view asm)
+          expected)
+        (not (compiler_backend.compiler-backend-string-contains? asm "imulq")))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-mul-scale-add-shapes-ok?) : bool
+  (and
+    (compiler-backend-mul-scale-add-shape-ok?
+      3
+      compiler_abi.compiler-reg-id-rcx
+      "    leaq (%r12,%r12,2), %rcx\n")
+    (compiler-backend-mul-scale-add-shape-ok?
+      5
+      compiler_abi.compiler-reg-id-rcx
+      "    leaq (%r12,%r12,4), %rcx\n")
+    (compiler-backend-mul-scale-add-shape-ok?
+      9
+      compiler_abi.compiler-reg-id-rcx
+      "    leaq (%r12,%r12,8), %rcx\n")
+    (compiler-backend-mul-scale-add-shape-ok?
+      5
+      compiler_abi.compiler-reg-id-r12
+      "    leaq (%r12,%r12,4), %r12\n")
+    (string.eq
+      (compiler_backend.compiler-backend-mul-immediate-direct-asm
+        "%rbp"
+        "%rcx"
+        "$3"
+        (compiler_ir_types.CompilerIrValue.I64 3))
+      "    imulq $3, %rbp, %rcx\n")
+    (string.eq
+      (compiler_backend.compiler-backend-mul-immediate-direct-asm
+        "%rbp"
+        "%rbp"
+        "$9"
+        (compiler_ir_types.CompilerIrValue.I64 9))
+      "    imulq $9, %rbp, %rbp\n")))
 
 (define (compiler-backend-mul-non-pow2-imul-shape-ok?) : bool
   (match (compiler-backend-mul-pow2-test-asm
@@ -40116,10 +40163,10 @@ g:
             "    call tl_div_abort_at\n")
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
-            "    cmpq %r10, %rax\n    jne 1f\n")
+            "    cmpq $1, %rax\n    jno 1f\n")
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
-            "    cmpq %r9, %r8\n    je .L_tl_abort_site_2_div_overflow.cold\n.L_tl_abort_site_2_div_overflow.back:\n1:\n    cqto\n")
+            "    cmpq $-1, %r8\n    je .L_tl_abort_site_2_div_overflow.cold\n.L_tl_abort_site_2_div_overflow.back:\n1:\n    cqto\n")
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
             "    cqto\n")
@@ -56365,10 +56412,15 @@ g:
             "%rax"))
         (compiler_backend.compiler-backend-string-contains?
           (owned_view.compiler-owned-shared-view div-guard)
-          "%r12")
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view div-guard)
-          "%r13")
+          "    cmpq $1, %rax\n    jno 1f\n    cmpq $-1, %r8\n")
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view div-guard)
+            "%r12"))
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view div-guard)
+            "%r13"))
         literal-ok
         non-divmod-lazy?
         non-divmod-dst-lazy?
@@ -59232,8 +59284,72 @@ b_keep:
           [(object_asm.ResultCompilerObjectAsm.Err _) false]))]
     [(compiler_backend.ResultCompilerBackendObject.Err _) false]))
 
+(define (compiler-backend-signed-div-guard-shape-ok?
+  [ty : compiler_ast_types.AstType]
+  [suffix : String]
+  [lhs : String]
+  [rhs : String]) : bool
+  (let
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [asm : String
+      (compiler_backend.compiler-backend-div-overflow-guard-asm-with-plan
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        ty
+        "%r8"
+        "%r12"
+        "%r13"
+        backend-state)]
+    (string.eq
+      asm
+      (str_cat.str-cat
+        "    cmp"
+        (owned_view.compiler-owned-shared-view suffix)
+        " $1, "
+        lhs
+        "\n    jno 1f\n    cmp"
+        suffix
+        " $-1, "
+        rhs
+        "\n    jne 1f\n    call tl_div_abort\n1:\n"))))
+
+(define (compiler-backend-signed-div-guard-shapes-ok?) : bool
+  (and
+    (compiler-backend-signed-div-guard-shape-ok?
+      (compiler_ast_types.AstType.I8)
+      "b"
+      "%al"
+      "%r8b")
+    (compiler-backend-signed-div-guard-shape-ok?
+      (compiler_ast_types.AstType.I16)
+      "w"
+      "%ax"
+      "%r8w")
+    (compiler-backend-signed-div-guard-shape-ok?
+      (compiler_ast_types.AstType.I32)
+      "l"
+      "%eax"
+      "%r8d")
+    (compiler-backend-signed-div-guard-shape-ok?
+      (compiler_ast_types.AstType.I64)
+      "q"
+      "%rax"
+      "%r8")
+    (string.eq
+      (compiler_backend.compiler-backend-div-overflow-guard-asm-with-plan
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (compiler_ast_types.AstType.U64)
+        "%r8"
+        "%r12"
+        "%r13"
+        (compiler_backend.compiler-backend-state-new
+          (ci.intern-compat-state-capture-active)))
+      "")))
+
 (define (compiler-backend-self-test) : i64
   (if (and
+    (compiler-backend-signed-div-guard-shapes-ok?)
     (compiler-backend-avx2-i64-reduce-source-ok?)
     (compiler-backend-avx2-i64-reduce-spilled-source-ok?)
     (compiler-backend-i64-reduce-mask-plan-ok?)

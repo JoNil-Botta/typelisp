@@ -551,7 +551,7 @@ rm -f "$MANIFEST_ASSEMBLY_DIGESTS" "$MANIFEST_ASSEMBLY_PATH_FILE" \
 ci_compiler_artifact_write_sha256_manifest \
     "$ROOT" "$ROOT/target/selfhost-compile-manifest" \
     "$MANIFEST_ASSEMBLY_DIGESTS"
-CI_ARTIFACT_MANIFEST_SOURCES='src,stdlib,src/compile_manifest.txt,scripts/verify-selfhost-compile-manifest.sh'
+CI_ARTIFACT_MANIFEST_SOURCES='src,stdlib,src/compile_manifest.txt,scripts/verify-selfhost-compile-manifest.sh,scripts/lib-bounded-pool.sh'
 CI_ARTIFACT_MANIFEST_ARGV='compile --batch {chunks} --target {host}-x86_64 --cfg selfhost-compile-manifest --stdlib-root {root}/stdlib --stdlib-root {root}/src'
 ci_compiler_artifact_publish \
     "$ROOT" "$MANIFEST_ASSEMBLY_METADATA_FILE" \

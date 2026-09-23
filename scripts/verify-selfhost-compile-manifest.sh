@@ -12,6 +12,27 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
 . "$ROOT/scripts/lib-ci-timing.sh"
+. "$ROOT/scripts/lib-bounded-pool.sh"
+BOUNDED_POOL_LABEL=selfhost-compile
+
+# --self-test-pool runs only the chunk pool self-test (a fake compiler, no
+# manifest); every ordinary run also runs it before compiling the manifest.
+SELF_TEST_POOL=0
+case "${1:-}" in
+    "") ;;
+    --self-test-pool)
+        SELF_TEST_POOL=1
+        shift
+        ;;
+    *)
+        echo "usage: scripts/verify-selfhost-compile-manifest.sh [--self-test-pool]" >&2
+        exit 2
+        ;;
+esac
+if [ "$#" -ne 0 ]; then
+    echo "usage: scripts/verify-selfhost-compile-manifest.sh [--self-test-pool]" >&2
+    exit 2
+fi
 
 HOST_OS=linux
 case "$(uname -s)" in
@@ -64,31 +85,58 @@ if [ "$BATCH_CHUNK_SIZE" -lt 1 ]; then
     exit 1
 fi
 
-if [ -n "${TYPELISP_BIN:-}" ]; then
-    COMPILER=$TYPELISP_BIN
-else
-    # Local-development fallback: fetch the published
-    # self-hosted stage0 (CI always passes a compiler via TYPELISP_BIN).
-    . "$ROOT/scripts/lib-stage0.sh"
-    COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
-fi
+# Chunks compile in a bounded pool (scripts/lib-bounded-pool.sh):
+# TYPELISP_COMPILE_MANIFEST_WORKERS compiler processes at once (1-3, default
+# 2), each under an enforced memory cap and timeout (a user cgroup on Linux, a
+# Job Object on Windows), so at most workers x cap MiB of caps run
+# concurrently. A chunk's peak is its heaviest entry's (see above): main.tl,
+# the largest, peaked at 1,753 MiB on Linux (#7998), so the cap leaves over 2x
+# headroom while two capped chunks stay within half of a 16 GB hosted runner.
+MANIFEST_POOL_WORKERS=${TYPELISP_COMPILE_MANIFEST_WORKERS:-2}
+case "$MANIFEST_POOL_WORKERS" in
+    1 | 2 | 3) ;;
+    *)
+        echo "invalid TYPELISP_COMPILE_MANIFEST_WORKERS: $MANIFEST_POOL_WORKERS (expected 1-3)" >&2
+        exit 2
+        ;;
+esac
+MANIFEST_POOL_CHUNK_CAP_MIB=4096
+MANIFEST_POOL_JOB_TIMEOUT_SECONDS=900
+# Internal: only the pool self-test turns enforcement off, on Windows, where
+# the Job Object wrapper cannot launch its shell-script compiler.
+MANIFEST_POOL_ENFORCE_CAPS=1
+MANIFEST_POOL_DIR=
+MANIFEST_POOL_PEAK_BYTES=0
+MANIFEST_POOL_PEAK_LABEL=
 
-if [ ! -f "$COMPILER" ]; then
-    echo "typelisp compiler does not exist: $COMPILER" >&2
-    exit 1
-fi
-
-if [ ! -f "$MANIFEST" ]; then
-    echo "compile manifest does not exist: $MANIFEST" >&2
-    exit 1
-fi
-
-rm -rf "$WORKDIR"
-mkdir -p "$WORKDIR"
 MANIFEST_INPUT="$WORKDIR/compile-manifest.normalized.txt"
 BATCH_INPUT="$WORKDIR/compile-batch.txt"
 BATCH_CHUNK_DIR="$WORKDIR/compile-batch-chunks"
-tr -d '\r' < "$MANIFEST" > "$MANIFEST_INPUT"
+COMPILER=
+if [ "$SELF_TEST_POOL" -eq 0 ]; then
+    if [ -n "${TYPELISP_BIN:-}" ]; then
+        COMPILER=$TYPELISP_BIN
+    else
+        # Local-development fallback: fetch the published
+        # self-hosted stage0 (CI always passes a compiler via TYPELISP_BIN).
+        . "$ROOT/scripts/lib-stage0.sh"
+        COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
+    fi
+
+    if [ ! -f "$COMPILER" ]; then
+        echo "typelisp compiler does not exist: $COMPILER" >&2
+        exit 1
+    fi
+
+    if [ ! -f "$MANIFEST" ]; then
+        echo "compile manifest does not exist: $MANIFEST" >&2
+        exit 1
+    fi
+
+    rm -rf "$WORKDIR"
+    mkdir -p "$WORKDIR"
+    tr -d '\r' < "$MANIFEST" > "$MANIFEST_INPUT"
+fi
 
 check_selfhost_manifest_sync() {
     expected="$WORKDIR/expected-selfhost-sources.txt"
@@ -464,6 +512,11 @@ prepare_compile_batch() {
         fail "manifest ended before case $prep_case_id had an end directive"
     fi
 
+    split_compile_batch
+}
+
+# Split BATCH_INPUT into BATCH_CHUNK_SIZE-entry chunk files, numbered from 0.
+split_compile_batch() {
     awk -v outdir="$BATCH_CHUNK_DIR" -v size="$BATCH_CHUNK_SIZE" '
         {
             chunk = int((NR - 1) / size)
@@ -476,38 +529,165 @@ prepare_compile_batch() {
     ' "$BATCH_INPUT"
 }
 
+# Compile one chunk inside a pool worker. It touches no shared state: it leaves
+# the compiler's status and, when CAP_MIB is set, the memory report of its
+# bounded run in the chunk's own files, which manifest_settle_chunk reads back
+# in chunk order.
+manifest_compile_chunk() {
+    _chunk=$1
+    _chunk_index=$2
+    _chunk_count=$3
+    _chunk_cap=$4
+    _chunk_label="batch compile manifest chunk $_chunk_index/$_chunk_count"
+    rm -f "$_chunk.status" "$_chunk.memory"
+    echo "[selfhost-compile] $_chunk_label"
+    set -- "$COMPILER" compile --batch "$_chunk" --target linux-x86_64 \
+        --cfg selfhost-compile-manifest \
+        --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src"
+    if [ -n "$_chunk_cap" ]; then
+        set -- "$ROOT/scripts/run-memory-bounded.sh" \
+            --limit-mib "$_chunk_cap" --report "$_chunk.memory" \
+            --timeout-seconds "$MANIFEST_POOL_JOB_TIMEOUT_SECONDS" -- "$@"
+    fi
+    set +e
+    ci_timing_run "chunk-$_chunk_index" compile \
+        run_with_heartbeat_capture "$_chunk_label" \
+        "$_chunk.out" "$_chunk.err" "$@"
+    _chunk_rc=$?
+    set -e
+    printf '%s\n' "$_chunk_rc" > "$_chunk.status"
+}
+
+# Account for one compiled chunk in the parent, in chunk order. A failing
+# compile fails the gate with the chunk's output, as the serial loop did; a
+# chunk stopped by its memory cap or timeout, or one that left no status, is a
+# resource regression and fails the gate too.
+manifest_settle_chunk() {
+    _chunk=$1
+    _chunk_index=$2
+    _chunk_count=$3
+    _chunk_cap=$4
+    _chunk_label="batch compile manifest chunk $_chunk_index/$_chunk_count"
+    if [ ! -s "$_chunk.status" ]; then
+        fail "$_chunk_label left no compile status"
+    fi
+    _chunk_rc=$(cat "$_chunk.status")
+    if [ -n "$_chunk_cap" ]; then
+        _chunk_reason=$(sed -n 's/^reason=//p' "$_chunk.memory" 2>/dev/null || true)
+        case "$_chunk_reason" in
+            success | command-failure) ;;
+            *)
+                echo "stderr:" >&2
+                sed 's/^/  /' "$_chunk.err" >&2 || true
+                fail "$_chunk_label was stopped by its bound" \
+                    "(reason=${_chunk_reason:-missing-report}, cap $_chunk_cap MiB," \
+                    "timeout $MANIFEST_POOL_JOB_TIMEOUT_SECONDS s)"
+                ;;
+        esac
+        _chunk_peak=$(sed -n 's/^peak_memory_bytes=//p' "$_chunk.memory")
+        case "$_chunk_peak" in
+            '' | *[!0-9]*) fail "$_chunk_label memory report has no peak" ;;
+        esac
+        if [ "$_chunk_peak" -gt "$MANIFEST_POOL_PEAK_BYTES" ]; then
+            MANIFEST_POOL_PEAK_BYTES=$_chunk_peak
+            MANIFEST_POOL_PEAK_LABEL="chunk-$_chunk_index"
+        fi
+    fi
+    if [ "$_chunk_rc" -ne 0 ]; then
+        echo "stdout:" >&2
+        sed 's/^/  /' "$_chunk.out" >&2
+        echo "stderr:" >&2
+        sed 's/^/  /' "$_chunk.err" >&2
+        fail "$_chunk_label exited $_chunk_rc in $EXPECTATION_MODE mode"
+    fi
+}
+
+# The chunk file of pool job `chunk-N` (N counts from 1, the file suffix from 0).
+manifest_chunk_path() {
+    printf '%s/compile-batch.%04d.txt\n' "$BATCH_CHUNK_DIR" "$(($1 - 1))"
+}
+
+# The pool's job callback (see lib-bounded-pool.sh). Timing rows go to a
+# private file per job; manifest_merge_pool_timing publishes them in queue
+# order, so the rows do not depend on scheduling.
+bounded_pool_run_job() {
+    _pool_job=$1
+    _pool_cap=$2
+    [ "$MANIFEST_POOL_ENFORCE_CAPS" -eq 1 ] || _pool_cap=
+    case "$_pool_job" in
+        chunk-[1-9]*) ;;
+        *)
+            echo "[selfhost-compile] pool job names no chunk: $_pool_job" >&2
+            return 1
+            ;;
+    esac
+    _pool_index=${_pool_job#chunk-}
+    if ci_timing_enabled; then
+        TYPELISP_CI_TIMING_FILE="$MANIFEST_POOL_DIR/timing/$_pool_job.tsv"
+    fi
+    manifest_compile_chunk "$(manifest_chunk_path "$_pool_index")" \
+        "$_pool_index" "$batch_chunk_count" "$_pool_cap"
+}
+
+# Publish the jobs' private timing rows in queue order. A passing pool requires
+# a row from every job; a failing one still publishes what ran.
+manifest_merge_pool_timing() {
+    ci_timing_enabled || return 0
+    while IFS='|' read -r _merge_job _merge_cap; do
+        _merge_rows="$MANIFEST_POOL_DIR/timing/$_merge_job.tsv"
+        if [ -s "$_merge_rows" ]; then
+            cat "$_merge_rows" >> "$TYPELISP_CI_TIMING_FILE"
+        elif [ "$1" = required ]; then
+            fail "batch compile manifest pool job published no timing row: $_merge_job"
+        fi
+    done < "$MANIFEST_POOL_DIR/queue"
+}
+
 run_compile_batch() {
     batch_chunk_count=$(find "$BATCH_CHUNK_DIR" -type f -name 'compile-batch.*.txt' | wc -l | tr -d ' ')
     if [ "$batch_chunk_count" -eq 0 ]; then
         fail "batch compile manifest has no chunks"
     fi
-
+    _pool_budget=$((MANIFEST_POOL_WORKERS * MANIFEST_POOL_CHUNK_CAP_MIB))
     echo "[selfhost-compile] batch compile manifest ($batch_chunk_count chunk(s), size $BATCH_CHUNK_SIZE)"
-    batch_chunk_index=0
+    echo "[selfhost-compile] batch pool: $MANIFEST_POOL_WORKERS worker(s), $_pool_budget MiB of enforced caps at once"
+    MANIFEST_POOL_DIR="$WORKDIR/compile-batch-pool"
+    _pool_queue="$WORKDIR/compile-batch-pool.queue"
+    : > "$_pool_queue"
+    _queue_index=0
     for batch_chunk in "$BATCH_CHUNK_DIR"/compile-batch.*.txt; do
         [ -f "$batch_chunk" ] || fail "batch compile manifest chunk is missing: $batch_chunk"
-        batch_chunk_index=$((batch_chunk_index + 1))
-        batch_label="batch compile manifest chunk $batch_chunk_index/$batch_chunk_count"
-        batch_out="$batch_chunk.out"
-        batch_err="$batch_chunk.err"
-        echo "[selfhost-compile] $batch_label"
-        set +e
-        ci_timing_run "chunk-$batch_chunk_index" compile \
-            run_with_heartbeat_capture \
-            "$batch_label" \
-            "$batch_out" \
-            "$batch_err" \
-            "$COMPILER" compile --batch "$batch_chunk" --target linux-x86_64 --cfg selfhost-compile-manifest --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src"
-        code=$?
-        set -e
-        if [ "$code" -ne 0 ]; then
-            echo "stdout:" >&2
-            sed 's/^/  /' "$batch_out" >&2
-            echo "stderr:" >&2
-            sed 's/^/  /' "$batch_err" >&2
-            fail "$batch_label exited $code in $EXPECTATION_MODE mode"
-        fi
+        _queue_index=$((_queue_index + 1))
+        [ "$batch_chunk" = "$(manifest_chunk_path "$_queue_index")" ] ||
+            fail "batch compile manifest chunks are not numbered contiguously: $batch_chunk"
+        printf 'chunk-%s|%s\n' "$_queue_index" "$MANIFEST_POOL_CHUNK_CAP_MIB" >> "$_pool_queue"
     done
+    bounded_pool_init "$MANIFEST_POOL_DIR" "$_pool_budget" "$_pool_queue" ||
+        fail "batch compile manifest pool could not start"
+    mkdir -p "$MANIFEST_POOL_DIR/timing"
+    ci_timing_set_now_ms
+    _pool_started=$CI_TIMING_NOW_MS
+    bounded_pool_start "$MANIFEST_POOL_DIR" "$MANIFEST_POOL_WORKERS"
+    if ! bounded_pool_join "$MANIFEST_POOL_DIR"; then
+        manifest_merge_pool_timing available
+        fail "batch compile manifest pool did not complete every chunk"
+    fi
+    ci_timing_set_now_ms
+    _pool_wall_ms=$((CI_TIMING_NOW_MS - _pool_started))
+    manifest_merge_pool_timing required
+    _settle_index=0
+    while IFS='|' read -r _settle_job _settle_cap; do
+        _settle_index=$((_settle_index + 1))
+        [ "$MANIFEST_POOL_ENFORCE_CAPS" -eq 1 ] || _settle_cap=
+        manifest_settle_chunk "$(manifest_chunk_path "$_settle_index")" \
+            "$_settle_index" "$batch_chunk_count" "$_settle_cap"
+    done < "$_pool_queue"
+    if [ -n "$MANIFEST_POOL_PEAK_LABEL" ]; then
+        echo "[selfhost-compile] batch pool compiled $batch_chunk_count chunk(s) in $_pool_wall_ms ms;" \
+            "largest chunk peak $((MANIFEST_POOL_PEAK_BYTES / 1048576)) MiB ($MANIFEST_POOL_PEAK_LABEL)"
+    else
+        echo "[selfhost-compile] batch pool compiled $batch_chunk_count chunk(s) in $_pool_wall_ms ms"
+    fi
 }
 
 main_label_count() {
@@ -569,6 +749,155 @@ ensure_compiled() {
 
     compiled=1
 }
+
+# Pool self-test (#7998): drive run_compile_batch with a fake compiler and pin
+# what the pooled route must keep from the serial one. Every job runs; timing
+# rows are published in chunk order even when chunks finish out of order; a
+# failing chunk fails the gate with its label and stderr while the other chunks
+# still compile; and, where caps are enforced, a chunk past its timeout fails
+# the gate instead of passing.
+manifest_pool_self_test_fail() {
+    echo "FAIL: compile manifest pool self-test: $*" >&2
+    exit 1
+}
+
+# Run one scenario: NAME CHUNK_SIZE SOURCE... in its own directory, recording
+# the gate's exit status, stdout and stderr there.
+manifest_pool_self_test_run() {
+    _st_name=$1
+    BATCH_CHUNK_SIZE=$2
+    shift 2
+    WORKDIR="$MANIFEST_POOL_SELF_TEST_ROOT/$_st_name"
+    BATCH_INPUT="$WORKDIR/compile-batch.txt"
+    BATCH_CHUNK_DIR="$WORKDIR/compile-batch-chunks"
+    mkdir -p "$BATCH_CHUNK_DIR"
+    : > "$BATCH_INPUT"
+    for _st_source in "$@"; do
+        printf '%s|%s\n' "$WORKDIR/$_st_source.tl" "$WORKDIR/$_st_source.s" >> "$BATCH_INPUT"
+    done
+    split_compile_batch
+    TYPELISP_CI_TIMING=1
+    TYPELISP_CI_TIMING_FILE="$WORKDIR/timing.tsv"
+    TYPELISP_CI_TIMING_HOST=$HOST_OS
+    TYPELISP_CI_TIMING_GATE=selfhost-compile-manifest-pool-self-test
+    export TYPELISP_CI_TIMING TYPELISP_CI_TIMING_FILE TYPELISP_CI_TIMING_HOST TYPELISP_CI_TIMING_GATE
+    : > "$TYPELISP_CI_TIMING_FILE"
+    MANIFEST_SELF_TEST_LOG="$WORKDIR/finished.log"
+    export MANIFEST_SELF_TEST_LOG
+    : > "$MANIFEST_SELF_TEST_LOG"
+    _st_status=0
+    ( run_compile_batch ) > "$WORKDIR/stdout" 2> "$WORKDIR/stderr" || _st_status=$?
+    printf '%s\n' "$_st_status" > "$WORKDIR/status"
+}
+
+manifest_pool_self_test_expect() {
+    _st_dir="$MANIFEST_POOL_SELF_TEST_ROOT/$1"
+    _st_want=$2
+    _st_got=$(cat "$_st_dir/status")
+    if [ "$_st_want" = pass ] && [ "$_st_got" -ne 0 ]; then
+        sed 's/^/  /' "$_st_dir/stderr" >&2
+        manifest_pool_self_test_fail "$1 exited $_st_got, expected success"
+    fi
+    if [ "$_st_want" = fail ] && [ "$_st_got" -eq 0 ]; then
+        manifest_pool_self_test_fail "$1 passed, expected the gate to fail"
+    fi
+}
+
+manifest_pool_self_test_stderr_has() {
+    grep -F -- "$2" "$MANIFEST_POOL_SELF_TEST_ROOT/$1/stderr" >/dev/null ||
+        manifest_pool_self_test_fail "$1 stderr lacks: $2"
+}
+
+manifest_pool_self_test() {
+    MANIFEST_POOL_SELF_TEST_ROOT="$ROOT/target/selfhost-compile-manifest-pool-self-test"
+    rm -rf "$MANIFEST_POOL_SELF_TEST_ROOT"
+    mkdir -p "$MANIFEST_POOL_SELF_TEST_ROOT"
+    # The fake compiler writes each entry's output, sleeps 3 s for a source
+    # named `pause*`, 30 s for `stall*`, fails `broken*`, and logs its chunk
+    # list once it finishes.
+    COMPILER="$MANIFEST_POOL_SELF_TEST_ROOT/fake-typelisp"
+    cat > "$COMPILER" <<'FAKE'
+#!/usr/bin/env sh
+if [ "${1:-}" != compile ] || [ "${2:-}" != --batch ]; then
+    echo "fake compiler: unexpected arguments: $*" >&2
+    exit 2
+fi
+while IFS='|' read -r source output; do
+    case "${source##*/}" in
+        pause*) sleep 3 ;;
+        stall*) sleep 30 ;;
+    esac
+    case "${source##*/}" in
+        broken*)
+            echo "fake compile failed: $source" >&2
+            exit 7
+            ;;
+    esac
+    printf 'main:\n' > "$output"
+done < "$3"
+printf '%s\n' "${3##*/}" >> "$MANIFEST_SELF_TEST_LOG"
+FAKE
+    chmod +x "$COMPILER"
+    EXPECTATION_MODE=stage1
+    # Windows' Job Object wrapper cannot launch a shell script; the pool and its
+    # settlement still run, only the cap and timeout are not enforced there.
+    [ "$HOST_OS" != windows ] || MANIFEST_POOL_ENFORCE_CAPS=0
+
+    # Two workers, three chunks. Chunk 1 pauses, so chunk 2 finishes first;
+    # the published rows must still be chunk-1, chunk-2, chunk-3.
+    MANIFEST_POOL_WORKERS=2
+    manifest_pool_self_test_run order 2 pause-a b c d e
+    manifest_pool_self_test_expect order pass
+    for _st_output in pause-a b c d e; do
+        [ -s "$MANIFEST_POOL_SELF_TEST_ROOT/order/$_st_output.s" ] ||
+            manifest_pool_self_test_fail "order did not compile $_st_output"
+    done
+    [ "$(head -n 1 "$MANIFEST_POOL_SELF_TEST_ROOT/order/finished.log")" = compile-batch.0001.txt ] ||
+        manifest_pool_self_test_fail "order: chunk 2 did not finish before chunk 1, so the scenario proves nothing"
+    [ "$(awk -F '\t' '{ printf "%s ", $2 }' "$MANIFEST_POOL_SELF_TEST_ROOT/order/timing.tsv")" = "chunk-1 chunk-2 chunk-3 " ] ||
+        manifest_pool_self_test_fail "order: timing rows are not one per chunk in chunk order"
+
+    # One worker is the serial route.
+    MANIFEST_POOL_WORKERS=1
+    manifest_pool_self_test_run serial 2 a b c
+    manifest_pool_self_test_expect serial pass
+    [ "$(wc -l < "$MANIFEST_POOL_SELF_TEST_ROOT/serial/timing.tsv" | tr -d ' ')" -eq 2 ] ||
+        manifest_pool_self_test_fail "serial: expected 2 timing rows"
+
+    # A failing chunk fails the gate with its label and the compiler's stderr;
+    # the chunks after it still ran.
+    MANIFEST_POOL_WORKERS=2
+    manifest_pool_self_test_run broken 1 a broken-b c
+    manifest_pool_self_test_expect broken fail
+    manifest_pool_self_test_stderr_has broken "batch compile manifest chunk 2/3 exited 7 in stage1 mode"
+    manifest_pool_self_test_stderr_has broken "fake compile failed:"
+    [ -s "$MANIFEST_POOL_SELF_TEST_ROOT/broken/c.s" ] ||
+        manifest_pool_self_test_fail "broken: the chunk after the failing one did not compile"
+
+    # A chunk past its timeout is a bound stop, not a pass.
+    if [ "$MANIFEST_POOL_ENFORCE_CAPS" -eq 1 ]; then
+        MANIFEST_POOL_JOB_TIMEOUT_SECONDS=2
+        manifest_pool_self_test_run stall 1 a stall-b
+        manifest_pool_self_test_expect stall fail
+        manifest_pool_self_test_stderr_has stall "batch compile manifest chunk 2/2 was stopped by its bound (reason=timeout"
+        MANIFEST_POOL_JOB_TIMEOUT_SECONDS=900
+    fi
+
+    # The worker count is validated before anything runs.
+    for _st_workers in 0 4 x; do
+        _st_status=0
+        TYPELISP_COMPILE_MANIFEST_WORKERS=$_st_workers sh "$ROOT/scripts/verify-selfhost-compile-manifest.sh" \
+            --self-test-pool > /dev/null 2>&1 || _st_status=$?
+        [ "$_st_status" -eq 2 ] ||
+            manifest_pool_self_test_fail "TYPELISP_COMPILE_MANIFEST_WORKERS=$_st_workers exited $_st_status, expected 2"
+    done
+    echo "[selfhost-compile] pool self-test passed"
+}
+
+( manifest_pool_self_test )
+if [ "$SELF_TEST_POOL" -eq 1 ]; then
+    exit 0
+fi
 
 check_selfhost_manifest_sync
 prepare_compile_batch

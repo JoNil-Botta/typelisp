@@ -524,13 +524,16 @@
 (define (compiler-diagnostic-code-typecheck-unsafe-callable-effect) : String
   "E0219")
 
+(define (compiler-diagnostic-code-typecheck-foreign-global-write) : String
+  "E0220")
+
 ;; Machine-readable inventory for the public diagnostic surface. Keep this in
 ;; the module that assigns codes rather than in the `explain` frontend: tests
 ;; can then prove that every published code has exactly one registry row and a
 ;; detailed explanation. `owner` identifies the subsystem responsible for
 ;; keeping the classification and explanation current.
 (define (compiler-diagnostic-code-registry-count) : i64
-  21)
+  22)
 
 (define (compiler-diagnostic-code-registry-code [index : i64]) : String
   (cond
@@ -555,6 +558,7 @@
     [(= index 18) (compiler-diagnostic-code-typecheck-thread-safety)]
     [(= index 19) (compiler-diagnostic-code-typecheck-comptime-constraint)]
     [(= index 20) (compiler-diagnostic-code-typecheck-unsafe-callable-effect)]
+    [(= index 21) (compiler-diagnostic-code-typecheck-foreign-global-write)]
     [else ""]))
 
 (define (compiler-diagnostic-code-registry-title [index : i64]) : String
@@ -580,6 +584,7 @@
     [(= index 18) "thread-safety violation"]
     [(= index 19) "compile-time constraint"]
     [(= index 20) "unsafe callable effect erasure"]
+    [(= index 21) "global written outside its module"]
     [else ""]))
 
 (define (compiler-diagnostic-code-registry-category [index : i64]) : String
@@ -598,9 +603,12 @@
 
 ;; Ordered, first match wins. `arity mismatch` is tested before `type mismatch`
 ;; so a call-arity error is not absorbed by the broader mismatch rule if the two
-;; phrasings ever overlap.
+;; phrasings ever overlap. The global-ownership rule comes first because its
+;; `mutably borrow` wording would otherwise fall into the borrow rule.
 (define (compiler-diagnostic-code-for-typecheck-message [message : String]) : String
   (cond
+    [(string.contains (& message) "only its defining module may write it")
+      (compiler-diagnostic-code-typecheck-foreign-global-write)]
     [(string.contains (& message) "arity mismatch")
       (compiler-diagnostic-code-typecheck-arity-mismatch)]
     [(and

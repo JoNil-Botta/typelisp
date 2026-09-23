@@ -23518,9 +23518,7 @@
     [saved-value : i64
       (array-ref compiler_optimize.opt-inline-checked-literal-scan 2)]
     (begin
-      (set! (array-ref compiler_optimize.opt-inline-checked-literal-scan 0) 0)
-      (set! (array-ref compiler_optimize.opt-inline-checked-literal-scan 1) 0)
-      (set! (array-ref compiler_optimize.opt-inline-checked-literal-scan 2) 0)
+      (compiler_optimize.opt-inline-checked-literal-scan-set! 0 0 0)
       (compiler_optimize.opt-inline-checked-literal-scan-blocks! blocks var)
       (let
         [result : OptInlineLiteralScanSnapshot
@@ -23529,14 +23527,9 @@
             (array-ref compiler_optimize.opt-inline-checked-literal-scan 1)
             (array-ref compiler_optimize.opt-inline-checked-literal-scan 2))]
         (begin
-          (set!
-            (array-ref compiler_optimize.opt-inline-checked-literal-scan 0)
-            saved-count)
-          (set!
-            (array-ref compiler_optimize.opt-inline-checked-literal-scan 1)
-            saved-literal)
-          (set!
-            (array-ref compiler_optimize.opt-inline-checked-literal-scan 2)
+          (compiler_optimize.opt-inline-checked-literal-scan-set!
+            saved-count
+            saved-literal
             saved-value)
           result)))))
 

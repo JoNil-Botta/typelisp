@@ -2650,6 +2650,11 @@
 (define (tc-serial-job-state) : TcJobState
   (array-ref tc-serial-job-state-cell 0))
 
+;; Replace the serial compatibility job state. Only this module writes its
+;; globals; harnesses that nest a job restore the parent through this function.
+(define (tc-serial-job-state-set! [state : TcJobState]) : unit
+  (set! (array-ref tc-serial-job-state-cell 0) state))
+
 (define (tc-serial-job-state-reset-if-ready!) : unit
   (tc-job-state-reset-file-state! (array-ref tc-serial-job-state-cell 0)))
 
@@ -72565,6 +72570,58 @@
       (tc-variant-constructor-type-for-handle ctx handle)]
     [(option_i64.None) (ResultTcType.Err message)]))
 
+;; #7976: a qualified `set!` target (`alias.global`, `module.path.global`, or a
+;; projection of one such as `alias.global.field`) never binds in the value
+;; environment. When its longest qualified prefix names another module's
+;; global, report the ownership rule the unqualified forms get instead of an
+;; unbound name.
+(define (tc-set-foreign-qualified-global-message
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : i64]) : TcMaybeString
+  (if (and (>= name 0) (< name (ci.intern-capacity)))
+    (let
+      [candidate : i64 name]
+      [result : TcMaybeString (TcMaybeString.No)]
+      [searching : bool true]
+      (begin
+        (while (and
+          searching
+          (>= candidate 0)
+          (>= (ci.intern-first-dot candidate) 0))
+          (let
+            [handle : i64
+              (tc-move-value-symbol-handle-id
+                (tc-global-shared-view ctx)
+                (tc-global-shared-view env)
+                candidate)]
+            (if (and
+              (csym.compiler-symbols-handle-found? handle)
+              (=
+                (csym.compiler-symbol-handle-kind handle)
+                (csym.compiler-symbol-kind-value-define)))
+              (begin
+                (if (tc-module-ids-same?
+                  (tc-move-global-owner-module-id
+                    (tc-global-shared-view ctx)
+                    handle)
+                  (tc-context-module-id (tc-global-shared-view ctx)))
+                  unit
+                  (set!
+                    result
+                    (TcMaybeString.Some
+                      (tc-move-foreign-global-write-message
+                        (tc-global-shared-view ctx)
+                        candidate
+                        handle
+                        (if (= candidate name)
+                          "assign to"
+                          "assign to part of")))))
+                (set! searching false))
+              (set! candidate (ci.intern-dotted-prefix-id candidate)))))
+        result))
+    (TcMaybeString.No)))
+
 (define (tc-set-expr-after-local-field-check
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -72608,7 +72665,13 @@
                   [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
               [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
           [(ResultTcType.Err message) (ResultTcType.Err message)])]
-      [(ResultTcType.Err message) (ResultTcType.Err message)])))
+      [(ResultTcType.Err message)
+        (match (tc-set-foreign-qualified-global-message
+          (tc-global-shared-view ctx)
+          (tc-global-shared-view env)
+          name)
+          [(TcMaybeString.Some foreign) (ResultTcType.Err foreign)]
+          [(TcMaybeString.No) (ResultTcType.Err message)])])))
 
 (define (tc-for-owned-name-id-result
   [ctx : TcContext]
@@ -88701,6 +88764,159 @@
               (box (tc-moved-empty)))]
           [(TcMoveResult.Err message) (TcMoveLoopResult.Err message)]))]))
 
+;; #7976: the defining module owns writes to its globals. A safe
+;; write-capable place operation (assignment, a field/tuple/element/deref
+;; projection write, `replace!`, `array-take!` or `&mut`) rooted at another
+;; module's global is rejected once the root resolves to its declaration,
+;; whatever import spelling, alias or macro expansion produced the name, and
+;; even inside `unsafe`; raw pointer operations keep their own rules. Reads and
+;; shared borrows stay valid, and the owner exposes a function for intentional
+;; mutation. Code produced by a macro is checked as code of the module it
+;; expands into, so an imported macro cannot carry its module's write authority.
+(define (tc-module-ids-same? [left : i64] [right : i64]) : bool
+  (or
+    (= left right)
+    (and
+      (csym.compiler-symbol-root-module-id? left)
+      (csym.compiler-symbol-root-module-id? right))))
+
+(define (tc-module-display [module-id : i64]) : String
+  (if (csym.compiler-symbol-root-module-id? module-id)
+    "the entry module"
+    (ci.intern-syntax-name-text-or module-id "<module>")))
+
+(define (tc-move-global-owner-module-id [ctx : TcContext] [handle : i64]) : i64
+  (csym.compiler-symbols-owner-module-id-at-index-or
+    (tc-context-symbols ctx)
+    (csym.compiler-symbol-handle-index handle)
+    (csym.compiler-symbol-root-module-id)))
+
+;; The handle of the global a place root names when another module owns it.
+(define (tc-move-foreign-global-root-handle
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [root-id : i64]) : TcMaybeNameId
+  (if (tc-move-global-source-root?
+    (tc-global-shared-view ctx)
+    (tc-global-shared-view env)
+    (tc-global-shared-view locals)
+    root-id)
+    (let
+      [handle : i64
+        (tc-move-value-symbol-handle-id
+          (tc-global-shared-view ctx)
+          (tc-global-shared-view env)
+          root-id)]
+      (if (tc-module-ids-same?
+        (tc-move-global-owner-module-id (tc-global-shared-view ctx) handle)
+        (tc-context-module-id (tc-global-shared-view ctx)))
+        (TcMaybeNameId.No)
+        (TcMaybeNameId.Some handle)))
+    (TcMaybeNameId.No)))
+
+(define (tc-move-foreign-global-write-message
+  [ctx : TcContext]
+  [root-id : i64]
+  [handle : i64]
+  [operation : String]) : String
+  (let
+    [owner : String
+      (tc-module-display
+        (tc-move-global-owner-module-id (tc-global-shared-view ctx) handle))]
+    [decl-name-id : i64
+      (csym.compiler-symbols-decl-name-id-at-index
+        (tc-context-symbols ctx)
+        (csym.compiler-symbol-handle-index handle))]
+    [name : String
+      (if (ci.intern-renderable-id? decl-name-id)
+        (ci.intern-str decl-name-id)
+        (tc-move-global-source-name root-id))]
+    (str_cat.str-cat
+      "typecheck: cannot "
+      operation
+      " global `"
+      name
+      "` owned by module `"
+      (tc-global-shared-view owner)
+      "` from module `"
+      (tc-module-display (tc-context-module-id (tc-global-shared-view ctx)))
+      "`; only its defining module may write it, so call a function that `"
+      owner
+      "` defines instead")))
+
+(define (tc-move-foreign-global-root-check
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [site : ast.AstExpr]
+  [root-id : i64]
+  [operation : String]) : ResultTcUnit
+  (match (tc-move-foreign-global-root-handle
+    (tc-global-shared-view ctx)
+    (tc-global-shared-view env)
+    (tc-global-shared-view locals)
+    root-id)
+    [(TcMaybeNameId.Some handle)
+      (ResultTcUnit.Err
+        (tc-locate-error-at-expr
+          expr-bases
+          (tc-global-shared-view site)
+          (tc-move-foreign-global-write-message
+            (tc-global-shared-view ctx)
+            root-id
+            handle
+            operation)))]
+    [(TcMaybeNameId.No) ResultTcUnit.Ok]))
+
+(define (tc-move-foreign-global-place-check
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [place-box : i64]
+  [operation : String]) : ResultTcUnit
+  (let
+    [place : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases place-box)]
+    (match (tc-move-root-projection-var-id
+      expr-bases
+      (tc-global-shared-view place))
+      [(TcMaybeNameId.Some root-id)
+        (tc-move-foreign-global-root-check
+          (tc-global-shared-view ctx)
+          expr-bases
+          (tc-global-shared-view env)
+          (tc-global-shared-view locals)
+          place
+          root-id
+          operation)]
+      [(TcMaybeNameId.No) ResultTcUnit.Ok])))
+
+;; A plain or dotted `set!` reached without a spanned parent (a virtual node);
+;; the value expression locates the diagnostic. Spanned `set!` nodes are
+;; checked, and located, in the `Spanned` arm of `tc-move-check-expr` first.
+(define (tc-move-foreign-global-set-check
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [name : i64]
+  [rhs-box : i64]) : ResultTcUnit
+  (tc-move-foreign-global-root-check
+    (tc-global-shared-view ctx)
+    expr-bases
+    (tc-global-shared-view env)
+    (tc-global-shared-view locals)
+    (ast.ast-expr-segment-bases-get expr-bases rhs-box)
+    (if (tc-dotted-place-name-id?
+      (tc-global-shared-view ctx)
+      (tc-global-shared-view env)
+      name)
+      (ci.intern-leading-dot-id name)
+      name)
+    "assign to"))
+
 (define (tc-move-check-expr
   [ctx : TcContext]
   [expr-bases : i64]
@@ -88711,14 +88927,85 @@
   [expr : ast.AstExpr]) : TcMoveResult
   (match (tc-global-shared-view expr)
     [(ast.AstExpr.Spanned inner-box _)
-      (tc-move-check-expr-id
-        (tc-global-shared-view ctx)
-        expr-bases
-        env
-        locals
-        loop-carried
-        moved
-        inner-box)]
+      (let
+        [inner : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
+        (match (tc-global-shared-view inner)
+          ;; A `set!` target has no place node of its own, so the spanned
+          ;; node locates its #7976 ownership diagnostic: the assignment, or
+          ;; for an expansion the macro call site.
+          [(ast.AstExpr.Set name _)
+            (match (tc-move-foreign-global-root-check
+              (tc-global-shared-view ctx)
+              expr-bases
+              (tc-global-shared-view env)
+              (tc-global-shared-view locals)
+              (tc-global-shared-view expr)
+              (if (tc-dotted-place-name-id?
+                (tc-global-shared-view ctx)
+                (tc-global-shared-view env)
+                name)
+                (ci.intern-leading-dot-id name)
+                name)
+              "assign to")
+              [(ResultTcUnit.Ok)
+                (tc-move-check-expr
+                  (tc-global-shared-view ctx)
+                  expr-bases
+                  env
+                  locals
+                  loop-carried
+                  moved
+                  inner)]
+              [(ResultTcUnit.Err message) (TcMoveResult.Err message)])]
+          ;; An expanded `set!` keeps its template span; the call site that
+          ;; wraps the expansion locates the diagnostic instead.
+          [(ast.AstExpr.MacroExpansion _ _ _)
+            (match (ast.ast-expr-unspan-with-segment-bases
+              expr-bases
+              (tc-global-shared-view inner))
+              [(ast.AstExpr.Set name _)
+                (match (tc-move-foreign-global-root-check
+                  (tc-global-shared-view ctx)
+                  expr-bases
+                  (tc-global-shared-view env)
+                  (tc-global-shared-view locals)
+                  (tc-global-shared-view expr)
+                  (if (tc-dotted-place-name-id?
+                    (tc-global-shared-view ctx)
+                    (tc-global-shared-view env)
+                    name)
+                    (ci.intern-leading-dot-id name)
+                    name)
+                  "assign to")
+                  [(ResultTcUnit.Ok)
+                    (tc-move-check-expr
+                      (tc-global-shared-view ctx)
+                      expr-bases
+                      env
+                      locals
+                      loop-carried
+                      moved
+                      inner)]
+                  [(ResultTcUnit.Err message) (TcMoveResult.Err message)])]
+              [_
+                (tc-move-check-expr
+                  (tc-global-shared-view ctx)
+                  expr-bases
+                  env
+                  locals
+                  loop-carried
+                  moved
+                  inner)])]
+          [_
+            (tc-move-check-expr
+              (tc-global-shared-view ctx)
+              expr-bases
+              env
+              locals
+              loop-carried
+              moved
+              inner)]))]
     [(ast.AstExpr.MacroExpansion inner-box _ _)
       (tc-move-check-expr-id
         ctx
@@ -89413,251 +89700,37 @@
               [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
           [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
     [(ast.AstExpr.ArraySet array-box index-box value-box)
-      (let
-        [array : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases array-box)]
-        [index : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases index-box)]
-        [value : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        (match (tc-param-storage-check-array-write
-          (tc-global-shared-view ctx)
-          expr-bases
-          (tc-global-shared-view env)
-          (tc-global-shared-view moved)
-          (tc-global-shared-view array))
-          [(ResultTcUnit.Ok)
-            (match (tc-move-check-expr
+      (match (tc-move-foreign-global-place-check
+        (tc-global-shared-view ctx)
+        expr-bases
+        (tc-global-shared-view env)
+        (tc-global-shared-view locals)
+        array-box
+        "assign to an element of")
+        [(ResultTcUnit.Ok)
+          (let
+            [array : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases array-box)]
+            [index : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases index-box)]
+            [value : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases value-box)]
+            (match (tc-param-storage-check-array-write
               (tc-global-shared-view ctx)
               expr-bases
               (tc-global-shared-view env)
-              (tc-global-shared-view locals)
-              (tc-global-shared-view loop-carried)
               (tc-global-shared-view moved)
               (tc-global-shared-view array))
-              [(TcMoveResult.Ok moved1)
+              [(ResultTcUnit.Ok)
                 (match (tc-move-check-expr
                   (tc-global-shared-view ctx)
                   expr-bases
                   (tc-global-shared-view env)
                   (tc-global-shared-view locals)
                   (tc-global-shared-view loop-carried)
-                  moved1
-                  (tc-global-shared-view index))
-                  [(TcMoveResult.Ok moved2)
-                    (match (tc-move-check-cleanup-overwrite
-                      (tc-global-shared-view ctx)
-                      expr-bases
-                      (tc-global-shared-view env)
-                      (tc-global-shared-view moved2)
-                      (ast.AstExpr.ArrayRef array-box index-box))
-                      [(ResultTcUnit.Ok)
-                        (match (tc-move-check-expr
-                          (tc-global-shared-view ctx)
-                          expr-bases
-                          (tc-global-shared-view env)
-                          (tc-global-shared-view locals)
-                          (tc-global-shared-view loop-carried)
-                          moved2
-                          (tc-global-shared-view value))
-                          [(TcMoveResult.Ok moved3)
-                            (TcMoveResult.Ok
-                              (tc-move-reinitialize-array-set-path
-                                expr-bases
-                                (tc-global-shared-view locals)
-                                moved3
-                                (tc-global-shared-view array)
-                                (tc-global-shared-view index)))]
-                          [(TcMoveResult.Err message)
-                            (TcMoveResult.Err message)])]
-                      [(ResultTcUnit.Err message) (TcMoveResult.Err message)])]
-                  [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
-              [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
-          [(ResultTcUnit.Err message) (TcMoveResult.Err message)]))]
-    [(ast.AstExpr.ArrayTake array-box live-box index-box)
-      (begin
-        ;; The legacy lower scan conservatively classified ArrayTake as an
-        ;; early-exit body through its unknown-node fallback.
-        (tc-body-early-exit-note!
-          (tc-context-body-state (tc-global-shared-view ctx)))
-        (match (tc-move-check-expr-id
-          (tc-global-shared-view ctx)
-          expr-bases
-          (tc-global-shared-view env)
-          (tc-global-shared-view locals)
-          (tc-global-shared-view loop-carried)
-          (tc-global-shared-view moved)
-          array-box)
-          [(TcMoveResult.Ok moved1)
-            (match (tc-move-check-expr-id
-              (tc-global-shared-view ctx)
-              expr-bases
-              (tc-global-shared-view env)
-              (tc-global-shared-view locals)
-              (tc-global-shared-view loop-carried)
-              moved1
-              live-box)
-              [(TcMoveResult.Ok moved2)
-                (tc-move-check-expr-id
-                  ctx
-                  expr-bases
-                  env
-                  locals
-                  loop-carried
-                  moved2
-                  index-box)]
-              [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
-          [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
-    [(ast.AstExpr.FixedArrayTake array-box index-box)
-      (let
-        [array : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases array-box)]
-        (match (tc-param-storage-check-array-write
-          (tc-global-shared-view ctx)
-          expr-bases
-          (tc-global-shared-view env)
-          (tc-global-shared-view moved)
-          (tc-global-shared-view array))
-          [(ResultTcUnit.Ok)
-            (match (tc-move-check-fixed-array-take-global-source
-              (tc-global-shared-view ctx)
-              expr-bases
-              (tc-global-shared-view env)
-              (tc-global-shared-view locals)
-              (tc-global-shared-view moved)
-              (tc-global-shared-view array))
-              [(TcMoveResult.Ok moved0)
-                (match (tc-move-check-expr-id
-                  (tc-global-shared-view ctx)
-                  expr-bases
-                  (tc-global-shared-view env)
-                  (tc-global-shared-view locals)
-                  (tc-global-shared-view loop-carried)
-                  moved0
-                  array-box)
+                  (tc-global-shared-view moved)
+                  (tc-global-shared-view array))
                   [(TcMoveResult.Ok moved1)
-                    (tc-move-check-expr-id
-                      (tc-global-shared-view ctx)
-                      expr-bases
-                      (tc-global-shared-view env)
-                      (tc-global-shared-view locals)
-                      (tc-global-shared-view loop-carried)
-                      moved1
-                      index-box)]
-                  [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
-              [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
-          [(ResultTcUnit.Err message) (TcMoveResult.Err message)]))]
-    [(ast.AstExpr.Replace place-box replacement-box)
-      (let
-        [place : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases place-box)]
-        [replacement : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases replacement-box)]
-        (match (tc-param-storage-check-write
-          (tc-global-shared-view ctx)
-          expr-bases
-          (tc-global-shared-view env)
-          (tc-global-shared-view moved)
-          (tc-global-shared-view place)
-          "replace")
-          [(ResultTcUnit.Ok)
-            (match (tc-move-check-replace-global-source
-              (tc-global-shared-view ctx)
-              expr-bases
-              (tc-global-shared-view env)
-              (tc-global-shared-view locals)
-              (tc-global-shared-view moved)
-              (tc-global-shared-view place))
-              [(TcMoveResult.Ok moved0)
-                (match (tc-move-check-replace-place-initialized
-                  expr-bases
-                  (tc-global-shared-view locals)
-                  moved0
-                  (tc-global-shared-view place))
-                  [(TcMoveResult.Ok initialized)
-                    (match (tc-move-check-borrow-place
-                      (tc-global-shared-view ctx)
-                      expr-bases
-                      (tc-global-shared-view env)
-                      (tc-global-shared-view locals)
-                      (tc-global-shared-view loop-carried)
-                      initialized
-                      (tc-global-shared-view place))
-                      [(TcMoveResult.Ok moved1)
-                        (match (tc-move-check-expr-id
-                          (tc-global-shared-view ctx)
-                          expr-bases
-                          (tc-global-shared-view env)
-                          (tc-global-shared-view locals)
-                          (tc-global-shared-view loop-carried)
-                          moved1
-                          replacement-box)
-                          [(TcMoveResult.Ok moved2)
-                            (match (tc-replace-place-value-type
-                              (tc-global-shared-view ctx)
-                              (tc-global-shared-view env)
-                              (tc-global-shared-view place))
-                              [(ResultTcType.Ok place-ty)
-                                (match (tc-move-after-move-only-value
-                                  (tc-global-shared-view ctx)
-                                  expr-bases
-                                  (tc-global-shared-view env)
-                                  (tc-global-shared-view locals)
-                                  (tc-global-shared-view loop-carried)
-                                  moved2
-                                  (tc-global-shared-view replacement)
-                                  (tc-global-shared-view place-ty))
-                                  [(TcMoveResult.Ok moved3)
-                                    (TcMoveResult.Ok
-                                      (tc-move-reinitialize-place-path
-                                        expr-bases
-                                        locals
-                                        moved3
-                                        place))]
-                                  [(TcMoveResult.Err message)
-                                    (TcMoveResult.Err message)])]
-                              [(ResultTcType.Err message)
-                                (TcMoveResult.Err message)])]
-                          [(TcMoveResult.Err message)
-                            (TcMoveResult.Err message)])]
-                      [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
-                  [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
-              [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
-          [(ResultTcUnit.Err message) (TcMoveResult.Err message)]))]
-    [(ast.AstExpr.StructSet receiver-box field value-box)
-      (let
-        [receiver : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases receiver-box)]
-        [value : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        (match (tc-param-storage-check-write
-          (tc-global-shared-view ctx)
-          expr-bases
-          (tc-global-shared-view env)
-          (tc-global-shared-view moved)
-          (tc-global-shared-view receiver)
-          "mutate")
-          [(ResultTcUnit.Ok)
-            (match (tc-move-check-expr
-              (tc-global-shared-view ctx)
-              expr-bases
-              (tc-global-shared-view env)
-              (tc-global-shared-view locals)
-              (tc-global-shared-view loop-carried)
-              (tc-global-shared-view moved)
-              (tc-global-shared-view receiver))
-              [(TcMoveResult.Ok moved1)
-                (match (tc-move-check-cleanup-overwrite
-                  (tc-global-shared-view ctx)
-                  expr-bases
-                  (tc-global-shared-view env)
-                  (tc-global-shared-view moved1)
-                  (if (ast.ast-tuple-set-field-id? field)
-                    (ast.AstExpr.TupleRef
-                      receiver-box
-                      (ast.ast-tuple-set-index-from-field-id field))
-                    (ast.AstExpr.StructGet receiver-box field)))
-                  [(ResultTcUnit.Ok)
                     (match (tc-move-check-expr
                       (tc-global-shared-view ctx)
                       expr-bases
@@ -89665,43 +89738,314 @@
                       (tc-global-shared-view locals)
                       (tc-global-shared-view loop-carried)
                       moved1
-                      (tc-global-shared-view value))
+                      (tc-global-shared-view index))
                       [(TcMoveResult.Ok moved2)
-                        (TcMoveResult.Ok
-                          (tc-move-reinitialize-struct-set-path
-                            expr-bases
-                            (tc-global-shared-view locals)
-                            moved2
-                            (tc-global-shared-view receiver)
-                            field))]
+                        (match (tc-move-check-cleanup-overwrite
+                          (tc-global-shared-view ctx)
+                          expr-bases
+                          (tc-global-shared-view env)
+                          (tc-global-shared-view moved2)
+                          (ast.AstExpr.ArrayRef array-box index-box))
+                          [(ResultTcUnit.Ok)
+                            (match (tc-move-check-expr
+                              (tc-global-shared-view ctx)
+                              expr-bases
+                              (tc-global-shared-view env)
+                              (tc-global-shared-view locals)
+                              (tc-global-shared-view loop-carried)
+                              moved2
+                              (tc-global-shared-view value))
+                              [(TcMoveResult.Ok moved3)
+                                (TcMoveResult.Ok
+                                  (tc-move-reinitialize-array-set-path
+                                    expr-bases
+                                    (tc-global-shared-view locals)
+                                    moved3
+                                    (tc-global-shared-view array)
+                                    (tc-global-shared-view index)))]
+                              [(TcMoveResult.Err message)
+                                (TcMoveResult.Err message)])]
+                          [(ResultTcUnit.Err message)
+                            (TcMoveResult.Err message)])]
                       [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
-                  [(ResultTcUnit.Err message) (TcMoveResult.Err message)])]
-              [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
-          [(ResultTcUnit.Err message) (TcMoveResult.Err message)]))]
-    [(ast.AstExpr.ArrayPush array-box value-box)
-      (let
-        [array : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases array-box)]
-        [value : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        (match (tc-move-check-expr
-          (tc-global-shared-view ctx)
-          expr-bases
-          (tc-global-shared-view env)
-          (tc-global-shared-view locals)
-          (tc-global-shared-view loop-carried)
-          (tc-global-shared-view moved)
-          array)
-          [(TcMoveResult.Ok moved1)
-            (tc-move-check-expr
+                  [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+              [(ResultTcUnit.Err message) (TcMoveResult.Err message)]))]
+        [(ResultTcUnit.Err message) (TcMoveResult.Err message)])]
+    [(ast.AstExpr.ArrayTake array-box live-box index-box)
+      (match (tc-move-foreign-global-place-check
+        (tc-global-shared-view ctx)
+        expr-bases
+        (tc-global-shared-view env)
+        (tc-global-shared-view locals)
+        array-box
+        "take an element of")
+        [(ResultTcUnit.Ok)
+          (begin
+            ;; The legacy lower scan conservatively classified ArrayTake as an
+            ;; early-exit body through its unknown-node fallback.
+            (tc-body-early-exit-note!
+              (tc-context-body-state (tc-global-shared-view ctx)))
+            (match (tc-move-check-expr-id
               (tc-global-shared-view ctx)
               expr-bases
               (tc-global-shared-view env)
               (tc-global-shared-view locals)
               (tc-global-shared-view loop-carried)
-              moved1
-              value)]
-          [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
+              (tc-global-shared-view moved)
+              array-box)
+              [(TcMoveResult.Ok moved1)
+                (match (tc-move-check-expr-id
+                  (tc-global-shared-view ctx)
+                  expr-bases
+                  (tc-global-shared-view env)
+                  (tc-global-shared-view locals)
+                  (tc-global-shared-view loop-carried)
+                  moved1
+                  live-box)
+                  [(TcMoveResult.Ok moved2)
+                    (tc-move-check-expr-id
+                      ctx
+                      expr-bases
+                      env
+                      locals
+                      loop-carried
+                      moved2
+                      index-box)]
+                  [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+              [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
+        [(ResultTcUnit.Err message) (TcMoveResult.Err message)])]
+    [(ast.AstExpr.FixedArrayTake array-box index-box)
+      (match (tc-move-foreign-global-place-check
+        (tc-global-shared-view ctx)
+        expr-bases
+        (tc-global-shared-view env)
+        (tc-global-shared-view locals)
+        array-box
+        "take an element of")
+        [(ResultTcUnit.Ok)
+          (let
+            [array : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases array-box)]
+            (match (tc-param-storage-check-array-write
+              (tc-global-shared-view ctx)
+              expr-bases
+              (tc-global-shared-view env)
+              (tc-global-shared-view moved)
+              (tc-global-shared-view array))
+              [(ResultTcUnit.Ok)
+                (match (tc-move-check-fixed-array-take-global-source
+                  (tc-global-shared-view ctx)
+                  expr-bases
+                  (tc-global-shared-view env)
+                  (tc-global-shared-view locals)
+                  (tc-global-shared-view moved)
+                  (tc-global-shared-view array))
+                  [(TcMoveResult.Ok moved0)
+                    (match (tc-move-check-expr-id
+                      (tc-global-shared-view ctx)
+                      expr-bases
+                      (tc-global-shared-view env)
+                      (tc-global-shared-view locals)
+                      (tc-global-shared-view loop-carried)
+                      moved0
+                      array-box)
+                      [(TcMoveResult.Ok moved1)
+                        (tc-move-check-expr-id
+                          (tc-global-shared-view ctx)
+                          expr-bases
+                          (tc-global-shared-view env)
+                          (tc-global-shared-view locals)
+                          (tc-global-shared-view loop-carried)
+                          moved1
+                          index-box)]
+                      [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+                  [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+              [(ResultTcUnit.Err message) (TcMoveResult.Err message)]))]
+        [(ResultTcUnit.Err message) (TcMoveResult.Err message)])]
+    [(ast.AstExpr.Replace place-box replacement-box)
+      (match (tc-move-foreign-global-place-check
+        (tc-global-shared-view ctx)
+        expr-bases
+        (tc-global-shared-view env)
+        (tc-global-shared-view locals)
+        place-box
+        "replace a place in")
+        [(ResultTcUnit.Ok)
+          (let
+            [place : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases place-box)]
+            [replacement : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases replacement-box)]
+            (match (tc-param-storage-check-write
+              (tc-global-shared-view ctx)
+              expr-bases
+              (tc-global-shared-view env)
+              (tc-global-shared-view moved)
+              (tc-global-shared-view place)
+              "replace")
+              [(ResultTcUnit.Ok)
+                (match (tc-move-check-replace-global-source
+                  (tc-global-shared-view ctx)
+                  expr-bases
+                  (tc-global-shared-view env)
+                  (tc-global-shared-view locals)
+                  (tc-global-shared-view moved)
+                  (tc-global-shared-view place))
+                  [(TcMoveResult.Ok moved0)
+                    (match (tc-move-check-replace-place-initialized
+                      expr-bases
+                      (tc-global-shared-view locals)
+                      moved0
+                      (tc-global-shared-view place))
+                      [(TcMoveResult.Ok initialized)
+                        (match (tc-move-check-borrow-place
+                          (tc-global-shared-view ctx)
+                          expr-bases
+                          (tc-global-shared-view env)
+                          (tc-global-shared-view locals)
+                          (tc-global-shared-view loop-carried)
+                          initialized
+                          (tc-global-shared-view place))
+                          [(TcMoveResult.Ok moved1)
+                            (match (tc-move-check-expr-id
+                              (tc-global-shared-view ctx)
+                              expr-bases
+                              (tc-global-shared-view env)
+                              (tc-global-shared-view locals)
+                              (tc-global-shared-view loop-carried)
+                              moved1
+                              replacement-box)
+                              [(TcMoveResult.Ok moved2)
+                                (match (tc-replace-place-value-type
+                                  (tc-global-shared-view ctx)
+                                  (tc-global-shared-view env)
+                                  (tc-global-shared-view place))
+                                  [(ResultTcType.Ok place-ty)
+                                    (match (tc-move-after-move-only-value
+                                      (tc-global-shared-view ctx)
+                                      expr-bases
+                                      (tc-global-shared-view env)
+                                      (tc-global-shared-view locals)
+                                      (tc-global-shared-view loop-carried)
+                                      moved2
+                                      (tc-global-shared-view replacement)
+                                      (tc-global-shared-view place-ty))
+                                      [(TcMoveResult.Ok moved3)
+                                        (TcMoveResult.Ok
+                                          (tc-move-reinitialize-place-path
+                                            expr-bases
+                                            locals
+                                            moved3
+                                            place))]
+                                      [(TcMoveResult.Err message)
+                                        (TcMoveResult.Err message)])]
+                                  [(ResultTcType.Err message)
+                                    (TcMoveResult.Err message)])]
+                              [(TcMoveResult.Err message)
+                                (TcMoveResult.Err message)])]
+                          [(TcMoveResult.Err message)
+                            (TcMoveResult.Err message)])]
+                      [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+                  [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+              [(ResultTcUnit.Err message) (TcMoveResult.Err message)]))]
+        [(ResultTcUnit.Err message) (TcMoveResult.Err message)])]
+    [(ast.AstExpr.StructSet receiver-box field value-box)
+      (match (tc-move-foreign-global-place-check
+        (tc-global-shared-view ctx)
+        expr-bases
+        (tc-global-shared-view env)
+        (tc-global-shared-view locals)
+        receiver-box
+        "assign to part of")
+        [(ResultTcUnit.Ok)
+          (let
+            [receiver : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases receiver-box)]
+            [value : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases value-box)]
+            (match (tc-param-storage-check-write
+              (tc-global-shared-view ctx)
+              expr-bases
+              (tc-global-shared-view env)
+              (tc-global-shared-view moved)
+              (tc-global-shared-view receiver)
+              "mutate")
+              [(ResultTcUnit.Ok)
+                (match (tc-move-check-expr
+                  (tc-global-shared-view ctx)
+                  expr-bases
+                  (tc-global-shared-view env)
+                  (tc-global-shared-view locals)
+                  (tc-global-shared-view loop-carried)
+                  (tc-global-shared-view moved)
+                  (tc-global-shared-view receiver))
+                  [(TcMoveResult.Ok moved1)
+                    (match (tc-move-check-cleanup-overwrite
+                      (tc-global-shared-view ctx)
+                      expr-bases
+                      (tc-global-shared-view env)
+                      (tc-global-shared-view moved1)
+                      (if (ast.ast-tuple-set-field-id? field)
+                        (ast.AstExpr.TupleRef
+                          receiver-box
+                          (ast.ast-tuple-set-index-from-field-id field))
+                        (ast.AstExpr.StructGet receiver-box field)))
+                      [(ResultTcUnit.Ok)
+                        (match (tc-move-check-expr
+                          (tc-global-shared-view ctx)
+                          expr-bases
+                          (tc-global-shared-view env)
+                          (tc-global-shared-view locals)
+                          (tc-global-shared-view loop-carried)
+                          moved1
+                          (tc-global-shared-view value))
+                          [(TcMoveResult.Ok moved2)
+                            (TcMoveResult.Ok
+                              (tc-move-reinitialize-struct-set-path
+                                expr-bases
+                                (tc-global-shared-view locals)
+                                moved2
+                                (tc-global-shared-view receiver)
+                                field))]
+                          [(TcMoveResult.Err message)
+                            (TcMoveResult.Err message)])]
+                      [(ResultTcUnit.Err message) (TcMoveResult.Err message)])]
+                  [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+              [(ResultTcUnit.Err message) (TcMoveResult.Err message)]))]
+        [(ResultTcUnit.Err message) (TcMoveResult.Err message)])]
+    [(ast.AstExpr.ArrayPush array-box value-box)
+      (match (tc-move-foreign-global-place-check
+        (tc-global-shared-view ctx)
+        expr-bases
+        (tc-global-shared-view env)
+        (tc-global-shared-view locals)
+        array-box
+        "push onto")
+        [(ResultTcUnit.Ok)
+          (let
+            [array : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases array-box)]
+            [value : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases value-box)]
+            (match (tc-move-check-expr
+              (tc-global-shared-view ctx)
+              expr-bases
+              (tc-global-shared-view env)
+              (tc-global-shared-view locals)
+              (tc-global-shared-view loop-carried)
+              (tc-global-shared-view moved)
+              array)
+              [(TcMoveResult.Ok moved1)
+                (tc-move-check-expr
+                  (tc-global-shared-view ctx)
+                  expr-bases
+                  (tc-global-shared-view env)
+                  (tc-global-shared-view locals)
+                  (tc-global-shared-view loop-carried)
+                  moved1
+                  value)]
+              [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
+        [(ResultTcUnit.Err message) (TcMoveResult.Err message)])]
     [(ast.AstExpr.StringRef str-box index-box)
       (let
         [str : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases str-box)]
@@ -89770,81 +90114,92 @@
     [(ast.AstExpr.Unsafe exprs)
       (tc-move-check-exprs ctx expr-bases env locals loop-carried moved exprs)]
     [(ast.AstExpr.Set name rhs-box)
-      (let
-        [rhs : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases rhs-box)]
-        (if (tc-dotted-place-name-id? (tc-global-shared-view ctx) env name)
-          (match (tc-dotted-local-field-set-expr-id-after-check
-            (tc-context-structural-session ctx)
-            name
-            rhs-box)
-            [(ResultTcExprId.Ok virtual-id)
-              (tc-move-check-expr
-                (tc-global-shared-view ctx)
-                expr-bases
-                (tc-global-shared-view env)
-                (tc-global-shared-view locals)
-                (tc-global-shared-view loop-carried)
-                (tc-global-shared-view moved)
-                (ast.ast-expr-segment-bases-get expr-bases virtual-id))]
-            [(ResultTcExprId.Err message) (TcMoveResult.Err message)])
-          (match (tc-move-check-cleanup-overwrite
-            (tc-global-shared-view ctx)
-            expr-bases
-            (tc-global-shared-view env)
-            (tc-global-shared-view moved)
-            (ast.AstExpr.Var name))
-            [(ResultTcUnit.Ok)
-              (match (tc-move-check-expr-id
-                (tc-global-shared-view ctx)
-                expr-bases
-                (tc-global-shared-view env)
-                (tc-global-shared-view locals)
-                (tc-moved-remove-root-state
-                  (tc-global-shared-view loop-carried)
-                  name)
-                (tc-global-shared-view moved)
+      (match (tc-move-foreign-global-set-check
+        (tc-global-shared-view ctx)
+        expr-bases
+        (tc-global-shared-view env)
+        (tc-global-shared-view locals)
+        name
+        rhs-box)
+        [(ResultTcUnit.Ok)
+          (let
+            [rhs : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases rhs-box)]
+            (if (tc-dotted-place-name-id? (tc-global-shared-view ctx) env name)
+              (match (tc-dotted-local-field-set-expr-id-after-check
+                (tc-context-structural-session ctx)
+                name
                 rhs-box)
-                [(TcMoveResult.Ok moved1)
-                  (match (tc-move-check-closure-assignment-facts
+                [(ResultTcExprId.Ok virtual-id)
+                  (tc-move-check-expr
                     (tc-global-shared-view ctx)
                     expr-bases
                     (tc-global-shared-view env)
                     (tc-global-shared-view locals)
-                    name
-                    (tc-global-shared-view rhs))
-                    [(ResultTcUnit.Ok)
-                      (match (tc-move-after-bind-id
+                    (tc-global-shared-view loop-carried)
+                    (tc-global-shared-view moved)
+                    (ast.ast-expr-segment-bases-get expr-bases virtual-id))]
+                [(ResultTcExprId.Err message) (TcMoveResult.Err message)])
+              (match (tc-move-check-cleanup-overwrite
+                (tc-global-shared-view ctx)
+                expr-bases
+                (tc-global-shared-view env)
+                (tc-global-shared-view moved)
+                (ast.AstExpr.Var name))
+                [(ResultTcUnit.Ok)
+                  (match (tc-move-check-expr-id
+                    (tc-global-shared-view ctx)
+                    expr-bases
+                    (tc-global-shared-view env)
+                    (tc-global-shared-view locals)
+                    (tc-moved-remove-root-state
+                      (tc-global-shared-view loop-carried)
+                      name)
+                    (tc-global-shared-view moved)
+                    rhs-box)
+                    [(TcMoveResult.Ok moved1)
+                      (match (tc-move-check-closure-assignment-facts
                         (tc-global-shared-view ctx)
                         expr-bases
                         (tc-global-shared-view env)
                         (tc-global-shared-view locals)
-                        (tc-global-shared-view loop-carried)
-                        moved1
-                        rhs-box)
-                        [(TcMoveResult.Ok moved2)
-                          (match (tc-lookup-id env name)
-                            [(ResultTcType.Ok binding-ty)
-                              (TcMoveResult.Ok
-                                (tc-move-rebind-lambda-owner-dependencies
-                                  expr-bases
-                                  env
-                                  (tc-param-storage-rebind-from-init
-                                    (tc-global-shared-view ctx)
-                                    expr-bases
-                                    (tc-global-shared-view env)
-                                    moved2
-                                    name
-                                    (tc-global-shared-view binding-ty)
-                                    (tc-global-shared-view rhs))
-                                  name
-                                  rhs))]
-                            [(ResultTcType.Err _)
-                              (TcMoveResult.Ok
-                                (tc-moved-remove-root-state moved2 name))])]
-                        [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
-                    [(ResultTcUnit.Err message) (TcMoveResult.Err message)])]
-                [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
-            [(ResultTcUnit.Err message) (TcMoveResult.Err message)])))]
+                        name
+                        (tc-global-shared-view rhs))
+                        [(ResultTcUnit.Ok)
+                          (match (tc-move-after-bind-id
+                            (tc-global-shared-view ctx)
+                            expr-bases
+                            (tc-global-shared-view env)
+                            (tc-global-shared-view locals)
+                            (tc-global-shared-view loop-carried)
+                            moved1
+                            rhs-box)
+                            [(TcMoveResult.Ok moved2)
+                              (match (tc-lookup-id env name)
+                                [(ResultTcType.Ok binding-ty)
+                                  (TcMoveResult.Ok
+                                    (tc-move-rebind-lambda-owner-dependencies
+                                      expr-bases
+                                      env
+                                      (tc-param-storage-rebind-from-init
+                                        (tc-global-shared-view ctx)
+                                        expr-bases
+                                        (tc-global-shared-view env)
+                                        moved2
+                                        name
+                                        (tc-global-shared-view binding-ty)
+                                        (tc-global-shared-view rhs))
+                                      name
+                                      rhs))]
+                                [(ResultTcType.Err _)
+                                  (TcMoveResult.Ok
+                                    (tc-moved-remove-root-state moved2 name))])]
+                            [(TcMoveResult.Err message)
+                              (TcMoveResult.Err message)])]
+                        [(ResultTcUnit.Err message) (TcMoveResult.Err message)])]
+                    [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+                [(ResultTcUnit.Err message) (TcMoveResult.Err message)])))]
+        [(ResultTcUnit.Err message) (TcMoveResult.Err message)])]
     [(ast.AstExpr.Ann inner-box _)
       (let
         [inner : ast.AstExpr
@@ -89856,35 +90211,46 @@
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
         (tc-move-check-expr ctx expr-bases env locals loop-carried moved inner))]
     [(ast.AstExpr.Borrow mutable _ inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (if mutable
-          (match (tc-param-storage-check-write
-            (tc-global-shared-view ctx)
-            expr-bases
-            (tc-global-shared-view env)
-            (tc-global-shared-view moved)
-            (tc-global-shared-view inner)
-            "mutably borrow")
-            [(ResultTcUnit.Ok)
-              (tc-move-check-borrow-place
+      (match (if mutable
+        (tc-move-foreign-global-place-check
+          (tc-global-shared-view ctx)
+          expr-bases
+          (tc-global-shared-view env)
+          (tc-global-shared-view locals)
+          inner-box
+          "mutably borrow")
+        ResultTcUnit.Ok)
+        [(ResultTcUnit.Ok)
+          (let
+            [inner : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases inner-box)]
+            (if mutable
+              (match (tc-param-storage-check-write
                 (tc-global-shared-view ctx)
                 expr-bases
                 (tc-global-shared-view env)
-                (tc-global-shared-view locals)
-                (tc-global-shared-view loop-carried)
+                (tc-global-shared-view moved)
+                (tc-global-shared-view inner)
+                "mutably borrow")
+                [(ResultTcUnit.Ok)
+                  (tc-move-check-borrow-place
+                    (tc-global-shared-view ctx)
+                    expr-bases
+                    (tc-global-shared-view env)
+                    (tc-global-shared-view locals)
+                    (tc-global-shared-view loop-carried)
+                    moved
+                    inner)]
+                [(ResultTcUnit.Err message) (TcMoveResult.Err message)])
+              (tc-move-check-borrow-place
+                ctx
+                expr-bases
+                env
+                locals
+                loop-carried
                 moved
-                inner)]
-            [(ResultTcUnit.Err message) (TcMoveResult.Err message)])
-          (tc-move-check-borrow-place
-            ctx
-            expr-bases
-            env
-            locals
-            loop-carried
-            moved
-            inner)))]
+                inner)))]
+        [(ResultTcUnit.Err message) (TcMoveResult.Err message)])]
     [(ast.AstExpr.Match match-box)
       (match (ast.ast-match-box-shared-view match-box)
         [(ast.AstMatch.Match scrut-box arms)
@@ -90419,49 +90785,59 @@
                 (TcMoveResult.Ok (tc-global-shared-view moved1))])]
           [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
     [(ast.AstExpr.BoxSet box-box value-box)
-      (let
-        [box-expr : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases box-box)]
-        [_value : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        (match (tc-move-check-expr
-          (tc-global-shared-view ctx)
-          expr-bases
-          env
-          (tc-global-shared-view locals)
-          (tc-global-shared-view loop-carried)
-          (tc-global-shared-view moved)
-          box-expr)
-          [(TcMoveResult.Ok moved1)
-            (match (tc-move-check-cleanup-overwrite
+      (match (tc-move-foreign-global-place-check
+        (tc-global-shared-view ctx)
+        expr-bases
+        (tc-global-shared-view env)
+        (tc-global-shared-view locals)
+        box-box
+        "assign through")
+        [(ResultTcUnit.Ok)
+          (let
+            [box-expr : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases box-box)]
+            [_value : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases value-box)]
+            (match (tc-move-check-expr
               (tc-global-shared-view ctx)
               expr-bases
               env
-              (tc-global-shared-view moved1)
-              (ast.AstExpr.BoxTake box-box))
-              [(ResultTcUnit.Ok)
-                (match (tc-move-check-expr-id
+              (tc-global-shared-view locals)
+              (tc-global-shared-view loop-carried)
+              (tc-global-shared-view moved)
+              box-expr)
+              [(TcMoveResult.Ok moved1)
+                (match (tc-move-check-cleanup-overwrite
                   (tc-global-shared-view ctx)
                   expr-bases
                   env
-                  (tc-global-shared-view locals)
-                  (tc-global-shared-view loop-carried)
-                  moved1
-                  value-box)
-                  [(TcMoveResult.Ok moved2)
-                    (match (tc-move-after-bind-id
+                  (tc-global-shared-view moved1)
+                  (ast.AstExpr.BoxTake box-box))
+                  [(ResultTcUnit.Ok)
+                    (match (tc-move-check-expr-id
                       (tc-global-shared-view ctx)
                       expr-bases
                       env
                       (tc-global-shared-view locals)
                       (tc-global-shared-view loop-carried)
-                      moved2
+                      moved1
                       value-box)
-                      [(TcMoveResult.Ok moved3) (TcMoveResult.Ok moved3)]
+                      [(TcMoveResult.Ok moved2)
+                        (match (tc-move-after-bind-id
+                          (tc-global-shared-view ctx)
+                          expr-bases
+                          env
+                          (tc-global-shared-view locals)
+                          (tc-global-shared-view loop-carried)
+                          moved2
+                          value-box)
+                          [(TcMoveResult.Ok moved3) (TcMoveResult.Ok moved3)]
+                          [(TcMoveResult.Err message)
+                            (TcMoveResult.Err message)])]
                       [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
-                  [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
-              [(ResultTcUnit.Err message) (TcMoveResult.Err message)])]
-          [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
+                  [(ResultTcUnit.Err message) (TcMoveResult.Err message)])]
+              [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
+        [(ResultTcUnit.Err message) (TcMoveResult.Err message)])]
     [(ast.AstExpr.TypeLiteral _)
       (TcMoveResult.Ok (tc-global-shared-view moved))]
     [(ast.AstExpr.Init _) (TcMoveResult.Ok (tc-global-shared-view moved))]

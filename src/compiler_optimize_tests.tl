@@ -7541,6 +7541,301 @@
         (compiler_optimize.compiler-opt-global-shared-view safe))]
     (compiler_optimize.opt-dce-block-list-array used safe)))
 
+;; BITLEN: the rotated `while (> probe 0) probe >>= 1, bits += 1` loop, with
+;; each ingredient of the idiom a parameter so the refusals can each break one.
+(define (opt-bitlen-test-blocks
+  [ty : compiler_ast_types.AstType]
+  [guard-op : compiler_ir_types.CompilerIrBinOp]
+  [guard-true-edge? : bool]
+  [guarded? : bool]
+  [exit-op : compiler_ir_types.CompilerIrBinOp]
+  [shift : i64]
+  [step : i64]
+  [probe-escapes? : bool]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (if guarded?
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            2
+            guard-op
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            (compiler_optimize.compiler-opt-global-shared-view ty))
+          (if guard-true-edge?
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 2)
+              (compiler_ir_types.compiler-ir-label "pre")
+              (compiler_ir_types.compiler-ir-label "exit"))
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 2)
+              (compiler_ir_types.compiler-ir-label "exit")
+              (compiler_ir_types.compiler-ir-label "pre"))))
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "pre")))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "pre")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "loop"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "loop")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Phi
+              3
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                (compiler_ir_types.CompilerIrValue.I64 0)
+                (compiler_ir_types.compiler-ir-label "pre")
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                  (compiler_ir_types.CompilerIrValue.Var 6)
+                  (compiler_ir_types.compiler-ir-label "loop")
+                  (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+              (compiler_optimize.compiler-opt-global-shared-view ty))
+            (compiler_ir_types.CompilerIrInstr.Phi
+              4
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (compiler_ir_types.compiler-ir-label "pre")
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                  (compiler_ir_types.CompilerIrValue.Var 5)
+                  (compiler_ir_types.compiler-ir-label "loop")
+                  (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+              (compiler_optimize.compiler-opt-global-shared-view ty))
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              5
+              (compiler_ir_types.CompilerIrBinOp.Shr
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrValue.Var 4)
+              (compiler_ir_types.CompilerIrValue.I64 shift)
+              (compiler_optimize.compiler-opt-global-shared-view ty))
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              7
+              (compiler_ir_types.CompilerIrBinOp.Add)
+              (compiler_ir_types.CompilerIrValue.Var 3)
+              (compiler_ir_types.CompilerIrValue.I64 step)
+              (compiler_optimize.compiler-opt-global-shared-view ty))
+            (compiler_ir_types.CompilerIrInstr.Mov
+              6
+              (compiler_ir_types.CompilerIrValue.Var 7)
+              (compiler_optimize.compiler-opt-global-shared-view ty))
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              8
+              exit-op
+              (compiler_ir_types.CompilerIrValue.Var 5)
+              (compiler_ir_types.CompilerIrValue.I64 0)
+              (compiler_optimize.compiler-opt-global-shared-view ty))
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 8)
+              (compiler_ir_types.compiler-ir-label "loop")
+              (compiler_ir_types.compiler-ir-label "exit"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "exit")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Phi
+                9
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                  (compiler_ir_types.CompilerIrValue.I64 0)
+                  (compiler_ir_types.compiler-ir-label "entry")
+                  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                    (if probe-escapes?
+                      (compiler_ir_types.CompilerIrValue.Var 4)
+                      (compiler_ir_types.CompilerIrValue.Var 6))
+                    (compiler_ir_types.compiler-ir-label "loop")
+                    (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+                ty)
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var 9)))))
+          compiler_ir_types.CompilerIrBlockList.Nil)))))
+
+;; 1 when the pass turned the loop into its closed form (a bit_length of the
+;; probe and a jump to the exit), 0 when it left the loop alone, -1 otherwise.
+(define (opt-bitlen-test-outcome
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : i64
+  (match (compiler_optimize.opt-cfg-find-block
+    (compiler_optimize.opt-bit-length-idiom-blocks 10 blocks)
+    (compiler_ir_types.compiler-ir-label "loop"))
+    [(compiler_optimize.OptMaybeBlock.Some
+        (compiler_ir_types.CompilerIrBlock.Block _ instrs))
+      (match (compiler_ir_types.compiler-ir-instr-seq-ref
+        instrs
+        (- instrs.len 1))
+        [(compiler_ir_types.CompilerIrInstr.Branch _ _ _) 0]
+        [(compiler_ir_types.CompilerIrInstr.Jump target)
+          (if (and
+            (= target (compiler_ir_types.compiler-ir-label "exit"))
+            (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs 2)
+              [(compiler_ir_types.CompilerIrInstr.UnOp
+                  5
+                  (compiler_ir_types.CompilerIrUnOp.BitLength)
+                  (compiler_ir_types.CompilerIrValue.Var 4)
+                  _)
+                true]
+              [_ false])
+            (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs 3)
+              [(compiler_ir_types.CompilerIrInstr.Mov
+                  7
+                  (compiler_ir_types.CompilerIrValue.Var 5)
+                  _)
+                true]
+              [_ false]))
+            1
+            (- 0 1))]
+        [_ (- 0 1)])]
+    [(compiler_optimize.OptMaybeBlock.No) (- 0 1)]))
+
+(define (compiler-optimize-bit-length-self-test) : i64
+  (cond
+    ;; the idiom behind a `probe > 0` guard, signed and unsigned
+    [(not
+        (=
+          (opt-bitlen-test-outcome
+            (opt-bitlen-test-blocks
+              (compiler_ast_types.AstType.I64)
+              (compiler_ir_types.CompilerIrBinOp.Gt)
+              true
+              true
+              (compiler_ir_types.CompilerIrBinOp.Gt)
+              1
+              1
+              false))
+          1))
+      1]
+    [(not
+        (=
+          (opt-bitlen-test-outcome
+            (opt-bitlen-test-blocks
+              (compiler_ast_types.AstType.U64)
+              (compiler_ir_types.CompilerIrBinOp.Ne)
+              true
+              true
+              (compiler_ir_types.CompilerIrBinOp.Ne)
+              1
+              1
+              false))
+          1))
+      2]
+    ;; reached on the false edge of `probe <= 0`
+    [(not
+        (=
+          (opt-bitlen-test-outcome
+            (opt-bitlen-test-blocks
+              (compiler_ast_types.AstType.I64)
+              (compiler_ir_types.CompilerIrBinOp.Le)
+              false
+              true
+              (compiler_ir_types.CompilerIrBinOp.Gt)
+              1
+              1
+              false))
+          1))
+      3]
+    ;; no guard: a non-positive probe still runs the body once
+    [(not
+        (=
+          (opt-bitlen-test-outcome
+            (opt-bitlen-test-blocks
+              (compiler_ast_types.AstType.I64)
+              (compiler_ir_types.CompilerIrBinOp.Gt)
+              true
+              false
+              (compiler_ir_types.CompilerIrBinOp.Gt)
+              1
+              1
+              false))
+          0))
+      4]
+    ;; the guard's true edge of `probe <= 0` proves nothing
+    [(not
+        (=
+          (opt-bitlen-test-outcome
+            (opt-bitlen-test-blocks
+              (compiler_ast_types.AstType.I64)
+              (compiler_ir_types.CompilerIrBinOp.Le)
+              true
+              true
+              (compiler_ir_types.CompilerIrBinOp.Gt)
+              1
+              1
+              false))
+          0))
+      5]
+    ;; the probe's last value leaves the loop
+    [(not
+        (=
+          (opt-bitlen-test-outcome
+            (opt-bitlen-test-blocks
+              (compiler_ast_types.AstType.I64)
+              (compiler_ir_types.CompilerIrBinOp.Gt)
+              true
+              true
+              (compiler_ir_types.CompilerIrBinOp.Gt)
+              1
+              1
+              true))
+          0))
+      6]
+    ;; a different shift or step is not a bit count
+    [(not
+        (=
+          (opt-bitlen-test-outcome
+            (opt-bitlen-test-blocks
+              (compiler_ast_types.AstType.I64)
+              (compiler_ir_types.CompilerIrBinOp.Gt)
+              true
+              true
+              (compiler_ir_types.CompilerIrBinOp.Gt)
+              2
+              1
+              false))
+          0))
+      7]
+    [(not
+        (=
+          (opt-bitlen-test-outcome
+            (opt-bitlen-test-blocks
+              (compiler_ast_types.AstType.I64)
+              (compiler_ir_types.CompilerIrBinOp.Gt)
+              true
+              true
+              (compiler_ir_types.CompilerIrBinOp.Gt)
+              1
+              2
+              false))
+          0))
+      8]
+    ;; a signed `!= 0` exit never ends for a negative probe
+    [(not
+        (=
+          (opt-bitlen-test-outcome
+            (opt-bitlen-test-blocks
+              (compiler_ast_types.AstType.I64)
+              (compiler_ir_types.CompilerIrBinOp.Gt)
+              true
+              true
+              (compiler_ir_types.CompilerIrBinOp.Ne)
+              1
+              1
+              false))
+          0))
+      9]
+    ;; constant folding of the op itself
+    [(not
+        (and
+          (= (compiler_optimize.opt-bit-length-of 1 true) 1)
+          (= (compiler_optimize.opt-bit-length-of 1024 true) 11)
+          (= (compiler_optimize.opt-bit-length-of 0 true) 0)
+          (= (compiler_optimize.opt-bit-length-of (- 0 5) true) 0)
+          (= (compiler_optimize.opt-bit-length-of (- 0 5) false) 64)
+          (= (compiler_optimize.opt-bit-length-of 9223372036854775807 true) 63)))
+      10]
+    [else 42]))
+
 (define (compiler-optimize-divrem-safety-self-test) : i64
   (let
     [i64-params : compiler_ir_types.CompilerIrParamSeq

@@ -424,9 +424,9 @@ are intentionally migrated.
 
 [`../scripts/verify-inline-tests.sh`](../scripts/verify-inline-tests.sh)
 auto-discovers top-level inline tests under `src/`, `stdlib/`, `tools/`,
-`tests/integration/`, `tests/inline/`, and `examples/`. It runs
-one batched `typelisp test --check --batch <listfile>` process first, then
-per-file `typelisp test` executions, so malformed, untyped, unbuildable, and
+`tests/integration/`, `tests/inline/`, and `examples/` and runs them through
+`typelisp test --batch` (see [the repository inline-test
+gate](#repository-inline-test-gate)), so malformed, untyped, unbuildable, and
 failing inline tests all fail CI without a hand-maintained manifest update.
 
 ### Selfhost compile manifest
@@ -1445,12 +1445,24 @@ Linux and Windows.
 
 `scripts/verify-inline-tests.sh` discovers `.tl` files with top-level
 `(test ...)` items under `src/`, `stdlib/`, `tests/integration/`,
-`tools/`, `tests/inline/`, and `examples/`. It type-checks the discovered files
-with one batched `test --check --batch` invocation, preserving per-file counts,
-then runs each generated inline-test harness with `--stdlib-root`, reporting the
-source path and test-runner output in CI logs. This gate is separate from
-doctests, manifest corpora, and smoke drivers so source-owned checks can be
-added next to the declarations they exercise.
+`tools/`, `tests/inline/`, and `examples/`, in sorted order. It runs them as
+contiguous chunks of up to 12 sources, each one `typelisp test --batch`
+process, in the bounded pool of `scripts/lib-bounded-pool.sh`:
+`TYPELISP_INLINE_TEST_WORKERS` chunks at once (1-3, default 2), each under an
+enforced 6144 MiB cap and an 1800 s timeout (a user cgroup on Linux, a Job
+Object on Windows). Every source keeps its own scratch arena and a full driver
+reset (#4820), so chunking changes only the number of processes. The gate
+requires, over the chunks' output in queue order, one count line and one
+passing summary per discovered source in discovered order and no source with
+zero tests, plus each chunk's own batch aggregate; a chunk that fails, leaves
+no status or memory report, or is stopped by its cap or timeout fails the gate
+with its streams. On Linux a focused `src/compiler_profile_summary.tl` run under
+a 1 GiB cap comes first (#5122). `--self-test-chunks` runs only the chunk
+accounting self-test that every run also performs first. This gate is separate
+from doctests, manifest corpora, and smoke drivers so source-owned checks can
+be added next to the declarations they exercise. Chunks share the checkout, so
+inline tests must keep writing uniquely named paths (under `target/` or the
+ignored `tests/scratch/`).
 
 ### Stdlib API site
 

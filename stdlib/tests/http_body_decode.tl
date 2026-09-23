@@ -2,6 +2,7 @@
 (import stdlib.net.http_body_decode as body)
 (import stdlib.net.http_head_codec)
 (import stdlib.net.http_types)
+(import stdlib.str_cat)
 (import stdlib.string)
 (import stdlib.test)
 
@@ -284,7 +285,7 @@
       unit)))
 
 (define (labeled [label : (& label str)] [detail : String]) : String
-  (string.append label (& detail)))
+  (str_cat.str-cat (string.copy label) detail))
 
 (define (repeat-text [text : String] [times : i64]) : String
   (let
@@ -377,7 +378,7 @@
       [run : Run
         (drive-whole
           (new-decoder (fixed-plan 1000) (plain) (unlimited 64))
-          (string.append (& large) "TAIL")
+          (str_cat.str-cat (clone large) "TAIL")
           -1)]
       (begin
         (assert-run (& run) (clone large) "TAIL" 1 -1 "large fixed")

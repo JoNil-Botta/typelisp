@@ -14,6 +14,8 @@ cd "$ROOT"
 
 . "$ROOT/scripts/lib-ci-timing.sh"
 . "$ROOT/scripts/lib-build-invariance-batch.sh"
+BOUNDED_POOL_LABEL=build-invariance
+. "$ROOT/scripts/lib-bounded-pool.sh"
 . "$ROOT/scripts/lib-ci-compiler-artifact.sh"
 
 usage() {
@@ -648,8 +650,8 @@ pool_job_cap_mib() {
     fi
 }
 
-# The worker pool's job callback; see lib-build-invariance-batch.sh.
-build_invariance_pool_run_job() {
+# The worker pool's job callback; see lib-bounded-pool.sh.
+bounded_pool_run_job() {
     pool_job=$1
     pool_job_cap=$2
     # One private file per job keeps concurrent writers apart; the gate merges
@@ -721,7 +723,7 @@ pool_main_exit() {
     if [ "$POOL_ACTIVE" -eq 1 ]; then
         POOL_ACTIVE=0
         echo "[build-invariance] stopping the worker pool after its running jobs" >&2
-        build_invariance_pool_stop "$POOL_DIR"
+        bounded_pool_stop "$POOL_DIR"
         pool_merge_rows available
     fi
     exit "$pool_main_status"
@@ -797,22 +799,22 @@ run_batched_comparison() {
     fi
 
     POOL_DIR="$WORKDIR/pool"
-    build_invariance_pool_init "$POOL_DIR" "$POOL_BUDGET_MIB" "$POOL_QUEUE"
+    bounded_pool_init "$POOL_DIR" "$POOL_BUDGET_MIB" "$POOL_QUEUE"
     mkdir -p "$POOL_DIR/metrics" "$POOL_DIR/timing" "$WORKDIR/backend-memory"
     pool_job_count=$(wc -l < "$POOL_QUEUE" | tr -d ' ')
     echo "[build-invariance] worker pool: $pool_job_count job(s), $POOL_WORKERS worker(s), $POOL_BUDGET_MIB MiB of enforced caps at once"
     pool_started=$(date +%s%3N)
     POOL_ACTIVE=1
-    build_invariance_pool_start "$POOL_DIR" "$POOL_WORKERS"
+    bounded_pool_start "$POOL_DIR" "$POOL_WORKERS"
 
     # Compare each chunk as soon as both producers have emitted it, so a
     # mismatch stops the gate without waiting for the rest of the corpus.
     while IFS='|' read -r pair_left_job pair_right_job pair_cases; do
-        build_invariance_pool_wait_for "$POOL_DIR" "$pair_left_job" "$pair_right_job" || exit 1
+        bounded_pool_wait_for "$POOL_DIR" "$pair_left_job" "$pair_right_job" || exit 1
         compare_batch_cases "$pair_cases" "$LEFT_DIR" "$RIGHT_DIR"
     done < "$POOL_PAIRS"
-    build_invariance_pool_wait_for "$POOL_DIR" backend-tests || exit 1
-    build_invariance_pool_join "$POOL_DIR" || exit 1
+    bounded_pool_wait_for "$POOL_DIR" backend-tests || exit 1
+    bounded_pool_join "$POOL_DIR" || exit 1
     POOL_ACTIVE=0
     pool_finished=$(date +%s%3N)
 
@@ -852,7 +854,7 @@ print_top_chunks() {
 }
 
 echo "[build-invariance] incoming opt2-built stage4 compiler: $COMPILER"
-SOURCE_INPUTS=src,stdlib,tests,scripts/check-build-invariance.sh,scripts/lib-build-invariance-batch.sh,scripts/lib-native-link.sh
+SOURCE_INPUTS=src,stdlib,tests,scripts/check-build-invariance.sh,scripts/lib-build-invariance-batch.sh,scripts/lib-bounded-pool.sh,scripts/lib-native-link.sh
 SOURCE_DIGEST=$(ci_compiler_artifact_source_set_digest "$ROOT" "$SOURCE_INPUTS")
 COMPILER_DIGEST=$(ci_compiler_artifact_sha256_file "$COMPILER")
 construction_start=$(date +%s)

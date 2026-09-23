@@ -88,7 +88,12 @@ inspect_winsock_capability() {
     _exe="$WORKDIR/winsock-capability.exe"
     _source="$ROOT/tests/integration/winsock_capability.tl"
     _direct="$WORKDIR/winsock-capability.direct.obj"
-    printf '%s|%s|%s\n' "$_source" "$_direct" "$_asm" \
+    # Batch row paths are read from the file by the compiler, so MSYS cannot
+    # translate POSIX absolute paths inside it. Keep them relative to ROOT.
+    _source_row=tests/integration/winsock_capability.tl
+    _direct_row=target/no-libc-verify/winsock-capability.direct.obj
+    _asm_row=target/no-libc-verify/winsock-capability.s
+    printf '%s|%s|%s\n' "$_source_row" "$_direct_row" "$_asm_row" \
         >"$WORKDIR/winsock-batch.list"
     "$COMPILER" compile --batch "$WORKDIR/winsock-batch.list" \
         --windows-coff-plan "$WORKDIR/winsock-batch.plan" \
@@ -99,7 +104,7 @@ inspect_winsock_capability() {
         return 1
     }
     printf '%s|assembly|%s|unsupported-object-semantics\n' \
-        "$_source" "$_asm" >"$WORKDIR/winsock-batch.expected"
+        "$_source_row" "$_asm_row" >"$WORKDIR/winsock-batch.expected"
     if ! cmp "$WORKDIR/winsock-batch.expected" "$WORKDIR/winsock-batch.plan" \
         >/dev/null || [ -e "$_direct" ]; then
         echo "FAIL [winsock object]: expected checked assembly fallback" >&2

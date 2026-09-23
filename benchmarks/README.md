@@ -45,6 +45,7 @@ Linux opt2 pass uses its positive case list from the CI suite manifest.
 | Name | Workload |
 |------|----------|
 | `arith_loop` | Scalar LCG recurrence over wrapping 64-bit arithmetic. |
+| `mul_small_constants` | Serial wrapping multiply/xor recurrence using factors 3, 5, and 9; exposes constant-multiply latency without affine recurrence folding. |
 | `array_sum` | `Vec i64` fill + repeated backing-storage sum, with the accumulator stored back per round to defeat loop-invariant folding (refs #1098). |
 | `borrowed_disjoint_store` | Loop-invariant shared checked-reference loads separated by a non-inlined direct call that writes through a distinct mutable-reference root (refs #5201, #5216). |
 | `string_scan` | Polynomial rolling hash (`acc = acc * 131 + byte`) over a fixed ASCII string scanned many rounds, carrying the hash across rounds (refs #1098). |

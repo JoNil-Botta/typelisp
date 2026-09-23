@@ -202,6 +202,63 @@
       result)))
 
 (test
+  value-source-counts-dense-semantics
+  (let
+    [sources : compiler_optimize.OptValueSources
+      (compiler_optimize.opt-value-sources-new)]
+    [independent : compiler_optimize.OptValueSources
+      (compiler_optimize.opt-value-sources-new)]
+    (begin
+      (set! sources (compiler_optimize.opt-gvn-defs-add sources -1))
+      (set! sources (compiler_optimize.opt-gvn-defs-add sources 0))
+      ;; Grow repeatedly, preserving both definitions and the candidate count.
+      (set! sources (compiler_optimize.opt-gvn-defs-add sources 15))
+      (set! sources (compiler_optimize.opt-gvn-defs-add sources 512))
+      (set! sources (compiler_optimize.opt-gvn-defs-add sources 0))
+      (test.assert-i64-eq
+        (compiler_optimize.opt-gvn-count
+          (compiler_optimize.compiler-opt-global-shared-view sources)
+          -1)
+        1
+        "growth preserves the expression candidate count")
+      (test.assert-i64-eq
+        (compiler_optimize.opt-gvn-count
+          (compiler_optimize.compiler-opt-global-shared-view sources)
+          0)
+        2
+        "multiple definitions prevent reuse")
+      (test.assert-true
+        (not
+          (compiler_optimize.opt-gvn-stable-var?
+            (compiler_optimize.compiler-opt-global-shared-view sources)
+            0))
+        "a reassigned parameter is not stable")
+      (test.assert-true
+        (compiler_optimize.opt-gvn-stable-var?
+          (compiler_optimize.compiler-opt-global-shared-view sources)
+          15)
+        "the former capacity boundary retains its definition")
+      (test.assert-true
+        (compiler_optimize.opt-gvn-stable-var?
+          (compiler_optimize.compiler-opt-global-shared-view sources)
+          512)
+        "a new large value id is stable")
+      (test.assert-i64-eq
+        (compiler_optimize.opt-gvn-count
+          (compiler_optimize.compiler-opt-global-shared-view sources)
+          511)
+        0
+        "unwritten grown slots are absent")
+      (test.assert-i64-eq
+        (compiler_optimize.opt-gvn-count sources 9223372036854775807)
+        0
+        "out-of-range reads cannot overflow the slot calculation")
+      (test.assert-i64-eq
+        (compiler_optimize.opt-gvn-count independent 0)
+        0
+        "function inventories are independent"))))
+
+(test
   switch-copy-env-indexed-semantics
   (let
     [env : compiler_optimize.OptSwitchCopyEnv
@@ -77179,7 +77236,7 @@
           (compiler_ir_types.compiler-ir-label "entry")
           (compiler_optimize.compiler-opt-global-shared-view instrs))
         (compiler_ir_types.CompilerIrBlockList.Nil)))
-    (opt_i64_i64_map.with-capacity 1)
+    (compiler_optimize.opt-value-sources-new)
     call-memory
     (compiler_optimize.opt-load-cse-state-with-caps-and-facts
       (profile_state.compiler-profile-state-metrics
@@ -79424,7 +79481,7 @@
   [unresolved : i64]) : OptCallBlockScanSnapshot
   (let
     [params : compiler_ir_types.CompilerIrParamSeq (opt-call-block-scan-params)]
-    [sources : opt_i64_i64_map.Map
+    [sources : compiler_optimize.OptValueSources
       (compiler_optimize.opt-call-memory-sources
         (owned_view.compiler-owned-shared-view params)
         (owned_view.compiler-owned-shared-view blocks))]

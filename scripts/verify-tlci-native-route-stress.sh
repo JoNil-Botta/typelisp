@@ -428,11 +428,12 @@ assert_macro_profile_counts \
 # two-operand conjunction to every stress entry. Refs #7655. The exact fused
 # multiply-add in stdlib.math, which stdlib.io imports, adds eight more
 # two-operand conjunctions and four two-operand disjunctions. Refs #7005.
+# Short-string equality adds two two-operand conjunctions in the imported
+# stdlib source, one each for its overlapping 2-byte and 4-byte comparisons.
 assert_macro_profile_counts \
-    "$NATIVE_STDERR" stdlib.core_macros/and 2 80 80 "$ROW_COUNT"
-# #6984's Windows open-error mapping adds two `or` expansions to every Windows
-# compiler batch entry. The Linux route is at 18 with #7005's four; the
-# Windows route pins 20.
+    "$NATIVE_STDERR" stdlib.core_macros/and 2 82 82 "$ROW_COUNT"
+# #6984's Windows open-error mapping contributes two more `or` expansions
+# than Linux for every Windows compiler batch entry.
 CORE_OR_CALLS=18
 if [ "$NL_HOST_OS" = windows ]; then
     CORE_OR_CALLS=20

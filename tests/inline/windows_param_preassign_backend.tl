@@ -96,7 +96,8 @@
             (ir.CompilerIrValue.Var 3)
             (ast.AstType.I64))
           (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)))
-      ir.CompilerIrBlockList.Nil)))
+      ir.CompilerIrBlockList.Nil)
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (win-param-preassign-program) : ir.CompilerIrProgram
   (let
@@ -135,7 +136,8 @@
             (ast.AstType.I64))
           (ir.CompilerIrInstr.Return
             (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 1)))))
-      ir.CompilerIrBlockList.Nil)))
+      ir.CompilerIrBlockList.Nil)
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (win-param-preassign-safe-div-regalloc-ok?) : bool
   ;; The incoming Win64 home of param b (var 1) is %rdx (arg1), which the safe

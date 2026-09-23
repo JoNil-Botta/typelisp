@@ -1909,8 +1909,14 @@ if [ "$NL_HOST_OS" = windows ]; then
     # from 81 to 82 segments: the authoritative Windows CI probe measured
     # 5,311,816 used nodes, 5,373,952 capacity, and 171,966,464 physical payload
     # bytes.
+    # #7405's private SPMD ABI descriptors (the IR schema and its integrity
+    # checks, plus the sixth CompilerIrFunction field at every rebuild site)
+    # cross the composed graph from 82 to 83 segments: the authoritative Windows
+    # CI probe (run 35806895783) measured 5,377,895 used nodes, 5,439,488
+    # capacity, and 174,063,616 physical payload bytes. The other three selfhost
+    # pool boundaries keep their pins on that tree (31, 64 and 12 segments).
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 82 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 83 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # The three dense optimizer plan containers crossed the checked expression
     # graph into its 33rd segment; the accessor-admission/absorption/fold/sinking

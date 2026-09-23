@@ -891,8 +891,71 @@
   (index-param i64)
   (link-symbol String))
 
+;; Same-program private SPMD helper ABI (#7405). Lowering records these facts
+;; once, when it builds a generated scalar, AVX2, or AVX-512 helper, and attaches
+;; one structurally equal copy to the helper (`CompilerIrFunctionAbi.SpmdPrivate`)
+;; and one to every same-program `SpmdCall` that targets it
+;; (`CompilerIrSpmdCallOrigin.Private`). The record is immutable facts only: no
+;; per-call values, source AST, loader or TLCI state, or backend placement. It
+;; is versioned separately from the imported catalog's serialized
+;; `spmd-call-v1` row, and consumers read roles from it instead of from
+;; generated helper or parameter spellings.
+(defenum CompilerIrSpmdPrivateAbiSchema
+  (V1))
+
+;; Role of one physical helper parameter. `Source` is declared source parameter
+;; `ordinal`, with the value class and source type the caller's argument has;
+;; the physical (register storage) type is recorded beside the role.
+;; `IndexBase` is the hidden uniform i64 logical-index base appended when the
+;; helper cannot recover the index from one of its varying source parameters.
+(defenum CompilerIrSpmdPrivateParamRole
+  (ActiveMask)
+  (Source i64 CompilerIrSpmdValueClass ast.AstType)
+  (IndexBase))
+
+;; One physical parameter: its ordinal in the helper signature, role, and
+;; physical type. A descriptor lists every physical parameter in signature
+;; order, so the ordinal of slot `i` is `i`; it is stored so that order is
+;; checked rather than assumed.
+(defenum CompilerIrSpmdPrivateParam
+  (Param i64 CompilerIrSpmdPrivateParamRole ast.AstType))
+
+(defstruct CompilerIrSpmdPrivateParamSeq
+  (slots (__tl_dyn-array CompilerIrSpmdPrivateParam))
+  (len i64))
+
+;; How the helper recovers its logical lane indexes. `ReuseSource` names the
+;; varying source parameter (by source ordinal) whose lanes already are the
+;; indexes; `Appended` names the physical ordinal of the `IndexBase`
+;; parameter. Scalar helpers run one lane and never recover an index.
+(defenum CompilerIrSpmdPrivateIndex
+  (None)
+  (ReuseSource i64)
+  (Appended i64))
+
+;; The helper result: its class and source type. `Mask` is a varying bool; a
+;; uniform result is returned once, not per lane.
+(defenum CompilerIrSpmdPrivateResult
+  (Unit)
+  (Value CompilerIrSpmdValueClass ast.AstType))
+
+(defstruct CompilerIrSpmdPrivateAbi
+  (schema CompilerIrSpmdPrivateAbiSchema)
+  (callee i64)
+  (backend CompilerIrSpmdBackend)
+  (lanes i64)
+  (params CompilerIrSpmdPrivateParamSeq)
+  (index CompilerIrSpmdPrivateIndex)
+  (result CompilerIrSpmdPrivateResult))
+
+;; Every function states its calling convention. Only generated same-program
+;; SPMD helpers use the private ABI; everything else is `Ordinary`.
+(defenum CompilerIrFunctionAbi
+  (Ordinary)
+  (SpmdPrivate (Box CompilerIrSpmdPrivateAbi)))
+
 (defenum CompilerIrSpmdCallOrigin
-  (Private)
+  (Private (Box CompilerIrSpmdPrivateAbi))
   (Imported (Box CompilerIrImportedSpmdCall)))
 
 (defstruct CompilerIrInstrSpmdCallPayload
@@ -1278,22 +1341,6 @@
       (set! (array-ref slots args.len) extra)
       (CompilerIrSpmdCallArgSeq slots (+ args.len 1)))))
 
-(define (ir-instr-spmd-call
-  [callee : i64]
-  [backend : CompilerIrSpmdBackend]
-  [lanes : i64]
-  [active-mask : CompilerIrValue]
-  [args : CompilerIrSpmdCallArgSeq]
-  [result : CompilerIrSpmdCallResult]) : CompilerIrInstr
-  (ir-instr-spmd-call-with-origin
-    callee
-    backend
-    lanes
-    active-mask
-    args
-    result
-    CompilerIrSpmdCallOrigin.Private))
-
 (define (ir-instr-spmd-call-with-origin
   [callee : i64]
   [backend : CompilerIrSpmdBackend]
@@ -1312,6 +1359,1114 @@
         args
         result
         origin))))
+
+;; --- Same-program private SPMD ABI (#7405) ------------------------------------
+;;
+;; Construction, clone, equality, rendering, and integrity checks for
+;; `CompilerIrSpmdPrivateAbi`. The checks run in three places:
+;; `compiler-ir-spmd-private-abi-shape-error` on one descriptor alone,
+;; `compiler-ir-spmd-private-abi-signature-error` against the helper's own
+;; signature, and `compiler-ir-spmd-private-call-error` against one call's
+;; payload. `compiler-ir-spmd-private-abi-program-error` composes them over a
+;; whole program and also requires each same-program call to carry exactly its
+;; callee's descriptor. Every message names the function or call it is about and
+;; one mismatched field; none renders IR.
+(define (compiler-ir-spmd-private-param-seq-with-capacity [capacity : i64]) : CompilerIrSpmdPrivateParamSeq
+  (CompilerIrSpmdPrivateParamSeq
+    (__tl_make-array
+      CompilerIrSpmdPrivateParam
+      (compiler-ir-builder-capacity capacity))
+    0))
+
+(define (compiler-ir-spmd-private-param-copy-range!
+  [dst : (&mut dst (__tl_dyn-array CompilerIrSpmdPrivateParam))]
+  [src : (& src (__tl_dyn-array CompilerIrSpmdPrivateParam))]
+  [count : i64]) : unit
+  (let
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (set! (array-ref dst index) (array-ref src index))
+        (set! index (+ index 1))))))
+
+(define (compiler-ir-spmd-private-param-seq-push!
+  [seq : (&mut seq CompilerIrSpmdPrivateParamSeq)]
+  [param : CompilerIrSpmdPrivateParam]) : unit
+  (begin
+    (if (< seq.len (array-length seq.slots))
+      unit
+      (let
+        [bigger : (__tl_dyn-array CompilerIrSpmdPrivateParam)
+          (__tl_make-array
+            CompilerIrSpmdPrivateParam
+            (* 2 (compiler-ir-builder-capacity (array-length seq.slots))))]
+        (begin
+          (compiler-ir-spmd-private-param-copy-range!
+            (&mut bigger)
+            (& seq.slots)
+            seq.len)
+          (set! seq.slots bigger))))
+    (let
+      [index : i64 seq.len]
+      (begin
+        (set! (array-ref seq.slots index) param)
+        (set! seq.len (+ index 1))))))
+
+(define (compiler-ir-spmd-private-param-seq-ref
+  [seq : CompilerIrSpmdPrivateParamSeq]
+  [index : i64]) : CompilerIrSpmdPrivateParam
+  (compiler-ir-array-shared-view seq.slots index))
+
+(define (compiler-ir-spmd-private-abi-box [abi : CompilerIrSpmdPrivateAbi]) : (Box
+    CompilerIrSpmdPrivateAbi)
+  (box abi))
+
+(define (compiler-ir-function-abi-private [abi : CompilerIrSpmdPrivateAbi]) : CompilerIrFunctionAbi
+  (CompilerIrFunctionAbi.SpmdPrivate (box abi)))
+
+(define (compiler-ir-spmd-call-origin-private [abi : CompilerIrSpmdPrivateAbi]) : CompilerIrSpmdCallOrigin
+  (CompilerIrSpmdCallOrigin.Private (box abi)))
+
+(define (compiler-ir-function-abi-ordinary? [abi : CompilerIrFunctionAbi]) : bool
+  (match abi
+    [(CompilerIrFunctionAbi.Ordinary) true]
+    [(CompilerIrFunctionAbi.SpmdPrivate _) false]))
+
+;; The number of `Source` parameters, which is also the source parameter count.
+(define (compiler-ir-spmd-private-abi-source-count
+  [abi : CompilerIrSpmdPrivateAbi]) : i64
+  (let
+    [count : i64 0]
+    [index : i64 0]
+    (begin
+      (while (< index abi.params.len)
+        (begin
+          (match (compiler-ir-spmd-private-param-seq-ref
+            (compiler-ir-global-shared-view abi.params)
+            index)
+            [(CompilerIrSpmdPrivateParam.Param
+                _
+                (CompilerIrSpmdPrivateParamRole.Source _ _ _)
+                _)
+              (set! count (+ count 1))]
+            [_ unit])
+          (set! index (+ index 1))))
+      count)))
+
+;; --- clone ---
+(define (compiler-ir-clone-spmd-private-param
+  [pools : ast.AstNodePoolContext]
+  [param : CompilerIrSpmdPrivateParam]) : CompilerIrSpmdPrivateParam
+  (match param
+    [(CompilerIrSpmdPrivateParam.Param ordinal role ty)
+      (CompilerIrSpmdPrivateParam.Param
+        ordinal
+        (match role
+          [(CompilerIrSpmdPrivateParamRole.ActiveMask)
+            (CompilerIrSpmdPrivateParamRole.ActiveMask)]
+          [(CompilerIrSpmdPrivateParamRole.Source source class source-ty)
+            (CompilerIrSpmdPrivateParamRole.Source
+              source
+              (compiler-ir-clone-spmd-value-class class)
+              (compiler-ir-clone-type
+                (compiler-ir-global-shared-view pools)
+                source-ty))]
+          [(CompilerIrSpmdPrivateParamRole.IndexBase)
+            (CompilerIrSpmdPrivateParamRole.IndexBase)])
+        (compiler-ir-clone-type (compiler-ir-global-shared-view pools) ty))]))
+
+(define (compiler-ir-clone-spmd-private-abi
+  [pools : ast.AstNodePoolContext]
+  [abi : CompilerIrSpmdPrivateAbi]) : CompilerIrSpmdPrivateAbi
+  (let
+    [params : CompilerIrSpmdPrivateParamSeq
+      (compiler-ir-spmd-private-param-seq-with-capacity abi.params.len)]
+    [index : i64 0]
+    (begin
+      (while (< index abi.params.len)
+        (begin
+          (compiler-ir-spmd-private-param-seq-push!
+            (&mut params)
+            (compiler-ir-clone-spmd-private-param
+              (compiler-ir-global-shared-view pools)
+              (compiler-ir-spmd-private-param-seq-ref
+                (compiler-ir-global-shared-view abi.params)
+                index)))
+          (set! index (+ index 1))))
+      (CompilerIrSpmdPrivateAbi
+        (match abi.schema
+          [(CompilerIrSpmdPrivateAbiSchema.V1)
+            (CompilerIrSpmdPrivateAbiSchema.V1)])
+        (compiler-ir-symbol-clone abi.callee)
+        (compiler-ir-clone-spmd-backend abi.backend)
+        abi.lanes
+        params
+        (match abi.index
+          [(CompilerIrSpmdPrivateIndex.None) (CompilerIrSpmdPrivateIndex.None)]
+          [(CompilerIrSpmdPrivateIndex.ReuseSource source)
+            (CompilerIrSpmdPrivateIndex.ReuseSource source)]
+          [(CompilerIrSpmdPrivateIndex.Appended ordinal)
+            (CompilerIrSpmdPrivateIndex.Appended ordinal)])
+        (match abi.result
+          [(CompilerIrSpmdPrivateResult.Unit)
+            (CompilerIrSpmdPrivateResult.Unit)]
+          [(CompilerIrSpmdPrivateResult.Value class ty)
+            (CompilerIrSpmdPrivateResult.Value
+              (compiler-ir-clone-spmd-value-class class)
+              (compiler-ir-clone-type (compiler-ir-global-shared-view pools) ty))])))))
+
+(define (compiler-ir-clone-function-abi
+  [pools : ast.AstNodePoolContext]
+  [abi : CompilerIrFunctionAbi]) : CompilerIrFunctionAbi
+  (match abi
+    [(CompilerIrFunctionAbi.Ordinary) (CompilerIrFunctionAbi.Ordinary)]
+    [(CompilerIrFunctionAbi.SpmdPrivate private-box)
+      (compiler-ir-function-abi-private
+        (compiler-ir-clone-spmd-private-abi
+          (compiler-ir-global-shared-view pools)
+          (compiler-ir-box-shared-view private-box)))]))
+
+(define (compiler-ir-clone-spmd-call-origin
+  [pools : ast.AstNodePoolContext]
+  [origin : CompilerIrSpmdCallOrigin]) : CompilerIrSpmdCallOrigin
+  (match origin
+    [(CompilerIrSpmdCallOrigin.Private private-box)
+      (compiler-ir-spmd-call-origin-private
+        (compiler-ir-clone-spmd-private-abi
+          (compiler-ir-global-shared-view pools)
+          (compiler-ir-box-shared-view private-box)))]
+    [(CompilerIrSpmdCallOrigin.Imported selected-box)
+      (CompilerIrSpmdCallOrigin.Imported (clone selected-box))]))
+
+;; --- equality ---
+(define (compiler-ir-spmd-backend-eq?
+  [left : CompilerIrSpmdBackend]
+  [right : CompilerIrSpmdBackend]) : bool
+  (match left
+    [(CompilerIrSpmdBackend.Scalar)
+      (match right
+        [(CompilerIrSpmdBackend.Scalar) true]
+        [_ false])]
+    [(CompilerIrSpmdBackend.Avx2)
+      (match right
+        [(CompilerIrSpmdBackend.Avx2) true]
+        [_ false])]
+    [(CompilerIrSpmdBackend.Avx512)
+      (match right
+        [(CompilerIrSpmdBackend.Avx512) true]
+        [_ false])]))
+
+(define (compiler-ir-spmd-value-class-eq?
+  [left : CompilerIrSpmdValueClass]
+  [right : CompilerIrSpmdValueClass]) : bool
+  (match left
+    [(CompilerIrSpmdValueClass.Uniform)
+      (match right
+        [(CompilerIrSpmdValueClass.Uniform) true]
+        [_ false])]
+    [(CompilerIrSpmdValueClass.Varying)
+      (match right
+        [(CompilerIrSpmdValueClass.Varying) true]
+        [_ false])]
+    [(CompilerIrSpmdValueClass.Mask)
+      (match right
+        [(CompilerIrSpmdValueClass.Mask) true]
+        [_ false])]))
+
+(define (compiler-ir-spmd-private-param-eq?
+  [bases : i64]
+  [left : CompilerIrSpmdPrivateParam]
+  [right : CompilerIrSpmdPrivateParam]) : bool
+  (match left
+    [(CompilerIrSpmdPrivateParam.Param left-ordinal left-role left-ty)
+      (match right
+        [(CompilerIrSpmdPrivateParam.Param right-ordinal right-role right-ty)
+          (and
+            (= left-ordinal right-ordinal)
+            (ast.ast-type-eq-with-seg-bases?
+              bases
+              (compiler-ir-global-shared-view left-ty)
+              (compiler-ir-global-shared-view right-ty))
+            (match left-role
+              [(CompilerIrSpmdPrivateParamRole.ActiveMask)
+                (match right-role
+                  [(CompilerIrSpmdPrivateParamRole.ActiveMask) true]
+                  [_ false])]
+              [(CompilerIrSpmdPrivateParamRole.IndexBase)
+                (match right-role
+                  [(CompilerIrSpmdPrivateParamRole.IndexBase) true]
+                  [_ false])]
+              [(CompilerIrSpmdPrivateParamRole.Source
+                  left-source
+                  left-class
+                  left-source-ty)
+                (match right-role
+                  [(CompilerIrSpmdPrivateParamRole.Source
+                      right-source
+                      right-class
+                      right-source-ty)
+                    (and
+                      (= left-source right-source)
+                      (compiler-ir-spmd-value-class-eq?
+                        (compiler-ir-global-shared-view left-class)
+                        (compiler-ir-global-shared-view right-class))
+                      (ast.ast-type-eq-with-seg-bases?
+                        bases
+                        (compiler-ir-global-shared-view left-source-ty)
+                        (compiler-ir-global-shared-view right-source-ty)))]
+                  [_ false])]))])]))
+
+(define (compiler-ir-spmd-private-index-eq?
+  [left : CompilerIrSpmdPrivateIndex]
+  [right : CompilerIrSpmdPrivateIndex]) : bool
+  (match left
+    [(CompilerIrSpmdPrivateIndex.None)
+      (match right
+        [(CompilerIrSpmdPrivateIndex.None) true]
+        [_ false])]
+    [(CompilerIrSpmdPrivateIndex.ReuseSource left-source)
+      (match right
+        [(CompilerIrSpmdPrivateIndex.ReuseSource right-source)
+          (= left-source right-source)]
+        [_ false])]
+    [(CompilerIrSpmdPrivateIndex.Appended left-ordinal)
+      (match right
+        [(CompilerIrSpmdPrivateIndex.Appended right-ordinal)
+          (= left-ordinal right-ordinal)]
+        [_ false])]))
+
+(define (compiler-ir-spmd-private-result-eq?
+  [bases : i64]
+  [left : CompilerIrSpmdPrivateResult]
+  [right : CompilerIrSpmdPrivateResult]) : bool
+  (match left
+    [(CompilerIrSpmdPrivateResult.Unit)
+      (match right
+        [(CompilerIrSpmdPrivateResult.Unit) true]
+        [_ false])]
+    [(CompilerIrSpmdPrivateResult.Value left-class left-ty)
+      (match right
+        [(CompilerIrSpmdPrivateResult.Value right-class right-ty)
+          (and
+            (compiler-ir-spmd-value-class-eq?
+              (compiler-ir-global-shared-view left-class)
+              (compiler-ir-global-shared-view right-class))
+            (ast.ast-type-eq-with-seg-bases?
+              bases
+              (compiler-ir-global-shared-view left-ty)
+              (compiler-ir-global-shared-view right-ty)))]
+        [_ false])]))
+
+;; Structural equality of two descriptors, field by field. Types compare
+;; structurally, not by spelling.
+(define (compiler-ir-spmd-private-abi-eq?
+  [bases : i64]
+  [left : CompilerIrSpmdPrivateAbi]
+  [right : CompilerIrSpmdPrivateAbi]) : bool
+  (and
+    (match left.schema
+      [(CompilerIrSpmdPrivateAbiSchema.V1)
+        (match right.schema
+          [(CompilerIrSpmdPrivateAbiSchema.V1) true])])
+    (compiler-ir-symbol-eq? left.callee right.callee)
+    (compiler-ir-spmd-backend-eq?
+      (compiler-ir-global-shared-view left.backend)
+      (compiler-ir-global-shared-view right.backend))
+    (= left.lanes right.lanes)
+    (= left.params.len right.params.len)
+    (let
+      [same : bool true]
+      [index : i64 0]
+      (begin
+        (while (and same (< index left.params.len))
+          (begin
+            (set!
+              same
+              (compiler-ir-spmd-private-param-eq?
+                bases
+                (compiler-ir-spmd-private-param-seq-ref
+                  (compiler-ir-global-shared-view left.params)
+                  index)
+                (compiler-ir-spmd-private-param-seq-ref
+                  (compiler-ir-global-shared-view right.params)
+                  index)))
+            (set! index (+ index 1))))
+        same))
+    (compiler-ir-spmd-private-index-eq? left.index right.index)
+    (compiler-ir-spmd-private-result-eq? bases left.result right.result)))
+
+;; --- rendering ---
+(define (compiler-ir-spmd-private-param-render
+  [structural-session : cis.InternStructuralSessionHandle]
+  [type-segment-bases : i64]
+  [param : CompilerIrSpmdPrivateParam]) : String
+  (match param
+    [(CompilerIrSpmdPrivateParam.Param ordinal role ty)
+      (str_cat.str-cat
+        (string.int->string ordinal)
+        " "
+        (match role
+          [(CompilerIrSpmdPrivateParamRole.ActiveMask) "active-mask"]
+          [(CompilerIrSpmdPrivateParamRole.IndexBase) "index-base"]
+          [(CompilerIrSpmdPrivateParamRole.Source source class source-ty)
+            (str_cat.str-cat
+              "source "
+              (string.int->string source)
+              " "
+              (compiler-ir-spmd-value-class-render
+                (compiler-ir-global-shared-view class))
+              " "
+              (compiler-ir-type-render
+                structural-session
+                type-segment-bases
+                source-ty))])
+        " : "
+        (compiler-ir-type-render structural-session type-segment-bases ty))]))
+
+;; One stable line of text per descriptor, shared by the function header and
+;; the call. Two descriptors render identically exactly when they are equal.
+(define (compiler-ir-spmd-private-abi-render
+  [structural-session : cis.InternStructuralSessionHandle]
+  [type-segment-bases : i64]
+  [abi : CompilerIrSpmdPrivateAbi]) : String
+  (let
+    [buf : text_buf.TextBuf
+      (text_buf.append
+        (text_buf.empty)
+        (str_cat.str-cat
+          (match abi.schema
+            [(CompilerIrSpmdPrivateAbiSchema.V1) "spmd-private-v1"])
+          " @"
+          (compiler-ir-symbol-text abi.callee)
+          " "
+          (compiler-ir-spmd-backend-render
+            (compiler-ir-global-shared-view abi.backend))
+          " lanes "
+          (string.int->string abi.lanes)
+          " ["))]
+    [index : i64 0]
+    (begin
+      (while (< index abi.params.len)
+        (begin
+          (if (> index 0)
+            (set! buf (text_buf.append buf ", "))
+            unit)
+          (set!
+            buf
+            (text_buf.append
+              buf
+              (compiler-ir-spmd-private-param-render
+                structural-session
+                type-segment-bases
+                (compiler-ir-spmd-private-param-seq-ref
+                  (compiler-ir-global-shared-view abi.params)
+                  index))))
+          (set! index (+ index 1))))
+      (text_buf.render
+        (text_buf.append
+          buf
+          (str_cat.str-cat
+            "] index "
+            (match abi.index
+              [(CompilerIrSpmdPrivateIndex.None) "none"]
+              [(CompilerIrSpmdPrivateIndex.ReuseSource source)
+                (str_cat.str-cat "source " (string.int->string source))]
+              [(CompilerIrSpmdPrivateIndex.Appended ordinal)
+                (str_cat.str-cat "appended " (string.int->string ordinal))])
+            " result "
+            (match abi.result
+              [(CompilerIrSpmdPrivateResult.Unit) "unit"]
+              [(CompilerIrSpmdPrivateResult.Value class ty)
+                (str_cat.str-cat
+                  (compiler-ir-spmd-value-class-render
+                    (compiler-ir-global-shared-view class))
+                  " "
+                  (compiler-ir-type-render
+                    structural-session
+                    type-segment-bases
+                    ty))])))))))
+
+;; --- integrity ---
+(define (compiler-ir-spmd-type-bool? [ty : ast.AstType]) : bool
+  (match ty
+    [(ast.AstType.Bool) true]
+    [_ false]))
+
+(define (compiler-ir-spmd-type-unit? [ty : ast.AstType]) : bool
+  (match ty
+    [(ast.AstType.Unit) true]
+    [_ false]))
+
+(define (compiler-ir-spmd-type-i64? [ty : ast.AstType]) : bool
+  (match ty
+    [(ast.AstType.I64) true]
+    [_ false]))
+
+(define (compiler-ir-spmd-lanes-error
+  [backend : CompilerIrSpmdBackend]
+  [lanes : i64]) : String
+  (match backend
+    [(CompilerIrSpmdBackend.Scalar)
+      (if (= lanes 1)
+        ""
+        (str_cat.str-cat
+          "scalar descriptor has "
+          (string.int->string lanes)
+          " lanes, not 1"))]
+    [_
+      (if (and (>= lanes 2) (<= lanes 64) (= (bit-and lanes (- lanes 1)) 0))
+        ""
+        (str_cat.str-cat
+          (compiler-ir-spmd-backend-render
+            (compiler-ir-global-shared-view backend))
+          " descriptor has "
+          (string.int->string lanes)
+          " lanes, not a power of two from 2 to 64"))]))
+
+(define (compiler-ir-spmd-private-param-shape-error
+  [abi : CompilerIrSpmdPrivateAbi]
+  [index : i64]) : String
+  (match (compiler-ir-spmd-private-param-seq-ref
+    (compiler-ir-global-shared-view abi.params)
+    index)
+    [(CompilerIrSpmdPrivateParam.Param ordinal role ty)
+      (cond
+        [(not (= ordinal index))
+          (str_cat.str-cat
+            "physical parameter "
+            (string.int->string index)
+            " records ordinal "
+            (string.int->string ordinal))]
+        [else
+          (match role
+            [(CompilerIrSpmdPrivateParamRole.ActiveMask)
+              (cond
+                [(not (= index 0))
+                  (str_cat.str-cat
+                    "active mask at physical parameter "
+                    (string.int->string index)
+                    ", not 0")]
+                [(not
+                    (compiler-ir-spmd-type-bool?
+                      (compiler-ir-global-shared-view ty)))
+                  "active mask parameter is not bool"]
+                [else ""])]
+            [(CompilerIrSpmdPrivateParamRole.Source source class source-ty)
+              (cond
+                [(= index 0) "physical parameter 0 is not the active mask"]
+                [(not (= source (- index 1)))
+                  (str_cat.str-cat
+                    "physical parameter "
+                    (string.int->string index)
+                    " maps source parameter "
+                    (string.int->string source)
+                    ", not "
+                    (string.int->string (- index 1)))]
+                [(and
+                    (compiler-ir-spmd-value-class-eq?
+                      (compiler-ir-global-shared-view class)
+                      (CompilerIrSpmdValueClass.Mask))
+                    (not
+                      (compiler-ir-spmd-type-bool?
+                        (compiler-ir-global-shared-view source-ty))))
+                  (str_cat.str-cat
+                    "mask source parameter "
+                    (string.int->string source)
+                    " is not bool")]
+                [(and
+                    (compiler-ir-spmd-value-class-eq?
+                      (compiler-ir-global-shared-view class)
+                      (CompilerIrSpmdValueClass.Varying))
+                    (compiler-ir-spmd-type-bool?
+                      (compiler-ir-global-shared-view source-ty)))
+                  (str_cat.str-cat
+                    "varying source parameter "
+                    (string.int->string source)
+                    " is bool; a varying bool is a mask")]
+                [else ""])]
+            [(CompilerIrSpmdPrivateParamRole.IndexBase)
+              (cond
+                [(= index 0) "physical parameter 0 is not the active mask"]
+                [(not (= index (- abi.params.len 1)))
+                  (str_cat.str-cat
+                    "index base at physical parameter "
+                    (string.int->string index)
+                    " is not the last parameter")]
+                [(not
+                    (compiler-ir-spmd-type-i64?
+                      (compiler-ir-global-shared-view ty)))
+                  "index base parameter is not i64"]
+                [else ""])])])]))
+
+(define (compiler-ir-spmd-private-index-error [abi : CompilerIrSpmdPrivateAbi]) : String
+  (let
+    [last-index-base? : bool
+      (and
+        (> abi.params.len 1)
+        (match (compiler-ir-spmd-private-param-seq-ref
+          (compiler-ir-global-shared-view abi.params)
+          (- abi.params.len 1))
+          [(CompilerIrSpmdPrivateParam.Param
+              _
+              (CompilerIrSpmdPrivateParamRole.IndexBase)
+              _)
+            true]
+          [_ false]))]
+    [scalar? : bool
+      (compiler-ir-spmd-backend-eq?
+        (compiler-ir-global-shared-view abi.backend)
+        (CompilerIrSpmdBackend.Scalar))]
+    (match abi.index
+      [(CompilerIrSpmdPrivateIndex.None)
+        (if last-index-base?
+          "index base parameter without an appended index mapping"
+          "")]
+      [(CompilerIrSpmdPrivateIndex.ReuseSource source)
+        (cond
+          [scalar? "scalar descriptor maps a logical index"]
+          [last-index-base? "index base parameter with a reused source index"]
+          [(or
+              (< source 0)
+              (>=
+                source
+                (compiler-ir-spmd-private-abi-source-count
+                  (compiler-ir-global-shared-view abi))))
+            (str_cat.str-cat
+              "reused index source parameter "
+              (string.int->string source)
+              " is out of range")]
+          [else
+            (match (compiler-ir-spmd-private-param-seq-ref
+              (compiler-ir-global-shared-view abi.params)
+              (+ source 1))
+              [(CompilerIrSpmdPrivateParam.Param
+                  _
+                  (CompilerIrSpmdPrivateParamRole.Source _ class _)
+                  _)
+                (if (compiler-ir-spmd-value-class-eq?
+                  (compiler-ir-global-shared-view class)
+                  (CompilerIrSpmdValueClass.Varying))
+                  ""
+                  (str_cat.str-cat
+                    "reused index source parameter "
+                    (string.int->string source)
+                    " is not varying"))]
+              [_
+                (str_cat.str-cat
+                  "reused index source parameter "
+                  (string.int->string source)
+                  " is not a source parameter")])])]
+      [(CompilerIrSpmdPrivateIndex.Appended ordinal)
+        (cond
+          [scalar? "scalar descriptor maps a logical index"]
+          [(not (= ordinal (- abi.params.len 1)))
+            (str_cat.str-cat
+              "appended index maps physical parameter "
+              (string.int->string ordinal)
+              ", not the last")]
+          [(not last-index-base?)
+            "appended index mapping without an index base parameter"]
+          [else ""])])))
+
+(define (compiler-ir-spmd-private-result-shape-error
+  [result : CompilerIrSpmdPrivateResult]) : String
+  (match result
+    [(CompilerIrSpmdPrivateResult.Unit) ""]
+    [(CompilerIrSpmdPrivateResult.Value class ty)
+      (cond
+        [(compiler-ir-spmd-type-unit? (compiler-ir-global-shared-view ty))
+          "valued result has type unit"]
+        [(and
+            (compiler-ir-spmd-value-class-eq?
+              (compiler-ir-global-shared-view class)
+              (CompilerIrSpmdValueClass.Mask))
+            (not
+              (compiler-ir-spmd-type-bool? (compiler-ir-global-shared-view ty))))
+          "mask result is not bool"]
+        [(and
+            (compiler-ir-spmd-value-class-eq?
+              (compiler-ir-global-shared-view class)
+              (CompilerIrSpmdValueClass.Varying))
+            (compiler-ir-spmd-type-bool? (compiler-ir-global-shared-view ty)))
+          "varying result is bool; a varying bool is a mask"]
+        [else ""])]))
+
+;; A descriptor's own consistency, independent of any function or call: lane
+;; count for the backend, the active mask first, source parameters contiguous
+;; and in source order, an index base only as the last parameter and only with
+;; an appended index mapping, and a result whose class fits its type.
+(define (compiler-ir-spmd-private-abi-shape-error
+  [abi : CompilerIrSpmdPrivateAbi]) : String
+  (let
+    [lanes-error : String (compiler-ir-spmd-lanes-error abi.backend abi.lanes)]
+    [param-error : String ""]
+    [index : i64 0]
+    (cond
+      [(> (string.string-length lanes-error) 0) lanes-error]
+      [(< abi.params.len 1) "descriptor has no active mask parameter"]
+      [else
+        (begin
+          (while (and
+            (= (string.string-length param-error) 0)
+            (< index abi.params.len))
+            (begin
+              (set!
+                param-error
+                (compiler-ir-spmd-private-param-shape-error
+                  (compiler-ir-global-shared-view abi)
+                  index))
+              (set! index (+ index 1))))
+          (if (> (string.string-length param-error) 0)
+            param-error
+            (let
+              [index-error : String
+                (compiler-ir-spmd-private-index-error
+                  (compiler-ir-global-shared-view abi))]
+              (if (> (string.string-length index-error) 0)
+                index-error
+                (compiler-ir-spmd-private-result-shape-error
+                  (compiler-ir-global-shared-view abi.result))))))])))
+
+;; The helper side: the descriptor must be well formed, name this function, and
+;; agree with the actual signature parameter by parameter and on the return type.
+(define (compiler-ir-spmd-private-abi-signature-error
+  [name : i64]
+  [params : CompilerIrParamSeq]
+  [ret : ast.AstType]
+  [abi : CompilerIrSpmdPrivateAbi]) : String
+  (let
+    [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    [shape-error : String
+      (compiler-ir-spmd-private-abi-shape-error
+        (compiler-ir-global-shared-view abi))]
+    [problem : String ""]
+    [index : i64 0]
+    (begin
+      (cond
+        [(> (string.string-length shape-error) 0) (set! problem shape-error)]
+        [(not (compiler-ir-symbol-eq? abi.callee name))
+          (set!
+            problem
+            (str_cat.str-cat
+              "descriptor names callee @"
+              (compiler-ir-symbol-text abi.callee)))]
+        [(not (= params.len abi.params.len))
+          (set!
+            problem
+            (str_cat.str-cat
+              "descriptor has "
+              (string.int->string abi.params.len)
+              " physical parameters, the signature has "
+              (string.int->string params.len)))]
+        [else
+          (begin
+            (while (and
+              (= (string.string-length problem) 0)
+              (< index params.len))
+              (begin
+                (match (compiler-ir-param-seq-ref
+                  (compiler-ir-global-shared-view params)
+                  index)
+                  [(CompilerIrParam.Param _ param-ty _)
+                    (match (compiler-ir-spmd-private-param-seq-ref
+                      (compiler-ir-global-shared-view abi.params)
+                      index)
+                      [(CompilerIrSpmdPrivateParam.Param _ _ abi-ty)
+                        (if (ast.ast-type-eq-with-seg-bases?
+                          bases
+                          (compiler-ir-global-shared-view param-ty)
+                          (compiler-ir-global-shared-view abi-ty))
+                          unit
+                          (set!
+                            problem
+                            (str_cat.str-cat
+                              "physical parameter "
+                              (string.int->string index)
+                              " type differs from the signature")))])])
+                (set! index (+ index 1))))
+            (if (> (string.string-length problem) 0)
+              unit
+              (match abi.result
+                [(CompilerIrSpmdPrivateResult.Unit)
+                  (if (compiler-ir-spmd-type-unit?
+                    (compiler-ir-global-shared-view ret))
+                    unit
+                    (set!
+                      problem
+                      "unit result but the signature returns a value"))]
+                [(CompilerIrSpmdPrivateResult.Value _ ty)
+                  (if (ast.ast-type-eq-with-seg-bases?
+                    bases
+                    (compiler-ir-global-shared-view ret)
+                    (compiler-ir-global-shared-view ty))
+                    unit
+                    (set! problem "result type differs from the signature"))])))])
+      (if (= (string.string-length problem) 0)
+        ""
+        (str_cat.str-cat
+          "private SPMD ABI of @"
+          (compiler-ir-symbol-text name)
+          ": "
+          problem)))))
+
+(define (compiler-ir-spmd-private-call-arg-error
+  [bases : i64]
+  [abi : CompilerIrSpmdPrivateAbi]
+  [args : CompilerIrSpmdCallArgSeq]
+  [index : i64]) : String
+  (match (array-ref args.slots index)
+    [(CompilerIrSpmdCallArg.Arg arg-class _ arg-ty)
+      (match (compiler-ir-spmd-private-param-seq-ref
+        (compiler-ir-global-shared-view abi.params)
+        (+ index 1))
+        [(CompilerIrSpmdPrivateParam.Param _ role _)
+          (match role
+            [(CompilerIrSpmdPrivateParamRole.Source _ class source-ty)
+              (cond
+                [(not
+                    (compiler-ir-spmd-value-class-eq?
+                      (compiler-ir-global-shared-view arg-class)
+                      (compiler-ir-global-shared-view class)))
+                  (str_cat.str-cat
+                    "argument "
+                    (string.int->string index)
+                    " is "
+                    (compiler-ir-spmd-value-class-render
+                      (compiler-ir-global-shared-view arg-class))
+                    ", the descriptor says "
+                    (compiler-ir-spmd-value-class-render
+                      (compiler-ir-global-shared-view class)))]
+                [(not
+                    (ast.ast-type-eq-with-seg-bases?
+                      bases
+                      (compiler-ir-global-shared-view arg-ty)
+                      (compiler-ir-global-shared-view source-ty)))
+                  (str_cat.str-cat
+                    "argument "
+                    (string.int->string index)
+                    " type differs from the descriptor")]
+                [else ""])]
+            [(CompilerIrSpmdPrivateParamRole.IndexBase)
+              (if (and
+                (compiler-ir-spmd-value-class-eq?
+                  (compiler-ir-global-shared-view arg-class)
+                  (CompilerIrSpmdValueClass.Uniform))
+                (compiler-ir-spmd-type-i64?
+                  (compiler-ir-global-shared-view arg-ty)))
+                ""
+                (str_cat.str-cat
+                  "argument "
+                  (string.int->string index)
+                  " is not the uniform i64 index base"))]
+            [(CompilerIrSpmdPrivateParamRole.ActiveMask)
+              (str_cat.str-cat
+                "argument "
+                (string.int->string index)
+                " maps the active mask")])])]))
+
+;; The call side: a same-program call's payload against the descriptor it
+;; carries. Arguments follow the physical parameters after the active mask, in
+;; order; the active mask travels separately in the payload.
+(define (compiler-ir-spmd-private-call-error
+  [payload : CompilerIrInstrSpmdCallPayload]
+  [abi : CompilerIrSpmdPrivateAbi]) : String
+  (let
+    [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    [shape-error : String
+      (compiler-ir-spmd-private-abi-shape-error
+        (compiler-ir-global-shared-view abi))]
+    [problem : String ""]
+    [index : i64 0]
+    (begin
+      (cond
+        [(> (string.string-length shape-error) 0) (set! problem shape-error)]
+        [(not (compiler-ir-symbol-eq? payload.callee abi.callee))
+          (set!
+            problem
+            (str_cat.str-cat
+              "the descriptor names callee @"
+              (compiler-ir-symbol-text abi.callee)))]
+        [(not
+            (compiler-ir-spmd-backend-eq?
+              (compiler-ir-global-shared-view payload.backend)
+              (compiler-ir-global-shared-view abi.backend)))
+          (set!
+            problem
+            (str_cat.str-cat
+              "call backend "
+              (compiler-ir-spmd-backend-render
+                (compiler-ir-global-shared-view payload.backend))
+              ", the descriptor says "
+              (compiler-ir-spmd-backend-render
+                (compiler-ir-global-shared-view abi.backend))))]
+        [(not (= payload.lanes abi.lanes))
+          (set!
+            problem
+            (str_cat.str-cat
+              "call has "
+              (string.int->string payload.lanes)
+              " lanes, the descriptor "
+              (string.int->string abi.lanes)))]
+        [(not
+            (match payload.active-mask
+              [(CompilerIrValue.Var _) true]
+              [(CompilerIrValue.Bool _) true]
+              [_ false]))
+          (set! problem "active mask is not a bool value")]
+        [(not (= payload.args.len (- abi.params.len 1)))
+          (set!
+            problem
+            (str_cat.str-cat
+              "call has "
+              (string.int->string payload.args.len)
+              " arguments, the descriptor "
+              (string.int->string (- abi.params.len 1))))]
+        [else
+          (begin
+            (while (and
+              (= (string.string-length problem) 0)
+              (< index payload.args.len))
+              (begin
+                (set!
+                  problem
+                  (compiler-ir-spmd-private-call-arg-error
+                    bases
+                    (compiler-ir-global-shared-view abi)
+                    (compiler-ir-global-shared-view payload.args)
+                    index))
+                (set! index (+ index 1))))
+            (if (> (string.string-length problem) 0)
+              unit
+              (match payload.result
+                [(CompilerIrSpmdCallResult.Unit)
+                  (match abi.result
+                    [(CompilerIrSpmdPrivateResult.Unit) unit]
+                    [_ (set! problem "unit call of a valued helper")])]
+                [(CompilerIrSpmdCallResult.Value _ class ty)
+                  (match abi.result
+                    [(CompilerIrSpmdPrivateResult.Unit)
+                      (set! problem "valued call of a unit helper")]
+                    [(CompilerIrSpmdPrivateResult.Value abi-class abi-ty)
+                      (cond
+                        [(not
+                            (compiler-ir-spmd-value-class-eq?
+                              (compiler-ir-global-shared-view class)
+                              (compiler-ir-global-shared-view abi-class)))
+                          (set!
+                            problem
+                            (str_cat.str-cat
+                              "result is "
+                              (compiler-ir-spmd-value-class-render
+                                (compiler-ir-global-shared-view class))
+                              ", the descriptor says "
+                              (compiler-ir-spmd-value-class-render
+                                (compiler-ir-global-shared-view abi-class))))]
+                        [(not
+                            (ast.ast-type-eq-with-seg-bases?
+                              bases
+                              (compiler-ir-global-shared-view ty)
+                              (compiler-ir-global-shared-view abi-ty)))
+                          (set!
+                            problem
+                            "result type differs from the descriptor")]
+                        [else unit])])])))])
+      (if (= (string.string-length problem) 0)
+        ""
+        (str_cat.str-cat
+          "private SPMD call to @"
+          (compiler-ir-symbol-text payload.callee)
+          ": "
+          problem)))))
+
+;; --- whole program ---
+;; Whether any function in `functions` has symbol `name`. Only failed private
+;; call lookups ask, so a valid program never pays for the scan.
+(define (compiler-ir-function-seq-names?
+  [functions : CompilerIrFunctionSeq]
+  [name : i64]) : bool
+  (let
+    [found : bool false]
+    [index : i64 0]
+    (begin
+      (while (and (not found) (< index functions.len))
+        (begin
+          (match (compiler-ir-array-shared-view functions.slots index)
+            [(CompilerIrFunction.Function function-name _ _ _ _ _)
+              (set! found (compiler-ir-symbol-eq? function-name name))])
+          (set! index (+ index 1))))
+      found)))
+
+(define (compiler-ir-spmd-private-call-callee-error
+  [functions : CompilerIrFunctionSeq]
+  [private-index : ir_i64_i64_map.Map]
+  [caller : i64]
+  [payload : CompilerIrInstrSpmdCallPayload]) : String
+  (let
+    [slot : i64
+      (match (ir_i64_i64_map.get
+        (& private-index)
+        (compiler-ir-symbol-id payload.callee))
+        [(ir_i64_i64_map.LookupFound found) found]
+        [(ir_i64_i64_map.LookupMissing) -1])]
+    [problem : String
+      (match payload.origin
+        [(CompilerIrSpmdCallOrigin.Imported _)
+          (if (>= slot 0)
+            "imported call targets a same-program private helper"
+            "")]
+        [(CompilerIrSpmdCallOrigin.Private private-box)
+          (let
+            [call-error : String
+              (compiler-ir-spmd-private-call-error
+                (compiler-ir-global-shared-view payload)
+                (compiler-ir-box-shared-view private-box))]
+            (cond
+              [(> (string.string-length call-error) 0) call-error]
+              [(< slot 0)
+                (str_cat.str-cat
+                  "private SPMD call to @"
+                  (compiler-ir-symbol-text payload.callee)
+                  (if (compiler-ir-function-seq-names?
+                    (compiler-ir-global-shared-view functions)
+                    payload.callee)
+                    ": the callee has the ordinary ABI"
+                    ": no same-program private helper has that name"))]
+              [else
+                (match (compiler-ir-array-shared-view functions.slots slot)
+                  [(CompilerIrFunction.Function _ _ _ _ _ function-abi)
+                    (match function-abi
+                      [(CompilerIrFunctionAbi.SpmdPrivate helper-box)
+                        (if (compiler-ir-spmd-private-abi-eq?
+                          (ast.ast-node-pool-reader-type-segment-bases)
+                          (compiler-ir-box-shared-view private-box)
+                          (compiler-ir-box-shared-view helper-box))
+                          ""
+                          (str_cat.str-cat
+                            "private SPMD call to @"
+                            (compiler-ir-symbol-text payload.callee)
+                            ": the call's descriptor differs from the helper's"))]
+                      [(CompilerIrFunctionAbi.Ordinary)
+                        (str_cat.str-cat
+                          "private SPMD call to @"
+                          (compiler-ir-symbol-text payload.callee)
+                          ": the callee has the ordinary ABI")])])]))])]
+    (if (= (string.string-length problem) 0)
+      ""
+      (str_cat.str-cat "in @" (compiler-ir-symbol-text caller) ": " problem))))
+
+(define (compiler-ir-spmd-private-instr-seq-error
+  [functions : CompilerIrFunctionSeq]
+  [private-index : ir_i64_i64_map.Map]
+  [caller : i64]
+  [instrs : CompilerIrInstrSeq]) : String
+  (let
+    [problem : String ""]
+    [index : i64 0]
+    (begin
+      (while (and (= (string.string-length problem) 0) (< index instrs.len))
+        (begin
+          (match (compiler-ir-array-shared-view instrs.slots index)
+            [(CompilerIrInstr.SpmdCall payload-box)
+              (set!
+                problem
+                (compiler-ir-spmd-private-call-callee-error
+                  (compiler-ir-global-shared-view functions)
+                  (compiler-ir-global-shared-view private-index)
+                  caller
+                  (compiler-ir-box-shared-view payload-box)))]
+            [_ unit])
+          (set! index (+ index 1))))
+      problem)))
+
+(define (compiler-ir-spmd-private-block-list-error
+  [functions : CompilerIrFunctionSeq]
+  [private-index : ir_i64_i64_map.Map]
+  [caller : i64]
+  [blocks : CompilerIrBlockList]) : String
+  (match (compiler-ir-global-shared-view blocks)
+    [(CompilerIrBlockList.Nil) ""]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (let
+            [problem : String
+              (compiler-ir-spmd-private-instr-seq-error
+                (compiler-ir-global-shared-view functions)
+                (compiler-ir-global-shared-view private-index)
+                caller
+                (compiler-ir-global-shared-view instrs))]
+            (if (> (string.string-length problem) 0)
+              problem
+              (compiler-ir-spmd-private-block-list-error
+                functions
+                private-index
+                caller
+                (compiler-ir-box-shared-view rest))))])]
+    [(CompilerIrBlockList.Array seq)
+      (let
+        [problem : String ""]
+        [index : i64 0]
+        (begin
+          (while (and (= (string.string-length problem) 0) (< index seq.len))
+            (begin
+              (match (compiler-ir-array-shared-view seq.slots index)
+                [(CompilerIrBlock.Block _ instrs)
+                  (set!
+                    problem
+                    (compiler-ir-spmd-private-instr-seq-error
+                      (compiler-ir-global-shared-view functions)
+                      (compiler-ir-global-shared-view private-index)
+                      caller
+                      (compiler-ir-global-shared-view instrs)))])
+              (set! index (+ index 1))))
+          problem))]))
+
+;; Whole-program private SPMD ABI admission. Every private helper's descriptor
+;; must match its own signature; every same-program call must pass its payload
+;; check and carry a descriptor structurally equal to its callee's; an imported
+;; call may not target a same-program private helper. Returns "" or the first
+;; problem, prefixed with the function it was found in.
+(define (compiler-ir-spmd-private-abi-program-error
+  [functions : CompilerIrFunctionSeq]) : String
+  (let
+    [private-index : ir_i64_i64_map.Map (ir_i64_i64_map.with-capacity 8)]
+    [problem : String ""]
+    [index : i64 0]
+    (begin
+      (while (and (= (string.string-length problem) 0) (< index functions.len))
+        (begin
+          (match (compiler-ir-array-shared-view functions.slots index)
+            [(CompilerIrFunction.Function name params ret _ _ function-abi)
+              (match function-abi
+                [(CompilerIrFunctionAbi.Ordinary) unit]
+                [(CompilerIrFunctionAbi.SpmdPrivate private-box)
+                  (begin
+                    (set!
+                      problem
+                      (compiler-ir-spmd-private-abi-signature-error
+                        name
+                        (compiler-ir-global-shared-view params)
+                        (compiler-ir-global-shared-view ret)
+                        (compiler-ir-box-shared-view private-box)))
+                    (ir_i64_i64_map.insert-ref!
+                      (&mut private-index)
+                      (compiler-ir-symbol-id name)
+                      index))])])
+          (set! index (+ index 1))))
+      (set! index 0)
+      (while (and (= (string.string-length problem) 0) (< index functions.len))
+        (begin
+          (match (compiler-ir-array-shared-view functions.slots index)
+            [(CompilerIrFunction.Function name _ _ _ blocks _)
+              (set!
+                problem
+                (compiler-ir-spmd-private-block-list-error
+                  (compiler-ir-global-shared-view functions)
+                  (compiler-ir-global-shared-view private-index)
+                  name
+                  (compiler-ir-global-shared-view blocks)))])
+          (set! index (+ index 1))))
+      problem)))
 
 ;; Compare segments without assembling temporary strings on every optimizer
 ;; integrity pass. The imported catalog is immutable; successful verification
@@ -1422,12 +2577,19 @@
             args
             (+ index 1)))])))
 
-;; Return an empty error for a valid selected imported row. This deliberately
-;; uses only the owned IR descriptor and call payload, never loader/TLCI state.
+;; Return an empty error when the call payload agrees with the descriptor its
+;; origin carries: a same-program call's private ABI, or an imported call's
+;; selected catalog row. This deliberately uses only the owned IR descriptor
+;; and call payload, never loader/TLCI state. Whether a private call's
+;; descriptor is its callee's is a whole-program question, answered by
+;; `compiler-ir-spmd-private-abi-program-error`.
 (define (compiler-ir-spmd-call-descriptor-error
   [payload : CompilerIrInstrSpmdCallPayload]) : String
   (match payload.origin
-    [(CompilerIrSpmdCallOrigin.Private) ""]
+    [(CompilerIrSpmdCallOrigin.Private private-box)
+      (compiler-ir-spmd-private-call-error
+        (compiler-ir-global-shared-view payload)
+        (compiler-ir-box-shared-view private-box))]
     [(CompilerIrSpmdCallOrigin.Imported selected-box)
       (let
         [selected : CompilerIrImportedSpmdCall
@@ -1535,7 +2697,13 @@
   (len i64))
 
 (defenum CompilerIrFunction
-  (Function i64 CompilerIrParamSeq ast.AstType i64 CompilerIrBlockList))
+  (Function
+    i64
+    CompilerIrParamSeq
+    ast.AstType
+    i64
+    CompilerIrBlockList
+    CompilerIrFunctionAbi))
 
 (defstruct CompilerIrFunctionSeq
   (slots (__tl_dyn-array CompilerIrFunction))
@@ -2215,13 +3383,14 @@
 
 (define (compiler-ir-function-compact-blocks [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
-    [(CompilerIrFunction.Function name params ret vars blocks)
+    [(CompilerIrFunction.Function name params ret vars blocks function-abi)
       (CompilerIrFunction.Function
         name
         params
         ret
         vars
-        (compiler-ir-block-list-compact blocks))]))
+        (compiler-ir-block-list-compact blocks)
+        function-abi)]))
 
 (define (compiler-ir-param-seq-empty) : CompilerIrParamSeq
   (CompilerIrParamSeq (__tl_make-array CompilerIrParam 0) 0))
@@ -3774,8 +4943,10 @@
           (compiler-ir-clone-spmd-call-arg-seq
             (compiler-ir-global-shared-view pools)
             args)
-          (compiler-ir-clone-spmd-call-result pools result)
-          (clone origin)))]
+          (compiler-ir-clone-spmd-call-result
+            (compiler-ir-global-shared-view pools)
+            result)
+          (compiler-ir-clone-spmd-call-origin pools origin)))]
     [(CompilerIrInstr.TailCall name args ty)
       (CompilerIrInstr.TailCall
         (compiler-ir-symbol-clone name)
@@ -3970,7 +5141,7 @@
   [pools : ast.AstNodePoolContext]
   [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
-    [(CompilerIrFunction.Function name params ret vars blocks)
+    [(CompilerIrFunction.Function name params ret vars blocks function-abi)
       (CompilerIrFunction.Function
         (compiler-ir-symbol-clone name)
         (compiler-ir-clone-param-seq
@@ -3981,7 +5152,10 @@
         (compiler-ir-block-list-compact
           (compiler-ir-clone-block-list
             (compiler-ir-global-shared-view pools)
-            blocks)))]))
+            blocks))
+        (compiler-ir-clone-function-abi
+          (compiler-ir-global-shared-view pools)
+          function-abi))]))
 
 (define (compiler-ir-clone-function-seq
   [pools : ast.AstNodePoolContext]
@@ -4577,6 +5751,34 @@
     ") : "
     (compiler-ir-type-render structural-session type-segment-bases ty)))
 
+;; Origin suffix of a rendered `spmd_call`: the full private descriptor, or the
+;; selected imported helper and the symbol it links to.
+(define (compiler-ir-spmd-call-origin-render
+  [structural-session : cis.InternStructuralSessionHandle]
+  [type-segment-bases : i64]
+  [origin : CompilerIrSpmdCallOrigin]) : String
+  (match origin
+    [(CompilerIrSpmdCallOrigin.Private private-box)
+      (str_cat.str-cat
+        " private "
+        (compiler-ir-spmd-private-abi-render
+          structural-session
+          type-segment-bases
+          (compiler-ir-box-shared-view private-box)))]
+    [(CompilerIrSpmdCallOrigin.Imported selected-box)
+      (let
+        [selected : CompilerIrImportedSpmdCall
+          (compiler-ir-box-shared-view selected-box)]
+        (str_cat.str-cat
+          " imported "
+          selected.package-owner
+          "/"
+          selected.canonical-helper
+          " "
+          selected.abi
+          " "
+          selected.link-symbol))]))
+
 (define (compiler-ir-spmd-call-render
   [structural-session : cis.InternStructuralSessionHandle]
   [type-segment-bases : i64]
@@ -4585,7 +5787,8 @@
   [lanes : i64]
   [active-mask : CompilerIrValue]
   [args : CompilerIrSpmdCallArgSeq]
-  [result : CompilerIrSpmdCallResult]) : String
+  [result : CompilerIrSpmdCallResult]
+  [origin : CompilerIrSpmdCallOrigin]) : String
   (str_cat.str-cat
     "  spmd_call "
     (compiler-ir-symbol-text callee)
@@ -4604,7 +5807,11 @@
     (compiler-ir-spmd-result-render
       structural-session
       type-segment-bases
-      result)))
+      result)
+    (compiler-ir-spmd-call-origin-render
+      structural-session
+      type-segment-bases
+      origin)))
 
 (define (compiler-ir-tail-call-indirect-render
   [structural-session : cis.InternStructuralSessionHandle]
@@ -5252,6 +6459,7 @@
           (compiler-ir-box-field-shared-view payload-box active-mask)]
         [args (compiler-ir-box-field-shared-view payload-box args)]
         [result (compiler-ir-box-field-shared-view payload-box result)]
+        [origin (compiler-ir-box-field-shared-view payload-box origin)]
         (compiler-ir-spmd-call-render
           structural-session
           type-segment-bases
@@ -5260,7 +6468,8 @@
           lanes
           active-mask
           args
-          result))]
+          result
+          origin))]
     [(CompilerIrInstr.Store dst value ty)
       (str_cat.str-cat
         "  store %"
@@ -5494,7 +6703,7 @@
   [type-segment-bases : i64]
   [func : CompilerIrFunction]) : String
   (match func
-    [(CompilerIrFunction.Function name params ret vars blocks)
+    [(CompilerIrFunction.Function name params ret vars blocks function-abi)
       (str_cat.str-cat
         "function @"
         (compiler-ir-symbol-text name)
@@ -5507,6 +6716,15 @@
         (compiler-ir-type-render structural-session type-segment-bases ret)
         " vars "
         (string.int->string vars)
+        (match function-abi
+          [(CompilerIrFunctionAbi.Ordinary) ""]
+          [(CompilerIrFunctionAbi.SpmdPrivate private-box)
+            (str_cat.str-cat
+              " abi "
+              (compiler-ir-spmd-private-abi-render
+                structural-session
+                type-segment-bases
+                (compiler-ir-box-shared-view private-box)))])
         " {\n"
         (compiler-ir-block-list-render
           structural-session
@@ -7207,45 +8425,49 @@
               (set! index (+ index 1))))
           total))]))
 
+(define (compiler-ir-function-abi [func : CompilerIrFunction]) : CompilerIrFunctionAbi
+  (match func
+    [(CompilerIrFunction.Function _ _ _ _ _ function-abi) (clone function-abi)]))
+
 (define (compiler-ir-function-block-count [func : CompilerIrFunction]) : i64
   (match func
-    [(CompilerIrFunction.Function _ _ _ _ blocks)
+    [(CompilerIrFunction.Function _ _ _ _ blocks _)
       (compiler-ir-block-list-count blocks)]))
 
 (define (compiler-ir-function-instruction-count [func : CompilerIrFunction]) : i64
   (match func
-    [(CompilerIrFunction.Function _ _ _ _ blocks)
+    [(CompilerIrFunction.Function _ _ _ _ blocks _)
       (compiler-ir-block-list-instruction-count blocks)]))
 
 (define (compiler-ir-function-empty-block-count [func : CompilerIrFunction]) : i64
   (match func
-    [(CompilerIrFunction.Function _ _ _ _ blocks)
+    [(CompilerIrFunction.Function _ _ _ _ blocks _)
       (compiler-ir-block-list-empty-count blocks)]))
 
 (define (compiler-ir-function-max-instruction-count [func : CompilerIrFunction]) : i64
   (match func
-    [(CompilerIrFunction.Function _ _ _ _ blocks)
+    [(CompilerIrFunction.Function _ _ _ _ blocks _)
       (compiler-ir-block-list-instruction-count blocks)]))
 
 (define (compiler-ir-function-max-block-instruction-count
   [func : CompilerIrFunction]) : i64
   (match func
-    [(CompilerIrFunction.Function _ _ _ _ blocks)
+    [(CompilerIrFunction.Function _ _ _ _ blocks _)
       (compiler-ir-block-list-max-instruction-count blocks)]))
 
 (define (compiler-ir-function-call-arg-count [func : CompilerIrFunction]) : i64
   (match func
-    [(CompilerIrFunction.Function _ _ _ _ blocks)
+    [(CompilerIrFunction.Function _ _ _ _ blocks _)
       (compiler-ir-block-list-call-arg-count blocks)]))
 
 (define (compiler-ir-function-phi-input-count [func : CompilerIrFunction]) : i64
   (match func
-    [(CompilerIrFunction.Function _ _ _ _ blocks)
+    [(CompilerIrFunction.Function _ _ _ _ blocks _)
       (compiler-ir-block-list-phi-input-count blocks)]))
 
 (define (compiler-ir-function-var-count [func : CompilerIrFunction]) : i64
   (match func
-    [(CompilerIrFunction.Function _ _ _ vars _) vars]))
+    [(CompilerIrFunction.Function _ _ _ vars _ _) vars]))
 
 (define (compiler-ir-function-seq-block-count
   [functions : CompilerIrFunctionSeq]) : i64
@@ -8833,7 +10055,7 @@
 (define (compiler-ir-representation-function-var-types
   [func : CompilerIrFunction]) : CompilerIrRepresentationVarTypes
   (match func
-    [(CompilerIrFunction.Function _ params _ vars blocks)
+    [(CompilerIrFunction.Function _ params _ vars blocks _)
       (let
         [types : CompilerIrRepresentationVarTypes
           (CompilerIrRepresentationVarTypes
@@ -9056,7 +10278,7 @@
   [index : CompilerIrRepresentationIndex]
   [func : CompilerIrFunction]) : CompilerIrRepresentationIndex
   (match (compiler-ir-global-shared-view func)
-    [(CompilerIrFunction.Function _ params ret-ty _ blocks)
+    [(CompilerIrFunction.Function _ params ret-ty _ blocks _)
       (let
         [types : CompilerIrRepresentationVarTypes
           (compiler-ir-representation-function-var-types
@@ -9376,7 +10598,7 @@
   [index : CompilerIrRepresentationIndex]
   [func : CompilerIrFunction]) : CompilerIrRepresentationIndex
   (match func
-    [(CompilerIrFunction.Function _ params ret-ty _ blocks)
+    [(CompilerIrFunction.Function _ params ret-ty _ blocks _)
       (compiler-ir-representation-collect-one-blocks
         type-segment-bases
         (compiler-ir-representation-collect-one-type
@@ -9858,8 +11080,136 @@
   (if (or (< index 0) (>= index functions.len))
     false
     (match (array-ref functions.slots index)
-      [(CompilerIrFunction.Function name _ _ _ _)
+      [(CompilerIrFunction.Function name _ _ _ _ _)
         (string.eq (compiler-ir-symbol-text name) want)])))
+
+;; Test support: a descriptor's rendering without its generated callee name,
+;; the one part a test cannot spell: "<backend> lanes N [...] index ... result".
+(define (compiler-ir-test-spmd-private-abi-shape
+  [abi : CompilerIrSpmdPrivateAbi]) : String
+  (let
+    [text : String
+      (compiler-ir-spmd-private-abi-render
+        (cis.InternStructuralSessionHandle 0)
+        (ast.ast-node-pool-reader-type-segment-bases)
+        abi)]
+    [length : i64 (string.string-length text)]
+    [index : i64 0]
+    [spaces : i64 0]
+    (begin
+      (while (and (< spaces 2) (< index length))
+        (begin
+          (if (= (string.string-ref text index) ' ')
+            (set! spaces (+ spaces 1))
+            unit)
+          (set! index (+ index 1))))
+      (string.substring text index (- length index)))))
+
+;; Test support: the shapes of every private helper in `functions`, in function order,
+;; separated by " | ".
+(define (compiler-ir-test-spmd-private-abi-shapes
+  [functions : CompilerIrFunctionSeq]) : String
+  (let
+    [out : String ""]
+    [index : i64 0]
+    (begin
+      (while (< index functions.len)
+        (begin
+          (match (compiler-ir-function-seq-ref
+            (compiler-ir-global-shared-view functions)
+            index)
+            [(CompilerIrFunction.Function _ _ _ _ _ function-abi)
+              (match function-abi
+                [(CompilerIrFunctionAbi.Ordinary) unit]
+                [(CompilerIrFunctionAbi.SpmdPrivate private-box)
+                  (let
+                    [separator : String
+                      (if (= (string.string-length out) 0)
+                        ""
+                        " | ")]
+                    (set!
+                      out
+                      (str_cat.str-cat
+                        out
+                        separator
+                        (compiler-ir-test-spmd-private-abi-shape
+                          (compiler-ir-box-shared-view private-box)))))])])
+          (set! index (+ index 1))))
+      out)))
+
+;; Test support: the private SPMD ABI a helper called with exactly `args` and
+;; `result` would have, with each physical parameter typed as its source type
+;; and no index mapping.
+(define (compiler-ir-test-spmd-private-abi
+  [callee : i64]
+  [backend : CompilerIrSpmdBackend]
+  [lanes : i64]
+  [args : CompilerIrSpmdCallArgSeq]
+  [result : CompilerIrSpmdCallResult]) : CompilerIrSpmdPrivateAbi
+  (let
+    [params : CompilerIrSpmdPrivateParamSeq
+      (compiler-ir-spmd-private-param-seq-with-capacity (+ args.len 1))]
+    [index : i64 0]
+    (begin
+      (compiler-ir-spmd-private-param-seq-push!
+        (&mut params)
+        (CompilerIrSpmdPrivateParam.Param
+          0
+          (CompilerIrSpmdPrivateParamRole.ActiveMask)
+          (ast.AstType.Bool)))
+      (while (< index args.len)
+        (begin
+          (match (array-ref args.slots index)
+            [(CompilerIrSpmdCallArg.Arg class _ ty)
+              (compiler-ir-spmd-private-param-seq-push!
+                (&mut params)
+                (CompilerIrSpmdPrivateParam.Param
+                  (+ index 1)
+                  (CompilerIrSpmdPrivateParamRole.Source
+                    index
+                    (compiler-ir-clone-spmd-value-class class)
+                    (clone ty))
+                  (clone ty)))])
+          (set! index (+ index 1))))
+      (CompilerIrSpmdPrivateAbi
+        (CompilerIrSpmdPrivateAbiSchema.V1)
+        callee
+        backend
+        lanes
+        params
+        (CompilerIrSpmdPrivateIndex.None)
+        (match result
+          [(CompilerIrSpmdCallResult.Unit) (CompilerIrSpmdPrivateResult.Unit)]
+          [(CompilerIrSpmdCallResult.Value _ class ty)
+            (CompilerIrSpmdPrivateResult.Value
+              (compiler-ir-clone-spmd-value-class class)
+              (clone ty))])))))
+
+;; Test support: a same-program SPMD call carrying the descriptor
+;; `compiler-ir-test-spmd-private-abi` derives from its own payload.
+(define (compiler-ir-test-spmd-private-call
+  [callee : i64]
+  [backend : CompilerIrSpmdBackend]
+  [lanes : i64]
+  [active-mask : CompilerIrValue]
+  [args : CompilerIrSpmdCallArgSeq]
+  [result : CompilerIrSpmdCallResult]) : CompilerIrInstr
+  (let
+    [abi : CompilerIrSpmdPrivateAbi
+      (compiler-ir-test-spmd-private-abi
+        callee
+        (compiler-ir-clone-spmd-backend backend)
+        lanes
+        (compiler-ir-global-shared-view args)
+        (compiler-ir-global-shared-view result))]
+    (ir-instr-spmd-call-with-origin
+      callee
+      backend
+      lanes
+      active-mask
+      args
+      result
+      (compiler-ir-spmd-call-origin-private abi))))
 
 (define (compiler-ir-test-function [name : String]) : CompilerIrFunction
   (CompilerIrFunction.Function
@@ -9867,7 +11217,8 @@
     (compiler-ir-param-seq-empty)
     (ast.AstType.I64)
     1
-    CompilerIrBlockList.Nil))
+    CompilerIrBlockList.Nil
+    CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-ir-dense-builders-order-ok?) : bool
   (let
@@ -10009,7 +11360,8 @@
         (compiler-ir-global-shared-view params)
         (ast.AstType.Unit)
         8
-        CompilerIrBlockList.Nil)]
+        CompilerIrBlockList.Nil
+        CompilerIrFunctionAbi.Ordinary)]
     [cloned-func : CompilerIrFunction func]
     (begin
       (compiler-ir-param-builder-push!
@@ -10032,7 +11384,8 @@
           (compiler-ir-global-shared-view params)
           (ast.AstType.Unit)
           8
-          CompilerIrBlockList.Nil))
+          CompilerIrBlockList.Nil
+          CompilerIrFunctionAbi.Ordinary))
       (set!
         cloned-func
         (compiler-ir-clone-function (compiler-ir-global-shared-view pools) func))
@@ -10061,7 +11414,7 @@
           3)
         (compiler-ir-param-seq-entry-bool? cloned 1 "flag" 7)
         (match cloned-func
-          [(CompilerIrFunction.Function _ cloned-params _ _ _)
+          [(CompilerIrFunction.Function _ cloned-params _ _ _ _)
             (and
               (=
                 (compiler-ir-param-seq-count

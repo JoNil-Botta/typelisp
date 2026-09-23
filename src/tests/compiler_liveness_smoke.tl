@@ -17,7 +17,7 @@
           (ir.CompilerIrValue.Var 22)
           (live_tests.compiler-live-i64-ty)))]
     [instr : ir.CompilerIrInstr
-      (ir.ir-instr-spmd-call
+      (ir.compiler-ir-test-spmd-private-call
         (ci.intern-generated-canonical-name "helper")
         (ir.CompilerIrSpmdBackend.Avx512)
         8

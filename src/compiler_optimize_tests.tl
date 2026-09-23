@@ -104224,8 +104224,8 @@
 ;;
 ;; MEASURED and REFUSED, see the note above opt-const-globals-imm32-fits?: this
 ;; tree's allocator cannot rematerialize a wide immediate, so a wide literal
-;; global stays a cell read and only imm32 literals become operands. This
-;; fixture pins that decision so the next attempt has to move the note with it.
+;; stays a cell read in ordinary operand positions. A power-of-two multiply
+;; may instead consume the literal as an immediate shift count.
 (define (opt-t22-const-globals) : compiler_ir_types.CompilerIrGlobalSeq
   (let
     [builder : compiler_ir_types.CompilerIrGlobalBuilder
@@ -104447,13 +104447,19 @@
               cells.opaque)
             2))
         14]
-      ;; (c) the constant-global table: imm32 in, wide out.
+      ;; (c) wide constants still do not substitute into ordinary operands.
       [(not
           (opt_i64_i64_map.contains?
             (& const-table)
             (opt-test-symbol "t22_narrow")))
         15]
-      [(opt_i64_i64_map.contains? (& const-table) (opt-test-symbol "t22_wide"))
+      [(not
+          (opt-const-divisor-test-is-global?
+            (compiler_optimize.opt-const-global-subst-value
+              (compiler_optimize.compiler-opt-global-shared-view const-table)
+              (compiler_ir_types.CompilerIrValue.Global
+                (opt-test-symbol "t22_wide")))
+            "t22_wide"))
         16]
       ;; (d) IAG-2: a `(&mut h)` argument at a parameter-write position no
       ;; longer empties the table -- the cached word of g survives, because the
@@ -104495,7 +104501,7 @@
   (test.assert-i64-eq
     (compiler-optimize-t22-load-cse-precision-self-test)
     42
-    "load keys resolve the copies the pass makes and the inliner's parameter copies, a repeated scalar cell read materializes one Mov per write-free region (ended by a Store or by a call whose mod-ref row holds the cell, not by one whose row does not), an element-only callee's stored class keeps a differently classed handle entry, a cell word survives a call whose row excludes it, a cached cell word also survives a call that writes through a global handed to it as an argument (and does not when that global is the cached one, nor when the program carries no storage table), and the constant-global table still refuses wide literals"))
+    "load keys resolve the copies the pass makes and the inliner's parameter copies, a repeated scalar cell read materializes one Mov per write-free region (ended by a Store or by a call whose mod-ref row holds the cell, not by one whose row does not), an element-only callee's stored class keeps a differently classed handle entry, a cell word survives a call whose row excludes it, a cached cell word also survives a call that writes through a global handed to it as an argument (and does not when that global is the cached one, nor when the program carries no storage table), and ordinary operand substitution still refuses wide literals"))
 
 ;; --- T2-5: sibling phis, merge-body Movs, and deep forwarding chains --------
 ;;
@@ -111158,3 +111164,117 @@
             (opt-spmd-map-test-case mode count)
             (set! count (+ count 1))))
         (set! mode (+ mode 1))))))
+
+(define (opt-wide-power-mul-test
+  [power : i64]
+  [unsigned? : bool]
+  [left? : bool]) : bool
+  (let
+    [name : i64 (opt-test-symbol "wide_power")]
+    [builder : compiler_ir_types.CompilerIrGlobalBuilder
+      (compiler_ir_types.compiler-ir-global-builder-with-capacity 1)]
+    [_global : unit
+      (opt-test-global-builder-push!
+        (&mut builder)
+        name
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.I64 (shl 1 power)))]
+    [table : opt_i64_i64_map.Map
+      (compiler_optimize.opt-const-divisors-build
+        (compiler_ir_types.compiler-ir-global-builder-to-seq builder)
+        (compiler_ir_types.compiler-ir-function-seq-empty))]
+    [constant : compiler_ir_types.CompilerIrValue
+      (compiler_ir_types.CompilerIrValue.Global name)]
+    [variable : compiler_ir_types.CompilerIrValue
+      (compiler_ir_types.CompilerIrValue.Var 7)]
+    [ty : compiler_ast_types.AstType
+      (if unsigned?
+        (compiler_ast_types.AstType.U64)
+        (compiler_ast_types.AstType.I64))]
+    [out : compiler_ir_types.CompilerIrInstr
+      (compiler_optimize.opt-const-divisor-rewrite-instr
+        (compiler_optimize.compiler-opt-global-shared-view table)
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          9
+          (compiler_ir_types.CompilerIrBinOp.Mul)
+          (if left?
+            (compiler_optimize.compiler-opt-global-shared-view constant)
+            (compiler_optimize.compiler-opt-global-shared-view variable))
+          (if left?
+            variable
+            constant)
+          ty))]
+    (and
+      (match out
+        [(compiler_ir_types.CompilerIrInstr.BinOp
+            9
+            (compiler_ir_types.CompilerIrBinOp.Shl _)
+            (compiler_ir_types.CompilerIrValue.Var 7)
+            (compiler_ir_types.CompilerIrValue.I64 shift)
+            _)
+          (= shift power)]
+        [_ false])
+      (opt-const-divisor-test-is-global?
+        (compiler_optimize.opt-const-global-subst-value
+          table
+          (compiler_ir_types.CompilerIrValue.Global name))
+        "wide_power"))))
+
+(test
+  wide-power-global-multiply
+  (let
+    [power : i64 31]
+    (begin
+      (while (<= power 62)
+        (begin
+          (test.assert-true
+            (opt-wide-power-mul-test power false false)
+            "signed right power becomes a shift")
+          (test.assert-true
+            (opt-wide-power-mul-test power false true)
+            "signed left power becomes a shift")
+          (test.assert-true
+            (opt-wide-power-mul-test power true false)
+            "unsigned right power becomes a shift")
+          (test.assert-true
+            (opt-wide-power-mul-test power true true)
+            "unsigned left power becomes a shift")
+          (set! power (+ power 1))))
+      (test.assert-true
+        (match (compiler_optimize.opt-const-divisor-rewrite-instr
+          (opt-t22-const-table)
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            9
+            (compiler_ir_types.CompilerIrBinOp.Mul)
+            (compiler_ir_types.CompilerIrValue.Var 7)
+            (compiler_ir_types.CompilerIrValue.I64 281474976710656)
+            (compiler_ast_types.AstType.I64)))
+          [(compiler_ir_types.CompilerIrInstr.BinOp
+              _
+              (compiler_ir_types.CompilerIrBinOp.Mul)
+              _
+              _
+              _)
+            true]
+          [_ false])
+        "literal products from unrolling stay in their existing reduction path")
+      (test.assert-i64-eq
+        (compiler_optimize.opt-const-global-wide-power-shift
+          (compiler_ir_types.CompilerIrValue.I64 1099511628211))
+        -1
+        "wide non-power remains unchanged")
+      (test.assert-i64-eq
+        (compiler_optimize.opt-const-global-wide-power-shift
+          (compiler_ir_types.CompilerIrValue.I64 0))
+        -1
+        "zero is not a power")
+      (test.assert-i64-eq
+        (compiler_optimize.opt-const-global-wide-power-shift
+          (compiler_ir_types.CompilerIrValue.I64 1073741824))
+        -1
+        "small powers retain existing selection")
+      (test.assert-i64-eq
+        (compiler_optimize.opt-const-global-wide-power-shift
+          (compiler_ir_types.CompilerIrValue.I64 -9223372036854775808))
+        -1
+        "negative power is outside this rewrite"))))

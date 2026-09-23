@@ -453,6 +453,19 @@ have an explicit compile-coverage decision. Staged cases cover integration
 drivers whose imports need temporary sibling names, such as the text buffer and
 symbol-table drivers.
 
+The runner compiles the manifest as `compile --batch` chunks: 16 entries per
+chunk on Linux, a deliberate cross-entry retention stress, and one per chunk on
+Windows for commit headroom. Chunks run in the bounded pool from
+`scripts/lib-bounded-pool.sh`:
+- `TYPELISP_COMPILE_MANIFEST_WORKERS` sets the number of chunks compiled at
+  once (1-3, default 2).
+- Each chunk runs under an enforced 4096 MiB cap and a 900 s timeout.
+- Chunks are settled in chunk order. A failing chunk, or one stopped by its
+  cap or timeout, fails the gate with its output.
+
+Every run first executes the pool self-test (a fake compiler; also available
+alone as `--self-test-pool`) before compiling the manifest.
+
 ### Scalar floating-point comparisons
 
 Scalar `f32`/`f64` comparison predicates are selected once by

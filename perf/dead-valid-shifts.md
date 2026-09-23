@@ -58,3 +58,9 @@ wall-time compiler speedup or evidence of general LLVM parity.
 Artifacts: `target/exp/dead-shifts/`, including the base/candidate fixture
 assembly and objects, `full-bench/`, `counts/`, `*-liveness.cg`, and test,
 integration, parity and bootstrap logs.
+
+## Upstream refresh
+
+Merged upstream `e2206a24`, rebuilt the opt 2 compiler, and passed all 679
+Linux integration cases, including the LICM element-bound regressions. The
+measurements above retain their explicitly named base.

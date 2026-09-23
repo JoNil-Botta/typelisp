@@ -651,7 +651,8 @@
             (compiler-live-i64-ty))
           (ir.CompilerIrInstr.Return
             (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 1)))))
-      ir.CompilerIrBlockList.Nil)))
+      ir.CompilerIrBlockList.Nil)
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-live-branch-function) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
@@ -679,7 +680,8 @@
             (ir.compiler-ir-instr-seq1
               (ir.CompilerIrInstr.Return
                 (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 2)))))
-          ir.CompilerIrBlockList.Nil)))))
+          ir.CompilerIrBlockList.Nil)))
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-live-phi-function) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
@@ -729,7 +731,8 @@
                   (compiler-live-i64-ty))
                 (ir.CompilerIrInstr.Return
                   (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 3)))))
-            ir.CompilerIrBlockList.Nil))))))
+            ir.CompilerIrBlockList.Nil))))
+    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-live-use-def-ok?) : bool
   (let

@@ -57,7 +57,8 @@
                   (ir.CompilerIrInstr.Return
                     (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 42)))
                   (ir.compiler-ir-instr-seq-empty)))))
-          (ir.CompilerIrBlockList.Nil)))
+          (ir.CompilerIrBlockList.Nil))
+        ir.CompilerIrFunctionAbi.Ordinary)
       (ir.compiler-ir-function-seq-empty))
     (ir.compiler-ir-extern-seq-empty)))
 

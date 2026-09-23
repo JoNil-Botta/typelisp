@@ -843,3 +843,7 @@ wide_enum_1003_next_constructor_reject|check-fail|tests/safety/wide_enum_1003_ne
 wide_enum_1003_next_match_reject|check-fail|tests/safety/wide_enum_1003_next_match_reject.tl|-|if condition must be bool: expected bool, found i64
 wide_enum_2500_alone_constructor_reject|check-fail|tests/safety/wide_enum_2500_alone_constructor_reject.tl|-|call `Big.V2499` argument 1 type mismatch: expected i64, found bool
 wide_aggregates_count_reject|check-fail|tests/safety/wide_aggregates_count_reject.tl|-|unbound name wide-aggregates-count-must-be-an-integer-literal
+
+# A global initialized from a non-Copy global moves out of it and is rejected
+# (#7804); Copy values are read by value (tests/integration global_reference_initializers).
+global_initializer_noncopy_reject|check-fail|tests/safety/global_initializer_noncopy_reject.tl|-|cannot move out of global `greeting`; borrow the global instead

@@ -120,7 +120,7 @@
       0x9b05688c2b3e6c1f
       0x1f83d9abfb41bd6b
       0x5be0cd19137e2179)
-    (init)
+    (make-array u8 128)
     0
     (cast 0 : u64)
     (cast 0 : u64)
@@ -325,7 +325,7 @@
         0x597f299cfc657e2a
         0x5fcb6fab3ad6faec
         0x6c44198c4a475817)]
-    [schedule : (Array u64 80) (init)]
+    [schedule : (Array u64 80) (make-array u64 80)]
     [index : i64 0]
     (begin
       (while (< index 16)
@@ -564,7 +564,7 @@
 ;: Finalize `state` exactly once and return its ordinary public 64-byte digest.
 (define (finalize! [state : (&mut state Sha512State)]) : Sha512FinalizeResult
   (let
-    [octets : (Array u8 64) (init)]
+    [octets : (Array u8 64) (make-array u8 64)]
     [output : (MutPtr u8)
       (unsafe
         (ptr-cast (ptr-addr-of octets) : (MutPtr u8)))]
@@ -645,7 +645,13 @@
 
 ;: Construct the poisoned all-zero replacement installed by `wipe-state!`.
 (define (wiped-state) : Sha512State
-  (Sha512State (init) (init) 0 (cast 0 : u64) (cast 0 : u64) true))
+  (Sha512State
+    (make-array u64 8)
+    (make-array u8 128)
+    0
+    (cast 0 : u64)
+    (cast 0 : u64)
+    true))
 
 ;: Poison the caller's state before volatile-wiping its previous contents.
 (define (wipe-state! [state : (&mut state Sha512State)]) : unit
@@ -678,7 +684,8 @@
 ;: Zero the caller's digest before volatile-wiping its previous contents.
 (define (wipe-digest! [digest : (&mut digest Sha512Digest)]) : unit
   (let
-    [previous : Sha512Digest (replace! (deref digest) (Sha512Digest (init)))]
+    [previous : Sha512Digest
+      (replace! (deref digest) (Sha512Digest (make-array u8 64)))]
     [data : (MutPtr u64)
       (unsafe
         (ptr-cast (ptr-addr-of previous.octets) : (MutPtr u64)))]

@@ -1102,7 +1102,7 @@
         "invalid"
         0
         0
-        (sha256.Sha256Digest (init)))]))
+        (sha256.Sha256Digest (make-array u8 32)))]))
 
 (define (compiler-incremental-build-valid?
   [build : (& build CompilerIncrementalBuildIdentity)]
@@ -1339,7 +1339,7 @@
 (define (compiler-incremental-read-digest!
   [reader : (&mut reader binary.CompilerIncrementalBinaryReader)]) : sha256.Sha256Digest
   (let
-    [octets : (Array u8 32) (init)]
+    [octets : (Array u8 32) (make-array u8 32)]
     [index : i64 0]
     (begin
       (while (< index 32)

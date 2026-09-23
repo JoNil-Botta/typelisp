@@ -99,7 +99,7 @@
 (define (new) : GitSha1State
   (GitSha1State
     (array 0x67452301 0xefcdab89 0x98badcfe 0x10325476 0xc3d2e1f0)
-    (init)
+    (make-array u8 64)
     0
     (cast 0 : u64)
     true))
@@ -192,7 +192,7 @@
 ;: Compress the complete 64-byte block currently stored in `state`.
 (define (compress! [state : (&mut state GitSha1State)]) : unit
   (let
-    [schedule : (Array u32 80) (init)]
+    [schedule : (Array u32 80) (make-array u32 80)]
     [index : i64 0]
     (begin
       (while (< index 16)
@@ -356,7 +356,7 @@
 
 ;: Construct the closed all-zero replacement installed after consumption.
 (define (wiped-state) : GitSha1State
-  (GitSha1State (init) (init) 0 (cast 0 : u64) false))
+  (GitSha1State (make-array u32 5) (make-array u8 64) 0 (cast 0 : u64) false))
 
 ;: Poison state, then volatile-wipe its previous words and partial block.
 (define (wipe-state! [state : (&mut state GitSha1State)]) : unit
@@ -435,7 +435,7 @@
 ;: Finalize `state` once into an ordinary public Git compatibility digest.
 (define (finalize! [state : (&mut state GitSha1State)]) : GitSha1FinalizeResult
   (let
-    [octets : (Array u8 20) (init)]
+    [octets : (Array u8 20) (make-array u8 20)]
     [output : (MutPtr u8)
       (unsafe
         (ptr-cast (ptr-addr-of octets) : (MutPtr u8)))]
@@ -520,7 +520,8 @@
 ;: Zero a public digest, volatile-wiping its previous by-value contents.
 (define (wipe-digest! [digest : (&mut digest GitSha1Digest)]) : unit
   (let
-    [previous : GitSha1Digest (replace! (deref digest) (GitSha1Digest (init)))]
+    [previous : GitSha1Digest
+      (replace! (deref digest) (GitSha1Digest (make-array u8 20)))]
     [data : (MutPtr u32)
       (unsafe
         (ptr-cast (ptr-addr-of previous.octets) : (MutPtr u32)))]

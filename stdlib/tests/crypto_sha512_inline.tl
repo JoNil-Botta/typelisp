@@ -8,7 +8,7 @@
   (define (test-zero-digest [message : String]) : sha.Sha512Digest
     (begin
       (test.assert-true false message)
-      (sha.Sha512Digest (init)))))
+      (sha.Sha512Digest (make-array u8 64)))))
 
 ;: Require one successful SHA-512 state update in inline tests.
 (cfg
@@ -256,7 +256,7 @@
       [input : (& text bytes) (byte_buf.str-as-bytes (& text))]
       [expected : sha.Sha512Digest (test-digest input)]
       [state : sha.Sha512State (sha.new)]
-      [output : (Array u8 64) (init)]
+      [output : (Array u8 64) (make-array u8 64)]
       [source : (Ptr u8)
         (unsafe
           (byte_buf.bytes-data input))]
@@ -284,7 +284,7 @@
           "SHA-512 consumed state wipe")
         (let
           [rejected-state : sha.Sha512State (sha.new)]
-          [rejected-output : (Array u8 64) (init)]
+          [rejected-output : (Array u8 64) (make-array u8 64)]
           [rejected-sink : (MutPtr u8)
             (unsafe
               (ptr-cast (ptr-addr-of rejected-output) : (MutPtr u8)))]
@@ -407,7 +407,7 @@
             127
             "SHA-512 rejected update preserves partial block length")))
       (let
-        [block : (Array u8 128) (init)]
+        [block : (Array u8 128) (make-array u8 128)]
         (begin
           (sha.write-bit-length! (&mut block) (cast 1 : u64) (cast 2 : u64))
           (test.assert-i64-eq

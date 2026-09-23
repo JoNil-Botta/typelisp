@@ -8,8 +8,9 @@ same predicate. The count keeps its independent IR type; unknown, negative,
 width-equal and too-large counts retain their trap. Other passes keep the
 existing conservative operator-only predicate.
 
-Check whether the result is live before doing the extra count proof. This keeps
-the common live-instruction path from paying for a proof it cannot use. Removing
+The array sweep checks whether the result is live before doing the extra count
+proof. This keeps its common live-instruction path from paying for a proof it
+cannot use. Removing
 a dead shift drops its operand uses through the existing backwards DCE sweep;
 side-effecting instructions that produced those operands remain.
 

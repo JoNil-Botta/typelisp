@@ -112,7 +112,10 @@
   (emit-entry bool)
   (crt-entry bool)
   (decls ast.AstDeclList)
-  (paths ast.AstDeclPathList))
+  (paths ast.AstDeclPathList)
+  ;; The job's cfg environment: generated declarations are reparsed with it
+  ;; while this request is lowered (#7812).
+  (cfgs sym_i64_env.SymI64Env))
 
 (define (build-package-direct-object-default-request
   [name : String]
@@ -123,7 +126,8 @@
   [emit-entry : bool]
   [crt-entry : bool]
   [decls : ast.AstDeclList]
-  [paths : ast.AstDeclPathList]) : BuildPackageDirectObjectRequest
+  [paths : ast.AstDeclPathList]
+  [cfgs : sym_i64_env.SymI64Env]) : BuildPackageDirectObjectRequest
   (BuildPackageDirectObjectRequest
     name
     kind
@@ -137,7 +141,8 @@
     emit-entry
     crt-entry
     decls
-    paths))
+    paths
+    cfgs))
 
 (defenum ResultBuildManifest
   (Ok load.CompilerPkgManifest)
@@ -3777,7 +3782,8 @@
   [emit-entry : bool]
   [crt-entry : bool]
   [decls : ast.AstDeclList]
-  [paths : ast.AstDeclPathList]) : ResultBuildPackagePreparedRuntime
+  [paths : ast.AstDeclPathList]
+  [cfgs : sym_i64_env.SymI64Env]) : ResultBuildPackagePreparedRuntime
   (let
     [preflight : BuildPackageDirectObjectPreflight
       (build-package-direct-object-preflight
@@ -3796,7 +3802,8 @@
         target
         mode
         decls
-        paths)]
+        paths
+        (owned_view.compiler-owned-shared-view cfgs))]
     (build-package-emit-preflighted-runtime
       kind
       target
@@ -7403,7 +7410,8 @@
         request.emit-entry
         request.crt-entry
         request.decls
-        request.paths)]
+        request.paths
+        request.cfgs)]
     (if request.require-direct-object
       (build-package-require-direct-object prepared)
       prepared)))
@@ -7431,7 +7439,8 @@
           request.target
           request.mode
           request.decls
-          request.paths)]
+          request.paths
+          request.cfgs)]
       [prepared : ResultBuildPackagePreparedRuntime
         (build-package-emit-preflighted-runtime
           request.kind
@@ -7487,7 +7496,8 @@
     [artifact-path : String]
     [link-inputs : build_run_core.SourceToolLinkInputs]
     [tlci-path : String]
-    [announce : bool]) : i64
+    [announce : bool]
+    [cfgs : sym_i64_env.SymI64Env]) : i64
     (begin
       (package_surface.package-surface-capture-start!
         (package_surface.package-surface-identity-key
@@ -7517,7 +7527,8 @@
               emit-entry
               crt-entry
               (owned_view.compiler-owned-shared-view decls)
-              (owned_view.compiler-owned-shared-view owned-paths)))]
+              (owned_view.compiler-owned-shared-view owned-paths)
+              (owned_view.compiler-owned-shared-view cfgs)))]
         [_abort : unit
           (match (owned_view.compiler-owned-shared-view prepared)
             [(ResultBuildPackagePreparedRuntime.Err message)
@@ -7816,7 +7827,8 @@
                 artifact-path
                 effective-link-inputs
                 tlci-path
-                announce))])])))
+                announce
+                (owned_view.compiler-owned-shared-view compile-cfgs)))])])))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)

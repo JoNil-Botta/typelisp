@@ -761,6 +761,10 @@ sync_generated_raw_alias_safe_reject|check-fail|tests/safety/sync_generated_raw_
 sync_generated_mutex_raw_safe_reject|check-fail|tests/safety/sync_generated_mutex_raw_safe_reject.tl|-|mutex_alias/load-raw requires unsafe context
 thread_sync_raw_explicit_unsafe_ok|check-ok|tests/safety/thread_sync_raw_explicit_unsafe_ok.tl|-|-
 thread_sync_typed_safe_control_ok|check-ok|tests/safety/thread_sync_typed_safe_control_ok.tl|-|-
+
+# Enabled generated cfg imports must resolve before checking even if unused.
+generated_cfg_missing_module_import_reject|check-fail|tests/safety/generated_cfg_missing_module_import_reject.tl|-|cannot read import
+generated_cfg_invalid_predicate_reject|check-fail|tests/safety/generated_cfg_invalid_predicate_reject.tl|-|cfg not expects exactly one predicate
 decls_generated_missing_import_reject|check-fail|tests/safety/decls_generated_missing_import_reject.tl|-|compiler-load: cannot read import tests/safety/nonexistent_decls_generated_dependency.tl
 decls_generated_conflicting_import_reject|check-fail|tests/safety/decls_generated_conflicting_import_reject.tl|-|ambiguous import alias 'dep'
 module_generated_conflicting_import_reject|check-fail|tests/safety/module_generated_conflicting_import_reject.tl|-|ambiguous import alias 'dep'
@@ -785,6 +789,7 @@ decls_generated_wildcard_selected_conflict_reject|check-fail|tests/safety/decls_
 module_generated_selected_conflict_reject|check-fail|tests/safety/module_generated_selected_conflict_reject.tl|-|ambiguous unqualified import
 module_generated_wildcard_conflict_reject|check-fail|tests/safety/module_generated_wildcard_conflict_reject.tl|-|ambiguous unqualified import
 module_generated_wildcard_selected_conflict_reject|check-fail|tests/safety/module_generated_wildcard_selected_conflict_reject.tl|-|ambiguous unqualified import
+generated_cfg_missing_decls_import_reject|check-fail|tests/safety/generated_cfg_missing_decls_import_reject.tl|-|cannot read import
 
 # Struct fields and enum variants past the former 1000-member registry stride
 # (#7921) resolve through their own declaration, never a later one's members:

@@ -983,8 +983,18 @@ cat > "$PKG_DIR/typelisp.pkg" <<'EOF'
   (version "0.1.0")
   (kind bin))
 EOF
+# Generated target predicates must survive package preparation, lowering and
+# direct-object/assembly emission (#7812). Reuse the existing package workflow.
 cat > "$PKG_DIR/src/main.tl" <<'EOF'
-(define (main) : i64 29)
+(defmacro (target-module) : Module
+  (let [head : Expr (expr-var "cfg")]
+    `(begin
+      (module generated.package_cfg)
+      (,head linux (define (answer) : i64 29))
+      (,head windows (define (answer) : i64 29))
+      (,head (all linux windows) (import nonexistent_package_cfg_dependency)))))
+(import (target-module) as selected)
+(define (main) : i64 (selected.answer))
 EOF
 PKG_EXE="$PKG_DIR/target/release/cli_pkg_smoke"
 if [ "$HOST_OS" = windows ]; then

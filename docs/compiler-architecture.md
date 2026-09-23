@@ -99,6 +99,18 @@ Compilation is one whole program per executable with import-graph dedup
 codegen'd once into archives; an in-process session cache warms compiler
 pools across compiles within one process (batch and LSP paths).
 
+File, package, check, test and semantic-index entry points pass their actual cfg
+environment through the lowerer/typecheck interfaces; a cache-scope String is
+only an identity key and cannot replace those semantic inputs.
+Declaration-producing macro expansion threads that environment through scratch
+generations and reparses both `Decls` and `Module` output with that same
+environment. Generated predicates use the canonical parser evaluator;
+constructing an empty dispatch would silently drop enabled declarations. Syntax
+head classification does not evaluate predicates and may use the cfg-free
+keyword table. The lowerer's closed core-macro Clone handoff supplies its explicit
+empty source-language cfg set. The `generated_cfg` native fixture and interleaved
+cfg driver-state smoke guard this boundary.
+
 Lexer tokens and unspanned reader nodes are scan scratch. Their geometric
 growth replaces dedicated storage after moving the live prefix, then retires
 the superseded owner and restores the caller's active arena. Token storage is

@@ -266,6 +266,10 @@ explicit_clone_generation|tests/integration/explicit_clone_generation.tl|42|-|-|
 clone_dynarray_scalar_bulk|tests/integration/clone_dynarray_scalar_bulk.tl|42|-|-|stdlib/arena.tl stdlib/string.tl
 clone_generated_vector_element|tests/integration/clone_generated_vector_element.tl|42|-|-|stdlib/vector.tl stdlib/string.tl
 generated_macro_clone_handoff|tests/integration/generated_macro_clone_handoff.tl|42|-|-|stdlib/clone.tl stdlib/comptime.tl stdlib/string.tl
+generated_cfg|tests/integration/generated_cfg.tl|42|-|-|-
+generated_cfg_opt0|tests/integration/generated_cfg.tl|42|-|-|-|opt-level:0+stage-stdlib
+generated_cfg_opt1|tests/integration/generated_cfg.tl|42|-|-|-|opt-level:1+stage-stdlib
+generated_cfg_opt2|tests/integration/generated_cfg.tl|42|-|-|-|opt-level:2+stage-stdlib
 clone_imported_nominal_direct|tests/integration/clone_imported_nominal_direct.tl|41|-|-|clone_imported_nominal_dep.tl stdlib/string.tl
 clone_imported_nominal_wrapper|tests/integration/clone_imported_nominal_wrapper.tl|42|-|-|clone_imported_nominal_dep.tl stdlib/string.tl
 comptime_scalar|tests/integration/comptime_scalar.tl|42|-|-|-

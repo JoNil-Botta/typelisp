@@ -37,6 +37,7 @@
   [program : ast.AstProgram]
   [paths : ast.AstDeclPathList]
   [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]
   [cache-scope : String]
   [pools : ast.AstNodePoolContext]
   [intern-state : ci.InternCompatState]) : tc_core.ResultCompilerTypecheck
@@ -48,6 +49,7 @@
       program
       paths
       stdlib-roots
+      (owned_view.compiler-owned-shared-view cfgs)
       cache-scope
       pools
       intern-state)))
@@ -63,6 +65,7 @@
   [program : ast.AstProgram]
   [paths : ast.AstDeclPathList]
   [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]
   [cache-scope : String]
   [pools : ast.AstNodePoolContext]) : tc_core.ResultCompilerTypecheck
   (typecheck-compiler-program-with-paths-cache-and-load-state-and-prefix-cache-state-and-pools-and-intern-state
@@ -72,6 +75,7 @@
     program
     paths
     stdlib-roots
+    (owned_view.compiler-owned-shared-view cfgs)
     cache-scope
     pools
     (ci.intern-compat-state-capture-active)))
@@ -81,6 +85,7 @@
   [program : ast.AstProgram]
   [paths : ast.AstDeclPathList]
   [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]
   [cache-scope : String]
   [pools : ast.AstNodePoolContext]) : tc_core.ResultCompilerTypecheck
   (typecheck-compiler-program-with-paths-cache-and-load-state-and-prefix-cache-state-and-pools
@@ -90,6 +95,7 @@
     program
     paths
     stdlib-roots
+    (owned_view.compiler-owned-shared-view cfgs)
     cache-scope
     pools))
 
@@ -99,6 +105,7 @@
   [program : ast.AstProgram]
   [paths : ast.AstDeclPathList]
   [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]
   [cache-scope : String]
   [pools : ast.AstNodePoolContext]) : tc_core.ResultCompilerTypecheck
   (typecheck-compiler-program-with-paths-cache-and-load-state-and-pools
@@ -106,6 +113,7 @@
     program
     paths
     stdlib-roots
+    (owned_view.compiler-owned-shared-view cfgs)
     cache-scope
     pools))
 
@@ -113,11 +121,13 @@
   [program : ast.AstProgram]
   [paths : ast.AstDeclPathList]
   [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]
   [cache-scope : String]) : tc_core.ResultCompilerTypecheck
   (typecheck-compiler-program-with-paths-cache-and-pools
     program
     paths
     stdlib-roots
+    (owned_view.compiler-owned-shared-view cfgs)
     cache-scope
     (ast.ast-node-pool-context-capture-active)))
 
@@ -128,6 +138,7 @@
     program
     paths
     (svec.new)
+    (typecheck-compiler-source-language-cfgs)
     (tc_core.tc-prefix-default-cache-scope)))
 
 (defenum ResultCompilerDocExpand
@@ -208,6 +219,7 @@
   [program : ast.AstProgram]
   [paths : ast.AstDeclPathList]
   [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]
   [cache-scope : String]
   [pools : ast.AstNodePoolContext]
   [intern-state : ci.InternCompatState]) : tc_core.ResultCompilerTypecheckChecked
@@ -255,7 +267,7 @@
                       generated-paths
                       (owned_view.compiler-owned-shared-view pools)
                       (owned_view.compiler-owned-shared-view stdlib-roots)
-                      (typecheck-compiler-source-language-cfgs)
+                      (owned_view.compiler-owned-shared-view cfgs)
                       (owned_view.compiler-owned-shared-view intern-state))]
                   (begin
                     (ast.ast-node-pool-context-capture-active!
@@ -409,6 +421,7 @@
   [program : ast.AstProgram]
   [paths : ast.AstDeclPathList]
   [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]
   [cache-scope : String]
   [pools : ast.AstNodePoolContext]) : tc_core.ResultCompilerTypecheckChecked
   (typecheck-compiler-program-with-paths-checked-cache-and-load-state-and-prefix-cache-state-and-pools-and-intern-state
@@ -418,6 +431,7 @@
     program
     paths
     stdlib-roots
+    (owned_view.compiler-owned-shared-view cfgs)
     cache-scope
     pools
     (ci.intern-compat-state-capture-active)))
@@ -428,6 +442,7 @@
   [program : ast.AstProgram]
   [paths : ast.AstDeclPathList]
   [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]
   [cache-scope : String]
   [pools : ast.AstNodePoolContext]) : tc_core.ResultCompilerTypecheckChecked
   (typecheck-compiler-program-with-paths-checked-cache-and-load-state-and-prefix-cache-state-and-pools
@@ -437,6 +452,7 @@
     program
     paths
     stdlib-roots
+    (owned_view.compiler-owned-shared-view cfgs)
     cache-scope
     pools))
 
@@ -445,6 +461,7 @@
   [program : ast.AstProgram]
   [paths : ast.AstDeclPathList]
   [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]
   [cache-scope : String]
   [pools : ast.AstNodePoolContext]) : tc_core.ResultCompilerTypecheckChecked
   (typecheck-compiler-program-with-paths-checked-cache-and-load-state-and-pools
@@ -452,6 +469,7 @@
     program
     paths
     stdlib-roots
+    (owned_view.compiler-owned-shared-view cfgs)
     cache-scope
     pools))
 
@@ -459,11 +477,13 @@
   [program : ast.AstProgram]
   [paths : ast.AstDeclPathList]
   [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]
   [cache-scope : String]) : tc_core.ResultCompilerTypecheckChecked
   (typecheck-compiler-program-with-paths-checked-cache-and-pools
     program
     paths
     stdlib-roots
+    (owned_view.compiler-owned-shared-view cfgs)
     cache-scope
     (ast.ast-node-pool-context-capture-active)))
 
@@ -474,6 +494,7 @@
     program
     paths
     (svec.new)
+    (typecheck-compiler-source-language-cfgs)
     (tc_core.tc-prefix-default-cache-scope)))
 
 (define (typecheck-compiler-program [program : ast.AstProgram]) : tc_core.ResultCompilerTypecheck

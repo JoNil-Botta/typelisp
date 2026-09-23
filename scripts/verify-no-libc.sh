@@ -146,7 +146,17 @@ inspect_winsock_capability() {
             return 1
         fi
     done
-    if grep -iE 'ws2_32\.lib|[-]lws2_32|/defaultlib:ws2_32' \
+    # Static Winsock linkage in any spelling the toolchain accepts: a linker
+    # library name or flag, or the language's own extern link metadata.
+    _static_ws2='ws2_32\.lib|[-]lws2_32|/defaultlib:ws2_32|:link-lib[[:space:]]+"ws2_32|:link-arg[[:space:]]+"[^"]*ws2_32'
+    for _probe in 'ws2_32.lib' '-lws2_32' '/DEFAULTLIB:ws2_32' \
+        '(:link-lib "Ws2_32")' '(:link-arg "/defaultlib:ws2_32.lib")'; do
+        if ! printf '%s\n' "$_probe" | grep -iE "$_static_ws2" >/dev/null; then
+            echo "FAIL [winsock source/package]: pattern misses $_probe" >&2
+            return 1
+        fi
+    done
+    if grep -iE "$_static_ws2" \
         "$ROOT/stdlib/net_windows_winsock.tl" "$ROOT/typelisp.pkg" >/dev/null; then
         echo "FAIL [winsock source/package]: requests static Winsock linkage" >&2
         return 1
@@ -196,6 +206,19 @@ SHADOW_C
             return 1
             ;;
     esac
+    # Without a preload, the same shadow sits in the application directory,
+    # the current directory and PATH. The System32-only load must still pick
+    # the real module: the capability smoke verifies its identity, and the
+    # shadow's WSAStartup fails, so any other selection cannot exit 42.
+    _unloaded_status=0
+    (cd "$WORKDIR" && PATH="$WORKDIR:$PATH" ./winsock-capability.exe) \
+        >"$WORKDIR/winsock-shadow-unloaded.out" 2>&1 || _unloaded_status=$?
+    if [ "$_unloaded_status" -ne 42 ]; then
+        echo "FAIL [winsock shadow]: capability smoke beside an unloaded shadow exited $_unloaded_status" >&2
+        sed 's/^/  /' "$WORKDIR/winsock-shadow-unloaded.out" >&2
+        return 1
+    fi
+    echo "ok [winsock shadow]: application-directory, CWD and PATH shadow never selected"
 }
 
 measure_winsock_capability() {

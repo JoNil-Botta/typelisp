@@ -1035,7 +1035,9 @@
 
 ;: The table's 22 raw words have process lifetime behind an unsafe pointer.
 ;: A public fixed-array global would let safe importers overwrite elements;
-;: only the checked unsafe accessors below may touch this backing storage.
+;: only the checked unsafe accessors below read or write the words. Like every
+;: module global, the bindings here stay assignable by an importer's `set!`
+;: (SPEC 4.4.2, #7976); this storage guards the words, not the bindings.
 (define winsock-table-words : (MutPtr u64)
   (let
     [storage : (__tl_dyn-array u64) (__tl_make-array u64 22)]
@@ -1168,15 +1170,19 @@
 
 ;: A bounded address registry makes a source-constructed WinsockLease inert.
 ;: The backing array is process-lifetime runtime storage; unsafe pointer
-;: access prevents safe callers from manufacturing an issued address.
-(define winsock-lease-capacity : i64
+;: access prevents safe callers from manufacturing an issued address. At most
+;: `winsock-lease-capacity` leases are live process-wide; past that,
+;: acquisition balances its startup and fails with WinsockLeaseCapacityExceeded.
+;: A function rather than a global: it bounds raw registry indices, and a
+;: module global stays assignable by importers (#7976).
+(define (winsock-lease-capacity) : i64
   4096)
 
-;: Issued Box addresses remain in private process-lifetime raw storage.
+;: Issued Box addresses remain in process-lifetime raw storage.
 (define winsock-lease-addresses : (MutPtr u64)
   (let
     [storage : (__tl_dyn-array u64)
-      (__tl_make-array u64 winsock-lease-capacity)]
+      (__tl_make-array u64 (winsock-lease-capacity))]
     (unsafe
       (__tl_array-data storage))))
 
@@ -1245,9 +1251,17 @@
     (let
       [probe : i64 0]
       [slot : i64 -1]
-      (while (and (< probe winsock-lease-capacity) (< slot 0))
+      ;; The cursor is only a hint, and module globals stay assignable by
+      ;; importers (#7976): bound it here so no value becomes a raw index.
+      [start : i64
+        (if (and
+          (>= winsock-lease-next 0)
+          (< winsock-lease-next (winsock-lease-capacity)))
+          winsock-lease-next
+          0)]
+      (while (and (< probe (winsock-lease-capacity)) (< slot 0))
         (let
-          [index : i64 (% (+ winsock-lease-next probe) winsock-lease-capacity)]
+          [index : i64 (% (+ start probe) (winsock-lease-capacity))]
           (if (=
             (unsafe
               (winsock-lease-slot-ref index))
@@ -1260,7 +1274,7 @@
         (begin
           (unsafe
             (winsock-lease-slot-set! slot address))
-          (set! winsock-lease-next (% (+ slot 1) winsock-lease-capacity))))
+          (set! winsock-lease-next (% (+ slot 1) (winsock-lease-capacity)))))
       (unsafe
         (winsock-unlock-leases!))
       slot)))
@@ -1275,7 +1289,7 @@
       (when
         (or
           (<= hint 0)
-          (> hint winsock-lease-capacity)
+          (> hint (winsock-lease-capacity))
           (= address (cast 0 : u64)))
         (return false))
       (unsafe
@@ -1299,7 +1313,7 @@
     (let
       [slot : i64 -1]
       (when
-        (and (> hint 0) (<= hint winsock-lease-capacity))
+        (and (> hint 0) (<= hint (winsock-lease-capacity)))
         (when
           (=
             (unsafe
@@ -1310,7 +1324,7 @@
         (< slot 0)
         (let
           [index : i64 0]
-          (while (and (< index winsock-lease-capacity) (< slot 0))
+          (while (and (< index (winsock-lease-capacity)) (< slot 0))
             (begin
               (when
                 (=
@@ -1603,10 +1617,37 @@
                 1
                 0)]))])))
 
+;: The same barrier, but every candidate misses the last schema slot. Each
+;: worker must see its own stable tag after exactly one attempt of its own.
+(cfg
+  test
+  (define (winsock-test-failing-worker [_context : i64]) : i64
+    (unsafe
+      (atomic-add! (ptr-addr-of winsock-test-wave-arrived) 1))
+    (while (=
+      (unsafe
+        (atomic-load (ptr-addr-of winsock-test-wave-go)))
+      0)
+      (begin
+        (time.sleep-ms 1)
+        unit))
+    (match (unsafe
+      (winsock-ensure-table-with 20 -1 false))
+      [(WinsockTableErr (WinsockMissingExport name))
+        (let
+          [expected : String (winsock-test-schema-name 20)]
+          (if (string.eq (& name) (& expected))
+            1
+            0))]
+      [_ 0])))
+
 ;: Recursive ownership joins every spawned thread on the way back out.
 (cfg
   test
-  (define (winsock-test-spawn-wave [remaining : i64] [total : i64]) : bool
+  (define (winsock-test-spawn-wave
+    [remaining : i64]
+    [total : i64]
+    [failing : bool]) : bool
     (if (= remaining 0)
       (let
         [attempts : i64 0]
@@ -1629,8 +1670,11 @@
             (unsafe
               (atomic-store! (ptr-addr-of winsock-test-wave-go) 1))
             all-arrived)))
-      (match (unsafe
-        (thread.spawn winsock-test-worker 0))
+      (match (if failing
+        (unsafe
+          (thread.spawn winsock-test-failing-worker 0))
+        (unsafe
+          (thread.spawn winsock-test-worker 0)))
         [(thread.ThreadSpawnErr _)
           (begin
             (unsafe
@@ -1638,7 +1682,8 @@
             false)]
         [(thread.ThreadSpawnOk worker)
           (let
-            [later-ok : bool (winsock-test-spawn-wave (- remaining 1) total)]
+            [later-ok : bool
+              (winsock-test-spawn-wave (- remaining 1) total failing)]
             (match (unsafe
               (thread.join worker))
               [(thread.ThreadJoinErr _) false]
@@ -1655,7 +1700,7 @@
     (unsafe
       (atomic-store! (ptr-addr-of winsock-test-wave-go) 0))
     (let
-      [joined-ok : bool (winsock-test-spawn-wave 16 16)]
+      [joined-ok : bool (winsock-test-spawn-wave 16 16 false)]
       (and
         joined-ok
         (=
@@ -1663,6 +1708,27 @@
             (atomic-load (ptr-addr-of winsock-publication-state)))
           2)
         (winsock-test-counters-match? expected-loads expected-resolves 0 16 16)))))
+
+;: A candidate that fails while other threads wait in `initializing` resets
+;: to uninitialized; each waiter retries, fails with the same tag, and releases
+;: its own candidate once. Nothing is published and no thread stays spinning.
+(cfg
+  test
+  (define (winsock-test-failing-publication-wave?) : bool
+    (winsock-test-reset-counters!)
+    (unsafe
+      (atomic-store! (ptr-addr-of winsock-test-wave-arrived) 0))
+    (unsafe
+      (atomic-store! (ptr-addr-of winsock-test-wave-go) 0))
+    (let
+      [joined-ok : bool (winsock-test-spawn-wave 16 16 true)]
+      (and
+        joined-ok
+        (=
+          (unsafe
+            (atomic-load (ptr-addr-of winsock-publication-state)))
+          0)
+        (winsock-test-counters-match? 16 (* 16 20) 16 0 0)))))
 
 (cfg
   test
@@ -1767,6 +1833,40 @@
                             (second-table.close duplicate))
                           0)])]))])]))))
 
+;: WSASocketW's INVALID_SOCKET crosses the native boundary as u64 all-ones:
+;: an unsupported address family must take the error path with its code.
+(cfg
+  test
+  (define (winsock-test-invalid-socket-round-trip?) : bool
+    (match (winsock-acquire)
+      [(WinsockAcquireErr _) false]
+      [(WinsockAcquired lease)
+        (with
+          ([owned lease cleanup-winsock-lease])
+          (match (unsafe
+            (winsock-create-socket-with-lease
+              (& owned)
+              12345
+              1
+              0
+              (ptr-null : (MutPtr WinsockProtocolInfoW))
+              (cast 0 : u32)
+              (cast 0 : u32)))
+            [(WinsockSocketErr (WinsockSocketCallFailed code))
+              (!= code (cast 0 : i32))]
+            [(WinsockSocketErr _) false]
+            [(WinsockSocketOk socket)
+              (begin
+                (match (unsafe
+                  (winsock-table-for-lease (& owned)))
+                  [(WinsockTableOk table)
+                    (begin
+                      (unsafe
+                        (table.close socket))
+                      unit)]
+                  [(WinsockTableErr _) unit])
+                false)]))])))
+
 (cfg
   test
   (define (winsock-test-construction-helpers?) : bool
@@ -1816,11 +1916,17 @@
         (not (winsock-test-forged-lease-rejected?))
         (io.panic "winsock: forged lease acquired table access"))
       (when
+        (not (winsock-test-failing-publication-wave?))
+        (io.panic "winsock: failed candidate under contention"))
+      (when
         (not (winsock-test-publication-stress?))
         (io.panic "winsock: concurrent publication or lease balance"))
       (when
         (not (winsock-test-startup-balance?))
         (io.panic "winsock: startup/refcount or authority balance"))
+      (when
+        (not (winsock-test-invalid-socket-round-trip?))
+        (io.panic "winsock: INVALID_SOCKET did not take the error path"))
       (when
         (not (winsock-test-construction-helpers?))
         (io.panic "winsock: construction or duplication under separate leases"))

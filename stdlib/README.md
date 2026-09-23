@@ -124,8 +124,11 @@ Vec bang place macros as available yet.
   successful `WSAStartup` owns one move-only lease whose cleanup calls
   `WSACleanup` exactly once; table access and socket construction require a
   live lease. A 176-byte table and a bounded 32 KiB lease registry are retained
-  for process lifetime, and each lease contains one pointer-width Box handle.
-  This internal module defines no public TCP/UDP handle or I/O API.
+  for process lifetime; at most 4096 leases are live at once, and acquisition
+  past that balances its startup and fails. Each lease is one pointer-width Box
+  handle whose 8-byte Box is allocated in the acquiring arena. Module globals
+  remain assignable by importers (#7976). This internal module defines no
+  public TCP/UDP handle or I/O API.
 - `ssh_known_hosts_parse.tl`: pure bounded OpenSSH `known_hosts` snapshot
   scanner, canonical host/port lookup identity, and ASCII case-folded plain
   pattern matcher. It preflights whole-source byte/line/record limits before

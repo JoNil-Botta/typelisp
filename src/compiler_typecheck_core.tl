@@ -94110,6 +94110,26 @@
         name
         (+ index 1)))))
 
+(define (tc-borrow-check-composite-selected-array-element-id
+  [expr-bases : i64]
+  [base : ast.AstExpr]
+  [index-box : i64]) : i64
+  (match (tc-move-literal-index
+    expr-bases
+    (ast.ast-expr-segment-bases-get expr-bases index-box))
+    [(TcMoveMaybeIndex.Some index)
+      (match (ast.ast-expr-unspan (tc-global-shared-view base))
+        [(ast.AstExpr.Array items)
+          (if (and (>= index 0) (< index items.len))
+            (ast.ast-expr-list-get (& items) index 0)
+            -1)]
+        [(ast.AstExpr.DynArray items)
+          (if (and (>= index 0) (< index items.len))
+            (ast.ast-expr-list-get (& items) index 0)
+            -1)]
+        [_ -1])]
+    [(TcMoveMaybeIndex.No) -1]))
+
 (define (tc-borrow-check-composite-value-uses-name-in-last?
   [expr-bases : i64]
   [exprs : ast.AstExprList]
@@ -94201,11 +94221,21 @@
         expr-bases
         (ast.ast-expr-segment-bases-get expr-bases base-box)
         name)]
-    [(ast.AstExpr.ArrayRef base-box _)
-      (tc-borrow-check-composite-value-uses-name?
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases base-box)
-        name)]
+    [(ast.AstExpr.ArrayRef base-box index-box)
+      (let
+        [base : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases base-box)]
+        [selected : i64
+          (tc-borrow-check-composite-selected-array-element-id
+            expr-bases
+            (tc-global-shared-view base)
+            index-box)]
+        (tc-borrow-check-composite-value-uses-name?
+          expr-bases
+          (if (>= selected 0)
+            (ast.ast-expr-segment-bases-get expr-bases selected)
+            base)
+          name))]
     [(ast.AstExpr.TupleRef base-box index)
       (let
         [base : ast.AstExpr
@@ -94790,17 +94820,27 @@
         binding-id
         (ast.ast-expr-segment-bases-get expr-bases base-box)
         result-lifetimes)]
-    [(ast.AstExpr.ArrayRef base-box _)
-      (tc-borrow-check-add-composite-arg-leaf
-        ctx
-        expr-bases
-        env
-        locals
-        borrowed
-        bound?
-        binding-id
-        (ast.ast-expr-segment-bases-get expr-bases base-box)
-        result-lifetimes)]
+    [(ast.AstExpr.ArrayRef base-box index-box)
+      (let
+        [base : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases base-box)]
+        [selected : i64
+          (tc-borrow-check-composite-selected-array-element-id
+            expr-bases
+            (tc-global-shared-view base)
+            index-box)]
+        (tc-borrow-check-add-composite-arg-leaf
+          ctx
+          expr-bases
+          env
+          locals
+          borrowed
+          bound?
+          binding-id
+          (if (>= selected 0)
+            (ast.ast-expr-segment-bases-get expr-bases selected)
+            base)
+          result-lifetimes))]
     [(ast.AstExpr.BoxTake inner-box)
       (tc-borrow-check-add-composite-arg-leaf
         ctx

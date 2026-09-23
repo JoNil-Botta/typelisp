@@ -229,6 +229,7 @@ composite_arg_loan_destructure_reject|check-fail|tests/safety/composite_arg_loan
 composite_arg_loan_nested_reject|check-fail|tests/safety/composite_arg_loan_nested_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
 composite_arg_loan_tuple_reject|check-fail|tests/safety/composite_arg_loan_tuple_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
 composite_arg_loan_array_reject|check-fail|tests/safety/composite_arg_loan_array_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_dynamic_array_index_reject|check-fail|tests/safety/composite_arg_loan_dynamic_array_index_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
 composite_arg_loan_box_reject|check-fail|tests/safety/composite_arg_loan_box_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
 composite_arg_loan_try_reject|check-fail|tests/safety/composite_arg_loan_try_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
 composite_arg_loan_with_resource_reject|check-fail|tests/safety/composite_arg_loan_with_resource_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
@@ -241,6 +242,8 @@ composite_arg_loan_unused_ref_let_ok|check-ok|tests/safety/composite_arg_loan_un
 composite_arg_loan_condition_only_ref_let_ok|check-ok|tests/safety/composite_arg_loan_condition_only_ref_let_ok.tl|-|-
 composite_arg_loan_nested_condition_only_ref_let_ok|check-ok|tests/safety/composite_arg_loan_nested_condition_only_ref_let_ok.tl|-|-
 composite_arg_loan_unselected_tuple_view_ok|check-ok|tests/safety/composite_arg_loan_unselected_tuple_view_ok.tl|-|-
+composite_arg_loan_unselected_array_view_ok|check-ok|tests/safety/composite_arg_loan_unselected_array_view_ok.tl|-|-
+composite_arg_loan_unselected_fixed_array_view_ok|check-ok|tests/safety/composite_arg_loan_unselected_fixed_array_view_ok.tl|-|-
 composite_arg_loan_unselected_match_scrutinee_ok|check-ok|tests/safety/composite_arg_loan_unselected_match_scrutinee_ok.tl|-|-
 hashmap_nominal_value_noncloneable_reject|check-fail|tests/safety/hashmap_nominal_value_noncloneable_reject.tl|-|typecheck: clone unsupported type HashmapNoncloneableValue at HashmapNoncloneableValue.choice.Raw[0].raw: (Ptr i64) has no clone capability
 hashmap_unsupported_value_kind_reject|check-fail|tests/safety/hashmap_unsupported_value_kind_reject.tl|-|hashmap: value type tuple_i64_i64_nil has unsupported value kind tuple

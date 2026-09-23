@@ -72,3 +72,10 @@ Artifacts are in `target/exp/wide-mul/`: `base-bench/`, `bench2/`,
 integration and parity logs. `--correctness` is also run, but that harness mode
 uses the compiler's default optimization level; opt 2 evidence comes from the
 separate timing run.
+
+## Upstream refresh
+
+Merged upstream `e2206a24`, including the global-initializer and LICM element-
+bound correctness fixes. Rebuilt the opt 2 compiler and passed all 673 Linux
+integration cases. The measurements above retain their explicitly named base;
+they are not reinterpreted as measurements of the combined upstream changes.

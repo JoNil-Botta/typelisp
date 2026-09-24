@@ -52924,7 +52924,16 @@
     (cond
       [(and
           (> fast-alloc-size 0)
-          (cbi.compiler-builtin-backend-tl-alloc-id? name)
+          ;; An extern alias with a pointer result uses the same register ABI.
+          ;; Its resolved symbol and the runtime plan below must still prove
+          ;; that this is our allocator, including its shared-arena slow path.
+          ;; Scratch planning already reserves both GP roles for every direct
+          ;; one-literal call of this size, independently of the callee name.
+          (or
+            (cbi.compiler-builtin-backend-tl-alloc-id? name)
+            (match (compiler-backend-global-shared-view ty)
+              [(compiler_ast_types.AstType.MutPtr _) true]
+              [_ false]))
           (compiler-backend-plan-provides-id?
             (compiler-backend-global-shared-view plan)
             cbi.compiler-builtin-id-tl-alloc)

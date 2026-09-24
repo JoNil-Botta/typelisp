@@ -45027,6 +45027,100 @@ g:
     (compiler-backend-inline-fast-alloc-multi-size-target-ok?
       (compiler_backend.CompilerBackendTarget.Windows))))
 
+(define (compiler-backend-inline-alloc-alias-case-ok?
+  [target : compiler_backend.CompilerBackendTarget]
+  [result-type : String]
+  [symbol : String]
+  [abi : String]
+  [size : i64]
+  [expected : i64]) : bool
+  (match (compiler-backend-emit-source-opt2-for-target
+    (str_cat.str-cat
+      "(extern (tl_alloc [bytes : i64]) : u64)\n(extern (reserve [bytes : i64]) : "
+      result-type
+      abi
+      (str_cat.str-cat
+        " (:symbol \""
+        symbol
+        "\"))\n(define (main) : i64 (begin (tl_alloc 128) (reserve "
+        (str_cat.str-cat (string.int->string size) ") 42))")))
+    target)
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (if (> expected 0)
+        (compiler-backend-string-contains-inline-alloc-size? asm expected)
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "_slow:\n    call .L_tl_alloc")))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-inline-alloc-alias-target-ok?
+  [target : compiler_backend.CompilerBackendTarget]) : bool
+  (and
+    (compiler-backend-inline-alloc-alias-case-ok?
+      target
+      "(MutPtr u8)"
+      "tl_alloc"
+      ""
+      1
+      8)
+    (compiler-backend-inline-alloc-alias-case-ok?
+      target
+      "(MutPtr i64)"
+      "tl_alloc"
+      ""
+      24
+      24)
+    (compiler-backend-inline-alloc-alias-case-ok?
+      target
+      "(MutPtr u8)"
+      "tl_alloc"
+      " (:abi c)"
+      63
+      64)
+    (compiler-backend-inline-alloc-alias-case-ok?
+      target
+      "(MutPtr u8)"
+      "tl_alloc"
+      ""
+      0
+      0)
+    (compiler-backend-inline-alloc-alias-case-ok?
+      target
+      "(MutPtr u8)"
+      "tl_alloc"
+      ""
+      65
+      0)
+    (compiler-backend-inline-alloc-alias-case-ok?
+      target
+      "(MutPtr u8)"
+      "unrelated_allocator"
+      ""
+      24
+      0)
+    (compiler-backend-inline-alloc-alias-case-ok?
+      target
+      "u64"
+      "tl_alloc"
+      ""
+      24
+      0)
+    (compiler-backend-inline-alloc-alias-case-ok?
+      target
+      "f64"
+      "tl_alloc"
+      " (:abi c)"
+      24
+      0)))
+
+(define (compiler-backend-inline-alloc-alias-ok?) : bool
+  (and
+    (compiler-backend-inline-alloc-alias-target-ok?
+      (compiler_backend.CompilerBackendTarget.Linux))
+    (compiler-backend-inline-alloc-alias-target-ok?
+      (compiler_backend.CompilerBackendTarget.Windows))))
+
 (define compiler-backend-inline-fast-alloc-emergency-live-count : i64
   13)
 
@@ -59958,6 +60052,7 @@ b_keep:
         (compiler-backend-inline-fast-alloc-result-ok?)
         (compiler-backend-inline-fast-alloc-reused-vreg-labels-ok?)
         (compiler-backend-inline-fast-alloc-multi-size-ok?)
+        (compiler-backend-inline-alloc-alias-ok?)
         (compiler-backend-inline-fast-alloc-emergency-preserved-ok?)
         (compiler-backend-inline-aggregate-storage-ok?)))
     (compiler-backend-tuple-ok?)

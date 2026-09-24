@@ -34,7 +34,6 @@ target/
 # Native toolchain artifacts. `typelisp compile` writes assembly beside the
 # source; assembling, linking, and `staticlib` builds add the rest.
 *.s
-!/tests/golden/*.s
 *.o
 *.obj
 *.a
@@ -46,6 +45,9 @@ target/
 # Inline test and integration scratch space.
 /tests/scratch/*
 !/tests/scratch/.gitkeep
+
+# Fixtures the gates generate (tests/integration/wide_struct_literal_decls.awk).
+/tests/integration/wide_struct_literal_decls.tl
 
 # Downloaded stage0 compiler cache (scripts/fetch-stage0.sh).
 /tools/stage0/

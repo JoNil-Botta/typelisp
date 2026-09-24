@@ -1,0 +1,276 @@
+# ISPC comparison corpus contracts (benchmarks/ispc/*): the case metadata,
+# the TypeLisp source surface, TypeLisp correctness and codegen shape in every
+# backend mode, the C oracle, and (when ISPC v1.31.0 is installed, via
+# ISPC_BIN or PATH) the upstream kernel's own driver. One gate per case:
+# --only 'CASE-*'; scripts/measure-ispc-spmd.sh runs the same selection before
+# measuring. ISPC has no width-1 CPU target, so its smallest generic target
+# only validates the derived kernel against the oracle.
+
+target -
+opt 2
+args --stdlib-root {{root}}/stdlib
+
+# ------------------------------------------------------------ perfbench_loads
+
+case perfbench_loads-contract
+do none
+check files-exist benchmarks/ispc/perfbench_loads bench.tl kernel.ispc driver.c case.tsv LICENSE.BSD-3-Clause
+check ispc-case-tsv benchmarks/ispc/perfbench_loads/case.tsv perfbench_loads f32 loads loads array:f32[];count:i32;zeros:f32[];result:f32[1] 100 42,42,42 examples/cpu/perfbench/perfbench.ispc loads
+in file benchmarks/ispc/perfbench_loads/bench.tl
+not-match \(Array[[:space:]]+[A-Za-z_][A-Za-z0-9_.]*\)
+not-contains __tl_dyn-array
+contains (import stdlib.vector)
+contains (import (vector.vector f32) as f32v)
+contains [values : (&mut values (Slice f32))]
+contains [values : f32v.Vec (loads-buffer 65536)]
+contains (while (< repetition 100)
+count = 1 \(f32v\.view(-mut)?[[:space:]]
+# Vec views are built once, outside the measured loop.
+narrow from:\(while \(< repetition 100\)
+not-match \(f32v\.view(-mut)?[[:space:]]
+
+case perfbench_loads-typelisp
+source benchmarks/ispc/perfbench_loads/bench.tl
+mode scalar avx2 avx512
+do link-run
+exit 42
+in stdout
+empty
+in stderr
+empty
+in asm
+not-empty
+if-mode scalar
+contains addss
+end-if
+if-mode avx2
+contains vaddps
+end-if
+if-mode avx512
+contains vextractf32x8
+end-if
+
+case perfbench_loads-ispc
+do none
+check ispc-driver benchmarks/ispc/perfbench_loads generic-i32x4 always 42 -O2 -
+check ispc-driver benchmarks/ispc/perfbench_loads avx2-i32x8 isa:avx2 42 -O2 -
+check ispc-driver benchmarks/ispc/perfbench_loads avx512skx-x16 env:ISPC_PERFBENCH_LOADS_AVX512:avx512 42 -O2 -
+
+# ----------------------------------------------------------- perfbench_stores
+
+case perfbench_stores-contract
+do none
+check files-exist benchmarks/ispc/perfbench_stores bench.tl kernel.ispc driver.c case.tsv README.md LICENSE.BSD-3-Clause
+check ispc-case-tsv benchmarks/ispc/perfbench_stores/case.tsv perfbench_stores f32 stores stores array:f32[];count:i32;zeros:f32[];result:f32[1] 100 42,49,57 examples/cpu/perfbench/perfbench.ispc stores
+in file benchmarks/ispc/perfbench_stores/bench.tl
+not-match \(Array[[:space:]]+[A-Za-z_][A-Za-z0-9_.]*\)
+not-contains __tl_dyn-array
+contains (import stdlib.vector)
+contains (import (vector.vector f32) as f32v)
+contains [values : (&mut values (Slice f32))]
+contains [values : f32v.Vec (stores-buffer (+ max-count 1))]
+contains (while (< repetition 100)
+count = 3 \(f32v\.view(-mut)?[[:space:]]
+narrow from:\(while \(< repetition 100\)
+not-match \(f32v\.view(-mut)?[[:space:]]
+
+case perfbench_stores-typelisp
+source benchmarks/ispc/perfbench_stores/bench.tl
+mode scalar avx2 avx512
+in fn _tl_bench_stores
+not-empty
+
+# The kernel observes its gang width: 42 scalar, 49 AVX2, 57 AVX-512.
+case perfbench_stores-run
+source benchmarks/ispc/perfbench_stores/bench.tl
+mode scalar avx2 avx512
+do tl-run
+exit scalar=42 avx2=49 avx512=57
+in stdout
+empty
+in stderr
+empty
+
+case perfbench_stores-oracle
+do none
+check c-oracle benchmarks/ispc/perfbench_stores/driver.c 42 -O2,-DEXPECTED_GANG_WIDTH=1
+
+case perfbench_stores-ispc
+do none
+check ispc-driver benchmarks/ispc/perfbench_stores generic-i32x4 always 45 -O2,-DEXPECTED_GANG_WIDTH=4 asm:stores___
+check ispc-driver benchmarks/ispc/perfbench_stores avx2-i32x8 isa:avx2 49 -O2,-DEXPECTED_GANG_WIDTH=8 asm:stores___
+check ispc-driver benchmarks/ispc/perfbench_stores avx512skx-x16 env:ISPC_PERFBENCH_STORES_AVX512:avx512 57 -O2,-DEXPECTED_GANG_WIDTH=16 asm:stores___
+
+# ---------------------------------------------------------- perfbench_gathers
+
+case perfbench_gathers-contract
+do none
+check files-exist benchmarks/ispc/perfbench_gathers bench.tl bounds.tl kernel.ispc driver.c case.tsv LICENSE.BSD-3-Clause
+check ispc-case-tsv benchmarks/ispc/perfbench_gathers/case.tsv perfbench_gathers f32 gathers gathers array:f32[];count:i32;zeros:f32[];result:f32[1] 100 42,42,42 examples/cpu/perfbench/perfbench.ispc gathers
+in file benchmarks/ispc/perfbench_gathers/bench.tl
+not-match \(Array[[:space:]]+[A-Za-z_][A-Za-z0-9_.]*\)
+not-contains __tl_dyn-array
+contains (import stdlib.vector)
+contains (import (vector.vector f32) as f32v)
+contains (import (vector.vector i64) as i64v)
+contains [values : (&mut values (Slice f32))]
+contains [offsets : (&mut offsets (Slice i64))]
+contains [offsets : i64v.Vec (gathers-i64-buffer 32)]
+contains (while (< repetition 100)
+# Six persistent Vec views: four in bench.tl, two in bounds.tl.
+count = 4 \((f32v|i64v)\.view(-mut)?[[:space:]]
+narrow from:\(while \(< repetition 100\)
+not-match \((f32v|i64v)\.view(-mut)?[[:space:]]
+in file benchmarks/ispc/perfbench_gathers/bounds.tl
+not-match \(Array[[:space:]]+[A-Za-z_][A-Za-z0-9_.]*\)
+not-contains __tl_dyn-array
+count = 2 \((f32v|i64v)\.view(-mut)?[[:space:]]
+
+case perfbench_gathers-typelisp
+source benchmarks/ispc/perfbench_gathers/bench.tl
+mode scalar avx2 avx512
+do link-run
+exit 42
+in stdout
+empty
+in stderr
+empty
+in asm
+if-mode scalar
+contains addss
+not-contains vgather
+end-if
+if-mode avx2
+contains vgatherqps
+contains vpaddq
+contains vaddps
+end-if
+if-mode avx512
+contains vgatherqps
+contains vpaddq
+contains vextractf32x8
+end-if
+
+# The gathered reduction's out-of-range index is an ordinary bounds trap.
+case perfbench_gathers-bounds
+source benchmarks/ispc/perfbench_gathers/bounds.tl
+mode scalar avx2 avx512
+do link-run
+exit 134
+in stderr
+contains array index out of bounds
+
+# An ordinary (unmasked) scatter stays a typecheck error.
+case perfbench_gathers-scatter-reject
+source tests/safety/spmd_unmasked_scatter_index_reject.tl
+do check
+exit nonzero
+in stderr
+contains foreach does not support non-contiguous array element destination indexes
+
+case perfbench_gathers-oracle
+do none
+check c-oracle benchmarks/ispc/perfbench_gathers/driver.c 42 -O2,-DEXPECTED_GANG_WIDTH=1
+
+case perfbench_gathers-ispc
+do none
+check ispc-driver benchmarks/ispc/perfbench_gathers generic-i32x4 always 42 -O2,-DEXPECTED_GANG_WIDTH=4 -
+check ispc-driver benchmarks/ispc/perfbench_gathers avx2-i32x8 isa:avx2 42 -O2,-DEXPECTED_GANG_WIDTH=8 -
+check ispc-driver benchmarks/ispc/perfbench_gathers avx512skx-x16 env:ISPC_PERFBENCH_GATHERS_AVX512:avx512 42 -O2,-DEXPECTED_GANG_WIDTH=16 -
+
+# ----------------------------------------------------------------- mandelbrot
+
+case mandelbrot-contract
+do none
+check files-exist benchmarks/ispc/mandelbrot bench.tl kernel.ispc driver.c case.tsv README.md LICENSE.BSD-3-Clause
+check ispc-case-tsv benchmarks/ispc/mandelbrot/case.tsv mandelbrot f32 mandelbrot-row mandelbrot_ispc x0:f32;y0:f32;x1:f32;y1:f32;width:i32;height:i32;maxIterations:i32;output:i32[] 1 42,42,42 examples/cpu/mandelbrot/mandelbrot.ispc mandelbrot_ispc
+
+case mandelbrot-typelisp
+source benchmarks/ispc/mandelbrot/bench.tl
+mode scalar avx2 avx512
+do link-run
+exit 42
+in stdout
+empty
+in stderr
+empty
+in fn _tl_bench_mandelbrot_row
+not-empty
+in asm
+if-mode avx512
+contains vmulps
+contains vsubps
+contains vcmpps
+match %k[0-7]
+end-if
+if-mode avx2
+contains vmulps
+contains vsubps
+contains vcmpps
+contains vpmovmskb
+contains vpand
+not-match %k[0-7]|%zmm[0-9]+
+end-if
+
+case mandelbrot-ispc
+do none
+check ispc-driver benchmarks/ispc/mandelbrot generic-i32x4 always 42 -O2,-ffp-contract=off nm:mandelbrot_ispc___
+check ispc-driver benchmarks/ispc/mandelbrot avx2-i32x8 isa:avx2 42 -O2,-ffp-contract=off nm:mandelbrot_ispc___
+check ispc-driver benchmarks/ispc/mandelbrot avx512skx-x16 env:ISPC_MANDELBROT_AVX512:avx512 42 -O2,-ffp-contract=off nm:mandelbrot_ispc___
+
+# ------------------------------------------------------------ point_transform
+
+case point_transform-contract
+do none
+check files-exist benchmarks/ispc/point_transform bench.tl kernel.ispc driver.c case.tsv README.md LICENSE.BSD-3-Clause
+check ispc-case-tsv benchmarks/ispc/point_transform/case.tsv point_transform f32 transform-points transform_points points_x:f32[];points_y:f32[];result_x:f32[];result_y:f32[];scale_x:f32;scale_y:f32;translate_x:f32;translate_y:f32;sin_theta:f32;cos_theta:f32;strength:f32;count:i32 100 42,42,42 examples/cpu/point_transform_ctypes/point_transform.ispc transform_points
+in file benchmarks/ispc/point_transform/bench.tl
+not-match \(Array[[:space:]]+[A-Za-z_][A-Za-z0-9_.]*\)
+not-contains __tl_dyn-array
+contains (import stdlib.vector)
+contains (import (vector.vector f32) as f32v)
+contains [points-x : (& points-x (Slice f32))]
+contains [result-x : (&mut result-x (Slice f32))]
+contains [points-x : (&mut points-x f32v.Vec)]
+contains [points-x : f32v.Vec (point-transform-buffer capacity)]
+count = 12 \(f32v\.view(-mut)?[[:space:]]
+narrow from:\(while \(< repetition 100\)
+not-match \(f32v\.view(-mut)?[[:space:]]
+
+case point_transform-typelisp
+source benchmarks/ispc/point_transform/bench.tl
+mode scalar avx2 avx512
+do link-run
+exit 42
+in stdout
+empty
+in stderr
+empty
+# At most one bounds-abort site per Slice the kernel touches.
+in fn _tl_bench_transform_points
+count <= 4 ^[[:space:]]+call[[:space:]]+tl_oob_abort(_at)?
+in asm
+if-mode scalar
+contains mulss
+match (addss|subss)
+end-if
+if-mode avx2
+contains %ymm
+contains vmulps
+match v(add|sub)ps
+end-if
+if-mode avx512
+contains %zmm
+contains vmulps
+match v(add|sub)ps
+end-if
+
+case point_transform-oracle
+do none
+check c-oracle benchmarks/ispc/point_transform/driver.c 42 -O2,-ffp-contract=off
+
+case point_transform-ispc
+do none
+check ispc-driver benchmarks/ispc/point_transform generic-i32x4 always 42 -O2,-ffp-contract=off,-DUSE_ISPC nm:transform_points___
+check ispc-driver benchmarks/ispc/point_transform avx2-i32x8 isa:avx2 42 -O2,-ffp-contract=off,-DUSE_ISPC nm:transform_points___
+check ispc-driver benchmarks/ispc/point_transform avx512skx-x16 env:ISPC_POINT_TRANSFORM_AVX512:avx512 42 -O2,-ffp-contract=off,-DUSE_ISPC nm:transform_points___

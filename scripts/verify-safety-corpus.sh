@@ -58,6 +58,9 @@ rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 NORMALIZED_MANIFEST="$WORKDIR/manifest.normalized"
 tr -d '\r' < "$MANIFEST" > "$NORMALIZED_MANIFEST"
+# wide_struct_literal_reject imports the generated #7921 declarations.
+awk -f tests/integration/wide_struct_literal_decls.awk > "$WORKDIR/wide_struct_literal_decls.tl"
+mv "$WORKDIR/wide_struct_literal_decls.tl" tests/integration/wide_struct_literal_decls.tl
 
 BUILD_TARGET=linux-x86_64
 CHECK_BIN="$WORKDIR/selfhost-check"

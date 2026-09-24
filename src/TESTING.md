@@ -353,8 +353,7 @@ The package follows the standard layout: `typelisp build` resolves the default
 `tlci_core.tl`, `tlci_pages.tl`, and `tlci_loader.tl` (staged tlci feature
 modules with dedicated smokes, #2651/#2671/#2657), plus
 `compiler_backend_tests.tl`, `compiler_driver_smoke_tests.tl`, and
-`compiler_lower_package_tests.tl` (main-less native smoke helpers). These carry
-`decision` rows in the compile manifest.
+`compiler_lower_package_tests.tl` (main-less native smoke helpers).
 
 ### Inline tests
 
@@ -431,7 +430,10 @@ Compile/symbol smoke coverage is driven by
 [`../scripts/verify-selfhost-compile-manifest.sh`](../scripts/verify-selfhost-compile-manifest.sh).
 The runner compiles each manifest case with an already-built TypeLisp compiler,
 rejects generated `# TODO` assembly, applies the case's `main:` label policy,
-and checks representative symbol/literal markers in the emitted assembly.
+and checks the case's codegen markers (calls that must survive, runtime
+helpers, symbols that must not be emitted) in the emitted assembly. Label
+existence alone is not a marker: a compile case already fails when the module
+does not compile, and command behaviour belongs to the CLI gates.
 `_tl_foo` and `call _tl_foo` markers are logical symbol
 markers, so both expectation modes accept direct labels such as `_tl_foo` and
 emitted module/path-qualified labels such as `_tl_calc_foo` without changing the
@@ -442,11 +444,8 @@ symbol markers also accept compact selfhost symbol metadata. The default
 Use `requires-stage0-mode|<reason>` only for a case that must remain seed-only
 for a named blocker such as the current #1437 stage1->stage2 resource limit.
 
-Every top-level `src/*.tl` file must appear as a manifest `case` or a
-`decision` line. This makes new modules and smoke drivers fail CI until they
-have an explicit compile-coverage decision. Staged cases cover integration
-drivers whose imports need temporary sibling names, such as the text buffer and
-symbol-table drivers.
+Staged cases cover integration drivers whose imports need temporary sibling
+names, such as the symbol-table driver.
 
 The runner compiles the manifest as `compile --batch` chunks: 16 entries per
 chunk on Linux, a deliberate cross-entry retention stress, and one per chunk on
@@ -1221,8 +1220,8 @@ For new selfhost tests:
   generated test harness is enough.
 - Add a `*_smoke.tl` driver when the module should be executable through the
   compiler boundary.
-- Add compile/symbol smoke coverage to `src/compile_manifest.txt` for new
-  top-level selfhost modules or smoke drivers, or add an explicit `decision`.
+- Add a `src/compile_manifest.txt` case when a new top-level module must
+  compile on its own or pins a codegen marker.
 - Add public command, package, docs, LSP, REPL, formatter, or platform cases to
   `scripts/verify-public-tools.sh` or the narrower verification script that
   owns that layer.
@@ -1237,12 +1236,15 @@ runner to preserve native Windows exit codes. Use this layer for behavior that
 only shows up after execution: exit status, stdout/stderr, diagnostic rendering,
 deterministic file output, and import-aware driver behavior.
 
-The integration manifests live in `tests/integration/native-linux.manifest` and
-`tests/integration/native-windows.manifest`. When a program or smoke driver
-needs another imported module, add the dependency to the owning manifest row so
-the CI runner exercises the same import graph reviewers see locally. The
-same script also owns host-specific backend/compiler-driver fixture checks that
-are too low-level for a manifest row.
+The integration manifest `tests/integration/native.manifest` serves both hosts:
+each row names the hosts it runs on and the opt levels it runs at (the batched
+default level and/or standalone `--opt-level` compiles), and
+`scripts/expand-integration-manifest.awk` expands one host's rows. When a
+program or smoke driver needs another imported module, add the dependency to
+the owning manifest row so the CI runner exercises the same import graph
+reviewers see locally. The same script also owns host-specific
+backend/compiler-driver fixture checks that are too low-level for a manifest
+row.
 
 The `c_function_pointer_flow` row uses a native C provider from
 `benchmarks/c_function_pointer_flow/baseline.c` to exercise typed code addresses
@@ -1297,14 +1299,25 @@ tools\stage0\typelisp.exe run src\compiler_parse_core.tl --stdlib-root stdlib --
 tools\stage0\typelisp.exe run src\compiler_backend_tests.tl --stdlib-root stdlib --stdlib-root src
 ```
 
-### Assembly shape gates
+### Codegen case files
 
-`scripts/verify-asm-shape-gates.sh` owns Linux opt2 assembly-shape assertions
-for performance-sensitive regalloc/backend fixtures. Use this layer when a
-native integration fixture can still return the right exit code while silently
-falling back to slow codegen. The script compiles each fixture with the selected
-CI compiler, extracts the intended function body, and checks for the fast shape
-and the absence of known slow markers.
+`tests/codegen/*.cases` hold the table-driven compile/run/assembly-shape
+checks, run by `scripts/verify-codegen-cases.sh` (the format is documented in
+its header). A case names a source, the targets, opt levels and backend modes
+it runs under, and an action (compile, build, link and run, `typelisp run` or
+`check`); its rows then assert on the exit status, stdout/stderr, the whole
+assembly or one function body: fixed text, regular expressions, match counts,
+and named analyzers from `scripts/codegen-cases-analyzers.awk` for shapes a
+grep cannot express (backward branches, prologue pushes, unrolled groups).
+Everything is evaluated with sh/grep/awk, never with the compiler under test.
+Each CI gate runs one file, or one case of it with `--only`.
+
+Use this layer when a native integration fixture can still return the right
+exit code while silently falling back to slow codegen: `asm-shape.cases` pins
+the opt2 regalloc/backend/optimizer shapes of the integration fixtures,
+`crypto-sha.cases` the hash cores' wipe loops, `by-value-aggregate-abi.cases`
+the internal aggregate ABI, `math.cases` freestanding stdlib math, and
+`ispc.cases` the ISPC comparison corpus contracts.
 
 ### Selfhost native generated programs
 

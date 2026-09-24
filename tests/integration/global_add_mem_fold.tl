@@ -20,7 +20,7 @@
 ;; are seeded through `gadd-opaque`, whose own self-recursion keeps its result
 ;; out of reach of constant propagation, so the adds stay real adds.
 ;;
-;; The gate is check_global_add_mem_fold in scripts/verify-asm-shape-gates.sh;
+;; The gate is case global-add-mem-fold in tests/codegen/asm-shape.cases;
 ;; it FAILS on the pre-BE-6 compiler, which stages the global read through a
 ;; scratch register first, and on the pre-CANON-G compiler for `probe-lhs`.
 (define gadd-k : i64

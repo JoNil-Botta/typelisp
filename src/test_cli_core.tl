@@ -5611,13 +5611,7 @@
   (let
     [integration-prefix : String
       (tltest-package-tests-subdir-prefix tests-prefix "integration")]
-    (or
-      (io.file-exists?
-        (str_cat.str-cat
-          (owned_view.compiler-owned-shared-view integration-prefix)
-          "native-linux.manifest"))
-      (io.file-exists?
-        (str_cat.str-cat integration-prefix "native-windows.manifest")))))
+    (io.file-exists? (str_cat.str-cat integration-prefix "native.manifest"))))
 
 (define (tltest-package-manifest-managed-integration-source-with?
   [normalized : String]

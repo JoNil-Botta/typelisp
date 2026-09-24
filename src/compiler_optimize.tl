@@ -184157,7 +184157,7 @@
 ;; Observed on tests/integration/licm_memclean_global_promote.tl, whose
 ;; `pressured_scan` loop is over the budget: without this gate its `gcell_b`
 ;; read moved into the preheader and the value spanned the loop, which
-;; scripts/verify-asm-shape-gates.sh gates on. Every measured win of this
+;; tests/codegen/asm-shape.cases gates on. Every measured win of this
 ;; promotion is in straight-line code, so the gate costs nothing on the
 ;; benchmark corpus (all 20 rows byte-identical with and without it).
 ;;

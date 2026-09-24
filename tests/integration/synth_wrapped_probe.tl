@@ -20,7 +20,7 @@
 ;; band can claim either before the measured tier is asked.
 ;;
 ;; The exit code proves the values; the shape is pinned in
-;; scripts/verify-asm-shape-gates.sh, and the abort twin
+;; tests/codegen/asm-shape.cases, and the abort twin
 ;; (synth_wrapped_probe_abort.tl) proves the inlined body keeps its own abort
 ;; site.
 (define sp-empty : i64

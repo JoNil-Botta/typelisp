@@ -4,7 +4,7 @@
 ;; the optimizer's copy_call pass turns into ONE runtime call, replacing the
 ;; word-merge unroller's 11-instructions-per-four-elements body with a
 ;; `rep movsq` that the deterministic instruction-count gate charges one
-;; instruction per element. scripts/verify-asm-shape-gates.sh asserts the shape;
+;; instruction per element. tests/codegen/asm-shape.cases asserts the shape;
 ;; this file's `main` is the correctness twin, and it is where the SEMANTICS the
 ;; helper exists for are pinned:
 ;;

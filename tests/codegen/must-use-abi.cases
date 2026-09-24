@@ -1,0 +1,45 @@
+# The declaration-only :must-use marker must not affect generated code or the
+# aggregate layout on either target (gate stage2-must-use-metadata-and-abi-codegen).
+
+args --stdlib-root stdlib
+
+case unmarked
+source tools/must-use-abi-unmarked.tl
+target linux-x86_64 windows-x86_64
+opt 0 2
+
+# The files' source-module names are the only permitted symbol difference.
+case marked
+source tools/must-use-abi-marked.tl
+target linux-x86_64 windows-x86_64
+opt 0 2
+check asm-equals {{work}}/unmarked/{{target}}-o{{opt}}/out.s s/must_use_abi_unmarked/must_use_abi_marked/g
+
+# Both return 7 from the pinned layout.
+case runtime-unmarked
+source tools/must-use-abi-unmarked.tl
+do tl-run
+target -
+opt -
+exit 7
+
+case runtime-marked
+source tools/must-use-abi-marked.tl
+do tl-run
+target -
+opt -
+exit 7
+
+# A must-use aggregate emitted by a macro compiles.
+case generated
+source tools/must-use-generated.tl
+do check
+exit 0
+
+# Outside an aggregate, :must-use stays an unbound name.
+case invalid-local
+source tools/must-use-invalid-local.tl
+do check
+exit nonzero
+in stderr
+contains typecheck: unbound name :must-use

@@ -89,16 +89,10 @@ Validate the required metadata/diagnostic contract, and optionally the real
 ISPC generic/AVX2 driver when v1.31.0 is installed, with:
 
 ```sh
-scripts/verify-ispc-perfbench-gathers.sh
-ISPC_BIN=/path/to/ispc scripts/verify-ispc-perfbench-gathers.sh
-scripts/verify-ispc-perfbench-loads.sh
-ISPC_BIN=/path/to/ispc scripts/verify-ispc-perfbench-loads.sh
-scripts/verify-ispc-perfbench-stores.sh
-ISPC_BIN=/path/to/ispc scripts/verify-ispc-perfbench-stores.sh
-scripts/verify-ispc-mandelbrot.sh
-ISPC_BIN=/path/to/ispc scripts/verify-ispc-mandelbrot.sh
-scripts/verify-ispc-point-transform.sh
-ISPC_BIN=/path/to/ispc scripts/verify-ispc-point-transform.sh
+scripts/verify-codegen-cases.sh tests/codegen/ispc.cases
+ISPC_BIN=/path/to/ispc scripts/verify-codegen-cases.sh tests/codegen/ispc.cases
+# one case: its CASE-* rows
+scripts/verify-codegen-cases.sh --only 'perfbench_gathers-*' tests/codegen/ispc.cases
 ```
 
 ## Case contract
@@ -112,7 +106,7 @@ symbols, lane/argument/repetition data, expected exit status, and pinned
 upstream provenance. The f32 width mapping is fixed: scalar/1 has no ISPC
 target, AVX2/8 uses `avx2-i32x8`, and AVX-512/16 uses `avx512skx-x16`.
 
-A corresponding `scripts/verify-ispc-<case-with-hyphens>.sh` remains the
-semantic authority. The shared harness runs it before measurement, so exit,
+The case's `CASE-*` rows in `tests/codegen/ispc.cases` remain the semantic
+authority. The shared harness runs them before measurement, so exit,
 stdout, stderr, case-specific bytes, and tolerance checks must pass before any
 static comparison is emitted.

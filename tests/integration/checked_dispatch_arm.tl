@@ -25,7 +25,7 @@
 ;; would be paid at every entry while the arm runs on a fraction of them.
 ;;
 ;; The exit code proves the values; the shape is pinned in
-;; scripts/verify-asm-shape-gates.sh, and the abort twin
+;; tests/codegen/asm-shape.cases, and the abort twin
 ;; (checked_dispatch_arm_abort.tl) proves the body spliced into an arm keeps
 ;; its own abort site.
 ;; The helper. Acyclic and call-free, two bounds-checked table reads, and far

@@ -1,0 +1,35 @@
+# Scalar `for` is an ordinary source transformer (run by scripts/verify-stdlib.sh):
+# no native identity hooks remain, and an exact copy of its body still works
+# after changing only its name.
+
+file copied-for.tl
+(import stdlib.iterator)
+(import for_copy_macros as copied)
+
+(define (main) : i64
+  (let
+    [total : i64 0]
+    (begin
+      (copied.for-copy [item (iterator.range 0 3)]
+        (set! total (+ total item)))
+      (+ total 39))))
+end-file
+
+# The bracketed letters keep this row from matching itself.
+case no-native-planner
+do none
+check git-grep-absent MacroCore[F]or|macro-core-[f]or src stdlib tests
+
+# for_copy_macros.tl holds only the renamed declaration (plugin
+# for-copy-mutation): loading the whole implicit-prelude module twice would
+# test module identity instead of the scalar-for implementation.
+case renamed-copy-runs
+setup for-copy-mutation {{work}}/stdlib-root
+source {{work}}/copied-for.tl
+do tl-run
+target -
+opt -
+args --stdlib-root {{work}}/stdlib-root --stdlib-root {{root}}/stdlib
+exit 42
+in file {{work}}/stdlib-root/for_copy_macros.tl
+match \(defmacro \(for-copy[ ]

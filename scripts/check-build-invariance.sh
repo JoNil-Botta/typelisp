@@ -272,14 +272,15 @@ write_corpus() {
     {
         printf '%s\n' "selfhost_main_opt1|src/main.tl|1"
         printf '%s\n' "selfhost_main_opt2|src/main.tl|2"
-        awk -F'|' '
-            /^[[:space:]]*#/ { next }
-            NF < 2 { next }
-            $1 == "" || $2 == "" { next }
-            {
-                print "integration_" $1 "|" $2 "|2"
-            }
-        ' tests/integration/native-linux.manifest
+        awk -v host=linux -f scripts/expand-integration-manifest.awk \
+            tests/integration/native.manifest |
+            awk -F'|' '
+                NF < 2 { next }
+                $1 == "" || $2 == "" { next }
+                {
+                    print "integration_" $1 "|" $2 "|2"
+                }
+            '
     } > "$corpus_file"
 }
 
@@ -884,6 +885,9 @@ echo "[build-invariance] compiler construction: ${construction_seconds}s"
 CORPUS="$WORKDIR/corpus.txt"
 LEFT_DIR="$WORKDIR/compare/opt1-built"
 RIGHT_DIR="$WORKDIR/compare/opt2-built"
+# wide_struct_literal imports the generated #7921 declarations.
+awk -f tests/integration/wide_struct_literal_decls.awk > "$WORKDIR/wide_struct_literal_decls.tl"
+mv "$WORKDIR/wide_struct_literal_decls.tl" tests/integration/wide_struct_literal_decls.tl
 write_corpus "$CORPUS"
 rm -rf "$LEFT_DIR" "$RIGHT_DIR"
 mkdir -p "$LEFT_DIR" "$RIGHT_DIR"

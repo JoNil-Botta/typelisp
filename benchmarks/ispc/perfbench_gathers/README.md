@@ -18,8 +18,8 @@ Run required TypeLisp/C-oracle correctness, focused bounds/scatter safety, and
 optional pinned ISPC comparisons with:
 
 ```sh
-scripts/verify-ispc-perfbench-gathers.sh
-ISPC_BIN=/path/to/ispc scripts/verify-ispc-perfbench-gathers.sh
+scripts/verify-codegen-cases.sh --only 'perfbench_gathers-*' tests/codegen/ispc.cases
+ISPC_BIN=/path/to/ispc scripts/verify-codegen-cases.sh --only 'perfbench_gathers-*' tests/codegen/ispc.cases
 ```
 
 `bounds.tl` keeps the deliberate active-lane out-of-bounds probe outside the

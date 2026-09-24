@@ -942,6 +942,9 @@
       (compiler_lower_tests.compiler-lower-mutable-global-function-value-shape-ok?)
       (io.panic "lower: mutable global function value smoke mismatch"))
     (unless
+      (compiler_lower_tests.compiler-optimize-wide-power-product-shape-ok?)
+      (io.panic "optimize: wide power-of-two product shape mismatch"))
+    (unless
       (compiler_lower_tests.compiler-lower-global-reference-initializer-shape-ok?)
       (io.panic "lower: global reference initializer smoke mismatch"))
     (unless

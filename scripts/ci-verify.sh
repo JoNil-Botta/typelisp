@@ -840,9 +840,9 @@ run_with_compiler "$STAGE2_BIN" stage2-native-integration-corpus scripts/verify-
 run_with_compiler "$STAGE2_BIN" stage2-must-use-metadata-and-abi-codegen scripts/verify-must-use-abi.sh
 if [ "$HOST_OS" = linux ]; then
     run_with_compiler "$STAGE2_BIN" stage2-regalloc-backend-asm-shape-gates scripts/verify-asm-shape-gates.sh
-    run_with_compiler "$STAGE2_BIN" stage2-git-sha-1-fixed-round-wipe-asm-shape-gate scripts/verify-crypto-sha1-git-shape.sh
-    run_with_compiler "$STAGE2_BIN" stage2-sha-256-fixed-round-wipe-asm-shape-gate scripts/verify-crypto-sha256-shape.sh
-    run_with_compiler "$STAGE2_BIN" stage2-sha-512-wipe-asm-shape-gate scripts/verify-crypto-sha512-shape.sh
+    run_with_compiler "$STAGE2_BIN" stage2-git-sha-1-fixed-round-wipe-asm-shape-gate scripts/verify-codegen-cases.sh --only 'sha1-*' tests/codegen/crypto-sha.cases
+    run_with_compiler "$STAGE2_BIN" stage2-sha-256-fixed-round-wipe-asm-shape-gate scripts/verify-codegen-cases.sh --only 'sha256-*' tests/codegen/crypto-sha.cases
+    run_with_compiler "$STAGE2_BIN" stage2-sha-512-wipe-asm-shape-gate scripts/verify-codegen-cases.sh --only 'sha512-*' tests/codegen/crypto-sha.cases
     run_with_compiler "$STAGE2_BIN" stage2-by-value-aggregate-abi-shape-gate scripts/verify-by-value-aggregate-abi.sh
 fi
 run_with_compiler "$STAGE2_BIN" stage2-examples scripts/verify-examples.sh

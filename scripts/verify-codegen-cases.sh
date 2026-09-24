@@ -467,8 +467,9 @@ cc_run_output_row() {
     return 1
 }
 
+# Subject rows (in, narrow) select what the next rows read; they fail when the
+# subject does not exist but are not counted as expectations.
 a_in() {
-    CC_ROWS=$((CC_ROWS + 1))
     _ai_line=$1
     _ai_kind=$2
     _ai_arg=$(cc_expand "${3-}")
@@ -518,7 +519,7 @@ a_in() {
 }
 
 a_narrow() {
-    cc_row || return 0
+    [ "$CV_BAD_SUBJECT" -eq 0 ] || return 0
     _an_line=$1
     _an_spec=$(cc_expand "$2")
     cc_need_subject "$_an_line" || return 0
@@ -853,7 +854,7 @@ done
 [ "$CC_LIST" -eq 0 ] || exit 0
 
 if [ "$CC_FAILURES" -ne 0 ]; then
-    echo "[codegen-cases] FAILED: $CC_FAILURES failing row(s) ($CC_ROWS evaluated, $CC_SKIPPED skipped)" >&2
+    echo "[codegen-cases] FAILED: $CC_FAILURES failure(s); $CC_ROWS expectation(s) checked, $CC_SKIPPED skipped" >&2
     exit 1
 fi
-echo "[codegen-cases] passed: $CC_ROWS row(s) evaluated, $CC_SKIPPED skipped"
+echo "[codegen-cases] passed: $CC_ROWS expectation(s) checked, $CC_SKIPPED skipped"

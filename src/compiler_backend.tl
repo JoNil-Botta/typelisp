@@ -89151,6 +89151,8 @@
 ;; These leaves have no incoming edges from the always-emitted runtime. Keep
 ;; them for direct calls, address-taken symbols, and any referenced extern alias.
 ;; Reuse the call and reference inventories already built for symbol emission.
+;; Every direct-callee IR form capable of targeting these leaves must be indexed.
+;; No pass after runtime indexing may introduce a new runtime-leaf call.
 (define (compiler-backend-runtime-leaf-bit
   [backend-state : CompilerBackendState]
   [name : i64]) : i64
@@ -89166,7 +89168,7 @@
         4]
       [(string.eq (compiler-backend-global-shared-view text) "tl_mem_copy8_fwd")
         8]
-      [(string.eq text "tl_mem_fill8") 16]
+      [(string.eq (compiler-backend-global-shared-view text) "tl_mem_fill8") 16]
       [else 0])))
 
 (define (compiler-backend-runtime-used-leaf-mask

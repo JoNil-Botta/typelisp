@@ -8,6 +8,7 @@ benchmark	hashmap_get
 benchmark	hashmap_grow
 benchmark	hashmap_insert
 benchmark	mul_small_constants
+benchmark	mul_wide_power
 benchmark	opt_allocation_heavy
 benchmark	opt_arithmetic_loops
 benchmark	opt_array_sum

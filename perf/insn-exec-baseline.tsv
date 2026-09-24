@@ -47,4 +47,4 @@ benchmark/typelisp/asm_render	748623392
 benchmark/c-scalar/asm_render	644231943
 self_compile/compile_cli_opt1	96093984196
 benchmark/typelisp/pure_call_join	154501100
-benchmark/c-scalar/pure_call_join	218104889
+benchmark/c-scalar/pure_call_join	218406456

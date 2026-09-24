@@ -20,8 +20,10 @@ The paired `pure_call_join` benchmark computes a runtime-dependent integer mix,
 a different mix in each branch, and the original mix again after the join. The
 C baseline uses `uint64_t` to preserve wrapping. Executed instructions fall from
 232,501,100 to **154,501,100** (−33.55%). The final bounded revision reproduces
-154,501,100 exactly against upstream `f716205a`; the C scalar reference counts
-218,104,889. Both rows are registered in the required `instruction-main` gate,
+154,501,100 exactly against upstream `f716205a`. The C scalar reference counts
+218,406,456 with CI's clang (hosted run 35931103677); a local clang measured
+218,104,889, and C rows are recorded from CI's toolchain (#7792). Both rows are
+registered in the required `instruction-main` gate,
 which also validates opt2 outputs against both C implementations. The manifest
 keeps that gate's cases out of the duplicate correctness suites.
 

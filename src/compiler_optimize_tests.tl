@@ -258,6 +258,75 @@
         0
         "function inventories are independent"))))
 
+;; The environment's ids, head first, as decimal digits.
+(cfg
+  test
+  (define (opt-test-ptr-env-ids
+    [env : compiler_optimize.OptLoopBcePtrEnv]
+    [acc : i64]) : i64
+    (match (compiler_optimize.compiler-opt-global-shared-view env)
+      [(compiler_optimize.OptLoopBcePtrEnv.Nil) acc]
+      [(compiler_optimize.OptLoopBcePtrEnv.Cons id _ rest)
+        (opt-test-ptr-env-ids
+          (compiler_optimize.compiler-opt-box-shared-view rest)
+          (+ (* acc 10) id))])))
+
+(cfg
+  test
+  (define (opt-test-ptr-env) : compiler_optimize.OptLoopBcePtrEnv
+    (compiler_optimize.OptLoopBcePtrEnv.Cons
+      1
+      (compiler_optimize.OptLoopBcePtrKind.LengthSlot 10)
+      (box
+        (compiler_optimize.OptLoopBcePtrEnv.Cons
+          2
+          (compiler_optimize.OptLoopBcePtrKind.DataSlot 20)
+          (box
+            (compiler_optimize.OptLoopBcePtrEnv.Cons
+              1
+              (compiler_optimize.OptLoopBcePtrKind.DataBuffer 30)
+              (box
+                (compiler_optimize.OptLoopBcePtrEnv.Cons
+                  3
+                  (compiler_optimize.OptLoopBcePtrKind.DataElement 40)
+                  (box (compiler_optimize.OptLoopBcePtrEnv.Nil)))))))))))
+
+(test
+  loop-bce-ptr-unbind-removes-every-binding
+  (begin
+    (test.assert-i64-eq
+      (opt-test-ptr-env-ids
+        (compiler_optimize.opt-loop-bce-ptr-unbind (opt-test-ptr-env) 9)
+        0)
+      1213
+      "an absent var leaves the environment as it is")
+    (test.assert-i64-eq
+      (opt-test-ptr-env-ids
+        (compiler_optimize.opt-loop-bce-ptr-unbind (opt-test-ptr-env) 1)
+        0)
+      23
+      "a var bound at the head and again later loses both bindings")
+    (test.assert-i64-eq
+      (opt-test-ptr-env-ids
+        (compiler_optimize.opt-loop-bce-ptr-unbind (opt-test-ptr-env) 2)
+        0)
+      113
+      "a middle binding goes and the rest keep their order")
+    (test.assert-i64-eq
+      (opt-test-ptr-env-ids
+        (compiler_optimize.opt-loop-bce-ptr-unbind (opt-test-ptr-env) 3)
+        0)
+      121
+      "a tail binding goes")
+    (test.assert-i64-eq
+      (match (compiler_optimize.opt-loop-bce-ptr-lookup
+        (compiler_optimize.opt-loop-bce-ptr-unbind (opt-test-ptr-env) 2)
+        3)
+        [(compiler_optimize.OptLoopBcePtrKind.DataElement slot) slot]
+        [_ -1])
+      40
+      "the kept bindings keep their kinds")))
+
 (test
   switch-copy-env-indexed-semantics
   (let

@@ -78435,19 +78435,23 @@
 
 ;; Removes every binding of `var`. A var is almost always unbound when it is
 ;; bound (each def binds its own var once), and then the environment is
-;; returned as it is rather than copied cell by cell into an equal list.
+;; returned as it is rather than copied cell by cell into an equal list. The
+;; search runs once, here; the removal does not repeat it per cell.
 (define (opt-loop-bce-ptr-unbind [env : OptLoopBcePtrEnv] [var : i64]) : OptLoopBcePtrEnv
-  (if (not (opt-loop-bce-ptr-bound? (compiler-opt-global-shared-view env) var))
-    env
-    (match (compiler-opt-global-shared-view env)
-      [(OptLoopBcePtrEnv.Nil) (OptLoopBcePtrEnv.Nil)]
-      [(OptLoopBcePtrEnv.Cons id kind rest)
-        (let
-          [tail : OptLoopBcePtrEnv
-            (opt-loop-bce-ptr-unbind (compiler-opt-box-shared-view rest) var)]
-          (if (= id var)
-            tail
-            (OptLoopBcePtrEnv.Cons id kind (box tail))))])))
+  (if (opt-loop-bce-ptr-bound? (compiler-opt-global-shared-view env) var)
+    (opt-loop-bce-ptr-remove env var)
+    env))
+
+(define (opt-loop-bce-ptr-remove [env : OptLoopBcePtrEnv] [var : i64]) : OptLoopBcePtrEnv
+  (match (compiler-opt-global-shared-view env)
+    [(OptLoopBcePtrEnv.Nil) (OptLoopBcePtrEnv.Nil)]
+    [(OptLoopBcePtrEnv.Cons id kind rest)
+      (let
+        [tail : OptLoopBcePtrEnv
+          (opt-loop-bce-ptr-remove (compiler-opt-box-shared-view rest) var)]
+        (if (= id var)
+          tail
+          (OptLoopBcePtrEnv.Cons id kind (box tail))))]))
 
 (define (opt-loop-bce-ptr-bind
   [env : OptLoopBcePtrEnv]

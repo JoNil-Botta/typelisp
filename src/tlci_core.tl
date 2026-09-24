@@ -1698,9 +1698,15 @@
   (let
     [h : i64 hash]
     [i : i64 start]
-    [blocks-end : i64 (- end 3)]
+    [limit : i64
+      (if (< end (array-length bytes))
+        end
+        (array-length bytes))]
     (begin
-      (while (< i blocks-end)
+      ;; Eight bytes per reduction: their Horner sum is below 2^58, and
+      ;; h * 131^8 + t stays below 2^63, where the two-step Mersenne fold
+      ;; still lands in [0, p + 2], one conditional subtract from p.
+      (while (<= (+ i 8) limit)
         (let
           [t : i64
             (+
@@ -1708,13 +1714,29 @@
                 (+
                   (*
                     (+
-                      (* (tlci-byte-at bytes i) 131)
-                      (tlci-byte-at bytes (+ i 1)))
+                      (*
+                        (+
+                          (*
+                            (+
+                              (*
+                                (+
+                                  (*
+                                    (+
+                                      (* (tlci-byte-at bytes i) 131)
+                                      (tlci-byte-at bytes (+ i 1)))
+                                    131)
+                                  (tlci-byte-at bytes (+ i 2)))
+                                131)
+                              (tlci-byte-at bytes (+ i 3)))
+                            131)
+                          (tlci-byte-at bytes (+ i 4)))
+                        131)
+                      (tlci-byte-at bytes (+ i 5)))
                     131)
-                  (tlci-byte-at bytes (+ i 2)))
+                  (tlci-byte-at bytes (+ i 6)))
                 131)
-              (tlci-byte-at bytes (+ i 3)))]
-          [x : i64 (+ (* h tlci-hash-step-4) t)]
+              (tlci-byte-at bytes (+ i 7)))]
+          [x : i64 (+ (* h tlci-hash-step-8) t)]
           [once : i64 (+ (bit-and x tlci-hash-modulus) (shr x 31))]
           [twice : i64 (+ (bit-and once tlci-hash-modulus) (shr once 31))]
           (begin
@@ -1723,7 +1745,7 @@
               (if (>= twice tlci-hash-modulus)
                 (- twice tlci-hash-modulus)
                 twice))
-            (set! i (+ i 4)))))
+            (set! i (+ i 8)))))
       (while (< i end)
         (begin
           (set! h (tlci-hash-reduce (+ (* h 131) (tlci-byte-at bytes i))))

@@ -497,6 +497,79 @@ awk -F '\t' '
     exit 1
 }
 
+# The field, path and identity helpers use shell builtins rather than one
+# process per call (#8063). Pin their results, including the edge cases the
+# former grep, awk and tr pipelines defined.
+expect_helper() {
+    if [ "$2" != "$3" ]; then
+        echo "ci compiler artifact helper self-test $1: expected '$3', got '$2'" >&2
+        exit 1
+    fi
+}
+ci_compiler_artifact_field_safe plain 'a b\c/åäö-{root}' ||
+    { echo "field_safe rejected printable text" >&2; exit 1; }
+expect_failure field-tab 'tabbed contains a control character' \
+    ci_compiler_artifact_field_safe tabbed "$(printf 'a\tb')"
+expect_failure field-newline 'wrapped contains a control character' \
+    ci_compiler_artifact_field_safe wrapped 'a
+b'
+expect_failure field-carriage-return 'returned contains a control character' \
+    ci_compiler_artifact_field_safe returned "$(printf 'a\rb')"
+expect_failure field-delete 'deleted contains a control character' \
+    ci_compiler_artifact_field_safe deleted "$(printf 'a\177b')"
+expect_failure field-escape 'escaped contains a control character' \
+    ci_compiler_artifact_field_safe escaped "$(printf 'a\033b')"
+
+FIELD_FIXTURE="$FIXTURE/fields.meta"
+printf '%s\n' 'alpha=1' 'beta=x=y' 'gamma=' 'twice=a' 'twice=b' 'bare' > "$FIELD_FIXTURE"
+printf '%s' 'last=unterminated' >> "$FIELD_FIXTURE"
+expect_helper field-value "$(ci_compiler_artifact_read_field "$FIELD_FIXTURE" alpha)" 1
+expect_helper field-equals "$(ci_compiler_artifact_read_field "$FIELD_FIXTURE" beta)" x=y
+expect_helper field-empty "$(ci_compiler_artifact_read_field "$FIELD_FIXTURE" gamma)" ''
+expect_helper field-bare "$(ci_compiler_artifact_read_field "$FIELD_FIXTURE" bare)" ''
+expect_helper field-unterminated "$(ci_compiler_artifact_read_field "$FIELD_FIXTURE" last)" unterminated
+expect_failure field-duplicate 'metadata field twice occurs 2 times' \
+    ci_compiler_artifact_read_field "$FIELD_FIXTURE" twice
+expect_failure field-absent 'metadata field delta occurs 0 times' \
+    ci_compiler_artifact_read_field "$FIELD_FIXTURE" delta
+expect_failure field-prefix 'metadata field alph occurs 0 times' \
+    ci_compiler_artifact_read_field "$FIELD_FIXTURE" alph
+expect_failure field-mismatch 'alpha mismatch: expected 2, got 1' \
+    ci_compiler_artifact_expect_field "$FIELD_FIXTURE" alpha 2
+expect_failure field-unreadable 'metadata is not readable' \
+    ci_compiler_artifact_read_field "$FIXTURE/no-such.meta" alpha
+
+expect_helper path-root "$(ci_compiler_artifact_normalized_path 'C:\a\b' 'C:\a\b')" '{root}'
+expect_helper path-inside "$(ci_compiler_artifact_normalized_path 'C:\a\b' 'C:\a\b\t\x.s')" '{root}/t/x.s'
+expect_helper path-mixed "$(ci_compiler_artifact_normalized_path /r/w '/r/w/d\\e/f')" '{root}/d//e/f'
+expect_helper path-sibling "$(ci_compiler_artifact_normalized_path /r/w /r/wx/y)" /r/wx/y
+expect_helper path-outside "$(ci_compiler_artifact_normalized_path /r/w 'D:\o')" D:/o
+
+ci_compiler_artifact_is_identity 0123456789abcdef0123456789abcdef01234567 ||
+    { echo "identity check rejected 40 hex digits" >&2; exit 1; }
+for bad_identity in '' 0123456789abcdef0123456789abcdef0123456 \
+    0123456789abcdef0123456789abcdef012345678 \
+    0123456789ABCDEF0123456789abcdef01234567 \
+    'x
+0123456789abcdef0123456789abcdef01234567'; do
+    if ci_compiler_artifact_is_identity "$bad_identity"; then
+        echo "identity check accepted a malformed identity: $bad_identity" >&2
+        exit 1
+    fi
+done
+
+expect_helper sha256-file "$(ci_compiler_artifact_sha256_file "$OUTPUT")" \
+    "$(sha256sum "$OUTPUT" | awk '{ print $1 }')"
+expect_failure sha256-missing 'No such file' \
+    ci_compiler_artifact_sha256_file "$FIXTURE/no-such-output"
+
+# require counts newline-terminated metadata lines, as wc -l does.
+cp "$METADATA" "$FIXTURE/metadata.saved"
+printf '%s\n' 'extra=1' >> "$METADATA"
+expect_failure metadata-extra-line 'handoff metadata has 22 lines; expected 21' require_fixture
+cp "$FIXTURE/metadata.saved" "$METADATA"
+require_fixture
+
 # The fast source-tree path must preserve the portable per-file manifest
 # exactly; otherwise switching hosts would change provenance keys.
 SOURCE_DIGEST_ACTUAL=$(ci_compiler_artifact_source_set_digest \

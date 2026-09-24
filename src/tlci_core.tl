@@ -1702,40 +1702,140 @@
         end
         (array-length bytes))]
     (begin
+      ;; Four independent recurrences consume the eight-byte pieces of each
+      ;; 32-byte group. Each advances by 131^32 mod p = 938964152. After the
+      ;; last full group, weight them by 131^24, 131^16, 131^8 and 1 to put
+      ;; the pieces back in byte order. The incoming digest starts in h3 so
+      ;; its weight is exactly 131^(32 * groups), without an extra factor.
+      ;;
+      ;; Even maximal bytes and h_j = p-1 give x <= 2186534790481770432,
+      ;; below 2^61, so the existing Mersenne reduction applies throughout.
+      ;; Guard the subtraction once; neither the bound nor i+32 can overflow.
+      ;; Keep the block polynomials here: extracting calls inhibits this
+      ;; compiler's inlining and loses most of the independent-chain benefit.
+      (when
+        (and (>= i 0) (>= limit 32) (<= i (- limit 32)))
+        (let
+          [h0 : i64 0]
+          [h1 : i64 0]
+          [h2 : i64 0]
+          [h3 : i64 h]
+          (begin
+            (while (<= i (- limit 32))
+              (begin
+                (let
+                  [a : i64
+                    (+
+                      (* (tlci-byte-at bytes i) 131)
+                      (tlci-byte-at bytes (+ i 1)))]
+                  [b : i64
+                    (+
+                      (* (tlci-byte-at bytes (+ i 2)) 131)
+                      (tlci-byte-at bytes (+ i 3)))]
+                  [c : i64
+                    (+
+                      (* (tlci-byte-at bytes (+ i 4)) 131)
+                      (tlci-byte-at bytes (+ i 5)))]
+                  [d : i64
+                    (+
+                      (* (tlci-byte-at bytes (+ i 6)) 131)
+                      (tlci-byte-at bytes (+ i 7)))]
+                  [t : i64
+                    (+ (* (+ (* a 17161) b) 294499921) (+ (* c 17161) d))]
+                  (set! h0 (tlci-hash-reduce (+ (* h0 938964152) t))))
+                (let
+                  [a : i64
+                    (+
+                      (* (tlci-byte-at bytes (+ i 8)) 131)
+                      (tlci-byte-at bytes (+ i 9)))]
+                  [b : i64
+                    (+
+                      (* (tlci-byte-at bytes (+ i 10)) 131)
+                      (tlci-byte-at bytes (+ i 11)))]
+                  [c : i64
+                    (+
+                      (* (tlci-byte-at bytes (+ i 12)) 131)
+                      (tlci-byte-at bytes (+ i 13)))]
+                  [d : i64
+                    (+
+                      (* (tlci-byte-at bytes (+ i 14)) 131)
+                      (tlci-byte-at bytes (+ i 15)))]
+                  [t : i64
+                    (+ (* (+ (* a 17161) b) 294499921) (+ (* c 17161) d))]
+                  (set! h1 (tlci-hash-reduce (+ (* h1 938964152) t))))
+                (let
+                  [a : i64
+                    (+
+                      (* (tlci-byte-at bytes (+ i 16)) 131)
+                      (tlci-byte-at bytes (+ i 17)))]
+                  [b : i64
+                    (+
+                      (* (tlci-byte-at bytes (+ i 18)) 131)
+                      (tlci-byte-at bytes (+ i 19)))]
+                  [c : i64
+                    (+
+                      (* (tlci-byte-at bytes (+ i 20)) 131)
+                      (tlci-byte-at bytes (+ i 21)))]
+                  [d : i64
+                    (+
+                      (* (tlci-byte-at bytes (+ i 22)) 131)
+                      (tlci-byte-at bytes (+ i 23)))]
+                  [t : i64
+                    (+ (* (+ (* a 17161) b) 294499921) (+ (* c 17161) d))]
+                  (set! h2 (tlci-hash-reduce (+ (* h2 938964152) t))))
+                (let
+                  [a : i64
+                    (+
+                      (* (tlci-byte-at bytes (+ i 24)) 131)
+                      (tlci-byte-at bytes (+ i 25)))]
+                  [b : i64
+                    (+
+                      (* (tlci-byte-at bytes (+ i 26)) 131)
+                      (tlci-byte-at bytes (+ i 27)))]
+                  [c : i64
+                    (+
+                      (* (tlci-byte-at bytes (+ i 28)) 131)
+                      (tlci-byte-at bytes (+ i 29)))]
+                  [d : i64
+                    (+
+                      (* (tlci-byte-at bytes (+ i 30)) 131)
+                      (tlci-byte-at bytes (+ i 31)))]
+                  [t : i64
+                    (+ (* (+ (* a 17161) b) 294499921) (+ (* c 17161) d))]
+                  (set! h3 (tlci-hash-reduce (+ (* h3 938964152) t))))
+                (set! i (+ i 32))))
+            (set!
+              h
+              (tlci-hash-reduce
+                (+
+                  (tlci-hash-reduce (* h0 1117162002))
+                  (+
+                    (tlci-hash-reduce (* h1 549389049))
+                    (+ (tlci-hash-reduce (* h2 tlci-hash-step-8)) h3))))))))
       ;; Eight bytes per reduction (see above); the two-step Mersenne fold
       ;; of a sum below 2^61 lands in [0, p + 2], one conditional subtract
       ;; from p. The loop runs to the array length, so one guard covers all
       ;; eight reads.
       (while (<= (+ i 8) limit)
         (let
-          [t : i64
+          ;; Pair adjacent bytes, then pairs of pairs. This is the same
+          ;; eight-byte polynomial with three dependent multiplies instead
+          ;; of seven; 131^2 and 131^4 both fit signed immediate operands.
+          [a : i64
+            (+ (* (tlci-byte-at bytes i) 131) (tlci-byte-at bytes (+ i 1)))]
+          [b : i64
             (+
-              (*
-                (+
-                  (*
-                    (+
-                      (*
-                        (+
-                          (*
-                            (+
-                              (*
-                                (+
-                                  (*
-                                    (+
-                                      (* (tlci-byte-at bytes i) 131)
-                                      (tlci-byte-at bytes (+ i 1)))
-                                    131)
-                                  (tlci-byte-at bytes (+ i 2)))
-                                131)
-                              (tlci-byte-at bytes (+ i 3)))
-                            131)
-                          (tlci-byte-at bytes (+ i 4)))
-                        131)
-                      (tlci-byte-at bytes (+ i 5)))
-                    131)
-                  (tlci-byte-at bytes (+ i 6)))
-                131)
+              (* (tlci-byte-at bytes (+ i 2)) 131)
+              (tlci-byte-at bytes (+ i 3)))]
+          [c : i64
+            (+
+              (* (tlci-byte-at bytes (+ i 4)) 131)
+              (tlci-byte-at bytes (+ i 5)))]
+          [d : i64
+            (+
+              (* (tlci-byte-at bytes (+ i 6)) 131)
               (tlci-byte-at bytes (+ i 7)))]
+          [t : i64 (+ (* (+ (* a 17161) b) 294499921) (+ (* c 17161) d))]
           [x : i64 (+ (* h tlci-hash-step-8) t)]
           [once : i64 (+ (bit-and x tlci-hash-modulus) (shr x 31))]
           [twice : i64 (+ (bit-and once tlci-hash-modulus) (shr once 31))]

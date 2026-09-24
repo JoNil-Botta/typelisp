@@ -5,6 +5,7 @@
 ;; match distance, and match length. Code lengths are stored explicitly so the
 ;; decoder owns no fixed model and repeated encoder runs are byte-identical.
 (import stdlib.string)
+(import compiler_owned_view as owned_view)
 
 (define (compiler-embedded-stdlib-tlci-codec-main-symbols) : i64
   257)
@@ -479,6 +480,11 @@
                   (= (array-length distance-lookup) lookup-size)
                   (= (array-length length-lookup) lookup-size))]
               [fast? : bool false]
+              [payload-view : (__tl_dyn-array u8)
+                (owned_view.compiler-owned-reference-shared-view payload)]
+              [payload-data : (Ptr u8)
+                (unsafe
+                  (ptr-cast (__tl_array-data payload-view) : (Ptr u8)))]
               [out-data : (MutPtr u8)
                 (unsafe
                   (__tl_array-data out))]
@@ -493,7 +499,7 @@
                   (__tl_array-data length-lookup))]
               (while (< out-index raw-len)
                 (begin
-                  (set! fast? tables-ok?)
+                  (set! fast? (and tables-ok? (>= next-byte 0)))
                   (while (and
                     fast?
                     (< out-index raw-len)
@@ -507,7 +513,14 @@
                               buffer
                               (bit-or
                                 (shl buffer 8)
-                                (cast (array-ref payload next-byte) : i64)))
+                                ;; This refill reads at most eight bytes.
+                                ;; The enclosing guard proves sixteen remain,
+                                ;; so every byte is within the payload.
+                                (cast
+                                  (unsafe
+                                    (ptr-read
+                                      (ptr-offset payload-data next-byte)))
+                                  : i64)))
                             (set! next-byte (+ next-byte 1))
                             (set! available (+ available 8)))))
                       ;; 48 <= available <= 64 here, so every shift count below

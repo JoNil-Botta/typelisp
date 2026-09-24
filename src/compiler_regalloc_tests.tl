@@ -3568,6 +3568,71 @@
           se
           1)))))
 
+;; Which exit edges a splice may redirect. A switch's case entries sit in a jump
+;; table the backend renders before this rewrite runs, so only a default edge
+;; that no case shares may move; two-way branches and jumps always may.
+(cfg
+  test
+  (define (compiler-reg-loop-park-redirectable-ok?) : bool
+    (let
+      [seq : ir.CompilerIrBlockSeq
+        (live.compiler-live-ir-block-list-to-seq
+          (ir.compiler-ir-block-cons
+            (compiler-reg-block-weights-switch-block "sw")
+            (ir.compiler-ir-block-cons
+              (ir.CompilerIrBlock.Block
+                (ir.compiler-ir-label "shared")
+                (compiler-reg-test-instr-seq-prepend
+                  (ir.CompilerIrInstr.Switch
+                    (ir.CompilerIrValue.Var 0)
+                    2
+                    (ir.compiler-ir-switch-case-seq2
+                      (ir.CompilerIrSwitchCase.Case
+                        0
+                        (ir.compiler-ir-label "s0"))
+                      (ir.CompilerIrSwitchCase.Case
+                        1
+                        (ir.compiler-ir-label "s3")))
+                    (ir.compiler-ir-label "s3"))
+                  (ir.compiler-ir-instr-seq-empty)))
+              (ir.compiler-ir-block-cons
+                (ir.CompilerIrBlock.Block
+                  (ir.compiler-ir-label "br")
+                  (compiler-reg-test-instr-seq-prepend
+                    (ir.CompilerIrInstr.Branch
+                      (ir.CompilerIrValue.Var 0)
+                      (ir.compiler-ir-label "s0")
+                      (ir.compiler-ir-label "s1"))
+                    (ir.compiler-ir-instr-seq-empty)))
+                ir.CompilerIrBlockList.Nil))))]
+      (and
+        ;; case edges are pinned by the jump table
+        (not
+          (reg.compiler-reg-loop-park-redirectable?
+            (ir.compiler-ir-global-shared-view seq)
+            0
+            (ir.compiler-ir-label "s0")))
+        (not
+          (reg.compiler-reg-loop-park-redirectable?
+            (ir.compiler-ir-global-shared-view seq)
+            0
+            (ir.compiler-ir-label "s2")))
+        ;; the default edge is emitted from the rewritten IR
+        (reg.compiler-reg-loop-park-redirectable?
+          (ir.compiler-ir-global-shared-view seq)
+          0
+          (ir.compiler-ir-label "s3"))
+        ;; unless a case names the same label
+        (not
+          (reg.compiler-reg-loop-park-redirectable?
+            (ir.compiler-ir-global-shared-view seq)
+            1
+            (ir.compiler-ir-label "s3")))
+        (reg.compiler-reg-loop-park-redirectable?
+          (ir.compiler-ir-global-shared-view seq)
+          2
+          (ir.compiler-ir-label "s1"))))))
+
 ;; The rewrite shape, driven from a hand-built decision so the assertions are
 ;; about the emitter and not about the planner.
 (cfg
@@ -23038,6 +23103,9 @@
     (compiler-regalloc-self-test-require!
       "compiler-reg-loop-park-sites-ok?"
       (cfg test (compiler-reg-loop-park-sites-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-loop-park-redirectable-ok?"
+      (cfg test (compiler-reg-loop-park-redirectable-ok?) true))
     (compiler-regalloc-self-test-require!
       "compiler-reg-loop-park-direct-rewrite-ok?"
       (cfg test (compiler-reg-loop-park-direct-rewrite-ok?) true))

@@ -80,7 +80,7 @@ read_bounded_report() {
     done
     [ "$BOUND_SCHEMA" = 1 ] || return 1
     case "$BOUND_HOST:$BOUND_BACKEND" in
-        linux:systemd-user-cgroup | linux:rss-watchdog | linux:unavailable | windows:job-object) ;;
+        linux:systemd-user-cgroup | linux:unavailable | windows:job-object) ;;
         *)
             echo "bounded report has unsupported host/backend: $BOUND_HOST/$BOUND_BACKEND" >&2
             return 1

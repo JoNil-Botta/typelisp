@@ -386,10 +386,9 @@ discovered_file_count=$(wc -l < "$DISCOVERED" | tr -d ' ')
 # regression fails deterministically without asking an uncapped runner to OOM.
 #
 # RLIMIT_AS is unsuitable here: the runtime reserves large virtual mappings,
-# so `ulimit -v` can fail while RSS remains below 200 MiB. Prefer a cgroup-v2
-# MemoryMax over the complete process tree. On Linux hosts without a usable
-# user systemd manager, the helper falls back to a process-group aggregate-RSS
-# watchdog with the same 1 GiB threshold.
+# so `ulimit -v` can fail while RSS remains below 200 MiB. The helper applies a
+# cgroup-v2 MemoryMax over the complete process tree and needs a usable user
+# systemd manager.
 if [ "$HOST_OS" = linux ]; then
     profile_summary_stdout="$WORKDIR/profile-summary.stdout"
     profile_summary_stderr="$WORKDIR/profile-summary.stderr"

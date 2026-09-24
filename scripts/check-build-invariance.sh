@@ -248,7 +248,6 @@ check_backend_memory() {
         run_with_heartbeat_capture \
         "bounded opt2 backend-tests build" \
         "$memory_dir/backend-tests.stdout" "$memory_dir/backend-tests.stderr" \
-        env TYPELISP_LINUX_MEMORY_LIMIT_BACKEND=systemd-user-cgroup \
         "$ROOT/scripts/run-memory-bounded.sh" \
         --limit-mib "$POOL_FULL_CAP_MIB" --report "$memory_dir/backend-tests.memory" \
         --timeout-seconds "$POOL_JOB_TIMEOUT_SECONDS" -- \
@@ -493,8 +492,7 @@ run_batch_chunk() {
             echo "[build-invariance] memory report exists before compile: $batch_memory_report" >&2
             exit 1
         fi
-        set -- env TYPELISP_LINUX_MEMORY_LIMIT_BACKEND=systemd-user-cgroup \
-            "$ROOT/scripts/run-memory-bounded.sh" \
+        set -- "$ROOT/scripts/run-memory-bounded.sh" \
             --limit-mib "$batch_cap_mib" --report "$batch_memory_report" \
             --timeout-seconds "$POOL_JOB_TIMEOUT_SECONDS" -- "$@"
     fi

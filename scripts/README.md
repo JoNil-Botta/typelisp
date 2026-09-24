@@ -129,15 +129,16 @@ reproduce the first reported difference with retained producer artifacts, or
 `--self-test` to run controlled observation and mode-selection perturbations
 without a compiler.
 
-The focused inline profile-summary probe uses `lib-linux-memory-limit.sh` to
-enforce a 1 GiB resident-memory ceiling on Linux. A usable user-systemd manager
-provides a hard cgroup-v2 `MemoryMax` with swap disabled. Other Linux runners
-use a documented fallback that samples and terminates the isolated process
-group when aggregate RSS crosses the same ceiling; neither path uses
-`RLIMIT_AS` or treats virtual reservations as resident memory.
+Linux memory limits (`lib-linux-memory-limit.sh`, used directly by the focused
+inline profile-summary and large CRLF formatter probes) need a usable
+user-systemd manager: it provides a hard cgroup-v2 `MemoryMax` over the complete
+process tree with swap disabled. A host without one fails closed; there is no
+unbounded or RSS-polling fallback, and nothing uses `RLIMIT_AS` or treats
+virtual reservations as resident memory.
 
-`run-memory-bounded.sh` gives gates one fail-closed interface to those Linux
-backends and the Windows Job Object wrapper. The Windows helper tests retain a
+`run-memory-bounded.sh` gives gates one fail-closed interface to that Linux
+backend and the Windows Job Object wrapper. On Linux it samples the process
+group's RSS inside the cgroup to report a trustworthy peak. The Windows helper tests retain a
 one-second timeout classification case and separately check descendant cleanup
 with delayed child creation and a ten-second bounded startup/cleanup deadline.
 Its stable key/value record
@@ -157,8 +158,8 @@ workload's environment; its own sampler receives the destination explicitly.
 Nested callers can request their own metrics file or `--report` path. They do
 not inherit or remove their parent's evidence. Systemd stderr uses a unique
 temporary file per invocation, cleaned up after success or failure. The helper
-self-test covers nested library calls and explicit inner reports on both Linux
-backends without building another compiler.
+self-test covers nested library calls and explicit inner reports without
+building another compiler.
 
 On Windows, `verify-integration.sh` sends independent manifest links through
 `windows-integration-linker.ps1`. The measured default is four concurrent

@@ -17,40 +17,9 @@
 (import stdlib.option)
 (import (option.option i64) as option_i64)
 
-(defstruct CompilerSymbolsDeclArrayRef
-  (:lifetimes items)
-  (value (& items (__tl_dyn-array ast.AstDecl))))
-
-(defstruct CompilerSymbolsI64ArrayRef
-  (:lifetimes items)
-  (value (& items (__tl_dyn-array i64))))
-
 (defstruct CompilerSymbolsProgramRef
   (:lifetimes program)
   (value (& program ast.AstProgram)))
-
-(define (compiler-symbols-decl-array-shared-view
-  [items : (& items (__tl_dyn-array ast.AstDecl))]) : (__tl_dyn-array
-    ast.AstDecl)
-  (let
-    [cell : (CompilerSymbolsDeclArrayRef items)
-      (CompilerSymbolsDeclArrayRef items)]
-    [address : u64
-      (unsafe
-        (ptr-read (ptr-cast (ptr-addr-of cell) : (Ptr u64))))]
-    (unsafe
-      (ptr-read (int->ptr address : (Ptr (__tl_dyn-array ast.AstDecl)))))))
-
-(define (compiler-symbols-i64-array-shared-view
-  [items : (& items (__tl_dyn-array i64))]) : (__tl_dyn-array i64)
-  (let
-    [cell : (CompilerSymbolsI64ArrayRef items)
-      (CompilerSymbolsI64ArrayRef items)]
-    [address : u64
-      (unsafe
-        (ptr-read (ptr-cast (ptr-addr-of cell) : (Ptr u64))))]
-    (unsafe
-      (ptr-read (int->ptr address : (Ptr (__tl_dyn-array i64)))))))
 
 (defmacro (compiler-symbols-decl-shared-view [decl : Expr]) : Expr
   `(unsafe
@@ -220,8 +189,7 @@
       (compiler-symbols-expr-maybe-span (ast.ast-node-get body))]
     [(ast.AstDecl.Test _ _ _ span) (CompilerSymbolsMaybeSpan.Some span)]
     [(ast.AstDecl.Unsafe inner-box)
-      (compiler-symbols-decl-maybe-span
-        (ast.ast-decl-box-shared-view inner-box))]
+      (compiler-symbols-decl-maybe-span (deref inner-box))]
     [_ CompilerSymbolsMaybeSpan.No]))
 
 (define (compiler-symbols-note-last-error-fallback!
@@ -635,10 +603,7 @@
               [(ast.AstDecl.ModuleBody _ body-box)
                 (set!
                   count
-                  (+
-                    count
-                    (compiler-decl-list-index-count
-                      (ast.ast-decl-list-box-shared-view body-box))))]
+                  (+ count (compiler-decl-list-index-count (deref body-box))))]
               [(ast.AstDecl.Test _ _ _ _) unit]
               [_ (set! count (+ count 1))])
             (set! index (+ index 1)))))
@@ -1727,7 +1692,7 @@
     [(ast.AstDecl.Module _) (ResultCompilerSymbols.Ok symbols)]
     [(ast.AstDecl.ModuleBody name body-box)
       (let
-        [body : ast.AstDeclList (ast.ast-decl-list-box-shared-view body-box)]
+        [body : ast.AstDeclList (deref body-box)]
         (build-compiler-symbol-list-in-module
           (ast.ast-place-shared-view body)
           body
@@ -1737,7 +1702,7 @@
     [(ast.AstDecl.Test _ _ _ _) (ResultCompilerSymbols.Ok symbols)]
     [(ast.AstDecl.Unsafe inner-box)
       (let
-        [inner : ast.AstDecl (ast.ast-decl-box-shared-view inner-box)]
+        [inner : ast.AstDecl (deref inner-box)]
         (compiler-symbols-add-decl-in-module symbols module-id inner index))]))
 
 (define (compiler-symbols-add-decl-in-module
@@ -1915,7 +1880,7 @@
         index)]
     [(ast.AstDecl.Unsafe inner-box)
       (let
-        [inner : ast.AstDecl (ast.ast-decl-box-shared-view inner-box)]
+        [inner : ast.AstDecl (deref inner-box)]
         (compiler-symbols-add-decl-alias-in-module symbols alias-id inner index))]
     [(ast.AstDecl.ModuleBody _ _) symbols]
     [_ symbols]))
@@ -1932,7 +1897,7 @@
         (compiler-symbol-make-handle (compiler-symbol-kind-defmacro) index))]
     [(ast.AstDecl.Unsafe inner-box)
       (let
-        [inner : ast.AstDecl (ast.ast-decl-box-shared-view inner-box)]
+        [inner : ast.AstDecl (deref inner-box)]
         (compiler-symbols-remove-decl-macro-alias symbols inner index))]
     [_ symbols]))
 
@@ -1947,13 +1912,10 @@
         (sym_i64_env.sym-i64-bind-id modules module-id 1))]
     [(ast.AstDecl.Unsafe inner-box)
       (let
-        [inner : ast.AstDecl (ast.ast-decl-box-shared-view inner-box)]
+        [inner : ast.AstDecl (deref inner-box)]
         (compiler-symbols-macro-module-set-add-decl modules module-id inner))]
     [(ast.AstDecl.ModuleBody name body-box)
-      (compiler-symbols-macro-module-set-list
-        (ast.ast-decl-list-box-shared-view body-box)
-        name
-        modules)]
+      (compiler-symbols-macro-module-set-list (deref body-box) name modules)]
     [_ modules]))
 
 (define (compiler-symbols-macro-module-set-list
@@ -2094,7 +2056,7 @@
                 (let
                   [nested : CompilerSymbolsModuleSets
                     (compiler-symbols-module-sets-list
-                      (ast.ast-decl-list-box-shared-view body-box)
+                      (deref body-box)
                       name
                       (CompilerSymbolsModuleSets macro-modules dotted-modules))]
                   (begin
@@ -2181,7 +2143,8 @@
           (set! i (+ i 1))))
       slot)))
 
-(define (compiler-symbols-build-module-decl-index [decls : ast.AstDeclList]) : ModuleDeclIndex
+(define (compiler-symbols-build-module-decl-index
+  [decls : (& decls ast.AstDeclList)]) : ModuleDeclIndex
   (let
     [decl-count : i64 (ast.ast-decl-list-len (& decls))]
     [cap : i64
@@ -2343,7 +2306,7 @@
 
 (define (compiler-symbols-remove-module-macro-aliases-indexed
   [symbols : CompilerSymbols]
-  [decls : ast.AstDeclList]
+  [decls : (& decls ast.AstDeclList)]
   [index : ModuleDeclIndex]
   [target-module-id : i64]
   [handle-index-offset : i64]) : CompilerSymbols
@@ -2379,7 +2342,7 @@
 
 (define (compiler-symbols-add-module-aliases-indexed
   [symbols : CompilerSymbols]
-  [decls : ast.AstDeclList]
+  [decls : (& decls ast.AstDeclList)]
   [index : ModuleDeclIndex]
   [target-module-id : i64]
   [alias-id : i64]
@@ -2468,8 +2431,7 @@
     [decl-count : i64 (ast.ast-decl-list-len (& decls))]
     [decl-offset : i64 decls.offset]
     [decl-index : ModuleDeclIndex
-      (compiler-symbols-build-module-decl-index
-        (ast.ast-place-shared-view all-decls))]
+      (compiler-symbols-build-module-decl-index all-decls)]
     (begin
       (while (< index decl-count)
         (let
@@ -2515,7 +2477,7 @@
                     (if target-has-macros
                       (compiler-symbols-remove-module-macro-aliases-indexed
                         (compiler-symbols-shared-view cur-symbols)
-                        (ast.ast-place-shared-view all-decls)
+                        all-decls
                         (ast.ast-place-shared-view decl-index)
                         target-module-id
                         handle-index-offset)
@@ -2523,7 +2485,7 @@
                   (if (= alias cbi.compiler-builtin-id-fix-empty)
                     (compiler-symbols-add-module-aliases-indexed
                       without-bare-macros
-                      (ast.ast-place-shared-view all-decls)
+                      all-decls
                       (ast.ast-place-shared-view decl-index)
                       target-module-id
                       cur-module-id
@@ -2577,7 +2539,7 @@
     [_ true]))
 
 (define (compiler-symbol-path-list-repeat
-  [decls : ast.AstDeclList]
+  [decls : (& decls ast.AstDeclList)]
   [path : String]
   [owner-id : i64]) : ast.AstDeclPathList
   (compiler-symbol-path-list-repeat-with-provenance
@@ -2587,7 +2549,7 @@
     owner-id))
 
 (define (compiler-symbol-path-list-repeat-with-provenance
-  [decls : ast.AstDeclList]
+  [decls : (& decls ast.AstDeclList)]
   [path : String]
   [owner-id : i64]
   [provenance-id : i64]) : ast.AstDeclPathList
@@ -2619,7 +2581,7 @@
     (match decl
       [(ast.AstDecl.ModuleBody _ body-box)
         (let
-          [body : ast.AstDeclList (ast.ast-decl-list-box-shared-view body-box)]
+          [body : ast.AstDeclList (deref body-box)]
           [body-count : i64
             (compiler-decl-list-index-count (ast.ast-place-shared-view body))]
           (if (< target (+ index body-count))
@@ -2766,7 +2728,7 @@
         decl-path)]
     [(ast.AstDecl.Unsafe inner-box)
       (let
-        [inner : ast.AstDecl (ast.ast-decl-box-shared-view inner-box)]
+        [inner : ast.AstDecl (deref inner-box)]
         (compiler-symbols-duplicate-value-message-for-decl-with-paths-id
           symbols
           all-decls
@@ -2783,7 +2745,7 @@
     (match decl
       [(ast.AstDecl.Unsafe inner-box)
         (let
-          [inner : ast.AstDecl (ast.ast-decl-box-shared-view inner-box)]
+          [inner : ast.AstDecl (deref inner-box)]
           inner)]
       [_ fallback])))
 
@@ -2978,8 +2940,7 @@
               next-module)]
           [(ast.AstDecl.ModuleBody name body-box)
             (let
-              [body : ast.AstDeclList
-                (ast.ast-decl-list-box-shared-view body-box)]
+              [body : ast.AstDeclList (deref body-box)]
               [body-count : i64
                 (compiler-decl-list-index-count
                   (ast.ast-place-shared-view body))]
@@ -3115,14 +3076,13 @@
                     (set! cur-module-id next-module))]
                 [(ast.AstDecl.ModuleBody name body-box)
                   (let
-                    [body : ast.AstDeclList
-                      (ast.ast-decl-list-box-shared-view body-box)]
+                    [body : ast.AstDeclList (deref body-box)]
                     [body-count : i64
                       (compiler-decl-list-index-count
                         (ast.ast-place-shared-view body))]
                     [body-paths : ast.AstDeclPathList
                       (compiler-symbol-path-list-repeat-with-provenance
-                        (ast.ast-place-shared-view body)
+                        body
                         decl-path
                         (ast.ast-decl-path-list-owner-id
                           (& cur-paths)
@@ -3168,7 +3128,7 @@
                         (compiler-symbols-note-last-error!
                           decl-origin-key
                           (+ decl-origin-offset cur-position)
-                          (compiler-symbols-decl-shared-view decl-master)
+                          decl-master
                           (string.copy (& decl-path)))
                         (set! result (ResultCompilerSymbols.Err message))
                         (set! done true))]
@@ -3241,8 +3201,7 @@
                                 (compiler-symbols-note-last-error!
                                   decl-origin-key
                                   (+ decl-origin-offset cur-position)
-                                  (compiler-symbols-decl-shared-view
-                                    decl-master)
+                                  decl-master
                                   (string.copy (& decl-path))))
                               (set! result (ResultCompilerSymbols.Err message))
                               (set! done true))]))])]))]))
@@ -3252,7 +3211,7 @@
   (match (compiler-symbols-program-shared-view program)
     [(ast.AstProgram.Program decls-box)
       (let
-        [decls : ast.AstDeclList (ast.ast-decl-list-box-shared-view decls-box)]
+        [decls : ast.AstDeclList (deref decls-box)]
         (match (build-compiler-symbol-list
           (ast.ast-place-shared-view decls)
           (compiler-symbols-empty-with-decls
@@ -3281,7 +3240,7 @@
   (match (compiler-symbols-program-shared-view program)
     [(ast.AstProgram.Program decls-box)
       (let
-        [decls : ast.AstDeclList (ast.ast-decl-list-box-shared-view decls-box)]
+        [decls : ast.AstDeclList (deref decls-box)]
         [module-sets : CompilerSymbolsModuleSets
           (compiler-symbols-module-sets (ast.ast-place-shared-view decls))]
         [decl-count : i64
@@ -3363,15 +3322,15 @@
             (or
               (= module-id target-module-id)
               (compiler-symbols-decls-declare-module-id?
-                (ast.ast-decl-list-box-shared-view body-box)
+                (deref body-box)
                 target-module-id))]
           [(ast.AstDecl.Unsafe inner-box)
-            (match (ast.ast-decl-box-shared-view inner-box)
+            (match (deref inner-box)
               [(ast.AstDecl.ModuleBody module-id body-box)
                 (or
                   (= module-id target-module-id)
                   (compiler-symbols-decls-declare-module-id?
-                    (ast.ast-decl-list-box-shared-view body-box)
+                    (deref body-box)
                     target-module-id))]
               [_ false])]
           [_ false])
@@ -3421,9 +3380,9 @@
           [(ast.AstDecl.ModuleBody _ body-box)
             (compiler-symbols-insert-aliases-self-contained?
               (ast.ast-place-shared-view all-decls)
-              (ast.ast-decl-list-box-shared-view body-box))]
+              (deref body-box))]
           [(ast.AstDecl.Unsafe inner-box)
-            (match (ast.ast-decl-box-shared-view inner-box)
+            (match (deref inner-box)
               [(ast.AstDecl.Import
                   decl-meta
                   (ast.AstImportSpec.Spec
@@ -3797,7 +3756,7 @@
 
 (define (compiler-registries-add-module-aliases-indexed
   [registries : CompilerRegistries]
-  [decls : ast.AstDeclList]
+  [decls : (& decls ast.AstDeclList)]
   [index : ModuleDeclIndex]
   [target-module-id : i64]
   [alias-id : i64]
@@ -3839,8 +3798,7 @@
       (unsafe
         (arena.tl_arena_set index-arena))]
     [decl-index : ModuleDeclIndex
-      (compiler-symbols-build-module-decl-index
-        (ast.ast-place-shared-view all-decls))]
+      (compiler-symbols-build-module-decl-index all-decls)]
     [_restore-enclosing : unit
       (unsafe
         (arena.tl_arena_set enclosing-arena))]
@@ -3871,7 +3829,7 @@
                     (if (= alias cbi.compiler-builtin-id-fix-empty)
                       (compiler-registries-add-module-aliases-indexed
                         (compiler-registries-shared-view cur-registries)
-                        (ast.ast-place-shared-view all-decls)
+                        all-decls
                         (ast.ast-place-shared-view decl-index)
                         target-module
                         (compiler-symbols-import-alias-key-id
@@ -4041,14 +3999,13 @@
                   (set! cur-module-id next-module))]
               [(ast.AstDecl.ModuleBody name body-box)
                 (let
-                  [body : ast.AstDeclList
-                    (ast.ast-decl-list-box-shared-view body-box)]
+                  [body : ast.AstDeclList (deref body-box)]
                   [body-count : i64
                     (compiler-decl-list-index-count
                       (ast.ast-place-shared-view body))]
                   [body-paths : ast.AstDeclPathList
                     (compiler-symbol-path-list-repeat
-                      (ast.ast-place-shared-view body)
+                      body
                       decl-path
                       (ast.ast-decl-path-list-owner-id
                         (& paths)
@@ -4177,7 +4134,7 @@
   (match program
     [(ast.AstProgram.Program decls-box)
       (let
-        [decls : ast.AstDeclList (ast.ast-decl-list-box-shared-view decls-box)]
+        [decls : ast.AstDeclList (deref decls-box)]
         (build-compiler-registries-for-decls-with-paths
           (ast.ast-place-shared-view decls)
           (compiler-symbol-path-list-repeat
@@ -4303,8 +4260,7 @@
     (match program
       [(ast.AstProgram.Program decls-box)
         (let
-          [decls : ast.AstDeclList
-            (ast.ast-decl-list-box-shared-view decls-box)]
+          [decls : ast.AstDeclList (deref decls-box)]
           (match (build-compiler-registries-for-decls-with-paths decls paths)
             [(ResultCompilerRegistries.Ok registries)
               (ResultCompilerRegistriesDiagnostic.Ok registries)]
@@ -4358,8 +4314,7 @@
                     (match decl-view
                       [(ast.AstDecl.Unsafe inner-box)
                         (let
-                          [inner : ast.AstDecl
-                            (ast.ast-decl-box-shared-view inner-box)]
+                          [inner : ast.AstDecl (deref inner-box)]
                           (parser.ResultAstDecl.Ok inner))]
                       [_ (parser.ResultAstDecl.Ok return-view)]))
                   (set! logical-index (+ logical-index 1)))])
@@ -4372,7 +4327,7 @@
   (match program
     [(ast.AstProgram.Program decls-box)
       (let
-        [decls : ast.AstDeclList (ast.ast-decl-list-box-shared-view decls-box)]
+        [decls : ast.AstDeclList (deref decls-box)]
         (compiler-decl-list-at-index decls target 0))]))
 
 (define (compiler-symbols-decl-at-index
@@ -5409,11 +5364,10 @@
                   (match splice-program
                     [(ast.AstProgram.Program splice-box)
                       (let
-                        [splice-decls : ast.AstDeclList
-                          (ast.ast-decl-list-box-shared-view splice-box)]
+                        [splice-decls : ast.AstDeclList (deref splice-box)]
                         [splice-paths : ast.AstDeclPathList
                           (compiler-symbol-path-list-repeat
-                            (ast.ast-place-shared-view splice-decls)
+                            splice-decls
                             ""
                             cbi.compiler-builtin-id-fix-empty)]
                         (match (compiler-registries-insert-decls
@@ -5472,7 +5426,7 @@
                 [(ast.AstProgram.Program splice-box)
                   (match (compiler-symbols-insert-decls
                     base-symbols
-                    (ast.ast-decl-list-box-shared-view splice-box)
+                    (deref splice-box)
                     (compiler-symbol-root-module-id))
                     [(ResultCompilerSymbols.Ok appended)
                       (let
@@ -5516,11 +5470,10 @@
                   (match splice-program
                     [(ast.AstProgram.Program splice-box)
                       (let
-                        [splice-decls : ast.AstDeclList
-                          (ast.ast-decl-list-box-shared-view splice-box)]
+                        [splice-decls : ast.AstDeclList (deref splice-box)]
                         [splice-paths : ast.AstDeclPathList
                           (compiler-symbol-path-list-repeat
-                            (ast.ast-place-shared-view splice-decls)
+                            splice-decls
                             "generated.tl"
                             cbi.compiler-builtin-id-fix-empty)]
                         [append-index : i64
@@ -5913,7 +5866,7 @@
   (match program
     [(ast.AstProgram.Program decls-box)
       (let
-        [decls : ast.AstDeclList (ast.ast-decl-list-box-shared-view decls-box)]
+        [decls : ast.AstDeclList (deref decls-box)]
         [index : i64 0]
         [count : i64 (ast.ast-decl-list-len (& decls))]
         (begin

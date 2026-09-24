@@ -98,6 +98,8 @@ stdlib.json/sequence-finish	1	fixed	expr	tests/integration/stdlib_serialize_json
 stdlib.json/sequence-length	2	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
 stdlib.json/sequence-element-value	3	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
 stdlib.json/extra-decls	1	fixed	decls	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
+stdlib.math/math-bits-row	2	fixed	expr	tests/integration/tlci_identity_public_gaps.tl	ok	default	assembly
+stdlib.math/math-bits-table	4	variadic	expr	tests/integration/tlci_identity_public_gaps.tl	ok	default	assembly
 stdlib.math/exp	1	fixed	expr	tests/integration/tlci_identity_public_gaps.tl	ok	default	assembly
 stdlib.math/log	1	fixed	expr	tests/integration/tlci_identity_public_gaps.tl	ok	default	assembly
 stdlib.math/pow	2	fixed	expr	tests/integration/tlci_identity_public_gaps.tl	ok	default	assembly

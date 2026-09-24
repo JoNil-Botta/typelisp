@@ -255,6 +255,67 @@
           unit))
       (* y (stdlib.math.f32-from-bits (shl (cast (+ 127 n) : u32) 23))))))
 
+;; The musl data tables below are written as `math-bits-table` rows. The macros
+;; expand them into exactly the `cond` chain they replace, so each table stays
+;; an in-code compare chain rather than a heap-allocated module-global array.
+;: Internal: build one table entry from a `(row field ...)` row.
+;:
+;: An integer field is a raw `u64` word; any other field is a binary64 decimal
+;: whose bits the private bitcast intrinsic folds to an integer constant,
+;: exactly as a literal `(f64-to-bits x)` call lowers. Any other operand
+;: shape is passed to `constructor` unchanged.
+(defmacro (math-bits-row [constructor : comptime.Expr] [row : comptime.Expr]) : comptime.Expr
+  (match row
+    [(comptime.Expr.Call _ row-fields)
+      (let
+        [fields : comptime.ExprList (comptime.expr-list-empty)]
+        [field-index : i64 (- (comptime.expr-list-length row-fields) 1)]
+        (begin
+          ;; Prepend back to front so the fields stay in source order.
+          (while (>= field-index 0)
+            (let
+              [field : comptime.Expr
+                (comptime.expr-list-nth row-fields field-index)]
+              (begin
+                (match field
+                  [(comptime.Expr.Int _)
+                    (set! fields (comptime.expr-list-cons field fields))]
+                  [_
+                    (set!
+                      fields
+                      (comptime.expr-list-cons
+                        `(__tl_float_to_bits ,field)
+                        fields))])
+                (set! field-index (- field-index 1)))))
+          `(,constructor ,@fields)))]
+    [_ `(,constructor ,row)]))
+
+;: Internal: expand constant table rows into an `index` lookup chain.
+;:
+;: Row `i` becomes `[(= index i) (constructor field ...)]` and the chain ends in
+;: `[else fallback]`, the same `if` chain `cond` produces.
+(defmacro (math-bits-table
+  [index : comptime.Expr]
+  [constructor : comptime.Expr]
+  [fallback : comptime.Expr]
+  [rows : comptime.Expr ...]) : comptime.Expr
+  (let
+    [out : comptime.Expr fallback]
+    [row-index : i64 (- (comptime.expr-list-length rows) 1)]
+    (begin
+      ;; Build the chain from the last row outwards, as `cond` folds its arms.
+      (while (>= row-index 0)
+        (begin
+          (set!
+            out
+            `(if (= ,index ,(comptime.expr-int row-index))
+              (stdlib.math.math-bits-row
+                ,constructor
+                ,(comptime.expr-list-nth rows row-index))
+              ,out))
+          (set! row-index (- row-index 1))))
+      out)))
+
 ;; The exponential implementation below follows musl `exp`/`expf` and their
 ;; data tables at revision b306b16af15c89a04d8e0c55cac2dadbeb39c083.
 ;; Tail corrections are shortest decimals folded to exact IEEE-754 payloads.
@@ -270,518 +331,138 @@
 ;: Tails stay in the `u64` ABI and are read with `f64-from-bits`; scales remain
 ;: raw words. In-code storage avoids a global; binary32 reuses every fourth row.
 (define (math-exp-f64-table-entry [index : i64]) : MathExpF64TableEntry
-  (cond
-    [(= index 0)
-      (MathExpF64TableEntry (stdlib.math.f64-to-bits 0.0) 0x3ff0000000000000)]
-    [(= index 1)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 9.447885451727066e-17)
-        0x3feff63da9fb3335)]
-    [(= index 2)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -1.507066976926039e-17)
-        0x3fefec9a3e778061)]
-    [(= index 3)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -5.679155082825012e-17)
-        0x3fefe315e86e7f85)]
-    [(= index 4)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 4.9997448722726326e-17)
-        0x3fefd9b0d3158574)]
-    [(= index 5)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -4.823683599994895e-17)
-        0x3fefd06b29ddf6de)]
-    [(= index 6)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 7.357846871247418e-18)
-        0x3fefc74518759bc8)]
-    [(= index 7)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 5.773230223741951e-17)
-        0x3fefbe3ecac6f383)]
-    [(= index 8)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 8.189317638195515e-17)
-        0x3fefb5586cf9890f)]
-    [(= index 9)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 5.326891139980878e-17)
-        0x3fefac922b7247f7)]
-    [(= index 10)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 1.6665881442326747e-18)
-        0x3fefa3ec32d3d1a2)]
-    [(= index 11)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -1.128113245461828e-17)
-        0x3fef9b66affed31b)]
-    [(= index 12)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -7.402825309426177e-17)
-        0x3fef9301d0125b51)]
-    [(= index 13)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -3.578659767309563e-18)
-        0x3fef8abdc06c31cc)]
-    [(= index 14)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -6.170654745608695e-17)
-        0x3fef829aaea92de0)]
-    [(= index 15)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 2.919139999949279e-17)
-        0x3fef7a98c8a58e51)]
-    [(= index 16)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -2.7939114859515733e-17)
-        0x3fef72b83c7d517b)]
-    [(= index 17)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -5.399285355184285e-17)
-        0x3fef6af9388c8dea)]
-    [(= index 18)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 4.776959425256223e-17)
-        0x3fef635beb6fcb75)]
-    [(= index 19)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -7.927701432338473e-17)
-        0x3fef5be084045cd4)]
-    [(= index 20)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 9.341710609905046e-17)
-        0x3fef54873168b9aa)]
-    [(= index 21)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -5.534520675707472e-17)
-        0x3fef4d5022fcd91d)]
-    [(= index 22)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 4.585670326662351e-17)
-        0x3fef463b88628cd6)]
-    [(= index 23)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 2.8582430411116143e-17)
-        0x3fef3f49917ddc96)]
-    [(= index 24)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 7.826573258636076e-17)
-        0x3fef387a6e756238)]
-    [(= index 25)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 4.053626906769216e-17)
-        0x3fef31ce4fb2a63f)]
-    [(= index 26)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 2.823784425951061e-17)
-        0x3fef2b4565e27cdd)]
-    [(= index 27)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -7.882802262487991e-17)
-        0x3fef24dfe1f56381)]
-    [(= index 28)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 3.2904726646008416e-17)
-        0x3fef1e9df51fdee1)]
-    [(= index 29)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -1.5792094703347882e-18)
-        0x3fef187fd0dad990)]
-    [(= index 30)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 4.721368121170128e-17)
-        0x3fef1285a6e4030b)]
-    [(= index 31)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 1.3045277096919659e-17)
-        0x3fef0cafa93e2f56)]
-    [(= index 32)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 3.3484623336251524e-17)
-        0x3fef06fe0a31b715)]
-    [(= index 33)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 3.8611199774925664e-17)
-        0x3fef0170fc4cd831)]
-    [(= index 34)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 5.527550048505249e-17)
-        0x3feefc08b26416ff)]
-    [(= index 35)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -3.927184172445234e-17)
-        0x3feef6c55f929ff1)]
-    [(= index 36)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -6.346552106729483e-17)
-        0x3feef1a7373aa9cb)]
-    [(= index 37)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -8.684417614865944e-17)
-        0x3feeecae6d05d866)]
-    [(= index 38)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -1.5456342819397733e-17)
-        0x3feee7db34e59ff7)]
-    [(= index 39)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -8.70763476495455e-17)
-        0x3feee32dc313a8e5)]
-    [(= index 40)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 3.750854201303127e-17)
-        0x3feedea64c123422)]
-    [(= index 41)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -6.616854503526488e-17)
-        0x3feeda4504ac801c)]
-    [(= index 42)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -5.346099009198751e-18)
-        0x3feed60a21f72e2a)]
-    [(= index 43)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -2.443726321015018e-17)
-        0x3feed1f5d950a897)]
-    [(= index 44)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 2.1023049675215714e-18)
-        0x3feece086061892d)]
-    [(= index 45)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 7.771067937501065e-17)
-        0x3feeca41ed1d0057)]
-    [(= index 46)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 1.3357510088834541e-17)
-        0x3feec6a2b5c13cd0)]
-    [(= index 47)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 6.938291696959204e-17)
-        0x3feec32af0d7d3de)]
-    [(= index 48)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 1.9572585293112036e-17)
-        0x3feebfdad5362a27)]
-    [(= index 49)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 6.632256961675804e-17)
-        0x3feebcb299fddd0d)]
-    [(= index 50)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -5.478069123926778e-17)
-        0x3feeb9b2769d2ca7)]
-    [(= index 51)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -4.140839310392624e-17)
-        0x3feeb6daa2cf6642)]
-    [(= index 52)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -2.1571477251208752e-17)
-        0x3feeb42b569d4f82)]
-    [(= index 53)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -3.8287766552120535e-17)
-        0x3feeb1a4ca5d920f)]
-    [(= index 54)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 6.663804589232195e-17)
-        0x3feeaf4736b527da)]
-    [(= index 55)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 2.3936187400285282e-17)
-        0x3feead12d497c7fd)]
-    [(= index 56)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 5.68648095791174e-17)
-        0x3feeab07dd485429)]
-    [(= index 57)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 1.1264523354521684e-18)
-        0x3feea9268a5946b7)]
-    [(= index 58)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 7.007875046906994e-17)
-        0x3feea76f15ad2148)]
-    [(= index 59)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -5.0119214278381254e-17)
-        0x3feea5e1b976dc09)]
-    [(= index 60)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -4.8923067513522756e-17)
-        0x3feea47eb03a5585)]
-    [(= index 61)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -3.5260089953269434e-17)
-        0x3feea34634ccc320)]
-    [(= index 62)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -6.872303720902018e-17)
-        0x3feea23882552225)]
-    [(= index 63)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 5.001446664133532e-18)
-        0x3feea155d44ca973)]
-    [(= index 64)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -6.835808657661922e-17)
-        0x3feea09e667f3bcd)]
-    [(= index 65)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -1.1307344092910212e-17)
-        0x3feea012750bdabf)]
-    [(= index 66)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -8.416011634717156e-18)
-        0x3fee9fb23c651a2f)]
-    [(= index 67)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -2.9247977035436566e-17)
-        0x3fee9f7df9519484)]
-    [(= index 68)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -2.092304381843353e-17)
-        0x3fee9f75e8ec5f74)]
-    [(= index 69)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -3.9778645875427124e-17)
-        0x3fee9f9a48a58174)]
-    [(= index 70)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -3.833464968654295e-17)
-        0x3fee9feb564267c9)]
-    [(= index 71)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 5.763611164480894e-17)
-        0x3feea0694fde5d3f)]
-    [(= index 72)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -2.3591094770850053e-17)
-        0x3feea11473eb0187)]
-    [(= index 73)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 7.260074661098575e-17)
-        0x3feea1ed0130c132)]
-    [(= index 74)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 9.50689710108796e-18)
-        0x3feea2f336cf4e62)]
-    [(= index 75)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -4.272956133839906e-17)
-        0x3feea427543e1a12)]
-    [(= index 76)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -6.735219232374683e-17)
-        0x3feea589994cce13)]
-    [(= index 77)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -2.8396044410430936e-17)
-        0x3feea71a4623c7ad)]
-    [(= index 78)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -7.226635472101257e-17)
-        0x3feea8d99b4492ed)]
-    [(= index 79)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 5.786121003395918e-17)
-        0x3feeaac7d98a6699)]
-    [(= index 80)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 5.1548301170786783e-17)
-        0x3feeace5422aa0db)]
-    [(= index 81)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -9.416257568878152e-18)
-        0x3feeaf3216b5448c)]
-    [(= index 82)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 2.4253985766689806e-17)
-        0x3feeb1ae99157736)]
-    [(= index 83)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -6.604314051707707e-17)
-        0x3feeb45b0b91ffc6)]
-    [(= index 84)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -6.432131775424189e-18)
-        0x3feeb737b0cdc5e5)]
-    [(= index 85)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -1.2204007601863921e-17)
-        0x3feeba44cbc8520f)]
-    [(= index 86)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -6.336161863401293e-17)
-        0x3feebd829fde4e50)]
-    [(= index 87)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -3.7800879246373815e-17)
-        0x3feec0f170ca07ba)]
-    [(= index 88)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 1.5341410053603723e-17)
-        0x3feec49182a3f090)]
-    [(= index 89)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 1.2932855580427452e-17)
-        0x3feec86319e32323)]
-    [(= index 90)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -4.123367330661149e-17)
-        0x3feecc667b5de565)]
-    [(= index 91)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 4.703083974463456e-17)
-        0x3feed09bec4a2d33)]
-    [(= index 92)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -6.152602891550265e-17)
-        0x3feed503b23e255d)]
-    [(= index 93)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 5.827849326195279e-17)
-        0x3feed99e1330b358)]
-    [(= index 94)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 3.540948262646183e-17)
-        0x3feede6b5579fdbf)]
-    [(= index 95)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -3.2741571320938764e-17)
-        0x3feee36bbfd3f37a)]
-    [(= index 96)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 4.875160526227062e-17)
-        0x3feee89f995ad3ad)]
-    [(= index 97)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -5.718569790077838e-17)
-        0x3feeee07298db666)]
-    [(= index 98)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -4.719539664590972e-18)
-        0x3feef3a2b84f15fb)]
-    [(= index 99)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -5.773451958805706e-17)
-        0x3feef9728de5593a)]
-    [(= index 100)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -1.0772487078934056e-17)
-        0x3feeff76f2fb5e47)]
-    [(= index 101)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -6.221808618533911e-17)
-        0x3fef05b030a1064a)]
-    [(= index 102)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 1.821405440362259e-17)
-        0x3fef0c1e904bc1d2)]
-    [(= index 103)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -6.155536546227639e-17)
-        0x3fef12c25bd71e09)]
-    [(= index 104)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 1.685487290628973e-17)
-        0x3fef199bdd85529c)]
-    [(= index 105)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 5.3581249177694816e-17)
-        0x3fef20ab5fffd07a)]
-    [(= index 106)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 3.621615935336894e-17)
-        0x3fef27f12e57d14b)]
-    [(= index 107)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 8.588379527574144e-18)
-        0x3fef2f6d9406e7b5)]
-    [(= index 108)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 1.01562190116415e-17)
-        0x3fef3720dcef9069)]
-    [(= index 109)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -2.869134889187244e-17)
-        0x3fef3f0b555dc3fa)]
-    [(= index 110)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -5.495118966122005e-17)
-        0x3fef472d4a07897c)]
-    [(= index 111)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -5.56965572431627e-17)
-        0x3fef4f87080d89f2)]
-    [(= index 112)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 1.790126907604513e-17)
-        0x3fef5818dcfba487)]
-    [(= index 113)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -3.2211766346200164e-17)
-        0x3fef60e316c98398)]
-    [(= index 114)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 5.265370768556274e-17)
-        0x3fef69e603db3285)]
-    [(= index 115)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 3.5089866402403033e-17)
-        0x3fef7321f301b460)]
-    [(= index 116)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -3.266924100901318e-17)
-        0x3fef7c97337b9b5f)]
-    [(= index 117)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -4.3657593008079375e-17)
-        0x3fef864614f5a129)]
-    [(= index 118)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 1.7963932659833022e-17)
-        0x3fef902ee78b3ff6)]
-    [(= index 119)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 3.4300925275214166e-17)
-        0x3fef9a51fbc74c83)]
-    [(= index 120)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -5.545065618639427e-17)
-        0x3fefa4afa2a490da)]
-    [(= index 121)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -5.149009745457733e-17)
-        0x3fefaf482d8e67f1)]
-    [(= index 122)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 5.336805878514151e-17)
-        0x3fefba1bee615a27)]
-    [(= index 123)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 3.498978661192973e-17)
-        0x3fefc52b376bba97)]
-    [(= index 124)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 4.5784915277060095e-17)
-        0x3fefd0765b6e4540)]
-    [(= index 125)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits -5.241934575393899e-17)
-        0x3fefdbfdad9cbe14)]
-    [(= index 126)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 2.0414278897578303e-17)
-        0x3fefe7c1819e90d8)]
-    [(= index 127)
-      (MathExpF64TableEntry
-        (stdlib.math.f64-to-bits 4.124842848606488e-18)
-        0x3feff3c22b8f71f1)]
-    [else (MathExpF64TableEntry 0 0)]))
+  (math-bits-table
+    index
+    MathExpF64TableEntry
+    (MathExpF64TableEntry 0 0)
+    (row 0.0 0x3ff0000000000000)
+    (row 9.447885451727066e-17 0x3feff63da9fb3335)
+    (row -1.507066976926039e-17 0x3fefec9a3e778061)
+    (row -5.679155082825012e-17 0x3fefe315e86e7f85)
+    (row 4.9997448722726326e-17 0x3fefd9b0d3158574)
+    (row -4.823683599994895e-17 0x3fefd06b29ddf6de)
+    (row 7.357846871247418e-18 0x3fefc74518759bc8)
+    (row 5.773230223741951e-17 0x3fefbe3ecac6f383)
+    (row 8.189317638195515e-17 0x3fefb5586cf9890f)
+    (row 5.326891139980878e-17 0x3fefac922b7247f7)
+    (row 1.6665881442326747e-18 0x3fefa3ec32d3d1a2)
+    (row -1.128113245461828e-17 0x3fef9b66affed31b)
+    (row -7.402825309426177e-17 0x3fef9301d0125b51)
+    (row -3.578659767309563e-18 0x3fef8abdc06c31cc)
+    (row -6.170654745608695e-17 0x3fef829aaea92de0)
+    (row 2.919139999949279e-17 0x3fef7a98c8a58e51)
+    (row -2.7939114859515733e-17 0x3fef72b83c7d517b)
+    (row -5.399285355184285e-17 0x3fef6af9388c8dea)
+    (row 4.776959425256223e-17 0x3fef635beb6fcb75)
+    (row -7.927701432338473e-17 0x3fef5be084045cd4)
+    (row 9.341710609905046e-17 0x3fef54873168b9aa)
+    (row -5.534520675707472e-17 0x3fef4d5022fcd91d)
+    (row 4.585670326662351e-17 0x3fef463b88628cd6)
+    (row 2.8582430411116143e-17 0x3fef3f49917ddc96)
+    (row 7.826573258636076e-17 0x3fef387a6e756238)
+    (row 4.053626906769216e-17 0x3fef31ce4fb2a63f)
+    (row 2.823784425951061e-17 0x3fef2b4565e27cdd)
+    (row -7.882802262487991e-17 0x3fef24dfe1f56381)
+    (row 3.2904726646008416e-17 0x3fef1e9df51fdee1)
+    (row -1.5792094703347882e-18 0x3fef187fd0dad990)
+    (row 4.721368121170128e-17 0x3fef1285a6e4030b)
+    (row 1.3045277096919659e-17 0x3fef0cafa93e2f56)
+    (row 3.3484623336251524e-17 0x3fef06fe0a31b715)
+    (row 3.8611199774925664e-17 0x3fef0170fc4cd831)
+    (row 5.527550048505249e-17 0x3feefc08b26416ff)
+    (row -3.927184172445234e-17 0x3feef6c55f929ff1)
+    (row -6.346552106729483e-17 0x3feef1a7373aa9cb)
+    (row -8.684417614865944e-17 0x3feeecae6d05d866)
+    (row -1.5456342819397733e-17 0x3feee7db34e59ff7)
+    (row -8.70763476495455e-17 0x3feee32dc313a8e5)
+    (row 3.750854201303127e-17 0x3feedea64c123422)
+    (row -6.616854503526488e-17 0x3feeda4504ac801c)
+    (row -5.346099009198751e-18 0x3feed60a21f72e2a)
+    (row -2.443726321015018e-17 0x3feed1f5d950a897)
+    (row 2.1023049675215714e-18 0x3feece086061892d)
+    (row 7.771067937501065e-17 0x3feeca41ed1d0057)
+    (row 1.3357510088834541e-17 0x3feec6a2b5c13cd0)
+    (row 6.938291696959204e-17 0x3feec32af0d7d3de)
+    (row 1.9572585293112036e-17 0x3feebfdad5362a27)
+    (row 6.632256961675804e-17 0x3feebcb299fddd0d)
+    (row -5.478069123926778e-17 0x3feeb9b2769d2ca7)
+    (row -4.140839310392624e-17 0x3feeb6daa2cf6642)
+    (row -2.1571477251208752e-17 0x3feeb42b569d4f82)
+    (row -3.8287766552120535e-17 0x3feeb1a4ca5d920f)
+    (row 6.663804589232195e-17 0x3feeaf4736b527da)
+    (row 2.3936187400285282e-17 0x3feead12d497c7fd)
+    (row 5.68648095791174e-17 0x3feeab07dd485429)
+    (row 1.1264523354521684e-18 0x3feea9268a5946b7)
+    (row 7.007875046906994e-17 0x3feea76f15ad2148)
+    (row -5.0119214278381254e-17 0x3feea5e1b976dc09)
+    (row -4.8923067513522756e-17 0x3feea47eb03a5585)
+    (row -3.5260089953269434e-17 0x3feea34634ccc320)
+    (row -6.872303720902018e-17 0x3feea23882552225)
+    (row 5.001446664133532e-18 0x3feea155d44ca973)
+    (row -6.835808657661922e-17 0x3feea09e667f3bcd)
+    (row -1.1307344092910212e-17 0x3feea012750bdabf)
+    (row -8.416011634717156e-18 0x3fee9fb23c651a2f)
+    (row -2.9247977035436566e-17 0x3fee9f7df9519484)
+    (row -2.092304381843353e-17 0x3fee9f75e8ec5f74)
+    (row -3.9778645875427124e-17 0x3fee9f9a48a58174)
+    (row -3.833464968654295e-17 0x3fee9feb564267c9)
+    (row 5.763611164480894e-17 0x3feea0694fde5d3f)
+    (row -2.3591094770850053e-17 0x3feea11473eb0187)
+    (row 7.260074661098575e-17 0x3feea1ed0130c132)
+    (row 9.50689710108796e-18 0x3feea2f336cf4e62)
+    (row -4.272956133839906e-17 0x3feea427543e1a12)
+    (row -6.735219232374683e-17 0x3feea589994cce13)
+    (row -2.8396044410430936e-17 0x3feea71a4623c7ad)
+    (row -7.226635472101257e-17 0x3feea8d99b4492ed)
+    (row 5.786121003395918e-17 0x3feeaac7d98a6699)
+    (row 5.1548301170786783e-17 0x3feeace5422aa0db)
+    (row -9.416257568878152e-18 0x3feeaf3216b5448c)
+    (row 2.4253985766689806e-17 0x3feeb1ae99157736)
+    (row -6.604314051707707e-17 0x3feeb45b0b91ffc6)
+    (row -6.432131775424189e-18 0x3feeb737b0cdc5e5)
+    (row -1.2204007601863921e-17 0x3feeba44cbc8520f)
+    (row -6.336161863401293e-17 0x3feebd829fde4e50)
+    (row -3.7800879246373815e-17 0x3feec0f170ca07ba)
+    (row 1.5341410053603723e-17 0x3feec49182a3f090)
+    (row 1.2932855580427452e-17 0x3feec86319e32323)
+    (row -4.123367330661149e-17 0x3feecc667b5de565)
+    (row 4.703083974463456e-17 0x3feed09bec4a2d33)
+    (row -6.152602891550265e-17 0x3feed503b23e255d)
+    (row 5.827849326195279e-17 0x3feed99e1330b358)
+    (row 3.540948262646183e-17 0x3feede6b5579fdbf)
+    (row -3.2741571320938764e-17 0x3feee36bbfd3f37a)
+    (row 4.875160526227062e-17 0x3feee89f995ad3ad)
+    (row -5.718569790077838e-17 0x3feeee07298db666)
+    (row -4.719539664590972e-18 0x3feef3a2b84f15fb)
+    (row -5.773451958805706e-17 0x3feef9728de5593a)
+    (row -1.0772487078934056e-17 0x3feeff76f2fb5e47)
+    (row -6.221808618533911e-17 0x3fef05b030a1064a)
+    (row 1.821405440362259e-17 0x3fef0c1e904bc1d2)
+    (row -6.155536546227639e-17 0x3fef12c25bd71e09)
+    (row 1.685487290628973e-17 0x3fef199bdd85529c)
+    (row 5.3581249177694816e-17 0x3fef20ab5fffd07a)
+    (row 3.621615935336894e-17 0x3fef27f12e57d14b)
+    (row 8.588379527574144e-18 0x3fef2f6d9406e7b5)
+    (row 1.01562190116415e-17 0x3fef3720dcef9069)
+    (row -2.869134889187244e-17 0x3fef3f0b555dc3fa)
+    (row -5.495118966122005e-17 0x3fef472d4a07897c)
+    (row -5.56965572431627e-17 0x3fef4f87080d89f2)
+    (row 1.790126907604513e-17 0x3fef5818dcfba487)
+    (row -3.2211766346200164e-17 0x3fef60e316c98398)
+    (row 5.265370768556274e-17 0x3fef69e603db3285)
+    (row 3.5089866402403033e-17 0x3fef7321f301b460)
+    (row -3.266924100901318e-17 0x3fef7c97337b9b5f)
+    (row -4.3657593008079375e-17 0x3fef864614f5a129)
+    (row 1.7963932659833022e-17 0x3fef902ee78b3ff6)
+    (row 3.4300925275214166e-17 0x3fef9a51fbc74c83)
+    (row -5.545065618639427e-17 0x3fefa4afa2a490da)
+    (row -5.149009745457733e-17 0x3fefaf482d8e67f1)
+    (row 5.336805878514151e-17 0x3fefba1bee615a27)
+    (row 3.498978661192973e-17 0x3fefc52b376bba97)
+    (row 4.5784915277060095e-17 0x3fefd0765b6e4540)
+    (row -5.241934575393899e-17 0x3fefdbfdad9cbe14)
+    (row 2.0414278897578303e-17 0x3fefe7c1819e90d8)
+    (row 4.124842848606488e-18 0x3feff3c22b8f71f1)))
 
 ;: Complete a binary64 result whose table scale may overflow or underflow.
 (define (math-exp-f64-special [tmp : f64] [scale-bits : u64] [k-bits : u64]) : f64
@@ -911,776 +592,650 @@
 
 ;: Return the exact musl binary64 logarithm constants for interval index.
 (define (math-log-f64-table-entry [index : i64]) : MathLogF64TableEntry
-  (cond
-    [(= index 0)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.4504249240398293)
-        (stdlib.math.f64-to-bits -0.37185656456335892)
-        (stdlib.math.f64-to-bits 0.68945312744263043)
-        (stdlib.math.f64-to-bits 2.6029065281053499e-17))]
-    [(= index 1)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.4422535083272761)
-        (stdlib.math.f64-to-bits -0.36620682668944937)
-        (stdlib.math.f64-to-bits 0.69335938115331663)
-        (stdlib.math.f64-to-bits 5.1607448519931415e-17))]
-    [(= index 2)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.4341736174350004)
-        (stdlib.math.f64-to-bits -0.36058880697919449)
-        (stdlib.math.f64-to-bits 0.69726565029726739)
-        (stdlib.math.f64-to-bits 5.2906724148878689e-17))]
-    [(= index 3)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.4261838163299949)
-        (stdlib.math.f64-to-bits -0.35500221714198688)
-        (stdlib.math.f64-to-bits 0.70117188860921476)
-        (stdlib.math.f64-to-bits 7.8010306348060135e-18))]
-    [(= index 4)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.4182825527052965)
-        (stdlib.math.f64-to-bits -0.34944666968829097)
-        (stdlib.math.f64-to-bits 0.70507812289769389)
-        (stdlib.math.f64-to-bits -2.471355337688684e-17))]
-    [(= index 5)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.4104682921759335)
-        (stdlib.math.f64-to-bits -0.34392177136032842)
-        (stdlib.math.f64-to-bits 0.7089843887644558)
-        (stdlib.math.f64-to-bits -4.6413389636862956e-17))]
-    [(= index 6)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.4027396147468003)
-        (stdlib.math.f64-to-bits -0.33842719212611883)
-        (stdlib.math.f64-to-bits 0.71289068155425528)
-        (stdlib.math.f64-to-bits 3.3387408065940366e-17))]
-    [(= index 7)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.3950954438932313)
-        (stdlib.math.f64-to-bits -0.33296283149434203)
-        (stdlib.math.f64-to-bits 0.71679683592783028)
-        (stdlib.math.f64-to-bits -2.6454587338050098e-17))]
-    [(= index 8)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.3875338232485754)
-        (stdlib.math.f64-to-bits -0.32752794345742586)
-        (stdlib.math.f64-to-bits 0.7207031520563163)
-        (stdlib.math.f64-to-bits 2.4284096334522285e-17))]
-    [(= index 9)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.3800539211058593)
-        (stdlib.math.f64-to-bits -0.32212257167088865)
-        (stdlib.math.f64-to-bits 0.72460936830546729)
-        (stdlib.math.f64-to-bits 4.8578243503198198e-17))]
-    [(= index 10)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.3726542695419708)
-        (stdlib.math.f64-to-bits -0.3167462884799761)
-        (stdlib.math.f64-to-bits 0.72851556447180355)
-        (stdlib.math.f64-to-bits -1.3014776598894487e-17))]
-    [(= index 11)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.3653332798446802)
-        (stdlib.math.f64-to-bits -0.3113985598928366)
-        (stdlib.math.f64-to-bits 0.73242190369355065)
-        (stdlib.math.f64-to-bits -1.0402317671225898e-17))]
-    [(= index 12)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.358090204587874)
-        (stdlib.math.f64-to-bits -0.30607945151655258)
-        (stdlib.math.f64-to-bits 0.73632811474658999)
-        (stdlib.math.f64-to-bits 3.0782914274674313e-17))]
-    [(= index 13)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.3509234892132138)
-        (stdlib.math.f64-to-bits -0.30078842466764399)
-        (stdlib.math.f64-to-bits 0.74023437151307969)
-        (stdlib.math.f64-to-bits -1.4304998976623033e-17))]
-    [(= index 14)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.3438320840699889)
-        (stdlib.math.f64-to-bits -0.29552529684769979)
-        (stdlib.math.f64-to-bits 0.74414059007384026)
-        (stdlib.math.f64-to-bits -2.8625955785571303e-17))]
-    [(= index 15)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.3368146974742003)
-        (stdlib.math.f64-to-bits -0.29028969275850613)
-        (stdlib.math.f64-to-bits 0.74804683243640002)
-        (stdlib.math.f64-to-bits 5.1609093535635645e-17))]
-    [(= index 16)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.3298701146777361)
-        (stdlib.math.f64-to-bits -0.28508127932775551)
-        (stdlib.math.f64-to-bits 0.75195313359028848)
-        (stdlib.math.f64-to-bits 4.423423949536319e-17))]
-    [(= index 17)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.3229973391611061)
-        (stdlib.math.f64-to-bits -0.27989987391470095)
-        (stdlib.math.f64-to-bits 0.75585941891167063)
-        (stdlib.math.f64-to-bits -4.6830167620995081e-17))]
-    [(= index 18)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.316195352741367)
-        (stdlib.math.f64-to-bits -0.27474526621870154)
-        (stdlib.math.f64-to-bits 0.75976563655023055)
-        (stdlib.math.f64-to-bits 4.4667420075147718e-17))]
-    [(= index 19)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.3094628125672239)
-        (stdlib.math.f64-to-bits -0.26961698637012432)
-        (stdlib.math.f64-to-bits 0.76367193508877373)
-        (stdlib.math.f64-to-bits -4.8134498775190266e-17))]
-    [(= index 20)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.3027990455471041)
-        (stdlib.math.f64-to-bits -0.26451506180308115)
-        (stdlib.math.f64-to-bits 0.76757808767050095)
-        (stdlib.math.f64-to-bits -4.3371015350542286e-17))]
-    [(= index 21)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.2962024229438942)
-        (stdlib.math.f64-to-bits -0.25943877627673828)
-        (stdlib.math.f64-to-bits 0.77148443969795355)
-        (stdlib.math.f64-to-bits -2.5156444722517071e-17))]
-    [(= index 22)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.2896726275815547)
-        (stdlib.math.f64-to-bits -0.25438840909816918)
-        (stdlib.math.f64-to-bits 0.77539057479667517)
-        (stdlib.math.f64-to-bits -4.163636184961329e-17))]
-    [(= index 23)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.2832080305745537)
-        (stdlib.math.f64-to-bits -0.24936321635129843)
-        (stdlib.math.f64-to-bits 0.77929686860847658)
-        (stdlib.math.f64-to-bits 3.3837161384165165e-17))]
-    [(= index 24)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.276807885983376)
-        (stdlib.math.f64-to-bits -0.24436312405975968)
-        (stdlib.math.f64-to-bits 0.78320318270106604)
-        (stdlib.math.f64-to-bits 4.3792065650567583e-17))]
-    [(= index 25)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.2704714060687552)
-        (stdlib.math.f64-to-bits -0.23938801747897287)
-        (stdlib.math.f64-to-bits 0.78710941090309128)
-        (stdlib.math.f64-to-bits 2.7322930976146396e-17))]
-    [(= index 26)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.2641976054949482)
-        (stdlib.math.f64-to-bits -0.23443761696705678)
-        (stdlib.math.f64-to-bits 0.79101557830311531)
-        (stdlib.math.f64-to-bits -5.4636612253640457e-17))]
-    [(= index 27)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.2579853575148821)
-        (stdlib.math.f64-to-bits -0.22951151871518505)
-        (stdlib.math.f64-to-bits 0.79492181210715718)
-        (stdlib.math.f64-to-bits -1.4320502634189868e-17))]
-    [(= index 28)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.2518337750655457)
-        (stdlib.math.f64-to-bits -0.2246094963439873)
-        (stdlib.math.f64-to-bits 0.79882810315422292)
-        (stdlib.math.f64-to-bits -4.0766731402809024e-17))]
-    [(= index 29)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.2457421919097305)
-        (stdlib.math.f64-to-bits -0.21973149037705753)
-        (stdlib.math.f64-to-bits 0.80273431091467962)
-        (stdlib.math.f64-to-bits -4.0338264352540086e-17))]
-    [(= index 30)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.2397094966625508)
-        (stdlib.math.f64-to-bits -0.2148770752847895)
-        (stdlib.math.f64-to-bits 0.80664059014803224)
-        (stdlib.math.f64-to-bits 1.7241428071650815e-18))]
-    [(= index 31)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.2337348463589233)
-        (stdlib.math.f64-to-bits -0.21004602910363701)
-        (stdlib.math.f64-to-bits 0.81054693636259334)
-        (stdlib.math.f64-to-bits -4.5534218930924523e-17))]
-    [(= index 32)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.2278176973028803)
-        (stdlib.math.f64-to-bits -0.20523836373934046)
-        (stdlib.math.f64-to-bits 0.8144531571720115)
-        (stdlib.math.f64-to-bits 1.8212169205891421e-17))]
-    [(= index 33)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.2219570190618474)
-        (stdlib.math.f64-to-bits -0.20045368751368642)
-        (stdlib.math.f64-to-bits 0.81835938940613961)
-        (stdlib.math.f64-to-bits 4.9864288025894273e-17))]
-    [(= index 34)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.2161519732977757)
-        (stdlib.math.f64-to-bits -0.1956917537758045)
-        (stdlib.math.f64-to-bits 0.82226565590182965)
-        (stdlib.math.f64-to-bits 4.3359904167266887e-17))]
-    [(= index 35)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.2104018095009725)
-        (stdlib.math.f64-to-bits -0.19095237845203883)
-        (stdlib.math.f64-to-bits 0.82617193080063434)
-        (stdlib.math.f64-to-bits -5.4220014716611272e-17))]
-    [(= index 36)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.204705805718973)
-        (stdlib.math.f64-to-bits -0.18623539250290833)
-        (stdlib.math.f64-to-bits 0.83007817780308302)
-        (stdlib.math.f64-to-bits -5.3336037289290352e-17))]
-    [(= index 37)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.1990631185441964)
-        (stdlib.math.f64-to-bits -0.18154051731551135)
-        (stdlib.math.f64-to-bits 0.83398445380766739)
-        (stdlib.math.f64-to-bits -1.1270648442682386e-17))]
-    [(= index 38)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.1934733004462308)
-        (stdlib.math.f64-to-bits -0.17686779574319189)
-        (stdlib.math.f64-to-bits 0.83789054989844136)
-        (stdlib.math.f64-to-bits -3.1651267348003982e-17))]
-    [(= index 39)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.1879350812847385)
-        (stdlib.math.f64-to-bits -0.17221657406412305)
-        (stdlib.math.f64-to-bits 0.84179684206186689)
-        (stdlib.math.f64-to-bits 1.1286283062565865e-17))]
-    [(= index 40)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.1824481322833125)
-        (stdlib.math.f64-to-bits -0.16758697765942543)
-        (stdlib.math.f64-to-bits 0.84570305681738078)
-        (stdlib.math.f64-to-bits 5.643595964448442e-18))]
-    [(= index 41)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.1770114976921955)
-        (stdlib.math.f64-to-bits -0.16297859687290384)
-        (stdlib.math.f64-to-bits 0.84960937251737334)
-        (stdlib.math.f64-to-bits -2.1687834632368187e-17))]
-    [(= index 42)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.1716248121809465)
-        (stdlib.math.f64-to-bits -0.15839151377804228)
-        (stdlib.math.f64-to-bits 0.85351555344626773)
-        (stdlib.math.f64-to-bits -2.2548234217914977e-17))]
-    [(= index 43)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.1662869231674715)
-        (stdlib.math.f64-to-bits -0.15382513241456763)
-        (stdlib.math.f64-to-bits 0.85742194320771459)
-        (stdlib.math.f64-to-bits 4.6832605563531392e-17))]
-    [(= index 44)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.1609977486762766)
-        (stdlib.math.f64-to-bits -0.14927976358922024)
-        (stdlib.math.f64-to-bits 0.86132811294437062)
-        (stdlib.math.f64-to-bits 2.5148296884122795e-17))]
-    [(= index 45)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.1557563220795803)
-        (stdlib.math.f64-to-bits -0.14475495398119165)
-        (stdlib.math.f64-to-bits 0.86523428935320534)
-        (stdlib.math.f64-to-bits -8.6721875709494672e-18))]
-    [(= index 46)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.1505619105480347)
-        (stdlib.math.f64-to-bits -0.14025044090817573)
-        (stdlib.math.f64-to-bits 0.86914053979388284)
-        (stdlib.math.f64-to-bits -1.2576268285559751e-17))]
-    [(= index 47)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.1454138888505974)
-        (stdlib.math.f64-to-bits -0.13576604666855019)
-        (stdlib.math.f64-to-bits 0.87304686081943916)
-        (stdlib.math.f64-to-bits -2.9930851265147998e-17))]
-    [(= index 48)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.1403118773746559)
-        (stdlib.math.f64-to-bits -0.1313018016355727)
-        (stdlib.math.f64-to-bits 0.87695306857831168)
-        (stdlib.math.f64-to-bits 4.8148015076816437e-17))]
-    [(= index 49)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.1352550225747513)
-        (stdlib.math.f64-to-bits -0.12685731518763532)
-        (stdlib.math.f64-to-bits 0.88085934888181006)
-        (stdlib.math.f64-to-bits -9.1054953361102193e-18))]
-    [(= index 50)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.1302429094831266)
-        (stdlib.math.f64-to-bits -0.12243257376712791)
-        (stdlib.math.f64-to-bits 0.88476555934096668)
-        (stdlib.math.f64-to-bits -3.5124146516207661e-17))]
-    [(= index 51)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.1252747693068048)
-        (stdlib.math.f64-to-bits -0.11802724521862729)
-        (stdlib.math.f64-to-bits 0.88867184022620804)
-        (stdlib.math.f64-to-bits 3.5552618153740227e-17))]
-    [(= index 52)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.1203501571039876)
-        (stdlib.math.f64-to-bits -0.11364127671663482)
-        (stdlib.math.f64-to-bits 0.89257808700176133)
-        (stdlib.math.f64-to-bits 1.692380503540994e-17))]
-    [(= index 53)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.1154683327680124)
-        (stdlib.math.f64-to-bits -0.10927434611278386)
-        (stdlib.math.f64-to-bits 0.89648443673745537)
-        (stdlib.math.f64-to-bits -1.0837881791715702e-17))]
-    [(= index 54)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.1106291463292157)
-        (stdlib.math.f64-to-bits -0.10492665324943573)
-        (stdlib.math.f64-to-bits 0.90039056088626834)
-        (stdlib.math.f64-to-bits 5.2900545724138363e-17))]
-    [(= index 55)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.1058315813301596)
-        (stdlib.math.f64-to-bits -0.10059761422644442)
-        (stdlib.math.f64-to-bits 0.90429683586820775)
-        (stdlib.math.f64-to-bits 5.3330721088784517e-17))]
-    [(= index 56)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.1010752177696026)
-        (stdlib.math.f64-to-bits -0.096287173090559008)
-        (stdlib.math.f64-to-bits 0.90820316710574411)
-        (stdlib.math.f64-to-bits 1.8640040753232978e-17))]
-    [(= index 57)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.0963597137952512)
-        (stdlib.math.f64-to-bits -0.091995340695575578)
-        (stdlib.math.f64-to-bits 0.91210939933054969)
-        (stdlib.math.f64-to-bits 4.4679728320540751e-17))]
-    [(= index 58)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.0916844827550398)
-        (stdlib.math.f64-to-bits -0.087721900366886985)
-        (stdlib.math.f64-to-bits 0.91601558490264567)
-        (stdlib.math.f64-to-bits -5.2162134195850327e-18))]
-    [(= index 59)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.0870487291277784)
-        (stdlib.math.f64-to-bits -0.083466436138678546)
-        (stdlib.math.f64-to-bits 0.91992196228624989)
-        (stdlib.math.f64-to-bits -2.7324731032846873e-17))]
-    [(= index 60)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.082452357388312)
-        (stdlib.math.f64-to-bits -0.079229168275446682)
-        (stdlib.math.f64-to-bits 0.9238281880717143)
-        (stdlib.math.f64-to-bits -1.7769263393434193e-17))]
-    [(= index 61)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.0778948225025884)
-        (stdlib.math.f64-to-bits -0.075009900475038194)
-        (stdlib.math.f64-to-bits 0.92773430127279288)
-        (stdlib.math.f64-to-bits 4.9433630808174411e-17))]
-    [(= index 62)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.0733751731601076)
-        (stdlib.math.f64-to-bits -0.070808051333528965)
-        (stdlib.math.f64-to-bits 0.93164070215627881)
-        (stdlib.math.f64-to-bits 4.164434042024055e-17))]
-    [(= index 63)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.068893585073351)
-        (stdlib.math.f64-to-bits -0.06662408085151128)
-        (stdlib.math.f64-to-bits 0.93554682520746602)
-        (stdlib.math.f64-to-bits 1.3011820859795741e-17))]
-    [(= index 64)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.0644491706655506)
-        (stdlib.math.f64-to-bits -0.062457454719151428)
-        (stdlib.math.f64-to-bits 0.93945303125629431)
-        (stdlib.math.f64-to-bits -2.7332907838481398e-17))]
-    [(= index 65)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.0600414846328305)
-        (stdlib.math.f64-to-bits -0.058308043804231602)
-        (stdlib.math.f64-to-bits 0.94335930668446688)
-        (stdlib.math.f64-to-bits 2.3421331708032919e-17))]
-    [(= index 66)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.0556701316181605)
-        (stdlib.math.f64-to-bits -0.05417576112313327)
-        (stdlib.math.f64-to-bits 0.94726559940383293)
-        (stdlib.math.f64-to-bits 1.6478717480487438e-17))]
-    [(= index 67)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.0513347505569259)
-        (stdlib.math.f64-to-bits -0.050060547896805474)
-        (stdlib.math.f64-to-bits 0.9511718313032721)
-        (stdlib.math.f64-to-bits -5.1960829013149901e-18))]
-    [(= index 68)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.0470347288442157)
-        (stdlib.math.f64-to-bits -0.045962101199052086)
-        (stdlib.math.f64-to-bits 0.95507815782181782)
-        (stdlib.math.f64-to-bits -3.5565573220578997e-17))]
-    [(= index 69)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.0427699229652954)
-        (stdlib.math.f64-to-bits -0.041880560088657148)
-        (stdlib.math.f64-to-bits 0.95898431473390433)
-        (stdlib.math.f64-to-bits 2.0816772146458738e-17))]
-    [(= index 70)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.0385395013738175)
-        (stdlib.math.f64-to-bits -0.037815400561839851)
-        (stdlib.math.f64-to-bits 0.96289067356336855)
-        (stdlib.math.f64-to-bits -3.4719628261468409e-18))]
-    [(= index 71)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.0343434189403451)
-        (stdlib.math.f64-to-bits -0.033766847579158821)
-        (stdlib.math.f64-to-bits 0.9667968893972092)
-        (stdlib.math.f64-to-bits -3.6864683447264197e-17))]
-    [(= index 72)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.0301811073173315)
-        (stdlib.math.f64-to-bits -0.029734619131772888)
-        (stdlib.math.f64-to-bits 0.97070310540257787)
-        (stdlib.math.f64-to-bits -3.4674108076868834e-18))]
-    [(= index 73)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.026052043621297)
-        (stdlib.math.f64-to-bits -0.025718470239212365)
-        (stdlib.math.f64-to-bits 0.97460943254949306)
-        (stdlib.math.f64-to-bits 4.5981526247743919e-17))]
-    [(= index 74)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.0219561082336197)
-        (stdlib.math.f64-to-bits -0.021718543925430822)
-        (stdlib.math.f64-to-bits 0.97851560545827221)
-        (stdlib.math.f64-to-bits 4.5531457523925683e-17))]
-    [(= index 75)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.0178926505784922)
-        (stdlib.math.f64-to-bits -0.017734461269810708)
-        (stdlib.math.f64-to-bits 0.98242186878122817)
-        (stdlib.math.f64-to-bits -7.8112591694189783e-18))]
-    [(= index 76)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.0138614436244586)
-        (stdlib.math.f64-to-bits -0.013766252464051831)
-        (stdlib.math.f64-to-bits 0.98632806907529169)
-        (stdlib.math.f64-to-bits 2.0375615178047467e-17))]
-    [(= index 77)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.0098620186501341)
-        (stdlib.math.f64-to-bits -0.0098137063225749444)
-        (stdlib.math.f64-to-bits 0.99023429095460336)
-        (stdlib.math.f64-to-bits -1.344597043422914e-17))]
-    [(= index 78)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.0058938559734134)
-        (stdlib.math.f64-to-bits -0.005876555150052809)
-        (stdlib.math.f64-to-bits 0.99414067802640083)
-        (stdlib.math.f64-to-bits 1.5185372369505401e-17))]
-    [(= index 79)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.0019569623501401)
-        (stdlib.math.f64-to-bits -0.0019550499938532084)
-        (stdlib.math.f64-to-bits 0.99804685987155584)
-        (stdlib.math.f64-to-bits -1.301926039598001e-17))]
-    [(= index 80)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.99610899230885086)
-        (stdlib.math.f64-to-bits 0.0038985973556009412)
-        (stdlib.math.f64-to-bits 1.0039062067717412)
-        (stdlib.math.f64-to-bits -4.5961206417449733e-17))]
-    [(= index 81)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.98841703381852009)
-        (stdlib.math.f64-to-bits 0.011650571286395461)
-        (stdlib.math.f64-to-bits 1.0117187035281372)
-        (stdlib.math.f64-to-bits -8.1524050026653492e-17))]
-    [(= index 82)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.98084291910052968)
-        (stdlib.math.f64-to-bits 0.019342955478919066)
-        (stdlib.math.f64-to-bits 1.0195312424919558)
-        (stdlib.math.f64-to-bits 8.2399270147578115e-17))]
-    [(= index 83)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.97338401699874455)
-        (stdlib.math.f64-to-bits 0.026976601484648199)
-        (stdlib.math.f64-to-bits 1.0273437641634193)
-        (stdlib.math.f64-to-bits 3.1228510053270453e-17))]
-    [(= index 84)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.96603775688765559)
-        (stdlib.math.f64-to-bits 0.034552359728422744)
-        (stdlib.math.f64-to-bits 1.0351562274561221)
-        (stdlib.math.f64-to-bits -1.3010212611128995e-17))]
-    [(= index 85)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.95880149453073693)
-        (stdlib.math.f64-to-bits 0.042071217671832528)
-        (stdlib.math.f64-to-bits 1.0429687539123276)
-        (stdlib.math.f64-to-bits -5.9841166886334577e-17))]
-    [(= index 86)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.95167285690731107)
-        (stdlib.math.f64-to-bits 0.049533940950141186)
-        (stdlib.math.f64-to-bits 1.0507812561238108)
-        (stdlib.math.f64-to-bits 2.8609238548223351e-17))]
-    [(= index 87)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.9446494635965822)
-        (stdlib.math.f64-to-bits 0.056941358295944156)
-        (stdlib.math.f64-to-bits 1.0585937308350133)
-        (stdlib.math.f64-to-bits -1.9962944508904598e-17))]
-    [(= index 88)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.93772889930262227)
-        (stdlib.math.f64-to-bits 0.064294391683461072)
-        (stdlib.math.f64-to-bits 1.0664062936992642)
-        (stdlib.math.f64-to-bits 5.2914691303090992e-17))]
-    [(= index 89)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.93090910737906807)
-        (stdlib.math.f64-to-bits 0.071593635494650698)
-        (stdlib.math.f64-to-bits 1.0742187309945372)
-        (stdlib.math.f64-to-bits 1.0321575006732523e-16))]
-    [(= index 90)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.92418768161272202)
-        (stdlib.math.f64-to-bits 0.078840109337761533)
-        (stdlib.math.f64-to-bits 1.0820313015371339)
-        (stdlib.math.f64-to-bits 9.0211943734191189e-17))]
-    [(= index 91)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.91756267655991919)
-        (stdlib.math.f64-to-bits 0.086034389059705063)
-        (stdlib.math.f64-to-bits 1.0898438063644336)
-        (stdlib.math.f64-to-bits 5.2027989923579528e-17))]
-    [(= index 92)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.91103204036240337)
-        (stdlib.math.f64-to-bits 0.093177211800139048)
-        (stdlib.math.f64-to-bits 1.0976562356711468)
-        (stdlib.math.f64-to-bits 5.8983184825007853e-17))]
-    [(= index 93)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.90459358397620238)
-        (stdlib.math.f64-to-bits 0.10026951462748457)
-        (stdlib.math.f64-to-bits 1.1054688179463226)
-        (stdlib.math.f64-to-bits 8.8463776906532518e-17))]
-    [(= index 94)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.89824563759228249)
-        (stdlib.math.f64-to-bits 0.10731170956330516)
-        (stdlib.math.f64-to-bits 1.113281220803328)
-        (stdlib.math.f64-to-bits -9.5294559652125745e-18))]
-    [(= index 95)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.89198609667825013)
-        (stdlib.math.f64-to-bits 0.11430473320717738)
-        (stdlib.math.f64-to-bits 1.1210937073167315)
-        (stdlib.math.f64-to-bits 6.7650807093777866e-17))]
-    [(= index 96)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.88581311211851288)
-        (stdlib.math.f64-to-bits 0.12124928503033061)
-        (stdlib.math.f64-to-bits 1.1289062967338532)
-        (stdlib.math.f64-to-bits 1.0929327370933015e-16))]
-    [(= index 97)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.87972507576067605)
-        (stdlib.math.f64-to-bits 0.12814583422959913)
-        (stdlib.math.f64-to-bits 1.1367187631150848)
-        (stdlib.math.f64-to-bits 6.9385705512305156e-17))]
-    [(= index 98)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.87372013726346853)
-        (stdlib.math.f64-to-bits 0.13499516368517561)
-        (stdlib.math.f64-to-bits 1.1445312490244826)
-        (stdlib.math.f64-to-bits 1.908841015045148e-17))]
-    [(= index 99)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.86779664057822725)
-        (stdlib.math.f64-to-bits 0.1417978768189414)
-        (stdlib.math.f64-to-bits 1.1523437096203593)
-        (stdlib.math.f64-to-bits 2.7744504138979832e-17))]
-    [(= index 100)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.86195280500607385)
-        (stdlib.math.f64-to-bits 0.14855476039031146)
-        (stdlib.math.f64-to-bits 1.1601563266482477)
-        (stdlib.math.f64-to-bits -1.5621964097491672e-17))]
-    [(= index 101)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.85618723544206921)
-        (stdlib.math.f64-to-bits 0.15526619376589679)
-        (stdlib.math.f64-to-bits 1.1679688257483505)
-        (stdlib.math.f64-to-bits -6.4191661495975e-17))]
-    [(= index 102)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.85049839278168926)
-        (stdlib.math.f64-to-bits 0.16193275688146969)
-        (stdlib.math.f64-to-bits 1.1757811754697645)
-        (stdlib.math.f64-to-bits -4.3364651650592681e-17))]
-    [(= index 103)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.84488445727903039)
-        (stdlib.math.f64-to-bits 0.16855539792220497)
-        (stdlib.math.f64-to-bits 1.1835937936656129)
-        (stdlib.math.f64-to-bits -3.8159292551356396e-17))]
-    [(= index 104)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.83934427415759649)
-        (stdlib.math.f64-to-bits 0.1751343179947753)
-        (stdlib.math.f64-to-bits 1.1914062331617676)
-        (stdlib.math.f64-to-bits -2.94933042768015e-17))]
-    [(= index 105)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.83387622493494384)
-        (stdlib.math.f64-to-bits 0.1816702989864325)
-        (stdlib.math.f64-to-bits 1.1992187450577771)
-        (stdlib.math.f64-to-bits -6.2441429163513478e-17))]
-    [(= index 106)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.82847893205577783)
-        (stdlib.math.f64-to-bits 0.18816387146023317)
-        (stdlib.math.f64-to-bits 1.2070312971249755)
-        (stdlib.math.f64-to-bits 7.4586446226274127e-17))]
-    [(= index 107)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.82315108000658321)
-        (stdlib.math.f64-to-bits 0.1946155228479256)
-        (stdlib.math.f64-to-bits 1.2148438169965134)
-        (stdlib.math.f64-to-bits 2.7760519266147807e-17))]
-    [(= index 108)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.81789139037787073)
-        (stdlib.math.f64-to-bits 0.20102572579389744)
-        (stdlib.math.f64-to-bits 1.2226562252208011)
-        (stdlib.math.f64-to-bits -7.0251069210796655e-17))]
-    [(= index 109)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.81269840072453736)
-        (stdlib.math.f64-to-bits 0.20739520907955011)
-        (stdlib.math.f64-to-bits 1.2304687681290862)
-        (stdlib.math.f64-to-bits 3.7292622364618835e-17))]
-    [(= index 110)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.80757100294602269)
-        (stdlib.math.f64-to-bits 0.21372429840596396)
-        (stdlib.math.f64-to-bits 1.2382812116234925)
-        (stdlib.math.f64-to-bits 2.2558949940652082e-17))]
-    [(= index 111)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.80250788811604146)
-        (stdlib.math.f64-to-bits 0.22001359459818559)
-        (stdlib.math.f64-to-bits 1.2460936706149877)
-        (stdlib.math.f64-to-bits 8.4993689444006646e-17))]
-    [(= index 112)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.79750773793643315)
-        (stdlib.math.f64-to-bits 0.22626374162859975)
-        (stdlib.math.f64-to-bits 1.2539063289686938)
-        (stdlib.math.f64-to-bits 1.039515474644361e-17))]
-    [(= index 113)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.79256960496637296)
-        (stdlib.math.f64-to-bits 0.23247494747693054)
-        (stdlib.math.f64-to-bits 1.2617188367227732)
-        (stdlib.math.f64-to-bits 3.2972622232754989e-17))]
-    [(= index 114)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.78769236412541144)
-        (stdlib.math.f64-to-bits 0.23864766620658884)
-        (stdlib.math.f64-to-bits 1.2695311590462317)
-        (stdlib.math.f64-to-bits 4.5098832535941547e-17))]
-    [(= index 115)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.78287467249409981)
-        (stdlib.math.f64-to-bits 0.24478265647405806)
-        (stdlib.math.f64-to-bits 1.2773436606579409)
-        (stdlib.math.f64-to-bits -7.546987371769545e-17))]
-    [(= index 116)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.77811553887908114)
-        (stdlib.math.f64-to-bits 0.25088025827324145)
-        (stdlib.math.f64-to-bits 1.2851561882963496)
-        (stdlib.math.f64-to-bits 9.4542955988181837e-17))]
-    [(= index 117)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.77341395578697769)
-        (stdlib.math.f64-to-bits 0.25694085525105947)
-        (stdlib.math.f64-to-bits 1.2929686521915196)
-        (stdlib.math.f64-to-bits -7.2854560911974897e-17))]
-    [(= index 118)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.76876871799149327)
-        (stdlib.math.f64-to-bits 0.26296511155101143)
-        (stdlib.math.f64-to-bits 1.3007813359167737)
-        (stdlib.math.f64-to-bits -8.9343576514628023e-17))]
-    [(= index 119)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.76417906980418537)
-        (stdlib.math.f64-to-bits 0.26895313271893428)
-        (stdlib.math.f64-to-bits 1.3085938093753886)
-        (stdlib.math.f64-to-bits 8.1525705945810205e-17))]
-    [(= index 120)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.75964387636923991)
-        (stdlib.math.f64-to-bits 0.27490553924610595)
-        (stdlib.math.f64-to-bits 1.3164063202609564)
-        (stdlib.math.f64-to-bits 6.9463414607658815e-18))]
-    [(= index 121)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.75516219510786675)
-        (stdlib.math.f64-to-bits 0.28082272484789428)
-        (stdlib.math.f64-to-bits 1.3242188320313901)
-        (stdlib.math.f64-to-bits -7.8927313807216758e-17))]
-    [(= index 122)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.7507331780216866)
-        (stdlib.math.f64-to-bits 0.28670497926725602)
-        (stdlib.math.f64-to-bits 1.3320311786874468)
-        (stdlib.math.f64-to-bits -4.3384657500713545e-17))]
-    [(= index 123)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.74635571963617509)
-        (stdlib.math.f64-to-bits 0.29255295645509705)
-        (stdlib.math.f64-to-bits 1.3398436880573092)
-        (stdlib.math.f64-to-bits 9.6275779545987923e-17))]
-    [(= index 124)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.74202893648696533)
-        (stdlib.math.f64-to-bits 0.29836703861428759)
-        (stdlib.math.f64-to-bits 1.3476563390295309)
-        (stdlib.math.f64-to-bits 4.2492400590204517e-17))]
-    [(= index 125)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.73775215370658764)
-        (stdlib.math.f64-to-bits 0.30414734587282055)
-        (stdlib.math.f64-to-bits 1.3554687641043626)
-        (stdlib.math.f64-to-bits -1.0843419551446047e-16))]
-    [(= index 126)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.73352429660026075)
-        (stdlib.math.f64-to-bits 0.30989455774829366)
-        (stdlib.math.f64-to-bits 1.3632813590971713)
-        (stdlib.math.f64-to-bits -8.5017278247202501e-17))]
-    [(= index 127)
-      (MathLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.72934477745784099)
-        (stdlib.math.f64-to-bits 0.31560871301871884)
-        (stdlib.math.f64-to-bits 1.3710936595522603)
-        (stdlib.math.f64-to-bits -7.1106272061629222e-17))]
-    [else (MathLogF64TableEntry 0 0 0 0)]))
+  (math-bits-table
+    index
+    MathLogF64TableEntry
+    (MathLogF64TableEntry 0 0 0 0)
+    (row
+      1.4504249240398293
+      -0.37185656456335892
+      0.68945312744263043
+      2.6029065281053499e-17)
+    (row
+      1.4422535083272761
+      -0.36620682668944937
+      0.69335938115331663
+      5.1607448519931415e-17)
+    (row
+      1.4341736174350004
+      -0.36058880697919449
+      0.69726565029726739
+      5.2906724148878689e-17)
+    (row
+      1.4261838163299949
+      -0.35500221714198688
+      0.70117188860921476
+      7.8010306348060135e-18)
+    (row
+      1.4182825527052965
+      -0.34944666968829097
+      0.70507812289769389
+      -2.471355337688684e-17)
+    (row
+      1.4104682921759335
+      -0.34392177136032842
+      0.7089843887644558
+      -4.6413389636862956e-17)
+    (row
+      1.4027396147468003
+      -0.33842719212611883
+      0.71289068155425528
+      3.3387408065940366e-17)
+    (row
+      1.3950954438932313
+      -0.33296283149434203
+      0.71679683592783028
+      -2.6454587338050098e-17)
+    (row
+      1.3875338232485754
+      -0.32752794345742586
+      0.7207031520563163
+      2.4284096334522285e-17)
+    (row
+      1.3800539211058593
+      -0.32212257167088865
+      0.72460936830546729
+      4.8578243503198198e-17)
+    (row
+      1.3726542695419708
+      -0.3167462884799761
+      0.72851556447180355
+      -1.3014776598894487e-17)
+    (row
+      1.3653332798446802
+      -0.3113985598928366
+      0.73242190369355065
+      -1.0402317671225898e-17)
+    (row
+      1.358090204587874
+      -0.30607945151655258
+      0.73632811474658999
+      3.0782914274674313e-17)
+    (row
+      1.3509234892132138
+      -0.30078842466764399
+      0.74023437151307969
+      -1.4304998976623033e-17)
+    (row
+      1.3438320840699889
+      -0.29552529684769979
+      0.74414059007384026
+      -2.8625955785571303e-17)
+    (row
+      1.3368146974742003
+      -0.29028969275850613
+      0.74804683243640002
+      5.1609093535635645e-17)
+    (row
+      1.3298701146777361
+      -0.28508127932775551
+      0.75195313359028848
+      4.423423949536319e-17)
+    (row
+      1.3229973391611061
+      -0.27989987391470095
+      0.75585941891167063
+      -4.6830167620995081e-17)
+    (row
+      1.316195352741367
+      -0.27474526621870154
+      0.75976563655023055
+      4.4667420075147718e-17)
+    (row
+      1.3094628125672239
+      -0.26961698637012432
+      0.76367193508877373
+      -4.8134498775190266e-17)
+    (row
+      1.3027990455471041
+      -0.26451506180308115
+      0.76757808767050095
+      -4.3371015350542286e-17)
+    (row
+      1.2962024229438942
+      -0.25943877627673828
+      0.77148443969795355
+      -2.5156444722517071e-17)
+    (row
+      1.2896726275815547
+      -0.25438840909816918
+      0.77539057479667517
+      -4.163636184961329e-17)
+    (row
+      1.2832080305745537
+      -0.24936321635129843
+      0.77929686860847658
+      3.3837161384165165e-17)
+    (row
+      1.276807885983376
+      -0.24436312405975968
+      0.78320318270106604
+      4.3792065650567583e-17)
+    (row
+      1.2704714060687552
+      -0.23938801747897287
+      0.78710941090309128
+      2.7322930976146396e-17)
+    (row
+      1.2641976054949482
+      -0.23443761696705678
+      0.79101557830311531
+      -5.4636612253640457e-17)
+    (row
+      1.2579853575148821
+      -0.22951151871518505
+      0.79492181210715718
+      -1.4320502634189868e-17)
+    (row
+      1.2518337750655457
+      -0.2246094963439873
+      0.79882810315422292
+      -4.0766731402809024e-17)
+    (row
+      1.2457421919097305
+      -0.21973149037705753
+      0.80273431091467962
+      -4.0338264352540086e-17)
+    (row
+      1.2397094966625508
+      -0.2148770752847895
+      0.80664059014803224
+      1.7241428071650815e-18)
+    (row
+      1.2337348463589233
+      -0.21004602910363701
+      0.81054693636259334
+      -4.5534218930924523e-17)
+    (row
+      1.2278176973028803
+      -0.20523836373934046
+      0.8144531571720115
+      1.8212169205891421e-17)
+    (row
+      1.2219570190618474
+      -0.20045368751368642
+      0.81835938940613961
+      4.9864288025894273e-17)
+    (row
+      1.2161519732977757
+      -0.1956917537758045
+      0.82226565590182965
+      4.3359904167266887e-17)
+    (row
+      1.2104018095009725
+      -0.19095237845203883
+      0.82617193080063434
+      -5.4220014716611272e-17)
+    (row
+      1.204705805718973
+      -0.18623539250290833
+      0.83007817780308302
+      -5.3336037289290352e-17)
+    (row
+      1.1990631185441964
+      -0.18154051731551135
+      0.83398445380766739
+      -1.1270648442682386e-17)
+    (row
+      1.1934733004462308
+      -0.17686779574319189
+      0.83789054989844136
+      -3.1651267348003982e-17)
+    (row
+      1.1879350812847385
+      -0.17221657406412305
+      0.84179684206186689
+      1.1286283062565865e-17)
+    (row
+      1.1824481322833125
+      -0.16758697765942543
+      0.84570305681738078
+      5.643595964448442e-18)
+    (row
+      1.1770114976921955
+      -0.16297859687290384
+      0.84960937251737334
+      -2.1687834632368187e-17)
+    (row
+      1.1716248121809465
+      -0.15839151377804228
+      0.85351555344626773
+      -2.2548234217914977e-17)
+    (row
+      1.1662869231674715
+      -0.15382513241456763
+      0.85742194320771459
+      4.6832605563531392e-17)
+    (row
+      1.1609977486762766
+      -0.14927976358922024
+      0.86132811294437062
+      2.5148296884122795e-17)
+    (row
+      1.1557563220795803
+      -0.14475495398119165
+      0.86523428935320534
+      -8.6721875709494672e-18)
+    (row
+      1.1505619105480347
+      -0.14025044090817573
+      0.86914053979388284
+      -1.2576268285559751e-17)
+    (row
+      1.1454138888505974
+      -0.13576604666855019
+      0.87304686081943916
+      -2.9930851265147998e-17)
+    (row
+      1.1403118773746559
+      -0.1313018016355727
+      0.87695306857831168
+      4.8148015076816437e-17)
+    (row
+      1.1352550225747513
+      -0.12685731518763532
+      0.88085934888181006
+      -9.1054953361102193e-18)
+    (row
+      1.1302429094831266
+      -0.12243257376712791
+      0.88476555934096668
+      -3.5124146516207661e-17)
+    (row
+      1.1252747693068048
+      -0.11802724521862729
+      0.88867184022620804
+      3.5552618153740227e-17)
+    (row
+      1.1203501571039876
+      -0.11364127671663482
+      0.89257808700176133
+      1.692380503540994e-17)
+    (row
+      1.1154683327680124
+      -0.10927434611278386
+      0.89648443673745537
+      -1.0837881791715702e-17)
+    (row
+      1.1106291463292157
+      -0.10492665324943573
+      0.90039056088626834
+      5.2900545724138363e-17)
+    (row
+      1.1058315813301596
+      -0.10059761422644442
+      0.90429683586820775
+      5.3330721088784517e-17)
+    (row
+      1.1010752177696026
+      -0.096287173090559008
+      0.90820316710574411
+      1.8640040753232978e-17)
+    (row
+      1.0963597137952512
+      -0.091995340695575578
+      0.91210939933054969
+      4.4679728320540751e-17)
+    (row
+      1.0916844827550398
+      -0.087721900366886985
+      0.91601558490264567
+      -5.2162134195850327e-18)
+    (row
+      1.0870487291277784
+      -0.083466436138678546
+      0.91992196228624989
+      -2.7324731032846873e-17)
+    (row
+      1.082452357388312
+      -0.079229168275446682
+      0.9238281880717143
+      -1.7769263393434193e-17)
+    (row
+      1.0778948225025884
+      -0.075009900475038194
+      0.92773430127279288
+      4.9433630808174411e-17)
+    (row
+      1.0733751731601076
+      -0.070808051333528965
+      0.93164070215627881
+      4.164434042024055e-17)
+    (row
+      1.068893585073351
+      -0.06662408085151128
+      0.93554682520746602
+      1.3011820859795741e-17)
+    (row
+      1.0644491706655506
+      -0.062457454719151428
+      0.93945303125629431
+      -2.7332907838481398e-17)
+    (row
+      1.0600414846328305
+      -0.058308043804231602
+      0.94335930668446688
+      2.3421331708032919e-17)
+    (row
+      1.0556701316181605
+      -0.05417576112313327
+      0.94726559940383293
+      1.6478717480487438e-17)
+    (row
+      1.0513347505569259
+      -0.050060547896805474
+      0.9511718313032721
+      -5.1960829013149901e-18)
+    (row
+      1.0470347288442157
+      -0.045962101199052086
+      0.95507815782181782
+      -3.5565573220578997e-17)
+    (row
+      1.0427699229652954
+      -0.041880560088657148
+      0.95898431473390433
+      2.0816772146458738e-17)
+    (row
+      1.0385395013738175
+      -0.037815400561839851
+      0.96289067356336855
+      -3.4719628261468409e-18)
+    (row
+      1.0343434189403451
+      -0.033766847579158821
+      0.9667968893972092
+      -3.6864683447264197e-17)
+    (row
+      1.0301811073173315
+      -0.029734619131772888
+      0.97070310540257787
+      -3.4674108076868834e-18)
+    (row
+      1.026052043621297
+      -0.025718470239212365
+      0.97460943254949306
+      4.5981526247743919e-17)
+    (row
+      1.0219561082336197
+      -0.021718543925430822
+      0.97851560545827221
+      4.5531457523925683e-17)
+    (row
+      1.0178926505784922
+      -0.017734461269810708
+      0.98242186878122817
+      -7.8112591694189783e-18)
+    (row
+      1.0138614436244586
+      -0.013766252464051831
+      0.98632806907529169
+      2.0375615178047467e-17)
+    (row
+      1.0098620186501341
+      -0.0098137063225749444
+      0.99023429095460336
+      -1.344597043422914e-17)
+    (row
+      1.0058938559734134
+      -0.005876555150052809
+      0.99414067802640083
+      1.5185372369505401e-17)
+    (row
+      1.0019569623501401
+      -0.0019550499938532084
+      0.99804685987155584
+      -1.301926039598001e-17)
+    (row
+      0.99610899230885086
+      0.0038985973556009412
+      1.0039062067717412
+      -4.5961206417449733e-17)
+    (row
+      0.98841703381852009
+      0.011650571286395461
+      1.0117187035281372
+      -8.1524050026653492e-17)
+    (row
+      0.98084291910052968
+      0.019342955478919066
+      1.0195312424919558
+      8.2399270147578115e-17)
+    (row
+      0.97338401699874455
+      0.026976601484648199
+      1.0273437641634193
+      3.1228510053270453e-17)
+    (row
+      0.96603775688765559
+      0.034552359728422744
+      1.0351562274561221
+      -1.3010212611128995e-17)
+    (row
+      0.95880149453073693
+      0.042071217671832528
+      1.0429687539123276
+      -5.9841166886334577e-17)
+    (row
+      0.95167285690731107
+      0.049533940950141186
+      1.0507812561238108
+      2.8609238548223351e-17)
+    (row
+      0.9446494635965822
+      0.056941358295944156
+      1.0585937308350133
+      -1.9962944508904598e-17)
+    (row
+      0.93772889930262227
+      0.064294391683461072
+      1.0664062936992642
+      5.2914691303090992e-17)
+    (row
+      0.93090910737906807
+      0.071593635494650698
+      1.0742187309945372
+      1.0321575006732523e-16)
+    (row
+      0.92418768161272202
+      0.078840109337761533
+      1.0820313015371339
+      9.0211943734191189e-17)
+    (row
+      0.91756267655991919
+      0.086034389059705063
+      1.0898438063644336
+      5.2027989923579528e-17)
+    (row
+      0.91103204036240337
+      0.093177211800139048
+      1.0976562356711468
+      5.8983184825007853e-17)
+    (row
+      0.90459358397620238
+      0.10026951462748457
+      1.1054688179463226
+      8.8463776906532518e-17)
+    (row
+      0.89824563759228249
+      0.10731170956330516
+      1.113281220803328
+      -9.5294559652125745e-18)
+    (row
+      0.89198609667825013
+      0.11430473320717738
+      1.1210937073167315
+      6.7650807093777866e-17)
+    (row
+      0.88581311211851288
+      0.12124928503033061
+      1.1289062967338532
+      1.0929327370933015e-16)
+    (row
+      0.87972507576067605
+      0.12814583422959913
+      1.1367187631150848
+      6.9385705512305156e-17)
+    (row
+      0.87372013726346853
+      0.13499516368517561
+      1.1445312490244826
+      1.908841015045148e-17)
+    (row
+      0.86779664057822725
+      0.1417978768189414
+      1.1523437096203593
+      2.7744504138979832e-17)
+    (row
+      0.86195280500607385
+      0.14855476039031146
+      1.1601563266482477
+      -1.5621964097491672e-17)
+    (row
+      0.85618723544206921
+      0.15526619376589679
+      1.1679688257483505
+      -6.4191661495975e-17)
+    (row
+      0.85049839278168926
+      0.16193275688146969
+      1.1757811754697645
+      -4.3364651650592681e-17)
+    (row
+      0.84488445727903039
+      0.16855539792220497
+      1.1835937936656129
+      -3.8159292551356396e-17)
+    (row
+      0.83934427415759649
+      0.1751343179947753
+      1.1914062331617676
+      -2.94933042768015e-17)
+    (row
+      0.83387622493494384
+      0.1816702989864325
+      1.1992187450577771
+      -6.2441429163513478e-17)
+    (row
+      0.82847893205577783
+      0.18816387146023317
+      1.2070312971249755
+      7.4586446226274127e-17)
+    (row
+      0.82315108000658321
+      0.1946155228479256
+      1.2148438169965134
+      2.7760519266147807e-17)
+    (row
+      0.81789139037787073
+      0.20102572579389744
+      1.2226562252208011
+      -7.0251069210796655e-17)
+    (row
+      0.81269840072453736
+      0.20739520907955011
+      1.2304687681290862
+      3.7292622364618835e-17)
+    (row
+      0.80757100294602269
+      0.21372429840596396
+      1.2382812116234925
+      2.2558949940652082e-17)
+    (row
+      0.80250788811604146
+      0.22001359459818559
+      1.2460936706149877
+      8.4993689444006646e-17)
+    (row
+      0.79750773793643315
+      0.22626374162859975
+      1.2539063289686938
+      1.039515474644361e-17)
+    (row
+      0.79256960496637296
+      0.23247494747693054
+      1.2617188367227732
+      3.2972622232754989e-17)
+    (row
+      0.78769236412541144
+      0.23864766620658884
+      1.2695311590462317
+      4.5098832535941547e-17)
+    (row
+      0.78287467249409981
+      0.24478265647405806
+      1.2773436606579409
+      -7.546987371769545e-17)
+    (row
+      0.77811553887908114
+      0.25088025827324145
+      1.2851561882963496
+      9.4542955988181837e-17)
+    (row
+      0.77341395578697769
+      0.25694085525105947
+      1.2929686521915196
+      -7.2854560911974897e-17)
+    (row
+      0.76876871799149327
+      0.26296511155101143
+      1.3007813359167737
+      -8.9343576514628023e-17)
+    (row
+      0.76417906980418537
+      0.26895313271893428
+      1.3085938093753886
+      8.1525705945810205e-17)
+    (row
+      0.75964387636923991
+      0.27490553924610595
+      1.3164063202609564
+      6.9463414607658815e-18)
+    (row
+      0.75516219510786675
+      0.28082272484789428
+      1.3242188320313901
+      -7.8927313807216758e-17)
+    (row
+      0.7507331780216866
+      0.28670497926725602
+      1.3320311786874468
+      -4.3384657500713545e-17)
+    (row
+      0.74635571963617509
+      0.29255295645509705
+      1.3398436880573092
+      9.6275779545987923e-17)
+    (row
+      0.74202893648696533
+      0.29836703861428759
+      1.3476563390295309
+      4.2492400590204517e-17)
+    (row
+      0.73775215370658764
+      0.30414734587282055
+      1.3554687641043626
+      -1.0843419551446047e-16)
+    (row
+      0.73352429660026075
+      0.30989455774829366
+      1.3632813590971713
+      -8.5017278247202501e-17)
+    (row
+      0.72934477745784099
+      0.31560871301871884
+      1.3710936595522603
+      -7.1106272061629222e-17)))
 
 ;: Internal binary32 logarithm reduction constants, evaluated as binary64.
 (defstruct MathLogF32TableEntry
@@ -1689,72 +1244,26 @@
 
 ;: Return the exact musl binary32 logarithm constants for interval index.
 (define (math-log-f32-table-entry [index : i64]) : MathLogF32TableEntry
-  (cond
-    [(= index 0)
-      (MathLogF32TableEntry
-        (stdlib.math.f64-to-bits 1.3989071621465281)
-        (stdlib.math.f64-to-bits -0.33569133332882284))]
-    [(= index 1)
-      (MathLogF32TableEntry
-        (stdlib.math.f64-to-bits 1.3403141896637998)
-        (stdlib.math.f64-to-bits -0.29290405637740741))]
-    [(= index 2)
-      (MathLogF32TableEntry
-        (stdlib.math.f64-to-bits 1.286432210124115)
-        (stdlib.math.f64-to-bits -0.25187265809373688))]
-    [(= index 3)
-      (MathLogF32TableEntry
-        (stdlib.math.f64-to-bits 1.2367150214269895)
-        (stdlib.math.f64-to-bits -0.21245868807117255))]
-    [(= index 4)
-      (MathLogF32TableEntry
-        (stdlib.math.f64-to-bits 1.1906977166711752)
-        (stdlib.math.f64-to-bits -0.17453945183745634))]
-    [(= index 5)
-      (MathLogF32TableEntry
-        (stdlib.math.f64-to-bits 1.1479821020556429)
-        (stdlib.math.f64-to-bits -0.1380057072319758))]
-    [(= index 6)
-      (MathLogF32TableEntry
-        (stdlib.math.f64-to-bits 1.1082251448272158)
-        (stdlib.math.f64-to-bits -0.10275976698545139))]
-    [(= index 7)
-      (MathLogF32TableEntry
-        (stdlib.math.f64-to-bits 1.0711297413057381)
-        (stdlib.math.f64-to-bits -0.068713924470205245))]
-    [(= index 8)
-      (MathLogF32TableEntry
-        (stdlib.math.f64-to-bits 1.0364372789772831)
-        (stdlib.math.f64-to-bits -0.035789138739822798))]
-    [(= index 9)
-      (MathLogF32TableEntry
-        (stdlib.math.f64-to-bits 1.0)
-        (stdlib.math.f64-to-bits 0.0))]
-    [(= index 10)
-      (MathLogF32TableEntry
-        (stdlib.math.f64-to-bits 0.9492859795739057)
-        (stdlib.math.f64-to-bits 0.052045177429294959))]
-    [(= index 11)
-      (MathLogF32TableEntry
-        (stdlib.math.f64-to-bits 0.89510494286090037)
-        (stdlib.math.f64-to-bits 0.11081431298787942))]
-    [(= index 12)
-      (MathLogF32TableEntry
-        (stdlib.math.f64-to-bits 0.84768216203511026)
-        (stdlib.math.f64-to-bits 0.16524952236951429))]
-    [(= index 13)
-      (MathLogF32TableEntry
-        (stdlib.math.f64-to-bits 0.80503148516920009)
-        (stdlib.math.f64-to-bits 0.21687389031699977))]
-    [(= index 14)
-      (MathLogF32TableEntry
-        (stdlib.math.f64-to-bits 0.7664671008843108)
-        (stdlib.math.f64-to-bits 0.26596350281213971))]
-    [(= index 15)
-      (MathLogF32TableEntry
-        (stdlib.math.f64-to-bits 0.73142860331632797)
-        (stdlib.math.f64-to-bits 0.31275566640735569))]
-    [else (MathLogF32TableEntry 0 0)]))
+  (math-bits-table
+    index
+    MathLogF32TableEntry
+    (MathLogF32TableEntry 0 0)
+    (row 1.3989071621465281 -0.33569133332882284)
+    (row 1.3403141896637998 -0.29290405637740741)
+    (row 1.286432210124115 -0.25187265809373688)
+    (row 1.2367150214269895 -0.21245868807117255)
+    (row 1.1906977166711752 -0.17453945183745634)
+    (row 1.1479821020556429 -0.1380057072319758)
+    (row 1.1082251448272158 -0.10275976698545139)
+    (row 1.0711297413057381 -0.068713924470205245)
+    (row 1.0364372789772831 -0.035789138739822798)
+    (row 1.0 0.0)
+    (row 0.9492859795739057 0.052045177429294959)
+    (row 0.89510494286090037 0.11081431298787942)
+    (row 0.84768216203511026 0.16524952236951429)
+    (row 0.80503148516920009 0.21687389031699977)
+    (row 0.7664671008843108 0.26596350281213971)
+    (row 0.73142860331632797 0.31275566640735569)))
 
 ;: Evaluate the compensated binary64 logarithm path for values close to one.
 (define (math-log-f64-near-one [value : f64]) : f64
@@ -1937,648 +1446,138 @@
 
 ;: Return the exact musl pow_data.c constants for interval index.
 (define (math-pow-f64-table-entry [index : i64]) : MathPowLogF64TableEntry
-  (cond
-    [(= index 0)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.4140625)
-        (stdlib.math.f64-to-bits -0.3464667673462145)
-        (stdlib.math.f64-to-bits 5.929407345889625e-15))]
-    [(= index 1)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.40625)
-        (stdlib.math.f64-to-bits -0.34092658697056777)
-        (stdlib.math.f64-to-bits -2.544157440035963e-14))]
-    [(= index 2)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.3984375)
-        (stdlib.math.f64-to-bits -0.3353555419211034)
-        (stdlib.math.f64-to-bits -3.443525940775045e-14))]
-    [(= index 3)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.390625)
-        (stdlib.math.f64-to-bits -0.3297532863724655)
-        (stdlib.math.f64-to-bits -2.500123826022799e-15))]
-    [(= index 4)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.3828125)
-        (stdlib.math.f64-to-bits -0.32411946865420305)
-        (stdlib.math.f64-to-bits -8.929337133850617e-15))]
-    [(= index 5)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.375)
-        (stdlib.math.f64-to-bits -0.31845373111855224)
-        (stdlib.math.f64-to-bits 1.7625431312172662e-14))]
-    [(= index 6)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.3671875)
-        (stdlib.math.f64-to-bits -0.31275571000389846)
-        (stdlib.math.f64-to-bits 1.5688303180062087e-15))]
-    [(= index 7)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.359375)
-        (stdlib.math.f64-to-bits -0.3070250352949415)
-        (stdlib.math.f64-to-bits 2.9655274673691784e-14))]
-    [(= index 8)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.3515625)
-        (stdlib.math.f64-to-bits -0.3012613305781997)
-        (stdlib.math.f64-to-bits 3.7923164802093147e-14))]
-    [(= index 9)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.34375)
-        (stdlib.math.f64-to-bits -0.2954642128938758)
-        (stdlib.math.f64-to-bits 3.993416384387844e-14))]
-    [(= index 10)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.3359375)
-        (stdlib.math.f64-to-bits -0.28963329258306203)
-        (stdlib.math.f64-to-bits 1.9352855826489123e-14))]
-    [(= index 11)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.3359375)
-        (stdlib.math.f64-to-bits -0.28963329258306203)
-        (stdlib.math.f64-to-bits 1.9352855826489123e-14))]
-    [(= index 12)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.328125)
-        (stdlib.math.f64-to-bits -0.28376817313062475)
-        (stdlib.math.f64-to-bits -1.9852665484979036e-14))]
-    [(= index 13)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.3203125)
-        (stdlib.math.f64-to-bits -0.27786845100342816)
-        (stdlib.math.f64-to-bits -2.814323765595281e-14))]
-    [(= index 14)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.3125)
-        (stdlib.math.f64-to-bits -0.2719337154836694)
-        (stdlib.math.f64-to-bits 2.7643769993528702e-14))]
-    [(= index 15)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.3046875)
-        (stdlib.math.f64-to-bits -0.2659635484970977)
-        (stdlib.math.f64-to-bits -4.025092402293806e-14))]
-    [(= index 16)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.296875)
-        (stdlib.math.f64-to-bits -0.25995752443691345)
-        (stdlib.math.f64-to-bits -1.2621729398885316e-14))]
-    [(= index 17)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.2890625)
-        (stdlib.math.f64-to-bits -0.25391520998095984)
-        (stdlib.math.f64-to-bits -3.600176732637335e-15))]
-    [(= index 18)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.2890625)
-        (stdlib.math.f64-to-bits -0.25391520998095984)
-        (stdlib.math.f64-to-bits -3.600176732637335e-15))]
-    [(= index 19)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.28125)
-        (stdlib.math.f64-to-bits -0.2478361639045943)
-        (stdlib.math.f64-to-bits 1.3029797173308663e-14))]
-    [(= index 20)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.2734375)
-        (stdlib.math.f64-to-bits -0.2417199368871934)
-        (stdlib.math.f64-to-bits 4.8230289429940886e-14))]
-    [(= index 21)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.265625)
-        (stdlib.math.f64-to-bits -0.23556607131274632)
-        (stdlib.math.f64-to-bits -2.0592242769647135e-14))]
-    [(= index 22)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.2578125)
-        (stdlib.math.f64-to-bits -0.22937410106487732)
-        (stdlib.math.f64-to-bits 3.149265065191484e-14))]
-    [(= index 23)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.25)
-        (stdlib.math.f64-to-bits -0.22314355131425145)
-        (stdlib.math.f64-to-bits 4.169796584527195e-14))]
-    [(= index 24)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.25)
-        (stdlib.math.f64-to-bits -0.22314355131425145)
-        (stdlib.math.f64-to-bits 4.169796584527195e-14))]
-    [(= index 25)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.2421875)
-        (stdlib.math.f64-to-bits -0.21687393830063684)
-        (stdlib.math.f64-to-bits 2.2477465222466186e-14))]
-    [(= index 26)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.234375)
-        (stdlib.math.f64-to-bits -0.21056476910735)
-        (stdlib.math.f64-to-bits 3.6507188831790577e-16))]
-    [(= index 27)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.2265625)
-        (stdlib.math.f64-to-bits -0.2042155414286526)
-        (stdlib.math.f64-to-bits -3.827767260205414e-14))]
-    [(= index 28)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.2265625)
-        (stdlib.math.f64-to-bits -0.2042155414286526)
-        (stdlib.math.f64-to-bits -3.827767260205414e-14))]
-    [(= index 29)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.21875)
-        (stdlib.math.f64-to-bits -0.19782574332987224)
-        (stdlib.math.f64-to-bits -4.7641388950792196e-14))]
-    [(= index 30)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.2109375)
-        (stdlib.math.f64-to-bits -0.19139485299967873)
-        (stdlib.math.f64-to-bits 4.9278276214647115e-14))]
-    [(= index 31)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.203125)
-        (stdlib.math.f64-to-bits -0.18492233849406148)
-        (stdlib.math.f64-to-bits 4.9485167661250996e-14))]
-    [(= index 32)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.203125)
-        (stdlib.math.f64-to-bits -0.18492233849406148)
-        (stdlib.math.f64-to-bits 4.9485167661250996e-14))]
-    [(= index 33)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.1953125)
-        (stdlib.math.f64-to-bits -0.1784076574728033)
-        (stdlib.math.f64-to-bits -1.5003333854266542e-14))]
-    [(= index 34)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.1875)
-        (stdlib.math.f64-to-bits -0.17185025692663203)
-        (stdlib.math.f64-to-bits -2.7194441649495324e-14))]
-    [(= index 35)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.1875)
-        (stdlib.math.f64-to-bits -0.17185025692663203)
-        (stdlib.math.f64-to-bits -2.7194441649495324e-14))]
-    [(= index 36)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.1796875)
-        (stdlib.math.f64-to-bits -0.1652495728952772)
-        (stdlib.math.f64-to-bits -2.99659267292569e-14))]
-    [(= index 37)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.171875)
-        (stdlib.math.f64-to-bits -0.15860503017665906)
-        (stdlib.math.f64-to-bits 2.0472357800461955e-14))]
-    [(= index 38)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.171875)
-        (stdlib.math.f64-to-bits -0.15860503017665906)
-        (stdlib.math.f64-to-bits 2.0472357800461955e-14))]
-    [(= index 39)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.1640625)
-        (stdlib.math.f64-to-bits -0.15191604202584585)
-        (stdlib.math.f64-to-bits 3.879296723063646e-15))]
-    [(= index 40)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.15625)
-        (stdlib.math.f64-to-bits -0.1451820098444614)
-        (stdlib.math.f64-to-bits -3.6506824353335045e-14))]
-    [(= index 41)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.1484375)
-        (stdlib.math.f64-to-bits -0.13840232285906495)
-        (stdlib.math.f64-to-bits -5.4183331379008994e-14))]
-    [(= index 42)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.1484375)
-        (stdlib.math.f64-to-bits -0.13840232285906495)
-        (stdlib.math.f64-to-bits -5.4183331379008994e-14))]
-    [(= index 43)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.140625)
-        (stdlib.math.f64-to-bits -0.131576357788731)
-        (stdlib.math.f64-to-bits 1.1729485484531301e-14))]
-    [(= index 44)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.140625)
-        (stdlib.math.f64-to-bits -0.131576357788731)
-        (stdlib.math.f64-to-bits 1.1729485484531301e-14))]
-    [(= index 45)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.1328125)
-        (stdlib.math.f64-to-bits -0.12470347850091912)
-        (stdlib.math.f64-to-bits -3.811763084710266e-14))]
-    [(= index 46)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.125)
-        (stdlib.math.f64-to-bits -0.11778303565643)
-        (stdlib.math.f64-to-bits 4.654729747598445e-14))]
-    [(= index 47)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.125)
-        (stdlib.math.f64-to-bits -0.11778303565643)
-        (stdlib.math.f64-to-bits 4.654729747598445e-14))]
-    [(= index 48)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.1171875)
-        (stdlib.math.f64-to-bits -0.11081436634026431)
-        (stdlib.math.f64-to-bits -2.5799991283069902e-14))]
-    [(= index 49)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.109375)
-        (stdlib.math.f64-to-bits -0.10379679368168127)
-        (stdlib.math.f64-to-bits 3.7700471749674615e-14))]
-    [(= index 50)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.109375)
-        (stdlib.math.f64-to-bits -0.10379679368168127)
-        (stdlib.math.f64-to-bits 3.7700471749674615e-14))]
-    [(= index 51)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.1015625)
-        (stdlib.math.f64-to-bits -0.09672962645856842)
-        (stdlib.math.f64-to-bits 1.7306161136093256e-14))]
-    [(= index 52)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.1015625)
-        (stdlib.math.f64-to-bits -0.09672962645856842)
-        (stdlib.math.f64-to-bits 1.7306161136093256e-14))]
-    [(= index 53)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.09375)
-        (stdlib.math.f64-to-bits -0.089612158689647)
-        (stdlib.math.f64-to-bits -4.012913552726574e-14))]
-    [(= index 54)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.0859375)
-        (stdlib.math.f64-to-bits -0.08244366921110213)
-        (stdlib.math.f64-to-bits 2.7541708360737882e-14))]
-    [(= index 55)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.0859375)
-        (stdlib.math.f64-to-bits -0.08244366921110213)
-        (stdlib.math.f64-to-bits 2.7541708360737882e-14))]
-    [(= index 56)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.078125)
-        (stdlib.math.f64-to-bits -0.07522342123763792)
-        (stdlib.math.f64-to-bits 5.0396178134370583e-14))]
-    [(= index 57)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.078125)
-        (stdlib.math.f64-to-bits -0.07522342123763792)
-        (stdlib.math.f64-to-bits 5.0396178134370583e-14))]
-    [(= index 58)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.0703125)
-        (stdlib.math.f64-to-bits -0.06795066190852594)
-        (stdlib.math.f64-to-bits 1.8195060030168815e-14))]
-    [(= index 59)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.0625)
-        (stdlib.math.f64-to-bits -0.06062462181648698)
-        (stdlib.math.f64-to-bits 5.213620639136504e-14))]
-    [(= index 60)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.0625)
-        (stdlib.math.f64-to-bits -0.06062462181648698)
-        (stdlib.math.f64-to-bits 5.213620639136504e-14))]
-    [(= index 61)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.0546875)
-        (stdlib.math.f64-to-bits -0.053244514518837605)
-        (stdlib.math.f64-to-bits 2.532168943117445e-14))]
-    [(= index 62)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.0546875)
-        (stdlib.math.f64-to-bits -0.053244514518837605)
-        (stdlib.math.f64-to-bits 2.532168943117445e-14))]
-    [(= index 63)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.046875)
-        (stdlib.math.f64-to-bits -0.045809536031242715)
-        (stdlib.math.f64-to-bits -5.148849572685811e-14))]
-    [(= index 64)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.046875)
-        (stdlib.math.f64-to-bits -0.045809536031242715)
-        (stdlib.math.f64-to-bits -5.148849572685811e-14))]
-    [(= index 65)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.0390625)
-        (stdlib.math.f64-to-bits -0.038318864302141264)
-        (stdlib.math.f64-to-bits 4.6652946995830086e-15))]
-    [(= index 66)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.0390625)
-        (stdlib.math.f64-to-bits -0.038318864302141264)
-        (stdlib.math.f64-to-bits 4.6652946995830086e-15))]
-    [(= index 67)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.03125)
-        (stdlib.math.f64-to-bits -0.03077165866670839)
-        (stdlib.math.f64-to-bits -4.529814257790929e-14))]
-    [(= index 68)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.03125)
-        (stdlib.math.f64-to-bits -0.03077165866670839)
-        (stdlib.math.f64-to-bits -4.529814257790929e-14))]
-    [(= index 69)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.0234375)
-        (stdlib.math.f64-to-bits -0.023167059281490765)
-        (stdlib.math.f64-to-bits -4.361324067851568e-14))]
-    [(= index 70)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.015625)
-        (stdlib.math.f64-to-bits -0.015504186535963527)
-        (stdlib.math.f64-to-bits -1.7274567499706107e-15))]
-    [(= index 71)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.015625)
-        (stdlib.math.f64-to-bits -0.015504186535963527)
-        (stdlib.math.f64-to-bits -1.7274567499706107e-15))]
-    [(= index 72)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.0078125)
-        (stdlib.math.f64-to-bits -0.0077821404420319595)
-        (stdlib.math.f64-to-bits -2.298941004620351e-14))]
-    [(= index 73)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.0078125)
-        (stdlib.math.f64-to-bits -0.0077821404420319595)
-        (stdlib.math.f64-to-bits -2.298941004620351e-14))]
-    [(= index 74)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.0)
-        (stdlib.math.f64-to-bits 0.0)
-        (stdlib.math.f64-to-bits 0.0))]
-    [(= index 75)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 1.0)
-        (stdlib.math.f64-to-bits 0.0)
-        (stdlib.math.f64-to-bits 0.0))]
-    [(= index 76)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.9921875)
-        (stdlib.math.f64-to-bits 0.007843177461040796)
-        (stdlib.math.f64-to-bits -1.4902732911301337e-14))]
-    [(= index 77)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.984375)
-        (stdlib.math.f64-to-bits 0.01574835696817445)
-        (stdlib.math.f64-to-bits -3.527980389655325e-14))]
-    [(= index 78)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.9765625)
-        (stdlib.math.f64-to-bits 0.023716526617363343)
-        (stdlib.math.f64-to-bits -4.730054772033249e-14))]
-    [(= index 79)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.96875)
-        (stdlib.math.f64-to-bits 0.03174869831457272)
-        (stdlib.math.f64-to-bits 7.580310369375161e-15))]
-    [(= index 80)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.9609375)
-        (stdlib.math.f64-to-bits 0.039845908547249564)
-        (stdlib.math.f64-to-bits -4.9893776716773285e-14))]
-    [(= index 81)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.953125)
-        (stdlib.math.f64-to-bits 0.048009219186383234)
-        (stdlib.math.f64-to-bits -2.262629393030674e-14))]
-    [(= index 82)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.9453125)
-        (stdlib.math.f64-to-bits 0.056239718322899535)
-        (stdlib.math.f64-to-bits -2.345674491018699e-14))]
-    [(= index 83)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.94140625)
-        (stdlib.math.f64-to-bits 0.06038051098892083)
-        (stdlib.math.f64-to-bits -1.3352588834854848e-14))]
-    [(= index 84)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.93359375)
-        (stdlib.math.f64-to-bits 0.06871389254808946)
-        (stdlib.math.f64-to-bits -3.765296820388875e-14))]
-    [(= index 85)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.92578125)
-        (stdlib.math.f64-to-bits 0.07711730334438016)
-        (stdlib.math.f64-to-bits 5.1128335719851986e-14))]
-    [(= index 86)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.91796875)
-        (stdlib.math.f64-to-bits 0.08559193033545398)
-        (stdlib.math.f64-to-bits -5.046674438470119e-14))]
-    [(= index 87)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.9140625)
-        (stdlib.math.f64-to-bits 0.08985632912185793)
-        (stdlib.math.f64-to-bits 3.1218748807418837e-15))]
-    [(= index 88)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.90625)
-        (stdlib.math.f64-to-bits 0.09844007281321865)
-        (stdlib.math.f64-to-bits 3.3871241029241416e-14))]
-    [(= index 89)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.8984375)
-        (stdlib.math.f64-to-bits 0.10709813555638448)
-        (stdlib.math.f64-to-bits -1.7376727386423858e-14))]
-    [(= index 90)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.89453125)
-        (stdlib.math.f64-to-bits 0.11145544092528326)
-        (stdlib.math.f64-to-bits 3.957125899799804e-14))]
-    [(= index 91)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.88671875)
-        (stdlib.math.f64-to-bits 0.12022742699821265)
-        (stdlib.math.f64-to-bits -5.2849453521890294e-14))]
-    [(= index 92)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.8828125)
-        (stdlib.math.f64-to-bits 0.12464244520731427)
-        (stdlib.math.f64-to-bits -3.767012502308738e-14))]
-    [(= index 93)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.875)
-        (stdlib.math.f64-to-bits 0.13353139262449076)
-        (stdlib.math.f64-to-bits 3.1859736349078334e-14))]
-    [(= index 94)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.87109375)
-        (stdlib.math.f64-to-bits 0.13800567301939282)
-        (stdlib.math.f64-to-bits 5.0900642926060466e-14))]
-    [(= index 95)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.86328125)
-        (stdlib.math.f64-to-bits 0.14701474296180095)
-        (stdlib.math.f64-to-bits 8.710783796122478e-15))]
-    [(= index 96)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.859375)
-        (stdlib.math.f64-to-bits 0.15154989812720032)
-        (stdlib.math.f64-to-bits 6.157896229122976e-16))]
-    [(= index 97)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.8515625)
-        (stdlib.math.f64-to-bits 0.16068238169043525)
-        (stdlib.math.f64-to-bits 3.821577743916796e-14))]
-    [(= index 98)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.84765625)
-        (stdlib.math.f64-to-bits 0.16528009093906348)
-        (stdlib.math.f64-to-bits 3.9440046718453496e-14))]
-    [(= index 99)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.83984375)
-        (stdlib.math.f64-to-bits 0.17453941635187675)
-        (stdlib.math.f64-to-bits 2.2924522154618074e-14))]
-    [(= index 100)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.8359375)
-        (stdlib.math.f64-to-bits 0.17920142945774842)
-        (stdlib.math.f64-to-bits -3.742530094732263e-14))]
-    [(= index 101)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.83203125)
-        (stdlib.math.f64-to-bits 0.18388527877016259)
-        (stdlib.math.f64-to-bits -2.5223102140407338e-14))]
-    [(= index 102)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.82421875)
-        (stdlib.math.f64-to-bits 0.1933193110035063)
-        (stdlib.math.f64-to-bits -1.0320443688698849e-14))]
-    [(= index 103)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.8203125)
-        (stdlib.math.f64-to-bits 0.19806991376208316)
-        (stdlib.math.f64-to-bits 1.0634128304268335e-14))]
-    [(= index 104)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.8125)
-        (stdlib.math.f64-to-bits 0.20763936477828793)
-        (stdlib.math.f64-to-bits -4.3425422595242564e-14))]
-    [(= index 105)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.80859375)
-        (stdlib.math.f64-to-bits 0.21245865121420593)
-        (stdlib.math.f64-to-bits -1.2527395755711364e-14))]
-    [(= index 106)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.8046875)
-        (stdlib.math.f64-to-bits 0.21730127569003344)
-        (stdlib.math.f64-to-bits -5.204008743405884e-14))]
-    [(= index 107)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.80078125)
-        (stdlib.math.f64-to-bits 0.22216746534115828)
-        (stdlib.math.f64-to-bits -3.979844515951702e-15))]
-    [(= index 108)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.79296875)
-        (stdlib.math.f64-to-bits 0.2319714654378231)
-        (stdlib.math.f64-to-bits -4.7955860343296286e-14))]
-    [(= index 109)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.7890625)
-        (stdlib.math.f64-to-bits 0.2369097470783572)
-        (stdlib.math.f64-to-bits 5.015686013791602e-16))]
-    [(= index 110)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.78515625)
-        (stdlib.math.f64-to-bits 0.24187253642048745)
-        (stdlib.math.f64-to-bits -7.252318953240293e-16))]
-    [(= index 111)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.78125)
-        (stdlib.math.f64-to-bits 0.2468600779315011)
-        (stdlib.math.f64-to-bits 2.4688324156011588e-14))]
-    [(= index 112)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.7734375)
-        (stdlib.math.f64-to-bits 0.2569104137850218)
-        (stdlib.math.f64-to-bits 5.465121253624792e-15))]
-    [(= index 113)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.76953125)
-        (stdlib.math.f64-to-bits 0.26197371574153294)
-        (stdlib.math.f64-to-bits 4.102651071698446e-14))]
-    [(= index 114)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.765625)
-        (stdlib.math.f64-to-bits 0.2670627852490952)
-        (stdlib.math.f64-to-bits -4.996736502345936e-14))]
-    [(= index 115)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.76171875)
-        (stdlib.math.f64-to-bits 0.27217788591576664)
-        (stdlib.math.f64-to-bits 4.903580708156347e-14))]
-    [(= index 116)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.7578125)
-        (stdlib.math.f64-to-bits 0.27731928541618345)
-        (stdlib.math.f64-to-bits 5.089628039500759e-14))]
-    [(= index 117)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.75390625)
-        (stdlib.math.f64-to-bits 0.28248725557466514)
-        (stdlib.math.f64-to-bits 1.1782016386565151e-14))]
-    [(= index 118)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.74609375)
-        (stdlib.math.f64-to-bits 0.29290401643288533)
-        (stdlib.math.f64-to-bits 4.727452940514406e-14))]
-    [(= index 119)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.7421875)
-        (stdlib.math.f64-to-bits 0.29815337231912054)
-        (stdlib.math.f64-to-bits -4.4204083338755686e-14))]
-    [(= index 120)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.73828125)
-        (stdlib.math.f64-to-bits 0.3034304294199046)
-        (stdlib.math.f64-to-bits 1.548345993498083e-14))]
-    [(= index 121)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.734375)
-        (stdlib.math.f64-to-bits 0.30873548164959175)
-        (stdlib.math.f64-to-bits 2.1522127491642888e-14))]
-    [(= index 122)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.73046875)
-        (stdlib.math.f64-to-bits 0.3140688276249648)
-        (stdlib.math.f64-to-bits 1.1054030169005386e-14))]
-    [(= index 123)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.7265625)
-        (stdlib.math.f64-to-bits 0.31943077076641657)
-        (stdlib.math.f64-to-bits -5.534326352070679e-14))]
-    [(= index 124)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.72265625)
-        (stdlib.math.f64-to-bits 0.3248216194012912)
-        (stdlib.math.f64-to-bits -5.351646604259541e-14))]
-    [(= index 125)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.71875)
-        (stdlib.math.f64-to-bits 0.33024168687052224)
-        (stdlib.math.f64-to-bits 5.4612144489920215e-14))]
-    [(= index 126)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.71484375)
-        (stdlib.math.f64-to-bits 0.3356912916381134)
-        (stdlib.math.f64-to-bits 2.8136969901227338e-14))]
-    [(= index 127)
-      (MathPowLogF64TableEntry
-        (stdlib.math.f64-to-bits 0.7109375)
-        (stdlib.math.f64-to-bits 0.3411707574027787)
-        (stdlib.math.f64-to-bits -1.156568624616423e-14))]
-    [else (MathPowLogF64TableEntry 0 0 0)]))
+  (math-bits-table
+    index
+    MathPowLogF64TableEntry
+    (MathPowLogF64TableEntry 0 0 0)
+    (row 1.4140625 -0.3464667673462145 5.929407345889625e-15)
+    (row 1.40625 -0.34092658697056777 -2.544157440035963e-14)
+    (row 1.3984375 -0.3353555419211034 -3.443525940775045e-14)
+    (row 1.390625 -0.3297532863724655 -2.500123826022799e-15)
+    (row 1.3828125 -0.32411946865420305 -8.929337133850617e-15)
+    (row 1.375 -0.31845373111855224 1.7625431312172662e-14)
+    (row 1.3671875 -0.31275571000389846 1.5688303180062087e-15)
+    (row 1.359375 -0.3070250352949415 2.9655274673691784e-14)
+    (row 1.3515625 -0.3012613305781997 3.7923164802093147e-14)
+    (row 1.34375 -0.2954642128938758 3.993416384387844e-14)
+    (row 1.3359375 -0.28963329258306203 1.9352855826489123e-14)
+    (row 1.3359375 -0.28963329258306203 1.9352855826489123e-14)
+    (row 1.328125 -0.28376817313062475 -1.9852665484979036e-14)
+    (row 1.3203125 -0.27786845100342816 -2.814323765595281e-14)
+    (row 1.3125 -0.2719337154836694 2.7643769993528702e-14)
+    (row 1.3046875 -0.2659635484970977 -4.025092402293806e-14)
+    (row 1.296875 -0.25995752443691345 -1.2621729398885316e-14)
+    (row 1.2890625 -0.25391520998095984 -3.600176732637335e-15)
+    (row 1.2890625 -0.25391520998095984 -3.600176732637335e-15)
+    (row 1.28125 -0.2478361639045943 1.3029797173308663e-14)
+    (row 1.2734375 -0.2417199368871934 4.8230289429940886e-14)
+    (row 1.265625 -0.23556607131274632 -2.0592242769647135e-14)
+    (row 1.2578125 -0.22937410106487732 3.149265065191484e-14)
+    (row 1.25 -0.22314355131425145 4.169796584527195e-14)
+    (row 1.25 -0.22314355131425145 4.169796584527195e-14)
+    (row 1.2421875 -0.21687393830063684 2.2477465222466186e-14)
+    (row 1.234375 -0.21056476910735 3.6507188831790577e-16)
+    (row 1.2265625 -0.2042155414286526 -3.827767260205414e-14)
+    (row 1.2265625 -0.2042155414286526 -3.827767260205414e-14)
+    (row 1.21875 -0.19782574332987224 -4.7641388950792196e-14)
+    (row 1.2109375 -0.19139485299967873 4.9278276214647115e-14)
+    (row 1.203125 -0.18492233849406148 4.9485167661250996e-14)
+    (row 1.203125 -0.18492233849406148 4.9485167661250996e-14)
+    (row 1.1953125 -0.1784076574728033 -1.5003333854266542e-14)
+    (row 1.1875 -0.17185025692663203 -2.7194441649495324e-14)
+    (row 1.1875 -0.17185025692663203 -2.7194441649495324e-14)
+    (row 1.1796875 -0.1652495728952772 -2.99659267292569e-14)
+    (row 1.171875 -0.15860503017665906 2.0472357800461955e-14)
+    (row 1.171875 -0.15860503017665906 2.0472357800461955e-14)
+    (row 1.1640625 -0.15191604202584585 3.879296723063646e-15)
+    (row 1.15625 -0.1451820098444614 -3.6506824353335045e-14)
+    (row 1.1484375 -0.13840232285906495 -5.4183331379008994e-14)
+    (row 1.1484375 -0.13840232285906495 -5.4183331379008994e-14)
+    (row 1.140625 -0.131576357788731 1.1729485484531301e-14)
+    (row 1.140625 -0.131576357788731 1.1729485484531301e-14)
+    (row 1.1328125 -0.12470347850091912 -3.811763084710266e-14)
+    (row 1.125 -0.11778303565643 4.654729747598445e-14)
+    (row 1.125 -0.11778303565643 4.654729747598445e-14)
+    (row 1.1171875 -0.11081436634026431 -2.5799991283069902e-14)
+    (row 1.109375 -0.10379679368168127 3.7700471749674615e-14)
+    (row 1.109375 -0.10379679368168127 3.7700471749674615e-14)
+    (row 1.1015625 -0.09672962645856842 1.7306161136093256e-14)
+    (row 1.1015625 -0.09672962645856842 1.7306161136093256e-14)
+    (row 1.09375 -0.089612158689647 -4.012913552726574e-14)
+    (row 1.0859375 -0.08244366921110213 2.7541708360737882e-14)
+    (row 1.0859375 -0.08244366921110213 2.7541708360737882e-14)
+    (row 1.078125 -0.07522342123763792 5.0396178134370583e-14)
+    (row 1.078125 -0.07522342123763792 5.0396178134370583e-14)
+    (row 1.0703125 -0.06795066190852594 1.8195060030168815e-14)
+    (row 1.0625 -0.06062462181648698 5.213620639136504e-14)
+    (row 1.0625 -0.06062462181648698 5.213620639136504e-14)
+    (row 1.0546875 -0.053244514518837605 2.532168943117445e-14)
+    (row 1.0546875 -0.053244514518837605 2.532168943117445e-14)
+    (row 1.046875 -0.045809536031242715 -5.148849572685811e-14)
+    (row 1.046875 -0.045809536031242715 -5.148849572685811e-14)
+    (row 1.0390625 -0.038318864302141264 4.6652946995830086e-15)
+    (row 1.0390625 -0.038318864302141264 4.6652946995830086e-15)
+    (row 1.03125 -0.03077165866670839 -4.529814257790929e-14)
+    (row 1.03125 -0.03077165866670839 -4.529814257790929e-14)
+    (row 1.0234375 -0.023167059281490765 -4.361324067851568e-14)
+    (row 1.015625 -0.015504186535963527 -1.7274567499706107e-15)
+    (row 1.015625 -0.015504186535963527 -1.7274567499706107e-15)
+    (row 1.0078125 -0.0077821404420319595 -2.298941004620351e-14)
+    (row 1.0078125 -0.0077821404420319595 -2.298941004620351e-14)
+    (row 1.0 0.0 0.0)
+    (row 1.0 0.0 0.0)
+    (row 0.9921875 0.007843177461040796 -1.4902732911301337e-14)
+    (row 0.984375 0.01574835696817445 -3.527980389655325e-14)
+    (row 0.9765625 0.023716526617363343 -4.730054772033249e-14)
+    (row 0.96875 0.03174869831457272 7.580310369375161e-15)
+    (row 0.9609375 0.039845908547249564 -4.9893776716773285e-14)
+    (row 0.953125 0.048009219186383234 -2.262629393030674e-14)
+    (row 0.9453125 0.056239718322899535 -2.345674491018699e-14)
+    (row 0.94140625 0.06038051098892083 -1.3352588834854848e-14)
+    (row 0.93359375 0.06871389254808946 -3.765296820388875e-14)
+    (row 0.92578125 0.07711730334438016 5.1128335719851986e-14)
+    (row 0.91796875 0.08559193033545398 -5.046674438470119e-14)
+    (row 0.9140625 0.08985632912185793 3.1218748807418837e-15)
+    (row 0.90625 0.09844007281321865 3.3871241029241416e-14)
+    (row 0.8984375 0.10709813555638448 -1.7376727386423858e-14)
+    (row 0.89453125 0.11145544092528326 3.957125899799804e-14)
+    (row 0.88671875 0.12022742699821265 -5.2849453521890294e-14)
+    (row 0.8828125 0.12464244520731427 -3.767012502308738e-14)
+    (row 0.875 0.13353139262449076 3.1859736349078334e-14)
+    (row 0.87109375 0.13800567301939282 5.0900642926060466e-14)
+    (row 0.86328125 0.14701474296180095 8.710783796122478e-15)
+    (row 0.859375 0.15154989812720032 6.157896229122976e-16)
+    (row 0.8515625 0.16068238169043525 3.821577743916796e-14)
+    (row 0.84765625 0.16528009093906348 3.9440046718453496e-14)
+    (row 0.83984375 0.17453941635187675 2.2924522154618074e-14)
+    (row 0.8359375 0.17920142945774842 -3.742530094732263e-14)
+    (row 0.83203125 0.18388527877016259 -2.5223102140407338e-14)
+    (row 0.82421875 0.1933193110035063 -1.0320443688698849e-14)
+    (row 0.8203125 0.19806991376208316 1.0634128304268335e-14)
+    (row 0.8125 0.20763936477828793 -4.3425422595242564e-14)
+    (row 0.80859375 0.21245865121420593 -1.2527395755711364e-14)
+    (row 0.8046875 0.21730127569003344 -5.204008743405884e-14)
+    (row 0.80078125 0.22216746534115828 -3.979844515951702e-15)
+    (row 0.79296875 0.2319714654378231 -4.7955860343296286e-14)
+    (row 0.7890625 0.2369097470783572 5.015686013791602e-16)
+    (row 0.78515625 0.24187253642048745 -7.252318953240293e-16)
+    (row 0.78125 0.2468600779315011 2.4688324156011588e-14)
+    (row 0.7734375 0.2569104137850218 5.465121253624792e-15)
+    (row 0.76953125 0.26197371574153294 4.102651071698446e-14)
+    (row 0.765625 0.2670627852490952 -4.996736502345936e-14)
+    (row 0.76171875 0.27217788591576664 4.903580708156347e-14)
+    (row 0.7578125 0.27731928541618345 5.089628039500759e-14)
+    (row 0.75390625 0.28248725557466514 1.1782016386565151e-14)
+    (row 0.74609375 0.29290401643288533 4.727452940514406e-14)
+    (row 0.7421875 0.29815337231912054 -4.4204083338755686e-14)
+    (row 0.73828125 0.3034304294199046 1.548345993498083e-14)
+    (row 0.734375 0.30873548164959175 2.1522127491642888e-14)
+    (row 0.73046875 0.3140688276249648 1.1054030169005386e-14)
+    (row 0.7265625 0.31943077076641657 -5.534326352070679e-14)
+    (row 0.72265625 0.3248216194012912 -5.351646604259541e-14)
+    (row 0.71875 0.33024168687052224 5.4612144489920215e-14)
+    (row 0.71484375 0.3356912916381134 2.8136969901227338e-14)
+    (row 0.7109375 0.3411707574027787 -1.156568624616423e-14)))
 
 ;: Internal binary64 pow logarithm result: rounded value plus a tail holding
 ;: about fifteen extra bits of precision, mirroring `log_inline`'s out-param.
@@ -2880,72 +1879,26 @@
 
 ;: Return the exact musl powf_data.c constants for interval index.
 (define (math-powf-table-entry [index : i64]) : MathPowLogF32TableEntry
-  (cond
-    [(= index 0)
-      (MathPowLogF32TableEntry
-        (stdlib.math.f64-to-bits 1.398907162146528)
-        (stdlib.math.f64-to-bits -0.48430022186289673))]
-    [(= index 1)
-      (MathPowLogF32TableEntry
-        (stdlib.math.f64-to-bits 1.3403141896637998)
-        (stdlib.math.f64-to-bits -0.42257122959194704))]
-    [(= index 2)
-      (MathPowLogF32TableEntry
-        (stdlib.math.f64-to-bits 1.286432210124115)
-        (stdlib.math.f64-to-bits -0.3633754347673556))]
-    [(= index 3)
-      (MathPowLogF32TableEntry
-        (stdlib.math.f64-to-bits 1.2367150214269895)
-        (stdlib.math.f64-to-bits -0.30651309567405577))]
-    [(= index 4)
-      (MathPowLogF32TableEntry
-        (stdlib.math.f64-to-bits 1.1906977166711752)
-        (stdlib.math.f64-to-bits -0.25180720160537634))]
-    [(= index 5)
-      (MathPowLogF32TableEntry
-        (stdlib.math.f64-to-bits 1.1479821020556429)
-        (stdlib.math.f64-to-bits -0.19910014943794563))]
-    [(= index 6)
-      (MathPowLogF32TableEntry
-        (stdlib.math.f64-to-bits 1.1082251448272158)
-        (stdlib.math.f64-to-bits -0.14825100623281615))]
-    [(= index 7)
-      (MathPowLogF32TableEntry
-        (stdlib.math.f64-to-bits 1.0711297413057381)
-        (stdlib.math.f64-to-bits -0.09913323807318392))]
-    [(= index 8)
-      (MathPowLogF32TableEntry
-        (stdlib.math.f64-to-bits 1.036437278977283)
-        (stdlib.math.f64-to-bits -0.051632812977629436))]
-    [(= index 9)
-      (MathPowLogF32TableEntry
-        (stdlib.math.f64-to-bits 1.0)
-        (stdlib.math.f64-to-bits 0.0))]
-    [(= index 10)
-      (MathPowLogF32TableEntry
-        (stdlib.math.f64-to-bits 0.9492859795739057)
-        (stdlib.math.f64-to-bits 0.07508531937943004))]
-    [(= index 11)
-      (MathPowLogF32TableEntry
-        (stdlib.math.f64-to-bits 0.8951049428609004)
-        (stdlib.math.f64-to-bits 0.15987125980713107))]
-    [(= index 12)
-      (MathPowLogF32TableEntry
-        (stdlib.math.f64-to-bits 0.8476821620351103)
-        (stdlib.math.f64-to-bits 0.2384046664317681))]
-    [(= index 13)
-      (MathPowLogF32TableEntry
-        (stdlib.math.f64-to-bits 0.8050314851692001)
-        (stdlib.math.f64-to-bits 0.31288288605863257))]
-    [(= index 14)
-      (MathPowLogF32TableEntry
-        (stdlib.math.f64-to-bits 0.7664671008843108)
-        (stdlib.math.f64-to-bits 0.38370422656453185))]
-    [(= index 15)
-      (MathPowLogF32TableEntry
-        (stdlib.math.f64-to-bits 0.731428603316328)
-        (stdlib.math.f64-to-bits 0.451211048935815))]
-    [else (MathPowLogF32TableEntry 0 0)]))
+  (math-bits-table
+    index
+    MathPowLogF32TableEntry
+    (MathPowLogF32TableEntry 0 0)
+    (row 1.398907162146528 -0.48430022186289673)
+    (row 1.3403141896637998 -0.42257122959194704)
+    (row 1.286432210124115 -0.3633754347673556)
+    (row 1.2367150214269895 -0.30651309567405577)
+    (row 1.1906977166711752 -0.25180720160537634)
+    (row 1.1479821020556429 -0.19910014943794563)
+    (row 1.1082251448272158 -0.14825100623281615)
+    (row 1.0711297413057381 -0.09913323807318392)
+    (row 1.036437278977283 -0.051632812977629436)
+    (row 1.0 0.0)
+    (row 0.9492859795739057 0.07508531937943004)
+    (row 0.8951049428609004 0.15987125980713107)
+    (row 0.8476821620351103 0.2384046664317681)
+    (row 0.8050314851692001 0.31288288605863257)
+    (row 0.7664671008843108 0.38370422656453185)
+    (row 0.731428603316328 0.451211048935815)))
 
 ;: Evaluate log2(x) in binary64 for the binary32 pow reduction; `ix` is the
 ;: bit pattern of a positive finite binary32 x, pre-normalized with the sign

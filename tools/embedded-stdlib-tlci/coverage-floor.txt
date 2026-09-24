@@ -48,7 +48,9 @@
 # shrink refactor merges stdlib.format's materializing and streaming expanders
 # into one sink-operand `format-expand`/`format-expand-call` pair and drops the
 # three start macros and the retained completion step: 155 entries, all native.
-native-entries-min 155
+# stdlib.math/math-bits-table and math-bits-row then generate the musl
+# lookup-table `cond` chains: 157 entries, all native.
+native-entries-min 157
 shell-entries-max 0
 partial-entries-max 0
 interpreted-arms-max 0

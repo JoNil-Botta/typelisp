@@ -55,9 +55,7 @@
     [search-records : String
       (doc_html.doc-html-search-records-for-module
         "smoke.html"
-        (doc_render.DocModule.Module
-          "smoke<&>.tl"
-          (owned_view.compiler-owned-shared-view docs)))]
+        (doc_render.DocModule.Module "smoke<&>.tl" docs))]
     (if (and
       (doc_html.doc-html-require-contains
         page

@@ -5171,7 +5171,7 @@
 ;; Per-function dense operand-home view for emission.
 ;; compiler-backend-emit-function installs the function's FINAL (post-coloring)
 ;; assignment table after every re-plan stage (caller-save, loop-split, remat,
-;; scratch-vreg, slot coloring) has been folded into it, so each operand-home
+;; slot coloring) has been folded into it, so each operand-home
 ;; query is an O(1) array read. `active` gates the function-state view; callers
 ;; of emit helpers outside whole-function emission (unit tests, closure-entry
 ;; adapters) read the same authoritative table from their context. The rax
@@ -14490,10 +14490,7 @@
 ;; twin used by the admission test (compiler-backend-scavenge-reg-peek is
 ;; documented as side-effect-free and returns what the committing call will);
 ;; the committing form books the emergency save/restore and the planned
-;; preservation exactly as compiler-backend-planned-or-scavenge-reg does. A
-;; missing modelled scratch under scratch-vreg returns "" -- the admission test
-;; reads that as a decline instead of inventing a register the plan never
-;; reserved.
+;; preservation exactly as compiler-backend-planned-or-scavenge-reg does.
 (define (compiler-backend-flags-select-reg
   [peek? : bool]
   [planned : String]
@@ -14503,21 +14500,19 @@
   [fallback : String]
   [backend-state : CompilerBackendState]) : String
   (if (string.eq planned "")
-    (if (compiler-backend-scratch-vreg-enabled?)
-      ""
-      (if peek?
-        (compiler-backend-scavenge-reg-peek
-          dst
-          exclude
-          exclude-n
-          fallback
-          backend-state)
-        (compiler-backend-scavenge-reg
-          dst
-          exclude
-          exclude-n
-          fallback
-          backend-state)))
+    (if peek?
+      (compiler-backend-scavenge-reg-peek
+        dst
+        exclude
+        exclude-n
+        fallback
+        backend-state)
+      (compiler-backend-scavenge-reg
+        dst
+        exclude
+        exclude-n
+        fallback
+        backend-state))
     (if peek?
       planned
       (begin
@@ -15787,8 +15782,8 @@
 
 ;; "Does this function's plan home a value in register R" is a per-function,
 ;; per-REGISTER constant: the emitted assignment table is fixed before body
-;; emission (every re-plan stage -- caller-save, loop-split, remat, scratch-vreg,
-;; slot coloring -- is already folded into it, exactly as for the dense operand
+;; emission (every re-plan stage -- caller-save, loop-split, remat, slot
+;; coloring -- is already folded into it, exactly as for the dense operand
 ;; view above). The prologue/epilogue, frame layout, callee-save and FPO paths
 ;; ask it tens of times per function, and each ask used to re-walk the whole
 ;; table through `compiler-reg-location-uses-register?` (two ownership-id folds
@@ -23816,15 +23811,15 @@
 ;; those out it marks it PRESERVE -- the consumer owes it the save/restore
 ;; bracket that `compiler-backend-preserve-planned-register!` arms. Consuming the
 ;; spelling raw, as these emitters used to, clobbers whatever the register holds:
-;; under `--cfg scratch-vreg` a six-argument call in
+;; with the former instruction-scratch planner a six-argument call in
 ;; `compiler-backend-peephole-pair-action-desc` staged both of its stack
 ;; arguments through %r12, which held a parameter read after the call, and every
 ;; read after the call saw the staged value instead. Nothing about a plan
 ;; register says it is free; only arming its bracket makes it so.
 ;;
 ;; `preserve-planned-register!` is a no-op for a plan register the plan did not
-;; mark, and the unplanned path (`planned-stage` empty -- every build without
-;; scratch-vreg) still scavenges exactly as before, so this is byte-identical
+;; mark, and the unplanned path (`planned-stage` empty) still scavenges
+;; exactly as before, so this is byte-identical
 ;; wherever the old spelling was already safe.
 (define (compiler-backend-stack-call-arg-stage
   [planned-stage : String]
@@ -26747,10 +26742,6 @@
         vars
         intervals)]))
 
-;; Experimental instruction-scratch planning remains cfg-gated and default-off.
-(define (compiler-backend-scratch-vreg-enabled?) : bool
-  (cfg scratch-vreg true false))
-
 ;; Generic scratch-plan consumers.  Successful items are compacted only for the
 ;; synthetic scavenge-occupancy suffix; instruction lookup continues to use the
 ;; stable point/ordinal map in CompilerRegScratchPlan, including failed slots.
@@ -27021,99 +27012,20 @@
           (set! index (+ index 1))))
       found)))
 
-(define (compiler-backend-current-planned-local-preserve-add!
-  [function-state : CompilerBackendFunctionState]
-  [reg : i64]) : unit
-  (if (or
-    (= reg compiler_abi.compiler-reg-id-invalid)
-    (>=
-      (compiler-backend-current-planned-local-preserve-index function-state reg)
-      0))
-    unit
-    (let
-      [count : i64
-        (compiler-backend-function-scratch-i64
-          function-state
-          compiler-backend-scratch-i64-current-planned-local-preserve-count)]
-      [regs : (__tl_dyn-array i64)
-        (compiler-backend-emergency-regs-push
-          (compiler-backend-function-scratch-i64-array
-            function-state
-            compiler-backend-scratch-i64-array-current-planned-local-preserve-regs)
-          count
-          reg)]
-      (begin
-        (compiler-backend-function-scratch-set-i64-array!
-          function-state
-          compiler-backend-scratch-i64-array-current-planned-local-preserve-regs
-          regs)
-        (compiler-backend-function-scratch-set-i64!
-          function-state
-          compiler-backend-scratch-i64-current-planned-local-preserve-count
-          (+ count 1))))))
-
-(define (compiler-backend-scratch-plan-register-at
-  [plan : compiler_regalloc.CompilerRegScratchPlan]
-  [point : i64]
-  [ordinal : i64]
-  [backend-state : CompilerBackendState]) : String
-  (let
-    [reg : i64
-      (compiler_regalloc.compiler-reg-scratch-plan-register
-        (compiler-backend-global-shared-view plan)
-        point
-        ordinal)]
-    (begin
-      (if (compiler_regalloc.compiler-reg-scratch-plan-preserve?
-        (compiler-backend-global-shared-view plan)
-        point
-        ordinal)
-        (if (compiler_regalloc.compiler-reg-scratch-plan-local-preserve?
-          (compiler-backend-global-shared-view plan)
-          point
-          ordinal)
-          (compiler-backend-current-planned-local-preserve-add!
-            (compiler-backend-state-function-state backend-state)
-            reg)
-          (compiler-backend-current-planned-preserve-add!
-            (compiler-backend-state-function-state backend-state)
-            reg))
-        unit)
-      (if (compiler_regalloc.compiler-reg-scratch-plan-frame?
-        (compiler-backend-global-shared-view plan)
-        point
-        ordinal)
-        "@frame"
-        (compiler_abi.compiler-abi-register-spelling reg)))))
-
+;; No production path installs a scratch plan, so every planned scratch
+;; lookup answers the empty spelling and callers fall back to the scavenger.
 (define (compiler-backend-scratch-plan-register-here
-  [plan : compiler_regalloc.CompilerRegScratchPlan]
-  [ordinal : i64]
-  [backend-state : CompilerBackendState]) : String
-  (if (compiler-backend-scratch-vreg-enabled?)
-    (compiler-backend-scratch-plan-register-at
-      plan
-      (compiler-backend-function-state-emission-point
-        (compiler-backend-state-function-state backend-state))
-      ordinal
-      backend-state)
-    ""))
+  [_plan : compiler_regalloc.CompilerRegScratchPlan]
+  [_ordinal : i64]
+  [_backend-state : CompilerBackendState]) : String
+  "")
 
 (define (compiler-backend-scratch-plan-register-ahead
-  [plan : compiler_regalloc.CompilerRegScratchPlan]
-  [instruction-offset : i64]
-  [ordinal : i64]
-  [backend-state : CompilerBackendState]) : String
-  (if (compiler-backend-scratch-vreg-enabled?)
-    (compiler-backend-scratch-plan-register-at
-      plan
-      (+
-        (compiler-backend-function-state-emission-point
-          (compiler-backend-state-function-state backend-state))
-        (* 2 instruction-offset))
-      ordinal
-      backend-state)
-    ""))
+  [_plan : compiler_regalloc.CompilerRegScratchPlan]
+  [_instruction-offset : i64]
+  [_ordinal : i64]
+  [_backend-state : CompilerBackendState]) : String
+  "")
 
 (define (compiler-backend-missing-modeled-scratch!
   [scratch-class : String]
@@ -27178,9 +27090,8 @@
         (compiler-backend-emergency-add-id! function-state reg))
       unit)))
 
-;; Planned scratch is authoritative when constrained allocation succeeded. An
-;; empty home exists only when scratch-vreg is compiled out; cfg-on production
-;; planning fails closed before emission.
+;; Planned scratch is authoritative when a scratch plan supplies it; an empty
+;; home falls back to the scavenger.
 (define (compiler-backend-planned-or-scavenge-reg
   [planned : String]
   [dst : i64]
@@ -27189,24 +27100,7 @@
   [fallback : String]
   [backend-state : CompilerBackendState]) : String
   (if (string.eq (compiler-backend-global-shared-view planned) "")
-    (if (compiler-backend-scratch-vreg-enabled?)
-      (compiler-backend-missing-modeled-scratch!
-        (str_cat.str-cat
-          "gp dst "
-          (str_cat.str-cat
-            (string.int->string dst)
-            (str_cat.str-cat
-              " fallback "
-              (str_cat.str-cat
-                fallback
-                (str_cat.str-cat " exclude " (string.int->string exclude-n))))))
-        backend-state)
-      (compiler-backend-scavenge-reg
-        dst
-        exclude
-        exclude-n
-        fallback
-        backend-state))
+    (compiler-backend-scavenge-reg dst exclude exclude-n fallback backend-state)
     (begin
       (compiler-backend-preserve-planned-register!
         (compiler-backend-global-shared-view planned)
@@ -27288,13 +27182,11 @@
   [fallback : String]
   [backend-state : CompilerBackendState]) : String
   (if (string.eq (compiler-backend-global-shared-view planned) "")
-    (if (compiler-backend-scratch-vreg-enabled?)
-      (compiler-backend-missing-modeled-scratch! "gp-here" backend-state)
-      (compiler-backend-scavenge-reg-here
-        exclude
-        exclude-n
-        fallback
-        backend-state))
+    (compiler-backend-scavenge-reg-here
+      exclude
+      exclude-n
+      fallback
+      backend-state)
     (begin
       (compiler-backend-preserve-planned-register!
         (compiler-backend-global-shared-view planned)
@@ -27309,14 +27201,12 @@
   [fallback : String]
   [backend-state : CompilerBackendState]) : String
   (if (string.eq (compiler-backend-global-shared-view planned) "")
-    (if (compiler-backend-scratch-vreg-enabled?)
-      (compiler-backend-missing-modeled-scratch! "xmm" backend-state)
-      (compiler-backend-scavenge-xmm-reg
-        dst
-        exclude
-        exclude-n
-        fallback
-        backend-state))
+    (compiler-backend-scavenge-xmm-reg
+      dst
+      exclude
+      exclude-n
+      fallback
+      backend-state)
     (begin
       (compiler-backend-preserve-planned-register!
         (compiler-backend-global-shared-view planned)
@@ -27384,13 +27274,11 @@
   [exclude-n : i64]
   [backend-state : CompilerBackendState]) : String
   (if (string.eq (compiler-backend-global-shared-view planned) "")
-    (if (compiler-backend-scratch-vreg-enabled?)
-      (compiler-backend-missing-modeled-scratch! "divmod-src" backend-state)
-      (compiler-backend-scavenge-divmod-src-reg
-        dst
-        exclude
-        exclude-n
-        backend-state))
+    (compiler-backend-scavenge-divmod-src-reg
+      dst
+      exclude
+      exclude-n
+      backend-state)
     (begin
       (compiler-backend-preserve-planned-register!
         (compiler-backend-global-shared-view planned)
@@ -27403,14 +27291,10 @@
   [exclude-n : i64]
   [backend-state : CompilerBackendState]) : String
   (if (string.eq (compiler-backend-global-shared-view planned) "")
-    (if (compiler-backend-scratch-vreg-enabled?)
-      (compiler-backend-missing-modeled-scratch!
-        "divmod-src-here"
-        backend-state)
-      (compiler-backend-scavenge-divmod-src-reg-here
-        exclude
-        exclude-n
-        backend-state))
+    (compiler-backend-scavenge-divmod-src-reg-here
+      exclude
+      exclude-n
+      backend-state)
     (begin
       (compiler-backend-preserve-planned-register!
         (compiler-backend-global-shared-view planned)
@@ -33633,21 +33517,8 @@
             ;; Once the LHS is copied into the fixed return accumulator, its old
             ;; home is dead and can materialize a non-encodable RHS.
             lhs-home]
-          [(not (compiler-backend-scratch-vreg-enabled?))
-            ;; Legacy/default builds have no modeled scratch inventory.
-            (compiler-backend-scavenge-reg-here exclude 7 "%r8" backend-state)]
-          [(compiler-backend-compare-op?
-              (compiler-backend-global-shared-view op))
-            ;; A comparison can still finish in the bounded cycle temp frame.
-            "@return-rhs-frame"]
           [else
-            (compiler-backend-missing-modeled-scratch!
-              (str_cat.str-cat
-                "return-rhs primary-empty alternate "
-                (if (string.eq planned-alternate "")
-                  "empty"
-                  planned-alternate))
-              backend-state)])]
+            (compiler-backend-scavenge-reg-here exclude 7 "%r8" backend-state)])]
       [(compiler-backend-return-rhs-plan-conflicts?
           (compiler-backend-global-shared-view planned)
           (compiler-backend-global-shared-view rhs-home)
@@ -35175,9 +35046,8 @@
         ;; too, exactly as a spilled lhs already was -- but only when the OTHER
         ;; operand needs no staging register of its own.
         ;;
-        ;; The scratch plan sizes this compare through
-        ;; `compiler-reg-scratch-compare-lhs-direct?`, which calls a global lhs
-        ;; NOT direct and therefore hands ordinal 0 to the lhs stage and only
+        ;; A scratch plan sizes this compare by calling a global lhs NOT
+        ;; direct, and therefore hands ordinal 0 to the lhs stage and only
         ;; ordinal 1 to an rhs stage -- and it reserves that second ordinal
         ;; only when the rhs is not directly addressable either. A spilled rhs
         ;; IS directly addressable, so today the plan carries one ordinal: the
@@ -47856,41 +47726,6 @@
           bit)
         0))))
 
-(cfg
-  scratch-vreg
-  (define (compiler-backend-phi-planned-avoiding-value-home
-    [backend-state : CompilerBackendState]
-    [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-    [value : compiler_ir_types.CompilerIrValue]
-    [planned : String]) : String
-    (match value
-      [(compiler_ir_types.CompilerIrValue.Var var)
-        (match (compiler-backend-emit-assignment-lookup
-          backend-state
-          assignments
-          var)
-          [(compiler_regalloc.CompilerRegMaybeLocation.Some location)
-            (match location
-              [(compiler_regalloc.CompilerRegLocation.Register home)
-                (if (string.eq
-                  planned
-                  (compiler_abi.compiler-abi-register-spelling home))
-                  ""
-                  planned)]
-              [(compiler_regalloc.CompilerRegLocation.RegisterPair lo hi)
-                (if (or
-                  (string.eq
-                    planned
-                    (compiler_abi.compiler-abi-register-spelling lo))
-                  (string.eq
-                    planned
-                    (compiler_abi.compiler-abi-register-spelling hi)))
-                  ""
-                  planned)]
-              [_ planned])]
-          [(compiler_regalloc.CompilerRegMaybeLocation.No) planned])]
-      [_ planned])))
-
 (define (compiler-backend-phi-temp-home-operand
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [var-id : i64]
@@ -49660,25 +49495,11 @@
     (compiler-backend-function-state-set-string!
       (compiler-backend-state-function-state program-index.backend-state)
       compiler-backend-function-string-current-phi-planned-cycle
-      (cfg
-        scratch-vreg
-        (compiler-backend-phi-planned-avoiding-value-home
-          program-index.backend-state
-          (compiler-backend-global-shared-view assignments)
-          (compiler-backend-global-shared-view moved-src)
-          planned-cycle)
-        planned-cycle))
+      planned-cycle)
     (compiler-backend-function-state-set-string!
       (compiler-backend-state-function-state program-index.backend-state)
       compiler-backend-function-string-current-phi-planned-stage
-      (cfg
-        scratch-vreg
-        (compiler-backend-phi-planned-avoiding-value-home
-          program-index.backend-state
-          (compiler-backend-global-shared-view assignments)
-          (compiler-backend-global-shared-view moved-src)
-          planned-stage)
-        planned-stage))
+      planned-stage)
     ;; #phi-staged-copy: see emit-phi-edge-copies.
     (compiler-backend-function-state-set-current-phi-target-point!
       program-index.backend-state
@@ -55414,12 +55235,11 @@
     ;; spelling raw skipped compiler-backend-preserve-planned-register!, so the
     ;; emergency wrap was never armed, `emergency-pending` stayed false, and the
     ;; plain `leaq table,%rsi; jmp *(%rsi,idx,8)` form went out with no restore:
-    ;; the parameter was destroyed on every arm (the scratch-vreg + TLCI twin
-    ;; on Windows failed typechecking its own macro expansions). Consuming
+    ;; the parameter was destroyed on every arm (the planned-scratch + TLCI
+    ;; twin on Windows failed typechecking its own macro expansions). Consuming
     ;; through the helper arms the borrow, which selects the slot-indirect
     ;; emergency form below (GAP2b-v2) that restores the occupant BEFORE the
-    ;; transfer; it also fails closed under scratch-vreg when a modeled scratch
-    ;; is missing, and is byte-identical for a non-planned (scavenged) home.
+    ;; transfer, and is byte-identical for a non-planned (scavenged) home.
     [index-reg : String
       (if need-index-scratch
         (compiler-backend-planned-or-scavenge-reg-here
@@ -55898,52 +55718,12 @@
         (compiler-backend-global-shared-view ctx)
         (compiler-backend-global-shared-view instr))]
     [_scratch-plan : compiler_regalloc.CompilerRegScratchPlan
-      (cfg
-        scratch-vreg
-        (compiler-backend-runtime-plan-scratch
-          (compiler-backend-global-shared-view ctx.plan))
-        (compiler-backend-global-shared-view
-          compiler-backend-empty-scratch-plan))]
-    [planned-scratch0 : String
-      (cfg
-        scratch-vreg
-        (compiler-backend-scratch-plan-register-here
-          (compiler-backend-global-shared-view _scratch-plan)
-          0
-          ctx.backend-state)
-        "")]
-    [planned-scratch1 : String
-      (cfg
-        scratch-vreg
-        (compiler-backend-scratch-plan-register-here
-          (compiler-backend-global-shared-view _scratch-plan)
-          1
-          ctx.backend-state)
-        "")]
-    [planned-scratch2 : String
-      (cfg
-        scratch-vreg
-        (compiler-backend-scratch-plan-register-here
-          (compiler-backend-global-shared-view _scratch-plan)
-          2
-          ctx.backend-state)
-        "")]
-    [planned-scratch3 : String
-      (cfg
-        scratch-vreg
-        (compiler-backend-scratch-plan-register-here
-          (compiler-backend-global-shared-view _scratch-plan)
-          3
-          ctx.backend-state)
-        "")]
-    [planned-scratch4 : String
-      (cfg
-        scratch-vreg
-        (compiler-backend-scratch-plan-register-here
-          (compiler-backend-global-shared-view _scratch-plan)
-          4
-          ctx.backend-state)
-        "")]
+      (compiler-backend-global-shared-view compiler-backend-empty-scratch-plan)]
+    [planned-scratch0 : String ""]
+    [planned-scratch1 : String ""]
+    [planned-scratch2 : String ""]
+    [planned-scratch3 : String ""]
+    [planned-scratch4 : String ""]
     [_c-memory-planned-xmm : unit
       (compiler-backend-function-state-set-string!
         ctx.function-state
@@ -69695,8 +69475,8 @@
             ;; result and nothing else needs no boolean at all -- the compare's
             ;; own flags drive one `cmov<cc>`. The scratch registers come from
             ;; the SELECT's planned ordinals (one instruction ahead), exactly
-            ;; the ones its ordinary emission would have consumed, so the
-            ;; scratch-vreg plan is honoured unchanged. The emitter declines by
+            ;; the ones its ordinary emission would have consumed, so a
+            ;; scratch plan is honoured unchanged. The emitter declines by
             ;; returning `No` whenever the operand shapes cannot guarantee the
             ;; compare's operands survive the two staging loads.
             [(compiler_ir_types.CompilerIrInstr.Select payload-box)
@@ -70110,9 +69890,6 @@
   [const-hoist-sites : i64]
   [backend-mode : CompilerBackendMode]) : bool
   (or
-    ;; Scratch-plan lookup is keyed by the exact global instruction point even
-    ;; when an opt0/opt1 function has no ordinary register homes (plan-mask 0).
-    (compiler-backend-scratch-vreg-enabled?)
     (not (= plan-mask 0))
     (not (= const-hoist-sites 0))
     ;; AVX2 predicated-store lane labels use the instruction point as their
@@ -83681,17 +83458,7 @@
           ;; Debug records deliberately keep the original SSA identities.
           ;; Compacting a debug frame is less important than keeping every
           ;; instruction and variable provenance key exact.
-          ;; The cfg-only scratch planner also keys fusion inventory to SSA
-          ;; identity. In stack-only mode every value lacks an assignment, so
-          ;; merging ids can change its single-use decisions after the plan has
-          ;; selected an instruction shape. Keep that experimental combination
-          ;; on its prior identity layout until scratch planning is slot-aware.
-          (if (or
-            (compiler_ir_types.compiler-debug-info-enabled?)
-            (and
-              (compiler-backend-scratch-vreg-enabled?)
-              (compiler-backend-mode-scalar? mode)
-              (not scalar-registers-enabled)))
+          (if (compiler_ir_types.compiler-debug-info-enabled?)
             compiler_regalloc.CompilerRegColoring.None
             (compiler_regalloc.compiler-reg-color-stack-slots-with-stack-only
               type-segment-bases
@@ -83738,7 +83505,7 @@
               (& assignments))
             unit)]
         ;; Install the final authoritative table for direct operand-home lookup
-        ;; in large functions. Caller-save / loop-split / remat / scratch-vreg /
+        ;; in large functions. Caller-save / loop-split / remat /
         ;; slot-coloring re-plans are all folded into this table, so no emission
         ;; view can go stale. Small functions read the same table directly from
         ;; their emission context and avoid the state-wrapper setup.
@@ -83920,24 +83687,9 @@
               (compiler-backend-global-shared-view emit-blocks-list))
             (compiler-backend-global-shared-view emit-blocks-list))]
         [scratch-plan-result : compiler_regalloc.CompilerRegScratchPlanResult
-          (cfg
-            scratch-vreg
-            (compiler_regalloc.compiler-reg-plan-with-scratch-vreg-result-with-groups
-              type-segment-bases
-              fn-abi
-              (compiler_ir_types.CompilerIrFunction.Function
-                (compiler-backend-global-shared-view name)
-                (compiler-backend-global-shared-view emit-params)
-                (compiler-backend-global-shared-view ret-ty)
-                scratch-vars
-                (compiler-backend-global-shared-view emit-blocks-list)
-                (compiler-backend-global-shared-view function-abi))
-              (compiler-backend-global-shared-view emit-group-vars)
-              scratch-base-plan
-              scratch-vars)
-            (compiler_regalloc.CompilerRegScratchPlanResult.Result
-              scratch-base-plan
-              (compiler_regalloc.compiler-reg-scratch-plan-empty)))]
+          (compiler_regalloc.CompilerRegScratchPlanResult.Result
+            scratch-base-plan
+            (compiler_regalloc.compiler-reg-scratch-plan-empty))]
         [scratch-plan : compiler_regalloc.CompilerRegScratchPlan
           (match scratch-plan-result
             [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ out-plan)
@@ -84101,7 +83853,7 @@
                   (compiler-backend-global-shared-view program-index)
                   (compiler-backend-global-shared-view name))
                 "main")))]
-        ;; Const-hoist register admission must see every cfg-gated scratch-vreg
+        ;; Const-hoist register admission must see every planned scratch
         ;; home over its exact point range. The published scratch reg-plan keeps
         ;; only unique callee-saved homes for prologue accounting, so append the
         ;; complete scratch plan as fresh synthetic vars for this occupancy
@@ -84192,7 +83944,7 @@
           ;; slot-vars (the compacted stack-slot count): register-homed vars keep
           ;; indices >= slot-vars, so a slot-vars-sized ctx would miss them and the
           ;; free-register query would false-free their registers (e.g. a pooled %r8
-          ;; holding a register var). M-F and the cfg-gated scratch-vreg path append
+          ;; holding a register var). M-F and a planned scratch path append
           ;; synthetic register-homed pseudo-vars so scavenging avoids those planned
           ;; registers inside their regions.
           (begin
@@ -84418,12 +84170,7 @@
                     types
                     (compiler-backend-global-shared-view global-types)
                     (compiler-backend-global-shared-view ret-ty)
-                    (cfg
-                      scratch-vreg
-                      (CompilerBackendRuntimePlan.WithScratch
-                        (box plan)
-                        (compiler-backend-global-shared-view scratch-plan))
-                      (compiler-backend-global-shared-view plan))
+                    (compiler-backend-global-shared-view plan)
                     (compiler-backend-global-shared-view functions)
                     (compiler-backend-global-shared-view externs)
                     (compiler-backend-global-shared-view program-index)
@@ -109322,14 +109069,6 @@
   (compiler-backend-function-scratch-set-i64-array!
     function-state
     compiler-backend-scratch-i64-array-scavenge-occupied-masks
-    value))
-
-(define (compiler-backend-function-scratch-fixture-set-scavenge-ctx-scratch-masks!
-  [function-state : CompilerBackendFunctionState]
-  [value : (__tl_dyn-array i64)]) : unit
-  (compiler-backend-function-scratch-set-i64-array!
-    function-state
-    compiler-backend-scratch-i64-array-scavenge-scratch-masks
     value))
 
 ;; Test-only dotted-import read boundary.

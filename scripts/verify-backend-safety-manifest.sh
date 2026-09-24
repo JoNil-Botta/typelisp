@@ -144,12 +144,6 @@ expect_failure shadow-space "win64-shadow-space" \
     "$REGISTRIES" "$CATALOG" "$CONTRACTS"
 cp src/compiler_abi.tl "$WORKDIR/source/src/compiler_abi.tl"
 
-sed 's/compiler-reg-scratch-pick-register-with-siblings/compiler-reg-scratch-pick-register-without-siblings/g' \
-    src/compiler_regalloc.tl > "$WORKDIR/source/src/compiler_regalloc.tl"
-expect_failure scratch-clobber "scratch-live-home" \
-    "$REGISTRIES" "$CATALOG" "$CONTRACTS"
-cp src/compiler_regalloc.tl "$WORKDIR/source/src/compiler_regalloc.tl"
-
 sed 's/"}{z}/"}/g' src/compiler_backend.tl \
     > "$WORKDIR/source/src/compiler_backend.tl"
 expect_failure unmasked-read "avx512-masked-read" \

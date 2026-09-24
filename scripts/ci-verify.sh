@@ -554,7 +554,7 @@ if ci_gate_selected bootstrap-fixpoint; then
     ensure_executable "bootstrapped compiler" "$STAGE2_BIN"
     CI_ARTIFACT_BOOTSTRAP_SOURCES='src,stdlib,typelisp.pkg,tools/embedded-stdlib-tlci,scripts/check-bootstrap-fixpoint.sh,scripts/lib-native-link.sh,scripts/lib-bootstrap-ctfe.sh,scripts/lib-bootstrap-fixpoint-control.sh,scripts/build-embedded-stdlib-tlci.sh'
     CI_ARTIFACT_BOOTSTRAP_CFG='compiler-build-identity,embedded-stdlib-tlci,host-defaults'
-    CI_ARTIFACT_BOOTSTRAP_ENV='TYPELISP_BOOTSTRAP_CFG=<unset>,TYPELISP_BOOTSTRAP_TLCI_MUTATION=0,TYPELISP_BOOTSTRAP_SKIP_CLI_SMOKE=0'
+    CI_ARTIFACT_BOOTSTRAP_ENV='TYPELISP_BOOTSTRAP_TLCI_MUTATION=0,TYPELISP_BOOTSTRAP_SKIP_CLI_SMOKE=0'
     CI_ARTIFACT_BOOTSTRAP_ARGV='scripts/check-bootstrap-fixpoint.sh {producer}'
     ci_compiler_artifact_publish \
         "$ROOT" "$STAGE2_METADATA_FILE" "$STAGE2_PATH_FILE" \
@@ -590,26 +590,21 @@ if ci_gate_selected bootstrap-fixpoint; then
     fi
 fi
 
-# The default-off scratch planner changes the compiler's own ABI and switch
-# movement only when its cfg is enabled. A focused unit fixture is not enough:
-# #4911 reproduced only after a scratch-built stage2 executed its generated
-# stage3 compiler. Require the same multi-generation fixpoint on both hosts.
-# The already-isolated run also carries the #6610 same-commit stdlib mutation:
+# An isolated second bootstrap carries the #6610 same-commit stdlib mutation:
 # stage1 must interpret its changed transformer, stage2 must execute the newly
 # embedded body natively, and compiler/image/provenance outputs must converge.
 # Reuse the normal converged compiler as the seed and skip duplicate CLI checks.
-if ci_gate_selected scratch-vreg-tlci-mutation-bootstrap-fixpoint; then
-    TYPELISP_BOOTSTRAP_CFG=scratch-vreg
-    TYPELISP_BOOTSTRAP_WORKDIR="$ROOT/target/bootstrap-fixpoint-scratch-vreg"
+if ci_gate_selected tlci-mutation-bootstrap-fixpoint; then
+    TYPELISP_BOOTSTRAP_WORKDIR="$ROOT/target/bootstrap-fixpoint-tlci-mutation"
     TYPELISP_BOOTSTRAP_SKIP_CLI_SMOKE=1
     TYPELISP_BOOTSTRAP_TLCI_MUTATION=1
-    export TYPELISP_BOOTSTRAP_CFG TYPELISP_BOOTSTRAP_WORKDIR
+    export TYPELISP_BOOTSTRAP_WORKDIR
     export TYPELISP_BOOTSTRAP_SKIP_CLI_SMOKE TYPELISP_BOOTSTRAP_TLCI_MUTATION
     run_gate \
-        scratch-vreg-tlci-mutation-bootstrap-fixpoint \
+        tlci-mutation-bootstrap-fixpoint \
         scripts/check-bootstrap-fixpoint.sh \
         "$STAGE2_BIN"
-    unset TYPELISP_BOOTSTRAP_CFG TYPELISP_BOOTSTRAP_WORKDIR
+    unset TYPELISP_BOOTSTRAP_WORKDIR
     unset TYPELISP_BOOTSTRAP_SKIP_CLI_SMOKE TYPELISP_BOOTSTRAP_TLCI_MUTATION
 fi
 

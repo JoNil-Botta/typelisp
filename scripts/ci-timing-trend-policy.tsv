@@ -3,7 +3,7 @@ kind	gate	case_or_chunk	phase	factor	min_delta_ms	min_baseline_ms	change_ref	evi
 trend	CI verification	all	complete-verification	1.15	180000	600000	#6882	https://github.com/JoNil-Botta/typelisp/issues/6881
 trend	CI verification	all	critical-path	1.15	180000	600000	#6882	https://github.com/JoNil-Botta/typelisp/issues/6881
 trend	CI verification	all	summed-runner-time	1.15	300000	1200000	#6882	https://github.com/JoNil-Botta/typelisp/issues/6881
-trend	scratch-vreg + TLCI mutation bootstrap fixpoint	all	gate	1.15	15000	60000	#6882	https://github.com/JoNil-Botta/typelisp/issues/6881
+trend	TLCI mutation bootstrap fixpoint	all	gate	1.15	15000	60000	#6882	https://github.com/JoNil-Botta/typelisp/issues/6881
 trend	bootstrap fixpoint	all	gate	1.15	15000	60000	#6882	https://github.com/JoNil-Botta/typelisp/issues/6881
 trend	stage2 opt2-built CLI compile + cross-fixpoint regression	all	gate	1.15	15000	60000	#6882	https://github.com/JoNil-Botta/typelisp/issues/6881
 trend	stage2 compile-profile verifier	all	gate	1.15	15000	60000	#6882	https://github.com/JoNil-Botta/typelisp/issues/6881

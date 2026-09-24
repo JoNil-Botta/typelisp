@@ -517,7 +517,6 @@
   [backend : (& backend str)]
   [lower : (& lower str)]
   [abi : (& abi str)]
-  [regalloc : (& regalloc str)]
   [object-asm : (& object-asm str)]
   [object-elf : (& object-elf str)]
   [object-coff : (& object-coff str)]) : bool
@@ -576,12 +575,6 @@
       "compiler-backend-object-abi-type-supported?"
       "(define (compiler-backend-object-abi-type-supported?"
       "compiler-backend-intlike-scalar-type?")
-    (bsm-guard
-      "scratch-live-home"
-      regalloc
-      "compiler-reg-scratch-assign-items-with-hulls!"
-      "compiler-reg-scratch-tail-mask-count-role?"
-      "compiler-reg-scratch-pick-register-with-siblings")
     (bsm-guard
       "raw-asm-reject"
       object-asm
@@ -723,8 +716,6 @@
       (bsm-read (str_cat.str-cat root "/src/compiler_backend.tl"))]
     [lower : String (bsm-read (str_cat.str-cat root "/src/compiler_lower.tl"))]
     [abi : String (bsm-read (str_cat.str-cat root "/src/compiler_abi.tl"))]
-    [regalloc : String
-      (bsm-read (str_cat.str-cat root "/src/compiler_regalloc.tl"))]
     [object-asm : String
       (bsm-read (str_cat.str-cat root "/src/compiler_object_asm.tl"))]
     [object-elf : String
@@ -752,7 +743,6 @@
         (& backend)
         (& lower)
         (& abi)
-        (& regalloc)
         (& object-asm)
         (& object-elf)
         (& object-coff)))

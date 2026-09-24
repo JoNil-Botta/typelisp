@@ -342,15 +342,10 @@ end
 
 (define (selfhost-lint-package-dead-cfg-source) : String
   "(define (main) : i64
-  (+ (cfg scratch-vreg (scratch-vreg-helper) 40)
-     (+ (cfg embedded-stdlib-tlci (embedded-helper) 1)
-        (cfg compile-profile
-          (profile-mode-helper)
-          (ordinary-mode-helper)))))
-(cfg scratch-vreg
-  (define (scratch-vreg-helper) : i64 7))
-(cfg scratch-vreg
-  (define (scratch-vreg-unused) : i64 8))
+  (+ (cfg embedded-stdlib-tlci (embedded-helper) 1)
+     (cfg compile-profile
+       (profile-mode-helper)
+       (ordinary-mode-helper))))
 (cfg embedded-stdlib-tlci
   (define (embedded-helper) : i64 1))
 (cfg embedded-stdlib-tlci
@@ -1441,12 +1436,11 @@ end
       ;; The explicit API and its dependency stay live. The prefix-colliding
       ;; declaration and the unrelated sibling remain dead.
       [(not (= explicit-root-count 2)) 63]
-      ;; Supported scratch, embedded-TLCI, and profile cfgs reach their live
-      ;; helpers and retain one dead declaration each. The ordinary
-      ;; compile-profile fallback also stays live. The inactive experimental
-      ;; cfg stays absent; the unrelated ordinary bin-local declaration is
-      ;; still dead.
-      [(not (= cfg-bin-count 4)) 61]
+      ;; Supported embedded-TLCI and profile cfgs reach their live helpers and
+      ;; retain one dead declaration each. The ordinary compile-profile
+      ;; fallback also stays live. The inactive experimental cfg stays absent;
+      ;; the unrelated ordinary bin-local declaration is still dead.
+      [(not (= cfg-bin-count 3)) 61]
       [(or
           (< ordinary-mode-index 0)
           (not

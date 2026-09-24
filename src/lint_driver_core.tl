@@ -1987,9 +1987,7 @@
       (parser.compiler-cfg-union
         (parser.compiler-cfg-enable
           (parser.compiler-cfg-enable
-            (parser.compiler-cfg-enable
-              (parser.compiler-cfg-enable (selfhost-lint-language-cfgs) "test")
-              "scratch-vreg")
+            (parser.compiler-cfg-enable (selfhost-lint-language-cfgs) "test")
             "embedded-stdlib-tlci")
           "compiler-build-identity")
         "compile-profile")

@@ -5094,18 +5094,11 @@
           (compiler-reg-low-xmm-vector-clobber-function))
           [(reg.CompilerRegPlan.Plan clobber-assignments _ _ _ _ _)
             (and
-              (cfg
-                scratch-vreg
-                (reg.compiler-reg-location-register?
+              (not
+                (compiler-reg-location-any-register?
                   (reg.compiler-reg-assignment-lookup
                     (reg.compiler-reg-global-shared-view splat-assignments)
-                    0)
-                  (cabi.compiler-abi-xmm-register-id 0))
-                (not
-                  (compiler-reg-location-any-register?
-                    (reg.compiler-reg-assignment-lookup
-                      (reg.compiler-reg-global-shared-view splat-assignments)
-                      0))))
+                    0)))
               (not
                 (reg.compiler-reg-location-register?
                   (reg.compiler-reg-assignment-lookup
@@ -6309,30 +6302,17 @@
             (live.compiler-live-set-contains?
               (reg.compiler-reg-global-shared-view ineligible)
               2))
-          (cfg
-            scratch-vreg
-            (and
-              (reg.compiler-reg-location-register?
+          (and
+            (not
+              (compiler-reg-location-any-register?
                 (reg.compiler-reg-assignment-lookup
                   (reg.compiler-reg-global-shared-view assignments)
-                  0)
-                (cabi.compiler-abi-xmm-register-id 0))
-              (reg.compiler-reg-location-register?
+                  0)))
+            (not
+              (compiler-reg-location-any-register?
                 (reg.compiler-reg-assignment-lookup
                   (reg.compiler-reg-global-shared-view assignments)
-                  1)
-                (cabi.compiler-abi-xmm-register-id 1)))
-            (and
-              (not
-                (compiler-reg-location-any-register?
-                  (reg.compiler-reg-assignment-lookup
-                    (reg.compiler-reg-global-shared-view assignments)
-                    0)))
-              (not
-                (compiler-reg-location-any-register?
-                  (reg.compiler-reg-assignment-lookup
-                    (reg.compiler-reg-global-shared-view assignments)
-                    1)))))
+                  1))))
           (reg.compiler-reg-location-register?
             (reg.compiler-reg-assignment-lookup
               (reg.compiler-reg-global-shared-view assignments)
@@ -6363,18 +6343,12 @@
             (reg.compiler-reg-assignment-lookup
               (reg.compiler-reg-global-shared-view assignments)
               0)
-            (cfg
-              scratch-vreg
-              (cabi.compiler-abi-xmm-register-id 0)
-              (cabi.compiler-abi-xmm-register-id 6)))
+            (cabi.compiler-abi-xmm-register-id 6))
           (reg.compiler-reg-location-register?
             (reg.compiler-reg-assignment-lookup
               (reg.compiler-reg-global-shared-view assignments)
               1)
-            (cfg
-              scratch-vreg
-              (cabi.compiler-abi-xmm-register-id 1)
-              (cabi.compiler-abi-xmm-register-id 7)))
+            (cabi.compiler-abi-xmm-register-id 7))
           (reg.compiler-reg-location-register?
             (reg.compiler-reg-assignment-lookup
               (reg.compiler-reg-global-shared-view assignments)
@@ -6407,26 +6381,13 @@
           (compiler-reg-unassigned?
             (reg.compiler-reg-global-shared-view assignments)
             0)
-          (cfg
-            scratch-vreg
-            (and
-              (reg.compiler-reg-location-register?
-                (reg.compiler-reg-assignment-lookup
-                  (reg.compiler-reg-global-shared-view assignments)
-                  1)
-                (cabi.compiler-abi-xmm-register-id 0))
-              (reg.compiler-reg-location-register?
-                (reg.compiler-reg-assignment-lookup
-                  (reg.compiler-reg-global-shared-view assignments)
-                  2)
-                (cabi.compiler-abi-xmm-register-id 1)))
-            (and
-              (compiler-reg-unassigned?
-                (reg.compiler-reg-global-shared-view assignments)
-                1)
-              (compiler-reg-unassigned?
-                (reg.compiler-reg-global-shared-view assignments)
-                2)))
+          (and
+            (compiler-reg-unassigned?
+              (reg.compiler-reg-global-shared-view assignments)
+              1)
+            (compiler-reg-unassigned?
+              (reg.compiler-reg-global-shared-view assignments)
+              2))
           (reg.compiler-reg-location-register?
             (reg.compiler-reg-assignment-lookup
               (reg.compiler-reg-global-shared-view assignments)
@@ -6459,16 +6420,9 @@
           (compiler-reg-unassigned?
             (reg.compiler-reg-global-shared-view assignments)
             0)
-          (cfg
-            scratch-vreg
-            (reg.compiler-reg-location-register?
-              (reg.compiler-reg-assignment-lookup
-                (reg.compiler-reg-global-shared-view assignments)
-                1)
-              (cabi.compiler-abi-xmm-register-id 1))
-            (compiler-reg-unassigned?
-              (reg.compiler-reg-global-shared-view assignments)
-              1))
+          (compiler-reg-unassigned?
+            (reg.compiler-reg-global-shared-view assignments)
+            1)
           (reg.compiler-reg-location-register?
             (reg.compiler-reg-assignment-lookup
               (reg.compiler-reg-global-shared-view assignments)
@@ -14234,235 +14188,9 @@
         [_ false])]
     [_ false]))
 
-(define (compiler-reg-switch-scratch-test-blocks) : ir.CompilerIrBlockList
-  (ir.compiler-ir-block-cons
-    (ir.CompilerIrBlock.Block
-      (ir.compiler-ir-label "entry")
-      (compiler-reg-test-instr-seq-prepend
-        (ir.CompilerIrInstr.Switch
-          (ir.CompilerIrValue.Var 0)
-          1
-          (ir.compiler-ir-switch-case-seq1
-            (ir.CompilerIrSwitchCase.Case 1 (ir.compiler-ir-label "one")))
-          (ir.compiler-ir-label "other"))
-        (ir.compiler-ir-instr-seq-empty)))
-    ir.CompilerIrBlockList.Nil))
-
-(define (compiler-reg-switch-scratch-test-function) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    (ir.compiler-ir-test-symbol "switch_scratch_vregs")
-    (ir.compiler-ir-param-seq-empty)
-    (ast.AstType.I64)
-    1
-    (compiler-reg-switch-scratch-test-blocks)
-    ir.CompilerIrFunctionAbi.Ordinary))
-
-(define (compiler-reg-switch-scratch-test-plan) : reg.CompilerRegPlan
-  (reg.CompilerRegPlan.Plan
-    (reg.compiler-reg-assignments-prepend
-      (reg.CompilerRegAssignment
-        0
-        (reg.CompilerRegLocation.Register cabi.compiler-reg-id-r9))
-      (reg.compiler-reg-assignment-table-empty))
-    (live.compiler-live-set-empty)
-    (reg.compiler-reg-interval-seq-prepend
-      (reg.CompilerRegInterval 0 0 1)
-      (reg.compiler-reg-interval-seq-empty))
-    (reg.compiler-reg-var-types-insert
-      (reg.compiler-reg-var-types-empty)
-      0
-      (ast.AstType.I64))
-    (reg.compiler-reg-call-split-empty)
-    (reg.compiler-reg-split-plan-empty)))
-
-(define (compiler-reg-switch-scratch-vregs-ok?) : bool
-  (cfg
-    scratch-vreg
-    (let
-      [func : ir.CompilerIrFunction (compiler-reg-switch-scratch-test-function)]
-      [plan : reg.CompilerRegPlan (compiler-reg-switch-scratch-test-plan)]
-      (match (reg.compiler-reg-plan-with-scratch-vreg-result
-        (ast.ast-node-pool-reader-type-segment-bases)
-        (cabi.CompilerRegTargetAbi.Linux)
-        func
-        plan
-        1)
-        [(reg.CompilerRegScratchPlanResult.Result out scratch-plan)
-          (let
-            [index-reg : i64
-              (reg.compiler-reg-scratch-plan-register
-                (reg.compiler-reg-global-shared-view scratch-plan)
-                0
-                0)]
-            [table-reg : i64
-              (reg.compiler-reg-scratch-plan-register
-                (reg.compiler-reg-global-shared-view scratch-plan)
-                0
-                1)]
-            (and
-              (= (reg.compiler-reg-plan-var-count out 1) 1)
-              (=
-                (reg.compiler-reg-scratch-plan-count
-                  (reg.compiler-reg-global-shared-view scratch-plan))
-                2)
-              (not (= index-reg cabi.compiler-reg-id-invalid))
-              (not (= table-reg cabi.compiler-reg-id-invalid))
-              (not (= index-reg table-reg))
-              (not (= index-reg cabi.compiler-reg-id-r9))
-              (not (= table-reg cabi.compiler-reg-id-r9))))]))
-    true))
-
-(define (compiler-reg-bounds-scratch-test-blocks) : ir.CompilerIrBlockList
-  (ir.compiler-ir-block-cons
-    (ir.CompilerIrBlock.Block
-      (ir.compiler-ir-label "entry")
-      (compiler-reg-test-instr-seq-prepend
-        (ir.CompilerIrInstr.BoundsCheck
-          (ir.CompilerIrValue.Var 0)
-          (ir.CompilerIrValue.I64 8)
-          (ir.compiler-ir-label "ok"))
-        (ir.compiler-ir-instr-seq-empty)))
-    ir.CompilerIrBlockList.Nil))
-
-(define (compiler-reg-bounds-scratch-test-function) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    (ir.compiler-ir-test-symbol "bounds_scratch_vregs")
-    (ir.compiler-ir-param-seq-empty)
-    (ast.AstType.I64)
-    1
-    (compiler-reg-bounds-scratch-test-blocks)
-    ir.CompilerIrFunctionAbi.Ordinary))
-
-(define (compiler-reg-bounds-scratch-vregs-ok?) : bool
-  (cfg
-    scratch-vreg
-    (let
-      [func : ir.CompilerIrFunction (compiler-reg-bounds-scratch-test-function)]
-      [plan : reg.CompilerRegPlan (compiler-reg-switch-scratch-test-plan)]
-      (match (reg.compiler-reg-plan-with-scratch-vreg-result
-        (ast.ast-node-pool-reader-type-segment-bases)
-        (cabi.CompilerRegTargetAbi.Linux)
-        func
-        plan
-        1)
-        [(reg.CompilerRegScratchPlanResult.Result out scratch-plan)
-          (let
-            [length-reg : i64
-              (reg.compiler-reg-scratch-plan-register
-                (reg.compiler-reg-global-shared-view scratch-plan)
-                0
-                0)]
-            [index-reg : i64
-              (reg.compiler-reg-scratch-plan-register
-                (reg.compiler-reg-global-shared-view scratch-plan)
-                0
-                1)]
-            (and
-              (= (reg.compiler-reg-plan-var-count out 1) 1)
-              (=
-                (reg.compiler-reg-scratch-plan-count
-                  (reg.compiler-reg-global-shared-view scratch-plan))
-                2)
-              (not (= length-reg cabi.compiler-reg-id-invalid))
-              (not (= index-reg cabi.compiler-reg-id-invalid))
-              (not (= length-reg index-reg))
-              (not (= length-reg cabi.compiler-reg-id-r9))
-              (not (= index-reg cabi.compiler-reg-id-r9))))]))
-    true))
-
-(define (compiler-reg-memory-scratch-test-plan) : reg.CompilerRegPlan
-  (reg.CompilerRegPlan.Plan
-    (reg.compiler-reg-assignments-prepend
-      (reg.CompilerRegAssignment
-        0
-        (reg.CompilerRegLocation.Register cabi.compiler-reg-id-r9))
-      (reg.compiler-reg-assignments-prepend
-        (reg.CompilerRegAssignment
-          1
-          (reg.CompilerRegLocation.Register cabi.compiler-reg-id-r10))
-        (reg.compiler-reg-assignment-table-empty)))
-    (live.compiler-live-set-empty)
-    (reg.compiler-reg-interval-seq-prepend
-      (reg.CompilerRegInterval 0 0 1)
-      (reg.compiler-reg-interval-seq-prepend
-        (reg.CompilerRegInterval 1 0 1)
-        (reg.compiler-reg-interval-seq-empty)))
-    (reg.compiler-reg-var-types-insert
-      (reg.compiler-reg-var-types-insert
-        (reg.compiler-reg-var-types-empty)
-        1
-        (ast.AstType.U64))
-      0
-      (ast.AstType.U64))
-    (reg.compiler-reg-call-split-empty)
-    (reg.compiler-reg-split-plan-empty)))
-
-(define (compiler-reg-memory-scratch-test-function) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    (ci.intern "memory_scratch_vregs")
-    (ir.compiler-ir-param-seq-empty)
-    (ast.AstType.Unit)
-    2
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.CopyBytes
-            (ir.CompilerIrValue.Var 0)
-            (ir.CompilerIrValue.Var 1)
-            7)
-          (ir.compiler-ir-instr-seq-empty)))
-      ir.CompilerIrBlockList.Nil)
-    ir.CompilerIrFunctionAbi.Ordinary))
-
-(define (compiler-reg-memory-scratch-vregs-ok?) : bool
-  (cfg
-    scratch-vreg
-    (match (reg.compiler-reg-plan-with-scratch-vreg-result
-      (ast.ast-node-pool-reader-type-segment-bases)
-      (cabi.CompilerRegTargetAbi.Linux)
-      (compiler-reg-memory-scratch-test-function)
-      (compiler-reg-memory-scratch-test-plan)
-      2)
-      [(reg.CompilerRegScratchPlanResult.Result _ scratch-plan)
-        (let
-          [dst : i64
-            (reg.compiler-reg-scratch-plan-register
-              (reg.compiler-reg-global-shared-view scratch-plan)
-              0
-              0)]
-          [src : i64
-            (reg.compiler-reg-scratch-plan-register
-              (reg.compiler-reg-global-shared-view scratch-plan)
-              0
-              1)]
-          [value : i64
-            (reg.compiler-reg-scratch-plan-register
-              (reg.compiler-reg-global-shared-view scratch-plan)
-              0
-              2)]
-          (and
-            (=
-              (reg.compiler-reg-scratch-plan-count
-                (reg.compiler-reg-global-shared-view scratch-plan))
-              3)
-            (not (= dst cabi.compiler-reg-id-invalid))
-            (not (= src cabi.compiler-reg-id-invalid))
-            (not (= value cabi.compiler-reg-id-invalid))
-            (not (= dst src))
-            (not (= dst value))
-            (not (= src value))
-            (not (= dst cabi.compiler-reg-id-r9))
-            (not (= dst cabi.compiler-reg-id-r10))
-            (not (= src cabi.compiler-reg-id-r9))
-            (not (= src cabi.compiler-reg-id-r10))
-            (not (= value cabi.compiler-reg-id-r9))
-            (not (= value cabi.compiler-reg-id-r10))))])
-    true))
-
 ;; StoreOwned is a real store until the ownership proof's optimizer window has
 ;; closed. Cheap/no-opt compilation can therefore hand it directly to the
-;; scratch planner, where it must reserve exactly the StorePtr machine shape.
+;; scratch fusion grouping, which must classify it exactly like StorePtr.
 (define (compiler-reg-owned-store-scratch-parity-ok?) : bool
   (let
     [plain : ir.CompilerIrInstr
@@ -14475,41 +14203,11 @@
         (ir.CompilerIrValue.Var 0)
         (ir.CompilerIrValue.Var 1)
         (ast.AstType.I64))]
-    [assignments : reg.CompilerRegAssignmentTable
-      (reg.compiler-reg-assignment-table-empty)]
-    [types : reg.CompilerRegVarTypes (reg.compiler-reg-var-types-empty)]
-    [groups : live.CompilerLiveI64Set (live.compiler-live-set-empty)]
-    [labels : reg.CompilerRegLabelSeq (reg.compiler-reg-label-seq-empty)]
-    [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
-    [plain-slots : i64
-      (reg.compiler-reg-scratch-vreg-slots-with-groups
-        bases
-        (cabi.CompilerRegTargetAbi.Linux)
-        (reg.compiler-reg-global-shared-view assignments)
-        (reg.compiler-reg-global-shared-view types)
-        (reg.compiler-reg-global-shared-view groups)
-        (reg.compiler-reg-global-shared-view plain)
-        (reg.compiler-reg-global-shared-view labels)
-        (reg.compiler-reg-global-shared-view labels)
-        false)]
-    [owned-slots : i64
-      (reg.compiler-reg-scratch-vreg-slots-with-groups
-        bases
-        (cabi.CompilerRegTargetAbi.Linux)
-        (reg.compiler-reg-global-shared-view assignments)
-        (reg.compiler-reg-global-shared-view types)
-        (reg.compiler-reg-global-shared-view groups)
-        (reg.compiler-reg-global-shared-view owned)
-        (reg.compiler-reg-global-shared-view labels)
-        (reg.compiler-reg-global-shared-view labels)
-        false)]
     (and
       (reg.compiler-reg-scratch-instr-store-ptr?
         (reg.compiler-reg-global-shared-view plain))
       (reg.compiler-reg-scratch-instr-store-ptr?
-        (reg.compiler-reg-global-shared-view owned))
-      (= plain-slots owned-slots)
-      (= owned-slots (cfg scratch-vreg 2 0)))))
+        (reg.compiler-reg-global-shared-view owned)))))
 
 (define (compiler-reg-owned-root-var-type-ok?) : bool
   (let
@@ -14543,356 +14241,6 @@
           [(ast.AstType.String) true]
           [_ false])]
       [(reg.CompilerRegMaybeType.No) false])))
-
-(define (compiler-reg-scalar-mov-scratch-test-plan) : reg.CompilerRegPlan
-  (reg.CompilerRegPlan.Plan
-    (reg.compiler-reg-assignments-prepend
-      (reg.CompilerRegAssignment 0 (reg.CompilerRegLocation.Spill -8))
-      (reg.compiler-reg-assignments-prepend
-        (reg.CompilerRegAssignment 1 (reg.CompilerRegLocation.Spill -16))
-        (reg.compiler-reg-assignment-table-empty)))
-    (live.compiler-live-set-empty)
-    (reg.compiler-reg-interval-seq-prepend
-      (reg.CompilerRegInterval 0 0 1)
-      (reg.compiler-reg-interval-seq-prepend
-        (reg.CompilerRegInterval 1 0 1)
-        (reg.compiler-reg-interval-seq-empty)))
-    (reg.compiler-reg-var-types-insert
-      (reg.compiler-reg-var-types-insert
-        (reg.compiler-reg-var-types-empty)
-        0
-        (ast.AstType.I32))
-      1
-      (ast.AstType.I32))
-    (reg.compiler-reg-call-split-empty)
-    (reg.compiler-reg-split-plan-empty)))
-
-(define (compiler-reg-scalar-mov-scratch-test-function) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    (ir.compiler-ir-test-symbol "early_scratch_literal_divmod")
-    (ir.compiler-ir-param-seq-empty)
-    (ast.AstType.I64)
-    2
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Mov
-            1
-            (ir.CompilerIrValue.Var 0)
-            (ast.AstType.I32))
-          (ir.compiler-ir-instr-seq-empty)))
-      ir.CompilerIrBlockList.Nil)
-    ir.CompilerIrFunctionAbi.Ordinary))
-
-(define (compiler-reg-scalar-mov-scratch-vregs-ok?) : bool
-  (cfg
-    scratch-vreg
-    (match (reg.compiler-reg-plan-with-scratch-vreg-result
-      (ast.ast-node-pool-reader-type-segment-bases)
-      (cabi.CompilerRegTargetAbi.Windows)
-      (compiler-reg-scalar-mov-scratch-test-function)
-      (compiler-reg-scalar-mov-scratch-test-plan)
-      2)
-      [(reg.CompilerRegScratchPlanResult.Result _ scratch-plan)
-        (and
-          (=
-            (reg.compiler-reg-scratch-plan-count
-              (reg.compiler-reg-global-shared-view scratch-plan))
-            1)
-          (not
-            (=
-              (reg.compiler-reg-scratch-plan-register scratch-plan 0 0)
-              cabi.compiler-reg-id-invalid)))])
-    true))
-
-(define (compiler-reg-fast-alloc-scratch-test-plan) : reg.CompilerRegPlan
-  (reg.CompilerRegPlan.Plan
-    (reg.compiler-reg-assignments-prepend
-      (reg.CompilerRegAssignment 0 (reg.CompilerRegLocation.Spill -8))
-      (reg.compiler-reg-assignment-table-empty))
-    (live.compiler-live-set-empty)
-    (reg.compiler-reg-interval-seq-prepend
-      (reg.CompilerRegInterval 0 0 2)
-      (reg.compiler-reg-interval-seq-empty))
-    (reg.compiler-reg-var-types-insert
-      (reg.compiler-reg-var-types-empty)
-      0
-      (ast.AstType.U64))
-    (reg.compiler-reg-call-split-empty)
-    (reg.compiler-reg-split-plan-empty)))
-
-(define (compiler-reg-fast-alloc-scratch-test-function) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    (ir.compiler-ir-test-symbol "fast_alloc_scratch_vregs")
-    (ir.compiler-ir-param-seq-empty)
-    (ast.AstType.U64)
-    1
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Call
-            0
-            (ir.compiler-ir-test-symbol "tl_alloc")
-            (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.I64 16))
-            (ast.AstType.U64))
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Return
-              (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
-            (ir.compiler-ir-instr-seq-empty))))
-      ir.CompilerIrBlockList.Nil)
-    ir.CompilerIrFunctionAbi.Ordinary))
-
-(define (compiler-reg-fast-alloc-scratch-vregs-ok?) : bool
-  (cfg
-    scratch-vreg
-    (match (reg.compiler-reg-plan-with-scratch-vreg-result
-      (ast.ast-node-pool-reader-type-segment-bases)
-      (cabi.CompilerRegTargetAbi.Windows)
-      (compiler-reg-fast-alloc-scratch-test-function)
-      (compiler-reg-fast-alloc-scratch-test-plan)
-      1)
-      [(reg.CompilerRegScratchPlanResult.Result _ scratch-plan)
-        (let
-          [root : i64
-            (reg.compiler-reg-scratch-plan-register
-              (reg.compiler-reg-global-shared-view scratch-plan)
-              0
-              0)]
-          [head : i64
-            (reg.compiler-reg-scratch-plan-register
-              (reg.compiler-reg-global-shared-view scratch-plan)
-              0
-              1)]
-          [xmm0 : i64 (cabi.compiler-abi-xmm-register-id 0)]
-          (and
-            (=
-              (reg.compiler-reg-scratch-plan-count
-                (reg.compiler-reg-global-shared-view scratch-plan))
-              2)
-            (>= root 0)
-            (>= head 0)
-            (< root xmm0)
-            (< head xmm0)
-            (not (= root head))))])
-    true))
-
-(define (compiler-reg-return-compare-rax-rhs-test-plan) : reg.CompilerRegPlan
-  (reg.CompilerRegPlan.Plan
-    (reg.compiler-reg-assignments-prepend
-      (reg.CompilerRegAssignment 0 (reg.CompilerRegLocation.Spill -8))
-      (reg.compiler-reg-assignments-prepend
-        (reg.CompilerRegAssignment
-          1
-          (reg.CompilerRegLocation.Register cabi.compiler-reg-id-rax))
-        (reg.compiler-reg-assignments-prepend
-          (reg.CompilerRegAssignment 2 (reg.CompilerRegLocation.Spill -16))
-          (reg.compiler-reg-assignment-table-empty))))
-    (live.compiler-live-set-empty)
-    (reg.compiler-reg-interval-seq-prepend
-      (reg.CompilerRegInterval 0 0 2)
-      (reg.compiler-reg-interval-seq-prepend
-        (reg.CompilerRegInterval 1 0 2)
-        (reg.compiler-reg-interval-seq-prepend
-          (reg.CompilerRegInterval 2 0 2)
-          (reg.compiler-reg-interval-seq-empty))))
-    (reg.compiler-reg-var-types-insert
-      (reg.compiler-reg-var-types-insert
-        (reg.compiler-reg-var-types-insert
-          (reg.compiler-reg-var-types-empty)
-          0
-          (ast.AstType.U64))
-        1
-        (ast.AstType.U64))
-      2
-      (ast.AstType.Bool))
-    (reg.compiler-reg-call-split-empty)
-    (reg.compiler-reg-split-plan-empty)))
-
-(define (compiler-reg-return-compare-rax-rhs-test-function) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    (ir.compiler-ir-test-symbol "return_compare_rax_rhs")
-    (ir.compiler-ir-param-seq-empty)
-    (ast.AstType.Bool)
-    3
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.BinOp
-            2
-            (ir.CompilerIrBinOp.Ne)
-            (ir.CompilerIrValue.Var 0)
-            (ir.CompilerIrValue.Var 1)
-            (ast.AstType.U64))
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Return
-              (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 2)))
-            (ir.compiler-ir-instr-seq-empty))))
-      ir.CompilerIrBlockList.Nil)
-    ir.CompilerIrFunctionAbi.Ordinary))
-
-(define (compiler-reg-return-compare-rax-rhs-scratch-vregs-ok?) : bool
-  (cfg
-    scratch-vreg
-    (match (reg.compiler-reg-plan-with-scratch-vreg-result
-      (ast.ast-node-pool-reader-type-segment-bases)
-      (cabi.CompilerRegTargetAbi.Windows)
-      (compiler-reg-return-compare-rax-rhs-test-function)
-      (compiler-reg-return-compare-rax-rhs-test-plan)
-      3)
-      [(reg.CompilerRegScratchPlanResult.Result _ scratch-plan)
-        (let
-          [primary : i64
-            (reg.compiler-reg-scratch-plan-register
-              (reg.compiler-reg-global-shared-view scratch-plan)
-              0
-              0)]
-          [alternate : i64
-            (reg.compiler-reg-scratch-plan-register
-              (reg.compiler-reg-global-shared-view scratch-plan)
-              0
-              1)]
-          (and
-            (=
-              (reg.compiler-reg-scratch-plan-count
-                (reg.compiler-reg-global-shared-view scratch-plan))
-              2)
-            (>= primary 0)
-            (>= alternate 0)
-            (not (= primary cabi.compiler-reg-id-rax))
-            (not (= alternate cabi.compiler-reg-id-rax))
-            (not (= primary alternate))))])
-    true))
-
-(define (compiler-reg-binop-global-rhs-scratch-test-function) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    (ir.compiler-ir-test-symbol "binop_global_rhs_scratch")
-    (ir.compiler-ir-param-seq-prepend
-      (ir.CompilerIrParam.Param "x" (ast.AstType.I64) 0)
-      (ir.compiler-ir-param-seq-prepend
-        (ir.CompilerIrParam.Param "y" (ast.AstType.I64) 1)
-        (ir.compiler-ir-param-seq-empty)))
-    (ast.AstType.I64)
-    5
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.BinOp
-            2
-            (ir.CompilerIrBinOp.Mul)
-            (ir.CompilerIrValue.Var 0)
-            (ir.CompilerIrValue.Global
-              (ir.compiler-ir-test-symbol "binop_global_rhs_value"))
-            (ast.AstType.I64))
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              3
-              (ir.CompilerIrValue.Var 2)
-              (ast.AstType.I64))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.BinOp
-                4
-                (ir.CompilerIrBinOp.Sub)
-                (ir.CompilerIrValue.Var 1)
-                (ir.CompilerIrValue.Var 3)
-                (ast.AstType.I64))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Return
-                  (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 4)))
-                (ir.compiler-ir-instr-seq-empty))))))
-      ir.CompilerIrBlockList.Nil)
-    ir.CompilerIrFunctionAbi.Ordinary))
-
-(define (compiler-reg-binop-global-rhs-scratch-test-plan) : reg.CompilerRegPlan
-  (let
-    [func : ir.CompilerIrFunction
-      (compiler-reg-binop-global-rhs-scratch-test-function)]
-    [assignments : reg.CompilerRegAssignmentTable
-      (reg.compiler-reg-assignments-prepend
-        (reg.CompilerRegAssignment
-          0
-          (reg.CompilerRegLocation.Register cabi.compiler-reg-id-rax))
-        (reg.compiler-reg-assignments-prepend
-          (reg.CompilerRegAssignment 1 (reg.CompilerRegLocation.Spill -8))
-          (reg.compiler-reg-assignments-prepend
-            (reg.CompilerRegAssignment 2 (reg.CompilerRegLocation.Spill -16))
-            (reg.compiler-reg-assignments-prepend
-              (reg.CompilerRegAssignment 3 (reg.CompilerRegLocation.Spill -24))
-              (reg.compiler-reg-assignments-prepend
-                (reg.CompilerRegAssignment
-                  4
-                  (reg.CompilerRegLocation.Register cabi.compiler-reg-id-rax))
-                (reg.compiler-reg-assignment-table-empty))))))]
-    [types : reg.CompilerRegVarTypes
-      (reg.compiler-reg-var-types-insert
-        (reg.compiler-reg-var-types-insert
-          (reg.compiler-reg-var-types-insert
-            (reg.compiler-reg-var-types-insert
-              (reg.compiler-reg-var-types-insert
-                (reg.compiler-reg-var-types-empty)
-                0
-                (ast.AstType.I64))
-              1
-              (ast.AstType.I64))
-            2
-            (ast.AstType.I64))
-          3
-          (ast.AstType.I64))
-        4
-        (ast.AstType.I64))]
-    (reg.CompilerRegPlan.Plan
-      assignments
-      (live.compiler-live-set-empty)
-      (reg.compiler-reg-live-intervals
-        (ir.compiler-ir-global-shared-view func)
-        (live.compiler-live-analyze-function
-          (ir.compiler-ir-global-shared-view func)))
-      types
-      (reg.compiler-reg-call-split-empty)
-      (reg.compiler-reg-split-plan-empty))))
-
-(define (compiler-reg-binop-global-rhs-scratch-vregs-ok?) : bool
-  (cfg
-    scratch-vreg
-    (let
-      [func : ir.CompilerIrFunction
-        (compiler-reg-binop-global-rhs-scratch-test-function)]
-      [plan : reg.CompilerRegPlan
-        (compiler-reg-binop-global-rhs-scratch-test-plan)]
-      [types : reg.CompilerRegVarTypes
-        (reg.compiler-reg-plan-types (reg.compiler-reg-global-shared-view plan))]
-      [groups : live.CompilerLiveI64Set
-        (reg.compiler-reg-function-group-vars
-          (ast.ast-node-pool-reader-type-segment-bases)
-          (ir.compiler-ir-global-shared-view func)
-          (reg.compiler-reg-global-shared-view types))]
-      (match (reg.compiler-reg-plan-with-scratch-vreg-result-with-groups
-        (ast.ast-node-pool-reader-type-segment-bases)
-        (cabi.CompilerRegTargetAbi.Windows)
-        (ir.compiler-ir-global-shared-view func)
-        groups
-        plan
-        5)
-        [(reg.CompilerRegScratchPlanResult.Result _ scratch-plan)
-          (let
-            [lhs : i64
-              (reg.compiler-reg-scratch-plan-register
-                (reg.compiler-reg-global-shared-view scratch-plan)
-                0
-                0)]
-            [rhs : i64
-              (reg.compiler-reg-scratch-plan-register
-                (reg.compiler-reg-global-shared-view scratch-plan)
-                0
-                1)]
-            (and
-              (not (= lhs cabi.compiler-reg-id-invalid))
-              (not (= rhs cabi.compiler-reg-id-invalid))
-              (not (= lhs rhs))))]))
-    true))
 
 (define (compiler-reg-scratch-sibling-test-requirement
   [point : i64]
@@ -15374,10 +14722,7 @@
             (cabi.CompilerRegTargetAbi.Windows)
             (reg.CompilerRegScratchClass.Xmm))
           (reg.compiler-reg-id-seq-empty))
-        (cfg
-          scratch-vreg
-          (cabi.compiler-abi-xmm-register-id 0)
-          (cabi.compiler-abi-xmm-register-id 2))))))
+        (cabi.compiler-abi-xmm-register-id 2)))))
 
 (define (compiler-reg-scratch-callee-saved-registers-ok?) : bool
   (and
@@ -17939,18 +17284,12 @@
           (reg.compiler-reg-assignment-lookup
             (reg.compiler-reg-global-shared-view assignments)
             0)
-          (cfg
-            scratch-vreg
-            (cabi.compiler-abi-xmm-register-id 0)
-            (cabi.compiler-abi-xmm-register-id 2)))
+          (cabi.compiler-abi-xmm-register-id 2))
         (reg.compiler-reg-location-register?
           (reg.compiler-reg-assignment-lookup
             (reg.compiler-reg-global-shared-view assignments)
             1)
-          (cfg
-            scratch-vreg
-            (cabi.compiler-abi-xmm-register-id 0)
-            (cabi.compiler-abi-xmm-register-id 2))))]))
+          (cabi.compiler-abi-xmm-register-id 2)))]))
 
 (define (compiler-reg-overlap-spill-ok?) : bool
   (match (reg.compiler-reg-plan-function (compiler-reg-overlap-function))
@@ -18000,42 +17339,27 @@
           (reg.compiler-reg-assignment-lookup
             (reg.compiler-reg-global-shared-view assignments)
             0)
-          (cfg
-            scratch-vreg
-            (cabi.compiler-abi-xmm-register-id 0)
-            (cabi.compiler-abi-xmm-register-id 2)))
+          (cabi.compiler-abi-xmm-register-id 2))
         (reg.compiler-reg-location-register?
           (reg.compiler-reg-assignment-lookup
             (reg.compiler-reg-global-shared-view assignments)
             1)
-          (cfg
-            scratch-vreg
-            (cabi.compiler-abi-xmm-register-id 1)
-            (cabi.compiler-abi-xmm-register-id 3)))
+          (cabi.compiler-abi-xmm-register-id 3))
         (reg.compiler-reg-location-register?
           (reg.compiler-reg-assignment-lookup
             (reg.compiler-reg-global-shared-view assignments)
             2)
-          (cfg
-            scratch-vreg
-            (cabi.compiler-abi-xmm-register-id 2)
-            (cabi.compiler-abi-xmm-register-id 4)))
+          (cabi.compiler-abi-xmm-register-id 4))
         (reg.compiler-reg-location-register?
           (reg.compiler-reg-assignment-lookup
             (reg.compiler-reg-global-shared-view assignments)
             3)
-          (cfg
-            scratch-vreg
-            (cabi.compiler-abi-xmm-register-id 3)
-            (cabi.compiler-abi-xmm-register-id 5)))
+          (cabi.compiler-abi-xmm-register-id 5))
         (reg.compiler-reg-location-register?
           (reg.compiler-reg-assignment-lookup
             (reg.compiler-reg-global-shared-view assignments)
             4)
-          (cfg
-            scratch-vreg
-            (cabi.compiler-abi-xmm-register-id 4)
-            (cabi.compiler-abi-xmm-register-id 6))))]))
+          (cabi.compiler-abi-xmm-register-id 6)))]))
 
 ;; SIMD plan (#perf): an integer value live across a call now keeps a callee-saved
 ;; register home (the SIMD integer pool is the 5 callee-saved registers, which the
@@ -18139,10 +17463,7 @@
           (reg.compiler-reg-assignment-lookup
             (reg.compiler-reg-global-shared-view assignments)
             2)
-          (cfg
-            scratch-vreg
-            (cabi.compiler-abi-xmm-register-id 0)
-            (cabi.compiler-abi-xmm-register-id 2))))]))
+          (cabi.compiler-abi-xmm-register-id 2)))]))
 
 (define (compiler-reg-call-arg-ok?) : bool
   (match (reg.compiler-reg-plan-function (compiler-reg-call-arg-function))
@@ -18180,10 +17501,7 @@
           (reg.compiler-reg-assignment-lookup
             (reg.compiler-reg-global-shared-view assignments)
             2)
-          (cfg
-            scratch-vreg
-            (cabi.compiler-abi-xmm-register-id 0)
-            (cabi.compiler-abi-xmm-register-id 2))))]))
+          (cabi.compiler-abi-xmm-register-id 2)))]))
 
 (define (compiler-reg-ineligible-ok?) : bool
   (match (reg.compiler-reg-plan-function (compiler-reg-ineligible-function))
@@ -18227,10 +17545,7 @@
               (reg.compiler-reg-assignment-lookup
                 (reg.compiler-reg-global-shared-view assignments)
                 1)
-              (cfg
-                scratch-vreg
-                (cabi.compiler-abi-xmm-register-id 0)
-                (cabi.compiler-abi-xmm-register-id 2)))
+              (cabi.compiler-abi-xmm-register-id 2))
             (reg.compiler-reg-location-register?
               (reg.compiler-reg-assignment-lookup
                 (reg.compiler-reg-global-shared-view assignments)
@@ -20304,27 +19619,25 @@
         ;; Families 14 and 15 are fixed YMM/ZMM spill scratch. They must stay
         ;; outside both scalar-XMM and vector allocation pools so an implicit
         ;; spill temporary cannot overwrite an unrelated resident value.
-        (= (reg.compiler-reg-id-seq-count sysv-pool) (cfg scratch-vreg 14 12))
-        (= (reg.compiler-reg-id-seq-count win-pool) (cfg scratch-vreg 14 12))
+        (= (reg.compiler-reg-id-seq-count sysv-pool) 12)
+        (= (reg.compiler-reg-id-seq-count win-pool) 12)
         (= (reg.compiler-reg-id-seq-count win-vector-pool) 12)
         (=
           (reg.compiler-reg-xmm-caller-register-count-for-abi
             cabi.CompilerRegTargetAbi.Linux)
-          (cfg scratch-vreg 14 12))
+          12)
         (=
           (reg.compiler-reg-xmm-caller-register-count-for-abi
             cabi.CompilerRegTargetAbi.Windows)
-          (cfg scratch-vreg 6 4))
-        (=
+          4)
+        (not
           (reg.compiler-reg-id-seq-contains?
             (clone sysv-pool)
-            (cabi.compiler-abi-xmm-register-id 0))
-          (reg.compiler-reg-low-xmm-allocatable?))
-        (=
+            (cabi.compiler-abi-xmm-register-id 0)))
+        (not
           (reg.compiler-reg-id-seq-contains?
             (clone sysv-pool)
-            (cabi.compiler-abi-xmm-register-id 1))
-          (reg.compiler-reg-low-xmm-allocatable?))
+            (cabi.compiler-abi-xmm-register-id 1)))
         (reg.compiler-reg-id-seq-contains?
           (clone sysv-pool)
           (cabi.compiler-abi-xmm-register-id 2))
@@ -20482,10 +19795,7 @@
           (reg.compiler-reg-assignment-lookup win-vector 0)))
       (reg.compiler-reg-location-register?
         (reg.compiler-reg-assignment-lookup sysv-leaf 0)
-        (cfg
-          scratch-vreg
-          (cabi.compiler-abi-xmm-register-id 0)
-          (cabi.compiler-abi-xmm-register-id 2))))))
+        (cabi.compiler-abi-xmm-register-id 2)))))
 
 (define (compiler-reg-xmm-shared-greedy-bank-ok?) : bool
   (let
@@ -23441,32 +22751,11 @@
       "compiler-reg-group-pair-widening-ok?"
       (cfg test (compiler-reg-group-pair-widening-ok?) true))
     (compiler-regalloc-self-test-require!
-      "compiler-reg-switch-scratch-vregs-ok?"
-      (compiler-reg-switch-scratch-vregs-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-bounds-scratch-vregs-ok?"
-      (compiler-reg-bounds-scratch-vregs-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-memory-scratch-vregs-ok?"
-      (compiler-reg-memory-scratch-vregs-ok?))
-    (compiler-regalloc-self-test-require!
       "compiler-reg-owned-store-scratch-parity-ok?"
       (compiler-reg-owned-store-scratch-parity-ok?))
     (compiler-regalloc-self-test-require!
       "compiler-reg-owned-root-var-type-ok?"
       (compiler-reg-owned-root-var-type-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-scalar-mov-scratch-vregs-ok?"
-      (compiler-reg-scalar-mov-scratch-vregs-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-fast-alloc-scratch-vregs-ok?"
-      (compiler-reg-fast-alloc-scratch-vregs-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-return-compare-rax-rhs-scratch-vregs-ok?"
-      (compiler-reg-return-compare-rax-rhs-scratch-vregs-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-binop-global-rhs-scratch-vregs-ok?"
-      (compiler-reg-binop-global-rhs-scratch-vregs-ok?))
     (compiler-regalloc-self-test-require!
       "compiler-reg-scratch-producer-phi-sharing-ok?"
       (compiler-reg-scratch-producer-phi-sharing-ok?))

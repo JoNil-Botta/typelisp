@@ -3770,50 +3770,6 @@
         lowered
         reason)]))
 
-(define (build-package-try-prepare-direct-runtime
-  [name : String]
-  [kind : load.CompilerPkgKind]
-  [target : backend.CompilerBackendTarget]
-  [opt-level : i64]
-  [mode : backend.CompilerBackendMode]
-  [debug-info : bool]
-  [path-budget : i64]
-  [linux-budget-override : bool]
-  [emit-entry : bool]
-  [crt-entry : bool]
-  [decls : ast.AstDeclList]
-  [paths : ast.AstDeclPathList]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultBuildPackagePreparedRuntime
-  (let
-    [preflight : BuildPackageDirectObjectPreflight
-      (build-package-direct-object-preflight
-        kind
-        target
-        mode
-        debug-info
-        path-budget
-        linux-budget-override
-        (owned_view.compiler-owned-shared-view decls)
-        (& paths))]
-    [lowered : compiler_driver_core.ResultCompilerDriverLowered
-      (compiler_driver_core.compiler-driver-lower-package-loaded
-        ""
-        name
-        target
-        mode
-        decls
-        paths
-        (owned_view.compiler-owned-shared-view cfgs))]
-    (build-package-emit-preflighted-runtime
-      kind
-      target
-      opt-level
-      mode
-      emit-entry
-      crt-entry
-      preflight
-      lowered)))
-
 (define (build-package-graph-node-artifact-paths
   [node : BuildPackageGraphNode]
   [profile : BuildProfile]
@@ -7393,28 +7349,6 @@
             (string.eq message "diagnostic")]
           [_ false]))
       (io.panic "strict direct-object route failed"))))
-
-(define (build-package-prepare-runtime
-  [request : BuildPackageDirectObjectRequest]) : ResultBuildPackagePreparedRuntime
-  (let
-    [prepared : ResultBuildPackagePreparedRuntime
-      (build-package-try-prepare-direct-runtime
-        request.name
-        request.kind
-        request.target
-        request.opt-level
-        request.mode
-        request.debug-info
-        request.path-budget
-        request.linux-budget-override
-        request.emit-entry
-        request.crt-entry
-        request.decls
-        request.paths
-        request.cfgs)]
-    (if request.require-direct-object
-      (build-package-require-direct-object prepared)
-      prepared)))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)

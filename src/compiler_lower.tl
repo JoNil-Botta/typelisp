@@ -81086,27 +81086,6 @@
       (lower-source-language-cfgs)
       (tc_core.tc-prefix-default-cache-scope))))
 
-(define (lower-compiler-program-with-decl-paths-mode-and-package
-  [entry-path : String]
-  [program : ast.AstProgram]
-  [paths : ast.AstDeclPathList]
-  [mode : CompilerLowerMode]
-  [package-name : String]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLower
-  (let
-    [state : CompilerLowerState (compiler-lower-state-new)]
-    (begin
-      (compiler-lower-state-set-spmd-package! state package-name)
-      (lower-compiler-program-with-decl-paths-mode-cache-and-state
-        state
-        entry-path
-        program
-        paths
-        mode
-        (svec.new)
-        (lower-global-shared-view cfgs)
-        (tc_core.tc-prefix-default-cache-scope)))))
-
 (define (lower-compiler-program [program : ast.AstProgram]) : ResultCompilerLower
   (lower-compiler-program-with-path "<source>" program))
 

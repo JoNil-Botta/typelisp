@@ -1033,23 +1033,6 @@
       profile-state
       backend-state)))
 
-(define (compiler-driver-lowered-from-active-pools
-  [program : compiler_ir_types.CompilerIrProgram]
-  [spans : compiler_ir_types.CompilerSourceSpans]) : ResultCompilerDriverLowered
-  (let
-    [profile-state : profile_state.CompilerProfileState
-      (profile_state.compiler-profile-state-new)]
-    [backend-state : compiler_backend.CompilerBackendState
-      (compiler_backend.compiler-backend-state-new-with-metrics
-        (ci.intern-compat-state-capture-active)
-        (profile_state.compiler-profile-state-metrics
-          (owned_view.compiler-owned-shared-view profile-state)))]
-    (compiler-driver-lowered-from-active-pools-and-profile-state-and-backend-state
-      program
-      spans
-      profile-state
-      backend-state)))
-
 (define (compiler-driver-lowered-from-pools-and-profile-state-and-backend-state
   [program : compiler_ir_types.CompilerIrProgram]
   [spans : compiler_ir_types.CompilerSourceSpans]
@@ -6251,26 +6234,6 @@
         (ResultCompilerDriverLowered.Err
           diag
           (compiler-driver-state-advisories state))])))
-
-(define (compiler-driver-lower-package-loaded
-  [input-path : String]
-  [package-name : String]
-  [target : compiler_backend.CompilerBackendTarget]
-  [mode : compiler_backend.CompilerBackendMode]
-  [decls : compiler_ast_types.AstDeclList]
-  [paths : compiler_ast_types.AstDeclPathList]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriverLowered
-  (match (compiler_lower.lower-compiler-program-with-decl-paths-mode-and-package
-    input-path
-    (compiler_ast_types.ast-program decls)
-    paths
-    (compiler-driver-lower-mode-for-target target mode)
-    package-name
-    (owned_view.compiler-owned-shared-view cfgs))
-    [(compiler_lower.ResultCompilerLower.Ok program spans)
-      (compiler-driver-lowered-from-active-pools program spans)]
-    [(compiler_lower.ResultCompilerLower.Err diag)
-      (ResultCompilerDriverLowered.Err diag (compiler-driver-serial-advisories))]))
 
 (define (compiler-driver-load-package-file-with-runtime-cfg
   [input-path : String]

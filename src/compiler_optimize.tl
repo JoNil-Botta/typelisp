@@ -7455,6 +7455,22 @@
           (ast.AstType.Unit))]
       [_ (ast.AstType.Unit)])))
 
+;; A String's descriptor is a fixed pair of words even though its byte buffer
+;; is dynamic. Admit only the exact runtime descriptor allocation here; all
+;; pointer-use, ownership-edge and escape checks of word splitting still apply.
+;; This does not make String storage a general stack-promotion candidate.
+(define (opt-aggregate-split-direct-alloc [instr : ir.CompilerIrInstr]) : OptMaybeAggregateAlloc
+  (match (compiler-opt-global-shared-view instr)
+    [(ir.CompilerIrInstr.Call
+        dst
+        name
+        (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.I64 16))
+        (ast.AstType.String))
+      (if (ir.compiler-ir-symbol-eq? name cbi.compiler-builtin-id-tl-alloc)
+        (OptMaybeAggregateAlloc.Some dst (ast.AstType.String) 16)
+        (OptMaybeAggregateAlloc.No))]
+    [_ (opt-aggregate-direct-alloc instr)]))
+
 ;; Word count of the allocation rooted at `index`: 0 when the instruction is not
 ;; a root at all, -1 when it is a root this pass will not take (a `tl_alloc`
 ;; whose size is not a whole number of words).
@@ -7477,7 +7493,8 @@
           storage)
         0)]
     [_
-      (match (opt-aggregate-direct-alloc (opt-aggregate-split-at flat index))
+      (match (opt-aggregate-split-direct-alloc
+        (opt-aggregate-split-at flat index))
         [(OptMaybeAggregateAlloc.Some _ _ size)
           (if (= (- size (* (/ size 8) 8)) 0)
             (/ size 8)
@@ -7493,7 +7510,8 @@
         (array-ref flat.starts index)
         storage)]
     [_
-      (match (opt-aggregate-direct-alloc (opt-aggregate-split-at flat index))
+      (match (opt-aggregate-split-direct-alloc
+        (opt-aggregate-split-at flat index))
         [(OptMaybeAggregateAlloc.Some _ ty _) ty]
         [(OptMaybeAggregateAlloc.No) (ast.AstType.Unit)])]))
 
@@ -132658,13 +132676,23 @@
                       (compiler-opt-global-shared-view final)))]
                 ;; IV-AFF: derived counters, after the unswitch has shaped the
                 ;; loops it wanted and before the last CFG cleanup.
-                [counted : ir.CompilerIrFunction
+                [derived : ir.CompilerIrFunction
                   (compiler-opt-debug-observe-function
                     type-segment-bases
                     "iv_aff"
                     (opt-iv-aff-final
                       type-segment-bases
                       (compiler-opt-global-shared-view unswitched)))]
+                ;; A wide power-of-two global multiply becomes a shift only
+                ;; here, after every pass that treats a shift as a possible
+                ;; abort (opt-const-global-mul-shift-final).
+                [counted : ir.CompilerIrFunction
+                  (compiler-opt-debug-observe-function
+                    type-segment-bases
+                    "mul_shift"
+                    (opt-const-global-mul-shift-final
+                      (compiler-opt-global-shared-view summaries.const-divisors)
+                      (compiler-opt-global-shared-view derived)))]
                 [unswitch-changed : bool
                   (not
                     (opt-function-eq
@@ -143937,6 +143965,99 @@
 (define (opt-inline-checked-generation-current) : i64
   opt-inline-checked-generation)
 
+;; --- callee-plan memo ---------------------------------------------------------
+;; A verdict prices the callee by optimizing its body alone and reading the plan
+;; at the site's depth (opt-inline-checked-plan-cost-at, whose entry-weight
+;; argument is unused). The same callee is priced at many sites, and in bottom-up
+;; SCC order its body is usually already final: one run per distinct body and
+;; depth answers them all. Entries hold the priced body itself -- a view into the
+;; inline stage's function index, whose bodies (replaced ones included) live until
+;; the stage ends -- and match structurally with opt-function-eq, so a body that
+;; changed is priced afresh. The memo is emptied whenever the checked tier begins
+;; a program and when an inline stage ends, so no entry outlives the stage that
+;; owns its body. The tables grow in the IR label arena (DELIBERATE-RAW #6620):
+;; verdicts run in a scratch arena that is rewound after each one.
+(define opt-inline-callee-cost-count : i64
+  0)
+(define opt-inline-callee-cost-funcs : (__tl_dyn-array ir.CompilerIrFunction)
+  (__tl_make-array ir.CompilerIrFunction 1))
+(define opt-inline-callee-cost-depths : (__tl_dyn-array i64)
+  (__tl_make-array i64 1))
+(define opt-inline-callee-cost-values : (__tl_dyn-array i64)
+  (__tl_make-array i64 1))
+
+(define (opt-inline-callee-cost-reset!) : unit
+  (set! opt-inline-callee-cost-count 0))
+
+(define (opt-inline-callee-cost-lookup
+  [type-segment-bases : i64]
+  [callee : ir.CompilerIrFunction]
+  [depth : i64]) : i64
+  (let
+    [i : i64 0]
+    (begin
+      (while (< i opt-inline-callee-cost-count)
+        (begin
+          (when
+            (and
+              (= (array-ref opt-inline-callee-cost-depths i) depth)
+              (opt-function-eq
+                type-segment-bases
+                (compiler-opt-global-array-element-shared-view
+                  opt-inline-callee-cost-funcs
+                  i)
+                (compiler-opt-global-shared-view callee)))
+            (return (array-ref opt-inline-callee-cost-values i)))
+          (set! i (+ i 1))))
+      (- 0 1))))
+
+(define (opt-inline-callee-cost-record!
+  [callee : ir.CompilerIrFunction]
+  [depth : i64]
+  [cost : i64]) : unit
+  (begin
+    (when
+      (>=
+        opt-inline-callee-cost-count
+        (array-length opt-inline-callee-cost-funcs))
+      (in-arena
+        (arena.Arena (ir.compiler-ir-label-arena))
+        (let
+          [size : i64 (* 2 (array-length opt-inline-callee-cost-funcs))]
+          [funcs : (__tl_dyn-array ir.CompilerIrFunction)
+            (__tl_make-array ir.CompilerIrFunction size)]
+          [depths : (__tl_dyn-array i64) (__tl_make-array i64 size)]
+          [values : (__tl_dyn-array i64) (__tl_make-array i64 size)]
+          [i : i64 0]
+          (begin
+            (while (< i opt-inline-callee-cost-count)
+              (begin
+                (set!
+                  (array-ref funcs i)
+                  (compiler-opt-global-array-element-shared-view
+                    opt-inline-callee-cost-funcs
+                    i))
+                (set!
+                  (array-ref depths i)
+                  (array-ref opt-inline-callee-cost-depths i))
+                (set!
+                  (array-ref values i)
+                  (array-ref opt-inline-callee-cost-values i))
+                (set! i (+ i 1))))
+            (set! opt-inline-callee-cost-funcs funcs)
+            (set! opt-inline-callee-cost-depths depths)
+            (set! opt-inline-callee-cost-values values)))))
+    (set!
+      (array-ref opt-inline-callee-cost-funcs opt-inline-callee-cost-count)
+      (compiler-opt-global-shared-view callee))
+    (set!
+      (array-ref opt-inline-callee-cost-depths opt-inline-callee-cost-count)
+      depth)
+    (set!
+      (array-ref opt-inline-callee-cost-values opt-inline-callee-cost-count)
+      cost)
+    (set! opt-inline-callee-cost-count (+ opt-inline-callee-cost-count 1))))
+
 (define (opt-inline-checked-program-begin!) : unit
   (begin
     (set! opt-inline-checked-budget (opt-inline-checked-program-budget))
@@ -143944,6 +144065,7 @@
       opt-inline-checked-relaxed-budget
       (opt-inline-checked-relaxed-program-budget))
     (set! opt-inline-caller-checked-taken? false)
+    (opt-inline-callee-cost-reset!)
     (opt-inline-checked-caller-begin!)))
 
 ;; Arm (or disarm) the tier. The whole-program optimizer entries arm it; a
@@ -145268,12 +145390,28 @@
     ;; site's depth, its prologue and its spill traffic once per site
     ;; execution.
     [callee-cost : i64
-      (opt-inline-checked-plan-cost-at
-        (compiler-opt-global-shared-view pools)
-        type-segment-bases
-        (compiler-opt-global-shared-view callee)
-        site-depth
-        site-weight)]
+      (let
+        [memo : i64
+          (opt-inline-callee-cost-lookup
+            type-segment-bases
+            (compiler-opt-global-shared-view callee)
+            site-depth)]
+        (if (>= memo 0)
+          memo
+          (let
+            [priced : i64
+              (opt-inline-checked-plan-cost-at
+                (compiler-opt-global-shared-view pools)
+                type-segment-bases
+                (compiler-opt-global-shared-view callee)
+                site-depth
+                site-weight)]
+            (begin
+              (opt-inline-callee-cost-record!
+                (compiler-opt-global-shared-view callee)
+                site-depth
+                priced)
+              priced))))]
     ;; INL-18: what the site's literal arguments fold out of the callee, priced
     ;; on the callee alone with those parameters pinned. A free inline of such
     ;; a site saves the boundary AND this, so the cap is read against both.
@@ -150094,6 +150232,7 @@
             (opt-inline-synth-reset!)
             (opt-inline-owned-state-reset! true)
             (opt-pure-call-inline-memory-reset!)
+            (opt-inline-callee-cost-reset!)
             out))))))
 
 (define (opt-inline-program-functions-with-spans
@@ -150150,6 +150289,7 @@
         (opt-inline-synth-reset!)
         (opt-inline-owned-state-reset! true)
         (opt-pure-call-inline-memory-reset!)
+        (opt-inline-callee-cost-reset!)
         out))))
 
 (define (opt-function-seq-defines-from?
@@ -154018,7 +154158,8 @@
   [functions : ir.CompilerIrFunctionSeq]) : opt_i64_i64_map.Map
   (opt-const-globals-disqualified-from disq functions 0))
 
-;; A constant only earns substitution when it fits a signed 32-bit immediate, so
+;; An ordinary operand only earns substitution when it fits a signed 32-bit
+;; immediate, so
 ;; the backend can fold it directly into the instruction (`and reg, $imm32`)
 ;; instead of loading it. A wider constant has to be materialized into a
 ;; register with `movabs` at every use, and -- decisively -- the global form it
@@ -154057,12 +154198,18 @@
 ;; No variant is a net win and each moves a row by more than the 0.05% this
 ;; tree gates on, so the rule stays until the allocator can rematerialize a
 ;; `movabs`.
+;;
+;; A narrow exception is a positive wide power of two used by a 64-bit multiply:
+;; consume it as a shift count in [31, 62], so no wide literal is materialized.
+;; The table retains those powers, but ordinary substitutions still check imm32.
 (define (opt-const-globals-imm32-fits? [n : i64]) : bool
   (and (>= n (- 0 2147483648)) (<= n 2147483647)))
 
 ;; Build the constant table: literal `CompilerIrValue.I64` globals that are not
 ;; disqualified (stored anywhere / address-taken anywhere) and are
-;; imm32-encodable. ZERO is a member like any other value. It used to be
+;; imm32-encodable or positive powers of two. Wide powers are consumed only by
+;; the multiply-to-shift rewrite; all ordinary positions retain the imm32 gate.
+;; ZERO is a member like any other value. It used to be
 ;; excluded here so a substituted divisor could never become a literal `0`, but
 ;; that is a property of the DIVISOR POSITION and not of the global, so the
 ;; refusal now lives at the substitution site
@@ -154106,7 +154253,10 @@
           (match value
             [(ir.CompilerIrValue.I64 n)
               (if (or
-                (not (opt-const-globals-imm32-fits? n))
+                (not
+                  (or
+                    (opt-const-globals-imm32-fits? n)
+                    (opt-bounds-dom-positive-power-of-two? n)))
                 (opt_i64_i64_map.contains?
                   (& disq)
                   (ir.compiler-ir-symbol-id name)))
@@ -155714,7 +155864,10 @@
       (match (opt_i64_i64_map.get
         (& const-divisors)
         (ir.compiler-ir-symbol-id name))
-        [(opt_i64_i64_map.LookupFound n) (ir.CompilerIrValue.I64 n)]
+        [(opt_i64_i64_map.LookupFound n)
+          (if (opt-const-globals-imm32-fits? n)
+            (ir.CompilerIrValue.I64 n)
+            v)]
         [(opt_i64_i64_map.LookupMissing) v])]
     [_ v]))
 
@@ -155759,6 +155912,284 @@
     (opt-const-global-subst-divisor-value const-divisors v)
     (opt-const-global-subst-value const-divisors v)))
 
+(define (opt-const-global-wide-power-shift [value : ir.CompilerIrValue]) : i64
+  (match value
+    [(ir.CompilerIrValue.I64 n)
+      (if (and (> n 2147483647) (opt-bounds-dom-positive-power-of-two? n))
+        (let
+          [power : i64 n]
+          [shift : i64 0]
+          (begin
+            (while (> power 1)
+              (begin
+                (set! power (shr power 1))
+                (set! shift (+ shift 1))))
+            shift))
+        -1)]
+    [_ -1]))
+
+;; --- wide power-of-two multiply as a shift (final slot) -----------------------
+;;
+;; A 64-bit multiply by a never-written global whose literal is a positive power
+;; of two past imm32 (2^31 .. 2^62) is the shift by its exponent: wrapping
+;; multiplication and a left shift compute the same low 64 bits for every
+;; input, signed or unsigned. Without this the multiplier is a `movabs` held in
+;; a register and the product an `imul`, three cycles of latency on a serial
+;; recurrence where the shift is one (benchmarks/mul_wide_power).
+;;
+;; WHY THE FINAL SLOT. The early constant-global rewrite keeps a wide literal
+;; out of every operand, so until here the product is a `Mul` of a Global
+;; operand: a pure, non-trapping BinOp. An IR `Shl` is not one to the passes
+;; that ask opt-binop-traps? -- LICM, rotation, DCE, range analysis all treat
+;; every shift as a possible abort -- so rewriting early made them keep an
+;; invariant product in its loop, leave a loop unrotated and a dead product in
+;; place. After unswitch and the derived-counter pass no pass that asks that
+;; question runs on the function, and the whole-program inline stage ran
+;; before any of this, so the shift is never re-examined as a hazard. The count
+;; is a literal in [31, 62], valid for the 64-bit operand: the shift cannot
+;; abort at run time either.
+;;
+;; The multiplier is recognized as the Global operand itself, or through the
+;; single-definition copy global-cell promotion leaves in a preheader. The other
+;; operand must not be a literal: `c * g` is a constant, and as a shift of two
+;; literals a later fold turns it into a wide literal that a loop then
+;; rematerializes on every trip, where the `imul` of the hoisted product ran
+;; once.
+(define (opt-const-global-mul-shift-power
+  [constants : opt_i64_i64_map.Map]
+  [copies : opt_i64_i64_map.Map]
+  [counts : opt_i64_i64_map.Map]
+  [value : ir.CompilerIrValue]) : i64
+  (let
+    [symbol : i64
+      (match (compiler-opt-global-shared-view value)
+        [(ir.CompilerIrValue.Global name) (ir.compiler-ir-symbol-id name)]
+        [(ir.CompilerIrValue.Var var)
+          (match (opt_i64_i64_map.get (& counts) var)
+            [(opt_i64_i64_map.LookupFound 1)
+              (match (opt_i64_i64_map.get (& copies) var)
+                [(opt_i64_i64_map.LookupFound id) id]
+                [_ (- 0 1)])]
+            [_ (- 0 1)])]
+        [_ (- 0 1)])]
+    (if (< symbol 0)
+      (- 0 1)
+      (match (opt_i64_i64_map.get (& constants) symbol)
+        [(opt_i64_i64_map.LookupFound n)
+          (opt-const-global-wide-power-shift (ir.CompilerIrValue.I64 n))]
+        [_ (- 0 1)]))))
+
+(define (opt-const-global-mul-shift-literal? [value : ir.CompilerIrValue]) : bool
+  (match (compiler-opt-global-shared-view value)
+    [(ir.CompilerIrValue.I64 _) true]
+    [_ false]))
+
+;; One instruction: an i64/u64 `Mul` with a wide-power multiplier on either side
+;; becomes `Shl` of the other operand; everything else is returned as is.
+(define (opt-const-global-mul-shift-instr
+  [constants : opt_i64_i64_map.Map]
+  [copies : opt_i64_i64_map.Map]
+  [counts : opt_i64_i64_map.Map]
+  [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
+  (match (compiler-opt-global-shared-view instr)
+    [(ir.CompilerIrInstr.BinOp dst op lhs rhs ty)
+      (if (and
+        (opt-binop-eq
+          (compiler-opt-global-shared-view op)
+          (ir.CompilerIrBinOp.Mul))
+        (match (compiler-opt-global-shared-view ty)
+          [(ast.AstType.I64) true]
+          [(ast.AstType.U64) true]
+          [_ false]))
+        (let
+          [right : i64
+            (opt-const-global-mul-shift-power
+              (compiler-opt-global-shared-view constants)
+              (compiler-opt-global-shared-view copies)
+              (compiler-opt-global-shared-view counts)
+              (compiler-opt-global-shared-view rhs))]
+          [left : i64
+            (opt-const-global-mul-shift-power
+              (compiler-opt-global-shared-view constants)
+              (compiler-opt-global-shared-view copies)
+              (compiler-opt-global-shared-view counts)
+              (compiler-opt-global-shared-view lhs))]
+          (cond
+            [(opt-const-global-mul-shift-literal?
+                (compiler-opt-global-shared-view lhs))
+              instr]
+            [(opt-const-global-mul-shift-literal?
+                (compiler-opt-global-shared-view rhs))
+              instr]
+            [(>= right 0)
+              (ir.CompilerIrInstr.BinOp
+                dst
+                (ir.CompilerIrBinOp.Shl (ast.AstType.I64))
+                lhs
+                (ir.CompilerIrValue.I64 right)
+                ty)]
+            [(>= left 0)
+              (ir.CompilerIrInstr.BinOp
+                dst
+                (ir.CompilerIrBinOp.Shl (ast.AstType.I64))
+                rhs
+                (ir.CompilerIrValue.I64 left)
+                ty)]
+            [else instr]))
+        instr)]
+    [_ instr]))
+
+;; var -> global symbol id for `Mov var (Global g)`, and var -> definition count.
+(define (opt-const-global-mul-shift-scan!
+  [copies : opt_i64_i64_map.Map]
+  [counts : opt_i64_i64_map.Map]
+  [blocks : ir.CompilerIrBlockList]) : unit
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (begin
+        (match (compiler-opt-global-shared-view block)
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (let
+              [count : i64
+                (ir.compiler-ir-instr-seq-count
+                  (compiler-opt-global-shared-view instrs))]
+              [index : i64 0]
+              (while (< index count)
+                (let
+                  [instr : ir.CompilerIrInstr
+                    (ir.compiler-ir-instr-seq-ref instrs index)]
+                  (begin
+                    (match (opt-instr-def-var
+                      (compiler-opt-global-shared-view instr))
+                      [(option_i64.Some var)
+                        (opt_i64_i64_map.insert-ref!
+                          (&mut counts)
+                          var
+                          (match (opt_i64_i64_map.get (& counts) var)
+                            [(opt_i64_i64_map.LookupFound n) (+ n 1)]
+                            [_ 1]))]
+                      [(option_i64.None) unit])
+                    (match instr
+                      [(ir.CompilerIrInstr.Mov
+                          dst
+                          (ir.CompilerIrValue.Global name)
+                          _)
+                        (opt_i64_i64_map.insert-ref!
+                          (&mut copies)
+                          dst
+                          (ir.compiler-ir-symbol-id name))]
+                      [_ unit])
+                    (set! index (+ index 1))))))])
+        (opt-const-global-mul-shift-scan!
+          copies
+          counts
+          (compiler-opt-box-shared-view rest)))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-const-global-mul-shift-scan!
+        copies
+        counts
+        (ir.compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-const-global-mul-shift-count-params!
+  [counts : opt_i64_i64_map.Map]
+  [params : ir.CompilerIrParamSeq]) : unit
+  (let
+    [position : i64 0]
+    (while (< position params.len)
+      (begin
+        (match (ir.compiler-ir-param-seq-ref
+          (compiler-opt-global-shared-view params)
+          position)
+          [(ir.CompilerIrParam.Param _ _ var)
+            (opt_i64_i64_map.insert-ref!
+              (&mut counts)
+              var
+              (match (opt_i64_i64_map.get (& counts) var)
+                [(opt_i64_i64_map.LookupFound n) (+ n 1)]
+                [_ 1]))])
+        (set! position (+ position 1))))))
+
+(define (opt-const-global-mul-shift-blocks
+  [constants : opt_i64_i64_map.Map]
+  [copies : opt_i64_i64_map.Map]
+  [counts : opt_i64_i64_map.Map]
+  [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) (ir.CompilerIrBlockList.Nil)]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match (compiler-opt-global-shared-view block)
+        [(ir.CompilerIrBlock.Block label instrs)
+          (let
+            [count : i64
+              (ir.compiler-ir-instr-seq-count
+                (compiler-opt-global-shared-view instrs))]
+            [builder : ir.CompilerIrInstrBuilder
+              (ir.compiler-ir-instr-builder-with-capacity count)]
+            [index : i64 0]
+            (begin
+              (while (< index count)
+                (begin
+                  (ir.compiler-ir-instr-builder-push!
+                    (&mut builder)
+                    (opt-const-global-mul-shift-instr
+                      (compiler-opt-global-shared-view constants)
+                      (compiler-opt-global-shared-view copies)
+                      (compiler-opt-global-shared-view counts)
+                      (ir.compiler-ir-instr-seq-ref instrs index)))
+                  (set! index (+ index 1))))
+              (ir.compiler-ir-block-cons
+                (ir.CompilerIrBlock.Block
+                  label
+                  (ir.compiler-ir-instr-builder-to-seq builder))
+                (opt-const-global-mul-shift-blocks
+                  constants
+                  copies
+                  counts
+                  (compiler-opt-box-shared-view rest)))))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-const-global-mul-shift-blocks
+        constants
+        copies
+        counts
+        (ir.compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-const-global-mul-shift-final
+  [constants : opt_i64_i64_map.Map]
+  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  (if (= (opt_i64_i64_map.len (& constants)) 0)
+    func
+    (match (compiler-opt-global-shared-view func)
+      [(ir.CompilerIrFunction.Function
+          name
+          params
+          ret-ty
+          frame
+          blocks
+          function-abi)
+        (let
+          [copies : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 8)]
+          [counts : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 64)]
+          (begin
+            ;; A parameter is a definition too. When SSA construction fell
+            ;; back, `(set! x g)` on a parameter is `%x = mov @g` in place, the
+            ;; only definition the block scan sees, and a use of %x before it
+            ;; still reads the argument.
+            (opt-const-global-mul-shift-count-params!
+              (compiler-opt-global-shared-view counts)
+              (compiler-opt-global-shared-view params))
+            (opt-const-global-mul-shift-scan!
+              (compiler-opt-global-shared-view copies)
+              (compiler-opt-global-shared-view counts)
+              (compiler-opt-global-shared-view blocks))
+            (ir.CompilerIrFunction.Function
+              name
+              params
+              ret-ty
+              frame
+              (opt-const-global-mul-shift-blocks constants copies counts blocks)
+              function-abi)))])))
+
 ;; The early rewrite substitutes every scalar operand position whose literal
 ;; the round-1 local fold and the loop passes can both consume: BinOp operands
 ;; (compare operands feeding branches included), UnOp sources, Cast/Bitcast
@@ -155777,6 +156208,10 @@
 ;; other passes). Load/StorePtr/Gep and the vector arms keep the global's
 ;; hidden-load form: their operand is an address or a descriptor pointer, not
 ;; a scalar the fold can use.
+;; A wide power-of-two global stays a Global operand here like every other
+;; wide constant: its multiply becomes a shift only in the final pipeline slot
+;; (opt-const-global-mul-shift-final), after every pass that reads
+;; opt-binop-traps? has seen it as the pure Mul it is.
 (define (opt-const-divisor-rewrite-instr
   [const-divisors : opt_i64_i64_map.Map]
   [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
@@ -182398,11 +182833,13 @@
 ;; `refcount name` twice per function, once directly and once inside the absorb
 ;; class it inlined, and pays the second probe whole.
 ;;
-;; SOUNDNESS. A table of (callee, arguments, result) entries is carried along a
-;; SINGLE-PREDECESSOR chain only: a block with exactly one predecessor, laid out
-;; after it, inherits that predecessor's exit table; every other block starts
-;; empty. Such a predecessor dominates the block, so the entry's result var
-;; dominates the copy that reads it. The table is dropped at every instruction
+;; SOUNDNESS. A table of (callee, arguments, result) entries is carried across
+;; a block edge only after the predecessor was processed. At a join, only the
+;; same single-definition result present in EVERY predecessor table survives.
+;; Its definition therefore dominates the join, and every path from that call
+;; to the replacement preserves memory. An unprocessed predecessor, including
+;; a loop back edge, starts the block empty. The table is dropped at every
+;; instruction
 ;; that may write memory (opt-alias-instr-clears-all?: every store form, every
 ;; call that is not a summarized write-free direct call, every unknown effect),
 ;; so nothing the callee could read changes between the two calls. The callee
@@ -182811,8 +183248,63 @@
               0
               acc)]))]))
 
-;; The table a block starts from: its single predecessor's exit table when that
-;; predecessor is laid out (and so processed) before it, else empty.
+;; An entry's result has a single definition in this function. Matching that
+;; exact result, rather than merely matching callees and arguments, proves the
+;; same completed call is available on both paths. Distinct branch-local calls
+;; would need a new phi and are deliberately not merged here.
+(define opt-pure-call-join-limit : i64
+  64)
+
+;; Bound both walks: a large function must not turn T available calls across
+;; J joins into O(J*T*T) work. Older entries are conservatively forgotten at
+;; joins; single-predecessor propagation and block-local CSE are unchanged.
+(define (opt-pure-call-table-has-result?
+  [table : OptPureCallTable]
+  [dst : i64]
+  [remaining : i64]) : bool
+  (if (<= remaining 0)
+    false
+    (match table
+      [(OptPureCallTable.Nil) false]
+      [(OptPureCallTable.Cons entry rest)
+        (or
+          (= entry.dst dst)
+          (opt-pure-call-table-has-result?
+            (compiler-opt-box-shared-view rest)
+            dst
+            (- remaining 1)))])))
+
+(define (opt-pure-call-table-intersect-bounded
+  [table : OptPureCallTable]
+  [other : OptPureCallTable]
+  [remaining : i64]) : OptPureCallTable
+  (if (<= remaining 0)
+    (OptPureCallTable.Nil)
+    (match table
+      [(OptPureCallTable.Nil) (OptPureCallTable.Nil)]
+      [(OptPureCallTable.Cons entry rest)
+        (let
+          [tail : OptPureCallTable
+            (opt-pure-call-table-intersect-bounded
+              (compiler-opt-box-shared-view rest)
+              (compiler-opt-global-shared-view other)
+              (- remaining 1))]
+          (if (opt-pure-call-table-has-result?
+            other
+            entry.dst
+            opt-pure-call-join-limit)
+            (OptPureCallTable.Cons entry (box tail))
+            tail))])))
+
+(define (opt-pure-call-table-intersect
+  [table : OptPureCallTable]
+  [other : OptPureCallTable]) : OptPureCallTable
+  (opt-pure-call-table-intersect-bounded table other opt-pure-call-join-limit))
+
+;; The table a block starts from: entries available at EVERY predecessor.
+;; A predecessor not processed yet (including a loop back edge) refuses the
+;; join. Existing stores and unknown calls clear their path's table, so one
+;; writing arm removes the stale result even if the other arm retains it.
 (define (opt-pure-call-entry-table
   [index : OptCfgIndex]
   [exits : (__tl_dyn-array OptPureCallTable)]
@@ -182824,11 +183316,32 @@
     [edges : (__tl_dyn-array i64) (compiler-opt-global-shared-view preds.edges)]
     [start : i64 (array-ref offsets id)]
     [end : i64 (array-ref offsets (+ id 1))]
-    (if (and (= (- end start) 1) (< (array-ref edges start) id))
-      (compiler-opt-global-array-element-shared-view
-        exits
-        (array-ref edges start))
-      (OptPureCallTable.Nil))))
+    (if (or (= start end) (>= (array-ref edges start) id))
+      (OptPureCallTable.Nil)
+      (let
+        [table : OptPureCallTable
+          (compiler-opt-global-array-element-shared-view
+            exits
+            (array-ref edges start))]
+        [cursor : i64 (+ start 1)]
+        (begin
+          (while (and
+            (< cursor end)
+            (not
+              (opt-pure-call-sites-empty?
+                (compiler-opt-global-shared-view table))))
+            (let
+              [pred : i64 (array-ref edges cursor)]
+              (begin
+                (set!
+                  table
+                  (if (>= pred id)
+                    (OptPureCallTable.Nil)
+                    (opt-pure-call-table-intersect
+                      table
+                      (compiler-opt-global-array-element-shared-view exits pred))))
+                (set! cursor (+ cursor 1)))))
+          table)))))
 
 ;; One block: rewrite its duplicate pure calls, return the rewritten
 ;; instructions and the exit table. The copy env is the function's own and is

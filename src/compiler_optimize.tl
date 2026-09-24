@@ -134868,10 +134868,6 @@
   ;; of the block that holds it. See opt-inline-census-depth-weight.
   (hotcount opt_i64_i64_map.Map))
 
-;; (next block index, saw a back edge) from one function's back-edge marking.
-(defenum OptInlineDepthMark
-  (Mark i64 bool))
-
 (defstruct OptSccResult
   (scc-of (__tl_dyn-array i64))
   (order (__tl_dyn-array i64)))
@@ -135235,21 +135231,10 @@
           (set! level (+ level 1))))
       weight)))
 
-;; Per-block loop depth of the function currently being censused. Depth is
-;; estimated from BACK EDGES IN BLOCK ORDER -- an edge whose target sits at or
-;; before its source -- rather than from dominator-based natural loops, because
-;; the census walks every function in the program and a dominator solve per
-;; function is the cost this file already refuses to pay eagerly (see
-;; opt-inline-caller-facts-ensure!). The two agree on every reducible CFG this
-;; compiler lowers, and where they disagree the estimate is only a weight: a
-;; wrong answer misprices a candidate, it cannot make an inline unsound.
-;;
-;; While edges are marked, each header slot holds one past its furthest latch.
-;; Coalescing by header is load-bearing: a reducible loop may have several
-;; latches (for example, two `continue` paths), but those edges describe one
-;; loop level rather than nested loops. A descending pass turns the coalesced
-;; ranges into a difference sequence, and a prefix sum then produces every
-;; block's depth. The whole estimate stays linear in blocks plus edges.
+;; Per-block loop depth of the function currently being censused, indexed by
+;; block position: the natural-loop nesting the register allocator reads (see
+;; opt-inline-census-depths-build!). The estimate is only a weight: a wrong
+;; answer misprices a candidate, it cannot make an inline unsound.
 (define opt-inline-census-depth-slots : (__tl_dyn-array i64)
   (__tl_make-array i64 64))
 (define opt-inline-census-depth-count : i64
@@ -135317,210 +135302,9 @@
               (set! i (+ i 1))))
           (+ start count)))]))
 
-;; One edge. Only a target at or before the source opens a loop; a forward edge
-;; (including the fall-through this walk never has to ask about, which always
-;; goes to the next block) contributes nothing. Keep the furthest latch for a
-;; header so multiple backedges into one loop do not manufacture extra nesting.
-(define (opt-inline-census-depth-edge!
-  [target : i64]
-  [generation : i64]
-  [source : i64]) : bool
-  (let
-    [id : i64 (opt-cfg-label-table-get target generation)]
-    (if (and (>= id 0) (<= id source))
-      (let
-        [end : i64 (+ source 1)]
-        [previous : i64 (array-ref opt-inline-census-depth-slots id)]
-        (begin
-          (if (> end previous)
-            (set! (array-ref opt-inline-census-depth-slots id) end)
-            unit)
-          true))
-      false)))
-
-(define (opt-inline-census-depth-switch-cases!
-  [cases : ir.CompilerIrSwitchCaseSeq]
-  [generation : i64]
-  [source : i64]
-  [found : bool]) : bool
-  (let
-    [index : i64 0]
-    [out : bool found]
-    (begin
-      (while (< index cases.len)
-        (begin
-          (match (ir.compiler-ir-switch-case-seq-ref cases index)
-            [(ir.CompilerIrSwitchCase.Case _ label)
-              (set!
-                out
-                (or (opt-inline-census-depth-edge! label generation source) out))])
-          (set! index (+ index 1))))
-      out)))
-
-(define (opt-inline-census-depth-instrs!
-  [instrs : ir.CompilerIrInstrSeq]
-  [generation : i64]
-  [source : i64]) : bool
-  (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-    [count : i64 instrs.len]
-    [i : i64 0]
-    [found : bool false]
-    (begin
-      (while (< i count)
-        (begin
-          (match (array-ref slots i)
-            [(ir.CompilerIrInstr.Jump label)
-              (set!
-                found
-                (or
-                  (opt-inline-census-depth-edge! label generation source)
-                  found))]
-            [(ir.CompilerIrInstr.Branch _ true-label false-label)
-              (begin
-                (set!
-                  found
-                  (or
-                    (opt-inline-census-depth-edge! true-label generation source)
-                    found))
-                (set!
-                  found
-                  (or
-                    (opt-inline-census-depth-edge!
-                      false-label
-                      generation
-                      source)
-                    found)))]
-            [(ir.CompilerIrInstr.TotalEnumBranch _ true-label false-label)
-              (begin
-                (set!
-                  found
-                  (or
-                    (opt-inline-census-depth-edge! true-label generation source)
-                    found))
-                (set!
-                  found
-                  (or
-                    (opt-inline-census-depth-edge!
-                      false-label
-                      generation
-                      source)
-                    found)))]
-            [(ir.CompilerIrInstr.Switch _ _ cases default-label)
-              (begin
-                (set!
-                  found
-                  (or
-                    (opt-inline-census-depth-edge!
-                      default-label
-                      generation
-                      source)
-                    found))
-                (set!
-                  found
-                  (opt-inline-census-depth-switch-cases!
-                    cases
-                    generation
-                    source
-                    found)))]
-            [(ir.CompilerIrInstr.TotalEnumSwitch _ _ cases default-label _)
-              (begin
-                (set!
-                  found
-                  (or
-                    (opt-inline-census-depth-edge!
-                      default-label
-                      generation
-                      source)
-                    found))
-                (set!
-                  found
-                  (opt-inline-census-depth-switch-cases!
-                    cases
-                    generation
-                    source
-                    found)))]
-            [_ unit])
-          (set! i (+ i 1))))
-      found)))
-
-(define (opt-inline-census-depth-mark!
-  [blocks : ir.CompilerIrBlockList]
-  [generation : i64]
-  [start : i64]
-  [found : bool]) : OptInlineDepthMark
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) (OptInlineDepthMark.Mark start found)]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (opt-inline-census-depth-mark!
-            (compiler-opt-box-shared-view rest)
-            generation
-            (+ start 1)
-            (or (opt-inline-census-depth-instrs! instrs generation start) found))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (let
-        [count : i64
-          (ir.compiler-ir-block-seq-count (compiler-opt-global-shared-view seq))]
-        [i : i64 0]
-        [any? : bool found]
-        (begin
-          (while (< i count)
-            (begin
-              (match (ir.compiler-ir-block-seq-ref
-                (compiler-opt-global-shared-view seq)
-                i)
-                [(ir.CompilerIrBlock.Block _ instrs)
-                  (set!
-                    any?
-                    (or
-                      (opt-inline-census-depth-instrs!
-                        instrs
-                        generation
-                        (+ start i))
-                      any?))])
-              (set! i (+ i 1))))
-          (OptInlineDepthMark.Mark (+ start count) any?)))]))
-
-(define (opt-inline-census-depth-prefix! [count : i64]) : unit
-  (let
-    [i : i64 1]
-    (while (< i count)
-      (begin
-        (set!
-          (array-ref opt-inline-census-depth-slots i)
-          (+
-            (array-ref opt-inline-census-depth-slots i)
-            (array-ref opt-inline-census-depth-slots (- i 1))))
-        (set! i (+ i 1))))))
-
-;; Convert the header -> furthest-latch records into range deltas. Descending
-;; order lets this reuse the same array: every interval end is after its header,
-;; so its header record has already been consumed before an earlier interval
-;; can write a closing delta into that slot.
-(define (opt-inline-census-depth-ranges! [count : i64]) : unit
-  (let
-    [i : i64 (- count 1)]
-    (while (>= i 0)
-      (let
-        [end : i64 (array-ref opt-inline-census-depth-slots i)]
-        (begin
-          (set! (array-ref opt-inline-census-depth-slots i) 0)
-          (if (> end i)
-            (begin
-              (set!
-                (array-ref opt-inline-census-depth-slots i)
-                (+ (array-ref opt-inline-census-depth-slots i) 1))
-              (set!
-                (array-ref opt-inline-census-depth-slots end)
-                (- (array-ref opt-inline-census-depth-slots end) 1)))
-            unit)
-          (set! i (- i 1)))))))
-
-;; Install per-block depths for one function. A body with no back edge at all --
-;; the common case -- leaves the estimate inactive and every site weighs 1, so
-;; the prefix pass is skipped and the walk never reads the array.
+;; Install per-block depths for one function. A body with no loop at all -- the
+;; common case -- leaves the estimate inactive and every site weighs 1, so the
+;; walk never reads the array.
 (define (opt-inline-census-depths-build! [blocks : ir.CompilerIrBlockList]) : unit
   (let
     [count : i64
@@ -135541,8 +135325,8 @@
               generation
               0)
             ;; INL-14: the slow-copy marks read the stamped label table, so
-            ;; they are taken here, before the back-edge walk below consumes
-            ;; the list; they are read only while the estimate is active.
+            ;; they are taken here; they are read only while the estimate is
+            ;; active.
             (opt-inline-census-slow-reserve! (+ count 1))
             (opt-inline-census-slow-clear! (+ count 1))
             (opt-inline-census-slow-mark!
@@ -137813,8 +137597,8 @@
 ;; stream, so no block is added at all.
 ;;
 ;; `TailCallIndirect` stays refused, here and in the multiblock path, for the
-;; reason recorded at opt-inline-multiblock-instr-ok?: its target is a computed
-;; value the census cannot see through to price the site.
+;; reason recorded at opt-inline-multiblock-instr-reason: its target is a
+;; computed value the census cannot see through to price the site.
 (define (opt-inline-body-terminator-ok? [instr : ir.CompilerIrInstr]) : bool
   (match instr
     [(ir.CompilerIrInstr.Return _) true]
@@ -138352,11 +138136,6 @@
         (opt-inline-shape-ok)
         (+ (opt-inline-shape-other-base) (opt-inline-instr-kind-code instr)))]))
 
-(define (opt-inline-multiblock-instr-ok?
-  [instr : ir.CompilerIrInstr]
-  [np : i64]) : bool
-  (= (opt-inline-multiblock-instr-reason instr np) (opt-inline-shape-ok)))
-
 ;; --- INL-5: the single-block tier's shape reasons ---------------------------
 ;;
 ;; The multiblock tier has reported its refusals by clause since INL-3; the
@@ -138616,11 +138395,6 @@
   [np : i64]) : i64
   (opt-inline-multiblock-instrs-reason-from instrs np 0))
 
-(define (opt-inline-multiblock-instrs-ok?
-  [instrs : ir.CompilerIrInstrSeq]
-  [np : i64]) : bool
-  (= (opt-inline-multiblock-instrs-reason instrs np) (opt-inline-shape-ok)))
-
 (define (opt-inline-multiblock-blocks-reason
   [blocks : ir.CompilerIrBlockList]
   [np : i64]) : i64
@@ -138640,11 +138414,6 @@
       (opt-inline-multiblock-blocks-reason
         (ir.compiler-ir-block-seq-to-list seq)
         np)]))
-
-(define (opt-inline-multiblock-blocks-ok?
-  [blocks : ir.CompilerIrBlockList]
-  [np : i64]) : bool
-  (= (opt-inline-multiblock-blocks-reason blocks np) (opt-inline-shape-ok)))
 
 (define (opt-inline-param-mutating-instr?
   [instr : ir.CompilerIrInstr]
@@ -146467,22 +146236,18 @@
   [func : ir.CompilerIrFunction]) : i64
   (opt-inline-checked-plan-cost-at pools type-segment-bases func 0 1))
 
-;; The accept window, named so it can be pinned on its own. `saving` is the
-;; modelled cost the inline removes; `boundary` is what a free inline would
-;; remove. The floor is half the boundary and the cap two and a half times it;
-;; see opt-inline-checked-verdict for why the window is two-sided and for the
-;; measurements that put the cap where it is.
-(define (opt-inline-checked-window-ok? [saving : i64] [boundary : i64]) : bool
-  (opt-inline-checked-window-ok-at? saving boundary 0))
-
-;; The same window with the site's specialization gain (INL-18) added to the
-;; prediction the cap is read against.
 ;; INL-17: a body of at most sixty-four instructions per site execution is one
 ;; the model prices well; the verdict says why, and INL-23 reads the same bound
 ;; for a one-block body.
 (define (opt-inline-checked-small-body? [callee-cost : i64] [site-weight : i64]) : bool
   (<= callee-cost (* 64 site-weight)))
 
+;; The accept window, named so it can be pinned on its own. `saving` is the
+;; modelled cost the inline removes; `boundary` is what a free inline would
+;; remove; `spec-gain` is the site's specialization gain (INL-18), added to the
+;; prediction the cap is read against. The floor is half the boundary and the
+;; cap two and a half times it; see opt-inline-checked-verdict for why the
+;; window is two-sided and for the measurements that put the cap where it is.
 (define (opt-inline-checked-window-ok-at?
   [saving : i64]
   [boundary : i64]
@@ -146979,7 +146744,7 @@
 ;; `TailCall h` and a `Return` exit becomes the caller's `Return`.
 ;;
 ;; `TailCallIndirect` is not a site here for the reason recorded at
-;; opt-inline-multiblock-instr-ok?: its target is a computed value the census
+;; opt-inline-multiblock-instr-reason: its target is a computed value the census
 ;; cannot see through to price. Self- and mutual recursion are refused by
 ;; opt-inline-lookup-inlinable's SCC test and by opt-inline-callee-ok?'s name
 ;; test, which is what leaves a tail-recursive function's own self-site for

@@ -21074,22 +21074,22 @@
 (define (compiler-optimize-inline-checked-window-ok?) : bool
   (and
     ;; exactly what a free inline predicts
-    (opt.opt-inline-checked-window-ok? 64 64)
+    (opt.opt-inline-checked-window-ok-at? 64 64 0)
     ;; the two edges of the window
-    (opt.opt-inline-checked-window-ok? 32 64)
-    (opt.opt-inline-checked-window-ok? 160 64)
-    (opt.opt-inline-checked-window-ok? 20 8)
+    (opt.opt-inline-checked-window-ok-at? 32 64 0)
+    (opt.opt-inline-checked-window-ok-at? 160 64 0)
+    (opt.opt-inline-checked-window-ok-at? 20 8 0)
     ;; below it: the boundary was retired and the merged body ate the saving
-    (not (opt.opt-inline-checked-window-ok? 31 64))
-    (not (opt.opt-inline-checked-window-ok? 0 64))
-    (not (opt.opt-inline-checked-window-ok? (- 0 400) 64))
+    (not (opt.opt-inline-checked-window-ok-at? 31 64 0))
+    (not (opt.opt-inline-checked-window-ok-at? 0 64 0))
+    (not (opt.opt-inline-checked-window-ok-at? (- 0 400) 64 0))
     ;; above it: the model claims more than an inline can produce, which is what
     ;; every documented loser looks like here (pl-line-end models 1,193 against
     ;; a boundary of 64; it-hash-words 89 against 9)
-    (not (opt.opt-inline-checked-window-ok? 161 64))
-    (not (opt.opt-inline-checked-window-ok? 21 8))
-    (not (opt.opt-inline-checked-window-ok? 89 9))
-    (not (opt.opt-inline-checked-window-ok? 1193 64))
+    (not (opt.opt-inline-checked-window-ok-at? 161 64 0))
+    (not (opt.opt-inline-checked-window-ok-at? 21 8 0))
+    (not (opt.opt-inline-checked-window-ok-at? 89 9 0))
+    (not (opt.opt-inline-checked-window-ok-at? 1193 64 0))
     ;; the boundary itself scales with arity, which is the part of a call
     ;; sequence that does
     (>

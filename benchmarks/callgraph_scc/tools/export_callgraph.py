@@ -31,11 +31,10 @@ program record holding, for every function in dump order:
   * the block-order edge list, `src dst` pairs derived from the terminators the
     same way `benchmarks/cfg_domloops/tools/export_cfg_blocks.py` derives them,
     except that this list is NOT deduplicated and carries no fall-through edge:
-    `opt-inline-census-depth-instrs!` reacts only to a Jump / Branch /
+    the census's former back-edge walk reacted only to a Jump / Branch /
     TotalEnumBranch / Switch / TotalEnumSwitch instruction, once per target
-    operand, and the comment on `opt-inline-census-depth-edge!` states that the
-    fall-through (always the next block, hence never a back edge) contributes
-    nothing.
+    operand, and the fall-through (always the next block, hence never a back
+    edge) contributed nothing.
   * the reference list, `block callee-name-id kind` triples in exactly the
     order `opt-inline-census-blocks` -> `opt-inline-census-instr-seq` ->
     `opt-inline-census-instr` visits them:
@@ -106,7 +105,7 @@ def name_id(text):
 
 
 def terminator_targets(instr):
-    """The labels `opt-inline-census-depth-instrs!` feeds to `depth-edge!`.
+    """The labels the census's former back-edge walk fed to its edge marker.
 
     Order matters only for readability (the pass keeps a per-header maximum),
     but it is the compiler's: Jump -> its label, Branch / TotalEnumBranch ->

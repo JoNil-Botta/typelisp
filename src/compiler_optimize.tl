@@ -143937,6 +143937,99 @@
 (define (opt-inline-checked-generation-current) : i64
   opt-inline-checked-generation)
 
+;; --- callee-plan memo ---------------------------------------------------------
+;; A verdict prices the callee by optimizing its body alone and reading the plan
+;; at the site's depth (opt-inline-checked-plan-cost-at, whose entry-weight
+;; argument is unused). The same callee is priced at many sites, and in bottom-up
+;; SCC order its body is usually already final: one run per distinct body and
+;; depth answers them all. Entries hold the priced body itself -- a view into the
+;; inline stage's function index, whose bodies (replaced ones included) live until
+;; the stage ends -- and match structurally with opt-function-eq, so a body that
+;; changed is priced afresh. The memo is emptied whenever the checked tier begins
+;; a program and when an inline stage ends, so no entry outlives the stage that
+;; owns its body. The tables grow in the IR label arena (DELIBERATE-RAW #6620):
+;; verdicts run in a scratch arena that is rewound after each one.
+(define opt-inline-callee-cost-count : i64
+  0)
+(define opt-inline-callee-cost-funcs : (__tl_dyn-array ir.CompilerIrFunction)
+  (__tl_make-array ir.CompilerIrFunction 1))
+(define opt-inline-callee-cost-depths : (__tl_dyn-array i64)
+  (__tl_make-array i64 1))
+(define opt-inline-callee-cost-values : (__tl_dyn-array i64)
+  (__tl_make-array i64 1))
+
+(define (opt-inline-callee-cost-reset!) : unit
+  (set! opt-inline-callee-cost-count 0))
+
+(define (opt-inline-callee-cost-lookup
+  [type-segment-bases : i64]
+  [callee : ir.CompilerIrFunction]
+  [depth : i64]) : i64
+  (let
+    [i : i64 0]
+    (begin
+      (while (< i opt-inline-callee-cost-count)
+        (begin
+          (when
+            (and
+              (= (array-ref opt-inline-callee-cost-depths i) depth)
+              (opt-function-eq
+                type-segment-bases
+                (compiler-opt-global-array-element-shared-view
+                  opt-inline-callee-cost-funcs
+                  i)
+                (compiler-opt-global-shared-view callee)))
+            (return (array-ref opt-inline-callee-cost-values i)))
+          (set! i (+ i 1))))
+      (- 0 1))))
+
+(define (opt-inline-callee-cost-record!
+  [callee : ir.CompilerIrFunction]
+  [depth : i64]
+  [cost : i64]) : unit
+  (begin
+    (when
+      (>=
+        opt-inline-callee-cost-count
+        (array-length opt-inline-callee-cost-funcs))
+      (in-arena
+        (arena.Arena (ir.compiler-ir-label-arena))
+        (let
+          [size : i64 (* 2 (array-length opt-inline-callee-cost-funcs))]
+          [funcs : (__tl_dyn-array ir.CompilerIrFunction)
+            (__tl_make-array ir.CompilerIrFunction size)]
+          [depths : (__tl_dyn-array i64) (__tl_make-array i64 size)]
+          [values : (__tl_dyn-array i64) (__tl_make-array i64 size)]
+          [i : i64 0]
+          (begin
+            (while (< i opt-inline-callee-cost-count)
+              (begin
+                (set!
+                  (array-ref funcs i)
+                  (compiler-opt-global-array-element-shared-view
+                    opt-inline-callee-cost-funcs
+                    i))
+                (set!
+                  (array-ref depths i)
+                  (array-ref opt-inline-callee-cost-depths i))
+                (set!
+                  (array-ref values i)
+                  (array-ref opt-inline-callee-cost-values i))
+                (set! i (+ i 1))))
+            (set! opt-inline-callee-cost-funcs funcs)
+            (set! opt-inline-callee-cost-depths depths)
+            (set! opt-inline-callee-cost-values values)))))
+    (set!
+      (array-ref opt-inline-callee-cost-funcs opt-inline-callee-cost-count)
+      (compiler-opt-global-shared-view callee))
+    (set!
+      (array-ref opt-inline-callee-cost-depths opt-inline-callee-cost-count)
+      depth)
+    (set!
+      (array-ref opt-inline-callee-cost-values opt-inline-callee-cost-count)
+      cost)
+    (set! opt-inline-callee-cost-count (+ opt-inline-callee-cost-count 1))))
+
 (define (opt-inline-checked-program-begin!) : unit
   (begin
     (set! opt-inline-checked-budget (opt-inline-checked-program-budget))
@@ -143944,6 +144037,7 @@
       opt-inline-checked-relaxed-budget
       (opt-inline-checked-relaxed-program-budget))
     (set! opt-inline-caller-checked-taken? false)
+    (opt-inline-callee-cost-reset!)
     (opt-inline-checked-caller-begin!)))
 
 ;; Arm (or disarm) the tier. The whole-program optimizer entries arm it; a
@@ -145268,12 +145362,28 @@
     ;; site's depth, its prologue and its spill traffic once per site
     ;; execution.
     [callee-cost : i64
-      (opt-inline-checked-plan-cost-at
-        (compiler-opt-global-shared-view pools)
-        type-segment-bases
-        (compiler-opt-global-shared-view callee)
-        site-depth
-        site-weight)]
+      (let
+        [memo : i64
+          (opt-inline-callee-cost-lookup
+            type-segment-bases
+            (compiler-opt-global-shared-view callee)
+            site-depth)]
+        (if (>= memo 0)
+          memo
+          (let
+            [priced : i64
+              (opt-inline-checked-plan-cost-at
+                (compiler-opt-global-shared-view pools)
+                type-segment-bases
+                (compiler-opt-global-shared-view callee)
+                site-depth
+                site-weight)]
+            (begin
+              (opt-inline-callee-cost-record!
+                (compiler-opt-global-shared-view callee)
+                site-depth
+                priced)
+              priced))))]
     ;; INL-18: what the site's literal arguments fold out of the callee, priced
     ;; on the callee alone with those parameters pinned. A free inline of such
     ;; a site saves the boundary AND this, so the cap is read against both.
@@ -150094,6 +150204,7 @@
             (opt-inline-synth-reset!)
             (opt-inline-owned-state-reset! true)
             (opt-pure-call-inline-memory-reset!)
+            (opt-inline-callee-cost-reset!)
             out))))))
 
 (define (opt-inline-program-functions-with-spans
@@ -150150,6 +150261,7 @@
         (opt-inline-synth-reset!)
         (opt-inline-owned-state-reset! true)
         (opt-pure-call-inline-memory-reset!)
+        (opt-inline-callee-cost-reset!)
         out))))
 
 (define (opt-function-seq-defines-from?

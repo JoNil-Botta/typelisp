@@ -574,8 +574,13 @@
 
 (define (lower-test-optimized-product-shape [source : String] [name : String]) : LowerTestProductShape
   (match (compiler_lower.lower-compiler-source source)
-    [(compiler_lower.ResultCompilerLower.Ok program _)
-      (match (compiler_optimize.optimize-program-with-level program 2)
+    [(compiler_lower.ResultCompilerLower.Ok program spans)
+      (match (match (compiler_optimize.optimize-program-with-spans-and-level
+        program
+        spans
+        2)
+        [(compiler_optimize.CompilerOptimizedProgram.Program optimized _)
+          optimized])
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (match (lower-test-function-seq-find
             (compiler_ir_types.compiler-ir-global-shared-view functions)
@@ -13907,7 +13912,7 @@
   [mode : compiler_lower.CompilerLowerMode]
   [level : i64]) : bool
   (match (compiler_lower.lower-compiler-source-with-mode src mode)
-    [(compiler_lower.ResultCompilerLower.Ok program _)
+    [(compiler_lower.ResultCompilerLower.Ok program spans)
       (let
         [before : String
           (match (compiler_ir_types.compiler-ir-global-shared-view program)
@@ -13915,7 +13920,12 @@
               (compiler_ir_types.compiler-ir-test-spmd-private-abi-shapes
                 functions)])]
         [optimized : compiler_ir_types.CompilerIrProgram
-          (compiler_optimize.optimize-program-with-level program level)]
+          (match (compiler_optimize.optimize-program-with-spans-and-level
+            program
+            spans
+            level)
+            [(compiler_optimize.CompilerOptimizedProgram.Program optimized _)
+              optimized])]
         (match optimized
           [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
             (and

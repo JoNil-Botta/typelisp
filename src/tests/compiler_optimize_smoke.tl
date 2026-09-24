@@ -3199,10 +3199,11 @@
   (let
     [blocks : ir.CompilerIrBlockList (smoke-heavy-pass-large-blocks)]
     [optimized : ir.CompilerIrFunction
-      (opt.optimize-function-once
+      (opt.optimize-function-once-with-summaries
         (ast.ast-node-pool-reader-context-current)
         (ast.ast-node-pool-reader-type-segment-bases)
-        (smoke-heavy-pass-large-function))]
+        (smoke-heavy-pass-large-function)
+        (opt.opt-loop-bce-empty-summaries))]
     (begin
       (unless
         (>
@@ -3799,7 +3800,7 @@
     [symbols : compiler_optimize_tests.OptInlineMultiTestSymbols
       (compiler_optimize_tests.opt-inline-multi-test-symbols)]
     [optimized : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (compiler_optimize_tests.opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (smoke-inline-phi-functions symbols)
         2)]
@@ -3912,7 +3913,7 @@
       (compiler_optimize_tests.opt-inline-multi-test-symbols)]
     [caller : ir.CompilerIrFunction (smoke-inline-phi-caller symbols)]
     [optimized : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (compiler_optimize_tests.opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.compiler-ir-function-seq-prepend
           (opt.compiler-opt-global-shared-view caller)
@@ -3944,7 +3945,7 @@
           ir.CompilerIrCallArgs.Nil
           (ast.AstType.I64)))]
     [optimized : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (compiler_optimize_tests.opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.compiler-ir-function-seq-prepend
           (opt.compiler-opt-global-shared-view caller)

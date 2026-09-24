@@ -11330,16 +11330,19 @@
   (PackWordCons i64 i64 ir.CompilerIrValue (Box OptCopyEnv)))
 
 (define (opt-copy-lookup [env : OptCopyEnv] [var : i64]) : ir.CompilerIrMaybeValue
-  (match env
-    [(OptCopyEnv.Nil) (ir.CompilerIrMaybeValue.No)]
-    [(OptCopyEnv.Cons id value rest)
-      (let
-        [rest : OptCopyEnv (compiler-opt-box-shared-view rest)]
-        (if (= id var)
-          (ir.CompilerIrMaybeValue.Some value)
-          (opt-copy-lookup rest var)))]
-    [(OptCopyEnv.PackWordCons _ _ _ rest)
-      (opt-copy-lookup (compiler-opt-box-shared-view rest) var)]))
+  (let
+    [cur : OptCopyEnv (compiler-opt-global-shared-view env)]
+    (begin
+      (while true
+        (match (compiler-opt-global-shared-view cur)
+          [(OptCopyEnv.Nil) (return (ir.CompilerIrMaybeValue.No))]
+          [(OptCopyEnv.Cons id value rest)
+            (if (= id var)
+              (return (ir.CompilerIrMaybeValue.Some value))
+              (set! cur (compiler-opt-box-shared-view rest)))]
+          [(OptCopyEnv.PackWordCons _ _ _ rest)
+            (set! cur (compiler-opt-box-shared-view rest))]))
+      (ir.CompilerIrMaybeValue.No))))
 
 (define (opt-copy-pack-word-lookup
   [env : OptCopyEnv]
@@ -30426,26 +30429,28 @@
   [global-cells : OptGlobalCellSummary]
   [track-provenance? : bool]
   [state : OptLicmStoreState]) : OptLicmStoreState
-  (if (>=
-    index
-    (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs)))
-    state
-    (opt-licm-store-state-instr-seq-from
-      type-segment-bases
-      (compiler-opt-global-shared-view types)
-      (compiler-opt-global-shared-view instrs)
-      (+ index 1)
-      (compiler-opt-global-shared-view direct-call-clean)
-      (compiler-opt-global-shared-view global-cells)
-      track-provenance?
-      (opt-licm-store-state-instr
-        type-segment-bases
-        types
-        (compiler-opt-global-shared-view state)
-        direct-call-clean
-        global-cells
-        track-provenance?
-        (ir.compiler-ir-instr-seq-ref instrs index)))))
+  (let
+    [count : i64
+      (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs))]
+    [out : OptLicmStoreState state]
+    [i : i64 index]
+    (begin
+      (while (< i count)
+        (begin
+          (set!
+            out
+            (opt-licm-store-state-instr
+              type-segment-bases
+              (compiler-opt-global-shared-view types)
+              out
+              (compiler-opt-global-shared-view direct-call-clean)
+              (compiler-opt-global-shared-view global-cells)
+              track-provenance?
+              (ir.compiler-ir-instr-seq-ref
+                (compiler-opt-global-shared-view instrs)
+                i)))
+          (set! i (+ i 1))))
+      out)))
 
 (define (opt-licm-store-state-instr-seq
   [type-segment-bases : i64]
@@ -30510,24 +30515,26 @@
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]
   [state : OptLicmStoreState]) : OptLicmStoreState
-  (if (>=
-    index
-    (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs)))
-    state
-    (opt-licm-provenance-state-instr-seq-from
-      type-segment-bases
-      (compiler-opt-global-shared-view types)
-      (compiler-opt-global-shared-view frozen)
-      (compiler-opt-global-shared-view instrs)
-      (+ index 1)
-      (opt-licm-provenance-state-instr
-        type-segment-bases
-        (compiler-opt-global-shared-view types)
-        (compiler-opt-global-shared-view frozen)
-        state
-        (ir.compiler-ir-instr-seq-ref
-          (compiler-opt-global-shared-view instrs)
-          index)))))
+  (let
+    [count : i64
+      (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs))]
+    [out : OptLicmStoreState state]
+    [i : i64 index]
+    (begin
+      (while (< i count)
+        (begin
+          (set!
+            out
+            (opt-licm-provenance-state-instr
+              type-segment-bases
+              (compiler-opt-global-shared-view types)
+              (compiler-opt-global-shared-view frozen)
+              out
+              (ir.compiler-ir-instr-seq-ref
+                (compiler-opt-global-shared-view instrs)
+                i)))
+          (set! i (+ i 1))))
+      out)))
 
 (define (opt-licm-provenance-state-blocks
   [type-segment-bases : i64]
@@ -59408,18 +59415,22 @@
   [state : OptSccpState]
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]) : OptSccpState
-  (if (>=
-    index
-    (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs)))
-    state
-    (opt-sccp-process-instr-seq-from
-      type-segment-bases
-      (opt-sccp-process-instr
-        type-segment-bases
-        (compiler-opt-global-shared-view state)
-        (ir.compiler-ir-instr-seq-ref instrs index))
-      (compiler-opt-global-shared-view instrs)
-      (+ index 1))))
+  (let
+    [count : i64
+      (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs))]
+    [out : OptSccpState state]
+    [i : i64 index]
+    (begin
+      (while (< i count)
+        (begin
+          (set!
+            out
+            (opt-sccp-process-instr
+              type-segment-bases
+              (compiler-opt-global-shared-view out)
+              (ir.compiler-ir-instr-seq-ref instrs i)))
+          (set! i (+ i 1))))
+      out)))
 
 (define (opt-sccp-process-instr-seq
   [type-segment-bases : i64]
@@ -63386,23 +63397,24 @@
   [index : i64]
   [count : i64]
   [acc : OptValueSources]) : OptValueSources
-  (if (>= index count)
-    acc
-    (let
-      [instr : ir.CompilerIrInstr
-        (compiler-opt-global-array-element-shared-view slots index)]
-      [dst : i64 (opt-gvn-instr-dst (compiler-opt-global-shared-view instr))]
-      [next : OptValueSources
-        (if (opt-gvn-record-candidate? (compiler-opt-global-shared-view instr))
-          (opt-gvn-defs-add acc (- 0 1))
-          acc)]
-      (opt-gvn-sources-instr-seq-from
-        slots
-        (+ index 1)
-        count
-        (if (= dst (- 0 1))
-          next
-          (opt-gvn-defs-add next dst))))))
+  (let
+    [out : OptValueSources acc]
+    [i : i64 index]
+    (begin
+      (while (< i count)
+        (let
+          [instr : ir.CompilerIrInstr
+            (compiler-opt-global-array-element-shared-view slots i)]
+          [dst : i64
+            (opt-gvn-instr-dst (compiler-opt-global-shared-view instr))]
+          (begin
+            (when
+              (opt-gvn-record-candidate?
+                (compiler-opt-global-shared-view instr))
+              (set! out (opt-gvn-defs-add out (- 0 1))))
+            (when (!= dst (- 0 1)) (set! out (opt-gvn-defs-add out dst)))
+            (set! i (+ i 1)))))
+      out)))
 
 (define (opt-gvn-sources-blocks
   [blocks : ir.CompilerIrBlockList]
@@ -183837,19 +183849,22 @@
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]
   [var : i64]) : OptMaybeInstr
-  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-    (OptMaybeInstr.No)
-    (let
-      [instr : ir.CompilerIrInstr
-        (ir.compiler-ir-instr-seq-ref
-          (compiler-opt-global-shared-view instrs)
-          index)]
-      (if (= (opt-gvn-instr-dst (compiler-opt-global-shared-view instr)) var)
-        (OptMaybeInstr.Some instr)
-        (opt-load-gvn-find-def-instrs
-          (compiler-opt-global-shared-view instrs)
-          (+ index 1)
-          var)))))
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [i : i64 index]
+    (begin
+      (while (< i count)
+        (let
+          [instr : ir.CompilerIrInstr
+            (ir.compiler-ir-instr-seq-ref
+              (compiler-opt-global-shared-view instrs)
+              i)]
+          (if (=
+            (opt-gvn-instr-dst (compiler-opt-global-shared-view instr))
+            var)
+            (return (OptMaybeInstr.Some instr))
+            (set! i (+ i 1)))))
+      (OptMaybeInstr.No))))
 
 (define (opt-load-gvn-find-def [blocks : ir.CompilerIrBlockList] [var : i64]) : OptMaybeInstr
   (match (compiler-opt-global-shared-view blocks)

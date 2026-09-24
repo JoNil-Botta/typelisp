@@ -233,7 +233,7 @@
       (compiler-x64-template-registry-gate id)]
     (begin
       (compiler-x64-template-require-kind!
-        (owned_view.compiler-owned-shared-view row)
+        row
         target
         (x64.CompilerX64TemplateRenderKind.Assembly))
       (compiler-x64-template-require-rendered-payload! row (& rendered))
@@ -248,7 +248,7 @@
       (compiler-x64-template-registry-gate id)]
     (begin
       (compiler-x64-template-require-kind!
-        (owned_view.compiler-owned-shared-view row)
+        row
         target
         (x64.CompilerX64TemplateRenderKind.OpaqueBytes))
       (compiler-x64-template-require-rendered-payload! row (& rendered))

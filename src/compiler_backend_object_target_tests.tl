@@ -41,7 +41,7 @@
         "Linux leaf owns the System V TLCI macro bridge")
       (test.assert-true
         (cobj.compiler-object-section-contains-bytes?
-          (owned_view.compiler-owned-shared-view linux-sections)
+          linux-sections
           (object_linux.compiler-backend-object-exit-bytes))
         "Linux leaf owns the syscall exit tail")
       (test.assert-true

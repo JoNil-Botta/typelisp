@@ -128,19 +128,14 @@
   [render-kind : x64.CompilerX64TemplateRenderKind]
   [rendered : String]) : String
   (let
-    [id-name : String
-      (evidence.compiler-x64-template-id-name
-        (owned_view.compiler-owned-shared-view id))]
+    [id-name : String (evidence.compiler-x64-template-id-name id)]
     [row : evidence.CompilerX64ExecutableTemplate
       (evidence.compiler-x64-template-registry-row id)]
     [gate : catalog.CompilerX64ExecutableTemplateGate
       (catalog.compiler-x64-template-registry-gate id)]
     (begin
-      (catalog.compiler-x64-template-require-kind!
-        (owned_view.compiler-owned-shared-view gate)
-        target
-        render-kind)
+      (catalog.compiler-x64-template-require-kind! gate target render-kind)
       (catalog.compiler-x64-template-require-rendered-payload!
-        (owned_view.compiler-owned-shared-view gate)
+        gate
         (& rendered))
       (compiler-x64-template-semantic-identity row id-name rendered))))

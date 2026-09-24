@@ -12538,6 +12538,87 @@
       (array-ref opt-cfg-label-slot label)
       -1)))
 
+;; Which generated-block markers a label's text contains, one row per label.
+;; Label ids are never reused and their text never changes, so each row is
+;; computed once: bit 0 says the row is filled, bit k + 1 that the text contains
+;; marker k. The substring searches this replaces ran for every block of every
+;; pass that asked, inliner trials included. DELIBERATE-RAW (#6620): process
+;; storage in the IR label arena, exactly like opt-cfg-label-slot above.
+(define opt-label-marker-rows : (__tl_dyn-array i64)
+  (__tl_make-array i64 1))
+
+(define (opt-label-marker-bool-and) : i64
+  0)
+
+(define (opt-label-marker-unroll2) : i64
+  1)
+
+(define (opt-label-marker-bce) : i64
+  2)
+
+(define (opt-label-marker-bce-fast) : i64
+  3)
+
+(define (opt-label-marker-text [marker : i64]) : String
+  (cond
+    [(= marker (opt-label-marker-bool-and)) "__bool_and."]
+    [(= marker (opt-label-marker-unroll2)) "__unroll2_1"]
+    [(= marker (opt-label-marker-bce)) "__bce_"]
+    [else "__bce_fast"]))
+
+(define (opt-label-marker-rows-reserve! [count : i64]) : unit
+  (if (<= count (array-length opt-label-marker-rows))
+    unit
+    (let
+      [size : i64 (array-length opt-label-marker-rows)]
+      (begin
+        (while (< size count)
+          (set! size (* size 2)))
+        (in-arena
+          (arena.Arena (ir.compiler-ir-label-arena))
+          (let
+            [next : (__tl_dyn-array i64) (__tl_make-array i64 size)]
+            [index : i64 0]
+            (begin
+              (while (< index (array-length opt-label-marker-rows))
+                (begin
+                  (set!
+                    (array-ref next index)
+                    (array-ref opt-label-marker-rows index))
+                  (set! index (+ index 1))))
+              (set! opt-label-marker-rows next))))))))
+
+(define (opt-label-marker-row-compute [label : i64]) : i64
+  (let
+    [text : String (ir.compiler-ir-label-text label)]
+    [row : i64 1]
+    [marker : i64 0]
+    (begin
+      (while (<= marker (opt-label-marker-bce-fast))
+        (let
+          [needle : String (opt-label-marker-text marker)]
+          (begin
+            (when
+              (string.contains (& text) (& needle))
+              (set! row (bit-or row (shl 2 marker))))
+            (set! marker (+ marker 1)))))
+      row)))
+
+(define (opt-label-has-marker? [label : i64] [marker : i64]) : bool
+  (if (or (< label 0) (>= label (ir.compiler-ir-label-count-value)))
+    false
+    (begin
+      (opt-label-marker-rows-reserve! (+ label 1))
+      (let
+        [row : i64 (array-ref opt-label-marker-rows label)]
+        (if (= row 0)
+          (let
+            [computed : i64 (opt-label-marker-row-compute label)]
+            (begin
+              (set! (array-ref opt-label-marker-rows label) computed)
+              (!= (bit-and computed (shl 2 marker)) 0)))
+          (!= (bit-and row (shl 2 marker)) 0))))))
+
 (defstruct OptCfgCsr
   (offsets (__tl_dyn-array i64))
   (edges (__tl_dyn-array i64)))
@@ -21814,10 +21895,7 @@
 ;; iteration, CSE must not merge those clones back into a dominating comparison
 ;; -- doing so recreates the setcc/test materialization the CFG rewrite removed.
 (define (opt-bool-branch-chain-generated-label? [label : i64]) : bool
-  (let
-    [marker : String "__bool_and."]
-    [text : String (ir.compiler-ir-label-text label)]
-    (string.contains (& text) (& marker))))
+  (opt-label-has-marker? label (opt-label-marker-bool-and)))
 
 (define (opt-bool-branch-chain-check-block?
   [block-label : i64]
@@ -21855,21 +21933,18 @@
 (define (opt-global-cse-unroll2-address-offset?
   [block-label : i64]
   [instr : ir.CompilerIrInstr]) : bool
-  (let
-    [marker : String "__unroll2_1"]
-    [text : String (ir.compiler-ir-label-text block-label)]
-    (and
-      (string.contains (& text) (& marker))
-      (match instr
-        [(ir.CompilerIrInstr.BinOp _ op _ rhs _)
-          (and
-            (match op
-              [(ir.CompilerIrBinOp.Add) true]
-              [_ false])
-            (match rhs
-              [(ir.CompilerIrValue.I64 n) (= n 1)]
-              [_ false]))]
-        [_ false]))))
+  (and
+    (opt-label-has-marker? block-label (opt-label-marker-unroll2))
+    (match instr
+      [(ir.CompilerIrInstr.BinOp _ op _ rhs _)
+        (and
+          (match op
+            [(ir.CompilerIrBinOp.Add) true]
+            [_ false])
+          (match rhs
+            [(ir.CompilerIrValue.I64 n) (= n 1)]
+            [_ false]))]
+      [_ false])))
 
 ;; 1:1 rewrite -> dense output sequence (see opt-global-copy-instr-seq). refs #5726
 (define (opt-global-cse-instr-seq
@@ -35665,14 +35740,11 @@
   (match (compiler-opt-global-shared-view labels)
     [(OptLabelSet.Nil) false]
     [(OptLabelSet.Dense _ _)
-      (let
-        [text : String
-          (ir.compiler-ir-label-text
-            (opt-label-ref (compiler-opt-global-shared-view labels) 0))]
-        [marker : String "__bce_"]
-        (or
-          (string.contains (& text) (& marker))
-          (opt-licm-unswitch-has-versioned-label? (opt-label-tail labels))))]))
+      (or
+        (opt-label-has-marker?
+          (opt-label-ref (compiler-opt-global-shared-view labels) 0)
+          (opt-label-marker-bce))
+        (opt-licm-unswitch-has-versioned-label? (opt-label-tail labels)))]))
 
 (define (opt-licm-unswitch-preheader-jumps-to?
   [blocks : ir.CompilerIrBlockList]
@@ -100202,10 +100274,7 @@
 ;; benchmark, against a base compiler that produces no nested clone anywhere in
 ;; the corpus.
 (define (opt-bce-mb-label-in-clone? [label : i64]) : bool
-  (let
-    [text : String (ir.compiler-ir-label-text label)]
-    [marker : String "__bce_fast"]
-    (string.contains (& text) (& marker))))
+  (opt-label-has-marker? label (opt-label-marker-bce-fast)))
 
 ;; Idempotence: no fast-clone label may already exist.
 (define (opt-bce-mb-fast-labels-fresh?
@@ -113083,13 +113152,11 @@
   (match (compiler-opt-global-shared-view labels)
     [(OptLabelSet.Nil) true]
     [(OptLabelSet.Dense _ _)
-      (let
-        [label : i64 (opt-label-ref (compiler-opt-global-shared-view labels) 0)]
-        [marker : String "__bce_fast"]
-        [text : String (ir.compiler-ir-label-text label)]
-        (and
-          (string.contains (& text) (& marker))
-          (opt-unroll-mb-all-fast-labels? (opt-label-tail labels))))]))
+      (and
+        (opt-label-has-marker?
+          (opt-label-ref (compiler-opt-global-shared-view labels) 0)
+          (opt-label-marker-bce-fast))
+        (opt-unroll-mb-all-fast-labels? (opt-label-tail labels)))]))
 
 (define (opt-unroll-mb-labels-fresh?
   [blocks : ir.CompilerIrBlockList]
@@ -114156,19 +114223,16 @@
     [(ir.CompilerIrBlockList.Cons block rest)
       (match block
         [(ir.CompilerIrBlock.Block label instrs)
-          (let
-            [marker : String "__bce_fast"]
-            [text : String (ir.compiler-ir-label-text label)]
-            (if (and
-              (string.contains (& text) (& marker))
-              (>
-                (ir.compiler-ir-instr-seq-count
-                  (compiler-opt-global-shared-view instrs))
-                0)
-              (ir.compiler-ir-instr-seq-phi? instrs 0))
-              true
-              (opt-unroll-mb-blocks-have-fast-phi?
-                (compiler-opt-box-shared-view rest))))])]
+          (if (and
+            (opt-label-has-marker? label (opt-label-marker-bce-fast))
+            (>
+              (ir.compiler-ir-instr-seq-count
+                (compiler-opt-global-shared-view instrs))
+              0)
+            (ir.compiler-ir-instr-seq-phi? instrs 0))
+            true
+            (opt-unroll-mb-blocks-have-fast-phi?
+              (compiler-opt-box-shared-view rest)))])]
     [(ir.CompilerIrBlockList.Array seq)
       (opt-unroll-mb-blocks-have-fast-phi?
         (ir.compiler-ir-block-seq-to-list seq))]))

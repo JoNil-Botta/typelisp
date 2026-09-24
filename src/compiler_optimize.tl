@@ -64939,27 +64939,26 @@
   [rhs : ir.CompilerIrValue]
   [query-var-lit : OptDomCmpVarLit]
   [ty : ast.AstType]) : OptDomCmpLookup
-  (match facts
-    [(OptDomCmpFacts.Nil) (OptDomCmpLookup.No)]
-    [(OptDomCmpFacts.Cons fact rest)
-      (match (opt-dom-cmp-fact-verdict
-        type-segment-bases
-        fact
-        query
-        (compiler-opt-global-shared-view lhs)
-        (compiler-opt-global-shared-view rhs)
-        query-var-lit
-        (compiler-opt-global-shared-view ty))
-        [(OptDomCmpLookup.Some decided) (OptDomCmpLookup.Some decided)]
-        [(OptDomCmpLookup.No)
-          (opt-dom-cmp-lookup-mask
-            type-segment-bases
-            (deref rest)
-            query
-            lhs
-            rhs
-            query-var-lit
-            ty)])]))
+  (let
+    [cur : OptDomCmpFacts (compiler-opt-global-shared-view facts)]
+    (begin
+      (while true
+        (match (compiler-opt-global-shared-view cur)
+          [(OptDomCmpFacts.Nil) (return (OptDomCmpLookup.No))]
+          [(OptDomCmpFacts.Cons fact rest)
+            (match (opt-dom-cmp-fact-verdict
+              type-segment-bases
+              fact
+              query
+              (compiler-opt-global-shared-view lhs)
+              (compiler-opt-global-shared-view rhs)
+              (compiler-opt-global-shared-view query-var-lit)
+              (compiler-opt-global-shared-view ty))
+              [(OptDomCmpLookup.Some decided)
+                (return (OptDomCmpLookup.Some decided))]
+              [(OptDomCmpLookup.No)
+                (set! cur (compiler-opt-box-shared-view rest))])]))
+      (OptDomCmpLookup.No))))
 
 (define (opt-dom-cmp-lookup
   [type-segment-bases : i64]
@@ -65895,34 +65894,31 @@
   [rhs : ir.CompilerIrValue]
   [query-var-lit : OptDomCmpVarLit]
   [ty : ast.AstType]) : OptDomCmpLookup
-  (match facts
-    [(OptDomCmpFacts.Nil) (OptDomCmpLookup.No)]
-    [(OptDomCmpFacts.Cons fact rest)
-      (match (if (opt-dom-cmp-fact-holds-at?
-        (compiler-opt-global-shared-view doms)
-        (compiler-opt-global-shared-view fact)
-        at-id)
-        (opt-dom-cmp-fact-verdict
-          type-segment-bases
-          (compiler-opt-global-shared-view fact)
-          query
-          (compiler-opt-global-shared-view lhs)
-          (compiler-opt-global-shared-view rhs)
-          (compiler-opt-global-shared-view query-var-lit)
-          (compiler-opt-global-shared-view ty))
-        (OptDomCmpLookup.No))
-        [(OptDomCmpLookup.Some decided) (OptDomCmpLookup.Some decided)]
-        [(OptDomCmpLookup.No)
-          (opt-dom-cmp-lookup-at-mask
-            type-segment-bases
-            (compiler-opt-global-shared-view doms)
-            at-id
-            (deref rest)
-            query
-            (compiler-opt-global-shared-view lhs)
-            (compiler-opt-global-shared-view rhs)
-            (compiler-opt-global-shared-view query-var-lit)
-            (compiler-opt-global-shared-view ty))])]))
+  (let
+    [cur : OptDomCmpFacts (compiler-opt-global-shared-view facts)]
+    (begin
+      (while true
+        (match (compiler-opt-global-shared-view cur)
+          [(OptDomCmpFacts.Nil) (return (OptDomCmpLookup.No))]
+          [(OptDomCmpFacts.Cons fact rest)
+            (match (if (opt-dom-cmp-fact-holds-at?
+              (compiler-opt-global-shared-view doms)
+              (compiler-opt-global-shared-view fact)
+              at-id)
+              (opt-dom-cmp-fact-verdict
+                type-segment-bases
+                (compiler-opt-global-shared-view fact)
+                query
+                (compiler-opt-global-shared-view lhs)
+                (compiler-opt-global-shared-view rhs)
+                (compiler-opt-global-shared-view query-var-lit)
+                (compiler-opt-global-shared-view ty))
+              (OptDomCmpLookup.No))
+              [(OptDomCmpLookup.Some decided)
+                (return (OptDomCmpLookup.Some decided))]
+              [(OptDomCmpLookup.No)
+                (set! cur (compiler-opt-box-shared-view rest))])]))
+      (OptDomCmpLookup.No))))
 
 ;; Do the facts that hold at `at-id` decide this i64 comparison TRUE?
 (define (opt-dom-cmp-decided-at?
@@ -78424,16 +78420,34 @@
 (define (opt-loop-bce-alias-resolve [env : OptLoopBceAliasEnv] [var : i64]) : i64
   (opt-loop-bce-alias-resolve-depth env var 0))
 
+(define (opt-loop-bce-ptr-bound? [env : OptLoopBcePtrEnv] [var : i64]) : bool
+  (let
+    [cur : OptLoopBcePtrEnv (compiler-opt-global-shared-view env)]
+    (begin
+      (while true
+        (match (compiler-opt-global-shared-view cur)
+          [(OptLoopBcePtrEnv.Nil) (return false)]
+          [(OptLoopBcePtrEnv.Cons id _ rest)
+            (if (= id var)
+              (return true)
+              (set! cur (compiler-opt-box-shared-view rest)))]))
+      false)))
+
+;; Removes every binding of `var`. A var is almost always unbound when it is
+;; bound (each def binds its own var once), and then the environment is
+;; returned as it is rather than copied cell by cell into an equal list.
 (define (opt-loop-bce-ptr-unbind [env : OptLoopBcePtrEnv] [var : i64]) : OptLoopBcePtrEnv
-  (match (compiler-opt-global-shared-view env)
-    [(OptLoopBcePtrEnv.Nil) (OptLoopBcePtrEnv.Nil)]
-    [(OptLoopBcePtrEnv.Cons id kind rest)
-      (let
-        [tail : OptLoopBcePtrEnv
-          (opt-loop-bce-ptr-unbind (compiler-opt-box-shared-view rest) var)]
-        (if (= id var)
-          tail
-          (OptLoopBcePtrEnv.Cons id kind (box tail))))]))
+  (if (not (opt-loop-bce-ptr-bound? (compiler-opt-global-shared-view env) var))
+    env
+    (match (compiler-opt-global-shared-view env)
+      [(OptLoopBcePtrEnv.Nil) (OptLoopBcePtrEnv.Nil)]
+      [(OptLoopBcePtrEnv.Cons id kind rest)
+        (let
+          [tail : OptLoopBcePtrEnv
+            (opt-loop-bce-ptr-unbind (compiler-opt-box-shared-view rest) var)]
+          (if (= id var)
+            tail
+            (OptLoopBcePtrEnv.Cons id kind (box tail))))])))
 
 (define (opt-loop-bce-ptr-bind
   [env : OptLoopBcePtrEnv]

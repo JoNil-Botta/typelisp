@@ -250,10 +250,11 @@
 (define (compiler-live-scratch-ops-ok?) : bool
   (let
     [words : (__tl_dyn-array i64) (__tl_make-array i64 6)]
+    [copied : live.CompilerLiveI64Set (live.compiler-live-set3 1 64 130)]
     [copy-count : i64
       (live.compiler-live-scratch-copy-set!
         (live.compiler-live-shared-view words)
-        (live.compiler-live-set3 1 64 130))]
+        copied)]
     [copy-ok : bool
       (and
         (= copy-count 5)
@@ -273,12 +274,14 @@
           (live.compiler-live-shared-view words)
           union-count
           (compiler-live-set5 1 64 65 130 191)))]
+    [step-uses : live.CompilerLiveI64Set (live.compiler-live-set1 0)]
+    [step-defs : live.CompilerLiveI64Set (live.compiler-live-set2 1 130)]
     [step-count : i64
       (live.compiler-live-scratch-step!
         (live.compiler-live-shared-view words)
         union-count
-        (live.compiler-live-set1 0)
-        (live.compiler-live-set2 1 130))]
+        step-uses
+        step-defs)]
     [step-ok : bool
       (and
         (= step-count 6)
@@ -291,10 +294,11 @@
             (live.compiler-live-shared-view words)
             step-count)
           (live.compiler-live-set4 0 64 65 191)))]
+    [short : live.CompilerLiveI64Set (live.compiler-live-set1 7)]
     [short-count : i64
       (live.compiler-live-scratch-copy-set!
         (live.compiler-live-shared-view words)
-        (live.compiler-live-set1 7))]
+        short)]
     [short-ok : bool
       (and
         (= short-count 1)
@@ -302,11 +306,7 @@
           (live.compiler-live-shared-view words)
           short-count
           (live.compiler-live-set1 7))
-        (=
-          (live.compiler-live-set-trim-length
-            (live.compiler-live-shared-view words)
-            6)
-          1))]
+        (= (live.compiler-live-set-trim-length words 6) 1))]
     [_cleared : unit
       (live.compiler-live-scratch-clear! (live.compiler-live-shared-view words))]
     (and
@@ -463,7 +463,7 @@
     [set-active : i64
       (live.compiler-live-scratch-copy-set!
         (live.compiler-live-shared-view set-words)
-        (live.compiler-live-shared-view seed))]
+        seed)]
     [id-active : i64
       (live.compiler-live-scratch-copy-set!
         (live.compiler-live-shared-view id-words)
@@ -475,15 +475,17 @@
       (begin
         (set! (array-ref ids 0) 130)
         (set! (array-ref ids 1) 191))]
+    [step-uses : live.CompilerLiveI64Set (live.compiler-live-set2 130 191)]
+    [step-defs : live.CompilerLiveI64Set (live.compiler-live-set1 1)]
     [set-count : i64
       (live.compiler-live-scratch-step!
         (live.compiler-live-shared-view set-words)
         set-active
-        (live.compiler-live-set2 130 191)
-        (live.compiler-live-set1 1))]
+        step-uses
+        step-defs)]
     [id-count : i64
       (live.compiler-live-scratch-step-ids!
-        (live.compiler-live-shared-view id-words)
+        (&mut id-words)
         id-active
         (live.compiler-live-shared-view ids)
         2
@@ -512,17 +514,19 @@
       (begin
         (set! (array-ref ids 0) 9)
         (set! (array-ref ids 1) 70))]
+    [instr-uses : live.CompilerLiveI64Set (live.compiler-live-set2 9 70)]
+    [instr-defs : live.CompilerLiveI64Set (live.compiler-live-set1 130)]
     [_set-step : unit
       (live.compiler-live-block-use-def-step!
         (live.compiler-live-shared-view set-use-words)
         (live.compiler-live-shared-view set-def-words)
-        (live.compiler-live-set2 9 70)
-        (live.compiler-live-set1 130))]
+        instr-uses
+        instr-defs)]
     [_id-step : unit
       (live.compiler-live-block-use-def-step-ids!
-        (live.compiler-live-shared-view id-use-words)
-        (live.compiler-live-shared-view id-def-words)
-        (live.compiler-live-shared-view ids)
+        (&mut id-use-words)
+        (&mut id-def-words)
+        ids
         2
         130)]
     [use-def-ok : bool
@@ -555,7 +559,7 @@
             (ir.CompilerIrValue.Var 3)
             (ir.CompilerIrValue.Var 4)
             (compiler-live-i64-ty))
-          narrow)
+          (&mut narrow))
         -1)]
     (and
       step-ok

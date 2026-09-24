@@ -15,9 +15,9 @@ bodies below. Grouped names are exact `AstExpr` variants.
 | --- | --- |
 | `Unary` | `lower-unary-expr`: contextual child lowering followed by one shared result allocation/emission path. |
 | `Binary` | `lower-binary-expr`: `And`/`Or` use `lower-if`; eager operands lower left then right; register-group comparisons use `lower-group-equality`. |
-| `Set` | Substantial inline assignment body remains. Reconcile it with existing `lower-set-expr` in a separate slice. |
-| `Comptime` | Substantial inline CTFE/materialization body remains. Reconcile it with existing `lower-comptime-expr` in a separate slice. |
-| `PtrNullCheck`, `PtrAddrOf`, `PtrRead`, `PtrWrite`, `PtrOffset`, `PtrCast`, `PtrToInt`, `IntToPtr` | Inline pointer-family behavior remains alongside existing `lower-ptr-*-expr` helpers. Coordinate #7725/#7844 when consolidating it. |
+| `Set` | Substantial inline assignment body remains; the dispatcher arm is its only implementation. Extract it into a family helper in a separate slice. |
+| `Comptime` | Substantial inline CTFE/materialization body remains; the dispatcher arm is its only implementation. Extract it into a family helper in a separate slice. |
+| `PtrNullCheck`, `PtrAddrOf`, `PtrRead`, `PtrWrite`, `PtrOffset`, `PtrCast`, `PtrToInt`, `IntToPtr` | Inline pointer-family behavior remains; the dispatcher arms are its only implementation. Coordinate #7725/#7844 when extracting it. |
 | `Spanned`, `MacroExpansion` | Small provenance/unwrapping routes back to the dispatcher. |
 | `Literal`, `BinaryData`, `SpmdProgramIndex`, `SpmdProgramCount` | Small value selection plus existing `lower-materialize-at-expr`. |
 | `Init`, `FixedMakeArray` | Select the expected type and route to `lower-init-expr`. |

@@ -1150,9 +1150,7 @@
     [(compiler_lower.ResultCompilerLower.Ok _ _) false]))
 
 (define (compiler-lower-inline-error-ok? [src : String] [want : String]) : bool
-  (match (compiler_lower.lower-compiler-source-with-mode
-    src
-    (compiler_lower.CompilerLowerMode.InlineAggregates))
+  (match (compiler_lower.lower-compiler-source src)
     [(compiler_lower.ResultCompilerLower.Err diag)
       (string.eq
         (compiler_diagnostic.compiler-diagnostic-message (__tl-box-place diag))
@@ -2897,9 +2895,8 @@
 ;; A mixed int/float 16-byte aggregate stays memory-backed, so its identity
 ;; return exercises the lower-copy-bytes 16-byte CopyBytes threshold.
 (define (compiler-lower-inline-aggregate-copy-shape-ok?) : bool
-  (match (compiler_lower.lower-compiler-source-with-mode
-    (compiler-lower-inline-aggregate-copy-source)
-    (compiler_lower.CompilerLowerMode.InlineAggregates))
+  (match (compiler_lower.lower-compiler-source
+    (compiler-lower-inline-aggregate-copy-source))
     [(compiler_lower.ResultCompilerLower.Ok pair-program _)
       (match pair-program
         [(compiler_ir_types.CompilerIrProgram.Program _ pair-functions _)
@@ -2911,9 +2908,8 @@
                 "id-pair")]
             [pair-store-count : i64
               (lower-test-function-store-ptr-count pair-functions "id-pair")]
-            (match (compiler_lower.lower-compiler-source-with-mode
-              (compiler-lower-inline-mixed16-copy-source)
-              (compiler_lower.CompilerLowerMode.InlineAggregates))
+            (match (compiler_lower.lower-compiler-source
+              (compiler-lower-inline-mixed16-copy-source))
               [(compiler_lower.ResultCompilerLower.Ok mixed-program _)
                 (match mixed-program
                   [(compiler_ir_types.CompilerIrProgram.Program
@@ -2932,9 +2928,8 @@
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-inline-sret-return-copy-shape-ok?) : bool
-  (match (compiler_lower.lower-compiler-source-with-mode
-    (compiler-lower-inline-sret-return-copy-source)
-    (compiler_lower.CompilerLowerMode.InlineAggregates))
+  (match (compiler_lower.lower-compiler-source
+    (compiler-lower-inline-sret-return-copy-source))
     [(compiler_lower.ResultCompilerLower.Ok program _)
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
@@ -2953,9 +2948,8 @@
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-inline-sret-constructor-copy-shape-ok?) : bool
-  (match (compiler_lower.lower-compiler-source-with-mode
-    (compiler-lower-inline-sret-struct-constructor-source)
-    (compiler_lower.CompilerLowerMode.InlineAggregates))
+  (match (compiler_lower.lower-compiler-source
+    (compiler-lower-inline-sret-struct-constructor-source))
     [(compiler_lower.ResultCompilerLower.Ok struct-program _)
       (match struct-program
         [(compiler_ir_types.CompilerIrProgram.Program _ struct-functions _)
@@ -2964,9 +2958,8 @@
               (lower-test-function-copy-bytes-count
                 struct-functions
                 "make-wide")]
-            (match (compiler_lower.lower-compiler-source-with-mode
-              (compiler-lower-inline-sret-enum-constructor-source)
-              (compiler_lower.CompilerLowerMode.InlineAggregates))
+            (match (compiler_lower.lower-compiler-source
+              (compiler-lower-inline-sret-enum-constructor-source))
               [(compiler_lower.ResultCompilerLower.Ok enum-program _)
                 (match enum-program
                   [(compiler_ir_types.CompilerIrProgram.Program
@@ -2984,9 +2977,8 @@
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-inline-sret-enum-match-shape-ok?) : bool
-  (match (compiler_lower.lower-compiler-source-with-mode
-    (compiler-lower-inline-sret-enum-match-constructor-source)
-    (compiler_lower.CompilerLowerMode.InlineAggregates))
+  (match (compiler_lower.lower-compiler-source
+    (compiler-lower-inline-sret-enum-match-constructor-source))
     [(compiler_lower.ResultCompilerLower.Ok constructor-program _)
       (match constructor-program
         [(compiler_ir_types.CompilerIrProgram.Program _ constructor-functions _)
@@ -3000,9 +2992,8 @@
               (lower-test-function-phi-count
                 constructor-functions
                 "from-choice")]
-            (match (compiler_lower.lower-compiler-source-with-mode
-              (compiler-lower-inline-sret-enum-match-generic-source)
-              (compiler_lower.CompilerLowerMode.InlineAggregates))
+            (match (compiler_lower.lower-compiler-source
+              (compiler-lower-inline-sret-enum-match-generic-source))
               [(compiler_lower.ResultCompilerLower.Ok generic-program _)
                 (match generic-program
                   [(compiler_ir_types.CompilerIrProgram.Program
@@ -3047,9 +3038,8 @@
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-inline-direct-store-copy-shape-ok?) : bool
-  (match (compiler_lower.lower-compiler-source-with-mode
-    (compiler-lower-inline-direct-store-source)
-    (compiler_lower.CompilerLowerMode.InlineAggregates))
+  (match (compiler_lower.lower-compiler-source
+    (compiler-lower-inline-direct-store-source))
     [(compiler_lower.ResultCompilerLower.Ok program _)
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
@@ -9535,9 +9525,8 @@
   ;; A one-word register-resident struct with an all-zero default takes the
   ;; tl_array_zero path (the aggregate zero-fill supersedes fill8 for
   ;; all-zero defaults; fill8 remains for non-zero defaults).
-  (match (compiler_lower.lower-compiler-source-with-mode
-    (compiler-lower-make-array-register-resident-fill8-source)
-    (compiler_lower.CompilerLowerMode.InlineAggregates))
+  (match (compiler_lower.lower-compiler-source
+    (compiler-lower-make-array-register-resident-fill8-source))
     [(compiler_lower.ResultCompilerLower.Ok program _)
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)

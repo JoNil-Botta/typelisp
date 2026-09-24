@@ -463,8 +463,8 @@ emission implementation. Runtime diagnostics and checked-surface failures still
 precede deferred export metadata errors. The export lifetime tests destroy and
 reuse the original parser/interner storage before emitting both target images.
 
-`build-package-prepare-runtime` and its owned-scope adapter in
-`build_cli_core.tl` share package route selection through `BuildPackageDirectObjectRequest`: target, artifact kind,
+`build-package-prepare-owned-runtime` in `build_cli_core.tl` selects the
+package route from one `BuildPackageDirectObjectRequest`: target, artifact kind,
 backend mode, debug policy, resource policy, strict policy, and loaded inputs.
 Its result contains object bytes and complete side assembly, valid fallback
 assembly with a closed `CompilerDirectObjectFallbackReason`, or a diagnostic.

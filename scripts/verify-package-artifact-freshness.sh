@@ -78,11 +78,11 @@ check_package_lowered_route() {
     awk '
         /^[[:space:]]*\(define \(/ {
             mode = ""; route_lower = 0
-            if ($0 ~ /\(build-package-(try-prepare-direct-runtime|prepare-owned-runtime)$/) { mode = "prepare"; prepare += 1 }
+            if ($0 ~ /\(build-package-prepare-owned-runtime$/) { mode = "prepare"; prepare += 1 }
             if ($0 ~ /\(build-package-(emit-preflighted-runtime|emit-assembly-fallback)$/) { mode = "emit"; emit += 1 }
         }
         mode == "prepare" {
-            if ($0 ~ /compiler-driver-(lower-package-loaded|package-runtime-lower)/) { lower_calls += 1; route_lower += 1 }
+            if ($0 ~ /compiler-driver-package-runtime-lower/) { lower_calls += 1; route_lower += 1 }
             if ($0 ~ /\(build-package-direct-object-preflight$/) { policy_calls += 1; if (route_lower) forbidden += 1 }
             if ($0 ~ /\(build-package-emit-preflighted-runtime$/) handoff += 1
         }
@@ -90,7 +90,7 @@ check_package_lowered_route() {
             if ($0 ~ /AstDecl|AstNode|compiler-driver-(lower|load|emit)-package/) forbidden += 1
             if ($0 ~ /\[lowered : compiler_driver_core.ResultCompilerDriverLowered\]/) inputs += 1
         }
-        END { exit !(prepare == 2 && emit == 2 && lower_calls == 2 && policy_calls == 2 && handoff == 2 && inputs == 2 && forbidden == 0) }
+        END { exit !(prepare == 1 && emit == 2 && lower_calls == 1 && policy_calls == 1 && handoff == 1 && inputs == 2 && forbidden == 0) }
     ' "$1"
 }
 check_package_lowered_route src/build_cli_core.tl || fail "package emission does not consume one lowered result"
@@ -117,7 +117,7 @@ check_prepared_runtime_boundary() {
             if ($0 ~ /\(build-package-finish-fresh-artifacts-with-surface$/) { mode = "capture"; capture += 1 }
         }
         mode == "finish" || mode == "direct" {
-            if ($0 ~ /AstDecl|AstNode|CompilerIr|build-package-prepare(-owned)?-runtime|compiler-driver-(emit|lower)-package|compiler-driver-package-runtime-lower/) forbidden += 1
+            if ($0 ~ /AstDecl|AstNode|CompilerIr|build-package-prepare-owned-runtime|compiler-driver-(emit|lower)-package|compiler-driver-package-runtime-lower/) forbidden += 1
         }
         mode == "finish" && $0 ~ /\(match prepared$/ { consume += 1 }
         mode == "capture" {
@@ -133,12 +133,12 @@ check_prepared_runtime_boundary() {
 }
 
 check_prepared_runtime_boundary src/build_cli_core.tl || fail "package artifact finishing does not consume one prepared runtime"
-sed 's/(match prepared$/(match (build-package-prepare-runtime request)/' \
+sed 's/(match prepared$/(match (build-package-prepare-owned-runtime scope request)/' \
     src/build_cli_core.tl > "$WORK/reprepared-runtime.tl"
 if check_prepared_runtime_boundary "$WORK/reprepared-runtime.tl"; then
     fail "prepared runtime guard accepted preparation inside artifact finishing"
 fi
-sed '/^[[:space:]]*(build-package-finish-prepared-runtime$/ { n; s/^[[:space:]]*prepared$/                      (build-package-prepare-runtime request)/; }' \
+sed '/^[[:space:]]*(build-package-finish-prepared-runtime$/ { n; s/^[[:space:]]*prepared$/                      (build-package-prepare-owned-runtime scope request)/; }' \
     src/build_cli_core.tl > "$WORK/reprepared-handoff.tl"
 if check_prepared_runtime_boundary "$WORK/reprepared-handoff.tl"; then
     fail "prepared runtime guard accepted repeated preparation at handoff"

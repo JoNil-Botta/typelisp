@@ -250,6 +250,12 @@ doc_site_page_check_self_test_cases() {
     doc_site_page_check_expect_failure missing-anchor "$_dspc_site" \
         "stdlib.html: link 'spec.html#nowhere' has no matching id=\"nowhere\" in spec.html" || return 1
 
+    # Anchors resolve in the link's target: tl-io exists only in other pages.
+    doc_site_page_check_fixture "$_dspc_site"
+    printf '%s\n' '<a href="spec.html#tl-io">wrong page</a>' >> "$_dspc_site/stdlib.html"
+    doc_site_page_check_expect_failure anchor-in-other-page "$_dspc_site" \
+        "stdlib.html: link 'spec.html#tl-io' has no matching id=\"tl-io\" in spec.html" || return 1
+
     doc_site_page_check_fixture "$_dspc_site"
     printf '%s\n' '<a href="#elsewhere">gone</a>' >> "$_dspc_site/stdlib-io.html"
     doc_site_page_check_expect_failure missing-self-anchor "$_dspc_site" \

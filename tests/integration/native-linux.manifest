@@ -71,6 +71,7 @@ hashmap_nominal_value_local_smoke|tests/integration/hashmap_nominal_value_local_
 stdlib_time_sleep|tests/integration/stdlib_time_sleep.tl|42|-|-|stdlib/time.tl
 stdlib_time_allocation|tests/integration/stdlib_time_allocation.tl|42|-|-|stdlib/arena.tl stdlib/profile.tl stdlib/string.tl stdlib/thread.tl stdlib/time.tl
 stdlib_crypto_random|tests/integration/stdlib_crypto_random.tl|42|-|-|stdlib/crypto_random.tl stdlib/byte_buf.tl stdlib/string.tl|stage-stdlib
+winsock_capability|tests/integration/winsock_capability.tl|42|-|-|stdlib/net_windows_winsock.tl stdlib/ffi.tl stdlib/byte_buf.tl|stage-stdlib
 array_compat_aliases|tests/integration/array_compat_aliases.tl|42|-|-|-
 private_array_data|tests/integration/private_array_data.tl|42|-|-|-
 dynamic_array_literal|tests/integration/dynamic_array_literal.tl|42|-|-|-

@@ -11348,16 +11348,19 @@
   (PackWordCons i64 i64 ir.CompilerIrValue (Box OptCopyEnv)))
 
 (define (opt-copy-lookup [env : OptCopyEnv] [var : i64]) : ir.CompilerIrMaybeValue
-  (match env
-    [(OptCopyEnv.Nil) (ir.CompilerIrMaybeValue.No)]
-    [(OptCopyEnv.Cons id value rest)
-      (let
-        [rest : OptCopyEnv (compiler-opt-box-shared-view rest)]
-        (if (= id var)
-          (ir.CompilerIrMaybeValue.Some value)
-          (opt-copy-lookup rest var)))]
-    [(OptCopyEnv.PackWordCons _ _ _ rest)
-      (opt-copy-lookup (compiler-opt-box-shared-view rest) var)]))
+  (let
+    [cur : OptCopyEnv (compiler-opt-global-shared-view env)]
+    (begin
+      (while true
+        (match (compiler-opt-global-shared-view cur)
+          [(OptCopyEnv.Nil) (return (ir.CompilerIrMaybeValue.No))]
+          [(OptCopyEnv.Cons id value rest)
+            (if (= id var)
+              (return (ir.CompilerIrMaybeValue.Some value))
+              (set! cur (compiler-opt-box-shared-view rest)))]
+          [(OptCopyEnv.PackWordCons _ _ _ rest)
+            (set! cur (compiler-opt-box-shared-view rest))]))
+      (ir.CompilerIrMaybeValue.No))))
 
 (define (opt-copy-pack-word-lookup
   [env : OptCopyEnv]
@@ -15979,33 +15982,29 @@
   [index : i64]
   [pos : i64]
   [items : (__tl_dyn-array OptMaybeVarDef)]) : bool
-  (if (>=
-    index
-    (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs)))
-    true
-    (let
-      [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
-      (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
-        [(option_i64.Some var)
-          (and
-            (opt-var-defs-checked-add!
-              (compiler-opt-global-shared-view items)
-              var
-              block-id
-              (opt-instr-def-position instr pos))
-            (opt-var-defs-checked-instr-seq-from!
-              (compiler-opt-global-shared-view instrs)
-              block-id
-              (+ index 1)
-              (+ pos 1)
-              items))]
-        [(option_i64.None)
-          (opt-var-defs-checked-instr-seq-from!
-            (compiler-opt-global-shared-view instrs)
-            block-id
-            (+ index 1)
-            (+ pos 1)
-            items)]))))
+  (let
+    [count : i64
+      (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs))]
+    [i : i64 index]
+    [p : i64 pos]
+    (begin
+      (while (< i count)
+        (let
+          [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs i)]
+          (begin
+            (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
+              [(option_i64.Some var)
+                (unless
+                  (opt-var-defs-checked-add!
+                    (compiler-opt-global-shared-view items)
+                    var
+                    block-id
+                    (opt-instr-def-position instr p))
+                  (return false))]
+              [(option_i64.None) unit])
+            (set! i (+ i 1))
+            (set! p (+ p 1)))))
+      true)))
 
 (define (opt-var-defs-checked-blocks!
   [blocks : ir.CompilerIrBlockList]
@@ -17685,28 +17684,27 @@
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]
   [pos : i64]) : ResultCompilerOptimizeVerify
-  (if (>=
-    index
-    (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs)))
-    (ResultCompilerOptimizeVerify.Ok)
-    (match (opt-verify-instr-uses-with-return-alias
-      (compiler-opt-global-shared-view defs)
-      (compiler-opt-global-shared-view doms)
-      (& return-alias)
-      block-id
-      pos
-      (ir.compiler-ir-instr-seq-ref instrs index))
-      [(ResultCompilerOptimizeVerify.Ok)
-        (opt-verify-instr-seq-uses-from
-          defs
-          doms
-          return-alias
-          block-id
-          instrs
-          (+ index 1)
-          (+ pos 1))]
-      [(ResultCompilerOptimizeVerify.Err message)
-        (ResultCompilerOptimizeVerify.Err message)])))
+  (let
+    [count : i64
+      (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs))]
+    [i : i64 index]
+    [p : i64 pos]
+    (begin
+      (while (< i count)
+        (begin
+          (match (opt-verify-instr-uses-with-return-alias
+            (compiler-opt-global-shared-view defs)
+            (compiler-opt-global-shared-view doms)
+            (& return-alias)
+            block-id
+            p
+            (ir.compiler-ir-instr-seq-ref instrs i))
+            [(ResultCompilerOptimizeVerify.Ok) unit]
+            [(ResultCompilerOptimizeVerify.Err message)
+              (return (ResultCompilerOptimizeVerify.Err message))])
+          (set! i (+ i 1))
+          (set! p (+ p 1))))
+      (ResultCompilerOptimizeVerify.Ok))))
 
 (define (opt-phi-input-labels [inputs : ir.CompilerIrPhiInputSeq]) : OptLabelSet
   (let
@@ -31124,26 +31122,28 @@
   [global-cells : OptGlobalCellSummary]
   [track-provenance? : bool]
   [state : OptLicmStoreState]) : OptLicmStoreState
-  (if (>=
-    index
-    (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs)))
-    state
-    (opt-licm-store-state-instr-seq-from
-      type-segment-bases
-      (compiler-opt-global-shared-view types)
-      (compiler-opt-global-shared-view instrs)
-      (+ index 1)
-      (compiler-opt-global-shared-view direct-call-clean)
-      (compiler-opt-global-shared-view global-cells)
-      track-provenance?
-      (opt-licm-store-state-instr
-        type-segment-bases
-        types
-        (compiler-opt-global-shared-view state)
-        direct-call-clean
-        global-cells
-        track-provenance?
-        (ir.compiler-ir-instr-seq-ref instrs index)))))
+  (let
+    [count : i64
+      (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs))]
+    [out : OptLicmStoreState state]
+    [i : i64 index]
+    (begin
+      (while (< i count)
+        (begin
+          (set!
+            out
+            (opt-licm-store-state-instr
+              type-segment-bases
+              (compiler-opt-global-shared-view types)
+              out
+              (compiler-opt-global-shared-view direct-call-clean)
+              (compiler-opt-global-shared-view global-cells)
+              track-provenance?
+              (ir.compiler-ir-instr-seq-ref
+                (compiler-opt-global-shared-view instrs)
+                i)))
+          (set! i (+ i 1))))
+      out)))
 
 (define (opt-licm-store-state-instr-seq
   [type-segment-bases : i64]
@@ -31208,24 +31208,26 @@
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]
   [state : OptLicmStoreState]) : OptLicmStoreState
-  (if (>=
-    index
-    (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs)))
-    state
-    (opt-licm-provenance-state-instr-seq-from
-      type-segment-bases
-      (compiler-opt-global-shared-view types)
-      (compiler-opt-global-shared-view frozen)
-      (compiler-opt-global-shared-view instrs)
-      (+ index 1)
-      (opt-licm-provenance-state-instr
-        type-segment-bases
-        (compiler-opt-global-shared-view types)
-        (compiler-opt-global-shared-view frozen)
-        state
-        (ir.compiler-ir-instr-seq-ref
-          (compiler-opt-global-shared-view instrs)
-          index)))))
+  (let
+    [count : i64
+      (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs))]
+    [out : OptLicmStoreState state]
+    [i : i64 index]
+    (begin
+      (while (< i count)
+        (begin
+          (set!
+            out
+            (opt-licm-provenance-state-instr
+              type-segment-bases
+              (compiler-opt-global-shared-view types)
+              (compiler-opt-global-shared-view frozen)
+              out
+              (ir.compiler-ir-instr-seq-ref
+                (compiler-opt-global-shared-view instrs)
+                i)))
+          (set! i (+ i 1))))
+      out)))
 
 (define (opt-licm-provenance-state-blocks
   [type-segment-bases : i64]
@@ -60129,18 +60131,22 @@
   [state : OptSccpState]
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]) : OptSccpState
-  (if (>=
-    index
-    (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs)))
-    state
-    (opt-sccp-process-instr-seq-from
-      type-segment-bases
-      (opt-sccp-process-instr
-        type-segment-bases
-        (compiler-opt-global-shared-view state)
-        (ir.compiler-ir-instr-seq-ref instrs index))
-      (compiler-opt-global-shared-view instrs)
-      (+ index 1))))
+  (let
+    [count : i64
+      (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs))]
+    [out : OptSccpState state]
+    [i : i64 index]
+    (begin
+      (while (< i count)
+        (begin
+          (set!
+            out
+            (opt-sccp-process-instr
+              type-segment-bases
+              (compiler-opt-global-shared-view out)
+              (ir.compiler-ir-instr-seq-ref instrs i)))
+          (set! i (+ i 1))))
+      out)))
 
 (define (opt-sccp-process-instr-seq
   [type-segment-bases : i64]
@@ -64107,23 +64113,24 @@
   [index : i64]
   [count : i64]
   [acc : OptValueSources]) : OptValueSources
-  (if (>= index count)
-    acc
-    (let
-      [instr : ir.CompilerIrInstr
-        (compiler-opt-global-array-element-shared-view slots index)]
-      [dst : i64 (opt-gvn-instr-dst (compiler-opt-global-shared-view instr))]
-      [next : OptValueSources
-        (if (opt-gvn-record-candidate? (compiler-opt-global-shared-view instr))
-          (opt-gvn-defs-add acc (- 0 1))
-          acc)]
-      (opt-gvn-sources-instr-seq-from
-        slots
-        (+ index 1)
-        count
-        (if (= dst (- 0 1))
-          next
-          (opt-gvn-defs-add next dst))))))
+  (let
+    [out : OptValueSources acc]
+    [i : i64 index]
+    (begin
+      (while (< i count)
+        (let
+          [instr : ir.CompilerIrInstr
+            (compiler-opt-global-array-element-shared-view slots i)]
+          [dst : i64
+            (opt-gvn-instr-dst (compiler-opt-global-shared-view instr))]
+          (begin
+            (when
+              (opt-gvn-record-candidate?
+                (compiler-opt-global-shared-view instr))
+              (set! out (opt-gvn-defs-add out (- 0 1))))
+            (when (!= dst (- 0 1)) (set! out (opt-gvn-defs-add out dst)))
+            (set! i (+ i 1)))))
+      out)))
 
 (define (opt-gvn-sources-blocks
   [blocks : ir.CompilerIrBlockList]
@@ -65648,27 +65655,26 @@
   [rhs : ir.CompilerIrValue]
   [query-var-lit : OptDomCmpVarLit]
   [ty : ast.AstType]) : OptDomCmpLookup
-  (match facts
-    [(OptDomCmpFacts.Nil) (OptDomCmpLookup.No)]
-    [(OptDomCmpFacts.Cons fact rest)
-      (match (opt-dom-cmp-fact-verdict
-        type-segment-bases
-        fact
-        query
-        (compiler-opt-global-shared-view lhs)
-        (compiler-opt-global-shared-view rhs)
-        query-var-lit
-        (compiler-opt-global-shared-view ty))
-        [(OptDomCmpLookup.Some decided) (OptDomCmpLookup.Some decided)]
-        [(OptDomCmpLookup.No)
-          (opt-dom-cmp-lookup-mask
-            type-segment-bases
-            (deref rest)
-            query
-            lhs
-            rhs
-            query-var-lit
-            ty)])]))
+  (let
+    [cur : OptDomCmpFacts (compiler-opt-global-shared-view facts)]
+    (begin
+      (while true
+        (match (compiler-opt-global-shared-view cur)
+          [(OptDomCmpFacts.Nil) (return (OptDomCmpLookup.No))]
+          [(OptDomCmpFacts.Cons fact rest)
+            (match (opt-dom-cmp-fact-verdict
+              type-segment-bases
+              fact
+              query
+              (compiler-opt-global-shared-view lhs)
+              (compiler-opt-global-shared-view rhs)
+              (compiler-opt-global-shared-view query-var-lit)
+              (compiler-opt-global-shared-view ty))
+              [(OptDomCmpLookup.Some decided)
+                (return (OptDomCmpLookup.Some decided))]
+              [(OptDomCmpLookup.No)
+                (set! cur (compiler-opt-box-shared-view rest))])]))
+      (OptDomCmpLookup.No))))
 
 (define (opt-dom-cmp-lookup
   [type-segment-bases : i64]
@@ -66604,34 +66610,31 @@
   [rhs : ir.CompilerIrValue]
   [query-var-lit : OptDomCmpVarLit]
   [ty : ast.AstType]) : OptDomCmpLookup
-  (match facts
-    [(OptDomCmpFacts.Nil) (OptDomCmpLookup.No)]
-    [(OptDomCmpFacts.Cons fact rest)
-      (match (if (opt-dom-cmp-fact-holds-at?
-        (compiler-opt-global-shared-view doms)
-        (compiler-opt-global-shared-view fact)
-        at-id)
-        (opt-dom-cmp-fact-verdict
-          type-segment-bases
-          (compiler-opt-global-shared-view fact)
-          query
-          (compiler-opt-global-shared-view lhs)
-          (compiler-opt-global-shared-view rhs)
-          (compiler-opt-global-shared-view query-var-lit)
-          (compiler-opt-global-shared-view ty))
-        (OptDomCmpLookup.No))
-        [(OptDomCmpLookup.Some decided) (OptDomCmpLookup.Some decided)]
-        [(OptDomCmpLookup.No)
-          (opt-dom-cmp-lookup-at-mask
-            type-segment-bases
-            (compiler-opt-global-shared-view doms)
-            at-id
-            (deref rest)
-            query
-            (compiler-opt-global-shared-view lhs)
-            (compiler-opt-global-shared-view rhs)
-            (compiler-opt-global-shared-view query-var-lit)
-            (compiler-opt-global-shared-view ty))])]))
+  (let
+    [cur : OptDomCmpFacts (compiler-opt-global-shared-view facts)]
+    (begin
+      (while true
+        (match (compiler-opt-global-shared-view cur)
+          [(OptDomCmpFacts.Nil) (return (OptDomCmpLookup.No))]
+          [(OptDomCmpFacts.Cons fact rest)
+            (match (if (opt-dom-cmp-fact-holds-at?
+              (compiler-opt-global-shared-view doms)
+              (compiler-opt-global-shared-view fact)
+              at-id)
+              (opt-dom-cmp-fact-verdict
+                type-segment-bases
+                (compiler-opt-global-shared-view fact)
+                query
+                (compiler-opt-global-shared-view lhs)
+                (compiler-opt-global-shared-view rhs)
+                (compiler-opt-global-shared-view query-var-lit)
+                (compiler-opt-global-shared-view ty))
+              (OptDomCmpLookup.No))
+              [(OptDomCmpLookup.Some decided)
+                (return (OptDomCmpLookup.Some decided))]
+              [(OptDomCmpLookup.No)
+                (set! cur (compiler-opt-box-shared-view rest))])]))
+      (OptDomCmpLookup.No))))
 
 ;; Do the facts that hold at `at-id` decide this i64 comparison TRUE?
 (define (opt-dom-cmp-decided-at?
@@ -79133,13 +79136,35 @@
 (define (opt-loop-bce-alias-resolve [env : OptLoopBceAliasEnv] [var : i64]) : i64
   (opt-loop-bce-alias-resolve-depth env var 0))
 
+(define (opt-loop-bce-ptr-bound? [env : OptLoopBcePtrEnv] [var : i64]) : bool
+  (let
+    [cur : OptLoopBcePtrEnv (compiler-opt-global-shared-view env)]
+    (begin
+      (while true
+        (match (compiler-opt-global-shared-view cur)
+          [(OptLoopBcePtrEnv.Nil) (return false)]
+          [(OptLoopBcePtrEnv.Cons id _ rest)
+            (if (= id var)
+              (return true)
+              (set! cur (compiler-opt-box-shared-view rest)))]))
+      false)))
+
+;; Removes every binding of `var`. A var is almost always unbound when it is
+;; bound (each def binds its own var once), and then the environment is
+;; returned as it is rather than copied cell by cell into an equal list. The
+;; search runs once, here; the removal does not repeat it per cell.
 (define (opt-loop-bce-ptr-unbind [env : OptLoopBcePtrEnv] [var : i64]) : OptLoopBcePtrEnv
+  (if (opt-loop-bce-ptr-bound? (compiler-opt-global-shared-view env) var)
+    (opt-loop-bce-ptr-remove env var)
+    env))
+
+(define (opt-loop-bce-ptr-remove [env : OptLoopBcePtrEnv] [var : i64]) : OptLoopBcePtrEnv
   (match (compiler-opt-global-shared-view env)
     [(OptLoopBcePtrEnv.Nil) (OptLoopBcePtrEnv.Nil)]
     [(OptLoopBcePtrEnv.Cons id kind rest)
       (let
         [tail : OptLoopBcePtrEnv
-          (opt-loop-bce-ptr-unbind (compiler-opt-box-shared-view rest) var)]
+          (opt-loop-bce-ptr-remove (compiler-opt-box-shared-view rest) var)]
         (if (= id var)
           tail
           (OptLoopBcePtrEnv.Cons id kind (box tail))))]))
@@ -185290,19 +185315,22 @@
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]
   [var : i64]) : OptMaybeInstr
-  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-    (OptMaybeInstr.No)
-    (let
-      [instr : ir.CompilerIrInstr
-        (ir.compiler-ir-instr-seq-ref
-          (compiler-opt-global-shared-view instrs)
-          index)]
-      (if (= (opt-gvn-instr-dst (compiler-opt-global-shared-view instr)) var)
-        (OptMaybeInstr.Some instr)
-        (opt-load-gvn-find-def-instrs
-          (compiler-opt-global-shared-view instrs)
-          (+ index 1)
-          var)))))
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [i : i64 index]
+    (begin
+      (while (< i count)
+        (let
+          [instr : ir.CompilerIrInstr
+            (ir.compiler-ir-instr-seq-ref
+              (compiler-opt-global-shared-view instrs)
+              i)]
+          (if (=
+            (opt-gvn-instr-dst (compiler-opt-global-shared-view instr))
+            var)
+            (return (OptMaybeInstr.Some instr))
+            (set! i (+ i 1)))))
+      (OptMaybeInstr.No))))
 
 (define (opt-load-gvn-find-def [blocks : ir.CompilerIrBlockList] [var : i64]) : OptMaybeInstr
   (match (compiler-opt-global-shared-view blocks)

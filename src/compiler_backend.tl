@@ -2437,10 +2437,8 @@
   13)
 (define compiler-backend-scratch-i64-current-source-function : i64
   14)
-(define compiler-backend-scratch-i64-planned-scratch-reg-mask : i64
-  15)
 (define compiler-backend-scratch-i64-count : i64
-  16)
+  15)
 (define compiler-backend-scratch-bool-emergency-pending : i64
   0)
 (define compiler-backend-scratch-bool-emergency-used : i64
@@ -2485,20 +2483,18 @@
   6)
 (define compiler-backend-scratch-i64-array-scavenge-occupied-masks : i64
   7)
-(define compiler-backend-scratch-i64-array-scavenge-scratch-masks : i64
-  8)
 (define compiler-backend-scratch-i64-array-current-planned-preserve-regs : i64
-  9)
+  8)
 (define compiler-backend-scratch-i64-array-current-planned-local-preserve-regs : i64
-  10)
+  9)
 
 ;; T1-6 (b): where each pending emergency-scavenge save is PARKED, one entry per
 ;; `-array-emergency-regs` entry. `>= 0` = an XMM register id (a frame-free
 ;; save); `< 0` = `-(slot-index + 1)`, the classic 64-byte frame slot.
 (define compiler-backend-scratch-i64-array-emergency-save-locs : i64
-  11)
+  10)
 (define compiler-backend-scratch-i64-array-count : i64
-  12)
+  11)
 (define compiler-backend-scratch-bool-array-const-hoist-site-wide : i64
   0)
 (define compiler-backend-scratch-bool-array-const-hoist-site-frame : i64
@@ -6523,8 +6519,6 @@
   [base : compiler_ir_types.CompilerIrValue]
   [index : compiler_ir_types.CompilerIrValue]
   [elem-ty : compiler_ast_types.AstType]
-  [planned-base : String]
-  [planned-index : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackendSimdIndexedAddress
   (let
     [base-home : String
@@ -6541,7 +6535,7 @@
     [base-reg : String
       (if (string.eq base-home "")
         (compiler-backend-planned-or-scavenge-reg-here
-          planned-base
+          ""
           (compiler-backend-global-shared-view addr-exclude)
           7
           "%r8"
@@ -6579,7 +6573,7 @@
           [index-reg : String
             (if (string.eq index-home "")
               (compiler-backend-planned-or-scavenge-reg-here
-                planned-index
+                ""
                 index-exclude
                 8
                 "%r9"
@@ -6646,8 +6640,6 @@
           base
           index
           (compiler-backend-global-shared-view elem-ty)
-          ""
-          ""
           backend-state)
           [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
             (let
@@ -7376,8 +7368,6 @@
                       base
                       index
                       (compiler-backend-global-shared-view elem-ty)
-                      ""
-                      ""
                       backend-state)
                       [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
                         (let
@@ -7459,8 +7449,6 @@
               base
               index
               (compiler-backend-global-shared-view elem-ty)
-              ""
-              ""
               backend-state)
               [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
                 (let
@@ -8549,8 +8537,6 @@
           base
           index
           (compiler-backend-global-shared-view elem-ty)
-          ""
-          ""
           backend-state)
           [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
             (let
@@ -8860,8 +8846,6 @@
                       base
                       index
                       (compiler-backend-global-shared-view elem-ty)
-                      ""
-                      ""
                       backend-state)
                       [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
                         (let
@@ -9464,8 +9448,6 @@
               base
               index
               (compiler-backend-global-shared-view elem-ty)
-              ""
-              ""
               backend-state)
               [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
                 (let
@@ -9704,8 +9686,6 @@
               (compiler-backend-global-shared-view index)
               lane-offset)
             (compiler_ast_types.AstType.I64)
-            ""
-            ""
             (compiler-backend-global-shared-view backend-state))
             [(ResultCompilerBackendSimdIndexedAddress.Ok index-plan)
               (let
@@ -9916,8 +9896,6 @@
               (compiler-backend-global-shared-view index)
               lane-offset)
             (compiler_ast_types.AstType.I64)
-            ""
-            ""
             (compiler-backend-global-shared-view backend-state))
             [(ResultCompilerBackendSimdIndexedAddress.Ok index-plan)
               (let
@@ -12112,10 +12090,6 @@
   [carry : compiler_ir_types.CompilerIrValue]
   [lanes : i64]
   [elem-ty : compiler_ast_types.AstType]
-  [planned-gp : String]
-  [planned-xmm : String]
-  [planned-work0 : String]
-  [planned-work1 : String]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
@@ -12131,14 +12105,11 @@
         (compiler-backend-global-shared-view src)
         (compiler-backend-global-shared-view carry))]
     [dst-exclude : (__tl_dyn-array String)
-      (compiler-backend-scavenge-exclude-append
-        operand-exclude
-        7
-        (compiler-backend-global-shared-view planned-xmm))]
+      (compiler-backend-scavenge-exclude-append operand-exclude 7 "")]
     [work0 : String
       (if needs-xmm-work
         (compiler-backend-planned-or-scavenge-xmm-reg
-          planned-work0
+          ""
           dst
           (compiler-backend-global-shared-view dst-exclude)
           8
@@ -12153,7 +12124,7 @@
     [work1 : String
       (if needs-xmm-work
         (compiler-backend-planned-or-scavenge-xmm-reg
-          planned-work1
+          ""
           dst
           work1-exclude
           9
@@ -12169,8 +12140,8 @@
         (compiler-backend-global-shared-view carry)
         lanes
         elem-ty
-        planned-gp
-        (compiler-backend-global-shared-view planned-xmm)
+        ""
+        ""
         (compiler-backend-global-shared-view work0)
         work1
         instr-diag
@@ -12183,8 +12154,8 @@
         (compiler-backend-global-shared-view carry)
         lanes
         elem-ty
-        planned-gp
-        (compiler-backend-global-shared-view planned-xmm)
+        ""
+        ""
         (compiler-backend-global-shared-view work0)
         work1
         instr-diag
@@ -12279,9 +12250,6 @@
       src
       lanes
       elem-ty
-      ""
-      ""
-      ""
       instr-diag
       backend-state)))
 
@@ -12328,20 +12296,15 @@
   [index : compiler_ir_types.CompilerIrValue]
   [end-value : compiler_ir_types.CompilerIrValue]
   [lanes : i64]
-  [planned-count : String]
-  [planned-index : String]
-  [planned-mask : String]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
     [full-mask : i64 (compiler-backend-avx512-lane-mask lanes)]
     [count-reg : String
-      (if (string.eq planned-count "")
-        (compiler-backend-scavenge-rcx-reg-here
-          (__tl_make-array String 0)
-          0
-          backend-state)
-        planned-count)]
+      (compiler-backend-scavenge-rcx-reg-here
+        (__tl_make-array String 0)
+        0
+        backend-state)]
     [index-home : String
       (compiler-backend-simd-index-home
         backend-state
@@ -12354,17 +12317,15 @@
         (compiler-backend-global-shared-view index)
         (compiler-backend-global-shared-view end-value))]
     [index-reg : String
-      (if (string.eq planned-index "")
-        (if (and
-          (not (string.eq index-home ""))
-          (not (string.eq index-home count-reg)))
-          index-home
-          (compiler-backend-scavenge-reg-here
-            (compiler-backend-global-shared-view index-exclude)
-            7
-            "%r8"
-            backend-state))
-        planned-index)]
+      (if (and
+        (not (string.eq index-home ""))
+        (not (string.eq index-home count-reg)))
+        index-home
+        (compiler-backend-scavenge-reg-here
+          (compiler-backend-global-shared-view index-exclude)
+          7
+          "%r8"
+          backend-state))]
     [mask-exclude : (__tl_dyn-array String)
       (compiler-backend-scavenge-exclude-append
         index-exclude
@@ -12372,7 +12333,7 @@
         (compiler-backend-global-shared-view index-reg))]
     [mask-reg : String
       (compiler-backend-planned-or-scavenge-reg-here
-        planned-mask
+        ""
         mask-exclude
         8
         "%r9"
@@ -12537,9 +12498,6 @@
   [index : compiler_ir_types.CompilerIrValue]
   [end-value : compiler_ir_types.CompilerIrValue]
   [lanes : i64]
-  [planned-count : String]
-  [planned-index : String]
-  [planned-mask : String]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (= (compiler-backend-avx512-lane-mask lanes) 0)
@@ -12584,9 +12542,6 @@
                   index
                   end-value
                   lanes
-                  planned-count
-                  planned-index
-                  planned-mask
                   instr-diag
                   backend-state)
                   [(ResultCompilerBackend.Ok asm)
@@ -12611,9 +12566,6 @@
               index
               end-value
               lanes
-              planned-count
-              planned-index
-              planned-mask
               instr-diag
               backend-state)
               [(ResultCompilerBackend.Ok asm)
@@ -12686,8 +12638,6 @@
                     base
                     index
                     (compiler-backend-global-shared-view elem-ty)
-                    ""
-                    ""
                     backend-state)
                     [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
                       (let
@@ -12793,8 +12743,6 @@
                         base
                         index
                         (compiler-backend-global-shared-view elem-ty)
-                        ""
-                        ""
                         backend-state)
                         [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
                           (let
@@ -12878,8 +12826,6 @@
                   base
                   index
                   (compiler_ast_types.AstType.Bool)
-                  ""
-                  ""
                   backend-state)
                   [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
                     (let
@@ -13012,8 +12958,6 @@
                       base
                       index
                       (compiler_ast_types.AstType.Bool)
-                      ""
-                      ""
                       backend-state)
                       [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
                         (let
@@ -15091,8 +15035,6 @@
                   base
                   index
                   (compiler-backend-global-shared-view elem-ty)
-                  ""
-                  ""
                   backend-state)
                   [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
                     (let
@@ -15213,8 +15155,6 @@
               base
               index
               (compiler-backend-global-shared-view elem-ty)
-              ""
-              ""
               backend-state)
               [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
                 (let
@@ -15590,9 +15530,6 @@
       index
       end-value
       lanes
-      ""
-      ""
-      ""
       instr-diag
       backend-state)))
 
@@ -17664,7 +17601,7 @@
 ;;   * the bit is added to the instruction's RESERVED mask the moment it is
 ;;     picked, so a later XMM scavenge inside the same instruction cannot pick
 ;;     it -- this rules out the scavenger;
-;;   * it is free in the occupancy mask at this point, and not a planned scratch.
+;;   * it is free in the occupancy mask at this point.
 ;; Scalar mode only: in AVX2/AVX-512 bodies a legacy-SSE `movq` next to VEX code
 ;; would pay an AVX/SSE transition, and those bodies have live wide registers
 ;; anyway. Win64 keeps the frame slot (its own callee-save discipline for
@@ -17838,10 +17775,6 @@
         (compiler-backend-function-scratch-i64
           function-state
           compiler-backend-scratch-i64-scavenge-plan-reg-mask)]
-      [scratch-mask : i64
-        (compiler-backend-function-scratch-i64
-          function-state
-          compiler-backend-scratch-i64-planned-scratch-reg-mask)]
       [i : i64 0]
       [found : i64 -1]
       (begin
@@ -17855,9 +17788,6 @@
               (if (and
                 (not (= bit 0))
                 (= (bit-and plan-mask bit) 0)
-                (=
-                  (bit-and scratch-mask (compiler-backend-plan-reg-id-bit xmm))
-                  0)
                 (not
                   (compiler-backend-const-hoist-uses-reg? function-state xmm))
                 (not
@@ -18428,15 +18358,7 @@
     (compiler-backend-plan-uses-reg? backend-state assignments reg)
     (compiler-backend-const-hoist-uses-reg?
       (compiler-backend-state-function-state backend-state)
-      reg)
-    (not
-      (=
-        (bit-and
-          (compiler-backend-function-scratch-i64
-            (compiler-backend-state-function-state backend-state)
-            compiler-backend-scratch-i64-planned-scratch-reg-mask)
-          (compiler-backend-plan-reg-id-bit reg))
-        0))))
+      reg)))
 
 (define (compiler-backend-emit-save-callee-reg
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -21881,9 +21803,6 @@
   [src : compiler_ir_types.CompilerIrValue]
   [lanes : i64]
   [elem-ty : compiler_ast_types.AstType]
-  [planned-acc-xmm : String]
-  [planned-scratch-xmm : String]
-  [planned-mask-xmm : String]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (compiler-backend-avx2-shape-ok?
@@ -21927,23 +21846,22 @@
                       (compiler-backend-global-shared-view ymm))]
                   [acc-xmm : String
                     (compiler-backend-planned-or-scavenge-xmm-reg
-                      planned-acc-xmm
+                      ""
                       dst
                       (compiler-backend-three-exclude
                         (compiler-backend-global-shared-view xmm)
-                        (compiler-backend-global-shared-view planned-mask-xmm)
-                        (compiler-backend-global-shared-view
-                          planned-scratch-xmm))
+                        ""
+                        "")
                       3
                       "%xmm2"
                       backend-state)]
                   [scratch-xmm : String
                     (compiler-backend-planned-or-scavenge-xmm-reg
-                      planned-scratch-xmm
+                      ""
                       dst
                       (compiler-backend-three-exclude
                         (compiler-backend-global-shared-view xmm)
-                        (compiler-backend-global-shared-view planned-mask-xmm)
+                        ""
                         (compiler-backend-global-shared-view acc-xmm))
                       3
                       "%xmm3"
@@ -21954,7 +21872,7 @@
                       lanes
                       (compiler-backend-global-shared-view elem-ty))
                       (compiler-backend-planned-or-scavenge-xmm-reg
-                        planned-mask-xmm
+                        ""
                         dst
                         (compiler-backend-three-exclude
                           (compiler-backend-global-shared-view xmm)
@@ -26546,201 +26464,6 @@
         vars
         intervals)]))
 
-;; Generic scratch-plan consumers.  Successful items are compacted only for the
-;; synthetic scavenge-occupancy suffix; instruction lookup continues to use the
-;; stable point/ordinal map in CompilerRegScratchPlan, including failed slots.
-(define (compiler-backend-scratch-plan-success-count-from
-  [items : (__tl_dyn-array compiler_regalloc.CompilerRegScratchAssignment)]
-  [index : i64]
-  [count : i64]) : i64
-  (if (>= index (array-length items))
-    count
-    (compiler-backend-scratch-plan-success-count-from
-      (compiler-backend-global-shared-view items)
-      (+ index 1)
-      (if (=
-        (__tl-project-field
-          (compiler-backend-global-array-element-shared-view items index)
-          register)
-        compiler_abi.compiler-reg-id-invalid)
-        count
-        (+ count 1)))))
-
-(define (compiler-backend-scratch-plan-success-count
-  [plan : compiler_regalloc.CompilerRegScratchPlan]) : i64
-  (compiler-backend-scratch-plan-success-count-from plan.items 0 0))
-
-(define (compiler-backend-scratch-plan-occupancy-fill-range!
-  [masks : (__tl_dyn-array i64)]
-  [lo : i64]
-  [hi : i64]
-  [reg : i64]) : unit
-  (let
-    [bit : i64
-      (compiler-backend-scavenge-reg-bit
-        (compiler_abi.compiler-abi-register-spelling reg))]
-    [i : i64
-      (if (< lo 0)
-        0
-        (/ (+ lo 1) 2))]
-    (while (and (< i (array-length masks)) (< (* 2 i) hi))
-      (begin
-        (set! (array-ref masks i) (bit-or (array-ref masks i) bit))
-        (set! i (+ i 1))))))
-
-(define (compiler-backend-scratch-plan-occupancy-fill!
-  [items : (__tl_dyn-array compiler_regalloc.CompilerRegScratchAssignment)]
-  [index : i64]
-  [masks : (__tl_dyn-array i64)]) : unit
-  (if (>= index (array-length items))
-    unit
-    (let
-      [item : compiler_regalloc.CompilerRegScratchAssignment
-        (compiler-backend-global-array-element-shared-view items index)]
-      [reg : i64 item.register]
-      (begin
-        (if (= reg compiler_abi.compiler-reg-id-invalid)
-          unit
-          (let
-            [requirement : compiler_regalloc.CompilerRegScratchRequirement
-              item.requirement]
-            (compiler-backend-scratch-plan-occupancy-fill-range!
-              (compiler-backend-global-shared-view masks)
-              requirement.lo
-              requirement.hi
-              reg)))
-        (compiler-backend-scratch-plan-occupancy-fill! items (+ index 1) masks)))))
-
-(define (compiler-backend-scratch-plan-occupancy-build
-  [plan : compiler_regalloc.CompilerRegScratchPlan]
-  [instruction-count : i64]) : (__tl_dyn-array i64)
-  (let
-    [masks : (__tl_dyn-array i64) (__tl_make-array i64 instruction-count)]
-    (begin
-      (compiler-backend-scratch-plan-occupancy-fill!
-        plan.items
-        0
-        (compiler-backend-global-shared-view masks))
-      masks)))
-
-(define (compiler-backend-scratch-plan-extend-vars
-  [plan : compiler_regalloc.CompilerRegScratchPlan]
-  [vars : i64]) : i64
-  (+ vars (compiler-backend-scratch-plan-success-count plan)))
-
-(define (compiler-backend-scratch-plan-extend-assignments-from
-  [items : (__tl_dyn-array compiler_regalloc.CompilerRegScratchAssignment)]
-  [index : i64]
-  [success : i64]
-  [vars : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]) : compiler_regalloc.CompilerRegAssignmentTable
-  (if (>= index (array-length items))
-    assignments
-    (let
-      [item : compiler_regalloc.CompilerRegScratchAssignment
-        (compiler-backend-global-array-element-shared-view items index)]
-      [reg : i64 item.register]
-      (if (= reg compiler_abi.compiler-reg-id-invalid)
-        (compiler-backend-scratch-plan-extend-assignments-from
-          items
-          (+ index 1)
-          success
-          vars
-          assignments)
-        (compiler_regalloc.compiler-reg-assignments-prepend
-          (compiler_regalloc.CompilerRegAssignment
-            (+ vars success)
-            (compiler_regalloc.CompilerRegLocation.Register reg))
-          (compiler-backend-scratch-plan-extend-assignments-from
-            items
-            (+ index 1)
-            (+ success 1)
-            vars
-            assignments))))))
-
-(define (compiler-backend-scratch-plan-extend-assignments
-  [plan : compiler_regalloc.CompilerRegScratchPlan]
-  [vars : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]) : compiler_regalloc.CompilerRegAssignmentTable
-  (let
-    [count : i64
-      (compiler-backend-scratch-plan-success-count
-        (compiler-backend-global-shared-view plan))]
-    (if (= count 0)
-      assignments
-      (let
-        [items : (__tl_dyn-array compiler_regalloc.CompilerRegScratchAssignment)
-          (compiler-backend-global-shared-view plan.items)]
-        [out : compiler_regalloc.CompilerRegAssignmentTable
-          (compiler_regalloc.compiler-reg-assignment-table-copy-with-capacity
-            (& assignments)
-            (+ vars count))]
-        [index : i64 0]
-        [success : i64 0]
-        (begin
-          (while (< index (array-length items))
-            (let
-              [item : compiler_regalloc.CompilerRegScratchAssignment
-                (compiler-backend-global-array-element-shared-view items index)]
-              [reg : i64 item.register]
-              (begin
-                (if (= reg compiler_abi.compiler-reg-id-invalid)
-                  unit
-                  (begin
-                    (compiler_regalloc.compiler-reg-assignment-table-insert
-                      (compiler-backend-global-shared-view out)
-                      (+ vars success)
-                      (compiler_regalloc.CompilerRegLocation.Register reg))
-                    (set! success (+ success 1))))
-                (set! index (+ index 1)))))
-          out)))))
-
-(define (compiler-backend-scratch-plan-extend-intervals-from
-  [items : (__tl_dyn-array compiler_regalloc.CompilerRegScratchAssignment)]
-  [index : i64]
-  [success : i64]
-  [vars : i64]
-  [intervals : compiler_regalloc.CompilerRegIntervalSeq]) : compiler_regalloc.CompilerRegIntervalSeq
-  (let
-    [out : compiler_regalloc.CompilerRegIntervalSeq
-      (compiler_regalloc.compiler-reg-interval-seq-empty)]
-    [item-index : i64 index]
-    [success-index : i64 success]
-    (begin
-      (while (< item-index (array-length items))
-        (let
-          [item : compiler_regalloc.CompilerRegScratchAssignment
-            (compiler-backend-global-array-element-shared-view items item-index)]
-          [reg : i64 item.register]
-          [requirement : compiler_regalloc.CompilerRegScratchRequirement
-            item.requirement]
-          (begin
-            (if (= reg compiler_abi.compiler-reg-id-invalid)
-              unit
-              (begin
-                (set!
-                  out
-                  (compiler_regalloc.compiler-reg-interval-seq-append
-                    out
-                    (compiler_regalloc.CompilerRegInterval
-                      (+ vars success-index)
-                      requirement.lo
-                      requirement.hi)))
-                (set! success-index (+ success-index 1))))
-            (set! item-index (+ item-index 1)))))
-      (compiler_regalloc.compiler-reg-interval-seq-append-all out intervals))))
-
-(define (compiler-backend-scratch-plan-extend-intervals
-  [plan : compiler_regalloc.CompilerRegScratchPlan]
-  [vars : i64]
-  [intervals : compiler_regalloc.CompilerRegIntervalSeq]) : compiler_regalloc.CompilerRegIntervalSeq
-  (compiler-backend-scratch-plan-extend-intervals-from
-    plan.items
-    0
-    0
-    vars
-    intervals))
-
 (define (compiler-backend-current-planned-preserve-index
   [function-state : CompilerBackendFunctionState]
   [reg : i64]) : i64
@@ -26764,35 +26487,6 @@
           (set! index (+ index 1))))
       found)))
 
-(define (compiler-backend-current-planned-preserve-add!
-  [function-state : CompilerBackendFunctionState]
-  [reg : i64]) : unit
-  (if (or
-    (= reg compiler_abi.compiler-reg-id-invalid)
-    (>= (compiler-backend-current-planned-preserve-index function-state reg) 0))
-    unit
-    (let
-      [count : i64
-        (compiler-backend-function-scratch-i64
-          function-state
-          compiler-backend-scratch-i64-current-planned-preserve-count)]
-      [regs : (__tl_dyn-array i64)
-        (compiler-backend-emergency-regs-push
-          (compiler-backend-function-scratch-i64-array
-            function-state
-            compiler-backend-scratch-i64-array-current-planned-preserve-regs)
-          count
-          reg)]
-      (begin
-        (compiler-backend-function-scratch-set-i64-array!
-          function-state
-          compiler-backend-scratch-i64-array-current-planned-preserve-regs
-          regs)
-        (compiler-backend-function-scratch-set-i64!
-          function-state
-          compiler-backend-scratch-i64-current-planned-preserve-count
-          (+ count 1))))))
-
 (define (compiler-backend-current-planned-local-preserve-index
   [function-state : CompilerBackendFunctionState]
   [reg : i64]) : i64
@@ -26815,45 +26509,6 @@
             unit)
           (set! index (+ index 1))))
       found)))
-
-(define (compiler-backend-missing-modeled-scratch!
-  [scratch-class : String]
-  [backend-state : CompilerBackendState]) : String
-  (io.panic
-    (str_cat.str-cat
-      "backend: consumed missing modeled scratch in "
-      (str_cat.str-cat
-        (compiler-backend-state-user-symbol-id
-          backend-state
-          (compiler-backend-function-scratch-i64
-            (compiler-backend-state-function-state backend-state)
-            compiler-backend-scratch-i64-current-source-function))
-        (str_cat.str-cat
-          " at point "
-          (str_cat.str-cat
-            (string.int->string
-              (compiler-backend-function-state-emission-point
-                (compiler-backend-state-function-state backend-state)))
-            (str_cat.str-cat
-              " site "
-              (str_cat.str-cat
-                (string.int->string
-                  (compiler-backend-function-state-emit-current-site
-                    (compiler-backend-state-function-state backend-state)))
-                (str_cat.str-cat
-                  " post-base "
-                  (str_cat.str-cat
-                    (string.int->string
-                      (compiler-backend-function-state-emit-instr-post-base
-                        (compiler-backend-state-function-state backend-state)))
-                    (str_cat.str-cat
-                      " remaining "
-                      (str_cat.str-cat
-                        (string.int->string
-                          (compiler-backend-function-state-emit-current-count
-                            (compiler-backend-state-function-state
-                              backend-state)))
-                        (str_cat.str-cat " class " scratch-class)))))))))))))
 
 ;; The allocator explicitly marks planned homes that overlap an ordinary
 ;; live-through value. Plan lookup records those homes for the current fused
@@ -27057,22 +26712,11 @@
           reg)))))
 
 (define (compiler-backend-planned-or-scavenge-divmod-src-reg
-  [planned : String]
   [dst : i64]
   [exclude : (__tl_dyn-array String)]
   [exclude-n : i64]
   [backend-state : CompilerBackendState]) : String
-  (if (string.eq (compiler-backend-global-shared-view planned) "")
-    (compiler-backend-scavenge-divmod-src-reg
-      dst
-      exclude
-      exclude-n
-      backend-state)
-    (begin
-      (compiler-backend-preserve-planned-register!
-        (compiler-backend-global-shared-view planned)
-        backend-state)
-      planned)))
+  (compiler-backend-scavenge-divmod-src-reg dst exclude exclude-n backend-state))
 
 (define (compiler-backend-planned-or-scavenge-divmod-src-reg-here
   [exclude : (__tl_dyn-array String)]
@@ -28103,8 +27747,6 @@
   [ty : compiler_ast_types.AstType]
   [dst : i64]
   [planned-magic : String]
-  [planned-dividend : String]
-  [planned-mask : String]
   [backend-state : CompilerBackendState]) : CompilerBackendMaybeAsm
   ;; Generic scalar binop emission probes this helper before its immediate and
   ;; source-operand fallbacks. Keep the probe side-effect-free unless the IR is
@@ -28156,7 +27798,6 @@
               (compiler-backend-global-shared-view magic))]
           [src : String
             (compiler-backend-planned-or-scavenge-divmod-src-reg
-              planned-dividend
               dst
               (if (string.eq hoist-reg "")
                 src-excl
@@ -28204,7 +27845,7 @@
               (compiler-backend-global-shared-view magic))]
           [dividend : String
             (compiler-backend-planned-or-scavenge-reg
-              planned-dividend
+              ""
               dst
               (if (string.eq hoist-reg "")
                 dividend-excl
@@ -28223,7 +27864,7 @@
               (compiler-backend-global-shared-view dividend))]
           [mask : String
             (compiler-backend-planned-or-scavenge-reg
-              planned-mask
+              ""
               dst
               (if (string.eq hoist-reg "")
                 mask-excl
@@ -31355,7 +30996,6 @@
         [dst-src? (compiler-backend-global-shared-view dst-home)]
         [else
           (compiler-backend-planned-or-scavenge-divmod-src-reg
-            ""
             dst
             (if (string.eq (compiler-backend-global-shared-view hoist-reg) "")
               (compiler-backend-global-shared-view src-excl)
@@ -32062,8 +31702,6 @@
                     (compiler-backend-global-shared-view operand-ty)
                     dst
                     ""
-                    ""
-                    ""
                     backend-state)
                     [(CompilerBackendMaybeAsm.Some op-asm)
                       (ResultCompilerBackend.Ok
@@ -32107,10 +31745,7 @@
                               (let
                                 [scav-rhs : String
                                   (compiler-backend-planned-or-scavenge-reg-here
-                                    (if (compiler-backend-divmod-op?
-                                      (compiler-backend-global-shared-view op))
-                                      ""
-                                      "")
+                                    ""
                                     (compiler-backend-scavenge-exclude-regs2
                                       (compiler-backend-global-shared-view
                                         staging)
@@ -32190,11 +31825,7 @@
                                   (let
                                     [scav-rhs : String
                                       (compiler-backend-planned-or-scavenge-reg-here
-                                        (if (compiler-backend-divmod-op?
-                                          (compiler-backend-global-shared-view
-                                            op))
-                                          ""
-                                          "")
+                                        ""
                                         (compiler-backend-scavenge-exclude-regs2
                                           (compiler-backend-global-shared-view
                                             staging)
@@ -32319,11 +31950,7 @@
                                     (let
                                       [scav-rhs : String
                                         (compiler-backend-planned-or-scavenge-reg-here
-                                          (if (compiler-backend-divmod-op?
-                                            (compiler-backend-global-shared-view
-                                              op))
-                                            ""
-                                            "")
+                                          ""
                                           (if preserve-rhs-before-lhs?
                                             (compiler-backend-scavenge-exclude-regs2
                                               (compiler-backend-global-shared-view
@@ -32519,8 +32146,6 @@
   [result-ty : compiler_ast_types.AstType]
   [store-result : bool]
   [planned-magic : String]
-  [planned-dividend : String]
-  [planned-mask : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (compiler-backend-signed-literal-divmod-src-shape?
     type-segment-bases
@@ -32542,8 +32167,6 @@
         (compiler-backend-global-shared-view operand-ty)
         dst
         (compiler-backend-global-shared-view planned-magic)
-        (compiler-backend-global-shared-view planned-dividend)
-        (compiler-backend-global-shared-view planned-mask)
         (compiler-backend-global-shared-view backend-state))
         [(CompilerBackendMaybeAsm.Some op-asm)
           (ResultCompilerBackend.Ok
@@ -32575,7 +32198,7 @@
               (compiler-backend-global-shared-view backend-state))]
           [scav-dividend : String
             (compiler-backend-planned-or-scavenge-reg
-              (compiler-backend-global-shared-view planned-dividend)
+              ""
               dst
               (compiler-backend-divmod-dividend-exclude
                 (compiler-backend-global-shared-view scav-rhs))
@@ -32584,7 +32207,7 @@
               (compiler-backend-global-shared-view backend-state))]
           [scav-mask : String
             (compiler-backend-planned-or-scavenge-reg
-              (compiler-backend-global-shared-view planned-mask)
+              ""
               dst
               (compiler-backend-divmod-mask-exclude
                 (compiler-backend-global-shared-view scav-rhs)
@@ -32745,14 +32368,6 @@
               (compiler-backend-global-shared-view rhs)
               (compiler-backend-global-shared-view operand-ty)
               binop-return)
-            (if (compiler-backend-divmod-op?
-              (compiler-backend-global-shared-view op))
-              ""
-              "")
-            (if (compiler-backend-divmod-op?
-              (compiler-backend-global-shared-view op))
-              ""
-              "")
             backend-state)
             [(ResultCompilerBackend.Ok op-asm)
               (ResultCompilerBackend.Ok (str_cat.str-cat lhs-asm op-asm))]
@@ -32821,14 +32436,6 @@
             (compiler-backend-global-shared-view rhs)
             (compiler-backend-global-shared-view operand-ty)
             binop-return)
-          (if (compiler-backend-divmod-op?
-            (compiler-backend-global-shared-view op))
-            ""
-            "")
-          (if (compiler-backend-divmod-op?
-            (compiler-backend-global-shared-view op))
-            ""
-            "")
           backend-state)
         (if (and
           (compiler-backend-branch-uses-var?
@@ -32856,14 +32463,6 @@
                   operand-ty))
                 ""
                 ""))
-            (if (compiler-backend-divmod-op?
-              (compiler-backend-global-shared-view op))
-              ""
-              "")
-            (if (compiler-backend-divmod-op?
-              (compiler-backend-global-shared-view op))
-              ""
-              "")
             backend-state)
           (compiler-backend-emit-binop-with-plan
             type-segment-bases
@@ -32896,8 +32495,6 @@
   [lhs : compiler_ir_types.CompilerIrValue]
   [rhs : compiler_ir_types.CompilerIrValue]
   [fty : compiler_ast_types.AstType]
-  [_planned-result : String]
-  [planned-rhs : String]
   [return-tail : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
@@ -32945,7 +32542,7 @@
             1)]
         [rhs-temp : String
           (compiler-backend-planned-or-scavenge-xmm-reg
-            planned-rhs
+            ""
             -1
             exclude
             exclude-n
@@ -32987,8 +32584,6 @@
   [lhs : compiler_ir_types.CompilerIrValue]
   [rhs : compiler_ir_types.CompilerIrValue]
   [fty : compiler_ast_types.AstType]
-  [_planned-result : String]
-  [planned-lhs : String]
   [return-tail : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (compiler-backend-compare-op? (compiler-backend-global-shared-view op))
@@ -33032,7 +32627,7 @@
               1)]
           [lhs-temp : String
             (compiler-backend-planned-or-scavenge-xmm-reg
-              planned-lhs
+              ""
               -1
               xmm-exclude
               xmm-exclude-n
@@ -33123,33 +32718,12 @@
           ""
           "backend: unsupported float return compare")))))
 
-(define (compiler-backend-return-rhs-plan-conflicts?
-  [planned : String]
-  [rhs-home : String]
-  [lhs-home : String]) : bool
-  (or
-    (string.eq (compiler-backend-global-shared-view planned) "%rax")
-    (and
-      (not (string.eq (compiler-backend-global-shared-view rhs-home) ""))
-      (string.eq
-        (compiler-backend-global-shared-view planned)
-        (compiler-backend-global-shared-view rhs-home)))
-    ;; An RHS currently forwarded in %rax has to be captured before loading the
-    ;; LHS. Its staging register therefore cannot be the LHS home even though
-    ;; that home becomes dead after the load.
-    (and
-      (string.eq (compiler-backend-global-shared-view rhs-home) "%rax")
-      (not (string.eq (compiler-backend-global-shared-view lhs-home) ""))
-      (string.eq planned lhs-home))))
-
 (define (compiler-backend-scavenge-binop-return-rhs-reg
   [backend-state : CompilerBackendState]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [op : compiler_ir_types.CompilerIrBinOp]
   [lhs : compiler_ir_types.CompilerIrValue]
-  [rhs : compiler_ir_types.CompilerIrValue]
-  [planned : String]
-  [planned-alternate : String]) : String
+  [rhs : compiler_ir_types.CompilerIrValue]) : String
   (let
     [rhs-home : String
       (compiler-backend-value-register-home
@@ -33182,7 +32756,7 @@
         (compiler-backend-global-shared-view rhs-home))]
     (cond
       [direct-compare-home? rhs-home]
-      [(string.eq planned "")
+      [else
         (cond
           [(and
               (compiler-backend-compare-op?
@@ -33201,45 +32775,7 @@
             ;; home is dead and can materialize a non-encodable RHS.
             lhs-home]
           [else
-            (compiler-backend-scavenge-reg-here exclude 7 "%r8" backend-state)])]
-      [(compiler-backend-return-rhs-plan-conflicts?
-          (compiler-backend-global-shared-view planned)
-          (compiler-backend-global-shared-view rhs-home)
-          (compiler-backend-global-shared-view lhs-home))
-        ;; The comparison planner gives a non-direct RHS two sibling homes. If
-        ;; ordinal 0 aliases the fixed return accumulator or the RHS itself,
-        ;; consume ordinal 1 rather than escaping the model through a legacy
-        ;; scavenge. Div/mod callers pass no alternate because their remaining
-        ;; ordinals have distinct architectural roles.
-        (if (or
-          (string.eq (compiler-backend-global-shared-view planned-alternate) "")
-          (compiler-backend-return-rhs-plan-conflicts?
-            (compiler-backend-global-shared-view planned-alternate)
-            (compiler-backend-global-shared-view rhs-home)
-            (compiler-backend-global-shared-view lhs-home)))
-          (if (compiler-backend-compare-op?
-            (compiler-backend-global-shared-view op))
-            "@return-rhs-frame"
-            (compiler-backend-missing-modeled-scratch!
-              (str_cat.str-cat
-                "return-rhs alternate-unavailable primary "
-                (str_cat.str-cat
-                  planned
-                  (str_cat.str-cat " rhs-home " rhs-home)))
-              backend-state))
-          (compiler-backend-planned-or-scavenge-reg-here
-            planned-alternate
-            exclude
-            7
-            "%r8"
-            backend-state))]
-      [else
-        (compiler-backend-planned-or-scavenge-reg-here
-          planned
-          exclude
-          7
-          "%r8"
-          backend-state)])))
+            (compiler-backend-scavenge-reg-here exclude 7 "%r8" backend-state)])])))
 
 (define (compiler-backend-emit-return-compare-frame-fallback
   [type-segment-bases : i64]
@@ -33319,9 +32855,7 @@
   [op : compiler_ir_types.CompilerIrBinOp]
   [lhs : compiler_ir_types.CompilerIrValue]
   [rhs : compiler_ir_types.CompilerIrValue]
-  [ty : compiler_ast_types.AstType]
-  [planned0 : String]
-  [planned1 : String]) : ResultCompilerBackend
+  [ty : compiler_ast_types.AstType]) : ResultCompilerBackend
   (let
     [return-tail : String
       (compiler-backend-return-tail
@@ -33353,8 +32887,6 @@
             (compiler-backend-global-shared-view lhs)
             (compiler-backend-global-shared-view rhs)
             fty
-            planned0
-            planned1
             return-tail
             backend-state)
           (compiler-backend-emit-float-compare-return
@@ -33363,8 +32895,6 @@
             (compiler-backend-global-shared-view lhs)
             (compiler-backend-global-shared-view rhs)
             fty
-            planned0
-            planned1
             return-tail
             backend-state)))
       (let
@@ -33417,15 +32947,12 @@
                     (compiler-backend-global-shared-view lhs-address)
                     ""))
                 (string.eq (compiler-backend-global-shared-view rhs-home) "")
-                (string.eq (compiler-backend-global-shared-view rhs-address) "")
-                (string.eq (compiler-backend-global-shared-view planned0) "")
-                (string.eq (compiler-backend-global-shared-view planned1) ""))]
+                (string.eq (compiler-backend-global-shared-view rhs-address) ""))]
             (if swap-return-compare?
               ;; When the LHS is already memory-addressable and a rematerialized
-              ;; RHS has neither a home nor a modeled scratch, stage the RHS in
-              ;; the fixed accumulator and reverse the predicate.  This keeps
-              ;; the comparison within x86's one-memory-operand constraint
-              ;; without escaping the scratch plan.
+              ;; RHS has no home, stage the RHS in the fixed accumulator and
+              ;; reverse the predicate.  This keeps the comparison within x86's
+              ;; one-memory-operand constraint without another scratch.
               (match (compiler-backend-emit-load-value-with-plan
                 (compiler-backend-global-shared-view assignments)
                 (compiler-backend-global-shared-view rhs)
@@ -33493,15 +33020,7 @@
                                       assignments)
                                     (compiler-backend-global-shared-view op)
                                     (compiler-backend-global-shared-view lhs)
-                                    (compiler-backend-global-shared-view rhs)
-                                    (if (compiler-backend-divmod-op?
-                                      (compiler-backend-global-shared-view op))
-                                      ""
-                                      planned0)
-                                    (if (compiler-backend-divmod-op?
-                                      (compiler-backend-global-shared-view op))
-                                      ""
-                                      planned1))]
+                                    (compiler-backend-global-shared-view rhs))]
                                 [rhs-frame? : bool
                                   (string.eq
                                     (compiler-backend-global-shared-view
@@ -33639,15 +33158,7 @@
                                       assignments)
                                     (compiler-backend-global-shared-view op)
                                     (compiler-backend-global-shared-view lhs)
-                                    (compiler-backend-global-shared-view rhs)
-                                    (if (compiler-backend-divmod-op?
-                                      (compiler-backend-global-shared-view op))
-                                      ""
-                                      planned0)
-                                    (if (compiler-backend-divmod-op?
-                                      (compiler-backend-global-shared-view op))
-                                      ""
-                                      planned1))]
+                                    (compiler-backend-global-shared-view rhs))]
                                 [rhs-frame? : bool
                                   (string.eq
                                     (compiler-backend-global-shared-view
@@ -34698,18 +34209,12 @@
         ;; too, exactly as a spilled lhs already was -- but only when the OTHER
         ;; operand needs no staging register of its own.
         ;;
-        ;; A scratch plan sizes this compare by calling a global lhs NOT
-        ;; direct, and therefore hands ordinal 0 to the lhs stage and only
-        ;; ordinal 1 to an rhs stage -- and it reserves that second ordinal
-        ;; only when the rhs is not directly addressable either. A spilled rhs
-        ;; IS directly addressable, so today the plan carries one ordinal: the
-        ;; lhs stage, after which the spilled rhs reaches the compare as its
-        ;; memory operand. Spelling the global into the destination slot
-        ;; instead would leave that spilled rhs with nowhere to go but a stage
-        ;; the plan never reserved. So the arm is admitted only for an
-        ;; immediate or register-homed rhs -- exactly the cases that consume no
-        ;; scratch at all, which is always within the plan's inventory. Every
-        ;; other rhs keeps the pre-M6-I shape and its modelled ordinal.
+        ;; A spilled rhs reaches the compare as its memory operand once the
+        ;; lhs is staged. Spelling the global into the destination slot instead
+        ;; would leave that spilled rhs needing a stage of its own. So the arm
+        ;; is admitted only for an immediate or register-homed rhs -- exactly
+        ;; the cases that consume no scratch at all. Every other rhs keeps the
+        ;; pre-M6-I shape.
         [rhs-needs-no-stage? : bool
           (or
             (not (string.eq rhs-home ""))
@@ -54600,8 +54105,7 @@
   [case-count : i64]
   [default-label : i64]
   [total-switch : bool]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [planned-table-reg : String]) : ResultCompilerBackend
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]) : ResultCompilerBackend
   (let
     [index-home : String
       (compiler-backend-value-scalar-register
@@ -54649,7 +54153,7 @@
       (if (compiler-backend-state-absolute-switch-ok? backend-state)
         ""
         (compiler-backend-planned-or-scavenge-reg-here
-          planned-table-reg
+          ""
           table-exclude
           1
           "%r9"
@@ -54900,8 +54404,7 @@
                       (compiler-backend-switch-default-edge-label current-label)
                       default-label)
                     total-switch
-                    (compiler-backend-global-shared-view assignments)
-                    "")
+                    (compiler-backend-global-shared-view assignments))
                     [(ResultCompilerBackend.Ok dispatch)
                       (ResultCompilerBackend.Ok
                         (str_cat.str-cat dispatch case-blocks default-block))]
@@ -54921,8 +54424,7 @@
           case-count
           default-label
           total-switch
-          (compiler-backend-global-shared-view assignments)
-          "")
+          (compiler-backend-global-shared-view assignments))
           [(ResultCompilerBackend.Ok dispatch)
             (ResultCompilerBackend.Ok dispatch)]
           [(ResultCompilerBackend.Err message)
@@ -55435,10 +54937,6 @@
             carry
             lanes
             (compiler-backend-global-shared-view elem-ty)
-            ""
-            ""
-            ""
-            ""
             instr-diag
             ctx.backend-state))]
       [(compiler_ir_types.CompilerIrInstr.VectorReduce dst op src lanes elem-ty)
@@ -60292,10 +59790,10 @@
     [_ false]))
 
 ;; M6-B/M6-C: compare asm, true jcc, false jcc, true label, false label,
-;; branch scratch-plan lookahead, resume index.
+;; resume index.
 (defenum CompilerBackendGepLoadCmpBranchFold
   (No)
-  (Some String String String i64 i64 i64 i64))
+  (Some String String String i64 i64 i64))
 
 ;; --- M6-G: a narrow element load whose only reader is its widening cast ------
 ;;
@@ -60619,21 +60117,13 @@
 ;; is what makes dropping the load (and the cast the load already performed)
 ;; unobservable; the instructions are consumed as a contiguous run, so nothing
 ;; can write memory, the address registers or the flags in between.
-;;
-;; `head-ahead` is how many instructions separate the one being EMITTED from
-;; `index`, the first instruction the walk looks at. The Gep+Load cluster
-;; enters from the `Gep` with the `Load` fused behind it, so its head is two
-;; instructions back (2); M6-I enters from a single `Mov` of a global, so its
-;; head is one back (1). Only the branch's scratch-plan lookahead reads it, and
-;; that plan is indexed from the emitted instruction.
 (define (compiler-backend-gep-load-cmp-branch-probe
   [ctx : CompilerBackendEmissionContext]
   [addr : String]
   [load-dst : i64]
   [load-ty : compiler_ast_types.AstType]
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
-  [index : i64]
-  [head-ahead : i64]) : CompilerBackendGepLoadCmpBranchFold
+  [index : i64]) : CompilerBackendGepLoadCmpBranchFold
   (match (compiler-backend-cmp-fold-walk
     (compiler-backend-global-shared-view ctx)
     (compiler-backend-global-shared-view instrs)
@@ -60649,9 +60139,7 @@
         load-ty
         value-var
         (compiler-backend-global-shared-view instrs)
-        index
-        stop
-        head-ahead)]))
+        stop)]))
 
 (define (compiler-backend-gep-load-cmp-branch-probe-at
   [ctx : CompilerBackendEmissionContext]
@@ -60660,12 +60148,7 @@
   [load-ty : compiler_ast_types.AstType]
   [value-var : i64]
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
-  ;; The instruction right behind the fused load, i.e. where the walk started.
-  ;; Its distance from the compare determines where the branch's scratch-plan
-  ;; entry lives when M6-E threads phi-edge copies around the folded compare.
-  [origin : i64]
-  [index : i64]
-  [head-ahead : i64]) : CompilerBackendGepLoadCmpBranchFold
+  [index : i64]) : CompilerBackendGepLoadCmpBranchFold
   (let
     [maybe-cast : compiler_ir_types.CompilerIrInstr
       (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
@@ -60831,12 +60314,6 @@
                         false-jcc
                         true-label
                         false-label
-                        ;; `origin` is the first walked instruction, sitting
-                        ;; `head-ahead` behind the one being emitted, and the
-                        ;; Branch follows the compare. A Gep+Load head with a
-                        ;; wide compare therefore uses 3; a narrow widening
-                        ;; cast makes it 4; a bare `Mov` head is one less.
-                        (+ (- cmp-index origin) (+ head-ahead 1))
                         (+ cmp-index 2))
                       (CompilerBackendGepLoadCmpBranchFold.No)))]
                 [_ (CompilerBackendGepLoadCmpBranchFold.No)])
@@ -61151,15 +60628,13 @@
           load-dst
           (compiler-backend-global-shared-view load-ty)
           (compiler-backend-global-shared-view instrs)
-          index
-          2)
+          index)
           [(CompilerBackendGepLoadCmpBranchFold.Some
               cmp-asm
               true-jcc
               false-jcc
               true-label
               false-label
-              branch-plan-ahead
               after-branch)
             (CompilerBackendMaybeGepLoadCmpEmission.Some
               (compiler-backend-emit-fused-result-rest
@@ -65627,8 +65102,7 @@
 ;; A rip-relative operand names no base and no index register, so none of
 ;; M6-D's staging and none of M6-H's scavenging applies: the address is always
 ;; spellable, and the fold retires one instruction and one register write with
-;; nothing added. `head-ahead` is 1 because the emitted instruction is the
-;; `Mov` itself, one ahead of where the walk starts.
+;; nothing added.
 ;;
 ;; Only a full-word non-group global takes this path. A narrow global read
 ;; carries the load's own extension into the register, which is the M6-C width
@@ -65685,15 +65159,13 @@
         dst
         ty
         (compiler-backend-global-shared-view instrs)
-        index
-        1)
+        index)
         [(CompilerBackendGepLoadCmpBranchFold.Some
             cmp-asm
             true-jcc
             false-jcc
             true-label
             false-label
-            branch-plan-ahead
             after-branch)
           (CompilerBackendMaybeGepLoadCmpEmission.Some
             (compiler-backend-emit-fused-result-rest
@@ -67842,9 +67314,7 @@
                           (compiler-backend-global-shared-view op)
                           (compiler-backend-global-shared-view lhs)
                           (compiler-backend-global-shared-view rhs)
-                          (compiler-backend-global-shared-view ty)
-                          ""
-                          "")
+                          (compiler-backend-global-shared-view ty))
                         out
                         (compiler-backend-global-shared-view ctx.backend-state))
                       (compiler-backend-emit-instrs-normal
@@ -67914,10 +67384,9 @@
                   out))]
             ;; SS-P5(b) / VG-P-B: a scalar Select reading this comparison's
             ;; result and nothing else needs no boolean at all -- the compare's
-            ;; own flags drive one `cmov<cc>`. The scratch registers come from
-            ;; the SELECT's planned ordinals (one instruction ahead), exactly
-            ;; the ones its ordinary emission would have consumed, so a
-            ;; scratch plan is honoured unchanged. The emitter declines by
+            ;; own flags drive one `cmov<cc>`. The scratch registers are the
+            ;; ones the SELECT's ordinary emission would have scavenged. The
+            ;; emitter declines by
             ;; returning `No` whenever the operand shapes cannot guarantee the
             ;; compare's operands survive the two staging loads.
             [(compiler_ir_types.CompilerIrInstr.Select payload-box)
@@ -70483,8 +69952,8 @@
 ;; reserved mask, the explicit exclude list, the callee-saved plan-mask rule and
 ;; the forward staging window all still hold, so a register is handed out only
 ;; when nothing live occupies it. Vars with no segment row (the synthetic
-;; const-hoist and scratch-plan pseudo-vars appended past the function's var
-;; count) keep the hull, which for a single-range synthetic interval is the same
+;; const-hoist pseudo-vars appended past the function's var count) keep the
+;; hull, which for a single-range synthetic interval is the same
 ;; answer.
 (define (compiler-backend-scavenge-var-segment-count
   [segments : (__tl_dyn-array compiler_regalloc.CompilerRegIntervalSeq)]
@@ -70987,12 +70456,7 @@
 ;; position read that register "free" and the scratch clobbered the just-loaded
 ;; sibling. ORing [point, point+2] keeps the emit-position endpoint (so a gep
 ;; operand live only at the instruction start is still protected) and adds the
-;; next-step endpoint (so the reordered fused sibling is too). Scratch-plan
-;; pseudo-vars are different: their modeled lifetime is the requirement range,
-;; and a temporary in a later instruction cannot be clobbered by an earlier
-;; staging sequence that has already ended. Keep planned scratch in the mask at
-;; `lo`, but subtract it from later window samples; otherwise every future call
-;; or phi slot lengthens unrelated legacy staging and creates emergency wraps.
+;; next-step endpoint (so the reordered fused sibling is too).
 (define (compiler-backend-scavenge-occupied-mask-over-range
   [function-state : CompilerBackendFunctionState]
   [lo : i64]
@@ -71002,10 +70466,6 @@
       (compiler-backend-function-scratch-i64-array
         function-state
         compiler-backend-scratch-i64-array-scavenge-occupied-masks)]
-    [scratch-masks : (__tl_dyn-array i64)
-      (compiler-backend-function-scratch-i64-array
-        function-state
-        compiler-backend-scratch-i64-array-scavenge-scratch-masks)]
     [count : i64 (array-length occupied-masks)]
     [lo-idx : i64
       (if (< lo 0)
@@ -71021,13 +70481,7 @@
       (while (<= i hi-idx)
         (begin
           (if (and (>= i 0) (< i count))
-            (let
-              [occupied : i64 (array-ref occupied-masks i)]
-              [without-future-scratch : i64
-                (if (or (= i lo-idx) (>= i (array-length scratch-masks)))
-                  occupied
-                  (bit-and occupied (bit-xor (array-ref scratch-masks i) -1)))]
-              (set! acc (bit-or acc without-future-scratch)))
+            (set! acc (bit-or acc (array-ref occupied-masks i)))
             unit)
           (set! i (+ i 1))))
       acc)))
@@ -71100,10 +70554,6 @@
       function-state
       compiler-backend-scratch-i64-scavenge-plan-reg-mask
       plan-mask)
-    (compiler-backend-function-scratch-set-i64-array!
-      function-state
-      compiler-backend-scratch-i64-array-scavenge-scratch-masks
-      (__tl_make-array i64 (array-length occupied-masks)))
     (compiler-backend-function-scratch-set-i64-array!
       function-state
       compiler-backend-scratch-i64-array-scavenge-occupied-masks
@@ -82086,22 +81536,6 @@
                 remap
                 scratch-vars
                 (compiler-backend-global-shared-view plan-types))])]
-        [scratch-base-plan : compiler_regalloc.CompilerRegPlan
-          (match remat-reg-plan
-            [(compiler_regalloc.CompilerRegPlan.Plan
-                _
-                ineligible
-                _
-                _
-                call-split
-                split-plan)
-              (compiler_regalloc.CompilerRegPlan.Plan
-                (compiler-backend-global-shared-view assignments)
-                (compiler-backend-global-shared-view ineligible)
-                (compiler-backend-global-shared-view scavenge-intervals)
-                (compiler-backend-global-shared-view types)
-                (compiler-backend-global-shared-view call-split)
-                (compiler-backend-global-shared-view split-plan))])]
         [emit-group-vars-base : compiler_liveness.CompilerLiveI64Set
           (match coloring
             [(compiler_regalloc.CompilerRegColoring.None) fn-group-vars]
@@ -82115,20 +81549,6 @@
               emit-group-vars-base
               (compiler-backend-global-shared-view emit-blocks-list))
             (compiler-backend-global-shared-view emit-blocks-list))]
-        [scratch-plan-result : compiler_regalloc.CompilerRegScratchPlanResult
-          (compiler_regalloc.CompilerRegScratchPlanResult.Result
-            scratch-base-plan
-            (compiler_regalloc.compiler-reg-scratch-plan-empty))]
-        [scratch-plan : compiler_regalloc.CompilerRegScratchPlan
-          (match scratch-plan-result
-            [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ out-plan)
-              out-plan])]
-        [_emit-scratch-plan-mask : unit
-          (compiler-backend-function-scratch-set-i64!
-            function-state
-            compiler-backend-scratch-i64-planned-scratch-reg-mask
-            (compiler_regalloc.compiler-reg-scratch-plan-register-mask
-              (compiler-backend-global-shared-view scratch-plan)))]
         [addressable-group-vars : compiler_liveness.CompilerLiveI64Set
           (if (>
             (compiler_liveness.compiler-live-set-count
@@ -82282,26 +81702,6 @@
                   (compiler-backend-global-shared-view program-index)
                   (compiler-backend-global-shared-view name))
                 "main")))]
-        ;; Const-hoist register admission must see every planned scratch
-        ;; home over its exact point range. The published scratch reg-plan keeps
-        ;; only unique callee-saved homes for prologue accounting, so append the
-        ;; complete scratch plan as fresh synthetic vars for this occupancy
-        ;; query. Otherwise a caller-saved scratch such as %r9 can be selected
-        ;; for a loop magic and then overwrite that magic at a divmod site.
-        [const-hoist-occupancy-vars : i64
-          (compiler-backend-scratch-plan-extend-vars
-            (compiler-backend-global-shared-view scratch-plan)
-            scratch-vars)]
-        [const-hoist-occupancy-assignments : compiler_regalloc.CompilerRegAssignmentTable
-          (compiler-backend-scratch-plan-extend-assignments
-            (compiler-backend-global-shared-view scratch-plan)
-            scratch-vars
-            (compiler-backend-global-shared-view assignments))]
-        [const-hoist-occupancy-intervals : compiler_regalloc.CompilerRegIntervalSeq
-          (compiler-backend-scratch-plan-extend-intervals
-            (compiler-backend-global-shared-view scratch-plan)
-            scratch-vars
-            (compiler-backend-global-shared-view scavenge-intervals))]
         ;; M-F: loop-hoisted divmod magic constants. Built over the FINAL
         ;; emitted IR + the same fresh intervals the scavenge occupancy uses,
         ;; so a hoist register is provably free over its whole loop region and
@@ -82322,9 +81722,9 @@
               type-segment-bases
               target
               (compiler-backend-global-shared-view emit-blocks-list)
-              const-hoist-occupancy-assignments
-              const-hoist-occupancy-intervals
-              const-hoist-occupancy-vars
+              (compiler-backend-global-shared-view assignments)
+              (compiler-backend-global-shared-view scavenge-intervals)
+              scratch-vars
               (compiler-backend-frame-slots-emergency-max
                 slot-vars
                 has-group-vars
@@ -82373,37 +81773,19 @@
           ;; slot-vars (the compacted stack-slot count): register-homed vars keep
           ;; indices >= slot-vars, so a slot-vars-sized ctx would miss them and the
           ;; free-register query would false-free their registers (e.g. a pooled %r8
-          ;; holding a register var). M-F and a planned scratch path append
-          ;; synthetic register-homed pseudo-vars so scavenging avoids those planned
-          ;; registers inside their regions.
-          (begin
-            (compiler-backend-scavenge-install-ctx-from-intervals!
-              function-state
-              (compiler-backend-scratch-plan-extend-vars
-                (compiler-backend-global-shared-view scratch-plan)
-                scavenge-base-vars)
-              (compiler-backend-scratch-plan-extend-assignments
-                (compiler-backend-global-shared-view scratch-plan)
-                scavenge-base-vars
-                scavenge-base-assignments)
-              (compiler-backend-scratch-plan-extend-intervals
-                (compiler-backend-global-shared-view scratch-plan)
-                scavenge-base-vars
-                scavenge-base-intervals)
-              ;; Rows exist only for the emitted function's own vars; the
-              ;; const-hoist and scratch-plan pseudo-vars appended above sit past
-              ;; the end of this array and fall back to their single-range hulls.
-              scavenge-segments
-              program-index.backend-state)
-            (compiler-backend-function-scratch-set-i64-array!
-              function-state
-              compiler-backend-scratch-i64-array-scavenge-scratch-masks
-              (compiler-backend-scratch-plan-occupancy-build
-                (compiler-backend-global-shared-view scratch-plan)
-                (array-length
-                  (compiler-backend-function-scratch-i64-array
-                    function-state
-                    compiler-backend-scratch-i64-array-scavenge-occupied-masks)))))]
+          ;; holding a register var). M-F appends synthetic register-homed
+          ;; pseudo-vars so scavenging avoids the hoisted registers inside
+          ;; their regions.
+          (compiler-backend-scavenge-install-ctx-from-intervals!
+            function-state
+            scavenge-base-vars
+            scavenge-base-assignments
+            scavenge-base-intervals
+            ;; Rows exist only for the emitted function's own vars; the
+            ;; const-hoist pseudo-vars appended above sit past the end of this
+            ;; array and fall back to their single-range hulls.
+            scavenge-segments
+            program-index.backend-state)]
         [_scavenge-self-check : unit
           (cfg
             scavenge-self-check

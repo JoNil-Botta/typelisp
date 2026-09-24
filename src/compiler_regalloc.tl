@@ -45253,40 +45253,10 @@
   (fixed i64))
 
 (defstruct CompilerRegScratchRequirement
-  (point i64)
-  (ordinal i64)
   (constraint CompilerRegScratchConstraint)
   (lo i64)
   (hi i64)
   (var i64))
-
-(defstruct CompilerRegScratchAssignment
-  (requirement CompilerRegScratchRequirement)
-  ;; True when this planned home deliberately overlaps an ordinary live-through
-  ;; value and emission must preserve that physical register around the group.
-  (preserve bool)
-  ;; True when an impossible register cycle is explicitly assigned the
-  ;; reserved phi frame temporary instead of silently falling back in emission.
-  (frame bool)
-  (register i64))
-
-;; `first[instruction-index]` plus the slot ordinal is an O(1) item lookup.
-;; Points are the allocator's even instruction points, so instruction-index is
-;; point/2 for list and dense block representations alike.  The arrays are
-;; allocated to the exact function counts: there is no site cap.
-(defstruct CompilerRegScratchPlan
-  (items (__tl_dyn-array CompilerRegScratchAssignment))
-  (first (__tl_dyn-array i64))
-  (slots (__tl_dyn-array i64)))
-
-(defenum CompilerRegScratchPlanResult
-  (Result CompilerRegPlan CompilerRegScratchPlan))
-
-(define (compiler-reg-scratch-plan-empty) : CompilerRegScratchPlan
-  (CompilerRegScratchPlan
-    (__tl_make-array CompilerRegScratchAssignment 0)
-    (__tl_make-array i64 0)
-    (__tl_make-array i64 0)))
 
 (define (compiler-reg-scratch-var-register-homed?
   [assignments : CompilerRegAssignmentTable]
@@ -45677,8 +45647,6 @@
   ;; Ordinals 0 and 1 are the fixed %rax/%rdx pair; 2-4 are GP temporaries that
   ;; exclude both fixed registers and the instruction's operand homes.
   (CompilerRegScratchRequirement
-    point
-    ordinal
     (cond
       [(= ordinal 0)
         (compiler-reg-scratch-fixed-constraint
@@ -46194,32 +46162,6 @@
   compiler-reg-scratch-hull-heapsort-range!
   range
   color-start-var)
-
-;; Scratch pseudos deliberately stay outside the ordinary assignment table, so
-;; the backend cannot discover their nonvolatile homes through its normal plan
-;; scan. Publish the complete physical-home mask separately: the prologue uses
-;; it for ABI preservation while `CompilerRegScratchAssignment.preserve` remains
-;; reserved for an ordinary live-through overlap at the scratch interval.
-(define (compiler-reg-scratch-plan-register-mask
-  [plan : CompilerRegScratchPlan]) : i64
-  (let
-    [items : (__tl_dyn-array CompilerRegScratchAssignment) plan.items]
-    [index : i64 0]
-    [mask : i64 0]
-    (begin
-      (while (< index (array-length items))
-        (let
-          [reg : i64 (array-ref items index).register]
-          [ownership : i64
-            (if (and (>= reg 0) (< reg 64))
-              reg
-              (cabi.compiler-abi-register-ownership-id reg))]
-          (begin
-            (if (and (>= ownership 0) (< ownership 64))
-              (set! mask (bit-or mask (shl 1 ownership)))
-              unit)
-            (set! index (+ index 1)))))
-      mask)))
 
 ;; ---------------------------------------------------------------------------
 ;; SCR-1: the scratch-reserve round.

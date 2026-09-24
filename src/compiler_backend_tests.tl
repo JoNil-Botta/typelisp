@@ -20802,91 +20802,6 @@ g:
       (compiler_ir_types.compiler-ir-function-seq-empty))
     (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
-(define (compiler-backend-switch-dispatch-planned-table-asm [borrowed : bool]) : compiler_backend.ResultCompilerBackend
-  (let
-    [program-index : compiler_backend.CompilerBackendProgramIndex
-      (compiler_backend.compiler-backend-program-index-build
-        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        (compiler_ir_types.compiler-ir-function-seq-empty)
-        (compiler_ir_types.compiler-ir-extern-seq-empty))]
-    [backend-state : compiler_backend.CompilerBackendState
-      program-index.backend-state]
-    [assignments : compiler_regalloc.CompilerRegAssignmentTable
-      (compiler_regalloc.compiler-reg-assignments-prepend
-        (compiler_regalloc.CompilerRegAssignment
-          0
-          (compiler_regalloc.CompilerRegLocation.Register
-            compiler_abi.compiler-reg-id-rax))
-        (compiler_regalloc.compiler-reg-assignment-table-empty))]
-    (begin
-      (compiler-backend-test-scavenge-install-ctx!
-        "switch_planned_table"
-        (compiler_ir_types.compiler-ir-param-seq-empty)
-        (compiler_ast_types.AstType.I64)
-        1
-        (compiler-backend-switch-test-blocks)
-        (owned_view.compiler-owned-shared-view assignments)
-        backend-state)
-      ;; The PIC/Win64 form: the dispatch needs a table register.
-      (compiler_backend.compiler-backend-state-set-absolute-switch-ok!
-        backend-state
-        false)
-      ;; What the plan lookup records when the allocator BORROWED %rsi from a
-      ;; live-through value for this step (CompilerRegScratchAssignment.preserve).
-      (if borrowed
-        (compiler_backend.compiler-backend-current-planned-preserve-add!
-          (compiler_backend.compiler-backend-state-function-state backend-state)
-          compiler_abi.compiler-reg-id-rsi)
-        unit)
-      (compiler_backend.compiler-backend-emit-switch-dispatch
-        backend-state
-        "switch_planned_table"
-        (compiler_ir_types.compiler-ir-label "entry")
-        (compiler_ir_types.CompilerIrValue.Var 0)
-        0
-        3
-        (compiler_ir_types.compiler-ir-label "other")
-        false
-        assignments
-        "%rsi"))))
-
-;; A planned table register the allocator BORROWED from a live-through value
-;; must reach the dispatch through the arming helper: the emitted form is then
-;; the slot-indirect one (target stashed, occupant restored BEFORE the
-;; transfer), never `jmp *(%rsi,idx,8)` with the occupant destroyed. A Win64
-;; planned-scratch self-host reached exactly this in ctfe-quote-expr: the first
-;; plan homed the table register in %rbp, the FPO audit demoted the function,
-;; and the re-plan without %rbp borrowed the `expr` parameter's %rsi; the raw
-;; spelling went out unarmed and every arm read a destroyed parameter. The
-;; control keeps the plain form for a planned register that overlaps nothing.
-(define (compiler-backend-switch-dispatch-borrowed-table-reg-ok?) : bool
-  (and
-    (match (compiler-backend-switch-dispatch-planned-table-asm true)
-      [(compiler_backend.ResultCompilerBackend.Ok asm)
-        (and
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "_disp_j:\n")
-          (not
-            (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
-              "    jmp *(%rsi"))
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            ", %rsi\n    jmp *"))]
-      [(compiler_backend.ResultCompilerBackend.Err _) false])
-    (match (compiler-backend-switch-dispatch-planned-table-asm false)
-      [(compiler_backend.ResultCompilerBackend.Ok asm)
-        (and
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "    jmp *(%rsi,%rax,8)\n")
-          (not
-            (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
-              "_disp_j")))]
-      [(compiler_backend.ResultCompilerBackend.Err _) false])))
-
 (define (compiler-backend-switch-negative-case-label-ok?) : bool
   (match (compiler_backend.compiler-backend-emit-program-linux
     (compiler-backend-switch-negative-case-program))
@@ -21068,7 +20983,6 @@ g:
     (compiler-backend-switch-base-asm-ok?)
     (compiler-backend-switch-shape-diagnostic-ok?)
     (compiler-backend-switch-phi-edge-copy-ok?)
-    (compiler-backend-switch-dispatch-borrowed-table-reg-ok?)
     (compiler-backend-switch-negative-case-label-ok?)
     (compiler-backend-switch-object-image-ok?)
     (compiler-backend-switch-base-object-image-ok?)
@@ -22161,112 +22075,6 @@ g:
               "    vpbroadcastd %r14d, %zmm0\n"))]
         [(compiler_backend.ResultCompilerBackend.Err _) false]))))
 
-(define (compiler-backend-vector-prefix-planned-work-registers-ok?) : bool
-  (let
-    [backend-state : compiler_backend.CompilerBackendState
-      (compiler_backend.compiler-backend-state-new
-        (ci.intern-compat-state-capture-active))]
-    [assignments : compiler_regalloc.CompilerRegAssignmentTable
-      (compiler-backend-vector-prefix-spill-assignments)]
-    [prev-mode : compiler_backend.CompilerBackendMode
-      (compiler_backend.compiler-backend-test-get-compiler-backend-current-mode
-        backend-state)]
-    [_avx2-mode : unit
-      (compiler_backend.compiler-backend-set-current-mode!
-        (compiler_backend.compiler-backend-state-function-state backend-state)
-        (compiler_backend.CompilerBackendMode.Avx2))]
-    [avx2-result : compiler_backend.ResultCompilerBackend
-      (compiler_backend.compiler-backend-emit-vector-prefix
-        (owned_view.compiler-owned-shared-view assignments)
-        2
-        (compiler_ir_types.CompilerIrVectorPrefixOp.Min)
-        (compiler_ir_types.CompilerIrValue.Var 0)
-        (compiler_ir_types.CompilerIrValue.Var 1)
-        4
-        (compiler_ast_types.AstType.I64)
-        "%r14"
-        "%xmm14"
-        "%xmm3"
-        "%xmm4"
-        (compiler_diagnostic.compiler-diagnostic-at-start "" "")
-        backend-state)]
-    [_avx512-mode : unit
-      (compiler_backend.compiler-backend-set-current-mode!
-        (compiler_backend.compiler-backend-state-function-state backend-state)
-        (compiler_backend.CompilerBackendMode.Avx512))]
-    [avx512-result : compiler_backend.ResultCompilerBackend
-      (compiler_backend.compiler-backend-emit-vector-prefix
-        assignments
-        2
-        (compiler_ir_types.CompilerIrVectorPrefixOp.Min)
-        (compiler_ir_types.CompilerIrValue.Var 0)
-        (compiler_ir_types.CompilerIrValue.Var 1)
-        8
-        (compiler_ast_types.AstType.I64)
-        "%r14"
-        "%xmm14"
-        "%xmm3"
-        "%xmm4"
-        (compiler_diagnostic.compiler-diagnostic-at-start "" "")
-        backend-state)]
-    [_restore-mode : unit
-      (compiler_backend.compiler-backend-set-current-mode!
-        (compiler_backend.compiler-backend-state-function-state backend-state)
-        prev-mode)]
-    (and
-      (match avx2-result
-        [(compiler_backend.ResultCompilerBackend.Ok asm)
-          (and
-            (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
-              "%ymm3")
-            (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
-              "%ymm4")
-            (not
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
-                "%ymm0,"))
-            (not
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
-                "%ymm0\n"))
-            (not
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
-                "%ymm1,"))
-            (not
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
-                "%ymm1\n")))]
-        [(compiler_backend.ResultCompilerBackend.Err _) false])
-      (match avx512-result
-        [(compiler_backend.ResultCompilerBackend.Ok asm)
-          (and
-            (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
-              "%zmm3")
-            (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
-              "%zmm4")
-            (not
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
-                "%zmm0,"))
-            (not
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
-                "%zmm0\n"))
-            (not
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
-                "%zmm1,"))
-            (not
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
-                "%zmm1\n")))]
-        [(compiler_backend.ResultCompilerBackend.Err _) false]))))
-
 (define (compiler-backend-avx512-vector-prefix-bool-assignments) : compiler_regalloc.CompilerRegAssignmentTable
   (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
@@ -22440,9 +22248,6 @@ g:
     (compiler_ir_types.CompilerIrValue.Var 3)
     4
     (compiler_ast_types.AstType.I64)
-    ""
-    ""
-    ""
     (compiler_diagnostic.compiler-diagnostic-at-start "" "")
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active)))
@@ -22492,7 +22297,6 @@ g:
     (compiler-backend-avx2-vector-prefix-source-carry-spill-ok?)
     (compiler-backend-avx2-vector-prefix-bool-spill-ok?)
     (compiler-backend-avx512-vector-prefix-numeric-spill-ok?)
-    (compiler-backend-vector-prefix-planned-work-registers-ok?)
     (compiler-backend-avx512-vector-prefix-bool-spill-ok?)
     (compiler-backend-avx512-predicated-load-spill-dst-ok?)
     (compiler-backend-avx512-select-spill-ok?)
@@ -22629,8 +22433,6 @@ g:
     base
     index
     elem-ty
-    ""
-    ""
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active)))
     [(compiler_backend.ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
@@ -22685,78 +22487,6 @@ g:
       "    movq -64(%rbp), %r9\n"
       "(%rdi,%r9,8)")))
 
-(define (compiler-backend-simd-indexed-address-planned-spills-ok?) : bool
-  (let
-    [backend-state : compiler_backend.CompilerBackendState
-      (compiler_backend.compiler-backend-state-new
-        (ci.intern-compat-state-capture-active))]
-    [before-pending : i64
-      (compiler_backend.compiler-backend-function-scratch-fixture-get-emergency-pending-count
-        (compiler_backend.compiler-backend-state-function-state backend-state))]
-    [before-used : i64
-      (compiler_backend.compiler-backend-function-scratch-fixture-get-emergency-used-count
-        (compiler_backend.compiler-backend-state-function-state backend-state))]
-    (match (compiler_backend.compiler-backend-emit-simd-indexed-address
-      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-      (compiler-backend-simd-address-assignments)
-      (compiler_ir_types.CompilerIrValue.Var 7)
-      (compiler_ir_types.CompilerIrValue.Var 8)
-      (compiler_ast_types.AstType.I64)
-      "%r14"
-      "%r13"
-      backend-state)
-      [(compiler_backend.ResultCompilerBackendSimdIndexedAddress.Ok dynamic)
-        (match (compiler_backend.compiler-backend-emit-simd-indexed-address
-          (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-          (compiler-backend-simd-address-assignments)
-          (compiler_ir_types.CompilerIrValue.Var 7)
-          (compiler_ir_types.CompilerIrValue.I64 4)
-          (compiler_ast_types.AstType.I64)
-          "%r14"
-          "%r13"
-          backend-state)
-          [(compiler_backend.ResultCompilerBackendSimdIndexedAddress.Ok
-              constant)
-            (match (compiler_backend.compiler-backend-emit-simd-indexed-address
-              (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-              (compiler-backend-simd-address-assignments)
-              (compiler_ir_types.CompilerIrValue.Var 0)
-              (compiler_ir_types.CompilerIrValue.I64 4)
-              (compiler_ast_types.AstType.I64)
-              "%r14"
-              "%r13"
-              backend-state)
-              [(compiler_backend.ResultCompilerBackendSimdIndexedAddress.Ok
-                  homed)
-                (and
-                  (string.eq
-                    dynamic.asm
-                    "    movq -64(%rbp), %r14\n    movq -72(%rbp), %r13\n")
-                  (string.eq dynamic.addr "(%r14,%r13,8)")
-                  (string.eq constant.asm "    movq -64(%rbp), %r14\n")
-                  (string.eq constant.addr "32(%r14)")
-                  (not
-                    (compiler_backend.compiler-backend-string-contains?
-                      constant.asm
-                      "%r13"))
-                  (string.eq homed.asm "")
-                  (string.eq homed.addr "32(%rdi)")
-                  (=
-                    (compiler_backend.compiler-backend-function-scratch-fixture-get-emergency-pending-count
-                      (compiler_backend.compiler-backend-state-function-state
-                        backend-state))
-                    before-pending)
-                  (=
-                    (compiler_backend.compiler-backend-function-scratch-fixture-get-emergency-used-count
-                      (compiler_backend.compiler-backend-state-function-state
-                        backend-state))
-                    before-used))]
-              [(compiler_backend.ResultCompilerBackendSimdIndexedAddress.Err _)
-                false])]
-          [(compiler_backend.ResultCompilerBackendSimdIndexedAddress.Err _)
-            false])]
-      [(compiler_backend.ResultCompilerBackendSimdIndexedAddress.Err _) false])))
-
 (define (compiler-backend-avx2-vector-load-address-ok?) : bool
   (match (compiler_backend.compiler-backend-emit-avx2-vector-load
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -22808,7 +22538,6 @@ g:
 
 (define (compiler-backend-simd-indexed-address-users-ok?) : bool
   (and
-    (compiler-backend-simd-indexed-address-planned-spills-ok?)
     (compiler-backend-avx2-vector-load-address-ok?)
     (compiler-backend-avx2-vector-store-address-ok?)
     (compiler-backend-avx512-predicated-load-address-ok?)))
@@ -23769,10 +23498,9 @@ g:
     (compiler-backend-shuffle-vector-check-reduction-ok?)))
 
 ;; The reduction result alone cannot detect a write through the source alias.
-;; Keep the full source family read-only in both late and planned emission.
+;; Keep the full source family read-only.
 (define (compiler-backend-avx2-i64-reduce-source-case-ok?
   [op : compiler_ir_types.CompilerIrVectorReduceOp]
-  [planned : bool]
   [spilled : bool]
   [compare : String]) : bool
   (match (compiler_backend.compiler-backend-emit-avx2-vector-reduce
@@ -23793,15 +23521,6 @@ g:
     (compiler_ir_types.CompilerIrValue.Var 0)
     4
     (compiler_ast_types.AstType.I64)
-    (if planned
-      "%xmm10"
-      "")
-    (if planned
-      "%xmm11"
-      "")
-    (if planned
-      "%xmm12"
-      "")
     (compiler_diagnostic.compiler-diagnostic-at-start "" "")
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active)))
@@ -23830,33 +23549,19 @@ g:
           true)
         (compiler_backend.compiler-backend-string-contains?
           asm
-          (if planned
-            "    vmovq %xmm10, %r12\n"
-            "    vmovq %xmm2, %r12\n")))]
+          "    vmovq %xmm2, %r12\n"))]
     [_ false]))
 
 (define (compiler-backend-avx2-i64-reduce-storage-cases-ok? [spilled : bool]) : bool
   (and
     (compiler-backend-avx2-i64-reduce-source-case-ok?
       (compiler_ir_types.CompilerIrVectorReduceOp.Min)
-      false
       spilled
       "    vpcmpgtq %xmm3, %xmm2, %xmm4\n    vpblendvb %xmm4, %xmm3, %xmm2, %xmm2\n")
     (compiler-backend-avx2-i64-reduce-source-case-ok?
       (compiler_ir_types.CompilerIrVectorReduceOp.Max)
-      false
       spilled
-      "    vpcmpgtq %xmm2, %xmm3, %xmm4\n    vpblendvb %xmm4, %xmm3, %xmm2, %xmm2\n")
-    (compiler-backend-avx2-i64-reduce-source-case-ok?
-      (compiler_ir_types.CompilerIrVectorReduceOp.Min)
-      true
-      spilled
-      "    vpcmpgtq %xmm11, %xmm10, %xmm12\n    vpblendvb %xmm12, %xmm11, %xmm10, %xmm10\n")
-    (compiler-backend-avx2-i64-reduce-source-case-ok?
-      (compiler_ir_types.CompilerIrVectorReduceOp.Max)
-      true
-      spilled
-      "    vpcmpgtq %xmm10, %xmm11, %xmm12\n    vpblendvb %xmm12, %xmm11, %xmm10, %xmm10\n")))
+      "    vpcmpgtq %xmm2, %xmm3, %xmm4\n    vpblendvb %xmm4, %xmm3, %xmm2, %xmm2\n")))
 
 (define (compiler-backend-avx2-i64-reduce-source-ok?) : bool
   (compiler-backend-avx2-i64-reduce-storage-cases-ok? false))
@@ -24221,9 +23926,6 @@ g:
     (compiler_ir_types.CompilerIrValue.Var 0)
     4
     (compiler_ast_types.AstType.I64)
-    ""
-    ""
-    ""
     (compiler_diagnostic.compiler-diagnostic-at-start "" "")
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active)))
@@ -24264,9 +23966,6 @@ g:
     (compiler_ir_types.CompilerIrValue.Var 0)
     4
     (compiler_ast_types.AstType.I64)
-    ""
-    ""
-    ""
     (compiler_diagnostic.compiler-diagnostic-at-start "" "")
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active)))
@@ -24595,9 +24294,6 @@ g:
     index
     end-value
     lanes
-    ""
-    ""
-    ""
     (compiler_diagnostic.compiler-diagnostic-at-start "" "")
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active)))
@@ -24614,9 +24310,6 @@ g:
     (compiler_ir_types.CompilerIrValue.Var 1)
     (compiler_ir_types.CompilerIrValue.Var 2)
     8
-    ""
-    ""
-    ""
     (compiler_diagnostic.compiler-diagnostic-at-start "" "")
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active)))
@@ -24654,102 +24347,6 @@ g:
             "    xorl %eax, %eax\n    kmovw %eax, %k1\n")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
-(define (compiler-backend-avx512-tail-mask-planned-assignments
-  [index-location : compiler_regalloc.CompilerRegLocation]) : compiler_regalloc.CompilerRegAssignmentTable
-  (compiler_regalloc.compiler-reg-assignments-prepend
-    (compiler_regalloc.CompilerRegAssignment
-      0
-      (compiler_regalloc.CompilerRegLocation.Register
-        (compiler_abi.compiler-abi-mask-register-id 1)))
-    (compiler_regalloc.compiler-reg-assignments-prepend
-      (compiler_regalloc.CompilerRegAssignment 1 index-location)
-      (compiler_regalloc.compiler-reg-assignments-prepend
-        (compiler_regalloc.CompilerRegAssignment
-          2
-          (compiler_regalloc.CompilerRegLocation.Spill -16))
-        (compiler_regalloc.compiler-reg-assignment-table-empty)))))
-
-(define (compiler-backend-avx512-tail-mask-planned-case-ok?
-  [index-location : compiler_regalloc.CompilerRegLocation]
-  [lanes : i64]
-  [index-load : String]
-  [mask-part : String]
-  [mask-move : String]) : bool
-  (match (compiler_backend.compiler-backend-emit-avx512-tail-mask
-    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-    "_tl_tail_planned"
-    (compiler_ir_types.compiler-ir-label "entry")
-    (compiler-backend-avx512-tail-mask-planned-assignments index-location)
-    0
-    (compiler_ir_types.CompilerIrValue.Var 1)
-    (compiler_ir_types.CompilerIrValue.Var 2)
-    lanes
-    "%rcx"
-    "%r10"
-    "%r11"
-    (compiler_diagnostic.compiler-diagnostic-at-start "" "")
-    (compiler_backend.compiler-backend-state-new
-      (ci.intern-compat-state-capture-active)))
-    [(compiler_backend.ResultCompilerBackend.Ok asm)
-      (and
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          index-load)
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          "    movq -16(%rbp), %rcx\n")
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          "    subq %r10, %rcx\n")
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          (str_cat.str-cat "    " mask-move " " mask-part ", %k1\n"))
-        (not
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "%r8"))
-        (not
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "%r9")))]
-    [(compiler_backend.ResultCompilerBackend.Err _) false]))
-
-(define (compiler-backend-avx512-tail-mask-planned-ok?) : bool
-  (and
-    ;; Preserve an index already homed in the fixed shift-count register.
-    (compiler-backend-avx512-tail-mask-planned-case-ok?
-      (compiler_regalloc.CompilerRegLocation.Register
-        compiler_abi.compiler-reg-id-rcx)
-      8
-      "    movq %rcx, %r10\n"
-      "%r11d"
-      "kmovw")
-    ;; Spilled dynamic indices cover every supported AVX-512 mask width.
-    (compiler-backend-avx512-tail-mask-planned-case-ok?
-      (compiler_regalloc.CompilerRegLocation.Spill -8)
-      8
-      "    movq -8(%rbp), %r10\n"
-      "%r11d"
-      "kmovw")
-    (compiler-backend-avx512-tail-mask-planned-case-ok?
-      (compiler_regalloc.CompilerRegLocation.Spill -8)
-      16
-      "    movq -8(%rbp), %r10\n"
-      "%r11d"
-      "kmovw")
-    (compiler-backend-avx512-tail-mask-planned-case-ok?
-      (compiler_regalloc.CompilerRegLocation.Spill -8)
-      32
-      "    movq -8(%rbp), %r10\n"
-      "%r11d"
-      "kmovd")
-    (compiler-backend-avx512-tail-mask-planned-case-ok?
-      (compiler_regalloc.CompilerRegLocation.Spill -8)
-      64
-      "    movq -8(%rbp), %r10\n"
-      "%r11"
-      "kmovq")))
-
 (define (compiler-backend-avx512-tail-mask-ok?) : bool
   (and
     (compiler-backend-avx512-tail-mask-emits?
@@ -24772,8 +24369,7 @@ g:
       (compiler_ir_types.CompilerIrValue.I64 3)
       64
       "    movq $7, %rax\n    kmovq %rax, %k1\n")
-    (compiler-backend-avx512-tail-mask-dynamic-zero-ok?)
-    (compiler-backend-avx512-tail-mask-planned-ok?)))
+    (compiler-backend-avx512-tail-mask-dynamic-zero-ok?)))
 
 (define (compiler-backend-avx2-tail-mask-assignments) : compiler_regalloc.CompilerRegAssignmentTable
   (compiler_regalloc.compiler-reg-assignments-prepend
@@ -27156,8 +26752,6 @@ g:
           (owned_view.compiler-owned-shared-view instrs))
         compiler_ir_types.CompilerIrBlockList.Nil)]
     [instr-count : i64 (compiler_ir_types.compiler-ir-instr-seq-count instrs)]
-    [scratch : compiler_regalloc.CompilerRegScratchPlan
-      (compiler_regalloc.compiler-reg-scratch-plan-empty)]
     [runtime-plan : compiler_backend.CompilerBackendRuntimePlan
       (compiler-backend-runtime-helper-full-plan)]
     [_scratch-position : unit
@@ -27167,11 +26761,9 @@ g:
           (owned_view.compiler-owned-shared-view prev-starts)
           (owned_view.compiler-owned-shared-view prev-ends)
           (owned_view.compiler-owned-shared-view prev-assignment-index)
-          (bit-or
-            (compiler_backend.compiler-backend-function-scratch-fixture-get-scavenge-ctx-plan-reg-mask
-              (compiler_backend.compiler-backend-state-function-state
-                backend-state))
-            (compiler_regalloc.compiler-reg-scratch-plan-register-mask scratch))
+          (compiler_backend.compiler-backend-function-scratch-fixture-get-scavenge-ctx-plan-reg-mask
+            (compiler_backend.compiler-backend-state-function-state
+              backend-state))
           (owned_view.compiler-owned-shared-view prev-occupied-masks)
           prev-vars)
         (compiler_backend.compiler-backend-test-set-compiler-backend-emit-instr-post-base!
@@ -37087,9 +36679,7 @@ g:
       (compiler_ir_types.CompilerIrBinOp.Add)
       (compiler_ir_types.CompilerIrValue.Var 0)
       (compiler_ir_types.CompilerIrValue.Var 1)
-      (compiler_ast_types.AstType.F64)
-      ""
-      "")))
+      (compiler_ast_types.AstType.F64))))
 
 (define (compiler-backend-float-return-binop-home-ok?) : bool
   (match (compiler-backend-float-return-binop-asm
@@ -37167,9 +36757,7 @@ g:
       (compiler_ir_types.CompilerIrBinOp.Lt)
       (compiler_ir_types.CompilerIrValue.Var 0)
       (compiler_ir_types.CompilerIrValue.Var 1)
-      (compiler_ast_types.AstType.Bool)
-      ""
-      "")))
+      (compiler_ast_types.AstType.Bool))))
 
 (define (compiler-backend-float-return-compare-spill-asm) : compiler_backend.ResultCompilerBackend
   (let
@@ -37204,9 +36792,7 @@ g:
       (compiler_ir_types.CompilerIrBinOp.Lt)
       (compiler_ir_types.CompilerIrValue.Var 0)
       (compiler_ir_types.CompilerIrValue.Var 1)
-      (compiler_ast_types.AstType.Bool)
-      ""
-      "")))
+      (compiler_ast_types.AstType.Bool))))
 
 (define (compiler-backend-float-return-compare-home-ok?) : bool
   (match (compiler-backend-float-return-compare-home-asm)
@@ -37330,9 +36916,7 @@ g:
         (compiler_ir_types.CompilerIrBinOp.Add)
         (compiler_ir_types.CompilerIrValue.I64 5)
         (compiler_ir_types.CompilerIrValue.Var 1)
-        (compiler_ast_types.AstType.I64)
-        ""
-        "")]
+        (compiler_ast_types.AstType.I64))]
     [_restore : unit
       (begin
         (compiler_backend.compiler-backend-set-scavenge-ctx-ready!
@@ -37396,9 +36980,7 @@ g:
       (compiler_ir_types.CompilerIrBinOp.Eq)
       (compiler_ir_types.CompilerIrValue.Var 0)
       (compiler_ir_types.CompilerIrValue.Var 1)
-      (compiler_ast_types.AstType.I64)
-      ""
-      "")
+      (compiler_ast_types.AstType.I64))
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
@@ -37441,9 +37023,7 @@ g:
       (compiler_ir_types.CompilerIrBinOp.Ge)
       (compiler_ir_types.CompilerIrValue.Var 0)
       (compiler_ir_types.CompilerIrValue.Var 1)
-      (compiler_ast_types.AstType.I64)
-      ""
-      "")
+      (compiler_ast_types.AstType.I64))
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
@@ -37487,9 +37067,7 @@ g:
       (compiler_ir_types.CompilerIrBinOp.Ge)
       (compiler_ir_types.CompilerIrValue.Var 0)
       (compiler_ir_types.CompilerIrValue.Var 1)
-      (compiler_ast_types.AstType.I64)
-      ""
-      "")
+      (compiler_ast_types.AstType.I64))
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
@@ -37502,89 +37080,6 @@ g:
             (compiler_backend.compiler-backend-string-contains?
               (owned_view.compiler-owned-shared-view asm)
               "%r8")))]
-      [(compiler_backend.ResultCompilerBackend.Err _) false])))
-
-(define (compiler-backend-int-return-compare-planned-conflict-ok?) : bool
-  (let
-    [backend-state : compiler_backend.CompilerBackendState
-      (compiler_backend.compiler-backend-state-new
-        (ci.intern-compat-state-capture-active))]
-    [assignments : compiler_regalloc.CompilerRegAssignmentTable
-      (compiler_regalloc.compiler-reg-assignments-prepend
-        (compiler_regalloc.CompilerRegAssignment
-          0
-          (compiler_regalloc.CompilerRegLocation.Register
-            compiler_abi.compiler-reg-id-rsi))
-        (compiler_regalloc.compiler-reg-assignments-prepend
-          (compiler_regalloc.CompilerRegAssignment
-            1
-            (compiler_regalloc.CompilerRegLocation.Register
-              compiler_abi.compiler-reg-id-rax))
-          (compiler_regalloc.compiler-reg-assignment-table-empty)))]
-    (match (compiler_backend.compiler-backend-emit-binop-return-with-plan
-      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-      backend-state
-      (ci.intern "ret_int_compare_planned_conflict")
-      compiler_ir_types.CompilerIrBlockList.Nil
-      (compiler-backend-scratch-test-types-from 0 2)
-      (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
-      assignments
-      2
-      (compiler_ir_types.CompilerIrBinOp.Ge)
-      (compiler_ir_types.CompilerIrValue.Var 0)
-      (compiler_ir_types.CompilerIrValue.Var 1)
-      (compiler_ast_types.AstType.I64)
-      "%rax"
-      "%r8")
-      [(compiler_backend.ResultCompilerBackend.Ok asm)
-        (and
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "    movq %rax, %r8\n")
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "    movq %rsi, %rax\n")
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "    cmpq %r8, %rax\n"))]
-      [(compiler_backend.ResultCompilerBackend.Err _) false])))
-
-(define (compiler-backend-int-return-compare-lhs-plan-conflict-ok?) : bool
-  (let
-    [backend-state : compiler_backend.CompilerBackendState
-      (compiler_backend.compiler-backend-state-new
-        (ci.intern-compat-state-capture-active))]
-    [assignments : compiler_regalloc.CompilerRegAssignmentTable
-      (compiler_regalloc.compiler-reg-assignments-prepend
-        (compiler_regalloc.CompilerRegAssignment
-          0
-          (compiler_regalloc.CompilerRegLocation.Register
-            compiler_abi.compiler-reg-id-rcx))
-        (compiler_regalloc.compiler-reg-assignments-prepend
-          (compiler_regalloc.CompilerRegAssignment
-            1
-            (compiler_regalloc.CompilerRegLocation.Register
-              compiler_abi.compiler-reg-id-rax))
-          (compiler_regalloc.compiler-reg-assignment-table-empty)))]
-    (match (compiler_backend.compiler-backend-emit-binop-return-with-plan
-      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-      backend-state
-      (ci.intern "ret_int_compare_lhs_plan_conflict")
-      compiler_ir_types.CompilerIrBlockList.Nil
-      (compiler-backend-scratch-test-types-from 0 2)
-      (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
-      assignments
-      2
-      (compiler_ir_types.CompilerIrBinOp.Eq)
-      (compiler_ir_types.CompilerIrValue.Var 0)
-      (compiler_ir_types.CompilerIrValue.Var 1)
-      (compiler_ast_types.AstType.I64)
-      "%rcx"
-      "%r8")
-      [(compiler_backend.ResultCompilerBackend.Ok asm)
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          "    movq %rax, %r8\n    movq %rcx, %rax\n    cmpq %r8, %rax\n")]
       [(compiler_backend.ResultCompilerBackend.Err _) false])))
 
 (define (compiler-backend-int-return-compare-global-memory-ok?) : bool
@@ -37617,9 +37112,7 @@ g:
       (compiler_ir_types.CompilerIrBinOp.Eq)
       (compiler_ir_types.CompilerIrValue.Var 0)
       (compiler_ir_types.CompilerIrValue.Var 1)
-      (compiler_ast_types.AstType.I64)
-      ""
-      "")
+      (compiler_ast_types.AstType.I64))
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
@@ -37658,9 +37151,7 @@ g:
       (compiler_ir_types.CompilerIrBinOp.Ne)
       (compiler_ir_types.CompilerIrValue.Var 0)
       (compiler_ir_types.CompilerIrValue.I64 0x7ff0000000000000)
-      (compiler_ast_types.AstType.U64)
-      ""
-      "")
+      (compiler_ast_types.AstType.U64))
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (compiler_backend.compiler-backend-string-contains?
           (owned_view.compiler-owned-shared-view asm)
@@ -37695,9 +37186,7 @@ g:
       (compiler_ir_types.CompilerIrBinOp.Ne)
       (compiler_ir_types.CompilerIrValue.Var 0)
       (compiler_ir_types.CompilerIrValue.Var 1)
-      (compiler_ast_types.AstType.U64)
-      ""
-      "")
+      (compiler_ast_types.AstType.U64))
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
@@ -37742,9 +37231,7 @@ g:
       (compiler_ir_types.CompilerIrBinOp.Lt)
       (compiler_ir_types.CompilerIrValue.Var 0)
       (compiler_ir_types.CompilerIrValue.Var 1)
-      (compiler_ast_types.AstType.U64)
-      ""
-      "")
+      (compiler_ast_types.AstType.U64))
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
@@ -37791,9 +37278,7 @@ g:
       (compiler_ir_types.CompilerIrBinOp.Lt)
       (compiler_ir_types.CompilerIrValue.Var 0)
       (compiler_ir_types.CompilerIrValue.Var 1)
-      (compiler_ast_types.AstType.U64)
-      ""
-      "")
+      (compiler_ast_types.AstType.U64))
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (compiler_backend.compiler-backend-string-contains?
           (owned_view.compiler-owned-shared-view asm)
@@ -45808,74 +45293,6 @@ g:
           (set! i (+ i 1))))
       unit)))
 
-;; Any-arity GP argument marshalling: where the register prefix ends, where the
-;; overflow lands, and the one register class whose stack mirror the peephole may
-;; NOT learn from a store.
-;;
-;; The prefix is the ABI's GP argument-register count minus the caller's current
-;; bank base (a closure/indirect shape starts at one), and the overflow is packed
-;; from the base of the outgoing area -- 0 on System V, past the shadow space on
-;; Windows. The owner-key store bit (`compiler-backend-peephole-owner-key-mark-store`)
-;; is what keeps a `movq %reg, off(%rsp)` argument store from teaching the
-;; peephole owner map a mirror that outlives the call which invalidates it: the
-;; outgoing area belongs to the callee, and only the volatile registers have
-;; their owners cleared at the call anyway.
-;; A PLANNED stack-argument stage register must have its preservation ARMED.
-;;
-;; A scratch plan may stage through callee-saved registers as well as %r10,
-;; and it marks such a pick PRESERVE -- the consumer owes it the save/restore bracket. The stack-argument
-;; emitters used to consume the spelling raw, so with a scratch plan a
-;; six-argument call in `compiler-backend-peephole-pair-action-desc` staged both
-;; of its stack arguments through %r12 while %r12 held a parameter read after the
-;; call, and a Windows planned-scratch bootstrap segfaulted. This pins the arming:
-;; consuming a marked stage register clears its planned-preserve entry and pushes
-;; it onto the emergency set, and an UNPLANNED stage still arms nothing.
-(define (compiler-backend-stack-call-arg-stage-preserves-ok?) : bool
-  (let
-    [backend-state : compiler_backend.CompilerBackendState
-      (compiler_backend.compiler-backend-state-new
-        (ci.intern-compat-state-capture-active))]
-    [function-state : compiler_backend.CompilerBackendFunctionState
-      (compiler_backend.compiler-backend-state-function-state backend-state)]
-    [before-pending : i64
-      (compiler_backend.compiler-backend-function-scratch-fixture-get-emergency-pending-count
-        function-state)]
-    [_plan : unit
-      (compiler_backend.compiler-backend-current-planned-preserve-add!
-        function-state
-        compiler_abi.compiler-reg-id-r12)]
-    [marked? : bool
-      (compiler_backend.compiler-backend-planned-register-preserve?
-        "%r12"
-        backend-state)]
-    [staged : String
-      (compiler_backend.compiler-backend-stack-call-arg-stage
-        "%r12"
-        backend-state)]
-    [after-pending : i64
-      (compiler_backend.compiler-backend-function-scratch-fixture-get-emergency-pending-count
-        function-state)]
-    [still-marked? : bool
-      (compiler_backend.compiler-backend-planned-register-preserve?
-        "%r12"
-        backend-state)]
-    [unplanned : String
-      (compiler_backend.compiler-backend-stack-call-arg-stage "" backend-state)]
-    [after-unplanned : i64
-      (compiler_backend.compiler-backend-function-scratch-fixture-get-emergency-pending-count
-        function-state)]
-    (and
-      ;; the plan marked it, and the stage hands back exactly that register
-      marked?
-      (string.eq staged "%r12")
-      ;; ... with its bracket armed: the entry is consumed and the emergency
-      ;; save/restore now covers it
-      (not still-marked?)
-      (= after-pending (+ before-pending 1))
-      ;; an unplanned stage scavenges and arms nothing new
-      (not (string.eq unplanned ""))
-      (= after-unplanned after-pending))))
-
 (define (compiler-backend-any-arity-stack-arg-shape-ok?) : bool
   (and
     (=
@@ -46572,73 +45989,6 @@ g:
         (compiler_backend.compiler-backend-const-hoist-candidate-regs
           (compiler_backend.CompilerBackendTarget.Windows))
         compiler_abi.compiler-reg-id-rdi))))
-
-;; A scratch plan publishes caller-saved homes only through its
-;; per-instruction plan. Const-hoist admission extends that plan into synthetic
-;; assignments + intervals, so an overlapping %r9 scratch cannot also carry a
-;; loop's magic constant. This is the reduced form of the Win64 self-host
-;; corruption in string.int->string.
-(define (compiler-backend-const-hoist-respects-scratch-plan-ok?) : bool
-  (let
-    [items : (__tl_dyn-array compiler_regalloc.CompilerRegScratchAssignment)
-      (__tl_make-array compiler_regalloc.CompilerRegScratchAssignment 1)]
-    [first : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-    [slots : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-    [_item : unit
-      (set!
-        (array-ref items 0)
-        (compiler_regalloc.CompilerRegScratchAssignment
-          (compiler_regalloc.CompilerRegScratchRequirement
-            4
-            0
-            (compiler_regalloc.CompilerRegScratchConstraint
-              (compiler_regalloc.CompilerRegScratchClass.Gp)
-              (compiler_regalloc.compiler-reg-id-seq-empty)
-              (compiler_regalloc.compiler-reg-id-seq-empty)
-              compiler_abi.compiler-reg-id-invalid)
-            4
-            8
-            1)
-          false
-          false
-          compiler_abi.compiler-reg-id-r9))]
-    [scratch : compiler_regalloc.CompilerRegScratchPlan
-      (compiler_regalloc.CompilerRegScratchPlan items first slots)]
-    [base-assignments : compiler_regalloc.CompilerRegAssignmentTable
-      (compiler_regalloc.compiler-reg-assignments-prepend
-        (compiler_regalloc.CompilerRegAssignment
-          0
-          (compiler_regalloc.CompilerRegLocation.Register
-            compiler_abi.compiler-reg-id-r8))
-        (compiler_regalloc.compiler-reg-assignment-table-empty))]
-    [base-intervals : compiler_regalloc.CompilerRegIntervalSeq
-      (compiler_regalloc.compiler-reg-interval-seq-prepend
-        (compiler_regalloc.CompilerRegInterval 0 0 10)
-        (compiler_regalloc.compiler-reg-interval-seq-empty))]
-    [vars : i64
-      (compiler_backend.compiler-backend-scratch-plan-extend-vars
-        (owned_view.compiler-owned-shared-view scratch)
-        1)]
-    [assignments : compiler_regalloc.CompilerRegAssignmentTable
-      (compiler_backend.compiler-backend-scratch-plan-extend-assignments
-        (owned_view.compiler-owned-shared-view scratch)
-        1
-        base-assignments)]
-    [intervals : compiler_regalloc.CompilerRegIntervalSeq
-      (compiler_backend.compiler-backend-scratch-plan-extend-intervals
-        scratch
-        1
-        base-intervals)]
-    (match (compiler_regalloc.compiler-reg-loop-split-first-register
-      (compiler_backend.compiler-backend-const-hoist-candidate-regs
-        (compiler_backend.CompilerBackendTarget.Windows))
-      assignments
-      (compiler_regalloc.compiler-reg-interval-index-build intervals vars)
-      (compiler_regalloc.compiler-reg-loop-split-region-interval -1 4 8)
-      -1)
-      [(compiler_regalloc.CompilerRegMaybeId.Some reg)
-        (= reg compiler_abi.compiler-reg-id-rbx)]
-      [(compiler_regalloc.CompilerRegMaybeId.No) false])))
 
 ;; Regression for the opt1-built compiler crash exposed by
 ;; integration_spmd_gather_read/fill-lane-offset-gather. The reduced IR keeps
@@ -51325,7 +50675,6 @@ b_keep:
         (compiler-backend-divmod-excludes-keep-scratch-fallbacks-ok?)
         (compiler-backend-scavenge-special-reg-bit-map-ok?)
         (compiler-backend-any-arity-stack-arg-shape-ok?)
-        (compiler-backend-stack-call-arg-stage-preserves-ok?)
         (compiler-backend-emergency-vector-width-ok?)
         (compiler-backend-scavenge-widened-pool-picks-rsi-ok?)
         (compiler-backend-scavenge-win64-rsi-rdi-plan-mask-ok?)
@@ -51334,7 +50683,6 @@ b_keep:
         (compiler-backend-const-hoist-candidates-abi-ok?)
         (compiler-backend-const-hoist-award-weight-ok?)
         (compiler-backend-const-hoist-award-tie-ok?)
-        (compiler-backend-const-hoist-respects-scratch-plan-ok?)
         (compiler-backend-callful-preheader-wide-literal-ok?)
         (compiler-backend-shrinkwrap-admission-state-ok?)
         (compiler-backend-shrinkwrap-large-guard-win64-ok?)
@@ -51465,8 +50813,6 @@ b_keep:
         (compiler-backend-int-return-compare-direct-rhs-ok?)
         (compiler-backend-int-return-compare-direct-memory-ok?)
         (compiler-backend-int-return-compare-remat-immediate-ok?)
-        (compiler-backend-int-return-compare-planned-conflict-ok?)
-        (compiler-backend-int-return-compare-lhs-plan-conflict-ok?)
         (compiler-backend-int-return-compare-global-memory-ok?)
         (compiler-backend-int-return-compare-reuses-lhs-home-ok?)
         (compiler-backend-int-return-compare-rax-frame-ok?)

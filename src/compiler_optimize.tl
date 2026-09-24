@@ -64640,9 +64640,39 @@
     bool
     i64))
 
+;; Each cell carries `vars`: a bit per var (its id mod 64) that its fact or any
+;; fact after it names. A fact decides a compare only through an operand the
+;; two share -- the same pair, the swapped pair, or the same var against another
+;; literal -- and bounds a value in a chain step only when it names that value.
+;; So a scan for a var can pass by a fact whose operands lack the var's bit and
+;; stop at a cell whose `vars` lacks it. Build cells with
+;; `opt-dom-cmp-facts-cons`, which keeps `vars` exact.
 (defenum OptDomCmpFacts
   (Nil)
-  (Cons OptDomCmpFact (Box OptDomCmpFacts)))
+  (Cons OptDomCmpFact i64 (Box OptDomCmpFacts)))
+
+(define (opt-dom-cmp-value-bit [value : ir.CompilerIrValue]) : i64
+  (match value
+    [(ir.CompilerIrValue.Var id) (shl 1 (bit-and id 63))]
+    [_ 0]))
+
+(define (opt-dom-cmp-fact-vars [fact : OptDomCmpFact]) : i64
+  (match fact
+    [(OptDomCmpFact.Fact _ lhs rhs _ _ _)
+      (bit-or (opt-dom-cmp-value-bit lhs) (opt-dom-cmp-value-bit rhs))]))
+
+(define (opt-dom-cmp-facts-vars [facts : OptDomCmpFacts]) : i64
+  (match facts
+    [(OptDomCmpFacts.Nil) 0]
+    [(OptDomCmpFacts.Cons _ vars _) vars]))
+
+(define (opt-dom-cmp-facts-cons [fact : OptDomCmpFact] [rest : OptDomCmpFacts]) : OptDomCmpFacts
+  (let
+    [vars : i64
+      (bit-or
+        (opt-dom-cmp-fact-vars (compiler-opt-global-shared-view fact))
+        (opt-dom-cmp-facts-vars (compiler-opt-global-shared-view rest)))]
+    (OptDomCmpFacts.Cons fact vars (box rest))))
 
 (defenum OptDomCmpLookup
   (No)
@@ -64941,23 +64971,42 @@
   [ty : ast.AstType]) : OptDomCmpLookup
   (let
     [cur : OptDomCmpFacts (compiler-opt-global-shared-view facts)]
+    ;; With a var operand, only a fact naming one of the query's vars can
+    ;; decide it; with none, every fact is tried.
+    [want : i64
+      (bit-or
+        (opt-dom-cmp-value-bit (compiler-opt-global-shared-view lhs))
+        (opt-dom-cmp-value-bit (compiler-opt-global-shared-view rhs)))]
     (begin
       (while true
         (match (compiler-opt-global-shared-view cur)
           [(OptDomCmpFacts.Nil) (return (OptDomCmpLookup.No))]
-          [(OptDomCmpFacts.Cons fact rest)
-            (match (opt-dom-cmp-fact-verdict
-              type-segment-bases
-              fact
-              query
-              (compiler-opt-global-shared-view lhs)
-              (compiler-opt-global-shared-view rhs)
-              (compiler-opt-global-shared-view query-var-lit)
-              (compiler-opt-global-shared-view ty))
-              [(OptDomCmpLookup.Some decided)
-                (return (OptDomCmpLookup.Some decided))]
-              [(OptDomCmpLookup.No)
-                (set! cur (compiler-opt-box-shared-view rest))])]))
+          [(OptDomCmpFacts.Cons fact vars rest)
+            (cond
+              [(and (!= want 0) (= (bit-and vars want) 0))
+                (return (OptDomCmpLookup.No))]
+              [(and
+                  (!= want 0)
+                  (=
+                    (bit-and
+                      (opt-dom-cmp-fact-vars
+                        (compiler-opt-global-shared-view fact))
+                      want)
+                    0))
+                (set! cur (compiler-opt-box-shared-view rest))]
+              [else
+                (match (opt-dom-cmp-fact-verdict
+                  type-segment-bases
+                  fact
+                  query
+                  (compiler-opt-global-shared-view lhs)
+                  (compiler-opt-global-shared-view rhs)
+                  (compiler-opt-global-shared-view query-var-lit)
+                  (compiler-opt-global-shared-view ty))
+                  [(OptDomCmpLookup.Some decided)
+                    (return (OptDomCmpLookup.Some decided))]
+                  [(OptDomCmpLookup.No)
+                    (set! cur (compiler-opt-box-shared-view rest))])])]))
       (OptDomCmpLookup.No))))
 
 (define (opt-dom-cmp-lookup
@@ -65039,20 +65088,44 @@
   [ty : ast.AstType]) : OptDomCmpBelow
   (match facts
     [(OptDomCmpFacts.Nil) (OptDomCmpBelow.No)]
-    [(OptDomCmpFacts.Cons fact rest)
-      (match (opt-dom-cmp-fact-below
-        type-segment-bases
-        fact
-        (compiler-opt-global-shared-view mid)
-        (compiler-opt-global-shared-view ty))
-        [(OptDomCmpBelow.Some upper strict?)
-          (if (opt-value-eq
-            (compiler-opt-global-shared-view upper)
-            (compiler-opt-global-shared-view c))
-            (OptDomCmpBelow.Some upper strict?)
-            (opt-dom-cmp-chain-tail type-segment-bases (deref rest) mid c ty))]
-        [(OptDomCmpBelow.No)
-          (opt-dom-cmp-chain-tail type-segment-bases (deref rest) mid c ty)])]))
+    [(OptDomCmpFacts.Cons fact vars rest)
+      (let
+        [want : i64
+          (opt-dom-cmp-value-bit (compiler-opt-global-shared-view mid))]
+        (cond
+          [(and (!= want 0) (= (bit-and vars want) 0)) (OptDomCmpBelow.No)]
+          [(and
+              (!= want 0)
+              (=
+                (bit-and
+                  (opt-dom-cmp-fact-vars (compiler-opt-global-shared-view fact))
+                  want)
+                0))
+            (opt-dom-cmp-chain-tail type-segment-bases (deref rest) mid c ty)]
+          [else
+            (match (opt-dom-cmp-fact-below
+              type-segment-bases
+              fact
+              (compiler-opt-global-shared-view mid)
+              (compiler-opt-global-shared-view ty))
+              [(OptDomCmpBelow.Some upper strict?)
+                (if (opt-value-eq
+                  (compiler-opt-global-shared-view upper)
+                  (compiler-opt-global-shared-view c))
+                  (OptDomCmpBelow.Some upper strict?)
+                  (opt-dom-cmp-chain-tail
+                    type-segment-bases
+                    (deref rest)
+                    mid
+                    c
+                    ty))]
+              [(OptDomCmpBelow.No)
+                (opt-dom-cmp-chain-tail
+                  type-segment-bases
+                  (deref rest)
+                  mid
+                  c
+                  ty)])]))]))
 
 (define (opt-dom-cmp-chain-scan
   [type-segment-bases : i64]
@@ -65062,9 +65135,38 @@
   [a : ir.CompilerIrValue]
   [c : ir.CompilerIrValue]
   [ty : ast.AstType]) : OptDomCmpLookup
+  (match (compiler-opt-global-shared-view facts)
+    [(OptDomCmpFacts.Nil) (OptDomCmpLookup.No)]
+    [(OptDomCmpFacts.Cons _ vars _)
+      (if (and
+        (!= (opt-dom-cmp-value-bit (compiler-opt-global-shared-view a)) 0)
+        (=
+          (bit-and
+            vars
+            (opt-dom-cmp-value-bit (compiler-opt-global-shared-view a)))
+          0))
+        ;; No fact from here on names `a`, so none is a head step.
+        (OptDomCmpLookup.No)
+        (opt-dom-cmp-chain-scan-cell
+          type-segment-bases
+          all-facts
+          facts
+          query
+          a
+          c
+          ty))]))
+
+(define (opt-dom-cmp-chain-scan-cell
+  [type-segment-bases : i64]
+  [all-facts : OptDomCmpFacts]
+  [facts : OptDomCmpFacts]
+  [query : i64]
+  [a : ir.CompilerIrValue]
+  [c : ir.CompilerIrValue]
+  [ty : ast.AstType]) : OptDomCmpLookup
   (match facts
     [(OptDomCmpFacts.Nil) (OptDomCmpLookup.No)]
-    [(OptDomCmpFacts.Cons fact rest)
+    [(OptDomCmpFacts.Cons fact _ rest)
       (match (match (opt-dom-cmp-fact-below
         type-segment-bases
         fact
@@ -65184,7 +65286,7 @@
                       (compiler-opt-global-shared-view crhs))
                     (opt-bounds-dom-stable-global-value?
                       (compiler-opt-global-shared-view crhs))))
-                  (OptDomCmpFacts.Cons
+                  (opt-dom-cmp-facts-cons
                     (OptDomCmpFact.Fact
                       (opt-dom-cmp-canon-op op)
                       clhs
@@ -65192,7 +65294,7 @@
                       ty
                       taken?
                       block)
-                    (box facts))
+                    facts)
                   facts))]
             [_ facts])])]
     [_ facts]))
@@ -65720,7 +65822,7 @@
   [latch-id : i64]) : bool
   (match facts
     [(OptDomCmpFacts.Nil) false]
-    [(OptDomCmpFacts.Cons fact rest)
+    [(OptDomCmpFacts.Cons fact _ rest)
       (match fact
         [(OptDomCmpFact.Fact fact-op fact-lhs _ fact-ty fact-value fact-block)
           (if (and
@@ -65896,24 +65998,39 @@
   [ty : ast.AstType]) : OptDomCmpLookup
   (let
     [cur : OptDomCmpFacts (compiler-opt-global-shared-view facts)]
+    [want : i64
+      (bit-or
+        (opt-dom-cmp-value-bit (compiler-opt-global-shared-view lhs))
+        (opt-dom-cmp-value-bit (compiler-opt-global-shared-view rhs)))]
     (begin
       (while true
         (match (compiler-opt-global-shared-view cur)
           [(OptDomCmpFacts.Nil) (return (OptDomCmpLookup.No))]
-          [(OptDomCmpFacts.Cons fact rest)
-            (match (if (opt-dom-cmp-fact-holds-at?
-              (compiler-opt-global-shared-view doms)
-              (compiler-opt-global-shared-view fact)
-              at-id)
-              (opt-dom-cmp-fact-verdict
-                type-segment-bases
-                (compiler-opt-global-shared-view fact)
-                query
-                (compiler-opt-global-shared-view lhs)
-                (compiler-opt-global-shared-view rhs)
-                (compiler-opt-global-shared-view query-var-lit)
-                (compiler-opt-global-shared-view ty))
-              (OptDomCmpLookup.No))
+          [(OptDomCmpFacts.Cons fact vars rest)
+            (match (if (and (!= want 0) (= (bit-and vars want) 0))
+              (return (OptDomCmpLookup.No))
+              (if (and
+                (or
+                  (= want 0)
+                  (!=
+                    (bit-and
+                      (opt-dom-cmp-fact-vars
+                        (compiler-opt-global-shared-view fact))
+                      want)
+                    0))
+                (opt-dom-cmp-fact-holds-at?
+                  (compiler-opt-global-shared-view doms)
+                  (compiler-opt-global-shared-view fact)
+                  at-id))
+                (opt-dom-cmp-fact-verdict
+                  type-segment-bases
+                  (compiler-opt-global-shared-view fact)
+                  query
+                  (compiler-opt-global-shared-view lhs)
+                  (compiler-opt-global-shared-view rhs)
+                  (compiler-opt-global-shared-view query-var-lit)
+                  (compiler-opt-global-shared-view ty))
+                (OptDomCmpLookup.No)))
               [(OptDomCmpLookup.Some decided)
                 (return (OptDomCmpLookup.Some decided))]
               [(OptDomCmpLookup.No)
@@ -70223,7 +70340,7 @@
   [global : i64]) : bool
   (match (compiler-opt-global-shared-view facts)
     [(OptDomCmpFacts.Nil) false]
-    [(OptDomCmpFacts.Cons fact rest)
+    [(OptDomCmpFacts.Cons fact _ rest)
       (or
         (match fact
           [(OptDomCmpFact.Fact _ lhs rhs _ _ _)
@@ -70617,7 +70734,7 @@
                           (begin
                             (set!
                               cur-cmp-facts
-                              (OptDomCmpFacts.Cons
+                              (opt-dom-cmp-facts-cons
                                 (OptDomCmpFact.Fact
                                   (ir.CompilerIrBinOp.Lt)
                                   (compiler-opt-global-shared-view cidx)
@@ -70625,18 +70742,16 @@
                                   (ast.AstType.I64)
                                   true
                                   block-id)
-                                (box
-                                  (OptDomCmpFacts.Cons
-                                    (OptDomCmpFact.Fact
-                                      (ir.CompilerIrBinOp.Lt)
-                                      (compiler-opt-global-shared-view clen)
-                                      (compiler-opt-global-shared-view cidx)
-                                      (ast.AstType.I64)
-                                      false
-                                      block-id)
-                                    (box
-                                      (compiler-opt-global-shared-view
-                                        cur-cmp-facts))))))
+                                (opt-dom-cmp-facts-cons
+                                  (OptDomCmpFact.Fact
+                                    (ir.CompilerIrBinOp.Lt)
+                                    (compiler-opt-global-shared-view clen)
+                                    (compiler-opt-global-shared-view cidx)
+                                    (ast.AstType.I64)
+                                    false
+                                    block-id)
+                                  (compiler-opt-global-shared-view
+                                    cur-cmp-facts))))
                             (set!
                               cur-facts
                               (opt-bounds-add
@@ -71651,7 +71766,7 @@
                     (compiler-opt-global-shared-view clen)))
                   (set!
                     cur
-                    (OptDomCmpFacts.Cons
+                    (opt-dom-cmp-facts-cons
                       (OptDomCmpFact.Fact
                         (ir.CompilerIrBinOp.Lt)
                         cidx
@@ -71659,7 +71774,7 @@
                         (ast.AstType.I64)
                         true
                         block-id)
-                      (box cur)))
+                      cur))
                   unit))]
             [_ unit])
           (set! pos (+ pos 1))))
@@ -131766,7 +131881,7 @@
                         (if (= (opt-pd-vec-at (& opt-pd-pair-g) k) g)
                           (set!
                             out
-                            (OptDomCmpFacts.Cons
+                            (opt-dom-cmp-facts-cons
                               (OptDomCmpFact.Fact
                                 (ir.CompilerIrBinOp.Le)
                                 (ir.CompilerIrValue.Var dst)
@@ -131775,7 +131890,7 @@
                                 (ast.AstType.I64)
                                 true
                                 0)
-                              (box out)))
+                              out))
                           unit)
                         (set! k (+ k 1)))))
                   unit))]
@@ -131827,7 +131942,7 @@
               (begin
                 (set!
                   facts
-                  (OptDomCmpFacts.Cons
+                  (opt-dom-cmp-facts-cons
                     (OptDomCmpFact.Fact
                       (ir.CompilerIrBinOp.Le)
                       (ir.CompilerIrValue.Global g)
@@ -131835,7 +131950,7 @@
                       (ast.AstType.I64)
                       true
                       0)
-                    (box facts)))
+                    facts))
                 (if (opt-pd-known-clean? fn g)
                   (opt_i64_i64_map.insert-ref! (&mut stable) g 1)
                   unit)

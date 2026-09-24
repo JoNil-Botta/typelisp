@@ -127,13 +127,8 @@ that program performed 12 scans.
 The backend smoke checks AVX2 i64 min/max with both ordinary and explicit
 planned scratch homes. It checks the scalar destination and forbids writes to
 the source's XMM/YMM family; checking only the reduction result missed #7821.
-The scratch-vreg smoke keeps the source live through a second reduction and
-through a coalesced phi home. It checks the mask role against source, destination
-and sibling homes on SysV and Win64. A full allocatable-XMM-pressure fixture
-requires the mask's full-width save/restore, and call-adjacent spill fixtures
-require independent reloads without overwriting the retained stack source.
-The source and call fixtures run in both normal and modeled-scratch modes.
-Preserve both the source-ownership and signed-comparison checks when changing
+Call-adjacent spill fixtures require independent reloads without overwriting
+the retained stack source. Preserve both the source-ownership and signed-comparison checks when changing
 horizontal reduction emission.
 
 ## Borrowed macro surface searches
@@ -1075,7 +1070,7 @@ every current macro identity. Trusted embedded-stdlib native routing is the
 default on both hosts; the bootstrap embedded-provenance parity compile proves
 the staged disk-source and embedded-source paths converge.
 
-CI's isolated scratch-vreg bootstrap also enables the deterministic same-commit
+CI's isolated TLCI mutation bootstrap enables the deterministic same-commit
 mutation witness. It copies `src/` and `stdlib/` below that bootstrap's target
 workdir, changes only the zero-body sentinel in the already-native
 `stdlib.core_macros/when` transformer, and builds every generation from that
@@ -1427,7 +1422,7 @@ compiler, including public tools, inline tests, doctests and native integration.
 The previous bootstrap generation is retained for the cross-mode differential.
 
 Configured and mutation proofs retain their independent builds: the separate
-scratch-vreg/TLCI mutation bootstrap must converge and prove its changed macro
+TLCI mutation bootstrap must converge and prove its changed macro
 runs through the embedded native route. Other producers hand their compilers
 and references to later gates through path files under `target/` (see
 `scripts/README.md`). Both hosts must run every applicable

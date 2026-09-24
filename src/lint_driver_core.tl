@@ -1976,25 +1976,17 @@
   ;; bootstrap and the repository's compiler instrumentation gates. Keep this
   ;; list explicit: arbitrary caller cfgs must stay inactive rather than
   ;; turning conditional implementation details into API.
-  (parser.compiler-cfg-enable
+  (parser.compiler-cfg-union
     (parser.compiler-cfg-enable
-      (parser.compiler-cfg-union
-        (parser.compiler-cfg-enable
-          (parser.compiler-cfg-enable
-            (parser.compiler-cfg-enable
-              (parser.compiler-cfg-enable (selfhost-lint-language-cfgs) "test")
-              "scratch-vreg")
-            "embedded-stdlib-tlci")
-          "compiler-build-identity")
-        "compile-profile")
-      "regalloc-census")
-    "scavenge-census"))
+      (parser.compiler-cfg-enable
+        (parser.compiler-cfg-enable (selfhost-lint-language-cfgs) "test")
+        "embedded-stdlib-tlci")
+      "compiler-build-identity")
+    "compile-profile"))
 
 (define (selfhost-lint-package-dead-cfgs) : sym_i64_env.SymI64Env
   (parser.compiler-cfg-union
-    (parser.compiler-cfg-enable
-      (selfhost-lint-package-dead-cfgs-base)
-      "scavenge-self-check")
+    (selfhost-lint-package-dead-cfgs-base)
     "compile-profile-summary"))
 
 (define (selfhost-lint-dead-decls-slots [items : SelfhostLintDeadDecls]) : (__tl_dyn-array

@@ -138,17 +138,22 @@
               : (Ptr (__tl_dyn-array u8))))))
       : (Ptr u8))))
 
+(unsafe
+  (extern (tlci-pages-runtime-copy-bytes!
+    [dst : (MutPtr u8)]
+    [src : (Ptr u8)]
+    [count : i64]) : unit (:symbol "tl_memcpy")))
+
+;; The runtime's bulk copy: mapping the embedded stdlib image copies all 16 MB
+;; of it here, which a byte loop spent ~56M instructions on per compile.
 (define (tlci-pages-copy-bytes!
   [dst : (MutPtr u8)]
   [src : (Ptr u8)]
   [count : i64]) : unit
-  (let
-    [i : i64 0]
-    (while (< i count)
-      (begin
-        (unsafe
-          (ptr-write! (ptr-offset dst i) (ptr-read (ptr-offset src i))))
-        (set! i (+ i 1))))))
+  (if (> count 0)
+    (unsafe
+      (tlci-pages-runtime-copy-bytes! dst src count))
+    unit))
 
 (cfg
   (not windows)

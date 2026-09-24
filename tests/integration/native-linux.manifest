@@ -26,6 +26,8 @@ invariant_loop_call_trap_order_opt2|tests/integration/invariant_loop_call.tl|129
 invariant_loop_call_write_opt2|tests/integration/invariant_loop_call.tl|0|190\n|6|-|opt-level:2+stage-stdlib
 invariant_loop_call_nested_opt2|tests/integration/invariant_loop_call.tl|0|438\n|7|-|opt-level:2+stage-stdlib
 invariant_loop_call_varying_opt2|tests/integration/invariant_loop_call.tl|0|75\n|8|-|opt-level:2+stage-stdlib
+loop_call_addr_taken_opt0|tests/integration/loop_call_addr_taken.tl|0|594\n1156\n|-|-|opt-level:0+stage-stdlib
+loop_call_addr_taken_opt2|tests/integration/loop_call_addr_taken.tl|0|594\n1156\n|-|-|opt-level:2+stage-stdlib
 hash_length_chain|tests/integration/hash_length_chain.tl|42|-|-|-|opt-level:2+stage-stdlib
 aggregate_globals|tests/integration/aggregate_globals.tl|42|-|-|stdlib/string.tl
 inline_aggregate_global|tests/integration/inline_aggregate_global.tl|42|98\n|-|stdlib/io.tl stdlib/string.tl
@@ -71,6 +73,7 @@ hashmap_nominal_value_local_smoke|tests/integration/hashmap_nominal_value_local_
 stdlib_time_sleep|tests/integration/stdlib_time_sleep.tl|42|-|-|stdlib/time.tl
 stdlib_time_allocation|tests/integration/stdlib_time_allocation.tl|42|-|-|stdlib/arena.tl stdlib/profile.tl stdlib/string.tl stdlib/thread.tl stdlib/time.tl
 stdlib_crypto_random|tests/integration/stdlib_crypto_random.tl|42|-|-|stdlib/crypto_random.tl stdlib/byte_buf.tl stdlib/string.tl|stage-stdlib
+winsock_capability|tests/integration/winsock_capability.tl|42|-|-|stdlib/net_windows_winsock.tl stdlib/ffi.tl stdlib/byte_buf.tl|stage-stdlib
 array_compat_aliases|tests/integration/array_compat_aliases.tl|42|-|-|-
 private_array_data|tests/integration/private_array_data.tl|42|-|-|-
 dynamic_array_literal|tests/integration/dynamic_array_literal.tl|42|-|-|-
@@ -580,7 +583,6 @@ lint_smoke|src/tests/lint_smoke.tl|42|-|-|lint_policy_core_tests.tl lint_core_te
 lint_driver_smoke|src/tests/lint_driver_smoke.tl|42|target/lint_unsafe_surface/safe.tl:3:3: unused unsafe block: body does not require unsafe context\nlint: 1 finding(s)\ntarget/lint_unsafe_surface/shadow.tl:5:3: unused unsafe block: body does not require unsafe context\nlint: 1 finding(s)\ntarget/lint_unsafe_surface/macro.tl:3:3: unused unsafe block: body does not require unsafe context\nlint: 1 finding(s)\ntarget/lint_unsafe_surface/local_value.tl:2:3: unused unsafe block: body does not require unsafe context\nlint: 1 finding(s)\ntarget/lint_unsafe_surface/callable_value.tl:4:5: unused unsafe block: body does not require unsafe context\nlint: 1 finding(s)\nlint: 0 finding(s)\ntarget/lint_unsafe_surface/macro.tl:3:3: unused unsafe block: body does not require unsafe context\nlint: 1 finding(s)\ntarget/lint_unsafe_surface/macro.tl:3:3: unused unsafe block: body does not require unsafe context\nlint: 1 finding(s)\nlint: 0 finding(s)\nlint: 0 finding(s)\nlint: 0 finding(s)\nlint: 0 finding(s)\n|-|lint_driver_core_tests.tl compiler_check_core.tl compiler_load.tl compiler_embedded_stdlib.tl compiler_typecheck.tl compiler_typecheck_api.tl compiler_typecheck_core.tl compiler_ctfe.tl compiler_float.tl compiler_specialize.tl compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl stdlib/dense_list.tl compiler_intern.tl compiler_builtin_ids.tl sym_i64_env.tl read.tl lex.tl token.tl lint_core.tl lint_policy_core.tl lint_driver_core.tl package_source_core.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/vector.tl stdlib/fs.tl stdlib/env.tl stdlib/io.tl stdlib/hash.tl stdlib/hashmap.tl stdlib/string.tl stdlib/str_cat.tl stdlib/arena.tl compiler_clone.tl tlci_core.tl|expected-stderr:target/lint_unsafe_surface/type_error.tl:3:21: typecheck: unbound name missing-value\nrelated: target/lint_unsafe_surface/type_error.tl:3:11: in expansion of macro `identity` invoked here\ntarget/lint_unsafe_surface/type_error.tl:3:21: typecheck: unbound name missing-value\nrelated: target/lint_unsafe_surface/type_error.tl:3:11: in expansion of macro `identity` invoked here\ntarget/lint_unsafe_surface/type_error.tl:3:21: typecheck: unbound name missing-value\nrelated: target/lint_unsafe_surface/type_error.tl:3:11: in expansion of macro `identity` invoked here\n
 package_cache_smoke|src/tests/package_cache_smoke.tl|42|-|-|package_cache_core.tl stdlib/fs.tl stdlib/env.tl stdlib/vector.tl stdlib/io.tl stdlib/string.tl
 git_delta_smoke|src/tests/git_delta_smoke.tl|42|-|-|git_delta_tests.tl git_delta_core.tl stdlib/byte_buf_core.tl stdlib/io.tl stdlib/string.tl
-git_object_smoke|src/tests/git_object_smoke.tl|42|-|-|git_object_tests.tl git_object_core.tl stdlib/byte_buf.tl stdlib/byte_buf_core.tl stdlib/crypto_sha1_git.tl stdlib/crypto_sha256.tl stdlib/io.tl stdlib/str_cat.tl stdlib/str_cat_runtime.tl stdlib/string.tl
 git_ssh_remote_smoke|src/tests/git_ssh_remote_smoke.tl|42|-|-|git_ssh_remote_tests.tl git_ssh_remote_core.tl stdlib/byte_buf_core.tl stdlib/io.tl stdlib/string.tl
 array_push_aggregate|tests/integration/array_push_aggregate.tl|42|-|-|-
 nested_repr_c_aggregate|tests/integration/nested_repr_c_aggregate.tl|42|-|-|-
@@ -707,6 +709,14 @@ nested_flag_loops|tests/integration/nested_flag_loops.tl|42|309\n-206\n-203\n-20
 nested_flag_loops_opt0|tests/integration/nested_flag_loops.tl|42|309\n-206\n-203\n-206\n0\n-201\n|-|stdlib/io.tl stdlib/string.tl|opt-level:0+stage-stdlib
 nested_flag_loops_opt2|tests/integration/nested_flag_loops.tl|42|309\n-206\n-203\n-206\n0\n-201\n|-|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib
 
+pure_call_join_opt0|tests/integration/pure_call_join.tl|42|-|13|stdlib/io.tl stdlib/string.tl|opt-level:0+stage-stdlib
+pure_call_join_opt1|tests/integration/pure_call_join.tl|42|-|13|stdlib/io.tl stdlib/string.tl|opt-level:1+stage-stdlib
+pure_call_join_opt2|tests/integration/pure_call_join.tl|42|-|13|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib
+pure_call_join_live_opt0|tests/integration/pure_call_join_live.tl|0|9389164835730396772\n|13 64|stdlib/io.tl stdlib/string.tl|opt-level:0+stage-stdlib
+pure_call_join_live_opt1|tests/integration/pure_call_join_live.tl|0|9389164835730396772\n|13 64|stdlib/io.tl stdlib/string.tl|opt-level:1+stage-stdlib
+pure_call_join_live_opt2|tests/integration/pure_call_join_live.tl|0|9389164835730396772\n|13 64|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib
+
+git_object_smoke|src/tests/git_object_smoke.tl|42|-|-|git_object_tests.tl git_object_core.tl stdlib/byte_buf.tl stdlib/byte_buf_core.tl stdlib/crypto_sha1_git.tl stdlib/crypto_sha256.tl stdlib/io.tl stdlib/str_cat.tl stdlib/str_cat_runtime.tl stdlib/string.tl
 bit_length_order_opt0|tests/integration/bit_length_order.tl|0|104\n104\n|100 8|stdlib/io.tl stdlib/string.tl|opt-level:0+stage-stdlib
 bit_length_order_opt1|tests/integration/bit_length_order.tl|0|104\n104\n|100 8|stdlib/io.tl stdlib/string.tl|opt-level:1+stage-stdlib
 bit_length_order_opt2|tests/integration/bit_length_order.tl|0|104\n104\n|100 8|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib
@@ -736,3 +746,6 @@ signed_div_64_overflow_opt2|tests/integration/signed_division_flags.tl|135|-|64 
 signed_div_64_zero_opt2|tests/integration/signed_division_flags.tl|135|-|64 1 0 0|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/linux/signed_div_64_zero_opt2/signed_div_64_zero_opt2.tl:10:14: integer division or remainder error: dividend=1 divisor=0\n
 signed_rem_64_overflow_opt2|tests/integration/signed_division_flags.tl|135|-|64 -9223372036854775808 -1 1|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/linux/signed_rem_64_overflow_opt2/signed_rem_64_overflow_opt2.tl:17:14: integer division or remainder error: dividend=-9223372036854775808 divisor=-1\n
 signed_rem_64_zero_opt2|tests/integration/signed_division_flags.tl|135|-|64 1 0 1|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/linux/signed_rem_64_zero_opt2/signed_rem_64_zero_opt2.tl:17:14: integer division or remainder error: dividend=1 divisor=0\n
+wide_power_multiply_o0|tests/integration/wide_power_multiply.tl|42|-|-|-|opt-level:0+stage-stdlib
+wide_power_multiply_o1|tests/integration/wide_power_multiply.tl|42|-|-|-|opt-level:1+stage-stdlib
+wide_power_multiply_o2|tests/integration/wide_power_multiply.tl|42|-|-|-|opt-level:2+stage-stdlib

@@ -747,3 +747,18 @@ signed_rem_64_zero_opt2|tests/integration/signed_division_flags.tl|135|-|64 1 0 
 wide_power_multiply_o0|tests/integration/wide_power_multiply.tl|42|-|-|-|opt-level:0+stage-stdlib
 wide_power_multiply_o1|tests/integration/wide_power_multiply.tl|42|-|-|-|opt-level:1+stage-stdlib
 wide_power_multiply_o2|tests/integration/wide_power_multiply.tl|42|-|-|-|opt-level:2+stage-stdlib
+mul_near_power_zero_o0|tests/integration/mul_near_power.tl|0|4145518161272886947 1737046605924864488\n|0|-|opt-level:0+stage-stdlib
+mul_near_power_one_o0|tests/integration/mul_near_power.tl|0|735075253528713822 14309744142121583456\n|1|-|opt-level:0+stage-stdlib
+mul_near_power_negative_o0|tests/integration/mul_near_power.tl|0|6665283474596016352 7019787720678018336\n|-1|-|opt-level:0+stage-stdlib
+mul_near_power_max_o0|tests/integration/mul_near_power.tl|0|15888655511450792160 7019787720678018336\n|9223372036854775807|-|opt-level:0+stage-stdlib
+mul_near_power_min_o0|tests/integration/mul_near_power.tl|0|13368890198127662755 1737046605924864488\n|-9223372036854775808|-|opt-level:0+stage-stdlib
+mul_near_power_zero_o1|tests/integration/mul_near_power.tl|0|4145518161272886947 1737046605924864488\n|0|-|opt-level:1+stage-stdlib
+mul_near_power_one_o1|tests/integration/mul_near_power.tl|0|735075253528713822 14309744142121583456\n|1|-|opt-level:1+stage-stdlib
+mul_near_power_negative_o1|tests/integration/mul_near_power.tl|0|6665283474596016352 7019787720678018336\n|-1|-|opt-level:1+stage-stdlib
+mul_near_power_max_o1|tests/integration/mul_near_power.tl|0|15888655511450792160 7019787720678018336\n|9223372036854775807|-|opt-level:1+stage-stdlib
+mul_near_power_min_o1|tests/integration/mul_near_power.tl|0|13368890198127662755 1737046605924864488\n|-9223372036854775808|-|opt-level:1+stage-stdlib
+mul_near_power_zero_o2|tests/integration/mul_near_power.tl|0|4145518161272886947 1737046605924864488\n|0|-|opt-level:2+stage-stdlib
+mul_near_power_one_o2|tests/integration/mul_near_power.tl|0|735075253528713822 14309744142121583456\n|1|-|opt-level:2+stage-stdlib
+mul_near_power_negative_o2|tests/integration/mul_near_power.tl|0|6665283474596016352 7019787720678018336\n|-1|-|opt-level:2+stage-stdlib
+mul_near_power_max_o2|tests/integration/mul_near_power.tl|0|15888655511450792160 7019787720678018336\n|9223372036854775807|-|opt-level:2+stage-stdlib
+mul_near_power_min_o2|tests/integration/mul_near_power.tl|0|13368890198127662755 1737046605924864488\n|-9223372036854775808|-|opt-level:2+stage-stdlib

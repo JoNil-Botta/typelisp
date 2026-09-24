@@ -132789,6 +132789,298 @@
                   (compiler-opt-global-shared-view function-abi)))
               (or changed-in? fold? swept-changed?))]))]))
 
+;; Shorten only multiplication that participates in a value-dependency cycle.
+;; Broad expansion loses throughput on independent arithmetic. A bounded walk
+;; from the source back to its own destination identifies loop recurrences;
+;; exceeding the budget only declines a latency optimization.
+(define (opt-ml-power [value : ir.CompilerIrValue]) : i64
+  (match value
+    [(ir.CompilerIrValue.I64 n)
+      (cond [(= n 17) 4] [(= n 33) 5] [(= n 65) 6] [else 0])]
+    [_ 0]))
+
+(define (opt-ml-var [value : ir.CompilerIrValue]) : i64
+  (match value
+    [(ir.CompilerIrValue.Var v) (+ v 1)]
+    [_ 0]))
+
+(define (opt-ml-candidate [instr : ir.CompilerIrInstr]) : i64
+  (match instr
+    [(ir.CompilerIrInstr.BinOp dst op lhs rhs ty)
+      (if (and
+        (match op
+          [(ir.CompilerIrBinOp.Mul) true]
+          [_ false])
+        (match ty
+          [(ast.AstType.I64) true]
+          [(ast.AstType.U64) true]
+          [_ false])
+        (or
+          (and
+            (> (opt-ml-power (compiler-opt-global-shared-view rhs)) 0)
+            (> (opt-ml-var (compiler-opt-global-shared-view lhs)) 0))
+          (and
+            (> (opt-ml-power (compiler-opt-global-shared-view lhs)) 0)
+            (> (opt-ml-var (compiler-opt-global-shared-view rhs)) 0))))
+        (+ dst 1)
+        0)]
+    [_ 0]))
+
+(define (opt-ml-index-instr!
+  [left : (__tl_dyn-array i64)]
+  [right : (__tl_dyn-array i64)]
+  [instr : ir.CompilerIrInstr]) : unit
+  (match instr
+    [(ir.CompilerIrInstr.BinOp dst _ lhs rhs _)
+      (begin
+        (set!
+          (array-ref left dst)
+          (opt-ml-var (compiler-opt-global-shared-view lhs)))
+        (set!
+          (array-ref right dst)
+          (opt-ml-var (compiler-opt-global-shared-view rhs))))]
+    [(ir.CompilerIrInstr.Mov dst value _)
+      (set! (array-ref left dst) (opt-ml-var value))]
+    [(ir.CompilerIrInstr.Cast dst value _ _)
+      (set! (array-ref left dst) (opt-ml-var value))]
+    [(ir.CompilerIrInstr.Phi dst inputs _)
+      (when
+        (= inputs.len 2)
+        (begin
+          (set!
+            (array-ref left dst)
+            (let
+              [input : ir.CompilerIrPhiInput
+                (ir.compiler-ir-phi-input-seq-ref
+                  (compiler-opt-global-shared-view inputs)
+                  0)]
+              (opt-ml-var input.value)))
+          (set!
+            (array-ref right dst)
+            (let
+              [input : ir.CompilerIrPhiInput
+                (ir.compiler-ir-phi-input-seq-ref
+                  (compiler-opt-global-shared-view inputs)
+                  1)]
+              (opt-ml-var input.value)))))]
+    [_ unit]))
+
+(define (opt-ml-cycle?
+  [left : (__tl_dyn-array i64)]
+  [right : (__tl_dyn-array i64)]
+  [seen : (__tl_dyn-array i64)]
+  [queue : (__tl_dyn-array i64)]
+  [start : i64]
+  [target : i64]) : bool
+  (let
+    [read : i64 0]
+    [write : i64 1]
+    [fuel : i64 128]
+    (begin
+      (set! (array-ref queue 0) start)
+      (while (and (< read write) (> fuel 0))
+        (let
+          [id : i64 (array-ref queue read)]
+          (begin
+            (set! read (+ read 1))
+            (when (= id target) (return true))
+            (when
+              (and
+                (> id 0)
+                (<= id (array-length seen))
+                (!= (array-ref seen (- id 1)) target))
+              (begin
+                (set! fuel (- fuel 1))
+                (set! (array-ref seen (- id 1)) target)
+                (set! (array-ref queue write) (array-ref left (- id 1)))
+                (set! (array-ref queue (+ write 1)) (array-ref right (- id 1)))
+                (set! write (+ write 2)))))))
+      false)))
+
+(define (opt-mul-latency-function [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  (match (compiler-opt-global-shared-view func)
+    [(ir.CompilerIrFunction.Function name params ret frame blocks abi)
+      (let
+        [seq : ir.CompilerIrBlockSeq
+          (match (compiler-opt-global-shared-view blocks)
+            [(ir.CompilerIrBlockList.Array dense) dense]
+            [_ (ir.compiler-ir-block-seq-from-list blocks)])]
+        [candidates : i64 0]
+        [b : i64 0]
+        (begin
+          (while (< b seq.len)
+            (match (ir.compiler-ir-block-seq-ref
+              (compiler-opt-global-shared-view seq)
+              b)
+              [(ir.CompilerIrBlock.Block _ instrs)
+                (let
+                  [i : i64 0]
+                  (begin
+                    (while (< i instrs.len)
+                      (begin
+                        (when
+                          (>
+                            (opt-ml-candidate
+                              (ir.compiler-ir-instr-seq-ref
+                                (compiler-opt-global-shared-view instrs)
+                                i))
+                            0)
+                          (set! candidates (+ candidates 1)))
+                        (set! i (+ i 1))))
+                    (set! b (+ b 1))))]))
+          (when (= candidates 0) (return func))
+          (let
+            [left : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+            [right : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+            [seen : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+            [queue : (__tl_dyn-array i64) (__tl_make-array i64 257)]
+            [selected : (__tl_dyn-array bool) (__tl_make-array bool frame)]
+            [count : i64 0]
+            (begin
+              (set! b 0)
+              (while (< b seq.len)
+                (match (ir.compiler-ir-block-seq-ref
+                  (compiler-opt-global-shared-view seq)
+                  b)
+                  [(ir.CompilerIrBlock.Block _ instrs)
+                    (let
+                      [i : i64 0]
+                      (begin
+                        (while (< i instrs.len)
+                          (begin
+                            (opt-ml-index-instr!
+                              (compiler-opt-global-shared-view left)
+                              (compiler-opt-global-shared-view right)
+                              (ir.compiler-ir-instr-seq-ref
+                                (compiler-opt-global-shared-view instrs)
+                                i))
+                            (set! i (+ i 1))))
+                        (set! b (+ b 1))))]))
+              (set! b 0)
+              (while (< b seq.len)
+                (match (ir.compiler-ir-block-seq-ref
+                  (compiler-opt-global-shared-view seq)
+                  b)
+                  [(ir.CompilerIrBlock.Block _ instrs)
+                    (let
+                      [i : i64 0]
+                      (begin
+                        (while (< i instrs.len)
+                          (let
+                            [candidate : i64
+                              (opt-ml-candidate
+                                (ir.compiler-ir-instr-seq-ref
+                                  (compiler-opt-global-shared-view instrs)
+                                  i))]
+                            (begin
+                              (when
+                                (> candidate 0)
+                                (let
+                                  [a : i64 (array-ref left (- candidate 1))]
+                                  (when
+                                    (opt-ml-cycle?
+                                      (compiler-opt-global-shared-view left)
+                                      (compiler-opt-global-shared-view right)
+                                      (compiler-opt-global-shared-view seen)
+                                      (compiler-opt-global-shared-view queue)
+                                      (if (> a 0)
+                                        a
+                                        (array-ref right (- candidate 1)))
+                                      candidate)
+                                    (begin
+                                      (set!
+                                        (array-ref selected (- candidate 1))
+                                        true)
+                                      (set! count (+ count 1))))))
+                              (set! i (+ i 1)))))
+                        (set! b (+ b 1))))]))
+              (when (= count 0) (return func))
+              (let
+                [out : (__tl_dyn-array ir.CompilerIrBlock)
+                  (__tl_make-array ir.CompilerIrBlock seq.len)]
+                [next : i64 frame]
+                (begin
+                  (set! b 0)
+                  (while (< b seq.len)
+                    (match (ir.compiler-ir-block-seq-ref
+                      (compiler-opt-global-shared-view seq)
+                      b)
+                      [(ir.CompilerIrBlock.Block label instrs)
+                        (let
+                          [builder : ir.CompilerIrInstrBuilder
+                            (ir.compiler-ir-instr-builder-with-capacity
+                              instrs.len)]
+                          [i : i64 0]
+                          (begin
+                            (while (< i instrs.len)
+                              (let
+                                [instr : ir.CompilerIrInstr
+                                  (ir.compiler-ir-instr-seq-ref
+                                    (compiler-opt-global-shared-view instrs)
+                                    i)]
+                                (begin
+                                  (match (compiler-opt-global-shared-view instr)
+                                    [(ir.CompilerIrInstr.BinOp dst _ lhs rhs ty)
+                                      (if (array-ref selected dst)
+                                        (let
+                                          [power : i64
+                                            (opt-ml-power
+                                              (compiler-opt-global-shared-view
+                                                rhs))]
+                                          [shift : i64
+                                            (if (> power 0)
+                                              power
+                                              (opt-ml-power
+                                                (compiler-opt-global-shared-view
+                                                  lhs)))]
+                                          [source : ir.CompilerIrValue
+                                            (if (> power 0)
+                                              lhs
+                                              rhs)]
+                                          (begin
+                                            (ir.compiler-ir-instr-builder-push!
+                                              (&mut builder)
+                                              (ir.CompilerIrInstr.BinOp
+                                                next
+                                                (ir.CompilerIrBinOp.Shl
+                                                  (ast.AstType.I64))
+                                                (compiler-opt-global-shared-view
+                                                  source)
+                                                (ir.CompilerIrValue.I64 shift)
+                                                (compiler-opt-global-shared-view
+                                                  ty)))
+                                            (ir.compiler-ir-instr-builder-push!
+                                              (&mut builder)
+                                              (ir.CompilerIrInstr.BinOp
+                                                dst
+                                                (ir.CompilerIrBinOp.Add)
+                                                (ir.CompilerIrValue.Var next)
+                                                source
+                                                ty))
+                                            (set! next (+ next 1))))
+                                        (ir.compiler-ir-instr-builder-push!
+                                          (&mut builder)
+                                          instr))]
+                                    [_
+                                      (ir.compiler-ir-instr-builder-push!
+                                        (&mut builder)
+                                        instr)])
+                                  (set! i (+ i 1)))))
+                            (set!
+                              (array-ref out b)
+                              (ir.CompilerIrBlock.Block
+                                label
+                                (ir.compiler-ir-instr-builder-to-seq builder)))
+                            (set! b (+ b 1))))]))
+                  (ir.CompilerIrFunction.Function
+                    name
+                    params
+                    ret
+                    next
+                    (ir.CompilerIrBlockList.Array
+                      (ir.CompilerIrBlockSeq out seq.len))
+                    abi)))))))]))
+
 (define (optimize-function
   [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
@@ -133335,7 +133627,8 @@
               [_t-bounds-group : i64 (cfg compile-profile (profile.now-ms) 0)]
               [body : ir.CompilerIrFunction
                 (if (>= level 2)
-                  (opt-bg-function type-segment-bases body-optimized)
+                  (opt-mul-latency-function
+                    (opt-bg-function type-segment-bases body-optimized))
                   body-optimized)]
               [_profile-bounds-group : unit
                 (cfg

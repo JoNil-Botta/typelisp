@@ -131,6 +131,7 @@ check_file_exact() {
 
 format_manifest() {
     cat <<'EOF'
+call_wrap
 char_literal
 comments
 decls
@@ -1243,7 +1244,7 @@ while IFS= read -r fmt_name; do
     strip_expected_trailing_lf "tests/format_golden/$fmt_name.expected" "$WORKDIR/$fmt_name.expected"
     set -- "$@" "$WORKDIR/$fmt_name.tl"
 done < "$WORKDIR/format-expected.txt"
-# cli-gate-expand stage1-wrapper-fmt-golden-{fixture} wrapper run_capture fixture=char_literal,comments,decls,flow,let_bindings,negative_int,quote,signature_colon,tail_comment
+# cli-gate-expand stage1-wrapper-fmt-golden-{fixture} wrapper run_capture fixture=call_wrap,char_literal,comments,decls,flow,let_bindings,negative_int,quote,signature_colon,tail_comment
 run_capture fmt-golden "$@"
 assert_empty "$WORKDIR/fmt-golden.stdout"
 assert_empty "$WORKDIR/fmt-golden.stderr"
@@ -1257,7 +1258,7 @@ while IFS= read -r fmt_name; do
     [ -n "$fmt_name" ] || continue
     set -- "$@" "$WORKDIR/$fmt_name.tl"
 done < "$WORKDIR/format-expected.txt"
-# cli-gate-expand stage1-wrapper-fmt-golden-check-{fixture} wrapper run_capture fixture=char_literal,comments,decls,flow,let_bindings,negative_int,quote,signature_colon,tail_comment
+# cli-gate-expand stage1-wrapper-fmt-golden-check-{fixture} wrapper run_capture fixture=call_wrap,char_literal,comments,decls,flow,let_bindings,negative_int,quote,signature_colon,tail_comment
 run_capture fmt-golden-check "$@"
 assert_empty "$WORKDIR/fmt-golden-check.stdout"
 assert_empty "$WORKDIR/fmt-golden-check.stderr"

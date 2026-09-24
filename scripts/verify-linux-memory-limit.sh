@@ -21,10 +21,7 @@ WORKDIR="$ROOT/target/linux-memory-limit-verify"
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 
-fail() {
-    echo "$*" >&2
-    exit 1
-}
+. "$ROOT/scripts/lib-gate.sh"
 
 LIMIT_BYTES=33554432
 # A fast-exiting transient service can finish before the user manager publishes

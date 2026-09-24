@@ -30,14 +30,9 @@ case "$(uname -s)" in
         ;;
 esac
 
-if [ -n "${TYPELISP_BIN:-}" ]; then
-    COMPILER=$TYPELISP_BIN
-else
-    # Local-development fallback: fetch the published
-    # self-hosted stage0 (CI always passes a compiler via TYPELISP_BIN).
-    . "$ROOT/scripts/lib-stage0.sh"
-    COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
-fi
+GATE_FAIL_PREFIX='FAIL: '
+. "$ROOT/scripts/lib-gate.sh"
+gate_compiler
 
 # A relative TYPELISP_BIN (e.g. CI's `target/debug/typelisp`) breaks cases that
 # change directory before invoking the compiler (run_cmd_cwd), so resolve it to
@@ -83,11 +78,6 @@ PACKAGE_SPLIT_STATIC_LIB_SUFFIX=$HOST_STATIC_LIB_SUFFIX
 WORKDIR="$ROOT/target/public-tool-verify"
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
-
-fail() {
-    echo "FAIL: $*" >&2
-    exit 1
-}
 
 maybe_strip_manifest_kind() {
     manifest=$1

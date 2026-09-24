@@ -58,10 +58,8 @@ if [ "$SELF_TEST" -eq 1 ] && [ -n "$CASE_FILTER" ]; then
     exit 2
 fi
 
-fail() {
-    echo "[cross-mode] FAIL: $*" >&2
-    exit 1
-}
+GATE_FAIL_PREFIX='[cross-mode] FAIL: '
+. "$ROOT/scripts/lib-gate.sh"
 
 [ -f "$MANIFEST" ] || fail "manifest is missing: $MANIFEST"
 

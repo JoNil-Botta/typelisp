@@ -63,10 +63,8 @@ RIGHT_TLCI="$RIGHT/target/release/surface_right.tlci"
 NATIVE_ASM="$WORKDIR/surface_consumer.native.s"
 SUCCESS_SOURCE="$WORKDIR/surface_consumer.success.tl"
 
-fail() {
-    echo "[package-surface-tlci] $*" >&2
-    exit 1
-}
+GATE_FAIL_PREFIX='[package-surface-tlci] '
+. "$ROOT/scripts/lib-gate.sh"
 
 profile_sum() {
     phase=$1

@@ -159,10 +159,8 @@ record_setup_timing() {
     SETUP_MS=$((SETUP_MS + elapsed))
 }
 
-fail() {
-    echo "[tool-bench] $*" >&2
-    exit 1
-}
+GATE_FAIL_PREFIX='[tool-bench] '
+. "$ROOT/scripts/lib-gate.sh"
 
 sha_files() {
     if command -v sha256sum >/dev/null 2>&1; then

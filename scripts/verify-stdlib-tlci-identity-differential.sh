@@ -40,10 +40,8 @@ DEFAULT_BATCH="$WORKDIR/default.batch"
 EXPLICIT_BATCH="$WORKDIR/explicit.batch"
 SOURCE_BATCH="$WORKDIR/source.batch"
 
-fail() {
-    echo "[tlci-identity-differential] $*" >&2
-    exit 1
-}
+GATE_FAIL_PREFIX='[tlci-identity-differential] '
+. "$ROOT/scripts/lib-gate.sh"
 
 batch_path() {
     if [ "$NL_HOST_OS" = windows ] && command -v cygpath >/dev/null 2>&1; then

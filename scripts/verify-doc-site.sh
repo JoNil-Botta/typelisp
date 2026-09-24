@@ -29,10 +29,8 @@ cd "$ROOT"
 . "$ROOT/scripts/lib-doc-site-search-manifests.sh"
 . "$ROOT/scripts/lib-doc-site-page-checks.sh"
 
-fail() {
-    echo "FAIL: $*" >&2
-    exit 1
-}
+GATE_FAIL_PREFIX='FAIL: '
+. "$ROOT/scripts/lib-gate.sh"
 
 parse_doc_site_max_rss_kb() {
     _time_log=$1
@@ -115,18 +113,8 @@ case "${1:-}" in
         ;;
 esac
 
-if [ -n "${TYPELISP_BIN:-}" ]; then
-    COMPILER=$TYPELISP_BIN
-else
-    # Local-development fallback: fetch the published
-    # self-hosted stage0 (CI always passes a compiler via TYPELISP_BIN).
-    . "$ROOT/scripts/lib-stage0.sh"
-    COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
-fi
-[ -x "$COMPILER" ] || {
-    echo "typelisp compiler is not executable: $COMPILER" >&2
-    exit 1
-}
+gate_compiler
+gate_require_compiler
 
 TYPELISP_DOC_SOURCE_IDENTITY=${TYPELISP_DOC_SOURCE_IDENTITY:-$(git rev-parse HEAD)}
 TYPELISP_DOC_COMPILER_IDENTITY=${TYPELISP_DOC_COMPILER_IDENTITY:-$(

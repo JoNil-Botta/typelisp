@@ -46,10 +46,7 @@ cat > "$SRC" <<'EOF'
   7)
 EOF
 
-fail() {
-    echo "$*" >&2
-    exit 1
-}
+. "$ROOT/scripts/lib-gate.sh"
 
 assert_contains() {
     file=$1
@@ -1464,6 +1461,7 @@ rm -rf "$HANDOFF_ROOT"
 mkdir -p "$HANDOFF_SCRIPTS"
 cp scripts/check-opt2-cli-regression.sh "$HANDOFF_SCRIPTS/check-opt2-cli-regression.sh"
 cp scripts/lib-native-link.sh "$HANDOFF_SCRIPTS/lib-native-link.sh"
+cp scripts/lib-gate.sh "$HANDOFF_SCRIPTS/lib-gate.sh"
 cp scripts/lib-linux-entry.sh "$HANDOFF_SCRIPTS/lib-linux-entry.sh"
 printf '.text\nvalidated opt1 reference\n' > "$HANDOFF_REFERENCE"
 

@@ -108,10 +108,8 @@ printf 'build_opt_level\tworkload_opt_level\tboundary\towner\tlifetime\tcumulati
 printf 'build_opt_level\tworkload_opt_level\tcompile_ms\tprofile_total_ms\tprofile_peak_live_delta_bytes\n' > "$SUMMARY_TSV"
 printf 'stage_label\tstart_epoch_ms\tend_epoch_ms\tcompiler\tcompiler_sha256\texit_code\tstdout\tstderr\targv\n' > "$COMMANDS_TSV"
 
-fail() {
-    echo "[compile-bench] $*" >&2
-    exit 1
-}
+GATE_FAIL_PREFIX='[compile-bench] '
+. "$ROOT/scripts/lib-gate.sh"
 
 show_failure_logs() {
     stdout=$1

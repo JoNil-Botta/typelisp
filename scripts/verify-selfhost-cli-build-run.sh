@@ -116,10 +116,8 @@ remove_directory_link() {
     fi
 }
 
-fail() {
-    echo "FAIL: $*" >&2
-    exit 1
-}
+GATE_FAIL_PREFIX='FAIL: '
+. "$ROOT/scripts/lib-gate.sh"
 
 assert_status() {
     _assert_label=$1

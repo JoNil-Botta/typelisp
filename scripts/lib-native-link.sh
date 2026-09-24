@@ -64,10 +64,7 @@ native_target_cfg_args() {
     fi
 }
 
-fail() {
-    echo "$*" >&2
-    exit 1
-}
+. "$ROOT/scripts/lib-gate.sh"
 
 to_unix_path() {
     if command -v cygpath >/dev/null 2>&1; then

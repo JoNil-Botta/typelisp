@@ -11,26 +11,14 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
-if [ -n "${TYPELISP_BIN:-}" ]; then
-    COMPILER=$TYPELISP_BIN
-else
-    . "$ROOT/scripts/lib-stage0.sh"
-    COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
-fi
-
-if [ ! -x "$COMPILER" ]; then
-    echo "typelisp compiler is not executable: $COMPILER" >&2
-    exit 1
-fi
+GATE_FAIL_PREFIX='FAIL: '
+. "$ROOT/scripts/lib-gate.sh"
+gate_compiler
+gate_require_compiler
 
 WORKDIR="$ROOT/target/asm-shape-gates"
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
-
-fail() {
-    echo "FAIL: $*" >&2
-    exit 1
-}
 
 count_fixed() {
     _file=$1
@@ -2625,7 +2613,6 @@ check_load_widen_cast_fold() {
     assert_matches "$_refused"         '^[[:space:]]+movzbq \(%r[a-z0-9]+,%r[a-z0-9]+,1\), %r[a-z0-9]+$'         load-widen-cast-fold-refused
     assert_contains "$_refused" 'movb ' load-widen-cast-fold-refused
 }
-
 
 # Count the block that starts at the FIRST `__unroll_body:` label and runs to
 # the next label definition -- one unrolled group, whose line count IS the

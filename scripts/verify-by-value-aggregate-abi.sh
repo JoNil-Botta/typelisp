@@ -9,17 +9,10 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
-if [ -n "${TYPELISP_BIN:-}" ]; then
-    COMPILER=$TYPELISP_BIN
-else
-    . "$ROOT/scripts/lib-stage0.sh"
-    COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
-fi
-
-if [ ! -x "$COMPILER" ]; then
-    echo "typelisp compiler is not executable: $COMPILER" >&2
-    exit 1
-fi
+GATE_FAIL_PREFIX='FAIL: '
+. "$ROOT/scripts/lib-gate.sh"
+gate_compiler
+gate_require_compiler
 
 command -v as >/dev/null 2>&1 || {
     echo "missing GNU assembler: as" >&2
@@ -29,11 +22,6 @@ command -v as >/dev/null 2>&1 || {
 TMP_ROOT=${TMPDIR:-/tmp}
 WORKDIR=$(mktemp -d "$TMP_ROOT/typelisp-by-value-aggregate-abi.XXXXXX")
 trap 'rm -rf "$WORKDIR"' EXIT HUP INT TERM
-
-fail() {
-    echo "FAIL: $*" >&2
-    exit 1
-}
 
 count_matches() {
     _file=$1

@@ -12,10 +12,8 @@ CAP_MIB=8192
 CAP_BYTES=8589934592
 TIMEOUT_SECONDS=1200
 
-fail() {
-    echo "[embedded-tlci-resources] $*" >&2
-    exit 1
-}
+GATE_FAIL_PREFIX='[embedded-tlci-resources] '
+. "$ROOT/scripts/lib-gate.sh"
 
 file_bytes() {
     wc -c < "$1" | tr -d ' '

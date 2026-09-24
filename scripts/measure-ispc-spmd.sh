@@ -92,10 +92,8 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 
-fail() {
-    echo "[ispc-spmd] $*" >&2
-    exit 1
-}
+GATE_FAIL_PREFIX='[ispc-spmd] '
+. "$ROOT/scripts/lib-gate.sh"
 
 csv_contains() {
     case ",$1," in

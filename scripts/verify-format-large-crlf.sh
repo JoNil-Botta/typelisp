@@ -21,21 +21,11 @@ case "$(uname -s)" in
         ;;
 esac
 
-if [ -n "${TYPELISP_BIN:-}" ]; then
-    COMPILER=$TYPELISP_BIN
-else
-    . "$ROOT/scripts/lib-stage0.sh"
-    COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
-fi
-
-case "$COMPILER" in
-    /* | [A-Za-z]:[/\\]*) ;;
-    *) COMPILER="$ROOT/$COMPILER" ;;
-esac
-if [ ! -x "$COMPILER" ]; then
-    echo "typelisp compiler is not executable: $COMPILER" >&2
-    exit 1
-fi
+GATE_FAIL_PREFIX='large CRLF formatter verification failed: '
+. "$ROOT/scripts/lib-gate.sh"
+gate_compiler
+gate_compiler_absolute
+gate_require_compiler
 
 WORKDIR=target/format-large-crlf-verify
 LF_FIXTURE="$WORKDIR/large-lf.tl"
@@ -50,11 +40,6 @@ LINUX_LIMIT_BYTES=1073741824
 
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
-
-fail() {
-    echo "large CRLF formatter verification failed: $*" >&2
-    exit 1
-}
 
 show_stream() {
     _stream_label=$1

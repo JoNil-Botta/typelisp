@@ -7,17 +7,10 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
-if [ -n "${TYPELISP_BIN:-}" ]; then
-    COMPILER=$TYPELISP_BIN
-else
-    . "$ROOT/scripts/lib-stage0.sh"
-    COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
-fi
-
-[ -x "$COMPILER" ] || {
-    echo "typelisp compiler is not executable: $COMPILER" >&2
-    exit 1
-}
+GATE_FAIL_PREFIX='math exp codegen verification failed: '
+. "$ROOT/scripts/lib-gate.sh"
+gate_compiler
+gate_require_compiler
 
 WORKDIR="$ROOT/target/math-exp-codegen"
 rm -rf "$WORKDIR"
@@ -48,11 +41,6 @@ cat > "$FIXTURE" <<'EOF'
       0
       1)))
 EOF
-
-fail() {
-    echo "math exp codegen verification failed: $*" >&2
-    exit 1
-}
 
 verify_assembly() {
     target=$1

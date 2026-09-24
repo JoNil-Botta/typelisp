@@ -31,19 +31,9 @@ case "$#" in
         ;;
 esac
 
-if [ -n "${TYPELISP_BIN:-}" ]; then
-    COMPILER=$TYPELISP_BIN
-else
-    # Local-development fallback. CI supplies its freshly bootstrapped compiler
-    # through TYPELISP_BIN when verify-stdlib.sh invokes this gate.
-    . "$ROOT/scripts/lib-stage0.sh"
-    COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
-fi
-
-if [ ! -x "$COMPILER" ]; then
-    echo "typelisp compiler is not executable: $COMPILER" >&2
-    exit 1
-fi
+. "$ROOT/scripts/lib-gate.sh"
+gate_compiler
+gate_require_compiler
 
 BATCH_SIZE=${TYPELISP_STDLIB_CONCAT_LINT_BATCH_SIZE:-32}
 case "$BATCH_SIZE" in

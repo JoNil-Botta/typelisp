@@ -66,10 +66,8 @@ finalize_record() {
 }
 trap finalize_record EXIT
 
-fail() {
-    echo "[tlci-native-route-stress] $*" >&2
-    exit 1
-}
+GATE_FAIL_PREFIX='[tlci-native-route-stress] '
+. "$ROOT/scripts/lib-gate.sh"
 
 batch_path() {
     if [ "$NL_HOST_OS" = windows ] && command -v cygpath >/dev/null 2>&1; then

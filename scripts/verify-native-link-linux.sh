@@ -18,19 +18,10 @@ case "$(uname -s)" in
         ;;
 esac
 
-if [ -n "${TYPELISP_BIN:-}" ]; then
-    COMPILER=$TYPELISP_BIN
-else
-    # Local-development fallback: fetch the published
-    # self-hosted stage0 (CI always passes a compiler via TYPELISP_BIN).
-    . "$ROOT/scripts/lib-stage0.sh"
-    COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
-fi
-
-if [ ! -x "$COMPILER" ]; then
-    echo "typelisp compiler is not executable: $COMPILER" >&2
-    exit 1
-fi
+GATE_FAIL_PREFIX='FAIL: '
+. "$ROOT/scripts/lib-gate.sh"
+gate_compiler
+gate_require_compiler
 
 command -v as >/dev/null 2>&1 || {
     echo "missing assembler: as" >&2
@@ -44,11 +35,6 @@ command -v ld >/dev/null 2>&1 || {
 WORKDIR="$ROOT/target/selfhost-native-verify"
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
-
-fail() {
-    echo "FAIL: $*" >&2
-    exit 1
-}
 
 assert_empty() {
     _file=$1

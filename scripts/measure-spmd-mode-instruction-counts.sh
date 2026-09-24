@@ -120,10 +120,8 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 
-fail() {
-    echo "[spmd-mode-ir] $*" >&2
-    exit 1
-}
+GATE_FAIL_PREFIX='[spmd-mode-ir] '
+. "$ROOT/scripts/lib-gate.sh"
 
 csv_contains() {
     case ",$1," in

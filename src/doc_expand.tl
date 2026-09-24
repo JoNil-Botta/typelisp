@@ -1428,9 +1428,9 @@
         "(defmacro (catalog [T : type (:kind i64 struct)]) : Module unit)")]
     [ctx : DocExpandContext
       (let
-        [bound-1 (ast.ast-node-pool-context-capture-active)]
-        [bound-2 (ci.intern-compat-state-capture-active)]
-        (doc-expand-context-from-pools-and-intern-state bound-1 bound-2))]
+        [pools (ast.ast-node-pool-context-capture-active)]
+        [intern-state (ci.intern-compat-state-capture-active)]
+        (doc-expand-context-from-pools-and-intern-state pools intern-state))]
     (match parsed
       [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
         (match (ast.ast-decl-list-step (deref decls-box))

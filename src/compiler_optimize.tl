@@ -13519,15 +13519,12 @@
                   (begin
                     ;; Jumps and two-way branches, in instruction order: the
                     ;; labels `opt-cfg-instr-seq-successors` adds, in its order.
-                    (while (and (< i n) (not general))
+                    ;; Most instructions branch nowhere, so the loop test is
+                    ;; the bound alone and room for a row's two new edges is
+                    ;; made only in the arms that push them; a switch leaves by
+                    ;; moving `i` to the end.
+                    (while (< i n)
                       (begin
-                        (when
-                          (>= (+ end 2) (array-length edges))
-                          (set!
-                            edges
-                            (opt-cfg-edges-grow
-                              (compiler-opt-global-shared-view edges)
-                              end)))
                         (match (compiler-opt-global-array-element-shared-view
                           slots
                           i)
@@ -13537,13 +13534,21 @@
                                 (opt-cfg-label-table-get label generation)]
                               (if (< id 0)
                                 (set! known false)
-                                (set!
-                                  end
-                                  (opt-cfg-row-push!
-                                    (compiler-opt-global-shared-view edges)
-                                    start
+                                (begin
+                                  (when
+                                    (>= (+ end 2) (array-length edges))
+                                    (set!
+                                      edges
+                                      (opt-cfg-edges-grow
+                                        (compiler-opt-global-shared-view edges)
+                                        end)))
+                                  (set!
                                     end
-                                    id))))]
+                                    (opt-cfg-row-push!
+                                      (compiler-opt-global-shared-view edges)
+                                      start
+                                      end
+                                      id)))))]
                           [(ir.CompilerIrInstr.Branch _ true-label false-label)
                             (let
                               [t : i64
@@ -13551,6 +13556,13 @@
                               [f : i64
                                 (opt-cfg-label-table-get false-label generation)]
                               (begin
+                                (when
+                                  (>= (+ end 2) (array-length edges))
+                                  (set!
+                                    edges
+                                    (opt-cfg-edges-grow
+                                      (compiler-opt-global-shared-view edges)
+                                      end)))
                                 (if (< t 0)
                                   (set! known false)
                                   (set!
@@ -13579,6 +13591,13 @@
                               [f : i64
                                 (opt-cfg-label-table-get false-label generation)]
                               (begin
+                                (when
+                                  (>= (+ end 2) (array-length edges))
+                                  (set!
+                                    edges
+                                    (opt-cfg-edges-grow
+                                      (compiler-opt-global-shared-view edges)
+                                      end)))
                                 (if (< t 0)
                                   (set! known false)
                                   (set!
@@ -13598,9 +13617,13 @@
                                       end
                                       f)))))]
                           [(ir.CompilerIrInstr.Switch _ _ _ _)
-                            (set! general true)]
+                            (begin
+                              (set! general true)
+                              (set! i n))]
                           [(ir.CompilerIrInstr.TotalEnumSwitch _ _ _ _ _)
-                            (set! general true)]
+                            (begin
+                              (set! general true)
+                              (set! i n))]
                           [_ unit])
                         (set! i (+ i 1))))
                     (if general

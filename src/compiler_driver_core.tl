@@ -287,8 +287,8 @@
         pool-arena)]
     [state : CompilerDriverState
       (compiler-driver-state-new-from-pools-arena-and-load-session
-        (owned_view.compiler-owned-array-element-shared-view pools.expr-pool 0)
-        (owned_view.compiler-owned-array-element-shared-view pools.type-pool 0)
+        (compiler_ast_types.ast-expr-pool-cell-read pools.expr-pool)
+        (compiler_ast_types.ast-type-pool-cell-read pools.type-pool)
         (compiler_ast_types.ast-node-pool-context-base-arena pools)
         load-session)]
     (begin
@@ -613,8 +613,12 @@
     (set!
       (array-ref compiler-driver-active-state-pool-arena 0)
       (compiler_ast_types.ast-node-pool-context-base-arena pools))
-    (set! (array-ref state.expr-pool 0) (array-ref pools.expr-pool 0))
-    (set! (array-ref state.type-pool 0) (array-ref pools.type-pool 0))))
+    (set!
+      (array-ref state.expr-pool 0)
+      (compiler_ast_types.ast-expr-pool-cell-read pools.expr-pool))
+    (set!
+      (array-ref state.type-pool 0)
+      (compiler_ast_types.ast-type-pool-cell-read pools.type-pool))))
 
 (define (compiler-driver-state-can-release-checked-lower-source-pools?
   [state : CompilerDriverState]) : bool
@@ -793,8 +797,12 @@
             (set!
               (array-ref compiler-driver-active-state-pool-arena 0)
               (compiler_ast_types.ast-node-pool-context-base-arena pools))
-            (set! (array-ref state.expr-pool 0) (array-ref pools.expr-pool 0))
-            (set! (array-ref state.type-pool 0) (array-ref pools.type-pool 0))))))))
+            (set!
+              (array-ref state.expr-pool 0)
+              (compiler_ast_types.ast-expr-pool-cell-read pools.expr-pool))
+            (set!
+              (array-ref state.type-pool 0)
+              (compiler_ast_types.ast-type-pool-cell-read pools.type-pool))))))))
 
 (define (compiler-driver-state-reset-owned-pool-arena-if-uncached!
   [state : CompilerDriverState]) : unit

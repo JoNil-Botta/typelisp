@@ -11740,11 +11740,9 @@
     [owner-address : u64 (ctfe-env-pools-address env)]
     [syntax-address : u64 (ctfe-env-syntax-pool-context-address-live env)]
     [captured-expr-cell-address : u64
-      (unsafe
-        (ptr->int (__tl_array-data captured.expr-pool)))]
+      (ast.ast-pool-cell-data captured.expr-pool)]
     [captured-type-cell-address : u64
-      (unsafe
-        (ptr->int (__tl_array-data captured.type-pool)))]
+      (ast.ast-pool-cell-data captured.type-pool)]
     (begin
       (ast.ast-node-pool-context-adopt-newer-cells!
         (ctfe-pool-context-cell-address-at owner-address 0)

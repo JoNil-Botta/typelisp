@@ -2201,9 +2201,9 @@
         [old-frontend-arena : i64 handoff.frontend-release-arena]
         [dest-arena : i64 (ast.ast-node-pool-context-base-arena pools)]
         [final-expr-state : ast.AstExprNodePoolState
-          (lower-global-array-element-shared-view pools.expr-pool 0)]
+          (ast.ast-expr-pool-cell-read pools.expr-pool)]
         [final-type-state : ast.AstTypeNodePoolState
-          (lower-global-array-element-shared-view pools.type-pool 0)]
+          (ast.ast-type-pool-cell-read pools.type-pool)]
         (begin
           (set! handoff.committed true)
           (set! handoff.rolled-over false)

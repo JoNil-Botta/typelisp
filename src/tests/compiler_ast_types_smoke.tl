@@ -413,8 +413,10 @@
 (define (compiler-ast-context-base-arenas-match?
   [pools : (& pools ast.AstNodePoolContext)]) : bool
   (let
-    [expr-pool : ast.AstExprNodePoolState (clone (array-ref pools.expr-pool 0))]
-    [type-pool : ast.AstTypeNodePoolState (clone (array-ref pools.type-pool 0))]
+    [expr-pool : ast.AstExprNodePoolState
+      (ast.ast-expr-pool-cell-read pools.expr-pool)]
+    [type-pool : ast.AstTypeNodePoolState
+      (ast.ast-type-pool-cell-read pools.type-pool)]
     (= expr-pool.base-arena type-pool.base-arena)))
 
 (define (compiler-ast-context-clone-types-only-smoke?) : bool

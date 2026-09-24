@@ -34,14 +34,13 @@ optional because ISPC is not a project dependency.
 Run the required TypeLisp checks and optional pinned-ISPC comparisons with:
 
 ```sh
-scripts/verify-ispc-mandelbrot.sh
-ISPC_BIN=/path/to/ispc scripts/verify-ispc-mandelbrot.sh
-ISPC_BIN=/path/to/ispc ISPC_MANDELBROT_AVX512=1 scripts/verify-ispc-mandelbrot.sh
+scripts/verify-codegen-cases.sh --only 'mandelbrot-*' tests/codegen/ispc.cases
+ISPC_BIN=/path/to/ispc scripts/verify-codegen-cases.sh --only 'mandelbrot-*' tests/codegen/ispc.cases
+ISPC_BIN=/path/to/ispc ISPC_MANDELBROT_AVX512=1 \
+  scripts/verify-codegen-cases.sh --only 'mandelbrot-*' tests/codegen/ispc.cases
 ```
 
-The verifier writes `target/ispc-mandelbrot-verify/static.tsv`. Each compiled
-kernel row records its extracted symbol-body hash and byte size, instruction,
-mask, branch, call, and vector-instruction counts, unique register count,
-stack accesses, stack moves (a conservative spill/prologue proxy), and whether
-the Mandelbrot helper remains inlined. Generic ISPC x4 is validation only, not
-a scalar width match. AVX-512 execution is gated on F+BW+DQ host support.
+Kernel-only static metrics (symbol-body hashes and sizes, instruction, mask,
+branch, call and vector counts, register and stack census) come from
+`scripts/measure-ispc-spmd.sh`. Generic ISPC x4 is validation only, not a
+scalar width match. AVX-512 execution is gated on F+BW+DQ host support.

@@ -19,17 +19,16 @@ the observed gang width: 42 for scalar x1, 49 for AVX2 x8, and 57 for AVX-512
 x16. ISPC v1.31.0 has no width-1 target, so the scalar side uses the checked C
 oracle; generic x4 is a derived-kernel check only.
 
-Run required TypeLisp and C-oracle correctness, optional ISPC comparisons, and
-kernel-only report metrics with:
+Run required TypeLisp and C-oracle correctness and optional ISPC comparisons
+with:
 
 ```sh
-scripts/verify-ispc-perfbench-stores.sh
-ISPC_BIN=/path/to/ispc scripts/verify-ispc-perfbench-stores.sh
+scripts/verify-codegen-cases.sh --only 'perfbench_stores-*' tests/codegen/ispc.cases
+ISPC_BIN=/path/to/ispc scripts/verify-codegen-cases.sh --only 'perfbench_stores-*' tests/codegen/ispc.cases
 ```
 
-Raw assembly, compiler logs, and `static.tsv` are written below
-`target/ispc-perfbench-stores-verify/`. Ratios and shared fingerprints remain
-owned by the generic harness in #4968; this case-level report is not a baseline.
+Kernel-only report metrics, ratios and shared fingerprints are owned by the
+generic harness `scripts/measure-ispc-spmd.sh` (#4968); they are not a baseline.
 
 The TypeLisp AVX2 shape is one full x8 vector load/store loop plus a scalar
 tail; AVX-512 uses an x16 loop plus a masked load/store tail. On the initial

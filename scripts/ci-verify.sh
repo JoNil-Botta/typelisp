@@ -717,11 +717,11 @@ else
 fi
 run_with_compiler "$STAGE2_BIN" stage2-spmd-runtime-dispatch scripts/verify-spmd-runtime-dispatch.sh
 run_with_compiler "$STAGE2_BIN" stage2-spmd-package-calls scripts/verify-spmd-package-calls.sh
-run_with_compiler "$STAGE2_BIN" ispc-perfbench-loads-corpus-contract scripts/verify-ispc-perfbench-loads.sh
-run_with_compiler "$STAGE2_BIN" ispc-perfbench-stores-corpus-contract scripts/verify-ispc-perfbench-stores.sh
-run_with_compiler "$STAGE2_BIN" ispc-perfbench-gathers-corpus-contract scripts/verify-ispc-perfbench-gathers.sh
-run_with_compiler "$STAGE2_BIN" ispc-mandelbrot-corpus-contract scripts/verify-ispc-mandelbrot.sh
-run_with_compiler "$STAGE2_BIN" ispc-point-transform-corpus-contract scripts/verify-ispc-point-transform.sh
+run_with_compiler "$STAGE2_BIN" ispc-perfbench-loads-corpus-contract scripts/verify-codegen-cases.sh --only 'perfbench_loads-*' tests/codegen/ispc.cases
+run_with_compiler "$STAGE2_BIN" ispc-perfbench-stores-corpus-contract scripts/verify-codegen-cases.sh --only 'perfbench_stores-*' tests/codegen/ispc.cases
+run_with_compiler "$STAGE2_BIN" ispc-perfbench-gathers-corpus-contract scripts/verify-codegen-cases.sh --only 'perfbench_gathers-*' tests/codegen/ispc.cases
+run_with_compiler "$STAGE2_BIN" ispc-mandelbrot-corpus-contract scripts/verify-codegen-cases.sh --only 'mandelbrot-*' tests/codegen/ispc.cases
+run_with_compiler "$STAGE2_BIN" ispc-point-transform-corpus-contract scripts/verify-codegen-cases.sh --only 'point_transform-*' tests/codegen/ispc.cases
 run_with_compiler "$STAGE2_BIN" stage2-repository-doctests scripts/verify-doc-tests.sh
 run_with_compiler "$STAGE2_BIN" stage2-inline-typelisp-tests scripts/verify-inline-tests.sh
 run_with_compiler "$STAGE2_BIN" stage2-prelude-macro-mutation-guard scripts/verify-prelude-mutation.sh

@@ -462,6 +462,14 @@ function window_after(re,   i, inblk) {
     }
 }
 
+# The first line matching the ERE ARG and everything after it.
+function window_from(re,   i, inblk) {
+    for (i = 1; i <= NR; i++) {
+        if (L[i] ~ re) inblk = 1
+        if (inblk) print L[i]
+    }
+}
+
 # The lines after a label matching the ERE ARG, up to the next .L label.
 function window_block_after(re,   i, inblk) {
     for (i = 1; i <= NR; i++) {
@@ -521,6 +529,7 @@ END {
     else if (analyzer == "window-fast-self-loop") window_fast_self_loop(arg)
     else if (analyzer == "window-fast-region") window_fast_region(arg)
     else if (analyzer == "window-after") window_after(arg)
+    else if (analyzer == "window-from") window_from(arg)
     else if (analyzer == "window-block-after") window_block_after(arg)
     else if (analyzer == "window-call-args") window_call_args(arg)
     else if (analyzer == "window-tl-code") window_tl_code()

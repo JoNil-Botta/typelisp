@@ -58,8 +58,9 @@ set -eu
 #   metric NAME[:ARG] OP VALUE      analyzer result; OP = compares text
 #   capture VAR ERE                 {{VAR}} := group 1 of the first line that the
 #                                   whole-line ERE matches (none fails)
-#   check PLUGIN ARGS...            plugin_PLUGIN (scripts/codegen-cases-plugins.sh)
-#   if-fn LABEL | if-no-fn LABEL ... [else ...] end-if
+#   check PLUGIN ARGS...            plugin_PLUGIN (scripts/codegen-cases-plugins.sh);
+#                                   a plugin returning 2 was skipped (optional tool)
+#   if-fn LABEL | if-no-fn LABEL | if-mode M... ... [else ...] end-if
 #
 # Text arguments expand {{root}}, {{work}}, {{target}}, {{opt}}, {{mode}} and
 # captured {{VAR}}s. The first failing row of a variant is reported with its
@@ -121,6 +122,7 @@ fi
 CC_FAILURES=0
 CC_ROWS=0
 CC_SKIPPED=0
+CC_SELECTED=0
 
 # ---------------------------------------------------------------- helpers
 
@@ -382,7 +384,7 @@ cc_case() {
     CC_HAS_EXIT=$9
     CC_ACTIVE=1
     case "$CC_CASE" in
-        $CC_ONLY) ;;
+        $CC_ONLY) CC_SELECTED=$((CC_SELECTED + 1)) ;;
         *) CC_ACTIVE=0; return 0 ;;
     esac
     case " $CC_HOSTS " in
@@ -694,11 +696,28 @@ a_check() {
         set -- "$@" "$(cc_expand "$_ck_word")"
         _ck_n=$((_ck_n - 1))
     done
-    "plugin_$(printf '%s' "$_ck_name" | tr - _)" "$@" || cc_fail "$_ck_line" "check $_ck_name failed"
+    _ck_status=0
+    "plugin_$(printf '%s' "$_ck_name" | tr - _)" "$@" || _ck_status=$?
+    case "$_ck_status" in
+        0) ;;
+        2)
+            # The plugin's optional tool is absent: skipped, not checked.
+            CC_ROWS=$((CC_ROWS - 1))
+            cc_skip
+            ;;
+        *) cc_fail "$_ck_line" "check $_ck_name failed" ;;
+    esac
 }
 
 cc_fn_exists() {
     [ -n "$CV_ASM" ] && grep -Fx -- "$(cc_expand "$1"):" "$CV_ASM" >/dev/null 2>&1
+}
+
+cc_mode_is() {
+    case " $1 " in
+        *" $CV_MODE "*) return 0 ;;
+    esac
+    return 1
 }
 
 # ---------------------------------------------------------------- front end
@@ -831,11 +850,14 @@ cc_translate() {
         } else if (kw == "if-fn" || kw == "if-no-fn") {
             depth++
             body("if " (kw == "if-no-fn" ? "! " : "") "cc_fn_exists " sq(rest) "; then :")
+        } else if (kw == "if-mode") {
+            depth++
+            body("if cc_mode_is " sq(rest) "; then :")
         } else if (kw == "else") {
-            if (depth == 0) die("else without if-fn")
+            if (depth == 0) die("else without if")
             body("else :")
         } else if (kw == "end-if") {
-            if (depth == 0) die("end-if without if-fn")
+            if (depth == 0) die("end-if without if")
             depth--
             body("fi")
         } else die("unknown directive " kw)
@@ -875,6 +897,10 @@ done
 
 [ "$CC_LIST" -eq 0 ] || exit 0
 
+if [ "$CC_SELECTED" -eq 0 ]; then
+    echo "[codegen-cases] no case matches --only $CC_ONLY" >&2
+    exit 1
+fi
 if [ "$CC_FAILURES" -ne 0 ]; then
     echo "[codegen-cases] FAILED: $CC_FAILURES failure(s); $CC_ROWS expectation(s) checked, $CC_SKIPPED skipped" >&2
     exit 1

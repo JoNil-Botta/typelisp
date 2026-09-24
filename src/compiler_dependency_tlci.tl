@@ -347,7 +347,7 @@
             state
             (compiler-dependency-tlci-base-key
               source-set
-              (owned_view.compiler-owned-shared-view artifact-path)
+              artifact-path
               source-digest)
             (load.CompilerLoadDependencyCatalogFailure.Missing
               "dependency tlci disabled by verification source control"))
@@ -889,7 +889,7 @@
               (owned_view.compiler-owned-shared-view parse-state)
               (compiler-dependency-tlci-prepare-source-set!
                 (owned_view.compiler-owned-shared-view parse-state)
-                (owned_view.compiler-owned-shared-view source-set)))
+                source-set))
               [(load.CompilerLoadDependencyCatalogAdmittedImage.Unavailable
                   (load.CompilerLoadDependencyCatalogFailure.Malformed _))
                 true]

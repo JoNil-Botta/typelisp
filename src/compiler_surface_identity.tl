@@ -1213,7 +1213,7 @@
                         (and
                           (= unrelated 0)
                           (surface-identity-remap-test-ok?
-                            (surface-identity-shared-view hydration)
+                            hydration
                             source-count
                             (array-length payload.generated))
                           (=

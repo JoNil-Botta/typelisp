@@ -142,8 +142,7 @@
   (match program
     [(ast.AstProgram.Program decls-box)
       (let
-        [decls : ast.AstDeclList
-          (owned_view.compiler-owned-box-shared-view decls-box)]
+        [decls : ast.AstDeclList (deref decls-box)]
         [count : i64 (ast.ast-decl-list-len (& decls))]
         [slots : (__tl_dyn-array i64) (__tl_make-array i64 count)]
         [module-id : i64 cbi.compiler-builtin-id-fix-empty]
@@ -214,7 +213,7 @@
           [(ast.AstProgram.Program decls-box)
             (match (surface_ast.surface-ast-encode
               structural-session
-              (owned_view.compiler-owned-box-shared-view decls-box)
+              (deref decls-box)
               paths
               modules
               seen

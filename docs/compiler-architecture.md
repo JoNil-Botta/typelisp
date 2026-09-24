@@ -59,11 +59,10 @@ also use native contracts outside the ordinary C signature subset.
 Vector reduction sources are read-only IR operands. AVX2 four-lane signed
 `i64` min/max needs an accumulator, a lane sibling and a comparison-mask
 scratch family: its second comparison must not write through the source's XMM
-alias. `compiler-reg-vector-reduce-mask-scratch?` owns this shape distinction;
-`VectorReduceMask` is ordinal 2 in the modeled scratch plan. Emission consumes
-planned homes through the shared preservation-aware scratch selector, so an
-occupied home receives the same save/restore contract as other scratch roles.
-AVX-512 native min/max and the other reduction shapes retain two scratch roles.
+alias. `compiler-reg-vector-reduce-mask-scratch?` owns this shape distinction,
+and emission takes the mask from the scavenger as a third XMM scratch that
+excludes the source, accumulator and sibling. AVX-512 native min/max and the
+other reduction shapes use two scratch registers.
 
 Every `CompilerIrFunction` states its calling convention as a
 `CompilerIrFunctionAbi`: `Ordinary`, or `SpmdPrivate` for a generated

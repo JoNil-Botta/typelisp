@@ -78,5 +78,3 @@ backend_avx512	both	n/a	read+write	vector-lane	active-mask	mode-observable	unsup
 object_abi_context	both	n/a	read+write	scalar-intlike-subset	typed-call	ordered-abi	unsupported-signature-reject	object	fail closed outside currently witnessed direct-object call entry return subset
 scratch_gp	both	n/a	none	gp-register	live-interval	ordered-abi	spill-or-reject	regalloc	scratch home must not overlap live owner or reserved target register
 scratch_xmm	both	n/a	none	xmm-register	live-interval	ordered-abi	spill-or-reject	regalloc	XMM scratch home must respect vector class and caller clobber
-scratch_fixed	both	n/a	none	fixed-register	live-interval	ordered-abi	spill-or-reject	regalloc	fixed RAX RDX RCX reservations exclude competing live values
-scratch_role	both	n/a	none	constraint-carried-register-class	live-interval	ordered-abi	spill-or-reject	regalloc	per-instance class allowed excluded and fixed homes cannot overlap live owner values

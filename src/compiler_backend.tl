@@ -23610,10 +23610,9 @@
 ;; The staging register for one value written into an outgoing (or tail) stack
 ;; argument slot.
 ;;
-;; A PLANNED stage register is not automatically free. The call-stage constraint
-;; admits %r10 first but also the whole callee-saved set
-;; (compiler-reg-scratch-call-target-allowed), and when the planner hands one of
-;; those out it marks it PRESERVE -- the consumer owes it the save/restore
+;; A PLANNED stage register is not automatically free. A scratch plan may hand
+;; out %r10 but also any callee-saved register, and it then marks the pick
+;; PRESERVE -- the consumer owes it the save/restore
 ;; bracket that `compiler-backend-preserve-planned-register!` arms. Consuming the
 ;; spelling raw, as these emitters used to, clobbers whatever the register holds:
 ;; with the former instruction-scratch planner a six-argument call in

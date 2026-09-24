@@ -1,7 +1,7 @@
 # Backend safety contract inventory
 
 `main.tl` is a self-hosted, source-derived audit map for the current IR,
-lowering/ABI classifications, register scratch roles, and structured object
+lowering/ABI classifications, register scratch classes, and structured object
 emission. Run `scripts/verify-backend-safety-manifest.sh` to regenerate and
 compare `docs/backend-safety-contract-manifest.tsv` and exercise drift
 mutations. To refresh the checked artifact after an intentional change:

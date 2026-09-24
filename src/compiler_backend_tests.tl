@@ -22300,53 +22300,6 @@ g:
             (compiler_abi.compiler-abi-mask-register-id 3)))
         (compiler_regalloc.compiler-reg-assignment-table-empty)))))
 
-(define (compiler-backend-avx512-vector-prefix-bool-scratch-requirement
-  [ordinal : i64]
-  [var : i64]) : compiler_regalloc.CompilerRegScratchRequirement
-  (compiler_regalloc.compiler-reg-scratch-requirement-local
-    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-    (compiler_abi.CompilerRegTargetAbi.Linux)
-    (compiler_regalloc.compiler-reg-scratch-policy
-      (compiler_abi.CompilerRegTargetAbi.Linux)
-      (compiler_regalloc.compiler-reg-assignment-table-empty)
-      (compiler_regalloc.compiler-reg-id-seq-empty)
-      (compiler_ir_types.CompilerIrBlockSeq
-        (__tl_make-array compiler_ir_types.CompilerIrBlock 0)
-        0))
-    (compiler_regalloc.compiler-reg-assignment-table-empty)
-    (compiler_regalloc.compiler-reg-var-types-empty)
-    (compiler_ir_types.ir-instr-vector-prefix
-      2
-      (compiler_ir_types.CompilerIrVectorPrefixOp.Any)
-      (compiler_ir_types.CompilerIrValue.Var 0)
-      (compiler_ir_types.CompilerIrValue.Var 1)
-      64
-      (compiler_ast_types.AstType.Bool))
-    0
-    ordinal
-    var
-    false))
-
-(define (compiler-backend-avx512-vector-prefix-bool-scratch-classes-ok?) : bool
-  (let
-    [carry : compiler_regalloc.CompilerRegScratchRequirement
-      (compiler-backend-avx512-vector-prefix-bool-scratch-requirement 0 3)]
-    [bits : compiler_regalloc.CompilerRegScratchRequirement
-      (compiler-backend-avx512-vector-prefix-bool-scratch-requirement 1 4)]
-    (and
-      (match carry.role
-        [(compiler_regalloc.CompilerRegScratchRole.VectorPrefixCarry) true]
-        [_ false])
-      (match bits.role
-        [(compiler_regalloc.CompilerRegScratchRole.VectorPrefixBits) true]
-        [_ false])
-      (match carry.constraint.register-class
-        [(compiler_regalloc.CompilerRegScratchClass.Gp) true]
-        [_ false])
-      (match bits.constraint.register-class
-        [(compiler_regalloc.CompilerRegScratchClass.Gp) true]
-        [_ false]))))
-
 (define (compiler-backend-avx512-vector-prefix-bool-spill-ok?) : bool
   (let
     [diag : compiler_diagnostic.CompilerDiagnostic
@@ -22540,7 +22493,6 @@ g:
     (compiler-backend-avx2-vector-prefix-bool-spill-ok?)
     (compiler-backend-avx512-vector-prefix-numeric-spill-ok?)
     (compiler-backend-vector-prefix-planned-work-registers-ok?)
-    (compiler-backend-avx512-vector-prefix-bool-scratch-classes-ok?)
     (compiler-backend-avx512-vector-prefix-bool-spill-ok?)
     (compiler-backend-avx512-predicated-load-spill-dst-ok?)
     (compiler-backend-avx512-select-spill-ok?)
@@ -34404,15 +34356,6 @@ g:
           (compiler_ast_types.AstType.F64)
           (compiler_ast_types.AstType.U64))
         0)
-      (=
-        (compiler_regalloc.compiler-reg-scratch-cast-slot-count
-          (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-          (owned_view.compiler-owned-shared-view direct)
-          1
-          (compiler_ir_types.CompilerIrValue.Var 0)
-          (compiler_ast_types.AstType.F64)
-          (compiler_ast_types.AstType.U64))
-        1)
       (compiler_regalloc.compiler-reg-scratch-cast-xmm-needed?
         (owned_view.compiler-owned-shared-view spilled)
         1
@@ -34426,16 +34369,7 @@ g:
           (compiler_ir_types.CompilerIrValue.Var 0)
           (compiler_ast_types.AstType.F32)
           (compiler_ast_types.AstType.U64))
-        1)
-      (=
-        (compiler_regalloc.compiler-reg-scratch-cast-slot-count
-          (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-          (owned_view.compiler-owned-shared-view spilled)
-          1
-          (compiler_ir_types.CompilerIrValue.Var 0)
-          (compiler_ast_types.AstType.F32)
-          (compiler_ast_types.AstType.U64))
-        2))))
+        1))))
 
 (define (compiler-backend-float-to-u64-threshold-collection-ok?) : bool
   (let
@@ -45888,9 +45822,8 @@ g:
 ;; their owners cleared at the call anyway.
 ;; A PLANNED stack-argument stage register must have its preservation ARMED.
 ;;
-;; The call-stage constraint admits callee-saved registers as well as %r10
-;; (compiler-reg-scratch-call-target-allowed), and the plan marks such a pick
-;; PRESERVE -- the consumer owes it the save/restore bracket. The stack-argument
+;; A scratch plan may stage through callee-saved registers as well as %r10,
+;; and it marks such a pick PRESERVE -- the consumer owes it the save/restore bracket. The stack-argument
 ;; emitters used to consume the spelling raw, so with a scratch plan a
 ;; six-argument call in `compiler-backend-peephole-pair-action-desc` staged both
 ;; of its stack arguments through %r12 while %r12 held a parameter read after the
@@ -46658,7 +46591,6 @@ g:
           (compiler_regalloc.CompilerRegScratchRequirement
             4
             0
-            (compiler_regalloc.CompilerRegScratchRole.ScalarPrimary)
             (compiler_regalloc.CompilerRegScratchConstraint
               (compiler_regalloc.CompilerRegScratchClass.Gp)
               (compiler_regalloc.compiler-reg-id-seq-empty)

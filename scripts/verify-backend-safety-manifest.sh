@@ -67,7 +67,7 @@ awk -F '\t' '
         if ($1 == "ir_instr") ir++
         if ($1 == "object_instr") object++
     }
-    END { if (count < 200 || ir < 50 || object < 20) exit 1 }
+    END { if (count < 170 || ir < 50 || object < 20) exit 1 }
 ' "$WORKDIR/current.tsv" || fail "malformed, missing, or duplicated output rows"
 
 while IFS="$(printf '\t')" read -r domain identity contract witness disposition; do

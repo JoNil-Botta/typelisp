@@ -14188,27 +14188,6 @@
         [_ false])]
     [_ false]))
 
-;; StoreOwned is a real store until the ownership proof's optimizer window has
-;; closed. Cheap/no-opt compilation can therefore hand it directly to the
-;; scratch fusion grouping, which must classify it exactly like StorePtr.
-(define (compiler-reg-owned-store-scratch-parity-ok?) : bool
-  (let
-    [plain : ir.CompilerIrInstr
-      (ir.CompilerIrInstr.StorePtr
-        (ir.CompilerIrValue.Var 0)
-        (ir.CompilerIrValue.Var 1)
-        (ast.AstType.I64))]
-    [owned : ir.CompilerIrInstr
-      (ir.CompilerIrInstr.StoreOwned
-        (ir.CompilerIrValue.Var 0)
-        (ir.CompilerIrValue.Var 1)
-        (ast.AstType.I64))]
-    (and
-      (reg.compiler-reg-scratch-instr-store-ptr?
-        (reg.compiler-reg-global-shared-view plain))
-      (reg.compiler-reg-scratch-instr-store-ptr?
-        (reg.compiler-reg-global-shared-view owned)))))
-
 (define (compiler-reg-owned-root-var-type-ok?) : bool
   (let
     [func : ir.CompilerIrFunction
@@ -14241,47 +14220,6 @@
           [(ast.AstType.String) true]
           [_ false])]
       [(reg.CompilerRegMaybeType.No) false])))
-
-(define (compiler-reg-scratch-sibling-test-requirement
-  [point : i64]
-  [role : reg.CompilerRegScratchRole]) : reg.CompilerRegScratchRequirement
-  (reg.CompilerRegScratchRequirement
-    point
-    0
-    role
-    (reg.CompilerRegScratchConstraint
-      (reg.CompilerRegScratchClass.Gp)
-      (reg.compiler-reg-id-seq-empty)
-      (reg.compiler-reg-id-seq-empty)
-      cabi.compiler-reg-id-invalid)
-    10
-    20
-    0))
-
-(define (compiler-reg-scratch-producer-phi-sharing-ok?) : bool
-  (let
-    [producer : reg.CompilerRegScratchRequirement
-      (compiler-reg-scratch-sibling-test-requirement
-        12
-        (reg.CompilerRegScratchRole.ScalarSecondary))]
-    [phi : reg.CompilerRegScratchRequirement
-      (compiler-reg-scratch-sibling-test-requirement
-        14
-        (reg.CompilerRegScratchRole.PhiCycle))]
-    [same-point : reg.CompilerRegScratchRequirement
-      (compiler-reg-scratch-sibling-test-requirement
-        14
-        (reg.CompilerRegScratchRole.ScalarSecondary))]
-    (and
-      (not
-        (reg.compiler-reg-scratch-sibling-conflicts?
-          (reg.compiler-reg-global-shared-view producer)
-          (reg.compiler-reg-global-shared-view phi)))
-      (not
-        (reg.compiler-reg-scratch-sibling-conflicts?
-          (reg.compiler-reg-global-shared-view phi)
-          (reg.compiler-reg-global-shared-view producer)))
-      (reg.compiler-reg-scratch-sibling-conflicts? same-point phi))))
 
 (define (compiler-reg-early-scratch-test-function) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
@@ -14365,8 +14303,7 @@
               (reg.compiler-reg-interval-seq-ref segments 0)]
             (and (= found.var var) (= found.start lo) (= found.end hi))))))))
 
-(define (compiler-reg-early-scratch-model-for-test
-  [target-abi : cabi.CompilerRegTargetAbi]) : reg.CompilerRegEarlyScratchModel
+(define (compiler-reg-early-scratch-model-for-test) : reg.CompilerRegEarlyScratchModel
   (let
     [func : ir.CompilerIrFunction (compiler-reg-early-scratch-test-function)]
     [types : reg.CompilerRegVarTypes
@@ -14378,8 +14315,6 @@
         (ir.compiler-ir-global-shared-view func)))
       [(reg.CompilerRegIntervalSelection.Selection _ index)
         (reg.compiler-reg-early-scratch-model
-          (ast.ast-node-pool-reader-type-segment-bases)
-          target-abi
           (ir.compiler-ir-global-shared-view func)
           index
           types
@@ -14389,11 +14324,10 @@
             (reg.CompilerRegLocation.Register cabi.compiler-reg-id-r10))
           true)])))
 
-(define (compiler-reg-early-scratch-model-one-abi-ok?
-  [target-abi : cabi.CompilerRegTargetAbi]) : bool
+(define (compiler-reg-early-scratch-model-divmod-ok?) : bool
   (let
     [model : reg.CompilerRegEarlyScratchModel
-      (compiler-reg-early-scratch-model-for-test target-abi)]
+      (compiler-reg-early-scratch-model-for-test)]
     [assignments : reg.CompilerRegAssignmentTable
       (reg.compiler-reg-global-shared-view model.assignments)]
     [base : i64 model.scratch-base]
@@ -14466,10 +14400,32 @@
       (reg.compiler-reg-early-scratch-count-blocks
         (compiler-reg-early-scratch-nontarget-blocks))
       0)
-    (compiler-reg-early-scratch-model-one-abi-ok?
-      (cabi.CompilerRegTargetAbi.Linux))
-    (compiler-reg-early-scratch-model-one-abi-ok?
-      (cabi.CompilerRegTargetAbi.Windows))))
+    (compiler-reg-early-scratch-model-divmod-ok?)))
+
+;; Occupancy fixture: the SysV greedy integer pool followed by XMM0, XMM1 and
+;; the target's allocatable XMM registers.
+(define (compiler-reg-test-register-array
+  [target-abi : cabi.CompilerRegTargetAbi]) : (__tl_dyn-array i64)
+  (let
+    [xmm-registers : reg.CompilerRegIdSeq
+      (reg.compiler-reg-id-seq-prepend
+        (cabi.compiler-abi-xmm-register-id 0)
+        (reg.compiler-reg-id-seq-prepend
+          (cabi.compiler-abi-xmm-register-id 1)
+          (reg.compiler-reg-xmm-registers-for-abi target-abi)))]
+    [registers : reg.CompilerRegIdSeq
+      (reg.compiler-reg-id-seq-append
+        (reg.compiler-reg-greedy-integer-pool-for-abi
+          (cabi.CompilerRegTargetAbi.Linux))
+        xmm-registers)]
+    [out : (__tl_dyn-array i64)
+      (__tl_make-array i64 (reg.compiler-reg-id-seq-count registers))]
+    (begin
+      (reg.compiler-reg-greedy-id-seq-to-array
+        registers
+        (reg.compiler-reg-global-shared-view out)
+        0)
+      out)))
 
 (define (compiler-reg-live-union-test-seq [var : i64] [start : i64] [end : i64]) : reg.CompilerRegIntervalSeq
   (reg.compiler-reg-interval-seq-append
@@ -14492,8 +14448,7 @@
     [assignments : reg.CompilerRegAssignmentTable
       (reg.compiler-reg-assignment-table-make vars)]
     [registers : (__tl_dyn-array i64)
-      (reg.compiler-reg-scratch-register-array
-        (cabi.CompilerRegTargetAbi.Linux))]
+      (compiler-reg-test-register-array (cabi.CompilerRegTargetAbi.Linux))]
     (begin
       (reg.compiler-reg-fill-i64-array
         (reg.compiler-reg-global-shared-view starts)
@@ -14650,81 +14605,7 @@
                   0))))
           (and resident-0-ok? emptied-ok? multi-ok? coarse-resident-ok?))))))
 
-(define (compiler-reg-scratch-default-pool-target-invariant-ok?) : bool
-  (let
-    [intervals : reg.CompilerRegIntervalSeq
-      (reg.compiler-reg-interval-seq-prepend
-        (reg.CompilerRegInterval 0 0 1)
-        (reg.compiler-reg-interval-seq-empty))]
-    [index : reg.CompilerRegIntervalIndex
-      (reg.compiler-reg-interval-index-build intervals 1)]
-    [assignments : reg.CompilerRegAssignmentTable
-      (reg.compiler-reg-assignment-table-make 1)]
-    [linux-registers : (__tl_dyn-array i64)
-      (reg.compiler-reg-scratch-register-array
-        (cabi.CompilerRegTargetAbi.Linux))]
-    [windows-registers : (__tl_dyn-array i64)
-      (reg.compiler-reg-scratch-register-array
-        (cabi.CompilerRegTargetAbi.Windows))]
-    [linux-occupancy : reg.CompilerRegGreedyOccupancy
-      (reg.compiler-reg-greedy-occupancy-make
-        (reg.compiler-reg-global-shared-view assignments)
-        (reg.compiler-reg-global-shared-view index)
-        (reg.compiler-reg-global-shared-view linux-registers)
-        (array-length linux-registers))]
-    [windows-occupancy : reg.CompilerRegGreedyOccupancy
-      (reg.compiler-reg-greedy-occupancy-make
-        (reg.compiler-reg-global-shared-view assignments)
-        (reg.compiler-reg-global-shared-view index)
-        (reg.compiler-reg-global-shared-view windows-registers)
-        (array-length windows-registers))]
-    [excluded : reg.CompilerRegIdSeq
-      (reg.compiler-reg-id-seq-prepend
-        cabi.compiler-reg-id-rax
-        (reg.compiler-reg-id-seq-empty))]
-    (and
-      (=
-        (reg.compiler-reg-scratch-pick-register
-          (reg.compiler-reg-global-shared-view assignments)
-          (reg.compiler-reg-global-shared-view linux-occupancy)
-          (reg.compiler-reg-global-shared-view index)
-          (__tl_make-array i64 0)
-          0
-          1
-          (reg.compiler-reg-scratch-default-pool
-            (cabi.CompilerRegTargetAbi.Linux)
-            (reg.CompilerRegScratchClass.Gp))
-          (reg.compiler-reg-global-shared-view excluded))
-        cabi.compiler-reg-id-rsi)
-      (=
-        (reg.compiler-reg-scratch-pick-register
-          (reg.compiler-reg-global-shared-view assignments)
-          (reg.compiler-reg-global-shared-view windows-occupancy)
-          (reg.compiler-reg-global-shared-view index)
-          (__tl_make-array i64 0)
-          0
-          1
-          (reg.compiler-reg-scratch-default-pool
-            (cabi.CompilerRegTargetAbi.Windows)
-            (reg.CompilerRegScratchClass.Gp))
-          (reg.compiler-reg-global-shared-view excluded))
-        cabi.compiler-reg-id-rsi)
-      ;; XMM volatility differs materially across ABIs and remains ABI-aware.
-      (=
-        (reg.compiler-reg-scratch-pick-register
-          (reg.compiler-reg-global-shared-view assignments)
-          (reg.compiler-reg-global-shared-view windows-occupancy)
-          (reg.compiler-reg-global-shared-view index)
-          (__tl_make-array i64 0)
-          0
-          1
-          (reg.compiler-reg-scratch-default-pool
-            (cabi.CompilerRegTargetAbi.Windows)
-            (reg.CompilerRegScratchClass.Xmm))
-          (reg.compiler-reg-id-seq-empty))
-        (cabi.compiler-abi-xmm-register-id 2)))))
-
-(define (compiler-reg-scratch-callee-saved-registers-ok?) : bool
+(define (compiler-reg-scratch-borrow-masks-ok?) : bool
   (and
     ;; The SCR-1 borrow estimator follows the same ABI split as the backend:
     ;; %rsi is an unconditional candidate on SysV, but on Win64 it is available
@@ -14754,183 +14635,7 @@
           (reg.compiler-reg-scratch-borrow-csr-mask
             (cabi.CompilerRegTargetAbi.Windows))
           (reg.compiler-reg-scratch-reg-bit cabi.compiler-reg-id-rsi))
-        0))
-    (reg.compiler-reg-scratch-callee-saved-register?
-      (cabi.CompilerRegTargetAbi.Linux)
-      cabi.compiler-reg-id-r12)
-    (reg.compiler-reg-scratch-callee-saved-register?
-      (cabi.CompilerRegTargetAbi.Linux)
-      cabi.compiler-reg-id-rbp)
-    (not
-      (reg.compiler-reg-scratch-callee-saved-register?
-        (cabi.CompilerRegTargetAbi.Linux)
-        cabi.compiler-reg-id-rsi))
-    (not
-      (reg.compiler-reg-scratch-callee-saved-register?
-        (cabi.CompilerRegTargetAbi.Linux)
-        (cabi.compiler-abi-xmm-register-id 6)))
-    (reg.compiler-reg-scratch-callee-saved-register?
-      (cabi.CompilerRegTargetAbi.Windows)
-      cabi.compiler-reg-id-rsi)
-    (reg.compiler-reg-scratch-callee-saved-register?
-      (cabi.CompilerRegTargetAbi.Windows)
-      cabi.compiler-reg-id-rdi)
-    (reg.compiler-reg-scratch-callee-saved-register?
-      (cabi.CompilerRegTargetAbi.Windows)
-      (cabi.compiler-abi-xmm-register-id 6))
-    (not
-      (reg.compiler-reg-scratch-callee-saved-register?
-        (cabi.CompilerRegTargetAbi.Windows)
-        (cabi.compiler-abi-xmm-register-id 5)))))
-
-(define (compiler-reg-scratch-call-result-exclusions-ok?) : bool
-  (let
-    [assignments : reg.CompilerRegAssignmentTable
-      (reg.compiler-reg-assignments-prepend
-        (reg.CompilerRegAssignment
-          0
-          (reg.CompilerRegLocation.Register cabi.compiler-reg-id-rbx))
-        (reg.compiler-reg-assignments-prepend
-          (reg.CompilerRegAssignment
-            1
-            (reg.CompilerRegLocation.Register cabi.compiler-reg-id-r10))
-          (reg.compiler-reg-assignment-table-empty)))]
-    [direct : reg.CompilerRegIdSeq
-      (reg.compiler-reg-scratch-instr-registers
-        (reg.compiler-reg-global-shared-view assignments)
-        (ir.CompilerIrInstr.Call
-          0
-          0
-          (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.I64 64))
-          (ast.AstType.U64)))]
-    [indirect : reg.CompilerRegIdSeq
-      (reg.compiler-reg-scratch-instr-registers
-        assignments
-        (ir.CompilerIrInstr.CallIndirect
-          0
-          (ir.CompilerIrValue.Var 1)
-          ir.CompilerIrCallArgs.Nil
-          (ast.AstType.U64)))]
-    (and
-      (reg.compiler-reg-id-seq-contains? direct cabi.compiler-reg-id-rbx)
-      (reg.compiler-reg-id-seq-contains?
-        (reg.compiler-reg-global-shared-view indirect)
-        cabi.compiler-reg-id-rbx)
-      (reg.compiler-reg-id-seq-contains? indirect cabi.compiler-reg-id-r10))))
-
-(define (compiler-reg-scratch-coalesced-home-hull-preserve-ok?) : bool
-  (let
-    [intervals : reg.CompilerRegIntervalSeq
-      (reg.compiler-reg-interval-seq-prepend
-        (reg.CompilerRegInterval 0 0 2)
-        (reg.compiler-reg-interval-seq-prepend
-          (reg.CompilerRegInterval 1 8 10)
-          (reg.compiler-reg-interval-seq-prepend
-            (reg.CompilerRegInterval 2 4 5)
-            (reg.compiler-reg-interval-seq-empty))))]
-    [index : reg.CompilerRegIntervalIndex
-      (reg.compiler-reg-interval-index-build intervals 3)]
-    [segmented-starts : (__tl_dyn-array i64) (__tl_make-array i64 3)]
-    [segmented-ends : (__tl_dyn-array i64) (__tl_make-array i64 3)]
-    [segmented-segments : (__tl_dyn-array reg.CompilerRegIntervalSeq)
-      (__tl_make-array reg.CompilerRegIntervalSeq 3)]
-    [_segmented-init : unit
-      (begin
-        (set! (array-ref segmented-starts 0) 0)
-        (set! (array-ref segmented-starts 1) -1)
-        (set! (array-ref segmented-starts 2) 4)
-        (set! (array-ref segmented-ends 0) 10)
-        (set! (array-ref segmented-ends 1) -1)
-        (set! (array-ref segmented-ends 2) 5)
-        (set!
-          (array-ref segmented-segments 0)
-          (reg.compiler-reg-interval-seq-prepend
-            (reg.CompilerRegInterval 0 0 2)
-            (reg.compiler-reg-interval-seq-prepend
-              (reg.CompilerRegInterval 0 8 10)
-              (reg.compiler-reg-interval-seq-empty))))
-        (set!
-          (array-ref segmented-segments 1)
-          (reg.compiler-reg-interval-seq-empty))
-        (set!
-          (array-ref segmented-segments 2)
-          (reg.compiler-reg-interval-seq-prepend
-            (reg.CompilerRegInterval 2 4 5)
-            (reg.compiler-reg-interval-seq-empty))))]
-    [segmented-index : reg.CompilerRegIntervalIndex
-      (reg.CompilerRegIntervalIndex
-        segmented-starts
-        segmented-ends
-        segmented-segments)]
-    [assignments : reg.CompilerRegAssignmentTable
-      (reg.compiler-reg-assignment-table-insert
-        (reg.compiler-reg-assignment-table-insert
-          (reg.compiler-reg-assignment-table-make 3)
-          0
-          (reg.CompilerRegLocation.Register cabi.compiler-reg-id-rdi))
-        1
-        (reg.CompilerRegLocation.Register cabi.compiler-reg-id-rdi))]
-    [coalesced : (__tl_dyn-array i64) (__tl_make-array i64 3)]
-    [independent : (__tl_dyn-array i64) (__tl_make-array i64 3)]
-    [requirement : reg.CompilerRegScratchRequirement
-      (reg.CompilerRegScratchRequirement
-        4
-        0
-        (reg.CompilerRegScratchRole.MemoryAddress)
-        (reg.CompilerRegScratchConstraint
-          (reg.CompilerRegScratchClass.Gp)
-          (reg.compiler-reg-id-seq-empty)
-          (reg.compiler-reg-id-seq-empty)
-          cabi.compiler-reg-id-invalid)
-        4
-        5
-        2)]
-    [_parents-init : unit
-      (begin
-        (set! (array-ref coalesced 0) 0)
-        (set! (array-ref coalesced 1) 0)
-        (set! (array-ref coalesced 2) 2)
-        (set! (array-ref independent 0) 0)
-        (set! (array-ref independent 1) 1)
-        (set! (array-ref independent 2) 2))]
-    (and
-      ;; Neither expanded member overlaps the scratch point by itself.
-      (reg.compiler-reg-scratch-register-free-from?
-        (reg.compiler-reg-global-shared-view assignments)
-        (reg.compiler-reg-global-shared-view index)
-        2
-        cabi.compiler-reg-id-rdi
-        0
-        3)
-      ;; The exact coalesced class gap excludes its shared physical home.
-      (reg.compiler-reg-scratch-register-coalesced-gap-from?
-        (reg.compiler-reg-global-shared-view assignments)
-        (reg.compiler-reg-global-shared-view index)
-        (reg.compiler-reg-global-shared-view coalesced)
-        (reg.compiler-reg-global-shared-view requirement)
-        cabi.compiler-reg-id-rdi
-        0
-        2)
-      ;; One segmented vreg can likewise carry its value across a modeled
-      ;; lowering group even when its precise segments leave the point free.
-      (reg.compiler-reg-scratch-register-coalesced-gap-from?
-        (reg.compiler-reg-global-shared-view assignments)
-        segmented-index
-        (reg.compiler-reg-global-shared-view independent)
-        (reg.compiler-reg-global-shared-view requirement)
-        cabi.compiler-reg-id-rdi
-        0
-        2)
-      ;; Unrelated values with the same physical home keep their precise gaps.
-      (not
-        (reg.compiler-reg-scratch-register-coalesced-gap-from?
-          assignments
-          index
-          independent
-          requirement
-          cabi.compiler-reg-id-rdi
-          0
-          2)))))
+        0))))
 
 (define (compiler-reg-early-scratch-never-spills-ok?) : bool
   (let
@@ -22751,14 +22456,8 @@
       "compiler-reg-group-pair-widening-ok?"
       (cfg test (compiler-reg-group-pair-widening-ok?) true))
     (compiler-regalloc-self-test-require!
-      "compiler-reg-owned-store-scratch-parity-ok?"
-      (compiler-reg-owned-store-scratch-parity-ok?))
-    (compiler-regalloc-self-test-require!
       "compiler-reg-owned-root-var-type-ok?"
       (compiler-reg-owned-root-var-type-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-scratch-producer-phi-sharing-ok?"
-      (compiler-reg-scratch-producer-phi-sharing-ok?))
     (compiler-regalloc-self-test-require!
       "compiler-reg-early-scratch-model-ok?"
       (compiler-reg-early-scratch-model-ok?))
@@ -22766,17 +22465,8 @@
       "compiler-reg-greedy-live-union-invariant-ok?"
       (compiler-reg-greedy-live-union-invariant-ok?))
     (compiler-regalloc-self-test-require!
-      "compiler-reg-scratch-default-pool-target-invariant-ok?"
-      (compiler-reg-scratch-default-pool-target-invariant-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-scratch-callee-saved-registers-ok?"
-      (compiler-reg-scratch-callee-saved-registers-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-scratch-call-result-exclusions-ok?"
-      (compiler-reg-scratch-call-result-exclusions-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-scratch-coalesced-home-hull-preserve-ok?"
-      (compiler-reg-scratch-coalesced-home-hull-preserve-ok?))
+      "compiler-reg-scratch-borrow-masks-ok?"
+      (compiler-reg-scratch-borrow-masks-ok?))
     (compiler-regalloc-self-test-require!
       "compiler-reg-early-scratch-never-spills-ok?"
       (compiler-reg-early-scratch-never-spills-ok?))

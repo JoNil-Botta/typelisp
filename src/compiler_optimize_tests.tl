@@ -69792,28 +69792,6 @@
         27]
       [(not (opt-label-set-persistent-branch-self-test)) 60]
       [(not
-          (opt.opt-cfg-dominators-match-legacy?
-            (opt.compiler-opt-global-shared-view diamond-blocks)))
-        28]
-      [(not
-          (opt.opt-cfg-dominators-match-legacy?
-            (opt.compiler-opt-global-shared-view loop-blocks)))
-        29]
-      [(not (opt.opt-cfg-dominators-match-legacy? (opt-ssa-unreachable-blocks)))
-        30]
-      [(not
-          (opt.opt-cfg-dominators-match-legacy?
-            (opt-natural-loop-irreducible-blocks)))
-        31]
-      [(not (opt.opt-cfg-dominators-match-bitset? diamond-blocks)) 32]
-      [(not (opt.opt-cfg-dominators-match-bitset? loop-blocks)) 33]
-      [(not (opt.opt-cfg-dominators-match-bitset? (opt-ssa-unreachable-blocks)))
-        34]
-      [(not
-          (opt.opt-cfg-dominators-match-bitset?
-            (opt-natural-loop-irreducible-blocks)))
-        35]
-      [(not
           (opt.opt-verify-ok?
             (opt.opt-verify-function
               (opt.compiler-opt-global-shared-view constructed-diamond))))

@@ -302,8 +302,7 @@
       [root-keys : (__tl_dyn-array i64) (__tl_make-array i64 count)]
       [call-indices : (__tl_dyn-array i64) (__tl_make-array i64 count)]
       [index : i64 0]
-      [slots : (__tl_dyn-array SurfaceCloneObservation)
-        (surface-facts-shared-view observations.slots)]
+      [slots : (__tl_dyn-array SurfaceCloneObservation) observations.slots]
       (begin
         (while (< index count)
           (let
@@ -805,18 +804,18 @@
         (surface-typecheck-facts-clear!)
         (match (surface-typecheck-facts-builder-append
           (surface-facts-shared-view builder)
-          (surface-facts-shared-view first))
+          first)
           [(ResultSurfaceTypecheckFactsBuilder.Err _) (set! ok false)]
           [(ResultSurfaceTypecheckFactsBuilder.Ok next) (set! builder next)])
         ;; A rejected fragment leaves the completed prefix reusable.
         (match (surface-typecheck-facts-builder-append
           (surface-facts-shared-view builder)
-          (surface-facts-shared-view bad-order))
+          bad-order)
           [(ResultSurfaceTypecheckFactsBuilder.Err _) unit]
           [(ResultSurfaceTypecheckFactsBuilder.Ok _) (set! ok false)])
         (match (surface-typecheck-facts-builder-append
           (surface-facts-shared-view builder)
-          (surface-facts-shared-view second))
+          second)
           [(ResultSurfaceTypecheckFactsBuilder.Err _) (set! ok false)]
           [(ResultSurfaceTypecheckFactsBuilder.Ok next) (set! builder next)])
         (match (surface-typecheck-facts-builder-finish builder)
@@ -901,13 +900,13 @@
             (let
               [decl-key : i64
                 (surface_identity.surface-identity-portable-id
-                  (surface-facts-shared-view structural-session)
+                  structural-session
                   (array-ref decl-keys index)
                   source-count
                   identity-count)]
               [root-key : i64
                 (surface_identity.surface-identity-portable-id
-                  (surface-facts-shared-view structural-session)
+                  structural-session
                   (array-ref root-keys index)
                   source-count
                   identity-count)]

@@ -68,10 +68,7 @@
             ir.CompilerIrBlockList.Nil)))]
     [index : opt.OptCfgIndex (opt.opt-cfg-index-build blocks)]
     [active-first : i64
-      (smoke-cfg-index-block-return
-        (opt.opt-cfg-index-find-block
-          (opt.compiler-opt-global-shared-view index)
-          label))]
+      (smoke-cfg-index-block-return (opt.opt-cfg-index-find-block index label))]
     [replacement-blocks : ir.CompilerIrBlockList
       (ir.compiler-ir-block-list-compact
         (ir.compiler-ir-block-cons
@@ -84,18 +81,14 @@
         (opt.compiler-opt-global-shared-view index)
         replacement-blocks)]
     [dense-second : i64
-      (smoke-cfg-index-block-return
-        (opt.opt-cfg-index-block (opt.compiler-opt-global-shared-view index) 1))]
+      (smoke-cfg-index-block-return (opt.opt-cfg-index-block index 1))]
     [_newer-index : opt.OptCfgIndex
       (opt.opt-cfg-index-build
         (ir.compiler-ir-block-cons
           (smoke-cfg-index-test-block other-label 33)
           ir.CompilerIrBlockList.Nil))]
     [stale-first : i64
-      (smoke-cfg-index-block-return
-        (opt.opt-cfg-index-find-block
-          (opt.compiler-opt-global-shared-view index)
-          label))]
+      (smoke-cfg-index-block-return (opt.opt-cfg-index-find-block index label))]
     [missing : i64
       (smoke-cfg-index-block-return
         (opt.opt-cfg-index-find-block index missing-label))]
@@ -3159,16 +3152,18 @@
     [qualified : String "module/path::tl_substring"]
     [plain : String "plain"]
     [index : opt.OptFunctionIndex
-      (opt.opt-function-index-build
-        (ir.compiler-ir-function-seq-prepend
-          (compiler_optimize_tests.opt-test-function-named
-            (string.copy qualified)
-            (ir.compiler-ir-instr-seq-empty))
+      (let
+        [bound-arg-1
           (ir.compiler-ir-function-seq-prepend
             (compiler_optimize_tests.opt-test-function-named
-              (string.copy plain)
+              (string.copy qualified)
               (ir.compiler-ir-instr-seq-empty))
-            (ir.compiler-ir-function-seq-empty))))]
+            (ir.compiler-ir-function-seq-prepend
+              (compiler_optimize_tests.opt-test-function-named
+                (string.copy plain)
+                (ir.compiler-ir-instr-seq-empty))
+              (ir.compiler-ir-function-seq-empty)))]
+        (opt.opt-function-index-build bound-arg-1))]
     [starts : (__tl_dyn-array i64) index.leaf-starts]
     (cond
       [(not (= (array-length starts) 2)) 1]

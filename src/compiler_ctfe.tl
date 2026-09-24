@@ -1351,12 +1351,40 @@
   (reflections CtfeReflectInfoList)
   (source-names ci.InternSourceNameSessionHandle))
 
+;; The binding arena and the metadata are boxed and shared by every snapshot of
+;; an environment. The environment keeps the two box pointers as addresses, so
+;; it is a Copy handle with the layout it had when it held the boxes.
 (defstruct CtfeEnv
-  (arena-store (Box CtfeEnvArena))
+  (arena-store u64)
   (head i64)
   (syntax-pools CtfeMaybeSyntaxPools)
-  (metadata (Box CtfeEnvMetadata))
+  (metadata u64)
   (macro-state CompilerCtfeMacroState))
+
+(define (ctfe-env-arena-box-new [store : CtfeEnvArena]) : u64
+  (let
+    [boxed : (Box CtfeEnvArena) (box store)]
+    (unsafe
+      (ptr-read (ptr-cast (ptr-addr-of boxed) : (Ptr u64))))))
+
+(define (ctfe-env-metadata-box-new [metadata : CtfeEnvMetadata]) : u64
+  (let
+    [boxed : (Box CtfeEnvMetadata) (box metadata)]
+    (unsafe
+      (ptr-read (ptr-cast (ptr-addr-of boxed) : (Ptr u64))))))
+
+;; The shared arena box itself, for in-place updates through `__tl-box-place`.
+(define (ctfe-env-arena-box [address : u64]) : (Box CtfeEnvArena)
+  (unsafe
+    (ptr-read (ptr-cast (ptr-addr-of address) : (Ptr (Box CtfeEnvArena))))))
+
+(define (ctfe-env-arena-read [address : u64]) : CtfeEnvArena
+  (unsafe
+    (ptr-read (int->ptr address : (Ptr CtfeEnvArena)))))
+
+(define (ctfe-env-metadata-read [address : u64]) : CtfeEnvMetadata
+  (unsafe
+    (ptr-read (int->ptr address : (Ptr CtfeEnvMetadata)))))
 
 (defstruct CtfeEnvRef
   (:lifetimes env)
@@ -1386,10 +1414,11 @@
     (cfg compile-profile (ctfe-env-profile-note-arena-root!) unit)
     (compiler-ctfe-macro-state-bind-source-names! macro-state source-names)
     (CtfeEnv
-      (box (ctfe-env-arena-new))
+      (ctfe-env-arena-box-new (ctfe-env-arena-new))
       -1
       (CtfeMaybeSyntaxPools.None)
-      (box (CtfeEnvMetadata pools layouts reflections source-names))
+      (ctfe-env-metadata-box-new
+        (CtfeEnvMetadata pools layouts reflections source-names))
       macro-state)))
 
 (define (ctfe-env-empty-with-pools-and-source-names-and-macro-state
@@ -1551,14 +1580,6 @@
     (unsafe
       (ptr-read (ptr-offset (__tl_array-data segment) offset)))))
 
-(define (ctfe-env-arena-box-shared-view [value : (Box CtfeEnvArena)]) : CtfeEnvArena
-  (let
-    [address : i64
-      (unsafe
-        (ptr-read (ptr-cast (ptr-addr-of value) : (Ptr i64))))]
-    (unsafe
-      (ptr-read (int->ptr (cast address : u64) : (Ptr CtfeEnvArena))))))
-
 (define (ctfe-env-arena-push!
   [store : (&mut store CtfeEnvArena)]
   [binding : CtfeEnvBinding]) : i64
@@ -1577,7 +1598,7 @@
   [ty : ast.AstType]
   [mutable-local : bool]) : CtfeEnv
   (let
-    [store : (Box CtfeEnvArena) env.arena-store]
+    [store : (Box CtfeEnvArena) (ctfe-env-arena-box env.arena-store)]
     [syntax-pools
       : CtfeMaybeSyntaxPools
       ;; Provenance inspection must not clone a syntax value: cloning its pool
@@ -1592,7 +1613,7 @@
         (CtfeEnvBinding name-id value ty env.head mutable-local))]
     (begin
       (cfg compile-profile (ctfe-env-profile-note-binding-append!) unit)
-      (CtfeEnv store index syntax-pools env.metadata env.macro-state))))
+      (CtfeEnv env.arena-store index syntax-pools env.metadata env.macro-state))))
 
 (define (ctfe-env-extend-id
   [env : CtfeEnv]
@@ -1861,26 +1882,16 @@
     (unsafe
       (ptr-read (int->ptr address : (Ptr CtfeEnv))))))
 
-(define (ctfe-env-metadata-box-shared-view [value : (Box CtfeEnvMetadata)]) : CtfeEnvMetadata
-  (let
-    [address : i64
-      (unsafe
-        (ptr-read (ptr-cast (ptr-addr-of value) : (Ptr i64))))]
-    (unsafe
-      (ptr-read (int->ptr (cast address : u64) : (Ptr CtfeEnvMetadata))))))
-
 (define (ctfe-env-layouts [env : (& env CtfeEnv)]) : CtfeLayoutInfoList
   (let
     [view : CtfeEnv (ctfe-env-shared-view env)]
-    [metadata : CtfeEnvMetadata
-      (ctfe-env-metadata-box-shared-view view.metadata)]
+    [metadata : CtfeEnvMetadata (ctfe-env-metadata-read view.metadata)]
     metadata.layouts))
 
 (define (ctfe-env-reflections [env : (& env CtfeEnv)]) : CtfeReflectInfoList
   (let
     [view : CtfeEnv (ctfe-env-shared-view env)]
-    [metadata : CtfeEnvMetadata
-      (ctfe-env-metadata-box-shared-view view.metadata)]
+    [metadata : CtfeEnvMetadata (ctfe-env-metadata-read view.metadata)]
     metadata.reflections))
 
 ;; Pool contexts are mutable state cells, not owned values. Keep this accessor
@@ -1945,8 +1956,7 @@
 (define (ctfe-env-source-names [env : (& env CtfeEnv)]) : ci.InternSourceNameSessionHandle
   (let
     [view : CtfeEnv (ctfe-env-shared-view env)]
-    [metadata : CtfeEnvMetadata
-      (ctfe-env-metadata-box-shared-view view.metadata)]
+    [metadata : CtfeEnvMetadata (ctfe-env-metadata-read view.metadata)]
     metadata.source-names))
 
 (define (ctfe-env-structural-session [env : (& env CtfeEnv)]) : cis.InternStructuralSessionHandle
@@ -2082,13 +2092,12 @@
 (define (ctfe-env-rebase-pools [env : CtfeEnv] [pools : ast.AstNodePoolContext]) : CtfeEnv
   (let
     [env-view : CtfeEnv (ctfe-env-shared-view (& env))]
-    [metadata : CtfeEnvMetadata
-      (ctfe-env-metadata-box-shared-view env-view.metadata)]
+    [metadata : CtfeEnvMetadata (ctfe-env-metadata-read env-view.metadata)]
     (CtfeEnv
       env.arena-store
       env.head
       env.syntax-pools
-      (box
+      (ctfe-env-metadata-box-new
         (CtfeEnvMetadata
           pools
           metadata.layouts
@@ -2106,13 +2115,12 @@
   [pools : ast.AstNodePoolContext]) : CtfeEnv
   (let
     [env-view : CtfeEnv (ctfe-env-shared-view (& env))]
-    [metadata : CtfeEnvMetadata
-      (ctfe-env-metadata-box-shared-view env-view.metadata)]
+    [metadata : CtfeEnvMetadata (ctfe-env-metadata-read env-view.metadata)]
     (CtfeEnv
       env.arena-store
       env.head
       (CtfeMaybeSyntaxPools.Some (ast.ast-place-shared-view pools))
-      (box
+      (ctfe-env-metadata-box-new
         (CtfeEnvMetadata
           pools
           metadata.layouts
@@ -2156,7 +2164,7 @@
 (define (ctfe-env-lookup-id-from [env : (& env CtfeEnv)] [name-id : i64]) : CtfeMaybeValue
   (let
     [view : CtfeEnv (ctfe-env-shared-view env)]
-    [store : CtfeEnvArena (ctfe-env-arena-box-shared-view view.arena-store)]
+    [store : CtfeEnvArena (ctfe-env-arena-read view.arena-store)]
     [index : i64 env.head]
     [searching? : bool true]
     [result : CtfeMaybeValue (CtfeMaybeValue.None)]
@@ -2181,7 +2189,7 @@
 (define (ctfe-env-lookup-type-id-from [env : (& env CtfeEnv)] [name-id : i64]) : ast.AstMaybeType
   (let
     [view : CtfeEnv (ctfe-env-shared-view env)]
-    [store : CtfeEnvArena (ctfe-env-arena-box-shared-view view.arena-store)]
+    [store : CtfeEnvArena (ctfe-env-arena-read view.arena-store)]
     [index : i64 env.head]
     [searching? : bool true]
     [result : ast.AstMaybeType (ast.AstMaybeType.No)]
@@ -2210,7 +2218,7 @@
   [name-id : i64]
   [value : CompilerCtfeValue]) : bool
   (let
-    [store : (Box CtfeEnvArena) env.arena-store]
+    [store : (Box CtfeEnvArena) (ctfe-env-arena-box env.arena-store)]
     [index : i64 env.head]
     [searching? : bool true]
     [updated? : bool false]

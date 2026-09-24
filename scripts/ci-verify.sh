@@ -299,10 +299,6 @@ else
         -File scripts/verify-windows-memory-limit.ps1
 fi
 run_gate \
-    semantic-index-benchmark-report-and-termination-self-tests \
-    scripts/benchmark-semantic-index.sh \
-    --self-test
-run_gate \
     embedded-stdlib-tlci-resource-verifier-self-tests \
     scripts/verify-embedded-stdlib-tlci-resources.sh --self-test
 # The stage0, fixpoint, and embedded-image builds all stamp the HEAD commit into

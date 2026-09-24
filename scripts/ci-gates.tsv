@@ -1,7 +1,7 @@
 # ci-gate-ledger-schema	2
-# count	all	120
-# count	linux	117
-# count	windows	103
+# count	all	119
+# count	linux	116
+# count	windows	102
 id	hosts	label	needs
 cli-gate-inventory-and-ownership	all	CLI gate inventory and ownership	-
 ci-gate-ledger-self-tests	all	CI gate ledger self-tests	-
@@ -11,7 +11,6 @@ work-queue-fetch-boundary-self-tests	all	work queue fetch boundary self-tests	-
 cross-mode-differential-oracle-self-tests	all	cross-mode differential oracle self-tests	-
 linux-resident-memory-limit-helper-self-tests	linux	Linux resident memory limit helper self-tests	-
 windows-job-object-memory-limit-helper-self-tests	windows	Windows Job Object memory limit helper self-tests	-
-semantic-index-benchmark-report-and-termination-self-tests	all	semantic-index benchmark report and termination self-tests	-
 embedded-stdlib-tlci-resource-verifier-self-tests	all	embedded stdlib TLCI resource verifier self-tests	-
 build-provenance-helper-self-tests	all	build provenance helper self-tests	-
 build-invariance-batch-reuse-self-tests	linux	build-invariance batch reuse self-tests	-

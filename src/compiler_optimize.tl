@@ -183028,13 +183028,52 @@
           true))]
     [(ir.CompilerIrCallArgs.Sret _ _) false]))
 
+;; The vars whose address the function takes (`AddrOf`'s source). A pointer
+;; made by `ptr-addr-of` reads such a var's slot, so redefining it -- which
+;; before SSA is a plain `Mov` -- writes memory a cached call may read.
+(define (opt-loop-call-addr-taken
+  [frame : i64]
+  [blocks : ir.CompilerIrBlockList]) : (__tl_dyn-array bool)
+  (let
+    [taken : (__tl_dyn-array bool) (__tl_make-array bool (+ frame 1))]
+    [seq : ir.CompilerIrBlockSeq
+      (ir.compiler-ir-block-seq-from-list
+        (compiler-opt-global-shared-view blocks))]
+    [b : i64 0]
+    (begin
+      (while (< b seq.len)
+        (match (ir.compiler-ir-block-seq-ref
+          (compiler-opt-global-shared-view seq)
+          b)
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (let
+              [i : i64 0]
+              (begin
+                (while (< i instrs.len)
+                  (begin
+                    (match (ir.compiler-ir-instr-seq-ref
+                      (compiler-opt-global-shared-view instrs)
+                      i)
+                      [(ir.CompilerIrInstr.AddrOf _ src)
+                        (when
+                          (and (>= src 0) (< src (array-length taken)))
+                          (set! (array-ref taken src) true))]
+                      [_ unit])
+                    (set! i (+ i 1))))
+                (set! b (+ b 1))))]))
+      taken)))
+
 (define (opt-loop-call-readonly?
   [memory : opt_i64_i64_map.Map]
+  [addr-taken : (__tl_dyn-array bool)]
   [blocks : ir.CompilerIrBlockList]) : bool
   (match blocks
     [(ir.CompilerIrBlockList.Nil) true]
     [(ir.CompilerIrBlockList.Array seq)
-      (opt-loop-call-readonly? memory (ir.compiler-ir-block-seq-to-list seq))]
+      (opt-loop-call-readonly?
+        memory
+        addr-taken
+        (ir.compiler-ir-block-seq-to-list seq))]
     [(ir.CompilerIrBlockList.Cons block rest)
       (match block
         [(ir.CompilerIrBlock.Block _ instrs)
@@ -183060,9 +183099,24 @@
                             (compiler-opt-global-shared-view instrs)
                             i))
                         (return false))])
+                  ;; Any definition of an address-taken var is a store to its
+                  ;; slot (see opt-loop-call-addr-taken).
+                  (match (opt-instr-def-var
+                    (ir.compiler-ir-instr-seq-ref
+                      (compiler-opt-global-shared-view instrs)
+                      i))
+                    [(option_i64.Some var)
+                      (when
+                        (and
+                          (>= var 0)
+                          (< var (array-length addr-taken))
+                          (array-ref addr-taken var))
+                        (return false))]
+                    [(option_i64.None) unit])
                   (set! i (+ i 1))))
               (opt-loop-call-readonly?
                 memory
+                addr-taken
                 (compiler-opt-box-shared-view rest))))])]))
 
 (define (opt-loop-call-expensive? [functions : OptFunctionIndex] [name : i64]) : bool
@@ -183133,6 +183187,7 @@
   [functions : OptFunctionIndex]
   [memory : opt_i64_i64_map.Map]
   [defs : (__tl_dyn-array i64)]
+  [addr-taken : (__tl_dyn-array bool)]
   [loops : OptNaturalLoopList]) : OptLoopCallSite
   (match loops
     [(OptNaturalLoopList.Nil) (OptLoopCallSite.No)]
@@ -183147,6 +183202,7 @@
               (when
                 (opt-loop-call-readonly?
                   (compiler-opt-global-shared-view memory)
+                  (compiler-opt-global-shared-view addr-taken)
                   (compiler-opt-global-shared-view body))
                 (match (opt-loop-call-find-in-body
                   (compiler-opt-global-shared-view functions)
@@ -183167,6 +183223,7 @@
           functions
           memory
           defs
+          addr-taken
           (compiler-opt-box-shared-view rest)))]))
 
 (define (opt-loop-call-rewrite
@@ -183376,7 +183433,14 @@
             (opt-def-counts-blocks!
               (compiler-opt-global-shared-view defs)
               (opt-function-blocks (compiler-opt-global-shared-view func)))
-            (match (opt-loop-call-find functions memory defs loops)
+            (match (opt-loop-call-find
+              functions
+              memory
+              defs
+              (opt-loop-call-addr-taken
+                frame
+                (opt-function-blocks (compiler-opt-global-shared-view func)))
+              loops)
               [(OptLoopCallSite.No) func]
               [(OptLoopCallSite.Some pre site at)
                 (match (opt-cfg-index-find-block

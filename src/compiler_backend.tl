@@ -68946,6 +68946,136 @@
         index
         out))))
 
+;; A sole-use byte offset such as i*24 followed by an address addition can
+;; use two LEAs: i*3, then base + scaled-index*8. This removes multiply latency
+;; without adding instructions. Keep the existing homes and refuse any shape
+;; whose Gep could disappear into a later memory operation.
+;; The successful path owns the absorbed Gep ordinal; rejected probes are pure.
+(define (compiler-backend-mul-gep-asm
+  [ctx : CompilerBackendEmissionContext]
+  [dst : i64]
+  [lhs : compiler_ir_types.CompilerIrValue]
+  [rhs : compiler_ir_types.CompilerIrValue]
+  [ty : compiler_ast_types.AstType]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]) : CompilerBackendMaybeAsm
+  (begin
+    (unless
+      (and
+        (< index instrs.len)
+        (compiler-backend-gep-fold-64bit-int? ty)
+        (compiler-backend-var-single-use?
+          (compiler-backend-global-shared-view ctx.use-counts)
+          dst))
+      (return (CompilerBackendMaybeAsm.No)))
+    (match rhs
+      [(compiler_ir_types.CompilerIrValue.I64 n)
+        (let
+          [factor : i64
+            (cond
+              [(or (= n 6) (= n 12) (= n 24)) 3]
+              [(or (= n 10) (= n 20) (= n 40)) 5]
+              [(or (= n 18) (= n 36) (= n 72)) 9]
+              [else 0])]
+          (begin
+            (when (= factor 0) (return (CompilerBackendMaybeAsm.No)))
+            (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+              [(compiler_ir_types.CompilerIrInstr.Gep
+                  address-dst
+                  base
+                  offset
+                  elem-ty)
+                (begin
+                  (unless
+                    (and
+                      (compiler-backend-branch-uses-var?
+                        (compiler-backend-global-shared-view offset)
+                        dst)
+                      (=
+                        (compiler-backend-type-size
+                          ctx.type-segment-bases
+                          (compiler-backend-global-shared-view elem-ty))
+                        1)
+                      (not
+                        (compiler-backend-var-single-use?
+                          (compiler-backend-global-shared-view ctx.use-counts)
+                          address-dst))
+                      (not
+                        (compiler-backend-var-fuse-safe?
+                          (compiler-backend-global-shared-view
+                            ctx.backend-state)
+                          address-dst))
+                      (=
+                        (compiler-backend-gep-fold-peek
+                          (compiler-backend-global-shared-view
+                            ctx.function-state)
+                          ctx.type-segment-bases
+                          0
+                          (compiler-backend-global-shared-view offset)
+                          (compiler-backend-global-shared-view elem-ty))
+                        0))
+                    (return (CompilerBackendMaybeAsm.No)))
+                  (let
+                    [source
+                      (compiler-backend-value-scalar-register
+                        (compiler-backend-global-shared-view ctx.backend-state)
+                        (compiler-backend-global-shared-view ctx.assignments)
+                        lhs)]
+                    [base-home
+                      (compiler-backend-value-scalar-register
+                        (compiler-backend-global-shared-view ctx.backend-state)
+                        (compiler-backend-global-shared-view ctx.assignments)
+                        base)]
+                    [temp
+                      (compiler-backend-var-register-home
+                        (compiler-backend-global-shared-view ctx.backend-state)
+                        (compiler-backend-global-shared-view ctx.assignments)
+                        dst)]
+                    [target
+                      (compiler-backend-var-register-home
+                        (compiler-backend-global-shared-view ctx.backend-state)
+                        (compiler-backend-global-shared-view ctx.assignments)
+                        address-dst)]
+                    (begin
+                      ;; A %rbp base would be mistaken for a frame reference by
+                      ;; FPO rebasing. The scaled temporary may use the index slot.
+                      (when
+                        (or
+                          (string.eq source "")
+                          (string.eq base-home "")
+                          (string.eq temp "")
+                          (string.eq target "")
+                          (string.eq source "%rbp")
+                          (string.eq base-home "%rbp")
+                          (string.eq temp base-home))
+                        (return (CompilerBackendMaybeAsm.No)))
+                      (compiler-backend-gep-fold-next!
+                        (compiler-backend-global-shared-view ctx.function-state)
+                        ctx.type-segment-bases
+                        offset
+                        elem-ty)
+                      (CompilerBackendMaybeAsm.Some
+                        (str_cat.str-cat
+                          "    leaq ("
+                          (compiler-backend-global-shared-view source)
+                          ","
+                          source
+                          ","
+                          (string.int->string (- factor 1))
+                          "), "
+                          (compiler-backend-global-shared-view temp)
+                          "\n    leaq ("
+                          base-home
+                          ","
+                          temp
+                          ","
+                          (string.int->string (/ n factor))
+                          "), "
+                          target
+                          "\n")))))]
+              [_ (CompilerBackendMaybeAsm.No)])))]
+      [_ (CompilerBackendMaybeAsm.No)])))
+
 (define (compiler-backend-emit-binop-step
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
@@ -68958,49 +69088,72 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
-  (match (compiler-backend-bit-test-branch-match
-    (compiler-backend-global-shared-view ctx)
-    dst
-    (compiler-backend-global-shared-view op)
-    (compiler-backend-global-shared-view lhs)
-    (compiler-backend-global-shared-view rhs)
-    (compiler-backend-global-shared-view instrs)
-    index)
-    [(CompilerBackendMaybeBitTest.Some
-        mask
-        count
-        true-label
-        false-label
-        after-branch
-        base-dst
-        guard?)
-      (compiler-backend-emit-bit-test-branch
+  (begin
+    (when
+      (match (compiler-backend-global-shared-view op)
+        [(compiler_ir_types.CompilerIrBinOp.Mul) true]
+        [_ false])
+      (match (compiler-backend-mul-gep-asm
         (compiler-backend-global-shared-view ctx)
-        fallthrough
-        base-dst
-        (compiler-backend-global-shared-view op)
-        ty
-        mask
-        count
-        true-label
-        false-label
-        guard?
-        (compiler-backend-global-shared-view instrs)
-        after-branch
-        out)]
-    [(CompilerBackendMaybeBitTest.No)
-      (compiler-backend-emit-binop-step-general
-        (compiler-backend-global-shared-view ctx)
-        fallthrough
-        (compiler-backend-global-shared-view instr)
         dst
-        (compiler-backend-global-shared-view op)
         (compiler-backend-global-shared-view lhs)
         (compiler-backend-global-shared-view rhs)
         (compiler-backend-global-shared-view ty)
         (compiler-backend-global-shared-view instrs)
-        index
-        out)]))
+        index)
+        [(CompilerBackendMaybeAsm.Some text)
+          (return
+            (compiler-backend-emit-fused-result-rest
+              ctx
+              fallthrough
+              (ResultCompilerBackend.Ok text)
+              instrs
+              (+ index 1)
+              out))]
+        [(CompilerBackendMaybeAsm.No) unit]))
+    (match (compiler-backend-bit-test-branch-match
+      (compiler-backend-global-shared-view ctx)
+      dst
+      (compiler-backend-global-shared-view op)
+      (compiler-backend-global-shared-view lhs)
+      (compiler-backend-global-shared-view rhs)
+      (compiler-backend-global-shared-view instrs)
+      index)
+      [(CompilerBackendMaybeBitTest.Some
+          mask
+          count
+          true-label
+          false-label
+          after-branch
+          base-dst
+          guard?)
+        (compiler-backend-emit-bit-test-branch
+          (compiler-backend-global-shared-view ctx)
+          fallthrough
+          base-dst
+          (compiler-backend-global-shared-view op)
+          ty
+          mask
+          count
+          true-label
+          false-label
+          guard?
+          (compiler-backend-global-shared-view instrs)
+          after-branch
+          out)]
+      [(CompilerBackendMaybeBitTest.No)
+        (compiler-backend-emit-binop-step-general
+          (compiler-backend-global-shared-view ctx)
+          fallthrough
+          (compiler-backend-global-shared-view instr)
+          dst
+          (compiler-backend-global-shared-view op)
+          (compiler-backend-global-shared-view lhs)
+          (compiler-backend-global-shared-view rhs)
+          (compiler-backend-global-shared-view ty)
+          (compiler-backend-global-shared-view instrs)
+          index
+          out)])))
 
 (defenum CompilerBackendMaybeFlagsBranch
   (No)

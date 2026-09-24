@@ -111700,6 +111700,16 @@
             (compiler_ir_types.compiler-ir-instr-builder-push!
               (&mut b)
               (opt-pcd-test-call 6 (opt-pcd-test-impure) 1)))
+          (when
+            (= mode 10)
+            (compiler_ir_types.compiler-ir-instr-builder-push!
+              (&mut b)
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                7
+                (compiler_ir_types.CompilerIrBinOp.Div)
+                (compiler_ir_types.CompilerIrValue.Var 1)
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (compiler_ast_types.AstType.I64))))
           (compiler_ir_types.compiler-ir-instr-builder-push!
             (&mut b)
             (compiler_ir_types.CompilerIrInstr.Call
@@ -111714,6 +111724,14 @@
                       2
                       1))))
               (compiler_ast_types.AstType.I64)))
+          (when
+            (= mode 11)
+            (compiler_ir_types.compiler-ir-instr-builder-push!
+              (&mut b)
+              (compiler_ir_types.CompilerIrInstr.Mov
+                4
+                (compiler_ir_types.CompilerIrValue.I64 0)
+                (compiler_ast_types.AstType.I64))))
           (compiler_ir_types.compiler-ir-instr-builder-push!
             (&mut b)
             (compiler_ir_types.CompilerIrInstr.BinOp
@@ -111746,7 +111764,7 @@
           (compiler_ir_types.compiler-ir-instr-builder-with-capacity 2)]
         (begin
           (when
-            (= mode 5)
+            (or (= mode 5) (= mode 12))
             (compiler_ir_types.compiler-ir-instr-builder-push!
               (&mut b)
               (compiler_ir_types.CompilerIrInstr.Phi
@@ -111754,17 +111772,19 @@
                 (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                   (compiler_ir_types.CompilerIrValue.Var 2)
                   header
-                  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
-                    (compiler_ir_types.CompilerIrValue.Var 4)
-                    body
-                    (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+                  (if (= mode 12)
+                    (compiler_ir_types.compiler-ir-phi-input-seq-empty)
+                    (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                      (compiler_ir_types.CompilerIrValue.Var 4)
+                      body
+                      (compiler_ir_types.compiler-ir-phi-input-seq-empty))))
                 (compiler_ast_types.AstType.I64))))
           (compiler_ir_types.compiler-ir-instr-builder-push!
             (&mut b)
             (compiler_ir_types.CompilerIrInstr.Return
               (compiler_ir_types.CompilerIrMaybeValue.Some
                 (compiler_ir_types.CompilerIrValue.Var
-                  (if (= mode 5)
+                  (if (or (= mode 5) (= mode 12))
                     7
                     2)))))
           (compiler_ir_types.compiler-ir-block-builder-push!
@@ -111863,11 +111883,96 @@
         [_ false])]
     [_ false]))
 
+;; The original guard still skips the first call, and the backedge targets a
+;; second guard whose taken edge skips that call. No flag/cache slots exist.
+(define (opt-lcc-test-guarded-control?
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : bool
+  (match (compiler_optimize.opt-cfg-find-block
+    (compiler_optimize.compiler-opt-global-shared-view blocks)
+    (compiler_ir_types.compiler-ir-label "body"))
+    [(compiler_optimize.OptMaybeBlock.Some
+        (compiler_ir_types.CompilerIrBlock.Block _ first))
+      (and
+        (match (compiler_optimize.opt-cfg-find-block
+          (compiler_optimize.compiler-opt-global-shared-view blocks)
+          (compiler_ir_types.compiler-ir-label "entry"))
+          [(compiler_optimize.OptMaybeBlock.Some
+              (compiler_ir_types.CompilerIrBlock.Block _ entry))
+            (and
+              (= entry.len 2)
+              (match (compiler_ir_types.compiler-ir-instr-seq-ref entry 1)
+                [(compiler_ir_types.CompilerIrInstr.Jump target)
+                  (= target (compiler_ir_types.compiler-ir-label "header"))]
+                [_ false]))]
+          [_ false])
+        (match (compiler_optimize.opt-cfg-find-block
+          (compiler_optimize.compiler-opt-global-shared-view blocks)
+          (compiler_ir_types.compiler-ir-label "header"))
+          [(compiler_optimize.OptMaybeBlock.Some
+              (compiler_ir_types.CompilerIrBlock.Block _ first-guard))
+            (and
+              (= first-guard.len 2)
+              (match (compiler_ir_types.compiler-ir-instr-seq-ref first-guard 1)
+                [(compiler_ir_types.CompilerIrInstr.Branch
+                    (compiler_ir_types.CompilerIrValue.Var 3)
+                    yes
+                    no)
+                  (and
+                    (= yes (compiler_ir_types.compiler-ir-label "body"))
+                    (= no (compiler_ir_types.compiler-ir-label "exit")))]
+                [_ false]))]
+          [_ false])
+        (match (compiler_ir_types.compiler-ir-instr-seq-ref
+          (compiler_optimize.compiler-opt-global-shared-view first)
+          (- first.len 2))
+          [(compiler_ir_types.CompilerIrInstr.Call 4 name _ _)
+            (= name (opt-pcd-test-pure))]
+          [_ false])
+        (match (compiler_ir_types.compiler-ir-instr-seq-ref
+          first
+          (- first.len 1))
+          [(compiler_ir_types.CompilerIrInstr.Jump resume)
+            (match (compiler_optimize.opt-cfg-find-block
+              (compiler_optimize.compiler-opt-global-shared-view blocks)
+              resume)
+              [(compiler_optimize.OptMaybeBlock.Some
+                  (compiler_ir_types.CompilerIrBlock.Block _ rest))
+                (and
+                  (= rest.len 3)
+                  (match (compiler_ir_types.compiler-ir-instr-seq-ref rest 2)
+                    [(compiler_ir_types.CompilerIrInstr.Jump repeat)
+                      (match (compiler_optimize.opt-cfg-find-block
+                        (compiler_optimize.compiler-opt-global-shared-view
+                          blocks)
+                        repeat)
+                        [(compiler_optimize.OptMaybeBlock.Some
+                            (compiler_ir_types.CompilerIrBlock.Block _ guard))
+                          (and
+                            (= guard.len 2)
+                            (match (compiler_ir_types.compiler-ir-instr-seq-ref
+                              guard
+                              1)
+                              [(compiler_ir_types.CompilerIrInstr.Branch
+                                  (compiler_ir_types.CompilerIrValue.Var 3)
+                                  yes
+                                  no)
+                                (and
+                                  (= yes resume)
+                                  (=
+                                    no
+                                    (compiler_ir_types.compiler-ir-label "exit")))]
+                              [_ false]))]
+                        [_ false])]
+                    [_ false]))]
+              [_ false])]
+          [_ false]))]
+    [_ false]))
+
 (test
   invariant-loop-call-cache
   (let
     [mode : i64 0]
-    (while (< mode 10)
+    (while (< mode 13)
       (let
         [index : compiler_optimize.OptFunctionIndex
           (compiler_optimize.opt-function-index-build
@@ -111887,16 +111992,36 @@
             (=
               (compiler_ir_types.compiler-ir-block-list-count
                 (compiler_ir_types.compiler-ir-global-shared-view blocks))
-              (if (or (= mode 0) (= mode 5) (= mode 6))
+              (if (or
+                (= mode 0)
+                (= mode 5)
+                (= mode 6)
+                (= mode 10)
+                (= mode 11)
+                (= mode 12))
                 6
                 4))
             "cache only a costly, invariant call in a write-free loop")
           (when
-            (or (= mode 0) (= mode 5) (= mode 6))
+            (or
+              (= mode 0)
+              (= mode 5)
+              (= mode 6)
+              (= mode 10)
+              (= mode 11)
+              (= mode 12))
             (test.assert-true
-              (opt-lcc-test-control?
-                (compiler_optimize.compiler-opt-global-shared-view blocks))
-              "false executes the original call; true reuses its completed result"))
+              (if (or (= mode 5) (= mode 10) (= mode 11) (= mode 12))
+                (opt-lcc-test-control?
+                  (compiler_optimize.compiler-opt-global-shared-view blocks))
+                (and
+                  (=
+                    (compiler_optimize.opt-function-frame
+                      (compiler_optimize.compiler-opt-global-shared-view out))
+                    8)
+                  (opt-lcc-test-guarded-control?
+                    (compiler_optimize.compiler-opt-global-shared-view blocks))))
+              "first call stays guarded; later iterations reuse its result"))
           (test.assert-true
             (compiler_optimize.opt-inline-structure-ok? blocks)
             "splitting the call repairs successor phi predecessors")

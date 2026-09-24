@@ -906,34 +906,25 @@
         [high : BigNum (bn-shl-bits high-base 32)]
         (bn-add low high)))))
 
-;: BigNum a multiplied by ten raised to p.
+;: BigNum a multiplied by ten raised to p, nine decimal digits (one 32-bit
+;: multiplier) per pass.
 (define (bn-mul-pow10 [a : BigNum] [p : i64]) : BigNum
   (let
     [r : BigNum a]
-    [i : i64 0]
+    [left : i64 p]
+    [m : u64 (cast 1 : u64)]
     (begin
-      (while (< i p)
+      (while (>= left 9)
         (begin
-          (set! r (bn-mul-u32 r (cast 10 : u64)))
-          (set! i (+ i 1))))
-      r)))
-
-;: floor(num/den) as u64, assuming the quotient fits in 60 bits.
-(define (bn-div-floor-u64 [num : (& num BigNum)] [den : (& den BigNum)]) : u64
-  (let
-    [q : u64 (cast 0 : u64)]
-    [bit : i64 59]
-    (begin
-      (while (>= bit 0)
-        (let
-          [cand : u64 (+ q (shl (cast 1 : u64) bit))]
-          [prod : BigNum (bn-mul-u64 den cand)]
-          (begin
-            (if (<= (bn-cmp prod num) 0)
-              (set! q cand)
-              unit)
-            (set! bit (- bit 1)))))
-      q)))
+          (set! r (bn-mul-u32 r (cast 1000000000 : u64)))
+          (set! left (- left 9))))
+      (while (> left 0)
+        (begin
+          (set! m (* m (cast 10 : u64)))
+          (set! left (- left 1))))
+      (if (> m (cast 1 : u64))
+        (bn-mul-u32 r m)
+        r))))
 
 ;: Optional f64 result for deterministic decimal parsing.
 (defenum IoFloatMaybeF64
@@ -957,12 +948,26 @@
 (define (float-exponent-char? [c : char]) : bool
   (or (= c 'e') (= c 'E')))
 
-;: Append one decimal digit to an exact bignum significand.
+;: Append one decimal digit to an exact bignum significand, in place.
 (define (float-bn-append-digit [value : BigNum] [digit : i64]) : BigNum
   (let
-    [scaled : BigNum (bn-mul-u32 value (cast 10 : u64))]
-    [tail : BigNum (bn-from-u64 (cast digit : u64))]
-    (bn-add scaled tail)))
+    [r : BigNum value]
+    [len : i64 r.len]
+    [carry : u64 (cast digit : u64)]
+    [i : i64 0]
+    (begin
+      (while (< i len)
+        (let
+          [p : u64 (+ (* (array-ref r.limbs i) (cast 10 : u64)) carry)]
+          (begin
+            (set! (array-ref r.limbs i) (bit-and p stdlib.io.ftoa-mask32))
+            (set! carry (shr p 32))
+            (set! i (+ i 1)))))
+      (if (> carry (cast 0 : u64))
+        (begin
+          (set! (array-ref r.limbs len) carry)
+          (BigNum r.limbs (+ len 1)))
+        r))))
 
 ;: Parse decimal text into exact sign, significand, and decimal exponent.
 (define (float-parse-decimal [text : String]) : IoFloatMaybeDecimal
@@ -1141,19 +1146,145 @@
           estimate
           (- estimate 1))))))
 
-;: Rounded quotient of `num / den`, ties to even.
+;: Rounded quotient of `num / den`, ties to even, for a quotient below 2^64.
+;: Knuth's algorithm D on the base-2^32 limbs: with both operands shifted so
+;: the divisor's top limb has its high bit set, each quotient limb is
+;: estimated from the top two remainder limbs, corrected against the next
+;: divisor limb (after which it is at most one too large), multiplied out and
+;: subtracted in place, and added back once if that subtraction borrows. The
+;: remainder left behind (scaled by the same shift) then rounds the quotient
+;: against half the divisor.
 (define (float-round-div-u64 [num : (& num BigNum)] [den : (& den BigNum)]) : u64
   (let
-    [q : u64 (bn-div-floor-u64 num den)]
-    [twice-num : BigNum (bn-shl-bits num 1)]
-    [mid : BigNum (bn-mul-u64 den (+ (* (cast 2 : u64) q) (cast 1 : u64)))]
-    [cmp : i64 (bn-cmp twice-num mid)]
-    (if (> cmp 0)
-      (+ q (cast 1 : u64))
-      (if (= cmp 0)
-        (if (= (bit-and q (cast 1 : u64)) (cast 1 : u64))
-          (+ q (cast 1 : u64))
-          q)
+    [n : i64 den.len]
+    [m : i64 num.len]
+    [ul : i64
+      (+
+        (if (> m n)
+          m
+          n)
+        1)]
+    [s : i64 (- 31 (stdlib.io.ftoa-msb-index (array-ref den.limbs (- n 1))))]
+    [b : u64 (shl (cast 1 : u64) 32)]
+    [mask : u64 stdlib.io.ftoa-mask32]
+    [vn : (__tl_dyn-array u64) (__tl_make-array u64 n)]
+    [un : (__tl_dyn-array u64) (__tl_make-array u64 ul)]
+    [vtop : u64 (cast 0 : u64)]
+    [q : u64 (cast 0 : u64)]
+    [cmp : i64 0]
+    [i : i64 0]
+    [j : i64 (- m n)]
+    (begin
+      (while (< i n)
+        (begin
+          (set!
+            (array-ref vn i)
+            (bit-or
+              (bit-and (shl (array-ref den.limbs i) s) mask)
+              (if (> i 0)
+                (shr (array-ref den.limbs (- i 1)) (- 32 s))
+                (cast 0 : u64))))
+          (set! i (+ i 1))))
+      (set! i 0)
+      (while (< i ul)
+        (begin
+          (set!
+            (array-ref un i)
+            (bit-or
+              (if (< i m)
+                (bit-and (shl (array-ref num.limbs i) s) mask)
+                (cast 0 : u64))
+              (if (and (> i 0) (<= i m))
+                (shr (array-ref num.limbs (- i 1)) (- 32 s))
+                (cast 0 : u64))))
+          (set! i (+ i 1))))
+      (set! vtop (array-ref vn (- n 1)))
+      (while (>= j 0)
+        (let
+          [top : u64
+            (bit-or
+              (shl (array-ref un (+ j n)) 32)
+              (array-ref un (+ j (- n 1))))]
+          [qhat : u64 (/ top vtop)]
+          [rhat : u64 (- top (* qhat vtop))]
+          [carry : u64 (cast 0 : u64)]
+          [borrow : u64 (cast 0 : u64)]
+          [k : i64 0]
+          (begin
+            (while (if (< rhat b)
+              (if (>= qhat b)
+                true
+                (if (> n 1)
+                  (>
+                    (* qhat (array-ref vn (- n 2)))
+                    (bit-or (shl rhat 32) (array-ref un (+ j (- n 2)))))
+                  false))
+              false)
+              (begin
+                (set! qhat (- qhat (cast 1 : u64)))
+                (set! rhat (+ rhat vtop))))
+            (while (< k n)
+              (let
+                [p : u64 (+ (* qhat (array-ref vn k)) carry)]
+                [sub : u64 (+ (bit-and p mask) borrow)]
+                [cur : u64 (array-ref un (+ j k))]
+                (begin
+                  (set! carry (shr p 32))
+                  (if (>= cur sub)
+                    (begin
+                      (set! (array-ref un (+ j k)) (- cur sub))
+                      (set! borrow (cast 0 : u64)))
+                    (begin
+                      (set! (array-ref un (+ j k)) (- (+ cur b) sub))
+                      (set! borrow (cast 1 : u64))))
+                  (set! k (+ k 1)))))
+            (let
+              [sub : u64 (+ carry borrow)]
+              [cur : u64 (array-ref un (+ j n))]
+              (if (>= cur sub)
+                (set! (array-ref un (+ j n)) (- cur sub))
+                (begin
+                  (set! (array-ref un (+ j n)) (bit-and (- (+ cur b) sub) mask))
+                  (set! qhat (- qhat (cast 1 : u64)))
+                  (set! carry (cast 0 : u64))
+                  (set! k 0)
+                  (while (< k n)
+                    (let
+                      [t : u64
+                        (+ (+ (array-ref un (+ j k)) (array-ref vn k)) carry)]
+                      (begin
+                        (set! (array-ref un (+ j k)) (bit-and t mask))
+                        (set! carry (shr t 32))
+                        (set! k (+ k 1)))))
+                  (set!
+                    (array-ref un (+ j n))
+                    (bit-and (+ (array-ref un (+ j n)) carry) mask)))))
+            (set! q (bit-or (shl q 32) qhat))
+            (set! j (- j 1)))))
+      (if (> (shr (array-ref un (- n 1)) 31) (cast 0 : u64))
+        (set! cmp 1)
+        unit)
+      (set! i (- n 1))
+      (while (and (= cmp 0) (>= i 0))
+        (let
+          [twice : u64
+            (bit-or
+              (bit-and (shl (array-ref un i) 1) mask)
+              (if (> i 0)
+                (shr (array-ref un (- i 1)) 31)
+                (cast 0 : u64)))]
+          [v : u64 (array-ref vn i)]
+          (begin
+            (if (> twice v)
+              (set! cmp 1)
+              (if (< twice v)
+                (set! cmp -1)
+                unit))
+            (set! i (- i 1)))))
+      (if (or
+        (> cmp 0)
+        (and (= cmp 0) (= (bit-and q (cast 1 : u64)) (cast 1 : u64))))
+        (+ q (cast 1 : u64))
         q))))
 
 ;: Rounded quotient of `num * 2^shift / den`, ties to even.
@@ -1198,8 +1329,22 @@
 (define (float-f32-zero-magnitude? [value : f32]) : bool
   (math.f32-signed-zero? value))
 
-;: Convert exact decimal components to an IEEE-754 binary64 value.
-(define (float-decimal-to-f64
+;: 10^k for 0 <= k <= 22: every such power is an exact binary64 value, and
+;: so is each partial product on the way to it.
+(define (float-exact-pow10 [k : i64]) : f64
+  (let
+    [result : f64 1.0]
+    [i : i64 0]
+    (begin
+      (while (< i k)
+        (begin
+          (set! result (* result 10.0))
+          (set! i (+ i 1))))
+      result)))
+
+;: Convert exact decimal components to an IEEE-754 binary64 value with exact
+;: bignum arithmetic, rounding the ratio num/den once.
+(define (float-decimal-to-f64-exact
   [negative : bool]
   [significand : BigNum]
   [decimal-exp : i64]) : IoFloatMaybeF64
@@ -1252,6 +1397,41 @@
                         (bit-or sign-bit (shl (cast 1 : u64) 52))))
                     (IoFloatSomeF64
                       (stdlib.io.float-f64-from-bits (bit-or sign-bit m)))))))))))))
+
+;: Convert exact decimal components to an IEEE-754 binary64 value.
+;: Clinger's fast path first: a significand below 2^53 and 10^|e| for
+;: |e| <= 22 are both exact binary64 values, so one IEEE multiply or divide
+;: rounds their exact product or quotient correctly -- the value the exact
+;: bignum ratio produces, at a fraction of its cost.
+(define (float-decimal-to-f64
+  [negative : bool]
+  [significand : BigNum]
+  [decimal-exp : i64]) : IoFloatMaybeF64
+  (let
+    [two53 : u64 0x20000000000000]
+    [value : u64
+      (cond
+        [(= significand.len 0) (cast 0 : u64)]
+        [(= significand.len 1) (array-ref significand.limbs 0)]
+        [(= significand.len 2)
+          (bit-or
+            (array-ref significand.limbs 0)
+            (shl (array-ref significand.limbs 1) 32))]
+        [else two53])]
+    (if (and (< value two53) (<= decimal-exp 22) (>= decimal-exp -22))
+      (IoFloatSomeF64
+        (stdlib.io.float-f64-from-bits
+          (bit-or
+            (if negative
+              (shl (cast 1 : u64) 63)
+              (cast 0 : u64))
+            (stdlib.io.float-f64-bits
+              (if (>= decimal-exp 0)
+                (* (cast value : f64) (stdlib.io.float-exact-pow10 decimal-exp))
+                (/
+                  (cast value : f64)
+                  (stdlib.io.float-exact-pow10 (- 0 decimal-exp))))))))
+      (stdlib.io.float-decimal-to-f64-exact negative significand decimal-exp))))
 
 ;: Parse finite decimal text into an IEEE-754 binary64 value.
 (define (float-parse-f64 [text : String]) : IoFloatMaybeF64

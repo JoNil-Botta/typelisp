@@ -57594,42 +57594,52 @@
           (tc-string-list-add bound (tc-env-key-name-text name))
           (+ index 1))])))
 
-(define (tc-expr-list-uses-free-name?
+(define (tc-expr-list-uses-free-names?
   [expr-bases : i64]
   [exprs : ast.AstExprList]
-  [name : String]
+  [names : TcStringList]
   [bound : TcStringList]) : bool
-  (tc-expr-list-uses-free-name-at? expr-bases (& exprs) 0 name bound))
+  (tc-expr-list-uses-free-names-at? expr-bases (& exprs) 0 names bound))
 
-(define (tc-expr-list-uses-free-name-at?
+(define (tc-expr-list-uses-free-names-at?
   [expr-bases : i64]
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]
-  [name : String]
+  [names : TcStringList]
   [bound : TcStringList]) : bool
   (if (>= index exprs.len)
     false
     (or
-      (tc-expr-uses-free-name?
+      (tc-expr-uses-free-names?
         expr-bases
         (ast.ast-expr-segment-bases-get
           expr-bases
           (ast.ast-expr-list-get exprs index 0))
-        (tc-global-shared-view name)
+        (tc-global-shared-view names)
         (tc-global-shared-view bound))
-      (tc-expr-list-uses-free-name-at? expr-bases exprs (+ index 1) name bound))))
+      (tc-expr-list-uses-free-names-at?
+        expr-bases
+        exprs
+        (+ index 1)
+        names
+        bound))))
 
-(define (tc-let-binding-list-uses-free-name?
+(define (tc-let-binding-list-uses-free-names?
   [expr-bases : i64]
   [bindings : ast.AstLetBindingList]
-  [name : String]
+  [names : TcStringList]
   [bound : TcStringList]) : bool
-  (tc-let-binding-list-uses-free-name-at? expr-bases (& bindings) name bound 0))
+  (tc-let-binding-list-uses-free-names-at?
+    expr-bases
+    (& bindings)
+    names
+    bound
+    0))
 
-(define (tc-let-binding-list-uses-free-name-at?
+(define (tc-let-binding-list-uses-free-names-at?
   [expr-bases : i64]
   [bindings : (& bindings ast.AstLetBindingList)]
-  [name : String]
+  [names : TcStringList]
   [bound : TcStringList]
   [index : i64]) : bool
   (if (>= index (ast.ast-let-binding-list-len bindings))
@@ -57643,34 +57653,34 @@
           [init : ast.AstExpr
             (ast.ast-expr-segment-bases-get expr-bases init-box)]
           (or
-            (tc-expr-uses-free-name?
+            (tc-expr-uses-free-names?
               expr-bases
               init
-              (tc-global-shared-view name)
+              (tc-global-shared-view names)
               (tc-global-shared-view bound))
-            (tc-let-binding-list-uses-free-name-at?
+            (tc-let-binding-list-uses-free-names-at?
               expr-bases
               bindings
-              name
+              names
               (tc-string-list-add bound (ci.intern-str bind-name))
               (+ index 1))))])))
 
-(define (tc-resource-binding-list-uses-free-name?
+(define (tc-resource-binding-list-uses-free-names?
   [expr-bases : i64]
   [bindings : ast.AstResourceBindingList]
-  [name : String]
+  [names : TcStringList]
   [bound : TcStringList]) : bool
-  (tc-resource-binding-list-uses-free-name-at?
+  (tc-resource-binding-list-uses-free-names-at?
     expr-bases
     (& bindings)
-    name
+    names
     bound
     0))
 
-(define (tc-resource-binding-list-uses-free-name-at?
+(define (tc-resource-binding-list-uses-free-names-at?
   [expr-bases : i64]
   [bindings : (& bindings ast.AstResourceBindingList)]
-  [name : String]
+  [names : TcStringList]
   [bound : TcStringList]
   [index : i64]) : bool
   (if (>= index (ast.ast-resource-binding-list-len bindings))
@@ -57686,34 +57696,34 @@
           [cleanup : ast.AstExpr
             (ast.ast-expr-segment-bases-get expr-bases cleanup-box)]
           (or
-            (tc-expr-uses-free-name?
+            (tc-expr-uses-free-names?
               expr-bases
               init
-              (tc-global-shared-view name)
+              (tc-global-shared-view names)
               (tc-global-shared-view bound))
-            (tc-expr-uses-free-name?
+            (tc-expr-uses-free-names?
               expr-bases
               cleanup
-              (tc-global-shared-view name)
+              (tc-global-shared-view names)
               (tc-global-shared-view bound))
-            (tc-resource-binding-list-uses-free-name-at?
+            (tc-resource-binding-list-uses-free-names-at?
               expr-bases
               bindings
-              name
+              names
               (tc-string-list-add bound (ci.intern-str bind-name))
               (+ index 1))))])))
 
-(define (tc-match-arms-use-free-name?
+(define (tc-match-arms-use-free-names?
   [expr-bases : i64]
   [arms : ast.AstMatchArmList]
-  [name : String]
+  [names : TcStringList]
   [bound : TcStringList]) : bool
-  (tc-match-arms-use-free-name-at? expr-bases (& arms) name bound 0))
+  (tc-match-arms-use-free-names-at? expr-bases (& arms) names bound 0))
 
-(define (tc-match-arms-use-free-name-at?
+(define (tc-match-arms-use-free-names-at?
   [expr-bases : i64]
   [arms : (& arms ast.AstMatchArmList)]
-  [name : String]
+  [names : TcStringList]
   [bound : TcStringList]
   [index : i64]) : bool
   (if (>= index arms.len)
@@ -57724,15 +57734,15 @@
           [body : ast.AstExpr
             (ast.ast-expr-segment-bases-get expr-bases body-box)]
           (or
-            (tc-expr-uses-free-name?
+            (tc-expr-uses-free-names?
               expr-bases
               body
-              (tc-global-shared-view name)
+              (tc-global-shared-view names)
               (tc-pattern-add-bound-names pattern (tc-global-shared-view bound)))
-            (tc-match-arms-use-free-name-at?
+            (tc-match-arms-use-free-names-at?
               expr-bases
               arms
-              name
+              names
               bound
               (+ index 1))))])))
 
@@ -57760,28 +57770,32 @@
       (tc-name-id-list-add bound (tc-env-key-source-id-or-neg session name-id))
       bound)))
 
-(define (tc-expr-uses-free-name?
+(define (tc-expr-uses-free-names?
   [expr-bases : i64]
   [expr : ast.AstExpr]
-  [name : String]
+  [names : TcStringList]
   [bound : TcStringList]) : bool
   (match expr
     [(ast.AstExpr.Spanned inner-box _)
       (let
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-uses-free-name? expr-bases inner name bound))]
+        (tc-expr-uses-free-names? expr-bases inner names bound))]
     [(ast.AstExpr.MacroExpansion inner-box _ _)
-      (tc-expr-uses-free-name?
+      (tc-expr-uses-free-names?
         expr-bases
         (ast.ast-expr-segment-bases-get expr-bases inner-box)
-        name
+        names
         bound)]
     [(ast.AstExpr.Literal _) false]
     [(ast.AstExpr.Var var-name)
-      (and
-        (string.eq (tc-env-key-name-text var-name) name)
-        (not (tc-string-list-contains bound name)))]
+      (let
+        [text : String (tc-env-key-name-text var-name)]
+        (and
+          (tc-string-list-contains
+            (tc-global-shared-view names)
+            (tc-global-shared-view text))
+          (not (tc-string-list-contains bound text))))]
     [(ast.AstExpr.Binary _ left-box right-box)
       (let
         [left : ast.AstExpr
@@ -57789,30 +57803,30 @@
         [right : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases right-box)]
         (or
-          (tc-expr-uses-free-name?
+          (tc-expr-uses-free-names?
             expr-bases
             left
-            (tc-global-shared-view name)
+            (tc-global-shared-view names)
             (tc-global-shared-view bound))
-          (tc-expr-uses-free-name? expr-bases right name bound)))]
+          (tc-expr-uses-free-names? expr-bases right names bound)))]
     [(ast.AstExpr.Unary _ inner-box)
       (let
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-uses-free-name? expr-bases inner name bound))]
+        (tc-expr-uses-free-names? expr-bases inner names bound))]
     [(ast.AstExpr.Call func-box args)
       (let
         [func : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases func-box)]
         (or
-          (tc-expr-uses-free-name?
+          (tc-expr-uses-free-names?
             expr-bases
             func
-            (tc-global-shared-view name)
+            (tc-global-shared-view names)
             (tc-global-shared-view bound))
-          (tc-expr-list-uses-free-name? expr-bases args name bound)))]
+          (tc-expr-list-uses-free-names? expr-bases args names bound)))]
     [(ast.AstExpr.BracketClause items)
-      (tc-expr-list-uses-free-name? expr-bases items name bound)]
+      (tc-expr-list-uses-free-names? expr-bases items names bound)]
     [(ast.AstExpr.TypeLiteral _) false]
     [(ast.AstExpr.Init _) false]
     [(ast.AstExpr.If cond-box then-branch-box else-branch-box)
@@ -57824,17 +57838,17 @@
         [else-branch : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases else-branch-box)]
         (or
-          (tc-expr-uses-free-name?
+          (tc-expr-uses-free-names?
             expr-bases
             cond
-            (tc-global-shared-view name)
+            (tc-global-shared-view names)
             (tc-global-shared-view bound))
-          (tc-expr-uses-free-name?
+          (tc-expr-uses-free-names?
             expr-bases
             then-branch
-            (tc-global-shared-view name)
+            (tc-global-shared-view names)
             (tc-global-shared-view bound))
-          (tc-expr-uses-free-name? expr-bases else-branch name bound)))]
+          (tc-expr-uses-free-names? expr-bases else-branch names bound)))]
     [(ast.AstExpr.Let let-box)
       (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-box)
@@ -57842,15 +57856,15 @@
             [body : ast.AstExpr
               (ast.ast-expr-segment-bases-get expr-bases body-box)]
             (or
-              (tc-let-binding-list-uses-free-name?
+              (tc-let-binding-list-uses-free-names?
                 expr-bases
                 (tc-global-shared-view bindings)
-                (tc-global-shared-view name)
+                (tc-global-shared-view names)
                 (tc-global-shared-view bound))
-              (tc-expr-uses-free-name?
+              (tc-expr-uses-free-names?
                 expr-bases
                 body
-                name
+                names
                 (tc-let-binding-list-add-bound-names bindings bound))))])]
     [(ast.AstExpr.Lambda lambda-box)
       (match (__tl-box-place lambda-box)
@@ -57858,30 +57872,30 @@
           (let
             [body : ast.AstExpr
               (ast.ast-expr-segment-bases-get expr-bases body-box)]
-            (tc-expr-uses-free-name?
+            (tc-expr-uses-free-names?
               expr-bases
               body
-              name
+              names
               (tc-param-list-add-bound-names params bound)))])]
     [(ast.AstExpr.Tuple exprs)
-      (tc-expr-list-uses-free-name? expr-bases exprs name bound)]
+      (tc-expr-list-uses-free-names? expr-bases exprs names bound)]
     [(ast.AstExpr.TupleRef tuple-box _)
       (let
         [tuple : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases tuple-box)]
-        (tc-expr-uses-free-name? expr-bases tuple name bound))]
+        (tc-expr-uses-free-names? expr-bases tuple names bound))]
     [(ast.AstExpr.Array exprs)
-      (tc-expr-list-uses-free-name? expr-bases exprs name bound)]
+      (tc-expr-list-uses-free-names? expr-bases exprs names bound)]
     [(ast.AstExpr.DynArray exprs)
-      (tc-expr-list-uses-free-name? expr-bases exprs name bound)]
+      (tc-expr-list-uses-free-names? expr-bases exprs names bound)]
     [(ast.AstExpr.FixedMakeArray _ len-box)
       (let
         [len : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases len-box)]
-        (tc-expr-uses-free-name? expr-bases len name bound))]
+        (tc-expr-uses-free-names? expr-bases len names bound))]
     [(ast.AstExpr.MakeArray _ len-box)
       (let
         [len : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases len-box)]
-        (tc-expr-uses-free-name? expr-bases len name bound))]
+        (tc-expr-uses-free-names? expr-bases len names bound))]
     [(ast.AstExpr.ArrayRef array-box index-box)
       (let
         [array : ast.AstExpr
@@ -57889,12 +57903,12 @@
         [index : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases index-box)]
         (or
-          (tc-expr-uses-free-name?
+          (tc-expr-uses-free-names?
             expr-bases
             array
-            (tc-global-shared-view name)
+            (tc-global-shared-view names)
             (tc-global-shared-view bound))
-          (tc-expr-uses-free-name? expr-bases index name bound)))]
+          (tc-expr-uses-free-names? expr-bases index names bound)))]
     [(ast.AstExpr.ArraySet array-box index-box value-box)
       (let
         [array : ast.AstExpr
@@ -57904,17 +57918,17 @@
         [value : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases value-box)]
         (or
-          (tc-expr-uses-free-name?
+          (tc-expr-uses-free-names?
             expr-bases
             array
-            (tc-global-shared-view name)
+            (tc-global-shared-view names)
             (tc-global-shared-view bound))
-          (tc-expr-uses-free-name?
+          (tc-expr-uses-free-names?
             expr-bases
             index
-            (tc-global-shared-view name)
+            (tc-global-shared-view names)
             (tc-global-shared-view bound))
-          (tc-expr-uses-free-name? expr-bases value name bound)))]
+          (tc-expr-uses-free-names? expr-bases value names bound)))]
     [(ast.AstExpr.ArrayTake array-box live-box index-box)
       (let
         [array : ast.AstExpr
@@ -57924,40 +57938,40 @@
         [index : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases index-box)]
         (or
-          (tc-expr-uses-free-name?
+          (tc-expr-uses-free-names?
             expr-bases
             array
-            (tc-global-shared-view name)
+            (tc-global-shared-view names)
             (tc-global-shared-view bound))
-          (tc-expr-uses-free-name?
+          (tc-expr-uses-free-names?
             expr-bases
             live
-            (tc-global-shared-view name)
+            (tc-global-shared-view names)
             (tc-global-shared-view bound))
-          (tc-expr-uses-free-name? expr-bases index name bound)))]
+          (tc-expr-uses-free-names? expr-bases index names bound)))]
     [(ast.AstExpr.FixedArrayTake array-box index-box)
       (or
-        (tc-expr-uses-free-name?
+        (tc-expr-uses-free-names?
           expr-bases
           (ast.ast-expr-segment-bases-get expr-bases array-box)
-          (tc-global-shared-view name)
+          (tc-global-shared-view names)
           (tc-global-shared-view bound))
-        (tc-expr-uses-free-name?
+        (tc-expr-uses-free-names?
           expr-bases
           (ast.ast-expr-segment-bases-get expr-bases index-box)
-          name
+          names
           bound))]
     [(ast.AstExpr.Replace place-box replacement-box)
       (or
-        (tc-expr-uses-free-name?
+        (tc-expr-uses-free-names?
           expr-bases
           (ast.ast-expr-segment-bases-get expr-bases place-box)
-          (tc-global-shared-view name)
+          (tc-global-shared-view names)
           (tc-global-shared-view bound))
-        (tc-expr-uses-free-name?
+        (tc-expr-uses-free-names?
           expr-bases
           (ast.ast-expr-segment-bases-get expr-bases replacement-box)
-          name
+          names
           bound))]
     [(ast.AstExpr.ArrayPush array-box value-box)
       (let
@@ -57966,24 +57980,24 @@
         [value : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases value-box)]
         (or
-          (tc-expr-uses-free-name?
+          (tc-expr-uses-free-names?
             expr-bases
             array
-            (tc-global-shared-view name)
+            (tc-global-shared-view names)
             (tc-global-shared-view bound))
-          (tc-expr-uses-free-name? expr-bases value name bound)))]
+          (tc-expr-uses-free-names? expr-bases value names bound)))]
     [(ast.AstExpr.StringRef str-box index-box)
       (let
         [str : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases str-box)]
         [index : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases index-box)]
         (or
-          (tc-expr-uses-free-name?
+          (tc-expr-uses-free-names?
             expr-bases
             str
-            (tc-global-shared-view name)
+            (tc-global-shared-view names)
             (tc-global-shared-view bound))
-          (tc-expr-uses-free-name? expr-bases index name bound)))]
+          (tc-expr-uses-free-names? expr-bases index names bound)))]
     [(ast.AstExpr.While cond-box body-box)
       (let
         [cond : ast.AstExpr
@@ -57991,30 +58005,30 @@
         [body : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases body-box)]
         (or
-          (tc-expr-uses-free-name?
+          (tc-expr-uses-free-names?
             expr-bases
             cond
-            (tc-global-shared-view name)
+            (tc-global-shared-view names)
             (tc-global-shared-view bound))
-          (tc-expr-uses-free-name? expr-bases body name bound)))]
+          (tc-expr-uses-free-names? expr-bases body names bound)))]
     [(ast.AstExpr.ForOwnedState payload)
       (let
         [source-name : i64 (ast.ast-for-owned-state-source-name (& payload))]
         [index-name : i64 (ast.ast-for-owned-state-index-name (& payload))]
         (or
-          (tc-expr-uses-free-name?
+          (tc-expr-uses-free-names?
             expr-bases
             (ast.ast-expr-segment-bases-get
               expr-bases
               (ast.ast-for-owned-state-source (& payload)))
-            (tc-global-shared-view name)
+            (tc-global-shared-view names)
             (tc-global-shared-view bound))
-          (tc-expr-uses-free-name?
+          (tc-expr-uses-free-names?
             expr-bases
             (ast.ast-expr-segment-bases-get
               expr-bases
               (ast.ast-for-owned-state-body (& payload)))
-            name
+            names
             (tc-for-owned-add-bound-name
               expr-bases
               index-name
@@ -58028,81 +58042,80 @@
         [done-name : i64 (ast.ast-for-owned-step-done-name (& payload))]
         [body : i64 (ast.ast-for-owned-step-body (& payload))]
         (or
-          (tc-expr-uses-free-name?
+          (tc-expr-uses-free-names?
             expr-bases
             (ast.ast-expr-segment-bases-get expr-bases source-name)
-            (tc-global-shared-view name)
+            (tc-global-shared-view names)
             (tc-global-shared-view bound))
-          (tc-expr-uses-free-name?
+          (tc-expr-uses-free-names?
             expr-bases
             (ast.ast-expr-segment-bases-get expr-bases index-name)
-            (tc-global-shared-view name)
+            (tc-global-shared-view names)
             (tc-global-shared-view bound))
           (if (>= expected-type 0)
-            (tc-expr-uses-free-name?
+            (tc-expr-uses-free-names?
               expr-bases
               (ast.ast-expr-segment-bases-get expr-bases expected-type)
-              (tc-global-shared-view name)
+              (tc-global-shared-view names)
               (tc-global-shared-view bound))
             false)
-          (tc-expr-uses-free-name?
+          (tc-expr-uses-free-names?
             expr-bases
             (ast.ast-expr-segment-bases-get expr-bases done-name)
-            (tc-global-shared-view name)
+            (tc-global-shared-view names)
             (tc-global-shared-view bound))
-          (tc-expr-uses-free-name?
+          (tc-expr-uses-free-names?
             expr-bases
             (ast.ast-expr-segment-bases-get expr-bases body)
-            name
+            names
             (tc-for-owned-add-bound-name expr-bases binding-name bound))))]
     [(ast.AstExpr.Begin exprs)
-      (tc-expr-list-uses-free-name? expr-bases exprs name bound)]
+      (tc-expr-list-uses-free-names? expr-bases exprs names bound)]
     [(ast.AstExpr.Unsafe exprs)
-      (tc-expr-list-uses-free-name? expr-bases exprs name bound)]
+      (tc-expr-list-uses-free-names? expr-bases exprs names bound)]
     [(ast.AstExpr.Set var-name value-box)
       (let
         [value : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases value-box)]
         (or
-          (and
-            (string.eq
-              (tc-env-key-name-text var-name)
-              (tc-global-shared-view name))
-            (not
+          (let
+            [text : String (tc-env-key-name-text var-name)]
+            (and
               (tc-string-list-contains
-                (tc-global-shared-view bound)
-                (tc-global-shared-view name))))
-          (tc-expr-uses-free-name? expr-bases value name bound)))]
+                (tc-global-shared-view names)
+                (tc-global-shared-view text))
+              (not (tc-string-list-contains (tc-global-shared-view bound) text))))
+          (tc-expr-uses-free-names? expr-bases value names bound)))]
     [(ast.AstExpr.Ann inner-box _)
       (let
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-uses-free-name? expr-bases inner name bound))]
+        (tc-expr-uses-free-names? expr-bases inner names bound))]
     [(ast.AstExpr.Cast inner-box _)
       (let
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-uses-free-name? expr-bases inner name bound))]
+        (tc-expr-uses-free-names? expr-bases inner names bound))]
     [(ast.AstExpr.Borrow _ _ place-box)
       (let
         [place : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases place-box)]
-        (tc-expr-uses-free-name? expr-bases place name bound))]
+        (tc-expr-uses-free-names? expr-bases place names bound))]
     [(ast.AstExpr.Box inner-box)
       (let
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-uses-free-name? expr-bases inner name bound))]
+        (tc-expr-uses-free-names? expr-bases inner names bound))]
     [(ast.AstExpr.BoxGet inner-box)
       (let
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-uses-free-name? expr-bases inner name bound))]
+        (tc-expr-uses-free-names? expr-bases inner names bound))]
     [(ast.AstExpr.BoxTake inner-box)
       (let
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-uses-free-name? expr-bases inner name bound))]
+        (tc-expr-uses-free-names? expr-bases inner names bound))]
     [(ast.AstExpr.BoxSet inner-box value-box)
       (let
         [inner : ast.AstExpr
@@ -58110,12 +58123,12 @@
         [value : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases value-box)]
         (or
-          (tc-expr-uses-free-name?
+          (tc-expr-uses-free-names?
             expr-bases
             inner
-            (tc-global-shared-view name)
+            (tc-global-shared-view names)
             (tc-global-shared-view bound))
-          (tc-expr-uses-free-name? expr-bases value name bound)))]
+          (tc-expr-uses-free-names? expr-bases value names bound)))]
     [(ast.AstExpr.Match match-box)
       (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrutinee-box arms)
@@ -58123,12 +58136,12 @@
             [scrutinee : ast.AstExpr
               (ast.ast-expr-segment-bases-get expr-bases scrutinee-box)]
             (or
-              (tc-expr-uses-free-name?
+              (tc-expr-uses-free-names?
                 expr-bases
                 scrutinee
-                (tc-global-shared-view name)
+                (tc-global-shared-view names)
                 (tc-global-shared-view bound))
-              (tc-match-arms-use-free-name? expr-bases arms name bound)))])]
+              (tc-match-arms-use-free-names? expr-bases arms names bound)))])]
     [(ast.AstExpr.Foreach fe-box)
       (match (__tl-box-place fe-box)
         [(ast.AstForeach.Foreach index _ start-box end-box body-box)
@@ -58140,20 +58153,20 @@
             [body : ast.AstExpr
               (ast.ast-expr-segment-bases-get expr-bases body-box)]
             (or
-              (tc-expr-uses-free-name?
+              (tc-expr-uses-free-names?
                 expr-bases
                 start
-                (tc-global-shared-view name)
+                (tc-global-shared-view names)
                 (tc-global-shared-view bound))
-              (tc-expr-uses-free-name?
+              (tc-expr-uses-free-names?
                 expr-bases
                 end
-                (tc-global-shared-view name)
+                (tc-global-shared-view names)
                 (tc-global-shared-view bound))
-              (tc-expr-uses-free-name?
+              (tc-expr-uses-free-names?
                 expr-bases
                 body
-                name
+                names
                 (tc-string-list-add bound (tc-env-key-name-text index)))))])]
     [(ast.AstExpr.SpmdReduce reduce-box)
       (match (__tl-box-place reduce-box)
@@ -58175,25 +58188,25 @@
             [value : ast.AstExpr
               (ast.ast-expr-segment-bases-get expr-bases value-box)]
             (or
-              (tc-expr-uses-free-name?
+              (tc-expr-uses-free-names?
                 expr-bases
                 start
-                (tc-global-shared-view name)
+                (tc-global-shared-view names)
                 (tc-global-shared-view bound))
-              (tc-expr-uses-free-name?
+              (tc-expr-uses-free-names?
                 expr-bases
                 end
-                (tc-global-shared-view name)
+                (tc-global-shared-view names)
                 (tc-global-shared-view bound))
-              (tc-expr-uses-free-name?
+              (tc-expr-uses-free-names?
                 expr-bases
                 init
-                (tc-global-shared-view name)
+                (tc-global-shared-view names)
                 (tc-global-shared-view bound))
-              (tc-expr-uses-free-name?
+              (tc-expr-uses-free-names?
                 expr-bases
                 value
-                name
+                names
                 (tc-string-list-add bound (tc-env-key-name-text index)))))])]
     [(ast.AstExpr.SpmdScan scan-box)
       (match (__tl-box-place scan-box)
@@ -58228,27 +58241,27 @@
                 (tc-global-shared-view value-bound)
                 (tc-env-key-name-text prefix))]
             (or
-              (tc-expr-uses-free-name?
+              (tc-expr-uses-free-names?
                 expr-bases
                 start
-                (tc-global-shared-view name)
+                (tc-global-shared-view names)
                 (tc-global-shared-view bound))
-              (tc-expr-uses-free-name?
+              (tc-expr-uses-free-names?
                 expr-bases
                 end
-                (tc-global-shared-view name)
+                (tc-global-shared-view names)
                 (tc-global-shared-view bound))
-              (tc-expr-uses-free-name?
+              (tc-expr-uses-free-names?
                 expr-bases
                 init
-                (tc-global-shared-view name)
+                (tc-global-shared-view names)
                 bound)
-              (tc-expr-uses-free-name?
+              (tc-expr-uses-free-names?
                 expr-bases
                 value
-                (tc-global-shared-view name)
+                (tc-global-shared-view names)
                 value-bound)
-              (tc-expr-uses-free-name? expr-bases body name body-bound)))])]
+              (tc-expr-uses-free-names? expr-bases body names body-bound)))])]
     [(ast.AstExpr.SpmdCompact compact-box)
       (match (__tl-box-place compact-box)
         [(ast.AstSpmdCompact.Compact
@@ -58281,27 +58294,27 @@
                 (tc-global-shared-view keep-bound)
                 (tc-env-key-name-text slot))]
             (or
-              (tc-expr-uses-free-name?
+              (tc-expr-uses-free-names?
                 expr-bases
                 start
-                (tc-global-shared-view name)
+                (tc-global-shared-view names)
                 (tc-global-shared-view bound))
-              (tc-expr-uses-free-name?
+              (tc-expr-uses-free-names?
                 expr-bases
                 end
-                (tc-global-shared-view name)
+                (tc-global-shared-view names)
                 (tc-global-shared-view bound))
-              (tc-expr-uses-free-name?
+              (tc-expr-uses-free-names?
                 expr-bases
                 init
-                (tc-global-shared-view name)
+                (tc-global-shared-view names)
                 bound)
-              (tc-expr-uses-free-name?
+              (tc-expr-uses-free-names?
                 expr-bases
                 keep
-                (tc-global-shared-view name)
+                (tc-global-shared-view names)
                 keep-bound)
-              (tc-expr-uses-free-name? expr-bases body name body-bound)))])]
+              (tc-expr-uses-free-names? expr-bases body names body-bound)))])]
     [(ast.AstExpr.SpmdBroadcast value-box lane-box)
       (let
         [value : ast.AstExpr
@@ -58309,12 +58322,12 @@
         [lane : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases lane-box)]
         (or
-          (tc-expr-uses-free-name?
+          (tc-expr-uses-free-names?
             expr-bases
             value
-            (tc-global-shared-view name)
+            (tc-global-shared-view names)
             (tc-global-shared-view bound))
-          (tc-expr-uses-free-name? expr-bases lane name bound)))]
+          (tc-expr-uses-free-names? expr-bases lane names bound)))]
     [(ast.AstExpr.SpmdShuffle value-box lane-box)
       (let
         [value : ast.AstExpr
@@ -58322,17 +58335,17 @@
         [lane : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases lane-box)]
         (or
-          (tc-expr-uses-free-name?
+          (tc-expr-uses-free-names?
             expr-bases
             value
-            (tc-global-shared-view name)
+            (tc-global-shared-view names)
             (tc-global-shared-view bound))
-          (tc-expr-uses-free-name? expr-bases lane name bound)))]
+          (tc-expr-uses-free-names? expr-bases lane names bound)))]
     [(ast.AstExpr.StructGet receiver-box _)
       (let
         [receiver : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases receiver-box)]
-        (tc-expr-uses-free-name? expr-bases receiver name bound))]
+        (tc-expr-uses-free-names? expr-bases receiver names bound))]
     [(ast.AstExpr.StructSet receiver-box _ value-box)
       (let
         [receiver : ast.AstExpr
@@ -58340,51 +58353,51 @@
         [value : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases value-box)]
         (or
-          (tc-expr-uses-free-name?
+          (tc-expr-uses-free-names?
             expr-bases
             receiver
-            (tc-global-shared-view name)
+            (tc-global-shared-view names)
             (tc-global-shared-view bound))
-          (tc-expr-uses-free-name? expr-bases value name bound)))]
+          (tc-expr-uses-free-names? expr-bases value names bound)))]
     [(ast.AstExpr.WithRegion _ body)
-      (tc-expr-list-uses-free-name? expr-bases body name bound)]
+      (tc-expr-list-uses-free-names? expr-bases body names bound)]
     [(ast.AstExpr.WithEscape scratch-box body)
       (let
         [scratch : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases scratch-box)]
         (or
-          (tc-expr-uses-free-name?
+          (tc-expr-uses-free-names?
             expr-bases
             scratch
-            (tc-global-shared-view name)
+            (tc-global-shared-view names)
             (tc-global-shared-view bound))
-          (tc-expr-list-uses-free-name? expr-bases body name bound)))]
+          (tc-expr-list-uses-free-names? expr-bases body names bound)))]
     [(ast.AstExpr.WithScratch body)
-      (tc-expr-list-uses-free-name? expr-bases body name bound)]
+      (tc-expr-list-uses-free-names? expr-bases body names bound)]
     [(ast.AstExpr.InArena arena-box body)
       (let
         [arena : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases arena-box)]
         (or
-          (tc-expr-uses-free-name?
+          (tc-expr-uses-free-names?
             expr-bases
             arena
-            (tc-global-shared-view name)
+            (tc-global-shared-view names)
             (tc-global-shared-view bound))
-          (tc-expr-list-uses-free-name? expr-bases body name bound)))]
+          (tc-expr-list-uses-free-names? expr-bases body names bound)))]
     [(ast.AstExpr.WithResource wr-box)
       (match (__tl-box-place wr-box)
         [(ast.AstWithResource.WithResource bindings body)
           (or
-            (tc-resource-binding-list-uses-free-name?
+            (tc-resource-binding-list-uses-free-names?
               expr-bases
               (tc-global-shared-view bindings)
-              (tc-global-shared-view name)
+              (tc-global-shared-view names)
               (tc-global-shared-view bound))
-            (tc-expr-list-uses-free-name?
+            (tc-expr-list-uses-free-names?
               expr-bases
               body
-              name
+              names
               (tc-resource-binding-list-add-bound-names bindings bound)))])]
     [(ast.AstExpr.TypeLiteral _) false]
     [(ast.AstExpr.Init _) false]
@@ -58392,37 +58405,37 @@
       (let
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-uses-free-name? expr-bases inner name bound))]
+        (tc-expr-uses-free-names? expr-bases inner names bound))]
     [(ast.AstExpr.Quote inner-box)
       (let
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-uses-free-name? expr-bases inner name bound))]
+        (tc-expr-uses-free-names? expr-bases inner names bound))]
     [(ast.AstExpr.Quasiquote inner-box)
       (let
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-uses-free-name? expr-bases inner name bound))]
+        (tc-expr-uses-free-names? expr-bases inner names bound))]
     [(ast.AstExpr.Unquote inner-box)
       (let
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-uses-free-name? expr-bases inner name bound))]
+        (tc-expr-uses-free-names? expr-bases inner names bound))]
     [(ast.AstExpr.UnquoteSplicing inner-box)
       (let
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-uses-free-name? expr-bases inner name bound))]
+        (tc-expr-uses-free-names? expr-bases inner names bound))]
     [(ast.AstExpr.Try inner-box)
       (let
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-uses-free-name? expr-bases inner name bound))]
+        (tc-expr-uses-free-names? expr-bases inner names bound))]
     [(ast.AstExpr.Return inner-box)
       (let
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-uses-free-name? expr-bases inner name bound))]
+        (tc-expr-uses-free-names? expr-bases inner names bound))]
     [(ast.AstExpr.Break) false]
     [(ast.AstExpr.Continue) false]
     [(ast.AstExpr.PtrNull _) false]
@@ -58430,73 +58443,73 @@
       (let
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-uses-free-name? expr-bases inner name bound))]
+        (tc-expr-uses-free-names? expr-bases inner names bound))]
     [(ast.AstExpr.PtrAddrOf place-box)
       (let
         [place : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases place-box)]
-        (tc-expr-uses-free-name? expr-bases place name bound))]
+        (tc-expr-uses-free-names? expr-bases place names bound))]
     [(ast.AstExpr.PtrRead ptr-box)
       (let
         [ptr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases ptr-box)]
-        (tc-expr-uses-free-name? expr-bases ptr name bound))]
+        (tc-expr-uses-free-names? expr-bases ptr names bound))]
     [(ast.AstExpr.PtrWrite ptr-box value-box)
       (let
         [ptr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases ptr-box)]
         [value : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases value-box)]
         (or
-          (tc-expr-uses-free-name?
+          (tc-expr-uses-free-names?
             expr-bases
             ptr
-            (tc-global-shared-view name)
+            (tc-global-shared-view names)
             (tc-global-shared-view bound))
-          (tc-expr-uses-free-name? expr-bases value name bound)))]
+          (tc-expr-uses-free-names? expr-bases value names bound)))]
     [(ast.AstExpr.PtrOffset ptr-box offset-box)
       (let
         [ptr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases ptr-box)]
         [offset : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases offset-box)]
         (or
-          (tc-expr-uses-free-name?
+          (tc-expr-uses-free-names?
             expr-bases
             ptr
-            (tc-global-shared-view name)
+            (tc-global-shared-view names)
             (tc-global-shared-view bound))
-          (tc-expr-uses-free-name? expr-bases offset name bound)))]
+          (tc-expr-uses-free-names? expr-bases offset names bound)))]
     [(ast.AstExpr.PtrCast ptr-box _)
       (let
         [ptr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases ptr-box)]
-        (tc-expr-uses-free-name? expr-bases ptr name bound))]
+        (tc-expr-uses-free-names? expr-bases ptr names bound))]
     [(ast.AstExpr.PtrToInt ptr-box)
       (let
         [ptr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases ptr-box)]
-        (tc-expr-uses-free-name? expr-bases ptr name bound))]
+        (tc-expr-uses-free-names? expr-bases ptr names bound))]
     [(ast.AstExpr.IntToPtr value-box _)
       (let
         [value : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        (tc-expr-uses-free-name? expr-bases value name bound))]
+        (tc-expr-uses-free-names? expr-bases value names bound))]
     [(ast.AstExpr.StringData str-box)
       (let
         [str : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases str-box)]
-        (tc-expr-uses-free-name? expr-bases str name bound))]
+        (tc-expr-uses-free-names? expr-bases str names bound))]
     [(ast.AstExpr.StringFromBytes ptr-box len-box)
       (let
         [ptr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases ptr-box)]
         [len : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases len-box)]
         (or
-          (tc-expr-uses-free-name?
+          (tc-expr-uses-free-names?
             expr-bases
             ptr
-            (tc-global-shared-view name)
+            (tc-global-shared-view names)
             (tc-global-shared-view bound))
-          (tc-expr-uses-free-name? expr-bases len name bound)))]
+          (tc-expr-uses-free-names? expr-bases len names bound)))]
     [(ast.AstExpr.ArrayData array-box)
       (let
         [array : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases array-box)]
-        (tc-expr-uses-free-name? expr-bases array name bound))]
+        (tc-expr-uses-free-names? expr-bases array names bound))]
     [(ast.AstExpr.BinaryData _) false]
     [(ast.AstExpr.SpmdProgramIndex) false]
     [(ast.AstExpr.SpmdProgramCount) false]
@@ -58510,12 +58523,12 @@
         [subleaf : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases subleaf-box)]
         (or
-          (tc-expr-uses-free-name?
+          (tc-expr-uses-free-names?
             expr-bases
             leaf
-            (tc-global-shared-view name)
+            (tc-global-shared-view names)
             (tc-global-shared-view bound))
-          (tc-expr-uses-free-name? expr-bases subleaf name bound)))]
+          (tc-expr-uses-free-names? expr-bases subleaf names bound)))]
     [(ast.AstExpr.CpuIdEbx leaf-box subleaf-box)
       (let
         [leaf : ast.AstExpr
@@ -58523,12 +58536,12 @@
         [subleaf : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases subleaf-box)]
         (or
-          (tc-expr-uses-free-name?
+          (tc-expr-uses-free-names?
             expr-bases
             leaf
-            (tc-global-shared-view name)
+            (tc-global-shared-view names)
             (tc-global-shared-view bound))
-          (tc-expr-uses-free-name? expr-bases subleaf name bound)))]
+          (tc-expr-uses-free-names? expr-bases subleaf names bound)))]
     [(ast.AstExpr.CpuIdEcx leaf-box subleaf-box)
       (let
         [leaf : ast.AstExpr
@@ -58536,12 +58549,12 @@
         [subleaf : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases subleaf-box)]
         (or
-          (tc-expr-uses-free-name?
+          (tc-expr-uses-free-names?
             expr-bases
             leaf
-            (tc-global-shared-view name)
+            (tc-global-shared-view names)
             (tc-global-shared-view bound))
-          (tc-expr-uses-free-name? expr-bases subleaf name bound)))]
+          (tc-expr-uses-free-names? expr-bases subleaf names bound)))]
     [(ast.AstExpr.CpuIdEdx leaf-box subleaf-box)
       (let
         [leaf : ast.AstExpr
@@ -58549,27 +58562,71 @@
         [subleaf : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases subleaf-box)]
         (or
-          (tc-expr-uses-free-name?
+          (tc-expr-uses-free-names?
             expr-bases
             leaf
-            (tc-global-shared-view name)
+            (tc-global-shared-view names)
             (tc-global-shared-view bound))
-          (tc-expr-uses-free-name? expr-bases subleaf name bound)))]
+          (tc-expr-uses-free-names? expr-bases subleaf names bound)))]
     [(ast.AstExpr.Xgetbv index-box)
       (let
         [index : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases index-box)]
-        (tc-expr-uses-free-name? expr-bases index name bound))]
+        (tc-expr-uses-free-names? expr-bases index names bound))]
     [(ast.AstExpr.Syscall args)
-      (tc-expr-list-uses-free-name? expr-bases args name bound)]))
+      (tc-expr-list-uses-free-names? expr-bases args names bound)]))
 
 ;; The id rule for a dot-free target text: the source-name id of an env key,
 ;; or -1 when the key's display can never equal the target. Pool ids render
 ;; as their text (intern-str is injective), structural-local and hygiene
-;; global/local ids render as their source name, and composite keys render
+;; global/local ids render as their source names, and composite keys render
 ;; dotted (with '/'), so they map to -1. For any dot-free target text T this
 ;; makes (= (tc-env-key-source-id-or-neg v) (intern T)) EXACTLY
 ;; (string.eq (tc-env-key-name-text v) T).
+;; Single-name entry points over the name-set walkers above.
+(define (tc-expr-uses-free-name?
+  [expr-bases : i64]
+  [expr : ast.AstExpr]
+  [name : String]
+  [bound : TcStringList]) : bool
+  (tc-expr-uses-free-names? expr-bases expr (TcStringList.One name) bound))
+
+(define (tc-expr-list-uses-free-name?
+  [expr-bases : i64]
+  [exprs : ast.AstExprList]
+  [name : String]
+  [bound : TcStringList]) : bool
+  (tc-expr-list-uses-free-names? expr-bases exprs (TcStringList.One name) bound))
+
+(define (tc-let-binding-list-uses-free-name?
+  [expr-bases : i64]
+  [bindings : ast.AstLetBindingList]
+  [name : String]
+  [bound : TcStringList]) : bool
+  (tc-let-binding-list-uses-free-names?
+    expr-bases
+    bindings
+    (TcStringList.One name)
+    bound))
+
+(define (tc-resource-binding-list-uses-free-name?
+  [expr-bases : i64]
+  [bindings : ast.AstResourceBindingList]
+  [name : String]
+  [bound : TcStringList]) : bool
+  (tc-resource-binding-list-uses-free-names?
+    expr-bases
+    bindings
+    (TcStringList.One name)
+    bound))
+
+(define (tc-match-arms-use-free-name?
+  [expr-bases : i64]
+  [arms : ast.AstMatchArmList]
+  [name : String]
+  [bound : TcStringList]) : bool
+  (tc-match-arms-use-free-names? expr-bases arms (TcStringList.One name) bound))
+
 (define (tc-env-key-source-id-or-neg
   [session : cis.InternStructuralSessionHandle]
   [name-id : i64]) : i64
@@ -111907,133 +111964,54 @@
               target-module-id
               base-id)))])))
 
+;; The comptime reflection helpers a macro body may name, in every spelling the
+;; body can reach them by. One walk tests all of them: the walker's shadowing is
+;; per name (every binder is recorded, whatever it binds), so "some spelling
+;; occurs free" is exactly the disjunction of the per-spelling walks this made
+;; one at a time.
+(define (macro-expr-type-helper-names) : TcStringList
+  (let
+    [names : TcStringList TcStringList.Nil]
+    (begin
+      (set! names (tc-string-list-add names "expr-type"))
+      (set! names (tc-string-list-add names "comptime.expr-type"))
+      (set! names (tc-string-list-add names "comptime/expr-type"))
+      (set! names (tc-string-list-add names "stdlib.comptime.expr-type"))
+      (set! names (tc-string-list-add names "stdlib.comptime/expr-type"))
+      (set! names (tc-string-list-add names "stdlib/comptime.expr-type"))
+      (set! names (tc-string-list-add names "stdlib/comptime/expr-type"))
+      (set! names (tc-string-list-add names "expr-string?"))
+      (set! names (tc-string-list-add names "comptime.expr-string?"))
+      (set! names (tc-string-list-add names "comptime/expr-string?"))
+      (set! names (tc-string-list-add names "stdlib.comptime.expr-string?"))
+      (set! names (tc-string-list-add names "stdlib.comptime/expr-string?"))
+      (set! names (tc-string-list-add names "stdlib/comptime.expr-string?"))
+      (set! names (tc-string-list-add names "expr-string-value"))
+      (set! names (tc-string-list-add names "comptime.expr-string-value"))
+      (set! names (tc-string-list-add names "comptime/expr-string-value"))
+      (set!
+        names
+        (tc-string-list-add names "stdlib.comptime.expr-string-value"))
+      (set!
+        names
+        (tc-string-list-add names "stdlib.comptime/expr-string-value"))
+      (set!
+        names
+        (tc-string-list-add names "stdlib/comptime.expr-string-value"))
+      (set! names (tc-string-list-add names "string-slice"))
+      (set! names (tc-string-list-add names "comptime.string-slice"))
+      (set! names (tc-string-list-add names "comptime/string-slice"))
+      (set! names (tc-string-list-add names "stdlib.comptime.string-slice"))
+      (set! names (tc-string-list-add names "stdlib.comptime/string-slice"))
+      (set! names (tc-string-list-add names "stdlib/comptime.string-slice"))
+      names)))
+
 (define (macro-expr-uses-expr-type? [expr-bases : i64] [expr : ast.AstExpr]) : bool
-  (or
-    (tc-expr-uses-free-name?
-      expr-bases
-      (tc-global-shared-view expr)
-      "expr-type"
-      TcStringList.Nil)
-    (tc-expr-uses-free-name?
-      expr-bases
-      (tc-global-shared-view expr)
-      "comptime.expr-type"
-      TcStringList.Nil)
-    (tc-expr-uses-free-name?
-      expr-bases
-      (tc-global-shared-view expr)
-      "comptime/expr-type"
-      TcStringList.Nil)
-    (tc-expr-uses-free-name?
-      expr-bases
-      (tc-global-shared-view expr)
-      "stdlib.comptime.expr-type"
-      TcStringList.Nil)
-    (tc-expr-uses-free-name?
-      expr-bases
-      (tc-global-shared-view expr)
-      "stdlib.comptime/expr-type"
-      TcStringList.Nil)
-    (tc-expr-uses-free-name?
-      expr-bases
-      (tc-global-shared-view expr)
-      "stdlib/comptime.expr-type"
-      TcStringList.Nil)
-    (tc-expr-uses-free-name?
-      expr-bases
-      (tc-global-shared-view expr)
-      "stdlib/comptime/expr-type"
-      TcStringList.Nil)
-    (tc-expr-uses-free-name?
-      expr-bases
-      (tc-global-shared-view expr)
-      "expr-string?"
-      TcStringList.Nil)
-    (tc-expr-uses-free-name?
-      expr-bases
-      (tc-global-shared-view expr)
-      "comptime.expr-string?"
-      TcStringList.Nil)
-    (tc-expr-uses-free-name?
-      expr-bases
-      (tc-global-shared-view expr)
-      "comptime/expr-string?"
-      TcStringList.Nil)
-    (tc-expr-uses-free-name?
-      expr-bases
-      (tc-global-shared-view expr)
-      "stdlib.comptime.expr-string?"
-      TcStringList.Nil)
-    (tc-expr-uses-free-name?
-      expr-bases
-      (tc-global-shared-view expr)
-      "stdlib.comptime/expr-string?"
-      TcStringList.Nil)
-    (tc-expr-uses-free-name?
-      expr-bases
-      (tc-global-shared-view expr)
-      "stdlib/comptime.expr-string?"
-      TcStringList.Nil)
-    (tc-expr-uses-free-name?
-      expr-bases
-      (tc-global-shared-view expr)
-      "expr-string-value"
-      TcStringList.Nil)
-    (tc-expr-uses-free-name?
-      expr-bases
-      (tc-global-shared-view expr)
-      "comptime.expr-string-value"
-      TcStringList.Nil)
-    (tc-expr-uses-free-name?
-      expr-bases
-      (tc-global-shared-view expr)
-      "comptime/expr-string-value"
-      TcStringList.Nil)
-    (tc-expr-uses-free-name?
-      expr-bases
-      (tc-global-shared-view expr)
-      "stdlib.comptime.expr-string-value"
-      TcStringList.Nil)
-    (tc-expr-uses-free-name?
-      expr-bases
-      (tc-global-shared-view expr)
-      "stdlib.comptime/expr-string-value"
-      TcStringList.Nil)
-    (tc-expr-uses-free-name?
-      expr-bases
-      (tc-global-shared-view expr)
-      "stdlib/comptime.expr-string-value"
-      TcStringList.Nil)
-    (tc-expr-uses-free-name?
-      expr-bases
-      (tc-global-shared-view expr)
-      "string-slice"
-      TcStringList.Nil)
-    (tc-expr-uses-free-name?
-      expr-bases
-      (tc-global-shared-view expr)
-      "comptime.string-slice"
-      TcStringList.Nil)
-    (tc-expr-uses-free-name?
-      expr-bases
-      (tc-global-shared-view expr)
-      "comptime/string-slice"
-      TcStringList.Nil)
-    (tc-expr-uses-free-name?
-      expr-bases
-      (tc-global-shared-view expr)
-      "stdlib.comptime.string-slice"
-      TcStringList.Nil)
-    (tc-expr-uses-free-name?
-      expr-bases
-      (tc-global-shared-view expr)
-      "stdlib.comptime/string-slice"
-      TcStringList.Nil)
-    (tc-expr-uses-free-name?
-      expr-bases
-      (tc-global-shared-view expr)
-      "stdlib/comptime.string-slice"
-      TcStringList.Nil)))
+  (tc-expr-uses-free-names?
+    expr-bases
+    expr
+    (macro-expr-type-helper-names)
+    TcStringList.Nil))
 
 (define (macro-collect-expr-type-decl-name
   [expr-bases : i64]

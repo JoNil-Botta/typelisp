@@ -209,6 +209,29 @@
     (ir.compiler-source-spans-empty))
     [(opt.OptInlineSpanProgram.Program inlined _) inlined]))
 
+;; The level-2 per-function pass fixpoint followed by the final if-conversion
+;; and constant-branch threading, without the rest of the production level-2
+;; tail (optimize-function-with-level). The pass fixtures below were written
+;; against exactly this sequence.
+(define (opt-test-optimize-function
+  [pools : ast.AstNodePoolContext]
+  [type-segment-bases : i64]
+  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  (let
+    [fixed : ir.CompilerIrFunction
+      (match (opt.optimize-function-fixed-pass-with-summaries
+        pools
+        type-segment-bases
+        func
+        (opt.optimize-function-max-iterations)
+        (opt.opt-loop-bce-empty-summaries))
+        [(opt.OptFunctionPassResult.Result next _) next])]
+    [converted : ir.CompilerIrFunction
+      (match (opt.opt-if-convert-final-pass type-segment-bases fixed)
+        [(opt.OptFunctionPassResult.Result next _) next])]
+    (match (opt.opt-thread-const-branch-final-pass type-segment-bases converted)
+      [(opt.OptFunctionPassResult.Result next _) next])))
+
 ;; A call-site stand-in for the span-carrying clone walks: with an empty span
 ;; table no location is found for it, so the clones carry no spans.
 (define (opt-test-inline-no-span-call) : ir.CompilerIrInstr
@@ -9507,7 +9530,7 @@
 ;; Returns 42 only when the full pipeline folds both extractions block-locally
 ;; and retires the now-unused Pack (0 Words and 0 Packs remain).
 (define (compiler-optimize-dce-pack-self-test) : i64
-  (match (opt.optimize-function-once
+  (match (opt.optimize-function-once-with-summaries
     (ast.ast-node-pool-reader-context-current)
     (ast.ast-node-pool-reader-type-segment-bases)
     (ir.CompilerIrFunction.Function
@@ -9516,7 +9539,8 @@
       (ast.AstType.I64)
       16
       (opt-dce-pack-blocks)
-      ir.CompilerIrFunctionAbi.Ordinary))
+      ir.CompilerIrFunctionAbi.Ordinary)
+    (opt.opt-loop-bce-empty-summaries))
     [(ir.CompilerIrFunction.Function _ _ _ _ optimized-blocks _)
       (begin
         (unless
@@ -32611,10 +32635,11 @@
     [rewritten : ir.CompilerIrFunction
       (opt.opt-tailrec-function (opt-tailrec-test-function))]
     [once : ir.CompilerIrFunction
-      (opt.optimize-function-once
+      (opt.optimize-function-once-with-summaries
         (ast.ast-node-pool-reader-context-current)
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt-tailrec-test-function))]
+        (opt-tailrec-test-function)
+        (opt.opt-loop-bce-empty-summaries))]
     [rewritten-blocks : ir.CompilerIrBlockList
       (opt.opt-function-blocks (opt.compiler-opt-global-shared-view rewritten))]
     [once-blocks : ir.CompilerIrBlockList
@@ -34059,7 +34084,7 @@
   [name : String]
   [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
   (opt.opt-function-blocks
-    (opt.optimize-function
+    (opt-test-optimize-function
       (ast.ast-node-pool-reader-context-current)
       (ast.ast-node-pool-reader-type-segment-bases)
       (opt-gvn-function name (opt-gvn-scalar-params) (ast.AstType.I64) blocks))))
@@ -35615,7 +35640,7 @@
   (let
     [dominated : ir.CompilerIrBlockList
       (opt.opt-function-blocks
-        (opt.optimize-function
+        (opt-test-optimize-function
           (ast.ast-node-pool-reader-context-current)
           (ast.ast-node-pool-reader-type-segment-bases)
           (opt-gvn-function
@@ -35625,7 +35650,7 @@
             (opt-gvn-dominated-diamond-blocks))))]
     [sibling : ir.CompilerIrBlockList
       (opt.opt-function-blocks
-        (opt.optimize-function
+        (opt-test-optimize-function
           (ast.ast-node-pool-reader-context-current)
           (ast.ast-node-pool-reader-type-segment-bases)
           (opt-gvn-function
@@ -35635,7 +35660,7 @@
             (opt-gvn-sibling-blocks))))]
     [loop : ir.CompilerIrBlockList
       (opt.opt-function-blocks
-        (opt.optimize-function
+        (opt-test-optimize-function
           (ast.ast-node-pool-reader-context-current)
           (ast.ast-node-pool-reader-type-segment-bases)
           (opt-gvn-function
@@ -35690,7 +35715,7 @@
         (opt-gvn-load-type-mismatch-blocks))]
     [copy : ir.CompilerIrBlockList
       (opt.opt-function-blocks
-        (opt.optimize-function
+        (opt-test-optimize-function
           (ast.ast-node-pool-reader-context-current)
           (ast.ast-node-pool-reader-type-segment-bases)
           (opt-gvn-function
@@ -35700,7 +35725,7 @@
             (opt-gvn-copy-blocks))))]
     [cast : ir.CompilerIrBlockList
       (opt.opt-function-blocks
-        (opt.optimize-function
+        (opt-test-optimize-function
           (ast.ast-node-pool-reader-context-current)
           (ast.ast-node-pool-reader-type-segment-bases)
           (opt-gvn-function
@@ -35710,7 +35735,7 @@
             (opt-gvn-cast-blocks))))]
     [gep : ir.CompilerIrBlockList
       (opt.opt-function-blocks
-        (opt.optimize-function
+        (opt-test-optimize-function
           (ast.ast-node-pool-reader-context-current)
           (ast.ast-node-pool-reader-type-segment-bases)
           (opt-gvn-function
@@ -38126,9 +38151,9 @@
 ;; outer merge retests it. Both merge phis are pure control flow, so every
 ;; incoming edge already decides the branch.
 ;;
-;; The fixtures drive the whole opt2 function pipeline (`optimize-function`)
-;; rather than the pass entry point, so a tree carrying only these tests still
-;; compiles and reports the new codes.
+;; The fixtures drive the whole opt2 function pipeline
+;; (`opt-test-optimize-function`) rather than the pass entry point, so a tree
+;; carrying only these tests still compiles and reports the new codes.
 (define (opt-thread-three-cond-params) : ir.CompilerIrParamSeq
   (ir.compiler-ir-param-seq-prepend
     (ir.CompilerIrParam.Param "outer" (ast.AstType.Bool) 0)
@@ -38355,7 +38380,7 @@
     ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (opt-thread-optimized [name : String] [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrFunction
-  (opt.optimize-function
+  (opt-test-optimize-function
     (ast.ast-node-pool-reader-context-current)
     (ast.ast-node-pool-reader-type-segment-bases)
     (opt-thread-test-function name blocks)))
@@ -49796,7 +49821,7 @@
       (opt.opt-function-blocks
         (opt.compiler-opt-global-shared-view bad-store-index-func))]
     [pipeline-map-func : ir.CompilerIrFunction
-      (opt.optimize-function
+      (opt-test-optimize-function
         (ast.ast-node-pool-reader-context-current)
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-unroll-mutable-map-test-function 0))]
@@ -51714,7 +51739,7 @@
 (define (compiler-optimize-bce-version-pipeline-self-test) : i64
   (let
     [optimized : ir.CompilerIrFunction
-      (opt.optimize-function
+      (opt-test-optimize-function
         (ast.ast-node-pool-reader-context-current)
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.CompilerIrFunction.Function
@@ -51727,7 +51752,7 @@
     [blocks : ir.CompilerIrBlockList
       (opt.opt-function-blocks (opt.compiler-opt-global-shared-view optimized))]
     [scaled : ir.CompilerIrFunction
-      (opt.optimize-function
+      (opt-test-optimize-function
         (ast.ast-node-pool-reader-context-current)
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.CompilerIrFunction.Function
@@ -61624,7 +61649,7 @@
 (define (compiler-optimize-bce-version-mb-pipeline-self-test) : i64
   (let
     [optimized : ir.CompilerIrFunction
-      (opt.optimize-function
+      (opt-test-optimize-function
         (ast.ast-node-pool-reader-context-current)
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.CompilerIrFunction.Function
@@ -63157,7 +63182,7 @@
 (define (compiler-optimize-unroll-mb-self-test) : i64
   (let
     [optimized : ir.CompilerIrFunction
-      (opt.optimize-function
+      (opt-test-optimize-function
         (ast.ast-node-pool-reader-context-current)
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.CompilerIrFunction.Function
@@ -63170,7 +63195,7 @@
     [blocks : ir.CompilerIrBlockList
       (opt.opt-function-blocks (opt.compiler-opt-global-shared-view optimized))]
     [merged : ir.CompilerIrFunction
-      (opt.optimize-function
+      (opt-test-optimize-function
         (ast.ast-node-pool-reader-context-current)
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-merged-loop-test-function))]
@@ -66223,9 +66248,9 @@
     (ir.CompilerIrBlockList.Nil)))
 
 ;; Full-pipeline integration fixture: `while (i < n) { acc = acc*5 + 3; i++ }`
-;; in SSA form. After optimize-function the x16 unroller versions the loop and
-;; the affine pass must collapse the sixteen chained pairs so the unrolled body
-;; multiplies by 5^16 = 152587890625 exactly once.
+;; in SSA form. After opt-test-optimize-function the x16 unroller versions the
+;; loop and the affine pass must collapse the sixteen chained pairs so the
+;; unrolled body multiplies by 5^16 = 152587890625 exactly once.
 (define (opt-affine-lcg-loop-blocks) : ir.CompilerIrBlockList
   (ir.compiler-ir-block-cons
     (ir.CompilerIrBlock.Block
@@ -66436,7 +66461,7 @@
   (let
     [ssa-result : i64
       (opt-affine-pipeline-check
-        (opt.optimize-function
+        (opt-test-optimize-function
           (ast.ast-node-pool-reader-context-current)
           (ast.ast-node-pool-reader-type-segment-bases)
           (ir.CompilerIrFunction.Function
@@ -66451,7 +66476,7 @@
         3)]
     [while-result : i64
       (opt-affine-pipeline-check
-        (opt.optimize-function
+        (opt-test-optimize-function
           (ast.ast-node-pool-reader-context-current)
           (ast.ast-node-pool-reader-type-segment-bases)
           (ir.CompilerIrFunction.Function
@@ -68079,7 +68104,7 @@
     [ssa-blocks : ir.CompilerIrBlockList
       (opt.opt-function-blocks (opt.compiler-opt-global-shared-view ssa))]
     [optimized : ir.CompilerIrFunction
-      (opt.optimize-function
+      (opt-test-optimize-function
         (ast.ast-node-pool-reader-context-current)
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-cfg-test-function raw))]
@@ -68869,7 +68894,7 @@
 (define (opt-rotate-ssa-test-pipeline-bottom-tested?) : bool
   (let
     [optimized : ir.CompilerIrFunction
-      (opt.optimize-function
+      (opt-test-optimize-function
         (ast.ast-node-pool-reader-context-current)
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-rotate-ssa-test-flag-loop-function))]
@@ -69612,10 +69637,11 @@
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt.compiler-opt-global-shared-view existing-phi))]
     [pipeline-loop : ir.CompilerIrFunction
-      (opt.optimize-function-once
+      (opt.optimize-function-once-with-summaries
         (ast.ast-node-pool-reader-context-current)
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt-ssa-construct-loop-function))]
+        (opt-ssa-construct-loop-function)
+        (opt.opt-loop-bce-empty-summaries))]
     [pipeline-loop-blocks : ir.CompilerIrBlockList
       (opt.opt-function-blocks
         (opt.compiler-opt-global-shared-view pipeline-loop))]
@@ -69636,10 +69662,11 @@
       (opt.opt-function-blocks
         (opt.compiler-opt-global-shared-view constructed-nested))]
     [pipeline-nested : ir.CompilerIrFunction
-      (opt.optimize-function-once
+      (opt.optimize-function-once-with-summaries
         (ast.ast-node-pool-reader-context-current)
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt-ssa-nested-loop-function))]
+        (opt-ssa-nested-loop-function)
+        (opt.opt-loop-bce-empty-summaries))]
     [pipeline-nested-blocks : ir.CompilerIrBlockList
       (opt.opt-function-blocks
         (opt.compiler-opt-global-shared-view pipeline-nested))]
@@ -70109,7 +70136,7 @@
         (ir.compiler-ir-global-shared-view mixed-join)
         (ir.compiler-ir-label "join"))]
     [chain-pipeline : ir.CompilerIrFunction
-      (opt.optimize-function
+      (opt-test-optimize-function
         (ast.ast-node-pool-reader-context-current)
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-uniform-phi-chain-function))]
@@ -70308,13 +70335,13 @@
       (opt.opt-cfg-simplify-blocks (opt-cfg-folded-edge-phi-blocks))]
     [phi-blocks : ir.CompilerIrBlockList
       (opt.opt-function-blocks
-        (opt.optimize-function
+        (opt-test-optimize-function
           (ast.ast-node-pool-reader-context-current)
           (ast.ast-node-pool-reader-type-segment-bases)
           (opt-cfg-test-function (opt-cfg-phi-blocks))))]
     [trap-blocks : ir.CompilerIrBlockList
       (opt.opt-function-blocks
-        (opt.optimize-function
+        (opt-test-optimize-function
           (ast.ast-node-pool-reader-context-current)
           (ast.ast-node-pool-reader-type-segment-bases)
           (opt-cfg-test-function (opt-cfg-trap-path-blocks))))]
@@ -71569,12 +71596,13 @@
   (let
     [func : ir.CompilerIrFunction (opt-test-function (opt-fixed-point-instrs))]
     [once : ir.CompilerIrFunction
-      (opt.optimize-function-once
+      (opt.optimize-function-once-with-summaries
         (ast.ast-node-pool-reader-context-current)
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt.compiler-opt-global-shared-view func))]
+        (opt.compiler-opt-global-shared-view func)
+        (opt.opt-loop-bce-empty-summaries))]
     [fixed : ir.CompilerIrFunction
-      (opt.optimize-function
+      (opt-test-optimize-function
         (ast.ast-node-pool-reader-context-current)
         (ast.ast-node-pool-reader-type-segment-bases)
         func)]
@@ -77551,7 +77579,7 @@
 (define (compiler-optimize-unroll-const-pipeline-self-test) : i64
   (let
     [func : ir.CompilerIrFunction
-      (opt.optimize-function
+      (opt-test-optimize-function
         (ast.ast-node-pool-reader-context-current)
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-lc-word-test-function
@@ -90728,7 +90756,7 @@
 (define (compiler-optimize-loop-budget-pipeline-self-test) : i64
   (let
     [piped : ir.CompilerIrFunction
-      (opt.optimize-function
+      (opt-test-optimize-function
         (ast.ast-node-pool-reader-context-current)
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-loop-budget-bce-function 3))]

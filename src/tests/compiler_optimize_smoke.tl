@@ -3199,10 +3199,11 @@
   (let
     [blocks : ir.CompilerIrBlockList (smoke-heavy-pass-large-blocks)]
     [optimized : ir.CompilerIrFunction
-      (opt.optimize-function-once
+      (opt.optimize-function-once-with-summaries
         (ast.ast-node-pool-reader-context-current)
         (ast.ast-node-pool-reader-type-segment-bases)
-        (smoke-heavy-pass-large-function))]
+        (smoke-heavy-pass-large-function)
+        (opt.opt-loop-bce-empty-summaries))]
     (begin
       (unless
         (>

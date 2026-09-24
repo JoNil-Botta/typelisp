@@ -14713,7 +14713,7 @@
 
 ;; Carries an optimized function together with an OptCfgContext that is
 ;; valid for the returned function's *current* blocks, so the next pass in
-;; optimize-function-once can reuse it for entry verification and dominance
+;; optimize-function-once-with-summaries can reuse it for entry verification and dominance
 ;; queries instead of rebuilding from scratch. The context is only paired with
 ;; the exact block list it was built from; passes that rewrite the CFG build a
 ;; fresh context for their output before handing it back.
@@ -132191,16 +132191,6 @@
                         load-sink
                         (compiler-opt-global-shared-view function-abi)))]))]))])))
 
-(define (optimize-function-once
-  [pools : ast.AstNodePoolContext]
-  [type-segment-bases : i64]
-  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
-  (optimize-function-once-with-summaries
-    pools
-    type-segment-bases
-    func
-    (opt-loop-bce-empty-summaries)))
-
 ;; Level 2 keeps the self-build path lightweight while preserving the explicit
 ;; optimized-level checks for local scalar cleanup, bounds checks, stack
 ;; promotion, CFG cleanup, DCE, and program-level reachability pruning.
@@ -132643,32 +132633,6 @@
               (OptFunctionPassResult.Result fixed true)])
           (OptFunctionPassResult.Result func false))])))
 
-(define (optimize-function-fixed-with-summaries
-  [pools : ast.AstNodePoolContext]
-  [type-segment-bases : i64]
-  [func : ir.CompilerIrFunction]
-  [remaining : i64]
-  [summaries : OptLoopBceSummaries]) : ir.CompilerIrFunction
-  (match (optimize-function-fixed-pass-with-summaries
-    pools
-    type-segment-bases
-    func
-    remaining
-    summaries)
-    [(OptFunctionPassResult.Result next _) next]))
-
-(define (optimize-function-fixed
-  [pools : ast.AstNodePoolContext]
-  [type-segment-bases : i64]
-  [func : ir.CompilerIrFunction]
-  [remaining : i64]) : ir.CompilerIrFunction
-  (optimize-function-fixed-with-summaries
-    pools
-    type-segment-bases
-    func
-    remaining
-    (opt-loop-bce-empty-summaries)))
-
 ;; Compare/branch fusion, run BELOW the pipeline fixpoint and below every final
 ;; CFG pass, which is the only position where "no CSE round runs after it" is
 ;; actually true: `optimize-function-fixed-pass-with-summaries` feeds a changed
@@ -132789,12 +132753,6 @@
           "if_convert"
           next)
         changed)]))
-
-(define (opt-if-convert-final
-  [type-segment-bases : i64]
-  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
-  (match (opt-if-convert-final-pass type-segment-bases func)
-    [(OptFunctionPassResult.Result next _) next]))
 
 ;; --- DCE-LATE: the last dead-instruction sweep ------------------------------
 ;;
@@ -133598,21 +133556,6 @@
                     (ir.CompilerIrBlockList.Array
                       (ir.CompilerIrBlockSeq out seq.len))
                     abi)))))))]))
-
-(define (optimize-function
-  [pools : ast.AstNodePoolContext]
-  [type-segment-bases : i64]
-  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
-  (match (opt-thread-const-branch-final-pass
-    type-segment-bases
-    (opt-if-convert-final
-      type-segment-bases
-      (optimize-function-fixed
-        pools
-        type-segment-bases
-        func
-        (optimize-function-max-iterations))))
-    [(OptFunctionPassResult.Result next _) next]))
 
 ;; Opt levels (0/1/2): 0 = none, 1 = cheap stack-only (the fast self-compile
 ;; path), 2 = the full optimizer + scalar register allocation + inlining (the

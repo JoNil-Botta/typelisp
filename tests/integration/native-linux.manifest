@@ -729,3 +729,15 @@ signed_div_64_overflow_opt2|tests/integration/signed_division_flags.tl|135|-|64 
 signed_div_64_zero_opt2|tests/integration/signed_division_flags.tl|135|-|64 1 0 0|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/linux/signed_div_64_zero_opt2/signed_div_64_zero_opt2.tl:10:14: integer division or remainder error: dividend=1 divisor=0\n
 signed_rem_64_overflow_opt2|tests/integration/signed_division_flags.tl|135|-|64 -9223372036854775808 -1 1|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/linux/signed_rem_64_overflow_opt2/signed_rem_64_overflow_opt2.tl:17:14: integer division or remainder error: dividend=-9223372036854775808 divisor=-1\n
 signed_rem_64_zero_opt2|tests/integration/signed_division_flags.tl|135|-|64 1 0 1|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/linux/signed_rem_64_zero_opt2/signed_rem_64_zero_opt2.tl:17:14: integer division or remainder error: dividend=1 divisor=0\n
+
+loop_call_addr_taken_opt0|tests/integration/loop_call_addr_taken.tl|0|594\n1156\n|-|-|opt-level:0+stage-stdlib
+loop_call_addr_taken_opt2|tests/integration/loop_call_addr_taken.tl|0|594\n1156\n|-|-|opt-level:2+stage-stdlib
+bit_length_loop|tests/integration/bit_length_loop.tl|42|0\n1\n2\n2\n3\n4\n10\n0\n0\n63\n63\n|0 1 2 3 7 8 1000 -1 -9223372036854775808 9223372036854775807 4611686018427387904|stdlib/io.tl stdlib/string.tl
+bit_length_loop_opt0|tests/integration/bit_length_loop.tl|42|0\n1\n2\n2\n3\n4\n10\n0\n0\n63\n63\n|0 1 2 3 7 8 1000 -1 -9223372036854775808 9223372036854775807 4611686018427387904|stdlib/io.tl stdlib/string.tl|opt-level:0+stage-stdlib
+bit_length_loop_opt2|tests/integration/bit_length_loop.tl|42|0\n1\n2\n2\n3\n4\n10\n0\n0\n63\n63\n|0 1 2 3 7 8 1000 -1 -9223372036854775808 9223372036854775807 4611686018427387904|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib
+bit_length_order_opt0|tests/integration/bit_length_order.tl|0|104\n104\n|100 8|stdlib/io.tl stdlib/string.tl|opt-level:0+stage-stdlib
+bit_length_order_opt1|tests/integration/bit_length_order.tl|0|104\n104\n|100 8|stdlib/io.tl stdlib/string.tl|opt-level:1+stage-stdlib
+bit_length_order_opt2|tests/integration/bit_length_order.tl|0|104\n104\n|100 8|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib
+bit_length_order_zero|tests/integration/bit_length_order.tl|0|0\n64\n|0 -1|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib
+bit_length_order_signed_wrap|tests/integration/bit_length_order.tl|0|-9223372036854775805\n9223372036854775811\n|9223372036854775807 8|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib
+bit_length_order_unsigned_wrap|tests/integration/bit_length_order.tl|0|-1\n63\n|-1 -9223372036854775808|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib

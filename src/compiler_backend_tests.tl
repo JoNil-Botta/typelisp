@@ -44984,15 +44984,15 @@ g:
   [abi : String]
   [size : i64]
   [expected : i64]) : bool
-  (match (compiler_backend.compiler-backend-emit-source-for-target
+  (match (compiler-backend-emit-source-opt2-for-target
     (str_cat.str-cat
-      "(extern (reserve [bytes : i64]) : "
+      "(extern (tl_alloc [bytes : i64]) : u64)\n(extern (reserve [bytes : i64]) : "
       result-type
       abi
       (str_cat.str-cat
         " (:symbol \""
         symbol
-        "\"))\n(define (main) : i64 (begin (reserve "
+        "\"))\n(define (main) : i64 (begin (tl_alloc 128) (reserve "
         (str_cat.str-cat (string.int->string size) ") 42))")))
     target)
     [(compiler_backend.ResultCompilerBackend.Ok asm)

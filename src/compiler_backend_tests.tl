@@ -16157,6 +16157,49 @@ g:
         [(compiler_backend.ResultCompilerBackend.Err _) false])
       (compiler-backend-word-scratch-staging-ok?))))
 
+;; BITLEN: `bit_length` is `bsr` + 1 in place, 0 for a value with no
+;; significant bit (<= 0 signed, 0 unsigned), with no scratch register.
+(define (compiler-backend-bit-length-ok?) : bool
+  (let
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    (and
+      (string.eq
+        (compiler_backend.compiler-backend-bit-length-reg-asm true "%rax")
+        "    testq %rax, %rax\n    jle 1f\n    bsrq %rax, %rax\n    addq $1, %rax\n    jmp 2f\n1:\n    xorq %rax, %rax\n2:\n")
+      (string.eq
+        (compiler_backend.compiler-backend-bit-length-reg-asm false "%r9")
+        "    testq %r9, %r9\n    je 1f\n    bsrq %r9, %r9\n    addq $1, %r9\n    jmp 2f\n1:\n    xorq %r9, %r9\n2:\n")
+      (match (compiler_backend.compiler-backend-emit-unop
+        (compiler_regalloc.compiler-reg-assignment-table-empty)
+        1
+        (compiler_ir_types.CompilerIrUnOp.BitLength)
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ast_types.AstType.I64)
+        backend-state)
+        [(compiler_backend.ResultCompilerBackend.Ok asm)
+          (and
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view asm)
+              "    jle 1f\n    bsrq ")
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view asm)
+              "\n2:\n"))]
+        [(compiler_backend.ResultCompilerBackend.Err _) false])
+      (match (compiler_backend.compiler-backend-emit-unop
+        (compiler_regalloc.compiler-reg-assignment-table-empty)
+        1
+        (compiler_ir_types.CompilerIrUnOp.BitLength)
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ast_types.AstType.U64)
+        backend-state)
+        [(compiler_backend.ResultCompilerBackend.Ok asm)
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            "    je 1f\n    bsrq ")]
+        [(compiler_backend.ResultCompilerBackend.Err _) false]))))
+
 (define (compiler-backend-call-return-program) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
     (compiler_ir_types.compiler-ir-global-seq-empty)
@@ -59717,7 +59760,8 @@ b_keep:
       (compiler-backend-aggregate-storage-shape-ok?)
       (and
         (compiler-backend-shift-guard-ok?)
-        (compiler-backend-scalar-shift-matrix-ok?))
+        (compiler-backend-scalar-shift-matrix-ok?)
+        (compiler-backend-bit-length-ok?))
       (and
         (compiler-backend-windows-runtime-guard-ok?)
         (compiler-backend-simd-vector-ok?)

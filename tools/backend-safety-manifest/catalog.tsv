@@ -81,6 +81,7 @@ ir_unop	Neg	unary_op	src/tests/compiler_ir_types_smoke.tl	checked
 ir_unop	Not	unary_op	src/tests/compiler_ir_types_smoke.tl	checked
 ir_unop	BitNot	unary_op	src/tests/compiler_ir_types_smoke.tl	checked
 ir_unop	Sqrt	unary_op	src/tests/compiler_ir_types_smoke.tl	checked
+ir_unop	BitLength	bit_length	src/compiler_backend_tests.tl	checked
 ir_mask_binop	And	vector_op	scripts/verify-cross-mode-differential.sh	checked
 ir_mask_binop	Or	vector_op	scripts/verify-cross-mode-differential.sh	checked
 ir_vector_reduce	Sum	vector_op	scripts/verify-cross-mode-differential.sh	checked

@@ -1832,8 +1832,738 @@
             (ir.CompilerIrMaybeValue.No))]
         ;; Do not fold sqrt through the compiler host. Runtime SSE2 is the
         ;; specified rounding/NaN implementation and must stay visible in IR.
-        [(ir.CompilerIrUnOp.Sqrt) (ir.CompilerIrMaybeValue.No)])]
+        [(ir.CompilerIrUnOp.Sqrt) (ir.CompilerIrMaybeValue.No)]
+        [(ir.CompilerIrUnOp.BitLength)
+          (if (opt-bit-length-type? (compiler-opt-global-shared-view result-ty))
+            (match (opt-normalize-scalar-to-i64
+              value
+              (compiler-opt-global-shared-view result-ty))
+              [(option_i64.Some a)
+                (ir.CompilerIrMaybeValue.Some
+                  (ir.CompilerIrValue.I64
+                    (opt-bit-length-of
+                      a
+                      (match result-ty
+                        [(ast.AstType.U64) false]
+                        [_ true]))))]
+              [(option_i64.None) (ir.CompilerIrMaybeValue.No)])
+            (ir.CompilerIrMaybeValue.No))])]
     [(OptKnownConst.NoConst) (ir.CompilerIrMaybeValue.No)]))
+
+;; --- BITLEN: significant-bit counting loops ------------------------------------
+;;
+;; After rotation,
+;;
+;;     (while (> probe 0) (set! probe (shr probe 1)) (set! bits (+ bits 1)))
+;;
+;; is a self loop B entered only after a guard has tested `probe > 0`:
+;;
+;;   G:  %g = gt %p0, 0 : T                  (u64 also: ne %p0, 0)
+;;       branch %g, P, X
+;;   P:  jump B                              (or G branches to B itself)
+;;   B:  %c  = phi [%c0, P], [%cn, B] : T
+;;       %p  = phi [%p0, P], [%ps, B] : T
+;;       %ps = shr %p, 1 : T
+;;       %ca = add %c, 1 : T
+;;      [%cn = mov %ca : T]
+;;       %k  = gt %ps, 0 : T                 (u64 also: ne %ps, 0)
+;;       branch %k, B, E
+;;
+;; For a p0 with a significant bit the body runs exactly bit-length(p0) times,
+;; so B becomes its closed form -- LLVM's LoopIdiomRecognize `ctlz` idiom:
+;;
+;;   B:  %c  = mov %c0 : T
+;;       %p  = mov %p0 : T
+;;       %ps = bit_length %p : T
+;;       %ca = add %c, %ps : T
+;;      [%cn = mov %ca : T]
+;;       jump E
+;;
+;; which the backend emits as `bsr` plus one. The rewrite is admitted only when
+;; no value whose meaning changes escapes: %p and %c have no reader but the
+;; shift and the add, %ps none but its phi and the exit test, and %k none but
+;; the branch. The values that do leave B, %ca and %cn, end the loop as
+;; c0 + bit-length(p0) either way. T is i64 (arithmetic shift, signed tests) or
+;; u64 (logical shift, unsigned tests), the same for the probe and the counter,
+;; and B has no other instruction.
+(define (opt-bitlen-same-type? [a : ast.AstType] [b : ast.AstType]) : bool
+  (match a
+    [(ast.AstType.I64)
+      (match b
+        [(ast.AstType.I64) true]
+        [_ false])]
+    [(ast.AstType.U64)
+      (match b
+        [(ast.AstType.U64) true]
+        [_ false])]
+    [_ false]))
+
+(define (opt-bitlen-var-of [value : ir.CompilerIrValue]) : i64
+  (match value
+    [(ir.CompilerIrValue.Var v) v]
+    [_ (- 0 1)]))
+
+(define (opt-bitlen-literal? [value : ir.CompilerIrValue] [n : i64]) : bool
+  (match value
+    [(ir.CompilerIrValue.I64 k) (= k n)]
+    [_ false]))
+
+;; `var > 0` at type `ty`, or for u64 also `var != 0`.
+(define (opt-bitlen-positive-test?
+  [op : ir.CompilerIrBinOp]
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]
+  [op-ty : ast.AstType]
+  [var : i64]
+  [ty : ast.AstType]) : bool
+  (and
+    (>= var 0)
+    (= (opt-bitlen-var-of (compiler-opt-global-shared-view lhs)) var)
+    (opt-bitlen-literal? (compiler-opt-global-shared-view rhs) 0)
+    (opt-bitlen-same-type? op-ty (compiler-opt-global-shared-view ty))
+    (match op
+      [(ir.CompilerIrBinOp.Gt) true]
+      [(ir.CompilerIrBinOp.Ne)
+        (match ty
+          [(ast.AstType.U64) true]
+          [_ false])]
+      [_ false])))
+
+;; References to `label` from control transfers anywhere in `seq`.
+(define (opt-bitlen-label-refs [seq : ir.CompilerIrBlockSeq] [label : i64]) : i64
+  (let
+    [b : i64 0]
+    [refs : i64 0]
+    (begin
+      (while (< b seq.len)
+        (begin
+          (match (ir.compiler-ir-block-seq-ref seq b)
+            [(ir.CompilerIrBlock.Block _ instrs)
+              (let
+                [slots : (__tl_dyn-array ir.CompilerIrInstr)
+                  (compiler-opt-global-shared-view instrs.slots)]
+                [i : i64 0]
+                (while (< i instrs.len)
+                  (begin
+                    (match (compiler-opt-global-array-element-shared-view
+                      slots
+                      i)
+                      [(ir.CompilerIrInstr.Jump t)
+                        (when (= t label) (set! refs (+ refs 1)))]
+                      [(ir.CompilerIrInstr.Branch _ t f)
+                        (begin
+                          (when (= t label) (set! refs (+ refs 1)))
+                          (when (= f label) (set! refs (+ refs 1))))]
+                      [(ir.CompilerIrInstr.TotalEnumBranch _ t f)
+                        (begin
+                          (when (= t label) (set! refs (+ refs 1)))
+                          (when (= f label) (set! refs (+ refs 1))))]
+                      ;; A switch may reach any block: never admitted.
+                      [(ir.CompilerIrInstr.Switch _ _ _ _)
+                        (set! refs (+ refs 2))]
+                      [(ir.CompilerIrInstr.TotalEnumSwitch _ _ _ _ _)
+                        (set! refs (+ refs 2))]
+                      [_ unit])
+                    (set! i (+ i 1)))))])
+          (set! b (+ b 1))))
+      refs)))
+
+;; Index of the block labelled `label`, or -1.
+(define (opt-bitlen-block-index [seq : ir.CompilerIrBlockSeq] [label : i64]) : i64
+  (let
+    [b : i64 0]
+    [found : i64 (- 0 1)]
+    (begin
+      (while (and (< found 0) (< b seq.len))
+        (begin
+          (match (ir.compiler-ir-block-seq-ref seq b)
+            [(ir.CompilerIrBlock.Block l _) (when (= l label) (set! found b))])
+          (set! b (+ b 1))))
+      found)))
+
+;; `var <= 0` at type `ty` (a false edge proves `var > 0`), or for u64 also
+;; `var == 0`.
+(define (opt-bitlen-nonpositive-test?
+  [op : ir.CompilerIrBinOp]
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]
+  [op-ty : ast.AstType]
+  [var : i64]
+  [ty : ast.AstType]) : bool
+  (and
+    (>= var 0)
+    (= (opt-bitlen-var-of lhs) var)
+    (opt-bitlen-literal? rhs 0)
+    (opt-bitlen-same-type? op-ty (compiler-opt-global-shared-view ty))
+    (match op
+      [(ir.CompilerIrBinOp.Le) true]
+      [(ir.CompilerIrBinOp.Eq)
+        (match ty
+          [(ast.AstType.U64) true]
+          [_ false])]
+      [_ false])))
+
+;; Whether reaching `target` from block `h` proves `p0` positive at type `ty`:
+;; `h` branches to `target` on the edge its own test of p0 decides, or `h`
+;; only jumps to `target` and the same holds for its single predecessor, at
+;; most compiler-opt-bitlen-guard-depth blocks back.
+(define (opt-bitlen-edge-proves-positive?
+  [seq : ir.CompilerIrBlockSeq]
+  [h : i64]
+  [target : i64]
+  [p0 : i64]
+  [ty : ast.AstType]
+  [depth : i64]) : bool
+  (if (or (< h 0) (> depth compiler-opt-bitlen-guard-depth))
+    false
+    (match (ir.compiler-ir-block-seq-ref seq h)
+      [(ir.CompilerIrBlock.Block h-label instrs)
+        (if (< instrs.len 1)
+          false
+          (match (ir.compiler-ir-instr-seq-ref instrs (- instrs.len 1))
+            [(ir.CompilerIrInstr.Jump t)
+              (and
+                (= t target)
+                (= instrs.len 1)
+                (=
+                  (opt-bitlen-label-refs
+                    (compiler-opt-global-shared-view seq)
+                    h-label)
+                  1)
+                (opt-bitlen-edge-proves-positive?
+                  (compiler-opt-global-shared-view seq)
+                  (opt-bitlen-guard-predecessor
+                    (compiler-opt-global-shared-view seq)
+                    h-label)
+                  h-label
+                  p0
+                  (compiler-opt-global-shared-view ty)
+                  (+ depth 1)))]
+            [(ir.CompilerIrInstr.Branch cond t f)
+              (let
+                [g : i64
+                  (opt-bitlen-var-of (compiler-opt-global-shared-view cond))]
+                [true-edge? : bool (and (= t target) (not (= f target)))]
+                [false-edge? : bool (and (= f target) (not (= t target)))]
+                [i : i64 0]
+                [ok : bool false]
+                (begin
+                  (when
+                    (and (>= g 0) (or true-edge? false-edge?))
+                    (while (< i (- instrs.len 1))
+                      (begin
+                        (match (ir.compiler-ir-instr-seq-ref instrs i)
+                          [(ir.CompilerIrInstr.BinOp dst op lhs rhs op-ty)
+                            (when
+                              (= dst g)
+                              (set!
+                                ok
+                                (if true-edge?
+                                  (opt-bitlen-positive-test?
+                                    op
+                                    lhs
+                                    rhs
+                                    op-ty
+                                    p0
+                                    (compiler-opt-global-shared-view ty))
+                                  (opt-bitlen-nonpositive-test?
+                                    op
+                                    lhs
+                                    rhs
+                                    op-ty
+                                    p0
+                                    (compiler-opt-global-shared-view ty)))))]
+                          [_ unit])
+                        (set! i (+ i 1)))))
+                  ok))]
+            [_ false]))])))
+
+(define compiler-opt-bitlen-guard-depth : i64
+  4)
+
+;; The rewritten body of self loop `block` at index `b` of `seq`, or the
+;; unchanged block when it is not the BITLEN idiom (see above).
+(define (opt-bitlen-rewrite-block
+  [seq : ir.CompilerIrBlockSeq]
+  [uses : (__tl_dyn-array i64)]
+  [block : ir.CompilerIrBlock]) : OptMaybeBlock
+  (match block
+    [(ir.CompilerIrBlock.Block label instrs)
+      (let
+        [n : i64 instrs.len]
+        [c : i64 (- 0 1)]
+        [c0 : ir.CompilerIrValue (ir.CompilerIrValue.Unit)]
+        [c-back : i64 (- 0 1)]
+        [p : i64 (- 0 1)]
+        [p0 : ir.CompilerIrValue (ir.CompilerIrValue.Unit)]
+        [p-back : i64 (- 0 1)]
+        [pred : i64 (- 0 1)]
+        [phis : i64 0]
+        [ps : i64 (- 0 1)]
+        [ca : i64 (- 0 1)]
+        [ca-src : i64 (- 0 1)]
+        [cn : i64 (- 0 1)]
+        [cn-src : i64 (- 0 1)]
+        [k : i64 (- 0 1)]
+        [k-src : i64 (- 0 1)]
+        [exit : i64 (- 0 1)]
+        [ty : ast.AstType (ast.AstType.Unit)]
+        [shr-ty : ast.AstType (ast.AstType.Unit)]
+        [add-ty : ast.AstType (ast.AstType.Unit)]
+        [k-op-ok : bool false]
+        [k-ty : ast.AstType (ast.AstType.Unit)]
+        [k-op : ir.CompilerIrBinOp (ir.CompilerIrBinOp.Add)]
+        [bad : bool (or (< n 6) (> n 7))]
+        [i : i64 0]
+        (begin
+          ;; The self edge.
+          (unless
+            bad
+            (match (ir.compiler-ir-instr-seq-ref instrs (- n 1))
+              [(ir.CompilerIrInstr.Branch cond t f)
+                (if (and (= t label) (not (= f label)))
+                  (begin
+                    (set!
+                      k-src
+                      (opt-bitlen-var-of (compiler-opt-global-shared-view cond)))
+                    (set! exit f))
+                  (set! bad true))]
+              [_ (set! bad true)]))
+          ;; Every other instruction is one of the idiom's.
+          (while (and (not bad) (< i (- n 1)))
+            (begin
+              (match (ir.compiler-ir-instr-seq-ref instrs i)
+                [(ir.CompilerIrInstr.Phi dst inputs phi-ty)
+                  (if (or
+                    (not (= i phis))
+                    (not
+                      (=
+                        (ir.compiler-ir-phi-input-seq-count
+                          (compiler-opt-global-shared-view inputs))
+                        2)))
+                    (set! bad true)
+                    (let
+                      [in0 : ir.CompilerIrPhiInput
+                        (ir.compiler-ir-phi-input-seq-ref
+                          (compiler-opt-global-shared-view inputs)
+                          0)]
+                      [in1 : ir.CompilerIrPhiInput
+                        (ir.compiler-ir-phi-input-seq-ref
+                          (compiler-opt-global-shared-view inputs)
+                          1)]
+                      [self-first? : bool (= in0.label label)]
+                      [outer : ir.CompilerIrPhiInput
+                        (if self-first?
+                          in1
+                          in0)]
+                      [inner : ir.CompilerIrPhiInput
+                        (if self-first?
+                          in0
+                          in1)]
+                      (if (or
+                        (not (= inner.label label))
+                        (= outer.label label)
+                        (and (>= pred 0) (not (= outer.label pred)))
+                        (<
+                          (opt-bitlen-var-of
+                            (compiler-opt-global-shared-view inner.value))
+                          0))
+                        (set! bad true)
+                        (begin
+                          (set! pred outer.label)
+                          (set! phis (+ phis 1))
+                          ;; The first phi is provisionally the counter; the
+                          ;; shift decides below.
+                          (if (< c 0)
+                            (begin
+                              (set! c dst)
+                              (set!
+                                c0
+                                (compiler-opt-global-shared-view outer.value))
+                              (set!
+                                c-back
+                                (opt-bitlen-var-of
+                                  (compiler-opt-global-shared-view inner.value)))
+                              (set! add-ty phi-ty))
+                            (begin
+                              (set! p dst)
+                              (set!
+                                p0
+                                (compiler-opt-global-shared-view outer.value))
+                              (set!
+                                p-back
+                                (opt-bitlen-var-of
+                                  (compiler-opt-global-shared-view inner.value)))
+                              (set! ty phi-ty)))))))]
+                [(ir.CompilerIrInstr.BinOp dst op lhs rhs op-ty)
+                  (match (compiler-opt-global-shared-view op)
+                    [(ir.CompilerIrBinOp.Shr _)
+                      (if (or
+                        (>= ps 0)
+                        (not
+                          (opt-bitlen-literal?
+                            (compiler-opt-global-shared-view rhs)
+                            1))
+                        (<
+                          (opt-bitlen-var-of
+                            (compiler-opt-global-shared-view lhs))
+                          0))
+                        (set! bad true)
+                        (begin
+                          (set! ps dst)
+                          (set! shr-ty (compiler-opt-global-shared-view op-ty))
+                          ;; Swap the provisional roles when the shift reads
+                          ;; the first phi.
+                          (when
+                            (=
+                              (opt-bitlen-var-of
+                                (compiler-opt-global-shared-view lhs))
+                              c)
+                            (let
+                              [t-var : i64 c]
+                              [t-init : ir.CompilerIrValue
+                                (compiler-opt-global-shared-view c0)]
+                              [t-back : i64 c-back]
+                              [t-ty : ast.AstType
+                                (compiler-opt-global-shared-view add-ty)]
+                              (begin
+                                (set! c p)
+                                (set! c0 (compiler-opt-global-shared-view p0))
+                                (set! c-back p-back)
+                                (set!
+                                  add-ty
+                                  (compiler-opt-global-shared-view ty))
+                                (set! p t-var)
+                                (set!
+                                  p0
+                                  (compiler-opt-global-shared-view t-init))
+                                (set! p-back t-back)
+                                (set! ty (compiler-opt-global-shared-view t-ty)))))
+                          (unless
+                            (=
+                              (opt-bitlen-var-of
+                                (compiler-opt-global-shared-view lhs))
+                              p)
+                            (set! bad true))))]
+                    [(ir.CompilerIrBinOp.Add)
+                      (if (>= ca 0)
+                        (set! bad true)
+                        (begin
+                          (set! ca dst)
+                          (set!
+                            ca-src
+                            (if (opt-bitlen-literal?
+                              (compiler-opt-global-shared-view rhs)
+                              1)
+                              (opt-bitlen-var-of
+                                (compiler-opt-global-shared-view lhs))
+                              (if (opt-bitlen-literal?
+                                (compiler-opt-global-shared-view lhs)
+                                1)
+                                (opt-bitlen-var-of
+                                  (compiler-opt-global-shared-view rhs))
+                                (- 0 1))))
+                          (unless
+                            (opt-bitlen-same-type?
+                              op-ty
+                              (compiler-opt-global-shared-view add-ty))
+                            (set! bad true))))]
+                    [_
+                      (if (>= k 0)
+                        (set! bad true)
+                        (begin
+                          (set! k dst)
+                          (set! k-op (compiler-opt-global-shared-view op))
+                          (set! k-ty (compiler-opt-global-shared-view op-ty))
+                          (set!
+                            k-op-ok
+                            (and
+                              (opt-bitlen-literal?
+                                (compiler-opt-global-shared-view rhs)
+                                0)
+                              (>=
+                                (opt-bitlen-var-of
+                                  (compiler-opt-global-shared-view lhs))
+                                0)
+                              (=
+                                (opt-bitlen-var-of
+                                  (compiler-opt-global-shared-view lhs))
+                                ps)))))])]
+                [(ir.CompilerIrInstr.Mov dst src mov-ty)
+                  (if (>= cn 0)
+                    (set! bad true)
+                    (begin
+                      (set! cn dst)
+                      (set!
+                        cn-src
+                        (opt-bitlen-var-of
+                          (compiler-opt-global-shared-view src)))
+                      (unless
+                        (opt-bitlen-same-type?
+                          mov-ty
+                          (compiler-opt-global-shared-view add-ty))
+                        (set! bad true))))]
+                [_ (set! bad true)])
+              (set! i (+ i 1))))
+          (if (or
+            bad
+            (not (= phis 2))
+            (< ps 0)
+            (< ca 0)
+            (< k 0)
+            (not k-op-ok)
+            ;; the exit test reads the shift and is the branch condition
+            (not (= k k-src))
+            (not
+              (opt-bitlen-positive-test?
+                k-op
+                (ir.CompilerIrValue.Var ps)
+                (ir.CompilerIrValue.I64 0)
+                (compiler-opt-global-shared-view k-ty)
+                ps
+                (compiler-opt-global-shared-view ty)))
+            ;; one 64-bit type throughout
+            (not (opt-bit-length-type? (compiler-opt-global-shared-view ty)))
+            (not
+              (opt-bitlen-same-type?
+                (compiler-opt-global-shared-view shr-ty)
+                (compiler-opt-global-shared-view ty)))
+            (not
+              (opt-bitlen-same-type?
+                (compiler-opt-global-shared-view add-ty)
+                (compiler-opt-global-shared-view ty)))
+            ;; the probe's back edge is the shift, the counter's the add or
+            ;; its copy
+            (not (= p-back ps))
+            (not (= ca-src c))
+            (not
+              (if (>= cn 0)
+                (and (= cn-src ca) (= c-back cn))
+                (= c-back ca)))
+            ;; no reader whose value changes
+            (not (= (array-ref uses p) 1))
+            (not (= (array-ref uses c) 1))
+            (not (= (array-ref uses ps) 2))
+            (not (= (array-ref uses k) 1))
+            (< (opt-bitlen-var-of (compiler-opt-global-shared-view p0)) 0))
+            (OptMaybeBlock.No)
+            ;; The guard: B's only other predecessor is P, and either P
+            ;; branches to B when p0 is positive, or P only jumps to B and its
+            ;; one predecessor branches to P when p0 is positive.
+            (let
+              [pred-index : i64
+                (opt-bitlen-block-index
+                  (compiler-opt-global-shared-view seq)
+                  pred)]
+              [p0-var : i64
+                (opt-bitlen-var-of (compiler-opt-global-shared-view p0))]
+              [guarded : bool
+                (and
+                  (>= pred-index 0)
+                  (=
+                    (opt-bitlen-label-refs
+                      (compiler-opt-global-shared-view seq)
+                      label)
+                    2)
+                  (opt-bitlen-edge-proves-positive?
+                    (compiler-opt-global-shared-view seq)
+                    pred-index
+                    label
+                    p0-var
+                    (compiler-opt-global-shared-view ty)
+                    0))]
+              (if (not guarded)
+                (OptMaybeBlock.No)
+                (let
+                  [size : i64
+                    (if (>= cn 0)
+                      6
+                      5)]
+                  [slots : (__tl_dyn-array ir.CompilerIrInstr)
+                    (__tl_make-array ir.CompilerIrInstr size)]
+                  (begin
+                    ;; The source may increment the counter before shifting
+                    ;; the probe. Build the dependency order explicitly: the
+                    ;; new counter update reads BitLength's result, even when
+                    ;; the old independent increment preceded the old shift.
+                    (set!
+                      (array-ref slots 0)
+                      (ir.CompilerIrInstr.Mov
+                        c
+                        (compiler-opt-global-shared-view c0)
+                        (compiler-opt-global-shared-view ty)))
+                    (set!
+                      (array-ref slots 1)
+                      (ir.CompilerIrInstr.Mov
+                        p
+                        p0
+                        (compiler-opt-global-shared-view ty)))
+                    (set!
+                      (array-ref slots 2)
+                      (ir.CompilerIrInstr.UnOp
+                        ps
+                        (ir.CompilerIrUnOp.BitLength)
+                        (ir.CompilerIrValue.Var p)
+                        (compiler-opt-global-shared-view ty)))
+                    (set!
+                      (array-ref slots 3)
+                      (if (opt-bitlen-literal?
+                        (compiler-opt-global-shared-view c0)
+                        0)
+                        (ir.CompilerIrInstr.Mov
+                          ca
+                          (ir.CompilerIrValue.Var ps)
+                          (compiler-opt-global-shared-view ty))
+                        (ir.CompilerIrInstr.BinOp
+                          ca
+                          (ir.CompilerIrBinOp.Add)
+                          (ir.CompilerIrValue.Var ps)
+                          (match c0
+                            [(ir.CompilerIrValue.I64 lit)
+                              (ir.CompilerIrValue.I64 lit)]
+                            [_ (ir.CompilerIrValue.Var c)])
+                          (compiler-opt-global-shared-view ty))))
+                    (when
+                      (>= cn 0)
+                      (set!
+                        (array-ref slots 4)
+                        (ir.CompilerIrInstr.Mov
+                          cn
+                          (ir.CompilerIrValue.Var ca)
+                          (compiler-opt-global-shared-view ty))))
+                    ;; The old predicate's only reader was the removed branch.
+                    (set!
+                      (array-ref slots (- size 1))
+                      (ir.CompilerIrInstr.Jump exit))
+                    (OptMaybeBlock.Some
+                      (ir.CompilerIrBlock.Block
+                        label
+                        (ir.CompilerIrInstrSeq slots size))))))))))]))
+
+;; The single predecessor of the block labelled `label`, as a block index, or
+;; -1 when it has none or several.
+(define (opt-bitlen-guard-predecessor
+  [seq : ir.CompilerIrBlockSeq]
+  [label : i64]) : i64
+  (let
+    [b : i64 0]
+    [found : i64 (- 0 1)]
+    [count : i64 0]
+    (begin
+      (while (< b seq.len)
+        (begin
+          (match (ir.compiler-ir-block-seq-ref seq b)
+            [(ir.CompilerIrBlock.Block _ instrs)
+              (when
+                (> instrs.len 0)
+                (match (ir.compiler-ir-instr-seq-ref instrs (- instrs.len 1))
+                  [(ir.CompilerIrInstr.Branch _ t f)
+                    (when
+                      (or (= t label) (= f label))
+                      (begin
+                        (set! found b)
+                        (set! count (+ count 1))))]
+                  [(ir.CompilerIrInstr.Jump t)
+                    (when
+                      (= t label)
+                      (begin
+                        (set! found b)
+                        (set! count (+ count 1))))]
+                  [_ unit]))])
+          (set! b (+ b 1))))
+      (if (= count 1)
+        found
+        (- 0 1)))))
+
+;; Cheap filter: a block that ends by branching back to itself and is the
+;; idiom's size.
+(define (opt-bitlen-candidate? [block : ir.CompilerIrBlock]) : bool
+  (match block
+    [(ir.CompilerIrBlock.Block label instrs)
+      (and
+        (>= instrs.len 6)
+        (<= instrs.len 7)
+        (match (ir.compiler-ir-instr-seq-ref instrs (- instrs.len 1))
+          [(ir.CompilerIrInstr.Branch _ t f)
+            (and (= t label) (not (= f label)))]
+          [_ false]))]))
+
+;; Entry: returns `blocks` untouched unless some self loop is the BITLEN idiom,
+;; in which case a fresh block array with those loops replaced.
+(define (opt-bit-length-idiom-blocks
+  [frame : i64]
+  [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
+  (let
+    [seq : ir.CompilerIrBlockSeq
+      (match (compiler-opt-global-shared-view blocks)
+        [(ir.CompilerIrBlockList.Array s) s]
+        [_
+          (ir.compiler-ir-block-seq-from-list
+            (compiler-opt-global-shared-view blocks))])]
+    [b : i64 0]
+    [any : bool false]
+    (begin
+      (while (and (not any) (< b seq.len))
+        (begin
+          (when
+            (opt-bitlen-candidate? (ir.compiler-ir-block-seq-ref seq b))
+            (set! any true))
+          (set! b (+ b 1))))
+      (if (not any)
+        blocks
+        (let
+          [uses : (__tl_dyn-array i64)
+            (opt-collect-blocks-uses-array
+              frame
+              (compiler-opt-global-shared-view blocks))]
+          [out : (__tl_dyn-array ir.CompilerIrBlock)
+            (__tl_make-array ir.CompilerIrBlock seq.len)]
+          [changed : bool false]
+          [i : i64 0]
+          (begin
+            (while (< i seq.len)
+              (begin
+                (set!
+                  (array-ref out i)
+                  (if (opt-bitlen-candidate?
+                    (ir.compiler-ir-block-seq-ref seq i))
+                    (match (opt-bitlen-rewrite-block
+                      (compiler-opt-global-shared-view seq)
+                      (compiler-opt-global-shared-view uses)
+                      (ir.compiler-ir-block-seq-ref seq i))
+                      [(OptMaybeBlock.Some rewritten)
+                        (begin
+                          (set! changed true)
+                          rewritten)]
+                      [(OptMaybeBlock.No) (ir.compiler-ir-block-seq-ref seq i)])
+                    (ir.compiler-ir-block-seq-ref seq i)))
+                (set! i (+ i 1))))
+            (if changed
+              (ir.CompilerIrBlockList.Array (ir.CompilerIrBlockSeq out seq.len))
+              blocks)))))))
+
+;; BitLength is defined for the two 64-bit integer types only.
+(define (opt-bit-length-type? [ty : ast.AstType]) : bool
+  (match ty
+    [(ast.AstType.I64) true]
+    [(ast.AstType.U64) true]
+    [_ false]))
+
+;; floor(log2 x) + 1 for x > 0 (signed) or x != 0 (unsigned), else 0.
+(define (opt-bit-length-of [x : i64] [signed? : bool]) : i64
+  (if (or (= x 0) (and signed? (< x 0)))
+    0
+    (if (< x 0)
+      64
+      (let
+        [bits : i64 0]
+        [probe : i64 x]
+        (begin
+          (while (> probe 0)
+            (begin
+              (set! probe (shr probe 1))
+              (set! bits (+ bits 1))))
+          bits)))))
 
 ;; --- strength reduction / algebraic identities ------------------------------
 ;;
@@ -8231,7 +8961,8 @@
     [(ir.CompilerIrUnOp.Neg) 0]
     [(ir.CompilerIrUnOp.Not) 1]
     [(ir.CompilerIrUnOp.BitNot) 2]
-    [(ir.CompilerIrUnOp.Sqrt) 3]))
+    [(ir.CompilerIrUnOp.Sqrt) 3]
+    [(ir.CompilerIrUnOp.BitLength) 4]))
 
 (define (opt-unop-eq [a : ir.CompilerIrUnOp] [b : ir.CompilerIrUnOp]) : bool
   (= (opt-unop-tag a) (opt-unop-tag b)))
@@ -129520,6 +130251,28 @@
                           "divrem_safety"
                           name
                           _t-divrem-safety)]
+                      [_t-bit-length : i64
+                        (cfg compile-profile (profile.now-ms) 0)]
+                      [bit-length-blocks : ir.CompilerIrBlockList
+                        (compiler-opt-debug-observe-blocks
+                          type-segment-bases
+                          "bit_length"
+                          name
+                          (compiler-opt-global-shared-view params)
+                          (compiler-opt-global-shared-view ret-ty)
+                          unroll-frame
+                          (if run-heavy?
+                            (opt-bit-length-idiom-blocks
+                              unroll-frame
+                              divrem-safe)
+                            divrem-safe)
+                          (compiler-opt-global-shared-view function-abi))]
+                      [_p-bit-length : unit
+                        (compiler-opt-profile-pass-note
+                          summaries.profile-state
+                          "bit_length"
+                          name
+                          _t-bit-length)]
                       ;; Split multi-use Geps into per-use single-use Geps so
                       ;; the backend's indexed-memory fusion fires on every
                       ;; Load/StorePtr (the quicksort swap shape). DCE then
@@ -129535,14 +130288,14 @@
                               (compiler-opt-global-shared-view params)
                               (compiler-opt-global-shared-view ret-ty)
                               unroll-frame
-                              divrem-safe
+                              bit-length-blocks
                               (compiler-opt-global-shared-view function-abi)))
                           (ir.CompilerIrFunction.Function
                             name
                             (compiler-opt-global-shared-view params)
                             (compiler-opt-global-shared-view ret-ty)
                             unroll-frame
-                            divrem-safe
+                            bit-length-blocks
                             (compiler-opt-global-shared-view function-abi)))]
                       [_p-gep-split : unit
                         (compiler-opt-profile-pass-note

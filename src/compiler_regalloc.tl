@@ -15954,28 +15954,37 @@
           [k : i64 0]
           (begin
             (while (< k from-succs)
-              (begin
-                (match (compiler-reg-edge-copy-boundary-one
-                  (compiler-reg-global-shared-view blocks)
-                  (compiler-reg-global-shared-view pred-counts)
-                  (compiler-reg-global-shared-view inside)
-                  (compiler-reg-global-shared-view block)
-                  label
-                  from-inside
-                  from-succs
-                  stack-var
-                  region-var
-                  (compiler-reg-global-shared-view ty)
-                  (compiler-reg-global-shared-view members)
-                  (live.compiler-live-label-set-ref
-                    (compiler-reg-global-shared-view succs)
-                    k)
-                  (array-ref succ-index (+ base k))
-                  (compiler-reg-global-shared-view acc))
-                  [(CompilerRegEdgeCopyPlan.Plan next) (set! acc next)]
-                  [(CompilerRegEdgeCopyPlan.Refused message)
-                    (return (CompilerRegEdgeCopyPlan.Refused message))])
-                (set! k (+ k 1))))
+              (let
+                [to-index : i64 (array-ref succ-index (+ base k))]
+                (begin
+                  ;; An edge that resolves and stays on one side of the
+                  ;; region is never a boundary edge; the call below would
+                  ;; hand `acc` back unchanged.
+                  (unless
+                    (and
+                      (>= to-index 0)
+                      (= from-inside (array-ref inside to-index)))
+                    (match (compiler-reg-edge-copy-boundary-one
+                      (compiler-reg-global-shared-view blocks)
+                      (compiler-reg-global-shared-view pred-counts)
+                      (compiler-reg-global-shared-view inside)
+                      (compiler-reg-global-shared-view block)
+                      label
+                      from-inside
+                      from-succs
+                      stack-var
+                      region-var
+                      (compiler-reg-global-shared-view ty)
+                      (compiler-reg-global-shared-view members)
+                      (live.compiler-live-label-set-ref
+                        (compiler-reg-global-shared-view succs)
+                        k)
+                      to-index
+                      (compiler-reg-global-shared-view acc))
+                      [(CompilerRegEdgeCopyPlan.Plan next) (set! acc next)]
+                      [(CompilerRegEdgeCopyPlan.Refused message)
+                        (return (CompilerRegEdgeCopyPlan.Refused message))]))
+                  (set! k (+ k 1)))))
             (set! b (+ b 1)))))
       (CompilerRegEdgeCopyPlan.Plan acc))))
 

@@ -156927,7 +156927,41 @@
       (opt-global-frozen-encoded-global encoded)
       1)))
 
+;; Every leveled var this instruction uses outside its allowed position refuses
+;; its global. Both sides are sets -- `vars` lists exactly the vars `levels`
+;; binds (possibly more than once), and a var the map does not bind has level 0,
+;; which refuses nothing -- so the refusals are the same whichever side is
+;; walked. Walk the smaller: a function with many leveled vars made the old
+;; list walk instructions x leveled vars, while a small list stays cheaper than
+;; scanning the use map's slots.
 (define (opt-global-frozen-refuse-vars
+  [levels : opt_i64_i64_map.Map]
+  [vars : OptLabelSet]
+  [uses : opt_i64_i64_map.Map]
+  [allowed : i64]
+  [bad : (&mut bad opt_i64_i64_map.Map)]) : unit
+  (if (<=
+    (opt-label-count (compiler-opt-global-shared-view vars))
+    (opt_i64_i64_map.len (& uses)))
+    (opt-global-frozen-refuse-listed-vars levels vars uses allowed bad)
+    (let
+      [capacity : i64 (opt_i64_i64_map.capacity (& uses))]
+      [i : i64 (opt_i64_i64_map.next-occupied (& uses) 0)]
+      (while (< i capacity)
+        (begin
+          (match (opt_i64_i64_map.entry-at (& uses) i)
+            [(opt_i64_i64_map.EntrySome var _)
+              (when
+                (not (= var allowed))
+                (opt-global-frozen-refuse
+                  bad
+                  (opt-global-frozen-var-level
+                    (compiler-opt-global-shared-view levels)
+                    var)))]
+            [(opt_i64_i64_map.EntryNone) unit])
+          (set! i (opt_i64_i64_map.next-occupied (& uses) (+ i 1))))))))
+
+(define (opt-global-frozen-refuse-listed-vars
   [levels : opt_i64_i64_map.Map]
   [vars : OptLabelSet]
   [uses : opt_i64_i64_map.Map]
@@ -156950,18 +156984,13 @@
                 (compiler-opt-global-shared-view levels)
                 var))
             unit)
-          (opt-global-frozen-refuse-vars
+          (opt-global-frozen-refuse-listed-vars
             levels
             (compiler-opt-global-shared-view rest)
             uses
             allowed
             bad)))]))
 
-;; Every `Global` this instruction mentions in a position that is NOT an
-;; allowed one. The existing whole-instruction global walk
-;; (opt-global-cell-scan-instr) is total over the IR instruction set, so a new
-;; form cannot slip a `Global` operand past this; the four forms with an allowed
-;; position are the ones handled here instead.
 (define (opt-global-frozen-escaped-refs
   [scan : OptGlobalCellScan]
   [instr : ir.CompilerIrInstr]) : OptGlobalCellScan
@@ -163249,6 +163278,26 @@
     [(ir.CompilerIrInstr.StorePtr ptr _ _) (opt-global-obj-value-var ptr)]
     [_ (- 0 1)]))
 
+(define (opt-cb-refuse-use!
+  [scan : OptCbScan]
+  [bad : (&mut bad opt_i64_i64_map.Map)]
+  [var : i64]
+  [allowed : i64]) : unit
+  (if (or (= var allowed) (< var 0) (>= var (array-length scan.tags)))
+    unit
+    (let
+      [tag : i64 (array-ref scan.tags var)]
+      [level : i64 (opt-cb-tag-level tag)]
+      (if (and (>= level (opt-cb-level-data)) (<= level (opt-cb-level-elem)))
+        (opt-cb-refuse! bad (opt-cb-tag-global tag))
+        unit))))
+
+;; Every data/element-level var this instruction uses outside its allowed
+;; position refuses its global. A var's tag leaves 0 exactly once, when it joins
+;; `scan.list`, and an untagged (0) or conflicting (-1) tag has no data or
+;; element level, so the listed vars and the used vars give the same refusals
+;; from either side: walk whichever is smaller. Walking the list for every
+;; instruction made the check instructions x tagged vars.
 (define (opt-cb-refuse-uses!
   [scan : OptCbScan]
   [bad : (&mut bad opt_i64_i64_map.Map)]
@@ -163256,21 +163305,35 @@
   [allowed : i64]) : unit
   (let
     [total : i64 (array-ref scan.count 0)]
-    [at : i64 0]
-    (while (< at total)
-      (begin
-        (let
-          [var : i64 (array-ref scan.list at)]
-          [tag : i64 (array-ref scan.tags var)]
-          [level : i64 (opt-cb-tag-level tag)]
-          (if (and
-            (>= level (opt-cb-level-data))
-            (<= level (opt-cb-level-elem))
-            (not (= var allowed))
-            (opt_i64_i64_map.contains? (& uses) var))
-            (opt-cb-refuse! bad (opt-cb-tag-global tag))
-            unit))
-        (set! at (+ at 1))))))
+    (if (<= total (opt_i64_i64_map.len (& uses)))
+      (let
+        [at : i64 0]
+        (while (< at total)
+          (let
+            [var : i64 (array-ref scan.list at)]
+            (begin
+              (when
+                (opt_i64_i64_map.contains? (& uses) var)
+                (opt-cb-refuse-use!
+                  (compiler-opt-global-shared-view scan)
+                  bad
+                  var
+                  allowed))
+              (set! at (+ at 1))))))
+      (let
+        [capacity : i64 (opt_i64_i64_map.capacity (& uses))]
+        [i : i64 (opt_i64_i64_map.next-occupied (& uses) 0)]
+        (while (< i capacity)
+          (begin
+            (match (opt_i64_i64_map.entry-at (& uses) i)
+              [(opt_i64_i64_map.EntrySome var _)
+                (opt-cb-refuse-use!
+                  (compiler-opt-global-shared-view scan)
+                  bad
+                  var
+                  allowed)]
+              [(opt_i64_i64_map.EntryNone) unit])
+            (set! i (opt_i64_i64_map.next-occupied (& uses) (+ i 1)))))))))
 
 ;; A function past either cap declines rather than growing a table: every
 ;; global its element stores name is refused.

@@ -114,6 +114,16 @@
       (str_cat.str-cat "\"" (string.copy expected) "\"")
       message)))
 
+;: Assert that two owned `String` values compare equal.
+;:
+;: Convenience form of `assert-string-eq` for call sites that produce owned
+;: strings; it borrows both operands for the comparison.
+(define (assert-owned-string-eq
+  [actual : String]
+  [expected : String]
+  [message : String]) : unit
+  (assert-string-eq (& actual) (& expected) message))
+
 (test
   test-assert-success
   (let
@@ -127,4 +137,5 @@
       (assert-i32-eq (cast 7 : i32) (cast 7 : i32) "i32 equality should pass")
       (assert-f64-eq 1.5 1.5 "f64 equality should pass")
       (assert-char-eq 'A' 'A' "char equality should pass")
-      (assert-string-eq (& actual) (& expected) "string equality should pass"))))
+      (assert-string-eq (& actual) (& expected) "string equality should pass")
+      (assert-owned-string-eq "ok" "ok" "owned string equality should pass"))))

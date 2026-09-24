@@ -3,6 +3,7 @@
 (import stdlib.string)
 (import stdlib.vector)
 (import (vector.vector String) as svec)
+(import stdlib.test)
 
 (define args-api-specs : args.ArgsOptionSpecList
   (args.option-spec-cons
@@ -16,23 +17,6 @@
 (define (args-api-specs-shared-view) : args.ArgsOptionSpecList
   (unsafe
     (ptr-read (ptr-addr-of args-api-specs))))
-
-(define (args-api-assert-true [condition : bool] [message : String]) : unit
-  (if condition
-    unit
-    (io.panic message)))
-
-(define (args-api-assert-i64-eq
-  [actual : i64]
-  [expected : i64]
-  [message : String]) : unit
-  (args-api-assert-true (= actual expected) message))
-
-(define (args-api-assert-string-eq
-  [actual : String]
-  [expected : String]
-  [message : String]) : unit
-  (args-api-assert-true (string.eq actual expected) message))
 
 (define (args-api-vec0) : svec.Vec
   (svec.new))
@@ -105,7 +89,7 @@
 (define (args-api-assert-vec-empty
   [items : (& items svec.Vec)]
   [message : String]) : unit
-  (args-api-assert-i64-eq (svec.len items) 0 message))
+  (test.assert-i64-eq (svec.len items) 0 message))
 
 (define (args-api-assert-vec2
   [items : (& items svec.Vec)]
@@ -113,12 +97,12 @@
   [second : String]
   [message : String]) : unit
   (begin
-    (args-api-assert-i64-eq (svec.len items) 2 (string.copy message))
-    (args-api-assert-string-eq
+    (test.assert-i64-eq (svec.len items) 2 (string.copy message))
+    (test.assert-owned-string-eq
       (svec.get items 0 "")
       first
       (string.copy message))
-    (args-api-assert-string-eq (svec.get items 1 "") second message)))
+    (test.assert-owned-string-eq (svec.get items 1 "") second message)))
 
 (define (args-api-assert-vec3
   [items : (& items svec.Vec)]
@@ -127,16 +111,16 @@
   [third : String]
   [message : String]) : unit
   (begin
-    (args-api-assert-i64-eq (svec.len items) 3 (string.copy message))
-    (args-api-assert-string-eq
+    (test.assert-i64-eq (svec.len items) 3 (string.copy message))
+    (test.assert-owned-string-eq
       (svec.get items 0 "")
       first
       (string.copy message))
-    (args-api-assert-string-eq
+    (test.assert-owned-string-eq
       (svec.get items 1 "")
       second
       (string.copy message))
-    (args-api-assert-string-eq (svec.get items 2 "") third message)))
+    (test.assert-owned-string-eq (svec.get items 2 "") third message)))
 
 (test
   args-api-empty-argv
@@ -149,7 +133,7 @@
       (args-api-assert-vec-empty
         (args.parsed-positionals (& parsed))
         "empty argv has no positionals")
-      (args-api-assert-i64-eq
+      (test.assert-i64-eq
         (args.option-count parsed "verbose")
         0
         "empty argv has no flags"))))
@@ -180,14 +164,14 @@
           (args-api-vec5 "input.tl" "--verbose" "-o" "out.s" "rest"))
         "flags around positionals should parse")]
     (begin
-      (args-api-assert-true
+      (test.assert-true
         (args.option-present? parsed "verbose")
         "long boolean flag present")
-      (args-api-assert-i64-eq
+      (test.assert-i64-eq
         (args.option-count parsed "output")
         1
         "short value flag counted")
-      (args-api-assert-string-eq
+      (test.assert-owned-string-eq
         (args.option-value-or parsed "output" "missing")
         "out.s"
         "short value flag consumes next argv")
@@ -207,7 +191,7 @@
           (args-api-vec3 "--" "--verbose" "-o"))
         "end-of-options should parse")]
     (begin
-      (args-api-assert-i64-eq
+      (test.assert-i64-eq
         (args.option-count parsed "verbose")
         0
         "tokens after -- are positionals")
@@ -227,10 +211,10 @@
           (args-api-vec1 "--output"))
         "missing value should fail")]
     (begin
-      (args-api-assert-true
+      (test.assert-true
         (args.error-missing-value? error)
         "missing value error kind")
-      (args-api-assert-string-eq
+      (test.assert-owned-string-eq
         (args.error-option error)
         "--output"
         "missing value carries token"))))
@@ -245,10 +229,10 @@
           (args-api-vec1 "--missing"))
         "unknown option should fail")]
     (begin
-      (args-api-assert-true
+      (test.assert-true
         (args.error-unknown-option? error)
         "unknown option error kind")
-      (args-api-assert-string-eq
+      (test.assert-owned-string-eq
         (args.error-option error)
         "--missing"
         "unknown option carries token"))))
@@ -263,15 +247,15 @@
           (args-api-vec6 "-I" "inc1" "--include" "inc2" "-v" "-v"))
         "repeated options should parse")]
     (begin
-      (args-api-assert-i64-eq
+      (test.assert-i64-eq
         (args.option-count parsed "include")
         2
         "repeated value option count")
-      (args-api-assert-string-eq
+      (test.assert-owned-string-eq
         (args.option-value-or parsed "include" "missing")
         "inc2"
         "last repeated value returned")
-      (args-api-assert-i64-eq
+      (test.assert-i64-eq
         (args.option-count parsed "verbose")
         2
         "repeated boolean flag count"))))
@@ -286,10 +270,10 @@
           (args-api-vec1 "--output=file"))
         "equals spelling should be rejected in v1")]
     (begin
-      (args-api-assert-true
+      (test.assert-true
         (args.error-unknown-option? error)
         "equals spelling is intentionally unknown")
-      (args-api-assert-string-eq
+      (test.assert-owned-string-eq
         (args.error-option error)
         "--output=file"
         "equals spelling carries original token"))))

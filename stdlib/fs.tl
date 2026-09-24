@@ -30,6 +30,7 @@
 (import stdlib.string)
 (import stdlib.vector)
 (import (vector.vector String) as svec)
+(cfg test (import stdlib.test))
 
 ;: Generated string-vector wrapper returned by filesystem vector APIs.
 (defstruct FsStringVector
@@ -2415,11 +2416,6 @@
 
 (cfg
   test
-  (define (fs-test-assert-false [condition : bool] [message : (& message str)]) : unit
-    (fs-test-assert-true (not condition) message)))
-
-(cfg
-  test
   (define (fs-test-assert-bool-eq
     [actual : bool]
     [expected : bool]
@@ -2441,14 +2437,6 @@
     [expected : (& expected str)]
     [message : (& message str)]) : unit
     (fs-test-assert-true (string.eq actual expected) message)))
-
-(cfg
-  test
-  (define (fs-path-join-many-api-assert
-    [got : String]
-    [want : String]
-    [message : (& message str)]) : unit
-    (fs-test-assert-string-eq (& got) (& want) message)))
 
 (cfg
   test
@@ -2479,24 +2467,24 @@
   test
   (define (fs-test-path-join-many-main) : i64
     (begin
-      (fs-path-join-many-api-assert (path-join-many) "" "path-join-many zero")
-      (fs-path-join-many-api-assert
+      (test.assert-owned-string-eq (path-join-many) "" "path-join-many zero")
+      (test.assert-owned-string-eq
         (path-join-many "solo")
         "solo"
         "path-join-many one")
-      (fs-path-join-many-api-assert
+      (test.assert-owned-string-eq
         (path-join-many "left path" "right file")
         (str_cat.str-cat "left path" (path-separator) "right file")
         "path-join-many two")
-      (fs-path-join-many-api-assert
+      (test.assert-owned-string-eq
         (path-join-many "left" "middle" "right")
         (fs-path-join-many-api-expected3 "left" "middle" "right")
         "path-join-many three")
-      (fs-path-join-many-api-assert
+      (test.assert-owned-string-eq
         (path-join-many "left" "middle" "right" "leaf")
         (fs-path-join-many-api-expected4 "left" "middle" "right" "leaf")
         "path-join-many four")
-      (fs-path-join-many-api-assert
+      (test.assert-owned-string-eq
         (path-join-many "left/" "/right" "leaf")
         (str_cat.str-cat "left/right" (path-separator) "leaf")
         "path-join-many duplicate separator")
@@ -3142,10 +3130,10 @@
             (fs-test-assert-true
               (stdlib.fs.string-vector-contains? (& entries) "child-dir")
               "read-dir includes subdirectory name")
-            (fs-test-assert-false
+            (test.assert-false
               (stdlib.fs.string-vector-contains? (& entries) ".")
               "read-dir filters dot")
-            (fs-test-assert-false
+            (test.assert-false
               (stdlib.fs.string-vector-contains? (& entries) "..")
               "read-dir filters dotdot")
             (fs-test-assert-true
@@ -3159,10 +3147,10 @@
             (fs-test-assert-true
               (stdlib.fs.string-vector-contains? (& entries-vec) "child-dir")
               "read-dir vec includes subdirectory name")
-            (fs-test-assert-false
+            (test.assert-false
               (stdlib.fs.string-vector-contains? (& entries-vec) ".")
               "read-dir vec filters dot")
-            (fs-test-assert-false
+            (test.assert-false
               (stdlib.fs.string-vector-contains? (& entries-vec) "..")
               "read-dir vec filters dotdot")
             (fs-test-assert-not-found-string-vector
@@ -3338,13 +3326,13 @@
           valid-text
           "a\n"
           "valid Linux dirent name")
-        (fs-test-assert-false
+        (test.assert-false
           (linux-read-dir-append-page! short 24 (&mut short-out))
           "short Linux dirent record rejected")
-        (fs-test-assert-false
+        (test.assert-false
           (linux-read-dir-append-page! unterminated 24 (&mut unterminated-out))
           "unterminated Linux dirent name rejected")
-        (fs-test-assert-false
+        (test.assert-false
           (linux-read-dir-append-page! oversized 25 (&mut oversized-out))
           "oversized Linux dirent byte count rejected")))))
 

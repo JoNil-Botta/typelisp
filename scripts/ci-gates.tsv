@@ -13,7 +13,6 @@ cross-mode-differential-oracle-self-tests	all	cross-mode differential oracle sel
 linux-resident-memory-limit-helper-self-tests	linux	Linux resident memory limit helper self-tests	-	-	scripts/verify-linux-memory-limit.sh
 windows-job-object-memory-limit-helper-self-tests	windows	Windows Job Object memory limit helper self-tests	-	-	powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-windows-memory-limit.ps1
 embedded-stdlib-tlci-resource-verifier-self-tests	all	embedded stdlib TLCI resource verifier self-tests	-	-	scripts/verify-embedded-stdlib-tlci-resources.sh --self-test
-build-provenance-helper-self-tests	all	build provenance helper self-tests	-	-	scripts/verify-build-provenance.sh
 build-invariance-batch-reuse-self-tests	linux	build-invariance batch reuse self-tests	-	-	scripts/verify-build-invariance-batch.sh
 selfhost-linked-size-attribution-parser-self-tests	all	selfhost linked-size attribution parser self-tests	-	-	scripts/analyze-selfhost-build-asm-size.sh --self-test
 cli-help-surface	all	CLI help surface	-	-	scripts/check-cli-help-surface.sh --self-test

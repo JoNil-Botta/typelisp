@@ -20616,8 +20616,7 @@ g:
       ;; Inspect the dispatch function: unrelated runtime helpers can have
       ;; unsigned range checks of their own.
       (let
-        [body : String
-          (compiler-backend-asm-function-body asm "_tl_total_switch_score")]
+        [body : String (compiler-backend-asm-function-body asm "_tl_f0")]
         (and
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view body)

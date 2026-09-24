@@ -18,11 +18,8 @@
 (import stdlib.arena)
 
 (defmacro (ast-global-shared-view [place : Expr]) : Expr
-  (cfg
-    stage0-seed-bootstrap
-    place
-    `(unsafe
-      (ptr-read (ptr-addr-of ,place)))))
+  `(unsafe
+    (ptr-read (ptr-addr-of ,place))))
 
 (defmacro (ast-array-shared-view [items : Expr] [index : Expr]) : Expr
   `(unsafe
@@ -37,41 +34,11 @@
     (unsafe
       (ptr-read (ptr-cast (__tl_array-data (array shared-ref)) : (Ptr u64))))))
 
-;; Unlike the bootstrap-compatibility global helper above, this always expands
-;; to an explicit shallow read. Use it only for a local aggregate place whose
-;; arena-backed owner remains live for the duration of the copied view.
-(cfg stage0-borrowed-inline-bootstrap (import stdlib.comptime))
-
+;; An explicit shallow read of a local aggregate place. Use it only for a place
+;; whose arena-backed owner remains live for the duration of the copied view.
 (defmacro (ast-place-shared-view [place : Expr]) : Expr
-  (cfg
-    stage0-borrowed-inline-bootstrap
-    (let
-      [value-ty : comptime.Expr (comptime.expr-type place)]
-      (match (comptime.type-info value-ty)
-        [(comptime.TypeInfo.DynArray _)
-          `(let
-            [shared-ref (& ,place)]
-            (unsafe
-              (ptr-read
-                (ptr-cast
-                  (__tl_array-data (array shared-ref))
-                  : (Ptr ,value-ty)))))]
-        [(comptime.TypeInfo.Builtin kind)
-          (if (string.eq kind "string")
-            `(let
-              [shared-ref (& ,place)]
-              (unsafe
-                (ptr-read
-                  (ptr-cast
-                    (__tl_array-data (array shared-ref))
-                    : (Ptr ,value-ty)))))
-            `(unsafe
-              (ptr-read (ptr-addr-of ,place))))]
-        [_
-          `(unsafe
-            (ptr-read (ptr-addr-of ,place)))]))
-    `(unsafe
-      (ptr-read (ptr-addr-of ,place)))))
+  `(unsafe
+    (ptr-read (ptr-addr-of ,place))))
 
 (define (ast-decl-box-shared-view [value : (Box AstDecl)]) : AstDecl
   (let
@@ -89,10 +56,7 @@
   (extern (tl_arena_debug_assert_pool_install [handle : i64]) : unit (:symbol "tl_arena_debug_assert_pool_install")))
 
 (define (compiler-arena-debug-protect-never-reset! [_handle : i64]) : unit
-  (cfg
-    (all compiler-arena-debug (not stage0-seed-bootstrap))
-    (tl_arena_debug_protect_never_reset _handle)
-    unit))
+  (cfg compiler-arena-debug (tl_arena_debug_protect_never_reset _handle) unit))
 
 (cfg
   compiler-arena-debug
@@ -102,16 +66,13 @@
 ;; every retained view. Ordinary destroy/reset remains forbidden in debug mode.
 (define (compiler-arena-retire-protected-owner! [handle : i64]) : unit
   (cfg
-    (all compiler-arena-debug (not stage0-seed-bootstrap))
+    compiler-arena-debug
     (tl_arena_debug_retire_protected handle)
     (unsafe
       (arena.tl_arena_destroy handle))))
 
 (define (compiler-arena-debug-assert-pool-install! [_handle : i64]) : unit
-  (cfg
-    (all compiler-arena-debug (not stage0-seed-bootstrap))
-    (tl_arena_debug_assert_pool_install _handle)
-    unit))
+  (cfg compiler-arena-debug (tl_arena_debug_assert_pool_install _handle) unit))
 
 ;; Compiler AST pool storage starts with 16 MiB instead of a general arena's
 ;; 64 MiB. Larger inputs append general chunks that pack multiple segments.

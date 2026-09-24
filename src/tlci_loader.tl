@@ -17,11 +17,8 @@
 (import tlci_pages as pages)
 
 (defmacro (tlci-loader-global-shared-view [place : Expr]) : Expr
-  (cfg
-    stage0-seed-bootstrap
-    place
-    `(unsafe
-      (ptr-read (ptr-addr-of ,place)))))
+  `(unsafe
+    (ptr-read (ptr-addr-of ,place))))
 
 (unsafe
   (extern (tlci-loader-call-image-entry-raw

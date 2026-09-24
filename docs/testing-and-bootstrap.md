@@ -148,6 +148,13 @@ scripts/build-stage0.sh target/stage0/typelisp.exe typelisp-stage0-windows.exe #
 
 `build-stage0.sh` compiles `src/main.tl` with the seed and links through the
 host toolchain, so a stage0 never depends on its own `build` command.
+
+The minimum supported seed is a stage0 published on or after 2026-08-30. There
+are no compatibility bridges: the seed compiles the current sources directly,
+with the same flags as every later stage. A compiler change that the current
+`stage0-latest` cannot compile therefore lands in two steps: first the compiler
+support, then, once `stage0-latest` has been republished with it, the sources
+that use it.
 `scripts/ci-verify.sh` runs the same gate as CI: the published compiler
 seeds a stage1->stage2->stage3 bootstrap fixpoint
 (`scripts/check-bootstrap-fixpoint.sh` compares stage2 and stage3 assembly),

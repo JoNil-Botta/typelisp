@@ -11,8 +11,5 @@
 (include-str embedded-stdlib-tlci-source-hash "../target/embedded-stdlib-tlci/source-hash.txt")
 
 (define (embedded-stdlib-tlci-source-hash-shared-view) : String
-  (cfg
-    stage0-seed-bootstrap
-    embedded-stdlib-tlci-source-hash
-    (unsafe
-      (ptr-read (ptr-addr-of embedded-stdlib-tlci-source-hash)))))
+  (unsafe
+    (ptr-read (ptr-addr-of embedded-stdlib-tlci-source-hash))))

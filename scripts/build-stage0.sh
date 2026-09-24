@@ -14,6 +14,10 @@ set -eu
 # scripts/check-bootstrap-fixpoint.sh, so stage0 publication does not depend on
 # an already-working `build` command in the seed compiler.
 #
+# The seed must be a stage0 published on or after 2026-08-30. There are no
+# compatibility bridges for older seeds: the seed compiles the current sources
+# directly (docs/testing-and-bootstrap.md).
+#
 # usage: scripts/build-stage0.sh <seed-compiler> <output-binary>
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
@@ -32,8 +36,7 @@ if [ ! -x "$SEED" ]; then
     exit 1
 fi
 
-# The first stage may run from a scratch directory to select the legacy
-# prelude, so normalize a caller-provided relative seed path while at ROOT.
+# Normalize a caller-provided relative seed path while at ROOT.
 case "$SEED" in
     /* | [A-Za-z]:[\\/]*) ;;
     *) SEED="$ROOT/$SEED" ;;
@@ -42,44 +45,12 @@ esac
 . "$ROOT/scripts/lib-native-link.sh"
 native_link_detect_host
 configure_toolchain
-. "$ROOT/scripts/lib-bootstrap-ctfe.sh"
 . "$ROOT/scripts/lib-build-provenance.sh"
 
 WORKDIR="$ROOT/target/build-stage0"
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 mkdir -p "$(dirname -- "$OUT")"
-
-SEED_DOTTED_IMPORT_BRIDGE_ROOT=$(
-    bootstrap_seed_dotted_import_bridge_root \
-        "$ROOT" "$SEED" "$WORKDIR"
-)
-SEED_COMPTIME_VARIANT_BRIDGE_ROOT=$(
-    bootstrap_seed_comptime_short_variant_bridge_root \
-        "$ROOT" "$SEED" "$WORKDIR"
-)
-SEED_CAPABILITY_ROOT=$ROOT
-if [ -n "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT" ]; then
-    SEED_CAPABILITY_ROOT=$SEED_COMPTIME_VARIANT_BRIDGE_ROOT
-fi
-SEED_CTFE_COMPAT_STDLIB=$(
-    bootstrap_seed_ctfe_macro_builders_legacy_stdlib \
-        "$SEED_CAPABILITY_ROOT" "$SEED" "$WORKDIR"
-)
-if [ -n "$SEED_CTFE_COMPAT_STDLIB" ]; then
-    echo "[build-stage0] seed lacks current CTFE macro builders; using the legacy prelude for stage1"
-else
-    echo "[build-stage0] seed supports current CTFE macro builders; using iterative core macros"
-fi
-
-# A compatibility bridge is itself compiled by the published seed. Resolve
-# that seed's global-view capability against the prepared bridge sources before
-# selecting any cfg for the bridge compile. The compiler produced by the bridge
-# is probed again below before it builds the real stage1.
-bootstrap_resolve_seed_global_views_for_bridges \
-    "$ROOT" "$SEED" "$WORKDIR" \
-    "$SEED_DOTTED_IMPORT_BRIDGE_ROOT" \
-    "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT"
 
 COMPILE_STDOUT="$WORKDIR/compile.stdout"
 COMPILE_STDERR="$WORKDIR/compile.stderr"
@@ -97,21 +68,6 @@ esac
 printf '%s' "$BUILD_GIT_HASH" > "$BUILD_GIT_HASH_FILE"
 printf '%s' "$BUILD_DATE" > "$BUILD_DATE_FILE"
 
-# Only stage1 runs on the published seed. It receives the narrow interner-abort
-# bridge because the seed predates fixed `tl_abort_string` recognition. Only a
-# seed that still rejects ptr-addr-of on globals also receives the legacy
-# shared-view cfg: a seed that enforces move-out-of-global rejects that spelling,
-# so SEED_REQUIRES_LEGACY_GLOBAL_VIEWS (resolved below) decides independently.
-stage_seed_bootstrap_cfg_args() {
-    stage_number=$1
-    if [ "$stage_number" -eq 1 ]; then
-        printf '%s\n' --cfg stage0-seed-intern-abort
-        printf '%s\n' --cfg stage0-token-scalar-bootstrap
-        printf '%s\n' --cfg stage0-borrowed-inline-bootstrap
-        bootstrap_legacy_global_view_cfg_args
-    fi
-}
-
 # Iterate to the converged stage and publish that. The seed is the previously
 # published stage0, so a backend codegen fix can take two self-host rounds to
 # propagate; the published binary is stage4 -- byte-identical to the converged
@@ -126,105 +82,6 @@ case "${TYPELISP_STAGE0_SIZE_REPORT:-0}" in
         exit 2
         ;;
 esac
-
-if [ -n "$SEED_DOTTED_IMPORT_BRIDGE_ROOT" ]; then
-    echo "[build-stage0] published seed predates the dotted-import cutover; building a one-generation bridge"
-    DOTTED_BRIDGE_DIR="$WORKDIR/dotted-import-seed-bridge/build"
-    DOTTED_BRIDGE_ASM="$DOTTED_BRIDGE_DIR/bridge.s"
-    DOTTED_BRIDGE_OBJ="$DOTTED_BRIDGE_DIR/bridge.$NL_OBJ_EXT"
-    DOTTED_BRIDGE_BIN="$DOTTED_BRIDGE_DIR/bridge$NL_BIN_EXT"
-    mkdir -p "$DOTTED_BRIDGE_DIR"
-    if ! run_with_heartbeat_capture \
-        "compile dotted-import bridge" \
-        "$COMPILE_STDOUT" "$COMPILE_STDERR" \
-        "$SEED" compile \
-        "$SEED_DOTTED_IMPORT_BRIDGE_ROOT/src/main.tl" \
-        -o "$DOTTED_BRIDGE_ASM" \
-        --target "$NL_BOOTSTRAP_TARGET" \
-        $(native_target_cfg_args) \
-        $(bootstrap_legacy_global_view_cfg_args) \
-        --stdlib-root "$SEED_DOTTED_IMPORT_BRIDGE_ROOT/stdlib" \
-        --stdlib-root "$SEED_DOTTED_IMPORT_BRIDGE_ROOT/src" \
-        --opt-level 2; then
-        echo "[build-stage0] seed failed while compiling the dotted-import bridge" >&2
-        sed 's/^/  /' "$COMPILE_STDOUT" >&2 || true
-        sed 's/^/  /' "$COMPILE_STDERR" >&2 || true
-        exit 1
-    fi
-    bootstrap_seed_runtime_small_arena_compat "$DOTTED_BRIDGE_ASM"
-    assemble_and_link \
-        "dotted-import bridge" \
-        "$DOTTED_BRIDGE_ASM" "$DOTTED_BRIDGE_OBJ" "$DOTTED_BRIDGE_BIN"
-    PREV=$DOTTED_BRIDGE_BIN
-    echo "[build-stage0] dotted-import bridge ready; building stage1 from current sources"
-fi
-
-if [ -n "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT" ]; then
-    echo "[build-stage0] seed pins prefixed comptime variants; building a short-variant bridge"
-    BRIDGE_DIR="$WORKDIR/comptime-short-variant-seed-bridge"
-    BRIDGE_ASM="$BRIDGE_DIR/bridge.s"
-    BRIDGE_OBJ="$BRIDGE_DIR/bridge.$NL_OBJ_EXT"
-    BRIDGE_BIN="$BRIDGE_DIR/bridge$NL_BIN_EXT"
-    BRIDGE_CWD="$BRIDGE_DIR/cwd"
-    mkdir -p "$BRIDGE_CWD"
-    bridge_compile_failed=0
-    # Isolate bridge compiles so repository-local implicit stdlib roots cannot shadow the prepared roots.
-    if [ -n "$SEED_CTFE_COMPAT_STDLIB" ]; then
-        if ! (
-            cd "$BRIDGE_CWD"
-            run_with_heartbeat_capture \
-                "compile short-variant bridge" \
-                "$COMPILE_STDOUT" "$COMPILE_STDERR" \
-                "$PREV" compile \
-                "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT/src/main.tl" \
-                -o "$BRIDGE_ASM" \
-                --target "$NL_BOOTSTRAP_TARGET" \
-                $(native_target_cfg_args) \
-                $(bootstrap_legacy_global_view_cfg_args) \
-                --stdlib-root "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT/bootstrap/stdlib" \
-                --stdlib-root "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT/stdlib" \
-                --stdlib-root "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT/src" \
-                --opt-level 2
-        ); then
-            bridge_compile_failed=1
-        fi
-    else
-        if ! (
-            cd "$BRIDGE_CWD"
-            run_with_heartbeat_capture \
-                "compile short-variant bridge" \
-                "$COMPILE_STDOUT" "$COMPILE_STDERR" \
-                "$PREV" compile \
-                "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT/src/main.tl" \
-                -o "$BRIDGE_ASM" \
-                --target "$NL_BOOTSTRAP_TARGET" \
-                $(native_target_cfg_args) \
-                $(bootstrap_legacy_global_view_cfg_args) \
-                --stdlib-root "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT/stdlib" \
-                --stdlib-root "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT/src" \
-                --opt-level 2
-        ); then
-            bridge_compile_failed=1
-        fi
-    fi
-    if [ "$bridge_compile_failed" -ne 0 ]; then
-        echo "[build-stage0] seed failed while compiling the short-variant bridge" >&2
-        sed 's/^/  /' "$COMPILE_STDOUT" >&2 || true
-        sed 's/^/  /' "$COMPILE_STDERR" >&2 || true
-        exit 1
-    fi
-    assemble_and_link \
-        "comptime short-variant bridge" \
-        "$BRIDGE_ASM" "$BRIDGE_OBJ" "$BRIDGE_BIN"
-    PREV=$BRIDGE_BIN
-    SEED_CTFE_COMPAT_STDLIB=
-    echo "[build-stage0] short-variant bridge ready; building stage1 from current sources"
-fi
-
-# Probe the compiler that actually builds stage1 -- the seed, or the last
-# compatibility bridge built from it -- so the legacy shared-view cfg is only
-# used by a seed that still needs it.
-bootstrap_resolve_seed_global_views "$PREV" "$WORKDIR" "$ROOT"
 
 i=1
 while [ "$i" -le "$STAGES" ]; do
@@ -245,32 +102,12 @@ while [ "$i" -le "$STAGES" ]; do
         EMBEDDED_STDLIB_TLCI_ARGS="--cfg embedded-stdlib-tlci"
     fi
     echo "[build-stage0] stage$i: compile src/main.tl ($NL_BOOTSTRAP_TARGET)"
-    stage_compile_failed=0
-    if [ "$i" -eq 1 ] && [ -n "$SEED_CTFE_COMPAT_STDLIB" ]; then
-        SEED_BOOTSTRAP_CWD="$WORKDIR/seed-bootstrap-cwd"
-        mkdir -p "$SEED_BOOTSTRAP_CWD"
-        if ! (
-            cd "$SEED_BOOTSTRAP_CWD"
-            run_with_heartbeat_capture "compile stage$i" "$COMPILE_STDOUT" "$COMPILE_STDERR" \
-                "$PREV" compile "$ROOT/src/main.tl" -o "$STAGE_ASM" \
-                --target "$NL_BOOTSTRAP_TARGET" \
-                $(native_target_cfg_args) \
-                --stdlib-root "$SEED_CTFE_COMPAT_STDLIB" --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" --opt-level 2 \
-                --cfg stage0-build-version $(stage_seed_bootstrap_cfg_args "$i") $EMBEDDED_STDLIB_TLCI_ARGS
-        ); then
-            stage_compile_failed=1
-        fi
-    else
-        if ! run_with_heartbeat_capture "compile stage$i" "$COMPILE_STDOUT" "$COMPILE_STDERR" \
-            "$PREV" compile src/main.tl -o "$STAGE_ASM" \
-            --target "$NL_BOOTSTRAP_TARGET" \
-            $(native_target_cfg_args) \
-            --stdlib-root stdlib --stdlib-root src --opt-level 2 \
-            --cfg stage0-build-version $(stage_seed_bootstrap_cfg_args "$i") $EMBEDDED_STDLIB_TLCI_ARGS; then
-            stage_compile_failed=1
-        fi
-    fi
-    if [ "$stage_compile_failed" -ne 0 ]; then
+    if ! run_with_heartbeat_capture "compile stage$i" "$COMPILE_STDOUT" "$COMPILE_STDERR" \
+        "$PREV" compile src/main.tl -o "$STAGE_ASM" \
+        --target "$NL_BOOTSTRAP_TARGET" \
+        $(native_target_cfg_args) \
+        --stdlib-root stdlib --stdlib-root src --opt-level 2 \
+        --cfg stage0-build-version $EMBEDDED_STDLIB_TLCI_ARGS; then
         echo "[build-stage0] stage$i compiler failed while compiling src/main.tl" >&2
         echo "[build-stage0] compiler stdout:" >&2
         sed 's/^/  /' "$COMPILE_STDOUT" >&2 || true
@@ -282,7 +119,6 @@ while [ "$i" -le "$STAGES" ]; do
         echo "[build-stage0] stage$i emitted no assembly for src/main.tl" >&2
         exit 1
     }
-    bootstrap_seed_runtime_small_arena_compat "$STAGE_ASM"
     assemble_and_link "stage$i" "$STAGE_ASM" "$STAGE_OBJ" "$STAGE_BIN"
     PREV="$STAGE_BIN"
     i=$((i + 1))

@@ -47,11 +47,8 @@
 (import (result.result i64 String) as result_lex_i64)
 
 (defmacro (global-shared-view [place : Expr]) : Expr
-  (cfg
-    stage0-seed-bootstrap
-    place
-    `(unsafe
-      (ptr-read (ptr-addr-of ,place)))))
+  `(unsafe
+    (ptr-read (ptr-addr-of ,place))))
 
 (defmacro (array-shared-view [items : Expr] [index : Expr]) : Expr
   `(unsafe

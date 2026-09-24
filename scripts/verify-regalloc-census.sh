@@ -1,9 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-# Keep the cfg-only register-allocation instrumentation buildable. The optional
-# analysis harness in scripts/attic/analyze-regalloc-call-spans.sh consumes this
-# compiler shape, but is intentionally not part of CI itself.
+# Keep the cfg-only register-allocation instrumentation buildable.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"

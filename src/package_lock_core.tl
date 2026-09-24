@@ -19,11 +19,8 @@
 (import package_cache_core)
 
 (defmacro (package-lock-global-shared-view [place : Expr]) : Expr
-  (cfg
-    stage0-seed-bootstrap
-    place
-    `(unsafe
-      (ptr-read (ptr-addr-of ,place)))))
+  `(unsafe
+    (ptr-read (ptr-addr-of ,place))))
 
 (defstruct PackageLockEntry
   (alias String)

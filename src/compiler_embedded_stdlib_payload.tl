@@ -131,15 +131,12 @@
 
 ;; Embedded compressed buffers are immutable process-lifetime storage. Decoding
 ;; allocates the uncompressed source independently, so copying every compressed
-;; byte here only adds transient work. Stage0 keeps its historical shallow read;
-;; the current compiler makes that same permanent-storage view explicit.
+;; byte here only adds transient work. Take an explicit shallow view of that
+;; permanent storage instead.
 (defmacro (compiler-embedded-stdlib-payload-copy [payload : Expr]) : CompilerEmbeddedStdlibPayload
-  (cfg
-    stage0-seed-bootstrap
-    `(CompilerEmbeddedStdlibPayloadSome ,payload)
-    `(CompilerEmbeddedStdlibPayloadSome
-      (unsafe
-        (ptr-read (ptr-addr-of ,payload))))))
+  `(CompilerEmbeddedStdlibPayloadSome
+    (unsafe
+      (ptr-read (ptr-addr-of ,payload)))))
 
 (define (compiler-embedded-stdlib-payload-lookup [suffix : String]) : CompilerEmbeddedStdlibPayload
   (cond

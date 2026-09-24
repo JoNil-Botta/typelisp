@@ -3,8 +3,8 @@
 The opt-in pinned TypeLisp/ISPC corpus uses
 `scripts/measure-ispc-spmd.sh`. Its static kernel-symbol reports and geomeans
 are report-only and fingerprint both binaries and flags. They are intentionally
-not mixed into the checked cachegrind or host-keyed AVX-512 tables below; the
-current retired-instruction runners do not accept arbitrary ISPC binaries.
+not mixed into the checked cachegrind tables below; the instruction-count
+runners do not accept arbitrary ISPC binaries.
 
 `perf/insn-exec-baseline.tsv` and `perf/insn-exec-heavy-baseline.tsv` are the
 committed cachegrind `Ir` baselines for the required Linux per-PR performance
@@ -276,53 +276,9 @@ for a benchmark-only pass over `spmd_map`, `spmd_mask`, `spmd_zip`,
 `spmd_short_tail`, and `string_scan`, checked exactly against
 `perf/insn-exec-heavy-baseline.tsv`. This adds one `Linux heavy
 instruction-count baseline` gate row to the `ci-timing-Linux` artifact without
-repeating the compiler bootstrap.
-
-## Host-keyed AVX-512 retired instructions
-
-Cachegrind 3.22 cannot execute this AVX-512 corpus: it SIGILLs and records only
-startup work. Use the opt-in Linux/WSL hardware harness instead:
-
-```sh
-TYPELISP_BIN=target/stage0/typelisp \
-  scripts/measure-spmd-avx512-instructions.sh --focused --cpu 4
-TYPELISP_BIN=target/stage0/typelisp \
-  scripts/measure-spmd-avx512-instructions.sh \
-  --runs 11 --check-baseline --cpu 4
-```
-
-The harness requires runnable AVX-512F+BW+DQ and OS ZMM/opmask state. It builds
-TypeLisp with explicit `--backend-mode avx512 --opt-level 2` and the static C
-comparison with `clang -O2 -march=x86-64 -mavx512f -mavx512bw -mavx512dq
--mno-avx512vl -static`; it never uses `-march=native`. Before measuring, each
-pair must match exit status, stdout, and stderr.
-
-`tools/spmd-avx512-perf/counter.tl` calls `perf_event_open` directly, pins the
-child to one logical CPU, starts the inherited user-space-only event on
-`execve`, waits, and rejects unavailable, zero, multiplexed, or signal/SIGILL
-results. There is no dependency on a distro-matched `perf`, Intel SDE, QEMU,
-llvm-mca, or a C helper.
-
-One warmup precedes 11 recorded runs. `metadata.tsv` records the complete
-host/tool/flags/PMU contract; `runs.tsv`, `summary.tsv`, and `comparison.tsv`
-record the raw counts, median/statistics/CV, TypeLisp-to-clang ratios, and
-geomean. Rebuilt assembly must hash identically, and static vector/AVX-512
-operand counts remain diagnostic columns—zero is visible and valid rather than
-substituted for dynamic performance.
-
-The committed `perf/spmd-avx512-retired-baseline.tsv` is keyed by a SHA-256 of
-the counter source, OS/kernel, CPU identity and logical CPU, ISA tokens,
-clang/as/ld versions, flags, and counter configuration. The 1000 ppm tolerance
-is enforced only for an exact fingerprint; other hosts are report-only.
-The baseline includes every supported benchmark, including measured
-`spmd_mask/avx512` and `spmd_shuffle/avx512` rows.
-Only a full 11-run measurement may update the baseline. The heavy hardware
-measurement is never part of required correctness CI; only fast mutation
-self-tests run there:
-
-```sh
-scripts/measure-spmd-avx512-instructions.sh --self-test
-```
+repeating the compiler bootstrap. Heavy improvements and regressions therefore
+block the PR that introduces them; accept intentional changes by committing an
+explicit `perf/insn-exec-heavy-baseline.tsv` refresh.
 
 ## Compile-profile optimizer escape capture
 
@@ -346,45 +302,6 @@ grep -E 'compile-profile\|optimize\.functions\||compile-profile-detail\|optimize
 Use the same target and cfgs that match the host being measured. The escape rows
 are `compile-profile-detail|optimize.escape.<phase>|elapsed_ms|opt_level|function`
 with phases for `body`, `compact`, `clone`, and `restore`.
-
-## Heavy compile RSS checks
-
-Use `scripts/measure-compile-rss.sh` from Linux or WSL before reopening checked
-program compaction work from #3863. The harness wraps real compiler invocations
-with GNU `/usr/bin/time -v`, writes a stable TSV summary, and keeps command,
-stdout, stderr, and time transcripts under `target/compile-rss/`. It fails
-clearly when GNU time is not available.
-
-Run the same workloads once with current `main` and once with the candidate
-branch compiler, then compare `elapsed_ms`, `exit_code`, and `max_rss_kb` in
-`target/compile-rss/measurements.tsv`:
-
-```sh
-TYPELISP_COMPILE_RSS_OUT=target/compile-rss-main \
-  TYPELISP_BIN=target/main/typelisp \
-  scripts/measure-compile-rss.sh --mode all
-TYPELISP_COMPILE_RSS_OUT=target/compile-rss-candidate \
-  TYPELISP_BIN=target/candidate/typelisp \
-  scripts/measure-compile-rss.sh --mode all
-```
-
-The default `all` mode runs both required #3863 workloads:
-
-```sh
-scripts/measure-compile-rss.sh --mode single --input src/doc_test.tl <typelisp-bin>
-scripts/measure-compile-rss.sh --mode manifest-chunk --chunk-id 0002 <typelisp-bin>
-```
-
-Manifest chunk ids are zero-based file ids. The required heavy chunk is
-`0002`, which is human chunk 3. Keep the default manifest batch size at 16;
-reducing the batch size hides the memory behavior being measured. If a different
-output directory is useful for side-by-side runs, set `TYPELISP_COMPILE_RSS_OUT`.
-
-The required Linux PR gate measures `spmd_map`, `spmd_mask`, `spmd_zip`,
-`spmd_short_tail`, and `string_scan` as benchmark-only cases with one
-cachegrind run. Heavy improvements and regressions therefore block the PR that
-introduces them; accept intentional changes by committing an explicit
-`perf/insn-exec-heavy-baseline.tsv` refresh.
 
 ## SPMD scalar/AVX2 mode matrix
 
@@ -422,5 +339,5 @@ scripts/measure-spmd-mode-instruction-counts.sh --self-test
 ```
 
 AVX-512 is never run under cachegrind because Valgrind 3.22 raises SIGILL and
-records only startup instructions. Its separate measurement methodology is
-tracked in [#4933](https://github.com/JoNil-Botta/typelisp/issues/4933).
+records only startup instructions, so AVX-512 has no instruction-count
+baseline.

@@ -6,8 +6,8 @@
 ;# REAL identifier stream: benchmarks/intern_table/data/idents.txt holds every
 ;# `Token.Sym` lexeme that src/lex.tl produces for src/lex.tl,
 ;# src/compiler_liveness.tl, src/compiler_symbols.tl and src/compiler_lower.tl,
-;# one per line, in encounter order, exported by
-;# benchmarks/intern_table/tools/export_idents.py. Encounter order carries the
+;# one per line, in encounter order, exported by a since-deleted Python tool
+;# (see README.md). Encounter order carries the
 ;# distribution that matters: the real first-occurrence-miss / repeat-hit ratio,
 ;# the real length distribution, and the real collision families the compiler's
 ;# dashed naming produces.

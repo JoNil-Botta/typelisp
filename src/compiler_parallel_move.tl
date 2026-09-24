@@ -4,11 +4,8 @@
 ;; either half without teaching this helper about registers, stack slots, or IR
 ;; values. Resource id 0 means "no resource".
 (defmacro (compiler-parallel-move-shared-view [place : Expr]) : Expr
-  (cfg
-    stage0-seed-bootstrap
-    place
-    `(unsafe
-      (ptr-read (ptr-addr-of ,place)))))
+  `(unsafe
+    (ptr-read (ptr-addr-of ,place))))
 
 (defenum CompilerParallelMoveEdge
   (ParallelMoveEdge i64 i64 i64 i64 i64))

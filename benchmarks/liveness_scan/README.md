@@ -26,7 +26,7 @@ on its own -- see the shift-count trap-check note in the delivery report.
 `data/cfgs.txt` is captured from the compiler compiling itself, without
 modifying the compiler: `typelisp compile src/compiler_liveness.tl --dump-ir`
 writes the final optimized IR -- the same IR the liveness pass consumes -- and
-`tools/export_cfgs.py` converts it into a compact all-integer corpus.
+a Python exporter converted it into a compact all-integer corpus.
 
 | property                          | value        |
 |-----------------------------------|--------------|
@@ -75,15 +75,10 @@ entries over all 2,087 functions.
 
 ## Regenerating the corpus
 
-From the repository root, with any working compiler binary:
-
-```sh
-python3 benchmarks/liveness_scan/tools/export_cfgs.py \
-    --typelisp target/bootstrap-fixpoint/stage2
-```
-
-Add `--module <path>` (repeatable) to capture a different or a wider set of
-modules; the default is `src/compiler_liveness.tl`. The intermediate IR dump
-goes to a temporary directory and is not kept. Regeneration is deterministic for
-a given compiler and module set; a compiler change that alters the emitted IR
-alters the corpus and therefore the benchmark checksum.
+The corpus is frozen: the committed `Ir` baselines pin it byte for byte. It was
+exported at commit `5fce734af` (#5989) by a Python exporter that read the
+compiler's `--dump-ir` output of that time. The exporter and its regeneration
+commands were deleted once the corpus was committed;
+`git log --diff-filter=D -- benchmarks/liveness_scan/tools` finds the deleting
+commit, whose parent still has both, including the exporter's header that
+documents the full corpus format.

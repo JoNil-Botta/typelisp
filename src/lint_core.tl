@@ -22,11 +22,8 @@
 (import lex as lexer)
 
 (defmacro (global-shared-view [place : Expr]) : Expr
-  (cfg
-    stage0-seed-bootstrap
-    place
-    `(unsafe
-      (ptr-read (ptr-addr-of ,place)))))
+  `(unsafe
+    (ptr-read (ptr-addr-of ,place))))
 
 ;: A rule either supplies an ordinary shared diagnostic fix or records why its
 ;: suggestion is not safe to apply automatically. A finding without a proved

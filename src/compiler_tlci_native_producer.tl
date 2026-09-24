@@ -26,11 +26,8 @@
 (import stdlib.string)
 
 (defmacro (embedded-native-global-shared-view [place : Expr]) : Expr
-  (cfg
-    stage0-seed-bootstrap
-    place
-    `(unsafe
-      (ptr-read (ptr-addr-of ,place)))))
+  `(unsafe
+    (ptr-read (ptr-addr-of ,place))))
 
 (define (embedded-stdlib-tlci-identity [module : String] [name-id : i64]) : String
   (if (= (string.string-length module) 0)

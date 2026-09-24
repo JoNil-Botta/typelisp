@@ -124,8 +124,8 @@ expect-verify`, then the parameters as `var typeclass` pairs, then per block
 `nsucc succ... ninstr` followed by the instructions. Blocks are numbered
 0..n-1 in dump (= block-list) order, which is the CFG id numbering
 `opt-cfg-index-build` assigns; successor edges are in `opt-cfg-instr-successors`
-discovery order (the terminator rules of
-`benchmarks/cfg_domloops/tools/export_cfg_blocks.py`). Instruction records name
+discovery order (the terminator rules of the `cfg_domloops` exporter).
+Instruction records name
 the `opt-ssa-facts-add-instr` arm they land in:
 
 ```
@@ -176,40 +176,13 @@ function. The exporter predicts this independently and the kernels assert it.
 
 ### Regeneration
 
-```sh
-# 1. the snapshot compiler and its sources (see target/bench6-dumps/aug25/README.txt)
-S=<extracted 98bdc6f5 sources>; TL=target/dev/tl-aug25s2
-
-# 2. dump each module after the rotation pass (16G is enough for these modules;
-#    compiler_load / compiler_regalloc OOM in the per-pass dump path, which is
-#    why the corpus comes from medium modules)
-for m in lex read format_rules format_tokens token compiler_object_elf \
-         package_lock_core tlci_loader compiler_clone compiler_diagnostic; do
-  systemd-run --user --scope -q -p MemoryMax=16G -p MemorySwapMax=0 \
-      $TL compile $S/src/$m.tl --dump-ir after-rotation \
-      -o target/bench6-dumps/aug25/$m.rotation.opt2.ir \
-      --stdlib-root $S/stdlib --stdlib-root $S/src --opt-level 2
-done
-
-# 3. export (file order is part of the corpus identity: first occurrence wins)
-python3 benchmarks/ssa_construct/tools/export_ssa_funcs.py \
-    benchmarks/ssa_construct/data/ssa-funcs.txt 3000000 \
-    target/bench6-dumps/aug25/lex.rotation.opt2.ir \
-    target/bench6-dumps/aug25/read.rotation.opt2.ir \
-    target/bench6-dumps/aug25/format_rules.rotation.opt2.ir \
-    target/bench6-dumps/aug25/format_tokens.rotation.opt2.ir \
-    target/bench6-dumps/aug25/token.rotation.opt2.ir \
-    target/bench6-dumps/aug25/compiler_object_elf.rotation.opt2.ir \
-    target/bench6-dumps/aug25/package_lock_core.rotation.opt2.ir \
-    target/bench6-dumps/aug25/tlci_loader.rotation.opt2.ir \
-    target/bench6-dumps/aug25/compiler_clone.rotation.opt2.ir \
-    target/bench6-dumps/aug25/compiler_diagnostic.rotation.opt2.ir
-```
-
-`--dump-ir` of any compiler module segfaults on the current `main` compiler;
-that is tracked separately by the orchestrator, which is why the corpus is
-produced by the pinned 2026-08-25 snapshot compiler, exactly as
-`benchmarks/cfg_domloops` and `benchmarks/gvn_table` are.
+The corpus is frozen: the committed `Ir` baselines pin it byte for byte. It was
+exported at commit `933fdf56c` (#7382) by a Python exporter that read the
+snapshot compiler's `--dump-ir` output of that time. The exporter and its
+regeneration commands were deleted once the corpus was committed;
+`git log --diff-filter=D -- benchmarks/ssa_construct/tools` finds the deleting
+commit, whose parent still has both, including the exporter's header that
+documents the full corpus format.
 
 ## Self-check
 

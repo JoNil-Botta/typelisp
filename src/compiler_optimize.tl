@@ -65,19 +65,13 @@
 (import (vector.vector i64 core) as opt_dense_i64_vec)
 
 (defmacro (compiler-opt-global-shared-view [place : Expr]) : Expr
-  (cfg
-    stage0-seed-bootstrap
-    place
-    `(owned_view.compiler-owned-shared-view ,place)))
+  `(owned_view.compiler-owned-shared-view ,place))
 
 (defmacro (compiler-opt-global-array-element-shared-view
   [items : Expr]
   [index : Expr]) : Expr
-  (cfg
-    stage0-seed-bootstrap
-    `(array-ref ,items ,index)
-    `(unsafe
-      (ptr-read (ptr-offset (__tl_array-data ,items) ,index)))))
+  `(unsafe
+    (ptr-read (ptr-offset (__tl_array-data ,items) ,index))))
 
 (defmacro (compiler-opt-borrowed-array-element-shared-view
   [items : Expr]
@@ -175,11 +169,8 @@
 ;; Serial compatibility reads intentionally take shallow shared views of this
 ;; process-global aggregate. Production optimizer work is not re-entrant.
 (define (compiler-opt-owned-state-shared-view) : CompilerOptOwnedState
-  (cfg
-    stage0-seed-bootstrap
-    compiler-opt-owned-state
-    (unsafe
-      (ptr-read (ptr-addr-of compiler-opt-owned-state)))))
+  (unsafe
+    (ptr-read (ptr-addr-of compiler-opt-owned-state))))
 
 ;; Developer-only optimizer observability. The CLI resets this state before
 ;; every command, so normal compilation remains silent and allocation-free at
@@ -181397,11 +181388,8 @@
 ;; and address-taken indexes), so one instance serves every block instead of
 ;; five maps and an array per block.
 (define (opt-load-cse-no-cells-view) : OptGlobalCellSummary
-  (cfg
-    stage0-seed-bootstrap
-    opt-load-cse-no-cells
-    (unsafe
-      (ptr-read (ptr-addr-of opt-load-cse-no-cells)))))
+  (unsafe
+    (ptr-read (ptr-addr-of opt-load-cse-no-cells))))
 
 (define (opt-load-canon-var [canon : (__tl_dyn-array i64)] [var : i64]) : i64
   (if (or (< var 0) (>= var (array-length canon)))

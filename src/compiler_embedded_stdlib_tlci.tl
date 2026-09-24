@@ -1,11 +1,7 @@
 ;; Build-configured embedded stdlib comptime image and production loader path.
 (import stdlib.str_cat_runtime as str_cat)
-(cfg
-  (any stage0-seed-bootstrap test)
-  (import compiler_embedded_stdlib_tlci_payload_seed as payload))
-(cfg
-  (not (any stage0-seed-bootstrap test))
-  (import compiler_embedded_stdlib_tlci_payload as payload))
+(cfg test (import compiler_embedded_stdlib_tlci_payload_seed as payload))
+(cfg (not test) (import compiler_embedded_stdlib_tlci_payload as payload))
 (import compiler_embedded_stdlib_tlci_codec as codec)
 (import tlci_loader as loader)
 
@@ -26,13 +22,10 @@
 
 ;; Native-comptime session cells are process-global owner slots. Read-only
 ;; callbacks intentionally share their live contents; make that shallow view
-;; explicit while retaining source compatibility with the published seed.
+;; explicit.
 (defmacro (compiler-comptime-host-global-shared-view [place : Expr]) : Expr
-  (cfg
-    stage0-seed-bootstrap
-    place
-    `(unsafe
-      (ptr-read (ptr-addr-of ,place)))))
+  `(unsafe
+    (ptr-read (ptr-addr-of ,place))))
 
 ;; Global host arrays retain their elements across native callback boundaries.
 ;; Reading one is a shallow compiler-owned view, never an ownership transfer
@@ -40,11 +33,8 @@
 (defmacro (compiler-comptime-host-array-element-shared-view
   [items : Expr]
   [index : Expr]) : Expr
-  (cfg
-    stage0-seed-bootstrap
-    `(array-ref ,items ,index)
-    `(unsafe
-      (ptr-read (ptr-offset (__tl_array-data ,items) ,index)))))
+  `(unsafe
+    (ptr-read (ptr-offset (__tl_array-data ,items) ,index))))
 
 (defenum CompilerEmbeddedStdlibTlciValidation
   (Ok i64)
@@ -62,11 +52,8 @@
 
 (define (compiler-embedded-stdlib-tlci-compressed-shared-view) : (__tl_dyn-array
     u8)
-  (cfg
-    stage0-seed-bootstrap
-    payload.embedded-stdlib-tlci-bytes
-    (unsafe
-      (ptr-read (ptr-addr-of payload.embedded-stdlib-tlci-bytes)))))
+  (unsafe
+    (ptr-read (ptr-addr-of payload.embedded-stdlib-tlci-bytes))))
 
 ;; The compiler maps the image lazily on the first embedded-stdlib macro call
 ;; and keeps it mapped through that macro-expansion pass. State values are
@@ -129,24 +116,18 @@
       (= compiler-embedded-stdlib-tlci-stress-canary-b 270544960))))
 
 (define (compiler-embedded-stdlib-tlci-session-image-shared-view) : loader.TlciLoadedImage
-  (cfg
-    stage0-seed-bootstrap
-    (array-ref compiler-embedded-stdlib-tlci-session-image 0)
-    (unsafe
-      (ptr-read
-        (ptr-offset
-          (__tl_array-data compiler-embedded-stdlib-tlci-session-image)
-          0)))))
+  (unsafe
+    (ptr-read
+      (ptr-offset
+        (__tl_array-data compiler-embedded-stdlib-tlci-session-image)
+        0))))
 
 (define (compiler-embedded-stdlib-tlci-session-error-shared-view) : String
-  (cfg
-    stage0-seed-bootstrap
-    (array-ref compiler-embedded-stdlib-tlci-session-error 0)
-    (unsafe
-      (ptr-read
-        (ptr-offset
-          (__tl_array-data compiler-embedded-stdlib-tlci-session-error)
-          0)))))
+  (unsafe
+    (ptr-read
+      (ptr-offset
+        (__tl_array-data compiler-embedded-stdlib-tlci-session-error)
+        0))))
 
 ;; R3-P2d. The session is opened LAZILY, from inside whatever the compiler
 ;; happens to be doing when the first embedded-stdlib macro fires, and it is
@@ -255,12 +236,9 @@
 
 (define (compiler-embedded-stdlib-tlci-decoded-shared-view) : (__tl_dyn-array
     u8)
-  (cfg
-    stage0-seed-bootstrap
-    (array-ref compiler-embedded-stdlib-tlci-decoded 0)
-    (unsafe
-      (ptr-read
-        (ptr-offset (__tl_array-data compiler-embedded-stdlib-tlci-decoded) 0)))))
+  (unsafe
+    (ptr-read
+      (ptr-offset (__tl_array-data compiler-embedded-stdlib-tlci-decoded) 0))))
 
 ;; The expanded image: the surface's bytes while their owner is alive, else a
 ;; fresh expansion in the caller's current arena.

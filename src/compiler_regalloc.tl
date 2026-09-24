@@ -35,19 +35,13 @@
     diagnostic))
 
 (defmacro (compiler-reg-global-shared-view [place : Expr]) : Expr
-  (cfg
-    stage0-seed-bootstrap
-    place
-    `(owned_view.compiler-owned-shared-view ,place)))
+  `(owned_view.compiler-owned-shared-view ,place))
 
 (defmacro (compiler-reg-global-array-element-shared-view
   [items : Expr]
   [index : Expr]) : Expr
-  (cfg
-    stage0-seed-bootstrap
-    `(array-ref ,items ,index)
-    `(unsafe
-      (ptr-read (ptr-offset (__tl_array-data ,items) ,index)))))
+  `(unsafe
+    (ptr-read (ptr-offset (__tl_array-data ,items) ,index))))
 
 (defmacro (compiler-reg-box-shared-view [value : Expr]) : Expr
   (let
@@ -39819,8 +39813,7 @@
         (set!
           compiler-reg-trace-reasons
           (compiler-reg-owned-copy-words
-            ;; This is a global place. Keep its view independent of the
-            ;; temporary reference cell used by the borrowed-inline seed bridge.
+            ;; This is a global place, so take the direct place view.
             (owned_view.compiler-owned-place-shared-view
               compiler-reg-trace-reasons))))
       (unsafe

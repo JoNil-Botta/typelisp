@@ -94,18 +94,13 @@ jumps live.
 
 ### Regeneration
 
-```sh
-# 1. snapshot the compiler (concurrent activity in the tree)
-cp target/bootstrap-fixpoint/stage2 /tmp/tlsnap && chmod +x /tmp/tlsnap
-
-# 2. emit the compiler's own assembly
-/tmp/tlsnap compile src/main.tl -o /tmp/main.s \
-    --stdlib-root stdlib --stdlib-root src --opt-level 2
-
-# 3. sample it (the byte budget is part of the corpus identity)
-python3 benchmarks/peephole_lines/tools/export_asm_slice.py \
-    benchmarks/peephole_lines/data/self-compile.asm 3000000 /tmp/main.s
-```
+The corpus is frozen: the committed `Ir` baselines pin it byte for byte. It was
+exported at commit `b70653e95` (#6015) by a Python exporter that read the
+snapshot compiler's own `--opt-level 2` assembly of that time. The exporter and
+its regeneration commands were deleted once the corpus was committed;
+`git log --diff-filter=D -- benchmarks/peephole_lines/tools` finds the deleting
+commit, whose parent still has both, including the exporter's header that
+documents the full corpus format.
 
 ## Design parameters
 

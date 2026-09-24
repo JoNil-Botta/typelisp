@@ -19,11 +19,8 @@
 ;; The raw verifier image is immutable process-global storage. Equality needs
 ;; a shallow view of its bytes, not ownership of the global array.
 (defmacro (embedded-verify-global-shared-view [place : Expr]) : Expr
-  (cfg
-    stage0-seed-bootstrap
-    place
-    `(unsafe
-      (ptr-read (ptr-addr-of ,place)))))
+  `(unsafe
+    (ptr-read (ptr-addr-of ,place))))
 
 ;; Compare expansion with the builder's ordinary, directly mappable format-v2
 ;; artifact. This is intentionally a verifier-only second embedding; shipped

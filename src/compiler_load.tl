@@ -33,20 +33,14 @@
 (import compiler_owned_view as owned_view)
 
 (defmacro (compiler-load-global-shared-view [place : Expr]) : Expr
-  (cfg
-    stage0-seed-bootstrap
-    place
-    `(unsafe
-      (ptr-read (ptr-addr-of ,place)))))
+  `(unsafe
+    (ptr-read (ptr-addr-of ,place))))
 
 (defmacro (compiler-load-global-array-element-shared-view
   [items : Expr]
   [index : Expr]) : Expr
-  (cfg
-    stage0-seed-bootstrap
-    `(array-ref ,items ,index)
-    `(unsafe
-      (ptr-read (ptr-offset (__tl_array-data ,items) ,index)))))
+  `(unsafe
+    (ptr-read (ptr-offset (__tl_array-data ,items) ,index))))
 
 ;; CompilerProfileState slot 350 is the load lifetime ledger's exact source
 ;; payload count. The active loader session already owns an explicit interner
@@ -2001,14 +1995,10 @@
   (compiler-load-standalone-session-state-new))
 
 ;; Serial compatibility adapters intentionally share this process-lifetime
-;; state. Stage0 keeps its historical shallow read while the current compiler
-;; requires the equivalent operation to be visibly unsafe.
+;; state through a visibly unsafe shallow read.
 (define (compiler-load-active-session-state-shared-view) : CompilerLoadSessionState
-  (cfg
-    stage0-seed-bootstrap
-    compiler-load-active-session-state
-    (unsafe
-      (ptr-read (ptr-addr-of compiler-load-active-session-state)))))
+  (unsafe
+    (ptr-read (ptr-addr-of compiler-load-active-session-state))))
 
 (define (compiler-load-session-state-shared-view
   [state : (& state CompilerLoadSessionState)]) : CompilerLoadSessionState

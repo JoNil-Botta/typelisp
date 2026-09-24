@@ -223,11 +223,8 @@
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-typecheck-facts-recording-observations-shared-view) : SurfaceCloneObservationSeq
-    (cfg
-      stage0-seed-bootstrap
-      surface-typecheck-facts-recording-observations
-      (unsafe
-        (ptr-read (ptr-addr-of surface-typecheck-facts-recording-observations))))))
+    (unsafe
+      (ptr-read (ptr-addr-of surface-typecheck-facts-recording-observations)))))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)

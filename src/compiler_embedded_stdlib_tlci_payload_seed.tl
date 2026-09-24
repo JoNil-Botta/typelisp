@@ -1,5 +1,5 @@
-;; The seed-built stage has no same-commit image yet. Stage1 builds the image
-;; that is embedded in stage2, preserving the ordinary bootstrap handoff.
+;; Test builds carry no same-commit image; production builds embed the image
+;; that the previous stage built (see compiler_embedded_stdlib_tlci_payload).
 ;;
 ;; An empty payload is the "no image" signal for the loader, which is why this
 ;; variant carries no compressed framing: `compiler_embedded_stdlib_tlci` reads
@@ -10,8 +10,5 @@
   "")
 
 (define (embedded-stdlib-tlci-source-hash-shared-view) : String
-  (cfg
-    stage0-seed-bootstrap
-    embedded-stdlib-tlci-source-hash
-    (unsafe
-      (ptr-read (ptr-addr-of embedded-stdlib-tlci-source-hash)))))
+  (unsafe
+    (ptr-read (ptr-addr-of embedded-stdlib-tlci-source-hash))))

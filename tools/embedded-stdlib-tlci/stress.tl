@@ -37,11 +37,8 @@
 (import stdlib.string)
 
 (defmacro (stress-global-shared-view [place : Expr]) : Expr
-  (cfg
-    stage0-seed-bootstrap
-    place
-    `(unsafe
-      (ptr-read (ptr-addr-of ,place)))))
+  `(unsafe
+    (ptr-read (ptr-addr-of ,place))))
 
 (define stress-cookie : i64
   0x5528)

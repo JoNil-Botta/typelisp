@@ -41,7 +41,7 @@ All in `src/compiler_regalloc.tl` unless noted.
 | `compiler-reg-priority-keys!` (14260) / `-priority-band-value` / `-priority-band-span` / `-priority-local-span` / `-block-index-of-point` / `-priority-key-weight` | the local-first band packed under the weight, with the binary search for the owning block and the band-free weight recovered by division for every eviction comparison |
 | `compiler-reg-greedy-integer-pool-for-abi` Linux (34072) / `-caller-saved-count` | the 14-register SysV pool in order — `rax rsi rdi r9 rcx rdx r10 r11 r8 \| r12 r13 r14 r15 rbx` — with the caller-saved prefix of 9 |
 | `compiler-reg-assignment-table-location-conflicts?` (8663) | the self-check: no two vars holding one register may have overlapping segments |
-| `compiler-reg-function-spill-weights` (14453), `compiler-reg-loop-depth-weight` (11497), `compiler-reg-ref-counts-blocks-weighted!` | computed by the exporter (`tools/export_intervals.py`) and shipped as the per-var raw weight; the kernel does the combine and the band packing |
+| `compiler-reg-function-spill-weights` (14453), `compiler-reg-loop-depth-weight` (11497), `compiler-reg-ref-counts-blocks-weighted!` | computed by the exporter and shipped as the per-var raw weight; the kernel does the combine and the band packing |
 | `compiler-reg-live-intervals`, `compiler-reg-live-interval-selection`, `-instr-seq`, `-blocks-with-live`, `compiler-reg-extend-interval*`, `compiler-reg-segment-note-point!` / `-flush-var!` (`src/compiler_liveness.tl`'s `compiler-live-analyze-function-edge-precise` and `compiler-live-instr-seq-fill-after!` underneath) | ported to Python in the exporter, which is where the shipped segments come from |
 
 ## Fidelity
@@ -155,8 +155,8 @@ nseg nrows`, the `nblocks + 1` block start points, the candidate var ids in
 candidate order, the call / div / shift points (doubled instruction indices),
 and one row per var that has a live interval:
 `var k (start end)*k weight hint argpref flags`. `#` starts a comment to end of
-line. Every field and the compiler function it comes from is documented at the
-top of `tools/export_intervals.py`.
+line. Every field and the compiler function it comes from is documented in the
+exporter's header (see Regeneration).
 
 Provenance: the `--dump-ir` final optimized IR of `src/compiler_load.tl` and
 `src/compiler_regalloc.tl`, compiled by the 2026-08-25 snapshot compiler
@@ -175,30 +175,13 @@ truncating to its stdlib-heavy prefix.
 
 ### Regeneration
 
-```sh
-# 1. snapshot the compiler (concurrent activity in the tree)
-cp target/bootstrap-fixpoint/stage2 /tmp/tlsnap && chmod +x /tmp/tlsnap
-
-# 2. dump the final optimized IR of the two modules
-/tmp/tlsnap compile src/compiler_load.tl --dump-ir \
-    -o /tmp/compiler_load.final.opt2.ir \
-    --stdlib-root stdlib --stdlib-root src --opt-level 2
-/tmp/tlsnap compile src/compiler_regalloc.tl --dump-ir \
-    -o /tmp/compiler_regalloc.final.opt2.ir \
-    --stdlib-root stdlib --stdlib-root src --opt-level 2
-
-# 3. export (byte budget and source order are part of the corpus identity;
-#    --verify additionally runs the Python greedy and prints the totals above)
-python3 benchmarks/regalloc_greedy/tools/export_intervals.py \
-    benchmarks/regalloc_greedy/data/intervals.txt 900000 --verify \
-    /tmp/compiler_load.final.opt2.ir /tmp/compiler_regalloc.final.opt2.ir
-```
-
-The dumps shipped for this benchmark were produced that way by the 2026-08-25
-snapshot compiler and live in `target/bench6-dumps/aug25/`. `--dump-ir` on the
-current `main` compilers segfaults for every compiler module; that crash is
-tracked separately by the orchestrator, which is why the snapshot route is the
-documented one.
+The corpus is frozen: the committed `Ir` baselines pin it byte for byte. It was
+exported at commit `933fdf56c` (#7382) by a Python exporter that read the
+snapshot compiler's `--dump-ir` output of that time. The exporter and its
+regeneration commands were deleted once the corpus was committed;
+`git log --diff-filter=D -- benchmarks/regalloc_greedy/tools` finds the deleting
+commit, whose parent still has both, including the exporter's header that
+documents the full corpus format.
 
 ## Design parameters
 

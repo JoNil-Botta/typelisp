@@ -211,39 +211,21 @@ temporary file per invocation, cleaned up after success or failure. The helper
 self-test covers nested library calls and explicit inner reports on both Linux
 backends without building another compiler.
 
-`benchmark-semantic-index.sh` is the opt-in compiler-scale consumer of that
-interface. It builds a current-tree runner with an explicitly selected compiler
-and reports owned semantic record count, process-tree peak memory, wall time,
-exit status, and normalized termination reason for
-`src/compiler_typecheck_core.tl`. Its `--self-test` mode is wired into CI on
-both hosts, but the expensive corpus workload is deliberately not; see
-`tools/semantic-index-bench/README.md` for the reproducible command and schema.
-
 On Windows, `verify-integration.sh` sends independent manifest links through
 `windows-integration-linker.ps1`. The measured default is four concurrent
 `lld-link` children; set `TYPELISP_WINDOWS_LINK_JOBS=1` for serial debugging or
 to another value from 1 through 64 for a host-specific measurement.
-
-For process-level safe-thread stress, `measure-thread-integration-stress.sh`
-builds the seven `thread_safe_*` manifest fixtures once and repeatedly runs the
-native executables on Linux or Windows. It retains every exit code and stream;
-use `TYPELISP_THREAD_STRESS_ITERATIONS=1000`,
-`TYPELISP_THREAD_STRESS_JOBS=8`, and, on Linux,
-`TYPELISP_THREAD_STRESS_CPU=0` to increase scheduling pressure.
 
 Some gate-owned helpers deliberately retain measurement-oriented names:
 
 | Helper | Owning gate |
 | --- | --- |
 | `measure-instruction-counts.sh` | `check-instruction-counts.sh` and `ci-verify.sh` self-test |
-| `measure-spmd-avx512-instructions.sh` | `ci-verify.sh` self-test and AVX-512 baseline checks |
 | `measure-spmd-mode-instruction-counts.sh` | `ci-verify.sh` self-test and SPMD baseline checks |
 | `measure-compile-batch-memory.ps1` | `verify-compile-profile.sh` |
-| `measure-heavy-closure-profile.sh` | `verify-compile-profile.sh` and `measure-compile-rss.sh` |
-| `measure-result-import-cost.sh` | `verify-result-import-harness.sh` fixture preparation |
+| `measure-heavy-closure-profile.sh` | `verify-compile-profile.sh` |
 | `analyze-stage0-size.sh` | `verify-stage0-smoke.sh` report |
 | `analyze-selfhost-build-asm-size.sh` | `ci-verify.sh` parser self-test; optional linked-size report |
-| `benchmark-bootstrap.ps1` | `ci-verify.sh` command-construction self-test |
 
 Keep these at the top level while their owning gate references them.
 
@@ -256,15 +238,11 @@ Keep these at the top level while their owning gate references them.
 - `lib-*` files are sourced support code and are not standalone commands.
 - `generate-*` scripts refresh reviewed test vectors or other checked inputs.
 - Data files next to scripts are owned by the gate that reads them.
-- `attic/` contains runnable historical experiment harnesses. They are not CI
-  gates and must not be referenced by workflows or `ci-verify.sh`.
 
 Active optional tools stay at the top level when they support recurring work:
-the compiler and CLI benchmarks, selfhost size report, compile-memory and RSS
-tools, instruction-count runners, the compiler-scale semantic-index benchmark,
-the SFrame v3 codec scale measurement, ISPC/SPMD comparisons, LSP latency,
-typecheck-prefix-cache measurements, the `run-bounded-process.ps1` job-memory
-cap wrapper, and platform profilers. See
+the compiler and CLI benchmarks, selfhost size report, instruction-count
+runners, the SFrame v3 codec scale measurement, ISPC/SPMD comparisons, LSP
+latency, and the `run-bounded-process.ps1` job-memory cap wrapper. See
 `src/TESTING.md`, `perf/README.md`, and `benchmarks/README.md` for their
 workload-specific instructions.
 
@@ -276,8 +254,9 @@ Before moving or deleting a script:
    manifests for its path.
 2. Keep live gate helpers at the top level even when their name begins with
    `measure-`.
-3. Move only closed, one-off experiments to `attic/`; record the owning issue
-   and update any historical reproduction command.
+3. Delete closed, one-off experiments instead of archiving them; name the
+   owning issue in the commit message so the script stays recoverable from
+   history.
 4. Run shell/PowerShell syntax checks for moved files and the focused gate for
    every changed live reference.
 5. Run `check-implementation-languages.sh` and `git diff --check`.

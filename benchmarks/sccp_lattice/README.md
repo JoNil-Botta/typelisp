@@ -142,7 +142,7 @@ successor-label pool, the `pred kind value` phi-input pool, the
 `label succ-base succ-count instr-base instr-count` block rows, and the
 fixed-width `op dst ty ty2 a a-kind b b-kind` instruction rows. `#` starts a
 comment to end of line. The opcode table, the operand kinds and the meaning of
-every field are documented at the top of `tools/export_sccp_tape.py`.
+every field are documented in the exporter's header (see Regeneration).
 
 Provenance: the `--dump-ir after-bounds_dom` text of ten compiler modules,
 compiled at `--opt-level 2` by the snapshot compiler. `after-bounds_dom` is the
@@ -163,7 +163,7 @@ repeats a suffix. The result is the near-contiguous, distinct label set
 `opt-cfg-index-id-slot`'s hash is designed for.
 
 **Self-check.** The exporter runs its own SCCP over the encoded tape (`analyse`
-in `tools/export_sccp_tape.py`, an independent transcription of
+in the exporter, an independent transcription of
 `opt-sccp-analyze-fixed` in Python) and writes its result into the corpus header
 as data. Both kernels recompute all five totals and `main` returns 1 if any
 disagrees. For the shipped corpus, per round:
@@ -181,40 +181,13 @@ functions (2.15 on average, 5 at most).
 
 ### Regeneration
 
-```sh
-# 1. the snapshot compiler and its own sources (see
-#    target/bench6-dumps/aug25/README.txt for the provenance model)
-S=<extracted 98bdc6f5 sources>; TL=target/dev/tl-aug25s2
-
-# 2. dump the ten modules (16G is enough for each of these; the per-pass dump
-#    path is quadratic in the function count, which is why the two largest
-#    compiler modules are not in the list)
-for m in lex read format_rules format_tokens token compiler_object_elf \
-         package_lock_core tlci_loader compiler_clone compiler_diagnostic; do
-  systemd-run --user --scope -q -p MemoryMax=16G -p MemorySwapMax=0 \
-      $TL compile $S/src/$m.tl --dump-ir after-bounds_dom \
-      -o /tmp/$m.bounds_dom.opt2.ir \
-      --stdlib-root $S/stdlib --stdlib-root $S/src --opt-level 2
-done
-
-# 3. export (byte budget and source order are part of the corpus identity)
-python3 benchmarks/sccp_lattice/tools/export_sccp_tape.py \
-    benchmarks/sccp_lattice/data/sccp-tape.txt 3000000 \
-    /tmp/lex.bounds_dom.opt2.ir /tmp/read.bounds_dom.opt2.ir \
-    /tmp/format_rules.bounds_dom.opt2.ir /tmp/format_tokens.bounds_dom.opt2.ir \
-    /tmp/token.bounds_dom.opt2.ir /tmp/compiler_object_elf.bounds_dom.opt2.ir \
-    /tmp/package_lock_core.bounds_dom.opt2.ir /tmp/tlci_loader.bounds_dom.opt2.ir \
-    /tmp/compiler_clone.bounds_dom.opt2.ir \
-    /tmp/compiler_diagnostic.bounds_dom.opt2.ir
-```
-
-The shipped corpus was produced from the pre-made dumps in
-`target/bench6-dumps/aug25/`, so its `# sources:` line names those paths; the
-byte order of the file list is part of the corpus identity because
-deduplication keeps the first occurrence. `--dump-ir` on any compiler module
-crashes in current-main compilers, which is why the dumps come from the
-2026-08-25 snapshot compiler compiling its own sources; the crash is tracked by
-the orchestrator.
+The corpus is frozen: the committed `Ir` baselines pin it byte for byte. It was
+exported at commit `933fdf56c` (#7382) by a Python exporter that read the
+snapshot compiler's `--dump-ir` output of that time. The exporter and its
+regeneration commands were deleted once the corpus was committed;
+`git log --diff-filter=D -- benchmarks/sccp_lattice/tools` finds the deleting
+commit, whose parent still has both, including the exporter's header that
+documents the full corpus format.
 
 ## Design parameters
 

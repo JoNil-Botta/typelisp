@@ -299,10 +299,6 @@ else
         -File scripts/verify-windows-memory-limit.ps1
 fi
 run_gate \
-    semantic-index-benchmark-report-and-termination-self-tests \
-    scripts/benchmark-semantic-index.sh \
-    --self-test
-run_gate \
     embedded-stdlib-tlci-resource-verifier-self-tests \
     scripts/verify-embedded-stdlib-tlci-resources.sh --self-test
 # The stage0, fixpoint, and embedded-image builds all stamp the HEAD commit into
@@ -324,14 +320,6 @@ run_gate \
     selfhost-linked-size-attribution-parser-self-tests \
     scripts/analyze-selfhost-build-asm-size.sh \
     --self-test
-# The seed capability probe that decides the legacy global shared-view cfg only
-# ever runs one branch per bootstrap, and the branch a published seed selects
-# changes under CI without any source change (#6385). Cover all three branches
-# with stub compilers so a mis-selected cfg fails here, not in the publication
-# workflow that CI never rehearses.
-run_gate \
-    bootstrap-seed-global-shared-view-probe-self-tests \
-    scripts/verify-bootstrap-seed-global-views.sh
 # Help text lives in src/main.tl and option parsing in src/<name>_cli_core.tl,
 # so a flag can be added without the text moving. The existing CLI gates assert
 # that help output exists, not that it matches what the parser accepts.
@@ -362,10 +350,6 @@ run_gate \
     zero-cons-fixture-and-embedded-source-invariant \
     scripts/check-zero-cons.sh \
     --fixtures
-run_gate \
-    spmd-avx-512-instruction-harness-self-tests \
-    scripts/measure-spmd-avx512-instructions.sh \
-    --self-test
 run_gate \
     spmd-mode-instruction-count-harness-self-tests \
     scripts/measure-spmd-mode-instruction-counts.sh \
@@ -402,24 +386,6 @@ run_gate \
 run_gate \
     docs-publication-workflow-policy \
     scripts/verify-docs-workflow-policy.sh
-if [ "$HOST_OS" = windows ]; then
-    BOOTSTRAP_BENCH_POWERSHELL=powershell.exe
-else
-    BOOTSTRAP_BENCH_POWERSHELL=pwsh
-fi
-if ci_gate_selected bootstrap-benchmark-command-construction-self-test &&
-    ! command -v "$BOOTSTRAP_BENCH_POWERSHELL" >/dev/null 2>&1; then
-    required_gate_unavailable \
-        "bootstrap benchmark command-construction self-test" \
-        "missing PowerShell executable: $BOOTSTRAP_BENCH_POWERSHELL"
-fi
-run_gate \
-    bootstrap-benchmark-command-construction-self-test \
-    "$BOOTSTRAP_BENCH_POWERSHELL" \
-    -NoProfile \
-    -ExecutionPolicy Bypass \
-    -File scripts/benchmark-bootstrap.ps1 \
-    -SelfTestCommandConstruction
 
 stage2_safety_corpus_supported() {
     compiler=$1
@@ -552,7 +518,7 @@ if ci_gate_selected bootstrap-fixpoint; then
     fi
     STAGE2_BIN=$(sed -n '1p' "$STAGE2_PATH_FILE")
     ensure_executable "bootstrapped compiler" "$STAGE2_BIN"
-    CI_ARTIFACT_BOOTSTRAP_SOURCES='src,stdlib,typelisp.pkg,tools/embedded-stdlib-tlci,scripts/check-bootstrap-fixpoint.sh,scripts/lib-native-link.sh,scripts/lib-bootstrap-ctfe.sh,scripts/lib-bootstrap-fixpoint-control.sh,scripts/build-embedded-stdlib-tlci.sh'
+    CI_ARTIFACT_BOOTSTRAP_SOURCES='src,stdlib,typelisp.pkg,tools/embedded-stdlib-tlci,scripts/check-bootstrap-fixpoint.sh,scripts/lib-native-link.sh,scripts/lib-bootstrap-fixpoint-control.sh,scripts/build-embedded-stdlib-tlci.sh'
     CI_ARTIFACT_BOOTSTRAP_CFG='compiler-build-identity,embedded-stdlib-tlci,host-defaults'
     CI_ARTIFACT_BOOTSTRAP_ENV='TYPELISP_BOOTSTRAP_CFG=<unset>,TYPELISP_BOOTSTRAP_TLCI_MUTATION=0,TYPELISP_BOOTSTRAP_SKIP_CLI_SMOKE=0'
     CI_ARTIFACT_BOOTSTRAP_ARGV='scripts/check-bootstrap-fixpoint.sh {producer}'
@@ -697,7 +663,6 @@ run_with_compiler "$STAGE2_BIN" backend-safety-contract-manifest scripts/verify-
 run_with_compiler "$STAGE2_BIN" compiler-arena-debug-native-matrix scripts/verify-compiler-arena-debug.sh
 run_with_compiler "$STAGE2_BIN" tlci-format-corpus scripts/verify-tlci-corpus.sh
 run_with_compiler "$STAGE2_BIN" tlci-native-boundary-manifest scripts/verify-tlci-boundary-manifest.sh
-run_with_compiler "$STAGE2_BIN" stage2-result-import-harness-integrity scripts/verify-result-import-harness.sh
 if [ "$HOST_OS" = linux ]; then
     OPT2_REFERENCE_PATH_FILE="$ROOT/target/ci-verify-opt2-reference.path"
     OPT2_REFERENCE_METADATA_FILE="$ROOT/target/ci-verify-opt2-reference.meta"

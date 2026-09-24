@@ -15,19 +15,13 @@
 ;; aggregate values as persistent snapshots while mutating their backing dense
 ;; arrays in place, so read sites must not consume the snapshot owner.
 (defmacro (compiler-live-shared-view [place : Expr]) : Expr
-  (cfg
-    stage0-seed-bootstrap
-    place
-    `(owned_view.compiler-owned-shared-view ,place)))
+  `(owned_view.compiler-owned-shared-view ,place))
 
 (defmacro (compiler-live-array-element-shared-view
   [items : Expr]
   [index : Expr]) : Expr
-  (cfg
-    stage0-seed-bootstrap
-    `(array-ref ,items ,index)
-    `(unsafe
-      (ptr-read (ptr-offset (__tl_array-data ,items) ,index)))))
+  `(unsafe
+    (ptr-read (ptr-offset (__tl_array-data ,items) ,index))))
 
 (defmacro (compiler-live-box-shared-view [value : Expr]) : Expr
   (let

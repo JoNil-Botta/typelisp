@@ -144,11 +144,8 @@ deliberately corrupt fixtures. On Linux they also verify that the timing helper
 distinguishes a normal exit above 128 from real signal termination.
 
 SPMD scalar/AVX2 deterministic performance uses the separate cachegrind mode
-matrix. AVX-512 cachegrind numbers are invalid because Valgrind 3.22 SIGILLs;
-on a capable Linux/WSL host, use
-`scripts/measure-spmd-avx512-instructions.sh --focused` for all five checked
-rows or `--runs 11 --check-baseline` for the host-keyed retired-instruction
-report. This remains opt-in and does not replace the correctness gate.
+matrix. AVX-512 has no instruction-count rows: Valgrind 3.22 SIGILLs on the
+AVX-512 corpus.
 
 The optimizer corpus has a stricter stdout-comparison runner because those
 programs report their result on stdout and take per-case arguments from
@@ -190,32 +187,6 @@ Environment knobs:
 environment counterparts. The compiler flags are intentionally fixed rather
 than configurable: TypeLisp uses `--opt-level 2`, `clang_auto` uses `-O2`, and
 `clang_scalar` uses `-O2 -fno-vectorize -fno-slp-vectorize`.
-
-## Bootstrap compiler benchmark
-
-To compare the Rust stage0 compiler against the selfhosted compiler on the
-same selfhost source, run:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts/benchmark-bootstrap.ps1 -Runs 3
-```
-
-The harness compares the Rust stage0 CLI (`typelisp compile`) against a stage2
-selfhosted compiler. It times stage0 building stage1, uses that stage1 once to
-seed stage2, then times stage2 building stage3. The stage1 seed build is not
-included in the summary. Compile-to-assembly is reported separately from
-assemble/link time and the full native build time. If `TYPELISP_BIN` is unset,
-the script fetches the published stage0 first, but that fetch is not included in
-the benchmark timings.
-
-Useful knobs:
-
-| Variable | Default | Meaning |
-|----------|---------|---------|
-| `TYPELISP_BIN` | (built) | Stage0 `typelisp` binary used as the seed compiler. |
-| `TYPELISP_BOOTSTRAP_BENCH_RUNS` | `3` | Timed repetitions per compiler. |
-| `TYPELISP_BOOTSTRAP_BENCH_TARGET` | host target | `windows-x86_64` or `linux-x86_64`. |
-| `TYPELISP_BOOTSTRAP_BENCH_OPT_LEVEL` | compiler default | Optional `--opt-level 0|1|2` passed to both compilers. |
 
 ## CLI tool corpus benchmark
 

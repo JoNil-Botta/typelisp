@@ -53,9 +53,7 @@
 (extern (tl_arena_current) : i64)
 (extern (tl_region_mark) : i64)
 (extern (tl_oob_abort) : never)
-(cfg
-  (not stage0-seed-intern-abort)
-  (extern (intern-runtime-abort-string [message : String]) : never (:symbol "tl_abort_string")))
+(extern (intern-runtime-abort-string [message : String]) : never (:symbol "tl_abort_string"))
 
 (unsafe
   (extern (tl_arena_set [arg0 : i64]) : unit))
@@ -95,11 +93,8 @@
 ;; intern storage. Require an explicit raw-pointer read for those shallow views;
 ;; ordinary non-Copy global reads remain rejected.
 (defmacro (intern-global-shared-view [place : Expr]) : Expr
-  (cfg
-    stage0-seed-bootstrap
-    place
-    `(unsafe
-      (ptr-read (ptr-addr-of ,place)))))
+  `(unsafe
+    (ptr-read (ptr-addr-of ,place))))
 
 (defmacro (intern-array-shared-view [items : Expr] [index : Expr]) : Expr
   `(unsafe
@@ -238,20 +233,11 @@
   (* 3 (intern-compiler-identity-domain-width)))
 
 (define (intern-compiler-identity-domain-overflow-abort) : never
-  (cfg
-    stage0-seed-intern-abort
-    (tl_oob_abort)
-    (intern-runtime-abort-string "tl: compiler identity domain exhausted\n")))
+  (intern-runtime-abort-string "tl: compiler identity domain exhausted\n"))
 
 (define (intern-pool-capacity-abort) : never
-  ;; The published seed predates the backend's fixed `tl_abort_string`
-  ;; recognition. Only its one-shot stage1 compile selects the old fallback;
-  ;; stage1 and every converged/published stage compile the diagnostic branch.
-  (cfg
-    stage0-seed-intern-abort
-    (tl_oob_abort)
-    (intern-runtime-abort-string
-      "tl: intern pool capacity exhausted: source and generated lanes met\n")))
+  (intern-runtime-abort-string
+    "tl: intern pool capacity exhausted: source and generated lanes met\n"))
 
 ;; Structural compound identities are session-owned canonical records, not
 ;; entries in the string pool. Keep their compatibility raw-handle adapters at

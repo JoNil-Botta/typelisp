@@ -72,23 +72,13 @@ there are more records than source functions.
 
 ### Regeneration
 
-```sh
-# 1. snapshot the compiler (concurrent activity in the tree)
-cp target/bootstrap-fixpoint/stage2 /tmp/tlsnap && chmod +x /tmp/tlsnap
-
-# 2. dump the two modules
-/tmp/tlsnap compile src/compiler_load.tl --dump-ir after-ssa \
-    -o /tmp/compiler_load.ssa.ir \
-    --stdlib-root stdlib --stdlib-root src --opt-level 2
-/tmp/tlsnap compile src/compiler_regalloc.tl --dump-ir after-ssa \
-    -o /tmp/compiler_regalloc.ssa.ir \
-    --stdlib-root stdlib --stdlib-root src --opt-level 2
-
-# 3. export (source order is part of the corpus identity)
-python3 benchmarks/cfg_domloops/tools/export_cfg_blocks.py \
-    benchmarks/cfg_domloops/data/cfg-blocks.txt \
-    /tmp/compiler_load.ssa.ir /tmp/compiler_regalloc.ssa.ir
-```
+The corpus is frozen: the committed `Ir` baselines pin it byte for byte. It was
+exported at commit `5fce734af` (#5989) by a Python exporter that read the
+snapshot compiler's `--dump-ir` output of that time. The exporter and its
+regeneration commands were deleted once the corpus was committed;
+`git log --diff-filter=D -- benchmarks/cfg_domloops/tools` finds the deleting
+commit, whose parent still has both, including the exporter's header that
+documents the full corpus format.
 
 ## Design parameters
 

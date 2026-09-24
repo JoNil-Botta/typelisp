@@ -330,10 +330,7 @@
 ;; The object path stages an edge's copies in REVERSE instruction order (the old
 ;; cons scan prepended); this keeps that visit order byte-identical.
 (defmacro (compiler-backend-global-shared-view [place : Expr]) : Expr
-  (cfg
-    stage0-seed-bootstrap
-    place
-    `(owned_view.compiler-owned-shared-view ,place)))
+  `(owned_view.compiler-owned-shared-view ,place))
 
 (define (compiler-backend-i64-array-shared-view
   [items : (& items (__tl_dyn-array i64))]) : (__tl_dyn-array i64)
@@ -354,11 +351,8 @@
 (defmacro (compiler-backend-global-array-element-shared-view
   [items : Expr]
   [index : Expr]) : Expr
-  (cfg
-    stage0-seed-bootstrap
-    `(array-ref ,items ,index)
-    `(unsafe
-      (ptr-read (ptr-offset (__tl_array-data ,items) ,index)))))
+  `(unsafe
+    (ptr-read (ptr-offset (__tl_array-data ,items) ,index))))
 
 (defmacro (compiler-backend-box-field-shared-view [value : Expr] [field : Expr]) : Expr
   `(let

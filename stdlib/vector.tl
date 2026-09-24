@@ -312,21 +312,13 @@
           v.len)
         (define (capacity [v : (& v Vec)]) : i64
           v.capacity)
-        ;; The published seed unsizes String elements while typing slice-view.
-        ;; Omit this surface only for its one-generation bootstrap compile; the
-        ;; resulting compiler carries the fix and emits the full API thereafter.
-        (cfg
-          (not stage0-seed-bootstrap)
-          (begin
-            ;; Expose only the live prefix. The returned Slice retains the Vec
-            ;; owner's lifetime, so growth and backing replacement remain blocked
-            ;; while the view is live.
-            (define (view [v : (& source Vec)]) : (& source (Slice ,T))
-              (slice-view (slots v) 0 (len v)))
-            (define (view-mut [v : (&mut source Vec)]) : (&mut
-                source
-                (Slice ,T))
-              (slice-mut-view (&mut v.state.slots) 0 v.len))))
+        ;; Expose only the live prefix. The returned Slice retains the Vec
+        ;; owner's lifetime, so growth and backing replacement remain blocked
+        ;; while the view is live.
+        (define (view [v : (& source Vec)]) : (& source (Slice ,T))
+          (slice-view (slots v) 0 (len v)))
+        (define (view-mut [v : (&mut source Vec)]) : (&mut source (Slice ,T))
+          (slice-mut-view (&mut v.state.slots) 0 v.len))
         (define (with-capacity [capacity : i64]) : Vec
           (let
             [cap : i64
@@ -388,19 +380,12 @@
           v.len)
         (define (capacity [v : (& v Vec)]) : i64
           (array-length (slots v)))
-        ;; See the cleanup-owning specialization above for the temporary seed
-        ;; capability gate. Normal compiles always expose both native views.
-        (cfg
-          (not stage0-seed-bootstrap)
-          (begin
-            ;; The backing array is capacity-sized. Build the native Slice from
-            ;; the live prefix so callers can never observe spare slots.
-            (define (view [v : (& source Vec)]) : (& source (Slice ,T))
-              (slice-view (slots v) 0 (len v)))
-            (define (view-mut [v : (&mut source Vec)]) : (&mut
-                source
-                (Slice ,T))
-              (slice-mut-view (&mut v.slots) 0 v.len))))
+        ;; The backing array is capacity-sized. Build the native Slice from
+        ;; the live prefix so callers can never observe spare slots.
+        (define (view [v : (& source Vec)]) : (& source (Slice ,T))
+          (slice-view (slots v) 0 (len v)))
+        (define (view-mut [v : (&mut source Vec)]) : (&mut source (Slice ,T))
+          (slice-mut-view (&mut v.slots) 0 v.len))
         (define (with-capacity [capacity : i64]) : Vec
           (let
             [cap : i64

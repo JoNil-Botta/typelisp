@@ -1,7 +1,7 @@
 # ci-gate-ledger-schema	2
-# count	all	123
-# count	linux	120
-# count	windows	106
+# count	all	118
+# count	linux	115
+# count	windows	101
 id	hosts	label	needs
 cli-gate-inventory-and-ownership	all	CLI gate inventory and ownership	-
 ci-gate-ledger-self-tests	all	CI gate ledger self-tests	-
@@ -11,21 +11,18 @@ work-queue-fetch-boundary-self-tests	all	work queue fetch boundary self-tests	-
 cross-mode-differential-oracle-self-tests	all	cross-mode differential oracle self-tests	-
 linux-resident-memory-limit-helper-self-tests	linux	Linux resident memory limit helper self-tests	-
 windows-job-object-memory-limit-helper-self-tests	windows	Windows Job Object memory limit helper self-tests	-
-semantic-index-benchmark-report-and-termination-self-tests	all	semantic-index benchmark report and termination self-tests	-
 embedded-stdlib-tlci-resource-verifier-self-tests	all	embedded stdlib TLCI resource verifier self-tests	-
 build-provenance-helper-self-tests	all	build provenance helper self-tests	-
 build-invariance-batch-reuse-self-tests	linux	build-invariance batch reuse self-tests	-
 ci-compiler-artifact-provenance-self-tests	all	CI compiler artifact provenance self-tests	-
 ci-compiler-artifact-startup-self-tests	all	CI compiler artifact startup self-tests	-
 selfhost-linked-size-attribution-parser-self-tests	all	selfhost linked-size attribution parser self-tests	-
-bootstrap-seed-global-shared-view-probe-self-tests	all	bootstrap seed global shared-view probe self-tests	-
 cli-help-surface	all	CLI help surface	-
 ci-timing-budget-self-tests	all	CI timing budget self-tests	-
 tlci-native-route-size-ratchet-self-tests	all	TLCI native route size ratchet self-tests	-
 gate-reachability	all	gate reachability	-
 zero-cons-structural-classifier-self-tests	all	zero-cons structural classifier self-tests	-
 zero-cons-fixture-and-embedded-source-invariant	all	zero-cons fixture and embedded source invariant	-
-spmd-avx-512-instruction-harness-self-tests	all	SPMD AVX-512 instruction harness self-tests	-
 spmd-mode-instruction-count-harness-self-tests	all	SPMD mode instruction-count harness self-tests	-
 c-measured-region-instruction-harness-self-tests	all	C measured-region instruction harness self-tests	-
 instruction-count-comparison-self-tests	all	instruction-count comparison self-tests	-
@@ -35,7 +32,6 @@ stage0-release-publication-verifier-self-tests	all	stage0 release publication ve
 stage0-latest-staged-publication-self-tests	all	stage0 latest staged publication self-tests	-
 stage0-publication-workflow-policy	all	stage0 publication workflow policy	-
 docs-publication-workflow-policy	all	docs publication workflow policy	-
-bootstrap-benchmark-command-construction-self-test	all	bootstrap benchmark command-construction self-test	-
 bootstrap-adaptive-control-flow	all	bootstrap adaptive control flow	-
 bootstrap-fixpoint	all	bootstrap fixpoint	-
 scratch-vreg-tlci-mutation-bootstrap-fixpoint	all	scratch-vreg + TLCI mutation bootstrap fixpoint	bootstrap-fixpoint
@@ -58,7 +54,6 @@ backend-safety-contract-manifest	all	backend safety contract manifest	bootstrap-
 compiler-arena-debug-native-matrix	all	compiler arena debug native matrix	bootstrap-fixpoint
 tlci-format-corpus	all	TLCI format corpus	bootstrap-fixpoint
 tlci-native-boundary-manifest	all	TLCI native boundary manifest	bootstrap-fixpoint
-stage2-result-import-harness-integrity	all	stage2 result-import harness integrity	bootstrap-fixpoint
 stage2-opt1-opt2-build-invariance	linux	stage2 opt1/opt2 build-invariance	bootstrap-fixpoint
 stage2-opt2-built-cli-compile-cross-fixpoint-regression	all	stage2 opt2-built CLI compile + cross-fixpoint regression	bootstrap-fixpoint,stage2-opt1-opt2-build-invariance@linux
 stage2-spmd-runtime-dispatch	all	stage2 SPMD runtime dispatch	bootstrap-fixpoint

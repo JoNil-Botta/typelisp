@@ -28,20 +28,14 @@
 (import sym_i64_env)
 
 (defmacro (selfhost-lint-global-shared-view [place : Expr]) : Expr
-  (cfg
-    stage0-seed-bootstrap
-    place
-    `(unsafe
-      (ptr-read (ptr-addr-of ,place)))))
+  `(unsafe
+    (ptr-read (ptr-addr-of ,place))))
 
 (defmacro (selfhost-lint-global-array-element-shared-view
   [items : Expr]
   [index : Expr]) : Expr
-  (cfg
-    stage0-seed-bootstrap
-    `(array-ref ,items ,index)
-    `(unsafe
-      (ptr-read (ptr-offset (__tl_array-data ,items) ,index)))))
+  `(unsafe
+    (ptr-read (ptr-offset (__tl_array-data ,items) ,index))))
 
 ;; Parsed lint CLI config: input paths, stdlib roots, whether `--check`
 ;; enforcing mode was requested (exit non-zero when findings are present), and

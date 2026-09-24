@@ -171,11 +171,8 @@
       (if shared-zero-capacity
         `(if (<= capacity 0)
           (,list-constructor
-            (cfg
-              stage0-seed-bootstrap
-              ,shared-zero-storage-expr
-              (unsafe
-                (ptr-read (ptr-addr-of ,shared-zero-storage-expr))))
+            (unsafe
+              (ptr-read (ptr-addr-of ,shared-zero-storage-expr)))
             0)
           (,list-constructor (__tl_make-array ,T capacity) 0))
         `(let

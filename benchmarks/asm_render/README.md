@@ -130,7 +130,7 @@ operands). An operand is `okind` plus its fields: register (64-bit spelling id,
 byte size), immediate (value), decimal (value), memory (base id, index id or
 -1, scale, displacement, displacement-present), rip-relative (symbol id), plain
 symbol (name id). `#` starts a comment to end of line. The full grammar and the
-rendering rule are documented at the top of `tools/export_asm_tape.py`.
+rendering rule are documented in the exporter's header (see Regeneration).
 
 `data/asm-names.txt` has two `#` header lines and then exactly `names` lines,
 one name per line in id order; the kernel reads them once into a `String` array
@@ -140,15 +140,14 @@ and the tape refers to them by id. Heads carry their indent and trailing space
 Provenance: `target/bench6-dumps/compiler_load.opt2.s`, the 15.6 MB `.s` the
 stage0 compiler writes for `src/compiler_load.tl` at `--opt-level 2`. A chunk
 starts at a line whose first non-space bytes are `.globl` and runs to just
-before the next one, the same chunking
-`benchmarks/peephole_lines/tools/export_asm_slice.py` uses. The kept range is
-the contiguous run of chunks 1151..3241: chunk 1151 is the runtime's data and
-bss block (`.section`, `.balign`, `.zero`, `.byte`, `.set`, `.quad`, `.data`,
-`.text`), chunk 1153 is `main`, and the run continues through whole functions
-until the byte budget is reached. Starting there skips the 1,150-chunk `.quad`
-prologue of module globals and the single 58,168-line rodata blob that
-precedes it, either of which would have filled the budget with data directives
-instead of instructions.
+before the next one, the same chunking the `peephole_lines` exporter used. The
+kept range is the contiguous run of chunks 1151..3241: chunk 1151 is the
+runtime's data and bss block (`.section`, `.balign`, `.zero`, `.byte`, `.set`,
+`.quad`, `.data`, `.text`), chunk 1153 is `main`, and the run continues through
+whole functions until the byte budget is reached. Starting there skips the
+1,150-chunk `.quad` prologue of module globals and the single 58,168-line rodata
+blob that precedes it, either of which would have filled the budget with data
+directives instead of instructions.
 
 `data/.gitattributes` pins both files to LF: the names file is split on LF, so a
 CRLF checkout would append `\r` to every head and symbol and the byte-identity
@@ -156,30 +155,13 @@ self-check would abort.
 
 ### Regeneration
 
-This corpus needs no `--dump-ir`; it is plain `compile` output. (`--dump-ir` of
-a compiler module currently segfaults on main in every available compiler build
-— the orchestrator tracks that; the other bench6 corpora use the 2026-08-25
-snapshot compiler at commit `98bdc6f5` under `target/bench6-dumps/aug25/` for
-their IR dumps.)
-
-```sh
-# 1. the compiler's own emitted assembly for one of its modules
-systemd-run --user --scope -q -p MemoryMax=8G -p MemorySwapMax=0 \
-    target/stage0/typelisp compile src/compiler_load.tl \
-    -o target/bench6-dumps/compiler_load.opt2.s \
-    --stdlib-root stdlib --stdlib-root src --opt-level 2
-
-# 2. export (the byte budget and the start chunk are part of the corpus
-#    identity; the exporter re-renders its own tape and fails if the result is
-#    not byte-identical to the slice)
-python3 benchmarks/asm_render/tools/export_asm_tape.py \
-    benchmarks/asm_render/data/asm-tape.txt \
-    benchmarks/asm_render/data/asm-names.txt \
-    2900000 1151 target/bench6-dumps/compiler_load.opt2.s
-```
-
-The exporter prints the slice's byte count and FNV-1a, the line-kind counts, the
-arity histogram, the mnemonic mix and the operand-kind histogram on stderr.
+The corpus is frozen: the committed `Ir` baselines pin it byte for byte. It was
+exported at commit `933fdf56c` (#7382) by a Python exporter that read the
+compiler's own `--opt-level 2` assembly of that time. The exporter and its
+regeneration commands were deleted once the corpus was committed;
+`git log --diff-filter=D -- benchmarks/asm_render/tools` finds the deleting
+commit, whose parent still has both, including the exporter's header that
+documents the full corpus format.
 
 ## Design parameters
 

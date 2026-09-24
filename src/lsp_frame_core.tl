@@ -38,11 +38,8 @@
 (import sym_i64_env)
 
 (defmacro (lsp-global-shared-view [place : Expr]) : Expr
-  (cfg
-    stage0-seed-bootstrap
-    place
-    `(unsafe
-      (ptr-read (ptr-addr-of ,place)))))
+  `(unsafe
+    (ptr-read (ptr-addr-of ,place))))
 
 (define (lsp-read-file-text-or [path : (& source str)] [fallback : String]) : String
   (byte_buf.to-string (io.read-file-or path (byte_buf.from-string fallback))))

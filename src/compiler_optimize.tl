@@ -23642,7 +23642,7 @@
 (define (opt-natural-loop-build-by-id
   [blocks : ir.CompilerIrBlockList]
   [pred-map : OptPredMap]
-  [reachable : OptLabelSet]
+  [_reachable : OptLabelSet]
   [header : i64]
   [latch : i64]) : OptNaturalLoop
   (let
@@ -23654,10 +23654,14 @@
     [stack : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
     [found-count : i64 0]
     [top : i64 0]
+    [header-id : i64 (- 0 1)]
     [latch-id : i64 (- 0 1)]
     (begin
       (match (opt-cfg-index-id (compiler-opt-global-shared-view index) header)
-        [(option_i64.Some id) (set! (array-ref marks id) true)]
+        [(option_i64.Some id)
+          (begin
+            (set! (array-ref marks id) true)
+            (set! header-id id))]
         [(option_i64.None) unit])
       (match (opt-cfg-index-id (compiler-opt-global-shared-view index) latch)
         [(option_i64.Some id)
@@ -23733,12 +23737,57 @@
                   (compiler-opt-global-shared-view blocks)
                   0
                   n))
-              (opt-natural-loop-find-preheader
-                (compiler-opt-global-shared-view blocks)
-                (compiler-opt-global-shared-view pred-map)
-                (compiler-opt-global-shared-view reachable)
-                header
-                body-labels))))))))
+              (opt-natural-loop-find-preheader-by-id
+                (compiler-opt-global-shared-view index)
+                (compiler-opt-global-shared-view marks)
+                header-id))))))))
+
+;; `opt-natural-loop-find-preheader` for the id walk. The candidate scan keeps a
+;; predecessor of the header that is reachable and outside the body, and the
+;; loop has a preheader exactly when there is one such predecessor and its only
+;; successor is the header -- a second one, or an unsafe first one, turns the
+;; candidate to Many whatever the order. With distinct labels the reachable set
+;; is the index's reachable array, body membership is `marks`, and a successor
+;; label set is its CSR row, whose ids are distinct.
+(define (opt-natural-loop-find-preheader-by-id
+  [index : OptCfgIndex]
+  [marks : (__tl_dyn-array bool)]
+  [header-id : i64]) : OptLoopPreheader
+  (if (< header-id 0)
+    (OptLoopPreheader.No)
+    (let
+      [edge : i64 (array-ref index.preds.offsets header-id)]
+      [end : i64 (array-ref index.preds.offsets (+ header-id 1))]
+      [candidate : i64 (- 0 1)]
+      [count : i64 0]
+      (begin
+        (while (< edge end)
+          (let
+            [p : i64 (array-ref index.preds.edges edge)]
+            (begin
+              (when
+                (and (array-ref index.reachable p) (not (array-ref marks p)))
+                (begin
+                  (set! candidate p)
+                  (set! count (+ count 1))))
+              (set! edge (+ edge 1)))))
+        (if (and
+          (= count 1)
+          (=
+            (-
+              (array-ref index.succs.offsets (+ candidate 1))
+              (array-ref index.succs.offsets candidate))
+            1)
+          (=
+            (array-ref
+              index.succs.edges
+              (array-ref index.succs.offsets candidate))
+            header-id))
+          (OptLoopPreheader.Some
+            (opt-cfg-index-label
+              (compiler-opt-global-shared-view index)
+              candidate))
+          (OptLoopPreheader.No))))))
 
 (define (opt-natural-loop-build-by-label
   [blocks : ir.CompilerIrBlockList]

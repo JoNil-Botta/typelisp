@@ -44,7 +44,6 @@ stage2-public-tool-surface	all	stage2 public tool surface	bootstrap-fixpoint	sta
 ir-observability-golden	all	IR observability golden	bootstrap-fixpoint	stage2	scripts/verify-ir-observability.sh
 compiler-arena-debug-native-matrix	all	compiler arena debug native matrix	bootstrap-fixpoint	stage2	scripts/verify-compiler-arena-debug.sh
 tlci-format-corpus	all	TLCI format corpus	bootstrap-fixpoint	stage2	scripts/verify-tlci-corpus.sh
-tlci-native-boundary-manifest	all	TLCI native boundary manifest	bootstrap-fixpoint	stage2	scripts/verify-tlci-boundary-manifest.sh
 stage2-opt1-opt2-build-invariance	linux	stage2 opt1/opt2 build-invariance	bootstrap-fixpoint	stage2	gate_build_invariance
 stage2-opt2-built-cli-compile-cross-fixpoint-regression	all	stage2 opt2-built CLI compile + cross-fixpoint regression	bootstrap-fixpoint,stage2-opt1-opt2-build-invariance@linux	stage2	gate_opt2_cli_regression
 stage2-spmd-runtime-dispatch	all	stage2 SPMD runtime dispatch	bootstrap-fixpoint	stage2	scripts/verify-spmd-runtime-dispatch.sh

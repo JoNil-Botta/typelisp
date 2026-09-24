@@ -1238,14 +1238,6 @@
 (define (compiler-ir-spmd-call-arg-seq-empty) : CompilerIrSpmdCallArgSeq
   (CompilerIrSpmdCallArgSeq (__tl_make-array CompilerIrSpmdCallArg 0) 0))
 
-(define (compiler-ir-spmd-call-arg-seq1 [arg : CompilerIrSpmdCallArg]) : CompilerIrSpmdCallArgSeq
-  (let
-    [slots : (__tl_dyn-array CompilerIrSpmdCallArg)
-      (__tl_make-array CompilerIrSpmdCallArg 1)]
-    (begin
-      (set! (array-ref slots 0) arg)
-      (CompilerIrSpmdCallArgSeq slots 1))))
-
 (define (compiler-ir-spmd-call-arg-seq2
   [a : CompilerIrSpmdCallArg]
   [b : CompilerIrSpmdCallArg]) : CompilerIrSpmdCallArgSeq
@@ -1420,10 +1412,6 @@
   [seq : CompilerIrSpmdPrivateParamSeq]
   [index : i64]) : CompilerIrSpmdPrivateParam
   (compiler-ir-array-shared-view seq.slots index))
-
-(define (compiler-ir-spmd-private-abi-box [abi : CompilerIrSpmdPrivateAbi]) : (Box
-    CompilerIrSpmdPrivateAbi)
-  (box abi))
 
 (define (compiler-ir-function-abi-private [abi : CompilerIrSpmdPrivateAbi]) : CompilerIrFunctionAbi
   (CompilerIrFunctionAbi.SpmdPrivate (box abi)))
@@ -2785,26 +2773,8 @@
       (compiler-ir-representation-index-kind-for-key index key)]
     [(ast.AstMaybeNominalKey.None) CompilerIrRepresentationKind.Unknown]))
 
-(defmacro (compiler-ir-spmd-call-arg-list-box-shared-view [value : Expr]) : Expr
-  `(compiler-ir-typed-box-shared-view ,value CompilerIrSpmdCallArgList))
-
-(defmacro (compiler-ir-switch-case-list-box-shared-view [value : Expr]) : Expr
-  `(compiler-ir-typed-box-shared-view ,value CompilerIrSwitchCaseList))
-
-(defmacro (compiler-ir-instr-list-box-shared-view [value : Expr]) : Expr
-  `(compiler-ir-typed-box-shared-view ,value CompilerIrInstrList))
-
 (defmacro (compiler-ir-block-list-box-shared-view [value : Expr]) : Expr
   `(compiler-ir-typed-box-shared-view ,value CompilerIrBlockList))
-
-(defmacro (compiler-ir-function-list-box-shared-view [value : Expr]) : Expr
-  `(compiler-ir-typed-box-shared-view ,value CompilerIrFunctionList))
-
-(defmacro (compiler-ir-global-list-box-shared-view [value : Expr]) : Expr
-  `(compiler-ir-typed-box-shared-view ,value CompilerIrGlobalList))
-
-(defmacro (compiler-ir-extern-list-box-shared-view [value : Expr]) : Expr
-  `(compiler-ir-typed-box-shared-view ,value CompilerIrExternList))
 
 (define (compiler-ir-value-seq-empty) : CompilerIrValueSeq
   (CompilerIrValueSeq (__tl_make-array CompilerIrValue 0) 0))
@@ -3438,12 +3408,6 @@
 (define (compiler-ir-param-seq-ref [params : CompilerIrParamSeq] [index : i64]) : CompilerIrParam
   (compiler-ir-array-shared-view params.slots index))
 
-(define (compiler-ir-param-seq-set!
-  [params : CompilerIrParamSeq]
-  [index : i64]
-  [param : CompilerIrParam]) : unit
-  (set! (array-ref params.slots index) param))
-
 (define (compiler-ir-function-seq-empty) : CompilerIrFunctionSeq
   (CompilerIrFunctionSeq (__tl_make-array CompilerIrFunction 0) 0))
 
@@ -3498,9 +3462,6 @@
   (CompilerIrValueBuilder
     (__tl_make-array CompilerIrValue (compiler-ir-builder-capacity capacity))
     0))
-
-(define (compiler-ir-value-builder-new) : CompilerIrValueBuilder
-  (compiler-ir-value-builder-with-capacity 4))
 
 (define (compiler-ir-value-builder-copy-range!
   [dst : (&mut dst (__tl_dyn-array CompilerIrValue))]
@@ -3619,9 +3580,6 @@
   (CompilerIrPhiInputBuilder
     (__tl_make-array CompilerIrPhiInput (compiler-ir-builder-capacity capacity))
     0))
-
-(define (compiler-ir-phi-input-builder-new) : CompilerIrPhiInputBuilder
-  (compiler-ir-phi-input-builder-with-capacity 4))
 
 (define (compiler-ir-phi-input-builder-copy-range!
   [dst : (&mut dst (__tl_dyn-array CompilerIrPhiInput))]
@@ -3847,9 +3805,6 @@
     [cap : i64 (compiler-ir-builder-capacity capacity)]
     (CompilerIrParamBuilder (__tl_make-array CompilerIrParam cap) 0)))
 
-(define (compiler-ir-param-builder-new) : CompilerIrParamBuilder
-  (compiler-ir-param-builder-with-capacity 4))
-
 (define (compiler-ir-param-builder-copy-range!
   [dst : (&mut dst (__tl_dyn-array CompilerIrParam))]
   [src : (& src (__tl_dyn-array CompilerIrParam))]
@@ -3890,20 +3845,6 @@
       (begin
         (set! (array-ref builder.slots index) param)
         (set! builder.len (+ index 1))))))
-
-(define (compiler-ir-param-builder-append-seq!
-  [builder : (&mut builder CompilerIrParamBuilder)]
-  [params : CompilerIrParamSeq]) : unit
-  (let
-    [index : i64 0]
-    (while (< index params.len)
-      (begin
-        (compiler-ir-param-builder-push!
-          builder
-          (compiler-ir-param-seq-ref
-            (compiler-ir-global-shared-view params)
-            index))
-        (set! index (+ index 1))))))
 
 (define (compiler-ir-param-builder-to-seq [builder : CompilerIrParamBuilder]) : CompilerIrParamSeq
   (CompilerIrParamSeq builder.slots builder.len))
@@ -4199,9 +4140,6 @@
         externs.len)
       (set! builder.len externs.len)
       builder)))
-
-(define (compiler-ir-extern-builder-to-seq [builder : CompilerIrExternBuilder]) : CompilerIrExternSeq
-  (CompilerIrExternSeq builder.slots builder.len))
 
 (define (compiler-ir-extern-builder-snapshot-seq
   [builder : (& builder CompilerIrExternBuilder)]) : CompilerIrExternSeq
@@ -7374,18 +7312,6 @@
         (compiler-source-spans-instr-entry-list-escape instr-entries)
         instr-count)]))
 
-(define (compiler-source-spans-instr-entry-array-lookup
-  [slots : (__tl_dyn-array CompilerSourceSpansInstrEntry)]
-  [index : i64]
-  [key : CompilerSourceSpansInstrKey]) : CompilerMaybeSourceSpan
-  (if (< index 0)
-    (CompilerMaybeSourceSpan.No)
-    (match (array-ref slots index)
-      [(CompilerSourceSpansInstrEntry.Entry entry-key _ span)
-        (if (compiler-source-spans-instr-key-eq? entry-key key)
-          (CompilerMaybeSourceSpan.Some span)
-          (compiler-source-spans-instr-entry-array-lookup slots (- index 1) key))])))
-
 (define (compiler-source-spans-instr-entry-array-lookup-location
   [slots : (__tl_dyn-array CompilerSourceSpansInstrEntry)]
   [index : i64]
@@ -7406,14 +7332,6 @@
   [entries : CompilerSourceSpansInstrEntryList]
   [key : CompilerSourceSpansInstrKey]) : CompilerMaybeSourceLocation
   (compiler-source-spans-instr-entry-array-lookup-location
-    entries.slots
-    (- entries.len 1)
-    key))
-
-(define (compiler-source-spans-instr-entry-list-lookup-span
-  [entries : CompilerSourceSpansInstrEntryList]
-  [key : CompilerSourceSpansInstrKey]) : CompilerMaybeSourceSpan
-  (compiler-source-spans-instr-entry-array-lookup
     entries.slots
     (- entries.len 1)
     key))

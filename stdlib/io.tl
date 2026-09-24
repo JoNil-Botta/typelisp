@@ -893,19 +893,6 @@
           [normalized-len : i64 (bn-norm-len r (+ la (+ limb-shift 1)))]
           (BigNum r normalized-len))))))
 
-;: Product of BigNum a and the 64-bit value m.
-(define (bn-mul-u64 [a : (& a BigNum)] [m : u64]) : BigNum
-  (let
-    [lo : u64 (bit-and m stdlib.io.ftoa-mask32)]
-    [hi : u64 (shr m 32)]
-    [low : BigNum (bn-mul-u32 a lo)]
-    (if (= hi (cast 0 : u64))
-      low
-      (let
-        [high-base : BigNum (bn-mul-u32 a hi)]
-        [high : BigNum (bn-shl-bits high-base 32)]
-        (bn-add low high)))))
-
 ;: BigNum a multiplied by ten raised to p, nine decimal digits (one 32-bit
 ;: multiplier) per pass.
 (define (bn-mul-pow10 [a : BigNum] [p : i64]) : BigNum
@@ -2791,11 +2778,6 @@
 
 (cfg
   test
-  (define (io-handle-test-assert-false [condition : bool] [message : String]) : unit
-    (io-handle-test-assert-true (not condition) message)))
-
-(cfg
-  test
   (define (io-handle-test-assert-bool-eq
     [actual : bool]
     [expected : bool]
@@ -2880,17 +2862,6 @@
       [(OkIoUnit)
         (panic (str_cat.str-cat message operation " unexpectedly succeeded"))]
       [(ErrIoUnit error)
-        (io-handle-test-assert-true (error-unsupported? error) message)])))
-
-(cfg
-  test
-  (define (io-handle-test-assert-open-unsupported
-    [result : ResultIoFile]
-    [message : String]) : unit
-    (match result
-      [(OkIoFile _)
-        (panic (str_cat.str-cat message "open unexpectedly succeeded"))]
-      [(ErrIoFile error)
         (io-handle-test-assert-true (error-unsupported? error) message)])))
 
 (cfg

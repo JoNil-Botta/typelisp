@@ -2012,14 +2012,6 @@
         ""
         (string.substring base (+ dot 1) (- bn (+ dot 1)))))))
 
-;: Convert a runtime filesystem status into a structured `ResultIoUnit`.
-(define (status-result [path : (& path str)] [status : i64]) : io.ResultIoUnit
-  (let
-    [error : io.IoError (io.error-from-status path status)]
-    (if (= status io.io-status-ok)
-      io.OkIoUnit
-      (io.ErrIoUnit error))))
-
 ;: Convert a runtime file-kind status into a structured result.
 (define (file-kind-status-result [path : (& path str)] [status : i64]) : ResultFsFileKind
   (cond
@@ -2555,15 +2547,6 @@
 
 (cfg
   test
-  (define (fs-test-assert-unsupported-unit
-    [result : io.ResultIoUnit]
-    [message : (& message str)]) : unit
-    (match result
-      [(io.OkIoUnit) (io.panic message)]
-      [(io.ErrIoUnit error) unit])))
-
-(cfg
-  test
   (define (fs-test-expect-ok-string
     [result : io.ResultIoString]
     [message : (& message str)]) : String
@@ -2841,15 +2824,6 @@
 
 (cfg
   test
-  (define (fs-test-assert-file-kind-unsupported
-    [path : (& path str)]
-    [message : String]) : unit
-    (match (fs-api-test-try-file-kind path)
-      [(ErrFsFileKind error) unit]
-      [(OkFsFileKind _) (io.panic message)])))
-
-(cfg
-  test
   (define (fs-test-assert-file-metadata-regular-size
     [path : (& path str)]
     [expected-size : i64]
@@ -2889,15 +2863,6 @@
 (cfg
   test
   (define (fs-test-assert-file-metadata-invalid
-    [path : (& path str)]
-    [message : String]) : unit
-    (match (fs-api-test-try-file-metadata path)
-      [(ErrFsMetadata error) unit]
-      [(OkFsMetadata _) (io.panic message)])))
-
-(cfg
-  test
-  (define (fs-test-assert-file-metadata-unsupported
     [path : (& path str)]
     [message : String]) : unit
     (match (fs-api-test-try-file-metadata path)

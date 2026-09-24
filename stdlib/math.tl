@@ -3601,14 +3601,12 @@
           "math.mul-add: expected f64 or f32, found "
           (type-kind (comptime.expr-type a))))]))
 
+;; Inline test coverage.
+(cfg test (import stdlib.test))
+
 (test
   math-trig-reduction-and-special-values
   (let
-    [fail : (-> unit)
-      (lambda () : unit
-        (begin
-          (/ 1 0)
-          unit))]
     [pi : f64 (stdlib.math.f64-from-bits 0x400921fb54442d18)]
     [max64 : f64 (stdlib.math.f64-from-bits 0x7fefffffffffffff)]
     [max32 : f32 (stdlib.math.f32-from-bits (cast 0x7f7fffff : u32))]
@@ -3619,207 +3617,186 @@
       (stdlib.math.f64-from-bits (cast 0x8000000000000000 : u64))]
     [negative-zero32 : f32 (stdlib.math.f32-from-bits (cast 0x80000000 : u32))]
     (begin
-      (if (and
-        (= (bit-and medium.quadrant 3) 2)
-        (<= (stdlib.math.f64-abs medium.hi) 0.785398164)
-        (<= (stdlib.math.f64-abs medium.lo) 0.000000000000001)
-        (<= (stdlib.math.f64-abs large64.hi) 0.785398164)
-        (stdlib.math.f64-finite? large64.hi)
-        (stdlib.math.f64-finite? large64.lo)
-        (<= (stdlib.math.f64-abs large32.hi) 0.785398164)
-        (stdlib.math.f64-finite? large32.hi))
-        unit
-        (fail))
-      (if (=
-        (stdlib.math.f64-to-bits (stdlib.math.f64-sin pi))
-        (cast 0x3ca1a62633145c07 : u64))
-        unit
-        (fail))
-      (if (= (stdlib.math.f64-cos pi) -1.0)
-        unit
-        (fail))
-      (if (=
-        (stdlib.math.f64-to-bits (stdlib.math.f64-sin negative-zero64))
-        (cast 0x8000000000000000 : u64))
-        unit
-        (fail))
-      (if (=
-        (stdlib.math.f64-to-bits (stdlib.math.f64-tan negative-zero64))
-        (cast 0x8000000000000000 : u64))
-        unit
-        (fail))
-      (if (=
-        (stdlib.math.f32-to-bits (stdlib.math.f32-sin negative-zero32))
-        (cast 0x80000000 : u32))
-        unit
-        (fail))
-      (if (=
-        (stdlib.math.f32-to-bits (stdlib.math.f32-tan negative-zero32))
-        (cast 0x80000000 : u32))
-        unit
-        (fail))
-      (if (and
-        (stdlib.math.f64-nan?
-          (stdlib.math.f64-sin (stdlib.math.f64-positive-infinity)))
-        (stdlib.math.f64-nan?
-          (stdlib.math.f64-cos (stdlib.math.f64-negative-infinity)))
-        (stdlib.math.f64-nan? (stdlib.math.f64-tan (stdlib.math.f64-quiet-nan)))
-        (stdlib.math.f32-nan?
-          (stdlib.math.f32-sin (stdlib.math.f32-positive-infinity)))
-        (stdlib.math.f32-nan?
-          (stdlib.math.f32-cos (stdlib.math.f32-negative-infinity)))
-        (stdlib.math.f32-nan? (stdlib.math.f32-tan (stdlib.math.f32-quiet-nan))))
-        unit
-        (fail)))))
+      (test.assert-true
+        (and
+          (= (bit-and medium.quadrant 3) 2)
+          (<= (stdlib.math.f64-abs medium.hi) 0.785398164)
+          (<= (stdlib.math.f64-abs medium.lo) 0.000000000000001)
+          (<= (stdlib.math.f64-abs large64.hi) 0.785398164)
+          (stdlib.math.f64-finite? large64.hi)
+          (stdlib.math.f64-finite? large64.lo)
+          (<= (stdlib.math.f64-abs large32.hi) 0.785398164)
+          (stdlib.math.f64-finite? large32.hi))
+        "math-trig-reduction-and-special-values: (and (= (bit-and medium.quadrant 3) 2) (<= (f64-abs mediu...")
+      (test.assert-true
+        (=
+          (stdlib.math.f64-to-bits (stdlib.math.f64-sin pi))
+          (cast 0x3ca1a62633145c07 : u64))
+        "math-trig-reduction-and-special-values: (= (f64-to-bits (f64-sin pi)) (cast 0x3ca1a62633145c07 : ...")
+      (test.assert-true
+        (= (stdlib.math.f64-cos pi) -1.0)
+        "math-trig-reduction-and-special-values: (= (f64-cos pi) -1.0)")
+      (test.assert-true
+        (=
+          (stdlib.math.f64-to-bits (stdlib.math.f64-sin negative-zero64))
+          (cast 0x8000000000000000 : u64))
+        "math-trig-reduction-and-special-values: (= (f64-to-bits (f64-sin negative-zero64)) (cast 0x800000...")
+      (test.assert-true
+        (=
+          (stdlib.math.f64-to-bits (stdlib.math.f64-tan negative-zero64))
+          (cast 0x8000000000000000 : u64))
+        "math-trig-reduction-and-special-values: (= (f64-to-bits (f64-tan negative-zero64)) (cast 0x800000...")
+      (test.assert-true
+        (=
+          (stdlib.math.f32-to-bits (stdlib.math.f32-sin negative-zero32))
+          (cast 0x80000000 : u32))
+        "math-trig-reduction-and-special-values: (= (f32-to-bits (f32-sin negative-zero32)) (cast 0x800000...")
+      (test.assert-true
+        (=
+          (stdlib.math.f32-to-bits (stdlib.math.f32-tan negative-zero32))
+          (cast 0x80000000 : u32))
+        "math-trig-reduction-and-special-values: (= (f32-to-bits (f32-tan negative-zero32)) (cast 0x800000...")
+      (test.assert-true
+        (and
+          (stdlib.math.f64-nan?
+            (stdlib.math.f64-sin (stdlib.math.f64-positive-infinity)))
+          (stdlib.math.f64-nan?
+            (stdlib.math.f64-cos (stdlib.math.f64-negative-infinity)))
+          (stdlib.math.f64-nan?
+            (stdlib.math.f64-tan (stdlib.math.f64-quiet-nan)))
+          (stdlib.math.f32-nan?
+            (stdlib.math.f32-sin (stdlib.math.f32-positive-infinity)))
+          (stdlib.math.f32-nan?
+            (stdlib.math.f32-cos (stdlib.math.f32-negative-infinity)))
+          (stdlib.math.f32-nan?
+            (stdlib.math.f32-tan (stdlib.math.f32-quiet-nan))))
+        "math-trig-reduction-and-special-values: (and (f64-nan? (f64-sin (f64-positive-infinity))) (f64-na..."))))
 
 (test
   math-i64-api
-  (let
-    [fail : (-> unit)
-      (lambda () : unit
-        (begin
-          (/ 1 0)
-          unit))]
-    (begin
-      (if (= (stdlib.math.i64-abs -7) 7)
-        unit
-        (fail))
-      (if (= (stdlib.math.i64-abs 0) 0)
-        unit
-        (fail))
-      (if (= (stdlib.math.i64-abs 7) 7)
-        unit
-        (fail))
-      (if (= (stdlib.math.i64-abs -9223372036854775808) -9223372036854775808)
-        unit
-        (fail))
-      (if (=
+  (begin
+    (test.assert-true
+      (= (stdlib.math.i64-abs -7) 7)
+      "math-i64-api: (= (i64-abs -7) 7)")
+    (test.assert-true
+      (= (stdlib.math.i64-abs 0) 0)
+      "math-i64-api: (= (i64-abs 0) 0)")
+    (test.assert-true
+      (= (stdlib.math.i64-abs 7) 7)
+      "math-i64-api: (= (i64-abs 7) 7)")
+    (test.assert-true
+      (= (stdlib.math.i64-abs -9223372036854775808) -9223372036854775808)
+      "math-i64-api: (= (i64-abs -9223372036854775808) -9223372036854775808)")
+    (test.assert-true
+      (=
         (stdlib.math.i64-abs-or -9223372036854775808 9223372036854775807)
         9223372036854775807)
-        unit
-        (fail))
-      (if (= (stdlib.math.i64-min -3 9) -3)
-        unit
-        (fail))
-      (if (= (stdlib.math.i64-max -3 9) 9)
-        unit
-        (fail))
-      (if (= (stdlib.math.i64-clamp 5 0 10) 5)
-        unit
-        (fail))
-      (if (= (stdlib.math.i64-clamp -1 0 10) 0)
-        unit
-        (fail))
-      (if (= (stdlib.math.i64-clamp 11 0 10) 10)
-        unit
-        (fail))
-      (if (= (stdlib.math.i64-clamp -1 10 0) 0)
-        unit
-        (fail))
-      (if (= (stdlib.math.i64-clamp 11 10 0) 10)
-        unit
-        (fail))
-      (if (stdlib.math.i64-negative? -1)
-        unit
-        (fail))
-      (if (stdlib.math.i64-zero? 0)
-        unit
-        (fail))
-      (if (stdlib.math.i64-positive? 1)
-        unit
-        (fail))
-      (if (not (stdlib.math.i64-positive? 0))
-        unit
-        (fail)))))
+      "math-i64-api: (= (i64-abs-or -9223372036854775808 9223372036854775807) ...")
+    (test.assert-true
+      (= (stdlib.math.i64-min -3 9) -3)
+      "math-i64-api: (= (i64-min -3 9) -3)")
+    (test.assert-true
+      (= (stdlib.math.i64-max -3 9) 9)
+      "math-i64-api: (= (i64-max -3 9) 9)")
+    (test.assert-true
+      (= (stdlib.math.i64-clamp 5 0 10) 5)
+      "math-i64-api: (= (i64-clamp 5 0 10) 5)")
+    (test.assert-true
+      (= (stdlib.math.i64-clamp -1 0 10) 0)
+      "math-i64-api: (= (i64-clamp -1 0 10) 0)")
+    (test.assert-true
+      (= (stdlib.math.i64-clamp 11 0 10) 10)
+      "math-i64-api: (= (i64-clamp 11 0 10) 10)")
+    (test.assert-true
+      (= (stdlib.math.i64-clamp -1 10 0) 0)
+      "math-i64-api: (= (i64-clamp -1 10 0) 0)")
+    (test.assert-true
+      (= (stdlib.math.i64-clamp 11 10 0) 10)
+      "math-i64-api: (= (i64-clamp 11 10 0) 10)")
+    (test.assert-true
+      (stdlib.math.i64-negative? -1)
+      "math-i64-api: (i64-negative? -1)")
+    (test.assert-true (stdlib.math.i64-zero? 0) "math-i64-api: (i64-zero? 0)")
+    (test.assert-true
+      (stdlib.math.i64-positive? 1)
+      "math-i64-api: (i64-positive? 1)")
+    (test.assert-true
+      (not (stdlib.math.i64-positive? 0))
+      "math-i64-api: (not (i64-positive? 0))")))
 
 (test
   math-f64-api
   (let
-    [fail : (-> unit)
-      (lambda () : unit
-        (begin
-          (/ 1 0)
-          unit))]
     [abs-neg : f64 -2.5]
     [abs-want : f64 2.5]
     (begin
-      (if (= (stdlib.math.f64-abs -2.5) 2.5)
-        unit
-        (fail))
-      (if (= (stdlib.math.f64-abs 0.0) 0.0)
-        unit
-        (fail))
-      (if (= (stdlib.math.f64-abs 2.5) 2.5)
-        unit
-        (fail))
-      (if (= (stdlib.math.abs abs-neg) abs-want)
-        unit
-        (fail))
-      (if (= (stdlib.math.f64-min -3.5 9.25) -3.5)
-        unit
-        (fail))
-      (if (= (stdlib.math.f64-max -3.5 9.25) 9.25)
-        unit
-        (fail))
-      (if (= (stdlib.math.f64-clamp 5.5 0.0 10.0) 5.5)
-        unit
-        (fail))
-      (if (= (stdlib.math.f64-clamp -1.0 0.0 10.0) 0.0)
-        unit
-        (fail))
-      (if (= (stdlib.math.f64-clamp 11.0 0.0 10.0) 10.0)
-        unit
-        (fail))
-      (if (= (stdlib.math.f64-clamp 11.0 10.0 0.0) 10.0)
-        unit
-        (fail))
-      (if (stdlib.math.f64-negative? -0.5)
-        unit
-        (fail))
-      (if (stdlib.math.f64-zero? 0.0)
-        unit
-        (fail))
-      (if (stdlib.math.f64-positive? 0.5)
-        unit
-        (fail))
-      (if (not (stdlib.math.f64-negative? 0.0))
-        unit
-        (fail)))))
+      (test.assert-true
+        (= (stdlib.math.f64-abs -2.5) 2.5)
+        "math-f64-api: (= (f64-abs -2.5) 2.5)")
+      (test.assert-true
+        (= (stdlib.math.f64-abs 0.0) 0.0)
+        "math-f64-api: (= (f64-abs 0.0) 0.0)")
+      (test.assert-true
+        (= (stdlib.math.f64-abs 2.5) 2.5)
+        "math-f64-api: (= (f64-abs 2.5) 2.5)")
+      (test.assert-true
+        (= (stdlib.math.abs abs-neg) abs-want)
+        "math-f64-api: (= (abs abs-neg) abs-want)")
+      (test.assert-true
+        (= (stdlib.math.f64-min -3.5 9.25) -3.5)
+        "math-f64-api: (= (f64-min -3.5 9.25) -3.5)")
+      (test.assert-true
+        (= (stdlib.math.f64-max -3.5 9.25) 9.25)
+        "math-f64-api: (= (f64-max -3.5 9.25) 9.25)")
+      (test.assert-true
+        (= (stdlib.math.f64-clamp 5.5 0.0 10.0) 5.5)
+        "math-f64-api: (= (f64-clamp 5.5 0.0 10.0) 5.5)")
+      (test.assert-true
+        (= (stdlib.math.f64-clamp -1.0 0.0 10.0) 0.0)
+        "math-f64-api: (= (f64-clamp -1.0 0.0 10.0) 0.0)")
+      (test.assert-true
+        (= (stdlib.math.f64-clamp 11.0 0.0 10.0) 10.0)
+        "math-f64-api: (= (f64-clamp 11.0 0.0 10.0) 10.0)")
+      (test.assert-true
+        (= (stdlib.math.f64-clamp 11.0 10.0 0.0) 10.0)
+        "math-f64-api: (= (f64-clamp 11.0 10.0 0.0) 10.0)")
+      (test.assert-true
+        (stdlib.math.f64-negative? -0.5)
+        "math-f64-api: (f64-negative? -0.5)")
+      (test.assert-true
+        (stdlib.math.f64-zero? 0.0)
+        "math-f64-api: (f64-zero? 0.0)")
+      (test.assert-true
+        (stdlib.math.f64-positive? 0.5)
+        "math-f64-api: (f64-positive? 0.5)")
+      (test.assert-true
+        (not (stdlib.math.f64-negative? 0.0))
+        "math-f64-api: (not (f64-negative? 0.0))"))))
 
 (test
   math-f32-api
   (let
-    [fail : (-> unit)
-      (lambda () : unit
-        (begin
-          (/ 1 0)
-          unit))]
     [neg : f32 -2.5]
     [zero : f32 0.0]
     [pos : f32 2.5]
     [want : f32 2.5]
     (begin
-      (if (= (stdlib.math.f32-abs neg) want)
-        unit
-        (fail))
-      (if (= (stdlib.math.f32-abs zero) zero)
-        unit
-        (fail))
-      (if (= (stdlib.math.f32-abs pos) want)
-        unit
-        (fail))
-      (if (= (stdlib.math.abs neg) want)
-        unit
-        (fail)))))
+      (test.assert-true
+        (= (stdlib.math.f32-abs neg) want)
+        "math-f32-api: (= (f32-abs neg) want)")
+      (test.assert-true
+        (= (stdlib.math.f32-abs zero) zero)
+        "math-f32-api: (= (f32-abs zero) zero)")
+      (test.assert-true
+        (= (stdlib.math.f32-abs pos) want)
+        "math-f32-api: (= (f32-abs pos) want)")
+      (test.assert-true
+        (= (stdlib.math.abs neg) want)
+        "math-f32-api: (= (abs neg) want)"))))
 
 (test
   math-float-sqrt
   (let
-    [fail : (-> unit)
-      (lambda () : unit
-        (begin
-          (/ 1 0)
-          unit))]
     [one32 : f32 1.0]
     [four32 : f32 4.0]
     [calls : i64 0]
@@ -3835,154 +3812,149 @@
     [nan64 : f64 (stdlib.math.f64-from-bits (cast 0x7ff8000000001234 : u64))]
     [nan32 : f32 (stdlib.math.f32-from-bits (cast 0x7fc01234 : u32))]
     (begin
-      (if (and
-        (= calls 1)
-        (= once 4.0)
-        (= sqrt32 (stdlib.math.f32-sqrt four32))
-        (= (stdlib.math.f64-sqrt 81.0) 9.0)
-        (= (stdlib.math.f32-sqrt one32) one32))
-        unit
-        (fail))
-      (if (=
-        (stdlib.math.f64-to-bits (stdlib.math.f64-sqrt 2.0))
-        (cast 0x3ff6a09e667f3bcd : u64))
-        unit
-        (fail))
-      (if (=
-        (stdlib.math.f64-to-bits (stdlib.math.f64-sqrt 3.0))
-        (cast 0x3ffbb67ae8584caa : u64))
-        unit
-        (fail))
-      (if (=
-        (stdlib.math.f64-to-bits (stdlib.math.f64-sqrt 10.0))
-        (cast 0x40094c583ada5b53 : u64))
-        unit
-        (fail))
-      (if (=
-        (stdlib.math.f64-to-bits
-          (stdlib.math.f64-sqrt
-            (stdlib.math.f64-from-bits (cast 0x3fb999999999999a : u64))))
-        (cast 0x3fd43d136248490f : u64))
-        unit
-        (fail))
-      (if (=
-        (stdlib.math.f64-to-bits
-          (stdlib.math.f64-sqrt (stdlib.math.f64-from-bits (cast 1 : u64))))
-        (cast 0x1e60000000000000 : u64))
-        unit
-        (fail))
-      (if (=
-        (stdlib.math.f64-to-bits
-          (stdlib.math.f64-sqrt
-            (stdlib.math.f64-from-bits (cast 0x000fffffffffffff : u64))))
-        (cast 0x1fffffffffffffff : u64))
-        unit
-        (fail))
-      (if (=
-        (stdlib.math.f64-to-bits
-          (stdlib.math.f64-sqrt
-            (stdlib.math.f64-from-bits (cast 0x0010000000000000 : u64))))
-        (cast 0x2000000000000000 : u64))
-        unit
-        (fail))
-      (if (=
-        (stdlib.math.f64-to-bits
-          (stdlib.math.f64-sqrt
-            (stdlib.math.f64-from-bits (cast 0x7fefffffffffffff : u64))))
-        (cast 0x5fefffffffffffff : u64))
-        unit
-        (fail))
-      (if (=
-        (stdlib.math.f32-to-bits
-          (stdlib.math.f32-sqrt
-            (stdlib.math.f32-from-bits (cast 0x40000000 : u32))))
-        (cast 0x3fb504f3 : u32))
-        unit
-        (fail))
-      (if (=
-        (stdlib.math.f32-to-bits
-          (stdlib.math.f32-sqrt
-            (stdlib.math.f32-from-bits (cast 0x40400000 : u32))))
-        (cast 0x3fddb3d7 : u32))
-        unit
-        (fail))
-      (if (=
-        (stdlib.math.f32-to-bits
-          (stdlib.math.f32-sqrt
-            (stdlib.math.f32-from-bits (cast 0x41200000 : u32))))
-        (cast 0x404a62c2 : u32))
-        unit
-        (fail))
-      (if (=
-        (stdlib.math.f32-to-bits
-          (stdlib.math.f32-sqrt
-            (stdlib.math.f32-from-bits (cast 0x3dcccccd : u32))))
-        (cast 0x3ea1e89b : u32))
-        unit
-        (fail))
-      (if (=
-        (stdlib.math.f32-to-bits
-          (stdlib.math.f32-sqrt (stdlib.math.f32-from-bits (cast 1 : u32))))
-        (cast 0x1a3504f3 : u32))
-        unit
-        (fail))
-      (if (=
-        (stdlib.math.f32-to-bits
-          (stdlib.math.f32-sqrt
-            (stdlib.math.f32-from-bits (cast 0x007fffff : u32))))
-        (cast 0x1fffffff : u32))
-        unit
-        (fail))
-      (if (=
-        (stdlib.math.f32-to-bits
-          (stdlib.math.f32-sqrt
-            (stdlib.math.f32-from-bits (cast 0x00800000 : u32))))
-        (cast 0x20000000 : u32))
-        unit
-        (fail))
-      (if (=
-        (stdlib.math.f32-to-bits
-          (stdlib.math.f32-sqrt
-            (stdlib.math.f32-from-bits (cast 0x7f7fffff : u32))))
-        (cast 0x5f7fffff : u32))
-        unit
-        (fail))
-      (if (and
+      (test.assert-true
+        (and
+          (= calls 1)
+          (= once 4.0)
+          (= sqrt32 (stdlib.math.f32-sqrt four32))
+          (= (stdlib.math.f64-sqrt 81.0) 9.0)
+          (= (stdlib.math.f32-sqrt one32) one32))
+        "math-float-sqrt: (and (= calls 1) (= once 4.0) (= sqrt32 (f32-sqrt four32)...")
+      (test.assert-true
+        (=
+          (stdlib.math.f64-to-bits (stdlib.math.f64-sqrt 2.0))
+          (cast 0x3ff6a09e667f3bcd : u64))
+        "math-float-sqrt: (= (f64-to-bits (f64-sqrt 2.0)) (cast 0x3ff6a09e667f3bcd ...")
+      (test.assert-true
+        (=
+          (stdlib.math.f64-to-bits (stdlib.math.f64-sqrt 3.0))
+          (cast 0x3ffbb67ae8584caa : u64))
+        "math-float-sqrt: (= (f64-to-bits (f64-sqrt 3.0)) (cast 0x3ffbb67ae8584caa ...")
+      (test.assert-true
+        (=
+          (stdlib.math.f64-to-bits (stdlib.math.f64-sqrt 10.0))
+          (cast 0x40094c583ada5b53 : u64))
+        "math-float-sqrt: (= (f64-to-bits (f64-sqrt 10.0)) (cast 0x40094c583ada5b53...")
+      (test.assert-true
         (=
           (stdlib.math.f64-to-bits
-            (stdlib.math.f64-sqrt (stdlib.math.f64-from-bits (cast 0 : u64))))
-          (cast 0 : u64))
+            (stdlib.math.f64-sqrt
+              (stdlib.math.f64-from-bits (cast 0x3fb999999999999a : u64))))
+          (cast 0x3fd43d136248490f : u64))
+        "math-float-sqrt: (= (f64-to-bits (f64-sqrt (f64-from-bits (cast 0x3fb99999...")
+      (test.assert-true
         (=
-          (stdlib.math.f64-to-bits (stdlib.math.f64-sqrt negative-zero64))
-          (cast 0x8000000000000000 : u64))
+          (stdlib.math.f64-to-bits
+            (stdlib.math.f64-sqrt (stdlib.math.f64-from-bits (cast 1 : u64))))
+          (cast 0x1e60000000000000 : u64))
+        "math-float-sqrt: (= (f64-to-bits (f64-sqrt (f64-from-bits (cast 1 : u64)))...")
+      (test.assert-true
         (=
-          (stdlib.math.f32-to-bits (stdlib.math.f32-sqrt negative-zero32))
-          (cast 0x80000000 : u32))
-        (stdlib.math.f64-infinite?
-          (stdlib.math.f64-sqrt (stdlib.math.f64-positive-infinity)))
-        (stdlib.math.f32-infinite?
-          (stdlib.math.f32-sqrt (stdlib.math.f32-positive-infinity))))
-        unit
-        (fail))
-      (if (and
-        (stdlib.math.f64-nan? (stdlib.math.f64-sqrt -1.0))
-        (stdlib.math.f64-nan?
-          (stdlib.math.f64-sqrt (stdlib.math.f64-negative-infinity)))
-        (stdlib.math.f64-nan? (stdlib.math.f64-sqrt nan64))
-        (stdlib.math.f32-nan?
-          (stdlib.math.f32-sqrt (stdlib.math.f32-negative-infinity)))
-        (stdlib.math.f32-nan? (stdlib.math.f32-sqrt nan32)))
-        unit
-        (fail)))))
+          (stdlib.math.f64-to-bits
+            (stdlib.math.f64-sqrt
+              (stdlib.math.f64-from-bits (cast 0x000fffffffffffff : u64))))
+          (cast 0x1fffffffffffffff : u64))
+        "math-float-sqrt: (= (f64-to-bits (f64-sqrt (f64-from-bits (cast 0x000fffff...")
+      (test.assert-true
+        (=
+          (stdlib.math.f64-to-bits
+            (stdlib.math.f64-sqrt
+              (stdlib.math.f64-from-bits (cast 0x0010000000000000 : u64))))
+          (cast 0x2000000000000000 : u64))
+        "math-float-sqrt: (= (f64-to-bits (f64-sqrt (f64-from-bits (cast 0x00100000...")
+      (test.assert-true
+        (=
+          (stdlib.math.f64-to-bits
+            (stdlib.math.f64-sqrt
+              (stdlib.math.f64-from-bits (cast 0x7fefffffffffffff : u64))))
+          (cast 0x5fefffffffffffff : u64))
+        "math-float-sqrt: (= (f64-to-bits (f64-sqrt (f64-from-bits (cast 0x7fefffff...")
+      (test.assert-true
+        (=
+          (stdlib.math.f32-to-bits
+            (stdlib.math.f32-sqrt
+              (stdlib.math.f32-from-bits (cast 0x40000000 : u32))))
+          (cast 0x3fb504f3 : u32))
+        "math-float-sqrt: (= (f32-to-bits (f32-sqrt (f32-from-bits (cast 0x40000000...")
+      (test.assert-true
+        (=
+          (stdlib.math.f32-to-bits
+            (stdlib.math.f32-sqrt
+              (stdlib.math.f32-from-bits (cast 0x40400000 : u32))))
+          (cast 0x3fddb3d7 : u32))
+        "math-float-sqrt: (= (f32-to-bits (f32-sqrt (f32-from-bits (cast 0x40400000...")
+      (test.assert-true
+        (=
+          (stdlib.math.f32-to-bits
+            (stdlib.math.f32-sqrt
+              (stdlib.math.f32-from-bits (cast 0x41200000 : u32))))
+          (cast 0x404a62c2 : u32))
+        "math-float-sqrt: (= (f32-to-bits (f32-sqrt (f32-from-bits (cast 0x41200000...")
+      (test.assert-true
+        (=
+          (stdlib.math.f32-to-bits
+            (stdlib.math.f32-sqrt
+              (stdlib.math.f32-from-bits (cast 0x3dcccccd : u32))))
+          (cast 0x3ea1e89b : u32))
+        "math-float-sqrt: (= (f32-to-bits (f32-sqrt (f32-from-bits (cast 0x3dcccccd...")
+      (test.assert-true
+        (=
+          (stdlib.math.f32-to-bits
+            (stdlib.math.f32-sqrt (stdlib.math.f32-from-bits (cast 1 : u32))))
+          (cast 0x1a3504f3 : u32))
+        "math-float-sqrt: (= (f32-to-bits (f32-sqrt (f32-from-bits (cast 1 : u32)))...")
+      (test.assert-true
+        (=
+          (stdlib.math.f32-to-bits
+            (stdlib.math.f32-sqrt
+              (stdlib.math.f32-from-bits (cast 0x007fffff : u32))))
+          (cast 0x1fffffff : u32))
+        "math-float-sqrt: (= (f32-to-bits (f32-sqrt (f32-from-bits (cast 0x007fffff...")
+      (test.assert-true
+        (=
+          (stdlib.math.f32-to-bits
+            (stdlib.math.f32-sqrt
+              (stdlib.math.f32-from-bits (cast 0x00800000 : u32))))
+          (cast 0x20000000 : u32))
+        "math-float-sqrt: (= (f32-to-bits (f32-sqrt (f32-from-bits (cast 0x00800000...")
+      (test.assert-true
+        (=
+          (stdlib.math.f32-to-bits
+            (stdlib.math.f32-sqrt
+              (stdlib.math.f32-from-bits (cast 0x7f7fffff : u32))))
+          (cast 0x5f7fffff : u32))
+        "math-float-sqrt: (= (f32-to-bits (f32-sqrt (f32-from-bits (cast 0x7f7fffff...")
+      (test.assert-true
+        (and
+          (=
+            (stdlib.math.f64-to-bits
+              (stdlib.math.f64-sqrt (stdlib.math.f64-from-bits (cast 0 : u64))))
+            (cast 0 : u64))
+          (=
+            (stdlib.math.f64-to-bits (stdlib.math.f64-sqrt negative-zero64))
+            (cast 0x8000000000000000 : u64))
+          (=
+            (stdlib.math.f32-to-bits (stdlib.math.f32-sqrt negative-zero32))
+            (cast 0x80000000 : u32))
+          (stdlib.math.f64-infinite?
+            (stdlib.math.f64-sqrt (stdlib.math.f64-positive-infinity)))
+          (stdlib.math.f32-infinite?
+            (stdlib.math.f32-sqrt (stdlib.math.f32-positive-infinity))))
+        "math-float-sqrt: (and (= (f64-to-bits (f64-sqrt (f64-from-bits (cast 0 : u...")
+      (test.assert-true
+        (and
+          (stdlib.math.f64-nan? (stdlib.math.f64-sqrt -1.0))
+          (stdlib.math.f64-nan?
+            (stdlib.math.f64-sqrt (stdlib.math.f64-negative-infinity)))
+          (stdlib.math.f64-nan? (stdlib.math.f64-sqrt nan64))
+          (stdlib.math.f32-nan?
+            (stdlib.math.f32-sqrt (stdlib.math.f32-negative-infinity)))
+          (stdlib.math.f32-nan? (stdlib.math.f32-sqrt nan32)))
+        "math-float-sqrt: (and (f64-nan? (f64-sqrt -1.0)) (f64-nan? (f64-sqrt (f64-..."))))
 
 (test
   math-float-mul-add
   (let
-    [fail : (-> unit)
-      (lambda () : unit
-        (begin
-          (/ 1 0)
-          unit))]
     [x : f64 (stdlib.math.f64-from-bits 0x3ff0000000400000)]
     [minus-one : f64 -1.0]
     [x32 : f32 (stdlib.math.f32-from-bits (cast 0x3f800200 : u32))]
@@ -3992,69 +3964,62 @@
     [negative-zero : f64 (stdlib.math.f64-from-bits 0x8000000000000000)]
     (begin
       ;; One rounding keeps the 2^-60 term that the rounded product loses.
-      (if (=
-        (stdlib.math.f64-to-bits (stdlib.math.f64-mul-add x x minus-one))
-        0x3e20000000200000)
-        unit
-        (fail))
-      (if (= (stdlib.math.f64-to-bits (+ (* x x) minus-one)) 0x3e20000000000000)
-        unit
-        (fail))
-      (if (=
-        (stdlib.math.f32-to-bits (stdlib.math.mul-add x32 x32 minus-one32))
-        (cast 0x39000100 : u32))
-        unit
-        (fail))
+      (test.assert-true
+        (=
+          (stdlib.math.f64-to-bits (stdlib.math.f64-mul-add x x minus-one))
+          0x3e20000000200000)
+        "math-float-mul-add: (= (f64-to-bits (f64-mul-add x x minus-one)) 0x3e20000000...")
+      (test.assert-true
+        (= (stdlib.math.f64-to-bits (+ (* x x) minus-one)) 0x3e20000000000000)
+        "math-float-mul-add: (= (f64-to-bits (+ (* x x) minus-one)) 0x3e20000000000000)")
+      (test.assert-true
+        (=
+          (stdlib.math.f32-to-bits (stdlib.math.mul-add x32 x32 minus-one32))
+          (cast 0x39000100 : u32))
+        "math-float-mul-add: (= (f32-to-bits (mul-add x32 x32 minus-one32)) (cast 0x39...")
       ;; The exact sum is finite although the product alone overflows.
-      (if (=
-        (stdlib.math.f64-to-bits (stdlib.math.mul-add max 2.0 (- 0.0 max)))
-        0x7fefffffffffffff)
-        unit
-        (fail))
+      (test.assert-true
+        (=
+          (stdlib.math.f64-to-bits (stdlib.math.mul-add max 2.0 (- 0.0 max)))
+          0x7fefffffffffffff)
+        "math-float-mul-add: (= (f64-to-bits (mul-add max 2.0 (- 0.0 max))) 0x7fefffff...")
       ;; Half of the smallest subnormal ties to even, which is zero.
-      (if (=
-        (stdlib.math.f64-to-bits
-          (stdlib.math.f64-mul-add min-subnormal 0.5 0.0))
-        0)
-        unit
-        (fail))
+      (test.assert-true
+        (=
+          (stdlib.math.f64-to-bits
+            (stdlib.math.f64-mul-add min-subnormal 0.5 0.0))
+          0)
+        "math-float-mul-add: (= (f64-to-bits (f64-mul-add min-subnormal 0.5 0.0)) 0)")
       ;; Signed zeros, exact cancellation, and invalid operations.
-      (if (=
-        (stdlib.math.f64-to-bits
-          (stdlib.math.f64-mul-add negative-zero 5.0 negative-zero))
-        0x8000000000000000)
-        unit
-        (fail))
-      (if (=
-        (stdlib.math.f64-to-bits (stdlib.math.f64-mul-add 3.0 5.0 -15.0))
-        0)
-        unit
-        (fail))
-      (if (stdlib.math.f64-nan?
-        (stdlib.math.f64-mul-add (stdlib.math.f64-positive-infinity) 0.0 1.0))
-        unit
-        (fail))
-      (if (stdlib.math.f64-nan?
-        (stdlib.math.f64-mul-add
-          (stdlib.math.f64-positive-infinity)
-          1.0
-          (stdlib.math.f64-negative-infinity)))
-        unit
-        (fail))
-      (if (=
-        (stdlib.math.f64-mul-add 2.0 3.0 (stdlib.math.f64-negative-infinity))
-        (stdlib.math.f64-negative-infinity))
-        unit
-        (fail)))))
+      (test.assert-true
+        (=
+          (stdlib.math.f64-to-bits
+            (stdlib.math.f64-mul-add negative-zero 5.0 negative-zero))
+          0x8000000000000000)
+        "math-float-mul-add: (= (f64-to-bits (f64-mul-add negative-zero 5.0 negative-z...")
+      (test.assert-true
+        (= (stdlib.math.f64-to-bits (stdlib.math.f64-mul-add 3.0 5.0 -15.0)) 0)
+        "math-float-mul-add: (= (f64-to-bits (f64-mul-add 3.0 5.0 -15.0)) 0)")
+      (test.assert-true
+        (stdlib.math.f64-nan?
+          (stdlib.math.f64-mul-add (stdlib.math.f64-positive-infinity) 0.0 1.0))
+        "math-float-mul-add: (f64-nan? (f64-mul-add (f64-positive-infinity) 0.0 1.0))")
+      (test.assert-true
+        (stdlib.math.f64-nan?
+          (stdlib.math.f64-mul-add
+            (stdlib.math.f64-positive-infinity)
+            1.0
+            (stdlib.math.f64-negative-infinity)))
+        "math-float-mul-add: (f64-nan? (f64-mul-add (f64-positive-infinity) 1.0 (f64-n...")
+      (test.assert-true
+        (=
+          (stdlib.math.f64-mul-add 2.0 3.0 (stdlib.math.f64-negative-infinity))
+          (stdlib.math.f64-negative-infinity))
+        "math-float-mul-add: (= (f64-mul-add 2.0 3.0 (f64-negative-infinity)) (f64-neg..."))))
 
 (test
   math-float-exp
   (let
-    [fail : (-> unit)
-      (lambda () : unit
-        (begin
-          (/ 1 0)
-          unit))]
     [calls : i64 0]
     [once : f64
       (stdlib.math.exp
@@ -4063,29 +4028,24 @@
           1.0))]
     [one32 : f32 1.0]
     [exp32 : f32 (stdlib.math.exp one32)]
-    (if (and
-      (= calls 1)
-      (= (stdlib.math.f64-to-bits once) (cast 0x4005bf0a8b145769 : u64))
-      (= (stdlib.math.f32-to-bits exp32) (cast 0x402df854 : u32))
-      (=
-        (stdlib.math.f64-to-bits (stdlib.math.f64-exp -0.0))
-        (cast 0x3ff0000000000000 : u64))
-      (=
-        (stdlib.math.f32-to-bits
-          (stdlib.math.f32-exp
-            (stdlib.math.f32-from-bits (cast 0x80000000 : u32))))
-        (cast 0x3f800000 : u32)))
-      unit
-      (fail))))
+    (test.assert-true
+      (and
+        (= calls 1)
+        (= (stdlib.math.f64-to-bits once) (cast 0x4005bf0a8b145769 : u64))
+        (= (stdlib.math.f32-to-bits exp32) (cast 0x402df854 : u32))
+        (=
+          (stdlib.math.f64-to-bits (stdlib.math.f64-exp -0.0))
+          (cast 0x3ff0000000000000 : u64))
+        (=
+          (stdlib.math.f32-to-bits
+            (stdlib.math.f32-exp
+              (stdlib.math.f32-from-bits (cast 0x80000000 : u32))))
+          (cast 0x3f800000 : u32)))
+      "math-float-exp: (and (= calls 1) (= (f64-to-bits once) (cast 0x4005bf0a8b...")))
 
 (test
   math-float-log
   (let
-    [fail : (-> unit)
-      (lambda () : unit
-        (begin
-          (/ 1 0)
-          unit))]
     [calls : i64 0]
     [once : f64
       (stdlib.math.log
@@ -4096,28 +4056,23 @@
     [log32 : f32 (stdlib.math.log two32)]
     [negative-zero64 : f64
       (stdlib.math.f64-from-bits (cast 0x8000000000000000 : u64))]
-    (if (and
-      (= calls 1)
-      (= (stdlib.math.f64-to-bits once) (cast 0x3fe62e42fefa39ef : u64))
-      (= (stdlib.math.f32-to-bits log32) (cast 0x3f317218 : u32))
-      (= (stdlib.math.f64-to-bits (stdlib.math.f64-log 1.0)) (cast 0 : u64))
-      (=
-        (stdlib.math.f64-to-bits (stdlib.math.f64-log negative-zero64))
-        (cast 0xfff0000000000000 : u64))
-      (stdlib.math.f64-infinite?
-        (stdlib.math.f64-log (stdlib.math.f64-positive-infinity)))
-      (stdlib.math.f64-nan? (stdlib.math.f64-log -1.0)))
-      unit
-      (fail))))
+    (test.assert-true
+      (and
+        (= calls 1)
+        (= (stdlib.math.f64-to-bits once) (cast 0x3fe62e42fefa39ef : u64))
+        (= (stdlib.math.f32-to-bits log32) (cast 0x3f317218 : u32))
+        (= (stdlib.math.f64-to-bits (stdlib.math.f64-log 1.0)) (cast 0 : u64))
+        (=
+          (stdlib.math.f64-to-bits (stdlib.math.f64-log negative-zero64))
+          (cast 0xfff0000000000000 : u64))
+        (stdlib.math.f64-infinite?
+          (stdlib.math.f64-log (stdlib.math.f64-positive-infinity)))
+        (stdlib.math.f64-nan? (stdlib.math.f64-log -1.0)))
+      "math-float-log: (and (= calls 1) (= (f64-to-bits once) (cast 0x3fe62e42fe...")))
 
 (test
   math-f64-ieee-foundation
   (let
-    [fail : (-> unit)
-      (lambda () : unit
-        (begin
-          (/ 1 0)
-          unit))]
     [positive-zero : f64 (stdlib.math.f64-from-bits (cast 0 : u64))]
     [negative-zero : f64
       (stdlib.math.f64-from-bits (cast 0x8000000000000000 : u64))]
@@ -4131,109 +4086,101 @@
     [payload-nan : f64
       (stdlib.math.f64-from-bits (cast 0x7ff8000000001234 : u64))]
     (begin
-      (if (= (stdlib.math.f64-to-bits positive-zero) (cast 0 : u64))
-        unit
-        (fail))
-      (if (=
-        (stdlib.math.f64-to-bits negative-zero)
-        (cast 0x8000000000000000 : u64))
-        unit
-        (fail))
-      (if (=
-        (stdlib.math.f64-to-bits max-subnormal)
-        (cast 0x000fffffffffffff : u64))
-        unit
-        (fail))
-      (if (=
-        (stdlib.math.f64-to-bits min-normal)
-        (cast 0x0010000000000000 : u64))
-        unit
-        (fail))
-      (if (=
-        (stdlib.math.f64-to-bits max-finite)
-        (cast 0x7fefffffffffffff : u64))
-        unit
-        (fail))
-      (if (=
-        (stdlib.math.f64-to-bits payload-nan)
-        (cast 0x7ff8000000001234 : u64))
-        unit
-        (fail))
-      (if (and
-        (stdlib.math.f64-positive-zero? positive-zero)
-        (stdlib.math.f64-negative-zero? negative-zero)
-        (stdlib.math.f64-signed-zero? negative-zero)
-        (stdlib.math.f64-sign-bit? negative-zero)
-        (not (stdlib.math.f64-sign-bit? positive-zero)))
-        unit
-        (fail))
-      (if (and
-        (stdlib.math.f64-subnormal? min-subnormal)
-        (stdlib.math.f64-subnormal? max-subnormal)
-        (stdlib.math.f64-normal? min-normal)
-        (stdlib.math.f64-finite? max-finite)
-        (stdlib.math.f64-infinite? (stdlib.math.f64-positive-infinity))
-        (stdlib.math.f64-infinite? (stdlib.math.f64-negative-infinity))
-        (stdlib.math.f64-nan? payload-nan))
-        unit
-        (fail))
-      (if (=
-        (stdlib.math.f64-to-bits (stdlib.math.f64-copy-sign 3.0 negative-zero))
-        (cast 0xc008000000000000 : u64))
-        unit
-        (fail))
-      (if (= (stdlib.math.f64-to-bits (stdlib.math.f64-abs negative-zero)) 0)
-        unit
-        (fail))
-      (if (= (stdlib.math.f64-scalbn 1.5 3) 12.0)
-        unit
-        (fail))
-      (if (=
-        (stdlib.math.f64-to-bits (stdlib.math.f64-scalbn min-normal -1))
-        (cast 0x0008000000000000 : u64))
-        unit
-        (fail))
-      (if (=
-        (stdlib.math.f64-to-bits (stdlib.math.f64-scalbn 1.0 -1074))
-        (cast 1 : u64))
-        unit
-        (fail))
-      (if (=
-        (stdlib.math.f64-to-bits (stdlib.math.f64-scalbn 1.0 -1075))
-        (cast 0 : u64))
-        unit
-        (fail))
-      (if (=
-        (stdlib.math.f64-to-bits (stdlib.math.f64-scalbn 3.0 -1075))
-        (cast 2 : u64))
-        unit
-        (fail))
-      (if (=
-        (stdlib.math.f64-to-bits (stdlib.math.f64-scalbn -1.0 -1075))
-        (cast 0x8000000000000000 : u64))
-        unit
-        (fail))
-      (if (stdlib.math.f64-infinite? (stdlib.math.f64-scalbn max-finite 1))
-        unit
-        (fail))
-      (if (=
-        (stdlib.math.f64-to-bits
-          (stdlib.math.f64-scalbn (stdlib.math.f64-positive-infinity) -99))
-        (cast 0x7ff0000000000000 : u64))
-        unit
-        (fail))
-      (if (stdlib.math.f64-nan? (stdlib.math.f64-scalbn payload-nan 99))
-        unit
-        (fail)))))
+      (test.assert-true
+        (= (stdlib.math.f64-to-bits positive-zero) (cast 0 : u64))
+        "math-f64-ieee-foundation: (= (f64-to-bits positive-zero) (cast 0 : u64))")
+      (test.assert-true
+        (=
+          (stdlib.math.f64-to-bits negative-zero)
+          (cast 0x8000000000000000 : u64))
+        "math-f64-ieee-foundation: (= (f64-to-bits negative-zero) (cast 0x8000000000000000 :...")
+      (test.assert-true
+        (=
+          (stdlib.math.f64-to-bits max-subnormal)
+          (cast 0x000fffffffffffff : u64))
+        "math-f64-ieee-foundation: (= (f64-to-bits max-subnormal) (cast 0x000fffffffffffff :...")
+      (test.assert-true
+        (= (stdlib.math.f64-to-bits min-normal) (cast 0x0010000000000000 : u64))
+        "math-f64-ieee-foundation: (= (f64-to-bits min-normal) (cast 0x0010000000000000 : u64))")
+      (test.assert-true
+        (= (stdlib.math.f64-to-bits max-finite) (cast 0x7fefffffffffffff : u64))
+        "math-f64-ieee-foundation: (= (f64-to-bits max-finite) (cast 0x7fefffffffffffff : u64))")
+      (test.assert-true
+        (=
+          (stdlib.math.f64-to-bits payload-nan)
+          (cast 0x7ff8000000001234 : u64))
+        "math-f64-ieee-foundation: (= (f64-to-bits payload-nan) (cast 0x7ff8000000001234 : u...")
+      (test.assert-true
+        (and
+          (stdlib.math.f64-positive-zero? positive-zero)
+          (stdlib.math.f64-negative-zero? negative-zero)
+          (stdlib.math.f64-signed-zero? negative-zero)
+          (stdlib.math.f64-sign-bit? negative-zero)
+          (not (stdlib.math.f64-sign-bit? positive-zero)))
+        "math-f64-ieee-foundation: (and (f64-positive-zero? positive-zero) (f64-negative-zer...")
+      (test.assert-true
+        (and
+          (stdlib.math.f64-subnormal? min-subnormal)
+          (stdlib.math.f64-subnormal? max-subnormal)
+          (stdlib.math.f64-normal? min-normal)
+          (stdlib.math.f64-finite? max-finite)
+          (stdlib.math.f64-infinite? (stdlib.math.f64-positive-infinity))
+          (stdlib.math.f64-infinite? (stdlib.math.f64-negative-infinity))
+          (stdlib.math.f64-nan? payload-nan))
+        "math-f64-ieee-foundation: (and (f64-subnormal? min-subnormal) (f64-subnormal? max-s...")
+      (test.assert-true
+        (=
+          (stdlib.math.f64-to-bits
+            (stdlib.math.f64-copy-sign 3.0 negative-zero))
+          (cast 0xc008000000000000 : u64))
+        "math-f64-ieee-foundation: (= (f64-to-bits (f64-copy-sign 3.0 negative-zero)) (cast ...")
+      (test.assert-true
+        (= (stdlib.math.f64-to-bits (stdlib.math.f64-abs negative-zero)) 0)
+        "math-f64-ieee-foundation: (= (f64-to-bits (f64-abs negative-zero)) 0)")
+      (test.assert-true
+        (= (stdlib.math.f64-scalbn 1.5 3) 12.0)
+        "math-f64-ieee-foundation: (= (f64-scalbn 1.5 3) 12.0)")
+      (test.assert-true
+        (=
+          (stdlib.math.f64-to-bits (stdlib.math.f64-scalbn min-normal -1))
+          (cast 0x0008000000000000 : u64))
+        "math-f64-ieee-foundation: (= (f64-to-bits (f64-scalbn min-normal -1)) (cast 0x00080...")
+      (test.assert-true
+        (=
+          (stdlib.math.f64-to-bits (stdlib.math.f64-scalbn 1.0 -1074))
+          (cast 1 : u64))
+        "math-f64-ieee-foundation: (= (f64-to-bits (f64-scalbn 1.0 -1074)) (cast 1 : u64))")
+      (test.assert-true
+        (=
+          (stdlib.math.f64-to-bits (stdlib.math.f64-scalbn 1.0 -1075))
+          (cast 0 : u64))
+        "math-f64-ieee-foundation: (= (f64-to-bits (f64-scalbn 1.0 -1075)) (cast 0 : u64))")
+      (test.assert-true
+        (=
+          (stdlib.math.f64-to-bits (stdlib.math.f64-scalbn 3.0 -1075))
+          (cast 2 : u64))
+        "math-f64-ieee-foundation: (= (f64-to-bits (f64-scalbn 3.0 -1075)) (cast 2 : u64))")
+      (test.assert-true
+        (=
+          (stdlib.math.f64-to-bits (stdlib.math.f64-scalbn -1.0 -1075))
+          (cast 0x8000000000000000 : u64))
+        "math-f64-ieee-foundation: (= (f64-to-bits (f64-scalbn -1.0 -1075)) (cast 0x80000000...")
+      (test.assert-true
+        (stdlib.math.f64-infinite? (stdlib.math.f64-scalbn max-finite 1))
+        "math-f64-ieee-foundation: (f64-infinite? (f64-scalbn max-finite 1))")
+      (test.assert-true
+        (=
+          (stdlib.math.f64-to-bits
+            (stdlib.math.f64-scalbn (stdlib.math.f64-positive-infinity) -99))
+          (cast 0x7ff0000000000000 : u64))
+        "math-f64-ieee-foundation: (= (f64-to-bits (f64-scalbn (f64-positive-infinity) -99))...")
+      (test.assert-true
+        (stdlib.math.f64-nan? (stdlib.math.f64-scalbn payload-nan 99))
+        "math-f64-ieee-foundation: (f64-nan? (f64-scalbn payload-nan 99))"))))
 
 (test
   math-f32-ieee-foundation
   (let
-    [fail : (-> unit)
-      (lambda () : unit
-        (begin
-          (/ 1 0)
-          unit))]
     [positive-zero : f32 (stdlib.math.f32-from-bits (cast 0 : u32))]
     [negative-zero : f32 (stdlib.math.f32-from-bits (cast 0x80000000 : u32))]
     [min-subnormal : f32 (stdlib.math.f32-from-bits (cast 1 : u32))]
@@ -4244,76 +4191,71 @@
     [one : f32 1.0]
     [three : f32 3.0]
     (begin
-      (if (= (stdlib.math.f32-to-bits negative-zero) (cast 0x80000000 : u32))
-        unit
-        (fail))
-      (if (= (stdlib.math.f32-to-bits max-subnormal) (cast 0x007fffff : u32))
-        unit
-        (fail))
-      (if (= (stdlib.math.f32-to-bits min-normal) (cast 0x00800000 : u32))
-        unit
-        (fail))
-      (if (= (stdlib.math.f32-to-bits max-finite) (cast 0x7f7fffff : u32))
-        unit
-        (fail))
-      (if (= (stdlib.math.f32-to-bits payload-nan) (cast 0x7fc01234 : u32))
-        unit
-        (fail))
-      (if (and
-        (stdlib.math.f32-positive-zero? positive-zero)
-        (stdlib.math.f32-negative-zero? negative-zero)
-        (stdlib.math.f32-sign-bit? negative-zero)
-        (stdlib.math.f32-subnormal? min-subnormal)
-        (stdlib.math.f32-subnormal? max-subnormal)
-        (stdlib.math.f32-normal? min-normal)
-        (stdlib.math.f32-finite? max-finite)
-        (stdlib.math.f32-infinite? (stdlib.math.f32-positive-infinity))
-        (stdlib.math.f32-nan? payload-nan))
-        unit
-        (fail))
-      (if (= (stdlib.math.f32-to-bits (stdlib.math.f32-abs negative-zero)) 0)
-        unit
-        (fail))
-      (if (=
-        (stdlib.math.f32-to-bits (stdlib.math.f32-scalbn min-normal -1))
-        (cast 0x00400000 : u32))
-        unit
-        (fail))
-      (if (=
-        (stdlib.math.f32-to-bits (stdlib.math.f32-scalbn one -149))
-        (cast 1 : u32))
-        unit
-        (fail))
-      (if (=
-        (stdlib.math.f32-to-bits (stdlib.math.f32-scalbn one -150))
-        (cast 0 : u32))
-        unit
-        (fail))
-      (if (=
-        (stdlib.math.f32-to-bits (stdlib.math.f32-scalbn three -150))
-        (cast 2 : u32))
-        unit
-        (fail))
-      (if (=
-        (stdlib.math.f32-to-bits (stdlib.math.f32-scalbn negative-zero 1000))
-        (cast 0x80000000 : u32))
-        unit
-        (fail))
-      (if (stdlib.math.f32-infinite? (stdlib.math.f32-scalbn max-finite 1))
-        unit
-        (fail))
-      (if (stdlib.math.f32-nan? (stdlib.math.f32-scalbn payload-nan 99))
-        unit
-        (fail)))))
+      (test.assert-true
+        (= (stdlib.math.f32-to-bits negative-zero) (cast 0x80000000 : u32))
+        "math-f32-ieee-foundation: (= (f32-to-bits negative-zero) (cast 0x80000000 : u32))")
+      (test.assert-true
+        (= (stdlib.math.f32-to-bits max-subnormal) (cast 0x007fffff : u32))
+        "math-f32-ieee-foundation: (= (f32-to-bits max-subnormal) (cast 0x007fffff : u32))")
+      (test.assert-true
+        (= (stdlib.math.f32-to-bits min-normal) (cast 0x00800000 : u32))
+        "math-f32-ieee-foundation: (= (f32-to-bits min-normal) (cast 0x00800000 : u32))")
+      (test.assert-true
+        (= (stdlib.math.f32-to-bits max-finite) (cast 0x7f7fffff : u32))
+        "math-f32-ieee-foundation: (= (f32-to-bits max-finite) (cast 0x7f7fffff : u32))")
+      (test.assert-true
+        (= (stdlib.math.f32-to-bits payload-nan) (cast 0x7fc01234 : u32))
+        "math-f32-ieee-foundation: (= (f32-to-bits payload-nan) (cast 0x7fc01234 : u32))")
+      (test.assert-true
+        (and
+          (stdlib.math.f32-positive-zero? positive-zero)
+          (stdlib.math.f32-negative-zero? negative-zero)
+          (stdlib.math.f32-sign-bit? negative-zero)
+          (stdlib.math.f32-subnormal? min-subnormal)
+          (stdlib.math.f32-subnormal? max-subnormal)
+          (stdlib.math.f32-normal? min-normal)
+          (stdlib.math.f32-finite? max-finite)
+          (stdlib.math.f32-infinite? (stdlib.math.f32-positive-infinity))
+          (stdlib.math.f32-nan? payload-nan))
+        "math-f32-ieee-foundation: (and (f32-positive-zero? positive-zero) (f32-negative-zer...")
+      (test.assert-true
+        (= (stdlib.math.f32-to-bits (stdlib.math.f32-abs negative-zero)) 0)
+        "math-f32-ieee-foundation: (= (f32-to-bits (f32-abs negative-zero)) 0)")
+      (test.assert-true
+        (=
+          (stdlib.math.f32-to-bits (stdlib.math.f32-scalbn min-normal -1))
+          (cast 0x00400000 : u32))
+        "math-f32-ieee-foundation: (= (f32-to-bits (f32-scalbn min-normal -1)) (cast 0x00400...")
+      (test.assert-true
+        (=
+          (stdlib.math.f32-to-bits (stdlib.math.f32-scalbn one -149))
+          (cast 1 : u32))
+        "math-f32-ieee-foundation: (= (f32-to-bits (f32-scalbn one -149)) (cast 1 : u32))")
+      (test.assert-true
+        (=
+          (stdlib.math.f32-to-bits (stdlib.math.f32-scalbn one -150))
+          (cast 0 : u32))
+        "math-f32-ieee-foundation: (= (f32-to-bits (f32-scalbn one -150)) (cast 0 : u32))")
+      (test.assert-true
+        (=
+          (stdlib.math.f32-to-bits (stdlib.math.f32-scalbn three -150))
+          (cast 2 : u32))
+        "math-f32-ieee-foundation: (= (f32-to-bits (f32-scalbn three -150)) (cast 2 : u32))")
+      (test.assert-true
+        (=
+          (stdlib.math.f32-to-bits (stdlib.math.f32-scalbn negative-zero 1000))
+          (cast 0x80000000 : u32))
+        "math-f32-ieee-foundation: (= (f32-to-bits (f32-scalbn negative-zero 1000)) (cast 0x...")
+      (test.assert-true
+        (stdlib.math.f32-infinite? (stdlib.math.f32-scalbn max-finite 1))
+        "math-f32-ieee-foundation: (f32-infinite? (f32-scalbn max-finite 1))")
+      (test.assert-true
+        (stdlib.math.f32-nan? (stdlib.math.f32-scalbn payload-nan 99))
+        "math-f32-ieee-foundation: (f32-nan? (f32-scalbn payload-nan 99))"))))
 
 (test
   math-float-pow
   (let
-    [fail : (-> unit)
-      (lambda () : unit
-        (begin
-          (/ 1 0)
-          unit))]
     [calls : i64 0]
     [ycalls : i64 0]
     [once : f64
@@ -4331,87 +4273,75 @@
     [two32 : f32 2.0]
     [ten32 : f32 10.0]
     [pow32 : f32 (stdlib.math.pow two32 ten32)]
-    (if (and
-      (= calls 1)
-      (= ycalls 1)
-      (= (stdlib.math.f64-to-bits once) (cast 0x4090000000000000 : u64))
-      (= (stdlib.math.f64-to-bits once-y) (cast 0x4022000000000000 : u64))
-      (= (stdlib.math.f32-to-bits pow32) (cast 0x44800000 : u32)))
-      unit
-      (fail))))
+    (test.assert-true
+      (and
+        (= calls 1)
+        (= ycalls 1)
+        (= (stdlib.math.f64-to-bits once) (cast 0x4090000000000000 : u64))
+        (= (stdlib.math.f64-to-bits once-y) (cast 0x4022000000000000 : u64))
+        (= (stdlib.math.f32-to-bits pow32) (cast 0x44800000 : u32)))
+      "math-float-pow: (and (= calls 1) (= ycalls 1) (= (f64-to-bits once) (cast...")))
 
 ;; NaN-propagation power cases. The rest of the decision table (and its MPFR
 ;; 800-bit reference results) lives in tests/integration/stdlib_math_pow.tl.
 (test
   math-pow-f64-special
-  (let
-    [fail : (-> unit)
-      (lambda () : unit
-        (begin
-          (/ 1 0)
-          unit))]
-    (begin
-      (if (stdlib.math.f64-nan?
+  (begin
+    (test.assert-true
+      (stdlib.math.f64-nan?
         (stdlib.math.f64-pow
           (stdlib.math.f64-from-bits (cast 0x7ff8000000000000 : u64))
           (stdlib.math.f64-from-bits (cast 0x4000000000000000 : u64))))
-        unit
-        (fail))
-      (if (stdlib.math.f64-nan?
+      "math-pow-f64-special: (f64-nan? (f64-pow (f64-from-bits (cast 0x7ff800000000000...")
+    (test.assert-true
+      (stdlib.math.f64-nan?
         (stdlib.math.f64-pow
           (stdlib.math.f64-from-bits (cast 0x4000000000000000 : u64))
           (stdlib.math.f64-from-bits (cast 0x7ff8000000000000 : u64))))
-        unit
-        (fail))
-      (if (stdlib.math.f64-nan?
+      "math-pow-f64-special: (f64-nan? (f64-pow (f64-from-bits (cast 0x400000000000000...")
+    (test.assert-true
+      (stdlib.math.f64-nan?
         (stdlib.math.f64-pow
           (stdlib.math.f64-from-bits (cast 0xfff8000000001234 : u64))
           (stdlib.math.f64-from-bits (cast 0x3fe0000000000000 : u64))))
-        unit
-        (fail))
-      (if (stdlib.math.f64-nan?
+      "math-pow-f64-special: (f64-nan? (f64-pow (f64-from-bits (cast 0xfff800000000123...")
+    (test.assert-true
+      (stdlib.math.f64-nan?
         (stdlib.math.f64-pow
           (stdlib.math.f64-from-bits (cast 0x3fe0000000000000 : u64))
           (stdlib.math.f64-from-bits (cast 0x7ff0000000000001 : u64))))
-        unit
-        (fail))
-      (if (stdlib.math.f64-nan?
+      "math-pow-f64-special: (f64-nan? (f64-pow (f64-from-bits (cast 0x3fe000000000000...")
+    (test.assert-true
+      (stdlib.math.f64-nan?
         (stdlib.math.f64-pow
           (stdlib.math.f64-from-bits (cast 0xc000000000000000 : u64))
           (stdlib.math.f64-from-bits (cast 0x3fe0000000000000 : u64))))
-        unit
-        (fail))
-      (if (stdlib.math.f64-nan?
+      "math-pow-f64-special: (f64-nan? (f64-pow (f64-from-bits (cast 0xc00000000000000...")
+    (test.assert-true
+      (stdlib.math.f64-nan?
         (stdlib.math.f64-pow
           (stdlib.math.f64-from-bits (cast 0xc020000000000000 : u64))
           (stdlib.math.f64-from-bits (cast 0x3ff8000000000000 : u64))))
-        unit
-        (fail)))))
+      "math-pow-f64-special: (f64-nan? (f64-pow (f64-from-bits (cast 0xc02000000000000...")))
 
 (test
   math-pow-f32-special
-  (let
-    [fail : (-> unit)
-      (lambda () : unit
-        (begin
-          (/ 1 0)
-          unit))]
-    (begin
-      (if (stdlib.math.f32-nan?
+  (begin
+    (test.assert-true
+      (stdlib.math.f32-nan?
         (stdlib.math.f32-pow
           (stdlib.math.f32-from-bits (cast 0x7fc00000 : u32))
           (stdlib.math.f32-from-bits (cast 0x40000000 : u32))))
-        unit
-        (fail))
-      (if (stdlib.math.f32-nan?
+      "math-pow-f32-special: (f32-nan? (f32-pow (f32-from-bits (cast 0x7fc00000 : u32)...")
+    (test.assert-true
+      (stdlib.math.f32-nan?
         (stdlib.math.f32-pow
           (stdlib.math.f32-from-bits (cast 0x40000000 : u32))
           (stdlib.math.f32-from-bits (cast 0x7fc00000 : u32))))
-        unit
-        (fail))
-      (if (stdlib.math.f32-nan?
+      "math-pow-f32-special: (f32-nan? (f32-pow (f32-from-bits (cast 0x40000000 : u32)...")
+    (test.assert-true
+      (stdlib.math.f32-nan?
         (stdlib.math.f32-pow
           (stdlib.math.f32-from-bits (cast 0xc0000000 : u32))
           (stdlib.math.f32-from-bits (cast 0x3f000000 : u32))))
-        unit
-        (fail)))))
+      "math-pow-f32-special: (f32-nan? (f32-pow (f32-from-bits (cast 0xc0000000 : u32)...")))

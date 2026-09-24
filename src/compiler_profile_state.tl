@@ -63,7 +63,9 @@
     scavenge-census
     test)
   (defstruct CompilerProfileState
-    (storage (__tl_dyn-array CompilerProfileStateStorage))))
+    ;; Address of the job's single storage cell. A plain word keeps the
+    ;; handle Copy, so holders pass it by value without a shallow view.
+    (storage u64)))
 
 ;; Hot instrumentation passes this one-word view instead of repeatedly copying
 ;; the wide profile storage record out of its job-owned array.
@@ -156,7 +158,9 @@
             (__tl_make-array
               i64
               compiler-profile-state-summary-exact-top-capacity)))
-        (CompilerProfileState storage)))
+        (CompilerProfileState
+          (unsafe
+            (ptr->int (__tl_array-data storage))))))
     (CompilerProfileState 0)))
 
 (cfg
@@ -168,11 +172,8 @@
     scavenge-census
     test)
   (define (compiler-profile-state-storage [state : CompilerProfileState]) : CompilerProfileStateStorage
-    (let
-      [items : (__tl_dyn-array CompilerProfileStateStorage)
-        (compiler-profile-state-shared-view state.storage)]
-      (unsafe
-        (ptr-read (ptr-offset (__tl_array-data items) 0))))))
+    (unsafe
+      (ptr-read (int->ptr state.storage : (Ptr CompilerProfileStateStorage))))))
 
 (define (compiler-profile-state-metrics [_state : CompilerProfileState]) : CompilerProfileMetrics
   (cfg
@@ -197,13 +198,16 @@
       regalloc-liveness-census
       scavenge-census
       test)
+    ;; `metrics` is the storage cell's first field, so the cell's address is
+    ;; the address of the metric array handle.
     `(unsafe
       (ptr->int
         (ptr-cast
           (__tl_array-data
-            (__tl-project-field
-              (array-ref ,(comptime.expr-struct-get _state "storage") 0)
-              metrics))
+            (ptr-read
+              (int->ptr
+                ,(comptime.expr-struct-get _state "storage")
+                : (Ptr (__tl_dyn-array i64)))))
           : (Ptr i64))))
     `(cast 0 : u64)))
 
@@ -222,9 +226,10 @@
         (ptr-offset
           (ptr-cast
             (__tl_array-data
-              (__tl-project-field
-                (array-ref ,(comptime.expr-struct-get _state "storage") 0)
-                metrics))
+              (ptr-read
+                (int->ptr
+                  ,(comptime.expr-struct-get _state "storage")
+                  : (Ptr (__tl_dyn-array i64)))))
             : (Ptr i64))
           242)))
     `(cast 0 : u64)))
@@ -455,155 +460,78 @@
       [left : CompilerProfileState (compiler-profile-state-new)]
       [right : CompilerProfileState (compiler-profile-state-new)]
       (begin
-        (compiler-profile-state-metric-set!
-          (compiler-profile-state-shared-view left)
-          3
-          11)
-        (compiler-profile-state-metric-set!
-          (compiler-profile-state-shared-view right)
-          3
-          29)
-        (compiler-profile-state-metric-add!
-          (compiler-profile-state-shared-view left)
-          3
-          7)
-        (compiler-profile-state-metric-set!
-          (compiler-profile-state-shared-view left)
-          4
-          41)
-        (compiler-profile-state-metric-set!
-          (compiler-profile-state-shared-view right)
-          4
-          43)
+        (compiler-profile-state-metric-set! left 3 11)
+        (compiler-profile-state-metric-set! right 3 29)
+        (compiler-profile-state-metric-add! left 3 7)
+        (compiler-profile-state-metric-set! left 4 41)
+        (compiler-profile-state-metric-set! right 4 43)
         ;; Exercise the first backend slot and the final regalloc slot so the
         ;; owner test covers the complete census range, not only legacy
         ;; compile-profile ids.
-        (compiler-profile-state-metric-set!
-          (compiler-profile-state-shared-view left)
-          140
-          47)
-        (compiler-profile-state-metric-set!
-          (compiler-profile-state-shared-view right)
-          140
-          53)
-        (compiler-profile-state-metric-set!
-          (compiler-profile-state-shared-view left)
-          222
-          59)
-        (compiler-profile-state-metric-set!
-          (compiler-profile-state-shared-view right)
-          222
-          61)
+        (compiler-profile-state-metric-set! left 140 47)
+        (compiler-profile-state-metric-set! right 140 53)
+        (compiler-profile-state-metric-set! left 222 59)
+        (compiler-profile-state-metric-set! right 222 61)
         ;; Exercise the first load-lifetime slot and both ends of the packed
         ;; typecheck/lifetime view so the central owner test pins the complete
         ;; reservation and a reset of one job cannot erase another ledger.
-        (compiler-profile-state-metric-set!
-          (compiler-profile-state-shared-view left)
-          242
-          67)
-        (compiler-profile-state-metric-set!
-          (compiler-profile-state-shared-view left)
-          350
-          71)
-        (compiler-profile-state-metric-set!
-          (compiler-profile-state-shared-view right)
-          350
-          73)
-        (compiler-profile-state-metric-set!
-          (compiler-profile-state-shared-view left)
-          373
-          79)
-        (compiler-profile-state-metric-set!
-          (compiler-profile-state-shared-view right)
-          373
-          83)
-        (compiler-profile-state-metric-reset-range!
-          (compiler-profile-state-shared-view right)
-          3
-          5)
+        (compiler-profile-state-metric-set! left 242 67)
+        (compiler-profile-state-metric-set! left 350 71)
+        (compiler-profile-state-metric-set! right 350 73)
+        (compiler-profile-state-metric-set! left 373 79)
+        (compiler-profile-state-metric-set! right 373 83)
+        (compiler-profile-state-metric-reset-range! right 3 5)
         (test.assert-i64-eq
-          (compiler-profile-state-metric-value
-            (compiler-profile-state-shared-view left)
-            3)
+          (compiler-profile-state-metric-value left 3)
           18
           "left job keeps interleaved metric")
         (test.assert-i64-eq
-          (compiler-profile-state-metric-value
-            (compiler-profile-state-shared-view left)
-            4)
+          (compiler-profile-state-metric-value left 4)
           41
           "right reset does not erase left range")
         (test.assert-i64-eq
-          (compiler-profile-state-metric-value
-            (compiler-profile-state-shared-view right)
-            3)
+          (compiler-profile-state-metric-value right 3)
           0
           "right reset clears its first metric")
         (test.assert-i64-eq
-          (compiler-profile-state-metric-value
-            (compiler-profile-state-shared-view right)
-            4)
+          (compiler-profile-state-metric-value right 4)
           0
           "right reset clears its second metric")
         (test.assert-i64-eq
-          (compiler-profile-state-metric-value
-            (compiler-profile-state-shared-view left)
-            140)
+          (compiler-profile-state-metric-value left 140)
           47
           "left backend metric remains isolated")
         (test.assert-i64-eq
-          (compiler-profile-state-metric-value
-            (compiler-profile-state-shared-view right)
-            140)
+          (compiler-profile-state-metric-value right 140)
           53
           "right backend metric remains isolated")
-        (compiler-profile-state-metric-reset-range!
-          (compiler-profile-state-shared-view left)
-          140
-          223)
+        (compiler-profile-state-metric-reset-range! left 140 223)
         (test.assert-i64-eq
-          (compiler-profile-state-metric-value
-            (compiler-profile-state-shared-view left)
-            222)
+          (compiler-profile-state-metric-value left 222)
           0
           "left census reset reaches the final metric")
         (test.assert-i64-eq
-          (compiler-profile-state-metric-value
-            (compiler-profile-state-shared-view right)
-            222)
+          (compiler-profile-state-metric-value right 222)
           61
           "left census reset leaves right owner intact")
         (test.assert-i64-eq
-          (compiler-profile-state-metric-value
-            (compiler-profile-state-shared-view left)
-            242)
+          (compiler-profile-state-metric-value left 242)
           67
           "first typecheck metric belongs to left owner")
-        (compiler-profile-state-metric-reset-range!
-          (compiler-profile-state-shared-view right)
-          350
-          374)
+        (compiler-profile-state-metric-reset-range! right 350 374)
         (test.assert-i64-eq
-          (compiler-profile-state-metric-value
-            (compiler-profile-state-shared-view left)
-            350)
+          (compiler-profile-state-metric-value left 350)
           71
           "right lifetime reset leaves left load metric intact")
         (test.assert-i64-eq
-          (compiler-profile-state-metric-value
-            (compiler-profile-state-shared-view right)
-            350)
+          (compiler-profile-state-metric-value right 350)
           0
           "right lifetime reset clears its load metric")
         (test.assert-i64-eq
-          (compiler-profile-state-metric-value
-            (compiler-profile-state-shared-view left)
-            373)
+          (compiler-profile-state-metric-value left 373)
           79
           "right lifetime reset leaves left final macro metric intact")
         (test.assert-i64-eq
-          (compiler-profile-state-metric-value
-            (compiler-profile-state-shared-view right)
-            373)
+          (compiler-profile-state-metric-value right 373)
           0
           "right lifetime reset reaches its final macro metric")))))

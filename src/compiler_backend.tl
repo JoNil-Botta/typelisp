@@ -2457,8 +2457,18 @@
   14)
 (define compiler-backend-scratch-i64-planned-scratch-reg-mask : i64
   15)
-(define compiler-backend-scratch-i64-count : i64
+
+;; Object emission: the label id of the block emitted next (-1 after a
+;; function's last block), and the var and x86 condition code of a compare
+;; whose flags are still live (-1 when the previous instruction was not one).
+(define compiler-backend-scratch-i64-object-next-label : i64
   16)
+(define compiler-backend-scratch-i64-object-flags-var : i64
+  17)
+(define compiler-backend-scratch-i64-object-flags-cc : i64
+  18)
+(define compiler-backend-scratch-i64-count : i64
+  19)
 (define compiler-backend-scratch-bool-emergency-pending : i64
   0)
 (define compiler-backend-scratch-bool-emergency-used : i64
@@ -92681,6 +92691,162 @@
           count
           program-index)])))
 
+;; The object walk emits a function's blocks in order. It records the label of
+;; the block it emits next, so a jump there can fall through instead.
+(define (compiler-backend-object-next-label
+  [program-index : CompilerBackendProgramIndex]) : i64
+  (compiler-backend-function-scratch-i64
+    (compiler-backend-state-function-state program-index.backend-state)
+    compiler-backend-scratch-i64-object-next-label))
+
+(define (compiler-backend-object-block-list-first-label
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : i64
+  (match (compiler-backend-global-shared-view blocks)
+    [(compiler_ir_types.CompilerIrBlockList.Nil) -1]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block _)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block label _) label])]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (if (> (compiler_ir_types.compiler-ir-block-seq-count seq) 0)
+        (match (compiler_ir_types.compiler-ir-block-seq-ref seq 0)
+          [(compiler_ir_types.CompilerIrBlock.Block label _) label])
+        -1)]))
+
+(define (compiler-backend-object-set-next-label!
+  [program-index : CompilerBackendProgramIndex]
+  [label : i64]) : unit
+  (compiler-backend-function-scratch-set-i64!
+    (compiler-backend-state-function-state program-index.backend-state)
+    compiler-backend-scratch-i64-object-next-label
+    label))
+
+;; The x86 condition code the object compare leaves in the flags for `op`,
+;; the one its `set<cc>` reads; -1 for anything else.
+(define (compiler-backend-object-compare-cc
+  [op : compiler_ir_types.CompilerIrBinOp]) : i64
+  (match op
+    [(compiler_ir_types.CompilerIrBinOp.Eq) 0x4]
+    [(compiler_ir_types.CompilerIrBinOp.Ne) 0x5]
+    [(compiler_ir_types.CompilerIrBinOp.Lt) 0xc]
+    [(compiler_ir_types.CompilerIrBinOp.Le) 0xe]
+    [(compiler_ir_types.CompilerIrBinOp.Gt) 0xf]
+    [(compiler_ir_types.CompilerIrBinOp.Ge) 0xd]
+    [(compiler_ir_types.CompilerIrBinOp.BitTestEq) 0x4]
+    [(compiler_ir_types.CompilerIrBinOp.BitTestNe) 0x5]
+    [_ -1]))
+
+;; An integer compare stores its `set<cc>` result with plain moves, which keep
+;; the flags. When it is the instruction right before a branch, the branch can
+;; jump on those flags instead of reloading the result and testing it.
+(define (compiler-backend-object-note-flags!
+  [program-index : CompilerBackendProgramIndex]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]) : unit
+  (let
+    [state : CompilerBackendFunctionState
+      (compiler-backend-state-function-state program-index.backend-state)]
+    [flags-var : i64
+      (if (= index 0)
+        -1
+        (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs (- index 1))
+          [(compiler_ir_types.CompilerIrInstr.BinOp dst op _ _ ty)
+            (let
+              [cc : i64
+                (compiler-backend-object-compare-cc
+                  (compiler-backend-global-shared-view op))]
+              (if (or
+                (< cc 0)
+                (compiler-backend-float-type?
+                  (compiler-backend-global-shared-view ty)))
+                -1
+                (begin
+                  (compiler-backend-function-scratch-set-i64!
+                    state
+                    compiler-backend-scratch-i64-object-flags-cc
+                    cc)
+                  dst)))]
+          [_ -1]))]
+    (compiler-backend-function-scratch-set-i64!
+      state
+      compiler-backend-scratch-i64-object-flags-var
+      flags-var)))
+
+;; The condition code that holds exactly when `cond` is nonzero, if the flags
+;; of the compare that produced `cond` are still live; -1 otherwise.
+(define (compiler-backend-object-branch-flags-cc
+  [cond : compiler_ir_types.CompilerIrValue]
+  [program-index : CompilerBackendProgramIndex]) : i64
+  (let
+    [state : CompilerBackendFunctionState
+      (compiler-backend-state-function-state program-index.backend-state)]
+    (match cond
+      [(compiler_ir_types.CompilerIrValue.Var id)
+        (if (and
+          (>= id 0)
+          (=
+            id
+            (compiler-backend-function-scratch-i64
+              state
+              compiler-backend-scratch-i64-object-flags-var)))
+          (compiler-backend-function-scratch-i64
+            state
+            compiler-backend-scratch-i64-object-flags-cc)
+          -1)]
+      [_ -1])))
+
+;; Sets the flags for a branch on `cond`: nothing when the compare's flags are
+;; live (`flags-cc` >= 0), else `test %rax, %rax` on the loaded value, after
+;; which `ne` holds exactly when it is nonzero.
+(define (compiler-backend-object-branch-test
+  [parts : object_target.CompilerBackendObjectTargetParts]
+  [site : String]
+  [cond : compiler_ir_types.CompilerIrValue]
+  [flags-cc : i64]
+  [program-index : CompilerBackendProgramIndex]) : object_target.CompilerBackendObjectTargetParts
+  (if (>= flags-cc 0)
+    parts
+    (compiler-backend-object-add-nonempty-bytes
+      (compiler-backend-object-load-value-to-reg
+        parts
+        site
+        cond
+        "%rax"
+        program-index)
+      (object_target.compiler-backend-object-bytes-from-hex "4885c0"))))
+
+(define (compiler-backend-object-jcc
+  [parts : object_target.CompilerBackendObjectTargetParts]
+  [site : String]
+  [cc : i64]
+  [symbol : String]) : object_target.CompilerBackendObjectTargetParts
+  (object_target.compiler-backend-object-add-text
+    (object_target.compiler-backend-object-add-text-relocation
+      parts
+      (compiler-backend-global-shared-view site)
+      (cobj.CompilerObjectRelocationKind.Branch)
+      (compiler-backend-global-shared-view symbol))
+    (cobj.CompilerObjectX64Instr.Jcc
+      cc
+      (compiler-backend-global-shared-view symbol))))
+
+;; A jump to `label`'s block, left out when that block is emitted next.
+(define (compiler-backend-object-jump
+  [parts : object_target.CompilerBackendObjectTargetParts]
+  [site : String]
+  [symbol : String]
+  [label : i64]
+  [next-label : i64]) : object_target.CompilerBackendObjectTargetParts
+  (if (= label next-label)
+    parts
+    (object_target.compiler-backend-object-add-text
+      (object_target.compiler-backend-object-add-text-relocation
+        parts
+        (compiler-backend-global-shared-view site)
+        (cobj.CompilerObjectRelocationKind.Branch)
+        (compiler-backend-global-shared-view symbol))
+      (cobj.CompilerObjectX64Instr.Jump
+        (compiler-backend-global-shared-view symbol)))))
+
 (define (compiler-backend-object-instr
   [type-segment-bases : i64]
   [parts : object_target.CompilerBackendObjectTargetParts]
@@ -92946,23 +93112,22 @@
     [(compiler_ir_types.CompilerIrInstr.Jump target)
       (let
         [symbol : String (compiler-backend-asm-label label-scope target)]
-        (object_target.compiler-backend-object-add-text
-          (object_target.compiler-backend-object-add-text-relocation
-            (compiler-backend-object-emit-phi-copies
-              parts
-              (compiler-backend-global-shared-view function)
-              (compiler-backend-object-edge-phi-copies
-                type-segment-bases
-                blocks
-                (compiler-backend-global-shared-view program-index)
-                target
-                current-label)
-              (compiler-backend-global-shared-view program-index))
+        (compiler-backend-object-jump
+          (compiler-backend-object-emit-phi-copies
+            parts
             (compiler-backend-global-shared-view function)
-            (cobj.CompilerObjectRelocationKind.Branch)
-            (compiler-backend-global-shared-view symbol))
-          (cobj.CompilerObjectX64Instr.Jump
-            (compiler-backend-global-shared-view symbol))))]
+            (compiler-backend-object-edge-phi-copies
+              type-segment-bases
+              blocks
+              (compiler-backend-global-shared-view program-index)
+              target
+              current-label)
+            (compiler-backend-global-shared-view program-index))
+          (compiler-backend-global-shared-view function)
+          symbol
+          target
+          (compiler-backend-object-next-label
+            (compiler-backend-global-shared-view program-index))))]
     [(compiler_ir_types.CompilerIrInstr.Branch cond true-label false-label)
       (let
         [true-symbol : String
@@ -92987,29 +93152,70 @@
             (compiler-backend-global-shared-view program-index)
             false-label
             current-label)]
+        [next-label : i64
+          (compiler-backend-object-next-label
+            (compiler-backend-global-shared-view program-index))]
+        [flags-cc : i64
+          (compiler-backend-object-branch-flags-cc
+            (compiler-backend-global-shared-view cond)
+            (compiler-backend-global-shared-view program-index))]
+        [cc : i64
+          (if (< flags-cc 0)
+            5
+            flags-cc)]
         (if (and
           (compiler-backend-object-phi-copy-list-nil?
             (compiler-backend-global-shared-view true-copies))
           (compiler-backend-object-phi-copy-list-nil?
             (compiler-backend-global-shared-view false-copies)))
-          (object_target.compiler-backend-object-add-text
-            (object_target.compiler-backend-object-add-text-relocation
+          (if (and
+            (< flags-cc 0)
+            (not (= true-label next-label))
+            (not (= false-label next-label)))
+            (object_target.compiler-backend-object-add-text
               (object_target.compiler-backend-object-add-text-relocation
-                (compiler-backend-object-load-value-to-reg
+                (object_target.compiler-backend-object-add-text-relocation
+                  (compiler-backend-object-load-value-to-reg
+                    parts
+                    (compiler-backend-global-shared-view function)
+                    (compiler-backend-global-shared-view cond)
+                    "%rax"
+                    (compiler-backend-global-shared-view program-index))
+                  (compiler-backend-global-shared-view function)
+                  (cobj.CompilerObjectRelocationKind.Branch)
+                  (compiler-backend-global-shared-view true-symbol))
+                (compiler-backend-global-shared-view function)
+                (cobj.CompilerObjectRelocationKind.Branch)
+                (compiler-backend-global-shared-view false-symbol))
+              (cobj.CompilerObjectX64Instr.Branch
+                (compiler-backend-global-shared-view true-symbol)
+                (compiler-backend-global-shared-view false-symbol)))
+            (let
+              [tested : object_target.CompilerBackendObjectTargetParts
+                (compiler-backend-object-branch-test
                   parts
                   (compiler-backend-global-shared-view function)
                   (compiler-backend-global-shared-view cond)
-                  "%rax"
-                  (compiler-backend-global-shared-view program-index))
-                (compiler-backend-global-shared-view function)
-                (cobj.CompilerObjectRelocationKind.Branch)
-                (compiler-backend-global-shared-view true-symbol))
-              (compiler-backend-global-shared-view function)
-              (cobj.CompilerObjectRelocationKind.Branch)
-              (compiler-backend-global-shared-view false-symbol))
-            (cobj.CompilerObjectX64Instr.Branch
-              (compiler-backend-global-shared-view true-symbol)
-              (compiler-backend-global-shared-view false-symbol)))
+                  flags-cc
+                  (compiler-backend-global-shared-view program-index))]
+              (if (= true-label next-label)
+                (compiler-backend-object-jcc
+                  tested
+                  (compiler-backend-global-shared-view function)
+                  (bit-xor cc 1)
+                  false-symbol)
+                (compiler-backend-object-jump
+                  (compiler-backend-object-jcc
+                    tested
+                    (compiler-backend-global-shared-view function)
+                    cc
+                    true-symbol)
+                  (compiler-backend-global-shared-view function)
+                  false-symbol
+                  false-label
+                  next-label))))
+          ;; The true edge's copies are emitted right after the branch, so the
+          ;; branch jumps only for the false edge and falls into the true one.
           (let
             [true-edge : String
               (compiler-backend-asm-label
@@ -93025,69 +93231,54 @@
                   (str_cat.str-cat
                     (compiler_ir_types.compiler-ir-label-text current-label)
                     ".phif")))]
-            (object_target.compiler-backend-object-add-text
-              (object_target.compiler-backend-object-add-text-relocation
-                (compiler-backend-object-emit-phi-copies
-                  (object_target.compiler-backend-object-add-text
-                    (object_target.compiler-backend-object-symbol-local-section
-                      (object_target.compiler-backend-object-add-text
-                        (object_target.compiler-backend-object-add-text-relocation
-                          (compiler-backend-object-emit-phi-copies
-                            (object_target.compiler-backend-object-add-text
-                              (object_target.compiler-backend-object-symbol-local-section
-                                (object_target.compiler-backend-object-add-text
-                                  (object_target.compiler-backend-object-add-text-relocation
-                                    (object_target.compiler-backend-object-add-text-relocation
-                                      (compiler-backend-object-load-value-to-reg
-                                        parts
-                                        (compiler-backend-global-shared-view
-                                          function)
-                                        (compiler-backend-global-shared-view
-                                          cond)
-                                        "%rax"
-                                        (compiler-backend-global-shared-view
-                                          program-index))
-                                      (compiler-backend-global-shared-view
-                                        function)
-                                      (cobj.CompilerObjectRelocationKind.Branch)
-                                      (compiler-backend-global-shared-view
-                                        true-edge))
-                                    (compiler-backend-global-shared-view
-                                      function)
-                                    (cobj.CompilerObjectRelocationKind.Branch)
-                                    (compiler-backend-global-shared-view
-                                      false-edge))
-                                  (cobj.CompilerObjectX64Instr.Branch
-                                    (compiler-backend-global-shared-view
-                                      true-edge)
-                                    (compiler-backend-global-shared-view
-                                      false-edge)))
-                                (compiler-backend-global-shared-view true-edge)
-                                (cobj.CompilerObjectSectionKind.Text)
-                                (cobj.CompilerObjectSymbolKind.Function))
-                              (cobj.CompilerObjectX64Instr.Label
-                                (compiler-backend-global-shared-view true-edge)))
-                            (compiler-backend-global-shared-view function)
-                            (compiler-backend-global-shared-view true-copies)
-                            (compiler-backend-global-shared-view program-index))
-                          (compiler-backend-global-shared-view function)
-                          (cobj.CompilerObjectRelocationKind.Branch)
-                          (compiler-backend-global-shared-view true-symbol))
-                        (cobj.CompilerObjectX64Instr.Jump
-                          (compiler-backend-global-shared-view true-symbol)))
-                      (compiler-backend-global-shared-view false-edge)
-                      (cobj.CompilerObjectSectionKind.Text)
-                      (cobj.CompilerObjectSymbolKind.Function))
-                    (cobj.CompilerObjectX64Instr.Label
-                      (compiler-backend-global-shared-view false-edge)))
+            [branched : object_target.CompilerBackendObjectTargetParts
+              (compiler-backend-object-jcc
+                (compiler-backend-object-branch-test
+                  parts
                   (compiler-backend-global-shared-view function)
-                  (compiler-backend-global-shared-view false-copies)
+                  (compiler-backend-global-shared-view cond)
+                  flags-cc
                   (compiler-backend-global-shared-view program-index))
                 (compiler-backend-global-shared-view function)
-                (cobj.CompilerObjectRelocationKind.Branch)
-                (compiler-backend-global-shared-view false-symbol))
-              (cobj.CompilerObjectX64Instr.Jump
-                (compiler-backend-global-shared-view false-symbol))))))]
+                (bit-xor cc 1)
+                (compiler-backend-global-shared-view false-edge))]
+            [true-copied : object_target.CompilerBackendObjectTargetParts
+              (compiler-backend-object-emit-phi-copies
+                (object_target.compiler-backend-object-add-text
+                  (object_target.compiler-backend-object-symbol-local-section
+                    branched
+                    (compiler-backend-global-shared-view true-edge)
+                    (cobj.CompilerObjectSectionKind.Text)
+                    (cobj.CompilerObjectSymbolKind.Function))
+                  (cobj.CompilerObjectX64Instr.Label
+                    (compiler-backend-global-shared-view true-edge)))
+                (compiler-backend-global-shared-view function)
+                (compiler-backend-global-shared-view true-copies)
+                (compiler-backend-global-shared-view program-index))]
+            [true-done : object_target.CompilerBackendObjectTargetParts
+              (compiler-backend-object-jump
+                true-copied
+                (compiler-backend-global-shared-view function)
+                true-symbol
+                true-label
+                -1)]
+            (compiler-backend-object-jump
+              (compiler-backend-object-emit-phi-copies
+                (object_target.compiler-backend-object-add-text
+                  (object_target.compiler-backend-object-symbol-local-section
+                    true-done
+                    (compiler-backend-global-shared-view false-edge)
+                    (cobj.CompilerObjectSectionKind.Text)
+                    (cobj.CompilerObjectSymbolKind.Function))
+                  (cobj.CompilerObjectX64Instr.Label
+                    (compiler-backend-global-shared-view false-edge)))
+                (compiler-backend-global-shared-view function)
+                (compiler-backend-global-shared-view false-copies)
+                (compiler-backend-global-shared-view program-index))
+              (compiler-backend-global-shared-view function)
+              false-symbol
+              false-label
+              next-label))))]
     [(compiler_ir_types.CompilerIrInstr.TotalEnumBranch
         cond
         true-label
@@ -93581,19 +93772,24 @@
     parts
     (compiler-backend-object-instr-seq
       type-segment-bases
-      (compiler-backend-object-instr
-        type-segment-bases
-        parts
-        target
-        (compiler-backend-global-shared-view function)
-        (compiler-backend-global-shared-view label-scope)
-        current-label
-        (compiler-backend-global-shared-view blocks)
-        (compiler_ir_types.compiler-ir-instr-seq-ref
+      (begin
+        (compiler-backend-object-note-flags!
+          (compiler-backend-global-shared-view program-index)
           (compiler-backend-global-shared-view instrs)
           index)
-        (compiler-backend-global-shared-view plan)
-        (compiler-backend-global-shared-view program-index))
+        (compiler-backend-object-instr
+          type-segment-bases
+          parts
+          target
+          (compiler-backend-global-shared-view function)
+          (compiler-backend-global-shared-view label-scope)
+          current-label
+          (compiler-backend-global-shared-view blocks)
+          (compiler_ir_types.compiler-ir-instr-seq-ref
+            (compiler-backend-global-shared-view instrs)
+            index)
+          (compiler-backend-global-shared-view plan)
+          (compiler-backend-global-shared-view program-index)))
       target
       (compiler-backend-global-shared-view function)
       (compiler-backend-global-shared-view label-scope)
@@ -93623,6 +93819,11 @@
               (compiler-backend-asm-label
                 (compiler-backend-global-shared-view label-scope)
                 label)]
+            [_next-label : unit
+              (compiler-backend-object-set-next-label!
+                (compiler-backend-global-shared-view program-index)
+                (compiler-backend-object-block-list-first-label
+                  (compiler_ir_types.compiler-ir-box-shared-view rest)))]
             (compiler-backend-object-blocks
               type-segment-bases
               (compiler-backend-object-instr-seq
@@ -93686,6 +93887,18 @@
             (compiler-backend-asm-label
               (compiler-backend-global-shared-view label-scope)
               label)]
+          [_next-label : unit
+            (compiler-backend-object-set-next-label!
+              (compiler-backend-global-shared-view program-index)
+              (if (<
+                (+ index 1)
+                (compiler_ir_types.compiler-ir-block-seq-count
+                  (compiler-backend-global-shared-view blocks)))
+                (match (compiler_ir_types.compiler-ir-block-seq-ref
+                  (compiler-backend-global-shared-view blocks)
+                  (+ index 1))
+                  [(compiler_ir_types.CompilerIrBlock.Block next _) next])
+                -1))]
           (compiler-backend-object-block-seq
             type-segment-bases
             (compiler-backend-object-instr-seq

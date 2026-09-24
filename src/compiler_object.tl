@@ -89,6 +89,8 @@
   (TailCall String)
   (Jump String)
   (Ja String)
+  ;; `j<cc> rel32` for the x86 condition code `cc` (0x0-0xf): 0F 80+cc rel32.
+  (Jcc i64 String)
   (Branch String String)
   (LoadRip String)
   (LoadRipAddress String)

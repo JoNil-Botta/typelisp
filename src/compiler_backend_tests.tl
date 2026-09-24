@@ -2288,8 +2288,10 @@
 ;; garbage otherwise). The call results keep the phi inputs opaque so the merge
 ;; is not folded away. The inner merge's two edges each carry one copy, which
 ;; moves straight into the destination slot: no stack staging, and the
-;; instruction before each jump into the merge is a lone `mov %rax, disp(%rbp)`.
-;; The outer `if` is in tail position, so its arms return directly.
+;; instruction before each edge into the merge is a lone `mov %rax, disp(%rbp)`.
+;; An edge is a jump to the merge, or the fall-through into its label when the
+;; merge is the next block. The outer `if` is in tail position, so its arms
+;; return directly.
 (define (compiler-backend-object-phi-edge-copy-source) : String
   "(extern (f [a : i64] [b : i64] [c : i64] [d : i64] [e : i64] [g : i64]) : i64 (:symbol \"f\"))
 (define (chain [x : i64]) : i64
@@ -2317,8 +2319,9 @@
           (string.substring (& chunk) 0 3)
           (object_target.compiler-backend-object-bytes-from-hex "488985"))))))
 
-;; The number of jumps into an if-merge, or -1 when one of them does not follow
-;; a lone frame-slot store.
+;; The number of edges into an if-merge -- jumps to it, and the fall-through
+;; into its label -- or -1 when a jump to it does not follow a lone frame-slot
+;; store.
 (define (compiler-backend-object-merge-edge-stores
   [instrs : cobj.CompilerObjectX64InstrList]) : i64
   (let
@@ -2344,6 +2347,14 @@
                   (if previous-store?
                     (set! edges (+ edges 1))
                     (set! edges -1))
+                  unit)
+                (set! previous-store? false))]
+            [(cobj.CompilerObjectX64Instr.Label symbol)
+              (begin
+                (if (and
+                  previous-store?
+                  (cobj.compiler-object-string-contains? symbol "if_merge" 0))
+                  (set! edges (+ edges 1))
                   unit)
                 (set! previous-store? false))]
             [_ (set! previous-store? false)])
@@ -2635,6 +2646,65 @@
                 (owned_view.compiler-owned-shared-view obj)
                 "foreign_exact")))]
         [(elf.ResultCompilerObjectElf.Err _) false])]
+    [(compiler_backend.ResultCompilerBackendObject.Err _) false]))
+
+;; A branch right after the compare that produced its condition jumps on the
+;; compare's flags, and the object walk emits blocks in order, so the arm that
+;; follows is reached by falling through. `(< x y)` with the then-arm next is a
+;; single `jge` to the else-arm: no reload and test of the stored result, no
+;; two-way `Branch`, and no jump to the label right after it.
+(define (compiler-backend-object-branch-flags-source) : String
+  "(extern (f [a : i64]) : i64 (:symbol \"f\"))
+(define (pick [x : i64] [y : i64]) : i64
+  (if (< x y) (f x) (f y)))
+(define (main) : i64
+  (pick 1 2))")
+
+(define (compiler-backend-object-branch-flags-shape-ok?
+  [instrs : cobj.CompilerObjectX64InstrList]) : bool
+  (let
+    [count : i64
+      (cobj.compiler-object-instr-list-count
+        (owned_view.compiler-owned-shared-view instrs))]
+    [index : i64 0]
+    [jge-count : i64 0]
+    [ok : bool true]
+    (begin
+      (while (and ok (< index count))
+        (begin
+          (match (cobj.compiler-object-instr-list-ref
+            (owned_view.compiler-owned-shared-view instrs)
+            index)
+            [(cobj.CompilerObjectX64Instr.Jcc cc _)
+              (if (= cc 0xd)
+                (set! jge-count (+ jge-count 1))
+                unit)]
+            [(cobj.CompilerObjectX64Instr.Branch _ _) (set! ok false)]
+            [(cobj.CompilerObjectX64Instr.Jump target)
+              (if (< (+ index 1) count)
+                (match (cobj.compiler-object-instr-list-ref
+                  (owned_view.compiler-owned-shared-view instrs)
+                  (+ index 1))
+                  [(cobj.CompilerObjectX64Instr.Label label)
+                    (if (string.eq label target)
+                      (set! ok false)
+                      unit)]
+                  [_ unit])
+                unit)]
+            [_ unit])
+          (set! index (+ index 1))))
+      (and ok (= jge-count 1)))))
+
+(define (compiler-backend-object-branch-flags-ok?) : bool
+  (match (compiler_backend.compiler-backend-emit-source-object-image-for-target
+    (compiler-backend-object-branch-flags-source)
+    (compiler_backend.CompilerBackendTarget.Linux))
+    [(compiler_backend.ResultCompilerBackendObject.Ok image)
+      (match (cobj.compiler-object-section-list-find
+        (owned_view.compiler-owned-shared-view image.sections)
+        (cobj.CompilerObjectSectionKind.Text))
+        [(cobj.CompilerObjectSection.Section _ _ instrs)
+          (compiler-backend-object-branch-flags-shape-ok? instrs)])]
     [(compiler_backend.ResultCompilerBackendObject.Err _) false]))
 
 (define (compiler-backend-windows-object-manifest-resource-ok?
@@ -59730,6 +59800,7 @@ b_keep:
         (compiler-backend-object-image-shape-ok?)
         (compiler-backend-object-tlci-macro-entry-gate-ok?)
         (compiler-backend-object-phi-edge-copy-ok?)
+        (compiler-backend-object-branch-flags-ok?)
         (compiler-backend-coff-renders-real-text-ok?)
         (compiler-backend-windows-object-entry-unwind-ok?)
         (compiler-backend-windows-object-unit-main-zero-ok?)

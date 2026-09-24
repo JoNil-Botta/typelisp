@@ -21,10 +21,6 @@
 (import token)
 (import lex as lexer)
 
-(defmacro (global-shared-view [place : Expr]) : Expr
-  `(unsafe
-    (ptr-read (ptr-addr-of ,place))))
-
 ;: A rule either supplies an ordinary shared diagnostic fix or records why its
 ;: suggestion is not safe to apply automatically. A finding without a proved
 ;: edit is never silently promoted to machine-applicable.
@@ -7979,7 +7975,8 @@
   (match (lint-unused-unsafe-exact-name-lookup
     (owned_view.compiler-owned-shared-view state)
     (owned_view.compiler-owned-shared-view name)
-    (global-shared-view lint-unused-unsafe-exact-names))
+    (unsafe
+      (ptr-read (ptr-addr-of lint-unused-unsafe-exact-names))))
     [(LintUnusedUnsafeExactLookup.Unknown)
       (let
         [root : String

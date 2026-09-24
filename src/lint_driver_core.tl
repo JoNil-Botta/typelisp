@@ -27,16 +27,6 @@
 (import stdlib.string)
 (import sym_i64_env)
 
-(defmacro (selfhost-lint-global-shared-view [place : Expr]) : Expr
-  `(unsafe
-    (ptr-read (ptr-addr-of ,place))))
-
-(defmacro (selfhost-lint-global-array-element-shared-view
-  [items : Expr]
-  [index : Expr]) : Expr
-  `(unsafe
-    (ptr-read (ptr-offset (__tl_array-data ,items) ,index))))
-
 ;; Parsed lint CLI config: input paths, stdlib roots, whether `--check`
 ;; enforcing mode was requested (exit non-zero when findings are present), and
 ;; whether staged migration rules are enabled.
@@ -87,7 +77,8 @@
 (define (selfhost-lint-language-cfgs) : sym_i64_env.SymI64Env
   (target_cfg.compiler-target-cfgs-with-names
     selfhost-lint-language-target
-    (selfhost-lint-global-shared-view selfhost-lint-language-cfg-names)))
+    (unsafe
+      (ptr-read (ptr-addr-of selfhost-lint-language-cfg-names)))))
 
 (define (selfhost-lint-flag? [value : String]) : bool
   (and (> (string.string-length value) 0) (= (string.string-ref value 0) '-')))
@@ -1235,9 +1226,12 @@
   (selfhost-lint-unsafe-surface-cache-empty))
 
 (define (selfhost-lint-unsafe-surface-cache-entry [index : i64]) : SelfhostLintUnsafeSurfaceCacheEntry
-  (selfhost-lint-global-array-element-shared-view
-    (__tl-project-field selfhost-lint-unsafe-surface-cache slots)
-    index))
+  (unsafe
+    (ptr-read
+      (ptr-offset
+        (__tl_array-data
+          (__tl-project-field selfhost-lint-unsafe-surface-cache slots))
+        index))))
 
 ;; The cache arena is the explicit batch's outer arena. Entries copy only path,
 ;; declaration name, and safety bits out of each file scratch; no AST nodes,
@@ -1263,7 +1257,8 @@
   "")
 
 (define (selfhost-lint-typed-unused-unsafe-error-shared-view) : String
-  (selfhost-lint-global-shared-view selfhost-lint-typed-unused-unsafe-error))
+  (unsafe
+    (ptr-read (ptr-addr-of selfhost-lint-typed-unused-unsafe-error))))
 
 (define (selfhost-lint-unsafe-surface-cache-reset!) : unit
   (begin

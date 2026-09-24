@@ -64,8 +64,8 @@
               (owned_view.compiler-owned-shared-view first)
               (owned_view.compiler-owned-shared-view second)))
           params
-          (owned_view.compiler-owned-shared-view first)
-          (owned_view.compiler-owned-shared-view second)
+          first
+          second
           arity
           (+ index 1))])))
 
@@ -162,7 +162,7 @@
             second
             arity)
           (compiler-ctfe-source-parity-find
-            (ast.ast-global-shared-view decls)
+            decls
             (+ index 1)
             name-id
             builtin-index
@@ -171,7 +171,7 @@
             arity))]
       [_
         (compiler-ctfe-source-parity-find
-          (ast.ast-global-shared-view decls)
+          decls
           (+ index 1)
           name-id
           builtin-index
@@ -189,7 +189,7 @@
   (compiler-ctfe-source-parity-find
     decls
     0
-    (ci.intern (owned_view.compiler-owned-shared-view name))
+    (ci.intern name)
     builtin-index
     first
     second
@@ -258,13 +258,13 @@
         (if (= found-name name-id)
           (compiler-ctfe-source-placeholder-eval? params body message)
           (compiler-ctfe-source-placeholder-find?
-            (ast.ast-global-shared-view decls)
+            decls
             (+ index 1)
             name-id
             message))]
       [_
         (compiler-ctfe-source-placeholder-find?
-          (ast.ast-global-shared-view decls)
+          decls
           (+ index 1)
           name-id
           message)])))
@@ -318,8 +318,7 @@
     [exprs : ast.AstExprList (ast.ast-expr-list-new)]
     [clause : ast.AstExprClause (ast.ast-expr-clause true-node false-node)]
     [clause-value : compiler_ctfe.CompilerCtfeValue
-      (compiler_ctfe.CompilerCtfeValue.ExprClause
-        (owned_view.compiler-owned-shared-view clause))]
+      (compiler_ctfe.CompilerCtfeValue.ExprClause clause)]
     [clauses : ast.AstExprClauseList (ast.ast-expr-clause-list-new)]
     [binding : ast.AstExprBindingClause
       (ast.ast-expr-binding-clause-id
@@ -563,7 +562,7 @@
             (match program
               [(ast.AstProgram.Program decls-box)
                 (compiler-ctfe-stdlib-source-parity-for-decls?
-                  (owned_view.compiler-owned-box-shared-view decls-box))])]
+                  (deref decls-box))])]
           [(parser.ResultAstProgram.Err _) false])]
       [(embedded_stdlib.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
         false])))

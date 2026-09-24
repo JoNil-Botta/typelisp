@@ -236,8 +236,7 @@
     [(ast.AstType.Func args ret)
       (str_cat.str-cat
         "(->"
-        (repl-type-list-render-spaced
-          (owned_view.compiler-owned-box-shared-view args))
+        (repl-type-list-render-spaced (deref args))
         " "
         (repl-type-render (ast.ty-node-get ret))
         ")")]
@@ -251,8 +250,7 @@
     [(ast.AstType.Tuple elems)
       (str_cat.str-cat
         "(Tuple"
-        (repl-type-list-render-spaced
-          (owned_view.compiler-owned-box-shared-view elems))
+        (repl-type-list-render-spaced (deref elems))
         ")")]
     [(ast.AstType.Array elem count)
       (str_cat.str-cat
@@ -300,24 +298,21 @@
       (str_cat.str-cat
         "("
         (ast.ast-nominal-name-id-display name)
-        (repl-lifetime-list-render-spaced
-          (owned_view.compiler-owned-box-shared-view lifetimes))
+        (repl-lifetime-list-render-spaced (deref lifetimes))
         ")")]
     [(ast.AstType.Struct name) (ast.ast-nominal-name-id-display name)]
     [(ast.AstType.StructArgs name lifetimes)
       (str_cat.str-cat
         "("
         (ast.ast-nominal-name-id-display name)
-        (repl-lifetime-list-render-spaced
-          (owned_view.compiler-owned-box-shared-view lifetimes))
+        (repl-lifetime-list-render-spaced (deref lifetimes))
         ")")]
     [(ast.AstType.Var name) (str_cat.str-cat "'" (ci.intern-str name) "'")]
     [(ast.AstType.VarArgs name lifetimes)
       (str_cat.str-cat
         "("
         (ci.intern-str name)
-        (repl-lifetime-list-render-spaced
-          (owned_view.compiler-owned-box-shared-view lifetimes))
+        (repl-lifetime-list-render-spaced (deref lifetimes))
         ")")]))
 
 (define (repl-print-error-line [message : String]) : unit
@@ -561,8 +556,7 @@
         (cdiag.compiler-diagnostic-message (__tl-box-place diag)))]))
 
 (define (repl-typecheck-session-source [session-source : String]) : tc.ResultCompilerTypecheck
-  (match (repl-load-session-decls
-    (owned_view.compiler-owned-shared-view session-source))
+  (match (repl-load-session-decls session-source)
     [(ResultReplDeclList.Ok decls)
       (compiler_typecheck_api.typecheck-compiler-program
         (ast.ast-program decls))]
@@ -713,8 +707,7 @@
                 candidate)]
             [(tc.ResultCompilerTypecheck.Err diag)
               (begin
-                (repl-report-diagnostics
-                  (owned_view.compiler-owned-box-shared-view diag))
+                (repl-report-diagnostics (deref diag))
                 session-source)]))]
       [(io.ErrIoBytes error)
         (begin
@@ -732,20 +725,19 @@
             [candidate : String
               (repl-session-candidate
                 (owned_view.compiler-owned-shared-view session-source)
-                (owned_view.compiler-owned-shared-view input))]
+                input)]
             (match (repl-typecheck-session-source
               (owned_view.compiler-owned-shared-view candidate))
               [(tc.ResultCompilerTypecheck.Ok _) candidate]
               [(tc.ResultCompilerTypecheck.Err diag)
                 (begin
-                  (repl-report-diagnostics
-                    (owned_view.compiler-owned-box-shared-view diag))
+                  (repl-report-diagnostics (deref diag))
                   session-source)]))]
         [(AstReplExpr expr)
           (begin
             (repl-evaluate-expr
               (owned_view.compiler-owned-shared-view session-source)
-              (owned_view.compiler-owned-shared-view input)
+              input
               (ast.ast-node-get expr))
             session-source)])]
     [(parser.ResultAstReplItem.Err message)

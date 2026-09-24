@@ -1946,8 +1946,13 @@ if [ "$NL_HOST_OS" = windows ]; then
     # CI probe (run 35806895783) measured 5,377,895 used nodes, 5,439,488
     # capacity, and 174,063,616 physical payload bytes. The other three selfhost
     # pool boundaries keep their pins on that tree (31, 64 and 12 segments).
+    # The 2026-09-24 codegen rollup (#8078: #8069, #8014, #8076, #8062, #8045,
+    # #8053, #8050, #8011, #8029, #8058 and #8032 over #8077) crosses the
+    # composed graph from 83 to 84 segments: the authoritative Windows CI probe
+    # (run 35977848989) measured 5,457,616 used nodes, 5,505,024 capacity, and
+    # 176,160,768 physical payload bytes; #8077 alone stays at 5,438,802.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 83 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 84 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # The three dense optimizer plan containers crossed the checked expression
     # graph into its 33rd segment; the accessor-admission/absorption/fold/sinking
@@ -2039,8 +2044,13 @@ if [ "$NL_HOST_OS" = windows ]; then
     # composed graph from 63 to 64 segments: the authoritative Windows CI probe
     # measured 4,129,838 used nodes (1,070 past the 63-segment capacity),
     # 4,194,304 capacity, and 134,217,728 physical payload bytes.
+    # The 2026-09-24 codegen rollup (#8078) crosses the composed graph from 64 to
+    # 65 segments: the Windows-target probe, reproduced with the profile CLI
+    # (it matches run 35977848989's macro_expand values exactly), measured
+    # 4,201,209 used nodes, 4,259,840 capacity, and 136,314,880 physical payload
+    # bytes; #8077 alone stays at 4,188,041.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool typecheck 64 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool typecheck 65 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # This is the tightest of the four and the one to check first when a series
     # adds compiler source: the copy-call / unsigned-bound-narrowing / chain

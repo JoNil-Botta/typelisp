@@ -34,8 +34,7 @@
         [(compiler_parse_core.ResultAstProgram.Ok
             (ast.AstProgram.Program decls-box))
           (let
-            [decls : ast.AstDeclList
-              (ast.ast-decl-list-box-shared-view decls-box)]
+            [decls : ast.AstDeclList (deref decls-box)]
             [tail1 : ast.AstDeclList
               (ast.ast-decl-list-tail
                 (owned_view.compiler-owned-shared-view decls))]
@@ -279,8 +278,7 @@
         [(compiler_parse_core.ResultAstProgram.Ok
             (ast.AstProgram.Program decls-box))
           (let
-            [decls : ast.AstDeclList
-              (ast.ast-decl-list-box-shared-view decls-box)]
+            [decls : ast.AstDeclList (deref decls-box)]
             (set!
               ok
               (and
@@ -616,8 +614,7 @@
         [(compiler_parse_core.ResultAstProgram.Ok
             (ast.AstProgram.Program decls-box))
           (let
-            [decls : ast.AstDeclList
-              (ast.ast-decl-list-box-shared-view decls-box)]
+            [decls : ast.AstDeclList (deref decls-box)]
             (set!
               ok
               (and
@@ -677,8 +674,7 @@
         [(compiler_parse_core.ResultAstProgram.Ok
             (ast.AstProgram.Program decls-box))
           (let
-            [decls : ast.AstDeclList
-              (ast.ast-decl-list-box-shared-view decls-box)]
+            [decls : ast.AstDeclList (deref decls-box)]
             [tail : ast.AstDeclList
               (ast.ast-decl-list-tail
                 (owned_view.compiler-owned-shared-view decls))]
@@ -757,13 +753,11 @@
         [(compiler_parse_core.ResultAstProgram.Ok
             (ast.AstProgram.Program decls-box))
           (let
-            [decls : ast.AstDeclList
-              (ast.ast-decl-list-box-shared-view decls-box)]
+            [decls : ast.AstDeclList (deref decls-box)]
             (match (ast.ast-decl-list-get (& decls) 0 (ast.ast-decl-fallback))
               [(ast.AstDecl.ModuleBody _ body-box)
                 (let
-                  [body : ast.AstDeclList
-                    (ast.ast-decl-list-box-shared-view body-box)]
+                  [body : ast.AstDeclList (deref body-box)]
                   (set!
                     ok
                     (and
@@ -846,8 +840,7 @@
         [(compiler_parse_core.ResultAstProgram.Ok
             (ast.AstProgram.Program decls-box))
           (let
-            [decls : ast.AstDeclList
-              (ast.ast-decl-list-box-shared-view decls-box)]
+            [decls : ast.AstDeclList (deref decls-box)]
             (begin
               (set!
                 ok
@@ -883,7 +876,7 @@
     [(compiler_parse_core.ResultAstProgram.Ok
         (ast.AstProgram.Program decls-box))
       (let
-        [decls : ast.AstDeclList (ast.ast-decl-list-box-shared-view decls-box)]
+        [decls : ast.AstDeclList (deref decls-box)]
         (match (ast.ast-decl-list-get (& decls) 0 (ast.ast-decl-fallback))
           [(ast.AstDecl.DefStruct decl-meta _ _ _ fields)
             (let
@@ -917,7 +910,7 @@
     [(compiler_parse_core.ResultAstProgram.Ok
         (ast.AstProgram.Program decls-box))
       (let
-        [decls : ast.AstDeclList (ast.ast-decl-list-box-shared-view decls-box)]
+        [decls : ast.AstDeclList (deref decls-box)]
         (and
           (match (ast.ast-decl-list-get (& decls) 0 (ast.ast-decl-fallback))
             [(ast.AstDecl.Module name)
@@ -1011,7 +1004,7 @@
     [(compiler_parse_core.ResultAstProgramDiagnostic.Ok
         (ast.AstProgram.Program decls-box))
       (let
-        [decls : ast.AstDeclList (ast.ast-decl-list-box-shared-view decls-box)]
+        [decls : ast.AstDeclList (deref decls-box)]
         (match (ast.ast-decl-list-step decls)
           [(ast.AstDeclListStep.Cons
               (ast.AstDecl.Import
@@ -1073,7 +1066,7 @@
         (compiler-parse-state-source-ok?
           "(define (first-owner-fn [first-owner-param : i64]) : i64 first-owner-param)"
           (owned_view.compiler-owned-shared-view parse-state)
-          (owned_view.compiler-owned-shared-view pools)))
+          pools))
       (set! first-len (ci.intern-compat-state-pool-len intern-state))
       (set!
         ok
@@ -1082,8 +1075,8 @@
           (= first-len (ci.intern-pool-len))
           (compiler-parse-state-source-ok?
             "(define (second-owner-fn [second-owner-param : i64]) : i64 (+ second-owner-param 1))"
-            (owned_view.compiler-owned-shared-view parse-state)
-            (owned_view.compiler-owned-shared-view pools))))
+            parse-state
+            pools)))
       (set! second-len (ci.intern-compat-state-pool-len intern-state))
       (set!
         ok
@@ -1139,14 +1132,14 @@
               "owner-a.tl"
               "(defmacro (bad [T : type (:owner-a)]) : Module unit)"
               (owned_view.compiler-owned-shared-view parse-state-a)
-              (owned_view.compiler-owned-shared-view pools-a)))
+              pools-a))
           (set!
             message-b
             (compiler-parse-state-diagnostic-message
               "owner-b.tl"
               "(defmacro (bad [T : type (:owner-b)]) : Module unit)"
               (owned_view.compiler-owned-shared-view parse-state-b)
-              (owned_view.compiler-owned-shared-view pools-b)))
+              pools-b))
           (set!
             ok
             (and

@@ -1663,20 +1663,19 @@
 ;;
 ;; and are part of the format, so they must keep their exact values. Computing
 ;; them a byte at a time costs a 64-bit modulo per byte, which made verifying
-;; the embedded stdlib image (16 MB) most of a hello-world compile. Four bytes
+;; the embedded stdlib image (16 MB) most of a hello-world compile. Eight bytes
 ;; at a time is the same polynomial, reduced once:
 ;;
-;;     h' = h * 131^4 + ((b0 * 131 + b1) * 131 + b2) * 131 + b3   (mod p)
+;;     h' = h * 131^8 + (((b0 * 131 + b1) * 131 + ...) * 131 + b7)   (mod p)
 ;;
-;; With h < p < 2^31 and 131^4 < 2^29 the sum stays below 2^61, and p being a
-;; Mersenne prime reduces it with two folds `x = (x & p) + (x >> 31)` and one
-;; conditional subtract instead of a division.
+;; With h < p < 2^31, 131^8 mod p < 2^29 and the eight-byte Horner sum below
+;; 2^58, the sum stays below 2^61, and p being a Mersenne prime reduces it with
+;; two folds `x = (x & p) + (x >> 31)` and one conditional subtract instead of a
+;; division.
 (define tlci-hash-modulus : i64
   2147483647)
 
-;; 131^4 and 131^8 mod p.
-(define tlci-hash-step-4 : i64
-  294499921)
+;; 131^8 mod p.
 (define tlci-hash-step-8 : i64
   460949235)
 
@@ -1698,9 +1697,16 @@
   (let
     [h : i64 hash]
     [i : i64 start]
-    [blocks-end : i64 (- end 3)]
+    [limit : i64
+      (if (< end (array-length bytes))
+        end
+        (array-length bytes))]
     (begin
-      (while (< i blocks-end)
+      ;; Eight bytes per reduction (see above); the two-step Mersenne fold
+      ;; of a sum below 2^61 lands in [0, p + 2], one conditional subtract
+      ;; from p. The loop runs to the array length, so one guard covers all
+      ;; eight reads.
+      (while (<= (+ i 8) limit)
         (let
           [t : i64
             (+
@@ -1708,13 +1714,29 @@
                 (+
                   (*
                     (+
-                      (* (tlci-byte-at bytes i) 131)
-                      (tlci-byte-at bytes (+ i 1)))
+                      (*
+                        (+
+                          (*
+                            (+
+                              (*
+                                (+
+                                  (*
+                                    (+
+                                      (* (tlci-byte-at bytes i) 131)
+                                      (tlci-byte-at bytes (+ i 1)))
+                                    131)
+                                  (tlci-byte-at bytes (+ i 2)))
+                                131)
+                              (tlci-byte-at bytes (+ i 3)))
+                            131)
+                          (tlci-byte-at bytes (+ i 4)))
+                        131)
+                      (tlci-byte-at bytes (+ i 5)))
                     131)
-                  (tlci-byte-at bytes (+ i 2)))
+                  (tlci-byte-at bytes (+ i 6)))
                 131)
-              (tlci-byte-at bytes (+ i 3)))]
-          [x : i64 (+ (* h tlci-hash-step-4) t)]
+              (tlci-byte-at bytes (+ i 7)))]
+          [x : i64 (+ (* h tlci-hash-step-8) t)]
           [once : i64 (+ (bit-and x tlci-hash-modulus) (shr x 31))]
           [twice : i64 (+ (bit-and once tlci-hash-modulus) (shr once 31))]
           (begin
@@ -1723,7 +1745,7 @@
               (if (>= twice tlci-hash-modulus)
                 (- twice tlci-hash-modulus)
                 twice))
-            (set! i (+ i 4)))))
+            (set! i (+ i 8)))))
       (while (< i end)
         (begin
           (set! h (tlci-hash-reduce (+ (* h 131) (tlci-byte-at bytes i))))

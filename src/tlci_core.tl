@@ -1708,34 +1708,24 @@
       ;; eight reads.
       (while (<= (+ i 8) limit)
         (let
-          [t : i64
+          ;; Pair adjacent bytes, then pairs of pairs. This is the same
+          ;; eight-byte polynomial with three dependent multiplies instead
+          ;; of seven; 131^2 and 131^4 both fit signed immediate operands.
+          [a : i64
+            (+ (* (tlci-byte-at bytes i) 131) (tlci-byte-at bytes (+ i 1)))]
+          [b : i64
             (+
-              (*
-                (+
-                  (*
-                    (+
-                      (*
-                        (+
-                          (*
-                            (+
-                              (*
-                                (+
-                                  (*
-                                    (+
-                                      (* (tlci-byte-at bytes i) 131)
-                                      (tlci-byte-at bytes (+ i 1)))
-                                    131)
-                                  (tlci-byte-at bytes (+ i 2)))
-                                131)
-                              (tlci-byte-at bytes (+ i 3)))
-                            131)
-                          (tlci-byte-at bytes (+ i 4)))
-                        131)
-                      (tlci-byte-at bytes (+ i 5)))
-                    131)
-                  (tlci-byte-at bytes (+ i 6)))
-                131)
+              (* (tlci-byte-at bytes (+ i 2)) 131)
+              (tlci-byte-at bytes (+ i 3)))]
+          [c : i64
+            (+
+              (* (tlci-byte-at bytes (+ i 4)) 131)
+              (tlci-byte-at bytes (+ i 5)))]
+          [d : i64
+            (+
+              (* (tlci-byte-at bytes (+ i 6)) 131)
               (tlci-byte-at bytes (+ i 7)))]
+          [t : i64 (+ (* (+ (* a 17161) b) 294499921) (+ (* c 17161) d))]
           [x : i64 (+ (* h tlci-hash-step-8) t)]
           [once : i64 (+ (bit-and x tlci-hash-modulus) (shr x 31))]
           [twice : i64 (+ (bit-and once tlci-hash-modulus) (shr once 31))]

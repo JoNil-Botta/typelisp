@@ -60108,36 +60108,12 @@
           ;; the simplify sees the input blocks either way.
           (opt-cfg-simplify-blocks blocks))])))
 
-(define (opt-sccp-blocks-with-context-result
-  [type-segment-bases : i64]
-  [context : OptCfgContext]
-  [params : ir.CompilerIrParamSeq]
-  [blocks : ir.CompilerIrBlockList]) : OptBlockCtxResult
-  (match (opt-sccp-analyze
-    type-segment-bases
-    (compiler-opt-global-shared-view context)
-    (compiler-opt-global-shared-view params)
-    (compiler-opt-global-shared-view blocks))
-    [(OptSccpState.State _ _ env _ _)
-      (if (opt-sccp-env-any-const? (compiler-opt-global-shared-view env) 0)
-        (opt-cfg-simplify-blocks-with-context-result
-          (OptBlockCtxResult.Result
-            (opt-sccp-rewrite-blocks
-              (compiler-opt-global-shared-view env)
-              (compiler-opt-global-shared-view blocks))
-            (compiler-opt-global-shared-view context)
-            (not (opt-sccp-blocks-change-successors? env blocks))))
-        ;; No constants: the rewrite is the identity and no branch condition
-        ;; can have folded to a literal, so the context is valid as-is.
-        (opt-cfg-simplify-blocks-with-context-result
-          (OptBlockCtxResult.Result blocks context true)))]))
-
 ;; Pipeline entry point that skips the nested cfg-simplify when it can: the
 ;; pipeline's own cfg pass canonicalizes further down (literal branches folded,
 ;; unreachable blocks filtered, phis cleaned -- a second application is a
-;; no-op), so simplifying here duplicated that stage.
-;; opt-sccp-blocks-with-context-result keeps the nested simplify
-;; unconditionally for the sccp self-test, which pins it. The context stays
+;; no-op), so simplifying here duplicated that stage. (The sccp self-test's
+;; opt-sccp-blocks-with-context-result in compiler_optimize_tests.tl keeps the
+;; nested simplify unconditionally, which the test pins.) The context stays
 ;; valid for the rewrite output exactly when no branch condition folded to a
 ;; literal (opt-sccp-blocks-change-successors?). The lattice env is sized by
 ;; the function frame (dense var ids), skipping the max-var walks.
@@ -64184,39 +64160,6 @@
       cells
       frame
       gvn)))
-
-(define (opt-gvn-blocks-with-context-and-call-memory
-  [profile-state : profile_state.CompilerProfileMetrics]
-  [type-segment-bases : i64]
-  [context : OptCfgContext]
-  [params : ir.CompilerIrParamSeq]
-  [call-memory : opt_i64_i64_map.Map]
-  [cells : OptGlobalCellSummary]
-  [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
-  (match (opt-gvn-blocks-with-context-and-call-memory-result
-    profile-state
-    type-segment-bases
-    context
-    params
-    call-memory
-    cells
-    0
-    blocks)
-    [(OptLoadGvnResult.Result out-blocks _) out-blocks]))
-
-(define (opt-gvn-blocks
-  [type-segment-bases : i64]
-  [params : ir.CompilerIrParamSeq]
-  [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
-  (opt-gvn-blocks-with-context-and-call-memory
-    (profile_state.compiler-profile-state-metrics
-      (profile_state.compiler-profile-state-new))
-    type-segment-bases
-    (opt-cfg-context-build (compiler-opt-global-shared-view blocks))
-    params
-    (opt_i64_i64_map.with-capacity 1)
-    (opt-global-cell-summary-empty)
-    blocks))
 
 ;; --- dominated redundant bounds-check elimination ----------------------------
 ;;
@@ -174026,26 +173969,6 @@
     (opt-alias-empty)
     (opt-alias-update-value-facts facts instr 0)))
 
-(define (opt-alias-run-from
-  [facts : OptAliasFacts]
-  [instrs : ir.CompilerIrInstrSeq]
-  [index : i64]) : OptAliasFacts
-  (if (>=
-    index
-    (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs)))
-    facts
-    (opt-alias-run-from
-      (opt-alias-update-facts
-        facts
-        (ir.compiler-ir-instr-seq-ref
-          (compiler-opt-global-shared-view instrs)
-          index))
-      (compiler-opt-global-shared-view instrs)
-      (+ index 1))))
-
-(define (opt-alias-run [facts : OptAliasFacts] [instrs : ir.CompilerIrInstrSeq]) : OptAliasFacts
-  (opt-alias-run-from facts instrs 0))
-
 ;; --- implicit scratch-region candidate report -------------------------------
 ;;
 ;; Report-only analysis for future automatic scratch regions. It recognizes
@@ -174676,12 +174599,6 @@
     [(OptScratchScopeState.State allocs bytes _ _ blocker)
       (OptScratchScopeReport.Report allocs bytes blocker)]))
 
-(define (opt-scratch-scope-scan-instrs
-  [type-segment-bases : i64]
-  [state : OptScratchScopeState]
-  [instrs : ir.CompilerIrInstrSeq]) : OptScratchScopeState
-  (opt-scratch-scope-scan-instr-seq-from type-segment-bases state instrs 0))
-
 (define (opt-scratch-scope-scan-instr-seq-from
   [type-segment-bases : i64]
   [state : OptScratchScopeState]
@@ -174723,15 +174640,6 @@
         state
         (ir.compiler-ir-block-seq-to-list seq))]))
 
-(define (opt-scratch-scope-report-instrs
-  [type-segment-bases : i64]
-  [instrs : ir.CompilerIrInstrSeq]) : OptScratchScopeReport
-  (opt-scratch-scope-report-from-state
-    (opt-scratch-scope-scan-instrs
-      type-segment-bases
-      (opt-scratch-state-initial)
-      instrs)))
-
 (define (opt-scratch-scope-report-block
   [type-segment-bases : i64]
   [block : ir.CompilerIrBlock]) : OptScratchScopeReport
@@ -174752,32 +174660,6 @@
       type-segment-bases
       (opt-scratch-state-initial)
       blocks)))
-
-(define (opt-scratch-report-candidate?
-  [report : OptScratchScopeReport]
-  [expected-allocs : i64]
-  [expected-bytes : i64]) : bool
-  (match report
-    [(OptScratchScopeReport.Report allocs bytes blocker)
-      (and
-        (= allocs expected-allocs)
-        (= bytes expected-bytes)
-        (opt-scratch-blocker-none? blocker))]))
-
-(define (opt-scratch-report-blocked?
-  [_type-segment-bases : i64]
-  [report : OptScratchScopeReport]
-  [expected-allocs : i64]
-  [expected-bytes : i64]
-  [reason : String]) : bool
-  (match report
-    [(OptScratchScopeReport.Report allocs bytes blocker)
-      (and
-        (= allocs expected-allocs)
-        (= bytes expected-bytes)
-        (match blocker
-          [(OptScratchBlockerReason.Blocked found) (string.eq found reason)]
-          [(OptScratchBlockerReason.NoBlocker) false]))]))
 
 (cfg
   compile-profile
@@ -175498,18 +175380,6 @@
                 (OptFunctionCtxResult.Result func context))])])]
     [(ResultCompilerOptimizeVerify.Err _)
       (OptFunctionCtxResult.Result func context)]))
-
-(define (opt-scratch-reset-function
-  [type-segment-bases : i64]
-  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
-  (match (compiler-opt-global-shared-view func)
-    [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-      (match (opt-scratch-reset-function-with-context-result
-        type-segment-bases
-        (opt-cfg-context-build (compiler-opt-global-shared-view blocks))
-        false
-        func)
-        [(OptFunctionCtxResult.Result next _) next])]))
 
 (define (opt-scratch-reset-function-unchecked-rewrite
   [type-segment-bases : i64]
@@ -176498,47 +176368,6 @@
           (arena.raw-handle (compiler-opt-global-shared-view scratch)))
         (arena.destroy-safe! scratch)
         result))))
-
-(define (opt-scratch-reset-pre-ssa-function-with-context-result
-  [pools : ast.AstNodePoolContext]
-  [type-segment-bases : i64]
-  [func : ir.CompilerIrFunction]) : OptFunctionCtxResult
-  (match func
-    [(ir.CompilerIrFunction.Function
-        name
-        params
-        ret-ty
-        frame
-        blocks
-        function-abi)
-      (let
-        [context : OptCfgContext
-          (opt-cfg-context-build
-            (ir.compiler-ir-clone-block-list
-              pools
-              (compiler-opt-global-shared-view blocks)))]
-        [input : ir.CompilerIrFunction
-          (ir.CompilerIrFunction.Function
-            name
-            params
-            ret-ty
-            frame
-            blocks
-            (compiler-opt-global-shared-view function-abi))]
-        [preheaders-result : OptFunctionCtxResult
-          (opt-loop-preheaders-function-with-context-result context false input)]
-        [preheaders : ir.CompilerIrFunction
-          (match (compiler-opt-global-shared-view preheaders-result)
-            [(OptFunctionCtxResult.Result f _)
-              (compiler-opt-global-shared-view f)])]
-        [preheaders-context : OptCfgContext
-          (match (compiler-opt-global-shared-view preheaders-result)
-            [(OptFunctionCtxResult.Result _ ctx) ctx])]
-        (opt-scratch-reset-function-with-context-result
-          type-segment-bases
-          preheaders-context
-          false
-          preheaders))]))
 
 ;; --- block-local redundant-load CSE -----------------------------------------
 ;;

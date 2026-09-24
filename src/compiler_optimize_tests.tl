@@ -620,6 +620,185 @@
         next
         fallback)]))
 
+(define (opt-sccp-blocks-with-context-result
+  [type-segment-bases : i64]
+  [context : opt.OptCfgContext]
+  [params : ir.CompilerIrParamSeq]
+  [blocks : ir.CompilerIrBlockList]) : opt.OptBlockCtxResult
+  (match (opt.opt-sccp-analyze
+    type-segment-bases
+    (opt.compiler-opt-global-shared-view context)
+    (opt.compiler-opt-global-shared-view params)
+    (opt.compiler-opt-global-shared-view blocks))
+    [(opt.OptSccpState.State _ _ env _ _)
+      (if (opt.opt-sccp-env-any-const?
+        (opt.compiler-opt-global-shared-view env)
+        0)
+        (opt.opt-cfg-simplify-blocks-with-context-result
+          (opt.OptBlockCtxResult.Result
+            (opt.opt-sccp-rewrite-blocks
+              (opt.compiler-opt-global-shared-view env)
+              (opt.compiler-opt-global-shared-view blocks))
+            (opt.compiler-opt-global-shared-view context)
+            (not (opt.opt-sccp-blocks-change-successors? env blocks))))
+        ;; No constants: the rewrite is the identity and no branch condition
+        ;; can have folded to a literal, so the context is valid as-is.
+        (opt.opt-cfg-simplify-blocks-with-context-result
+          (opt.OptBlockCtxResult.Result blocks context true)))]))
+
+(define (opt-gvn-blocks-with-context-and-call-memory
+  [profile-state : profile_state.CompilerProfileMetrics]
+  [type-segment-bases : i64]
+  [context : opt.OptCfgContext]
+  [params : ir.CompilerIrParamSeq]
+  [call-memory : opt_i64_i64_map.Map]
+  [cells : opt.OptGlobalCellSummary]
+  [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
+  (match (opt.opt-gvn-blocks-with-context-and-call-memory-result
+    profile-state
+    type-segment-bases
+    context
+    params
+    call-memory
+    cells
+    0
+    blocks)
+    [(opt.OptLoadGvnResult.Result out-blocks _) out-blocks]))
+
+(define (opt-gvn-blocks
+  [type-segment-bases : i64]
+  [params : ir.CompilerIrParamSeq]
+  [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
+  (opt-gvn-blocks-with-context-and-call-memory
+    (profile_state.compiler-profile-state-metrics
+      (profile_state.compiler-profile-state-new))
+    type-segment-bases
+    (opt.opt-cfg-context-build (opt.compiler-opt-global-shared-view blocks))
+    params
+    (opt_i64_i64_map.with-capacity 1)
+    (opt.opt-global-cell-summary-empty)
+    blocks))
+
+(define (opt-alias-run-from
+  [facts : opt.OptAliasFacts]
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]) : opt.OptAliasFacts
+  (if (>=
+    index
+    (ir.compiler-ir-instr-seq-count
+      (opt.compiler-opt-global-shared-view instrs)))
+    facts
+    (opt-alias-run-from
+      (opt.opt-alias-update-facts
+        facts
+        (ir.compiler-ir-instr-seq-ref
+          (opt.compiler-opt-global-shared-view instrs)
+          index))
+      (opt.compiler-opt-global-shared-view instrs)
+      (+ index 1))))
+
+(define (opt-alias-run
+  [facts : opt.OptAliasFacts]
+  [instrs : ir.CompilerIrInstrSeq]) : opt.OptAliasFacts
+  (opt-alias-run-from facts instrs 0))
+
+(define (opt-scratch-scope-scan-instrs
+  [type-segment-bases : i64]
+  [state : opt.OptScratchScopeState]
+  [instrs : ir.CompilerIrInstrSeq]) : opt.OptScratchScopeState
+  (opt.opt-scratch-scope-scan-instr-seq-from type-segment-bases state instrs 0))
+
+(define (opt-scratch-scope-report-instrs
+  [type-segment-bases : i64]
+  [instrs : ir.CompilerIrInstrSeq]) : opt.OptScratchScopeReport
+  (opt.opt-scratch-scope-report-from-state
+    (opt-scratch-scope-scan-instrs
+      type-segment-bases
+      (opt.opt-scratch-state-initial)
+      instrs)))
+
+(define (opt-scratch-report-candidate?
+  [report : opt.OptScratchScopeReport]
+  [expected-allocs : i64]
+  [expected-bytes : i64]) : bool
+  (match report
+    [(opt.OptScratchScopeReport.Report allocs bytes blocker)
+      (and
+        (= allocs expected-allocs)
+        (= bytes expected-bytes)
+        (opt.opt-scratch-blocker-none? blocker))]))
+
+(define (opt-scratch-report-blocked?
+  [_type-segment-bases : i64]
+  [report : opt.OptScratchScopeReport]
+  [expected-allocs : i64]
+  [expected-bytes : i64]
+  [reason : String]) : bool
+  (match report
+    [(opt.OptScratchScopeReport.Report allocs bytes blocker)
+      (and
+        (= allocs expected-allocs)
+        (= bytes expected-bytes)
+        (match blocker
+          [(opt.OptScratchBlockerReason.Blocked found) (string.eq found reason)]
+          [(opt.OptScratchBlockerReason.NoBlocker) false]))]))
+
+(define (opt-scratch-reset-function
+  [type-segment-bases : i64]
+  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  (match (opt.compiler-opt-global-shared-view func)
+    [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
+      (match (opt.opt-scratch-reset-function-with-context-result
+        type-segment-bases
+        (opt.opt-cfg-context-build (opt.compiler-opt-global-shared-view blocks))
+        false
+        func)
+        [(opt.OptFunctionCtxResult.Result next _) next])]))
+
+(define (opt-scratch-reset-pre-ssa-function-with-context-result
+  [pools : ast.AstNodePoolContext]
+  [type-segment-bases : i64]
+  [func : ir.CompilerIrFunction]) : opt.OptFunctionCtxResult
+  (match func
+    [(ir.CompilerIrFunction.Function
+        name
+        params
+        ret-ty
+        frame
+        blocks
+        function-abi)
+      (let
+        [context : opt.OptCfgContext
+          (opt.opt-cfg-context-build
+            (ir.compiler-ir-clone-block-list
+              pools
+              (opt.compiler-opt-global-shared-view blocks)))]
+        [input : ir.CompilerIrFunction
+          (ir.CompilerIrFunction.Function
+            name
+            params
+            ret-ty
+            frame
+            blocks
+            (opt.compiler-opt-global-shared-view function-abi))]
+        [preheaders-result : opt.OptFunctionCtxResult
+          (opt.opt-loop-preheaders-function-with-context-result
+            context
+            false
+            input)]
+        [preheaders : ir.CompilerIrFunction
+          (match (opt.compiler-opt-global-shared-view preheaders-result)
+            [(opt.OptFunctionCtxResult.Result f _)
+              (opt.compiler-opt-global-shared-view f)])]
+        [preheaders-context : opt.OptCfgContext
+          (match (opt.compiler-opt-global-shared-view preheaders-result)
+            [(opt.OptFunctionCtxResult.Result _ ctx) ctx])]
+        (opt.opt-scratch-reset-function-with-context-result
+          type-segment-bases
+          preheaders-context
+          false
+          preheaders))]))
+
 (test
   value-source-counts-dense-semantics
   (let
@@ -9366,12 +9545,12 @@
 (define (compiler-optimize-gvn-self-test) : i64
   (let
     [probe : ir.CompilerIrBlockList
-      (opt.opt-gvn-blocks
+      (opt-gvn-blocks
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-gvn-test-params)
         (opt-gvn-probe-dominated-blocks))]
     [probe-different : ir.CompilerIrBlockList
-      (opt.opt-gvn-blocks
+      (opt-gvn-blocks
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-gvn-test-params)
         (opt-gvn-probe-different-blocks))]
@@ -9379,7 +9558,7 @@
       (unless
         (=
           (opt-gvn-count-binops-blocks
-            (opt.opt-gvn-blocks
+            (opt-gvn-blocks
               (ast.ast-node-pool-reader-type-segment-bases)
               (opt-gvn-test-params)
               (opt-gvn-diamond-blocks)))
@@ -9388,7 +9567,7 @@
       (unless
         (=
           (opt-gvn-count-binops-blocks
-            (opt.opt-gvn-blocks
+            (opt-gvn-blocks
               (ast.ast-node-pool-reader-type-segment-bases)
               (opt-gvn-test-params)
               (opt-gvn-siblings-blocks)))
@@ -9397,7 +9576,7 @@
       (unless
         (=
           (opt-gvn-count-binops-blocks
-            (opt.opt-gvn-blocks
+            (opt-gvn-blocks
               (ast.ast-node-pool-reader-type-segment-bases)
               (opt-gvn-test-params)
               (opt-gvn-redef-blocks)))
@@ -9406,7 +9585,7 @@
       (unless
         (=
           (opt-gvn-count-binops-blocks
-            (opt.opt-gvn-blocks
+            (opt-gvn-blocks
               (ast.ast-node-pool-reader-type-segment-bases)
               (opt-gvn-test-params)
               (opt-gvn-loop-blocks)))
@@ -9682,27 +9861,27 @@
   (let
     [type-segment-bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
     [dominated : ir.CompilerIrBlockList
-      (opt.opt-gvn-blocks
+      (opt-gvn-blocks
         type-segment-bases
         (opt-gvn-test-params)
         (opt-simd-gvn-dominated-blocks))]
     [siblings : ir.CompilerIrBlockList
-      (opt.opt-gvn-blocks
+      (opt-gvn-blocks
         type-segment-bases
         (opt-gvn-test-params)
         (opt-simd-gvn-sibling-blocks))]
     [redefined : ir.CompilerIrBlockList
-      (opt.opt-gvn-blocks
+      (opt-gvn-blocks
         type-segment-bases
         (opt-gvn-test-params)
         (opt-simd-gvn-redefined-operand-blocks))]
     [current : ir.CompilerIrBlockList
-      (opt.opt-gvn-blocks
+      (opt-gvn-blocks
         type-segment-bases
         (opt-gvn-test-params)
         (opt-simd-gvn-current-block-blocks))]
     [dst-redefined : ir.CompilerIrBlockList
-      (opt.opt-gvn-blocks
+      (opt-gvn-blocks
         type-segment-bases
         (opt-gvn-test-params)
         (opt-simd-gvn-redefined-dst-blocks))]
@@ -34179,7 +34358,7 @@
 (define (opt-gvn-scoped-nearest-dominator-ok?) : bool
   (let
     [out : ir.CompilerIrBlockList
-      (opt.opt-gvn-blocks
+      (opt-gvn-blocks
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-gvn-scalar-params)
         (opt-gvn-nearest-scope-blocks))]
@@ -34722,7 +34901,7 @@
           (ir.CompilerIrBlockList.Nil))))))
 
 (define (opt-load-subst-run [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
-  (opt.opt-gvn-blocks
+  (opt-gvn-blocks
     (ast.ast-node-pool-reader-type-segment-bases)
     (opt-gvn-pointer-cond-params)
     blocks))
@@ -34839,7 +35018,7 @@
         (opt-gsf-globals symbols)
         (ir.compiler-ir-global-shared-view functions))]
     [blocks : ir.CompilerIrBlockList (opt-gsf-blocks symbols call?)]
-    (opt.opt-gvn-blocks-with-context-and-call-memory
+    (opt-gvn-blocks-with-context-and-call-memory
       (profile_state.compiler-profile-state-metrics
         (profile_state.compiler-profile-state-new))
       (ast.ast-node-pool-reader-type-segment-bases)
@@ -34990,7 +35169,7 @@
         (opt-gdp-globals symbols header?)
         (ir.compiler-ir-global-shared-view functions))]
     [blocks : ir.CompilerIrBlockList (opt-gdp-blocks symbols)]
-    (opt.opt-gvn-blocks-with-context-and-call-memory
+    (opt-gvn-blocks-with-context-and-call-memory
       (profile_state.compiler-profile-state-metrics
         (profile_state.compiler-profile-state-new))
       (ast.ast-node-pool-reader-type-segment-bases)
@@ -35045,7 +35224,7 @@
       (ir.compiler-ir-param-seq-empty))))
 
 (define (opt-load-join-run [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
-  (opt.opt-gvn-blocks
+  (opt-gvn-blocks
     (ast.ast-node-pool-reader-type-segment-bases)
     (opt-load-join-params)
     blocks))
@@ -36019,47 +36198,47 @@
             (ast.AstType.I64)
             (opt-gvn-phi-loop-blocks))))]
     [load-safe : ir.CompilerIrBlockList
-      (opt.opt-gvn-blocks
+      (opt-gvn-blocks
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-gvn-pointer-params)
         (opt-gvn-load-barrier-blocks))]
     [load-join-safe : ir.CompilerIrBlockList
-      (opt.opt-gvn-blocks
+      (opt-gvn-blocks
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-gvn-pointer-cond-params)
         (opt-gvn-load-join-safe-blocks))]
     [load-store-path : ir.CompilerIrBlockList
-      (opt.opt-gvn-blocks
+      (opt-gvn-blocks
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-gvn-pointer-cond-params)
         (opt-gvn-load-store-path-blocks))]
     [single-load-store-forward : ir.CompilerIrBlockList
-      (opt.opt-gvn-blocks
+      (opt-gvn-blocks
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.compiler-ir-param-seq-empty)
         (opt-gvn-single-load-store-forward-blocks))]
     [load-call-path : ir.CompilerIrBlockList
-      (opt.opt-gvn-blocks
+      (opt-gvn-blocks
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-gvn-pointer-cond-params)
         (opt-gvn-load-call-path-blocks))]
     [checked-ref-store-path : ir.CompilerIrBlockList
-      (opt.opt-gvn-blocks
+      (opt-gvn-blocks
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-gvn-checked-ref-cond-params)
         (opt-gvn-checked-ref-store-path-blocks false))]
     [checked-ref-root-loss : ir.CompilerIrBlockList
-      (opt.opt-gvn-blocks
+      (opt-gvn-blocks
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-gvn-checked-ref-cond-params)
         (opt-gvn-checked-ref-store-path-blocks true))]
     [load-address-redef : ir.CompilerIrBlockList
-      (opt.opt-gvn-blocks
+      (opt-gvn-blocks
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-gvn-pointer-params)
         (opt-gvn-load-address-redef-blocks))]
     [load-type-mismatch : ir.CompilerIrBlockList
-      (opt.opt-gvn-blocks
+      (opt-gvn-blocks
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-gvn-pointer-params)
         (opt-gvn-load-type-mismatch-blocks))]
@@ -36686,7 +36865,7 @@
         (ir.compiler-ir-param-seq-empty)
         (opt.compiler-opt-global-shared-view branch-source))]
     [branch-context-result : opt.OptBlockCtxResult
-      (opt.opt-sccp-blocks-with-context-result
+      (opt-sccp-blocks-with-context-result
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt.opt-cfg-context-build
           (opt.compiler-opt-global-shared-view branch-source))
@@ -72045,7 +72224,7 @@
     [(opt.OptNaturalLoopList.Nil) false]
     [(opt.OptNaturalLoopList.Cons loop rest)
       (or
-        (opt.opt-scratch-report-candidate?
+        (opt-scratch-report-candidate?
           (opt.opt-scratch-scope-report-blocks
             (ast.ast-node-pool-reader-type-segment-bases)
             (opt.opt-natural-loop-body-blocks loop))
@@ -72215,7 +72394,7 @@
                 ir.CompilerIrBlockList.Nil))))))))
 
 (define (opt-scratch-reset-rewrite [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrFunction
-  (opt.opt-scratch-reset-function
+  (opt-scratch-reset-function
     (ast.ast-node-pool-reader-type-segment-bases)
     (opt-scratch-reset-test-function (ir.compiler-ir-global-shared-view blocks))))
 
@@ -72274,14 +72453,14 @@
     (cbi.compiler-builtin-initialize-for-parse!)
     (let
       [positive : opt.OptScratchScopeReport
-        (opt.opt-scratch-scope-report-instrs
+        (opt-scratch-scope-report-instrs
           (ast.ast-node-pool-reader-type-segment-bases)
           (opt-scratch-positive-instrs))]
       [loop-positive : bool
         (opt-scratch-loop-list-has-candidate?
           (opt.opt-cfg-natural-loops (opt-scratch-loop-candidate-blocks)))]
       [call-blocked : opt.OptScratchScopeReport
-        (opt.opt-scratch-scope-report-instrs
+        (opt-scratch-scope-report-instrs
           (ast.ast-node-pool-reader-type-segment-bases)
           (opt-scratch-test-one-block
             (ir.CompilerIrInstr.Call
@@ -72290,7 +72469,7 @@
               (ir.CompilerIrCallArgs.Nil)
               (ast.AstType.Unit))))]
       [extern-blocked : opt.OptScratchScopeReport
-        (opt.opt-scratch-scope-report-instrs
+        (opt-scratch-scope-report-instrs
           (ast.ast-node-pool-reader-type-segment-bases)
           (opt-scratch-test-one-block
             (ir.CompilerIrInstr.CallIndirectC
@@ -72299,7 +72478,7 @@
               (ir.CompilerIrCallArgs.Nil)
               (ast.AstType.I64))))]
       [raw-blocked : opt.OptScratchScopeReport
-        (opt.opt-scratch-scope-report-instrs
+        (opt-scratch-scope-report-instrs
           (ast.ast-node-pool-reader-type-segment-bases)
           (opt-scratch-test-one-block (ir.CompilerIrInstr.AddrOf 2 1)))]
       ;; The scratch analysis records its roots with `opt-alias-mark-unique`, so
@@ -72320,7 +72499,7 @@
                 (ir.CompilerIrValue.Var 1)
                 (ast.AstType.U64)))))]
       [arena-blocked : opt.OptScratchScopeReport
-        (opt.opt-scratch-scope-report-instrs
+        (opt-scratch-scope-report-instrs
           (ast.ast-node-pool-reader-type-segment-bases)
           (opt-scratch-test-one-block
             (ir.CompilerIrInstr.Call
@@ -72350,7 +72529,7 @@
       [reset-early-exit : ir.CompilerIrFunction
         (opt-scratch-reset-rewrite (opt-scratch-reset-early-exit-blocks))]
       [reset-pre-ssa : ir.CompilerIrFunction
-        (match (opt.opt-scratch-reset-pre-ssa-function-with-context-result
+        (match (opt-scratch-reset-pre-ssa-function-with-context-result
           (ast.ast-node-pool-reader-context-current)
           (ast.ast-node-pool-reader-type-segment-bases)
           (opt-scratch-reset-level-function))
@@ -72368,10 +72547,10 @@
       [level2-reset-count : i64
         (opt-scratch-reset-level-program-call-count 2 "tl_region_reset")]
       (cond
-        [(not (opt.opt-scratch-report-candidate? positive 1 32)) 1]
+        [(not (opt-scratch-report-candidate? positive 1 32)) 1]
         [(not loop-positive) 2]
         [(not
-            (opt.opt-scratch-report-blocked?
+            (opt-scratch-report-blocked?
               (ast.ast-node-pool-reader-type-segment-bases)
               call-blocked
               1
@@ -72379,7 +72558,7 @@
               "call"))
           3]
         [(not
-            (opt.opt-scratch-report-blocked?
+            (opt-scratch-report-blocked?
               (ast.ast-node-pool-reader-type-segment-bases)
               extern-blocked
               1
@@ -72387,7 +72566,7 @@
               "extern_call"))
           4]
         [(not
-            (opt.opt-scratch-report-blocked?
+            (opt-scratch-report-blocked?
               (ast.ast-node-pool-reader-type-segment-bases)
               raw-blocked
               1
@@ -72395,7 +72574,7 @@
               "raw_pointer"))
           5]
         [(not
-            (opt.opt-scratch-report-blocked?
+            (opt-scratch-report-blocked?
               (ast.ast-node-pool-reader-type-segment-bases)
               store-blocked
               1
@@ -72403,7 +72582,7 @@
               "store_outer"))
           6]
         [(not
-            (opt.opt-scratch-report-blocked?
+            (opt-scratch-report-blocked?
               (ast.ast-node-pool-reader-type-segment-bases)
               arena-blocked
               1
@@ -72411,7 +72590,7 @@
               "arena_helper"))
           7]
         [(not
-            (opt.opt-scratch-report-blocked?
+            (opt-scratch-report-blocked?
               (ast.ast-node-pool-reader-type-segment-bases)
               return-blocked
               1
@@ -72540,19 +72719,17 @@
 (define (compiler-optimize-alias-self-test) : i64
   (let
     [unique : opt.OptAliasFacts
-      (opt.opt-alias-run (opt.opt-alias-empty) (opt-alias-test-unique-instrs))]
+      (opt-alias-run (opt.opt-alias-empty) (opt-alias-test-unique-instrs))]
     [transitive : opt.OptAliasFacts
-      (opt.opt-alias-run
-        (opt.opt-alias-empty)
-        (opt-alias-test-transitive-instrs))]
+      (opt-alias-run (opt.opt-alias-empty) (opt-alias-test-transitive-instrs))]
     [loaded : opt.OptAliasFacts
-      (opt.opt-alias-run (opt.opt-alias-empty) (opt-alias-test-load-instrs))]
+      (opt-alias-run (opt.opt-alias-empty) (opt-alias-test-load-instrs))]
     [stored : opt.OptAliasFacts
-      (opt.opt-alias-run (opt.opt-alias-empty) (opt-alias-test-store-instrs))]
+      (opt-alias-run (opt.opt-alias-empty) (opt-alias-test-store-instrs))]
     [called : opt.OptAliasFacts
-      (opt.opt-alias-run (opt.opt-alias-empty) (opt-alias-test-call-instrs))]
+      (opt-alias-run (opt.opt-alias-empty) (opt-alias-test-call-instrs))]
     [copied : opt.OptAliasFacts
-      (opt.opt-alias-run (opt.opt-alias-empty) (opt-alias-test-copy-instrs))]
+      (opt-alias-run (opt.opt-alias-empty) (opt-alias-test-copy-instrs))]
     [joined : opt.OptAliasFacts
       (opt.opt-alias-intersect
         (opt-alias-join-facts-a)
@@ -94930,13 +95107,13 @@
   (cond
     [(not
         (opt-gvn-reassoc-rewritten?
-          (opt.opt-gvn-blocks
+          (opt-gvn-blocks
             (ast.ast-node-pool-reader-type-segment-bases)
             (opt-gvn-test-params)
             (opt-gvn-reassoc-blocks true))))
       1]
     [(opt-gvn-reassoc-rewritten?
-        (opt.opt-gvn-blocks
+        (opt-gvn-blocks
           (ast.ast-node-pool-reader-type-segment-bases)
           (opt-gvn-test-params)
           (opt-gvn-reassoc-blocks false)))
@@ -97452,7 +97629,7 @@
   [call-memory : opt_i64_i64_map.Map]
   [cells : opt.OptGlobalCellSummary]
   [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
-  (opt.opt-gvn-blocks-with-context-and-call-memory
+  (opt-gvn-blocks-with-context-and-call-memory
     (profile_state.compiler-profile-state-metrics
       (profile_state.compiler-profile-state-new))
     (opt-t22-type-bases)

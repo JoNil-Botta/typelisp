@@ -464,6 +464,15 @@ register_scalar_homes|tests/integration/register_scalar_homes.tl|42|-|-|-
 rem_zero_trap|tests/integration/rem_zero_trap.tl|135|-|-|-|expected-stderr:tl: target/integration-verify/windows/rem_zero_trap/rem_zero_trap.tl:3:5: integer division or remainder error: dividend=1 divisor=0\n
 short_circuit|tests/integration/short_circuit.tl|42|-|-|-
 shl_count_width_trap|tests/integration/shl_count_width_trap.tl|129|-|-|-|expected-stderr:tl: target/integration-verify/windows/shl_count_width_trap/shl_count_width_trap.tl:3:5: shift count out of range: count=64 width=32\n
+dead_valid_shifts_o0|tests/integration/dead_valid_shifts.tl|42|-|-|-|opt-level:0+stage-stdlib
+dead_valid_shifts_o1|tests/integration/dead_valid_shifts.tl|42|-|-|-|opt-level:1+stage-stdlib
+dead_valid_shifts_o2|tests/integration/dead_valid_shifts.tl|42|-|-|-|opt-level:2+stage-stdlib
+dead_valid_shifts_dynamic|tests/integration/dead_valid_shifts.tl|42|-|63|-|opt-level:2+stage-stdlib
+dead_shift_dynamic_width|tests/integration/dead_valid_shifts.tl|129|-|64|-|opt-level:2+stage-stdlib+expected-stderr:tl: target/integration-verify/windows/dead_shift_dynamic_width/dead_shift_dynamic_width.tl:22:5: shift count out of range: count=64 width=64\n
+dead_shift_dynamic_negative|tests/integration/dead_valid_shifts.tl|129|-|-1|-|opt-level:2+stage-stdlib+expected-stderr:tl: target/integration-verify/windows/dead_shift_dynamic_negative/dead_shift_dynamic_negative.tl:22:5: shift count out of range: count=-1 width=64\n
+shl_count_width_trap_opt2|tests/integration/shl_count_width_trap.tl|129|-|-|-|opt-level:2+expected-stderr:tl: target/integration-verify/windows/shl_count_width_trap_opt2/shl_count_width_trap_opt2.tl:3:5: shift count out of range: count=64 width=32\n
+shl_neg_count_trap_opt2|tests/integration/shl_neg_count_trap.tl|129|-|-|-|opt-level:2+expected-stderr:tl: target/integration-verify/windows/shl_neg_count_trap_opt2/shl_neg_count_trap_opt2.tl:3:5: shift count out of range: count=-1 width=32\n
+shr_u64_high_count_trap_opt2|tests/integration/shr_u64_high_count_trap.tl|129|-|-|-|opt-level:2+expected-stderr:tl: target/integration-verify/windows/shr_u64_high_count_trap_opt2/shr_u64_high_count_trap_opt2.tl:3:5: shift count out of range: count=18446744073709551615 width=64\n
 shl_neg_count_trap|tests/integration/shl_neg_count_trap.tl|129|-|-|-|expected-stderr:tl: target/integration-verify/windows/shl_neg_count_trap/shl_neg_count_trap.tl:3:5: shift count out of range: count=-1 width=32\n
 shr_u64_high_count_trap|tests/integration/shr_u64_high_count_trap.tl|129|-|-|-|expected-stderr:tl: target/integration-verify/windows/shr_u64_high_count_trap/shr_u64_high_count_trap.tl:3:5: shift count out of range: count=18446744073709551615 width=64\n
 valid_scalar_shift_matrix|tests/integration/valid_scalar_shift_matrix.tl|42|-|-|-

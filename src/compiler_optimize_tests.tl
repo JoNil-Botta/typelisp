@@ -1671,7 +1671,7 @@
       last)))
 
 (define (opt-dense-test-ssa-site-is?
-  [sites : opt.OptSsaPhiSites]
+  [sites : (& sites opt.OptSsaPhiSites)]
   [index : i64]
   [expected : i64]) : bool
   (match (opt.opt-ssa-phi-sites-ref sites index)
@@ -1696,7 +1696,7 @@
         last))))
 
 (define (opt-dense-test-ssa-rename-block-newest?
-  [blocks : opt.OptSsaRenameBlocks]) : bool
+  [blocks : (& blocks opt.OptSsaRenameBlocks)]) : bool
   (match (opt.opt-ssa-rename-blocks-ref blocks 0)
     [(opt.OptSsaDenseEntry.RenameBlock label instrs)
       (and
@@ -1708,7 +1708,7 @@
     [_ false]))
 
 (define (opt-dense-test-ssa-rename-block-is?
-  [blocks : opt.OptSsaRenameBlocks]
+  [blocks : (& blocks opt.OptSsaRenameBlocks)]
   [index : i64]
   [expected-label : i64]) : bool
   (match (opt.opt-ssa-rename-blocks-ref blocks index)
@@ -1734,7 +1734,8 @@
       (+ next 1)
       last)))
 
-(define (opt-dense-test-ssa-block-out-newest? [outs : opt.OptSsaBlockOuts]) : bool
+(define (opt-dense-test-ssa-block-out-newest?
+  [outs : (& outs opt.OptSsaBlockOuts)]) : bool
   (match (opt.opt-ssa-env-snapshot-lookup
     (opt.opt-ssa-block-out-lookup outs 4)
     99)
@@ -1742,7 +1743,7 @@
     [(option_i64.None) false]))
 
 (define (opt-dense-test-ssa-block-out-is?
-  [outs : opt.OptSsaBlockOuts]
+  [outs : (& outs opt.OptSsaBlockOuts)]
   [index : i64]
   [expected-label : i64]) : bool
   (match (opt.opt-ssa-block-outs-ref outs index)
@@ -1787,7 +1788,7 @@
     [(option_i64.None) true]))
 
 (define (opt-dense-test-ssa-snapshot-value?
-  [outs : opt.OptSsaBlockOuts]
+  [outs : (& outs opt.OptSsaBlockOuts)]
   [label : i64]
   [var : i64]
   [expected : i64]) : bool
@@ -1847,26 +1848,10 @@
       (= checkpoint 12)
       (= registered-count 13)
       restored-ok?
-      (opt-dense-test-ssa-snapshot-value?
-        (opt.compiler-opt-global-shared-view outs)
-        10
-        3
-        303)
-      (opt-dense-test-ssa-snapshot-value?
-        (opt.compiler-opt-global-shared-view outs)
-        10
-        12
-        312)
-      (opt-dense-test-ssa-snapshot-value?
-        (opt.compiler-opt-global-shared-view outs)
-        20
-        3
-        403)
-      (opt-dense-test-ssa-snapshot-value?
-        (opt.compiler-opt-global-shared-view outs)
-        20
-        12
-        412)
+      (opt-dense-test-ssa-snapshot-value? outs 10 3 303)
+      (opt-dense-test-ssa-snapshot-value? outs 10 12 312)
+      (opt-dense-test-ssa-snapshot-value? outs 20 3 403)
+      (opt-dense-test-ssa-snapshot-value? outs 20 12 412)
       (opt-dense-test-ssa-snapshot-missing? outs 99 3))))
 
 (define (opt-dense-test-ssa-var-block-index) : opt.OptCfgIndex
@@ -1882,27 +1867,27 @@
         (ir.CompilerIrBlockList.Nil)))))
 
 (define (opt-dense-test-ssa-var-blocks-fill
-  [index : opt.OptCfgIndex]
+  [index : (& index opt.OptCfgIndex)]
   [blocks : opt.OptSsaVarBlocks]
   [label : i64]
   [var : i64]) : opt.OptSsaVarBlocks
   (if (> var 9)
     blocks
     (opt-dense-test-ssa-var-blocks-fill
-      (opt.compiler-opt-global-shared-view index)
+      index
       (if (or (= var 1) (= var 4) (= var 8))
         blocks
         (opt.opt-ssa-var-blocks-add index blocks var label))
       label
       (+ var 1))))
 
-(define (opt-dense-test-ssa-var-blocks [index : opt.OptCfgIndex]) : opt.OptSsaVarBlocks
+(define (opt-dense-test-ssa-var-blocks [index : (& index opt.OptCfgIndex)]) : opt.OptSsaVarBlocks
   (let
     [label-a : i64 (ir.compiler-ir-label "dense_ssa_defs_a")]
     [label-b : i64 (ir.compiler-ir-label "dense_ssa_defs_b")]
     [unknown : i64 (ir.compiler-ir-label "dense_ssa_defs_unknown")]
     (opt-dense-test-ssa-var-blocks-fill
-      (opt.compiler-opt-global-shared-view index)
+      index
       (opt.opt-ssa-var-blocks-add
         index
         (opt.opt-ssa-var-blocks-add
@@ -2174,18 +2159,8 @@
       [(not (opt-dense-test-gvn-scope-rollback? type-segment-bases)) 31]
       [(not (= (opt.opt-ssa-phi-sites-count ssa-sites-empty) 0)) 32]
       [(not (= (opt.opt-ssa-phi-sites-count ssa-sites) 9)) 33]
-      [(not
-          (opt-dense-test-ssa-site-is?
-            (opt.compiler-opt-global-shared-view ssa-sites)
-            0
-            4))
-        34]
-      [(not
-          (opt-dense-test-ssa-site-is?
-            (opt.compiler-opt-global-shared-view ssa-sites)
-            1
-            8))
-        35]
+      [(not (opt-dense-test-ssa-site-is? ssa-sites 0 4)) 34]
+      [(not (opt-dense-test-ssa-site-is? ssa-sites 1 8)) 35]
       [(not (opt-dense-test-ssa-site-is? ssa-sites 8 1)) 36]
       [(not (= (opt.opt-ssa-rename-blocks-count ssa-renamed) 9)) 37]
       [(not (= (opt.opt-ssa-rename-blocks-count ssa-renamed-independent) 0)) 38]
@@ -2200,29 +2175,13 @@
             (opt.compiler-opt-global-shared-view ssa-renamed)
             8))
         41]
-      [(not
-          (opt-dense-test-ssa-rename-block-newest?
-            (opt.compiler-opt-global-shared-view ssa-renamed)))
-        43]
-      [(not
-          (opt-dense-test-ssa-rename-block-is?
-            (opt.compiler-opt-global-shared-view ssa-renamed)
-            1
-            8))
-        44]
+      [(not (opt-dense-test-ssa-rename-block-newest? ssa-renamed)) 43]
+      [(not (opt-dense-test-ssa-rename-block-is? ssa-renamed 1 8)) 44]
       [(not (opt-dense-test-ssa-rename-block-is? ssa-renamed 8 1)) 45]
       [(not (= (opt.opt-ssa-block-outs-count ssa-outs) 9)) 46]
       [(not (= (opt.opt-ssa-block-outs-count ssa-outs-independent) 0)) 47]
-      [(not
-          (opt-dense-test-ssa-block-out-newest?
-            (opt.compiler-opt-global-shared-view ssa-outs)))
-        48]
-      [(not
-          (opt-dense-test-ssa-block-out-is?
-            (opt.compiler-opt-global-shared-view ssa-outs)
-            1
-            8))
-        49]
+      [(not (opt-dense-test-ssa-block-out-newest? ssa-outs)) 48]
+      [(not (opt-dense-test-ssa-block-out-is? ssa-outs 1 8)) 49]
       [(not (opt-dense-test-ssa-block-out-is? ssa-outs 8 1)) 50]
       [(match (opt.opt-ssa-env-snapshot-lookup
           (opt.opt-ssa-block-out-lookup ssa-outs-independent 1)
@@ -16617,7 +16576,7 @@
 
 (define (opt-callgraph-test-edge?
   [index : (& index opt.OptFunctionIndex)]
-  [graph : opt.OptCallGraph]
+  [graph : (& graph opt.OptCallGraph)]
   [caller : i64]
   [callee : i64]) : bool
   (opt.opt-callgraph-has-edge?
@@ -16738,31 +16697,12 @@
               symbols.main)
             2))
         false]
-      [(not
-          (opt-callgraph-test-edge?
-            index
-            (opt.compiler-opt-global-shared-view graph)
-            symbols.main
-            symbols.a))
+      [(not (opt-callgraph-test-edge? index graph symbols.main symbols.a))
         false]
-      [(not
-          (opt-callgraph-test-edge?
-            index
-            (opt.compiler-opt-global-shared-view graph)
-            symbols.main
-            symbols.b))
+      [(not (opt-callgraph-test-edge? index graph symbols.main symbols.b))
         false]
-      [(opt-callgraph-test-edge?
-          index
-          (opt.compiler-opt-global-shared-view graph)
-          symbols.main
-          symbols.c)
-        false]
-      [(opt-callgraph-test-edge?
-          index
-          (opt.compiler-opt-global-shared-view graph)
-          symbols.main
-          symbols.address-taken)
+      [(opt-callgraph-test-edge? index graph symbols.main symbols.c) false]
+      [(opt-callgraph-test-edge? index graph symbols.main symbols.address-taken)
         false]
       [(not
           (=
@@ -16772,13 +16712,7 @@
               symbols.a)
             1))
         false]
-      [(not
-          (opt-callgraph-test-edge?
-            index
-            (opt.compiler-opt-global-shared-view graph)
-            symbols.a
-            symbols.c))
-        false]
+      [(not (opt-callgraph-test-edge? index graph symbols.a symbols.c)) false]
       [(not
           (=
             (opt-callgraph-test-edge-count
@@ -16795,13 +16729,7 @@
               symbols.c)
             1))
         false]
-      [(not
-          (opt-callgraph-test-edge?
-            index
-            (opt.compiler-opt-global-shared-view graph)
-            symbols.c
-            symbols.b))
-        false]
+      [(not (opt-callgraph-test-edge? index graph symbols.c symbols.b)) false]
       [(not
           (=
             (opt-callgraph-test-edge-count index graph symbols.address-taken)
@@ -16830,15 +16758,11 @@
       [(not
           (opt-callgraph-test-edge?
             index
-            (opt.compiler-opt-global-shared-view graph)
+            graph
             symbols.rec-even
             symbols.rec-odd))
         false]
-      [(opt-callgraph-test-edge?
-          index
-          (opt.compiler-opt-global-shared-view graph)
-          symbols.rec-even
-          symbols.rec-even)
+      [(opt-callgraph-test-edge? index graph symbols.rec-even symbols.rec-even)
         false]
       [(not
           (=
@@ -16851,7 +16775,7 @@
       [(not
           (opt-callgraph-test-edge?
             index
-            (opt.compiler-opt-global-shared-view graph)
+            graph
             symbols.rec-odd
             symbols.rec-even))
         false]
@@ -16864,9 +16788,11 @@
   [slot : i64]) : i64
   (array-ref result.scc-of slot))
 
-(define (opt-scc-component-size [result : opt.OptSccResult] [scc-id : i64]) : i64
+(define (opt-scc-component-size
+  [result : (& result opt.OptSccResult)]
+  [scc-id : i64]) : i64
   (let
-    [scc-of : (__tl_dyn-array i64) result.scc-of]
+    [scc-of (& result.scc-of)]
     [count : i64 (array-length scc-of)]
     [slot : i64 0]
     [size : i64 0]
@@ -16879,9 +16805,11 @@
           (set! slot (+ slot 1))))
       size)))
 
-(define (opt-scc-order-position [result : opt.OptSccResult] [scc-id : i64]) : i64
+(define (opt-scc-order-position
+  [result : (& result opt.OptSccResult)]
+  [scc-id : i64]) : i64
   (let
-    [order : (__tl_dyn-array i64) result.order]
+    [order (& result.order)]
     [count : i64 (array-length order)]
     [index : i64 0]
     [position : i64 (- 0 1)]
@@ -16894,10 +16822,12 @@
           (set! index (+ index 1))))
       position)))
 
-(define (opt-scc-before? [result : opt.OptSccResult] [left : i64] [right : i64]) : bool
+(define (opt-scc-before?
+  [result : (& result opt.OptSccResult)]
+  [left : i64]
+  [right : i64]) : bool
   (let
-    [left-pos : i64
-      (opt-scc-order-position (opt.compiler-opt-global-shared-view result) left)]
+    [left-pos : i64 (opt-scc-order-position result left)]
     [right-pos : i64 (opt-scc-order-position result right)]
     (and (>= left-pos 0) (>= right-pos 0) (< left-pos right-pos))))
 
@@ -16928,13 +16858,7 @@
       [(< self-scc 0) false]
       [(< leaf-scc 0) false]
       [(= self-scc leaf-scc) false]
-      [(not
-          (=
-            (opt-scc-component-size
-              (opt.compiler-opt-global-shared-view result)
-              self-scc)
-            1))
-        false]
+      [(not (= (opt-scc-component-size result self-scc) 1)) false]
       [(not (= (opt-scc-component-size result leaf-scc) 1)) false]
       [else true])))
 
@@ -16957,13 +16881,7 @@
       [(< even-scc 0) false]
       [(not (= even-scc odd-scc)) false]
       [(= even-scc lonely-scc) false]
-      [(not
-          (=
-            (opt-scc-component-size
-              (opt.compiler-opt-global-shared-view result)
-              even-scc)
-            2))
-        false]
+      [(not (= (opt-scc-component-size result even-scc) 2)) false]
       [(not (= (opt-scc-component-size result lonely-scc) 1)) false]
       [else true])))
 
@@ -17005,24 +16923,9 @@
       [(not (= (array-ref order 2) a-scc)) false]
       [(not (= (array-ref order 3) main-scc)) false]
       [(not (= (array-ref order 4) address-scc)) false]
-      [(not
-          (opt-scc-before?
-            (opt.compiler-opt-global-shared-view result)
-            b-scc
-            c-scc))
-        false]
-      [(not
-          (opt-scc-before?
-            (opt.compiler-opt-global-shared-view result)
-            c-scc
-            a-scc))
-        false]
-      [(not
-          (opt-scc-before?
-            (opt.compiler-opt-global-shared-view result)
-            a-scc
-            main-scc))
-        false]
+      [(not (opt-scc-before? result b-scc c-scc)) false]
+      [(not (opt-scc-before? result c-scc a-scc)) false]
+      [(not (opt-scc-before? result a-scc main-scc)) false]
       [(not (opt-scc-before? result b-scc main-scc)) false]
       [else true])))
 
@@ -40084,7 +39987,7 @@
       (opt.opt-label-contains (opt.opt-natural-loop-body loop) label)]))
 
 (define (opt-natural-loop-maybe-body-contains-id?
-  [index : opt.OptCfgIndex]
+  [index : (& index opt.OptCfgIndex)]
   [maybe : opt.OptMaybeNaturalLoop]
   [label : i64]) : bool
   (match maybe
@@ -66052,13 +65955,13 @@
         31]
       [(not
           (opt-natural-loop-maybe-body-contains-id?
-            (opt.compiler-opt-global-shared-view single-index)
+            single-index
             (opt.compiler-opt-global-shared-view single)
             (ir.compiler-ir-label "loop")))
         32]
       [(not
           (opt-natural-loop-maybe-body-contains-id?
-            (opt.compiler-opt-global-shared-view single-index)
+            single-index
             (opt.compiler-opt-global-shared-view single)
             (ir.compiler-ir-label "body")))
         33]
@@ -84272,7 +84175,7 @@
     level))
 
 (define (opt-lga-find
-  [functions : ir.CompilerIrFunctionSeq]
+  [functions : (& functions ir.CompilerIrFunctionSeq)]
   [name : i64]
   [index : i64]) : i64
   (if (>= index functions.len)
@@ -84286,10 +84189,11 @@
       (opt-lga-find functions name (+ index 1)))))
 
 ;; The surviving parameter count of a function, or -1 when it is not there.
-(define (opt-lga-params [functions : ir.CompilerIrFunctionSeq] [name : i64]) : i64
+(define (opt-lga-params
+  [functions : (& functions ir.CompilerIrFunctionSeq)]
+  [name : i64]) : i64
   (let
-    [index : i64
-      (opt-lga-find (opt.compiler-opt-global-shared-view functions) name 0)]
+    [index : i64 (opt-lga-find functions name 0)]
     (if (< index 0)
       (- 0 1)
       (match (opt.compiler-opt-global-array-element-shared-view
@@ -84300,11 +84204,10 @@
 ;; The first instruction of a function's entry block, or a `Jump` sentinel no
 ;; fixture builds.
 (define (opt-lga-first-instr
-  [functions : ir.CompilerIrFunctionSeq]
+  [functions : (& functions ir.CompilerIrFunctionSeq)]
   [name : i64]) : ir.CompilerIrInstr
   (let
-    [index : i64
-      (opt-lga-find (opt.compiler-opt-global-shared-view functions) name 0)]
+    [index : i64 (opt-lga-find functions name 0)]
     (if (< index 0)
       (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "missing"))
       (match (opt.compiler-opt-global-array-element-shared-view
@@ -84322,7 +84225,7 @@
 
 ;; The global symbol id the first instruction's POINTER operand names, or -1.
 (define (opt-lga-rooted-global
-  [functions : ir.CompilerIrFunctionSeq]
+  [functions : (& functions ir.CompilerIrFunctionSeq)]
   [name : i64]) : i64
   (match (opt-lga-first-instr functions name)
     [(ir.CompilerIrInstr.Load _ src _)
@@ -84336,7 +84239,9 @@
     [_ (- 0 1)]))
 
 ;; The argument count of the first `Call` in a caller's entry block, or -1.
-(define (opt-lga-site-args [functions : ir.CompilerIrFunctionSeq] [name : i64]) : i64
+(define (opt-lga-site-args
+  [functions : (& functions ir.CompilerIrFunctionSeq)]
+  [name : i64]) : i64
   (match (opt-lga-first-instr functions name)
     [(ir.CompilerIrInstr.Call _ _ args _) (opt.opt-arg-global-args-count args)]
     [_ (- 0 1)]))
@@ -84350,111 +84255,33 @@
       ;; --- the admission ---
       ;; every site passes @lga_a: the parameter goes and the dereference is
       ;; rooted at the global instead
-      [(not
-          (=
-            (opt-lga-params
-              (opt.compiler-opt-global-shared-view out)
-              symbols.helper)
-            0))
-        1]
-      [(not
-          (=
-            (opt-lga-rooted-global
-              (opt.compiler-opt-global-shared-view out)
-              symbols.helper)
-            symbols.a))
-        2]
+      [(not (= (opt-lga-params out symbols.helper) 0)) 1]
+      [(not (= (opt-lga-rooted-global out symbols.helper) symbols.a)) 2]
       ;; and both sites drop the argument
-      [(not
-          (=
-            (opt-lga-site-args
-              (opt.compiler-opt-global-shared-view out)
-              symbols.helper-one)
-            0))
-        3]
-      [(not
-          (=
-            (opt-lga-site-args
-              (opt.compiler-opt-global-shared-view out)
-              symbols.helper-two)
-            0))
-        4]
+      [(not (= (opt-lga-site-args out symbols.helper-one) 0)) 3]
+      [(not (= (opt-lga-site-args out symbols.helper-two) 0)) 4]
       ;; a `(&mut g)` helper that writes THROUGH the parameter is admitted, and
       ;; the write lands on the global's own storage
-      [(not
-          (=
-            (opt-lga-params
-              (opt.compiler-opt-global-shared-view out)
-              symbols.mut)
-            0))
-        5]
-      [(not
-          (=
-            (opt-lga-rooted-global
-              (opt.compiler-opt-global-shared-view out)
-              symbols.mut)
-            symbols.c))
-        6]
-      [(not
-          (=
-            (opt-lga-site-args
-              (opt.compiler-opt-global-shared-view out)
-              symbols.mut-caller)
-            0))
-        7]
+      [(not (= (opt-lga-params out symbols.mut) 0)) 5]
+      [(not (= (opt-lga-rooted-global out symbols.mut) symbols.c)) 6]
+      [(not (= (opt-lga-site-args out symbols.mut-caller) 0)) 7]
       ;; --- the refusals, one clause each ---
       ;; two sites disagreeing about the position
-      [(not
-          (=
-            (opt-lga-params
-              (opt.compiler-opt-global-shared-view out)
-              symbols.mixed)
-            1))
-        10]
-      [(not
-          (=
-            (opt-lga-site-args
-              (opt.compiler-opt-global-shared-view out)
-              symbols.mixed-caller)
-            1))
-        11]
+      [(not (= (opt-lga-params out symbols.mixed) 1)) 10]
+      [(not (= (opt-lga-site-args out symbols.mixed-caller) 1)) 11]
       ;; a callee whose address the program takes can be entered without a site
-      [(not
-          (=
-            (opt-lga-params
-              (opt.compiler-opt-global-shared-view out)
-              symbols.taken)
-            1))
-        12]
+      [(not (= (opt-lga-params out symbols.taken) 1)) 12]
       ;; a callee that reaches `(set! lga_b ...)` through a direct callee could
       ;; read a different cell after the rebind than the caller marshalled
-      [(not
-          (=
-            (opt-lga-params
-              (opt.compiler-opt-global-shared-view out)
-              symbols.rebind)
-            1))
-        13]
-      [(not
-          (=
-            (opt-lga-site-args
-              (opt.compiler-opt-global-shared-view out)
-              symbols.rebind-caller)
-            1))
-        14]
+      [(not (= (opt-lga-params out symbols.rebind) 1)) 13]
+      [(not (= (opt-lga-site-args out symbols.rebind-caller) 1)) 14]
       ;; a parameter STORED into memory escapes the positions the storage
       ;; analysis follows
       [(not (= (opt-lga-params out symbols.escape) 1)) 15]
       ;; --- the level gate ---
       ;; every whole-program summary this pass rests on is level-2 only, so
       ;; below it the program comes out untouched
-      [(not
-          (=
-            (opt-lga-params
-              (opt.compiler-opt-global-shared-view level1)
-              symbols.helper)
-            1))
-        20]
+      [(not (= (opt-lga-params level1 symbols.helper) 1)) 20]
       [(not (= (opt-lga-site-args level1 symbols.helper-one) 1)) 21]
       [else 42])))
 

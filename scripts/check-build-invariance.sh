@@ -16,7 +16,6 @@ cd "$ROOT"
 . "$ROOT/scripts/lib-build-invariance-batch.sh"
 BOUNDED_POOL_LABEL=build-invariance
 . "$ROOT/scripts/lib-bounded-pool.sh"
-. "$ROOT/scripts/lib-ci-compiler-artifact.sh"
 
 usage() {
     cat >&2 <<'EOF'
@@ -853,15 +852,28 @@ print_top_chunks() {
         }'
 }
 
+# One digest over the named files and directory trees, so a source or compiler
+# change while the comparison runs fails the gate instead of passing it.
+build_invariance_digest() {
+    for _digest_input in "$@"; do
+        [ -e "$_digest_input" ] || {
+            echo "[build-invariance] digest input is missing: $_digest_input" >&2
+            return 1
+        }
+    done
+    find "$@" -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum
+}
+
 echo "[build-invariance] incoming opt2-built stage4 compiler: $COMPILER"
-SOURCE_INPUTS=src,stdlib,tests,scripts/check-build-invariance.sh,scripts/lib-build-invariance-batch.sh,scripts/lib-bounded-pool.sh,scripts/lib-native-link.sh
-SOURCE_DIGEST=$(ci_compiler_artifact_source_set_digest "$ROOT" "$SOURCE_INPUTS")
-COMPILER_DIGEST=$(ci_compiler_artifact_sha256_file "$COMPILER")
+SOURCE_INPUTS='src stdlib tests scripts/check-build-invariance.sh scripts/lib-build-invariance-batch.sh scripts/lib-bounded-pool.sh scripts/lib-native-link.sh'
+# shellcheck disable=SC2086 # SOURCE_INPUTS is a fixed list of repository paths.
+SOURCE_DIGEST=$(build_invariance_digest $SOURCE_INPUTS)
+COMPILER_DIGEST=$(build_invariance_digest "$COMPILER")
 construction_start=$(date +%s)
 build_opt1_compiler
 OPT1_COMPILER="$WORKDIR/opt1/opt1$NL_BIN_EXT"
 OPT2_STAGE4="$COMPILER"
-OPT1_DIGEST=$(ci_compiler_artifact_sha256_file "$OPT1_COMPILER")
+OPT1_DIGEST=$(build_invariance_digest "$OPT1_COMPILER")
 construction_end=$(date +%s)
 construction_seconds=$((construction_end - construction_start))
 echo "[build-invariance] compiler construction: ${construction_seconds}s"
@@ -905,9 +917,10 @@ sentinel_end=$(date +%s)
 corpus_end=$(date +%s)
 corpus_seconds=$((corpus_end - corpus_start))
 
-if [ "$SOURCE_DIGEST" != "$(ci_compiler_artifact_source_set_digest "$ROOT" "$SOURCE_INPUTS")" ] ||
-    [ "$COMPILER_DIGEST" != "$(ci_compiler_artifact_sha256_file "$COMPILER")" ] ||
-    [ "$OPT1_DIGEST" != "$(ci_compiler_artifact_sha256_file "$OPT1_COMPILER")" ]; then
+# shellcheck disable=SC2086 # SOURCE_INPUTS is a fixed list of repository paths.
+if [ "$SOURCE_DIGEST" != "$(build_invariance_digest $SOURCE_INPUTS)" ] ||
+    [ "$COMPILER_DIGEST" != "$(build_invariance_digest "$COMPILER")" ] ||
+    [ "$OPT1_DIGEST" != "$(build_invariance_digest "$OPT1_COMPILER")" ]; then
     echo "[build-invariance] source or compiler changed during comparison" >&2
     exit 1
 fi

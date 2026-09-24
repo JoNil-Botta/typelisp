@@ -1455,8 +1455,8 @@ assert_nonempty "$WORKDIR/lint-parse-error-check.stderr"
 echo "[host-action-cli] opt2 build-invariance reference handoff"
 assert_contains scripts/ci-verify.sh "TYPELISP_BUILD_INVARIANCE_OPT1_REFERENCE_PATH_FILE"
 assert_contains scripts/ci-verify.sh "TYPELISP_OPT2_CLI_REFERENCE_ASM"
-handoff_build_line=$(grep -nF 'scripts/check-build-invariance.sh' scripts/ci-verify.sh | head -n 1 | cut -d: -f1)
-handoff_opt2_line=$(grep -nF 'scripts/check-opt2-cli-regression.sh' scripts/ci-verify.sh | head -n 1 | cut -d: -f1)
+handoff_build_line=$(awk -F '\t' '$1 == "stage2-opt1-opt2-build-invariance" { print NR; exit }' scripts/ci-gates.tsv)
+handoff_opt2_line=$(awk -F '\t' '$1 == "stage2-opt2-built-cli-compile-cross-fixpoint-regression" { print NR; exit }' scripts/ci-gates.tsv)
 if [ -z "$handoff_build_line" ] || [ -z "$handoff_opt2_line" ] || [ "$handoff_build_line" -ge "$handoff_opt2_line" ]; then
     fail "Linux CI must run build-invariance before the opt2 regression handoff"
 fi

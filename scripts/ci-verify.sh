@@ -3,26 +3,27 @@ set -eu
 
 # ci-verify.sh - the repository's CI verification gate.
 #
-# Fetches the published stage0 artifact when TYPELISP_BIN is unset. The seed
-# performs the single compiler build of the flow: the stage1->stage2->stage3
-# bootstrap fixpoint over src/main.tl, with a stage4 fallback when needed. Every
-# remaining gate then runs on the converged compiler (the branch-built full CLI).
+# Runs the gates of scripts/ci-gates.tsv in table order. Fetches the published
+# stage0 artifact when TYPELISP_BIN is unset. The seed performs the single
+# compiler build of the flow: the stage1->stage2->stage3 bootstrap fixpoint over
+# src/main.tl, with a stage4 fallback when needed. Every remaining gate then
+# runs on the converged compiler (the branch-built full CLI).
 #
-# --gates runs a dependency-closed subset of the same ledger: the named gates
-# plus every gate their needs reach, in ledger order, each with the setup it
-# owns. A subset is a partial result, never a verification success.
+# --gates runs a dependency-closed subset of the same table: the named gates
+# plus every gate their needs reach, in table order. A subset is a partial
+# result, never a verification success.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
-
-. "$ROOT/scripts/lib-ci-gate-ledger.sh"
+GATES_FILE="$ROOT/scripts/ci-gates.tsv"
 
 usage() {
     cat >&2 <<'EOF'
 usage: scripts/ci-verify.sh [--gates ID[,ID...]]
        scripts/ci-verify.sh --list-gates linux|windows [--gates ID[,ID...]]
 
-Runs the repository's CI verification gate.
+Runs the repository's CI verification gate: every gate of scripts/ci-gates.tsv
+that applies to this host, in table order.
 If TYPELISP_BIN is unset, downloads stage0-latest with scripts/fetch-stage0.sh.
 TYPELISP_BIN is the seed compiler and performs the single compiler build of
 the flow: the bootstrap stage1->stage2->stage3 fixpoint over src/main.tl, with
@@ -30,118 +31,145 @@ a stage4 fallback when needed. Every remaining gate runs on the converged
 bootstrapped compiler.
 
 --gates runs only the named host gates plus the closure of their needs, in
-ledger order. Unless that closure is the whole host inventory the result is
+table order. Unless that closure is the whole host inventory the result is
 partial: no verification-complete timing row and no success message.
 
---list-gates prints the validated required host inventory, or with --gates
-the dependency-closed selection, without running CI.
+--list-gates prints the host inventory, or with --gates the dependency-closed
+selection, without running CI.
 EOF
 }
 
-# Arguments and listing are read-only and must be handled before any runtime
-# initialization.
-CI_VERIFY_GATES=
-case "${1:-}" in
-    -h | --help)
-        usage
-        exit 0
-        ;;
-    --list-gates)
-        if [ "$#" -ne 2 ] && { [ "$#" -ne 4 ] || [ "$3" != --gates ]; }; then
-            usage
-            exit 2
-        fi
-        ci_gate_ledger_load "$ROOT/scripts/ci-gates.tsv" "$2"
-        if [ "$#" -eq 4 ]; then
-            ci_gate_ledger_select "$4"
-        fi
-        printf 'id\thosts\tlabel\tneeds\n%s\n' "$CI_GATE_LEDGER_REMAINING"
-        exit 0
-        ;;
-    --gates)
-        if [ "$#" -ne 2 ] || [ -z "$2" ]; then
-            usage
-            exit 2
-        fi
-        CI_VERIFY_GATES=$2
-        ;;
-    *)
-        if [ "$#" -ne 0 ]; then
-            usage
-            exit 2
-        fi
-        ;;
-esac
+# Agent/contributor note: do not make CI pass by skipping gates when a PR needs
+# a new compiler/runtime capability. Split that work instead: first land the
+# compiler/runtime support, then land a follow-up PR that uses the new feature.
+# A short green run caused by skipped gates is a CI bug, not a successful check.
+#
+# NO-RETRY POLICY (#1204): the verify-* gates run each `typelisp` invocation
+# exactly once. A crash (segfault / Windows access violation / illegal
+# instruction) is a real compiler/runtime bug, NOT transient infra flake — fix
+# the bug. Do NOT re-introduce a retry loop or a `VERIFY_*_ATTEMPTS`-style knob
+# to retry crashing invocations: that only hides the bug behind a green run, as
+# the old #1204 retry masking did for months. (The release-republish retry in
+# fetch-stage0.sh is unrelated — it rides out a genuinely transient mutable-asset
+# race, not a compiler crash.)
 
-. "$ROOT/scripts/lib-linux-entry.sh"
-. "$ROOT/scripts/lib-ci-timing.sh"
-. "$ROOT/scripts/lib-benchmark-ci-cases.sh"
-. "$ROOT/scripts/lib-ci-compiler-artifact.sh"
+# ci_gates_plan HOST [ID,...]
+#   Validate the whole table, then print the HOST rows (id, hosts, label,
+#   needs projected onto HOST, compiler, command), or only the requested gates
+#   plus the closure of their needs, in table order.
+ci_gates_plan() {
+    awk -F '\t' -v host="$1" -v request="${2:-}" '
+        function fail(message) {
+            print "ci-gates.tsv: " message > "/dev/stderr"
+            invalid = 1
+            exit 1
+        }
+        { sub(/\r$/, "") }
+        /^#/ { next }
+        !header {
+            if ($0 != "id\thosts\tlabel\tneeds\tcompiler\tcommand")
+                fail("line " NR ": expected the id/hosts/label/needs/compiler/command header")
+            header = 1
+            next
+        }
+        {
+            if (NF != 6 || $1 !~ /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/)
+                fail("line " NR ": expected six fields and a lowercase kebab-case ID")
+            if ($2 != "all" && $2 != "linux" && $2 != "windows") fail("line " NR ": invalid hosts: " $2)
+            if ($3 == "") fail("line " NR ": empty label")
+            if ($5 != "-" && $5 != "stage2" && $5 != "profile") fail("line " NR ": invalid compiler: " $5)
+            if ($6 == "") fail("line " NR ": empty command")
+            if ($1 in gate_hosts) fail("line " NR ": duplicate gate ID: " $1)
+            gate_hosts[$1] = $2
+            # A need names an earlier gate that runs wherever this one does,
+            # optionally on one host only, so table order is a topological order.
+            projected = ""
+            if ($4 != "-") {
+                count = split($4, list, ",")
+                for (n = 1; n <= count; n++) {
+                    need = list[n]
+                    need_host = ""
+                    at = index(need, "@")
+                    if (at > 0) {
+                        need_host = substr(need, at + 1)
+                        need = substr(need, 1, at - 1)
+                        if (need_host != "linux" && need_host != "windows") fail("line " NR ": invalid need host: " list[n])
+                    }
+                    if (!(need in gate_hosts) || need == $1) fail("line " NR ": " $1 " needs an unknown or later gate: " need)
+                    covered = (need_host != "" ? need_host : $2)
+                    if (gate_hosts[need] != "all" && gate_hosts[need] != covered)
+                        fail("line " NR ": " $1 " needs a gate that does not run on its hosts: " need)
+                    if (need_host == "" || need_host == host) projected = (projected == "" ? need : projected "," need)
+                }
+            }
+            if ($2 != "all" && $2 != host) next
+            rows++
+            row[rows] = $1 "\t" $2 "\t" $3 "\t" (projected == "" ? "-" : projected) "\t" $5 "\t" $6
+            needs[rows] = projected
+            position[$1] = rows
+        }
+        END {
+            if (invalid) exit 1
+            if (!rows) fail("no gates for " host)
+            if (request == "") {
+                for (k = 1; k <= rows; k++) print row[k]
+                exit 0
+            }
+            count = split(request, requested, ",")
+            for (r = 1; r <= count; r++) {
+                id = requested[r]
+                if (id == "") fail("empty gate ID in selection: " request)
+                if (seen[id]++) fail("duplicate gate in selection: " id)
+                if (!(id in position)) {
+                    if (id in gate_hosts) fail("gate does not run on " host " (" gate_hosts[id] "): " id)
+                    fail("unknown gate in selection: " id)
+                }
+                selected[position[id]] = 1
+            }
+            # Needs name earlier gates only, so one reverse pass is a closure.
+            for (k = rows; k >= 1; k--) {
+                if (!selected[k] || needs[k] == "") continue
+                count = split(needs[k], list, ",")
+                for (n = 1; n <= count; n++) selected[position[list[n]]] = 1
+            }
+            for (k = 1; k <= rows; k++) if (selected[k]) print row[k]
+        }
+    ' "$GATES_FILE"
+}
 
-HOST_OS=linux
-case "$(uname -s)" in
-    Linux*) HOST_OS=linux ;;
-    MINGW* | MSYS* | CYGWIN*) HOST_OS=windows ;;
-    *)
-        echo "CI verification is unsupported on this host: $(uname -s)" >&2
-        exit 1
-        ;;
-esac
+# Every command must name something that exists: the scripts/ files it runs
+# and the gate_* functions defined in this file.
+ci_gates_check_commands() {
+    _ci_missing=0
+    for _ci_word in $(awk -F '\t' '!/^#/ && NF == 6 && $1 != "id" { print $6 }' "$GATES_FILE" |
+        tr -d '\r"' | tr ' ' '\n' |
+        grep -E '^(gate_[a-z0-9_]+|scripts/[A-Za-z0-9._/-]+)$' | sort -u); do
+        case "$_ci_word" in
+            gate_*) command -v "$_ci_word" >/dev/null 2>&1 ;;
+            *) [ -f "$ROOT/$_ci_word" ] ;;
+        esac || {
+            echo "ci-gates.tsv: command names a missing script or gate function: $_ci_word" >&2
+            _ci_missing=1
+        }
+    done
+    return "$_ci_missing"
+}
 
-ci_gate_ledger_load "$ROOT/scripts/ci-gates.tsv" "$HOST_OS"
-if [ -n "$CI_VERIFY_GATES" ]; then
-    ci_gate_ledger_select "$CI_VERIFY_GATES"
-    if [ "$CI_GATE_LEDGER_COMPLETE" != 1 ]; then
-        echo "[ci-verify] partial run: $CI_GATE_LEDGER_SELECTED_COUNT of $CI_GATE_LEDGER_HOST_COUNT $HOST_OS gates"
-        printf '%s\n' "$CI_GATE_LEDGER_REMAINING" | awk -F '\t' -v request=",$CI_VERIFY_GATES," '
-            {print "[ci-verify]   " (index(request, "," $1 ",") ? "requested " : "needed    ") $1}'
-    else
-        echo "[ci-verify] --gates $CI_VERIFY_GATES closes over the complete $HOST_OS inventory"
-    fi
-fi
+ci_verify_error() {
+    echo "[ci-verify] ERROR: $*" >&2
+}
 
-# Same-run compiler reuse is fail-closed.  The token prevents a prior run's
-# path/metadata pair from being accepted even when it happens to name an
-# identical file. Every CI run owns a paired trace; the journal omits the token
-# and stays diffable. Standalone gates may still run without either setting.
-TYPELISP_CI_COMPILER_ARTIFACT_RUN_TOKEN="${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-$HOST_OS-$$"
-TYPELISP_CI_COMPILER_ARTIFACT_TRACE="${TYPELISP_CI_COMPILER_ARTIFACT_TRACE:-$ROOT/target/ci-compiler-artifacts/trace.tsv}"
-case "$TYPELISP_CI_COMPILER_ARTIFACT_TRACE" in
-    /* | [A-Za-z]:[/\\]*) ;;
-    *) TYPELISP_CI_COMPILER_ARTIFACT_TRACE="$ROOT/$TYPELISP_CI_COMPILER_ARTIFACT_TRACE" ;;
-esac
-export TYPELISP_CI_COMPILER_ARTIFACT_RUN_TOKEN TYPELISP_CI_COMPILER_ARTIFACT_TRACE
-ci_compiler_artifact_trace_init "$TYPELISP_CI_COMPILER_ARTIFACT_TRACE"
-
-BENCHMARK_CORRECTNESS_CASES=
-OPT2_CORRECTNESS_CASES=
-HEAVY_INSTRUCTION_COUNT_BENCHMARKS=
-if [ "$HOST_OS" = linux ]; then
-    BENCHMARK_CORRECTNESS_CASES=$(benchmark_ci_case_csv "$ROOT" benchmark)
-    OPT2_CORRECTNESS_CASES=$(benchmark_ci_case_csv "$ROOT" optimization-opt2)
-    HEAVY_INSTRUCTION_COUNT_BENCHMARKS=$(benchmark_ci_case_csv "$ROOT" instruction-heavy)
-fi
-
-if [ "${TYPELISP_CI_TIMING:-0}" = 1 ]; then
-    ci_timing_init "$ROOT/target/ci-timing/$HOST_OS.tsv" "$HOST_OS"
-    ci_timing_set_now_ms
-    CI_VERIFY_STARTED_MS=$CI_TIMING_NOW_MS
-    trap 'ci_timing_summary "$TYPELISP_CI_TIMING_FILE" 10' EXIT
-fi
-
-# Only the bootstrap consumes the seed; a selection without it needs none.
-SEED_TYPELISP_BIN=
-if ci_gate_selected bootstrap-fixpoint; then
-    if [ -z "${TYPELISP_BIN:-}" ]; then
-        scripts/fetch-stage0.sh
-        SEED_TYPELISP_BIN="$ROOT/target/stage0/typelisp"
-        if [ "$HOST_OS" = windows ]; then
-            SEED_TYPELISP_BIN="$SEED_TYPELISP_BIN.exe"
-        fi
-    else
-        SEED_TYPELISP_BIN=$TYPELISP_BIN
-    fi
-fi
+required_gate_unavailable() {
+    gate=$1
+    shift
+    echo >&2
+    ci_verify_error "CI must run every required gate; skipped gates hide compiler regressions."
+    ci_verify_error "unable to run required gate: $gate"
+    for detail in "$@"; do
+        echo "[ci-verify]   $detail" >&2
+    done
+    exit 1
+}
 
 ensure_executable() {
     label=$1
@@ -159,233 +187,57 @@ ensure_executable() {
     fi
 }
 
-if [ -n "$SEED_TYPELISP_BIN" ]; then
-    ensure_executable "seed" "$SEED_TYPELISP_BIN"
-fi
-
-# Produced compilers and artifact paths are named only by gates whose closure
-# contains their producer. Until that producer runs they name a path that cannot
-# exist, so a missing need fails its consumer instead of falling back to some
-# other compiler.
-CI_VERIFY_UNPRODUCED="$ROOT/target/ci-verify-unproduced"
-rm -rf "$CI_VERIFY_UNPRODUCED"
-STAGE1_BIN="$CI_VERIFY_UNPRODUCED/previous-stage-compiler"
-STAGE2_BIN="$CI_VERIFY_UNPRODUCED/converged-compiler"
-COMPILE_PROFILE_BIN="$CI_VERIFY_UNPRODUCED/compile-profile-compiler"
-OPT2_REFERENCE_ASM="$CI_VERIFY_UNPRODUCED/build-invariance-opt1-reference.s"
-CI_ARTIFACT_TARGET="${HOST_OS}-x86_64"
-
-# A gate sees exactly one compiler as TYPELISP_BIN: the one its
-# run_with_compiler binding names, or, for run_gate, a path that cannot exist,
-# so a gate that uses a compiler without naming one fails instead of falling
-# back to the fetched seed. Nothing leaks into later gates, so a gate's
-# environment does not depend on which gates ran before it.
-CI_VERIFY_NO_COMPILER="$CI_VERIFY_UNPRODUCED/gate-names-no-compiler"
-run_gate() {
-    gate_compiler=${CI_VERIFY_GATE_COMPILER:-}
-    CI_VERIFY_GATE_COMPILER=
-    if ci_gate_ledger_unselected "$1"; then
-        return 0
+# Read the one path a producer gate wrote to PATH_FILE into CI_VERIFY_HANDOFF.
+read_handoff() {
+    if [ ! -s "$2" ]; then
+        ci_verify_error "$1 did not write its handoff path: $2"
+        return 1
     fi
-    ci_gate_ledger_enter "$1" || return $?
-    label=$CI_GATE_LEDGER_LABEL
-    shift
-    previous_timing_gate=${TYPELISP_CI_TIMING_GATE:-}
-    TYPELISP_CI_TIMING_GATE=$label
-    export TYPELISP_CI_TIMING_GATE
-    if ci_timing_enabled; then
-        ci_timing_set_now_ms
-        start=$CI_TIMING_NOW_MS
-    else
-        start=$(date +%s)
-    fi
-    case $- in
-        *e*) had_errexit=1 ;;
-        *) had_errexit=0 ;;
-    esac
-    echo
-    echo "[ci-verify] START $label"
-    set +e
-    if [ -n "$gate_compiler" ] && [ ! -x "$gate_compiler" ]; then
-        echo "[ci-verify] ERROR: $label compiler was not produced by this run: $gate_compiler" >&2
-        status=126
-    elif [ -n "$gate_compiler" ]; then
-        TYPELISP_BIN=$gate_compiler "$@"
-        status=$?
-    else
-        TYPELISP_BIN=${CI_VERIFY_NO_COMPILER:?} "$@"
-        status=$?
-    fi
-    if [ "$had_errexit" -eq 1 ]; then
-        set -e
-    fi
-    if ci_timing_enabled; then
-        ci_timing_set_now_ms
-        end=$CI_TIMING_NOW_MS
-        elapsed_ms=$((end - start))
-        elapsed=$((elapsed_ms / 1000))
-        ci_timing_record_elapsed all gate "$elapsed_ms" "$status"
-    else
-        end=$(date +%s)
-        elapsed=$((end - start))
-    fi
-    TYPELISP_CI_TIMING_GATE=$previous_timing_gate
-    export TYPELISP_CI_TIMING_GATE
-    if [ "$status" -eq 0 ]; then
-        echo "[ci-verify] PASS $label (${elapsed}s)"
-    else
-        echo "[ci-verify] FAIL $label (${elapsed}s, exit $status)" >&2
-    fi
-    ci_gate_ledger_leave "$status" || return $?
-    return "$status"
+    CI_VERIFY_HANDOFF=$(sed -n '1p' "$2")
 }
 
-run_with_compiler() {
-    CI_VERIFY_GATE_COMPILER=$1
-    shift
-    run_gate "$@"
+# Gates whose setup or handoff does not fit one command line. A gate runs with
+# errexit off, so each step checks its own status.
+
+# The single compiler build of the flow: the seed bootstraps src/main.tl through
+# successive stages at opt2 until the compiler's own code converges (normally
+# stage2 == stage3, with a stage3 == stage4 fallback). Every later gate runs on
+# the resulting converged compiler - the branch-built full CLI, handed over via
+# the compatibility-named stage2 path file - so the artifact under test is the
+# one the bootstrap just produced. Do not add per-gate compiler rebuilds.
+gate_bootstrap_fixpoint() {
+    _ci_stage1_path_file="$ROOT/target/ci-verify-stage1.path"
+    _ci_stage2_path_file="$ROOT/target/ci-verify-stage2.path"
+    rm -f "$_ci_stage1_path_file" "$_ci_stage2_path_file"
+    TYPELISP_BOOTSTRAP_STAGE1_PATH_FILE=$_ci_stage1_path_file \
+        TYPELISP_BOOTSTRAP_STAGE2_PATH_FILE=$_ci_stage2_path_file \
+        scripts/check-bootstrap-fixpoint.sh "$SEED_TYPELISP_BIN" || return $?
+    # The cross-mode differential also runs the previous-stage compiler.
+    read_handoff "bootstrap previous-stage compiler capture" "$_ci_stage1_path_file" || return 1
+    STAGE1_BIN=$CI_VERIFY_HANDOFF
+    ensure_executable "previous-stage" "$STAGE1_BIN"
+    read_handoff "bootstrap fixpoint compiler capture" "$_ci_stage2_path_file" || return 1
+    STAGE2_BIN=$CI_VERIFY_HANDOFF
+    ensure_executable "bootstrapped compiler" "$STAGE2_BIN"
+    echo "[ci-verify] every gate runs the converged bootstrapped compiler: $STAGE2_BIN"
+
+    # Fail-closed run-capability probe: stage2 must compile -> assemble -> link ->
+    # RUN a native program before the run-assert tiers may execute. A failed
+    # probe is a CI failure, never a reason to omit gates.
+    if [ "$HOST_OS" = linux ]; then
+        if ! stage2_safety_corpus_supported "$STAGE2_BIN"; then
+            required_gate_unavailable "Linux stage2 compile->as->ld->run probe" \
+                "safety, integration, examples, SPMD, and stdlib run-assert tiers depend on this probe"
+        fi
+        echo "[ci-verify] stage2 compile->as->ld->run capability confirmed"
+    else
+        if ! stage2_can_compile_native_windows "$STAGE2_BIN"; then
+            required_gate_unavailable "Windows stage2 compile->clang->lld-link->run probe" \
+                "safety, integration, and examples run-assert tiers depend on this probe"
+        fi
+        echo "[ci-verify] stage2 compile->clang->lld-link->run capability confirmed"
+    fi
 }
-
-required_gate_unavailable() {
-    gate=$1
-    shift
-    echo >&2
-    echo "[ci-verify] ERROR: CI must run every required gate; skipped gates hide compiler regressions." >&2
-    echo "[ci-verify] ERROR: unable to run required gate: $gate" >&2
-    for detail in "$@"; do
-        echo "[ci-verify]   $detail" >&2
-    done
-    exit 1
-}
-
-# Agent/contributor note: do not make CI pass by skipping gates when a PR needs
-# a new compiler/runtime capability. Split that work instead: first land the
-# compiler/runtime support, then land a follow-up PR that uses the new feature.
-# A short green run caused by skipped gates is a CI bug, not a successful check.
-#
-# NO-RETRY POLICY (#1204): the verify-* gates run each `typelisp` invocation
-# exactly once. A crash (segfault / Windows access violation / illegal
-# instruction) is a real compiler/runtime bug, NOT transient infra flake — fix
-# the bug. Do NOT re-introduce a retry loop or a `VERIFY_*_ATTEMPTS`-style knob
-# to retry crashing invocations: that only hides the bug behind a green run, as
-# the old #1204 retry masking did for months. (The release-republish retry in
-# fetch-stage0.sh is unrelated — it rides out a genuinely transient mutable-asset
-# race, not a compiler crash.)
-
-# Validate the complete CLI gate inventory before the bootstrap and all of its
-# expensive owners. --self-test exercises fail-closed diagnostics, then checks
-# production annotations, counts, duplicates, and delegated fixture counts.
-run_gate cli-gate-inventory-and-ownership scripts/check-cli-gate-coverage.sh --self-test
-run_gate ci-gate-ledger-self-tests sh scripts/test-ci-gate-ledger.sh
-run_gate x64-executable-template-registry-coverage scripts/check-x64-executable-template-registry.sh
-
-# Harness-only checks run before the expensive bootstrap. Source-owned payload
-# verification uses the branch-built compiler because compression is part of
-# the new loader surface.
-run_gate ci-timing-helper-self-tests scripts/verify-ci-timing.sh
-run_gate work-queue-fetch-boundary-self-tests sh scripts/test-fetch-work-queue.sh
-run_gate \
-    cross-mode-differential-oracle-self-tests \
-    scripts/verify-cross-mode-differential.sh \
-    --self-test
-if [ "$HOST_OS" = linux ]; then
-    run_gate \
-        linux-resident-memory-limit-helper-self-tests \
-        scripts/verify-linux-memory-limit.sh
-else
-    run_gate \
-        windows-job-object-memory-limit-helper-self-tests \
-        powershell.exe -NoProfile -ExecutionPolicy Bypass \
-        -File scripts/verify-windows-memory-limit.ps1
-fi
-run_gate \
-    embedded-stdlib-tlci-resource-verifier-self-tests \
-    scripts/verify-embedded-stdlib-tlci-resources.sh --self-test
-# The stage0, fixpoint, and embedded-image builds all stamp the HEAD commit into
-# their output. CI only ever runs the success path, so the diagnostic for a
-# checkout git cannot resolve has no other coverage.
-run_gate build-provenance-helper-self-tests scripts/verify-build-provenance.sh
-# The batch plan helper serves only the Linux build-invariance gate, and its
-# negative cases need real symbolic links, which Git Bash cannot create.
-if [ "$HOST_OS" = linux ]; then
-    run_gate build-invariance-batch-reuse-self-tests scripts/verify-build-invariance-batch.sh
-fi
-run_gate \
-    ci-compiler-artifact-provenance-self-tests \
-    scripts/verify-ci-compiler-artifacts.sh
-run_gate ci-compiler-artifact-startup-self-tests sh scripts/test-ci-artifact-run-setup.sh
-# Keep current-mangling module/clone attribution pinned without making code
-# size itself a CI budget. Linked-object measurement remains an opt-in report.
-run_gate \
-    selfhost-linked-size-attribution-parser-self-tests \
-    scripts/analyze-selfhost-build-asm-size.sh \
-    --self-test
-# Help text lives in src/main.tl and option parsing in src/<name>_cli_core.tl,
-# so a flag can be added without the text moving. The existing CLI gates assert
-# that help output exists, not that it matches what the parser accepts.
-run_gate \
-    cli-help-surface \
-    scripts/check-cli-help-surface.sh \
-    --self-test
-run_gate \
-    ci-timing-budget-self-tests \
-    scripts/check-ci-timing-budgets.sh \
-    --self-test
-run_gate \
-    tlci-native-route-size-ratchet-self-tests \
-    scripts/check-tlci-native-route-size.sh \
-    --self-test
-# A verify-*/check-* script that nothing invokes fails nothing. Two ISPC
-# correctness gates survived that way for months (#5690); this sweep makes the
-# next one a red CI run instead of silent dead weight.
-run_gate \
-    gate-reachability \
-    scripts/check-gate-reachability.sh \
-    --self-test
-run_gate \
-    zero-cons-structural-classifier-self-tests \
-    scripts/check-zero-cons.sh \
-    --self-test
-run_gate \
-    zero-cons-fixture-and-embedded-source-invariant \
-    scripts/check-zero-cons.sh \
-    --fixtures
-run_gate \
-    spmd-mode-instruction-count-harness-self-tests \
-    scripts/measure-spmd-mode-instruction-counts.sh \
-    --self-test
-run_gate \
-    c-measured-region-instruction-harness-self-tests \
-    scripts/measure-instruction-counts.sh \
-    --self-test \
-    --output target/instruction-count-c-region-self-test
-run_gate \
-    instruction-count-comparison-self-tests \
-    scripts/check-instruction-counts.sh \
-    --self-test
-run_gate \
-    compiler-scaling-comparison-self-tests \
-    scripts/check-compiler-scaling.sh \
-    --self-test
-run_gate \
-    cli-tools-benchmark-repetition-self-test \
-    sh \
-    scripts/benchmark-cli-tools.sh \
-    --self-test
-run_gate \
-    stage0-release-publication-verifier-self-tests \
-    scripts/verify-stage0-release.sh \
-    --self-test
-run_gate \
-    stage0-latest-staged-publication-self-tests \
-    scripts/publish-stage0-latest.sh \
-    --self-test
-run_gate \
-    stage0-publication-workflow-policy \
-    scripts/verify-stage0-workflow-policy.sh
-run_gate \
-    docs-publication-workflow-policy \
-    scripts/verify-docs-workflow-policy.sh
 
 stage2_safety_corpus_supported() {
     compiler=$1
@@ -420,10 +272,8 @@ stage2_safety_corpus_supported() {
         return 1
     fi
 
-    set +e
     "$bin" > "$probe_dir/run.stdout" 2> "$probe_dir/run.stderr"
     probe_status=$?
-    set -e
     if [ "$probe_status" -ne 135 ]; then
         echo "[ci-verify] stage2 safety probe expected guarded div-zero exit 135, got $probe_status"
         sed 's/^/  /' "$probe_dir/run.stdout" >&2 || true
@@ -473,10 +323,8 @@ stage2_can_compile_native_windows() {
         sed 's/^/  /' "$probe_dir/link.out" >&2 || true
         return 1
     fi
-    set +e
     "$bin" < /dev/null > "$probe_dir/run.out" 2>&1
     probe_status=$?
-    set -e
     if [ "$probe_status" -ne 42 ]; then
         echo "[ci-verify] windows stage2 compile-native probe expected exit 42, got $probe_status"
         return 1
@@ -484,451 +332,259 @@ stage2_can_compile_native_windows() {
     return 0
 }
 
-echo "[ci-verify] host=$HOST_OS seed=${SEED_TYPELISP_BIN:-<unused by this selection>}"
-
-run_gate bootstrap-adaptive-control-flow scripts/verify-bootstrap-fixpoint-control.sh
-# The single compiler build of the flow: the seed bootstraps src/main.tl through
-# successive stages at opt2 until the compiler's own code converges (normally
-# stage2 == stage3, with a stage3 == stage4 fallback). Every gate below runs on
-# the resulting converged compiler -
-# the branch-built full CLI, handed over via the compatibility-named stage2 path
-# file - so the artifact under test is the one the bootstrap just produced. Do
-# not add per-gate compiler rebuilds here.
-# The capture, provenance handoff and run-capability probe below belong to
-# this gate and run exactly when it does.
-if ci_gate_selected bootstrap-fixpoint; then
-    STAGE1_PATH_FILE="$ROOT/target/ci-verify-stage1.path"
-    STAGE2_PATH_FILE="$ROOT/target/ci-verify-stage2.path"
-    STAGE2_METADATA_FILE="$ROOT/target/ci-verify-stage2.meta"
-    rm -f "$STAGE1_PATH_FILE" "$STAGE2_PATH_FILE" "$STAGE2_METADATA_FILE"
-    TYPELISP_BOOTSTRAP_STAGE1_PATH_FILE=$STAGE1_PATH_FILE
-    TYPELISP_BOOTSTRAP_STAGE2_PATH_FILE=$STAGE2_PATH_FILE
-    export TYPELISP_BOOTSTRAP_STAGE1_PATH_FILE TYPELISP_BOOTSTRAP_STAGE2_PATH_FILE
-    run_gate bootstrap-fixpoint scripts/check-bootstrap-fixpoint.sh "$SEED_TYPELISP_BIN"
-    unset TYPELISP_BOOTSTRAP_STAGE1_PATH_FILE TYPELISP_BOOTSTRAP_STAGE2_PATH_FILE
-    if [ ! -s "$STAGE1_PATH_FILE" ]; then
-        required_gate_unavailable "bootstrap previous-stage compiler capture" \
-            "bootstrap did not persist the previous compiler path used by the cross-mode differential"
+# Linux build-invariance publishes its validated stage4 src/main @ opt1
+# assembly; the opt2 gate reuses it as its reference instead of compiling it
+# again. Windows has no build-invariance gate, so the opt2 gate retains its
+# standalone reference compile there.
+gate_build_invariance() {
+    _ci_reference_path_file="$ROOT/target/ci-verify-opt2-reference.path"
+    rm -f "$_ci_reference_path_file"
+    TYPELISP_BUILD_INVARIANCE_OPT1_REFERENCE_PATH_FILE=$_ci_reference_path_file \
+        scripts/check-build-invariance.sh || return $?
+    read_handoff "build-invariance opt1 reference handoff" "$_ci_reference_path_file" || return 1
+    OPT2_REFERENCE_ASM=$CI_VERIFY_HANDOFF
+    if [ ! -s "$OPT2_REFERENCE_ASM" ]; then
+        ci_verify_error "build-invariance published a missing or empty assembly: $OPT2_REFERENCE_ASM"
+        return 1
     fi
-    STAGE1_BIN=$(sed -n '1p' "$STAGE1_PATH_FILE")
-    ensure_executable "previous-stage" "$STAGE1_BIN"
-    if [ ! -s "$STAGE2_PATH_FILE" ]; then
-        required_gate_unavailable "bootstrap fixpoint compiler capture" \
-            "bootstrap did not persist a converged compiler path for the downstream gates"
-    fi
-    STAGE2_BIN=$(sed -n '1p' "$STAGE2_PATH_FILE")
-    ensure_executable "bootstrapped compiler" "$STAGE2_BIN"
-    CI_ARTIFACT_BOOTSTRAP_SOURCES='src,stdlib,typelisp.pkg,tools/embedded-stdlib-tlci,scripts/check-bootstrap-fixpoint.sh,scripts/lib-native-link.sh,scripts/lib-bootstrap-fixpoint-control.sh,scripts/build-embedded-stdlib-tlci.sh'
-    CI_ARTIFACT_BOOTSTRAP_CFG='compiler-build-identity,embedded-stdlib-tlci,host-defaults'
-    CI_ARTIFACT_BOOTSTRAP_ENV='TYPELISP_BOOTSTRAP_CFG=<unset>,TYPELISP_BOOTSTRAP_TLCI_MUTATION=0,TYPELISP_BOOTSTRAP_SKIP_CLI_SMOKE=0'
-    CI_ARTIFACT_BOOTSTRAP_ARGV='scripts/check-bootstrap-fixpoint.sh {producer}'
-    ci_compiler_artifact_publish \
-        "$ROOT" "$STAGE2_METADATA_FILE" "$STAGE2_PATH_FILE" \
-        bootstrap-converged "$SEED_TYPELISP_BIN" "$CI_ARTIFACT_TARGET" \
-        "$CI_ARTIFACT_BOOTSTRAP_CFG" 2 none "$CI_ARTIFACT_BOOTSTRAP_SOURCES" \
-        'stdlib,src' "$CI_ARTIFACT_BOOTSTRAP_ENV" compiler-binary \
-        "$STAGE2_BIN" "$CI_ARTIFACT_BOOTSTRAP_ARGV"
-    ci_compiler_artifact_require \
-        "$ROOT" "$STAGE2_METADATA_FILE" "$STAGE2_PATH_FILE" \
-        bootstrap-converged bootstrap-downstream \
-        "$SEED_TYPELISP_BIN" "$CI_ARTIFACT_TARGET" \
-        "$CI_ARTIFACT_BOOTSTRAP_CFG" 2 none "$CI_ARTIFACT_BOOTSTRAP_SOURCES" \
-        'stdlib,src' "$CI_ARTIFACT_BOOTSTRAP_ENV" compiler-binary - \
-        "$CI_ARTIFACT_BOOTSTRAP_ARGV"
-    STAGE2_BIN=$CI_COMPILER_ARTIFACT_PATH
-    echo "[ci-verify] every gate runs the converged bootstrapped compiler: $STAGE2_BIN"
-
-    # Fail-closed run-capability probe: stage2 must compile -> assemble -> link ->
-    # RUN a native program before the run-assert tiers below may execute. A failed
-    # probe is a CI failure, never a reason to omit gates.
-    if [ "$HOST_OS" = linux ]; then
-        if ! stage2_safety_corpus_supported "$STAGE2_BIN"; then
-            required_gate_unavailable "Linux stage2 compile->as->ld->run probe" \
-                "safety, integration, examples, SPMD, and stdlib run-assert tiers depend on this probe"
-        fi
-        echo "[ci-verify] stage2 compile->as->ld->run capability confirmed"
-    else
-        if ! stage2_can_compile_native_windows "$STAGE2_BIN"; then
-            required_gate_unavailable "Windows stage2 compile->clang->lld-link->run probe" \
-                "safety, integration, and examples run-assert tiers depend on this probe"
-        fi
-        echo "[ci-verify] stage2 compile->clang->lld-link->run capability confirmed"
-    fi
-fi
-
-# The default-off scratch planner changes the compiler's own ABI and switch
-# movement only when its cfg is enabled. A focused unit fixture is not enough:
-# #4911 reproduced only after a scratch-built stage2 executed its generated
-# stage3 compiler. Require the same multi-generation fixpoint on both hosts.
-# The already-isolated run also carries the #6610 same-commit stdlib mutation:
-# stage1 must interpret its changed transformer, stage2 must execute the newly
-# embedded body natively, and compiler/image/provenance outputs must converge.
-# Reuse the normal converged compiler as the seed and skip duplicate CLI checks.
-if ci_gate_selected scratch-vreg-tlci-mutation-bootstrap-fixpoint; then
-    TYPELISP_BOOTSTRAP_CFG=scratch-vreg
-    TYPELISP_BOOTSTRAP_WORKDIR="$ROOT/target/bootstrap-fixpoint-scratch-vreg"
-    TYPELISP_BOOTSTRAP_SKIP_CLI_SMOKE=1
-    TYPELISP_BOOTSTRAP_TLCI_MUTATION=1
-    export TYPELISP_BOOTSTRAP_CFG TYPELISP_BOOTSTRAP_WORKDIR
-    export TYPELISP_BOOTSTRAP_SKIP_CLI_SMOKE TYPELISP_BOOTSTRAP_TLCI_MUTATION
-    run_gate \
-        scratch-vreg-tlci-mutation-bootstrap-fixpoint \
-        scripts/check-bootstrap-fixpoint.sh \
-        "$STAGE2_BIN"
-    unset TYPELISP_BOOTSTRAP_CFG TYPELISP_BOOTSTRAP_WORKDIR
-    unset TYPELISP_BOOTSTRAP_SKIP_CLI_SMOKE TYPELISP_BOOTSTRAP_TLCI_MUTATION
-fi
-
-# The selfhost compile manifest is one of the highest-memory Windows gates.
-# Run it before the long format/lint/public-tool stretch; this keeps coverage
-# identical while limiting job-level memory pressure before the gate.
-# The current cli.tl emits stage1-qualified symbols, so the manifest uses the
-# stage1 expectation mode on both hosts.
-MANIFEST_ASSEMBLY_DIGESTS="$ROOT/target/ci-verify-selfhost-manifest.sha256"
-MANIFEST_ASSEMBLY_PATH_FILE="$ROOT/target/ci-verify-selfhost-manifest.path"
-MANIFEST_ASSEMBLY_METADATA_FILE="$ROOT/target/ci-verify-selfhost-manifest.meta"
-CI_ARTIFACT_MANIFEST_SOURCES='src,stdlib,src/compile_manifest.txt,scripts/verify-selfhost-compile-manifest.sh,scripts/lib-bounded-pool.sh'
-CI_ARTIFACT_MANIFEST_ARGV='compile --batch {chunks} --target {host}-x86_64 --cfg selfhost-compile-manifest --stdlib-root {root}/stdlib --stdlib-root {root}/src'
-if ci_gate_selected stage2-selfhost-compile-manifest; then
-    run_with_compiler "$STAGE2_BIN" stage2-selfhost-compile-manifest env TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE=stage1 scripts/verify-selfhost-compile-manifest.sh
-    rm -f "$MANIFEST_ASSEMBLY_DIGESTS" "$MANIFEST_ASSEMBLY_PATH_FILE" \
-        "$MANIFEST_ASSEMBLY_METADATA_FILE"
-    ci_compiler_artifact_write_sha256_manifest \
-        "$ROOT" "$ROOT/target/selfhost-compile-manifest" \
-        "$MANIFEST_ASSEMBLY_DIGESTS"
-    ci_compiler_artifact_publish \
-        "$ROOT" "$MANIFEST_ASSEMBLY_METADATA_FILE" \
-        "$MANIFEST_ASSEMBLY_PATH_FILE" selfhost-compile-manifest-assembly-set \
-        "$STAGE2_BIN" "$CI_ARTIFACT_TARGET" selfhost-compile-manifest default \
-        none "$CI_ARTIFACT_MANIFEST_SOURCES" 'stdlib,src' \
-        'TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE=stage1,TYPELISP_COMPILE_MANIFEST_BATCH_SIZE=host-default' \
-        assembly-set-manifest "$MANIFEST_ASSEMBLY_DIGESTS" \
-        "$CI_ARTIFACT_MANIFEST_ARGV"
-fi
-run_with_compiler "$STAGE2_BIN" stage2-regalloc-census-compiler-build scripts/verify-regalloc-census.sh
-run_with_compiler "$STAGE2_BIN" embedded-stdlib-build-payload scripts/verify-embedded-stdlib-payload.sh
-EMBEDDED_TLCI_BUNDLE="$ROOT/target/ci-verify-embedded-stdlib-tlci.sha256"
-EMBEDDED_TLCI_PATH_FILE="$ROOT/target/ci-verify-embedded-stdlib-tlci.path"
-EMBEDDED_TLCI_METADATA_FILE="$ROOT/target/ci-verify-embedded-stdlib-tlci.meta"
-CI_ARTIFACT_TLCI_SOURCES='src,stdlib,tools/embedded-stdlib-tlci,scripts/build-embedded-stdlib-tlci.sh'
-CI_ARTIFACT_TLCI_ARGV='scripts/build-embedded-stdlib-tlci.sh {producer} target/embedded-stdlib-tlci/stdlib.tlci {host}'
-if ci_gate_selected embedded-stdlib-tlci-image; then
-    run_with_compiler "$STAGE2_BIN" embedded-stdlib-tlci-image scripts/verify-embedded-stdlib-tlci.sh
-    rm -f "$EMBEDDED_TLCI_BUNDLE" "$EMBEDDED_TLCI_PATH_FILE" \
-        "$EMBEDDED_TLCI_METADATA_FILE"
-    ci_compiler_artifact_write_files_manifest \
-        "$ROOT" "$EMBEDDED_TLCI_BUNDLE" \
-        "$ROOT/target/embedded-stdlib-tlci/stdlib.tlci" \
-        "$ROOT/target/embedded-stdlib-tlci/stdlib.tlci.tlch" \
-        "$ROOT/target/embedded-stdlib-tlci/modules.txt" \
-        "$ROOT/target/embedded-stdlib-tlci/prelude-surface-$HOST_OS.rodata" \
-        "$ROOT/target/embedded-stdlib-tlci/source-hash.txt"
-    ci_compiler_artifact_publish \
-        "$ROOT" "$EMBEDDED_TLCI_METADATA_FILE" "$EMBEDDED_TLCI_PATH_FILE" \
-        embedded-stdlib-tlci-canonical "$STAGE2_BIN" "$CI_ARTIFACT_TARGET" \
-        'compiler-surface-producer,host-defaults' default none \
-        "$CI_ARTIFACT_TLCI_SOURCES" 'stdlib,src' \
-        'TYPELISP_EMBEDDED_STDLIB_SOURCE_ROOT={root},TYPELISP_EMBEDDED_STDLIB_WORKDIR=target/embedded-stdlib-tlci' \
-        embedded-image-set-manifest "$EMBEDDED_TLCI_BUNDLE" \
-        "$CI_ARTIFACT_TLCI_ARGV"
-fi
-# The deterministic assembly gate reuses the manifest's emitted .s as its first
-# compile for overlapping sources, so it must run after the manifest gate.
-if ci_gate_selected stage2-deterministic-assembly; then
-    ci_compiler_artifact_require \
-        "$ROOT" "$MANIFEST_ASSEMBLY_METADATA_FILE" \
-        "$MANIFEST_ASSEMBLY_PATH_FILE" selfhost-compile-manifest-assembly-set \
-        manifest-deterministic-consumer "$STAGE2_BIN" "$CI_ARTIFACT_TARGET" \
-        selfhost-compile-manifest default \
-        none "$CI_ARTIFACT_MANIFEST_SOURCES" 'stdlib,src' \
-        'TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE=stage1,TYPELISP_COMPILE_MANIFEST_BATCH_SIZE=host-default' \
-        assembly-set-manifest - "$CI_ARTIFACT_MANIFEST_ARGV"
-    ci_compiler_artifact_verify_sha256_manifest \
-        "$ROOT" "$CI_COMPILER_ARTIFACT_PATH"
-    run_with_compiler "$STAGE2_BIN" stage2-deterministic-assembly env TYPELISP_DETERMINISTIC_ASM_MANIFEST_DIR="$ROOT/target/selfhost-compile-manifest" scripts/check-deterministic-asm.sh
-fi
-run_gate typelisp-format-compiler-selection-control scripts/check-tl-format.sh --self-test-current-compiler-mode
-run_with_compiler "$STAGE2_BIN" typelisp-source-formatting env TYPELISP_FORMAT_COMPILER_IS_CURRENT_TREE=1 scripts/check-tl-format.sh
-run_with_compiler "$STAGE2_BIN" large-crlf-formatter-diff scripts/verify-format-large-crlf.sh
-run_gate typelisp-lint-gate-coverage-self-tests sh scripts/test-tl-lint-gate.sh
-run_with_compiler "$STAGE2_BIN" typelisp-source-lint scripts/check-tl-lint.sh
-# The freshly bootstrapped compiler (and the programs it builds) must depend on
-# no C runtime: kernel32 only on Windows, nothing dynamic on Linux.
-run_with_compiler "$STAGE2_BIN" no-libc-dependency-guard scripts/verify-no-libc.sh
-run_gate package-lock-writer-observation-self-tests sh scripts/test-package-lock-wait.sh
-run_with_compiler "$STAGE2_BIN" stage2-cli-build-run-and-chooser-smoke scripts/verify-selfhost-cli-build-run.sh
-run_with_compiler "$STAGE2_BIN" stage2-public-tool-surface scripts/verify-public-tools.sh
-run_with_compiler "$STAGE2_BIN" ir-observability-golden scripts/verify-ir-observability.sh
-run_with_compiler "$STAGE2_BIN" backend-safety-contract-manifest scripts/verify-backend-safety-manifest.sh
-run_with_compiler "$STAGE2_BIN" compiler-arena-debug-native-matrix scripts/verify-compiler-arena-debug.sh
-run_with_compiler "$STAGE2_BIN" tlci-format-corpus scripts/verify-tlci-corpus.sh
-run_with_compiler "$STAGE2_BIN" tlci-native-boundary-manifest scripts/verify-tlci-boundary-manifest.sh
-if [ "$HOST_OS" = linux ]; then
-    OPT2_REFERENCE_PATH_FILE="$ROOT/target/ci-verify-opt2-reference.path"
-    OPT2_REFERENCE_METADATA_FILE="$ROOT/target/ci-verify-opt2-reference.meta"
-    CI_ARTIFACT_INVARIANCE_SOURCES='src,stdlib,tests/integration/native-linux.manifest,scripts/check-build-invariance.sh,scripts/lib-build-invariance-batch.sh,scripts/lib-bounded-pool.sh'
-    CI_ARTIFACT_INVARIANCE_ARGV='compile src/main.tl -o {output} --target linux-x86_64 --cfg host-defaults --backend-mode scalar --opt-level 1 --stdlib-root stdlib --stdlib-root src'
-    if ci_gate_selected stage2-opt1-opt2-build-invariance; then
-        rm -f "$OPT2_REFERENCE_PATH_FILE" "$OPT2_REFERENCE_METADATA_FILE"
-        run_with_compiler \
-            "$STAGE2_BIN" \
-            stage2-opt1-opt2-build-invariance \
-            env TYPELISP_BUILD_INVARIANCE_OPT1_REFERENCE_PATH_FILE="$OPT2_REFERENCE_PATH_FILE" \
-            scripts/check-build-invariance.sh
-        if [ ! -s "$OPT2_REFERENCE_PATH_FILE" ]; then
-            required_gate_unavailable "build-invariance opt1 reference handoff" \
-                "build-invariance did not publish its validated stage4 src/main @ opt1 assembly path"
-        fi
-        OPT2_REFERENCE_ASM=$(sed -n '1p' "$OPT2_REFERENCE_PATH_FILE")
-        if [ ! -s "$OPT2_REFERENCE_ASM" ]; then
-            required_gate_unavailable "build-invariance opt1 reference handoff" \
-                "published assembly is missing or empty: $OPT2_REFERENCE_ASM"
-        fi
-        ci_compiler_artifact_publish \
-            "$ROOT" "$OPT2_REFERENCE_METADATA_FILE" "$OPT2_REFERENCE_PATH_FILE" \
-            build-invariance-opt1-reference "$STAGE2_BIN" linux-x86_64 \
-            host-defaults 1 none "$CI_ARTIFACT_INVARIANCE_SOURCES" \
-            'stdlib,src' 'TYPELISP_BUILD_INVARIANCE_BATCH_SIZE=default' \
-            compiler-assembly "$OPT2_REFERENCE_ASM" "$CI_ARTIFACT_INVARIANCE_ARGV"
-    fi
-    if ci_gate_selected stage2-opt2-built-cli-compile-cross-fixpoint-regression; then
-        ci_compiler_artifact_require \
-            "$ROOT" "$OPT2_REFERENCE_METADATA_FILE" "$OPT2_REFERENCE_PATH_FILE" \
-            build-invariance-opt1-reference opt2-reference-consumer \
-            "$STAGE2_BIN" linux-x86_64 \
-            host-defaults 1 none "$CI_ARTIFACT_INVARIANCE_SOURCES" \
-            'stdlib,src' 'TYPELISP_BUILD_INVARIANCE_BATCH_SIZE=default' \
-            compiler-assembly - "$CI_ARTIFACT_INVARIANCE_ARGV"
-        OPT2_REFERENCE_ASM=$CI_COMPILER_ARTIFACT_PATH
-        echo "[ci-verify] opt2 gate reuses build-invariance reference: $OPT2_REFERENCE_ASM"
-        run_with_compiler \
-            "$STAGE2_BIN" \
-            stage2-opt2-built-cli-compile-cross-fixpoint-regression \
-            env TYPELISP_OPT2_CLI_REFERENCE_ASM="$OPT2_REFERENCE_ASM" \
-            scripts/check-opt2-cli-regression.sh
-    fi
-else
-    # Windows has no build-invariance gate, so the opt2 gate retains its
-    # standalone reference compile.
-    run_with_compiler \
-        "$STAGE2_BIN" \
-        stage2-opt2-built-cli-compile-cross-fixpoint-regression \
-        scripts/check-opt2-cli-regression.sh
-fi
-run_with_compiler "$STAGE2_BIN" stage2-spmd-runtime-dispatch scripts/verify-spmd-runtime-dispatch.sh
-run_with_compiler "$STAGE2_BIN" stage2-spmd-package-calls scripts/verify-spmd-package-calls.sh
-run_with_compiler "$STAGE2_BIN" ispc-perfbench-loads-corpus-contract scripts/verify-ispc-perfbench-loads.sh
-run_with_compiler "$STAGE2_BIN" ispc-perfbench-stores-corpus-contract scripts/verify-ispc-perfbench-stores.sh
-run_with_compiler "$STAGE2_BIN" ispc-perfbench-gathers-corpus-contract scripts/verify-ispc-perfbench-gathers.sh
-run_with_compiler "$STAGE2_BIN" ispc-mandelbrot-corpus-contract scripts/verify-ispc-mandelbrot.sh
-run_with_compiler "$STAGE2_BIN" ispc-point-transform-corpus-contract scripts/verify-ispc-point-transform.sh
-run_with_compiler "$STAGE2_BIN" stage2-repository-doctests scripts/verify-doc-tests.sh
-run_with_compiler "$STAGE2_BIN" stage2-inline-typelisp-tests scripts/verify-inline-tests.sh
-run_with_compiler "$STAGE2_BIN" stage2-prelude-macro-mutation-guard scripts/verify-prelude-mutation.sh
-COMPILE_PROFILE_CLI_PATH_FILE="$ROOT/target/ci-verify-compile-profile-cli.path"
-COMPILE_PROFILE_CLI_METADATA_FILE="$ROOT/target/ci-verify-compile-profile-cli.meta"
-CI_ARTIFACT_PROFILE_SOURCES='src,stdlib,tools/embedded-stdlib-tlci,scripts/verify-compile-profile.sh,scripts/build-embedded-stdlib-tlci.sh,target/embedded-stdlib-tlci/stdlib.tlci,target/embedded-stdlib-tlci/stdlib.tlci.tlch,target/build-stage0/git-hash.txt'
-CI_ARTIFACT_PROFILE_CFG='compiler-build-identity,compile-profile,dependency-tlci-verification,embedded-stdlib-tlci,host-defaults,tlci-native-route-stress'
-CI_ARTIFACT_PROFILE_ARGV='compile src/main.tl -o {output} --target {host}-x86_64 --cfg host-defaults --stdlib-root stdlib --stdlib-root src --cfg compiler-build-identity --cfg compile-profile --cfg embedded-stdlib-tlci --cfg tlci-native-route-stress --cfg dependency-tlci-verification'
-if ci_gate_selected stage2-compile-profile-verifier; then
-    rm -f "$COMPILE_PROFILE_CLI_PATH_FILE" "$COMPILE_PROFILE_CLI_METADATA_FILE"
-    TYPELISP_COMPILE_PROFILE_CLI_PATH_FILE=$COMPILE_PROFILE_CLI_PATH_FILE
-    export TYPELISP_COMPILE_PROFILE_CLI_PATH_FILE
-    ci_compiler_artifact_require \
-        "$ROOT" "$EMBEDDED_TLCI_METADATA_FILE" "$EMBEDDED_TLCI_PATH_FILE" \
-        embedded-stdlib-tlci-canonical embedded-tlci-profile-consumer \
-        "$STAGE2_BIN" "$CI_ARTIFACT_TARGET" \
-        'compiler-surface-producer,host-defaults' default none \
-        "$CI_ARTIFACT_TLCI_SOURCES" 'stdlib,src' \
-        'TYPELISP_EMBEDDED_STDLIB_SOURCE_ROOT={root},TYPELISP_EMBEDDED_STDLIB_WORKDIR=target/embedded-stdlib-tlci' \
-        embedded-image-set-manifest - "$CI_ARTIFACT_TLCI_ARGV"
-    ci_compiler_artifact_verify_sha256_manifest \
-        "$ROOT" "$CI_COMPILER_ARTIFACT_PATH"
-    run_with_compiler \
-        "$STAGE2_BIN" \
-        stage2-compile-profile-verifier \
-        env TYPELISP_COMPILE_PROFILE_EMBEDDED_TLCI_REUSE=1 \
-        scripts/verify-compile-profile.sh
-    unset TYPELISP_COMPILE_PROFILE_CLI_PATH_FILE
-    if [ ! -s "$COMPILE_PROFILE_CLI_PATH_FILE" ]; then
-        required_gate_unavailable "TLCI native route sustained stress" \
-            "compile-profile verifier did not publish its stress-enabled compiler path"
-    fi
-    COMPILE_PROFILE_BIN=$(sed -n '1p' "$COMPILE_PROFILE_CLI_PATH_FILE")
-    ensure_executable "compile-profile" "$COMPILE_PROFILE_BIN"
-    ci_compiler_artifact_publish \
-        "$ROOT" "$COMPILE_PROFILE_CLI_METADATA_FILE" \
-        "$COMPILE_PROFILE_CLI_PATH_FILE" compile-profile-cli "$STAGE2_BIN" \
-        "$CI_ARTIFACT_TARGET" "$CI_ARTIFACT_PROFILE_CFG" default compile-profile \
-        "$CI_ARTIFACT_PROFILE_SOURCES" 'stdlib,src' \
-        'TYPELISP_STDLIB_ROOT=<unset>' compiler-binary "$COMPILE_PROFILE_BIN" \
-        "$CI_ARTIFACT_PROFILE_ARGV"
-fi
-require_compile_profile_cli() {
-    _ci_profile_consumer=$1
-    ci_compiler_artifact_require \
-        "$ROOT" "$COMPILE_PROFILE_CLI_METADATA_FILE" \
-        "$COMPILE_PROFILE_CLI_PATH_FILE" compile-profile-cli \
-        "$_ci_profile_consumer" "$STAGE2_BIN" "$CI_ARTIFACT_TARGET" \
-        "$CI_ARTIFACT_PROFILE_CFG" default compile-profile \
-        "$CI_ARTIFACT_PROFILE_SOURCES" 'stdlib,src' \
-        'TYPELISP_STDLIB_ROOT=<unset>' compiler-binary - \
-        "$CI_ARTIFACT_PROFILE_ARGV"
-    COMPILE_PROFILE_BIN=$CI_COMPILER_ARTIFACT_PATH
 }
-run_with_compiler \
-    "$STAGE2_BIN" \
-    embedded-stdlib-tlci-bounded-resource-report \
-    scripts/verify-embedded-stdlib-tlci-resources.sh
-if ci_gate_selected tlci-native-route-sustained-stress; then
-    require_compile_profile_cli compile-profile-stress
-    run_with_compiler \
-        "$COMPILE_PROFILE_BIN" \
-        tlci-native-route-sustained-stress \
-        scripts/verify-tlci-native-route-stress.sh
-fi
-if ci_gate_selected package-metadata-only-tlci-dependency-catalogs; then
-    require_compile_profile_cli compile-profile-metadata
-    run_with_compiler \
-        "$COMPILE_PROFILE_BIN" \
-        package-metadata-only-tlci-dependency-catalogs \
-        scripts/verify-package-metadata-tlci.sh
-fi
-if ci_gate_selected package-native-tlci-dependency-macros; then
-    require_compile_profile_cli compile-profile-native-package
-    run_with_compiler \
-        "$COMPILE_PROFILE_BIN" \
-        package-native-tlci-dependency-macros \
-        scripts/verify-package-native-tlci.sh
-fi
-if ci_gate_selected package-dependency-tlci-frontend-surfaces; then
-    require_compile_profile_cli compile-profile-surface-package
-    run_with_compiler \
-        "$COMPILE_PROFILE_BIN" \
-        package-dependency-tlci-frontend-surfaces \
-        scripts/verify-package-surface-tlci.sh
-fi
-run_with_compiler "$STAGE2_BIN" stage2-compile-startup-profile-verifier scripts/verify-compile-startup-profile.sh
-run_with_compiler "$STAGE2_BIN" stage2-allocation-profile-verifier scripts/verify-allocation-profile.sh
-run_with_compiler "$STAGE2_BIN" stage2-math-exp-codegen-verifier scripts/verify-math-exp-codegen.sh
-run_with_compiler "$STAGE2_BIN" stage2-math-log-codegen-verifier scripts/verify-math-log-codegen.sh
-run_with_compiler "$STAGE2_BIN" stage2-math-pow-codegen-verifier scripts/verify-math-pow-codegen.sh
-run_with_compiler "$STAGE2_BIN" stage2-math-trig-codegen-verifier scripts/verify-math-trig-codegen.sh
-run_with_compiler "$STAGE2_BIN" stage2-codegen-target-parity scripts/check-codegen-target-parity.sh
-run_with_compiler "$STAGE2_BIN" stage2-backend-target-assembly-parity scripts/check-backend-target-asm-parity.sh
-run_with_compiler "$STAGE2_BIN" stage2-windows-coff-batch-plan scripts/verify-compile-batch-windows-coff.sh
-run_with_compiler "$STAGE2_BIN" stage2-pic-relocation-verifier scripts/verify-pic-relocations.sh
-run_with_compiler "$STAGE2_BIN" stage2-coff-relocation-overflow-verifier scripts/verify-coff-relocation-overflow.sh
-run_with_compiler "$STAGE2_BIN" stage2-safety-corpus scripts/verify-safety-corpus.sh
-run_gate integration-manifest-validator-self-tests scripts/verify-integration-manifest-validator.sh
-run_gate windows-coff-plan-validator-self-tests scripts/verify-windows-coff-plan-validator.sh
-run_gate docs-site-search-manifest-validator-self-tests scripts/verify-doc-site.sh --self-test-search-manifests
-run_gate integration-batch-observability scripts/verify-integration.sh --self-test-batch-observability
-run_gate integration-windows-path-normalization scripts/verify-integration.sh --self-test-path-normalization
-run_with_compiler "$STAGE2_BIN" integration-compile-failure-diagnostics scripts/verify-integration.sh --self-test-empty-compile-diagnostic
-if [ "$HOST_OS" = linux ]; then
-    run_gate integration-signal-notice-capture scripts/verify-integration.sh --self-test-signal-notice-capture
-else
-    run_gate \
-        windows-integration-linker-queue-self-test \
-        powershell.exe \
-        -NoProfile \
-        -ExecutionPolicy Bypass \
-        -File scripts/windows-integration-linker-self-test.ps1
-fi
-run_with_compiler "$STAGE2_BIN" stage2-native-integration-corpus scripts/verify-integration.sh
-run_with_compiler "$STAGE2_BIN" stage2-must-use-metadata-and-abi-codegen scripts/verify-must-use-abi.sh
-if [ "$HOST_OS" = linux ]; then
-    run_with_compiler "$STAGE2_BIN" stage2-regalloc-backend-asm-shape-gates scripts/verify-asm-shape-gates.sh
-    run_with_compiler "$STAGE2_BIN" stage2-git-sha-1-fixed-round-wipe-asm-shape-gate scripts/verify-crypto-sha1-git-shape.sh
-    run_with_compiler "$STAGE2_BIN" stage2-sha-256-fixed-round-wipe-asm-shape-gate scripts/verify-crypto-sha256-shape.sh
-    run_with_compiler "$STAGE2_BIN" stage2-sha-512-wipe-asm-shape-gate scripts/verify-crypto-sha512-shape.sh
-    run_with_compiler "$STAGE2_BIN" stage2-by-value-aggregate-abi-shape-gate scripts/verify-by-value-aggregate-abi.sh
-fi
-run_with_compiler "$STAGE2_BIN" stage2-examples scripts/verify-examples.sh
-# The self-test builds the Linux wall-clock runner with the compiler it is given.
-run_with_compiler "$STAGE2_BIN" benchmark-wall-clock-harness-self-tests scripts/bench.sh --self-test
-if [ "$HOST_OS" = linux ]; then
-    run_with_compiler "$STAGE2_BIN" stage2-benchmark-comparison-correctness \
-        scripts/bench.sh --correctness --cases "$BENCHMARK_CORRECTNESS_CASES"
-else
-    run_with_compiler "$STAGE2_BIN" stage2-benchmark-comparison-correctness \
-        scripts/bench.sh --correctness
-fi
-run_with_compiler "$STAGE2_BIN" stage2-optimization-corpus-correctness scripts/run-optimization-benchmarks.sh --correctness
-if [ "$HOST_OS" = linux ]; then
-    run_with_compiler "$STAGE2_BIN" stage2-optimization-corpus-opt2-runtime-correctness \
-        scripts/run-optimization-benchmarks.sh --correctness --tl-opt-level 2 \
-        --cases "$OPT2_CORRECTNESS_CASES"
-else
-    run_with_compiler "$STAGE2_BIN" stage2-optimization-corpus-opt2-runtime-correctness \
-        scripts/run-optimization-benchmarks.sh --correctness --tl-opt-level 2
-fi
-run_with_compiler "$STAGE2_BIN" stage2-stdlib-modules-and-fixtures scripts/verify-stdlib.sh
-run_with_compiler "$STAGE2_BIN" stage2-stdlib-selfhost-verifier scripts/verify-stdlib-selfhost.sh
-run_with_compiler "$STAGE2_BIN" stage2-spmd-simd-comparison scripts/verify-spmd-simd.sh
-run_with_compiler \
-    "$STAGE2_BIN" \
-    stage2-cross-mode-semantic-abi-differential \
-    env TYPELISP_CROSS_MODE_PREVIOUS_COMPILER="$STAGE1_BIN" \
-    scripts/verify-cross-mode-differential.sh
-run_with_compiler "$STAGE2_BIN" stage2-spmd-lane-identity scripts/verify-spmd-lane-identity.sh
-run_with_compiler "$STAGE2_BIN" stage2-spmd-broadcast scripts/verify-spmd-broadcast.sh
-if ci_gate_selected stage2-docs-pages-build-path; then
-    DOC_SITE_OUT="$ROOT/target/ci-verify-docs-pages-site"
-    export DOC_SITE_OUT
-    run_with_compiler "$STAGE2_BIN" stage2-docs-pages-build-path scripts/verify-doc-site.sh
-    unset DOC_SITE_OUT
-fi
 
-if [ "$HOST_OS" = linux ]; then
-    run_with_compiler "$STAGE2_BIN" stage2-cli-host-action-smoke scripts/check-stage1-wrapper.sh
-    run_with_compiler "$STAGE2_BIN" stage2-stdlib-documentation scripts/verify-stdlib-docs.sh
-    # check-instruction-counts.sh reports and skips without valgrind; required
-    # CI must not, so both instruction-count gates require it here.
-    if { ci_gate_selected linux-instruction-count-baseline ||
-        ci_gate_selected linux-heavy-instruction-count-baseline; } &&
-        ! command -v valgrind >/dev/null 2>&1; then
+gate_opt2_cli_regression() {
+    if [ "$HOST_OS" = windows ]; then
+        scripts/check-opt2-cli-regression.sh
+        return $?
+    fi
+    echo "[ci-verify] opt2 gate reuses build-invariance reference: $OPT2_REFERENCE_ASM"
+    TYPELISP_OPT2_CLI_REFERENCE_ASM=$OPT2_REFERENCE_ASM scripts/check-opt2-cli-regression.sh
+}
+
+# The compile-profile verifier reuses the embedded stdlib image the image gate
+# built and publishes its profile-enabled CLI, which the TLCI stress and
+# package gates run instead of paying for another full self-compile.
+gate_compile_profile() {
+    _ci_profile_path_file="$ROOT/target/ci-verify-compile-profile-cli.path"
+    rm -f "$_ci_profile_path_file"
+    TYPELISP_COMPILE_PROFILE_CLI_PATH_FILE=$_ci_profile_path_file \
+        TYPELISP_COMPILE_PROFILE_EMBEDDED_TLCI_REUSE=1 \
+        scripts/verify-compile-profile.sh || return $?
+    read_handoff "compile-profile verifier" "$_ci_profile_path_file" || return 1
+    COMPILE_PROFILE_BIN=$CI_VERIFY_HANDOFF
+    ensure_executable "compile-profile" "$COMPILE_PROFILE_BIN"
+}
+
+# On Linux the benchmark suites run the cases perf/benchmark-ci-cases.tsv
+# assigns them; Windows runs every case.
+gate_benchmark_correctness() {
+    if [ "$HOST_OS" = windows ]; then
+        scripts/bench.sh --correctness
+        return $?
+    fi
+    _ci_cases=$(benchmark_ci_case_csv "$ROOT" benchmark) || return $?
+    scripts/bench.sh --correctness --cases "$_ci_cases"
+}
+
+gate_optimization_opt2_correctness() {
+    if [ "$HOST_OS" = windows ]; then
+        scripts/run-optimization-benchmarks.sh --correctness --tl-opt-level 2
+        return $?
+    fi
+    _ci_cases=$(benchmark_ci_case_csv "$ROOT" optimization-opt2) || return $?
+    scripts/run-optimization-benchmarks.sh --correctness --tl-opt-level 2 \
+        --cases "$_ci_cases"
+}
+
+# check-instruction-counts.sh reports and skips without valgrind; required CI
+# must not, so both instruction-count gates require it here.
+require_valgrind() {
+    command -v valgrind >/dev/null 2>&1 ||
         required_gate_unavailable "Linux instruction-count baseline" \
             "valgrind is required on Linux; install valgrind rather than skipping this gate"
-    fi
-    run_with_compiler "$STAGE2_BIN" linux-instruction-count-baseline \
-        env TYPELISP_IR_CHECK_COMPILER="$STAGE2_BIN" scripts/check-instruction-counts.sh
-    run_with_compiler "$STAGE2_BIN" linux-heavy-instruction-count-baseline \
-        env TYPELISP_IR_CHECK_COMPILER="$STAGE2_BIN" \
-        scripts/check-instruction-counts.sh \
+}
+
+gate_instruction_counts() {
+    require_valgrind
+    TYPELISP_IR_CHECK_COMPILER=$STAGE2_BIN scripts/check-instruction-counts.sh
+}
+
+gate_heavy_instruction_counts() {
+    require_valgrind
+    _ci_cases=$(benchmark_ci_case_csv "$ROOT" instruction-heavy) || return $?
+    TYPELISP_IR_CHECK_COMPILER=$STAGE2_BIN scripts/check-instruction-counts.sh \
         --baseline perf/insn-exec-heavy-baseline.tsv \
-        --benchmarks "$HEAVY_INSTRUCTION_COUNT_BENCHMARKS" \
+        --benchmarks "$_ci_cases" \
         --benchmarks-only \
         --runs 1 \
         --output target/instruction-count-heavy
-    run_with_compiler "$STAGE2_BIN" linux-compiler-scaling-budgets \
-        scripts/check-compiler-scaling.sh "$STAGE2_BIN"
-    run_with_compiler "$STAGE2_BIN" stage2-native-link-generated-programs scripts/verify-native-link-linux.sh
-    run_with_compiler "$STAGE2_BIN" stage2-rooted-linux-filesystem-boundary scripts/verify-fs-rooted-linux.sh
-    run_with_compiler "$STAGE2_BIN" stage2-linux-process-failure-boundary scripts/verify-process-runtime-linux.sh
-else
-    run_with_compiler "$STAGE2_BIN" windows-native-link-build-run scripts/verify-native-link-windows.sh
-    echo
-    echo "[ci-verify] Linux-only gates not applicable on Windows:"
-    echo "[ci-verify]   opt1/opt2 build-invariance, host-action smoke (as/ld),"
-    echo "[ci-verify]   stdlib documentation (doc target selection), instruction"
-    echo "[ci-verify]   counts (valgrind), native link generated programs,"
-    echo "[ci-verify]   rooted Linux filesystem and process failure boundaries"
+}
+
+# Arguments and listing are read-only and must be handled before any runtime
+# initialization.
+CI_VERIFY_GATES=
+case "${1:-}" in
+    -h | --help)
+        usage
+        exit 0
+        ;;
+    --list-gates)
+        if { [ "$#" -ne 2 ] && { [ "$#" -ne 4 ] || [ "$3" != --gates ]; }; } ||
+            { [ "$2" != linux ] && [ "$2" != windows ]; }; then
+            usage
+            exit 2
+        fi
+        # Validate the whole table before printing anything.
+        ci_gates_check_commands
+        CI_VERIFY_PLAN=$(ci_gates_plan "$2" "${4:-}")
+        printf 'id\thosts\tlabel\tneeds\n'
+        printf '%s\n' "$CI_VERIFY_PLAN" | cut -f 1-4
+        exit 0
+        ;;
+    --gates)
+        if [ "$#" -ne 2 ] || [ -z "$2" ]; then
+            usage
+            exit 2
+        fi
+        CI_VERIFY_GATES=$2
+        ;;
+    *)
+        if [ "$#" -ne 0 ]; then
+            usage
+            exit 2
+        fi
+        ;;
+esac
+
+. "$ROOT/scripts/lib-linux-entry.sh"
+. "$ROOT/scripts/lib-ci-timing.sh"
+. "$ROOT/scripts/lib-benchmark-ci-cases.sh"
+
+HOST_OS=linux
+case "$(uname -s)" in
+    Linux*) HOST_OS=linux ;;
+    MINGW* | MSYS* | CYGWIN*) HOST_OS=windows ;;
+    *)
+        echo "CI verification is unsupported on this host: $(uname -s)" >&2
+        exit 1
+        ;;
+esac
+
+ci_gates_check_commands
+CI_VERIFY_INVENTORY=$(ci_gates_plan "$HOST_OS")
+CI_VERIFY_PLAN=$(ci_gates_plan "$HOST_OS" "$CI_VERIFY_GATES")
+CI_VERIFY_HOST_COUNT=$(printf '%s\n' "$CI_VERIFY_INVENTORY" | awk 'END { print NR }')
+CI_VERIFY_SELECTED_COUNT=$(printf '%s\n' "$CI_VERIFY_PLAN" | awk 'END { print NR }')
+CI_VERIFY_COMPLETE=0
+if [ "$CI_VERIFY_SELECTED_COUNT" = "$CI_VERIFY_HOST_COUNT" ]; then
+    CI_VERIFY_COMPLETE=1
+fi
+if [ -n "$CI_VERIFY_GATES" ]; then
+    if [ "$CI_VERIFY_COMPLETE" != 1 ]; then
+        echo "[ci-verify] partial run: $CI_VERIFY_SELECTED_COUNT of $CI_VERIFY_HOST_COUNT $HOST_OS gates"
+        printf '%s\n' "$CI_VERIFY_PLAN" | awk -F '\t' -v request=",$CI_VERIFY_GATES," '
+            {print "[ci-verify]   " (index(request, "," $1 ",") ? "requested " : "needed    ") $1}'
+    else
+        echo "[ci-verify] --gates $CI_VERIFY_GATES closes over the complete $HOST_OS inventory"
+    fi
 fi
 
-run_gate \
-    ci-compiler-artifact-hosted-trace-completeness \
-    scripts/verify-ci-compiler-artifacts.sh \
-    --trace "$TYPELISP_CI_COMPILER_ARTIFACT_TRACE" "$HOST_OS"
+if [ "${TYPELISP_CI_TIMING:-0}" = 1 ]; then
+    ci_timing_init "$ROOT/target/ci-timing/$HOST_OS.tsv" "$HOST_OS"
+    ci_timing_set_now_ms
+    CI_VERIFY_STARTED_MS=$CI_TIMING_NOW_MS
+    trap 'ci_timing_summary "$TYPELISP_CI_TIMING_FILE" 10' EXIT
+fi
 
-ci_gate_ledger_finish
+# Only the bootstrap consumes the seed; a selection without it needs none.
+SEED_TYPELISP_BIN=
+case ",$(printf '%s\n' "$CI_VERIFY_PLAN" | cut -f 1 | tr '\n' ',')" in
+    *,bootstrap-fixpoint,*)
+        if [ -z "${TYPELISP_BIN:-}" ]; then
+            scripts/fetch-stage0.sh
+            SEED_TYPELISP_BIN="$ROOT/target/stage0/typelisp"
+            if [ "$HOST_OS" = windows ]; then
+                SEED_TYPELISP_BIN="$SEED_TYPELISP_BIN.exe"
+            fi
+        else
+            SEED_TYPELISP_BIN=$TYPELISP_BIN
+        fi
+        ensure_executable "seed" "$SEED_TYPELISP_BIN"
+        ;;
+esac
+
+# Produced compilers and artifact paths are set only by the gate that produces
+# them. Until that gate runs they name a path that cannot exist, so a missing
+# need fails its consumer instead of falling back to some other compiler. A gate
+# whose compiler column is `-` sees such a path as TYPELISP_BIN, so a gate that
+# uses a compiler without naming one fails instead of falling back to the seed.
+CI_VERIFY_UNPRODUCED="$ROOT/target/ci-verify-unproduced"
+rm -rf "$CI_VERIFY_UNPRODUCED"
+STAGE1_BIN="$CI_VERIFY_UNPRODUCED/previous-stage-compiler"
+STAGE2_BIN="$CI_VERIFY_UNPRODUCED/converged-compiler"
+COMPILE_PROFILE_BIN="$CI_VERIFY_UNPRODUCED/compile-profile-compiler"
+OPT2_REFERENCE_ASM="$CI_VERIFY_UNPRODUCED/build-invariance-opt1-reference.s"
+CI_VERIFY_NO_COMPILER="$CI_VERIFY_UNPRODUCED/gate-names-no-compiler"
+
+# run_gate LABEL COMPILER COMMAND
+run_gate() {
+    case "$2" in
+        stage2) gate_compiler=$STAGE2_BIN ;;
+        profile) gate_compiler=$COMPILE_PROFILE_BIN ;;
+        *) gate_compiler=$CI_VERIFY_NO_COMPILER ;;
+    esac
+    TYPELISP_CI_TIMING_GATE=$1
+    export TYPELISP_CI_TIMING_GATE
+    if ci_timing_enabled; then
+        ci_timing_set_now_ms
+        start=$CI_TIMING_NOW_MS
+    else
+        start=$(date +%s)
+    fi
+    echo
+    echo "[ci-verify] START $1"
+    set +e
+    if [ "$2" != - ] && [ ! -x "$gate_compiler" ]; then
+        ci_verify_error "$1 compiler was not produced by this run: $gate_compiler"
+        status=126
+    else
+        TYPELISP_BIN=$gate_compiler
+        export TYPELISP_BIN
+        eval "$3"
+        status=$?
+    fi
+    set -e
+    if ci_timing_enabled; then
+        ci_timing_set_now_ms
+        end=$CI_TIMING_NOW_MS
+        elapsed_ms=$((end - start))
+        elapsed=$((elapsed_ms / 1000))
+        ci_timing_record_elapsed all gate "$elapsed_ms" "$status"
+    else
+        end=$(date +%s)
+        elapsed=$((end - start))
+    fi
+    if [ "$status" -eq 0 ]; then
+        echo "[ci-verify] PASS $1 (${elapsed}s)"
+    else
+        echo "[ci-verify] FAIL $1 (${elapsed}s, exit $status)" >&2
+    fi
+    return "$status"
+}
+
+echo "[ci-verify] host=$HOST_OS seed=${SEED_TYPELISP_BIN:-<unused by this selection>}"
+
+# Gates may read standard input, so the plan is read from descriptor 3.
+CI_VERIFY_PLAN_FILE="$ROOT/target/ci-verify-plan.tsv"
+mkdir -p "$ROOT/target"
+printf '%s\n' "$CI_VERIFY_PLAN" > "$CI_VERIFY_PLAN_FILE"
+TAB=$(printf '\t')
+while IFS=$TAB read -r gate_id gate_hosts gate_label gate_needs gate_compiler_kind gate_command <&3; do
+    run_gate "$gate_label" "$gate_compiler_kind" "$gate_command" || exit $?
+done 3< "$CI_VERIFY_PLAN_FILE"
 
 # A selection that does not close over the whole inventory proves only its own
 # gates: it must not look like a verification to timing or log consumers.
-if [ "$CI_GATE_LEDGER_COMPLETE" != 1 ]; then
+if [ "$CI_VERIFY_COMPLETE" != 1 ]; then
     echo
-    echo "CI verification partial: $CI_GATE_LEDGER_SELECTED_COUNT of $CI_GATE_LEDGER_HOST_COUNT $HOST_OS gates passed; this is not a complete verification"
+    echo "CI verification partial: $CI_VERIFY_SELECTED_COUNT of $CI_VERIFY_HOST_COUNT $HOST_OS gates passed; this is not a complete verification"
     exit 0
 fi
 

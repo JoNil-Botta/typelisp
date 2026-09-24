@@ -21,5 +21,5 @@ tools/tlci-boundary-manifest/admission-stages.tsv text eol=lf
 docs/backend-safety-contract-manifest.tsv text eol=lf
 tools/backend-safety-manifest/*.tsv text eol=lf
 
-# The required CI gate ledger has canonical LF output on both hosts.
+# ci-verify.sh reads the CI gate table on both hosts; keep it LF.
 scripts/ci-gates.tsv text eol=lf

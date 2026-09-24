@@ -1437,8 +1437,9 @@ The previous bootstrap generation is retained for the cross-mode differential.
 
 Configured and mutation proofs retain their independent builds: the separate
 scratch-vreg/TLCI mutation bootstrap must converge and prove its changed macro
-runs through the embedded native route. Other specialized producer roles and
-validated handoffs are inventoried below. Both hosts must run every applicable
+runs through the embedded native route. Other producers hand their compilers
+and references to later gates through path files under `target/` (see
+`scripts/README.md`). Both hosts must run every applicable
 gate. Linux-only obligations include build invariance, instruction counts and
 Linux runtime boundaries; Windows executes its native link/run gates. A missing
 compiler capability or required tool fails verification, rather than selecting
@@ -1467,47 +1468,6 @@ artifacts, then derives one `all-hosts` critical path (the larger host value)
 and one summed verification runner-time value. Pre-#6882 artifacts without the
 new total remain usable for older gate baselines, but cannot be mistaken for a
 fast complete-verification sample.
-
-Compiler-producing gates and same-run consumers are owned by
-[`../scripts/ci-compiler-artifacts.tsv`](../scripts/ci-compiler-artifacts.tsv).
-The ledger records the producer identity class, host/target, cfg and opt/profile
-shape, source set, output kind, and why each near-match must remain an
-independent proof. Reusable groups have exactly one producer and one or more
-consumers. `scripts/verify-ci-compiler-artifacts.sh` rejects malformed or
-orphaned groups and exercises the fail-closed handoff metadata against empty,
-corrupt, stale, cross-host, wrong-target, wrong-cfg, wrong-opt/profile, and
-digest-mismatched artifacts. Required CI additionally uploads a stable
-schema-2 `ci-compiler-artifacts-<host>` trace. Its explicit `produce` and
-`consume` records carry the ledger record ID, producer/compiler identity and
-digest, normalized invocation, source-set digest, output kind, and output
-digest for every validated handoff. The final CI gate rejects missing,
-duplicate, wrong-role, wrong-host, or unowned records and requires every member
-of a reuse group to have the same provenance key and output digest.
-
-Published handoff `.path` files use the same literal `{root}/...` representation
-as metadata and digest manifests for checkout-owned outputs. Consumers resolve
-that prefix against their checkout before validating the unchanged metadata,
-producer, source set, output digest and run token. A path file must contain
-exactly one newline-terminated path. Relative producer and output arguments
-resolve against the declared checkout, independently of the caller's working
-directory. Existing absolute paths remain supported; external outputs do not
-become portable. Consumers use the absolute
-`CI_COMPILER_ARTIFACT_PATH` returned by successful validation, rather than
-executing the path-file text. The relocation tests move binary and manifest
-bundles between roots containing spaces, make the old root unavailable, and
-reject changed inputs, payloads, run tokens and malformed path files. This
-same-run portability does not authorize cross-run cache reuse or replace the
-complete coverage aggregate required by #7766.
-
-The current exact reuse groups are the converged bootstrap compiler, the
-selfhost compile-manifest assembly set, the canonical embedded-stdlib TLCI
-image bundle, Linux build-invariance's opt1 reference assembly, the
-compile-profile compiler, and the single selfhost CLI shared inside the Linux
-native-link gate. Standalone verifier invocations keep their local build
-fallbacks. Any new required-flow command that produces `src/main.tl`, an
-embedded compiler image, or a reusable compiler reference must add a ledger
-row and either publish validated metadata or state the independent assertion
-that makes reuse unsound.
 
 Within each Linux build-invariance chunk, identical compile-input paths at the
 same optimization level share one fresh output from that chunk's compiler.

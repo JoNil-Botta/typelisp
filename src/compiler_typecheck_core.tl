@@ -2609,29 +2609,183 @@
   (intern-table-id i64)
   (intern-generation i64))
 
-(defenum TcContext
-  (TcContext
-    ast.AstProgram
-    csym.CompilerSymbols
-    csym.CompilerRegistries
-    String
-    i64
-    i64
-    ast.AstNodePoolContext
-    ci.InternSourceNameSessionHandle
-    TcBodyState))
+;; The part of a typecheck context that every context derived from one root
+;; shares. Only the root constructors allocate it, in the owning job's
+;; lifetime arena; the `tc-context-with-*` derivations reuse it. The leading
+;; words hold the addresses of the three fields that accessors hand out by
+;; reference, so each is one load at a constant offset (an address-taken local
+;; would keep the accessor from being inlined); `symbols-address` comes first.
+(defstruct TcContextShared
+  (symbols-address u64)
+  (registries-address u64)
+  (pools-address u64)
+  (symbols csym.CompilerSymbols)
+  (registries csym.CompilerRegistries)
+  (pools ast.AstNodePoolContext)
+  (source-names ci.InternSourceNameSessionHandle)
+  (body-state TcBodyState))
+
+;; A typecheck context is a Copy handle: the address of its TcContextShared
+;; block, the body's job state (the most frequently read capability) and the
+;; fields that differ between derived contexts, so deriving a context for
+;; another module or program allocates nothing. `module` and `program-decls`
+;; hold the bits of the module-name String and of the program's
+;; declaration-list Box; their owners keep them alive, as they did for the
+;; shallow copies of the former by-value context.
+(defstruct TcContext
+  (shared u64)
+  (job-state TcJobState)
+  (module-id i64)
+  (type-module-id i64)
+  (module u64)
+  (program-decls u64))
+
+;; Read one field of the shared block with a single load at its offset;
+;; accessors never copy the whole block.
+(defmacro (tc-context-shared-field [ctx : Expr] [field : Expr] [_T : type]) : Expr
+  `(unsafe
+    (ptr-read
+      (int->ptr
+        (+
+          ,(comptime.expr-struct-get ctx "shared")
+          (cast (comptime (offset-of (type TcContextShared) ,field)) : u64))
+        : (Ptr ,_T)))))
+
+(define (tc-context-symbols [ctx : (& ctx TcContext)]) : (&
+    ctx
+    csym.CompilerSymbols)
+  (unsafe
+    (ptr-read (int->ptr ctx.shared : (Ptr (& ctx csym.CompilerSymbols))))))
+
+(define (tc-context-symbols-ref [ctx : (& ctx TcContext)]) : (&
+    ctx
+    csym.CompilerSymbols)
+  (tc-context-symbols ctx))
+
+(define (tc-context-registries [ctx : (& ctx TcContext)]) : (&
+    ctx
+    csym.CompilerRegistries)
+  (unsafe
+    (ptr-read
+      (int->ptr
+        (+
+          ctx.shared
+          (cast
+            (comptime (offset-of (type TcContextShared) registries-address))
+            : u64))
+        : (Ptr (& ctx csym.CompilerRegistries))))))
+
+(define (tc-context-pools-ref [ctx : (& ctx TcContext)]) : (&
+    ctx
+    ast.AstNodePoolContext)
+  (unsafe
+    (ptr-read
+      (int->ptr
+        (+
+          ctx.shared
+          (cast
+            (comptime (offset-of (type TcContextShared) pools-address))
+            : u64))
+        : (Ptr (& ctx ast.AstNodePoolContext))))))
+
+;; By-value shallow view for helpers that still take CompilerSymbols by value.
+(define (tc-context-symbols-view [ctx : TcContext]) : csym.CompilerSymbols
+  (tc-context-shared-field ctx symbols csym.CompilerSymbols))
+
+(define (tc-context-module [ctx : TcContext]) : String
+  (unsafe
+    (ptr-read (ptr-cast (ptr-addr-of ctx.module) : (Ptr String)))))
+
+(define (tc-context-module-id [ctx : TcContext]) : i64
+  ctx.module-id)
+
+(define (tc-context-type-module-id [ctx : TcContext]) : i64
+  ctx.type-module-id)
+
+(define (tc-context-program [ctx : TcContext]) : ast.AstProgram
+  (ast.AstProgram.Program
+    (unsafe
+      (ptr-read
+        (ptr-cast (ptr-addr-of ctx.program-decls) : (Ptr (Box ast.AstDeclList)))))))
+
+(define (tc-context-source-names [ctx : TcContext]) : ci.InternSourceNameSessionHandle
+  (tc-context-shared-field ctx source-names ci.InternSourceNameSessionHandle))
+
+(define (tc-context-body-state [ctx : TcContext]) : TcBodyState
+  (tc-context-shared-field ctx body-state TcBodyState))
+
+(define (tc-context-job-state [ctx : TcContext]) : TcJobState
+  ctx.job-state)
+
+(define (tc-context-string-bits [text : String]) : u64
+  (unsafe
+    (ptr-read (ptr-cast (ptr-addr-of text) : (Ptr u64)))))
+
+(define (tc-context-program-bits [program : ast.AstProgram]) : u64
+  (match program
+    [(ast.AstProgram.Program decls-box)
+      (unsafe
+        (ptr-read (ptr-cast (ptr-addr-of decls-box) : (Ptr u64))))]))
+
+;; Allocate a root context's shared block in the job's lifetime arena, which
+;; outlives every context of the job (a caller's scratch arena might not).
+(define (tc-context-shared-new
+  [job-state : TcJobState]
+  [shared : TcContextShared]) : u64
+  (let
+    [owner : i64 (tc-job-state-field job-state owner-arena i64)]
+    [home : i64 (arena.tl_arena_current)]
+    [_enter : unit
+      (if (= owner 0)
+        unit
+        (unsafe
+          (arena.tl_arena_set owner)))]
+    [block : (Box TcContextShared) (box shared)]
+    [_leave : unit
+      (if (= owner 0)
+        unit
+        (unsafe
+          (arena.tl_arena_set home)))]
+    [address : u64
+      (unsafe
+        (ptr-read (ptr-cast (ptr-addr-of block) : (Ptr u64))))]
+    (begin
+      (tc-context-shared-address-set!
+        address
+        (comptime (offset-of (type TcContextShared) symbols-address))
+        (comptime (offset-of (type TcContextShared) symbols)))
+      (tc-context-shared-address-set!
+        address
+        (comptime (offset-of (type TcContextShared) registries-address))
+        (comptime (offset-of (type TcContextShared) registries)))
+      (tc-context-shared-address-set!
+        address
+        (comptime (offset-of (type TcContextShared) pools-address))
+        (comptime (offset-of (type TcContextShared) pools)))
+      address)))
+
+(define (tc-context-shared-address-set!
+  [address : u64]
+  [slot-offset : i64]
+  [field-offset : i64]) : unit
+  (unsafe
+    (ptr-write!
+      (int->ptr (+ address (cast slot-offset : u64)) : (MutPtr u64))
+      (+ address (cast field-offset : u64)))))
 
 (define (tc-context-expr-cell-address-live [ctx : TcContext]) : u64
-  (match ctx
-    [(TcContext _ _ _ _ _ _ pools _ _)
-      (unsafe
-        (ptr->int (__tl_array-data (__tl-project-field pools expr-pool))))]))
+  (let
+    [pools : ast.AstNodePoolContext
+      (tc-context-shared-field ctx pools ast.AstNodePoolContext)]
+    (unsafe
+      (ptr->int (__tl_array-data (__tl-project-field pools expr-pool))))))
 
 (define (tc-context-type-cell-address-live [ctx : TcContext]) : u64
-  (match ctx
-    [(TcContext _ _ _ _ _ _ pools _ _)
-      (unsafe
-        (ptr->int (__tl_array-data (__tl-project-field pools type-pool))))]))
+  (let
+    [pools : ast.AstNodePoolContext
+      (tc-context-shared-field ctx pools ast.AstNodePoolContext)]
+    (unsafe
+      (ptr->int (__tl_array-data (__tl-project-field pools type-pool))))))
 
 (define (tc-context-expr-push-cell-addresses
   [expr-cell-address : u64]
@@ -2680,15 +2834,24 @@
       job-state
       (tc-global-shared-view pools))
     (TcContext
-      program
-      symbols
-      registries
-      module
+      (tc-context-shared-new
+        job-state
+        (TcContextShared
+          0
+          0
+          0
+          symbols
+          registries
+          pools
+          source-names
+          (tc-body-state-new-with-job-state-and-source-names
+            job-state
+            source-names)))
+      job-state
       module-id
       module-id
-      pools
-      source-names
-      (tc-body-state-new-with-job-state-and-source-names job-state source-names))))
+      (tc-context-string-bits module)
+      (tc-context-program-bits program))))
 
 (define (tc-context-new-with-source-names
   [program : ast.AstProgram]
@@ -2717,20 +2880,21 @@
   [pools : ast.AstNodePoolContext]
   [source-names : ci.InternSourceNameSessionHandle]
   [body-state : TcBodyState]) : TcContext
-  (begin
-    (tc-type-resolution-cache-bind-pools-for-job!
-      body-state.job-state
-      (tc-global-shared-view pools))
+  (let
+    [job-state : TcJobState body-state.job-state]
+    [_bind : unit
+      (tc-type-resolution-cache-bind-pools-for-job!
+        job-state
+        (tc-global-shared-view pools))]
     (TcContext
-      program
-      symbols
-      registries
-      module
+      (tc-context-shared-new
+        job-state
+        (TcContextShared 0 0 0 symbols registries pools source-names body-state))
+      job-state
       module-id
       module-id
-      pools
-      source-names
-      body-state)))
+      (tc-context-string-bits module)
+      (tc-context-program-bits program))))
 
 (define (tc-context-new
   [program : ast.AstProgram]
@@ -4622,106 +4786,48 @@
   [ctx : TcContext]
   [module : String]
   [module-id : i64]) : TcContext
-  (match ctx
-    [(TcContext program symbols registries _ _ _ pools source-names body-state)
-      (TcContext
-        program
-        symbols
-        registries
-        module
-        module-id
-        module-id
-        pools
-        source-names
-        body-state)]))
+  (TcContext
+    ctx.shared
+    ctx.job-state
+    module-id
+    module-id
+    (tc-context-string-bits module)
+    ctx.program-decls))
 
 (define (tc-context-with-type-module-id [ctx : TcContext] [module-id : i64]) : TcContext
-  (match ctx
-    [(TcContext
-        program
-        symbols
-        registries
-        value-module
-        value-module-id
-        _
-        pools
-        source-names
-        body-state)
-      (TcContext
-        program
-        symbols
-        registries
-        value-module
-        value-module-id
-        module-id
-        pools
-        source-names
-        body-state)]))
+  (TcContext
+    ctx.shared
+    ctx.job-state
+    ctx.module-id
+    module-id
+    ctx.module
+    ctx.program-decls))
 
 (define (tc-context-with-program [ctx : TcContext] [program : ast.AstProgram]) : TcContext
-  (match ctx
-    [(TcContext
-        _
-        symbols
-        registries
-        module
-        module-id
-        type-module-id
-        pools
-        source-names
-        body-state)
-      (TcContext
-        program
-        symbols
-        registries
-        module
-        module-id
-        type-module-id
-        pools
-        source-names
-        body-state)]))
-
-(define (tc-context-module [ctx : TcContext]) : String
-  (match ctx
-    [(TcContext _ _ _ module _ _ _ _ _) module]))
-
-(define (tc-context-module-id [ctx : TcContext]) : i64
-  (match ctx
-    [(TcContext _ _ _ _ module-id _ _ _ _) module-id]))
-
-(define (tc-context-type-module-id [ctx : TcContext]) : i64
-  (match ctx
-    [(TcContext _ _ _ _ _ type-module-id _ _ _) type-module-id]))
+  (TcContext
+    ctx.shared
+    ctx.job-state
+    ctx.module-id
+    ctx.type-module-id
+    ctx.module
+    (tc-context-program-bits program)))
 
 (define (tc-context-for-type-resolution [ctx : TcContext]) : TcContext
-  (match (tc-global-shared-view ctx)
-    [(TcContext
-        program
-        symbols
-        registries
-        _
-        module-id
+  (if (= ctx.module-id ctx.type-module-id)
+    ctx
+    (let
+      [type-module-id : i64 ctx.type-module-id]
+      [type-module : String
+        (if (csym.compiler-symbol-root-module-id? type-module-id)
+          ""
+          (tc-env-key-name-text type-module-id))]
+      (TcContext
+        ctx.shared
+        ctx.job-state
         type-module-id
-        pools
-        source-names
-        body-state)
-      (if (= module-id type-module-id)
-        (tc-global-shared-view ctx)
-        (let
-          [type-module : String
-            (if (csym.compiler-symbol-root-module-id? type-module-id)
-              ""
-              (tc-env-key-name-text type-module-id))]
-          (TcContext
-            program
-            symbols
-            registries
-            type-module
-            type-module-id
-            type-module-id
-            pools
-            source-names
-            body-state)))]))
+        type-module-id
+        (tc-context-string-bits type-module)
+        ctx.program-decls))))
 
 (define (tc-context-dotted-module-id-or-suffix
   [dotted-modules : sym_i64_env.SymI64Env]
@@ -4754,28 +4860,25 @@
           (ci.intern (cload.compiler-load-canonical-module-id-from-path path)))])))
 
 (defmacro (tc-context-pools-live [ctx : Expr]) : ast.AstNodePoolContext
-  `(match ,ctx
-    [(TcContext _ _ _ _ _ _ pools _ _)
-      (ast.ast-node-pool-context-shared-view (& pools))]))
+  `(let
+    [pools-ctx : TcContext ,ctx]
+    (ast.ast-node-pool-context-shared-view (tc-context-pools-ref pools-ctx))))
 
-;; Mutating operations stay inside the match arm so the pool aggregate never
-;; crosses an owned-value expression boundary before its state cell is used.
+;; Mutating operations take the pool view straight from the shared block so
+;; the pool aggregate never crosses an owned-value expression boundary before
+;; its state cell is used.
 (defmacro (tc-context-type-push [ctx : Expr] [node : Expr]) : i64
-  `(match ,ctx
-    [(TcContext _ _ _ _ _ _ pools _ _)
-      (ast.ast-node-pool-context-type-push
-        (ast.ast-node-pool-context-shared-view (& pools))
-        ,node)]))
+  `(let
+    [pools-ctx : TcContext ,ctx]
+    (ast.ast-node-pool-context-type-push
+      (ast.ast-node-pool-context-shared-view (tc-context-pools-ref pools-ctx))
+      ,node)))
 
 ;; Read-only public boundary for modules that consume typecheck metadata. Pool
 ;; mutation inside this module uses the syntax-level accessor above so the
 ;; retained state cells are not detached by an aggregate return.
 (define (tc-context-pools [ctx : TcContext]) : ast.AstNodePoolContext
   (tc-context-pools-live ctx))
-
-(define (tc-context-source-names [ctx : TcContext]) : ci.InternSourceNameSessionHandle
-  (match ctx
-    [(TcContext _ _ _ _ _ _ _ source-names _) source-names]))
 
 (define (tc-context-structural-session-owned [ctx : TcContext]) : cis.InternStructuralSessionHandle
   (cis.intern-structural-session-handle-from-source-names
@@ -4784,14 +4887,7 @@
 ;; Structural-session lookup is observational. Preserve the context owner at
 ;; every call site, including qualified callers in lowering and indexing.
 (defmacro (tc-context-structural-session [ctx : Expr]) : Expr
-  `(tc-context-structural-session-owned (tc-global-shared-view ,ctx)))
-
-(define (tc-context-body-state [ctx : TcContext]) : TcBodyState
-  (match ctx
-    [(TcContext _ _ _ _ _ _ _ _ body-state) body-state]))
-
-(define (tc-context-job-state [ctx : TcContext]) : TcJobState
-  (__tl-project-field (tc-context-body-state ctx) job-state))
+  `(tc-context-structural-session-owned ,ctx))
 
 (define (tc-context-capture-active-pools! [ctx : TcContext]) : unit
   (if (ast.ast-node-pool-compat-context-active?)
@@ -4821,10 +4917,16 @@
   `(ast.ast-expr-segment-bases-get
     (if (ast.ast-node-pool-compat-context-active?)
       (ast.ast-node-pool-active-expr-segment-bases)
-      (match ,ctx
-        [(TcContext _ _ _ _ _ _ expr-pools _ _)
-          (ast.ast-node-pool-context-expr-segment-bases expr-pools)]))
+      (tc-context-expr-segment-bases ,ctx))
     ,id))
+
+;; Expanded in place: expression reads are the hottest context access, and a
+;; helper function here would not be inlined into the large walkers.
+(defmacro (tc-context-expr-segment-bases [ctx : Expr]) : Expr
+  `(let
+    [expr-pools : ast.AstNodePoolContext
+      (tc-context-shared-field ,ctx pools ast.AstNodePoolContext)]
+    (ast.ast-node-pool-context-expr-segment-bases expr-pools)))
 
 (test
   tc-context-expression-pool-isolation
@@ -4981,11 +5083,9 @@
 (define (tc-context-expr-bases [ctx : TcContext]) : i64
   (if (ast.ast-node-pool-compat-context-active?)
     (ast.ast-node-pool-active-expr-segment-bases)
-    ;; This query returns one scalar. Borrow the owning field in place instead
-    ;; of materializing the complete pool aggregate through tc-context-pools.
-    (match ctx
-      [(TcContext _ _ _ _ _ _ pools _ _)
-        (ast.ast-node-pool-context-expr-segment-bases (& pools))])))
+    ;; This query returns one scalar: read the pool cells from the shared block
+    ;; instead of materializing a pool view through tc-context-pools.
+    (tc-context-expr-segment-bases ctx)))
 
 ;; The typechecker receives an already-loaded program and so does not know the
 ;; source path; it builds diagnostics with an empty path (the CLI driver stamps
@@ -24600,40 +24700,41 @@
       found)))
 
 (define (tc-imported-module-identity-id? [ctx : TcContext] [target-id : i64]) : bool
-  (match (tc-global-shared-view ctx)
-    [(TcContext program _ _ current-module current-module-id _ _ _ _)
-      (match program
-        [(ast.AstProgram.Program decls-box)
-          (begin
-            (tc-imported-module-identity-cache-ensure!)
-            (let
-              [cached : i64
-                (tc-imported-module-identity-cache-get
-                  current-module-id
-                  target-id)]
-              (if (= cached -2)
-                (let
-                  [found : bool
-                    (if (macro-segmented-program-active?
-                      (tc-context-job-state (tc-global-shared-view ctx)))
-                      (macro-segmented-imported-module-identity-ids?
-                        (tc-context-structural-session ctx)
-                        (tc-context-job-state (tc-global-shared-view ctx))
-                        current-module-id
-                        target-id)
-                      (tc-imported-module-identity-ids?
-                        (tc-context-structural-session ctx)
-                        (ast.ast-decl-list-box-shared-view decls-box)
-                        current-module-id
-                        target-id
-                        cbi.compiler-builtin-id-fix-empty))]
-                  (begin
-                    (tc-imported-module-identity-cache-put!
+  (let
+    [program : ast.AstProgram (tc-context-program ctx)]
+    [current-module-id : i64 (tc-context-module-id ctx)]
+    (match program
+      [(ast.AstProgram.Program decls-box)
+        (begin
+          (tc-imported-module-identity-cache-ensure!)
+          (let
+            [cached : i64
+              (tc-imported-module-identity-cache-get
+                current-module-id
+                target-id)]
+            (if (= cached -2)
+              (let
+                [found : bool
+                  (if (macro-segmented-program-active?
+                    (tc-context-job-state (tc-global-shared-view ctx)))
+                    (macro-segmented-imported-module-identity-ids?
+                      (tc-context-structural-session ctx)
+                      (tc-context-job-state (tc-global-shared-view ctx))
+                      current-module-id
+                      target-id)
+                    (tc-imported-module-identity-ids?
+                      (tc-context-structural-session ctx)
+                      (ast.ast-decl-list-box-shared-view decls-box)
                       current-module-id
                       target-id
-                      found)
-                    found))
-                (> cached 0))))])]))
+                      cbi.compiler-builtin-id-fix-empty))]
+                (begin
+                  (tc-imported-module-identity-cache-put!
+                    current-module-id
+                    target-id
+                    found)
+                  found))
+              (> cached 0))))])))
 
 (define (tc-source-name-id-or [ctx : TcContext] [name : i64] [fallback : i64]) : i64
   (let
@@ -24879,38 +24980,37 @@
   [ctx : TcContext]
   [base-id : i64]
   [base : String]) : bool
-  (match (tc-global-shared-view ctx)
-    [(TcContext _ symbols _ _ _ _ _ _ _)
+  (let
+    [symbols : (& ctx csym.CompilerSymbols) (tc-context-symbols ctx)]
+    [handle : i64
+      (csym.compiler-symbols-lookup-value-id-or
+        symbols
+        base-id
+        (csym.compiler-symbols-missing-handle))]
+    (if (csym.compiler-symbols-handle-found? handle)
       (let
-        [handle : i64
-          (csym.compiler-symbols-lookup-value-id-or
-            symbols
-            base-id
-            (csym.compiler-symbols-missing-handle))]
-        (if (csym.compiler-symbols-handle-found? handle)
+        [decls : (__tl_dyn-array ast.AstDecl)
+          (csym.compiler-symbols-decls symbols)]
+        [index : i64 (csym.compiler-symbol-handle-index handle)]
+        (if (or (< index 0) (>= index (array-length decls)))
+          false
           (let
-            [decls : (__tl_dyn-array ast.AstDecl)
-              (csym.compiler-symbols-decls symbols)]
-            [index : i64 (csym.compiler-symbol-handle-index handle)]
-            (if (or (< index 0) (>= index (array-length decls)))
-              false
-              (let
-                [decl : ast.AstDecl (ast.ast-array-shared-view decls index)]
-                (cond
-                  [(string.eq base "string-length")
-                    (tc-stdlib-string-length-wrapper-decl? ctx base decl)]
-                  [(string.eq base "string-ref")
-                    (tc-stdlib-string-ref-wrapper-decl? ctx base decl)]
-                  [(string.eq base "char-at")
-                    (tc-stdlib-string-ref-wrapper-decl? ctx base decl)]
-                  [(string.eq base "eq")
-                    (tc-stdlib-string-eq-wrapper-decl? ctx base decl)]
-                  [(string.eq base "string-append")
-                    (tc-stdlib-string-copy-wrapper-decl? ctx base decl)]
-                  [(string.eq base "string-concat")
-                    (tc-stdlib-string-copy-wrapper-decl? ctx base decl)]
-                  [else false]))))
-          false))]))
+            [decl : ast.AstDecl (ast.ast-array-shared-view decls index)]
+            (cond
+              [(string.eq base "string-length")
+                (tc-stdlib-string-length-wrapper-decl? ctx base decl)]
+              [(string.eq base "string-ref")
+                (tc-stdlib-string-ref-wrapper-decl? ctx base decl)]
+              [(string.eq base "char-at")
+                (tc-stdlib-string-ref-wrapper-decl? ctx base decl)]
+              [(string.eq base "eq")
+                (tc-stdlib-string-eq-wrapper-decl? ctx base decl)]
+              [(string.eq base "string-append")
+                (tc-stdlib-string-copy-wrapper-decl? ctx base decl)]
+              [(string.eq base "string-concat")
+                (tc-stdlib-string-copy-wrapper-decl? ctx base decl)]
+              [else false]))))
+      false)))
 
 ;; The builtin string helpers a module-qualified `stdlib.string` call may
 ;; reach: exactly the helper names stdlib.string exports. `string-append`,
@@ -25234,14 +25334,15 @@
           found)))))
 
 (define (tc-context-imports-stdlib-string? [ctx : TcContext]) : bool
-  (match ctx
-    [(TcContext program _ _ module module-id _ _ _ _)
-      (match program
-        [(ast.AstProgram.Program decls-box)
-          (tc-decl-list-module-imports-stdlib-string?
-            (ast.ast-decl-list-box-shared-view decls-box)
-            module-id
-            cbi.compiler-builtin-id-fix-empty)])]))
+  (let
+    [program : ast.AstProgram (tc-context-program ctx)]
+    [module-id : i64 (tc-context-module-id ctx)]
+    (match program
+      [(ast.AstProgram.Program decls-box)
+        (tc-decl-list-module-imports-stdlib-string?
+          (ast.ast-decl-list-box-shared-view decls-box)
+          module-id
+          cbi.compiler-builtin-id-fix-empty)])))
 
 (define (tc-stdlib-string-helper-visible-or-wrapper-id?
   [ctx : TcContext]
@@ -26318,21 +26419,21 @@
         [alias : String (string.substring name 0 first-dot)]
         [base-start : i64 (+ first-dot 1)]
         [base : String (string.substring name base-start (- n base-start))]
-        (match (tc-global-shared-view ctx)
-          [(TcContext program _ _ _ current-module-id _ _ _ _)
-            (match program
-              [(ast.AstProgram.Program decls-box)
-                (match (macro-import-alias-target-cached-id-in-context
-                  ctx
-                  (ast.ast-decl-list-box-shared-view decls-box)
-                  current-module-id
-                  alias-id)
-                  [(TcMaybeNameId.Some target-id)
-                    (if (= target-id alias-id)
-                      (TcMaybeString.No)
-                      (TcMaybeString.Some
-                        (csym.compiler-symbol-module-key alias base)))]
-                  [(TcMaybeNameId.No) (TcMaybeString.No)])])])))))
+        [program : ast.AstProgram (tc-context-program ctx)]
+        [current-module-id : i64 (tc-context-module-id ctx)]
+        (match program
+          [(ast.AstProgram.Program decls-box)
+            (match (macro-import-alias-target-cached-id-in-context
+              ctx
+              (ast.ast-decl-list-box-shared-view decls-box)
+              current-module-id
+              alias-id)
+              [(TcMaybeNameId.Some target-id)
+                (if (= target-id alias-id)
+                  (TcMaybeString.No)
+                  (TcMaybeString.Some
+                    (csym.compiler-symbol-module-key alias base)))]
+              [(TcMaybeNameId.No) (TcMaybeString.No)])])))))
 
 (define (tc-source-lookup-display-name
   [ctx : TcContext]
@@ -26616,38 +26717,38 @@
 (define (tc-enum-qualified-variant-lookup-handle
   [ctx : TcContext]
   [name-id : i64]) : option_i64.Option
-  (match (tc-global-shared-view ctx)
-    [(TcContext _ _ registries _ module-id _ _ _ _)
-      (let
-        [registry-id : i64 (csym.compiler-registries-identity registries)]
-        [cached-handle : i64
-          (tc-context-source-qualified-variant-handle-cache-get
-            (tc-global-shared-view ctx)
-            registry-id
-            module-id
-            name-id)]
-        (if (>= cached-handle 0)
-          (option_i64.Some cached-handle)
-          (if (= cached-handle -1)
-            option_i64.None
-            (match (tc-enum-qualified-variant-lookup-key-id
-              (tc-global-shared-view ctx)
-              name-id
-              module-id)
-              [(option_i64.Some key-id)
-                (let
-                  [resolved-handle : i64
-                    (tc-context-source-qualified-variant-handle-cache-get
-                      (tc-global-shared-view ctx)
-                      registry-id
-                      module-id
-                      name-id)]
-                  (if (>= resolved-handle 0)
-                    (option_i64.Some resolved-handle)
-                    (csym.compiler-registries-lookup-variant-key-id
-                      registries
-                      key-id)))]
-              [(option_i64.None) option_i64.None]))))]))
+  (let
+    [registries : (& ctx csym.CompilerRegistries) (tc-context-registries ctx)]
+    [module-id : i64 (tc-context-module-id ctx)]
+    [registry-id : i64 (csym.compiler-registries-identity registries)]
+    [cached-handle : i64
+      (tc-context-source-qualified-variant-handle-cache-get
+        (tc-global-shared-view ctx)
+        registry-id
+        module-id
+        name-id)]
+    (if (>= cached-handle 0)
+      (option_i64.Some cached-handle)
+      (if (= cached-handle -1)
+        option_i64.None
+        (match (tc-enum-qualified-variant-lookup-key-id
+          (tc-global-shared-view ctx)
+          name-id
+          module-id)
+          [(option_i64.Some key-id)
+            (let
+              [resolved-handle : i64
+                (tc-context-source-qualified-variant-handle-cache-get
+                  (tc-global-shared-view ctx)
+                  registry-id
+                  module-id
+                  name-id)]
+              (if (>= resolved-handle 0)
+                (option_i64.Some resolved-handle)
+                (csym.compiler-registries-lookup-variant-key-id
+                  registries
+                  key-id)))]
+          [(option_i64.None) option_i64.None])))))
 
 (define (tc-enum-qualified-variant-constructor-handle
   [ctx : TcContext]
@@ -26734,79 +26835,79 @@
   (if (tc-enum-qualified-variant-lookup-name-id?
     (tc-context-structural-session ctx)
     name-id)
-    (match (tc-global-shared-view ctx)
-      [(TcContext _ _ registries module _ _ _ _ _)
+    (let
+      [registries : (& ctx csym.CompilerRegistries) (tc-context-registries ctx)]
+      [module : String (tc-context-module ctx)]
+      [registry-id : i64 (csym.compiler-registries-identity registries)]
+      [cached : i64
+        (tc-context-source-qualified-variant-key-cache-get
+          (tc-global-shared-view ctx)
+          registry-id
+          module-id
+          name-id)]
+      (if (= cached -2)
         (let
-          [registry-id : i64 (csym.compiler-registries-identity registries)]
-          [cached : i64
-            (tc-context-source-qualified-variant-key-cache-get
-              (tc-global-shared-view ctx)
+          [structural : bool (>= name-id (ci.intern-capacity))]
+          [module-key-id : i64
+            (if (and
+              (not structural)
+              (> (string.string-length module) 0)
+              (not
+                (tc-name-qualified-id?
+                  (tc-context-structural-session ctx)
+                  name-id)))
+              (csym.compiler-symbol-dotted-variant-key-id-in-module-or
+                name-id
+                module-id
+                -1)
+              -1)]
+          [module-handle : i64
+            (if (< module-key-id 0)
+              -1
+              (match (csym.compiler-registries-lookup-variant-key-id
+                registries
+                module-key-id)
+                [(option_i64.Some handle) handle]
+                [(option_i64.None) -1]))]
+          [fallback-key-id : i64
+            (if structural
+              (csym.compiler-symbol-name-id-key name-id)
+              (csym.compiler-symbol-dotted-variant-key-id-in-module-or
+                name-id
+                (csym.compiler-symbol-root-module-id)
+                -1))]
+          [fallback-handle : i64
+            (if (or (>= module-handle 0) (< fallback-key-id 0))
+              -1
+              (match (csym.compiler-registries-lookup-variant-key-id
+                registries
+                fallback-key-id)
+                [(option_i64.Some handle) handle]
+                [(option_i64.None) -1]))]
+          [resolved : i64
+            (if (>= module-handle 0)
+              module-key-id
+              (if (>= fallback-handle 0)
+                fallback-key-id
+                -1))]
+          [resolved-handle : i64
+            (if (>= module-handle 0)
+              module-handle
+              fallback-handle)]
+          (begin
+            (tc-context-source-qualified-variant-key-cache-put!
+              ctx
               registry-id
               module-id
-              name-id)]
-          (if (= cached -2)
-            (let
-              [structural : bool (>= name-id (ci.intern-capacity))]
-              [module-key-id : i64
-                (if (and
-                  (not structural)
-                  (> (string.string-length module) 0)
-                  (not
-                    (tc-name-qualified-id?
-                      (tc-context-structural-session ctx)
-                      name-id)))
-                  (csym.compiler-symbol-dotted-variant-key-id-in-module-or
-                    name-id
-                    module-id
-                    -1)
-                  -1)]
-              [module-handle : i64
-                (if (< module-key-id 0)
-                  -1
-                  (match (csym.compiler-registries-lookup-variant-key-id
-                    registries
-                    module-key-id)
-                    [(option_i64.Some handle) handle]
-                    [(option_i64.None) -1]))]
-              [fallback-key-id : i64
-                (if structural
-                  (csym.compiler-symbol-name-id-key name-id)
-                  (csym.compiler-symbol-dotted-variant-key-id-in-module-or
-                    name-id
-                    (csym.compiler-symbol-root-module-id)
-                    -1))]
-              [fallback-handle : i64
-                (if (or (>= module-handle 0) (< fallback-key-id 0))
-                  -1
-                  (match (csym.compiler-registries-lookup-variant-key-id
-                    registries
-                    fallback-key-id)
-                    [(option_i64.Some handle) handle]
-                    [(option_i64.None) -1]))]
-              [resolved : i64
-                (if (>= module-handle 0)
-                  module-key-id
-                  (if (>= fallback-handle 0)
-                    fallback-key-id
-                    -1))]
-              [resolved-handle : i64
-                (if (>= module-handle 0)
-                  module-handle
-                  fallback-handle)]
-              (begin
-                (tc-context-source-qualified-variant-key-cache-put!
-                  ctx
-                  registry-id
-                  module-id
-                  name-id
-                  resolved
-                  resolved-handle)
-                (if (< resolved 0)
-                  option_i64.None
-                  (option_i64.Some resolved))))
-            (if (< cached 0)
+              name-id
+              resolved
+              resolved-handle)
+            (if (< resolved 0)
               option_i64.None
-              (option_i64.Some cached))))])
+              (option_i64.Some resolved))))
+        (if (< cached 0)
+          option_i64.None
+          (option_i64.Some cached))))
     option_i64.None))
 
 (define (tc-enum-qualified-variant-lookup-key-from-id
@@ -27046,15 +27147,16 @@
 (define (tc-qualified-access-target-module-id
   [ctx : TcContext]
   [qualifier-id : i64]) : i64
-  (match (tc-global-shared-view ctx)
-    [(TcContext program _ _ _ current-module-id _ _ _ _)
-      (match program
-        [(ast.AstProgram.Program decls-box)
-          (macro-resolve-qualified-module-id
-            ctx
-            (ast.ast-decl-list-box-shared-view decls-box)
-            current-module-id
-            qualifier-id)])]))
+  (let
+    [program : ast.AstProgram (tc-context-program ctx)]
+    [current-module-id : i64 (tc-context-module-id ctx)]
+    (match program
+      [(ast.AstProgram.Program decls-box)
+        (macro-resolve-qualified-module-id
+          ctx
+          (ast.ast-decl-list-box-shared-view decls-box)
+          current-module-id
+          qualifier-id)])))
 
 (define (tc-resolved-nominal-type-id [name-id : i64] [handle : i64]) : ast.AstType
   (if (=
@@ -27610,7 +27712,7 @@
 
 (define (tc-resolve-type-name-symbol-lookup-id
   [state : TcNominalCacheState]
-  [symbols : csym.CompilerSymbols]
+  [symbols : (& symbols csym.CompilerSymbols)]
   [lookup-id : i64]) : i64
   (match (tc-resolve-type-name-cache-lookup state lookup-id)
     [(TcTypeNameLookupCache.Found handle)
@@ -27787,24 +27889,25 @@
     (match (tc-nominal-owner-cache-lookup (tc-global-shared-view ctx) handle)
       [(ResultTcString.Ok cached) (ResultTcString.Ok cached)]
       [(ResultTcString.Err _)
-        (match ctx
-          [(TcContext program symbols _ _ _ _ _ _ _)
-            (match (csym.compiler-symbols-owner-name-at-index
-              symbols
-              (csym.compiler-symbol-handle-index handle))
-              [(CompilerSomeString name)
-                (begin
-                  (tc-nominal-owner-cache-store-if-safe!
-                    state
-                    handle
-                    (string.copy (& name)))
-                  (ResultTcString.Ok name))]
-              [(CompilerNoString)
-                (tc-nominal-owner-name-scan
+        (let
+          [program : ast.AstProgram (tc-context-program ctx)]
+          [symbols : (& ctx csym.CompilerSymbols) (tc-context-symbols ctx)]
+          (match (csym.compiler-symbols-owner-name-at-index
+            symbols
+            (csym.compiler-symbol-handle-index handle))
+            [(CompilerSomeString name)
+              (begin
+                (tc-nominal-owner-cache-store-if-safe!
                   state
-                  program
                   handle
-                  (csym.compiler-symbol-handle-index handle))])])])))
+                  (string.copy (& name)))
+                (ResultTcString.Ok name))]
+            [(CompilerNoString)
+              (tc-nominal-owner-name-scan
+                state
+                program
+                handle
+                (csym.compiler-symbol-handle-index handle))]))])))
 
 (define (tc-context-with-owner-name-module [ctx : TcContext] [owner-id : i64]) : TcContext
   (if (tc-name-qualified-id? (tc-context-structural-session ctx) owner-id)
@@ -27986,127 +28089,101 @@
   [ctx : TcContext]
   [name : String]
   [name-id : i64]) : ast.AstType
-  (match (tc-global-shared-view ctx)
-    [(TcContext _ symbols _ module module-id _ _ _ _)
-      (let
-        [current-dotted-id : i64
-          (tc-current-module-dotted-name-id
-            (tc-global-shared-view ctx)
-            (tc-global-shared-view name)
-            name-id)]
-        [direct-source-key : option_i64.Option
-          (if (>= current-dotted-id 0)
-            option_i64.None
-            (tc-dotted-type-symbol-key-id
+  (let
+    [symbols : (& ctx csym.CompilerSymbols) (tc-context-symbols ctx)]
+    [module : String (tc-context-module ctx)]
+    [module-id : i64 (tc-context-module-id ctx)]
+    [current-dotted-id : i64
+      (tc-current-module-dotted-name-id
+        (tc-global-shared-view ctx)
+        (tc-global-shared-view name)
+        name-id)]
+    [direct-source-key : option_i64.Option
+      (if (>= current-dotted-id 0)
+        option_i64.None
+        (tc-dotted-type-symbol-key-id
+          (tc-global-shared-view ctx)
+          (tc-global-shared-view name)
+          name-id))]
+    [source-result : ResultTcString
+      (if (>= current-dotted-id 0)
+        (ResultTcString.Ok (tc-nominal-name-id-display current-dotted-id))
+        (match direct-source-key
+          [(option_i64.Some _) (ResultTcString.Ok (tc-global-shared-view name))]
+          [(option_i64.None)
+            (tc-dotted-type-name-lookup-key-from-id
               (tc-global-shared-view ctx)
               (tc-global-shared-view name)
-              name-id))]
-        [source-result : ResultTcString
-          (if (>= current-dotted-id 0)
-            (ResultTcString.Ok (tc-nominal-name-id-display current-dotted-id))
-            (match direct-source-key
-              [(option_i64.Some _)
-                (ResultTcString.Ok (tc-global-shared-view name))]
-              [(option_i64.None)
-                (tc-dotted-type-name-lookup-key-from-id
+              name-id)]))]
+    [source-name : String
+      (match (tc-global-shared-view source-result)
+        [(ResultTcString.Ok key) key]
+        [(ResultTcString.Err _) (tc-global-shared-view name)])]
+    [source-id : i64
+      (if (>= current-dotted-id 0)
+        current-dotted-id
+        (match direct-source-key
+          [(option_i64.Some key-id) key-id]
+          [(option_i64.None)
+            (match source-result
+              [(ResultTcString.Ok key)
+                (if (string.eq key (tc-global-shared-view name))
+                  name-id
+                  (tc-dotted-resolved-key-id-or
+                    (tc-global-shared-view ctx)
+                    name-id
+                    name-id))]
+              [(ResultTcString.Err _)
+                (match (tc-dotted-unique-nominal-type-id
                   (tc-global-shared-view ctx)
                   (tc-global-shared-view name)
-                  name-id)]))]
-        [source-name : String
-          (match (tc-global-shared-view source-result)
-            [(ResultTcString.Ok key) key]
-            [(ResultTcString.Err _) (tc-global-shared-view name)])]
-        [source-id : i64
-          (if (>= current-dotted-id 0)
-            current-dotted-id
-            (match direct-source-key
-              [(option_i64.Some key-id) key-id]
-              [(option_i64.None)
-                (match source-result
-                  [(ResultTcString.Ok key)
-                    (if (string.eq key (tc-global-shared-view name))
-                      name-id
-                      (tc-dotted-resolved-key-id-or
-                        (tc-global-shared-view ctx)
-                        name-id
-                        name-id))]
-                  [(ResultTcString.Err _)
-                    (match (tc-dotted-unique-nominal-type-id
-                      (tc-global-shared-view ctx)
-                      (tc-global-shared-view name)
-                      name-id)
-                      [(option_i64.Some unique-id) unique-id]
-                      [(option_i64.None) name-id])])]))]
-        [in-current-module : bool
-          (and
-            (> (string.string-length module) 0)
-            (not
-              (tc-name-qualified-id?
-                (tc-context-structural-session ctx)
-                source-id)))]
-        [lookup-id : i64
-          (if in-current-module
-            (tc-qualified-name-key-id module-id source-id)
-            source-id)]
-        [handle : i64
-          (if (>= lookup-id 0)
-            (tc-resolve-type-name-symbol-lookup-id
-              (tc-job-state-nominal-cache
-                (tc-context-job-state (tc-global-shared-view ctx)))
-              symbols
-              lookup-id)
-            (csym.compiler-symbols-missing-handle))]
-        (if (csym.compiler-symbols-handle-found? handle)
-          (if (and
-            (tc-name-qualified-id?
-              (tc-context-structural-session ctx)
-              lookup-id)
-            (= (tc-qualified-name-module-id lookup-id) module-id))
-            (match (tc-stdlib-comptime-syntax-type-id lookup-id)
-              [(ast.AstMaybeType.Some syntax-ty) syntax-ty]
-              [(ast.AstMaybeType.No)
-                (tc-resolved-current-module-nominal-type-id
-                  ctx
+                  name-id)
+                  [(option_i64.Some unique-id) unique-id]
+                  [(option_i64.None) name-id])])]))]
+    [in-current-module : bool
+      (and
+        (> (string.string-length module) 0)
+        (not
+          (tc-name-qualified-id? (tc-context-structural-session ctx) source-id)))]
+    [lookup-id : i64
+      (if in-current-module
+        (tc-qualified-name-key-id module-id source-id)
+        source-id)]
+    [handle : i64
+      (if (>= lookup-id 0)
+        (tc-resolve-type-name-symbol-lookup-id
+          (tc-job-state-nominal-cache
+            (tc-context-job-state (tc-global-shared-view ctx)))
+          symbols
+          lookup-id)
+        (csym.compiler-symbols-missing-handle))]
+    (if (csym.compiler-symbols-handle-found? handle)
+      (if (and
+        (tc-name-qualified-id? (tc-context-structural-session ctx) lookup-id)
+        (= (tc-qualified-name-module-id lookup-id) module-id))
+        (match (tc-stdlib-comptime-syntax-type-id lookup-id)
+          [(ast.AstMaybeType.Some syntax-ty) syntax-ty]
+          [(ast.AstMaybeType.No)
+            (tc-resolved-current-module-nominal-type-id ctx lookup-id handle)])
+        (let
+          [canonical-id : i64
+            (tc-nominal-owner-id-or
+              (tc-global-shared-view ctx)
+              handle
+              lookup-id)]
+          (match (tc-stdlib-comptime-syntax-type-id canonical-id)
+            [(ast.AstMaybeType.Some syntax-ty) syntax-ty]
+            [(ast.AstMaybeType.No)
+              (tc-resolved-nominal-type-id
+                (tc-qualified-lookup-owner-id
+                  (tc-context-structural-session ctx)
                   lookup-id
-                  handle)])
-            (let
-              [canonical-id : i64
-                (tc-nominal-owner-id-or
-                  (tc-global-shared-view ctx)
-                  handle
-                  lookup-id)]
-              (match (tc-stdlib-comptime-syntax-type-id canonical-id)
-                [(ast.AstMaybeType.Some syntax-ty) syntax-ty]
-                [(ast.AstMaybeType.No)
-                  (tc-resolved-nominal-type-id
-                    (tc-qualified-lookup-owner-id
-                      (tc-context-structural-session ctx)
-                      lookup-id
-                      canonical-id)
-                    handle)])))
-          (if (tc-name-qualified-id?
-            (tc-context-structural-session ctx)
-            source-id)
-            (match (tc-context-enum-variants-id ctx source-id source-name)
-              [(parser.ResultAstVariantDefList.Ok _)
-                (ast.AstType.Enum source-id)]
-              [(parser.ResultAstVariantDefList.Err _)
-                (cond
-                  [(string.eq name "Expr") (ast.AstType.Expr)]
-                  [(string.eq name "ExprList") (ast.AstType.ExprList)]
-                  [(string.eq name "ExprClause") (tc-macro-expr-clause-type)]
-                  [(string.eq name "ExprClauseList")
-                    (tc-macro-expr-clause-list-type)]
-                  [(string.eq name "ExprBindingClause")
-                    (tc-macro-expr-binding-clause-type)]
-                  [(string.eq name "ExprBindingClauseList")
-                    (tc-macro-expr-binding-clause-list-type)]
-                  [(string.eq name "Pattern") (tc-macro-pattern-type)]
-                  [(string.eq name "PatternList") (tc-macro-pattern-list-type)]
-                  [(string.eq name "MatchArm") (tc-macro-match-arm-type)]
-                  [(string.eq name "MatchArmList")
-                    (tc-macro-match-arm-list-type)]
-                  [else (ast.AstType.Var name-id)])])
+                  canonical-id)
+                handle)])))
+      (if (tc-name-qualified-id? (tc-context-structural-session ctx) source-id)
+        (match (tc-context-enum-variants-id ctx source-id source-name)
+          [(parser.ResultAstVariantDefList.Ok _) (ast.AstType.Enum source-id)]
+          [(parser.ResultAstVariantDefList.Err _)
             (cond
               [(string.eq name "Expr") (ast.AstType.Expr)]
               [(string.eq name "ExprList") (ast.AstType.ExprList)]
@@ -28121,7 +28198,21 @@
               [(string.eq name "PatternList") (tc-macro-pattern-list-type)]
               [(string.eq name "MatchArm") (tc-macro-match-arm-type)]
               [(string.eq name "MatchArmList") (tc-macro-match-arm-list-type)]
-              [else (ast.AstType.Var name-id)]))))]))
+              [else (ast.AstType.Var name-id)])])
+        (cond
+          [(string.eq name "Expr") (ast.AstType.Expr)]
+          [(string.eq name "ExprList") (ast.AstType.ExprList)]
+          [(string.eq name "ExprClause") (tc-macro-expr-clause-type)]
+          [(string.eq name "ExprClauseList") (tc-macro-expr-clause-list-type)]
+          [(string.eq name "ExprBindingClause")
+            (tc-macro-expr-binding-clause-type)]
+          [(string.eq name "ExprBindingClauseList")
+            (tc-macro-expr-binding-clause-list-type)]
+          [(string.eq name "Pattern") (tc-macro-pattern-type)]
+          [(string.eq name "PatternList") (tc-macro-pattern-list-type)]
+          [(string.eq name "MatchArm") (tc-macro-match-arm-type)]
+          [(string.eq name "MatchArmList") (tc-macro-match-arm-list-type)]
+          [else (ast.AstType.Var name-id)])))))
 
 (define (tc-resolve-type-name [ctx : TcContext] [name : String] [name-id : i64]) : ast.AstType
   (let
@@ -28613,115 +28704,109 @@
   [name : String]
   [name-id : i64]
   [lifetimes : ast.AstLifetimeList]) : ast.AstType
-  (match (tc-global-shared-view ctx)
-    [(TcContext _ symbols _ module module-id _ _ _ _)
-      (let
-        [current-dotted-id : i64
-          (tc-current-module-dotted-name-id
-            (tc-global-shared-view ctx)
-            (tc-global-shared-view name)
-            name-id)]
-        [direct-source-key : option_i64.Option
-          (if (>= current-dotted-id 0)
-            option_i64.None
-            (tc-dotted-type-symbol-key-id
+  (let
+    [symbols : (& ctx csym.CompilerSymbols) (tc-context-symbols ctx)]
+    [module : String (tc-context-module ctx)]
+    [module-id : i64 (tc-context-module-id ctx)]
+    [current-dotted-id : i64
+      (tc-current-module-dotted-name-id
+        (tc-global-shared-view ctx)
+        (tc-global-shared-view name)
+        name-id)]
+    [direct-source-key : option_i64.Option
+      (if (>= current-dotted-id 0)
+        option_i64.None
+        (tc-dotted-type-symbol-key-id
+          (tc-global-shared-view ctx)
+          (tc-global-shared-view name)
+          name-id))]
+    [source-result : ResultTcString
+      (if (>= current-dotted-id 0)
+        (ResultTcString.Ok (tc-nominal-name-id-display current-dotted-id))
+        (match direct-source-key
+          [(option_i64.Some _) (ResultTcString.Ok (tc-global-shared-view name))]
+          [(option_i64.None)
+            (tc-dotted-type-name-lookup-key-from-id
               (tc-global-shared-view ctx)
               (tc-global-shared-view name)
-              name-id))]
-        [source-result : ResultTcString
-          (if (>= current-dotted-id 0)
-            (ResultTcString.Ok (tc-nominal-name-id-display current-dotted-id))
-            (match direct-source-key
-              [(option_i64.Some _)
-                (ResultTcString.Ok (tc-global-shared-view name))]
-              [(option_i64.None)
-                (tc-dotted-type-name-lookup-key-from-id
+              name-id)]))]
+    [source-name : String
+      (match (tc-global-shared-view source-result)
+        [(ResultTcString.Ok key) key]
+        [(ResultTcString.Err _) (tc-global-shared-view name)])]
+    [source-id : i64
+      (if (>= current-dotted-id 0)
+        current-dotted-id
+        (match direct-source-key
+          [(option_i64.Some key-id) key-id]
+          [(option_i64.None)
+            (match source-result
+              [(ResultTcString.Ok key)
+                (if (string.eq key (tc-global-shared-view name))
+                  name-id
+                  (tc-dotted-resolved-key-id-or
+                    (tc-global-shared-view ctx)
+                    name-id
+                    name-id))]
+              [(ResultTcString.Err _)
+                (match (tc-dotted-unique-nominal-type-id
                   (tc-global-shared-view ctx)
                   (tc-global-shared-view name)
-                  name-id)]))]
-        [source-name : String
-          (match (tc-global-shared-view source-result)
-            [(ResultTcString.Ok key) key]
-            [(ResultTcString.Err _) (tc-global-shared-view name)])]
-        [source-id : i64
-          (if (>= current-dotted-id 0)
-            current-dotted-id
-            (match direct-source-key
-              [(option_i64.Some key-id) key-id]
-              [(option_i64.None)
-                (match source-result
-                  [(ResultTcString.Ok key)
-                    (if (string.eq key (tc-global-shared-view name))
-                      name-id
-                      (tc-dotted-resolved-key-id-or
-                        (tc-global-shared-view ctx)
-                        name-id
-                        name-id))]
-                  [(ResultTcString.Err _)
-                    (match (tc-dotted-unique-nominal-type-id
-                      (tc-global-shared-view ctx)
-                      (tc-global-shared-view name)
-                      name-id)
-                      [(option_i64.Some unique-id) unique-id]
-                      [(option_i64.None) name-id])])]))]
-        [in-current-module : bool
-          (and
-            (> (string.string-length module) 0)
-            (not
-              (tc-name-qualified-id?
-                (tc-context-structural-session ctx)
-                source-id)))]
-        [lookup-id : i64
-          (if in-current-module
-            (tc-qualified-name-key-id module-id source-id)
-            source-id)]
-        [handle : i64
-          (if (>= lookup-id 0)
-            (tc-resolve-type-name-symbol-lookup-id
-              (tc-job-state-nominal-cache
-                (tc-context-job-state (tc-global-shared-view ctx)))
-              symbols
-              lookup-id)
-            (csym.compiler-symbols-missing-handle))]
-        (if (csym.compiler-symbols-handle-found? handle)
-          (if (and
-            (tc-name-qualified-id?
-              (tc-context-structural-session ctx)
-              lookup-id)
-            (= (tc-qualified-name-module-id lookup-id) module-id))
-            (match (tc-stdlib-comptime-syntax-type-id lookup-id)
-              [(ast.AstMaybeType.Some syntax-ty) syntax-ty]
-              [(ast.AstMaybeType.No)
-                (tc-resolved-current-module-nominal-type-with-args-id
-                  ctx
+                  name-id)
+                  [(option_i64.Some unique-id) unique-id]
+                  [(option_i64.None) name-id])])]))]
+    [in-current-module : bool
+      (and
+        (> (string.string-length module) 0)
+        (not
+          (tc-name-qualified-id? (tc-context-structural-session ctx) source-id)))]
+    [lookup-id : i64
+      (if in-current-module
+        (tc-qualified-name-key-id module-id source-id)
+        source-id)]
+    [handle : i64
+      (if (>= lookup-id 0)
+        (tc-resolve-type-name-symbol-lookup-id
+          (tc-job-state-nominal-cache
+            (tc-context-job-state (tc-global-shared-view ctx)))
+          symbols
+          lookup-id)
+        (csym.compiler-symbols-missing-handle))]
+    (if (csym.compiler-symbols-handle-found? handle)
+      (if (and
+        (tc-name-qualified-id? (tc-context-structural-session ctx) lookup-id)
+        (= (tc-qualified-name-module-id lookup-id) module-id))
+        (match (tc-stdlib-comptime-syntax-type-id lookup-id)
+          [(ast.AstMaybeType.Some syntax-ty) syntax-ty]
+          [(ast.AstMaybeType.No)
+            (tc-resolved-current-module-nominal-type-with-args-id
+              ctx
+              lookup-id
+              handle
+              lifetimes)])
+        (let
+          [canonical-id : i64
+            (tc-nominal-owner-id-or
+              (tc-global-shared-view ctx)
+              handle
+              lookup-id)]
+          (match (tc-stdlib-comptime-syntax-type-id canonical-id)
+            [(ast.AstMaybeType.Some syntax-ty) syntax-ty]
+            [(ast.AstMaybeType.No)
+              (tc-resolved-nominal-type-with-args-id
+                (tc-qualified-lookup-owner-id
+                  (tc-context-structural-session ctx)
                   lookup-id
-                  handle
-                  lifetimes)])
-            (let
-              [canonical-id : i64
-                (tc-nominal-owner-id-or
-                  (tc-global-shared-view ctx)
-                  handle
-                  lookup-id)]
-              (match (tc-stdlib-comptime-syntax-type-id canonical-id)
-                [(ast.AstMaybeType.Some syntax-ty) syntax-ty]
-                [(ast.AstMaybeType.No)
-                  (tc-resolved-nominal-type-with-args-id
-                    (tc-qualified-lookup-owner-id
-                      (tc-context-structural-session ctx)
-                      lookup-id
-                      canonical-id)
-                    handle
-                    lifetimes)])))
-          (if (tc-name-qualified-id?
-            (tc-context-structural-session ctx)
-            source-id)
-            (match (tc-context-enum-variants-id ctx source-id source-name)
-              [(parser.ResultAstVariantDefList.Ok _)
-                (ast.ast-ty-enum-args source-id lifetimes)]
-              [(parser.ResultAstVariantDefList.Err _)
-                (ast.ast-ty-var-args name-id lifetimes)])
-            (ast.ast-ty-var-args name-id lifetimes))))]))
+                  canonical-id)
+                handle
+                lifetimes)])))
+      (if (tc-name-qualified-id? (tc-context-structural-session ctx) source-id)
+        (match (tc-context-enum-variants-id ctx source-id source-name)
+          [(parser.ResultAstVariantDefList.Ok _)
+            (ast.ast-ty-enum-args source-id lifetimes)]
+          [(parser.ResultAstVariantDefList.Err _)
+            (ast.ast-ty-var-args name-id lifetimes)])
+        (ast.ast-ty-var-args name-id lifetimes)))))
 
 (define (tc-resolve-type-name-with-args
   [ctx : TcContext]
@@ -28889,38 +28974,35 @@
         -1)]))
 
 (define (tc-nominal-lifetimes-id [ctx : TcContext] [name-id : i64]) : ResultTcLifetimeList
-  (match (tc-global-shared-view ctx)
-    [(TcContext program symbols _ _ _ _ _ _ _)
-      (let
-        [handle : i64
-          (tc-type-handle-lookup-id
-            (tc-job-state-nominal-cache
-              (tc-context-job-state (tc-global-shared-view ctx)))
-            (& symbols)
-            name-id
-            tc-type-handle-lookup-caller-nominal-lifetime)]
-        (if (csym.compiler-symbols-handle-found? handle)
-          (match (csym.compiler-symbols-decl-at-index
-            symbols
-            (csym.compiler-symbol-handle-index handle))
-            [(parser.ResultAstDecl.Ok decl)
-              (tc-nominal-lifetimes-from-decl decl)]
-            [(parser.ResultAstDecl.Err message)
-              (ResultTcLifetimeList.Err message)])
-          (match (tc-program-nominal-lifetimes
-            (tc-context-structural-session ctx)
-            (tc-context-program ctx)
-            name-id)
-            [(ResultTcLifetimeList.Ok lifetimes)
-              (ResultTcLifetimeList.Ok lifetimes)]
-            [(ResultTcLifetimeList.Err message)
-              (ResultTcLifetimeList.Err
-                (str_cat.str-cat
-                  message
-                  ": "
-                  (tc-nominal-name-id-display name-id)
-                  "#"
-                  (string.int->string name-id)))])))]))
+  (let
+    [symbols : (& ctx csym.CompilerSymbols) (tc-context-symbols ctx)]
+    [handle : i64
+      (tc-type-handle-lookup-id
+        (tc-job-state-nominal-cache
+          (tc-context-job-state (tc-global-shared-view ctx)))
+        (& symbols)
+        name-id
+        tc-type-handle-lookup-caller-nominal-lifetime)]
+    (if (csym.compiler-symbols-handle-found? handle)
+      (match (csym.compiler-symbols-decl-at-index
+        symbols
+        (csym.compiler-symbol-handle-index handle))
+        [(parser.ResultAstDecl.Ok decl) (tc-nominal-lifetimes-from-decl decl)]
+        [(parser.ResultAstDecl.Err message) (ResultTcLifetimeList.Err message)])
+      (match (tc-program-nominal-lifetimes
+        (tc-context-structural-session ctx)
+        (tc-context-program ctx)
+        name-id)
+        [(ResultTcLifetimeList.Ok lifetimes)
+          (ResultTcLifetimeList.Ok lifetimes)]
+        [(ResultTcLifetimeList.Err message)
+          (ResultTcLifetimeList.Err
+            (str_cat.str-cat
+              message
+              ": "
+              (tc-nominal-name-id-display name-id)
+              "#"
+              (string.int->string name-id)))]))))
 
 (define (tc-arena-nominal-name-id? [name-id : i64]) : bool
   (=
@@ -41135,78 +41217,80 @@
     (< (tc-name-first-dot-id session name-id) 0)))
 
 (define (tc-constructor-name-id? [ctx : TcContext] [name-id : i64]) : bool
-  (match (tc-global-shared-view ctx)
-    [(TcContext _ symbols registries module ctx-module-id _ _ _ _)
-      (let
-        [module-id : i64
-          (if (> (string.string-length module) 0)
-            ctx-module-id
-            -1)]
-        [non-root-bare? : bool
-          (tc-constructor-non-root-bare-name-id?
-            (tc-context-structural-session ctx)
-            module
-            name-id)]
-        [variant-key : i64
-          (if non-root-bare?
-            (csym.compiler-composite-pair-key-id module-id name-id)
-            name-id)]
-        [handle : i64
-          (tc-type-handle-lookup-id
-            (tc-job-state-nominal-cache
-              (tc-context-job-state (tc-global-shared-view ctx)))
-            (& symbols)
-            name-id
-            tc-type-handle-lookup-caller-constructor)]
-        [variant-found : bool
-          (if (and
-            (not non-root-bare?)
-            (tc-enum-qualified-variant-lookup-name-id?
-              (tc-context-structural-session ctx)
-              name-id))
-            (match (tc-enum-qualified-variant-lookup-handle ctx name-id)
-              [(option_i64.Some _) true]
-              [(option_i64.None) false])
-            (let
-              [registry-id : i64 (csym.compiler-registries-identity registries)]
-              [cached : i64
-                (tc-context-source-qualified-variant-key-cache-get
-                  (tc-global-shared-view ctx)
-                  registry-id
-                  ctx-module-id
-                  name-id)]
-              (if (= cached -2)
-                (match (csym.compiler-registries-lookup-variant-key-id
-                  registries
-                  (csym.compiler-symbol-name-id-key variant-key))
-                  [(option_i64.Some variant-handle)
-                    (begin
-                      (tc-context-source-qualified-variant-key-cache-put!
-                        ctx
-                        registry-id
-                        ctx-module-id
-                        name-id
-                        variant-key
-                        variant-handle)
-                      true)]
-                  [(option_i64.None)
-                    (begin
-                      (tc-context-source-qualified-variant-key-cache-put!
-                        ctx
-                        registry-id
-                        ctx-module-id
-                        name-id
-                        -1
-                        -1)
-                      false)])
-                (>= cached 0))))]
-        (if (csym.compiler-symbols-handle-found? handle)
-          (if (=
-            (csym.compiler-symbol-handle-kind handle)
-            (csym.compiler-symbol-kind-defstruct))
-            true
-            variant-found)
-          variant-found))]))
+  (let
+    [symbols : (& ctx csym.CompilerSymbols) (tc-context-symbols ctx)]
+    [registries : (& ctx csym.CompilerRegistries) (tc-context-registries ctx)]
+    [module : String (tc-context-module ctx)]
+    [ctx-module-id : i64 (tc-context-module-id ctx)]
+    [module-id : i64
+      (if (> (string.string-length module) 0)
+        ctx-module-id
+        -1)]
+    [non-root-bare? : bool
+      (tc-constructor-non-root-bare-name-id?
+        (tc-context-structural-session ctx)
+        module
+        name-id)]
+    [variant-key : i64
+      (if non-root-bare?
+        (csym.compiler-composite-pair-key-id module-id name-id)
+        name-id)]
+    [handle : i64
+      (tc-type-handle-lookup-id
+        (tc-job-state-nominal-cache
+          (tc-context-job-state (tc-global-shared-view ctx)))
+        (& symbols)
+        name-id
+        tc-type-handle-lookup-caller-constructor)]
+    [variant-found : bool
+      (if (and
+        (not non-root-bare?)
+        (tc-enum-qualified-variant-lookup-name-id?
+          (tc-context-structural-session ctx)
+          name-id))
+        (match (tc-enum-qualified-variant-lookup-handle ctx name-id)
+          [(option_i64.Some _) true]
+          [(option_i64.None) false])
+        (let
+          [registry-id : i64 (csym.compiler-registries-identity registries)]
+          [cached : i64
+            (tc-context-source-qualified-variant-key-cache-get
+              (tc-global-shared-view ctx)
+              registry-id
+              ctx-module-id
+              name-id)]
+          (if (= cached -2)
+            (match (csym.compiler-registries-lookup-variant-key-id
+              registries
+              (csym.compiler-symbol-name-id-key variant-key))
+              [(option_i64.Some variant-handle)
+                (begin
+                  (tc-context-source-qualified-variant-key-cache-put!
+                    ctx
+                    registry-id
+                    ctx-module-id
+                    name-id
+                    variant-key
+                    variant-handle)
+                  true)]
+              [(option_i64.None)
+                (begin
+                  (tc-context-source-qualified-variant-key-cache-put!
+                    ctx
+                    registry-id
+                    ctx-module-id
+                    name-id
+                    -1
+                    -1)
+                  false)])
+            (>= cached 0))))]
+    (if (csym.compiler-symbols-handle-found? handle)
+      (if (=
+        (csym.compiler-symbol-handle-kind handle)
+        (csym.compiler-symbol-kind-defstruct))
+        true
+        variant-found)
+      variant-found)))
 
 (define (tc-call-allows-region-args-id?
   [ctx : TcContext]
@@ -52713,12 +52797,12 @@
           [_ (tc-spmd-program-imports-atomic? rest)]))]))
 
 (define (tc-spmd-context-imports-atomic? [ctx : TcContext]) : bool
-  (match (tc-global-shared-view ctx)
-    [(TcContext program _ _ _ _ _ _ _ _)
-      (match (tc-global-shared-view program)
-        [(ast.AstProgram.Program decls-box)
-          (tc-spmd-program-imports-atomic?
-            (ast.ast-decl-list-box-shared-view decls-box))])]))
+  (let
+    [program : ast.AstProgram (tc-context-program ctx)]
+    (match (tc-global-shared-view program)
+      [(ast.AstProgram.Program decls-box)
+        (tc-spmd-program-imports-atomic?
+          (ast.ast-decl-list-box-shared-view decls-box))])))
 
 (define (tc-spmd-atomic-imported-symbol-for-name
   [ctx : TcContext]
@@ -61209,27 +61293,6 @@
     body
     true))
 
-(define (tc-context-program [ctx : TcContext]) : ast.AstProgram
-  (match ctx
-    [(TcContext program _ _ _ _ _ _ _ _) program]))
-
-(define (tc-context-symbols [ctx : (& ctx TcContext)]) : (&
-    ctx
-    csym.CompilerSymbols)
-  (match ctx
-    [(TcContext _ symbols _ _ _ _ _ _ _) symbols]))
-
-(define (tc-context-symbols-ref [ctx : (& ctx TcContext)]) : (&
-    ctx
-    csym.CompilerSymbols)
-  (tc-context-symbols ctx))
-
-(define (tc-context-registries [ctx : (& ctx TcContext)]) : (&
-    ctx
-    csym.CompilerRegistries)
-  (match ctx
-    [(TcContext _ _ registries _ _ _ _ _ _) registries]))
-
 ;; Enum queries are frequent during macro expansion, and the generated-name
 ;; compatibility path cannot always use CompilerSymbols. Index the flat
 ;; program view by the same source and module-qualified ids that the old string
@@ -61975,46 +62038,44 @@
     b))
 
 (define (tc-struct-decl-id [ctx : TcContext] [struct-name-id : i64]) : ResultTcStructDecl
-  (match ctx
-    [(TcContext _ symbols _ _ _ _ _ _ _)
-      (let
-        [handle : i64
-          (csym.compiler-symbols-lookup-type-id-or
-            symbols
-            struct-name-id
-            (csym.compiler-symbols-missing-handle))]
-        (if (csym.compiler-symbols-handle-found? handle)
-          (if (=
-            (csym.compiler-symbol-handle-kind handle)
-            (csym.compiler-symbol-kind-defstruct))
-            (match (csym.compiler-symbols-decl-at-index
-              symbols
-              (csym.compiler-symbol-handle-index handle))
-              [(parser.ResultAstDecl.Ok decl)
-                (match decl
-                  [(ast.AstDecl.DefStruct decl-meta _ repr cleanup fields)
-                    (ResultTcStructDecl.Ok (TcStructDecl repr cleanup fields))]
-                  [(ast.AstDecl.DefStructLifetimes
-                      decl-meta
-                      _
-                      _
-                      repr
-                      cleanup
-                      fields)
-                    (ResultTcStructDecl.Ok (TcStructDecl repr cleanup fields))]
-                  [_
-                    (ResultTcStructDecl.Err
-                      "typecheck: struct symbol owner is not a struct")])]
-              [(parser.ResultAstDecl.Err message)
-                (ResultTcStructDecl.Err message)])
-            (ResultTcStructDecl.Err
-              (str_cat.str-cat
-                "typecheck: unknown struct "
-                (tc-nominal-name-id-display struct-name-id))))
-          (ResultTcStructDecl.Err
-            (str_cat.str-cat
-              "typecheck: unknown struct "
-              (tc-nominal-name-id-display struct-name-id)))))]))
+  (let
+    [symbols : (& ctx csym.CompilerSymbols) (tc-context-symbols ctx)]
+    [handle : i64
+      (csym.compiler-symbols-lookup-type-id-or
+        symbols
+        struct-name-id
+        (csym.compiler-symbols-missing-handle))]
+    (if (csym.compiler-symbols-handle-found? handle)
+      (if (=
+        (csym.compiler-symbol-handle-kind handle)
+        (csym.compiler-symbol-kind-defstruct))
+        (match (csym.compiler-symbols-decl-at-index
+          symbols
+          (csym.compiler-symbol-handle-index handle))
+          [(parser.ResultAstDecl.Ok decl)
+            (match decl
+              [(ast.AstDecl.DefStruct decl-meta _ repr cleanup fields)
+                (ResultTcStructDecl.Ok (TcStructDecl repr cleanup fields))]
+              [(ast.AstDecl.DefStructLifetimes
+                  decl-meta
+                  _
+                  _
+                  repr
+                  cleanup
+                  fields)
+                (ResultTcStructDecl.Ok (TcStructDecl repr cleanup fields))]
+              [_
+                (ResultTcStructDecl.Err
+                  "typecheck: struct symbol owner is not a struct")])]
+          [(parser.ResultAstDecl.Err message) (ResultTcStructDecl.Err message)])
+        (ResultTcStructDecl.Err
+          (str_cat.str-cat
+            "typecheck: unknown struct "
+            (tc-nominal-name-id-display struct-name-id))))
+      (ResultTcStructDecl.Err
+        (str_cat.str-cat
+          "typecheck: unknown struct "
+          (tc-nominal-name-id-display struct-name-id))))))
 
 (define (tc-struct-decl-at-handle
   [ctx : TcContext]
@@ -62042,40 +62103,38 @@
     (tc-struct-decl-id ctx struct-name-id)))
 
 (define (tc-enum-decl-id [ctx : TcContext] [enum-name-id : i64]) : ResultTcEnumDecl
-  (match ctx
-    [(TcContext _ symbols _ _ _ _ _ _ _)
-      (let
-        [handle : i64
-          (csym.compiler-symbols-lookup-type-id-or
-            symbols
-            enum-name-id
-            (csym.compiler-symbols-missing-handle))]
-        (if (csym.compiler-symbols-handle-found? handle)
-          (if (=
-            (csym.compiler-symbol-handle-kind handle)
-            (csym.compiler-symbol-kind-defenum))
-            (match (csym.compiler-symbols-decl-at-index
-              symbols
-              (csym.compiler-symbol-handle-index handle))
-              [(parser.ResultAstDecl.Ok decl)
-                (match decl
-                  [(ast.AstDecl.DefEnum decl-meta _ cleanup variants)
-                    (ResultTcEnumDecl.Ok (TcEnumDecl cleanup variants))]
-                  [(ast.AstDecl.DefEnumLifetimes decl-meta _ _ cleanup variants)
-                    (ResultTcEnumDecl.Ok (TcEnumDecl cleanup variants))]
-                  [_
-                    (ResultTcEnumDecl.Err
-                      "typecheck: enum symbol owner is not an enum")])]
-              [(parser.ResultAstDecl.Err message)
-                (ResultTcEnumDecl.Err message)])
-            (ResultTcEnumDecl.Err
-              (str_cat.str-cat
-                "typecheck: unknown enum "
-                (tc-nominal-name-id-display enum-name-id))))
-          (ResultTcEnumDecl.Err
-            (str_cat.str-cat
-              "typecheck: unknown enum "
-              (tc-nominal-name-id-display enum-name-id)))))]))
+  (let
+    [symbols : (& ctx csym.CompilerSymbols) (tc-context-symbols ctx)]
+    [handle : i64
+      (csym.compiler-symbols-lookup-type-id-or
+        symbols
+        enum-name-id
+        (csym.compiler-symbols-missing-handle))]
+    (if (csym.compiler-symbols-handle-found? handle)
+      (if (=
+        (csym.compiler-symbol-handle-kind handle)
+        (csym.compiler-symbol-kind-defenum))
+        (match (csym.compiler-symbols-decl-at-index
+          symbols
+          (csym.compiler-symbol-handle-index handle))
+          [(parser.ResultAstDecl.Ok decl)
+            (match decl
+              [(ast.AstDecl.DefEnum decl-meta _ cleanup variants)
+                (ResultTcEnumDecl.Ok (TcEnumDecl cleanup variants))]
+              [(ast.AstDecl.DefEnumLifetimes decl-meta _ _ cleanup variants)
+                (ResultTcEnumDecl.Ok (TcEnumDecl cleanup variants))]
+              [_
+                (ResultTcEnumDecl.Err
+                  "typecheck: enum symbol owner is not an enum")])]
+          [(parser.ResultAstDecl.Err message) (ResultTcEnumDecl.Err message)])
+        (ResultTcEnumDecl.Err
+          (str_cat.str-cat
+            "typecheck: unknown enum "
+            (tc-nominal-name-id-display enum-name-id))))
+      (ResultTcEnumDecl.Err
+        (str_cat.str-cat
+          "typecheck: unknown enum "
+          (tc-nominal-name-id-display enum-name-id))))))
 
 (define (tc-inline-aggregate-cycle-stack-render [stack : TcStringList]) : String
   (if (tc-string-list-empty? (tc-global-shared-view stack))
@@ -63934,24 +63993,24 @@
       current-layouts)))
 
 (define (tc-ctfe-layouts [ctx : TcContext]) : ctfe_support.CtfeLayoutInfoList
-  (match (tc-global-shared-view ctx)
-    [(TcContext program _ _ _ _ _ _ _ _)
-      (match program
-        [(ast.AstProgram.Program decls-box)
-          (let
-            [decls : ast.AstDeclList
-              (ast.ast-decl-list-box-shared-view decls-box)]
-            (begin
-              (ctfe_support.ctfe-build-seen-reset!)
-              (tc-ctfe-layouts-from-decls
-                ctx
-                (tc-global-shared-view decls)
-                ""
-                cbi.compiler-builtin-id-fix-empty
-                (ctfe_support.ctfe-layout-info-list-with-capacity
-                  ;; Splice extension grows this owner-arena vector
-                  ;; geometrically; reserve only the known program surface.
-                  (ctfe_support.ctfe-metadata-decl-capacity decls)))))])]))
+  (let
+    [program : ast.AstProgram (tc-context-program ctx)]
+    (match program
+      [(ast.AstProgram.Program decls-box)
+        (let
+          [decls : ast.AstDeclList
+            (ast.ast-decl-list-box-shared-view decls-box)]
+          (begin
+            (ctfe_support.ctfe-build-seen-reset!)
+            (tc-ctfe-layouts-from-decls
+              ctx
+              (tc-global-shared-view decls)
+              ""
+              cbi.compiler-builtin-id-fix-empty
+              (ctfe_support.ctfe-layout-info-list-with-capacity
+                ;; Splice extension grows this owner-arena vector
+                ;; geometrically; reserve only the known program surface.
+                (ctfe_support.ctfe-metadata-decl-capacity decls)))))])))
 
 ;; CTFE base environment (reflection + layout metadata). This is invariant across
 ;; a single compile (same program/symbols/registries), but is requested up to ~8
@@ -116044,31 +116103,33 @@
               (ctfe_support.ctfe-diagnostic-at-expr
                 (tc-global-shared-view arg)
                 (tc-source-slash-qualified-message (tc-global-shared-view name)))))
-          (match (tc-global-shared-view ctx)
-            [(TcContext program _ _ current-module current-module-id _ _ _ _)
-              (match (tc-global-shared-view program)
-                [(ast.AstProgram.Program decls-box)
-                  (match (macro-import-alias-target-cached-id-in-context
-                    (tc-global-shared-view ctx)
-                    (ast.ast-decl-list-box-shared-view decls-box)
-                    current-module-id
-                    name-id)
-                    [(TcMaybeNameId.Some target-id)
-                      (ResultMacroModuleArg.Ok
-                        (tc-env-key-name-text target-id)
-                        target-id)]
-                    [(TcMaybeNameId.No)
-                      (if (or
-                        (string.eq (tc-global-shared-view name) current-module)
-                        (tc-imported-module-identity-id?
-                          (tc-global-shared-view ctx)
-                          name-id))
-                        (ResultMacroModuleArg.Ok name source-id)
-                        (ResultMacroModuleArg.Err
-                          (box
-                            (ctfe_support.ctfe-diagnostic-at-expr
-                              arg
-                              (macro-module-strategy-unknown-message name)))))])])])))]
+          (let
+            [program : ast.AstProgram (tc-context-program ctx)]
+            [current-module : String (tc-context-module ctx)]
+            [current-module-id : i64 (tc-context-module-id ctx)]
+            (match (tc-global-shared-view program)
+              [(ast.AstProgram.Program decls-box)
+                (match (macro-import-alias-target-cached-id-in-context
+                  (tc-global-shared-view ctx)
+                  (ast.ast-decl-list-box-shared-view decls-box)
+                  current-module-id
+                  name-id)
+                  [(TcMaybeNameId.Some target-id)
+                    (ResultMacroModuleArg.Ok
+                      (tc-env-key-name-text target-id)
+                      target-id)]
+                  [(TcMaybeNameId.No)
+                    (if (or
+                      (string.eq (tc-global-shared-view name) current-module)
+                      (tc-imported-module-identity-id?
+                        (tc-global-shared-view ctx)
+                        name-id))
+                      (ResultMacroModuleArg.Ok name source-id)
+                      (ResultMacroModuleArg.Err
+                        (box
+                          (ctfe_support.ctfe-diagnostic-at-expr
+                            arg
+                            (macro-module-strategy-unknown-message name)))))])]))))]
     [_
       (ResultMacroModuleArg.Err
         (box

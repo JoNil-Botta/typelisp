@@ -256,8 +256,6 @@ Keep these at the top level while their owning gate references them.
 - `lib-*` files are sourced support code and are not standalone commands.
 - `generate-*` scripts refresh reviewed test vectors or other checked inputs.
 - Data files next to scripts are owned by the gate that reads them.
-- `attic/` contains runnable historical experiment harnesses. They are not CI
-  gates and must not be referenced by workflows or `ci-verify.sh`.
 
 Active optional tools stay at the top level when they support recurring work:
 the compiler and CLI benchmarks, selfhost size report, compile-memory and RSS
@@ -276,8 +274,9 @@ Before moving or deleting a script:
    manifests for its path.
 2. Keep live gate helpers at the top level even when their name begins with
    `measure-`.
-3. Move only closed, one-off experiments to `attic/`; record the owning issue
-   and update any historical reproduction command.
+3. Delete closed, one-off experiments instead of archiving them; name the
+   owning issue in the commit message so the script stays recoverable from
+   history.
 4. Run shell/PowerShell syntax checks for moved files and the focused gate for
    every changed live reference.
 5. Run `check-implementation-languages.sh` and `git diff --check`.

@@ -5,6 +5,7 @@
 ;# caller-provided text without copying.
 (import stdlib.str_cat)
 (import stdlib.string)
+(cfg test (import stdlib.test))
 
 ;: Result for lifetime-preserving string replacement.
 ;:
@@ -145,18 +146,18 @@
     [helper-owned : (StringReplaceResult text needle replacement)
       (string-replace-result (& text) (& needle) (& replacement))]
     (begin
-      (if (string-replace-result-borrowed? borrowed)
-        unit
-        (test-fail))
-      (if (string-replace-result-owned? owned-result)
-        unit
-        (test-fail))
+      (test.assert-true
+        (string-replace-result-borrowed? borrowed)
+        "string-caller-result-api: (string-replace-result-borrowed? borrowed)")
+      (test.assert-true
+        (string-replace-result-owned? owned-result)
+        "string-caller-result-api: (string-replace-result-owned? owned-result)")
       (test-string-eq (string-replace-result-string borrowed) "alpha")
       (test-string-eq (string-replace-result-string owned-result) "owned")
-      (if (string-replace-result-borrowed? helper-borrowed)
-        unit
-        (test-fail))
-      (if (string-replace-result-owned? helper-owned)
-        unit
-        (test-fail))
+      (test.assert-true
+        (string-replace-result-borrowed? helper-borrowed)
+        "string-caller-result-api: (string-replace-result-borrowed? helper-borrowed)")
+      (test.assert-true
+        (string-replace-result-owned? helper-owned)
+        "string-caller-result-api: (string-replace-result-owned? helper-owned)")
       (test-string-eq (string-replace-result-string helper-owned) "alrena"))))

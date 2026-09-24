@@ -19,6 +19,7 @@
 ;# ```
 (import stdlib.comptime)
 (import stdlib.string as string_mod)
+(cfg test (import stdlib.test))
 
 ;: Return a representation-level shared view of a hash input place.
 (defmacro (hash-shared-view [place : comptime.Expr]) : comptime.Expr
@@ -454,11 +455,6 @@
 (test
   hash-api
   (let
-    [fail : (-> unit)
-      (lambda () : unit
-        (begin
-          (/ 1 0)
-          unit))]
     [empty : String ""]
     [a : String "a"]
     [ab : String "ab"]
@@ -479,138 +475,134 @@
     [range-empty : i64 (stdlib.hash.string-key (& empty))]
     [range-edge : i64 (stdlib.hash.string-key (& edge))]
     (begin
-      (if (= (stdlib.hash.modulus) 2147483647)
-        unit
-        (fail))
-      (if (= (stdlib.hash.multiplier) 131)
-        unit
-        (fail))
-      (if (= (stdlib.hash.normalize 2147483647) 0)
-        unit
-        (fail))
-      (if (= (stdlib.hash.normalize -1) 2147483646)
-        unit
-        (fail))
-      (if (= (stdlib.hash.i64 42) 42)
-        unit
-        (fail))
-      (if (= (stdlib.hash.i64 -42) 2147483605)
-        unit
-        (fail))
-      (if (= (stdlib.hash.bool false) 0)
-        unit
-        (fail))
-      (if (= (stdlib.hash.bool true) 1)
-        unit
-        (fail))
-      (if (= (stdlib.hash.char 'A') 65)
-        unit
-        (fail))
-      (if (= (stdlib.hash.char '\n') 10)
-        unit
-        (fail))
-      (if (= (stdlib.hash.combine 0 0) 1)
-        unit
-        (fail))
-      (if (= (stdlib.hash.combine 42 7) 5510)
-        unit
-        (fail))
-      (if (= (stdlib.hash.string-key (& empty)) 0)
-        unit
-        (fail))
-      (if (= (stdlib.hash.string-key (& a)) 98)
-        unit
-        (fail))
-      (if (= (stdlib.hash.string-key (& ab)) 12937)
-        unit
-        (fail))
-      (if (= (stdlib.hash.string-key (& abc)) 1694847)
-        unit
-        (fail))
-      (if (= (stdlib.hash.string-key (& abcd)) 222025058)
-        unit
-        (fail))
-      (if (= (stdlib.hash.string-key (& abcdefgh)) 1379066653)
-        unit
-        (fail))
-      (if (= (stdlib.hash.string-key (& ba)) 13067)
-        unit
-        (fail))
-      (if (= (stdlib.hash.string-key (& a-newline-b)) 1683318)
-        unit
-        (fail))
-      (if (= (stdlib.hash.i64 42) (stdlib.hash.i64 (+ 40 2)))
-        unit
-        (fail))
-      (if (= (stdlib.hash.bool true) (stdlib.hash.bool (not false)))
-        unit
-        (fail))
-      (if (= (stdlib.hash.char 'A') (stdlib.hash.char (string-ref "A" 0)))
-        unit
-        (fail))
-      (if (=
-        (stdlib.hash.string-key (& abc))
-        (stdlib.hash.string-key (& joined)))
-        unit
-        (fail))
-      (if (stdlib.hash.key-i64-eq? 5 5)
-        unit
-        (fail))
-      (if (not (stdlib.hash.key-i64-eq? 5 6))
-        unit
-        (fail))
-      (if (stdlib.hash.key-bool-eq? true true)
-        unit
-        (fail))
-      (if (not (stdlib.hash.key-bool-eq? true false))
-        unit
-        (fail))
-      (if (stdlib.hash.key-char-eq? 'x' 'x')
-        unit
-        (fail))
-      (if (not (stdlib.hash.key-char-eq? 'x' (string-ref "y" 0)))
-        unit
-        (fail))
-      (if (stdlib.hash.key-string-eq? (& same) (& same-copy))
-        unit
-        (fail))
-      (if (not (stdlib.hash.key-string-eq? (& same) (& different)))
-        unit
-        (fail))
-      (if (= (stdlib.hash.i64 0) (stdlib.hash.i64 2147483647))
-        unit
-        (fail))
-      (if (not (stdlib.hash.key-i64-eq? 0 2147483647))
-        unit
-        (fail))
-      (if (= (stdlib.hash.combine 0 131) (stdlib.hash.combine 1 0))
-        unit
-        (fail))
-      (if (not (stdlib.hash.key-i64-eq? 0 1))
-        unit
-        (fail))
-      (if (if (>= range-min 0)
-        (< range-min (stdlib.hash.modulus))
-        false)
-        unit
-        (fail))
-      (if (if (>= range-max 0)
-        (< range-max (stdlib.hash.modulus))
-        false)
-        unit
-        (fail))
-      (if (if (>= range-combine 0)
-        (< range-combine (stdlib.hash.modulus))
-        false)
-        unit
-        (fail))
-      (if (if (>= range-empty 0)
-        (< range-empty (stdlib.hash.modulus))
-        false)
-        unit
-        (fail))
-      (if (if (>= range-edge 0)
-        (< range-edge (stdlib.hash.modulus))
-        false)
-        unit
-        (fail)))))
+      (test.assert-true
+        (= (stdlib.hash.modulus) 2147483647)
+        "hash-api: (= (modulus) 2147483647)")
+      (test.assert-true
+        (= (stdlib.hash.multiplier) 131)
+        "hash-api: (= (multiplier) 131)")
+      (test.assert-true
+        (= (stdlib.hash.normalize 2147483647) 0)
+        "hash-api: (= (normalize 2147483647) 0)")
+      (test.assert-true
+        (= (stdlib.hash.normalize -1) 2147483646)
+        "hash-api: (= (normalize -1) 2147483646)")
+      (test.assert-true (= (stdlib.hash.i64 42) 42) "hash-api: (= (i64 42) 42)")
+      (test.assert-true
+        (= (stdlib.hash.i64 -42) 2147483605)
+        "hash-api: (= (i64 -42) 2147483605)")
+      (test.assert-true
+        (= (stdlib.hash.bool false) 0)
+        "hash-api: (= (bool false) 0)")
+      (test.assert-true
+        (= (stdlib.hash.bool true) 1)
+        "hash-api: (= (bool true) 1)")
+      (test.assert-true
+        (= (stdlib.hash.char 'A') 65)
+        "hash-api: (= (char 'A') 65)")
+      (test.assert-true
+        (= (stdlib.hash.char '\n') 10)
+        "hash-api: (= (char '\\n') 10)")
+      (test.assert-true
+        (= (stdlib.hash.combine 0 0) 1)
+        "hash-api: (= (combine 0 0) 1)")
+      (test.assert-true
+        (= (stdlib.hash.combine 42 7) 5510)
+        "hash-api: (= (combine 42 7) 5510)")
+      (test.assert-true
+        (= (stdlib.hash.string-key (& empty)) 0)
+        "hash-api: (= (string-key (& empty)) 0)")
+      (test.assert-true
+        (= (stdlib.hash.string-key (& a)) 98)
+        "hash-api: (= (string-key (& a)) 98)")
+      (test.assert-true
+        (= (stdlib.hash.string-key (& ab)) 12937)
+        "hash-api: (= (string-key (& ab)) 12937)")
+      (test.assert-true
+        (= (stdlib.hash.string-key (& abc)) 1694847)
+        "hash-api: (= (string-key (& abc)) 1694847)")
+      (test.assert-true
+        (= (stdlib.hash.string-key (& abcd)) 222025058)
+        "hash-api: (= (string-key (& abcd)) 222025058)")
+      (test.assert-true
+        (= (stdlib.hash.string-key (& abcdefgh)) 1379066653)
+        "hash-api: (= (string-key (& abcdefgh)) 1379066653)")
+      (test.assert-true
+        (= (stdlib.hash.string-key (& ba)) 13067)
+        "hash-api: (= (string-key (& ba)) 13067)")
+      (test.assert-true
+        (= (stdlib.hash.string-key (& a-newline-b)) 1683318)
+        "hash-api: (= (string-key (& a-newline-b)) 1683318)")
+      (test.assert-true
+        (= (stdlib.hash.i64 42) (stdlib.hash.i64 (+ 40 2)))
+        "hash-api: (= (i64 42) (i64 (+ 40 2)))")
+      (test.assert-true
+        (= (stdlib.hash.bool true) (stdlib.hash.bool (not false)))
+        "hash-api: (= (bool true) (bool (not false)))")
+      (test.assert-true
+        (= (stdlib.hash.char 'A') (stdlib.hash.char (string-ref "A" 0)))
+        "hash-api: (= (char 'A') (char (string-ref \"A\" 0)))")
+      (test.assert-true
+        (= (stdlib.hash.string-key (& abc)) (stdlib.hash.string-key (& joined)))
+        "hash-api: (= (string-key (& abc)) (string-key (& joined)))")
+      (test.assert-true
+        (stdlib.hash.key-i64-eq? 5 5)
+        "hash-api: (key-i64-eq? 5 5)")
+      (test.assert-true
+        (not (stdlib.hash.key-i64-eq? 5 6))
+        "hash-api: (not (key-i64-eq? 5 6))")
+      (test.assert-true
+        (stdlib.hash.key-bool-eq? true true)
+        "hash-api: (key-bool-eq? true true)")
+      (test.assert-true
+        (not (stdlib.hash.key-bool-eq? true false))
+        "hash-api: (not (key-bool-eq? true false))")
+      (test.assert-true
+        (stdlib.hash.key-char-eq? 'x' 'x')
+        "hash-api: (key-char-eq? 'x' 'x')")
+      (test.assert-true
+        (not (stdlib.hash.key-char-eq? 'x' (string-ref "y" 0)))
+        "hash-api: (not (key-char-eq? 'x' (string-ref \"y\" 0)))")
+      (test.assert-true
+        (stdlib.hash.key-string-eq? (& same) (& same-copy))
+        "hash-api: (key-string-eq? (& same) (& same-copy))")
+      (test.assert-true
+        (not (stdlib.hash.key-string-eq? (& same) (& different)))
+        "hash-api: (not (key-string-eq? (& same) (& different)))")
+      (test.assert-true
+        (= (stdlib.hash.i64 0) (stdlib.hash.i64 2147483647))
+        "hash-api: (= (i64 0) (i64 2147483647))")
+      (test.assert-true
+        (not (stdlib.hash.key-i64-eq? 0 2147483647))
+        "hash-api: (not (key-i64-eq? 0 2147483647))")
+      (test.assert-true
+        (= (stdlib.hash.combine 0 131) (stdlib.hash.combine 1 0))
+        "hash-api: (= (combine 0 131) (combine 1 0))")
+      (test.assert-true
+        (not (stdlib.hash.key-i64-eq? 0 1))
+        "hash-api: (not (key-i64-eq? 0 1))")
+      (test.assert-true
+        (if (>= range-min 0)
+          (< range-min (stdlib.hash.modulus))
+          false)
+        "hash-api: (if (>= range-min 0) (< range-min (modulus)) false)")
+      (test.assert-true
+        (if (>= range-max 0)
+          (< range-max (stdlib.hash.modulus))
+          false)
+        "hash-api: (if (>= range-max 0) (< range-max (modulus)) false)")
+      (test.assert-true
+        (if (>= range-combine 0)
+          (< range-combine (stdlib.hash.modulus))
+          false)
+        "hash-api: (if (>= range-combine 0) (< range-combine (modulus)) false)")
+      (test.assert-true
+        (if (>= range-empty 0)
+          (< range-empty (stdlib.hash.modulus))
+          false)
+        "hash-api: (if (>= range-empty 0) (< range-empty (modulus)) false)")
+      (test.assert-true
+        (if (>= range-edge 0)
+          (< range-edge (stdlib.hash.modulus))
+          false)
+        "hash-api: (if (>= range-edge 0) (< range-edge (modulus)) false)"))))

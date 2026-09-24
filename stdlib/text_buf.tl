@@ -127,11 +127,6 @@
 (test
   text-buf-scoped-arena-render-policy
   (let
-    [fail : (-> unit)
-      (lambda () : unit
-        (begin
-          (/ 1 0)
-          unit))]
     [program-buf : TextBuf
       (stdlib.text_buf.append (stdlib.text_buf.empty) "scoped")]
     (with-arena
@@ -141,9 +136,9 @@
         (let
           [rendered : String (stdlib.text_buf.render program-buf)]
           [expected : String "scoped"]
-          (if (string.eq (& rendered) (& expected))
-            unit
-            (fail)))))))
+          (test.assert-true
+            (string.eq (& rendered) (& expected))
+            "text-buf-scoped-arena-render-policy: (string.eq (& rendered) (& expected))"))))))
 
 ;; Inline test coverage.
 (cfg test (import stdlib.test))

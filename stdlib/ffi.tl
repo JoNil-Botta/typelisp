@@ -22,6 +22,7 @@
 ;#       0)))
 ;# ```
 (import stdlib.byte_buf)
+(cfg test (import stdlib.test))
 
 ;: Result type for copying TypeLisp bytes into caller-owned C string storage.
 (defenum FfiCStringCopyResult
@@ -220,25 +221,25 @@
 (test
   ffi-c-string-api
   (begin
-    (if (= (c-string-required-bytes "") 1)
-      unit
-      (test-fail))
-    (if (= (c-string-required-bytes "abc") 4)
-      unit
-      (test-fail))
+    (test.assert-true
+      (= (c-string-required-bytes "") 1)
+      "ffi-c-string-api: (= (c-string-required-bytes \"\") 1)")
+    (test.assert-true
+      (= (c-string-required-bytes "abc") 4)
+      "ffi-c-string-api: (= (c-string-required-bytes \"abc\") 4)")
     (let
       [view-text : String "bytes"]
       [view : (& view-text bytes) (byte_buf.str-as-bytes (& view-text))]
       (begin
-        (if (= (c-bytes-required-bytes view) 6)
-          unit
-          (test-fail))
-        (if (not (c-bytes-interior-nul? view))
-          unit
-          (test-fail))))
-    (if (not (c-string-interior-nul? "abc"))
-      unit
-      (test-fail))
+        (test.assert-true
+          (= (c-bytes-required-bytes view) 6)
+          "ffi-c-string-api: (= (c-bytes-required-bytes view) 6)")
+        (test.assert-true
+          (not (c-bytes-interior-nul? view))
+          "ffi-c-string-api: (not (c-bytes-interior-nul? view))")))
+    (test.assert-true
+      (not (c-string-interior-nul? "abc"))
+      "ffi-c-string-api: (not (c-string-interior-nul? \"abc\"))")
     (let
       [empty-storage : (__tl_dyn-array u8) (__tl_make-array u8 1)]
       [empty-buf : (MutPtr u8)
@@ -288,9 +289,9 @@
           (__tl_array-data nul-storage))]
       (begin
         (test-write-u8! nul-buf 0 88)
-        (if (c-string-interior-nul? with-nul)
-          unit
-          (test-fail))
+        (test.assert-true
+          (c-string-interior-nul? with-nul)
+          "ffi-c-string-api: (c-string-interior-nul? with-nul)")
         (test-assert-interior-nul (c-string-copy! with-nul nul-buf 4))
         (test-assert-u8-eq (test-read-u8 nul-buf 0) 88)))
     (let
@@ -305,24 +306,24 @@
           (__tl_array-data binary-storage))]
       (begin
         (test-write-u8! binary-buf 0 66)
-        (if (c-bytes-interior-nul? binary-view)
-          unit
-          (test-fail))
+        (test.assert-true
+          (c-bytes-interior-nul? binary-view)
+          "ffi-c-string-api: (c-bytes-interior-nul? binary-view)")
         (test-assert-interior-nul (c-bytes-copy! binary-view binary-buf 3))
         (test-assert-u8-eq (test-read-u8 binary-buf 0) 66)))
     (let
       [empty-ptr : (Ptr u8) (c-string-alloc "")]
       (begin
-        (if (not (ptr-null? empty-ptr))
-          unit
-          (test-fail))
+        (test.assert-true
+          (not (ptr-null? empty-ptr))
+          "ffi-c-string-api: (not (ptr-null? empty-ptr))")
         (test-assert-u8-eq (test-read-const-u8 empty-ptr 0) 0)))
     (let
       [ptr : (Ptr u8) (c-string-alloc "abc")]
       (begin
-        (if (not (ptr-null? ptr))
-          unit
-          (test-fail))
+        (test.assert-true
+          (not (ptr-null? ptr))
+          "ffi-c-string-api: (not (ptr-null? ptr))")
         (test-assert-u8-eq (test-read-const-u8 ptr 0) 97)
         (test-assert-u8-eq (test-read-const-u8 ptr 1) 98)
         (test-assert-u8-eq (test-read-const-u8 ptr 2) 99)
@@ -332,23 +333,23 @@
       [bytes-view : (& bytes-text bytes) (byte_buf.str-as-bytes (& bytes-text))]
       [bytes-ptr : (Ptr u8) (cbytes bytes-view)]
       (begin
-        (if (not (ptr-null? bytes-ptr))
-          unit
-          (test-fail))
+        (test.assert-true
+          (not (ptr-null? bytes-ptr))
+          "ffi-c-string-api: (not (ptr-null? bytes-ptr))")
         (test-assert-u8-eq (test-read-const-u8 bytes-ptr 0) 112)
         (test-assert-u8-eq (test-read-const-u8 bytes-ptr 1) 113)
         (test-assert-u8-eq (test-read-const-u8 bytes-ptr 2) 0)))
     (let
       [alias-ptr : (Ptr u8) (cstr "xy")]
       (begin
-        (if (not (ptr-null? alias-ptr))
-          unit
-          (test-fail))
+        (test.assert-true
+          (not (ptr-null? alias-ptr))
+          "ffi-c-string-api: (not (ptr-null? alias-ptr))")
         (test-assert-u8-eq (test-read-const-u8 alias-ptr 0) 120)
         (test-assert-u8-eq (test-read-const-u8 alias-ptr 1) 121)
         (test-assert-u8-eq (test-read-const-u8 alias-ptr 2) 0)))
     (let
       [with-nul : String (test-string-with-nul)]
-      (if (ptr-null? (c-string-alloc with-nul))
-        unit
-        (test-fail)))))
+      (test.assert-true
+        (ptr-null? (c-string-alloc with-nul))
+        "ffi-c-string-api: (ptr-null? (c-string-alloc with-nul))"))))

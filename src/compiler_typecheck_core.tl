@@ -19138,16 +19138,6 @@
               persistent-id
               display-id)))]
       (begin
-        (cfg
-          tc-env-scoped-dual-verify
-          (if (tc-type-env-scoped-dual-result-type-matches?
-            (tc-global-shared-view scoped)
-            env
-            persistent-id
-            display-id)
-            unit
-            (io.panic
-              "typecheck: scoped type lookup diverged from persistent env")))
         (match (tc-global-shared-view scoped)
           [(ResultTcType.Ok ty) (tc-poison-observation-note! ty)]
           [(ResultTcType.Err _) unit])
@@ -19234,14 +19224,7 @@
                 (__tl-project-field carrier sidecar)
                 persistent)
               persistent-id)))]
-      (begin
-        (cfg
-          tc-env-scoped-dual-verify
-          (if (= scoped (tc-name-bound-persistent-key-id? env persistent-id))
-            unit
-            (io.panic
-              "typecheck: scoped exact-bound lookup diverged from persistent env")))
-        scoped))
+      scoped)
     (tc-name-bound-persistent-key-id? env persistent-id)))
 
 (define (tc-name-bound-id? [env : TcTypeEnv] [name-id : i64]) : bool
@@ -19400,20 +19383,6 @@
               persistent-id
               display-id)))]
       (begin
-        (cfg
-          tc-env-scoped-dual-verify
-          (if (tc-type-env-scoped-dual-result-unsafe-matches?
-            (tc-global-shared-view scoped)
-            env
-            persistent-id
-            display-id)
-            unit
-            (io.panic
-              (str_cat.str-cat
-                "typecheck: scoped unsafe lookup diverged for "
-                (tc-env-key-display
-                  (tc-type-env-structural-session env)
-                  display-id)))))
         (match (tc-global-shared-view scoped)
           [(ResultTcTypeUnsafe.Ok ty _) (tc-poison-observation-note! ty)]
           [(ResultTcTypeUnsafe.Err _) unit])
@@ -23840,19 +23809,7 @@
                   persistent)
                 name-id
                 prefix-id))])]
-      (begin
-        (cfg
-          tc-env-scoped-dual-verify
-          (if (=
-            scoped
-            (tc-source-leading-segment-wins-over-exact-persistent-id?
-              env
-              name-id
-              prefix-id))
-            unit
-            (io.panic
-              "typecheck: scoped dotted-name ordering diverged from persistent env")))
-        scoped))
+      scoped)
     (tc-source-leading-segment-wins-over-exact-persistent-id?
       env
       name-id
@@ -36570,129 +36527,6 @@
           (+ index 1)
           (tc-signature-lifetime-type-collect-into ty name lifetimes))])))
 
-(cfg
-  tc-env-scoped-dual-verify
-  (define (tc-type-env-scoped-dual-type-kind [ty : ast.AstType]) : String
-    (match ty
-      [(ast.AstType.I64) "i64"]
-      [(ast.AstType.I32) "i32"]
-      [(ast.AstType.U64) "u64"]
-      [(ast.AstType.U32) "u32"]
-      [(ast.AstType.Bool) "bool"]
-      [(ast.AstType.String) "String"]
-      [(ast.AstType.Func _ _) "function"]
-      [(ast.AstType.Ref _ _) "reference"]
-      [(ast.AstType.MutRef _ _) "mutable-reference"]
-      [(ast.AstType.Var _) "variable"]
-      [_ "other"])))
-
-(cfg
-  tc-env-scoped-dual-verify
-  (define (tc-type-env-scoped-dual-result-type-matches?
-    [scoped : ResultTcType]
-    [env : TcTypeEnv]
-    [persistent-id : i64]
-    [display-id : i64]) : bool
-    (match scoped
-      [(ResultTcType.Ok scoped-ty)
-        (match (tc-lookup-persistent-key-id env persistent-id display-id)
-          [(ResultTcType.Ok persistent-ty) (tc-type-eq scoped-ty persistent-ty)]
-          [(ResultTcType.Err _) false])]
-      [(ResultTcType.Err _)
-        (not (tc-name-bound-persistent-key-id? env persistent-id))])))
-
-(cfg
-  tc-env-scoped-dual-verify
-  (define (tc-type-env-scoped-dual-result-unsafe-matches?
-    [scoped : ResultTcTypeUnsafe]
-    [env : TcTypeEnv]
-    [persistent-id : i64]
-    [display-id : i64]) : bool
-    (match scoped
-      [(ResultTcTypeUnsafe.Ok scoped-ty scoped-unsafe)
-        (match (tc-lookup-unsafe-persistent-key-id env persistent-id display-id)
-          [(ResultTcTypeUnsafe.Ok persistent-ty persistent-unsafe)
-            (if (tc-type-eq scoped-ty persistent-ty)
-              (if (= scoped-unsafe persistent-unsafe)
-                true
-                (io.panic
-                  (str_cat.str-cat
-                    "typecheck: scoped unsafe flag diverged for "
-                    (tc-env-key-display
-                      (tc-context-structural-session ctx)
-                      display-id))))
-              (io.panic
-                (str_cat.str-cat
-                  "typecheck: scoped unsafe type diverged for "
-                  (tc-env-key-display
-                    (tc-context-structural-session ctx)
-                    display-id)
-                  ": scoped="
-                  (tc-type-env-scoped-dual-type-kind scoped-ty)
-                  " persistent="
-                  (tc-type-env-scoped-dual-type-kind persistent-ty))))]
-          [(ResultTcTypeUnsafe.Err _)
-            (io.panic
-              (str_cat.str-cat
-                "typecheck: scoped unsafe lookup found persistent miss for "
-                (tc-env-key-display
-                  (tc-context-structural-session ctx)
-                  display-id)))])]
-      [(ResultTcTypeUnsafe.Err _)
-        (if (tc-name-bound-persistent-key-id? env persistent-id)
-          (io.panic
-            (str_cat.str-cat
-              "typecheck: scoped unsafe lookup missed persistent binding for "
-              (tc-env-key-display
-                (tc-context-structural-session ctx)
-                display-id)))
-          true)])))
-
-(cfg
-  tc-env-scoped-dual-verify
-  (define (tc-type-env-scoped-carrier-params-match-persistent-at?
-    [carrier : TcTypeEnvScopedCarrier]
-    [persistent : TcTypeEnv]
-    [params : (& params ast.AstParamList)]
-    [index : i64]) : bool
-    (if (>= index (ast.ast-param-list-len params))
-      true
-      (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
-        [(ast.AstParam.Param name _ _)
-          (match (tc-type-env-scoped-carrier-lookup-id carrier name)
-            [(ResultTcType.Ok stack-ty)
-              (match (tc-lookup-persistent-id persistent name)
-                [(ResultTcType.Ok persistent-ty)
-                  (and
-                    (tc-type-eq stack-ty persistent-ty)
-                    (tc-type-env-scoped-carrier-params-match-persistent-at?
-                      carrier
-                      persistent
-                      params
-                      (+ index 1)))]
-                [(ResultTcType.Err _) false])]
-            [(ResultTcType.Err _) false])]))))
-
-(cfg
-  tc-env-scoped-dual-verify
-  (define (tc-type-env-scoped-carrier-fn-entry-matches-persistent?
-    [carrier : TcTypeEnvScopedCarrier]
-    [persistent : TcTypeEnv]
-    [params : ast.AstParamList]) : bool
-    (and
-      (tc-type-env-scoped-carrier-params-match-persistent-at?
-        carrier
-        persistent
-        (& params)
-        0)
-      (match (tc-type-env-scoped-carrier-current-return-type carrier)
-        [(ResultTcType.Ok stack-ret)
-          (match (tc-env-marker-type persistent (tc-return-type-id))
-            [(ast.AstMaybeType.Some persistent-ret)
-              (tc-type-eq stack-ret persistent-ret)]
-            [(ast.AstMaybeType.No) false])]
-        [(ResultTcType.Err _) false]))))
-
 (define (tc-bind-macro-params
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -41284,14 +41118,7 @@
                     (__tl-project-field carrier sidecar)
                     persistent)
                   name-id))])]
-        (begin
-          (cfg
-            tc-env-scoped-dual-verify
-            (if (= scoped (tc-default-builtin-unshadowed-scan-id? env name-id))
-              unit
-              (io.panic
-                "typecheck: scoped default-shadow lookup diverged from persistent env")))
-          scoped))
+        scoped)
       (tc-default-builtin-unshadowed-scan-id? env name-id))
     false))
 
@@ -129625,24 +129452,6 @@
       (tc-context-body-state (tc-global-shared-view ctx))]
     [typed-result : ResultTcType
       (begin
-        (cfg
-          tc-env-scoped-dual-verify
-          (let
-            [persistent : TcTypeEnv
-              (tc-bind-return-type
-                (tc-bind-params
-                  (tc-global-shared-view ctx)
-                  (tc-global-shared-view global-env)
-                  (tc-global-shared-view registered-params))
-                (tc-global-shared-view resolved-ret))]
-            (if (tc-type-env-scoped-carrier-fn-entry-matches-persistent?
-              (tc-global-shared-view carrier)
-              (tc-global-shared-view persistent)
-              (tc-global-shared-view registered-params))
-              unit
-              (io.panic
-                "typecheck: scoped carrier diverged from persistent function env")))
-          unit)
         (tc-body-early-exit-function-start! (tc-global-shared-view body-state))
         (tc-body-type-facts-start-recording! (tc-global-shared-view body-state))
         (tc-expr-with-expected-or-actual-id

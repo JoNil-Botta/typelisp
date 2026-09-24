@@ -176,10 +176,11 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
   `mutex_i64.Mutex` guard locking, guarded get/set/add, close rejection while a guard is live,
   and fail-closed double close. Pure invalid-capacity checks now live inline in
   `stdlib/sync.tl`.
-- `process_api.tl` remains a runnable fixture for command-validation paths that
-  intentionally call `output` / `start`. Pure command construction, argv/env
-  vector builders, validation helpers, duplicate-name order, list conversion,
-  and result/error predicates now live inline in `stdlib/process.tl`.
+- `process_api.tl` is a runnable fixture for command-validation paths that
+  intentionally call `output` / `start`. Its test item also covers pure command
+  construction, argv/env vector builders, validation helpers, list conversion,
+  and result/error predicates, and calls `process.test-env-dense-api` for
+  duplicate-name order in the dense environment list.
 - The process borrowed escape fixture verifies the checker rejects returning a
   borrowed command whose text owner is shorter-lived than the declared command
   lifetime.
@@ -308,7 +309,8 @@ Inline stdlib coverage:
   that cleanup-owning elements fail at the macro boundary without partial
   generated storage diagnostics.
 - `test.tl` owns inline tests for successful assertion helpers, including the
-  borrowed `assert-string-eq` path with explicit borrows.
+  borrowed `assert-string-eq` path with explicit borrows and the owned
+  `assert-owned-string-eq` form.
 - `arena.tl` owns inline tests for first-class arena helpers, including safe
   handle/mark observation and unsafe switch, rewind, and destroy calls.
 - `string.tl` owns inline tests for the borrowed `str` gate, scoped arena

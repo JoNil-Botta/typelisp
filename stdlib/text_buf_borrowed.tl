@@ -24,6 +24,7 @@
 ;; lint-allow: unused-import
 (import stdlib.text_buf)
 (import stdlib.text_buf_family)
+(cfg test (import stdlib.test))
 
 ;# Emit the complete borrowed family in one declaration splice.
 (text_buf_family.borrowed)
@@ -76,36 +77,34 @@
     [mixed-rendered : String
       (render (text_buf_family.text-buf-family-shared-view mixed))]
     (begin
-      (if (empty? empty)
-        unit
-        (test-fail))
-      (if (= (length empty) 0)
-        unit
-        (test-fail))
-      (if (string.eq rendered "alpha-alphatail")
-        unit
-        (test-fail))
-      (if (= (chunk-count sliced-zero) 0)
-        unit
-        (test-fail))
-      (if (= (chunk-count sliced-two) 1)
-        unit
-        (test-fail))
-      (if (= (length sliced-two) (string-length sliced-source))
-        unit
-        (test-fail))
-      (if (string.eq (render sliced-two) sliced-source)
-        unit
-        (test-fail))
-      (if (string.eq (render sliced-one) "alpha\n")
-        unit
-        (test-fail))
-      (if (= (chunk-count mixed) 3)
-        unit
-        (test-fail))
-      (if (string.eq mixed-rendered "alpha\nbeta-!")
-        unit
-        (test-fail))
+      (test.assert-true (empty? empty) "text-buf-borrowed-api: (empty? empty)")
+      (test.assert-true
+        (= (length empty) 0)
+        "text-buf-borrowed-api: (= (length empty) 0)")
+      (test.assert-true
+        (string.eq rendered "alpha-alphatail")
+        "text-buf-borrowed-api: (string.eq rendered \"alpha-alphatail\")")
+      (test.assert-true
+        (= (chunk-count sliced-zero) 0)
+        "text-buf-borrowed-api: (= (chunk-count sliced-zero) 0)")
+      (test.assert-true
+        (= (chunk-count sliced-two) 1)
+        "text-buf-borrowed-api: (= (chunk-count sliced-two) 1)")
+      (test.assert-true
+        (= (length sliced-two) (string-length sliced-source))
+        "text-buf-borrowed-api: (= (length sliced-two) (string-length sliced-source))")
+      (test.assert-true
+        (string.eq (render sliced-two) sliced-source)
+        "text-buf-borrowed-api: (string.eq (render sliced-two) sliced-source)")
+      (test.assert-true
+        (string.eq (render sliced-one) "alpha\n")
+        "text-buf-borrowed-api: (string.eq (render sliced-one) \"alpha\\n\")")
+      (test.assert-true
+        (= (chunk-count mixed) 3)
+        "text-buf-borrowed-api: (= (chunk-count mixed) 3)")
+      (test.assert-true
+        (string.eq mixed-rendered "alpha\nbeta-!")
+        "text-buf-borrowed-api: (string.eq mixed-rendered \"alpha\\nbeta-!\")")
       (let
         [many-source : String "x"]
         [many : (TextBufBorrowed many-source) (empty-like (& many-source))]
@@ -115,17 +114,15 @@
             (begin
               (set! many (append many (& many-source)))
               (set! many-index (+ many-index 1))))
-          (if (= (chunk-count many) 40)
-            unit
-            (test-fail))
-          (if (= (length many) 40)
-            unit
-            (test-fail))
-          (if (string.eq
-            (render many)
-            "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
-            unit
-            (test-fail))))
+          (test.assert-true
+            (= (chunk-count many) 40)
+            "text-buf-borrowed-api: (= (chunk-count many) 40)")
+          (test.assert-true
+            (= (length many) 40)
+            "text-buf-borrowed-api: (= (length many) 40)")
+          (test.assert-true
+            (string.eq (render many) "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+            "text-buf-borrowed-api: (string.eq (render many) \"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx...")))
       (let
         [branch-source : String "branch"]
         [branch-base : (TextBufBorrowed branch-source)
@@ -139,15 +136,15 @@
             (text_buf_family.text-buf-family-shared-view branch-base)
             "?")]
         (begin
-          (if (= (chunk-count branch-base) 0)
-            unit
-            (test-fail))
-          (if (string.eq (render branch-left) "!")
-            unit
-            (test-fail))
-          (if (string.eq (render branch-right) "?")
-            unit
-            (test-fail))))
+          (test.assert-true
+            (= (chunk-count branch-base) 0)
+            "text-buf-borrowed-api: (= (chunk-count branch-base) 0)")
+          (test.assert-true
+            (string.eq (render branch-left) "!")
+            "text-buf-borrowed-api: (string.eq (render branch-left) \"!\")")
+          (test.assert-true
+            (string.eq (render branch-right) "?")
+            "text-buf-borrowed-api: (string.eq (render branch-right) \"?\")")))
       (let
         [mixed-source : String "abc"]
         [mixed-empty : (TextBufBorrowed mixed-source)
@@ -178,11 +175,11 @@
                   (text_buf.TextBuf (chunks-to-owned joined-chunks) joined-len)]
                 (text_buf.render owned))])]
         (begin
-          (if (string.eq
-            (render (text_buf_family.text-buf-family-shared-view joined))
-            "abc-!")
-            unit
-            (test-fail))
-          (if (string.eq owned-rendered (render joined))
-            unit
-            (test-fail)))))))
+          (test.assert-true
+            (string.eq
+              (render (text_buf_family.text-buf-family-shared-view joined))
+              "abc-!")
+            "text-buf-borrowed-api: (string.eq (render (text_buf_family.text-buf-family-share...")
+          (test.assert-true
+            (string.eq owned-rendered (render joined))
+            "text-buf-borrowed-api: (string.eq owned-rendered (render joined))"))))))

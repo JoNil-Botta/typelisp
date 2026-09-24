@@ -6,6 +6,7 @@
 (import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.string)
+(cfg test (import stdlib.test))
 
 ;: Result for `read-file-or-result`.
 ;:
@@ -92,14 +93,14 @@
     [manual-borrowed : (ReadFileOrResult fallback)
       (read-file-or-borrowed-result (& fallback))]
     (begin
-      (if (read-file-or-result-borrowed? direct)
-        unit
-        (test-fail))
-      (if (read-file-or-result-owned? manual-owned)
-        unit
-        (test-fail))
-      (if (read-file-or-result-borrowed? manual-borrowed)
-        unit
-        (test-fail))
+      (test.assert-true
+        (read-file-or-result-borrowed? direct)
+        "io-caller-result-api: (read-file-or-result-borrowed? direct)")
+      (test.assert-true
+        (read-file-or-result-owned? manual-owned)
+        "io-caller-result-api: (read-file-or-result-owned? manual-owned)")
+      (test.assert-true
+        (read-file-or-result-borrowed? manual-borrowed)
+        "io-caller-result-api: (read-file-or-result-borrowed? manual-borrowed)")
       (test-string-eq (read-file-or-result-string direct) "fallback")
       (test-string-eq (read-file-or-result-string manual-owned) "contents"))))

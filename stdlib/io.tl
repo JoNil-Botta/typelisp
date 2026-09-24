@@ -50,6 +50,7 @@
 (import stdlib.math)
 (import stdlib.str_cat)
 (import stdlib.string)
+(cfg test (import stdlib.test))
 
 ;: Private errno-style status slot used by stdlib IO/FS helpers. This is not
 ;: libc errno; it preserves the previous backend-owned slot semantics in TL.
@@ -892,19 +893,6 @@
         (let
           [normalized-len : i64 (bn-norm-len r (+ la (+ limb-shift 1)))]
           (BigNum r normalized-len))))))
-
-;: Product of BigNum a and the 64-bit value m.
-(define (bn-mul-u64 [a : (& a BigNum)] [m : u64]) : BigNum
-  (let
-    [lo : u64 (bit-and m stdlib.io.ftoa-mask32)]
-    [hi : u64 (shr m 32)]
-    [low : BigNum (bn-mul-u32 a lo)]
-    (if (= hi (cast 0 : u64))
-      low
-      (let
-        [high-base : BigNum (bn-mul-u32 a hi)]
-        [high : BigNum (bn-shl-bits high-base 32)]
-        (bn-add low high)))))
 
 ;: BigNum a multiplied by ten raised to p, nine decimal digits (one 32-bit
 ;: multiplier) per pass.
@@ -2498,34 +2486,6 @@
 
 (cfg
   test
-  (define (io-edges-test-assert-true [condition : bool] [message : String]) : unit
-    (if condition
-      unit
-      (io-edges-test-fail message))))
-
-(cfg
-  test
-  (define (io-edges-test-assert-false [condition : bool] [message : String]) : unit
-    (io-edges-test-assert-true (not condition) message)))
-
-(cfg
-  test
-  (define (io-edges-test-assert-string-eq
-    [actual : (& actual str)]
-    [expected : (& expected str)]
-    [message : String]) : unit
-    (io-edges-test-assert-true (string.eq actual expected) message)))
-
-(cfg
-  test
-  (define (io-edges-test-assert-owned-string-eq
-    [actual : String]
-    [expected : String]
-    [message : String]) : unit
-    (io-edges-test-assert-string-eq (& actual) (& expected) message)))
-
-(cfg
-  test
   (defmacro (io-test-global-shared-view [place : Expr]) : Expr
     `(unsafe
       (ptr-read (ptr-addr-of ,place)))))
@@ -2560,7 +2520,7 @@
   (define (io-edges-test-expect-try-read-ok [path : String] [expected : String]) : unit
     (match (try-read-file (& path))
       [(OkIoBytes contents)
-        (io-edges-test-assert-owned-string-eq
+        (test.assert-owned-string-eq
           (byte_buf.to-string contents)
           expected
           "try-read-file returned contents")]
@@ -2573,10 +2533,10 @@
       [(OkIoBytes _) (panic "try-read-file unexpectedly read missing file")]
       [(ErrIoBytes error)
         (begin
-          (io-edges-test-assert-true
+          (test.assert-true
             (error-not-found? (io-test-global-shared-view error))
             "missing read error kind")
-          (io-edges-test-assert-owned-string-eq
+          (test.assert-owned-string-eq
             (error-message error)
             (str_cat.str-cat "io: not found: " path)
             "missing read error render"))])))
@@ -2668,10 +2628,10 @@
   test
   (define (io-edges-test-expect-invalid-path [error : IoError]) : unit
     (begin
-      (io-edges-test-assert-true
+      (test.assert-true
         (error-invalid-path? (io-test-global-shared-view error))
         "invalid path error kind")
-      (io-edges-test-assert-owned-string-eq
+      (test.assert-owned-string-eq
         (error-message error)
         "io: invalid path: "
         "invalid path error render"))))
@@ -2685,7 +2645,7 @@
       (match (io-edges-test-try-file-exists?
         (io-test-global-shared-view io-missing-file))
         [(OkIoBool exists)
-          (io-edges-test-assert-false exists "missing file does not exist")]
+          (test.assert-false exists "missing file does not exist")]
         [(ErrIoBool error) (panic (error-message error))])
       (let
         [path : String ""]
@@ -2710,13 +2670,13 @@
         (io-test-global-shared-view io-missing-parent-file))
       (io-edges-test-expect-try-append-error
         (io-test-global-shared-view io-missing-parent-file))
-      (io-edges-test-assert-owned-string-eq
+      (test.assert-owned-string-eq
         (io-edges-test-read-file-or
           (io-test-global-shared-view io-missing-file)
           "fallback")
         "fallback"
         "missing file fallback")
-      (io-edges-test-assert-false
+      (test.assert-false
         (io-edges-test-file-nonempty?
           (io-test-global-shared-view io-missing-file))
         "missing file is not nonempty")
@@ -2725,7 +2685,7 @@
         (write-file
           (io-test-global-shared-view io-empty-file)
           (byte_buf.str-as-bytes (& contents))))
-      (io-edges-test-assert-false
+      (test.assert-false
         (io-edges-test-file-nonempty?
           (io-test-global-shared-view io-empty-file))
         "empty file is not nonempty")
@@ -2735,13 +2695,13 @@
       (io-edges-test-expect-try-read-ok
         (io-test-global-shared-view io-file)
         "alpha")
-      (io-edges-test-assert-owned-string-eq
+      (test.assert-owned-string-eq
         (io-edges-test-read-file-or
           (io-test-global-shared-view io-file)
           "fallback")
         "alpha"
         "read existing file")
-      (io-edges-test-assert-true
+      (test.assert-true
         (io-edges-test-file-nonempty? (io-test-global-shared-view io-file))
         "written file is nonempty")
       (let
@@ -2751,7 +2711,7 @@
           contents)
           [(OkIoUnit) unit]
           [(ErrIoUnit error) (panic (error-message error))]))
-      (io-edges-test-assert-owned-string-eq
+      (test.assert-owned-string-eq
         (byte_buf.to-string (read-file (io-test-global-shared-view io-file)))
         "alpha-beta"
         "append existing file")
@@ -2762,7 +2722,7 @@
         [contents : String "created"]
         (begin
           (io-edges-test-append-file created-file contents)
-          (io-edges-test-assert-owned-string-eq
+          (test.assert-owned-string-eq
             (byte_buf.to-string (read-file created-file))
             "created"
             "append creates missing file")))
@@ -2781,42 +2741,6 @@
   test
   (define (io-handle-test-fail [message : String]) : unit
     (panic message)))
-
-(cfg
-  test
-  (define (io-handle-test-assert-true [condition : bool] [message : String]) : unit
-    (if condition
-      unit
-      (io-handle-test-fail message))))
-
-(cfg
-  test
-  (define (io-handle-test-assert-false [condition : bool] [message : String]) : unit
-    (io-handle-test-assert-true (not condition) message)))
-
-(cfg
-  test
-  (define (io-handle-test-assert-bool-eq
-    [actual : bool]
-    [expected : bool]
-    [message : String]) : unit
-    (io-handle-test-assert-true (= actual expected) message)))
-
-(cfg
-  test
-  (define (io-handle-test-assert-string-eq
-    [actual : (& actual str)]
-    [expected : (& expected str)]
-    [message : String]) : unit
-    (io-handle-test-assert-true (string.eq actual expected) message)))
-
-(cfg
-  test
-  (define (io-handle-test-assert-owned-string-eq
-    [actual : String]
-    [expected : String]
-    [message : String]) : unit
-    (io-handle-test-assert-string-eq (& actual) (& expected) message)))
 
 (cfg
   test
@@ -2867,8 +2791,7 @@
     (match result
       [(OkIoUnit)
         (panic (str_cat.str-cat message "close unexpectedly succeeded"))]
-      [(ErrIoUnit error)
-        (io-handle-test-assert-true (error-unsupported? error) message)])))
+      [(ErrIoUnit error) (test.assert-true (error-unsupported? error) message)])))
 
 (cfg
   test
@@ -2879,19 +2802,7 @@
     (match result
       [(OkIoUnit)
         (panic (str_cat.str-cat message operation " unexpectedly succeeded"))]
-      [(ErrIoUnit error)
-        (io-handle-test-assert-true (error-unsupported? error) message)])))
-
-(cfg
-  test
-  (define (io-handle-test-assert-open-unsupported
-    [result : ResultIoFile]
-    [message : String]) : unit
-    (match result
-      [(OkIoFile _)
-        (panic (str_cat.str-cat message "open unexpectedly succeeded"))]
-      [(ErrIoFile error)
-        (io-handle-test-assert-true (error-unsupported? error) message)])))
+      [(ErrIoUnit error) (test.assert-true (error-unsupported? error) message)])))
 
 (cfg
   test
@@ -2901,8 +2812,7 @@
     (match result
       [(OkIoFile _)
         (panic (str_cat.str-cat message "open unexpectedly succeeded"))]
-      [(ErrIoFile error)
-        (io-handle-test-assert-true (error-invalid-path? error) message)])))
+      [(ErrIoFile error) (test.assert-true (error-invalid-path? error) message)])))
 
 (cfg
   test
@@ -2912,8 +2822,7 @@
     (match result
       [(OkIoFile _)
         (panic (str_cat.str-cat message "open unexpectedly succeeded"))]
-      [(ErrIoFile error)
-        (io-handle-test-assert-true (error-not-found? error) message)])))
+      [(ErrIoFile error) (test.assert-true (error-not-found? error) message)])))
 
 (cfg
   test
@@ -2925,11 +2834,11 @@
     (match result
       [(OkIoRead read)
         (begin
-          (io-handle-test-assert-bool-eq
+          (test.assert-bool-eq
             read.eof
             expected-eof
             (str_cat.str-cat (string.copy (& message)) " eof"))
-          (io-handle-test-assert-owned-string-eq
+          (test.assert-owned-string-eq
             (byte_buf.to-string (file-read-bytes read))
             expected-bytes
             (str_cat.str-cat message " bytes")))]
@@ -2944,8 +2853,7 @@
     (match result
       [(OkIoRead _)
         (panic (str_cat.str-cat message "read unexpectedly succeeded"))]
-      [(ErrIoRead error)
-        (io-handle-test-assert-true (error-unsupported? error) message)])))
+      [(ErrIoRead error) (test.assert-true (error-unsupported? error) message)])))
 
 (cfg
   test
@@ -2955,8 +2863,7 @@
     (match result
       [(OkIoRead _)
         (panic (str_cat.str-cat message "read unexpectedly succeeded"))]
-      [(ErrIoRead error)
-        (io-handle-test-assert-true (error-invalid-path? error) message)])))
+      [(ErrIoRead error) (test.assert-true (error-invalid-path? error) message)])))
 
 (cfg
   test
@@ -3013,7 +2920,7 @@
     [message : String]) : unit
     (match (io-handle-test-try-read-file path)
       [(OkIoBytes contents)
-        (io-handle-test-assert-owned-string-eq
+        (test.assert-owned-string-eq
           (byte_buf.to-string contents)
           expected
           message)]
@@ -3027,8 +2934,7 @@
     [expected : bool]
     [message : String]) : unit
     (match (io-handle-test-try-file-exists? path)
-      [(OkIoBool exists)
-        (io-handle-test-assert-bool-eq exists expected message)]
+      [(OkIoBool exists) (test.assert-bool-eq exists expected message)]
       [(ErrIoBool error)
         (panic (str_cat.str-cat message (error-message error)))])))
 

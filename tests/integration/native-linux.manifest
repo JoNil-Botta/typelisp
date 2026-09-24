@@ -159,6 +159,13 @@ regalloc_shifted_loop_bound|tests/integration/regalloc_shifted_loop_bound.tl|42|
 regalloc_loop_split_evicted_region_var|tests/integration/regalloc_loop_split_evicted_region_var.tl|42|-|-|stdlib/io.tl stdlib/string.tl
 regalloc_coalesce_class_return_value|tests/integration/regalloc_coalesce_class_return_value.tl|42|-|-|stdlib/io.tl
 loop_invariant_array_sum|tests/integration/loop_invariant_array_sum.tl|42|-|-|stdlib/io.tl
+unrolled_sum_chains_o0|tests/integration/unrolled_sum_chains.tl|42|-|-|-|opt-level:0+stage-stdlib
+unrolled_sum_chains_o1|tests/integration/unrolled_sum_chains.tl|42|-|-|-|opt-level:1+stage-stdlib
+unrolled_sum_chains_o2|tests/integration/unrolled_sum_chains.tl|42|-|-|-|opt-level:2+stage-stdlib
+unrolled_sum_chains_trap|tests/integration/unrolled_sum_chains.tl|134|-|130|-|opt-level:2+stage-stdlib+expected-stderr:tl: target/integration-verify/linux/unrolled_sum_chains_trap/unrolled_sum_chains_trap.tl:12:42: array index out of bounds: index=129 length=129\n
+unrolled_sum_floor_headroom_o0|tests/integration/unrolled_sum_floor_headroom.tl|42|0\n1\n1\n2\n2\n3\n3\n4\n4\n5\n5\n6\n6\n7\n7\n8\n8\n9\n9\n10\n10\n|20|-|opt-level:0+stage-stdlib
+unrolled_sum_floor_headroom_o1|tests/integration/unrolled_sum_floor_headroom.tl|42|0\n1\n1\n2\n2\n3\n3\n4\n4\n5\n5\n6\n6\n7\n7\n8\n8\n9\n9\n10\n10\n|20|-|opt-level:1+stage-stdlib
+unrolled_sum_floor_headroom_o2|tests/integration/unrolled_sum_floor_headroom.tl|42|0\n1\n1\n2\n2\n3\n3\n4\n4\n5\n5\n6\n6\n7\n7\n8\n8\n9\n9\n10\n10\n|20|-|opt-level:2+stage-stdlib
 csr_occupant_split|tests/integration/csr_occupant_split.tl|42|-|-|stdlib/io.tl
 callrun_subrange_home|tests/integration/callrun_subrange_home.tl|42|-|-|stdlib/io.tl
 scavenge_destructure_clobber|tests/integration/scavenge_destructure_clobber.tl|42|-|-|stdlib/io.tl stdlib/string.tl

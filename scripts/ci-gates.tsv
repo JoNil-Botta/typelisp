@@ -1,7 +1,7 @@
 # ci-gate-ledger-schema	2
-# count	all	119
-# count	linux	116
-# count	windows	102
+# count	all	118
+# count	linux	115
+# count	windows	101
 id	hosts	label	needs
 cli-gate-inventory-and-ownership	all	CLI gate inventory and ownership	-
 ci-gate-ledger-self-tests	all	CI gate ledger self-tests	-
@@ -23,7 +23,6 @@ tlci-native-route-size-ratchet-self-tests	all	TLCI native route size ratchet sel
 gate-reachability	all	gate reachability	-
 zero-cons-structural-classifier-self-tests	all	zero-cons structural classifier self-tests	-
 zero-cons-fixture-and-embedded-source-invariant	all	zero-cons fixture and embedded source invariant	-
-spmd-avx-512-instruction-harness-self-tests	all	SPMD AVX-512 instruction harness self-tests	-
 spmd-mode-instruction-count-harness-self-tests	all	SPMD mode instruction-count harness self-tests	-
 c-measured-region-instruction-harness-self-tests	all	C measured-region instruction harness self-tests	-
 instruction-count-comparison-self-tests	all	instruction-count comparison self-tests	-

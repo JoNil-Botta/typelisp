@@ -144,11 +144,8 @@ deliberately corrupt fixtures. On Linux they also verify that the timing helper
 distinguishes a normal exit above 128 from real signal termination.
 
 SPMD scalar/AVX2 deterministic performance uses the separate cachegrind mode
-matrix. AVX-512 cachegrind numbers are invalid because Valgrind 3.22 SIGILLs;
-on a capable Linux/WSL host, use
-`scripts/measure-spmd-avx512-instructions.sh --focused` for all five checked
-rows or `--runs 11 --check-baseline` for the host-keyed retired-instruction
-report. This remains opt-in and does not replace the correctness gate.
+matrix. AVX-512 has no instruction-count rows: Valgrind 3.22 SIGILLs on the
+AVX-512 corpus.
 
 The optimizer corpus has a stricter stdout-comparison runner because those
 programs report their result on stdout and take per-case arguments from

@@ -351,10 +351,6 @@ run_gate \
     scripts/check-zero-cons.sh \
     --fixtures
 run_gate \
-    spmd-avx-512-instruction-harness-self-tests \
-    scripts/measure-spmd-avx512-instructions.sh \
-    --self-test
-run_gate \
     spmd-mode-instruction-count-harness-self-tests \
     scripts/measure-spmd-mode-instruction-counts.sh \
     --self-test

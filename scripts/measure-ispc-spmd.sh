@@ -41,9 +41,9 @@ Environment:
   TYPELISP_ISPC_OUT     Default --output directory
 
 The normal run emits support.tsv, static.tsv, comparison.tsv, tools.tsv, and
-raw compiler/assembly logs. Missing ISPC skips only ISPC rows. Dynamic retired-
-instruction measurement remains with the host-keyed SPMD counter tools; those
-tools do not yet accept arbitrary ISPC binaries.
+raw compiler/assembly logs. Missing ISPC skips only ISPC rows. Dynamic
+instruction counts come only from the cachegrind SPMD runners, which do not
+accept arbitrary ISPC binaries.
 EOF
 }
 

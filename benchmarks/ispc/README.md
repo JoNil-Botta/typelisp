@@ -37,9 +37,9 @@ zero for a missing or unsupported implementation.
 
 `tools.tsv` fingerprints the compiler binaries and exact flags. Reports are
 informational: there is no checked performance baseline or tolerance. The
-host-keyed retired-instruction tools currently accept the checked TypeLisp/C
-SPMD corpus rather than arbitrary ISPC binaries, so this harness does not
-mislabel those counters as ISPC comparisons.
+cachegrind instruction-count runners accept only the checked TypeLisp/C SPMD
+corpus rather than arbitrary ISPC binaries, so this harness reports no dynamic
+instruction counts.
 
 ISPC v1.31.0 has no width-1 CPU target (`generic-i32x4` is the smallest
 generic target). A TypeLisp scalar row therefore uses the checked C scalar

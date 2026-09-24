@@ -221,7 +221,6 @@ Some gate-owned helpers deliberately retain measurement-oriented names:
 | Helper | Owning gate |
 | --- | --- |
 | `measure-instruction-counts.sh` | `check-instruction-counts.sh` and `ci-verify.sh` self-test |
-| `measure-spmd-avx512-instructions.sh` | `ci-verify.sh` self-test and AVX-512 baseline checks |
 | `measure-spmd-mode-instruction-counts.sh` | `ci-verify.sh` self-test and SPMD baseline checks |
 | `measure-compile-batch-memory.ps1` | `verify-compile-profile.sh` |
 | `measure-heavy-closure-profile.sh` | `verify-compile-profile.sh` |

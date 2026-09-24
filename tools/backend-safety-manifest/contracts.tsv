@@ -45,6 +45,7 @@ binary_pure	both	n/a	none	operator-width	typed-operands	reorderable-if-dataflow	
 binary_divrem	both	n/a	none	operator-width	typed-operands	fatal-order-pending-7608	division-abort-or-safe-form	internal	safe-code divide failure cannot be elided by pure effect
 binary_shift	both	n/a	none	shift-width	typed-operands	fatal-order-pending-7608	shift-abort	internal	out-of-range shift count must abort before emission
 unary_op	both	n/a	none	operator-width	typed-operand	reorderable-if-dataflow	none	internal	preserve sign bitwise and sqrt semantics
+bit_length	both	n/a	none	64-bit-integer	typed-operand	reorderable-if-dataflow	none	internal	count significant bits for positive signed or nonzero unsigned input and return zero otherwise
 vector_op	both	n/a	none	lane-width	active-mask	mode-observable	none	spmd-private	match scalar active-lane semantics
 spmd_class	both	n/a	none	lane-shape	active-mask	mode-observable	none	spmd-private	class identity controls register and mask layout
 c_return_slot	linux-x86_64	n/a	none	slot-offset+class	classified-aggregate	ordered-abi	unsupported-class-reject	sysv-c	slot offset matches source aggregate layout

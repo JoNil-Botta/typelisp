@@ -7598,6 +7598,431 @@
         (compiler_optimize.compiler-opt-global-shared-view safe))]
     (compiler_optimize.opt-dce-block-list-array used safe)))
 
+;; BITLEN: the rotated `while (> probe 0) probe >>= 1, bits += 1` loop, with
+;; each ingredient of the idiom a parameter so the refusals can each break one.
+(define (opt-bitlen-test-blocks
+  [ty : compiler_ast_types.AstType]
+  [guard-op : compiler_ir_types.CompilerIrBinOp]
+  [guard-true-edge? : bool]
+  [guarded? : bool]
+  [exit-op : compiler_ir_types.CompilerIrBinOp]
+  [shift : i64]
+  [step : i64]
+  [probe-escapes? : bool]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (if guarded?
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            2
+            guard-op
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            (compiler_optimize.compiler-opt-global-shared-view ty))
+          (if guard-true-edge?
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 2)
+              (compiler_ir_types.compiler-ir-label "pre")
+              (compiler_ir_types.compiler-ir-label "exit"))
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 2)
+              (compiler_ir_types.compiler-ir-label "exit")
+              (compiler_ir_types.compiler-ir-label "pre"))))
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "pre")))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "pre")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "loop"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "loop")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Phi
+              3
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                (compiler_ir_types.CompilerIrValue.I64 0)
+                (compiler_ir_types.compiler-ir-label "pre")
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                  (compiler_ir_types.CompilerIrValue.Var 6)
+                  (compiler_ir_types.compiler-ir-label "loop")
+                  (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+              (compiler_optimize.compiler-opt-global-shared-view ty))
+            (compiler_ir_types.CompilerIrInstr.Phi
+              4
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (compiler_ir_types.compiler-ir-label "pre")
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                  (compiler_ir_types.CompilerIrValue.Var 5)
+                  (compiler_ir_types.compiler-ir-label "loop")
+                  (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+              (compiler_optimize.compiler-opt-global-shared-view ty))
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              5
+              (compiler_ir_types.CompilerIrBinOp.Shr
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrValue.Var 4)
+              (compiler_ir_types.CompilerIrValue.I64 shift)
+              (compiler_optimize.compiler-opt-global-shared-view ty))
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              7
+              (compiler_ir_types.CompilerIrBinOp.Add)
+              (compiler_ir_types.CompilerIrValue.Var 3)
+              (compiler_ir_types.CompilerIrValue.I64 step)
+              (compiler_optimize.compiler-opt-global-shared-view ty))
+            (compiler_ir_types.CompilerIrInstr.Mov
+              6
+              (compiler_ir_types.CompilerIrValue.Var 7)
+              (compiler_optimize.compiler-opt-global-shared-view ty))
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              8
+              exit-op
+              (compiler_ir_types.CompilerIrValue.Var 5)
+              (compiler_ir_types.CompilerIrValue.I64 0)
+              (compiler_optimize.compiler-opt-global-shared-view ty))
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 8)
+              (compiler_ir_types.compiler-ir-label "loop")
+              (compiler_ir_types.compiler-ir-label "exit"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "exit")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Phi
+                9
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                  (compiler_ir_types.CompilerIrValue.I64 0)
+                  (compiler_ir_types.compiler-ir-label "entry")
+                  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                    (if probe-escapes?
+                      (compiler_ir_types.CompilerIrValue.Var 4)
+                      (compiler_ir_types.CompilerIrValue.Var 6))
+                    (compiler_ir_types.compiler-ir-label "loop")
+                    (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+                ty)
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var 9)))))
+          compiler_ir_types.CompilerIrBlockList.Nil)))))
+
+;; 1 when the pass turned the loop into its closed form (a bit_length of the
+;; probe and a jump to the exit), 0 when it left the loop alone, -1 otherwise.
+(define (opt-bitlen-test-outcome
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : i64
+  (match (compiler_optimize.opt-cfg-find-block
+    (compiler_optimize.opt-bit-length-idiom-blocks 10 blocks)
+    (compiler_ir_types.compiler-ir-label "loop"))
+    [(compiler_optimize.OptMaybeBlock.Some
+        (compiler_ir_types.CompilerIrBlock.Block _ instrs))
+      (match (compiler_ir_types.compiler-ir-instr-seq-ref
+        instrs
+        (- instrs.len 1))
+        [(compiler_ir_types.CompilerIrInstr.Branch _ _ _) 0]
+        [(compiler_ir_types.CompilerIrInstr.Jump target)
+          (if (and
+            (= target (compiler_ir_types.compiler-ir-label "exit"))
+            (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs 2)
+              [(compiler_ir_types.CompilerIrInstr.UnOp
+                  5
+                  (compiler_ir_types.CompilerIrUnOp.BitLength)
+                  (compiler_ir_types.CompilerIrValue.Var 4)
+                  _)
+                true]
+              [_ false])
+            (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs 3)
+              [(compiler_ir_types.CompilerIrInstr.Mov
+                  7
+                  (compiler_ir_types.CompilerIrValue.Var 5)
+                  _)
+                true]
+              [_ false]))
+            1
+            (- 0 1))]
+        [_ (- 0 1)])]
+    [(compiler_optimize.OptMaybeBlock.No) (- 0 1)]))
+
+;; Reordering the independent source increment ahead of the shift must not
+;; leave the replacement add/copy reading BitLength's result before it exists.
+;; Check the verifier as well as admission, with literal and runtime seeds.
+(define (opt-bitlen-order-function
+  [ty : compiler_ast_types.AstType]
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "bitlen_order")
+    (opt-divrem-test-params
+      (compiler_optimize.compiler-opt-global-shared-view ty))
+    ty
+    10
+    blocks
+    compiler_ir_types.CompilerIrFunctionAbi.Ordinary))
+
+(define (opt-bitlen-counter-first-ok?
+  [ty : compiler_ast_types.AstType]
+  [seed : compiler_ir_types.CompilerIrValue]) : bool
+  (let
+    [seq : compiler_ir_types.CompilerIrBlockSeq
+      (compiler_ir_types.compiler-ir-block-seq-from-list
+        (opt-bitlen-test-blocks
+          (compiler_optimize.compiler-opt-global-shared-view ty)
+          (compiler_ir_types.CompilerIrBinOp.Gt)
+          true
+          true
+          (compiler_ir_types.CompilerIrBinOp.Gt)
+          1
+          1
+          false))]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrBlock)
+      (compiler_optimize.compiler-opt-global-shared-view seq.slots)]
+    (begin
+      (match (compiler_ir_types.compiler-ir-block-seq-ref seq 2)
+        [(compiler_ir_types.CompilerIrBlock.Block label instrs)
+          (set!
+            (array-ref slots 2)
+            (compiler_ir_types.CompilerIrBlock.Block
+              label
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Phi
+                  3
+                  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                    seed
+                    (compiler_ir_types.compiler-ir-label "pre")
+                    (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                      (compiler_ir_types.CompilerIrValue.Var 6)
+                      (compiler_ir_types.compiler-ir-label "loop")
+                      (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+                  (compiler_optimize.compiler-opt-global-shared-view ty))
+                (compiler_ir_types.compiler-ir-instr-seq-ref instrs 1)
+                (compiler_ir_types.compiler-ir-instr-seq-ref instrs 3)
+                (compiler_ir_types.compiler-ir-instr-seq-ref instrs 4)
+                (compiler_ir_types.compiler-ir-instr-seq-ref instrs 2)
+                (compiler_ir_types.compiler-ir-instr-seq-ref instrs 5)
+                (compiler_ir_types.compiler-ir-instr-seq-ref instrs 6))))])
+      (let
+        [blocks : compiler_ir_types.CompilerIrBlockList
+          (compiler_ir_types.CompilerIrBlockList.Array seq)]
+        [rewritten : compiler_ir_types.CompilerIrBlockList
+          (compiler_optimize.opt-bit-length-idiom-blocks
+            10
+            (compiler_optimize.compiler-opt-global-shared-view blocks))]
+        (and
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function
+              (opt-bitlen-order-function
+                (compiler_optimize.compiler-opt-global-shared-view ty)
+                blocks)))
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function
+              (opt-bitlen-order-function
+                ty
+                (compiler_optimize.compiler-opt-global-shared-view rewritten))))
+          (match (compiler_optimize.opt-cfg-find-block
+            rewritten
+            (compiler_ir_types.compiler-ir-label "loop"))
+            [(compiler_optimize.OptMaybeBlock.Some
+                (compiler_ir_types.CompilerIrBlock.Block _ instrs))
+              (and
+                (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs 2)
+                  [(compiler_ir_types.CompilerIrInstr.UnOp
+                      _
+                      (compiler_ir_types.CompilerIrUnOp.BitLength)
+                      _
+                      _)
+                    true]
+                  [_ false])
+                (match (compiler_ir_types.compiler-ir-instr-seq-ref
+                  instrs
+                  (- instrs.len 1))
+                  [(compiler_ir_types.CompilerIrInstr.Jump _) true]
+                  [_ false]))]
+            [_ false]))))))
+
+(cfg
+  test
+  (test
+    bit-length-counter-first-has-valid-definition-order
+    (let
+      [kind : i64 0]
+      (while (< kind 2)
+        (let
+          [ty : compiler_ast_types.AstType
+            (if (= kind 0)
+              (compiler_ast_types.AstType.I64)
+              (compiler_ast_types.AstType.U64))]
+          (begin
+            (test.assert-true
+              (opt-bitlen-counter-first-ok?
+                (compiler_optimize.compiler-opt-global-shared-view ty)
+                (compiler_ir_types.CompilerIrValue.I64 0))
+              "zero seed")
+            (test.assert-true
+              (opt-bitlen-counter-first-ok?
+                (compiler_optimize.compiler-opt-global-shared-view ty)
+                (compiler_ir_types.CompilerIrValue.I64 100))
+              "nonzero seed")
+            (test.assert-true
+              (opt-bitlen-counter-first-ok?
+                (compiler_optimize.compiler-opt-global-shared-view ty)
+                (compiler_ir_types.CompilerIrValue.Var 1))
+              "runtime seed")
+            (test.assert-true
+              (opt-bitlen-counter-first-ok?
+                ty
+                (compiler_ir_types.CompilerIrValue.I64 9223372036854775807))
+              "wrapping seed")
+            (set! kind (+ kind 1))))))))
+
+(define (compiler-optimize-bit-length-self-test) : i64
+  (cond
+    ;; the idiom behind a `probe > 0` guard, signed and unsigned
+    [(not
+        (=
+          (opt-bitlen-test-outcome
+            (opt-bitlen-test-blocks
+              (compiler_ast_types.AstType.I64)
+              (compiler_ir_types.CompilerIrBinOp.Gt)
+              true
+              true
+              (compiler_ir_types.CompilerIrBinOp.Gt)
+              1
+              1
+              false))
+          1))
+      1]
+    [(not
+        (=
+          (opt-bitlen-test-outcome
+            (opt-bitlen-test-blocks
+              (compiler_ast_types.AstType.U64)
+              (compiler_ir_types.CompilerIrBinOp.Ne)
+              true
+              true
+              (compiler_ir_types.CompilerIrBinOp.Ne)
+              1
+              1
+              false))
+          1))
+      2]
+    ;; reached on the false edge of `probe <= 0`
+    [(not
+        (=
+          (opt-bitlen-test-outcome
+            (opt-bitlen-test-blocks
+              (compiler_ast_types.AstType.I64)
+              (compiler_ir_types.CompilerIrBinOp.Le)
+              false
+              true
+              (compiler_ir_types.CompilerIrBinOp.Gt)
+              1
+              1
+              false))
+          1))
+      3]
+    ;; no guard: a non-positive probe still runs the body once
+    [(not
+        (=
+          (opt-bitlen-test-outcome
+            (opt-bitlen-test-blocks
+              (compiler_ast_types.AstType.I64)
+              (compiler_ir_types.CompilerIrBinOp.Gt)
+              true
+              false
+              (compiler_ir_types.CompilerIrBinOp.Gt)
+              1
+              1
+              false))
+          0))
+      4]
+    ;; the guard's true edge of `probe <= 0` proves nothing
+    [(not
+        (=
+          (opt-bitlen-test-outcome
+            (opt-bitlen-test-blocks
+              (compiler_ast_types.AstType.I64)
+              (compiler_ir_types.CompilerIrBinOp.Le)
+              true
+              true
+              (compiler_ir_types.CompilerIrBinOp.Gt)
+              1
+              1
+              false))
+          0))
+      5]
+    ;; the probe's last value leaves the loop
+    [(not
+        (=
+          (opt-bitlen-test-outcome
+            (opt-bitlen-test-blocks
+              (compiler_ast_types.AstType.I64)
+              (compiler_ir_types.CompilerIrBinOp.Gt)
+              true
+              true
+              (compiler_ir_types.CompilerIrBinOp.Gt)
+              1
+              1
+              true))
+          0))
+      6]
+    ;; a different shift or step is not a bit count
+    [(not
+        (=
+          (opt-bitlen-test-outcome
+            (opt-bitlen-test-blocks
+              (compiler_ast_types.AstType.I64)
+              (compiler_ir_types.CompilerIrBinOp.Gt)
+              true
+              true
+              (compiler_ir_types.CompilerIrBinOp.Gt)
+              2
+              1
+              false))
+          0))
+      7]
+    [(not
+        (=
+          (opt-bitlen-test-outcome
+            (opt-bitlen-test-blocks
+              (compiler_ast_types.AstType.I64)
+              (compiler_ir_types.CompilerIrBinOp.Gt)
+              true
+              true
+              (compiler_ir_types.CompilerIrBinOp.Gt)
+              1
+              2
+              false))
+          0))
+      8]
+    ;; a signed `!= 0` exit never ends for a negative probe
+    [(not
+        (=
+          (opt-bitlen-test-outcome
+            (opt-bitlen-test-blocks
+              (compiler_ast_types.AstType.I64)
+              (compiler_ir_types.CompilerIrBinOp.Gt)
+              true
+              true
+              (compiler_ir_types.CompilerIrBinOp.Ne)
+              1
+              1
+              false))
+          0))
+      9]
+    ;; constant folding of the op itself
+    [(not
+        (and
+          (= (compiler_optimize.opt-bit-length-of 1 true) 1)
+          (= (compiler_optimize.opt-bit-length-of 1024 true) 11)
+          (= (compiler_optimize.opt-bit-length-of 0 true) 0)
+          (= (compiler_optimize.opt-bit-length-of (- 0 5) true) 0)
+          (= (compiler_optimize.opt-bit-length-of (- 0 5) false) 64)
+          (= (compiler_optimize.opt-bit-length-of 9223372036854775807 true) 63)))
+      10]
+    [else 42]))
+
 (define (compiler-optimize-divrem-safety-self-test) : i64
   (let
     [i64-params : compiler_ir_types.CompilerIrParamSeq
@@ -111652,3 +112077,202 @@
             (opt-spmd-map-test-case mode count)
             (set! count (+ count 1))))
         (set! mode (+ mode 1))))))
+
+;; Exercise cache admission and phi repair directly, independently of whether
+;; a later inlining round keeps or removes the original callee.
+(define (opt-lcc-test-callee [cheap : bool]) : compiler_ir_types.CompilerIrFunction
+  (let
+    [b : compiler_ir_types.CompilerIrInstrBuilder
+      (compiler_ir_types.compiler-ir-instr-builder-with-capacity 18)]
+    [i : i64 2]
+    [limit : i64
+      (if cheap
+        5
+        18)]
+    (begin
+      (while (< i limit)
+        (begin
+          (compiler_ir_types.compiler-ir-instr-builder-push!
+            (&mut b)
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              i
+              (compiler_ir_types.CompilerIrBinOp.Add)
+              (compiler_ir_types.CompilerIrValue.Var (- i 1))
+              (compiler_ir_types.CompilerIrValue.I64 1)
+              (compiler_ast_types.AstType.I64)))
+          (set! i (+ i 1))))
+      (compiler_ir_types.compiler-ir-instr-builder-push!
+        (&mut b)
+        (compiler_ir_types.CompilerIrInstr.Return
+          (compiler_ir_types.CompilerIrMaybeValue.Some
+            (compiler_ir_types.CompilerIrValue.Var (- limit 1)))))
+      (compiler_ir_types.CompilerIrFunction.Function
+        (opt-pcd-test-pure)
+        (opt-pcd-test-params)
+        (compiler_ast_types.AstType.I64)
+        limit
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "entry")
+            (compiler_ir_types.compiler-ir-instr-builder-to-seq b))
+          (compiler_ir_types.CompilerIrBlockList.Nil))
+        (compiler_ir_types.CompilerIrFunctionAbi.Ordinary)))))
+
+(define (opt-lcc-test-function [mode : i64]) : compiler_ir_types.CompilerIrFunction
+  (let
+    [entry : i64 (compiler_ir_types.compiler-ir-label "entry")]
+    [header : i64 (compiler_ir_types.compiler-ir-label "header")]
+    [body : i64 (compiler_ir_types.compiler-ir-label "body")]
+    [exit : i64 (compiler_ir_types.compiler-ir-label "exit")]
+    [out : compiler_ir_types.CompilerIrBlockBuilder
+      (compiler_ir_types.compiler-ir-block-builder-with-capacity 4)]
+    (begin
+      (compiler_ir_types.compiler-ir-block-builder-push!
+        (&mut out)
+        (compiler_ir_types.CompilerIrBlock.Block
+          entry
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Mov
+              2
+              (compiler_ir_types.CompilerIrValue.I64 0)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Jump header))))
+      (compiler_ir_types.compiler-ir-block-builder-push!
+        (&mut out)
+        (compiler_ir_types.CompilerIrBlock.Block
+          header
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              3
+              (compiler_ir_types.CompilerIrBinOp.Lt)
+              (compiler_ir_types.CompilerIrValue.Var 2)
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 3)
+              body
+              exit))))
+      (let
+        [b : compiler_ir_types.CompilerIrInstrBuilder
+          (compiler_ir_types.compiler-ir-instr-builder-with-capacity 6)]
+        (begin
+          (when
+            (= mode 1)
+            (compiler_ir_types.compiler-ir-instr-builder-push!
+              (&mut b)
+              (opt-pcd-test-call 6 (opt-pcd-test-impure) 1)))
+          (compiler_ir_types.compiler-ir-instr-builder-push!
+            (&mut b)
+            (compiler_ir_types.CompilerIrInstr.Call
+              4
+              (opt-pcd-test-pure)
+              (compiler_ir_types.CompilerIrCallArgs.Two
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (compiler_ir_types.CompilerIrValue.Var
+                  (if (= mode 2)
+                    2
+                    1)))
+              (compiler_ast_types.AstType.I64)))
+          (compiler_ir_types.compiler-ir-instr-builder-push!
+            (&mut b)
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              5
+              (compiler_ir_types.CompilerIrBinOp.Add)
+              (compiler_ir_types.CompilerIrValue.Var 2)
+              (compiler_ir_types.CompilerIrValue.I64 1)
+              (compiler_ast_types.AstType.I64)))
+          (compiler_ir_types.compiler-ir-instr-builder-push!
+            (&mut b)
+            (compiler_ir_types.CompilerIrInstr.Mov
+              2
+              (compiler_ir_types.CompilerIrValue.Var 5)
+              (compiler_ast_types.AstType.I64)))
+          (compiler_ir_types.compiler-ir-instr-builder-push!
+            (&mut b)
+            (if (= mode 5)
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Bool true)
+                header
+                exit)
+              (compiler_ir_types.CompilerIrInstr.Jump header)))
+          (compiler_ir_types.compiler-ir-block-builder-push!
+            (&mut out)
+            (compiler_ir_types.CompilerIrBlock.Block
+              body
+              (compiler_ir_types.compiler-ir-instr-builder-to-seq b)))))
+      (let
+        [b : compiler_ir_types.CompilerIrInstrBuilder
+          (compiler_ir_types.compiler-ir-instr-builder-with-capacity 2)]
+        (begin
+          (when
+            (= mode 5)
+            (compiler_ir_types.compiler-ir-instr-builder-push!
+              (&mut b)
+              (compiler_ir_types.CompilerIrInstr.Phi
+                7
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                  (compiler_ir_types.CompilerIrValue.Var 2)
+                  header
+                  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                    (compiler_ir_types.CompilerIrValue.Var 4)
+                    body
+                    (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+                (compiler_ast_types.AstType.I64))))
+          (compiler_ir_types.compiler-ir-instr-builder-push!
+            (&mut b)
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.Var
+                  (if (= mode 5)
+                    7
+                    2)))))
+          (compiler_ir_types.compiler-ir-block-builder-push!
+            (&mut out)
+            (compiler_ir_types.CompilerIrBlock.Block
+              exit
+              (compiler_ir_types.compiler-ir-instr-builder-to-seq b)))))
+      (compiler_ir_types.CompilerIrFunction.Function
+        (opt-test-symbol "loop_call_cache_test")
+        (opt-pcd-test-params)
+        (compiler_ast_types.AstType.I64)
+        8
+        (compiler_ir_types.compiler-ir-block-builder-to-list out)
+        (compiler_ir_types.CompilerIrFunctionAbi.Ordinary)))))
+
+(test
+  invariant-loop-call-cache
+  (let
+    [mode : i64 0]
+    (while (< mode 6)
+      (let
+        [index : compiler_optimize.OptFunctionIndex
+          (compiler_optimize.opt-function-index-build
+            (compiler_ir_types.compiler-ir-function-seq-prepend
+              (opt-lcc-test-callee (= mode 4))
+              (compiler_ir_types.compiler-ir-function-seq-empty)))]
+        [out : compiler_ir_types.CompilerIrFunction
+          (compiler_optimize.opt-loop-call-cache-function
+            index
+            (opt-pcd-test-map (= mode 3))
+            (opt-lcc-test-function mode))]
+        [blocks : compiler_ir_types.CompilerIrBlockList
+          (compiler_optimize.opt-function-blocks
+            (compiler_ir_types.compiler-ir-global-shared-view out))]
+        (begin
+          (test.assert-true
+            (=
+              (compiler_ir_types.compiler-ir-block-list-count
+                (compiler_ir_types.compiler-ir-global-shared-view blocks))
+              (if (or (= mode 0) (= mode 5))
+                6
+                4))
+            "cache only a costly, invariant call in a write-free loop")
+          (test.assert-true
+            (compiler_optimize.opt-inline-structure-ok? blocks)
+            "splitting the call repairs successor phi predecessors")
+          (test.assert-true
+            (compiler_optimize.opt-verify-ok?
+              (compiler_optimize.opt-verify-function
+                (compiler_optimize.opt-ssa-construct-function 0 out)))
+            "cache flags and results have valid SSA definitions")
+          (set! mode (+ mode 1)))))))

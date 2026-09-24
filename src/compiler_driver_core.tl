@@ -4276,7 +4276,8 @@
         CompilerDriverPreludeSurface.Missing
         (in-arena
           (arena.Arena surface-arena)
-          (match (embedded_tlci.compiler-embedded-stdlib-tlci-surface)
+          (match (embedded_tlci.compiler-embedded-stdlib-tlci-surface
+            surface-arena)
             [(embedded_tlci.CompilerEmbeddedStdlibTlciSurface.Unavailable _)
               CompilerDriverPreludeSurface.Missing]
             [(embedded_tlci.CompilerEmbeddedStdlibTlciSurface.Ok
@@ -6103,6 +6104,10 @@
                       (compiler_ast_types.ast-node-pool-context-base-arena
                         retired))
                     (arena.tl_arena_destroy intern-arena)
+                    (cfg
+                      embedded-stdlib-tlci
+                      (embedded_tlci.compiler-embedded-stdlib-tlci-forget-decoded!
+                        state.surface-arena))
                     (arena.tl_arena_destroy state.surface-arena)
                     (unless
                       (= (array-ref scope.frontend-arena 0) 0)

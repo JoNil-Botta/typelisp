@@ -1657,7 +1657,98 @@
           (set! ok false)))
       ok)))
 
+;; The image and range digests are the polynomial hash
+;;
+;;     h = 1;  h = (h * 131 + b) mod p   for each byte b,   p = 2^31 - 1
+;;
+;; and are part of the format, so they must keep their exact values. Computing
+;; them a byte at a time costs a 64-bit modulo per byte, which made verifying
+;; the embedded stdlib image (16 MB) most of a hello-world compile. Four bytes
+;; at a time is the same polynomial, reduced once:
+;;
+;;     h' = h * 131^4 + ((b0 * 131 + b1) * 131 + b2) * 131 + b3   (mod p)
+;;
+;; With h < p < 2^31 and 131^4 < 2^29 the sum stays below 2^61, and p being a
+;; Mersenne prime reduces it with two folds `x = (x & p) + (x >> 31)` and one
+;; conditional subtract instead of a division.
+(define tlci-hash-modulus : i64
+  2147483647)
+
+;; 131^4 and 131^8 mod p.
+(define tlci-hash-step-4 : i64
+  294499921)
+(define tlci-hash-step-8 : i64
+  460949235)
+
+;; x mod p for 0 <= x < 2^62.
+(define (tlci-hash-reduce [x : i64]) : i64
+  (let
+    [once : i64 (+ (bit-and x tlci-hash-modulus) (shr x 31))]
+    [twice : i64 (+ (bit-and once tlci-hash-modulus) (shr once 31))]
+    (if (>= twice tlci-hash-modulus)
+      (- twice tlci-hash-modulus)
+      twice)))
+
+;; Extend `hash` (< p) over bytes [start, end).
+(define (tlci-hash-extend
+  [bytes : (& bytes (__tl_dyn-array u8))]
+  [hash : i64]
+  [start : i64]
+  [end : i64]) : i64
+  (let
+    [h : i64 hash]
+    [i : i64 start]
+    [blocks-end : i64 (- end 3)]
+    (begin
+      (while (< i blocks-end)
+        (let
+          [t : i64
+            (+
+              (*
+                (+
+                  (*
+                    (+
+                      (* (tlci-byte-at bytes i) 131)
+                      (tlci-byte-at bytes (+ i 1)))
+                    131)
+                  (tlci-byte-at bytes (+ i 2)))
+                131)
+              (tlci-byte-at bytes (+ i 3)))]
+          [x : i64 (+ (* h tlci-hash-step-4) t)]
+          [once : i64 (+ (bit-and x tlci-hash-modulus) (shr x 31))]
+          [twice : i64 (+ (bit-and once tlci-hash-modulus) (shr once 31))]
+          (begin
+            (set!
+              h
+              (if (>= twice tlci-hash-modulus)
+                (- twice tlci-hash-modulus)
+                twice))
+            (set! i (+ i 4)))))
+      (while (< i end)
+        (begin
+          (set! h (tlci-hash-reduce (+ (* h 131) (tlci-byte-at bytes i))))
+          (set! i (+ i 1))))
+      h)))
+
+;; The image digest; the digest field itself hashes as zeros.
 (define (tlci-content-hash [bytes : (& bytes (__tl_dyn-array u8))]) : i64
+  (let
+    [n : i64 (array-length bytes)]
+    [field-end : i64 (+ tlci-hash-field-offset tlci-hash-field-size)]
+    (if (< n field-end)
+      (tlci-content-hash-bytewise bytes)
+      (tlci-hash-extend
+        bytes
+        (tlci-hash-reduce
+          (*
+            (tlci-hash-extend bytes 1 0 tlci-hash-field-offset)
+            tlci-hash-step-8))
+        field-end
+        n))))
+
+;; The byte-at-a-time definition, kept for images too short to hold the digest
+;; field and as the reference the tests check the fast form against.
+(define (tlci-content-hash-bytewise [bytes : (& bytes (__tl_dyn-array u8))]) : i64
   (let
     [n : i64 (array-length bytes)]
     [i : i64 0]
@@ -1680,17 +1771,7 @@
   [bytes : (& bytes (__tl_dyn-array u8))]
   [offset : i64]
   [len : i64]) : i64
-  (let
-    [i : i64 0]
-    [hash : i64 1]
-    (begin
-      (while (< i len)
-        (begin
-          (set!
-            hash
-            (% (+ (* hash 131) (tlci-byte-at bytes (+ offset i))) 2147483647))
-          (set! i (+ i 1))))
-      hash)))
+  (tlci-hash-extend bytes 1 offset (+ offset len)))
 
 (define (tlci-aux-pack-rodata
   [base : (__tl_dyn-array u8)]
@@ -4734,6 +4815,69 @@
             [(TlciPackageSourceBindingRead.Malformed _) true]
             [_ false])]))))
 
+;; The block form of the digest against the byte-at-a-time definition, at
+;; every length around the digest field and the four-byte blocks, and on
+;; all-0xff bytes (the largest intermediate sums).
+(define (tlci-test-hash-bytes [n : i64] [seed : i64]) : (__tl_dyn-array u8)
+  (let
+    [bytes : (__tl_dyn-array u8) (__tl_make-array u8 n)]
+    [state : i64 seed]
+    [i : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (set! state (+ (* state 6364136223846793005) 1442695040888963407))
+          (set!
+            (array-ref bytes i)
+            (if (< seed 0)
+              (cast 255 : u8)
+              (cast (bit-and (shr state 33) 255) : u8)))
+          (set! i (+ i 1))))
+      bytes)))
+
+(define (tlci-test-range-hash-bytewise
+  [bytes : (& bytes (__tl_dyn-array u8))]
+  [offset : i64]
+  [len : i64]) : i64
+  (let
+    [hash : i64 1]
+    [i : i64 0]
+    (begin
+      (while (< i len)
+        (begin
+          (set!
+            hash
+            (% (+ (* hash 131) (tlci-byte-at bytes (+ offset i))) 2147483647))
+          (set! i (+ i 1))))
+      hash)))
+
+(define (tlci-test-hash-blocks-ok?) : bool
+  (let
+    [n : i64 0]
+    [ok : bool true]
+    (begin
+      (while (and ok (< n 140))
+        (let
+          [random : (__tl_dyn-array u8) (tlci-test-hash-bytes n (+ n 3))]
+          [ones : (__tl_dyn-array u8) (tlci-test-hash-bytes n (- 0 1))]
+          (begin
+            (set!
+              ok
+              (and
+                (=
+                  (tlci-content-hash (& random))
+                  (tlci-content-hash-bytewise (& random)))
+                (=
+                  (tlci-content-hash (& ones))
+                  (tlci-content-hash-bytewise (& ones)))
+                (or
+                  (< n 5)
+                  (=
+                    (tlci-range-hash (& random) 2 (- n 5))
+                    (tlci-test-range-hash-bytewise (& random) 2 (- n 5))))))
+            (set! n (+ n 1)))))
+      ok)))
+
 (define (tlci-core-self-test-status) : i64
   (cond
     [(not (tlci-test-metadata-emit-parse?)) 1]
@@ -4755,6 +4899,7 @@
     [(not (tlci-test-package-source-binding-admission-ok?)) 18]
     [(not (tlci-test-host-platform-admission-ok?)) 19]
     [(not (tlci-test-aux-directory-shapes-ok?)) 20]
+    [(not (tlci-test-hash-blocks-ok?)) 21]
     [else 0]))
 
 (define (tlci-core-self-test) : i64

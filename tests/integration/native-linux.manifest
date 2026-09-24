@@ -8,6 +8,24 @@
 # the row then compiles standalone at that level instead of the default one the
 # batched pre-pass uses, so a claim that only holds at a particular level can be
 # pinned beside the default-level row for the same source.
+invariant_loop_call_negative_opt0|tests/integration/invariant_loop_call.tl|0|0\n|0|-|opt-level:0+stage-stdlib
+invariant_loop_call_zero_opt0|tests/integration/invariant_loop_call.tl|0|0\n|1|-|opt-level:0+stage-stdlib
+invariant_loop_call_skipped_opt0|tests/integration/invariant_loop_call.tl|0|5\n|2|-|opt-level:0+stage-stdlib
+invariant_loop_call_delayed_opt0|tests/integration/invariant_loop_call.tl|0|59\n|3|-|opt-level:0+stage-stdlib
+invariant_loop_call_division_opt0|tests/integration/invariant_loop_call.tl|135|-|4|-|opt-level:0+stage-stdlib+expected-stderr:tl: target/integration-verify/linux/invariant_loop_call_division_opt0/invariant_loop_call_division_opt0.tl:15:10: integer division or remainder error: dividend=36 divisor=0\n
+invariant_loop_call_trap_order_opt0|tests/integration/invariant_loop_call.tl|129|-|5|-|opt-level:0+stage-stdlib+expected-stderr:tl: target/integration-verify/linux/invariant_loop_call_trap_order_opt0/invariant_loop_call_trap_order_opt0.tl:29:32: shift count out of range: count=-1 width=64\n
+invariant_loop_call_write_opt0|tests/integration/invariant_loop_call.tl|0|190\n|6|-|opt-level:0+stage-stdlib
+invariant_loop_call_nested_opt0|tests/integration/invariant_loop_call.tl|0|438\n|7|-|opt-level:0+stage-stdlib
+invariant_loop_call_varying_opt0|tests/integration/invariant_loop_call.tl|0|75\n|8|-|opt-level:0+stage-stdlib
+invariant_loop_call_negative_opt2|tests/integration/invariant_loop_call.tl|0|0\n|0|-|opt-level:2+stage-stdlib
+invariant_loop_call_zero_opt2|tests/integration/invariant_loop_call.tl|0|0\n|1|-|opt-level:2+stage-stdlib
+invariant_loop_call_skipped_opt2|tests/integration/invariant_loop_call.tl|0|5\n|2|-|opt-level:2+stage-stdlib
+invariant_loop_call_delayed_opt2|tests/integration/invariant_loop_call.tl|0|59\n|3|-|opt-level:2+stage-stdlib
+invariant_loop_call_division_opt2|tests/integration/invariant_loop_call.tl|135|-|4|-|opt-level:2+stage-stdlib+expected-stderr:tl: target/integration-verify/linux/invariant_loop_call_division_opt2/invariant_loop_call_division_opt2.tl:15:10: integer division or remainder error: dividend=36 divisor=0\n
+invariant_loop_call_trap_order_opt2|tests/integration/invariant_loop_call.tl|129|-|5|-|opt-level:2+stage-stdlib+expected-stderr:tl: target/integration-verify/linux/invariant_loop_call_trap_order_opt2/invariant_loop_call_trap_order_opt2.tl:29:32: shift count out of range: count=-1 width=64\n
+invariant_loop_call_write_opt2|tests/integration/invariant_loop_call.tl|0|190\n|6|-|opt-level:2+stage-stdlib
+invariant_loop_call_nested_opt2|tests/integration/invariant_loop_call.tl|0|438\n|7|-|opt-level:2+stage-stdlib
+invariant_loop_call_varying_opt2|tests/integration/invariant_loop_call.tl|0|75\n|8|-|opt-level:2+stage-stdlib
 hash_length_chain|tests/integration/hash_length_chain.tl|42|-|-|-|opt-level:2+stage-stdlib
 aggregate_globals|tests/integration/aggregate_globals.tl|42|-|-|stdlib/string.tl
 inline_aggregate_global|tests/integration/inline_aggregate_global.tl|42|98\n|-|stdlib/io.tl stdlib/string.tl
@@ -270,6 +288,9 @@ clone_dynarray_scalar_bulk|tests/integration/clone_dynarray_scalar_bulk.tl|42|-|
 clone_generated_vector_element|tests/integration/clone_generated_vector_element.tl|42|-|-|stdlib/vector.tl stdlib/string.tl
 generated_macro_clone_handoff|tests/integration/generated_macro_clone_handoff.tl|42|-|-|stdlib/clone.tl stdlib/comptime.tl stdlib/string.tl
 generated_cfg|tests/integration/generated_cfg.tl|42|-|-|-
+bit_length_loop|tests/integration/bit_length_loop.tl|42|0\n1\n2\n2\n3\n4\n10\n0\n0\n63\n63\n|0 1 2 3 7 8 1000 -1 -9223372036854775808 9223372036854775807 4611686018427387904|stdlib/io.tl stdlib/string.tl
+bit_length_loop_opt0|tests/integration/bit_length_loop.tl|42|0\n1\n2\n2\n3\n4\n10\n0\n0\n63\n63\n|0 1 2 3 7 8 1000 -1 -9223372036854775808 9223372036854775807 4611686018427387904|stdlib/io.tl stdlib/string.tl|opt-level:0+stage-stdlib
+bit_length_loop_opt2|tests/integration/bit_length_loop.tl|42|0\n1\n2\n2\n3\n4\n10\n0\n0\n63\n63\n|0 1 2 3 7 8 1000 -1 -9223372036854775808 9223372036854775807 4611686018427387904|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib
 generated_cfg_opt0|tests/integration/generated_cfg.tl|42|-|-|-|opt-level:0+stage-stdlib
 generated_cfg_opt1|tests/integration/generated_cfg.tl|42|-|-|-|opt-level:1+stage-stdlib
 generated_cfg_opt2|tests/integration/generated_cfg.tl|42|-|-|-|opt-level:2+stage-stdlib
@@ -383,13 +404,13 @@ integer_literal_u64_full_range|tests/integration/integer_literal_u64_full_range.
 inline_alloc_scavenge_live_through|tests/integration/inline_alloc_scavenge_live_through.tl|42|-|-|stdlib/io.tl
 parser|tests/integration/parser.tl|14|-|-|-
 process_runtime|tests/integration/process_runtime.tl|42|inherit-stdout\n|-|stdlib/process_borrowed.tl stdlib/process.tl stdlib/process_runtime.tl stdlib/test.tl stdlib/io.tl stdlib/env.tl stdlib/vector.tl stdlib/string.tl|expected-stderr:inherit-stderr\n
-read_file_missing_trap|tests/integration/read_file_missing_trap.tl|134|-|-|-|expected-stderr:tl: stdlib/io.tl:1379:8: panic: tl: read-file failed\n
+read_file_missing_trap|tests/integration/read_file_missing_trap.tl|134|-|-|-|expected-stderr:tl: stdlib/io.tl:1559:8: panic: tl: read-file failed\n
 write_file_invalid_trap|tests/integration/write_file_invalid_trap.tl|134|-|-|-|expected-stderr:tl: write-file failed: io: not found: tests/integration/missing-parent-zzz/output.txt\n
-selfhost_argv_oob|tests/integration/selfhost_argv_oob.tl|134|-|-|-|expected-stderr:tl: stdlib/io.tl:1296:8: panic: tl: argv index out of bounds\n
+selfhost_argv_oob|tests/integration/selfhost_argv_oob.tl|134|-|-|-|expected-stderr:tl: stdlib/io.tl:1476:8: panic: tl: argv index out of bounds\n
 tl_alloc_huge_trap|tests/integration/tl_alloc_huge_trap.tl|134|-|-|-|expected-stderr:tl: allocation failed\n
 tl_alloc_aligned_invalid|tests/integration/tl_alloc_aligned_invalid.tl|134|-|-|-|expected-stderr:tl: allocation failed\n
 tl_alloc_aligned_overflow|tests/integration/tl_alloc_aligned_overflow.tl|134|-|-|-|expected-stderr:tl: allocation failed\n
-stdin_bytes_negative_trap|tests/integration/stdin_bytes_negative_trap.tl|134|-|-|-|expected-stderr:tl: stdlib/io.tl:1653:6: panic: tl: stdin failed\n
+stdin_bytes_negative_trap|tests/integration/stdin_bytes_negative_trap.tl|134|-|-|-|expected-stderr:tl: stdlib/io.tl:1833:6: panic: tl: stdin failed\n
 region_mark_zero|tests/integration/region_mark_zero.tl|42|-|-|-
 region_reset_zero|tests/integration/region_reset_zero.tl|44|-|-|stdlib/string.tl
 region_reset_discard|tests/integration/region_reset_discard.tl|3|-|-|stdlib/string.tl
@@ -683,6 +704,12 @@ generated_import_global_initializers|tests/integration/generated_import_global_i
 generated_import_global_initializers_opt0|tests/integration/generated_import_global_initializers.tl|42|-|-|decls_generated_import_dep.tl decls_generated_import_empty.tl generated_import_alias_other_dep.tl|opt-level:0+stage-stdlib
 generated_import_global_initializers_opt2|tests/integration/generated_import_global_initializers.tl|42|-|-|decls_generated_import_dep.tl decls_generated_import_empty.tl generated_import_alias_other_dep.tl|opt-level:2+stage-stdlib
 
+bit_length_order_opt0|tests/integration/bit_length_order.tl|0|104\n104\n|100 8|stdlib/io.tl stdlib/string.tl|opt-level:0+stage-stdlib
+bit_length_order_opt1|tests/integration/bit_length_order.tl|0|104\n104\n|100 8|stdlib/io.tl stdlib/string.tl|opt-level:1+stage-stdlib
+bit_length_order_opt2|tests/integration/bit_length_order.tl|0|104\n104\n|100 8|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib
+bit_length_order_zero|tests/integration/bit_length_order.tl|0|0\n64\n|0 -1|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib
+bit_length_order_signed_wrap|tests/integration/bit_length_order.tl|0|-9223372036854775805\n9223372036854775811\n|9223372036854775807 8|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib
+bit_length_order_unsigned_wrap|tests/integration/bit_length_order.tl|0|-1\n63\n|-1 -9223372036854775808|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib
 signed_division_flags_opt0|tests/integration/signed_division_flags.tl|42|-|-|stdlib/io.tl stdlib/string.tl|opt-level:0+stage-stdlib
 signed_division_flags_opt1|tests/integration/signed_division_flags.tl|42|-|-|stdlib/io.tl stdlib/string.tl|opt-level:1+stage-stdlib
 signed_division_flags_opt2|tests/integration/signed_division_flags.tl|42|-|-|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib

@@ -6031,7 +6031,7 @@
             "    movsd -16(%rsp), %xmm0\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            (compiler-backend-asm-function-body asm "main")
             "%xmm3")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 

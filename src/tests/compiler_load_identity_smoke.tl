@@ -10,8 +10,7 @@
   (let
     [module-name : String "loader.identity.same"]
     [source-id : i64
-      (compiler_load.compiler-load-parse-context-name-id
-        (owned_view.compiler-owned-shared-view module-name))]
+      (compiler_load.compiler-load-parse-context-name-id module-name)]
     [generated-id : i64
       (ci.intern-generated-name
         (owned_view.compiler-owned-shared-view module-name))]
@@ -34,7 +33,7 @@
         source-id)
       (not
         (compiler_load.compiler-load-decl-list-has-module-id?
-          (owned_view.compiler-owned-shared-view decls)
+          decls
           generated-id))
       (match (compiler_load.compiler-load-check-expected-module
         "src/loader_identity.tl"
@@ -47,7 +46,7 @@
       (match (compiler_load.compiler-load-check-expected-module
         "src/loader_identity.tl"
         (ast.AstMaybeModuleName.Some generated-id)
-        (owned_view.compiler-owned-shared-view module-name)
+        module-name
         source-id)
         [(compiler_load.ResultCompilerLoadModuleId.Ok _ _) false]
         [(compiler_load.ResultCompilerLoadModuleId.Err _) true]))))
@@ -86,8 +85,7 @@
           "loader.identity.same"))
       (set! b-ok (compiler-load-identity-current-ok?))
       (ci.intern-compat-state-capture-from-globals! (&mut state-b))
-      (ci.intern-compat-state-install!
-        (owned_view.compiler-owned-shared-view state-a))
+      (ci.intern-compat-state-install! state-a)
       (cbi.compiler-builtin-reset!)
       (cbi.compiler-builtin-initialize-for-parse!)
       (set!
@@ -102,8 +100,7 @@
           (not (= source-a source-b))
           (= restored-source-a source-a)
           (compiler-load-identity-current-ok?)))
-      (ci.intern-compat-state-install!
-        (owned_view.compiler-owned-shared-view home))
+      (ci.intern-compat-state-install! home)
       (cbi.compiler-builtin-reset!)
       (cbi.compiler-builtin-initialize-for-parse!)
       restored-ok)))

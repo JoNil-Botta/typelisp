@@ -3,12 +3,11 @@
 ;; Shared by the retained `repl.tl` compatibility/coverage wrapper and the
 ;; unified `cli.tl` dispatcher.
 ;;
-;; Owns the REPL line loop and the dot-command behavior of the Rust REPL
-;; skeleton's in-process slices. It reads
-;; lines with `read-stdin-line` until `.exit` or end of input, printing a flushed
-;; `tl> ` prompt (or a `... ` continuation marker while a multiline form is
-;; pending) before each read so the prompt is visible in an interactive
-;; session, and dispatches the dot commands:
+;; Owns the REPL line loop and the dot-commands. It reads lines with
+;; `read-stdin-line` until `.exit` or end of input, printing a flushed `tl> `
+;; prompt (or a `... ` continuation marker while a multiline form is pending)
+;; before each read so the prompt is visible in an interactive session, and
+;; dispatches the dot commands:
 ;;
 ;;   - `.exit`            ends the session.
 ;;   - `.help`            prints the command help to stdout.
@@ -754,10 +753,9 @@
         (repl-print-error-line (str_cat.str-cat "REPL parse error: " message))
         session-source)]))
 
-;; Completeness tracking mirrors the Rust REPL's delimiter check closely enough
-;; for the selfhost slice: strings, comments, and char literals do not count
-;; delimiters; unmatched closing delimiters are considered complete so parsing can
-;; report the real error and the session can recover.
+;; Completeness tracking is a delimiter check: strings, comments, and char
+;; literals do not count delimiters; unmatched closing delimiters are considered
+;; complete so parsing can report the real error and the session can recover.
 (define (repl-skip-comment [text : String] [idx : i64] [len : i64]) : i64
   (if (>= idx len)
     idx

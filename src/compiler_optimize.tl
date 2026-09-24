@@ -17503,6 +17503,110 @@
 (define (opt-verify-phi-predecessors-blocks
   [pred-map : OptPredMap]
   [remaining : ir.CompilerIrBlockList]) : ResultCompilerOptimizeVerify
+  (if pred-map.index.labels-unique
+    (opt-verify-phi-predecessors-by-id
+      (compiler-opt-global-shared-view pred-map.index)
+      remaining)
+    (opt-verify-phi-predecessors-by-label pred-map remaining)))
+
+;; With every block label distinct, a block's predecessor labels are exactly the
+;; labels of the distinct ids in its predecessor CSR row, so "the phi's input
+;; labels are distinct and form the predecessor set" is: every input label names
+;; a block that is a predecessor and that no earlier input named, and there are
+;; as many inputs as predecessors. `stamp` marks the row's ids with `generation`
+;; and each id an input names with `generation + 1`, so both tests are one read
+;; per input, where the label sets above rescanned per label.
+(define (opt-verify-phi-inputs-match-row?
+  [index : OptCfgIndex]
+  [stamp : (__tl_dyn-array i64)]
+  [generation : i64]
+  [block-label : i64]
+  [inputs : ir.CompilerIrPhiInputSeq]) : bool
+  (match (opt-cfg-index-id (compiler-opt-global-shared-view index) block-label)
+    [(option_i64.None) (<= inputs.len 0)]
+    [(option_i64.Some id)
+      (let
+        [offsets : (__tl_dyn-array i64) index.preds.offsets]
+        [edges : (__tl_dyn-array i64) index.preds.edges]
+        [edge : i64 (array-ref offsets id)]
+        [end : i64 (array-ref offsets (+ id 1))]
+        [k : i64 0]
+        (begin
+          (while (< edge end)
+            (begin
+              (set! (array-ref stamp (array-ref edges edge)) generation)
+              (set! edge (+ edge 1))))
+          (while (< k inputs.len)
+            (let
+              [input : ir.CompilerIrPhiInput
+                (ir.compiler-ir-phi-input-seq-ref
+                  (ir.compiler-ir-global-shared-view inputs)
+                  k)]
+              (match (opt-cfg-index-id
+                (compiler-opt-global-shared-view index)
+                input.label)
+                [(option_i64.None) (return false)]
+                [(option_i64.Some pred)
+                  (if (= (array-ref stamp pred) generation)
+                    (begin
+                      (set! (array-ref stamp pred) (+ generation 1))
+                      (set! k (+ k 1)))
+                    (return false))])))
+          (= inputs.len (- (array-ref offsets (+ id 1)) (array-ref offsets id)))))]))
+
+(define (opt-verify-phi-predecessors-by-id
+  [index : OptCfgIndex]
+  [blocks : ir.CompilerIrBlockList]) : ResultCompilerOptimizeVerify
+  (let
+    [seq : ir.CompilerIrBlockSeq
+      (ir.compiler-ir-block-seq-from-list
+        (compiler-opt-global-shared-view blocks))]
+    [count : i64
+      (ir.compiler-ir-block-seq-count (compiler-opt-global-shared-view seq))]
+    [stamp : (__tl_dyn-array i64)
+      (__tl_make-array
+        i64
+        (opt-cfg-index-block-count (compiler-opt-global-shared-view index)))]
+    [generation : i64 1]
+    [b : i64 0]
+    (begin
+      (while (< b count)
+        (begin
+          (match (ir.compiler-ir-block-seq-ref
+            (compiler-opt-global-shared-view seq)
+            b)
+            [(ir.CompilerIrBlock.Block label instrs)
+              (let
+                [slots : (__tl_dyn-array ir.CompilerIrInstr)
+                  (compiler-opt-global-shared-view instrs.slots)]
+                [n : i64 instrs.len]
+                [i : i64 0]
+                (while (< i n)
+                  (begin
+                    (match (compiler-opt-global-array-element-shared-view
+                      slots
+                      i)
+                      [(ir.CompilerIrInstr.Phi _ inputs _)
+                        (begin
+                          (unless
+                            (opt-verify-phi-inputs-match-row?
+                              (compiler-opt-global-shared-view index)
+                              (compiler-opt-global-shared-view stamp)
+                              generation
+                              label
+                              (compiler-opt-global-shared-view inputs))
+                            (return
+                              (ResultCompilerOptimizeVerify.Err
+                                "optimizer verify: phi predecessor mismatch")))
+                          (set! generation (+ generation 2)))]
+                      [_ unit])
+                    (set! i (+ i 1)))))])
+          (set! b (+ b 1))))
+      (ResultCompilerOptimizeVerify.Ok))))
+
+(define (opt-verify-phi-predecessors-by-label
+  [pred-map : OptPredMap]
+  [remaining : ir.CompilerIrBlockList]) : ResultCompilerOptimizeVerify
   (match remaining
     [(ir.CompilerIrBlockList.Nil) (ResultCompilerOptimizeVerify.Ok)]
     [(ir.CompilerIrBlockList.Cons block rest)
@@ -17514,13 +17618,13 @@
             (compiler-opt-global-shared-view instrs)
             0)
             [(ResultCompilerOptimizeVerify.Ok)
-              (opt-verify-phi-predecessors-blocks
+              (opt-verify-phi-predecessors-by-label
                 pred-map
                 (compiler-opt-box-shared-view rest))]
             [(ResultCompilerOptimizeVerify.Err message)
               (ResultCompilerOptimizeVerify.Err message)])])]
     [(ir.CompilerIrBlockList.Array seq)
-      (opt-verify-phi-predecessors-blocks
+      (opt-verify-phi-predecessors-by-label
         pred-map
         (ir.compiler-ir-block-seq-to-list seq))]))
 

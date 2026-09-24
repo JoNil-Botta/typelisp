@@ -225,8 +225,7 @@
   [entries : package_lock_entry_vec.Vec]
   [entry : PackageLockEntry]) : ResultPackageLockEntryList
   (let
-    [next : package_lock_entry_vec.Vec
-      (package-lock-global-shared-view entries)]
+    [next : package_lock_entry_vec.Vec entries]
     [index : i64
       (package-lock-entry-list-insert-position
         (& next)

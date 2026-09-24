@@ -66,9 +66,12 @@
   (begin
     (cbi.compiler-builtin-initialize-for-parse!)
     (match (compiler_backend.compiler-backend-emit-program-linux
-      (compiler_optimize.optimize-program-with-level
+      (match (compiler_optimize.optimize-program-with-spans-and-level
         (bounds-check-smoke-program)
-        2))
+        (ir.compiler-source-spans-empty)
+        2)
+        [(compiler_optimize.CompilerOptimizedProgram.Program optimized _)
+          optimized]))
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (let
           [symbol-count : i64

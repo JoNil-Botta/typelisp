@@ -186,6 +186,67 @@
       (opt.opt-bounds-instrs! type-segment-bases facts casts (&mut result))
       result)))
 
+;; The optimizer's program and inliner entries all thread source spans. A
+;; fixture without spans runs the production entry with an empty span table and
+;; keeps only the optimized code.
+(define (opt-test-optimize-program-with-level
+  [program : ir.CompilerIrProgram]
+  [level : i64]) : ir.CompilerIrProgram
+  (match (opt.optimize-program-with-spans-and-level
+    program
+    (ir.compiler-source-spans-empty)
+    level)
+    [(opt.CompilerOptimizedProgram.Program optimized _) optimized]))
+
+(define (opt-test-inline-program-functions
+  [type-segment-bases : i64]
+  [functions : ir.CompilerIrFunctionSeq]
+  [level : i64]) : ir.CompilerIrFunctionSeq
+  (match (opt.opt-inline-program-functions-with-spans
+    type-segment-bases
+    functions
+    level
+    (ir.compiler-source-spans-empty))
+    [(opt.OptInlineSpanProgram.Program inlined _) inlined]))
+
+;; A call-site stand-in for the span-carrying clone walks: with an empty span
+;; table no location is found for it, so the clones carry no spans.
+(define (opt-test-inline-no-span-call) : ir.CompilerIrInstr
+  (ir.CompilerIrInstr.Return (ir.CompilerIrMaybeValue.No)))
+
+(define (opt-test-inline-expand-instrs
+  [instrs : ir.CompilerIrInstrSeq]
+  [dst : i64]
+  [ret : ast.AstType]
+  [sa : ir.CompilerIrCallArgs]
+  [np : i64]
+  [base : i64]
+  [label-prefix : String]) : ir.CompilerIrInstrSeq
+  (match (opt.opt-inline-expand-instrs-with-spans
+    instrs
+    dst
+    ret
+    sa
+    np
+    base
+    label-prefix
+    (ir.compiler-source-spans-empty)
+    (ir.compiler-source-spans-empty)
+    0
+    (opt-test-inline-no-span-call)
+    0)
+    [(opt.OptInlineSpanState.State expanded _ _ _) expanded]))
+
+;; Keep an inliner rewrite only when its caller still has a valid structure.
+(define (opt-test-inline-revert-or-keep
+  [fallback : ir.CompilerIrFunction]
+  [next : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  (match (ir.compiler-ir-global-shared-view next)
+    [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
+      (if (opt.opt-inline-structure-ok? blocks)
+        next
+        fallback)]))
+
 (test
   value-source-counts-dense-semantics
   (let
@@ -3561,11 +3622,11 @@
     [array-local : ir.CompilerIrInstrSeq
       (opt-aggregate-promote-test-instrs (opt-aggregate-array-local-instrs))]
     [level0 : ir.CompilerIrProgram
-      (opt.optimize-program-with-level
+      (opt-test-optimize-program-with-level
         (opt-spans-program (opt-aggregate-positive-instrs))
         0)]
     [level2 : ir.CompilerIrProgram
-      (opt.optimize-program-with-level
+      (opt-test-optimize-program-with-level
         (opt-spans-program (opt-aggregate-positive-instrs))
         2)]
     (cond
@@ -4079,7 +4140,7 @@
 ;; claim actually lands: the split feeds `ssa`, `ssa` builds the phi, and `sccp`
 ;; and `thread_branch` decide the match the phi now carries.
 (define (opt-agsplit-optimized [blocks : ir.CompilerIrBlockList] [frame : i64]) : ir.CompilerIrFunction
-  (match (opt.optimize-program-with-level
+  (match (opt-test-optimize-program-with-level
     (ir.CompilerIrProgram.Program
       (ir.compiler-ir-global-seq-empty)
       (ir.compiler-ir-function-seq-prepend
@@ -16148,27 +16209,30 @@
   (let
     [program : ir.CompilerIrProgram (opt-test-program (opt-self-test-instrs))]
     [level0 : ir.CompilerIrProgram
-      (opt.optimize-program-with-level
+      (opt-test-optimize-program-with-level
         (opt.compiler-opt-global-shared-view program)
         0)]
     [level1 : ir.CompilerIrProgram
-      (opt.optimize-program-with-level
+      (opt-test-optimize-program-with-level
         (opt.compiler-opt-global-shared-view program)
         1)]
     [level2 : ir.CompilerIrProgram
-      (opt.optimize-program-with-level
+      (opt-test-optimize-program-with-level
         (opt.compiler-opt-global-shared-view program)
         2)]
     [defaulted : ir.CompilerIrProgram
-      (opt.optimize-program (opt.compiler-opt-global-shared-view program))]
+      (match (opt.optimize-program-with-spans
+        (opt.compiler-opt-global-shared-view program)
+        (ir.compiler-source-spans-empty))
+        [(opt.CompilerOptimizedProgram.Program optimized _) optimized])]
     [fixed-program : ir.CompilerIrProgram
       (opt-test-program (opt-fixed-point-instrs))]
     [level1-fixed : ir.CompilerIrProgram
-      (opt.optimize-program-with-level
+      (opt-test-optimize-program-with-level
         (opt.compiler-opt-global-shared-view fixed-program)
         1)]
     [level2-fixed : ir.CompilerIrProgram
-      (opt.optimize-program-with-level fixed-program 2)]
+      (opt-test-optimize-program-with-level fixed-program 2)]
     [level0-instrs : ir.CompilerIrInstrSeq
       (opt-program-first-instrs (opt.compiler-opt-global-shared-view level0))]
     [level1-instrs : ir.CompilerIrInstrSeq
@@ -16410,12 +16474,13 @@
     ;; Level 0 keeps every function; level 1 (the cheap optimized build) prunes
     ;; functions unreachable from the roots without inlining the survivors.
     [level0 : ir.CompilerIrProgram
-      (opt.optimize-program-with-level
+      (opt-test-optimize-program-with-level
         (opt.compiler-opt-global-shared-view program)
         0)]
-    [level1 : ir.CompilerIrProgram (opt.optimize-program-with-level program 1)]
+    [level1 : ir.CompilerIrProgram
+      (opt-test-optimize-program-with-level program 1)]
     [no-main : ir.CompilerIrProgram
-      (opt.optimize-program-with-level (opt-global-dce-no-main-program) 1)]
+      (opt-test-optimize-program-with-level (opt-global-dce-no-main-program) 1)]
     [level0-functions : ir.CompilerIrFunctionSeq
       (opt-program-functions (ir.compiler-ir-global-shared-view level0))]
     [level1-functions : ir.CompilerIrFunctionSeq
@@ -17167,7 +17232,7 @@
 (define (opt-inline-level-functions [level : i64]) : ir.CompilerIrFunctionSeq
   (let
     [symbols : OptInlineFrameTestSymbols (opt-inline-frame-test-symbols)]
-    (opt.opt-inline-program-functions
+    (opt-test-inline-program-functions
       (ast.ast-node-pool-reader-type-segment-bases)
       (opt-inline-frame-functions symbols)
       level)))
@@ -18233,7 +18298,7 @@
         (opt-inline-self-recursive)
         (ir.compiler-ir-function-seq-empty))]
     [optimized : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         functions
         2)]
@@ -18487,17 +18552,17 @@
 (define (compiler-optimize-inline-converted-leaf-self-test) : i64
   (let
     [absorbed : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-conv-functions false)
         2)]
     [shared : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-conv-functions true)
         2)]
     [looped : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-convwalk-functions)
         2)]
@@ -18662,7 +18727,7 @@
   (let
     [symbols : OptInlineBoundsTestSymbols (opt-inline-bounds-test-symbols)]
     [optimized : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-large-functions symbols)
         2)]
@@ -18782,7 +18847,7 @@
   [caller : ir.CompilerIrFunction]
   [first : ir.CompilerIrFunction]
   [second : ir.CompilerIrFunction]) : ir.CompilerIrFunctionSeq
-  (opt.opt-inline-program-functions
+  (opt-test-inline-program-functions
     (ast.ast-node-pool-reader-type-segment-bases)
     (ir.compiler-ir-function-seq-prepend
       caller
@@ -18819,7 +18884,7 @@
   [second : ir.CompilerIrFunction]
   [extra1 : ir.CompilerIrFunction]
   [extra2 : ir.CompilerIrFunction]) : ir.CompilerIrFunctionSeq
-  (opt.opt-inline-program-functions
+  (opt-test-inline-program-functions
     (ast.ast-node-pool-reader-type-segment-bases)
     (ir.compiler-ir-function-seq-prepend
       caller
@@ -18936,7 +19001,7 @@
   (let
     [symbols : OptInlineBoundsTestSymbols (opt-inline-bounds-test-symbols)]
     [optimized : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-bounds-functions symbols)
         2)]
@@ -18968,7 +19033,7 @@
   (let
     [symbols : OptInlineBoundsTestSymbols (opt-inline-bounds-test-symbols)]
     [optimized : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-bounds-twice-functions symbols)
         2)]
@@ -19011,7 +19076,7 @@
   (let
     [symbols : OptInlineBoundsTestSymbols (opt-inline-bounds-test-symbols)]
     [optimized : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-bounds-twice-functions symbols)
         2)]
@@ -19032,7 +19097,7 @@
                 (opt.compiler-opt-global-shared-view duplicate))))
           (opt.opt-function-eq
             (ast.ast-node-pool-reader-type-segment-bases)
-            (opt.opt-inline-revert-or-keep
+            (opt-test-inline-revert-or-keep
               (opt.compiler-opt-global-shared-view fallback)
               duplicate)
             fallback))]
@@ -19045,14 +19110,14 @@
     [rejected-symbols : OptInlineBoundsTestSymbols
       (opt-inline-bounds-test-symbols)]
     [accepted : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-bounds-leaf-functions
           accepted-symbols
           (opt.opt-inline-bounds-leaf-max-body))
         2)]
     [rejected : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-bounds-leaf-functions
           rejected-symbols
@@ -19086,19 +19151,19 @@
   (let
     [symbols : OptInlineBoundsTestSymbols (opt-inline-bounds-test-symbols)]
     [minimal : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-bounds-leaf-twice-functions symbols 1)
         2)]
     [boundary : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-bounds-leaf-twice-functions
           symbols
           (opt.opt-inline-max-body))
         2)]
     [leaf-call : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-bounds-leaf-call-functions symbols)
         2)]
@@ -19145,12 +19210,12 @@
   (let
     [symbols : OptInlineBoundsTestSymbols (opt-inline-bounds-test-symbols)]
     [char-program : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-bounds-leaf-char-functions symbols)
         2)]
     [owned-program : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-bounds-leaf-owned-functions symbols)
         2)]
@@ -19177,7 +19242,7 @@
 (define (opt-inline-band-residual-calls [body : i64] [const-args? : bool]) : i64
   (opt-count-direct-call-name-instr-seq
     (opt-inline-function-instrs
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-band-functions body const-args?)
         2)
@@ -19214,7 +19279,7 @@
   (let
     [symbols : OptInlineFrameTestSymbols (opt-inline-frame-test-symbols)]
     [optimized : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-multi-call-functions symbols)
         2)]
@@ -19260,7 +19325,7 @@
   (let
     [symbols : OptInlineFrameTestSymbols (opt-inline-frame-test-symbols)]
     [optimized : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-cascade-functions symbols)
         2)]
@@ -19296,7 +19361,7 @@
 (define (compiler-optimize-inline-mutual-scc-refusal-ok?) : bool
   (let
     [optimized : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-mutual-functions)
         2)]
@@ -19389,7 +19454,7 @@
   (let
     [symbols : OptInlineFrameTestSymbols (opt-inline-frame-test-symbols)]
     [optimized : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-pack-word-functions symbols)
         2)]
@@ -19600,17 +19665,17 @@
     [level1-symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [level2-symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [level0 : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-repeated-predicate-functions level0-symbols)
         0)]
     [level1 : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-repeated-predicate-functions level1-symbols)
         1)]
     [level2 : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-repeated-predicate-functions level2-symbols)
         2)]
@@ -19646,7 +19711,7 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [optimized : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-branch-functions symbols)
         2)]
@@ -19736,7 +19801,7 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [optimized : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-loop-functions symbols)
         2)]
@@ -19834,7 +19899,7 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [optimized : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.compiler-ir-function-seq-prepend
           (opt-inline-mb-bounds-caller symbols)
@@ -20134,7 +20199,7 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [optimized : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.compiler-ir-function-seq-prepend
           (opt-inline-switch-caller symbols)
@@ -20180,7 +20245,7 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [optimized : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.compiler-ir-function-seq-prepend
           (opt-inline-switch-caller symbols)
@@ -20252,17 +20317,17 @@
     [other-name : i64
       (opt-test-symbol (opt.compiler-opt-global-shared-view other-text))]
     [vm-opt2 : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-switch-functions-named symbols vm-name)
         2)]
     [other-opt2 : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-switch-functions-named symbols other-name)
         2)]
     [vm-opt1 : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-switch-functions-named symbols vm-name)
         1)]
@@ -20405,7 +20470,7 @@
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [callee-name : i64 symbols.inline-switch]
     [optimized : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.compiler-ir-function-seq-prepend
           (opt-inline-loop-site-function
@@ -20450,7 +20515,7 @@
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [callee-name : i64 symbols.inline-switch]
     [optimized : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.compiler-ir-function-seq-prepend
           (opt-inline-switch-caller-named symbols callee-name)
@@ -20508,12 +20573,12 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [refused : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-cascade-program symbols (opt-inline-loop-site-entry-instrs))
         2)]
     [admitted : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-cascade-program
           symbols
@@ -20648,7 +20713,7 @@
   [callers : opt.OptSlotList]
   [callee-name : i64]
   [leaf : ir.CompilerIrFunction]) : ir.CompilerIrFunctionSeq
-  (opt.opt-inline-program-functions
+  (opt-test-inline-program-functions
     (ast.ast-node-pool-reader-type-segment-bases)
     (opt-inline-dup-caller-chain
       callers
@@ -20704,7 +20769,7 @@
     [callee-name : i64 symbols.inline-switch]
     [mid-name : i64 symbols.inline-nonleaf]
     [optimized : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.compiler-ir-function-seq-prepend
           (opt-inline-switch-caller-named symbols mid-name)
@@ -21305,7 +21370,7 @@
         (opt.opt-inline-checked-set-active! true)
         (opt.opt-inline-checked-program-begin!))]
     [armed : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.compiler-ir-function-seq-prepend
           (opt-inline-nested-loop-site-function symbols.main callee-name)
@@ -21367,10 +21432,10 @@
 ;;                     before this class existed must still.
 ;;
 ;; The class belongs to the MEASURED tier alone: no band is asked about a tail
-;; site (see opt-inline-multiblock-build-site-rewrite-seq for the measurement
-;; that decides), so the fixtures that pin the splice arm the tier and use a
-;; callee every band refuses. opt-inline-tail-exit-leaf is that callee, and it
-;; carries one exit of each form.
+;; site (see opt-inline-multiblock-build-span-site-rewrite-seq for the
+;; measurement that decides), so the fixtures that pin the splice arm the tier
+;; and use a callee every band refuses. opt-inline-tail-exit-leaf is that
+;; callee, and it carries one exit of each form.
 ;; The callee the tail-site fixtures price: the call-carrying cyclic leaf the
 ;; accept fixtures use, with its `zero` case rewritten from `t = helper(v0)`
 ;; into `return helper(v0)`. It therefore carries BOTH exit forms -- the tail
@@ -21477,7 +21542,7 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [optimized : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-multiblock-tail-site-indirect-functions symbols)
         2)]
@@ -21617,7 +21682,7 @@
         (opt.opt-inline-checked-set-active! true)
         (opt.opt-inline-checked-program-begin!))]
     [armed : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.compiler-ir-function-seq-prepend
           (opt-inline-tail-site-loop-function symbols.main callee-name)
@@ -21772,7 +21837,7 @@
         (opt.opt-inline-checked-set-active! true)
         (opt.opt-inline-checked-program-begin!))]
     [armed : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.compiler-ir-function-seq-prepend
           (opt-inline-checked-hot-driver-function
@@ -22139,7 +22204,7 @@
         (opt.opt-inline-checked-set-active! true)
         (opt.opt-inline-checked-program-begin!))]
     [armed : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.compiler-ir-function-seq-prepend
           (opt-inline-tail-only-site-function symbols.main callee-name literal?)
@@ -22379,7 +22444,7 @@
         (opt.opt-inline-checked-set-active! true)
         (opt.opt-inline-checked-program-begin!))]
     [armed : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-rescan-chain-functions symbols)
         2)]
@@ -22608,7 +22673,7 @@
         (opt.opt-inline-checked-set-active! true)
         (opt.opt-inline-checked-program-begin!))]
     [armed : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-absorb-rescan-functions symbols)
         2)]
@@ -24252,7 +24317,7 @@
         (opt.opt-inline-checked-set-active! true)
         (opt.opt-inline-checked-program-begin!))]
     [optimized : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.compiler-ir-function-seq-prepend
           (opt-inline-inl9-driver-function
@@ -24476,7 +24541,7 @@
         (opt.opt-inline-checked-set-active! true)
         (opt.opt-inline-checked-program-begin!))]
     [optimized : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.compiler-ir-function-seq-prepend
           (opt-inline-inl8-driver-function
@@ -24869,7 +24934,7 @@
         (opt.opt-inline-checked-set-active! true)
         (opt.opt-inline-checked-program-begin!))]
     [optimized : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-checked-depth0-program symbols mode)
         2)]
@@ -25661,7 +25726,7 @@
         (opt.opt-inline-checked-set-active! true)
         (opt.opt-inline-checked-program-begin!))]
     [optimized : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-checked-cheap-program symbols)
         2)]
@@ -26014,7 +26079,7 @@
       ir.CompilerIrFunctionAbi.Ordinary)))
 
 (define (opt-inline-wide-optimized [functions : ir.CompilerIrFunctionSeq]) : ir.CompilerIrFunctionSeq
-  (opt.opt-inline-program-functions
+  (opt-test-inline-program-functions
     (ast.ast-node-pool-reader-type-segment-bases)
     functions
     2))
@@ -26254,7 +26319,7 @@
   [symbols : OptInlineMultiTestSymbols]
   [mid : ir.CompilerIrFunction]
   [leaf : ir.CompilerIrFunction]) : ir.CompilerIrFunctionSeq
-  (opt.opt-inline-program-functions
+  (opt-test-inline-program-functions
     (ast.ast-node-pool-reader-type-segment-bases)
     (opt-inline-narrow-site-program symbols mid leaf)
     2))
@@ -27458,7 +27523,7 @@
       (ir.compiler-ir-function-seq-prepend
         leaf
         (ir.compiler-ir-function-seq-empty))]
-    (opt.opt-inline-program-functions
+    (opt-test-inline-program-functions
       (ast.ast-node-pool-reader-type-segment-bases)
       (if in-loop?
         (opt-inline-dup-caller-chain names callee-name tail)
@@ -27569,7 +27634,7 @@
       (opt-inline-dominant-remaining-calls functions (+ index 1) count))))
 
 (define (opt-inline-dominant-optimized [callee-name : i64] [count : i64]) : ir.CompilerIrFunctionSeq
-  (opt.opt-inline-program-functions
+  (opt-test-inline-program-functions
     (ast.ast-node-pool-reader-type-segment-bases)
     (opt-inline-shared-flat-caller-chain
       (opt-inline-dominant-caller-names-from 0 count)
@@ -27603,7 +27668,7 @@
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [callee-name : i64 symbols.inline-switch]
     [refused : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-shared-flat-caller-chain
           (opt-inline-dominant-caller-names-from 0 64)
@@ -27858,7 +27923,7 @@
   [callee-name : i64]
   [nested? : bool]
   [leaf : ir.CompilerIrFunction]) : ir.CompilerIrFunctionSeq
-  (opt.opt-inline-program-functions
+  (opt-test-inline-program-functions
     (ast.ast-node-pool-reader-type-segment-bases)
     (opt-inline-depth-caller-chain
       (opt-inline-dominant-caller-names-from 0 2)
@@ -28408,7 +28473,7 @@
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [callee-name : i64 symbols.inline-switch]
     [optimized : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-hot-loop-big-caller-chain
           (opt-inline-dup-three-caller-names symbols)
@@ -28550,7 +28615,7 @@
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [callee-name : i64 symbols.inline-switch]
     [optimized : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-recursive-caller-chain
           (opt-inline-shared-caller-names symbols 3)
@@ -28698,7 +28763,7 @@
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [callee-name : i64 symbols.inline-switch]
     [optimized : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-hot-loop-cold-site-chain
           (opt-inline-dup-three-caller-names symbols)
@@ -28771,7 +28836,7 @@
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [callee-name : i64 symbols.inline-switch]
     [optimized : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.compiler-ir-function-seq-prepend
           (ir.CompilerIrFunction.Function
@@ -29147,7 +29212,7 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [optimized : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.compiler-ir-function-seq-prepend
           (opt-inline-costly-switch-caller symbols)
@@ -29241,7 +29306,7 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [optimized : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-mut-param-functions symbols)
         2)]
@@ -29328,7 +29393,7 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [optimized : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-caller-phi-loop-functions symbols)
         2)]
@@ -29670,7 +29735,7 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [optimized : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.compiler-ir-function-seq-prepend
           (opt-inline-chain-main symbols)
@@ -29713,7 +29778,7 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [optimized : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-nonleaf-functions symbols)
         2)]
@@ -29849,7 +29914,7 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [optimized : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-tail-call-functions symbols)
         2)]
@@ -29887,7 +29952,7 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [optimized : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-tail-call-indirect-functions symbols)
         2)]
@@ -29914,12 +29979,12 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [once : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-tail-call-functions symbols)
         2)]
     [twice : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt.compiler-opt-global-shared-view once)
         2)]
@@ -30105,7 +30170,7 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [optimized : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-single-block-tail-call-functions symbols)
         2)]
@@ -30146,7 +30211,7 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [optimized : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-single-block-tail-call-functions symbols)
         1)]
@@ -30175,7 +30240,7 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [optimized : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-single-block-tail-call-indirect-functions symbols)
         2)]
@@ -30202,7 +30267,7 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [optimized : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-single-block-self-tail-call-functions symbols)
         2)]
@@ -30248,7 +30313,7 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [optimized : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-single-block-tail-call-to-caller-functions symbols)
         2)]
@@ -30275,11 +30340,12 @@
 ;;
 ;; The site class the inliner could not see. `(define (main) (f))` lowers to one
 ;; block holding a single `TailCall f`: no destination, no continuation, and --
-;; until opt-inline-try grew its TailCall arm -- no inline site either, so a
-;; caller that does nothing but forward paid `f`'s whole call boundary. The
-;; rewrite is the simpler of the two site classes: the callee's exit becomes the
-;; caller's exit, so a `Return` exit lands as the caller's `Return` and a
-;; `TailCall h` exit is forwarded as a `TailCall h`, never as a call.
+;; until opt-inline-try-with-spans grew its TailCall arm -- no inline site
+;; either, so a caller that does nothing but forward paid `f`'s whole call
+;; boundary. The rewrite is the simpler of the two site classes: the callee's
+;; exit becomes the caller's exit, so a `Return` exit lands as the caller's
+;; `Return` and a `TailCall h` exit is forwarded as a `TailCall h`, never as a
+;; call.
 (define (opt-inline-tail-site-caller [symbols : OptInlineMultiTestSymbols]) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
     symbols.main
@@ -30442,7 +30508,7 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [optimized : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-tail-site-return-functions symbols)
         2)]
@@ -30491,7 +30557,7 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [optimized : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-tail-site-tail-functions symbols)
         2)]
@@ -30549,7 +30615,7 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [optimized : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-tail-site-indirect-functions symbols)
         2)]
@@ -30589,7 +30655,7 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [optimized : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-tail-site-self-recursive-functions symbols)
         2)]
@@ -30632,7 +30698,7 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [optimized : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-tail-site-mutual-functions symbols)
         2)]
@@ -30675,7 +30741,7 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [optimized : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-tail-site-return-functions symbols)
         1)]
@@ -30789,7 +30855,7 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [optimized : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-repeated-nonleaf-predicate-functions symbols)
         2)]
@@ -30983,7 +31049,7 @@
     [array-seq : ir.CompilerIrInstrSeq
       (opt.opt-inline-single-block-instrs array-blocks)]
     [expanded-cons : ir.CompilerIrInstrSeq
-      (opt.opt-inline-expand-instrs
+      (opt-test-inline-expand-instrs
         (ir.compiler-ir-global-shared-view cons-seq)
         99
         (ast.AstType.I64)
@@ -30992,7 +31058,7 @@
         10
         "dense")]
     [expanded-array : ir.CompilerIrInstrSeq
-      (opt.opt-inline-expand-instrs
+      (opt-test-inline-expand-instrs
         (ir.compiler-ir-global-shared-view array-seq)
         99
         (ast.AstType.I64)
@@ -31152,7 +31218,7 @@
         source-callee-name
         (opt.compiler-opt-global-shared-view source-ty))]
     [private-level1 : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-private-memory-test-functions
           private-caller-name
@@ -31160,7 +31226,7 @@
           (opt.compiler-opt-global-shared-view private-ty))
         1)]
     [private-level2 : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-private-memory-test-functions
           private-caller-name
@@ -31168,7 +31234,7 @@
           (opt.compiler-opt-global-shared-view private-ty))
         2)]
     [source-level1 : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-private-memory-test-functions
           source-caller-name
@@ -31760,7 +31826,7 @@
     [callee-name : i64 (opt-test-symbol "inline_alloc_sret")]
     [caller-name : i64 (opt-test-symbol "alloc_sret_main")]
     [optimized : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-alloc-sret-functions caller-name callee-name)
         2)]
@@ -31792,7 +31858,7 @@
   (let
     [symbols : OptInlineFrameTestSymbols (opt-inline-frame-test-symbols)]
     [optimized : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-frame-functions symbols)
         2)]
@@ -31808,13 +31874,13 @@
       (opt.opt-devirt-known-function-function
         (opt-devirt-local-alias-caller true))]
     [devirt-inlined : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-known-indirect-functions symbols)
         2)]
     [devirt-reach : ir.CompilerIrFunctionSeq
       (opt-program-functions
-        (opt.optimize-program-with-level (opt-devirt-reach-program) 2))]
+        (opt-test-optimize-program-with-level (opt-devirt-reach-program) 2))]
     [valid-structure : bool
       (opt.opt-inline-structure-ok?
         (opt.opt-function-blocks (opt-inline-frame-caller symbols)))]
@@ -31822,19 +31888,19 @@
       (opt.opt-inline-structure-ok?
         (opt.opt-function-blocks (opt-ssa-duplicate-def-function)))]
     [duplicate-label-revert : ir.CompilerIrFunction
-      (opt.opt-inline-revert-or-keep
+      (opt-test-inline-revert-or-keep
         (opt-inline-frame-caller symbols)
         (opt-ssa-duplicate-label-function))]
     [unknown-successor-revert : ir.CompilerIrFunction
-      (opt.opt-inline-revert-or-keep
+      (opt-test-inline-revert-or-keep
         (opt-inline-frame-caller symbols)
         (opt-ssa-unknown-successor-function))]
     [bad-phi-revert : ir.CompilerIrFunction
-      (opt.opt-inline-revert-or-keep
+      (opt-test-inline-revert-or-keep
         (opt-inline-frame-caller symbols)
         (opt-ssa-bad-phi-function))]
     [valid-keep : ir.CompilerIrFunction
-      (opt.opt-inline-revert-or-keep
+      (opt-test-inline-revert-or-keep
         (opt-inline-frame-caller symbols)
         (opt-inline-frame-callee symbols))]
     (match (opt.opt-function-seq-find
@@ -63009,7 +63075,7 @@
     [name : i64 (opt-test-symbol "merged_loop_caller")]
     [prefix : String "inl.absorbed.0"]
     [cont : i64 (ir.compiler-ir-label "inl.absorbed.0.cont")]
-    (match (opt.opt-inline-clone-multiblock-blocks
+    (match (opt.opt-inline-clone-multiblock-blocks-with-spans
       (opt-merged-loop-test-callee-blocks)
       prefix
       cont
@@ -63023,8 +63089,13 @@
       (ast.AstType.I64)
       (opt-merged-loop-test-callee-args)
       3
-      5)
-      [(opt.OptInlineMultiClone.Clone cloned return-inputs)
+      5
+      (ir.compiler-source-spans-empty)
+      (ir.compiler-source-spans-empty)
+      0
+      (opt-test-inline-no-span-call)
+      0)
+      [(opt.OptInlineMultiSpanClone.Clone cloned return-inputs _)
         (let
           [entry-blocks : ir.CompilerIrBlockList
             (ir.compiler-ir-block-cons
@@ -71534,11 +71605,11 @@
     [once-instrs : ir.CompilerIrInstrSeq (opt-function-first-instrs once)]
     [fixed-instrs : ir.CompilerIrInstrSeq (opt-function-first-instrs fixed)]
     [optimized-program : ir.CompilerIrProgram
-      (opt.optimize-program-with-level
+      (opt-test-optimize-program-with-level
         (opt-test-program (opt-fixed-point-instrs))
         3)]
     [again-program : ir.CompilerIrProgram
-      (opt.optimize-program-with-level
+      (opt-test-optimize-program-with-level
         (opt.compiler-opt-global-shared-view optimized-program)
         3)]
     (cond
@@ -71804,7 +71875,7 @@
 (define (opt-scratch-reset-level-program-call-count
   [level : i64]
   [name : String]) : i64
-  (match (opt.optimize-program-with-level
+  (match (opt-test-optimize-program-with-level
     (opt-scratch-reset-level-program)
     level)
     [(ir.CompilerIrProgram.Program _ functions _)
@@ -103730,7 +103801,7 @@
     [symbols : OptInlineStoreTestSymbols (opt-inline-store-test-symbols)]
     [cursor : i64 symbols.cursor]
     [optimized : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-store-functions
           (opt.compiler-opt-global-shared-view symbols))

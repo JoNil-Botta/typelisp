@@ -3799,7 +3799,7 @@
     [symbols : compiler_optimize_tests.OptInlineMultiTestSymbols
       (compiler_optimize_tests.opt-inline-multi-test-symbols)]
     [optimized : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (compiler_optimize_tests.opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (smoke-inline-phi-functions symbols)
         2)]
@@ -3912,7 +3912,7 @@
       (compiler_optimize_tests.opt-inline-multi-test-symbols)]
     [caller : ir.CompilerIrFunction (smoke-inline-phi-caller symbols)]
     [optimized : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (compiler_optimize_tests.opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.compiler-ir-function-seq-prepend
           (opt.compiler-opt-global-shared-view caller)
@@ -3944,7 +3944,7 @@
           ir.CompilerIrCallArgs.Nil
           (ast.AstType.I64)))]
     [optimized : ir.CompilerIrFunctionSeq
-      (opt.opt-inline-program-functions
+      (compiler_optimize_tests.opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.compiler-ir-function-seq-prepend
           (opt.compiler-opt-global-shared-view caller)

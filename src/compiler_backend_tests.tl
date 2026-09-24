@@ -6497,13 +6497,14 @@
 ;; The address-take is a GLOBAL initialised with the function, and every fixture
 ;; below that needs one spells it the same way. The older spelling was a
 ;; `(define (keep [f : T]) : i64 0)` wrapper called from `main`, and that stopped
-;; holding anything: a wrapper whose body ignores its parameter is inlined at its
-;; site, the argument goes with it, and the subject is then unreferenced and
+;; holding anything: a wrapper whose body ignores its parameter is inlined at
+;; its site, the argument goes with it, and the subject is then unreferenced and
 ;; pruned before it is ever emitted. That was already true at an ordinary call
-;; site and became true at a tail call site too once opt-inline-try grew its
-;; TailCall arm. A global holding the address is not a call at all, so nothing
-;; can dissolve it: the census reads it as address-taken (so the subject is never
-;; inlined) and the pruner reads it as a root (so the subject is always emitted).
+;; site and became true at a tail call site too once opt-inline-try-with-spans
+;; grew its TailCall arm. A global holding the address is not a call at all, so
+;; nothing can dissolve it: the census reads it as address-taken (so the subject
+;; is never inlined) and the pruner reads it as a root (so the subject is always
+;; emitted).
 (define compiler-backend-shifted-loop-bound-source : String
   "(define (array-zero-count [buf : (MutPtr u8)] [byte-count : i64]) : i64
   (let
@@ -6744,12 +6745,12 @@
 ;; thing away.
 ;; The arms carry a guard so each one is more than a single block. Without it
 ;; they are exactly the shape the single-block inliner takes at a tail-call site
-;; (opt-inline-try's TailCall arm), the dispatcher's three `jmp`s become three
-;; spliced bodies, and the tail-jump tail this fixture exists to check is not
-;; emitted at all. The guard costs the fixture nothing that it measures: every
-;; assertion below reads `_tl_tc_dispatch`, whose own shape -- the empty CSR set,
-;; the incoming argument registers, the 2-cycle break and the three tail jumps --
-;; is unchanged by what the arms contain.
+;; (opt-inline-try-with-spans's TailCall arm), the dispatcher's three `jmp`s
+;; become three spliced bodies, and the tail-jump tail this fixture exists to
+;; check is not emitted at all. The guard costs the fixture nothing that it
+;; measures: every assertion below reads `_tl_tc_dispatch`, whose own shape --
+;; the empty CSR set, the incoming argument registers, the 2-cycle break and the
+;; three tail jumps -- is unchanged by what the arms contain.
 (define compiler-backend-tail-dispatch-source : String
   "(define (tc-arm-a [a : i64] [b : i64] [c : i64]) : i64
   (if (< a 0)

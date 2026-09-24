@@ -58591,7 +58591,7 @@
 ;; --- pure direct-call dedupe (CSE-CALL) ---------------------------------------
 ;;
 ;; Two calls to a summarized write-free callee with the same argument, the
-;; second reached from the first along single-predecessor blocks with no memory
+;; second reached from the first along fully visited blocks with no memory
 ;; write between, collapse into one call and a copy. Layout:
 ;;
 ;;   entry: %2 = pure(x); %3 = mov x; jump b1
@@ -58603,7 +58603,7 @@
 ;;          %8 = pure(x); %9 = x < y; branch %9, b3, b4
 ;;   b3:    %10 = pure(x)        <- copy of %8
 ;;   b4:    %11 = pure(y)        <- a different argument: kept
-;;   b5:    %12 = pure(x)        <- two predecessors: kept
+;;   b5:    %12 = pure(x)        <- both paths retain %8: copy of %8
 ;;          unitpure(x) twice    <- unit-typed: never a candidate
 (define opt-pcd-test-frame : i64
   32)
@@ -58833,6 +58833,22 @@
                   [_ false]))]
             [_ false])])]))
 
+;; Refusal must retain the call itself, regardless of which wrong result a
+;; broken join might choose to substitute.
+(define (opt-pcd-test-call-at?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : i64]
+  [index : i64]
+  [dst : i64]) : bool
+  (match (compiler_optimize.opt-cfg-find-block blocks label)
+    [(compiler_optimize.OptMaybeBlock.No) false]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+            [(compiler_ir_types.CompilerIrInstr.Call d _ _ _) (= d dst)]
+            [_ false])])]))
+
 ;; Direct calls to `callee` in one block.
 (define (opt-pcd-test-calls-from
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
@@ -58905,13 +58921,13 @@
             8))
         3]
       ;; the first, the one after the impure call, the one after the store,
-      ;; the other-argument one and the join one stay: five of eight
+      ;; and the other-argument one stay: four of eight; the join reuses %8
       [(not
           (=
             (opt-pcd-test-calls
               (compiler_ir_types.compiler-ir-global-shared-view out)
               (opt-pcd-test-pure))
-            5))
+            4))
         4]
       ;; unit-typed calls are never candidates
       [(not
@@ -58950,7 +58966,220 @@
             2))
         9]
       [(not (= (opt-pcd-test-calls redef (opt-pcd-test-agg)) 2)) 10]
+      [(not
+          (opt-pcd-test-mov-at?
+            out
+            (compiler_ir_types.compiler-ir-label "b5")
+            0
+            12
+            8))
+        11]
       [else 42])))
+
+;; Join variants use the same call/branch fixture above. A write or unknown
+;; call on just one arm invalidates the shared result. Re-executing pure(x)
+;; after that write produces a different result definition, so it cannot be
+;; merged with the other arm's earlier call. A predecessor laid out after the
+;; join, including a back edge, is deliberately unknown to this one-pass walk.
+(define (opt-pcd-join-test-block
+  [block : compiler_ir_types.CompilerIrBlock]
+  [variant : i64]) : compiler_ir_types.CompilerIrBlock
+  (match block
+    [(compiler_ir_types.CompilerIrBlock.Block label instrs)
+      (if (not (= label (compiler_ir_types.compiler-ir-label "b3")))
+        (if (and
+          (>= variant 6)
+          (= label (compiler_ir_types.compiler-ir-label "b2")))
+          (let
+            [changed : compiler_ir_types.CompilerIrInstrSeq
+              (opt-test-instr-seq-copy instrs)]
+            (begin
+              (compiler_ir_types.compiler-ir-instr-seq-set!
+                (compiler_ir_types.compiler-ir-global-shared-view changed)
+                2
+                (compiler_ir_types.CompilerIrInstr.Mov
+                  8
+                  (compiler_ir_types.CompilerIrValue.I64 0)
+                  (compiler_ast_types.AstType.I64)))
+              (compiler_ir_types.CompilerIrBlock.Block label changed)))
+          (if (and
+            (= variant 7)
+            (= label (compiler_ir_types.compiler-ir-label "b4")))
+            (compiler_ir_types.CompilerIrBlock.Block
+              label
+              (opt-test-instrs
+                (opt-pcd-test-call 11 (opt-pcd-test-pure) 0)
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "b5"))))
+            (compiler_ir_types.CompilerIrBlock.Block label instrs)))
+        (let
+          [count : i64 (compiler_ir_types.compiler-ir-instr-seq-count instrs)]
+          [builder : compiler_ir_types.CompilerIrInstrBuilder
+            (compiler_ir_types.compiler-ir-instr-builder-with-capacity 5)]
+          (begin
+            (compiler_ir_types.compiler-ir-instr-builder-append-seq-range!
+              (&mut builder)
+              instrs
+              0
+              (- count 1))
+            (when
+              (or (= variant 1) (= variant 3))
+              (compiler_ir_types.compiler-ir-instr-builder-push!
+                (&mut builder)
+                (compiler_ir_types.CompilerIrInstr.StorePtr
+                  (compiler_ir_types.CompilerIrValue.Var 1)
+                  (compiler_ir_types.CompilerIrValue.Var 0)
+                  (compiler_ast_types.AstType.I64))))
+            (when
+              (= variant 2)
+              (compiler_ir_types.compiler-ir-instr-builder-push!
+                (&mut builder)
+                (opt-pcd-test-call 17 (opt-pcd-test-impure) 0)))
+            (when
+              (= variant 3)
+              (compiler_ir_types.compiler-ir-instr-builder-push!
+                (&mut builder)
+                (opt-pcd-test-call 17 (opt-pcd-test-pure) 0)))
+            (compiler_ir_types.compiler-ir-instr-builder-push!
+              (&mut builder)
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label
+                  (if (= variant 5)
+                    "b2"
+                    "b5"))))
+            (compiler_ir_types.CompilerIrBlock.Block
+              label
+              (compiler_ir_types.compiler-ir-instr-builder-to-seq builder)))))]))
+
+(define (opt-pcd-join-test-run [variant : i64]) : compiler_ir_types.CompilerIrBlockList
+  (let
+    [index : compiler_optimize.OptCfgIndex
+      (compiler_optimize.opt-cfg-index-build (opt-pcd-test-blocks))]
+    [builder : compiler_ir_types.CompilerIrBlockBuilder
+      (compiler_ir_types.compiler-ir-block-builder-with-capacity 6)]
+    [cursor : i64 0]
+    (begin
+      (while (< cursor 6)
+        (let
+          [at : i64
+            (if (and (= variant 4) (>= cursor 4))
+              (- 9 cursor)
+              cursor)]
+          (begin
+            (compiler_ir_types.compiler-ir-block-builder-push!
+              (&mut builder)
+              (opt-pcd-join-test-block
+                (compiler_optimize.compiler-opt-global-array-element-shared-view
+                  index.blocks
+                  at)
+                variant))
+            (set! cursor (+ cursor 1)))))
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.opt-pure-call-dedupe-function
+          (opt-pcd-test-map false)
+          (compiler_ir_types.CompilerIrFunction.Function
+            (opt-test-symbol "pcd_join_fixture")
+            (opt-pcd-test-params)
+            (compiler_ast_types.AstType.I64)
+            opt-pcd-test-frame
+            (compiler_ir_types.compiler-ir-block-builder-to-list builder)
+            compiler_ir_types.CompilerIrFunctionAbi.Ordinary))))))
+
+(cfg
+  test
+  (test
+    pure-call-join-requires-the-same-result-on-every-path
+    (let
+      [variant : i64 0]
+      (while (< variant 8)
+        (let
+          [out : compiler_ir_types.CompilerIrBlockList
+            (opt-pcd-join-test-run variant)]
+          (begin
+            (if (= variant 0)
+              (test.assert-true
+                (opt-pcd-test-mov-at?
+                  out
+                  (compiler_ir_types.compiler-ir-label "b5")
+                  0
+                  12
+                  8)
+                "the write-free, fully visited diamond retains the result")
+              (test.assert-true
+                (opt-pcd-test-call-at?
+                  out
+                  (compiler_ir_types.compiler-ir-label
+                    (if (= variant 5)
+                      "b2"
+                      "b5"))
+                  0
+                  (if (= variant 5)
+                    7
+                    12))
+                "a refused join must retain the original call"))
+            (set! variant (+ variant 1))))))))
+
+(define (opt-pcd-join-test-table [start : i64] [count : i64]) : compiler_optimize.OptPureCallTable
+  (let
+    [table : compiler_optimize.OptPureCallTable
+      (compiler_optimize.OptPureCallTable.Nil)]
+    [i : i64 0]
+    (begin
+      (while (< i count)
+        (begin
+          (set!
+            table
+            (compiler_optimize.OptPureCallTable.Cons
+              (compiler_optimize.OptPureCallEntry
+                (opt-pcd-test-pure)
+                (compiler_ir_types.CompilerIrCallArgs.One
+                  (compiler_ir_types.CompilerIrValue.Var 0))
+                (+ start i))
+              (box table)))
+          (set! i (+ i 1))))
+      table)))
+
+(test
+  pure-call-join-work-bound
+  (let
+    [table : compiler_optimize.OptPureCallTable
+      (compiler_optimize.opt-pure-call-table-intersect
+        (opt-pcd-join-test-table 0 70)
+        (opt-pcd-join-test-table 0 70))]
+    [expected : i64 69]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match table
+          [(compiler_optimize.OptPureCallTable.Nil) (set! done true)]
+          [(compiler_optimize.OptPureCallTable.Cons entry rest)
+            (begin
+              (test.assert-i64-eq
+                entry.dst
+                expected
+                "the bounded intersection preserves available-result order")
+              (set! expected (- expected 1))
+              (set! table (compiler_optimize.compiler-opt-box-shared-view rest)))]))
+      (test.assert-i64-eq expected 5 "only the most recent 64 entries survive")
+      (test.assert-true
+        (compiler_optimize.opt-pure-call-sites-empty?
+          (compiler_optimize.opt-pure-call-table-intersect
+            (opt-pcd-join-test-table 0 1)
+            (opt-pcd-join-test-table 0 70)))
+        "the other predecessor's membership walk also stops at its bound")
+      (test.assert-true
+        (compiler_optimize.opt-pure-call-sites-empty?
+          (compiler_optimize.opt-pure-call-table-intersect
+            (opt-pcd-join-test-table 0 70)
+            (opt-pcd-join-test-table 0 1)))
+        "the left walk cannot reach a result beyond its bound")
+      (test.assert-true
+        (not
+          (compiler_optimize.opt-pure-call-sites-empty?
+            (compiler_optimize.opt-pure-call-table-intersect
+              (opt-pcd-join-test-table 6 1)
+              (opt-pcd-join-test-table 0 70))))
+        "the last admitted membership position still survives"))))
 
 ;; --- merged-body exit-join versioning -----------------------------------------
 ;;

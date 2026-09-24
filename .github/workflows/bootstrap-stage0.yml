@@ -228,9 +228,12 @@ jobs:
           EOF
 
           # Upload the complete replacement as an explicit draft. The helper
-          # rechecks main immediately before a short release/tag cutover and
-          # promotes the prepared release with one authoritative REST PATCH.
-          # A stale publisher discards only its private candidate.
+          # rechecks the candidate immediately before a short release/tag
+          # cutover and promotes the prepared release with one authoritative
+          # REST PATCH. The alias only moves forward along main: a candidate
+          # still on main and newer than the current alias is promoted even
+          # when main has advanced (#8055); a superseded one discards only its
+          # private candidate.
           candidate_tag="stage0-candidate-${{ github.run_id }}-${{ github.run_attempt }}"
           set +e
           scripts/publish-stage0-latest.sh \
@@ -245,7 +248,7 @@ jobs:
           publish_status=$?
           set -e
           if [ "$publish_status" -eq 3 ]; then
-            echo "Skipping stage0-latest verification because main advanced during candidate preparation."
+            echo "Skipping stage0-latest verification because this candidate was not promoted (no longer on main, or stage0-latest already targets it or a newer commit)."
             exit 0
           fi
           if [ "$publish_status" -ne 0 ]; then

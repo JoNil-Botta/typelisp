@@ -9,16 +9,9 @@ cd "$ROOT"
 . "$ROOT/scripts/lib-native-link.sh"
 native_link_detect_host
 
-if [ -n "${TYPELISP_BIN:-}" ]; then
-    COMPILER=$TYPELISP_BIN
-else
-    . "$ROOT/scripts/lib-stage0.sh"
-    COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
-fi
-case "$COMPILER" in
-    /* | [A-Za-z]:[/\\]*) ;;
-    *) COMPILER="$ROOT/$COMPILER" ;;
-esac
+. "$ROOT/scripts/lib-gate.sh"
+gate_compiler
+gate_compiler_absolute
 [ -x "$COMPILER" ] || {
     echo "allocation-profile compiler is not executable: $COMPILER" >&2
     exit 1

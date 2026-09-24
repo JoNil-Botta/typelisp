@@ -10,22 +10,11 @@ cd "$ROOT"
 native_link_detect_host
 configure_toolchain
 
-if [ -n "${TYPELISP_BIN:-}" ]; then
-    COMPILER=$TYPELISP_BIN
-else
-    . "$ROOT/scripts/lib-stage0.sh"
-    COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
-fi
-
-case "$COMPILER" in
-    /* | [A-Za-z]:[/\\]*) ;;
-    *) COMPILER="$ROOT/$COMPILER" ;;
-esac
-
-if [ ! -x "$COMPILER" ]; then
-    echo "typelisp compiler is not executable: $COMPILER" >&2
-    exit 1
-fi
+GATE_FAIL_PREFIX='FAIL: '
+. "$ROOT/scripts/lib-gate.sh"
+gate_compiler
+gate_compiler_absolute
+gate_require_compiler
 
 WORKDIR="$ROOT/target/compile-profile-verify/$NL_HOST_OS"
 rm -rf "$WORKDIR"
@@ -145,11 +134,6 @@ FAILED_BATCH_STDOUT="$WORKDIR/failed-batch.stdout"
 FAILED_BATCH_STDERR="$WORKDIR/failed-batch.stderr"
 FAILED_BATCH_FIRST="$WORKDIR/failed-batch-first.s"
 FAILED_BATCH_SECOND="$WORKDIR/missing/failed-batch-second.s"
-
-fail() {
-    echo "FAIL: $*" >&2
-    exit 1
-}
 
 batch_path() {
     if [ "$NL_HOST_OS" = windows ] && command -v cygpath >/dev/null 2>&1; then

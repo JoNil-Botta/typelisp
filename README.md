@@ -164,10 +164,7 @@ Some capabilities remain restricted or experimental:
   catalogs are source- and host-admitted, selected by physical defining
   provenance, and revalidated against their package key and mapping generation
   immediately before execution; unsupported registered shells retain
-  deterministic source CTFE. The checked
-  [native boundary manifest](docs/tlci-native-boundary-manifest.tsv) maps every
-  admission stage and host callback to its trust, validation, capability,
-  failure, implementation, and test witnesses.
+  deterministic source CTFE.
 - Public vector, mask, and varying source value types remain deferred by
   design. A package registry and workspaces are also not complete.
 - General `free` and GC are intentionally not planned. TypeLisp uses arenas as

@@ -17,10 +17,7 @@ if [ ! -x "$COMPILER" ]; then
     exit 1
 fi
 
-fail() {
-    echo "$*" >&2
-    exit 1
-}
+. "$ROOT/scripts/lib-gate.sh"
 
 assert_contains() {
     file=$1

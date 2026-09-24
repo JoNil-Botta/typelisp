@@ -1,8 +1,9 @@
 #!/usr/bin/env sh
 set -eu
 
-# Exercise backend selection, status forwarding, complete-tree containment,
-# and cleanup after an actual over-limit descendant.
+# Exercise the user-systemd cgroup backend: status forwarding, complete-tree
+# containment, cleanup after an actual over-limit descendant, and nested
+# evidence through run-memory-bounded.sh.
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
@@ -20,10 +21,7 @@ WORKDIR="$ROOT/target/linux-memory-limit-verify"
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 
-fail() {
-    echo "$*" >&2
-    exit 1
-}
+. "$ROOT/scripts/lib-gate.sh"
 
 LIMIT_BYTES=33554432
 # A fast-exiting transient service can finish before the user manager publishes
@@ -105,11 +103,6 @@ exercise_backend() {
     if kill -0 "$_memory_child_pid" 2>/dev/null; then
         fail "Linux memory-limit backend left child $_memory_child_pid alive: $_memory_backend"
     fi
-    if [ "$_memory_backend" = rss-watchdog ] \
-        && ! grep -q 'memory limit exceeded: aggregate RSS' "$_memory_stderr"; then
-        cat "$_memory_stderr" >&2 || true
-        fail "RSS watchdog did not report its measured over-limit failure"
-    fi
     echo "[linux-memory-limit] $_memory_backend pass/fail fixtures passed"
 }
 
@@ -119,8 +112,7 @@ exercise_nested_backend() {
         for _nested_exit in 0 23; do
             _nested_prefix="$WORKDIR/$_nested_backend-$_nested_mode-$_nested_exit"
             _nested_status=0
-            TYPELISP_LINUX_MEMORY_LIMIT_BACKEND=$_nested_backend \
-                "$ROOT/scripts/run-memory-bounded.sh" --limit-mib 128 \
+            "$ROOT/scripts/run-memory-bounded.sh" --limit-mib 128 \
                 --report "$_nested_prefix.outer" -- \
                 sh "$WORKDIR/nested.sh" "$ROOT" "$_nested_mode" \
                     "$_nested_exit" "$_nested_prefix.inner" \
@@ -163,8 +155,7 @@ exercise_nested_backend() {
     # the outer workload after its nested helper finishes, using a small cap.
     _nested_prefix="$WORKDIR/$_nested_backend-nested-oom"
     _nested_status=0
-    TYPELISP_LINUX_MEMORY_LIMIT_BACKEND=$_nested_backend \
-        "$ROOT/scripts/run-memory-bounded.sh" --limit-mib 32 \
+    "$ROOT/scripts/run-memory-bounded.sh" --limit-mib 32 \
         --report "$_nested_prefix.outer" -- \
         sh "$WORKDIR/nested.sh" "$ROOT" inherited 0 \
             "$_nested_prefix.inner" "$ALLOCATE_AWK" \
@@ -185,17 +176,15 @@ exercise_nested_backend() {
         [ "$(grep -Fxc "$_nested_marker" "$_nested_prefix.stderr")" -eq 1 ] || \
             fail "nested outer OOM lost or repeated $_nested_marker"
     done
-    if [ "$_nested_backend" = systemd-user-cgroup ]; then
-        _nested_status=0
-        TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE="$WORKDIR/missing/peak" \
-            linux_memory_limit_run "$LIMIT_BYTES" sh -c 'echo must-not-run' \
-            > "$WORKDIR/scratch-failure.stdout" 2> "$WORKDIR/scratch-failure.stderr" || \
-            _nested_status=$?
-        [ "$_nested_status" -eq 2 ] || fail "stderr allocation failure did not fail closed"
-        [ ! -s "$WORKDIR/scratch-failure.stdout" ] || fail "stderr allocation failure ran the workload"
-        grep -Fq 'failed to create invocation stderr evidence' "$WORKDIR/scratch-failure.stderr" || \
-            fail "stderr allocation failure lost its actionable diagnostic"
-    fi
+    _nested_status=0
+    TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE="$WORKDIR/missing/peak" \
+        linux_memory_limit_run "$LIMIT_BYTES" sh -c 'echo must-not-run' \
+        > "$WORKDIR/scratch-failure.stdout" 2> "$WORKDIR/scratch-failure.stderr" || \
+        _nested_status=$?
+    [ "$_nested_status" -eq 2 ] || fail "stderr allocation failure did not fail closed"
+    [ ! -s "$WORKDIR/scratch-failure.stdout" ] || fail "stderr allocation failure ran the workload"
+    grep -Fq 'failed to create invocation stderr evidence' "$WORKDIR/scratch-failure.stderr" || \
+        fail "stderr allocation failure lost its actionable diagnostic"
     echo "[linux-memory-limit] $_nested_backend nested evidence fixtures passed"
 }
 
@@ -212,7 +201,7 @@ inner_report=$4
 # Direct systemd metrics need the existing stable accounting interval. The
 # wrapper's own launch-gated sampler provides positive evidence for its cases.
 nested_delay=0.1
-if [ "$mode" = metrics ] && [ "${LINUX_MEMORY_LIMIT_BACKEND:-}" = systemd-user-cgroup ]; then
+if [ "$mode" = metrics ]; then
     nested_delay=$ACCOUNTING_FIXTURE_SECONDS
 fi
 printf 'outer-before\n' >&2
@@ -238,22 +227,9 @@ EOF
 
 LINUX_MEMORY_LIMIT_BACKEND=
 linux_memory_limit_select_backend
-selected_backend=$LINUX_MEMORY_LIMIT_BACKEND
-echo "[linux-memory-limit] auto-selected $selected_backend"
-exercise_backend "$selected_backend"
-exercise_nested_backend "$selected_backend"
-
-# A usable systemd manager is host-dependent, but the portable fallback is a
-# required path everywhere. Force it when auto-selection exercised systemd.
-if [ "$selected_backend" != rss-watchdog ]; then
-    LINUX_MEMORY_LIMIT_BACKEND=
-    TYPELISP_LINUX_MEMORY_LIMIT_BACKEND=rss-watchdog
-    export TYPELISP_LINUX_MEMORY_LIMIT_BACKEND
-    linux_memory_limit_select_backend
-    [ "$LINUX_MEMORY_LIMIT_BACKEND" = rss-watchdog ] \
-        || fail "forced RSS watchdog selection returned $LINUX_MEMORY_LIMIT_BACKEND"
-    exercise_backend rss-watchdog
-    exercise_nested_backend rss-watchdog
-fi
+[ "$LINUX_MEMORY_LIMIT_BACKEND" = systemd-user-cgroup ] ||
+    fail "Linux memory limiting selected $LINUX_MEMORY_LIMIT_BACKEND, expected systemd-user-cgroup"
+exercise_backend systemd-user-cgroup
+exercise_nested_backend systemd-user-cgroup
 
 echo "Linux memory-limit helper self-tests passed"

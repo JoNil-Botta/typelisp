@@ -22,17 +22,9 @@ case "$(uname -s)" in
         ;;
 esac
 
-if [ -n "${TYPELISP_BIN:-}" ]; then
-    COMPILER=$TYPELISP_BIN
-else
-    . "$ROOT/scripts/lib-stage0.sh"
-    COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
-fi
-
-if [ ! -x "$COMPILER" ]; then
-    echo "typelisp compiler is not executable: $COMPILER" >&2
-    exit 1
-fi
+. "$ROOT/scripts/lib-gate.sh"
+gate_compiler
+gate_require_compiler
 
 if [ "$HOST_OS" = linux ]; then
     command -v as >/dev/null 2>&1 || {

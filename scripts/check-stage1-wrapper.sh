@@ -46,10 +46,7 @@ cat > "$SRC" <<'EOF'
   7)
 EOF
 
-fail() {
-    echo "$*" >&2
-    exit 1
-}
+. "$ROOT/scripts/lib-gate.sh"
 
 assert_contains() {
     file=$1
@@ -552,12 +549,6 @@ EOF
     # user-facing one. Do not "fix" it by deleting the case: it is the only
     # end-to-end proof that a package's emitted .tlci dispatches its macros
     # natively, and it caught a real producer bug in #5712.
-    #
-    # That acceptance is enforced rather than only described (#5778): this gate
-    # has a 36000ms cap in scripts/check-ci-timing-budgets.sh and is denylisted
-    # in scripts/analyze-ci-timing-trends.sh, so the trend report no longer
-    # re-raises it. Adding another case of this weight here moves the measured
-    # row, so change the cap in the same commit rather than after CI says so.
     # cli-gate-case stage1-wrapper-package-tlci-native-verify wrapper run_capture
     run_capture package-tlci-native-verify \
         "$COMPILER" run "$ROOT/src/tests/compiler_tlci_native_producer_smoke.tl" \
@@ -1455,8 +1446,8 @@ assert_nonempty "$WORKDIR/lint-parse-error-check.stderr"
 echo "[host-action-cli] opt2 build-invariance reference handoff"
 assert_contains scripts/ci-verify.sh "TYPELISP_BUILD_INVARIANCE_OPT1_REFERENCE_PATH_FILE"
 assert_contains scripts/ci-verify.sh "TYPELISP_OPT2_CLI_REFERENCE_ASM"
-handoff_build_line=$(grep -nF 'scripts/check-build-invariance.sh' scripts/ci-verify.sh | head -n 1 | cut -d: -f1)
-handoff_opt2_line=$(grep -nF 'scripts/check-opt2-cli-regression.sh' scripts/ci-verify.sh | head -n 1 | cut -d: -f1)
+handoff_build_line=$(awk -F '\t' '$1 == "stage2-opt1-opt2-build-invariance" { print NR; exit }' scripts/ci-gates.tsv)
+handoff_opt2_line=$(awk -F '\t' '$1 == "stage2-opt2-built-cli-compile-cross-fixpoint-regression" { print NR; exit }' scripts/ci-gates.tsv)
 if [ -z "$handoff_build_line" ] || [ -z "$handoff_opt2_line" ] || [ "$handoff_build_line" -ge "$handoff_opt2_line" ]; then
     fail "Linux CI must run build-invariance before the opt2 regression handoff"
 fi
@@ -1470,6 +1461,7 @@ rm -rf "$HANDOFF_ROOT"
 mkdir -p "$HANDOFF_SCRIPTS"
 cp scripts/check-opt2-cli-regression.sh "$HANDOFF_SCRIPTS/check-opt2-cli-regression.sh"
 cp scripts/lib-native-link.sh "$HANDOFF_SCRIPTS/lib-native-link.sh"
+cp scripts/lib-gate.sh "$HANDOFF_SCRIPTS/lib-gate.sh"
 cp scripts/lib-linux-entry.sh "$HANDOFF_SCRIPTS/lib-linux-entry.sh"
 printf '.text\nvalidated opt1 reference\n' > "$HANDOFF_REFERENCE"
 

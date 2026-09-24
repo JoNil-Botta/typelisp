@@ -15,19 +15,9 @@ cd "$ROOT"
 native_link_detect_host
 configure_toolchain
 
-if [ -n "${TYPELISP_BIN:-}" ]; then
-    COMPILER=$TYPELISP_BIN
-else
-    # Local-development fallback: fetch the published
-    # self-hosted stage0 (CI always passes a compiler via TYPELISP_BIN).
-    . "$ROOT/scripts/lib-stage0.sh"
-    COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
-fi
-
-if [ ! -x "$COMPILER" ]; then
-    echo "typelisp compiler is not executable: $COMPILER" >&2
-    exit 1
-fi
+. "$ROOT/scripts/lib-gate.sh"
+gate_compiler
+gate_require_compiler
 
 # Expected exit codes for each example program.
 expected_exit() {

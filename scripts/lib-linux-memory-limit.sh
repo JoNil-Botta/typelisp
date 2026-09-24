@@ -1,20 +1,19 @@
 #!/usr/bin/env sh
 
-# Linux resident-memory limits for focused compiler probes.
+# Linux resident-memory limits for compiler gates and probes.
 #
-# Prefer a transient user-systemd service: MemoryMax is a kernel-enforced
-# cgroup limit over the complete process tree and MemorySwapMax=0 keeps the
-# result resident. GitHub-hosted runners and minimal Linux environments may
-# have systemd-run installed without a usable user manager, so auto-detection
-# probes the complete invocation before selecting it.
+# The only enforcement backend is a transient user-systemd service: MemoryMax
+# is a kernel-enforced cgroup limit over the complete process tree and
+# MemorySwapMax=0 keeps the result resident. A host without a usable user
+# manager fails closed; nothing falls back to an unbounded run.
 #
-# The fallback launches the command in a new process group and samples that
-# group's aggregate RSS from `ps`. It does not cap virtual address space and
-# therefore avoids the mmap-reservation failures caused by RLIMIT_AS. The
-# fallback can briefly overshoot between samples, but terminates the complete
-# process group once observed RSS crosses the configured ceiling. A launch
-# gate keeps user code suspended until process-group isolation and the first
-# successful memory sample are established.
+# linux_memory_limit_sample_process_group runs inside that cgroup (see
+# run-memory-bounded.sh): it launches the command in a new process group and
+# samples the group's aggregate RSS from `ps` to report a trustworthy peak,
+# terminating the group if observed RSS crosses the same ceiling. A launch gate
+# keeps user code suspended until process-group isolation and the first
+# successful memory sample are established. It never caps virtual address
+# space, which avoids the mmap-reservation failures RLIMIT_AS causes.
 
 LINUX_MEMORY_LIMIT_BACKEND=${LINUX_MEMORY_LIMIT_BACKEND:-}
 
@@ -152,55 +151,15 @@ linux_memory_limit_run_systemd() {
     return "$_linux_memory_limit_status"
 }
 
-linux_memory_limit_watchdog_available() {
-    [ -d /proc ] || return 1
-    command -v setsid >/dev/null 2>&1 || return 1
-    command -v ps >/dev/null 2>&1 || return 1
-    command -v awk >/dev/null 2>&1 || return 1
-    command -v sleep >/dev/null 2>&1 || return 1
-    command -v mktemp >/dev/null 2>&1 || return 1
-    command -v rm >/dev/null 2>&1 || return 1
-    command -v rmdir >/dev/null 2>&1 || return 1
-    command -v sh >/dev/null 2>&1 || return 1
-    ps -e -o pid= -o pgid= -o rss= >/dev/null 2>&1
-}
-
 linux_memory_limit_select_backend() {
     if [ -n "$LINUX_MEMORY_LIMIT_BACKEND" ]; then
         return 0
     fi
-
-    _linux_memory_limit_requested=${TYPELISP_LINUX_MEMORY_LIMIT_BACKEND:-auto}
-    case "$_linux_memory_limit_requested" in
-        auto)
-            if linux_memory_limit_systemd_available; then
-                LINUX_MEMORY_LIMIT_BACKEND=systemd-user-cgroup
-            elif linux_memory_limit_watchdog_available; then
-                LINUX_MEMORY_LIMIT_BACKEND=rss-watchdog
-            else
-                echo "Linux memory limiting requires a usable user systemd manager or setsid/ps/awk RSS watchdog" >&2
-                return 1
-            fi
-            ;;
-        systemd-user-cgroup)
-            if ! linux_memory_limit_systemd_available; then
-                echo "requested Linux memory-limit backend is unavailable: systemd-user-cgroup" >&2
-                return 1
-            fi
-            LINUX_MEMORY_LIMIT_BACKEND=systemd-user-cgroup
-            ;;
-        rss-watchdog)
-            if ! linux_memory_limit_watchdog_available; then
-                echo "requested Linux memory-limit backend is unavailable: rss-watchdog" >&2
-                return 1
-            fi
-            LINUX_MEMORY_LIMIT_BACKEND=rss-watchdog
-            ;;
-        *)
-            echo "unknown TYPELISP_LINUX_MEMORY_LIMIT_BACKEND: $_linux_memory_limit_requested" >&2
-            return 2
-            ;;
-    esac
+    if ! linux_memory_limit_systemd_available; then
+        echo "Linux memory limiting requires a usable user systemd manager (systemd-run --user with MemoryMax)" >&2
+        return 1
+    fi
+    LINUX_MEMORY_LIMIT_BACKEND=systemd-user-cgroup
 }
 
 linux_memory_limit_process_group_rss_kib() {
@@ -212,7 +171,7 @@ linux_memory_limit_process_group_rss_kib() {
         '
 }
 
-linux_memory_limit_run_watchdog() {
+linux_memory_limit_sample_process_group() {
     _linux_memory_limit_bytes=$1
     shift
     _linux_memory_limit_kib=$(((_linux_memory_limit_bytes + 1023) / 1024))
@@ -222,10 +181,10 @@ linux_memory_limit_run_watchdog() {
     # Keep the requested command behind a filesystem gate. The waiting shell
     # gives the parent time to verify the new process group and take a positive
     # RSS sample before any user code can execute, including commands which
-    # would otherwise finish between fork and the first watchdog poll.
+    # would otherwise finish between fork and the first sample.
     _linux_memory_limit_gate_dir=$(mktemp -d \
-        "${TMPDIR:-/tmp}/typelisp-memory-watchdog.XXXXXX") || {
-        echo "RSS watchdog failed to create launch gate" >&2
+        "${TMPDIR:-/tmp}/typelisp-memory-sampler.XXXXXX") || {
+        echo "process-group sampler failed to create launch gate" >&2
         return 1
     }
     _linux_memory_limit_gate="$_linux_memory_limit_gate_dir/start"
@@ -270,7 +229,7 @@ linux_memory_limit_run_watchdog() {
         wait "$_linux_memory_limit_pid" 2>/dev/null || true
         rm -f "$_linux_memory_limit_gate"
         rmdir "$_linux_memory_limit_gate_dir" 2>/dev/null || true
-        echo "RSS watchdog failed to isolate command process group" >&2
+        echo "process-group sampler failed to isolate command process group" >&2
         return 1
     fi
 
@@ -284,7 +243,7 @@ linux_memory_limit_run_watchdog() {
                 wait "$_linux_memory_limit_pid" 2>/dev/null || true
                 rm -f "$_linux_memory_limit_gate"
                 rmdir "$_linux_memory_limit_gate_dir" 2>/dev/null || true
-                echo "RSS watchdog failed to read initial process memory" >&2
+                echo "process-group sampler failed to read initial process memory" >&2
                 return 1
             }
         if [ "$_linux_memory_limit_rss" -eq 0 ]; then
@@ -297,12 +256,12 @@ linux_memory_limit_run_watchdog() {
         wait "$_linux_memory_limit_pid" 2>/dev/null || true
         rm -f "$_linux_memory_limit_gate"
         rmdir "$_linux_memory_limit_gate_dir" 2>/dev/null || true
-        echo "RSS watchdog failed to establish initial memory measurement" >&2
+        echo "process-group sampler failed to establish initial memory measurement" >&2
         return 1
     fi
     _linux_memory_limit_peak_rss=$_linux_memory_limit_rss
     if [ "$_linux_memory_limit_rss" -gt "$_linux_memory_limit_kib" ]; then
-        echo "memory limit exceeded before command launch: aggregate RSS ${_linux_memory_limit_rss} KiB > ${_linux_memory_limit_kib} KiB (rss-watchdog fallback)" >&2
+        echo "memory limit exceeded before command launch: aggregate RSS ${_linux_memory_limit_rss} KiB > ${_linux_memory_limit_kib} KiB (process-group sampler)" >&2
         kill -TERM "-$_linux_memory_limit_pid" 2>/dev/null || true
         wait "$_linux_memory_limit_pid" 2>/dev/null || true
         rm -f "$_linux_memory_limit_gate"
@@ -322,7 +281,7 @@ linux_memory_limit_run_watchdog() {
                 wait "$_linux_memory_limit_pid" 2>/dev/null || true
                 rm -f "$_linux_memory_limit_gate"
                 rmdir "$_linux_memory_limit_gate_dir" 2>/dev/null || true
-                echo "RSS watchdog failed to read process memory" >&2
+                echo "process-group sampler failed to read process memory" >&2
                 return 1
             }
         if [ "$_linux_memory_limit_rss" -eq 0 ]; then
@@ -332,7 +291,7 @@ linux_memory_limit_run_watchdog() {
             _linux_memory_limit_peak_rss=$_linux_memory_limit_rss
         fi
         if [ "$_linux_memory_limit_rss" -gt "$_linux_memory_limit_kib" ]; then
-            echo "memory limit exceeded: aggregate RSS ${_linux_memory_limit_rss} KiB > ${_linux_memory_limit_kib} KiB (rss-watchdog fallback)" >&2
+            echo "memory limit exceeded: aggregate RSS ${_linux_memory_limit_rss} KiB > ${_linux_memory_limit_kib} KiB (process-group sampler)" >&2
             kill -TERM "-$_linux_memory_limit_pid" 2>/dev/null || true
             sleep 0.1
             kill -KILL "-$_linux_memory_limit_pid" 2>/dev/null || true
@@ -372,16 +331,5 @@ linux_memory_limit_run() {
     linux_memory_limit_validate_bytes "$_linux_memory_limit_bytes" || return $?
     linux_memory_limit_select_backend || return $?
 
-    case "$LINUX_MEMORY_LIMIT_BACKEND" in
-        systemd-user-cgroup)
-            linux_memory_limit_run_systemd "$_linux_memory_limit_bytes" "$@"
-            ;;
-        rss-watchdog)
-            linux_memory_limit_run_watchdog "$_linux_memory_limit_bytes" "$@"
-            ;;
-        *)
-            echo "invalid selected Linux memory-limit backend: $LINUX_MEMORY_LIMIT_BACKEND" >&2
-            return 2
-            ;;
-    esac
+    linux_memory_limit_run_systemd "$_linux_memory_limit_bytes" "$@"
 }

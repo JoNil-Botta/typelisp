@@ -162,10 +162,8 @@ check_selfhost_manifest_sync() {
     fi
 }
 
-fail() {
-    echo "FAIL: $*" >&2
-    exit 1
-}
+GATE_FAIL_PREFIX='FAIL: '
+. "$ROOT/scripts/lib-gate.sh"
 
 run_with_heartbeat_capture() {
     heartbeat_label=$1

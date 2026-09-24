@@ -9,17 +9,10 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
-if [ -n "${TYPELISP_BIN:-}" ]; then
-    COMPILER=$TYPELISP_BIN
-else
-    . "$ROOT/scripts/lib-stage0.sh"
-    COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
-fi
-
-if [ ! -x "$COMPILER" ]; then
-    echo "typelisp compiler is not executable: $COMPILER" >&2
-    exit 1
-fi
+GATE_FAIL_PREFIX='SHA-512 assembly-shape verification failed: '
+. "$ROOT/scripts/lib-gate.sh"
+gate_compiler
+gate_require_compiler
 
 WORKDIR="$ROOT/target/crypto-sha512-shape"
 rm -rf "$WORKDIR"
@@ -54,11 +47,6 @@ cat > "$FIXTURE" <<'EOF'
                 42
                 1))])])))
 EOF
-
-fail() {
-    echo "SHA-512 assembly-shape verification failed: $*" >&2
-    exit 1
-}
 
 compile_level() {
     _level=$1

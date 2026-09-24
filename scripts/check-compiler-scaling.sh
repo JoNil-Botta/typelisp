@@ -56,10 +56,8 @@ Environment:
 EOF
 }
 
-fail() {
-    echo "[compiler-scaling] $*" >&2
-    exit 1
-}
+GATE_FAIL_PREFIX='[compiler-scaling] '
+. "$ROOT/scripts/lib-gate.sh"
 
 while [ "$#" -gt 0 ]; do
     case "$1" in

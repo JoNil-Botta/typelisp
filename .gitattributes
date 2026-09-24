@@ -12,14 +12,5 @@ tests/tlci/corpus/SHA256SUMS text eol=lf
 tests/tlci/corpus/*.tlci binary
 tests/integration/include_str_comptime_payload.txt text eol=lf
 
-# The TLCI boundary verifier byte-compares its generated TSV output.
-docs/tlci-native-boundary-manifest.tsv text eol=lf
-tools/tlci-boundary-manifest/admission-stages.tsv text eol=lf
-
-# The backend safety generator parses and byte-compares these TSV files on
-# Windows as well as Linux; keep Git's autocrlf checkout from changing rows.
-docs/backend-safety-contract-manifest.tsv text eol=lf
-tools/backend-safety-manifest/*.tsv text eol=lf
-
-# The required CI gate ledger has canonical LF output on both hosts.
+# ci-verify.sh reads the CI gate table on both hosts; keep it LF.
 scripts/ci-gates.tsv text eol=lf

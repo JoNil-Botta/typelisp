@@ -1,42 +1,26 @@
 # TypeLisp work-queue chooser
 
-Fetch the complete open queue before applying eligibility filters:
+Capture the open queue with authenticated `gh` and `jq`, filter only the
+issues, and pipe the combined document into the chooser:
 
 ```sh
-mkdir -p target/exp/work-queue
-sh scripts/fetch-work-queue.sh > target/exp/work-queue/raw.json &&
-jq '.issues |= map(select(any(.labels[]; .name=="ready-for-implementation" or .name=="needs-research")))' \
-  target/exp/work-queue/raw.json > target/exp/work-queue/eligible.json &&
-typelisp run tools/work-queue-chooser/chooser.tl --stdlib-root stdlib \
-  < target/exp/work-queue/eligible.json
+prs=$(gh pr list --repo JoNil-Botta/typelisp --state open --limit 1000 \
+  --json number,title,body,headRefName,baseRefName,isDraft,labels,statusCheckRollup) &&
+issues=$(gh issue list --repo JoNil-Botta/typelisp --state open --limit 10000 \
+  --json number,title,labels) &&
+printf '{"prs":%s,"issues":%s}' "$prs" "$issues" |
+  jq '.issues |= map(select(any(.labels[]; .name=="ready-for-implementation" or .name=="needs-research")))' |
+  typelisp run tools/work-queue-chooser/chooser.tl --stdlib-root stdlib
 ```
 
-The fetch wrapper requires authenticated `gh` and `jq`. Its optional argument
-is an `OWNER/REPO` (default `JoNil-Botta/typelisp`). It emits one unfiltered
-`{"prs":[...],"issues":[...]}` document only after both list requests succeed
-and validate. PR records retain number, title, body, head/base branches, draft
-state, labels and check rollups; issue records retain number, title and labels.
-Claimed PRs and drafts remain in the raw queue. Keep the raw capture when
-investigating selection; filtering first can hide dependencies or claims.
-
-`gh list` paginates up to its requested limit. The wrapper starts at 1,000 PRs
-and 10,000 issues, doubles a reached limit, and retries up to four requests per
-lane. A still-reached limit fails with pagination guidance; it never certifies
-that an exactly full result is complete. API errors, malformed records,
-duplicate IDs and extra JSON documents also fail with no snapshot on stdout.
-Do not invoke the chooser after a failed fetch. An empty repository is valid
-fetch output; the current chooser's empty-queue behavior is described below.
-
-These are two live GitHub list observations, not an atomic repository snapshot.
-Recheck issue/PR activity immediately before claiming work. The wrapper does
-not infer readiness, change labels, recover stale claims or implement the
-remaining scheduling policy in #7768. The current chooser still needs caller
-checks for review claims, draft-inclusive backpressure, blocked work and #8's
-horizons. Repository fetch regression tests run without credentials or network:
-
-```sh
-sh scripts/test-fetch-work-queue.sh
-```
+`gh ... list` returns at most `--limit` records: if a list returns exactly its
+limit, raise the limit and fetch again. Keep claimed PRs and drafts in the PR
+array; filtering them first hides claims and backlog. The two lists are
+separate live observations, not an atomic repository snapshot, so recheck
+issue/PR activity immediately before claiming work. The chooser does not infer
+readiness, change labels, recover stale claims or implement the remaining
+scheduling policy in #7768; callers still check review claims, draft-inclusive
+backpressure, blocked work and #8's horizons.
 
 `chooser.tl` reads a combined GitHub queue payload from stdin:
 
@@ -77,8 +61,7 @@ gh pr list --repo JoNil-Botta/typelisp --state open --limit 1000 \
 
 Combine that complete PR array with the issue array; do not remove claimed PRs
 before passing the snapshot to the chooser. Increase reached query limits or
-fetch all pages. This command documents the PR fields, not a pagination or
-dependency-policy replacement for the worker's queue fetcher.
+fetch all pages.
 
 `labels` is an array of objects with string `name` fields. The exact decoded
 name `review-claimed` excludes a PR from review. Other labels, including case

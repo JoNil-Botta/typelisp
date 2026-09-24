@@ -92,16 +92,9 @@ END {
     exit 1
 }
 
-if [ -n "${TYPELISP_BIN:-}" ]; then
-    COMPILER=$TYPELISP_BIN
-else
-    . "$ROOT/scripts/lib-stage0.sh"
-    COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
-fi
-case "$COMPILER" in
-    /* | [A-Za-z]:[\\/]*) ;;
-    *) COMPILER="$ROOT/$COMPILER" ;;
-esac
+. "$ROOT/scripts/lib-gate.sh"
+gate_compiler
+gate_compiler_absolute
 [ -x "$COMPILER" ] || {
     echo "point_transform: TypeLisp compiler is not executable: $COMPILER" >&2
     exit 1

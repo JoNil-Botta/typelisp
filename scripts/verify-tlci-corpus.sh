@@ -14,22 +14,11 @@ case "$(uname -s)" in
         ;;
 esac
 
-if [ -n "${TYPELISP_BIN:-}" ]; then
-    COMPILER=$TYPELISP_BIN
-else
-    . "$ROOT/scripts/lib-stage0.sh"
-    COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
-fi
-
-case "$COMPILER" in
-    /* | [A-Za-z]:[/\\]*) ;;
-    *) COMPILER="$ROOT/$COMPILER" ;;
-esac
-
-if [ ! -x "$COMPILER" ]; then
-    echo "typelisp compiler is not executable: $COMPILER" >&2
-    exit 1
-fi
+GATE_FAIL_PREFIX='TLCI v2 corpus: '
+. "$ROOT/scripts/lib-gate.sh"
+gate_compiler
+gate_compiler_absolute
+gate_require_compiler
 
 CORPUS=tests/tlci/corpus
 WORKDIR=target/tlci-v2-corpus
@@ -37,11 +26,6 @@ rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 
 (cd "$CORPUS" && sha256sum -c SHA256SUMS >/dev/null)
-
-fail() {
-    echo "TLCI v2 corpus: $*" >&2
-    exit 1
-}
 
 compare_file() {
     expected=$1

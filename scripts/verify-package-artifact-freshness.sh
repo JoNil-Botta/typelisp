@@ -4,17 +4,10 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
-if [ -n "${TYPELISP_BIN:-}" ]; then
-    COMPILER=$TYPELISP_BIN
-else
-    . "$ROOT/scripts/lib-stage0.sh"
-    COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
-fi
-
-case "$COMPILER" in
-    /* | [A-Za-z]:[/\\]*) ;;
-    *) COMPILER="$ROOT/$COMPILER" ;;
-esac
+GATE_FAIL_PREFIX='FAIL: '
+. "$ROOT/scripts/lib-gate.sh"
+gate_compiler
+gate_compiler_absolute
 
 HOST_OS=linux
 OBJ_SUFFIX=.o
@@ -39,11 +32,6 @@ esac
 WORK="$ROOT/target/package-artifact-freshness"
 rm -rf "$WORK"
 mkdir -p "$WORK/pkg/src" "$WORK/pkg/vendor/dep/src" "$WORK/serial/src"
-
-fail() {
-    echo "FAIL: $*" >&2
-    exit 1
-}
 
 # Package ELF preparation translates artifact kind and delegates to the shared
 # source/package capability owner. Keep serializer decisions out of this seam.

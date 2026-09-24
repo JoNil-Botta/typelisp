@@ -112,18 +112,9 @@ stdlib_run_fixture_binary() {
     )
 }
 
-if [ -n "${TYPELISP_BIN:-}" ]; then
-    COMPILER=$TYPELISP_BIN
-else
-    # Local-development fallback: fetch the published
-    # self-hosted stage0 (CI always passes a compiler via TYPELISP_BIN).
-    . "$ROOT/scripts/lib-stage0.sh"
-    COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
-fi
-if [ ! -x "$COMPILER" ]; then
-    echo "typelisp compiler is not executable: $COMPILER" >&2
-    exit 1
-fi
+. "$ROOT/scripts/lib-gate.sh"
+gate_compiler
+gate_require_compiler
 
 TYPELISP_BIN="$COMPILER" scripts/verify-for-source-macro.sh
 

@@ -10,12 +10,8 @@ if [ "$#" -ne 0 ]; then
     exit 2
 fi
 
-if [ -n "${TYPELISP_BIN:-}" ]; then
-    COMPILER=$TYPELISP_BIN
-else
-    . "$ROOT/scripts/lib-stage0.sh"
-    COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
-fi
+. "$ROOT/scripts/lib-gate.sh"
+gate_compiler
 
 WORKDIR=target/embedded-stdlib-payload-verify
 NORMALIZED_MANIFEST="$WORKDIR/modules.txt"

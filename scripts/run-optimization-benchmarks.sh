@@ -174,19 +174,10 @@ if [ "$CORRECTNESS" -eq 0 ]; then
     esac
 fi
 
-if [ -n "${TYPELISP_BIN:-}" ]; then
-    COMPILER=$TYPELISP_BIN
-else
-    # Local-development fallback: fetch the published
-    # self-hosted stage0 (CI always passes a compiler via TYPELISP_BIN).
-    . "$ROOT/scripts/lib-stage0.sh"
-    COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
-fi
-
-if [ ! -x "$COMPILER" ]; then
-    echo "typelisp compiler is not executable: $COMPILER" >&2
-    exit 1
-fi
+GATE_FAIL_PREFIX='FAIL: '
+. "$ROOT/scripts/lib-gate.sh"
+gate_compiler
+gate_require_compiler
 
 if [ "$CORRECTNESS" -eq 1 ]; then
     _tools="clang awk tr"
@@ -256,11 +247,6 @@ if [ -n "$CASES" ]; then
         esac
     done < "$REQUESTED_CASES"
 fi
-
-fail() {
-    echo "FAIL: $*" >&2
-    exit 1
-}
 
 now_ns() {
     date +%s%N

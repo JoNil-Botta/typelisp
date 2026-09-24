@@ -4,10 +4,8 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
-fail() {
-    echo "check-x64-executable-template-registry: $*" >&2
-    exit 1
-}
+GATE_FAIL_PREFIX='check-x64-executable-template-registry: '
+. "$ROOT/scripts/lib-gate.sh"
 
 count_matches() {
     expected=$1

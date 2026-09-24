@@ -23625,6 +23625,127 @@
   [reachable : OptLabelSet]
   [header : i64]
   [latch : i64]) : OptNaturalLoop
+  (if pred-map.index.labels-unique
+    (opt-natural-loop-build-by-id blocks pred-map reachable header latch)
+    (opt-natural-loop-build-by-label blocks pred-map reachable header latch)))
+
+;; `opt-natural-loop-build-by-label` on block ids, for an index whose labels are
+;; all distinct. There, a predecessor row's label set holds exactly the labels of
+;; the row's ids in CSR order, and `opt-natural-loop-collect-add-preds` visits it
+;; head first -- the row read backwards -- consing each newly marked block onto
+;; both the body and the worklist it pops from the head. So the same walk runs
+;; on an id stack: pop the newest id, read its predecessor row backwards, and
+;; mark, record and push every reachable unmarked id. The body label set is then
+;; the header, the latch and the recorded ids in discovery order, and the body's
+;; member array is `marks` itself: both hold exactly the header, the latch and
+;; every recorded block.
+(define (opt-natural-loop-build-by-id
+  [blocks : ir.CompilerIrBlockList]
+  [pred-map : OptPredMap]
+  [reachable : OptLabelSet]
+  [header : i64]
+  [latch : i64]) : OptNaturalLoop
+  (let
+    [index : OptCfgIndex (compiler-opt-global-shared-view pred-map.index)]
+    [count : i64
+      (opt-cfg-index-block-count (compiler-opt-global-shared-view index))]
+    [marks : (__tl_dyn-array bool) (__tl_make-array bool count)]
+    [found : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+    [stack : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+    [found-count : i64 0]
+    [top : i64 0]
+    [latch-id : i64 (- 0 1)]
+    (begin
+      (match (opt-cfg-index-id (compiler-opt-global-shared-view index) header)
+        [(option_i64.Some id) (set! (array-ref marks id) true)]
+        [(option_i64.None) unit])
+      (match (opt-cfg-index-id (compiler-opt-global-shared-view index) latch)
+        [(option_i64.Some id)
+          (begin
+            (set! (array-ref marks id) true)
+            (set! latch-id id))]
+        [(option_i64.None) unit])
+      ;; #M-E, as in the label walk: a self-loop expands no predecessors.
+      (when
+        (and (!= header latch) (>= latch-id 0))
+        (begin
+          (set! (array-ref stack 0) latch-id)
+          (set! top 1)))
+      (while (> top 0)
+        (let
+          [w : i64 (array-ref stack (- top 1))]
+          [start : i64 (array-ref index.preds.offsets w)]
+          [edge : i64 (array-ref index.preds.offsets (+ w 1))]
+          (begin
+            (set! top (- top 1))
+            (while (> edge start)
+              (let
+                [p : i64 (array-ref index.preds.edges (- edge 1))]
+                (begin
+                  (when
+                    (and
+                      (array-ref index.reachable p)
+                      (not (array-ref marks p)))
+                    (begin
+                      (set! (array-ref marks p) true)
+                      (set! (array-ref found found-count) p)
+                      (set! found-count (+ found-count 1))
+                      (set! (array-ref stack top) p)
+                      (set! top (+ top 1))))
+                  (set! edge (- edge 1))))))))
+      (let
+        [seeds : i64
+          (if (= header latch)
+            1
+            2)]
+        [n : i64 (+ seeds found-count)]
+        [items : (__tl_dyn-array i64)
+          (__tl_make-array
+            i64
+            (+
+              (if (< n 4)
+                4
+                n)
+              1))]
+        [k : i64 0]
+        (begin
+          (set! (array-ref items 0) n)
+          (set! (array-ref items 1) header)
+          (when (= seeds 2) (set! (array-ref items 2) latch))
+          (while (< k found-count)
+            (begin
+              (set!
+                (array-ref items (+ seeds (+ k 1)))
+                (opt-cfg-index-label
+                  (compiler-opt-global-shared-view index)
+                  (array-ref found k)))
+              (set! k (+ k 1))))
+          (let
+            [body-labels : OptLabelSet (OptLabelSet.Dense items n)]
+            (OptNaturalLoop.Loop
+              header
+              latch
+              (OptLoopBody
+                (compiler-opt-global-shared-view body-labels)
+                (compiler-opt-global-shared-view marks)
+                (opt-loop-body-blocks-from
+                  (compiler-opt-global-shared-view marks)
+                  (compiler-opt-global-shared-view blocks)
+                  0
+                  n))
+              (opt-natural-loop-find-preheader
+                (compiler-opt-global-shared-view blocks)
+                (compiler-opt-global-shared-view pred-map)
+                (compiler-opt-global-shared-view reachable)
+                header
+                body-labels))))))))
+
+(define (opt-natural-loop-build-by-label
+  [blocks : ir.CompilerIrBlockList]
+  [pred-map : OptPredMap]
+  [reachable : OptLabelSet]
+  [header : i64]
+  [latch : i64]) : OptNaturalLoop
   (let
     [index : OptCfgIndex (compiler-opt-global-shared-view pred-map.index)]
     [marks : (__tl_dyn-array bool)

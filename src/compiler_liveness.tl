@@ -1910,6 +1910,11 @@
     [cursor : i64 index]
     [count : i64
       (ir.compiler-ir-instr-seq-count (compiler-live-shared-view instrs))]
+    ;; Leading phis read in parallel (see compiler-live-leading-phi-count).
+    [phi-end : i64
+      (if (= index 0)
+        (compiler-live-leading-phi-count (compiler-live-shared-view instrs))
+        0)]
     [out-uses : CompilerLiveI64Set uses]
     [out-defs : CompilerLiveI64Set defs]
     (begin
@@ -1919,7 +1924,10 @@
             (ir.compiler-ir-instr-seq-ref instrs cursor)]
           [instr-uses : CompilerLiveI64Set
             (compiler-live-instr-uses (compiler-live-shared-view instr))]
-          [instr-defs : CompilerLiveI64Set (compiler-live-instr-defs instr)]
+          [instr-defs : CompilerLiveI64Set
+            (if (< cursor phi-end)
+              (compiler-live-set-empty)
+              (compiler-live-instr-defs instr))]
           (begin
             (set!
               out-uses
@@ -1929,6 +1937,21 @@
                   instr-uses
                   (compiler-live-shared-view out-defs))))
             (set! out-defs (compiler-live-set-union out-defs instr-defs))
+            (when
+              (= (+ cursor 1) phi-end)
+              (let
+                [j : i64 0]
+                (while (< j phi-end)
+                  (begin
+                    (set!
+                      out-defs
+                      (compiler-live-set-union
+                        out-defs
+                        (compiler-live-instr-defs
+                          (ir.compiler-ir-instr-seq-ref
+                            (compiler-live-shared-view instrs)
+                            j))))
+                    (set! j (+ j 1))))))
             (set! cursor (+ cursor 1)))))
       (CompilerLiveUseDef out-uses out-defs))))
 
@@ -2029,6 +2052,62 @@
               (bit-or old-def-bits instr-def-bits)))
           (set! index (+ index 1)))))))
 
+;; Leading phis read their inputs in PARALLEL on entry: each input is the value
+;; its predecessor left, not a value another phi of this block just wrote. So a
+;; phi input is upward-exposed even when an earlier phi of the same block
+;; defines that var -- the lagged copy `a = phi [.., i]` beside
+;; `i = phi [.., i + 1]` reads the PREVIOUS `i`, which must stay live around the
+;; back edge. The scan below therefore records every leading phi's uses before
+;; any leading phi's def. (Edge-precise mode reports no phi uses, so only the
+;; conservative mode reads this.)
+(define (compiler-live-leading-phi-count [instrs : ir.CompilerIrInstrSeq]) : i64
+  (let
+    [count : i64
+      (ir.compiler-ir-instr-seq-count (compiler-live-shared-view instrs))]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (match (ir.compiler-ir-instr-seq-ref
+          (compiler-live-shared-view instrs)
+          index)
+          [(ir.CompilerIrInstr.Phi _ _ _) (set! index (+ index 1))]
+          [_ (return index)]))
+      index)))
+
+(define (compiler-live-leading-phi-defs!
+  [instrs : ir.CompilerIrInstrSeq]
+  [phi-end : i64]
+  [defs : (__tl_dyn-array i64)]) : i64
+  (let
+    [index : i64 0]
+    [word-count : i64 0]
+    (begin
+      (while (< index phi-end)
+        (let
+          [def-var : i64
+            (compiler-live-instr-def-var
+              (ir.compiler-ir-instr-seq-ref
+                (compiler-live-shared-view instrs)
+                index))]
+          (begin
+            (when
+              (>= def-var 0)
+              (let
+                [word : i64 (compiler-live-set-word-index def-var)]
+                (begin
+                  (set!
+                    (array-ref defs word)
+                    (bit-or
+                      (array-ref defs word)
+                      (compiler-live-set-bit-mask def-var)))
+                  (set!
+                    word-count
+                    (compiler-live-set-max
+                      word-count
+                      (compiler-live-var-word-count-of def-var))))))
+            (set! index (+ index 1)))))
+      word-count)))
+
 (define (compiler-live-block-use-def-seq-with-scratch
   [instrs : ir.CompilerIrInstrSeq]
   [uses : (__tl_dyn-array i64)]
@@ -2037,6 +2116,8 @@
   (let
     [count : i64
       (ir.compiler-ir-instr-seq-count (compiler-live-shared-view instrs))]
+    [phi-end : i64
+      (compiler-live-leading-phi-count (compiler-live-shared-view instrs))]
     [use-count : i64 0]
     [def-count : i64 0]
     [index : i64 0]
@@ -2053,8 +2134,11 @@
               (compiler-live-instr-use-ids-nophi!
                 (compiler-live-shared-view instr))
               (compiler-live-instr-use-ids! (compiler-live-shared-view instr)))]
+          ;; A leading phi's def is recorded once every leading phi's uses are.
           [def-var : i64
-            (compiler-live-instr-def-var (compiler-live-shared-view instr))]
+            (if (< index phi-end)
+              (- 0 1)
+              (compiler-live-instr-def-var (compiler-live-shared-view instr)))]
           (begin
             (if (< id-count 0)
               ;; Wider than the extraction buffer: take the bitset path, which
@@ -2066,7 +2150,9 @@
                       (compiler-live-shared-view instr))
                     (compiler-live-instr-uses (compiler-live-shared-view instr)))]
                 [instr-defs : CompilerLiveI64Set
-                  (compiler-live-instr-defs instr)]
+                  (if (< index phi-end)
+                    (compiler-live-set-empty)
+                    (compiler-live-instr-defs instr))]
                 (begin
                   (compiler-live-block-use-def-step!
                     (compiler-live-shared-view uses)
@@ -2100,6 +2186,16 @@
                   (compiler-live-set-max
                     def-count
                     (compiler-live-var-word-count-of def-var)))))
+            (when
+              (= (+ index 1) phi-end)
+              (set!
+                def-count
+                (compiler-live-set-max
+                  def-count
+                  (compiler-live-leading-phi-defs!
+                    (compiler-live-shared-view instrs)
+                    phi-end
+                    (compiler-live-shared-view defs)))))
             (set! index (+ index 1)))))
       (CompilerLiveUseDef
         (compiler-live-scratch-freeze uses use-count)

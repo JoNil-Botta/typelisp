@@ -15800,68 +15800,6 @@
   [block : live.CompilerLiveBlock]) : i64
   block.label)
 
-(define (compiler-reg-edge-copy-increment-pred!
-  [liveness : live.CompilerFunctionLiveness]
-  [pred-counts : (__tl_dyn-array i64)]
-  [label : i64]) : unit
-  (let
-    [index : i64 (live.compiler-live-function-block-index liveness label)]
-    (if (>= index 0)
-      (set! (array-ref pred-counts index) (+ (array-ref pred-counts index) 1))
-      unit)))
-
-(define (compiler-reg-edge-copy-count-preds-succs!
-  [liveness : live.CompilerFunctionLiveness]
-  [pred-counts : (__tl_dyn-array i64)]
-  [succs : live.CompilerLiveLabelSet]) : unit
-  (match (compiler-reg-global-shared-view succs)
-    [(live.CompilerLiveLabelSet.Nil) unit]
-    [(live.CompilerLiveLabelSet.Dense _ _)
-      (begin
-        (compiler-reg-edge-copy-increment-pred!
-          (compiler-reg-global-shared-view liveness)
-          (compiler-reg-global-shared-view pred-counts)
-          (live.compiler-live-label-set-ref
-            (compiler-reg-global-shared-view succs)
-            0))
-        (compiler-reg-edge-copy-count-preds-succs!
-          liveness
-          pred-counts
-          (live.compiler-live-label-set-tail succs)))]))
-
-(define (compiler-reg-edge-copy-count-preds-blocks!
-  [liveness : live.CompilerFunctionLiveness]
-  [blocks : (__tl_dyn-array live.CompilerLiveBlock)]
-  [pred-counts : (__tl_dyn-array i64)]
-  [index : i64]) : unit
-  (if (>= index (array-length blocks))
-    unit
-    (begin
-      (compiler-reg-edge-copy-count-preds-succs!
-        (compiler-reg-global-shared-view liveness)
-        (compiler-reg-global-shared-view pred-counts)
-        (compiler-reg-live-block-succs
-          (compiler-reg-global-array-element-shared-view blocks index)))
-      (compiler-reg-edge-copy-count-preds-blocks!
-        liveness
-        (compiler-reg-global-shared-view blocks)
-        (compiler-reg-global-shared-view pred-counts)
-        (+ index 1)))))
-
-(define (compiler-reg-edge-copy-pred-counts
-  [liveness : live.CompilerFunctionLiveness]
-  [blocks : (__tl_dyn-array live.CompilerLiveBlock)]) : (__tl_dyn-array i64)
-  (let
-    [pred-counts : (__tl_dyn-array i64)
-      (__tl_make-array i64 (array-length blocks))]
-    (begin
-      (compiler-reg-edge-copy-count-preds-blocks!
-        liveness
-        blocks
-        (compiler-reg-global-shared-view pred-counts)
-        0)
-      pred-counts)))
-
 (define (compiler-reg-edge-copy-refusal [from-label : i64] [to-label : i64]) : String
   (str_cat.str-cat
     "regalloc: edge copy from "
@@ -15917,10 +15855,9 @@
       members)))
 
 (define (compiler-reg-edge-copy-boundary-one
-  [liveness : live.CompilerFunctionLiveness]
   [blocks : (__tl_dyn-array live.CompilerLiveBlock)]
   [pred-counts : (__tl_dyn-array i64)]
-  [region : reg_label_i64_map.Map]
+  [inside : (__tl_dyn-array bool)]
   [from-block : live.CompilerLiveBlock]
   [from-label : i64]
   [from-inside : bool]
@@ -15930,178 +15867,161 @@
   [ty : ast.AstType]
   [members : live.CompilerLiveI64Set]
   [to-label : i64]
+  [to-index : i64]
   [acc : CompilerRegEdgeCopySeq]) : CompilerRegEdgeCopyPlan
-  (let
-    [to-index : i64 (live.compiler-live-function-block-index liveness to-label)]
-    (if (>= to-index 0)
-      (let
-        [to-block : live.CompilerLiveBlock
-          (compiler-reg-global-array-element-shared-view blocks to-index)]
-        [to-inside : bool (compiler-reg-region-label? region to-label)]
-        (if (or
-          (= from-inside to-inside)
-          (not
-            ;; An empty `members` set selects the existing per-var liveness test
-            ;; (read-only / non-phi homing -- byte-identical). A non-empty set is
-            ;; the phi-carried coalesce group: the slot is live on the edge iff ANY
-            ;; member is (no single member is live on every boundary edge).
-            (if (=
-              (live.compiler-live-set-word-count
-                (compiler-reg-global-shared-view members))
-              0)
-              (compiler-reg-edge-copy-live-on-edge?
-                from-block
-                to-block
-                stack-var)
-              (compiler-reg-edge-copy-group-live-on-edge?
-                from-block
-                to-block
-                members))))
-          (CompilerRegEdgeCopyPlan.Plan acc)
-          (match (compiler-reg-edge-copy-placement-for
-            from-label
-            to-label
-            from-succs
-            (compiler-reg-global-array-element-shared-view pred-counts to-index))
-            [(CompilerRegEdgeCopyPlacementResult.Ok placement)
-              (if to-inside
-                (CompilerRegEdgeCopyPlan.Plan
-                  (compiler-reg-edge-copy-seq-push
-                    acc
-                    (CompilerRegEdgeCopy.Copy
-                      from-label
-                      to-label
-                      stack-var
-                      region-var
-                      ty
-                      CompilerRegEdgeCopyDirection.IntoRegion
-                      placement)))
-                (CompilerRegEdgeCopyPlan.Plan
-                  (compiler-reg-edge-copy-seq-push
-                    acc
-                    (CompilerRegEdgeCopy.Copy
-                      from-label
-                      to-label
-                      region-var
-                      stack-var
-                      ty
-                      CompilerRegEdgeCopyDirection.OutOfRegion
-                      placement))))]
-            [(CompilerRegEdgeCopyPlacementResult.Refused message)
-              (CompilerRegEdgeCopyPlan.Refused message)])))
-      (CompilerRegEdgeCopyPlan.Refused
-        (str_cat.str-cat
-          "regalloc: edge copy target block not found: "
-          (ir.compiler-ir-label-text to-label)
-          "")))))
-
-(define (compiler-reg-edge-copy-boundary-succs
-  [liveness : live.CompilerFunctionLiveness]
-  [blocks : (__tl_dyn-array live.CompilerLiveBlock)]
-  [pred-counts : (__tl_dyn-array i64)]
-  [region : reg_label_i64_map.Map]
-  [from-block : live.CompilerLiveBlock]
-  [from-label : i64]
-  [from-inside : bool]
-  [from-succs : i64]
-  [stack-var : i64]
-  [region-var : i64]
-  [ty : ast.AstType]
-  [members : live.CompilerLiveI64Set]
-  [succs : live.CompilerLiveLabelSet]
-  [acc : CompilerRegEdgeCopySeq]) : CompilerRegEdgeCopyPlan
-  (match (compiler-reg-global-shared-view succs)
-    [(live.CompilerLiveLabelSet.Nil) (CompilerRegEdgeCopyPlan.Plan acc)]
-    [(live.CompilerLiveLabelSet.Dense _ _)
-      (match (compiler-reg-edge-copy-boundary-one
-        (compiler-reg-global-shared-view liveness)
-        (compiler-reg-global-shared-view blocks)
-        (compiler-reg-global-shared-view pred-counts)
-        (compiler-reg-global-shared-view region)
-        (compiler-reg-global-shared-view from-block)
-        from-label
-        from-inside
-        from-succs
-        stack-var
-        region-var
-        (compiler-reg-global-shared-view ty)
-        (compiler-reg-global-shared-view members)
-        (live.compiler-live-label-set-ref
-          (compiler-reg-global-shared-view succs)
-          0)
-        acc)
-        [(CompilerRegEdgeCopyPlan.Plan next)
-          (compiler-reg-edge-copy-boundary-succs
-            liveness
-            blocks
-            pred-counts
-            region
-            from-block
-            from-label
-            from-inside
-            from-succs
-            stack-var
-            region-var
-            ty
-            members
-            (live.compiler-live-label-set-tail succs)
-            next)]
-        [(CompilerRegEdgeCopyPlan.Refused message)
-          (CompilerRegEdgeCopyPlan.Refused message)])]))
-
-(define (compiler-reg-edge-copy-boundary-blocks
-  [liveness : live.CompilerFunctionLiveness]
-  [blocks : (__tl_dyn-array live.CompilerLiveBlock)]
-  [pred-counts : (__tl_dyn-array i64)]
-  [region : reg_label_i64_map.Map]
-  [stack-var : i64]
-  [region-var : i64]
-  [ty : ast.AstType]
-  [members : live.CompilerLiveI64Set]
-  [index : i64]
-  [acc : CompilerRegEdgeCopySeq]) : CompilerRegEdgeCopyPlan
-  (if (>= index (array-length blocks))
-    (CompilerRegEdgeCopyPlan.Plan acc)
+  (if (>= to-index 0)
     (let
-      [block : live.CompilerLiveBlock
-        (compiler-reg-global-array-element-shared-view blocks index)]
-      [label : i64
-        (compiler-reg-edge-copy-live-block-label
-          (compiler-reg-global-shared-view block))]
-      [succs : live.CompilerLiveLabelSet
-        (compiler-reg-live-block-succs (compiler-reg-global-shared-view block))]
-      (match (compiler-reg-edge-copy-boundary-succs
-        (compiler-reg-global-shared-view liveness)
-        (compiler-reg-global-shared-view blocks)
-        (compiler-reg-global-shared-view pred-counts)
-        (compiler-reg-global-shared-view region)
-        (compiler-reg-global-shared-view block)
-        label
-        (compiler-reg-region-label?
-          (compiler-reg-global-shared-view region)
-          label)
-        (live.compiler-live-label-set-count
-          (compiler-reg-global-shared-view succs))
-        stack-var
-        region-var
-        (compiler-reg-global-shared-view ty)
-        (compiler-reg-global-shared-view members)
-        (compiler-reg-global-shared-view succs)
-        (compiler-reg-global-shared-view acc))
-        [(CompilerRegEdgeCopyPlan.Plan next)
-          (compiler-reg-edge-copy-boundary-blocks
-            (compiler-reg-global-shared-view liveness)
-            (compiler-reg-global-shared-view blocks)
-            (compiler-reg-global-shared-view pred-counts)
-            (compiler-reg-global-shared-view region)
-            stack-var
-            region-var
-            (compiler-reg-global-shared-view ty)
-            (compiler-reg-global-shared-view members)
-            (+ index 1)
-            next)]
-        [(CompilerRegEdgeCopyPlan.Refused message)
-          (CompilerRegEdgeCopyPlan.Refused message)]))))
+      [to-block : live.CompilerLiveBlock
+        (compiler-reg-global-array-element-shared-view blocks to-index)]
+      [to-inside : bool (array-ref inside to-index)]
+      (if (or
+        (= from-inside to-inside)
+        (not
+          ;; An empty `members` set selects the existing per-var liveness test
+          ;; (read-only / non-phi homing -- byte-identical). A non-empty set is
+          ;; the phi-carried coalesce group: the slot is live on the edge iff ANY
+          ;; member is (no single member is live on every boundary edge).
+          (if (=
+            (live.compiler-live-set-word-count
+              (compiler-reg-global-shared-view members))
+            0)
+            (compiler-reg-edge-copy-live-on-edge? from-block to-block stack-var)
+            (compiler-reg-edge-copy-group-live-on-edge?
+              from-block
+              to-block
+              members))))
+        (CompilerRegEdgeCopyPlan.Plan acc)
+        (match (compiler-reg-edge-copy-placement-for
+          from-label
+          to-label
+          from-succs
+          (compiler-reg-global-array-element-shared-view pred-counts to-index))
+          [(CompilerRegEdgeCopyPlacementResult.Ok placement)
+            (if to-inside
+              (CompilerRegEdgeCopyPlan.Plan
+                (compiler-reg-edge-copy-seq-push
+                  acc
+                  (CompilerRegEdgeCopy.Copy
+                    from-label
+                    to-label
+                    stack-var
+                    region-var
+                    ty
+                    CompilerRegEdgeCopyDirection.IntoRegion
+                    placement)))
+              (CompilerRegEdgeCopyPlan.Plan
+                (compiler-reg-edge-copy-seq-push
+                  acc
+                  (CompilerRegEdgeCopy.Copy
+                    from-label
+                    to-label
+                    region-var
+                    stack-var
+                    ty
+                    CompilerRegEdgeCopyDirection.OutOfRegion
+                    placement))))]
+          [(CompilerRegEdgeCopyPlacementResult.Refused message)
+            (CompilerRegEdgeCopyPlan.Refused message)])))
+    (CompilerRegEdgeCopyPlan.Refused
+      (str_cat.str-cat
+        "regalloc: edge copy target block not found: "
+        (ir.compiler-ir-label-text to-label)
+        ""))))
+
+;; Every block's successor edges, in block order and then in the order each
+;; block's label set yields its successors -- the order the plan's copies are
+;; accumulated in. `inside` is the region's membership by block index, and the
+;; successor indices and predecessor counts come from the analysis's edge index,
+;; so no edge costs a hash lookup.
+(define (compiler-reg-edge-copy-boundary-blocks
+  [blocks : (__tl_dyn-array live.CompilerLiveBlock)]
+  [edge-index : live.CompilerLiveEdgeIndex]
+  [inside : (__tl_dyn-array bool)]
+  [stack-var : i64]
+  [region-var : i64]
+  [ty : ast.AstType]
+  [members : live.CompilerLiveI64Set]) : CompilerRegEdgeCopyPlan
+  (let
+    [count : i64 (array-length blocks)]
+    [succ-offsets : (__tl_dyn-array i64)
+      (compiler-reg-global-shared-view edge-index.succ-offsets)]
+    [succ-index : (__tl_dyn-array i64)
+      (compiler-reg-global-shared-view edge-index.succ-index)]
+    [canon : (__tl_dyn-array i64)
+      (compiler-reg-global-shared-view edge-index.canon)]
+    [pred-counts : (__tl_dyn-array i64)
+      (compiler-reg-global-shared-view edge-index.pred-counts)]
+    [acc : CompilerRegEdgeCopySeq (compiler-reg-edge-copy-seq-empty)]
+    [b : i64 0]
+    (begin
+      (while (< b count)
+        (let
+          [block : live.CompilerLiveBlock
+            (compiler-reg-global-array-element-shared-view blocks b)]
+          [label : i64
+            (compiler-reg-edge-copy-live-block-label
+              (compiler-reg-global-shared-view block))]
+          [succs : live.CompilerLiveLabelSet
+            (compiler-reg-live-block-succs
+              (compiler-reg-global-shared-view block))]
+          [from-succs : i64
+            (live.compiler-live-label-set-count
+              (compiler-reg-global-shared-view succs))]
+          [from-canon : i64 (array-ref canon b)]
+          [from-inside : bool
+            (and (>= from-canon 0) (array-ref inside from-canon))]
+          [base : i64 (array-ref succ-offsets b)]
+          [k : i64 0]
+          (begin
+            (while (< k from-succs)
+              (begin
+                (match (compiler-reg-edge-copy-boundary-one
+                  (compiler-reg-global-shared-view blocks)
+                  (compiler-reg-global-shared-view pred-counts)
+                  (compiler-reg-global-shared-view inside)
+                  (compiler-reg-global-shared-view block)
+                  label
+                  from-inside
+                  from-succs
+                  stack-var
+                  region-var
+                  (compiler-reg-global-shared-view ty)
+                  (compiler-reg-global-shared-view members)
+                  (live.compiler-live-label-set-ref
+                    (compiler-reg-global-shared-view succs)
+                    k)
+                  (array-ref succ-index (+ base k))
+                  (compiler-reg-global-shared-view acc))
+                  [(CompilerRegEdgeCopyPlan.Plan next) (set! acc next)]
+                  [(CompilerRegEdgeCopyPlan.Refused message)
+                    (return (CompilerRegEdgeCopyPlan.Refused message))])
+                (set! k (+ k 1))))
+            (set! b (+ b 1)))))
+      (CompilerRegEdgeCopyPlan.Plan acc))))
+
+;; Region membership by block index: the index the label map resolves each
+;; region label to, exactly the block `compiler-reg-region-label?` would have
+;; answered for through that label.
+(define (compiler-reg-edge-copy-region-marks
+  [liveness : live.CompilerFunctionLiveness]
+  [count : i64]
+  [region-labels : CompilerRegLabelSeq]) : (__tl_dyn-array bool)
+  (let
+    [inside : (__tl_dyn-array bool) (__tl_make-array bool count)]
+    [index : i64 0]
+    (begin
+      (while (< index (compiler-reg-label-seq-count region-labels))
+        (let
+          [block-index : i64
+            (live.compiler-live-function-block-index
+              (compiler-reg-global-shared-view liveness)
+              (compiler-reg-label-seq-ref region-labels index))]
+          (begin
+            (when
+              (and (>= block-index 0) (< block-index count))
+              (set! (array-ref inside block-index) true))
+            (set! index (+ index 1)))))
+      inside)))
 
 (define (compiler-reg-edge-copy-plan-for-region-group-with-liveness
   [liveness : live.CompilerFunctionLiveness]
@@ -16155,24 +16075,18 @@
   [ty : ast.AstType]
   [members : live.CompilerLiveI64Set]) : CompilerRegEdgeCopyPlan
   (match (compiler-reg-global-shared-view liveness)
-    [(live.CompilerFunctionLiveness.Liveness _ blocks)
-      (let
-        [pred-counts : (__tl_dyn-array i64)
-          (compiler-reg-edge-copy-pred-counts
-            (compiler-reg-global-shared-view liveness)
-            (compiler-reg-global-shared-view blocks))]
-        (compiler-reg-edge-copy-boundary-blocks
+    [(live.CompilerFunctionLiveness.Liveness _ blocks edge-index)
+      (compiler-reg-edge-copy-boundary-blocks
+        (compiler-reg-global-shared-view blocks)
+        (compiler-reg-global-shared-view edge-index)
+        (compiler-reg-edge-copy-region-marks
           (compiler-reg-global-shared-view liveness)
-          (compiler-reg-global-shared-view blocks)
-          (compiler-reg-global-shared-view pred-counts)
-          (compiler-reg-region-label-map
-            (compiler-reg-global-shared-view region-labels))
-          stack-var
-          region-var
-          (compiler-reg-global-shared-view ty)
-          (compiler-reg-global-shared-view members)
-          0
-          (compiler-reg-edge-copy-seq-empty)))]))
+          (array-length blocks)
+          (compiler-reg-global-shared-view region-labels))
+        stack-var
+        region-var
+        (compiler-reg-global-shared-view ty)
+        (compiler-reg-global-shared-view members))]))
 
 (define (compiler-reg-edge-copy-instr [copy : CompilerRegEdgeCopy]) : ir.CompilerIrInstr
   (match copy
@@ -20126,7 +20040,7 @@
                   (compiler-reg-coalesce-merged-root-set
                     (compiler-reg-global-shared-view coalesce))]
                 (match (compiler-reg-global-shared-view liveness)
-                  [(live.CompilerFunctionLiveness.Liveness _ live-blocks)
+                  [(live.CompilerFunctionLiveness.Liveness _ live-blocks _)
                     (match (compiler-reg-leaf-csr-select-headers
                       type-segment-bases
                       target-abi
@@ -20287,7 +20201,7 @@
               (compiler-reg-coalesce-merged-root-set
                 (compiler-reg-global-shared-view coalesce))]
             (match (compiler-reg-global-shared-view liveness)
-              [(live.CompilerFunctionLiveness.Liveness _ live-blocks)
+              [(live.CompilerFunctionLiveness.Liveness _ live-blocks _)
                 (match (match (compiler-reg-loop-split-select-blocks
                   type-segment-bases
                   target-abi

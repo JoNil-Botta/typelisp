@@ -739,3 +739,7 @@ signed_div_64_overflow_opt2|tests/integration/signed_division_flags.tl|135|-|64 
 signed_div_64_zero_opt2|tests/integration/signed_division_flags.tl|135|-|64 1 0 0|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/linux/signed_div_64_zero_opt2/signed_div_64_zero_opt2.tl:10:14: integer division or remainder error: dividend=1 divisor=0\n
 signed_rem_64_overflow_opt2|tests/integration/signed_division_flags.tl|135|-|64 -9223372036854775808 -1 1|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/linux/signed_rem_64_overflow_opt2/signed_rem_64_overflow_opt2.tl:17:14: integer division or remainder error: dividend=-9223372036854775808 divisor=-1\n
 signed_rem_64_zero_opt2|tests/integration/signed_division_flags.tl|135|-|64 1 0 1|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/linux/signed_rem_64_zero_opt2/signed_rem_64_zero_opt2.tl:17:14: integer division or remainder error: dividend=1 divisor=0\n
+
+runtime_leaf_aliases_opt0|tests/integration/runtime_leaf_aliases.tl|42|-|-|-|opt-level:0+stage-stdlib
+runtime_leaf_aliases_opt1|tests/integration/runtime_leaf_aliases.tl|42|-|-|-|opt-level:1+stage-stdlib
+runtime_leaf_aliases_opt2|tests/integration/runtime_leaf_aliases.tl|42|-|-|-|opt-level:2+stage-stdlib

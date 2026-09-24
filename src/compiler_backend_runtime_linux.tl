@@ -1269,7 +1269,10 @@ tl_memcpy_fresh:
     movq %rdx, %rcx
     jmp .Ltl_memcpy_fwd
     .size tl_memcpy_fresh, . - tl_memcpy_fresh
-    .globl tl_mem_copy_fwd
+")
+
+(define (compiler-backend-runtime-copy-fwd-functions) : String
+  "    .globl tl_mem_copy_fwd
     .type tl_mem_copy_fwd,@function
 tl_mem_copy_fwd:
     testq %rdx, %rdx
@@ -1285,7 +1288,10 @@ tl_mem_copy_fwd:
 .Ltl_mem_copy_fwd_done:
     ret
     .size tl_mem_copy_fwd, . - tl_mem_copy_fwd
-    .globl tl_mem_copy8_fwd
+")
+
+(define (compiler-backend-runtime-copy8-fwd-functions) : String
+  "    .globl tl_mem_copy8_fwd
     .type tl_mem_copy8_fwd,@function
 tl_mem_copy8_fwd:
     testq %rdx, %rdx
@@ -1560,26 +1566,46 @@ tl_backtrace_stack_set:
         (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeMemcpy)
         (x64_template.CompilerX64TemplateTarget.LinuxX64)
         (compiler-backend-runtime-memcpy-functions))]
+    [copy-fwd-asm : String
+      (if (runtime_common.compiler-backend-runtime-features-leaf? features 4)
+        (x64_catalog.compiler-x64-template-render-assembly
+          (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeCopyFwd)
+          (x64_template.CompilerX64TemplateTarget.LinuxX64)
+          (compiler-backend-runtime-copy-fwd-functions))
+        "")]
+    [copy8-fwd-asm : String
+      (if (runtime_common.compiler-backend-runtime-features-leaf? features 8)
+        (x64_catalog.compiler-x64-template-render-assembly
+          (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeCopy8Fwd)
+          (x64_template.CompilerX64TemplateTarget.LinuxX64)
+          (compiler-backend-runtime-copy8-fwd-functions))
+        "")]
     [memchr-asm : String
-      (x64_catalog.compiler-x64-template-render-assembly
-        (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeMemchr)
-        (x64_template.CompilerX64TemplateTarget.LinuxX64)
-        (compiler-backend-runtime-memchr-functions))]
+      (if (runtime_common.compiler-backend-runtime-features-leaf? features 1)
+        (x64_catalog.compiler-x64-template-render-assembly
+          (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeMemchr)
+          (x64_template.CompilerX64TemplateTarget.LinuxX64)
+          (compiler-backend-runtime-memchr-functions))
+        "")]
     [array-zero-asm : String
       (x64_catalog.compiler-x64-template-render-assembly
         (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeArrayZero)
         (x64_template.CompilerX64TemplateTarget.LinuxX64)
         (compiler-backend-runtime-array-zero-functions))]
     [mem-fill8-asm : String
-      (x64_catalog.compiler-x64-template-render-assembly
-        (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeMemFill8)
-        (x64_template.CompilerX64TemplateTarget.LinuxX64)
-        (compiler-backend-runtime-mem-fill8-functions))]
+      (if (runtime_common.compiler-backend-runtime-features-leaf? features 16)
+        (x64_catalog.compiler-x64-template-render-assembly
+          (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeMemFill8)
+          (x64_template.CompilerX64TemplateTarget.LinuxX64)
+          (compiler-backend-runtime-mem-fill8-functions))
+        "")]
     [tlci-entry-asm : String
-      (x64_catalog.compiler-x64-template-render-assembly
-        (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeTlciImage)
-        (x64_template.CompilerX64TemplateTarget.LinuxX64)
-        (compiler-backend-runtime-tlci-entry-functions))]
+      (if (runtime_common.compiler-backend-runtime-features-leaf? features 2)
+        (x64_catalog.compiler-x64-template-render-assembly
+          (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeTlciImage)
+          (x64_template.CompilerX64TemplateTarget.LinuxX64)
+          (compiler-backend-runtime-tlci-entry-functions))
+        "")]
     [tlci-macro-entry-asm : String
       (if (runtime_common.compiler-backend-runtime-features-tlci-macro-entry?
         features)
@@ -1597,7 +1623,7 @@ tl_backtrace_stack_set:
         "")]
     [runtime-front-asm : String
       (str_cat.str-cat
-        memcpy-asm
+        (str_cat.str-cat memcpy-asm copy-fwd-asm copy8-fwd-asm "")
         memchr-asm
         array-zero-asm
         mem-fill8-asm

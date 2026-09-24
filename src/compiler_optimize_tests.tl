@@ -4881,6 +4881,143 @@
         17]
       [else 42])))
 
+;; Reuse the branch/copy/escape fixtures with the runtime String descriptor
+;; type. Only the allocation type changes; its complete use graph stays intact.
+(define (opt-agsplit-string-instr [instr : compiler_ir_types.CompilerIrInstr]) : compiler_ir_types.CompilerIrInstr
+  (match (compiler_optimize.compiler-opt-global-shared-view instr)
+    [(compiler_ir_types.CompilerIrInstr.Call dst name args ty)
+      (compiler_ir_types.CompilerIrInstr.Call
+        dst
+        name
+        args
+        (if (= name cbi.compiler-builtin-id-tl-alloc)
+          (compiler_ast_types.AstType.String)
+          ty))]
+    [_ instr]))
+
+(define (opt-agsplit-string-blocks
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlockList
+  (let
+    [out : compiler_ir_types.CompilerIrBlockBuilder
+      (compiler_ir_types.compiler-ir-block-builder-new)]
+    [count : i64
+      (compiler_ir_types.compiler-ir-block-list-count
+        (compiler_optimize.compiler-opt-global-shared-view blocks))]
+    [i : i64 0]
+    (begin
+      (while (< i count)
+        (begin
+          (match (opt-cmp-dup-block-at
+            (compiler_optimize.compiler-opt-global-shared-view blocks)
+            i)
+            [(compiler_ir_types.CompilerIrBlock.Block label instrs)
+              (let
+                [b : compiler_ir_types.CompilerIrInstrBuilder
+                  (compiler_ir_types.compiler-ir-instr-builder-new)]
+                [j : i64 0]
+                (begin
+                  (while (< j instrs.len)
+                    (begin
+                      (compiler_ir_types.compiler-ir-instr-builder-push!
+                        (&mut b)
+                        (opt-agsplit-string-instr
+                          (compiler_ir_types.compiler-ir-instr-seq-ref
+                            (compiler_optimize.compiler-opt-global-shared-view
+                              instrs)
+                            j)))
+                      (set! j (+ j 1))))
+                  (compiler_ir_types.compiler-ir-block-builder-push!
+                    (&mut out)
+                    (compiler_ir_types.CompilerIrBlock.Block
+                      label
+                      (compiler_ir_types.compiler-ir-instr-builder-to-seq b)))))])
+          (set! i (+ i 1))))
+      (compiler_ir_types.compiler-ir-block-builder-to-list out))))
+
+(test
+  local-string-descriptor-splitting
+  (let
+    [mode : i64 0]
+    (while (< mode 8)
+      (let
+        [blocks : compiler_ir_types.CompilerIrBlockList
+          (opt-agsplit-string-blocks
+            (cond
+              [(= mode 0) (opt-agsplit-join-blocks)]
+              [(= mode 1) (opt-agsplit-copy-blocks)]
+              [(= mode 2) (opt-agsplit-call-arg-blocks)]
+              [(= mode 3) (opt-agsplit-escape-call-blocks)]
+              [(= mode 4) (opt-agsplit-subword-blocks)]
+              [(= mode 5) (opt-agsplit-dynamic-gep-blocks)]
+              [(= mode 6) (opt-agsplit-partial-copy-blocks)]
+              [else (opt-agsplit-stored-pointer-blocks)]))]
+        [out : compiler_ir_types.CompilerIrFunction
+          (opt-agsplit-split blocks 12)]
+        (begin
+          (test.assert-i64-eq
+            (opt-agsplit-count-function out (opt-agsplit-kind-tl-alloc) 0)
+            (if (< mode 2)
+              0
+              1)
+            "split private String words, retain escaped or incompatible storage")
+          (set! mode (+ mode 1))))))
+  (test.assert-i64-eq
+    (opt-agsplit-count-function
+      (opt-agsplit-optimized
+        (opt-agsplit-string-blocks (opt-agsplit-copy-blocks))
+        12)
+      (opt-agsplit-kind-return-literal)
+      11)
+    1
+    "descriptor copying preserves its length through the whole pipeline")
+  (test.assert-i64-eq
+    (opt-agsplit-count-function
+      (opt-agsplit-split
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-agsplit-block
+            "entry"
+            (opt-test-instrs
+              (opt-agsplit-string-instr (opt-agsplit-alloc 1 16))
+              (opt-agsplit-gep 2 1 8)
+              (opt-agsplit-store-literal 2 11)
+              (opt-agsplit-load 3 2)
+              (compiler_ir_types.CompilerIrInstr.OwnRoot
+                4
+                (compiler_ir_types.CompilerIrValue.Var 1)
+                (compiler_ast_types.AstType.String))
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var 3)))))
+          compiler_ir_types.CompilerIrBlockList.Nil)
+        6)
+      (opt-agsplit-kind-tl-alloc)
+      0)
+    1
+    "an ownership edge retains the String descriptor")
+  (let
+    [mode : i64 0]
+    (while (< mode 3)
+      (begin
+        (test.assert-true
+          (match (compiler_optimize.opt-aggregate-split-direct-alloc
+            (compiler_ir_types.CompilerIrInstr.Call
+              1
+              (if (= mode 0)
+                (opt-test-symbol "foreign-alloc")
+                cbi.compiler-builtin-id-tl-alloc)
+              (compiler_ir_types.CompilerIrCallArgs.One
+                (compiler_ir_types.CompilerIrValue.I64
+                  (if (= mode 0)
+                    16
+                    (if (= mode 1)
+                      8
+                      24))))
+              (compiler_ast_types.AstType.String)))
+            [(compiler_optimize.OptMaybeAggregateAlloc.No) true]
+            [_ false])
+          "only the exact 16-byte runtime String descriptor is admitted")
+        (set! mode (+ mode 1))))))
+
 (define (compiler-optimize-aggregate-sroa-self-test) : i64
   (let
     [positive-result : compiler_optimize.OptFunctionPassResult
@@ -58454,7 +58591,7 @@
 ;; --- pure direct-call dedupe (CSE-CALL) ---------------------------------------
 ;;
 ;; Two calls to a summarized write-free callee with the same argument, the
-;; second reached from the first along single-predecessor blocks with no memory
+;; second reached from the first along fully visited blocks with no memory
 ;; write between, collapse into one call and a copy. Layout:
 ;;
 ;;   entry: %2 = pure(x); %3 = mov x; jump b1
@@ -58466,7 +58603,7 @@
 ;;          %8 = pure(x); %9 = x < y; branch %9, b3, b4
 ;;   b3:    %10 = pure(x)        <- copy of %8
 ;;   b4:    %11 = pure(y)        <- a different argument: kept
-;;   b5:    %12 = pure(x)        <- two predecessors: kept
+;;   b5:    %12 = pure(x)        <- both paths retain %8: copy of %8
 ;;          unitpure(x) twice    <- unit-typed: never a candidate
 (define opt-pcd-test-frame : i64
   32)
@@ -58696,6 +58833,22 @@
                   [_ false]))]
             [_ false])])]))
 
+;; Refusal must retain the call itself, regardless of which wrong result a
+;; broken join might choose to substitute.
+(define (opt-pcd-test-call-at?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : i64]
+  [index : i64]
+  [dst : i64]) : bool
+  (match (compiler_optimize.opt-cfg-find-block blocks label)
+    [(compiler_optimize.OptMaybeBlock.No) false]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+            [(compiler_ir_types.CompilerIrInstr.Call d _ _ _) (= d dst)]
+            [_ false])])]))
+
 ;; Direct calls to `callee` in one block.
 (define (opt-pcd-test-calls-from
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
@@ -58768,13 +58921,13 @@
             8))
         3]
       ;; the first, the one after the impure call, the one after the store,
-      ;; the other-argument one and the join one stay: five of eight
+      ;; and the other-argument one stay: four of eight; the join reuses %8
       [(not
           (=
             (opt-pcd-test-calls
               (compiler_ir_types.compiler-ir-global-shared-view out)
               (opt-pcd-test-pure))
-            5))
+            4))
         4]
       ;; unit-typed calls are never candidates
       [(not
@@ -58813,7 +58966,220 @@
             2))
         9]
       [(not (= (opt-pcd-test-calls redef (opt-pcd-test-agg)) 2)) 10]
+      [(not
+          (opt-pcd-test-mov-at?
+            out
+            (compiler_ir_types.compiler-ir-label "b5")
+            0
+            12
+            8))
+        11]
       [else 42])))
+
+;; Join variants use the same call/branch fixture above. A write or unknown
+;; call on just one arm invalidates the shared result. Re-executing pure(x)
+;; after that write produces a different result definition, so it cannot be
+;; merged with the other arm's earlier call. A predecessor laid out after the
+;; join, including a back edge, is deliberately unknown to this one-pass walk.
+(define (opt-pcd-join-test-block
+  [block : compiler_ir_types.CompilerIrBlock]
+  [variant : i64]) : compiler_ir_types.CompilerIrBlock
+  (match block
+    [(compiler_ir_types.CompilerIrBlock.Block label instrs)
+      (if (not (= label (compiler_ir_types.compiler-ir-label "b3")))
+        (if (and
+          (>= variant 6)
+          (= label (compiler_ir_types.compiler-ir-label "b2")))
+          (let
+            [changed : compiler_ir_types.CompilerIrInstrSeq
+              (opt-test-instr-seq-copy instrs)]
+            (begin
+              (compiler_ir_types.compiler-ir-instr-seq-set!
+                (compiler_ir_types.compiler-ir-global-shared-view changed)
+                2
+                (compiler_ir_types.CompilerIrInstr.Mov
+                  8
+                  (compiler_ir_types.CompilerIrValue.I64 0)
+                  (compiler_ast_types.AstType.I64)))
+              (compiler_ir_types.CompilerIrBlock.Block label changed)))
+          (if (and
+            (= variant 7)
+            (= label (compiler_ir_types.compiler-ir-label "b4")))
+            (compiler_ir_types.CompilerIrBlock.Block
+              label
+              (opt-test-instrs
+                (opt-pcd-test-call 11 (opt-pcd-test-pure) 0)
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "b5"))))
+            (compiler_ir_types.CompilerIrBlock.Block label instrs)))
+        (let
+          [count : i64 (compiler_ir_types.compiler-ir-instr-seq-count instrs)]
+          [builder : compiler_ir_types.CompilerIrInstrBuilder
+            (compiler_ir_types.compiler-ir-instr-builder-with-capacity 5)]
+          (begin
+            (compiler_ir_types.compiler-ir-instr-builder-append-seq-range!
+              (&mut builder)
+              instrs
+              0
+              (- count 1))
+            (when
+              (or (= variant 1) (= variant 3))
+              (compiler_ir_types.compiler-ir-instr-builder-push!
+                (&mut builder)
+                (compiler_ir_types.CompilerIrInstr.StorePtr
+                  (compiler_ir_types.CompilerIrValue.Var 1)
+                  (compiler_ir_types.CompilerIrValue.Var 0)
+                  (compiler_ast_types.AstType.I64))))
+            (when
+              (= variant 2)
+              (compiler_ir_types.compiler-ir-instr-builder-push!
+                (&mut builder)
+                (opt-pcd-test-call 17 (opt-pcd-test-impure) 0)))
+            (when
+              (= variant 3)
+              (compiler_ir_types.compiler-ir-instr-builder-push!
+                (&mut builder)
+                (opt-pcd-test-call 17 (opt-pcd-test-pure) 0)))
+            (compiler_ir_types.compiler-ir-instr-builder-push!
+              (&mut builder)
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label
+                  (if (= variant 5)
+                    "b2"
+                    "b5"))))
+            (compiler_ir_types.CompilerIrBlock.Block
+              label
+              (compiler_ir_types.compiler-ir-instr-builder-to-seq builder)))))]))
+
+(define (opt-pcd-join-test-run [variant : i64]) : compiler_ir_types.CompilerIrBlockList
+  (let
+    [index : compiler_optimize.OptCfgIndex
+      (compiler_optimize.opt-cfg-index-build (opt-pcd-test-blocks))]
+    [builder : compiler_ir_types.CompilerIrBlockBuilder
+      (compiler_ir_types.compiler-ir-block-builder-with-capacity 6)]
+    [cursor : i64 0]
+    (begin
+      (while (< cursor 6)
+        (let
+          [at : i64
+            (if (and (= variant 4) (>= cursor 4))
+              (- 9 cursor)
+              cursor)]
+          (begin
+            (compiler_ir_types.compiler-ir-block-builder-push!
+              (&mut builder)
+              (opt-pcd-join-test-block
+                (compiler_optimize.compiler-opt-global-array-element-shared-view
+                  index.blocks
+                  at)
+                variant))
+            (set! cursor (+ cursor 1)))))
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.opt-pure-call-dedupe-function
+          (opt-pcd-test-map false)
+          (compiler_ir_types.CompilerIrFunction.Function
+            (opt-test-symbol "pcd_join_fixture")
+            (opt-pcd-test-params)
+            (compiler_ast_types.AstType.I64)
+            opt-pcd-test-frame
+            (compiler_ir_types.compiler-ir-block-builder-to-list builder)
+            compiler_ir_types.CompilerIrFunctionAbi.Ordinary))))))
+
+(cfg
+  test
+  (test
+    pure-call-join-requires-the-same-result-on-every-path
+    (let
+      [variant : i64 0]
+      (while (< variant 8)
+        (let
+          [out : compiler_ir_types.CompilerIrBlockList
+            (opt-pcd-join-test-run variant)]
+          (begin
+            (if (= variant 0)
+              (test.assert-true
+                (opt-pcd-test-mov-at?
+                  out
+                  (compiler_ir_types.compiler-ir-label "b5")
+                  0
+                  12
+                  8)
+                "the write-free, fully visited diamond retains the result")
+              (test.assert-true
+                (opt-pcd-test-call-at?
+                  out
+                  (compiler_ir_types.compiler-ir-label
+                    (if (= variant 5)
+                      "b2"
+                      "b5"))
+                  0
+                  (if (= variant 5)
+                    7
+                    12))
+                "a refused join must retain the original call"))
+            (set! variant (+ variant 1))))))))
+
+(define (opt-pcd-join-test-table [start : i64] [count : i64]) : compiler_optimize.OptPureCallTable
+  (let
+    [table : compiler_optimize.OptPureCallTable
+      (compiler_optimize.OptPureCallTable.Nil)]
+    [i : i64 0]
+    (begin
+      (while (< i count)
+        (begin
+          (set!
+            table
+            (compiler_optimize.OptPureCallTable.Cons
+              (compiler_optimize.OptPureCallEntry
+                (opt-pcd-test-pure)
+                (compiler_ir_types.CompilerIrCallArgs.One
+                  (compiler_ir_types.CompilerIrValue.Var 0))
+                (+ start i))
+              (box table)))
+          (set! i (+ i 1))))
+      table)))
+
+(test
+  pure-call-join-work-bound
+  (let
+    [table : compiler_optimize.OptPureCallTable
+      (compiler_optimize.opt-pure-call-table-intersect
+        (opt-pcd-join-test-table 0 70)
+        (opt-pcd-join-test-table 0 70))]
+    [expected : i64 69]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match table
+          [(compiler_optimize.OptPureCallTable.Nil) (set! done true)]
+          [(compiler_optimize.OptPureCallTable.Cons entry rest)
+            (begin
+              (test.assert-i64-eq
+                entry.dst
+                expected
+                "the bounded intersection preserves available-result order")
+              (set! expected (- expected 1))
+              (set! table (compiler_optimize.compiler-opt-box-shared-view rest)))]))
+      (test.assert-i64-eq expected 5 "only the most recent 64 entries survive")
+      (test.assert-true
+        (compiler_optimize.opt-pure-call-sites-empty?
+          (compiler_optimize.opt-pure-call-table-intersect
+            (opt-pcd-join-test-table 0 1)
+            (opt-pcd-join-test-table 0 70)))
+        "the other predecessor's membership walk also stops at its bound")
+      (test.assert-true
+        (compiler_optimize.opt-pure-call-sites-empty?
+          (compiler_optimize.opt-pure-call-table-intersect
+            (opt-pcd-join-test-table 0 70)
+            (opt-pcd-join-test-table 0 1)))
+        "the left walk cannot reach a result beyond its bound")
+      (test.assert-true
+        (not
+          (compiler_optimize.opt-pure-call-sites-empty?
+            (compiler_optimize.opt-pure-call-table-intersect
+              (opt-pcd-join-test-table 6 1)
+              (opt-pcd-join-test-table 0 70))))
+        "the last admitted membership position still survives"))))
 
 ;; --- merged-body exit-join versioning -----------------------------------------
 ;;
@@ -105503,8 +105869,8 @@
 ;;
 ;; MEASURED and REFUSED, see the note above opt-const-globals-imm32-fits?: this
 ;; tree's allocator cannot rematerialize a wide immediate, so a wide literal
-;; global stays a cell read and only imm32 literals become operands. This
-;; fixture pins that decision so the next attempt has to move the note with it.
+;; stays a cell read in ordinary operand positions. A power-of-two multiply
+;; may instead consume the literal as an immediate shift count.
 (define (opt-t22-const-globals) : compiler_ir_types.CompilerIrGlobalSeq
   (let
     [builder : compiler_ir_types.CompilerIrGlobalBuilder
@@ -105726,13 +106092,19 @@
               cells.opaque)
             2))
         14]
-      ;; (c) the constant-global table: imm32 in, wide out.
+      ;; (c) wide constants still do not substitute into ordinary operands.
       [(not
           (opt_i64_i64_map.contains?
             (& const-table)
             (opt-test-symbol "t22_narrow")))
         15]
-      [(opt_i64_i64_map.contains? (& const-table) (opt-test-symbol "t22_wide"))
+      [(not
+          (opt-const-divisor-test-is-global?
+            (compiler_optimize.opt-const-global-subst-value
+              (compiler_optimize.compiler-opt-global-shared-view const-table)
+              (compiler_ir_types.CompilerIrValue.Global
+                (opt-test-symbol "t22_wide")))
+            "t22_wide"))
         16]
       ;; (d) IAG-2: a `(&mut h)` argument at a parameter-write position no
       ;; longer empties the table -- the cached word of g survives, because the
@@ -105774,7 +106146,7 @@
   (test.assert-i64-eq
     (compiler-optimize-t22-load-cse-precision-self-test)
     42
-    "load keys resolve the copies the pass makes and the inliner's parameter copies, a repeated scalar cell read materializes one Mov per write-free region (ended by a Store or by a call whose mod-ref row holds the cell, not by one whose row does not), an element-only callee's stored class keeps a differently classed handle entry, a cell word survives a call whose row excludes it, a cached cell word also survives a call that writes through a global handed to it as an argument (and does not when that global is the cached one, nor when the program carries no storage table), and the constant-global table still refuses wide literals"))
+    "load keys resolve the copies the pass makes and the inliner's parameter copies, a repeated scalar cell read materializes one Mov per write-free region (ended by a Store or by a call whose mod-ref row holds the cell, not by one whose row does not), an element-only callee's stored class keeps a differently classed handle entry, a cell word survives a call whose row excludes it, a cached cell word also survives a call that writes through a global handed to it as an argument (and does not when that global is the cached one, nor when the program carries no storage table), and ordinary operand substitution still refuses wide literals"))
 
 ;; --- T2-5: sibling phis, merge-body Movs, and deep forwarding chains --------
 ;;
@@ -112437,6 +112809,372 @@
             (opt-spmd-map-test-case mode count)
             (set! count (+ count 1))))
         (set! mode (+ mode 1))))))
+
+(define (opt-wide-power-mul-test
+  [power : i64]
+  [unsigned? : bool]
+  [left? : bool]) : bool
+  (let
+    [name : i64 (opt-test-symbol "wide_power")]
+    [builder : compiler_ir_types.CompilerIrGlobalBuilder
+      (compiler_ir_types.compiler-ir-global-builder-with-capacity 1)]
+    [_global : unit
+      (opt-test-global-builder-push!
+        (&mut builder)
+        name
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.I64 (shl 1 power)))]
+    [table : opt_i64_i64_map.Map
+      (compiler_optimize.opt-const-divisors-build
+        (compiler_ir_types.compiler-ir-global-builder-to-seq builder)
+        (compiler_ir_types.compiler-ir-function-seq-empty))]
+    [constant : compiler_ir_types.CompilerIrValue
+      (compiler_ir_types.CompilerIrValue.Global name)]
+    [variable : compiler_ir_types.CompilerIrValue
+      (compiler_ir_types.CompilerIrValue.Var 7)]
+    [ty : compiler_ast_types.AstType
+      (if unsigned?
+        (compiler_ast_types.AstType.U64)
+        (compiler_ast_types.AstType.I64))]
+    [product : compiler_ir_types.CompilerIrInstr
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        9
+        (compiler_ir_types.CompilerIrBinOp.Mul)
+        (if left?
+          (compiler_optimize.compiler-opt-global-shared-view constant)
+          (compiler_optimize.compiler-opt-global-shared-view variable))
+        (if left?
+          (compiler_optimize.compiler-opt-global-shared-view variable)
+          (compiler_optimize.compiler-opt-global-shared-view constant))
+        (compiler_optimize.compiler-opt-global-shared-view ty))]
+    ;; The early rewrite keeps the product a pure Mul of the Global operand,
+    ;; so LICM, rotation and DCE still see a non-trapping BinOp.
+    [early : compiler_ir_types.CompilerIrInstr
+      (compiler_optimize.opt-const-divisor-rewrite-instr
+        (compiler_optimize.compiler-opt-global-shared-view table)
+        (compiler_optimize.compiler-opt-global-shared-view product))]
+    [out : compiler_ir_types.CompilerIrInstr
+      (compiler_optimize.opt-const-global-mul-shift-instr
+        (compiler_optimize.compiler-opt-global-shared-view table)
+        (opt_i64_i64_map.with-capacity 1)
+        (opt_i64_i64_map.with-capacity 1)
+        product)]
+    (and
+      (match early
+        [(compiler_ir_types.CompilerIrInstr.BinOp
+            9
+            (compiler_ir_types.CompilerIrBinOp.Mul)
+            lhs
+            rhs
+            _)
+          (opt-const-divisor-test-is-global?
+            (if left?
+              lhs
+              rhs)
+            "wide_power")]
+        [_ false])
+      (match out
+        [(compiler_ir_types.CompilerIrInstr.BinOp
+            9
+            (compiler_ir_types.CompilerIrBinOp.Shl _)
+            (compiler_ir_types.CompilerIrValue.Var 7)
+            (compiler_ir_types.CompilerIrValue.I64 shift)
+            _)
+          (= shift power)]
+        [_ false])
+      (opt-const-divisor-test-is-global?
+        (compiler_optimize.opt-const-global-subst-value
+          table
+          (compiler_ir_types.CompilerIrValue.Global name))
+        "wide_power"))))
+
+;; `instr` passes through the final slot unchanged, with the wide_power table.
+(define (opt-wide-power-mul-shift-kept?
+  [instr : compiler_ir_types.CompilerIrInstr]
+  [copies : opt_i64_i64_map.Map]
+  [counts : opt_i64_i64_map.Map]) : bool
+  (match (compiler_optimize.opt-const-global-mul-shift-instr
+    (opt-wide-power-table 34)
+    copies
+    counts
+    instr)
+    [(compiler_ir_types.CompilerIrInstr.BinOp
+        9
+        (compiler_ir_types.CompilerIrBinOp.Mul)
+        _
+        _
+        _)
+      true]
+    [_ false]))
+
+(define (opt-wide-power-table [power : i64]) : opt_i64_i64_map.Map
+  (let
+    [builder : compiler_ir_types.CompilerIrGlobalBuilder
+      (compiler_ir_types.compiler-ir-global-builder-with-capacity 1)]
+    (begin
+      (opt-test-global-builder-push!
+        (&mut builder)
+        (opt-test-symbol "wide_power")
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.I64 (shl 1 power)))
+      (compiler_optimize.opt-const-divisors-build
+        (compiler_ir_types.compiler-ir-global-builder-to-seq builder)
+        (compiler_ir_types.compiler-ir-function-seq-empty)))))
+
+;; Global-cell promotion leaves `%5 = mov @wide_power` in a preheader and the
+;; product reads %5. With `definitions` copies of %5 in the function.
+(define (opt-wide-power-mul-shift-copy? [definitions : i64]) : bool
+  (let
+    [copies : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 1)]
+    [counts : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 1)]
+    (begin
+      (opt_i64_i64_map.insert-ref!
+        (&mut copies)
+        5
+        (compiler_ir_types.compiler-ir-symbol-id (opt-test-symbol "wide_power")))
+      (opt_i64_i64_map.insert-ref! (&mut counts) 5 definitions)
+      (match (compiler_optimize.opt-const-global-mul-shift-instr
+        (opt-wide-power-table 34)
+        copies
+        counts
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          9
+          (compiler_ir_types.CompilerIrBinOp.Mul)
+          (compiler_ir_types.CompilerIrValue.Var 7)
+          (compiler_ir_types.CompilerIrValue.Var 5)
+          (compiler_ast_types.AstType.I64)))
+        [(compiler_ir_types.CompilerIrInstr.BinOp
+            9
+            (compiler_ir_types.CompilerIrBinOp.Shl _)
+            (compiler_ir_types.CompilerIrValue.Var 7)
+            (compiler_ir_types.CompilerIrValue.I64 34)
+            _)
+          true]
+        [_ false]))))
+
+;; A function SSA construction gave up on: `(set! x big)` on parameter %0 is
+;; `%0 = mov @wide_power` in place, AFTER `%4 = mul %1, %0` read the argument.
+;; %0 has two definitions -- the parameter and the Mov -- so neither product
+;; may treat it as the constant.
+(define (opt-wide-power-mul-shift-param-redefined?) : bool
+  (let
+    [func : compiler_ir_types.CompilerIrFunction
+      (compiler_ir_types.CompilerIrFunction.Function
+        (opt-test-symbol "wide_power_param")
+        (compiler_ir_types.compiler-ir-param-seq-prepend
+          (compiler_ir_types.CompilerIrParam.Param
+            "x"
+            (compiler_ast_types.AstType.I64)
+            0)
+          (compiler_ir_types.compiler-ir-param-seq-prepend
+            (compiler_ir_types.CompilerIrParam.Param
+              "y"
+              (compiler_ast_types.AstType.I64)
+              1)
+            (compiler_ir_types.compiler-ir-param-seq-empty)))
+        (compiler_ast_types.AstType.I64)
+        8
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "entry")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                4
+                (compiler_ir_types.CompilerIrBinOp.Mul)
+                (compiler_ir_types.CompilerIrValue.Var 1)
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrInstr.Mov
+                0
+                (compiler_ir_types.CompilerIrValue.Global
+                  (opt-test-symbol "wide_power"))
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                5
+                (compiler_ir_types.CompilerIrBinOp.Mul)
+                (compiler_ir_types.CompilerIrValue.Var 1)
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                6
+                (compiler_ir_types.CompilerIrBinOp.Add)
+                (compiler_ir_types.CompilerIrValue.Var 4)
+                (compiler_ir_types.CompilerIrValue.Var 5)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var 6)))))
+          (compiler_ir_types.CompilerIrBlockList.Nil))
+        compiler_ir_types.CompilerIrFunctionAbi.Ordinary)]
+    [out : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-const-global-mul-shift-final
+        (opt-wide-power-table 34)
+        func)]
+    [shifts : i64 0]
+    (begin
+      (match (compiler_optimize.opt-function-blocks out)
+        [(compiler_ir_types.CompilerIrBlockList.Cons block _)
+          (match (compiler_optimize.compiler-opt-global-shared-view block)
+            [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+              (let
+                [index : i64 0]
+                (while (<
+                  index
+                  (compiler_ir_types.compiler-ir-instr-seq-count
+                    (compiler_optimize.compiler-opt-global-shared-view instrs)))
+                  (begin
+                    (match (compiler_ir_types.compiler-ir-instr-seq-ref
+                      instrs
+                      index)
+                      [(compiler_ir_types.CompilerIrInstr.BinOp
+                          _
+                          (compiler_ir_types.CompilerIrBinOp.Shl _)
+                          _
+                          _
+                          _)
+                        (set! shifts (+ shifts 1))]
+                      [_ unit])
+                    (set! index (+ index 1)))))])]
+        [_ (set! shifts -1)])
+      (= shifts 0))))
+
+(define (opt-wide-power-mul-shift-both?) : bool
+  (match (compiler_optimize.opt-const-global-mul-shift-instr
+    (opt-wide-power-table 34)
+    (opt_i64_i64_map.with-capacity 1)
+    (opt_i64_i64_map.with-capacity 1)
+    (compiler_ir_types.CompilerIrInstr.BinOp
+      9
+      (compiler_ir_types.CompilerIrBinOp.Mul)
+      (compiler_ir_types.CompilerIrValue.Global (opt-test-symbol "wide_power"))
+      (compiler_ir_types.CompilerIrValue.Global (opt-test-symbol "wide_power"))
+      (compiler_ast_types.AstType.I64)))
+    [(compiler_ir_types.CompilerIrInstr.BinOp
+        9
+        (compiler_ir_types.CompilerIrBinOp.Shl _)
+        (compiler_ir_types.CompilerIrValue.Global _)
+        (compiler_ir_types.CompilerIrValue.I64 34)
+        _)
+      true]
+    [_ false]))
+
+(test
+  wide-power-global-multiply
+  (let
+    [power : i64 31]
+    (begin
+      (while (<= power 62)
+        (begin
+          (test.assert-true
+            (opt-wide-power-mul-test power false false)
+            "signed right power becomes a shift")
+          (test.assert-true
+            (opt-wide-power-mul-test power false true)
+            "signed left power becomes a shift")
+          (test.assert-true
+            (opt-wide-power-mul-test power true false)
+            "unsigned right power becomes a shift")
+          (test.assert-true
+            (opt-wide-power-mul-test power true true)
+            "unsigned left power becomes a shift")
+          (set! power (+ power 1))))
+      (test.assert-true
+        (match (compiler_optimize.opt-const-divisor-rewrite-instr
+          (opt-t22-const-table)
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            9
+            (compiler_ir_types.CompilerIrBinOp.Mul)
+            (compiler_ir_types.CompilerIrValue.Var 7)
+            (compiler_ir_types.CompilerIrValue.I64 281474976710656)
+            (compiler_ast_types.AstType.I64)))
+          [(compiler_ir_types.CompilerIrInstr.BinOp
+              _
+              (compiler_ir_types.CompilerIrBinOp.Mul)
+              _
+              _
+              _)
+            true]
+          [_ false])
+        "literal products from unrolling stay in their existing reduction path")
+      (test.assert-true
+        (opt-wide-power-mul-shift-kept?
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            9
+            (compiler_ir_types.CompilerIrBinOp.Mul)
+            (compiler_ir_types.CompilerIrValue.Var 7)
+            (compiler_ir_types.CompilerIrValue.I64 281474976710656)
+            (compiler_ast_types.AstType.I64))
+          (opt_i64_i64_map.with-capacity 1)
+          (opt_i64_i64_map.with-capacity 1))
+        "the final slot does not rewrite a literal product either")
+      (test.assert-true
+        (opt-wide-power-mul-shift-kept?
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            9
+            (compiler_ir_types.CompilerIrBinOp.Mul)
+            (compiler_ir_types.CompilerIrValue.Var 7)
+            (compiler_ir_types.CompilerIrValue.Global
+              (opt-test-symbol "wide_power"))
+            (compiler_ast_types.AstType.I32))
+          (opt_i64_i64_map.with-capacity 1)
+          (opt_i64_i64_map.with-capacity 1))
+        "an i32 multiply is not rewritten")
+      (test.assert-true
+        (opt-wide-power-mul-shift-kept?
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            9
+            (compiler_ir_types.CompilerIrBinOp.Mul)
+            (compiler_ir_types.CompilerIrValue.Var 7)
+            (compiler_ir_types.CompilerIrValue.Global
+              (opt-test-symbol "wide_power"))
+            (compiler_ast_types.AstType.U32))
+          (opt_i64_i64_map.with-capacity 1)
+          (opt_i64_i64_map.with-capacity 1))
+        "a u32 multiply is not rewritten")
+      (test.assert-true
+        (opt-wide-power-mul-shift-copy? 1)
+        "a single-definition copy of the global in a preheader is the multiplier")
+      (test.assert-true
+        (not (opt-wide-power-mul-shift-copy? 2))
+        "a copy with two definitions names no single value")
+      (test.assert-true
+        (opt-wide-power-mul-shift-both?)
+        "with wide powers on both sides the right one is the count")
+      (test.assert-true
+        (opt-wide-power-mul-shift-param-redefined?)
+        "a parameter redefined from the global is not a single-definition copy")
+      (test.assert-true
+        (opt-wide-power-mul-shift-kept?
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            9
+            (compiler_ir_types.CompilerIrBinOp.Mul)
+            (compiler_ir_types.CompilerIrValue.I64 5)
+            (compiler_ir_types.CompilerIrValue.Global
+              (opt-test-symbol "wide_power"))
+            (compiler_ast_types.AstType.I64))
+          (opt_i64_i64_map.with-capacity 1)
+          (opt_i64_i64_map.with-capacity 1))
+        "a constant product stays a multiply, not a wide literal to rematerialize")
+      (test.assert-i64-eq
+        (compiler_optimize.opt-const-global-wide-power-shift
+          (compiler_ir_types.CompilerIrValue.I64 1099511628211))
+        -1
+        "wide non-power remains unchanged")
+      (test.assert-i64-eq
+        (compiler_optimize.opt-const-global-wide-power-shift
+          (compiler_ir_types.CompilerIrValue.I64 0))
+        -1
+        "zero is not a power")
+      (test.assert-i64-eq
+        (compiler_optimize.opt-const-global-wide-power-shift
+          (compiler_ir_types.CompilerIrValue.I64 1073741824))
+        -1
+        "small powers retain existing selection")
+      (test.assert-i64-eq
+        (compiler_optimize.opt-const-global-wide-power-shift
+          (compiler_ir_types.CompilerIrValue.I64 -9223372036854775808))
+        -1
+        "negative power is outside this rewrite"))))
 
 ;; Exercise cache admission and phi repair directly, independently of whether
 ;; a later inlining round keeps or removes the original callee.

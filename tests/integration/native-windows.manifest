@@ -800,3 +800,13 @@ replayed_prefix_shl_first_opt2|tests/integration/replayed_loop_call_prefix_traps
 replayed_prefix_shl_later_opt2|tests/integration/replayed_loop_call_prefix_traps.tl|129|-|2 3|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/windows/replayed_prefix_shl_later_opt2/replayed_prefix_shl_later_opt2.tl:42:26: shift count out of range: count=-1 width=64\n
 replayed_prefix_shr_first_opt2|tests/integration/replayed_loop_call_prefix_traps.tl|129|-|3 -1|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/windows/replayed_prefix_shr_first_opt2/replayed_prefix_shr_first_opt2.tl:52:26: shift count out of range: count=-1 width=64\n
 replayed_prefix_shr_later_opt2|tests/integration/replayed_loop_call_prefix_traps.tl|129|-|3 3|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/windows/replayed_prefix_shr_later_opt2/replayed_prefix_shr_later_opt2.tl:52:26: shift count out of range: count=-1 width=64\n
+
+pure_call_join_opt0|tests/integration/pure_call_join.tl|42|-|13|stdlib/io.tl stdlib/string.tl|opt-level:0+stage-stdlib
+pure_call_join_opt1|tests/integration/pure_call_join.tl|42|-|13|stdlib/io.tl stdlib/string.tl|opt-level:1+stage-stdlib
+pure_call_join_opt2|tests/integration/pure_call_join.tl|42|-|13|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib
+pure_call_join_live_opt0|tests/integration/pure_call_join_live.tl|0|9389164835730396772\n|13 64|stdlib/io.tl stdlib/string.tl|opt-level:0+stage-stdlib
+pure_call_join_live_opt1|tests/integration/pure_call_join_live.tl|0|9389164835730396772\n|13 64|stdlib/io.tl stdlib/string.tl|opt-level:1+stage-stdlib
+pure_call_join_live_opt2|tests/integration/pure_call_join_live.tl|0|9389164835730396772\n|13 64|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib
+wide_power_multiply_o0|tests/integration/wide_power_multiply.tl|42|-|-|-|opt-level:0+stage-stdlib
+wide_power_multiply_o1|tests/integration/wide_power_multiply.tl|42|-|-|-|opt-level:1+stage-stdlib
+wide_power_multiply_o2|tests/integration/wide_power_multiply.tl|42|-|-|-|opt-level:2+stage-stdlib

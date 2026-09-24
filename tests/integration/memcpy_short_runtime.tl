@@ -1,7 +1,5 @@
 ;; Copies must preserve snapshot semantics under overlap, leave surrounding
 ;; bytes alone, and never read outside either end of a short source range.
-(import stdlib.runtime)
-
 (extern (copy-bytes [dst : (MutPtr u8)] [src : (Ptr u8)] [n : i64]) : unit (:symbol "tl_memcpy"))
 (extern (copy-fresh [dst : (MutPtr u8)] [src : (Ptr u8)] [n : i64]) : unit (:symbol "tl_memcpy_fresh"))
 

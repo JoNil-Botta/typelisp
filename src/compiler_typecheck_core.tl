@@ -42,18 +42,12 @@
 (import sym_i64_env)
 
 (defmacro (tc-global-shared-view [place : Expr]) : Expr
-  (cfg
-    stage0-seed-bootstrap
-    place
-    `(unsafe
-      (ptr-read (ptr-addr-of ,place)))))
+  `(unsafe
+    (ptr-read (ptr-addr-of ,place))))
 
 (defmacro (tc-global-array-element-shared-view [items : Expr] [index : Expr]) : Expr
-  (cfg
-    stage0-seed-bootstrap
-    `(array-ref ,items ,index)
-    `(unsafe
-      (ptr-read (ptr-offset (__tl_array-data ,items) ,index)))))
+  `(unsafe
+    (ptr-read (ptr-offset (__tl_array-data ,items) ,index))))
 
 ;; Capture the dynamic-array descriptor itself, rather than its data pointer.
 ;; This indirection is required while bootstrapping the owned-value ABI: taking
@@ -61870,63 +61864,22 @@
   (match ctx
     [(TcContext program _ _ _ _ _ _ _ _) program]))
 
-;; The published seed lowers borrowed inline enum payloads as values instead of
-;; addresses. Keep its one-shot raw-layout bridge in the live accessors; later
-;; generations use the checked borrowed matches below.
-(cfg
-  stage0-borrowed-inline-bootstrap
-  (define (tc-context-symbols [ctx : (& ctx TcContext)]) : (&
-      ctx
-      csym.CompilerSymbols)
-    (let
-      [ctx-cell : (Array (& ctx TcContext) 1) (array ctx)]
-      [ctx-address : u64
-        (unsafe
-          (ptr-read (ptr-cast (__tl_array-data ctx-cell) : (Ptr u64))))]
-      [word : u64 (+ ctx-address 24)]
-      [cell : (Array u64 1) (array word)]
-      (unsafe
-        (ptr-read
-          (ptr-cast (__tl_array-data cell) : (Ptr (& ctx csym.CompilerSymbols))))))))
-
-(cfg
-  (not stage0-borrowed-inline-bootstrap)
-  (define (tc-context-symbols [ctx : (& ctx TcContext)]) : (&
-      ctx
-      csym.CompilerSymbols)
-    (match ctx
-      [(TcContext _ symbols _ _ _ _ _ _ _) symbols])))
+(define (tc-context-symbols [ctx : (& ctx TcContext)]) : (&
+    ctx
+    csym.CompilerSymbols)
+  (match ctx
+    [(TcContext _ symbols _ _ _ _ _ _ _) symbols]))
 
 (define (tc-context-symbols-ref [ctx : (& ctx TcContext)]) : (&
     ctx
     csym.CompilerSymbols)
   (tc-context-symbols ctx))
 
-(cfg
-  stage0-borrowed-inline-bootstrap
-  (define (tc-context-registries [ctx : (& ctx TcContext)]) : (&
-      ctx
-      csym.CompilerRegistries)
-    (let
-      [ctx-cell : (Array (& ctx TcContext) 1) (array ctx)]
-      [ctx-address : u64
-        (unsafe
-          (ptr-read (ptr-cast (__tl_array-data ctx-cell) : (Ptr u64))))]
-      [word : u64 (+ ctx-address 152)]
-      [cell : (Array u64 1) (array word)]
-      (unsafe
-        (ptr-read
-          (ptr-cast
-            (__tl_array-data cell)
-            : (Ptr (& ctx csym.CompilerRegistries))))))))
-
-(cfg
-  (not stage0-borrowed-inline-bootstrap)
-  (define (tc-context-registries [ctx : (& ctx TcContext)]) : (&
-      ctx
-      csym.CompilerRegistries)
-    (match ctx
-      [(TcContext _ _ registries _ _ _ _ _ _) registries])))
+(define (tc-context-registries [ctx : (& ctx TcContext)]) : (&
+    ctx
+    csym.CompilerRegistries)
+  (match ctx
+    [(TcContext _ _ registries _ _ _ _ _ _) registries]))
 
 ;; Enum queries are frequent during macro expansion, and the generated-name
 ;; compatibility path cannot always use CompilerSymbols. Index the flat

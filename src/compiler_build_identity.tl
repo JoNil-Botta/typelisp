@@ -9,11 +9,8 @@
 (import stdlib.string)
 
 (defmacro (compiler-build-identity-global-shared-view [place : Expr]) : Expr
-  (cfg
-    stage0-seed-bootstrap
-    place
-    `(unsafe
-      (ptr-read (ptr-addr-of ,place)))))
+  `(unsafe
+    (ptr-read (ptr-addr-of ,place))))
 
 (cfg
   (any stage0-build-version compiler-build-identity)

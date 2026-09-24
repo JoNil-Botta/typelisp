@@ -14,11 +14,8 @@
 (import compiler_owned_view as owned_view)
 
 (defmacro (tlci-host-callback-name-shared-view [place : Expr]) : Expr
-  (cfg
-    stage0-seed-bootstrap
-    place
-    `(unsafe
-      (ptr-read (ptr-addr-of ,place)))))
+  `(unsafe
+    (ptr-read (ptr-addr-of ,place))))
 
 (define (tlci-symbol-text [name-id : ci.InternSyntaxId]) : String
   (reader.symbol-text-for-syntax-id name-id))

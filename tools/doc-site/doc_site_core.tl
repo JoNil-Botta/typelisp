@@ -20,11 +20,8 @@
 (import (vector.vector doc_md.MdBlock core) as doc_site_md_blocks)
 
 (defmacro (doc-site-global-shared-view [place : Expr]) : Expr
-  (cfg
-    stage0-seed-bootstrap
-    place
-    `(unsafe
-      (ptr-read (ptr-addr-of ,place)))))
+  `(unsafe
+    (ptr-read (ptr-addr-of ,place))))
 
 (defenum DocSiteModule
   (Module String String))

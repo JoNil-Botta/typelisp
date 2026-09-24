@@ -23,11 +23,8 @@
   (cfg windows "windows" "linux"))
 
 (define (embedded-stdlib-tlci-build-error-shared-view) : String
-  (cfg
-    stage0-seed-bootstrap
-    embedded-stdlib-tlci-build-error
-    (unsafe
-      (ptr-read (ptr-addr-of embedded-stdlib-tlci-build-error)))))
+  (unsafe
+    (ptr-read (ptr-addr-of embedded-stdlib-tlci-build-error))))
 
 (define (embedded-stdlib-tlci-hash-text! [text : (& text str)]) : unit
   (let

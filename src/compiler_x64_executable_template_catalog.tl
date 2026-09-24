@@ -15,11 +15,8 @@
 (include-str compiler-x64-template-catalog-data "compiler_x64_executable_template_catalog.tsv")
 
 (define (compiler-x64-template-catalog-data-shared-view) : String
-  (cfg
-    stage0-seed-bootstrap
-    compiler-x64-template-catalog-data
-    (unsafe
-      (ptr-read (ptr-addr-of compiler-x64-template-catalog-data)))))
+  (unsafe
+    (ptr-read (ptr-addr-of compiler-x64-template-catalog-data))))
 
 ;; SPEC 3.5.1 assigns each nullary enum its 0-based declaration-order tag.
 ;; Keep the checked-in data in that order and bounds-check the representation.

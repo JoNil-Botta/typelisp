@@ -18,10 +18,7 @@
 (import (hashmap.hashmap i64 i64) as ir_i64_i64_map)
 
 (defmacro (compiler-ir-global-shared-view [place : Expr]) : Expr
-  (cfg
-    stage0-seed-bootstrap
-    place
-    `(owned_view.compiler-owned-shared-view ,place)))
+  `(owned_view.compiler-owned-shared-view ,place))
 
 (defmacro (compiler-ir-array-shared-view [items : Expr] [index : Expr]) : Expr
   `(unsafe

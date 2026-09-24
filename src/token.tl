@@ -36,51 +36,24 @@
 (import compiler_intern as ci)
 (import stdlib.string)
 
-(cfg
-  stage0-token-scalar-bootstrap
-  (defenum Token
-    (LParen)
-    (RParen)
-    (Int i64 String)
-    (Sym i64)
-    (End)
-    (Str i64)
-    (Char char)
-    (Float String)
-    (LBracket)
-    (RBracket)
-    (Quote)
-    (Backtick)
-    (Comma)
-    (CommaAt)))
+(defenum Token
+  (LParen)
+  (RParen)
+  (Int i64 String)
+  (Sym ci.InternId)
+  (End)
+  (Str ci.InternId)
+  (Char char)
+  (Float String)
+  (LBracket)
+  (RBracket)
+  (Quote)
+  (Backtick)
+  (Comma)
+  (CommaAt))
 
-(cfg
-  (not stage0-token-scalar-bootstrap)
-  (defenum Token
-    (LParen)
-    (RParen)
-    (Int i64 String)
-    (Sym ci.InternId)
-    (End)
-    (Str ci.InternId)
-    (Char char)
-    (Float String)
-    (LBracket)
-    (RBracket)
-    (Quote)
-    (Backtick)
-    (Comma)
-    (CommaAt)))
-
-(cfg
-  stage0-token-scalar-bootstrap
-  (define (token-intern-payload [id : ci.InternId]) : i64
-    (ci.intern-id-value id)))
-
-(cfg
-  (not stage0-token-scalar-bootstrap)
-  (define (token-intern-payload [id : ci.InternId]) : ci.InternId
-    id))
+(define (token-intern-payload [id : ci.InternId]) : ci.InternId
+  id)
 
 ;; Source locations are 1-based line/column pairs. The end position is
 ;; exclusive, so a one-character token at line 1 column 1 spans 1:1 -> 1:2.
@@ -181,11 +154,7 @@
 ;; a non-symbol is not represented by a raw negative name sentinel.
 (define (sym-id [t : (& t Token)]) : ci.InternId
   (match t
-    [(Token.Sym id)
-      (cfg
-        stage0-token-scalar-bootstrap
-        (ci.intern-id-from-renderable (deref id))
-        (deref id))]
+    [(Token.Sym id) (deref id)]
     [_ (ci.tl_oob_abort)]))
 
 ;; Symbol text of `Token.Sym` (the empty string for any other kind): resolves
@@ -195,11 +164,7 @@
     [(Token.LParen) ""]
     [(Token.RParen) ""]
     [(Token.Int _ _) ""]
-    [(Token.Sym id)
-      (cfg
-        stage0-token-scalar-bootstrap
-        (ci.intern-str id)
-        (ci.intern-id-str id))]
+    [(Token.Sym id) (ci.intern-id-str id)]
     [(Token.End) ""]
     [(Token.Str _) ""]
     [(Token.Char _) ""]
@@ -222,11 +187,7 @@
     [(Token.Int _ _) ""]
     [(Token.Sym _) ""]
     [(Token.End) ""]
-    [(Token.Str id)
-      (cfg
-        stage0-token-scalar-bootstrap
-        (ci.intern-str id)
-        (ci.intern-id-str id))]
+    [(Token.Str id) (ci.intern-id-str id)]
     [(Token.Char _) ""]
     [(Token.Float _) ""]
     [(Token.LBracket) ""]
@@ -240,11 +201,7 @@
 ;; tag before projecting, so missing remains outside the name-id type.
 (define (str-id [t : (& t Token)]) : ci.InternId
   (match t
-    [(Token.Str id)
-      (cfg
-        stage0-token-scalar-bootstrap
-        (ci.intern-id-from-renderable (deref id))
-        (deref id))]
+    [(Token.Str id) (deref id)]
     [_ (ci.tl_oob_abort)]))
 
 ;; Float literal text of `Token.Float` (the empty string for any other kind):

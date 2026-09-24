@@ -7,11 +7,8 @@
 (import compiler_x64_executable_template_catalog as x64_catalog)
 
 (defmacro (compiler-backend-object-global-shared-view [place : Expr]) : Expr
-  (cfg
-    stage0-seed-bootstrap
-    place
-    `(unsafe
-      (ptr-read (ptr-addr-of ,place)))))
+  `(unsafe
+    (ptr-read (ptr-addr-of ,place))))
 
 (define (compiler-backend-object-registered-bytes
   [id : x64_template.CompilerX64ExecutableTemplateId]

@@ -1,10 +1,6 @@
 ;; compiler_embedded_stdlib.tl - Exact-source compressed stdlib fallback.
-(cfg
-  (any stage0-seed-bootstrap test)
-  (import compiler_embedded_stdlib_payload_seed as payload))
-(cfg
-  (not (any stage0-seed-bootstrap test))
-  (import compiler_embedded_stdlib_payload as payload))
+(cfg test (import compiler_embedded_stdlib_payload_seed as payload))
+(cfg (not test) (import compiler_embedded_stdlib_payload as payload))
 (import compiler_lzss as lzss)
 (import stdlib.string)
 

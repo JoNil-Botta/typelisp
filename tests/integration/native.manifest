@@ -334,7 +334,7 @@ tail_direct_mutual|all|-|tests/integration/tail_direct_mutual.tl|42|-|-|-|-
 tail_direct_stack_args|all|-|tests/integration/tail_direct_stack_args.tl|42|-|-|-|-
 tail_indirect_closure|all|-|tests/integration/tail_indirect_closure.tl|42|-|-|-|-
 early_return|all|-|tests/integration/early_return.tl|42|-|-|-|-
-div_zero_trap|all|-|tests/integration/div_zero_trap.tl|135|-|-|-|expected-stderr:tl: $SRC:3:5: integer division or remainder error: dividend=1 divisor=0\n
+div_zero_trap|all|-|tests/safety/division_by_zero_trap.tl|135|-|-|-|expected-stderr:tl: $SRC:4:5: integer division or remainder error: dividend=1 divisor=0\n
 dot_field_access|all|-|tests/integration/dot_field_access.tl|0|-|-|-|-
 dotted_field_place_parity|all|-|tests/integration/dotted_field_place_parity.tl|42|-|-|stdlib/vector.tl|-
 enum_match|all|-|tests/integration/enum_match.tl|42|-|-|-|-
@@ -365,7 +365,7 @@ mutable_reference_array|all|-|tests/integration/mutable_reference_array.tl|42|-|
 mutable_reference_by_value_writeback|all|-|tests/integration/mutable_reference_by_value_writeback.tl|42|-|-|-|-
 mutable_reference_by_value_writeback_growth|all|-|tests/integration/mutable_reference_by_value_writeback_growth.tl|42|-|-|-|-
 mutable_reference_disjoint_fields|all|-|tests/integration/mutable_reference_disjoint_fields.tl|42|-|-|-|-
-mutable_reference_disjoint_read|all|-|tests/integration/mutable_reference_disjoint_read.tl|42|-|-|-|-
+mutable_reference_disjoint_read|all|-|tests/safety/mutable_reference_read_disjoint_ok.tl|42|-|-|-|-
 enum_string_payload|all|-|tests/integration/enum_string_payload.tl|5|-|-|stdlib/string.tl|-
 f32_scalar|all|-|tests/integration/f32_scalar.tl|42|-|-|-|-
 f64_negation|all|-|tests/integration/f64_negation.tl|42|-|-|-|-
@@ -464,7 +464,7 @@ dead_valid_shifts|all|0,1,2|tests/integration/dead_valid_shifts.tl|42|-|-|-|stag
 dead_valid_shifts_dynamic|all|2|tests/integration/dead_valid_shifts.tl|42|-|63|-|stage-stdlib
 dead_shift_dynamic_width|all|2|tests/integration/dead_valid_shifts.tl|129|-|64|-|stage-stdlib+expected-stderr:tl: $SRC:22:5: shift count out of range: count=64 width=64\n
 dead_shift_dynamic_negative|all|2|tests/integration/dead_valid_shifts.tl|129|-|-1|-|stage-stdlib+expected-stderr:tl: $SRC:22:5: shift count out of range: count=-1 width=64\n
-shl_neg_count_trap|all|2,-|tests/integration/shl_neg_count_trap.tl|129|-|-|-|expected-stderr:tl: $SRC:3:5: shift count out of range: count=-1 width=32\n
+shl_neg_count_trap|all|2,-|tests/safety/shift_count_trap.tl|129|-|-|-|expected-stderr:tl: $SRC:4:5: shift count out of range: count=-1 width=32\n
 shr_u64_high_count_trap|all|2,-|tests/integration/shr_u64_high_count_trap.tl|129|-|-|-|expected-stderr:tl: $SRC:3:5: shift count out of range: count=18446744073709551615 width=64\n
 valid_scalar_shift_matrix|all|-|tests/integration/valid_scalar_shift_matrix.tl|42|-|-|-|-
 runtime_panic_site_trap|all|-|tests/integration/runtime_panic_site_trap.tl|134|-|-|stdlib/io.tl|expected-stderr:tl: $SRC:4:4: panic: boom\n

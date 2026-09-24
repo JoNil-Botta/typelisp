@@ -195,7 +195,7 @@ write_differential_rows allowed_external "$ALLOWED_EXTERN_SOURCE"
 write_differential_rows nt_create_file "$NT_CREATE_FILE_SOURCE"
 write_differential_rows nt_open_file "$NT_OPEN_FILE_SOURCE"
 write_differential_rows float_position "$FLOAT_POSITION_SOURCE"
-write_differential_rows runtime_trap tests/integration/div_zero_trap.tl
+write_differential_rows runtime_trap tests/safety/division_by_zero_trap.tl
 write_differential_rows wide_immediate tests/integration/integer_literal_boundary_matrix.tl
 write_differential_rows branch_phi_switch tests/integration/enum_match.tl
 write_differential_rows tail_call tests/integration/tail_call_stack_args.tl
@@ -250,7 +250,7 @@ printf '%s|assembly|%s/%s.direct.s|unsupported-object-abi:windows-x86_64:call\n'
     "$FLOAT_POSITION_SOURCE" "$WORKDIR" float_position >> "$DIFFERENTIAL_EXPECTED"
 printf '%s|assembly|%s/%s.forced.s|forced-assembly\n' \
     "$FLOAT_POSITION_SOURCE" "$WORKDIR" float_position >> "$DIFFERENTIAL_EXPECTED"
-write_fallback_differential_expected runtime_trap tests/integration/div_zero_trap.tl
+write_fallback_differential_expected runtime_trap tests/safety/division_by_zero_trap.tl
 write_fallback_differential_expected wide_immediate tests/integration/integer_literal_boundary_matrix.tl
 write_fallback_differential_expected branch_phi_switch tests/integration/enum_match.tl
 write_fallback_differential_expected tail_call tests/integration/tail_call_stack_args.tl

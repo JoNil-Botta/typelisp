@@ -1016,7 +1016,7 @@ validate_manifest() {
     _catalog="$WORKDIR/repository-files.txt"
     : > "$_known"
 
-    find benchmarks examples src stdlib tests/integration -type f -print |
+    find benchmarks examples src stdlib tests/integration tests/safety -type f -print |
         sed 's#^\./##' > "$_catalog"
     awk -v root="$ROOT" -v catalog="$_catalog" -v known_out="$_known" \
         -f "$ROOT/scripts/validate-integration-manifest.awk" \
@@ -2260,7 +2260,7 @@ run_linux_fatal_backtrace_fixture() {
         fatal-backtrace-bounds-values tests/integration/red_zone_abort_trap.tl 134 \
         'array index out of bounds: index=4 length=4' trap
     run_linux_backtrace_fatal_value_fixture \
-        fatal-backtrace-div-values tests/integration/div_zero_trap.tl 135 \
+        fatal-backtrace-div-values tests/safety/division_by_zero_trap.tl 135 \
         'integer division or remainder error: dividend=1 divisor=0'
     run_linux_backtrace_fatal_value_fixture \
         fatal-backtrace-shift-values tests/integration/shl_count_width_trap.tl 129 \

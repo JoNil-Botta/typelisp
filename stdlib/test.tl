@@ -116,13 +116,23 @@
 
 ;: Assert that two owned `String` values compare equal.
 ;:
-;: Convenience form of `assert-string-eq` for call sites that produce owned
-;: strings; it borrows both operands for the comparison.
+;: Owned-operand form of `assert-string-eq`, with the same failure text. It
+;: renders the failure itself rather than calling the borrowed form, so adding
+;: it leaves the existing assertions' code unchanged.
 (define (assert-owned-string-eq
   [actual : String]
   [expected : String]
   [message : String]) : unit
-  (assert-string-eq (& actual) (& expected) message))
+  (if (string.eq (& actual) (& expected))
+    unit
+    (runtime.runtime-test-assertion-failure!
+      (str_cat.str-cat
+        message
+        ": expected \""
+        expected
+        "\", found \""
+        actual
+        "\""))))
 
 (test
   test-assert-success

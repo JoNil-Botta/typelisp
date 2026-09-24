@@ -1469,8 +1469,23 @@
   ;; Attached only while lowering one masked vector loop and its vector tail.
   (masked-preheader-cache LowerMaybeMaskedPreheaderCache))
 
-(defenum LowerState
-  (State (Box LowerStateData)))
+;; The carrier is the cell's address, so it is Copy (the sym_i64_env idiom):
+;; every holder already shared the one cell through the box, and the explicit
+;; fork seams copy the cell itself (`lower-state-clone`).
+(defstruct LowerState
+  (address u64))
+
+(define (lower-state-from-box [data : (Box LowerStateData)]) : LowerState
+  (LowerState
+    (unsafe
+      (ptr-read (ptr-cast (ptr-addr-of data) : (Ptr u64))))))
+
+;; The state's cell, as the box every accessor projects fields through.
+(defmacro (lower-state-box [state : Expr]) : Expr
+  `(let
+    [handle : LowerState ,state]
+    (unsafe
+      (ptr-read (ptr-cast (ptr-addr-of handle) : (Ptr (Box LowerStateData)))))))
 
 (define (lower-state-new
   [next-var : i64]
@@ -1489,7 +1504,7 @@
   [address-taken : lower_i64_i64_map.Map]
   [tail-param-start : i64]
   [tail-param-end : i64]) : LowerState
-  (LowerState.State
+  (lower-state-from-box
     (box
       (LowerStateData
         next-var
@@ -1515,8 +1530,9 @@
 ;; builders deliberately fork from a shared snapshot; clone only at those
 ;; explicit seams so the fork keeps the former by-value counter/builder heads.
 (define (lower-state-clone [state : LowerState]) : LowerState
-  (match state
-    [(LowerState.State data) (LowerState.State (box (__tl-box-place data)))]))
+  (let
+    [data : (Box LowerStateData) (lower-state-box state)]
+    (lower-state-from-box (box (__tl-box-place data)))))
 
 (defenum LowerMaybeArrayVar
   (No)
@@ -17561,34 +17577,35 @@
               result))))]))
 
 (define (lower-state-next-var [state : LowerState]) : i64
-  (match state
-    [(LowerState.State data)
-      (__tl-project-field (__tl-box-place data) next-var)]))
+  (let
+    [data : (Box LowerStateData) (lower-state-box state)]
+    (__tl-project-field (__tl-box-place data) next-var)))
 
 (define (lower-state-current-label [state : LowerState]) : i64
-  (match state
-    [(LowerState.State data)
-      (__tl-project-field (__tl-box-place data) current-label)]))
+  (let
+    [data : (Box LowerStateData) (lower-state-box state)]
+    (__tl-project-field (__tl-box-place data) current-label)))
 
 (define (lower-state-current-function [state : LowerState]) : String
-  (match state
-    [(LowerState.State data)
-      (ir.compiler-ir-symbol-text
-        (__tl-project-field (__tl-box-place data) function))]))
+  (let
+    [data : (Box LowerStateData) (lower-state-box state)]
+    (ir.compiler-ir-symbol-text
+      (__tl-project-field (__tl-box-place data) function))))
 
 (define (lower-state-current-function-id [state : LowerState]) : i64
-  (match state
-    [(LowerState.State data)
-      (__tl-project-field (__tl-box-place data) function)]))
+  (let
+    [data : (Box LowerStateData) (lower-state-box state)]
+    (__tl-project-field (__tl-box-place data) function)))
 
 (define (lower-state-spans [state : LowerState]) : ir.CompilerSourceSpans
-  (match state
-    [(LowerState.State data)
-      (__tl-box-place (__tl-project-field (__tl-box-place data) spans))]))
+  (let
+    [data : (Box LowerStateData) (lower-state-box state)]
+    (__tl-box-place (__tl-project-field (__tl-box-place data) spans))))
 
 (define (lower-state-names [state : LowerState]) : LowerNameCache
-  (match state
-    [(LowerState.State data) (__tl-project-field (__tl-box-place data) names)]))
+  (let
+    [data : (Box LowerStateData) (lower-state-box state)]
+    (__tl-project-field (__tl-box-place data) names)))
 
 (define (lower-state-owner [state : LowerState]) : CompilerLowerState
   (let
@@ -17617,18 +17634,19 @@
     active-loop-entry-var-limit))
 
 (define (lower-state-type-cache [state : LowerState]) : LowerTypeCache
-  (match state
-    [(LowerState.State data)
-      (__tl-project-field (__tl-box-place data) type-cache)]))
+  (let
+    [data : (Box LowerStateData) (lower-state-box state)]
+    (__tl-project-field (__tl-box-place data) type-cache)))
 
 (define (lower-state-function-state [state : LowerState]) : CompilerLowerFunctionState
-  (match state
-    [(LowerState.State data)
-      (__tl-project-field (__tl-box-place data) function-state)]))
+  (let
+    [data : (Box LowerStateData) (lower-state-box state)]
+    (__tl-project-field (__tl-box-place data) function-state)))
 
 (define (lower-state-mode [state : LowerState]) : CompilerLowerMode
-  (match state
-    [(LowerState.State data) (__tl-project-field (__tl-box-place data) mode)]))
+  (let
+    [data : (Box LowerStateData) (lower-state-box state)]
+    (__tl-project-field (__tl-box-place data) mode)))
 
 (define (lower-masked-preheader-cache-new) : (Box LowerMaskedPreheaderCacheData)
   (box
@@ -17643,29 +17661,28 @@
       0)))
 
 (define (lower-state-masked-preheader-cache [state : LowerState]) : LowerMaybeMaskedPreheaderCache
-  (match state
-    [(LowerState.State data)
-      (let
-        [view : LowerStateData (deref data)]
-        view.masked-preheader-cache)]))
+  (let
+    [data : (Box LowerStateData) (lower-state-box state)]
+    [view : LowerStateData (deref data)]
+    view.masked-preheader-cache))
 
 (define (lower-masked-preheader-cache-set!
   [state : LowerState]
   [cache : (Box LowerMaskedPreheaderCacheData)]) : unit
-  (match state
-    [(LowerState.State data)
-      (__tl-project-set-field
-        (__tl-box-place data)
-        masked-preheader-cache
-        (LowerMaybeMaskedPreheaderCache.Some cache))]))
+  (let
+    [data : (Box LowerStateData) (lower-state-box state)]
+    (__tl-project-set-field
+      (__tl-box-place data)
+      masked-preheader-cache
+      (LowerMaybeMaskedPreheaderCache.Some cache))))
 
 (define (lower-masked-preheader-cache-disable! [state : LowerState]) : unit
-  (match state
-    [(LowerState.State data)
-      (__tl-project-set-field
-        (__tl-box-place data)
-        masked-preheader-cache
-        (LowerMaybeMaskedPreheaderCache.No))]))
+  (let
+    [data : (Box LowerStateData) (lower-state-box state)]
+    (__tl-project-set-field
+      (__tl-box-place data)
+      masked-preheader-cache
+      (LowerMaybeMaskedPreheaderCache.No))))
 
 (define (lower-masked-preheader-uniform-get
   [state : LowerState]
@@ -17794,35 +17811,35 @@
         [_ -2])]))
 
 (define (lower-state-masked-load-cache [state : LowerState]) : LowerMaybeMaskedLoadCache
-  (match state
-    [(LowerState.State data)
-      (__tl-project-field (__tl-box-place data) masked-load-cache)]))
+  (let
+    [data : (Box LowerStateData) (lower-state-box state)]
+    (__tl-project-field (__tl-box-place data) masked-load-cache)))
 
 (define (lower-masked-load-cache-enable! [state : LowerState]) : unit
-  (match state
-    [(LowerState.State data)
-      (match (__tl-project-field (__tl-box-place data) masked-load-cache)
-        [(LowerMaybeMaskedLoadCache.No)
-          (__tl-project-set-field
-            (__tl-box-place data)
-            masked-load-cache
-            (LowerMaybeMaskedLoadCache.Some
-              (box
-                (LowerMaskedLoadCacheData
-                  (__tl_make-array i64 (lower-masked-load-cache-entry-capacity))
-                  (__tl_make-array i64 (lower-masked-load-cache-entry-capacity))
-                  (__tl_make-array i64 (lower-masked-load-cache-entry-capacity))
-                  (__tl_make-array
-                    ir.CompilerIrValue
-                    (lower-masked-load-cache-entry-capacity))
-                  0
-                  (__tl_make-array i64 (lower-masked-load-cache-mask-capacity))
-                  (__tl_make-array i64 (lower-masked-load-cache-mask-capacity))
-                  0))))]
-        [(LowerMaybeMaskedLoadCache.Some cache)
-          (begin
-            (__tl-project-set-field (__tl-box-place cache) count 0)
-            (__tl-project-set-field (__tl-box-place cache) mask-count 0))])]))
+  (let
+    [data : (Box LowerStateData) (lower-state-box state)]
+    (match (__tl-project-field (__tl-box-place data) masked-load-cache)
+      [(LowerMaybeMaskedLoadCache.No)
+        (__tl-project-set-field
+          (__tl-box-place data)
+          masked-load-cache
+          (LowerMaybeMaskedLoadCache.Some
+            (box
+              (LowerMaskedLoadCacheData
+                (__tl_make-array i64 (lower-masked-load-cache-entry-capacity))
+                (__tl_make-array i64 (lower-masked-load-cache-entry-capacity))
+                (__tl_make-array i64 (lower-masked-load-cache-entry-capacity))
+                (__tl_make-array
+                  ir.CompilerIrValue
+                  (lower-masked-load-cache-entry-capacity))
+                0
+                (__tl_make-array i64 (lower-masked-load-cache-mask-capacity))
+                (__tl_make-array i64 (lower-masked-load-cache-mask-capacity))
+                0))))]
+      [(LowerMaybeMaskedLoadCache.Some cache)
+        (begin
+          (__tl-project-set-field (__tl-box-place cache) count 0)
+          (__tl-project-set-field (__tl-box-place cache) mask-count 0))])))
 
 ;; Memory effects retire values but keep the mask ancestry: the control-flow
 ;; proof remains true and can classify loads emitted after the effect.
@@ -18032,33 +18049,34 @@
 (define (lower-state-register-address-taken-var?
   [state : LowerState]
   [var-id : i64]) : bool
-  (match state
-    [(LowerState.State data)
-      (lower_i64_i64_map.contains?
-        (& (__tl-project-field (__tl-box-place data) address-taken))
-        var-id)]))
+  (let
+    [data : (Box LowerStateData) (lower-state-box state)]
+    (lower_i64_i64_map.contains?
+      (& (__tl-project-field (__tl-box-place data) address-taken))
+      var-id)))
 
 (define (lower-state-register-address-taken-mark
   [state : LowerState]
   [var-id : i64]) : LowerState
-  (match (lower-global-shared-view state)
-    [(LowerState.State data)
-      (begin
-        (lower_i64_i64_map.insert-ref!
-          (&mut (__tl-project-field (__tl-box-place data) address-taken))
-          var-id
-          1)
-        state)]))
+  (let
+    [data : (Box LowerStateData)
+      (lower-state-box (lower-global-shared-view state))]
+    (begin
+      (lower_i64_i64_map.insert-ref!
+        (&mut (__tl-project-field (__tl-box-place data) address-taken))
+        var-id
+        1)
+      state)))
 
 (define (lower-state-tail-param-start [state : LowerState]) : i64
-  (match state
-    [(LowerState.State data)
-      (__tl-project-field (__tl-box-place data) tail-param-start)]))
+  (let
+    [data : (Box LowerStateData) (lower-state-box state)]
+    (__tl-project-field (__tl-box-place data) tail-param-start)))
 
 (define (lower-state-tail-param-end [state : LowerState]) : i64
-  (match state
-    [(LowerState.State data)
-      (__tl-project-field (__tl-box-place data) tail-param-end)]))
+  (let
+    [data : (Box LowerStateData) (lower-state-box state)]
+    (__tl-project-field (__tl-box-place data) tail-param-end)))
 
 (define (lower-state-tail-param-range-contains?
   [state : LowerState]
@@ -18068,78 +18086,76 @@
     (< var-id (lower-state-tail-param-end state))))
 
 (define (lower-state-clear-tail-param-range [state : LowerState]) : LowerState
-  (match (lower-global-shared-view state)
-    [(LowerState.State data)
-      (begin
-        (__tl-project-set-field (__tl-box-place data) tail-param-start 0)
-        (__tl-project-set-field (__tl-box-place data) tail-param-end 0)
-        state)]))
+  (let
+    [data : (Box LowerStateData)
+      (lower-state-box (lower-global-shared-view state))]
+    (begin
+      (__tl-project-set-field (__tl-box-place data) tail-param-start 0)
+      (__tl-project-set-field (__tl-box-place data) tail-param-end 0)
+      state)))
 
 (define (lower-state-alloc-var [state : LowerState]) : LowerAlloc
-  (match (lower-global-shared-view state)
-    [(LowerState.State data)
-      (let
-        [next-var : i64 (__tl-project-field (__tl-box-place data) next-var)]
-        (begin
-          (__tl-project-set-field (__tl-box-place data) next-var (+ next-var 1))
-          (LowerAlloc.Alloc state next-var)))]))
+  (let
+    [data : (Box LowerStateData)
+      (lower-state-box (lower-global-shared-view state))]
+    [next-var : i64 (__tl-project-field (__tl-box-place data) next-var)]
+    (begin
+      (__tl-project-set-field (__tl-box-place data) next-var (+ next-var 1))
+      (LowerAlloc.Alloc state next-var))))
 
 (define (lower-state-next-label-number [state : LowerState]) : i64
-  (match state
-    [(LowerState.State data)
-      (__tl-project-field (__tl-box-place data) next-label)]))
+  (let
+    [data : (Box LowerStateData) (lower-state-box state)]
+    (__tl-project-field (__tl-box-place data) next-label)))
 
 (define (lower-state-fresh-label [state : LowerState] [prefix : String]) : LowerLabel
-  (match (lower-global-shared-view state)
-    [(LowerState.State data)
-      (let
-        [next-label : i64 (__tl-project-field (__tl-box-place data) next-label)]
-        (begin
-          (__tl-project-set-field
-            (__tl-box-place data)
-            next-label
-            (+ next-label 1))
-          (LowerLabel.Label
-            state
-            (ir.compiler-ir-label
-              (str_cat.str-cat prefix "." (string.int->string next-label))))))]))
+  (let
+    [data : (Box LowerStateData)
+      (lower-state-box (lower-global-shared-view state))]
+    [next-label : i64 (__tl-project-field (__tl-box-place data) next-label)]
+    (begin
+      (__tl-project-set-field (__tl-box-place data) next-label (+ next-label 1))
+      (LowerLabel.Label
+        state
+        (ir.compiler-ir-label
+          (str_cat.str-cat prefix "." (string.int->string next-label)))))))
 
 (define (lower-state-fresh-lambda-name [state : LowerState]) : LowerLambdaName
-  (match (lower-global-shared-view state)
-    [(LowerState.State data)
-      (let
-        [next-lambda : i64
-          (__tl-project-field (__tl-box-place data) next-lambda)]
-        [intern-state : ci.InternCompatState
-          (compiler-lower-state-interns
-            (let
-              [name-cache (lower-box-field-shared-view data names)]
-              (compiler-lower-state-from-name-cache name-cache)))]
-        [components : i64
-          (ci.intern-compat-state-composite-pair-id
-            (&mut intern-state)
-            (__tl-project-field (__tl-box-place data) function)
-            next-lambda)]
-        [lambda-id : i64
-          (ci.intern-compat-state-generated-role-symbol-id
-            (&mut intern-state)
-            (ci.intern-generated-symbol-role-lambda)
-            components)]
-        (begin
-          (__tl-project-set-field
-            (__tl-box-place data)
-            next-lambda
-            (+ next-lambda 1))
-          (LowerLambdaName.Name state lambda-id)))]))
+  (let
+    [data : (Box LowerStateData)
+      (lower-state-box (lower-global-shared-view state))]
+    [next-lambda : i64 (__tl-project-field (__tl-box-place data) next-lambda)]
+    [intern-state : ci.InternCompatState
+      (compiler-lower-state-interns
+        (let
+          [name-cache (lower-box-field-shared-view data names)]
+          (compiler-lower-state-from-name-cache name-cache)))]
+    [components : i64
+      (ci.intern-compat-state-composite-pair-id
+        (&mut intern-state)
+        (__tl-project-field (__tl-box-place data) function)
+        next-lambda)]
+    [lambda-id : i64
+      (ci.intern-compat-state-generated-role-symbol-id
+        (&mut intern-state)
+        (ci.intern-generated-symbol-role-lambda)
+        components)]
+    (begin
+      (__tl-project-set-field
+        (__tl-box-place data)
+        next-lambda
+        (+ next-lambda 1))
+      (LowerLambdaName.Name state lambda-id))))
 
 (define (lower-state-emit [state : LowerState] [instr : ir.CompilerIrInstr]) : LowerState
-  (match (lower-global-shared-view state)
-    [(LowerState.State data)
-      (begin
-        (ir.compiler-ir-instr-builder-push!
-          (&mut (__tl-project-field (__tl-box-place data) current-instrs))
-          instr)
-        state)]))
+  (let
+    [data : (Box LowerStateData)
+      (lower-state-box (lower-global-shared-view state))]
+    (begin
+      (ir.compiler-ir-instr-builder-push!
+        (&mut (__tl-project-field (__tl-box-place data) current-instrs))
+        instr)
+      state)))
 
 (define (lower-runtime-abort-instr? [instr : ir.CompilerIrInstr]) : bool
   (match instr
@@ -18170,34 +18186,31 @@
       (not
         (lower-state-current-decl-generated? (lower-global-shared-view state)))
       (lower-runtime-abort-instr? (lower-global-shared-view instr))))
-    (match (lower-global-shared-view state)
-      [(LowerState.State data)
-        (let
-          [pools : ast.AstNodePoolContext
-            (tc_core.tc-context-pools
-              (owned_view.compiler-owned-reference-shared-view ctx))]
-          [next-spans : ir.CompilerSourceSpans
-            (match (lower-ast-expr-span (& pools) expr)
-              [(ir.CompilerMaybeSourceSpan.Some span)
-                (ir.compiler-source-spans-insert-instr-located
-                  (lower-boxed-box-field-shared-view data spans)
-                  (ir.compiler-ir-symbol-typed-id
-                    (lower-box-field-shared-view data function))
-                  (lower-global-shared-view instr)
-                  (lower-state-current-source-path-id
-                    (lower-global-shared-view state))
-                  span)]
-              [(ir.CompilerMaybeSourceSpan.No)
-                (lower-boxed-box-field-shared-view data spans)])]
-          (begin
-            (ir.compiler-ir-instr-builder-push!
-              (&mut (__tl-project-field (__tl-box-place data) current-instrs))
-              instr)
-            (__tl-project-set-field
-              (__tl-box-place data)
-              spans
-              (box next-spans))
-            state))])
+    (let
+      [data : (Box LowerStateData)
+        (lower-state-box (lower-global-shared-view state))]
+      [pools : ast.AstNodePoolContext
+        (tc_core.tc-context-pools
+          (owned_view.compiler-owned-reference-shared-view ctx))]
+      [next-spans : ir.CompilerSourceSpans
+        (match (lower-ast-expr-span (& pools) expr)
+          [(ir.CompilerMaybeSourceSpan.Some span)
+            (ir.compiler-source-spans-insert-instr-located
+              (lower-boxed-box-field-shared-view data spans)
+              (ir.compiler-ir-symbol-typed-id
+                (lower-box-field-shared-view data function))
+              (lower-global-shared-view instr)
+              (lower-state-current-source-path-id
+                (lower-global-shared-view state))
+              span)]
+          [(ir.CompilerMaybeSourceSpan.No)
+            (lower-boxed-box-field-shared-view data spans)])]
+      (begin
+        (ir.compiler-ir-instr-builder-push!
+          (&mut (__tl-project-field (__tl-box-place data) current-instrs))
+          instr)
+        (__tl-project-set-field (__tl-box-place data) spans (box next-spans))
+        state))
     (lower-state-emit state instr)))
 
 ;; Bounds-check helpers emit their BoundsCheck before the final GEP/load and do
@@ -18219,33 +18232,33 @@
       (match (lower-ast-expr-span (& pools) expr)
         [(ir.CompilerMaybeSourceSpan.No) state]
         [(ir.CompilerMaybeSourceSpan.Some span)
-          (match (lower-global-shared-view state)
-            [(LowerState.State data)
-              (let
-                [bounds-label : i64
-                  (ir.compiler-ir-label
-                    (str_cat.str-cat
-                      (str_cat.str-cat label-prefix ".")
-                      (string.int->string
-                        (- (lower-box-field-shared-view data next-label) 1))))]
-                [next-spans : ir.CompilerSourceSpans
-                  (ir.compiler-source-spans-insert-instr-located
-                    (lower-boxed-box-field-shared-view data spans)
-                    (ir.compiler-ir-symbol-typed-id
-                      (lower-box-field-shared-view data function))
-                    (ir.CompilerIrInstr.BoundsCheck
-                      ir.CompilerIrValue.Unit
-                      ir.CompilerIrValue.Unit
-                      bounds-label)
-                    (lower-state-current-source-path-id
-                      (lower-global-shared-view state))
-                    span)]
-                (begin
-                  (__tl-project-set-field
-                    (__tl-box-place data)
-                    spans
-                    (box next-spans))
-                  state))])]))))
+          (let
+            [data : (Box LowerStateData)
+              (lower-state-box (lower-global-shared-view state))]
+            [bounds-label : i64
+              (ir.compiler-ir-label
+                (str_cat.str-cat
+                  (str_cat.str-cat label-prefix ".")
+                  (string.int->string
+                    (- (lower-box-field-shared-view data next-label) 1))))]
+            [next-spans : ir.CompilerSourceSpans
+              (ir.compiler-source-spans-insert-instr-located
+                (lower-boxed-box-field-shared-view data spans)
+                (ir.compiler-ir-symbol-typed-id
+                  (lower-box-field-shared-view data function))
+                (ir.CompilerIrInstr.BoundsCheck
+                  ir.CompilerIrValue.Unit
+                  ir.CompilerIrValue.Unit
+                  bounds-label)
+                (lower-state-current-source-path-id
+                  (lower-global-shared-view state))
+                span)]
+            (begin
+              (__tl-project-set-field
+                (__tl-box-place data)
+                spans
+                (box next-spans))
+              state))]))))
 
 (define (lower-state-record-latest-bounds-check-at-expr
   [ctx : (& ctx tc_core.TcContext)]
@@ -18258,44 +18271,40 @@
     expr))
 
 (define (lower-state-finish-block [state : LowerState] [next-label : i64]) : LowerState
-  (match (lower-global-shared-view state)
-    [(LowerState.State data)
-      (let
-        [current-label : i64 (lower-box-field-shared-view data current-label)]
-        [current-instrs : ir.CompilerIrInstrBuilder
-          (lower-box-field-shared-view data current-instrs)]
-        (begin
-          (ir.compiler-ir-block-builder-push!
-            (&mut (__tl-project-field (__tl-box-place data) blocks))
-            (ir.CompilerIrBlock.Block
-              current-label
-              (ir.compiler-ir-instr-builder-to-seq current-instrs)))
-          (__tl-project-set-field
-            (__tl-box-place data)
-            current-label
-            next-label)
-          (__tl-project-set-field
-            (__tl-box-place data)
-            current-instrs
-            (ir.compiler-ir-instr-builder-new))
-          state))]))
+  (let
+    [data : (Box LowerStateData)
+      (lower-state-box (lower-global-shared-view state))]
+    [current-label : i64 (lower-box-field-shared-view data current-label)]
+    [current-instrs : ir.CompilerIrInstrBuilder
+      (lower-box-field-shared-view data current-instrs)]
+    (begin
+      (ir.compiler-ir-block-builder-push!
+        (&mut (__tl-project-field (__tl-box-place data) blocks))
+        (ir.CompilerIrBlock.Block
+          current-label
+          (ir.compiler-ir-instr-builder-to-seq current-instrs)))
+      (__tl-project-set-field (__tl-box-place data) current-label next-label)
+      (__tl-project-set-field
+        (__tl-box-place data)
+        current-instrs
+        (ir.compiler-ir-instr-builder-new))
+      state)))
 
 (define (lower-state-build-blocks [state : LowerState]) : ir.CompilerIrBlockList
-  (match state
-    [(LowerState.State data)
-      (let
-        [current-block : ir.CompilerIrBlock
-          (ir.CompilerIrBlock.Block
-            (lower-box-field-shared-view data current-label)
-            (ir.compiler-ir-instr-builder-to-seq
-              (lower-box-field-shared-view data current-instrs)))]
-        [blocks : ir.CompilerIrBlockBuilder
-          (lower-box-field-shared-view data blocks)]
-        [next-blocks : ir.CompilerIrBlockBuilder
-          (ir.CompilerIrBlockBuilder blocks.slots blocks.len)]
-        (begin
-          (ir.compiler-ir-block-builder-push! (&mut next-blocks) current-block)
-          (ir.compiler-ir-block-builder-to-list next-blocks)))]))
+  (let
+    [data : (Box LowerStateData) (lower-state-box state)]
+    [current-block : ir.CompilerIrBlock
+      (ir.CompilerIrBlock.Block
+        (lower-box-field-shared-view data current-label)
+        (ir.compiler-ir-instr-builder-to-seq
+          (lower-box-field-shared-view data current-instrs)))]
+    [blocks : ir.CompilerIrBlockBuilder
+      (lower-box-field-shared-view data blocks)]
+    [next-blocks : ir.CompilerIrBlockBuilder
+      (ir.CompilerIrBlockBuilder blocks.slots blocks.len)]
+    (begin
+      (ir.compiler-ir-block-builder-push! (&mut next-blocks) current-block)
+      (ir.compiler-ir-block-builder-to-list next-blocks))))
 
 (define (lower-state-build-function-blocks [state : LowerState]) : ir.CompilerIrBlockList
   (lower-state-build-blocks state))
@@ -18303,29 +18312,29 @@
 (define (lower-state-build-functions-with
   [state : LowerState]
   [func : ir.CompilerIrFunction]) : ir.CompilerIrFunctionSeq
-  (match state
-    [(LowerState.State data)
-      (let
-        [functions : ir.CompilerIrFunctionBuilder
-          (lower-box-field-shared-view data functions)]
-        [out : ir.CompilerIrFunctionBuilder
-          (ir.CompilerIrFunctionBuilder functions.slots functions.len)]
-        (begin
-          (ir.compiler-ir-function-builder-push! (&mut out) func)
-          (ir.compiler-ir-function-builder-to-seq out)))]))
+  (let
+    [data : (Box LowerStateData) (lower-state-box state)]
+    [functions : ir.CompilerIrFunctionBuilder
+      (lower-box-field-shared-view data functions)]
+    [out : ir.CompilerIrFunctionBuilder
+      (ir.CompilerIrFunctionBuilder functions.slots functions.len)]
+    (begin
+      (ir.compiler-ir-function-builder-push! (&mut out) func)
+      (ir.compiler-ir-function-builder-to-seq out))))
 
 (define (lower-state-add-functions
   [state : LowerState]
   [new-functions : ir.CompilerIrFunctionSeq]
   [new-spans : ir.CompilerSourceSpans]) : LowerState
-  (match (lower-global-shared-view state)
-    [(LowerState.State data)
-      (begin
-        (ir.compiler-ir-function-builder-append-seq!
-          (&mut (__tl-project-field (__tl-box-place data) functions))
-          new-functions)
-        (__tl-project-set-field (__tl-box-place data) spans (box new-spans))
-        state)]))
+  (let
+    [data : (Box LowerStateData)
+      (lower-state-box (lower-global-shared-view state))]
+    (begin
+      (ir.compiler-ir-function-builder-append-seq!
+        (&mut (__tl-project-field (__tl-box-place data) functions))
+        new-functions)
+      (__tl-project-set-field (__tl-box-place data) spans (box new-spans))
+      state)))
 
 (define (lower-materialize
   [state : LowerState]
@@ -68584,12 +68593,12 @@
                 (lower-state-finish-block
                   (lower-state-emit s (ir.CompilerIrInstr.Jump preheader-label))
                   preheader-label))
-              (match (lower-global-shared-view s)
-                [(LowerState.State data)
-                  (let
-                    [blocks : ir.CompilerIrBlockBuilder
-                      (lower-box-field-shared-view data blocks)]
-                    (set! preheader-block-index blocks.len))])
+              (let
+                [data : (Box LowerStateData)
+                  (lower-state-box (lower-global-shared-view s))]
+                [blocks : ir.CompilerIrBlockBuilder
+                  (lower-box-field-shared-view data blocks)]
+                (set! preheader-block-index blocks.len))
               (set!
                 s
                 (lower-state-finish-block
@@ -68742,19 +68751,17 @@
                         vector-start-ok
                         header-label
                         tail-header-label))
-                    (match (lower-global-shared-view s)
-                      [(LowerState.State data)
-                        (let
-                          [blocks : ir.CompilerIrBlockBuilder
-                            (lower-box-field-shared-view data blocks)]
-                          (set!
-                            (array-ref blocks.slots preheader-block-index)
-                            (ir.CompilerIrBlock.Block
-                              preheader-label
-                              (ir.compiler-ir-instr-builder-to-seq
-                                (lower-box-field-shared-view
-                                  cache
-                                  uniform-instrs)))))]))]
+                    (let
+                      [data : (Box LowerStateData)
+                        (lower-state-box (lower-global-shared-view s))]
+                      [blocks : ir.CompilerIrBlockBuilder
+                        (lower-box-field-shared-view data blocks)]
+                      (set!
+                        (array-ref blocks.slots preheader-block-index)
+                        (ir.CompilerIrBlock.Block
+                          preheader-label
+                          (ir.compiler-ir-instr-builder-to-seq
+                            (lower-box-field-shared-view cache uniform-instrs))))))]
                 [(LowerMaybeMaskedPreheaderCache.No) unit])
               (lower-masked-preheader-cache-disable!
                 (lower-global-shared-view s))

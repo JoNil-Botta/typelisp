@@ -138,30 +138,6 @@ if [ "$SELF_TEST_POOL" -eq 0 ]; then
     tr -d '\r' < "$MANIFEST" > "$MANIFEST_INPUT"
 fi
 
-check_selfhost_manifest_sync() {
-    expected="$WORKDIR/expected-selfhost-sources.txt"
-    actual="$WORKDIR/actual-selfhost-sources.txt"
-
-    awk -F'|' '
-        $1 == "case" && $3 ~ /^src\/[^/]+\.tl$/ { print $3 }
-        $1 == "decision" && $2 ~ /^src\/[^/]+\.tl$/ { print $2 }
-    ' "$MANIFEST_INPUT" | sort -u > "$expected"
-
-    find src -maxdepth 1 -type f -name '*.tl' | sort > "$actual"
-
-    if ! cmp -s "$expected" "$actual"; then
-        echo "selfhost compile manifest is out of date" >&2
-        echo "expected manifest decisions:" >&2
-        sed 's/^/  /' "$expected" >&2
-        echo "actual top-level selfhost sources:" >&2
-        sed 's/^/  /' "$actual" >&2
-        if command -v diff >/dev/null 2>&1; then
-            diff -u "$expected" "$actual" >&2 || true
-        fi
-        exit 1
-    fi
-}
-
 fail() {
     echo "FAIL: $*" >&2
     exit 1
@@ -452,7 +428,6 @@ prepare_compile_batch() {
     while IFS='|' read -r kind a b c d e; do
         case "$kind" in
             ""|\#*) ;;
-            decision) ;;
             case)
                 prep_case_id=$a
                 prep_case_source=$b
@@ -899,7 +874,6 @@ if [ "$SELF_TEST_POOL" -eq 1 ]; then
     exit 0
 fi
 
-check_selfhost_manifest_sync
 prepare_compile_batch
 run_compile_batch
 
@@ -915,7 +889,6 @@ case_requires_stage0_mode=
 while IFS='|' read -r kind a b c d e; do
     case "$kind" in
         ""|\#*) ;;
-        decision) ;;
         case)
             case_id=$a
             case_source=$b

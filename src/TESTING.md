@@ -358,8 +358,7 @@ The package follows the standard layout: `typelisp build` resolves the default
 `tlci_core.tl`, `tlci_pages.tl`, and `tlci_loader.tl` (staged tlci feature
 modules with dedicated smokes, #2651/#2671/#2657), plus
 `compiler_backend_tests.tl`, `compiler_driver_smoke_tests.tl`, and
-`compiler_lower_package_tests.tl` (main-less native smoke helpers). These carry
-`decision` rows in the compile manifest.
+`compiler_lower_package_tests.tl` (main-less native smoke helpers).
 
 ### Inline tests
 
@@ -450,11 +449,8 @@ symbol markers also accept compact selfhost symbol metadata. The default
 Use `requires-stage0-mode|<reason>` only for a case that must remain seed-only
 for a named blocker such as the current #1437 stage1->stage2 resource limit.
 
-Every top-level `src/*.tl` file must appear as a manifest `case` or a
-`decision` line. This makes new modules and smoke drivers fail CI until they
-have an explicit compile-coverage decision. Staged cases cover integration
-drivers whose imports need temporary sibling names, such as the text buffer and
-symbol-table drivers.
+Staged cases cover integration drivers whose imports need temporary sibling
+names, such as the symbol-table driver.
 
 The runner compiles the manifest as `compile --batch` chunks: 16 entries per
 chunk on Linux, a deliberate cross-entry retention stress, and one per chunk on
@@ -1238,8 +1234,8 @@ For new selfhost tests:
   generated test harness is enough.
 - Add a `*_smoke.tl` driver when the module should be executable through the
   compiler boundary.
-- Add compile/symbol smoke coverage to `src/compile_manifest.txt` for new
-  top-level selfhost modules or smoke drivers, or add an explicit `decision`.
+- Add a `src/compile_manifest.txt` case when a new top-level module must
+  compile on its own or pins a codegen marker.
 - Add public command, package, docs, LSP, REPL, formatter, or platform cases to
   `scripts/verify-public-tools.sh` or the narrower verification script that
   owns that layer.

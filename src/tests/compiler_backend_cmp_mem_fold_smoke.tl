@@ -14,6 +14,7 @@
 ;; too, so a fold that changed a check's sense would abort here instead of
 ;; returning.
 (import stdlib.io)
+(import stdlib.string)
 
 (define cmp-mem-fold-smoke-n : i64
   257)
@@ -182,6 +183,49 @@
             (set! i (+ i 1)))))
       total)))
 
+;; M6-J: byte-width compares that read the element in place, with no widening
+;; cast between the load and the compare -- an equality and an unsigned ordered
+;; compare against literals, a register operand on the compare's left and on its
+;; right, and a char scan against a char literal (the `string-ref` shape of a
+;; path or token scanner). Each compare reads a DIFFERENT array so every load
+;; stays single use; opt0 keeps the loads, so the printed total is the parity.
+(define (cmp-mem-fold-smoke-bytes-fill
+  [bytes : (&mut bytes (__tl_dyn-array u8))]
+  [seed : i64]) : unit
+  (let
+    [i : i64 0]
+    [state : i64 seed]
+    (while (< i (array-length bytes))
+      (begin
+        (set! state (bit-and (+ (* state 1103515245) 12345) 2147483647))
+        (set! (array-ref bytes i) (cast (bit-and (shr state 7) 127) : u8))
+        (set! i (+ i 1))))))
+
+(define (cmp-mem-fold-smoke-bytes
+  [a : (& a (__tl_dyn-array u8))]
+  [b : (& b (__tl_dyn-array u8))]
+  [c : (& c (__tl_dyn-array u8))]
+  [d : (& d (__tl_dyn-array u8))]
+  [text : (& text str)]
+  [key : u8]) : i64
+  (let
+    [i : i64 0]
+    [total : i64 0]
+    (begin
+      (while (< i (array-length a))
+        (begin
+          (when (= (array-ref a i) (cast 47 : u8)) (set! total (+ total 1)))
+          (when (< (array-ref b i) (cast 100 : u8)) (set! total (+ total 3)))
+          (when (< key (array-ref c i)) (set! total (+ total 7)))
+          (when (!= (array-ref d i) key) (set! total (+ total 11)))
+          (set! i (+ i 1))))
+      (set! i 0)
+      (while (< i (string.string-length text))
+        (begin
+          (when (!= (string.string-ref text i) '/') (set! total (+ total 13)))
+          (set! i (+ i 1))))
+      total)))
+
 (define (main) : i64
   (let
     [flags : (__tl_dyn-array i64) (__tl_make-array i64 cmp-mem-fold-smoke-n)]
@@ -233,6 +277,29 @@
             12345)))
         (io.panic "cmp-mem fold: accumulator ALU parity mismatch")
         unit)
+      (let
+        [bytes-a : (__tl_dyn-array u8)
+          (__tl_make-array u8 cmp-mem-fold-smoke-n)]
+        [bytes-b : (__tl_dyn-array u8)
+          (__tl_make-array u8 cmp-mem-fold-smoke-n)]
+        [bytes-c : (__tl_dyn-array u8)
+          (__tl_make-array u8 cmp-mem-fold-smoke-n)]
+        [bytes-d : (__tl_dyn-array u8)
+          (__tl_make-array u8 cmp-mem-fold-smoke-n)]
+        (begin
+          (cmp-mem-fold-smoke-bytes-fill (&mut bytes-a) 7)
+          (cmp-mem-fold-smoke-bytes-fill (&mut bytes-b) 8)
+          (cmp-mem-fold-smoke-bytes-fill (&mut bytes-c) 9)
+          (cmp-mem-fold-smoke-bytes-fill (&mut bytes-d) 10)
+          (io.println
+            "cmp-mem fold smoke: bytes={}"
+            (cmp-mem-fold-smoke-bytes
+              (& bytes-a)
+              (& bytes-b)
+              (& bytes-c)
+              (& bytes-d)
+              "/usr/local//lib/typelisp/x/"
+              (cast 64 : u8)))))
       (io.println
         "cmp-mem fold smoke: compares={} words={} indirect={} acc={}"
         (cmp-mem-fold-smoke-folded (& flags) (& marks))

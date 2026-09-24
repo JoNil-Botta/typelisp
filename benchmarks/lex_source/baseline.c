@@ -5,7 +5,7 @@
  * in benchmarks/lex_source/data/corpus.tl-txt is a byte-for-byte concatenation
  * of src/lex.tl, src/compiler_liveness.tl, src/compiler_symbols.tl and
  * src/compiler_lower.tl, produced by
- * benchmarks/lex_source/tools/export_corpus.py.
+ * a since-deleted Python tool (see README.md).
  *
  * The classifier, the scanners, the token-kind numbering, and the line/column
  * tracking mirror src/lex.tl `lex-into-spanned-tokens-result` and its helpers

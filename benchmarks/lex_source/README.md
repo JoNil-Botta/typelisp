@@ -38,12 +38,11 @@ about 1.0G retired instructions for the TypeLisp build.
 
 ## Regenerating the corpus
 
-From the repository root:
-
-```sh
-python3 benchmarks/lex_source/tools/export_corpus.py
-```
-
-The module list lives in `tools/export_corpus.py` (`SOURCES`). Regeneration is
-deterministic, but any change to the listed modules changes the corpus and
-therefore the benchmark checksum.
+The corpus is frozen: the committed `Ir` baselines pin it byte for byte. It was
+exported at commit `5fce734af` (#5989) by a Python exporter that read the
+checked-in compiler sources of that time. The exporter and its regeneration
+commands were deleted once the corpus was committed;
+`git log --diff-filter=D -- benchmarks/lex_source/tools` finds the deleting
+commit, whose parent still has both, including the exporter's header that
+documents the full corpus format. Later language migrations edited the corpus in
+place; `git log -- benchmarks/lex_source/data` lists them.

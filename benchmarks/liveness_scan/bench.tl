@@ -6,7 +6,7 @@
 ;# and use/def sets the compiler's own liveness pass consumes when it lowers
 ;# src/compiler_liveness.tl (2087 functions, 12172 blocks, that module plus
 ;# every module it imports), captured from `typelisp compile --dump-ir` by
-;# benchmarks/liveness_scan/tools/export_cfgs.py without modifying the compiler.
+;# a since-deleted Python tool without modifying the compiler (see README.md).
 ;# The block order in the corpus is the dump order, which is the lowering's
 ;# deterministic reverse postorder - the order the worklist walks backwards.
 ;#

@@ -122,7 +122,7 @@ Layout: format version, program count, then per program
 `name-id nblocks nedges nrefs`, `nedges` `src dst` pairs and `nrefs`
 `block callee-name-id kind` triples. `#` starts a comment to end of line. The
 grammar, the reference kinds and the two self-check quantities are documented
-at the top of `tools/export_callgraph.py`.
+in the exporter's header (see Regeneration).
 
 `name-id` is a 64-bit FNV-1a of the function's mangled name text, masked to 62
 bits. The compiler keys `OptFunctionNameIndex.ids` by the name's interned
@@ -162,37 +162,17 @@ The two whole-compiler modules `compiler_load` and `compiler_regalloc` used by
 `cfg_domloops` and `gvn_table` are **not** in this corpus: the per-pass dump
 path clones the accumulated snapshot buffer on every observation, so its memory
 is quadratic in the function count and both modules OOM at 16 GB. Ten modules
-in the ~250–2000 function range were dumped instead. Regenerating `--dump-ir`
-of any compiler module with a current-main compiler segfaults; that is tracked
-by the orchestrator, and the snapshot route below is the supported one, exactly
-as in `benchmarks/gvn_table/README.md`.
+in the ~250–2000 function range were dumped instead.
 
 ### Regeneration
 
-```sh
-# 1. snapshot compiler and its own sources (git archive 98bdc6f5 src stdlib)
-S=<extracted 98bdc6f5 sources>; TL=<snapshot typelisp 98bdc6f5>
-
-# 2. dump each module at the first opt1 dump point
-for M in lex read format_rules format_tokens token compiler_object_elf \
-         package_lock_core tlci_loader compiler_clone compiler_diagnostic; do
-  systemd-run --user --scope -q -p MemoryMax=32G -p MemorySwapMax=0 \
-      $TL compile $S/src/$M.tl --dump-ir after-fold -o /tmp/$M.fold.opt1.ir \
-      --stdlib-root $S/stdlib --stdlib-root $S/src --opt-level 1
-done
-
-# 3. export (the source order is part of the corpus identity)
-python3 benchmarks/callgraph_scc/tools/export_callgraph.py \
-    benchmarks/callgraph_scc/data/callgraph.txt \
-    /tmp/lex.fold.opt1.ir /tmp/read.fold.opt1.ir \
-    /tmp/format_rules.fold.opt1.ir /tmp/format_tokens.fold.opt1.ir \
-    /tmp/token.fold.opt1.ir /tmp/compiler_object_elf.fold.opt1.ir \
-    /tmp/package_lock_core.fold.opt1.ir /tmp/tlci_loader.fold.opt1.ir \
-    /tmp/compiler_clone.fold.opt1.ir /tmp/compiler_diagnostic.fold.opt1.ir
-```
-
-The exporter writes the corpus byte-identically from the same inputs; only the
-`# sources:` comment records the paths it was given.
+The corpus is frozen: the committed `Ir` baselines pin it byte for byte. It was
+exported at commit `933fdf56c` (#7382) by a Python exporter that read the
+snapshot compiler's `--dump-ir` output of that time. The exporter and its
+regeneration commands were deleted once the corpus was committed;
+`git log --diff-filter=D -- benchmarks/callgraph_scc/tools` finds the deleting
+commit, whose parent still has both, including the exporter's header that
+documents the full corpus format.
 
 ## Design parameters
 

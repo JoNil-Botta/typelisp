@@ -90,7 +90,8 @@ Layout: type count, then per type `byte-width is-integer-or-char-or-bool`; then
 function count, then per function `nvars nheaders nblocks`, the header var ids,
 then per block the instruction count followed by fixed 6-integer rows
 `op dst a b c d`. `#` starts a comment to end of line. The opcode table and the
-meaning of every field are documented at the top of `tools/export_gvn_tape.py`.
+meaning of every field are documented in the exporter's header (see
+Regeneration).
 
 Provenance: the `--dump-ir after-ssa` text of `src/compiler_load.tl` and
 `src/compiler_regalloc.tl`, compiled by the snapshot compiler at
@@ -103,23 +104,13 @@ instead of truncating to its stdlib-heavy prefix.
 
 ### Regeneration
 
-```sh
-# 1. snapshot the compiler (concurrent activity in the tree)
-cp target/bootstrap-fixpoint/stage2 /tmp/tlsnap && chmod +x /tmp/tlsnap
-
-# 2. dump the two modules
-/tmp/tlsnap compile src/compiler_load.tl --dump-ir after-ssa \
-    -o /tmp/compiler_load.ssa.ir \
-    --stdlib-root stdlib --stdlib-root src --opt-level 2
-/tmp/tlsnap compile src/compiler_regalloc.tl --dump-ir after-ssa \
-    -o /tmp/compiler_regalloc.ssa.ir \
-    --stdlib-root stdlib --stdlib-root src --opt-level 2
-
-# 3. export (byte budget and source order are part of the corpus identity)
-python3 benchmarks/gvn_table/tools/export_gvn_tape.py \
-    benchmarks/gvn_table/data/gvn-tape.txt 3000000 \
-    /tmp/compiler_load.ssa.ir /tmp/compiler_regalloc.ssa.ir
-```
+The corpus is frozen: the committed `Ir` baselines pin it byte for byte. It was
+exported at commit `5fce734af` (#5989) by a Python exporter that read the
+snapshot compiler's `--dump-ir` output of that time. The exporter and its
+regeneration commands were deleted once the corpus was committed;
+`git log --diff-filter=D -- benchmarks/gvn_table/tools` finds the deleting
+commit, whose parent still has both, including the exporter's header that
+documents the full corpus format.
 
 ## Design parameters
 

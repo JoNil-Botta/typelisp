@@ -73,7 +73,7 @@
 ;#
 ;# SELF-CHECK: one pass over the corpus must read exactly 3,002 top-level forms
 ;# and push exactly 270,063 nodes into the pool - both computed independently by
-;# tools/export_tokens.py replaying the same descent. Both are asserted and
+;# the corpus exporter replaying the same descent. Both are asserted and
 ;# folded into the checksum.
 ;#
 ;# The corpus path and the round count are runtime arguments, so nothing can be
@@ -633,7 +633,7 @@
 (define rs-nodes : i64
   0)
 
-;; The values tools/export_tokens.py computes by replaying the same descent over
+;; The values the corpus exporter computed by replaying the same descent over
 ;; data/tokens.txt. Any drift in the reader or the corpus fails here.
 (define rs-expect-forms : i64
   3002)

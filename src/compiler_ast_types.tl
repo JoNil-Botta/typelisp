@@ -3987,6 +3987,19 @@
   [pools : (& pools AstNodePoolContext)]) : AstNodePoolContext
   (AstNodePoolContext pools.expr-pool pools.type-pool pools.owner-arena))
 
+;; Independent state cells holding deep copies of both states: what `clone`
+;; of a context produced while the context held its cells as dynamic arrays.
+(define (ast-node-pool-context-clone [pools : AstNodePoolContext]) : AstNodePoolContext
+  (let
+    [expr-cell : (__tl_dyn-array AstExprNodePoolState)
+      (__tl_make-array (clone (ast-expr-pool-cell-read pools.expr-pool)))]
+    [type-cell : (__tl_dyn-array AstTypeNodePoolState)
+      (__tl_make-array (clone (ast-type-pool-cell-read pools.type-pool)))]
+    (AstNodePoolContext
+      (ast-pool-cell-descriptor expr-cell)
+      (ast-pool-cell-descriptor type-cell)
+      pools.owner-arena)))
+
 ;; Pool snapshots can retain different state cells while sharing the same
 ;; stable segmented storage. Publish the newer cursor/dedup state between those
 ;; cells without changing either context's stable arena root.

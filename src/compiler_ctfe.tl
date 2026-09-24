@@ -11621,7 +11621,7 @@
                   (CompilerCtfeValue.CapturedExpr
                     (ctfe-expr-clause-first clause)
                     (ctfe-untyped-expr-type)
-                    (clone pools))
+                    (ast.ast-node-pool-context-clone pools))
                   (CompilerCtfeValue.CapturedExpr
                     (ctfe-expr-clause-second clause)
                     (ctfe-untyped-expr-type)
@@ -20229,11 +20229,15 @@
           cbi.compiler-builtin-id-fix-len
           expr)
         (compiler-ctfe-structural-field-ok?
-          (CompilerCtfeValue.CapturedExprList (clone exprs) (clone pools))
+          (CompilerCtfeValue.CapturedExprList
+            (clone exprs)
+            (ast.ast-node-pool-context-clone pools))
           cbi.compiler-builtin-id-fix-items
           expr)
         (compiler-ctfe-structural-field-ok?
-          (CompilerCtfeValue.CapturedExprList (clone exprs) (clone pools))
+          (CompilerCtfeValue.CapturedExprList
+            (clone exprs)
+            (ast.ast-node-pool-context-clone pools))
           cbi.compiler-builtin-id-fix-len
           expr)
         (compiler-ctfe-structural-field-ok?
@@ -20245,11 +20249,15 @@
           cbi.compiler-builtin-id-fix-second
           expr)
         (compiler-ctfe-structural-field-ok?
-          (CompilerCtfeValue.CapturedExprClause (clone clause) (clone pools))
+          (CompilerCtfeValue.CapturedExprClause
+            (clone clause)
+            (ast.ast-node-pool-context-clone pools))
           cbi.compiler-builtin-id-fix-first
           expr)
         (compiler-ctfe-structural-field-ok?
-          (CompilerCtfeValue.CapturedExprClause (clone clause) (clone pools))
+          (CompilerCtfeValue.CapturedExprClause
+            (clone clause)
+            (ast.ast-node-pool-context-clone pools))
           cbi.compiler-builtin-id-fix-second
           expr)
         (compiler-ctfe-structural-field-ok?
@@ -20263,13 +20271,13 @@
         (compiler-ctfe-structural-field-ok?
           (CompilerCtfeValue.CapturedExprClauseList
             (clone clauses)
-            (clone pools))
+            (ast.ast-node-pool-context-clone pools))
           cbi.compiler-builtin-id-fix-items
           expr)
         (compiler-ctfe-structural-field-ok?
           (CompilerCtfeValue.CapturedExprClauseList
             (clone clauses)
-            (clone pools))
+            (ast.ast-node-pool-context-clone pools))
           cbi.compiler-builtin-id-fix-len
           expr)
         (compiler-ctfe-structural-field-ok?

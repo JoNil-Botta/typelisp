@@ -1,7 +1,7 @@
 # ci-gate-ledger-schema	2
-# count	all	123
-# count	linux	120
-# count	windows	106
+# count	all	122
+# count	linux	119
+# count	windows	105
 id	hosts	label	needs
 cli-gate-inventory-and-ownership	all	CLI gate inventory and ownership	-
 ci-gate-ledger-self-tests	all	CI gate ledger self-tests	-
@@ -18,7 +18,6 @@ build-invariance-batch-reuse-self-tests	linux	build-invariance batch reuse self-
 ci-compiler-artifact-provenance-self-tests	all	CI compiler artifact provenance self-tests	-
 ci-compiler-artifact-startup-self-tests	all	CI compiler artifact startup self-tests	-
 selfhost-linked-size-attribution-parser-self-tests	all	selfhost linked-size attribution parser self-tests	-
-bootstrap-seed-global-shared-view-probe-self-tests	all	bootstrap seed global shared-view probe self-tests	-
 cli-help-surface	all	CLI help surface	-
 ci-timing-budget-self-tests	all	CI timing budget self-tests	-
 tlci-native-route-size-ratchet-self-tests	all	TLCI native route size ratchet self-tests	-

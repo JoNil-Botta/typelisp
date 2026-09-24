@@ -8,7 +8,9 @@ Thanks for your interest! This is a learning project — all contributions welco
 2. Fetch the published self-hosted stage0 compiler: `scripts/fetch-stage0.sh`
    (or `powershell -ep Bypass -f scripts\fetch-stage0.ps1` on Windows). It
    installs as `target/stage0/typelisp` (Linux) or `target/stage0/typelisp.exe`
-   (Windows).
+   (Windows). The minimum supported seed is a stage0 published on or after
+   2026-08-30; refetch if yours is older. The bootstrap has no compatibility
+   bridges for older seeds.
 3. You also need a native toolchain: `as` + `ld` on Linux, or `clang` + MSVC
    `link.exe` + a Windows SDK on Windows, for build/run.
 4. Run the verification gate: `scripts/ci-verify.sh`.

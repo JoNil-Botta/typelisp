@@ -324,14 +324,6 @@ run_gate \
     selfhost-linked-size-attribution-parser-self-tests \
     scripts/analyze-selfhost-build-asm-size.sh \
     --self-test
-# The seed capability probe that decides the legacy global shared-view cfg only
-# ever runs one branch per bootstrap, and the branch a published seed selects
-# changes under CI without any source change (#6385). Cover all three branches
-# with stub compilers so a mis-selected cfg fails here, not in the publication
-# workflow that CI never rehearses.
-run_gate \
-    bootstrap-seed-global-shared-view-probe-self-tests \
-    scripts/verify-bootstrap-seed-global-views.sh
 # Help text lives in src/main.tl and option parsing in src/<name>_cli_core.tl,
 # so a flag can be added without the text moving. The existing CLI gates assert
 # that help output exists, not that it matches what the parser accepts.
@@ -552,7 +544,7 @@ if ci_gate_selected bootstrap-fixpoint; then
     fi
     STAGE2_BIN=$(sed -n '1p' "$STAGE2_PATH_FILE")
     ensure_executable "bootstrapped compiler" "$STAGE2_BIN"
-    CI_ARTIFACT_BOOTSTRAP_SOURCES='src,stdlib,typelisp.pkg,tools/embedded-stdlib-tlci,scripts/check-bootstrap-fixpoint.sh,scripts/lib-native-link.sh,scripts/lib-bootstrap-ctfe.sh,scripts/lib-bootstrap-fixpoint-control.sh,scripts/build-embedded-stdlib-tlci.sh'
+    CI_ARTIFACT_BOOTSTRAP_SOURCES='src,stdlib,typelisp.pkg,tools/embedded-stdlib-tlci,scripts/check-bootstrap-fixpoint.sh,scripts/lib-native-link.sh,scripts/lib-bootstrap-fixpoint-control.sh,scripts/build-embedded-stdlib-tlci.sh'
     CI_ARTIFACT_BOOTSTRAP_CFG='compiler-build-identity,embedded-stdlib-tlci,host-defaults'
     CI_ARTIFACT_BOOTSTRAP_ENV='TYPELISP_BOOTSTRAP_CFG=<unset>,TYPELISP_BOOTSTRAP_TLCI_MUTATION=0,TYPELISP_BOOTSTRAP_SKIP_CLI_SMOKE=0'
     CI_ARTIFACT_BOOTSTRAP_ARGV='scripts/check-bootstrap-fixpoint.sh {producer}'

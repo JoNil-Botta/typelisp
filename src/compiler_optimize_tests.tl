@@ -26547,8 +26547,12 @@
                 (compiler_ir_types.compiler-ir-label "latch")
                 (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
             (compiler_ast_types.AstType.I64))
+          ;; `idx`, not `tag`: the builder's own loop exits only on a false
+          ;; `tag`, so a header testing `tag` again would be decided dead below
+          ;; the inlined body by the flag's own test, and the priced plan would
+          ;; measure that fixture artifact instead of the site.
           (compiler_ir_types.CompilerIrInstr.Branch
-            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.CompilerIrValue.Var 1)
             (compiler_ir_types.compiler-ir-label "body")
             (compiler_ir_types.compiler-ir-label "exit"))))
       (compiler_ir_types.compiler-ir-block-cons
@@ -64015,6 +64019,362 @@
     (compiler-optimize-flag-exit-self-test)
     42
     "a loop-carried bool that only clears becomes a direct exit jump at the clear site, adds no exit predecessor, and rejects every shape that could observe the retired flag"))
+
+;; --- flag values a dominating branch decided ----------------------------------
+;; entry tests the flag %0 and only `outer` is below its true edge, so %0 is
+;; true in `outer` and everything it dominates. bounds_dom's rewrite
+;; (branches only):
+;;   * `body`'s re-test of %0 becomes `branch true`;
+;;   * the loop header's seed is left for flag_exit, so it stays %0;
+;;   * `join` is not a loop header, so its %0 input stays %0 even though the
+;;     fact holds in `left` -- a flag's in-loop web is flag_exit's to read;
+;;   * entry's own test, above the fact, stays %0.
+;; flag_exit's seed trial for `head`:
+;;   * the header's SEED input (from `outer`, a forward edge) becomes true;
+;;   * the header's back-edge input, `body`'s branch and `join` are untouched.
+(define (opt-flag-facts-test-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.compiler-ir-label "outer")
+          (compiler_ir_types.compiler-ir-label "done"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-flag-exit-test-jump-block "outer" "head")
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "head")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Phi
+              2
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (compiler_ir_types.compiler-ir-label "outer")
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                  (compiler_ir_types.CompilerIrValue.Var 3)
+                  (compiler_ir_types.compiler-ir-label "join")
+                  (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+              (compiler_ast_types.AstType.Bool))
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 2)
+              (compiler_ir_types.compiler-ir-label "body")
+              (compiler_ir_types.compiler-ir-label "done"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "body")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (compiler_ir_types.compiler-ir-label "check")
+                (compiler_ir_types.compiler-ir-label "done"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "check")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Branch
+                  (compiler_ir_types.CompilerIrValue.Var 1)
+                  (compiler_ir_types.compiler-ir-label "left")
+                  (compiler_ir_types.compiler-ir-label "right"))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-flag-exit-test-jump-block "left" "join")
+              (compiler_ir_types.compiler-ir-block-cons
+                (opt-flag-exit-test-jump-block "right" "join")
+                (compiler_ir_types.compiler-ir-block-cons
+                  (compiler_ir_types.CompilerIrBlock.Block
+                    (compiler_ir_types.compiler-ir-label "join")
+                    (opt-test-instrs
+                      (compiler_ir_types.CompilerIrInstr.Phi
+                        3
+                        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                          (compiler_ir_types.CompilerIrValue.Var 0)
+                          (compiler_ir_types.compiler-ir-label "left")
+                          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                            (compiler_ir_types.CompilerIrValue.Bool false)
+                            (compiler_ir_types.compiler-ir-label "right")
+                            (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+                        (compiler_ast_types.AstType.Bool))
+                      (compiler_ir_types.CompilerIrInstr.Jump
+                        (compiler_ir_types.compiler-ir-label "head"))))
+                  (compiler_ir_types.compiler-ir-block-cons
+                    (compiler_ir_types.CompilerIrBlock.Block
+                      (compiler_ir_types.compiler-ir-label "done")
+                      (opt-test-instrs
+                        (compiler_ir_types.CompilerIrInstr.Return
+                          (compiler_ir_types.CompilerIrMaybeValue.Some
+                            (compiler_ir_types.CompilerIrValue.Bool false)))))
+                    (compiler_ir_types.CompilerIrBlockList.Nil)))))))))))
+
+(define (opt-flag-facts-test-params) : compiler_ir_types.CompilerIrParamSeq
+  (compiler_ir_types.compiler-ir-param-seq-prepend
+    (compiler_ir_types.CompilerIrParam.Param
+      "flag"
+      (compiler_ast_types.AstType.Bool)
+      0)
+    (compiler_ir_types.compiler-ir-param-seq-prepend
+      (compiler_ir_types.CompilerIrParam.Param
+        "more"
+        (compiler_ast_types.AstType.Bool)
+        1)
+      (compiler_ir_types.compiler-ir-param-seq-empty))))
+
+;; The value a block's first phi carries in from `pred`, or Unit.
+(define (opt-flag-facts-test-phi-input
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : String]
+  [pred : String]) : compiler_ir_types.CompilerIrValue
+  (match (compiler_optimize.opt-cfg-find-block
+    blocks
+    (compiler_ir_types.compiler-ir-label label))
+    [(compiler_optimize.OptMaybeBlock.No)
+      compiler_ir_types.CompilerIrValue.Unit]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (match (compiler_ir_types.compiler-ir-instr-seq-ref
+            (compiler_ir_types.compiler-ir-global-shared-view instrs)
+            0)
+            [(compiler_ir_types.CompilerIrInstr.Phi _ inputs _)
+              (let
+                [n : i64
+                  (compiler_ir_types.compiler-ir-phi-input-seq-count
+                    (compiler_ir_types.compiler-ir-global-shared-view inputs))]
+                [pred-label : i64 (compiler_ir_types.compiler-ir-label pred)]
+                [k : i64 0]
+                [found : compiler_ir_types.CompilerIrValue
+                  compiler_ir_types.CompilerIrValue.Unit]
+                (begin
+                  (while (< k n)
+                    (let
+                      [input : compiler_ir_types.CompilerIrPhiInput
+                        (compiler_ir_types.compiler-ir-phi-input-seq-ref
+                          (compiler_ir_types.compiler-ir-global-shared-view
+                            inputs)
+                          k)]
+                      (begin
+                        (if (= input.label pred-label)
+                          (set! found input.value)
+                          unit)
+                        (set! k (+ k 1)))))
+                  found))]
+            [_ compiler_ir_types.CompilerIrValue.Unit])])]))
+
+;; The condition of the Branch ending a block, or Unit.
+(define (opt-flag-facts-test-branch-cond
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : String]) : compiler_ir_types.CompilerIrValue
+  (match (opt-flag-exit-test-last-instr blocks label)
+    [(compiler_optimize.OptFlagExitMaybeInstr.No)
+      compiler_ir_types.CompilerIrValue.Unit]
+    [(compiler_optimize.OptFlagExitMaybeInstr.Some instr)
+      (match instr
+        [(compiler_ir_types.CompilerIrInstr.Branch cond _ _) cond]
+        [_ compiler_ir_types.CompilerIrValue.Unit])]))
+
+(define (compiler-optimize-flag-facts-self-test) : i64
+  (let
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (opt-flag-facts-test-blocks)]
+    [context : compiler_optimize.OptCfgContext
+      (compiler_optimize.opt-cfg-context-build
+        (compiler_ir_types.compiler-ir-global-shared-view blocks))]
+    [sources : compiler_optimize.OptValueSources
+      (compiler_optimize.opt-gvn-sources-blocks
+        (compiler_ir_types.compiler-ir-global-shared-view blocks)
+        (compiler_optimize.opt-gvn-sources-params
+          (opt-flag-facts-test-params)
+          (compiler_optimize.opt-value-sources-new)))]
+    ;; bounds_dom's half: dominated re-tests only.
+    [branches : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-flag-facts-rewrite-blocks
+        (compiler_optimize.compiler-opt-global-shared-view context.index)
+        (compiler_optimize.compiler-opt-global-shared-view context.doms)
+        (compiler_optimize.compiler-opt-global-shared-view sources)
+        (compiler_ir_types.compiler-ir-global-shared-view blocks))]
+    ;; flag_exit's half: one header's forward seed.
+    [seeded : compiler_ir_types.CompilerIrBlockList
+      (match (compiler_optimize.opt-flag-facts-rewrite-seeds
+        (compiler_optimize.compiler-opt-global-shared-view context.index)
+        (compiler_optimize.compiler-opt-global-shared-view context.doms)
+        sources
+        (compiler_ir_types.compiler-ir-label "head")
+        (compiler_ir_types.compiler-ir-global-shared-view blocks))
+        [(compiler_optimize.OptFlagSeeded.Some out) out]
+        [(compiler_optimize.OptFlagSeeded.No)
+          compiler_ir_types.CompilerIrBlockList.Nil])]
+    (cond
+      [(not
+          (compiler_optimize.opt-value-eq
+            (opt-flag-facts-test-branch-cond
+              (compiler_ir_types.compiler-ir-global-shared-view branches)
+              "body")
+            (compiler_ir_types.CompilerIrValue.Bool true)))
+        1]
+      [(not
+          (compiler_optimize.opt-value-eq
+            (opt-flag-facts-test-phi-input
+              (compiler_ir_types.compiler-ir-global-shared-view branches)
+              "head"
+              "outer")
+            (compiler_ir_types.CompilerIrValue.Var 0)))
+        2]
+      [(not
+          (compiler_optimize.opt-value-eq
+            (opt-flag-facts-test-phi-input
+              (compiler_ir_types.compiler-ir-global-shared-view branches)
+              "join"
+              "left")
+            (compiler_ir_types.CompilerIrValue.Var 0)))
+        3]
+      [(not
+          (compiler_optimize.opt-value-eq
+            (opt-flag-facts-test-branch-cond
+              (compiler_ir_types.compiler-ir-global-shared-view branches)
+              "entry")
+            (compiler_ir_types.CompilerIrValue.Var 0)))
+        4]
+      [(not
+          (compiler_optimize.opt-value-eq
+            (opt-flag-facts-test-phi-input
+              (compiler_ir_types.compiler-ir-global-shared-view seeded)
+              "head"
+              "outer")
+            (compiler_ir_types.CompilerIrValue.Bool true)))
+        5]
+      [(not
+          (compiler_optimize.opt-value-eq
+            (opt-flag-facts-test-phi-input
+              (compiler_ir_types.compiler-ir-global-shared-view seeded)
+              "head"
+              "join")
+            (compiler_ir_types.CompilerIrValue.Var 3)))
+        6]
+      [(not
+          (compiler_optimize.opt-value-eq
+            (opt-flag-facts-test-branch-cond
+              (compiler_ir_types.compiler-ir-global-shared-view seeded)
+              "body")
+            (compiler_ir_types.CompilerIrValue.Var 0)))
+        7]
+      [(not
+          (compiler_optimize.opt-value-eq
+            (opt-flag-facts-test-phi-input
+              (compiler_ir_types.compiler-ir-global-shared-view seeded)
+              "join"
+              "left")
+            (compiler_ir_types.CompilerIrValue.Var 0)))
+        8]
+      [else 42])))
+
+(test
+  flag-facts-loop-seed-and-dominated-branch
+  (test.assert-i64-eq
+    (compiler-optimize-flag-facts-self-test)
+    42
+    "a flag its own dominating test decided is a literal in a dominated re-test (bounds_dom) and, when flag_exit asks, in that loop header's forward seed -- and nowhere else"))
+
+;; Entry has an implicit incoming edge that is not a CFG predecessor. Neither
+;; a self-edge nor a separate latch can decide its condition on the first call.
+(define (opt-flag-facts-entry-cycle-test
+  [separate-latch : bool]
+  [backedge-true : bool]) : i64
+  (let
+    [entry : i64 (compiler_ir_types.compiler-ir-label "entry")]
+    [latch : i64 (compiler_ir_types.compiler-ir-label "latch")]
+    [done : i64 (compiler_ir_types.compiler-ir-label "done")]
+    [target : i64
+      (if separate-latch
+        latch
+        entry)]
+    [tail : compiler_ir_types.CompilerIrBlockList
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          done
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.I64 42)))))
+        (compiler_ir_types.CompilerIrBlockList.Nil))]
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          entry
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              (if backedge-true
+                target
+                done)
+              (if backedge-true
+                done
+                target))))
+        (if separate-latch
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              latch
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Branch
+                  (compiler_ir_types.CompilerIrValue.Var 0)
+                  (if backedge-true
+                    entry
+                    done)
+                  (if backedge-true
+                    done
+                    entry))))
+            tail)
+          tail))]
+    [func : compiler_ir_types.CompilerIrFunction
+      (compiler_ir_types.CompilerIrFunction.Function
+        (compiler_ir_types.compiler-ir-test-symbol "flag_entry_cycle")
+        (opt-flag-facts-test-params)
+        (compiler_ast_types.AstType.I64)
+        2
+        (compiler_ir_types.compiler-ir-global-shared-view blocks)
+        (compiler_ir_types.CompilerIrFunctionAbi.Ordinary))]
+    [valid : bool
+      (compiler_optimize.opt-verify-ok?
+        (compiler_optimize.opt-verify-function func))]
+    [context : compiler_optimize.OptCfgContext
+      (compiler_optimize.opt-cfg-context-build
+        (compiler_ir_types.compiler-ir-global-shared-view blocks))]
+    [out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-flag-facts-rewrite-blocks
+        (compiler_optimize.compiler-opt-global-shared-view context.index)
+        (compiler_optimize.compiler-opt-global-shared-view context.doms)
+        (compiler_optimize.opt-gvn-sources-blocks
+          (compiler_ir_types.compiler-ir-global-shared-view blocks)
+          (compiler_optimize.opt-gvn-sources-params
+            (opt-flag-facts-test-params)
+            (compiler_optimize.opt-value-sources-new)))
+        blocks)]
+    (if (and
+      valid
+      (compiler_optimize.opt-value-eq
+        (opt-flag-facts-test-branch-cond out "entry")
+        (compiler_ir_types.CompilerIrValue.Var 0)))
+      42
+      1)))
+
+(test
+  flag-facts-entry-backedge
+  (begin
+    (test.assert-i64-eq
+      (opt-flag-facts-entry-cycle-test false true)
+      42
+      "a true self-edge cannot decide the entry flag")
+    (test.assert-i64-eq
+      (opt-flag-facts-entry-cycle-test false false)
+      42
+      "a false self-edge cannot decide the entry flag")
+    (test.assert-i64-eq
+      (opt-flag-facts-entry-cycle-test true true)
+      42
+      "a true latch edge cannot decide the entry flag")
+    (test.assert-i64-eq
+      (opt-flag-facts-entry-cycle-test true false)
+      42
+      "a false latch edge cannot decide the entry flag")))
 
 ;; --- generalized monotone-flag conversion self-tests --------------------------
 ;; The merged shape the inliner produces and the probe loops intern_table and

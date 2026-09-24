@@ -11,44 +11,78 @@ ci_compiler_artifact_error() {
     return 1
 }
 
-ci_compiler_artifact_host() {
-    case "$(uname -s)" in
-        Linux*) printf '%s\n' linux ;;
-        MINGW* | MSYS* | CYGWIN*) printf '%s\n' windows ;;
-        *) ci_compiler_artifact_error "unsupported host: $(uname -s)" ;;
+# GitHub's Windows runner pays about 17 ms for every Git Bash process launch
+# (#8063), and publish/require run on every handoff and in hundreds of
+# self-test cases. The helpers below therefore return through CI_COMPILER_*
+# scalars and shell builtins where the result is the same; the printing forms
+# remain for callers outside this file. Values that cost a process are
+# computed once, on first use, so sourcing the file launches nothing.
+
+# Set CI_COMPILER_ARTIFACT_HOST to linux or windows.
+ci_compiler_artifact_resolve_host() {
+    [ -n "${CI_COMPILER_ARTIFACT_UNAME:-}" ] ||
+        CI_COMPILER_ARTIFACT_UNAME=$(uname -s)
+    case "$CI_COMPILER_ARTIFACT_UNAME" in
+        Linux*) CI_COMPILER_ARTIFACT_HOST=linux ;;
+        MINGW* | MSYS* | CYGWIN*) CI_COMPILER_ARTIFACT_HOST=windows ;;
+        *) ci_compiler_artifact_error "unsupported host: $CI_COMPILER_ARTIFACT_UNAME" ;;
     esac
 }
 
-ci_compiler_artifact_sha256_file() {
+ci_compiler_artifact_host() {
+    ci_compiler_artifact_resolve_host || return 1
+    printf '%s\n' "$CI_COMPILER_ARTIFACT_HOST"
+}
+
+# Set CI_COMPILER_ARTIFACT_SHA256 to FILE's digest: the first field of the
+# tool's output line, as awk '{ print $1 }' read it.
+ci_compiler_artifact_hash_file() {
     _cica_sha_file=$1
+    CI_COMPILER_ARTIFACT_SHA256=
     if command -v sha256sum >/dev/null 2>&1; then
-        sha256sum "$_cica_sha_file" | awk '{ print $1 }'
+        _cica_sha_line=$(sha256sum "$_cica_sha_file") || return 1
     elif command -v shasum >/dev/null 2>&1; then
-        shasum -a 256 "$_cica_sha_file" | awk '{ print $1 }'
+        _cica_sha_line=$(shasum -a 256 "$_cica_sha_file") || return 1
     else
         ci_compiler_artifact_error "sha256sum or shasum is required"
+        return 1
     fi
+    CI_COMPILER_ARTIFACT_SHA256=${_cica_sha_line%%[ 	]*}
+}
+
+ci_compiler_artifact_sha256_file() {
+    ci_compiler_artifact_hash_file "$1" || return 1
+    printf '%s\n' "$CI_COMPILER_ARTIFACT_SHA256"
 }
 
 ci_compiler_artifact_sha256_stdin() {
     if command -v sha256sum >/dev/null 2>&1; then
-        sha256sum | awk '{ print $1 }'
+        _cica_sha_line=$(sha256sum) || return 1
     elif command -v shasum >/dev/null 2>&1; then
-        shasum -a 256 | awk '{ print $1 }'
+        _cica_sha_line=$(shasum -a 256) || return 1
     else
         ci_compiler_artifact_error "sha256sum or shasum is required"
+        return 1
     fi
+    printf '%s\n' "${_cica_sha_line%%[ 	]*}"
 }
 
+# A line-based grep never saw a newline inside the value; this check rejects
+# it with every other control byte, since fields are one metadata line each.
 ci_compiler_artifact_field_safe() {
     _cica_safe_name=$1
     _cica_safe_value=$2
-    if printf '%s' "$_cica_safe_value" | \
-        LC_ALL=C grep -q '[[:cntrl:]]'; then
-        ci_compiler_artifact_error \
-            "$_cica_safe_name contains a control character"
-        return 1
-    fi
+    # Every control byte a C-locale [[:cntrl:]] matches, except NUL, which no
+    # shell value can hold. DEL comes last, so the newline stays in the set.
+    [ -n "${CI_COMPILER_ARTIFACT_CONTROL_BYTES:-}" ] ||
+        CI_COMPILER_ARTIFACT_CONTROL_BYTES=$(printf '\001\002\003\004\005\006\007\010\011\012\013\014\015\016\017\020\021\022\023\024\025\026\027\030\031\032\033\034\035\036\037\177')
+    case "$_cica_safe_value" in
+        *["$CI_COMPILER_ARTIFACT_CONTROL_BYTES"]*)
+            ci_compiler_artifact_error \
+                "$_cica_safe_name contains a control character"
+            return 1
+            ;;
+    esac
     return 0
 }
 
@@ -61,16 +95,43 @@ ci_compiler_artifact_absolute_path() {
     esac
 }
 
-ci_compiler_artifact_normalized_path() {
-    _cica_norm_root=$(printf '%s' "$1" | tr '\\' '/')
-    _cica_norm_path=$(printf '%s' "$2" | tr '\\' '/')
+# Set CI_COMPILER_ARTIFACT_SLASHED to $1 with every backslash made a slash.
+ci_compiler_artifact_forward_slashes() {
+    _cica_slash_rest=$1
+    CI_COMPILER_ARTIFACT_SLASHED=
+    while :; do
+        case "$_cica_slash_rest" in
+            *\\*)
+                CI_COMPILER_ARTIFACT_SLASHED="$CI_COMPILER_ARTIFACT_SLASHED${_cica_slash_rest%%\\*}/"
+                _cica_slash_rest=${_cica_slash_rest#*\\}
+                ;;
+            *)
+                CI_COMPILER_ARTIFACT_SLASHED="$CI_COMPILER_ARTIFACT_SLASHED$_cica_slash_rest"
+                return 0
+                ;;
+        esac
+    done
+}
+
+# Set CI_COMPILER_ARTIFACT_NORMALIZED_PATH to PATH relative to ROOT: slashes
+# only, with ROOT spelled {root}.
+ci_compiler_artifact_normalize_path() {
+    ci_compiler_artifact_forward_slashes "$1"
+    _cica_norm_root=$CI_COMPILER_ARTIFACT_SLASHED
+    ci_compiler_artifact_forward_slashes "$2"
+    _cica_norm_path=$CI_COMPILER_ARTIFACT_SLASHED
     case "$_cica_norm_path" in
-        "$_cica_norm_root") printf '%s\n' '{root}' ;;
+        "$_cica_norm_root") CI_COMPILER_ARTIFACT_NORMALIZED_PATH='{root}' ;;
         "$_cica_norm_root"/*)
-            printf '{root}/%s\n' "${_cica_norm_path#"$_cica_norm_root"/}"
+            CI_COMPILER_ARTIFACT_NORMALIZED_PATH="{root}/${_cica_norm_path#"$_cica_norm_root"/}"
             ;;
-        *) printf '%s\n' "$_cica_norm_path" ;;
+        *) CI_COMPILER_ARTIFACT_NORMALIZED_PATH=$_cica_norm_path ;;
     esac
+}
+
+ci_compiler_artifact_normalized_path() {
+    ci_compiler_artifact_normalize_path "$1" "$2"
+    printf '%s\n' "$CI_COMPILER_ARTIFACT_NORMALIZED_PATH"
 }
 
 # Metadata, digest manifests and handoff paths share the same checkout-relative
@@ -87,18 +148,26 @@ ci_compiler_artifact_resolve_path() {
     esac
 }
 
+# True when $1 is exactly forty lowercase hex digits.
+ci_compiler_artifact_is_identity() {
+    case "$1" in
+        '' | *[!0-9a-f]*) return 1 ;;
+    esac
+    [ "${#1}" -eq 40 ]
+}
+
 ci_compiler_artifact_producer_identity() {
     _cica_identity_compiler=$1
     _cica_identity=$(
         "$_cica_identity_compiler" --producer-identity 2>/dev/null || true
     )
-    if ! printf '%s\n' "$_cica_identity" | grep -Eq '^[0-9a-f]{40}$'; then
+    if ! ci_compiler_artifact_is_identity "$_cica_identity"; then
         _cica_identity=$(
             "$_cica_identity_compiler" --version 2>/dev/null |
                 awk 'NR == 1 && $1 == "typelisp" { print $2 }' || true
         )
     fi
-    if ! printf '%s\n' "$_cica_identity" | grep -Eq '^[0-9a-f]{40}$'; then
+    if ! ci_compiler_artifact_is_identity "$_cica_identity"; then
         ci_compiler_artifact_error \
             "producer reported a malformed identity: $_cica_identity_compiler"
         return 1
@@ -200,26 +269,23 @@ ci_compiler_artifact_source_set_digest() {
     else
         LC_ALL=C sort -u "$_cica_source_list" -o "$_cica_source_list"
         while IFS= read -r _cica_source_file; do
-            _cica_source_name=$(ci_compiler_artifact_normalized_path \
-                "$_cica_source_root" "$_cica_source_file") || {
+            ci_compiler_artifact_normalize_path "$_cica_source_root" "$_cica_source_file"
+            _cica_source_name=$CI_COMPILER_ARTIFACT_NORMALIZED_PATH
+            ci_compiler_artifact_hash_file "$_cica_source_file" || {
                 rm -rf "$_cica_source_tmp"
                 return 1
             }
-            _cica_source_hash=$(ci_compiler_artifact_sha256_file \
-                "$_cica_source_file") || {
-                rm -rf "$_cica_source_tmp"
-                return 1
-            }
+            _cica_source_hash=$CI_COMPILER_ARTIFACT_SHA256
             printf '%s  %s\n' "$_cica_source_hash" "$_cica_source_name" \
                 >> "$_cica_source_manifest"
         done < "$_cica_source_list"
     fi
 
-    _cica_source_digest=$(ci_compiler_artifact_sha256_file \
-        "$_cica_source_manifest") || {
+    ci_compiler_artifact_hash_file "$_cica_source_manifest" || {
         rm -rf "$_cica_source_tmp"
         return 1
     }
+    _cica_source_digest=$CI_COMPILER_ARTIFACT_SHA256
     rm -rf "$_cica_source_tmp"
     printf '%s\n' "$_cica_source_digest"
 }
@@ -246,16 +312,13 @@ ci_compiler_artifact_write_sha256_manifest() {
     }
     : > "$_cica_manifest_tmp"
     while IFS= read -r _cica_manifest_file; do
-        _cica_manifest_hash=$(ci_compiler_artifact_sha256_file \
-            "$_cica_manifest_file") || {
+        ci_compiler_artifact_hash_file "$_cica_manifest_file" || {
             rm -f "$_cica_manifest_list" "$_cica_manifest_tmp"
             return 1
         }
-        _cica_manifest_path=$(ci_compiler_artifact_normalized_path \
-            "$_cica_manifest_root" "$_cica_manifest_file") || {
-            rm -f "$_cica_manifest_list" "$_cica_manifest_tmp"
-            return 1
-        }
+        _cica_manifest_hash=$CI_COMPILER_ARTIFACT_SHA256
+        ci_compiler_artifact_normalize_path "$_cica_manifest_root" "$_cica_manifest_file"
+        _cica_manifest_path=$CI_COMPILER_ARTIFACT_NORMALIZED_PATH
         printf '%s  %s\n' "$_cica_manifest_hash" "$_cica_manifest_path" \
             >> "$_cica_manifest_tmp"
     done < "$_cica_manifest_list"
@@ -281,16 +344,13 @@ ci_compiler_artifact_write_files_manifest() {
                 "manifest artifact is missing or empty: $_cica_files_file"
             return 1
         }
-        _cica_files_hash=$(ci_compiler_artifact_sha256_file \
-            "$_cica_files_file") || {
+        ci_compiler_artifact_hash_file "$_cica_files_file" || {
             rm -f "$_cica_files_tmp"
             return 1
         }
-        _cica_files_path=$(ci_compiler_artifact_normalized_path \
-            "$_cica_files_root" "$_cica_files_file") || {
-            rm -f "$_cica_files_tmp"
-            return 1
-        }
+        _cica_files_hash=$CI_COMPILER_ARTIFACT_SHA256
+        ci_compiler_artifact_normalize_path "$_cica_files_root" "$_cica_files_file"
+        _cica_files_path=$CI_COMPILER_ARTIFACT_NORMALIZED_PATH
         printf '%s  %s\n' "$_cica_files_hash" "$_cica_files_path" \
             >> "$_cica_files_tmp"
     done
@@ -322,8 +382,8 @@ ci_compiler_artifact_verify_sha256_manifest() {
             _cica_verify_failed=1
             continue
         fi
-        _cica_verify_actual=$(ci_compiler_artifact_sha256_file \
-            "$_cica_verify_file") || return 1
+        ci_compiler_artifact_hash_file "$_cica_verify_file" || return 1
+        _cica_verify_actual=$CI_COMPILER_ARTIFACT_SHA256
         if [ "$_cica_verify_actual" != "$_cica_verify_hash" ]; then
             ci_compiler_artifact_error \
                 "manifest artifact digest mismatch: $_cica_verify_path"
@@ -494,21 +554,22 @@ ci_compiler_artifact_publish() {
         return 1
     }
 
-    _cica_pub_host=$(ci_compiler_artifact_host) || return 1
-    _cica_pub_producer_sha=$(ci_compiler_artifact_sha256_file \
-        "$_cica_pub_producer") || return 1
+    ci_compiler_artifact_resolve_host || return 1
+    _cica_pub_host=$CI_COMPILER_ARTIFACT_HOST
+    ci_compiler_artifact_hash_file "$_cica_pub_producer" || return 1
+    _cica_pub_producer_sha=$CI_COMPILER_ARTIFACT_SHA256
     _cica_pub_producer_identity=$(ci_compiler_artifact_producer_identity \
         "$_cica_pub_producer") || return 1
     _cica_pub_source_digest=$(ci_compiler_artifact_source_set_digest \
         "$_cica_pub_root" "$_cica_pub_source_roots") || return 1
-    _cica_pub_cwd=$(ci_compiler_artifact_normalized_path \
-        "$_cica_pub_root" "$_cica_pub_root") || return 1
-    _cica_pub_producer_path=$(ci_compiler_artifact_normalized_path \
-        "$_cica_pub_root" "$_cica_pub_producer") || return 1
-    _cica_pub_output_path=$(ci_compiler_artifact_normalized_path \
-        "$_cica_pub_root" "$_cica_pub_output") || return 1
-    _cica_pub_output_sha=$(ci_compiler_artifact_sha256_file \
-        "$_cica_pub_output") || return 1
+    ci_compiler_artifact_normalize_path "$_cica_pub_root" "$_cica_pub_root"
+    _cica_pub_cwd=$CI_COMPILER_ARTIFACT_NORMALIZED_PATH
+    ci_compiler_artifact_normalize_path "$_cica_pub_root" "$_cica_pub_producer"
+    _cica_pub_producer_path=$CI_COMPILER_ARTIFACT_NORMALIZED_PATH
+    ci_compiler_artifact_normalize_path "$_cica_pub_root" "$_cica_pub_output"
+    _cica_pub_output_path=$CI_COMPILER_ARTIFACT_NORMALIZED_PATH
+    ci_compiler_artifact_hash_file "$_cica_pub_output" || return 1
+    _cica_pub_output_sha=$CI_COMPILER_ARTIFACT_SHA256
     _cica_pub_key=$(ci_compiler_artifact_key \
         "$_cica_pub_producer_sha" "$_cica_pub_producer_identity" \
         "$_cica_pub_host" "$_cica_pub_target" "$_cica_pub_cwd" \
@@ -564,27 +625,48 @@ ci_compiler_artifact_publish() {
         "$_cica_pub_output_path" "$_cica_pub_output_sha"
 }
 
-ci_compiler_artifact_read_field() {
+# Set CI_COMPILER_ARTIFACT_FIELD to KEY's value in a KEY=VALUE metadata file.
+# As with awk -F= '$1 == key', a line naming KEY with or without "=" counts,
+# and the key must occur exactly once.
+ci_compiler_artifact_read_field_value() {
     _cica_read_file=$1
     _cica_read_key=$2
-    _cica_read_count=$(awk -F= -v key="$_cica_read_key" '$1 == key { count++ } END { print count + 0 }' \
-        "$_cica_read_file")
+    CI_COMPILER_ARTIFACT_FIELD=
+    [ -r "$_cica_read_file" ] || {
+        ci_compiler_artifact_error "metadata is not readable: $_cica_read_file"
+        return 1
+    }
+    _cica_read_count=0
+    while IFS= read -r _cica_read_line || [ -n "$_cica_read_line" ]; do
+        case "$_cica_read_line" in
+            "$_cica_read_key")
+                _cica_read_count=$((_cica_read_count + 1))
+                ;;
+            "$_cica_read_key="*)
+                _cica_read_count=$((_cica_read_count + 1))
+                CI_COMPILER_ARTIFACT_FIELD=${_cica_read_line#"$_cica_read_key="}
+                ;;
+        esac
+    done < "$_cica_read_file"
     if [ "$_cica_read_count" -ne 1 ]; then
         ci_compiler_artifact_error \
             "metadata field $_cica_read_key occurs $_cica_read_count times"
         return 1
     fi
-    awk -v key="$_cica_read_key=" \
-        'index($0, key) == 1 { print substr($0, length(key) + 1) }' \
-        "$_cica_read_file"
+}
+
+ci_compiler_artifact_read_field() {
+    ci_compiler_artifact_read_field_value "$1" "$2" || return 1
+    printf '%s\n' "$CI_COMPILER_ARTIFACT_FIELD"
 }
 
 ci_compiler_artifact_expect_field() {
     _cica_expect_file=$1
     _cica_expect_name=$2
     _cica_expect_value=$3
-    _cica_expect_actual=$(ci_compiler_artifact_read_field \
-        "$_cica_expect_file" "$_cica_expect_name") || return 1
+    ci_compiler_artifact_read_field_value \
+        "$_cica_expect_file" "$_cica_expect_name" || return 1
+    _cica_expect_actual=$CI_COMPILER_ARTIFACT_FIELD
     if [ "$_cica_expect_actual" != "$_cica_expect_value" ]; then
         ci_compiler_artifact_error \
             "$_cica_expect_name mismatch: expected $_cica_expect_value, got $_cica_expect_actual"
@@ -662,21 +744,22 @@ ci_compiler_artifact_require() {
         ci_compiler_artifact_error "same-run token is unset"
         return 2
     }
-    _cica_req_host=$(ci_compiler_artifact_host) || return 1
-    _cica_req_producer_sha=$(ci_compiler_artifact_sha256_file \
-        "$_cica_req_producer") || return 1
+    ci_compiler_artifact_resolve_host || return 1
+    _cica_req_host=$CI_COMPILER_ARTIFACT_HOST
+    ci_compiler_artifact_hash_file "$_cica_req_producer" || return 1
+    _cica_req_producer_sha=$CI_COMPILER_ARTIFACT_SHA256
     _cica_req_producer_identity=$(ci_compiler_artifact_producer_identity \
         "$_cica_req_producer") || return 1
     _cica_req_source_digest=$(ci_compiler_artifact_source_set_digest \
         "$_cica_req_root" "$_cica_req_source_roots") || return 1
-    _cica_req_cwd=$(ci_compiler_artifact_normalized_path \
-        "$_cica_req_root" "$_cica_req_root") || return 1
-    _cica_req_producer_path=$(ci_compiler_artifact_normalized_path \
-        "$_cica_req_root" "$_cica_req_producer") || return 1
-    _cica_req_output_path=$(ci_compiler_artifact_normalized_path \
-        "$_cica_req_root" "$_cica_req_output") || return 1
-    _cica_req_output_sha=$(ci_compiler_artifact_sha256_file \
-        "$_cica_req_output") || return 1
+    ci_compiler_artifact_normalize_path "$_cica_req_root" "$_cica_req_root"
+    _cica_req_cwd=$CI_COMPILER_ARTIFACT_NORMALIZED_PATH
+    ci_compiler_artifact_normalize_path "$_cica_req_root" "$_cica_req_producer"
+    _cica_req_producer_path=$CI_COMPILER_ARTIFACT_NORMALIZED_PATH
+    ci_compiler_artifact_normalize_path "$_cica_req_root" "$_cica_req_output"
+    _cica_req_output_path=$CI_COMPILER_ARTIFACT_NORMALIZED_PATH
+    ci_compiler_artifact_hash_file "$_cica_req_output" || return 1
+    _cica_req_output_sha=$CI_COMPILER_ARTIFACT_SHA256
     _cica_req_key=$(ci_compiler_artifact_key \
         "$_cica_req_producer_sha" "$_cica_req_producer_identity" \
         "$_cica_req_host" "$_cica_req_target" "$_cica_req_cwd" \
@@ -729,7 +812,11 @@ ci_compiler_artifact_require() {
     ci_compiler_artifact_expect_field \
         "$_cica_req_metadata" provenance_key "$_cica_req_key" || return 1
 
-    _cica_req_lines=$(wc -l < "$_cica_req_metadata" | tr -d ' ')
+    # Count newline-terminated lines, as wc -l does.
+    _cica_req_lines=0
+    while IFS= read -r _cica_req_line; do
+        _cica_req_lines=$((_cica_req_lines + 1))
+    done < "$_cica_req_metadata"
     if [ "$_cica_req_lines" -ne 21 ]; then
         ci_compiler_artifact_error \
             "handoff metadata has $_cica_req_lines lines; expected 21"

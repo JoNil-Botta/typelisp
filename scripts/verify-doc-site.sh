@@ -27,6 +27,7 @@ cd "$ROOT"
 
 . "$ROOT/scripts/lib-linux-entry.sh"
 . "$ROOT/scripts/lib-doc-site-search-manifests.sh"
+. "$ROOT/scripts/lib-doc-site-page-checks.sh"
 
 fail() {
     echo "FAIL: $*" >&2
@@ -163,6 +164,9 @@ if [ "$HOST_OS" = linux ]; then
     # intentionally allocation-free so the failure path stays cheap to test.
     doc_site_rss_guard_self_test
 fi
+# The page checker must accept a conforming fixture site and name each kind of
+# violation before it may pass the generated one.
+doc_site_page_check_self_test || fail "docs-site page check self-tests failed"
 
 compile_linux_binary() {
     _label=$1
@@ -346,8 +350,6 @@ echo "[doc-site] published all $expected_stdlib_modules top-level stdlib module(
 HTML_PAGES="$WORK/.html-pages"
 find "$SITE" -maxdepth 1 -type f -name '*.html' | LC_ALL=C sort > "$HTML_PAGES"
 [ -s "$HTML_PAGES" ] || fail "no HTML pages were generated"
-pages=$(cat "$HTML_PAGES")
-link_count=0
 SEARCH_INDEX="$SITE/typelisp-docs-search-index.js"
 doc_site_search_structure_guard "$ROOT/scripts/verify-doc-site.sh" \
     || fail "docs-site page loop must not rescan the complete search index"
@@ -356,75 +358,11 @@ doc_site_search_validate_manifests "$SITE" "$WORK" "$SEARCH_INDEX" "$HTML_PAGES"
 search_record_count=$DOC_SITE_SEARCH_RECORD_COUNT
 
 # doc-site-search-index-scan-guard: page-loop-begin
-for page in $pages; do
-    page_base=$(basename "$page")
-    # Each HTML page should reference the stylesheet.
-    grep -q 'href="typelisp-docs.css"' "$page" \
-        || fail "$(basename "$page") does not reference typelisp-docs.css"
-    grep -q 'src="typelisp-docs-search-index.js"' "$page" \
-        || fail "$(basename "$page") does not reference the search index"
-    grep -q 'src="typelisp-docs.js"' "$page" \
-        || fail "$(basename "$page") does not reference the search client"
-    grep -q 'data-doc-search-input' "$page" \
-        || fail "$(basename "$page") does not expose the search control"
-
-    # Each page should expose the persistent composed documentation sidebar.
-    grep -q '<nav class="tl-doc-stdlib-sidebar" aria-label="Documentation tree">' "$page" \
-        || fail "$(basename "$page") does not include the documentation sidebar"
-    grep -q 'href="stdlib.html">stdlib</a>' "$page" \
-        || fail "$(basename "$page") does not include the stdlib sidebar root"
-    grep -q 'href="stdlib-io.html"' "$page" \
-        || fail "$(basename "$page") does not include representative stdlib module links"
-    grep -q 'href="readme.html"' "$page" \
-        || fail "$(basename "$page") does not include the README language page link"
-    grep -q 'href="spec.html"' "$page" \
-        || fail "$(basename "$page") does not include the SPEC language page link"
-
-    case "$page_base" in
-        readme.html | spec.html)
-            grep -q "class=\"tl-doc-tree-link is-current\" aria-current=\"page\" href=\"$page_base\"" "$page" \
-                || fail "$page_base does not mark its language sidebar link as current"
-            ;;
-        stdlib.html)
-            grep -q 'class="tl-doc-tree-root is-current" aria-current="page" href="stdlib.html"' "$page" \
-                || fail "$page_base does not mark the stdlib root as current"
-            ;;
-        stdlib-*.html)
-            grep -q "class=\"tl-doc-tree-link is-current\" aria-current=\"page\" href=\"$page_base\"" "$page" \
-                || fail "$page_base does not mark its sidebar module link as current"
-            ;;
-    esac
-
-    # Extract href targets (strip the href="...") wrapper).
-    hrefs=$(grep -oE 'href="[^"]*"' "$page" | sed 's/^href="//; s/"$//')
-    for href in $hrefs; do
-        case "$href" in
-            *://* | mailto:*) continue ;;
-        esac
-        link_count=$((link_count + 1))
-        path=${href%%#*}
-        anchor=${href#*#}
-        if [ "$href" = "$path" ]; then
-            anchor=
-        fi
-
-        if [ -n "$path" ]; then
-            target="$SITE/$path"
-            [ -f "$target" ] || fail "$(basename "$page"): dead local link '$href' (missing $path)"
-        else
-            target="$page"
-        fi
-
-        case "$target" in
-            *.html)
-                if [ -n "$anchor" ]; then
-                    grep -q "id=\"$anchor\"" "$target" \
-                        || fail "$(basename "$page"): link '$href' has no matching id=\"$anchor\" in $(basename "$target")"
-                fi
-                ;;
-        esac
-    done
-done
+# One awk pass over the pages checks the markers, links and anchors that a
+# per-page, per-link grep loop checked before (#8063); see
+# scripts/lib-doc-site-page-checks.sh.
+link_count=$(doc_site_check_pages "$SITE" "$HTML_PAGES") ||
+    fail "docs-site page and link checks failed"
 # doc-site-search-index-scan-guard: page-loop-end
 
 search_index_bytes=$DOC_SITE_SEARCH_INDEX_BYTES

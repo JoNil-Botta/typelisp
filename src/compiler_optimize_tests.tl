@@ -8490,13 +8490,6 @@
       (opt.opt-const-divisor-rewrite-blocks
         (opt.compiler-opt-global-shared-view table)
         (opt.compiler-opt-global-shared-view blocks))]
-    [move-rewritten : ir.CompilerIrBlockList
-      (opt.opt-const-global-move-rewrite-blocks
-        (opt.compiler-opt-global-shared-view table)
-        (opt.opt-const-global-move-fold-vars-blocks
-          (opt_i64_i64_map.with-capacity 8)
-          (opt.compiler-opt-global-shared-view blocks))
-        blocks)]
     ;; The P6 leg: run the same rewrite the pipeline runs at the top of the
     ;; level-2 iteration, then hand the result to SCCP exactly as the pipeline's
     ;; sccp slot does.
@@ -8577,17 +8570,22 @@
               16)
             "big"))
         14]
+      ;; Every Mov source is substituted, whether the Move feeds arithmetic
+      ;; or only a compare: the fold that follows removes the Move, so the
+      ;; literal is never held in a register.
       [(not
           (opt-const-divisor-test-is-i64?
             (opt-const-divisor-test-mov-src
-              (opt.compiler-opt-global-shared-view move-rewritten)
+              (opt.compiler-opt-global-shared-view rewritten)
               17)
             1000000007))
         15]
       [(not
-          (opt-const-divisor-test-is-global?
-            (opt-const-divisor-test-mov-src move-rewritten 19)
-            "konst"))
+          (opt-const-divisor-test-is-i64?
+            (opt-const-divisor-test-mov-src
+              (opt.compiler-opt-global-shared-view rewritten)
+              19)
+            1000000007))
         16]
       ;; A zero divisor is the one position an admitted global is NOT
       ;; substituted into.

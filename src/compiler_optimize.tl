@@ -131737,11 +131737,9 @@
                       ;; structure intact, so the post-LFTR LICM context stays
                       ;; valid for the divrem-safety pass below.
                       [const-div-blocks : ir.CompilerIrBlockList
-                        (opt-const-global-move-rewrite-summary-blocks
+                        (opt-const-divisor-rewrite-summary-blocks
                           (compiler-opt-global-shared-view summaries)
-                          (opt-const-divisor-rewrite-summary-blocks
-                            (compiler-opt-global-shared-view summaries)
-                            global-blocks))]
+                          global-blocks)]
                       [_t-divrem-safety : i64
                         (cfg compile-profile (profile.now-ms) 0)]
                       [divrem-safe : ir.CompilerIrBlockList
@@ -155272,15 +155270,12 @@
 ;; operand (a hidden rip-relative load, neither a literal nor an invariant SSA
 ;; value). Substituting Mov sources early is register-neutral: the following
 ;; fold propagates the literal into its uses and DCEs the Move, so a bound used
-;; only in a compare still ends as an immediate operand. The older late pass
-;; below (`opt-const-global-move-rewrite-*`) kept comparison-bound Moves
-;; symbolic to avoid holding a constant in a register across a loop; that
-;; concern does not apply here because the fold removes the Move entirely. The
-;; late passes stay in place and simply become no-ops for the sites this pass
-;; already covered (they still catch globals materialized mid-iteration by
-;; other passes). Load/StorePtr/Gep and the vector arms keep the global's
-;; hidden-load form: their operand is an address or a descriptor pointer, not
-;; a scalar the fold can use.
+;; only in a compare still ends as an immediate operand and no constant is held
+;; in a register across a loop. The same rewrite runs again after global_gvn,
+;; where it is a no-op for the sites this run already covered and catches
+;; globals materialized mid-iteration by other passes. Load/StorePtr/Gep and
+;; the vector arms keep the global's hidden-load form: their operand is an
+;; address or a descriptor pointer, not a scalar the fold can use.
 ;; A wide power-of-two global stays a Global operand here like every other
 ;; wide constant: its multiply becomes a shift only in the final pipeline slot
 ;; (opt-const-global-mul-shift-final), after every pass that reads
@@ -155417,140 +155412,6 @@
     (if (= (opt_i64_i64_map.len (& const-divisors)) 0)
       blocks
       (opt-const-divisor-rewrite-blocks const-divisors blocks))))
-
-;; Rewrite proven constant globals in lowering-time Moves only after the loop
-;; BCE and unroll passes for this iteration have consumed their symbolic bound
-;; identities. The following iteration's ordinary fold sees the literal and
-;; simplifies its dependent arithmetic before late LICM. Restrict this to Moves
-;; feeding non-comparison arithmetic: replacing a global used only as a loop
-;; limit with an immediate can increase register pressure without enabling a
-;; fold, while branchless min/bound recipes include bit/arithmetic uses. The
-;; early rewrite (opt-const-divisor-rewrite-instr) already covers every
-;; lowering-time Move at the start of the iteration, so in the pipeline this
-;; pass now fires only on const-global Moves materialized mid-iteration by
-;; other passes.
-(define (opt-const-global-move-fold-vars-instr
-  [vars : opt_i64_i64_map.Map]
-  [instr : ir.CompilerIrInstr]) : opt_i64_i64_map.Map
-  (match (compiler-opt-global-shared-view instr)
-    [(ir.CompilerIrInstr.BinOp _ op lhs rhs _)
-      (if (ir.compiler-ir-binop-compare? op)
-        vars
-        (opt-collect-value-uses (opt-collect-value-uses vars lhs) rhs))]
-    [_ vars]))
-
-(define (opt-const-global-move-fold-vars-seq
-  [vars : opt_i64_i64_map.Map]
-  [instrs : ir.CompilerIrInstrSeq]
-  [index : i64]) : opt_i64_i64_map.Map
-  (if (>=
-    index
-    (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs)))
-    vars
-    (opt-const-global-move-fold-vars-seq
-      (opt-const-global-move-fold-vars-instr
-        vars
-        (ir.compiler-ir-instr-seq-ref instrs index))
-      instrs
-      (+ index 1))))
-
-(define (opt-const-global-move-fold-vars-blocks
-  [vars : opt_i64_i64_map.Map]
-  [blocks : ir.CompilerIrBlockList]) : opt_i64_i64_map.Map
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) vars]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (opt-const-global-move-fold-vars-blocks
-            (opt-const-global-move-fold-vars-seq vars instrs 0)
-            (compiler-opt-box-shared-view rest))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (opt-const-global-move-fold-vars-blocks
-        vars
-        (ir.compiler-ir-block-seq-to-list seq))]))
-
-(define (opt-const-global-move-rewrite-instr
-  [const-divisors : opt_i64_i64_map.Map]
-  [fold-vars : opt_i64_i64_map.Map]
-  [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
-  (match (compiler-opt-global-shared-view instr)
-    [(ir.CompilerIrInstr.Mov dst src ty)
-      (if (opt-used-contains fold-vars dst)
-        (ir.CompilerIrInstr.Mov
-          dst
-          (opt-const-global-subst-value const-divisors src)
-          ty)
-        instr)]
-    [_ instr]))
-
-(define (opt-const-global-move-rewrite-seq
-  [const-divisors : opt_i64_i64_map.Map]
-  [fold-vars : opt_i64_i64_map.Map]
-  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
-  (let
-    [count : i64
-      (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs))]
-    [slots : (__tl_dyn-array ir.CompilerIrInstr)
-      (__tl_make-array ir.CompilerIrInstr count)]
-    [index : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            (array-ref slots index)
-            (opt-const-global-move-rewrite-instr
-              (compiler-opt-global-shared-view const-divisors)
-              (compiler-opt-global-shared-view fold-vars)
-              (ir.compiler-ir-instr-seq-ref instrs index)))
-          (set! index (+ index 1))))
-      (ir.CompilerIrInstrSeq slots count))))
-
-(define (opt-const-global-move-rewrite-block
-  [const-divisors : opt_i64_i64_map.Map]
-  [fold-vars : opt_i64_i64_map.Map]
-  [block : ir.CompilerIrBlock]) : ir.CompilerIrBlock
-  (match block
-    [(ir.CompilerIrBlock.Block label instrs)
-      (ir.CompilerIrBlock.Block
-        label
-        (opt-const-global-move-rewrite-seq const-divisors fold-vars instrs))]))
-
-(define (opt-const-global-move-rewrite-blocks
-  [const-divisors : opt_i64_i64_map.Map]
-  [fold-vars : opt_i64_i64_map.Map]
-  [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) ir.CompilerIrBlockList.Nil]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (ir.compiler-ir-block-cons
-        (opt-const-global-move-rewrite-block
-          (compiler-opt-global-shared-view const-divisors)
-          (compiler-opt-global-shared-view fold-vars)
-          block)
-        (opt-const-global-move-rewrite-blocks
-          const-divisors
-          fold-vars
-          (compiler-opt-box-shared-view rest)))]
-    [(ir.CompilerIrBlockList.Array seq)
-      (opt-const-global-move-rewrite-blocks
-        const-divisors
-        fold-vars
-        (ir.compiler-ir-block-seq-to-list seq))]))
-
-(define (opt-const-global-move-rewrite-summary-blocks
-  [summaries : OptLoopBceSummaries]
-  [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
-  (let
-    [const-divisors : opt_i64_i64_map.Map summaries.const-divisors]
-    (if (= (opt_i64_i64_map.len (& const-divisors)) 0)
-      blocks
-      (opt-const-global-move-rewrite-blocks
-        const-divisors
-        (opt-const-global-move-fold-vars-blocks
-          (opt_i64_i64_map.with-capacity 64)
-          (compiler-opt-global-shared-view blocks))
-        blocks))))
 
 ;; --- function-scope global-cell invariance (global_cell pass) ----------------
 ;;

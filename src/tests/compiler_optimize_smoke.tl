@@ -2004,10 +2004,7 @@
         (smoke-noop-int-cast-mov-instrs))]
     (begin
       (unless
-        (=
-          (compiler_optimize_tests.opt-count-cast-instr-seq
-            (opt.compiler-opt-global-shared-view rewritten))
-          3)
+        (= (compiler_optimize_tests.opt-count-cast-instr-seq rewritten) 3)
         (return 1))
       (unless
         (smoke-mov-dst-var-type?

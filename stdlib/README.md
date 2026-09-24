@@ -401,8 +401,9 @@ behavior.
 
 The assertion helpers in `stdlib/test.tl` are also intended for inline
 `(test ...)` items. They do not allocate on success; `assert-string-eq` takes
-borrowed `str` comparison inputs, while messages remain owned `String` values
-so failures can render composed diagnostics. In a generated `typelisp test`
+borrowed `str` comparison inputs (`assert-owned-string-eq` takes owned ones),
+while messages remain owned `String` values so failures can render composed
+diagnostics. In a generated `typelisp test`
 harness, failures are recorded and execution continues through the remaining
 assertions and tests. In any other program, a failed assertion still aborts.
 Repository CI runs

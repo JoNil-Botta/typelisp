@@ -719,9 +719,7 @@
   [findings : lint_core.LintFindings]
   [index : i64]
   [depth : i64]) : bool
-  (match (lint_core.lint-findings-get
-    (owned_view.compiler-owned-shared-view findings)
-    index)
+  (match (lint_core.lint-findings-get findings index)
     [(lint_core.LintMaybeFinding.Some finding)
       (let
         [fspan : ast.AstSourceSpan finding.span]
@@ -737,9 +735,7 @@
   [findings : lint_core.LintFindings]
   [index : i64]
   [rule-id : String]) : bool
-  (match (lint_core.lint-findings-get
-    (owned_view.compiler-owned-shared-view findings)
-    index)
+  (match (lint_core.lint-findings-get findings index)
     [(lint_core.LintMaybeFinding.Some finding)
       (let
         [fspan : ast.AstSourceSpan finding.span]
@@ -753,9 +749,7 @@
   [index : i64]
   [rule-id : String]
   [line : i64]) : bool
-  (match (lint_core.lint-findings-get
-    (owned_view.compiler-owned-shared-view findings)
-    index)
+  (match (lint_core.lint-findings-get findings index)
     [(lint_core.LintMaybeFinding.Some finding)
       (let
         [fspan : ast.AstSourceSpan finding.span]
@@ -770,9 +764,7 @@
   [rule-id : String]
   [depth : i64]
   [line : i64]) : bool
-  (match (lint_core.lint-findings-get
-    (owned_view.compiler-owned-shared-view findings)
-    index)
+  (match (lint_core.lint-findings-get findings index)
     [(lint_core.LintMaybeFinding.Some finding)
       (let
         [fspan : ast.AstSourceSpan finding.span]
@@ -882,18 +874,8 @@
             0
             (lint_core.lint-rule-no-effect-id)))
         31]
-      [(not
-          (=
-            (lint_core.lint-findings-count
-              (owned_view.compiler-owned-shared-view clean))
-            0))
-        32]
-      [(not
-          (=
-            (lint_core.lint-findings-count
-              (owned_view.compiler-owned-shared-view suppressed))
-            0))
-        33]
+      [(not (= (lint_core.lint-findings-count clean) 0)) 32]
+      [(not (= (lint_core.lint-findings-count suppressed) 0)) 33]
       [else 42])))
 
 (define (lint-driver-smoke-unreachable-self-test) : i64
@@ -933,22 +915,12 @@
       [(not
           (=
             (lint_driver_core_tests.selfhost-lint-findings-rule-count
-              (owned_view.compiler-owned-shared-view reported)
+              reported
               (lint_core.lint-rule-redundant-divergence-padding-id))
             2))
         43]
-      [(not
-          (=
-            (lint_core.lint-findings-count
-              (owned_view.compiler-owned-shared-view clean))
-            0))
-        44]
-      [(not
-          (=
-            (lint_core.lint-findings-count
-              (owned_view.compiler-owned-shared-view suppressed))
-            0))
-        45]
+      [(not (= (lint_core.lint-findings-count clean) 0)) 44]
+      [(not (= (lint_core.lint-findings-count suppressed) 0)) 45]
       [else 42])))
 
 (define (lint-driver-smoke-divergence-padding-self-test) : i64
@@ -986,12 +958,7 @@
             (lint_core.lint-rule-redundant-divergence-padding-id)
             4))
         48]
-      [(not
-          (=
-            (lint_core.lint-findings-count
-              (owned_view.compiler-owned-shared-view clean))
-            0))
-        49]
+      [(not (= (lint_core.lint-findings-count clean) 0)) 49]
       [else 42])))
 
 (define (lint-driver-smoke-unused-variable-self-test) : i64
@@ -1049,13 +1016,7 @@
             (lint_core.lint-rule-unused-variable-id))))
         (set! status 51)
         unit)
-      (if (and
-        (= status 42)
-        (not
-          (=
-            (lint_core.lint-findings-count
-              (owned_view.compiler-owned-shared-view clean))
-            0)))
+      (if (and (= status 42) (not (= (lint_core.lint-findings-count clean) 0)))
         (set! status 52)
         unit)
       (if (and
@@ -1078,11 +1039,7 @@
         unit)
       (if (and
         (= status 42)
-        (not
-          (=
-            (lint_core.lint-findings-count
-              (owned_view.compiler-owned-shared-view suppressed))
-            0)))
+        (not (= (lint_core.lint-findings-count suppressed) 0)))
         (set! status 55)
         unit)
       (if (and
@@ -1188,12 +1145,7 @@
             (lint_core.lint-rule-unused-unsafe-id)
             2))
         61]
-      [(not
-          (=
-            (lint_core.lint-findings-count
-              (owned_view.compiler-owned-shared-view required))
-            0))
-        62]
+      [(not (= (lint_core.lint-findings-count required) 0)) 62]
       [(not
           (=
             (lint_core.lint-findings-count
@@ -1207,12 +1159,7 @@
             (lint_core.lint-rule-unused-unsafe-id)
             4))
         64]
-      [(not
-          (=
-            (lint_core.lint-findings-count
-              (owned_view.compiler-owned-shared-view required-call))
-            0))
-        65]
+      [(not (= (lint_core.lint-findings-count required-call) 0)) 65]
       [(not
           (=
             (lint_core.lint-findings-count
@@ -1226,12 +1173,7 @@
             (lint_core.lint-rule-unused-unsafe-id)
             2))
         67]
-      [(not
-          (=
-            (lint_core.lint-findings-count
-              (owned_view.compiler-owned-shared-view suppressed))
-            0))
-        68]
+      [(not (= (lint_core.lint-findings-count suppressed) 0)) 68]
       [(lint-driver-smoke-source-has-unused-unsafe-candidate?
           "lint_driver_atomic_load.tl"
           (lint-driver-smoke-unsafe-builtin-source "atomic-load"))
@@ -1282,36 +1224,11 @@
             "lint_driver_tls_current.tl"
             (lint-driver-smoke-safe-tls-current-arena-source)))
         171]
-      [(not
-          (=
-            (lint_core.lint-findings-count
-              (owned_view.compiler-owned-shared-view parameter-shadow))
-            1))
-        172]
-      [(not
-          (=
-            (lint_core.lint-findings-count
-              (owned_view.compiler-owned-shared-view local-shadow))
-            1))
-        173]
-      [(not
-          (=
-            (lint_core.lint-findings-count
-              (owned_view.compiler-owned-shared-view let-shadow))
-            1))
-        174]
-      [(not
-          (=
-            (lint_core.lint-findings-count
-              (owned_view.compiler-owned-shared-view top-level-shadow))
-            1))
-        175]
-      [(not
-          (=
-            (lint_core.lint-findings-count
-              (owned_view.compiler-owned-shared-view tls-shadow))
-            1))
-        176]
+      [(not (= (lint_core.lint-findings-count parameter-shadow) 1)) 172]
+      [(not (= (lint_core.lint-findings-count local-shadow) 1)) 173]
+      [(not (= (lint_core.lint-findings-count let-shadow) 1)) 174]
+      [(not (= (lint_core.lint-findings-count top-level-shadow) 1)) 175]
+      [(not (= (lint_core.lint-findings-count tls-shadow) 1)) 176]
       [(not
           (lint-driver-smoke-source-has-unused-unsafe-candidate?
             "lint_driver_unsafe_resource_snapshot.tl"
@@ -1574,62 +1491,72 @@
           false
           false)]
       [batch-macro-status : i64
-        (lint_driver_core.selfhost-lint-files
-          (lint-driver-smoke-unsafe-surface-macro-paths)
-          (lint_svec.new)
-          true
-          false
-          false
-          false
-          false
-          false
-          0)]
+        (let
+          [smoke-paths (lint-driver-smoke-unsafe-surface-macro-paths)]
+          (lint_driver_core.selfhost-lint-files
+            smoke-paths
+            (lint_svec.new)
+            true
+            false
+            false
+            false
+            false
+            false
+            0))]
       [package-macro-status : i64
-        (lint_driver_core.selfhost-lint-package-files
-          (lint-driver-smoke-unsafe-surface-macro-paths)
-          (lint_svec.new)
-          true
-          false
-          false
-          false
-          false
-          (lint_driver_core.selfhost-lint-dead-decls-with-capacity 0)
-          false
-          0)]
+        (let
+          [smoke-paths (lint-driver-smoke-unsafe-surface-macro-paths)]
+          (lint_driver_core.selfhost-lint-package-files
+            smoke-paths
+            (lint_svec.new)
+            true
+            false
+            false
+            false
+            false
+            (lint_driver_core.selfhost-lint-dead-decls-with-capacity 0)
+            false
+            0))]
       [batch-error-status : i64
-        (lint_driver_core.selfhost-lint-files
-          (lint-driver-smoke-unsafe-surface-error-paths)
-          (lint_svec.new)
-          false
-          false
-          false
-          false
-          false
-          false
-          0)]
+        (let
+          [smoke-paths (lint-driver-smoke-unsafe-surface-error-paths)]
+          (lint_driver_core.selfhost-lint-files
+            smoke-paths
+            (lint_svec.new)
+            false
+            false
+            false
+            false
+            false
+            false
+            0))]
       [package-error-status : i64
-        (lint_driver_core.selfhost-lint-package-files
-          (lint-driver-smoke-unsafe-surface-error-paths)
-          (lint_svec.new)
-          false
-          false
-          false
-          false
-          false
-          (lint_driver_core.selfhost-lint-dead-decls-with-capacity 0)
-          false
-          0)]
+        (let
+          [smoke-paths (lint-driver-smoke-unsafe-surface-error-paths)]
+          (lint_driver_core.selfhost-lint-package-files
+            smoke-paths
+            (lint_svec.new)
+            false
+            false
+            false
+            false
+            false
+            (lint_driver_core.selfhost-lint-dead-decls-with-capacity 0)
+            false
+            0))]
       [batch-status : i64
-        (lint_driver_core.selfhost-lint-files
-          (lint-driver-smoke-unsafe-surface-paths)
-          (lint_svec.new)
-          false
-          false
-          false
-          false
-          false
-          false
-          0)]
+        (let
+          [smoke-paths (lint-driver-smoke-unsafe-surface-paths)]
+          (lint_driver_core.selfhost-lint-files
+            smoke-paths
+            (lint_svec.new)
+            false
+            false
+            false
+            false
+            false
+            false
+            0))]
       (cond
         [(not (= direct-count 1)) 115]
         [(not (= direct-fallbacks 1)) 116]
@@ -1758,7 +1685,7 @@
           (=
             (lint_driver_core_tests.selfhost-lint-source-rule-count
               (lint-driver-smoke-dot-copy-on-update-struct-source)
-              (owned_view.compiler-owned-shared-view rule))
+              rule)
             1))
         89]
       [else 42])))
@@ -1791,10 +1718,8 @@
         92]
       [(not
           (=
-            (lint_core.lint-findings-count
-              (owned_view.compiler-owned-shared-view ordinary))
-            (lint_core.lint-findings-count
-              (owned_view.compiler-owned-shared-view compat))))
+            (lint_core.lint-findings-count ordinary)
+            (lint_core.lint-findings-count compat)))
         94]
       [else 42])))
 

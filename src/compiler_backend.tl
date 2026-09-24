@@ -29743,7 +29743,45 @@
     [(compiler_ir_types.CompilerIrUnOp.BitNot)
       (str_cat.str-cat "    notq " reg "\n")]
     ;; Sqrt is admitted only for f32/f64 and takes the float path below.
-    [(compiler_ir_types.CompilerIrUnOp.Sqrt) ""]))
+    [(compiler_ir_types.CompilerIrUnOp.Sqrt) ""]
+    ;; BitLength needs the operand's signedness; see
+    ;; compiler-backend-unop-typed-reg-asm.
+    [(compiler_ir_types.CompilerIrUnOp.BitLength) ""]))
+
+;; BITLEN: the significant-bit count of a 64-bit register, in place and without
+;; a scratch register. A value with no significant bits (<= 0 signed, 0
+;; unsigned) yields 0; otherwise `bsr` gives the index of the highest set bit.
+(define (compiler-backend-bit-length-reg-asm [signed? : bool] [reg : String]) : String
+  (str_cat.str-cat
+    "    testq "
+    (compiler-backend-global-shared-view reg)
+    ", "
+    (compiler-backend-global-shared-view reg)
+    (if signed?
+      "\n    jle 1f\n    bsrq "
+      "\n    je 1f\n    bsrq ")
+    (compiler-backend-global-shared-view reg)
+    ", "
+    (compiler-backend-global-shared-view reg)
+    "\n    addq $1, "
+    (compiler-backend-global-shared-view reg)
+    "\n    jmp 2f\n1:\n    xorq "
+    (compiler-backend-global-shared-view reg)
+    ", "
+    reg
+    "\n2:\n"))
+
+;; Integer unary ops whose lowering depends on the operand type.
+(define (compiler-backend-unop-typed-reg-asm
+  [op : compiler_ir_types.CompilerIrUnOp]
+  [ty : compiler_ast_types.AstType]
+  [reg : String]) : String
+  (match op
+    [(compiler_ir_types.CompilerIrUnOp.BitLength)
+      (compiler-backend-bit-length-reg-asm
+        (compiler-backend-type-signed? ty)
+        reg)]
+    [_ (compiler-backend-unop-reg-asm op reg)]))
 
 (define (compiler-backend-float-suffix [fty : compiler_ast_types.AstType]) : String
   (if (compiler-backend-f64-type? fty)
@@ -35937,8 +35975,9 @@
               (ResultCompilerBackend.Ok
                 (str_cat.str-cat
                   src-asm
-                  (compiler-backend-unop-reg-asm
+                  (compiler-backend-unop-typed-reg-asm
                     (compiler-backend-global-shared-view op)
+                    (compiler-backend-global-shared-view ty)
                     (compiler-backend-global-shared-view result-reg))
                   (compiler-backend-emit-store-var-with-plan
                     (compiler-backend-global-shared-view assignments)
@@ -35956,8 +35995,9 @@
             (ResultCompilerBackend.Ok
               (str_cat.str-cat
                 src-asm
-                (compiler-backend-unop-reg-asm
+                (compiler-backend-unop-typed-reg-asm
                   (compiler-backend-global-shared-view op)
+                  (compiler-backend-global-shared-view ty)
                   (compiler-backend-global-shared-view dst-home))))]
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err message)])))))
@@ -90817,7 +90857,8 @@
             (compiler-backend-object-push-u8! (&mut out) 0x48)
             (compiler-backend-object-push-u8! (&mut out) 0xf7)
             (compiler-backend-object-push-u8! (&mut out) 0xd0))]
-        [(compiler_ir_types.CompilerIrUnOp.Sqrt) unit])
+        [(compiler_ir_types.CompilerIrUnOp.Sqrt) unit]
+        [(compiler_ir_types.CompilerIrUnOp.BitLength) unit])
       (byte_buf_core.byte-buf-builder-finish-string (& out)))))
 
 (define (compiler-backend-object-call-r11-bytes) : String
@@ -94038,6 +94079,7 @@
         (compiler-backend-object-semantic-value-supported? src)
         (match op
           [(compiler_ir_types.CompilerIrUnOp.Sqrt) false]
+          [(compiler_ir_types.CompilerIrUnOp.BitLength) false]
           [_ true]))]
     [(compiler_ir_types.CompilerIrInstr.Call _ name args _)
       (and

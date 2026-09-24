@@ -784,6 +784,60 @@
         (compiler-live-set7 10 11 12 13 14 15 16))
       (live.compiler-live-set-eq? use-def.defs (compiler-live-set5 0 1 2 3 4)))))
 
+;; Leading phis read in parallel. In a loop block `i = phi [.., %5]` then
+;; `a = phi [.., i]`, the second phi reads the PREVIOUS iteration's `i`, so `i`
+;; is upward-exposed although the phi before it defines `i`; it must stay live
+;; around the back edge instead of dying at the increment `%5 = i + 1`.
+(define (compiler-live-parallel-phi-use-def-ok?) : bool
+  (let
+    [use-def : live.CompilerLiveUseDef
+      (live.compiler-live-block-use-def
+        (ir.compiler-ir-instr-seq4
+          (ir.CompilerIrInstr.Phi
+            1
+            (ir.compiler-ir-phi-input-seq-prepend
+              (ir.CompilerIrValue.Var 5)
+              (ir.compiler-ir-label "body")
+              (ir.compiler-ir-phi-input-seq-empty))
+            (compiler-live-i64-ty))
+          (ir.CompilerIrInstr.Phi
+            2
+            (ir.compiler-ir-phi-input-seq-prepend
+              (ir.CompilerIrValue.Var 1)
+              (ir.compiler-ir-label "body")
+              (ir.compiler-ir-phi-input-seq-empty))
+            (compiler-live-i64-ty))
+          (ir.CompilerIrInstr.BinOp
+            5
+            ir.CompilerIrBinOp.Add
+            (ir.CompilerIrValue.Var 1)
+            (ir.CompilerIrValue.I64 1)
+            (compiler-live-i64-ty))
+          (ir.CompilerIrInstr.Branch
+            (ir.CompilerIrValue.Var 5)
+            (ir.compiler-ir-label "body")
+            (ir.compiler-ir-label "exit"))))]
+    (and
+      (live.compiler-live-set-contains?
+        (live.compiler-live-shared-view use-def.uses)
+        1)
+      (live.compiler-live-set-contains?
+        (live.compiler-live-shared-view use-def.uses)
+        5)
+      (not
+        (live.compiler-live-set-contains?
+          (live.compiler-live-shared-view use-def.uses)
+          2))
+      (live.compiler-live-set-contains?
+        (live.compiler-live-shared-view use-def.defs)
+        1)
+      (live.compiler-live-set-contains?
+        (live.compiler-live-shared-view use-def.defs)
+        2)
+      (live.compiler-live-set-contains?
+        (live.compiler-live-shared-view use-def.defs)
+        5))))
+
 (define (compiler-live-memory-use-def-ok?) : bool
   (let
     [use-def : live.CompilerLiveUseDef
@@ -1104,6 +1158,7 @@
     (compiler-live-scratch-ops-ok?)
     (compiler-live-step-ids-ok?)
     (compiler-live-use-def-ok?)
+    (compiler-live-parallel-phi-use-def-ok?)
     (compiler-live-memory-use-def-ok?)
     (compiler-live-owned-capability-use-def-ok?)
     (compiler-live-vector-mask-use-def-ok?)

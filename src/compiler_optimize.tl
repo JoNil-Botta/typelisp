@@ -24115,6 +24115,248 @@
   [reachable : OptLabelSet]
   [header : i64]
   [latch : i64]) : OptNaturalLoop
+  (if pred-map.index.labels-unique
+    (opt-natural-loop-build-by-id blocks pred-map reachable header latch)
+    (opt-natural-loop-build-by-label blocks pred-map reachable header latch)))
+
+;; `opt-natural-loop-build-by-label` on block ids, for an index whose labels are
+;; all distinct. There, a predecessor row's label set holds exactly the labels of
+;; the row's ids in CSR order, and `opt-natural-loop-collect-add-preds` visits it
+;; head first -- the row read backwards -- consing each newly marked block onto
+;; both the body and the worklist it pops from the head. So the same walk runs
+;; on an id stack: pop the newest id, read its predecessor row backwards, and
+;; mark, record and push every reachable unmarked id. The body label set is then
+;; the header, the latch and the recorded ids in discovery order, and the body's
+;; member array is `marks` itself: both hold exactly the header, the latch and
+;; every recorded block.
+(define (opt-natural-loop-build-by-id
+  [blocks : ir.CompilerIrBlockList]
+  [pred-map : OptPredMap]
+  [_reachable : OptLabelSet]
+  [header : i64]
+  [latch : i64]) : OptNaturalLoop
+  (let
+    [index : OptCfgIndex (compiler-opt-global-shared-view pred-map.index)]
+    [count : i64
+      (opt-cfg-index-block-count (compiler-opt-global-shared-view index))]
+    [marks : (__tl_dyn-array bool) (__tl_make-array bool count)]
+    [found : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+    [stack : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+    [found-count : i64 0]
+    [top : i64 0]
+    [header-id : i64 (- 0 1)]
+    [latch-id : i64 (- 0 1)]
+    (begin
+      (match (opt-cfg-index-id (compiler-opt-global-shared-view index) header)
+        [(option_i64.Some id)
+          (begin
+            (set! (array-ref marks id) true)
+            (set! header-id id))]
+        [(option_i64.None) unit])
+      (match (opt-cfg-index-id (compiler-opt-global-shared-view index) latch)
+        [(option_i64.Some id)
+          (begin
+            (set! (array-ref marks id) true)
+            (set! latch-id id))]
+        [(option_i64.None) unit])
+      ;; #M-E, as in the label walk: a self-loop expands no predecessors.
+      (when
+        (and (!= header latch) (>= latch-id 0))
+        (begin
+          (set! (array-ref stack 0) latch-id)
+          (set! top 1)))
+      (while (> top 0)
+        (let
+          [w : i64 (array-ref stack (- top 1))]
+          [start : i64 (array-ref index.preds.offsets w)]
+          [edge : i64 (array-ref index.preds.offsets (+ w 1))]
+          (begin
+            (set! top (- top 1))
+            (while (> edge start)
+              (let
+                [p : i64 (array-ref index.preds.edges (- edge 1))]
+                (begin
+                  (when
+                    (and
+                      (array-ref index.reachable p)
+                      (not (array-ref marks p)))
+                    (begin
+                      (set! (array-ref marks p) true)
+                      (set! (array-ref found found-count) p)
+                      (set! found-count (+ found-count 1))
+                      (set! (array-ref stack top) p)
+                      (set! top (+ top 1))))
+                  (set! edge (- edge 1))))))))
+      (let
+        [seeds : i64
+          (if (= header latch)
+            1
+            2)]
+        [n : i64 (+ seeds found-count)]
+        [items : (__tl_dyn-array i64)
+          (__tl_make-array
+            i64
+            (+
+              (if (< n 4)
+                4
+                n)
+              1))]
+        [k : i64 0]
+        (begin
+          (set! (array-ref items 0) n)
+          (set! (array-ref items 1) header)
+          (when (= seeds 2) (set! (array-ref items 2) latch))
+          (while (< k found-count)
+            (begin
+              (set!
+                (array-ref items (+ seeds (+ k 1)))
+                (opt-cfg-index-label
+                  (compiler-opt-global-shared-view index)
+                  (array-ref found k)))
+              (set! k (+ k 1))))
+          (let
+            [body-labels : OptLabelSet (OptLabelSet.Dense items n)]
+            (OptNaturalLoop.Loop
+              header
+              latch
+              (OptLoopBody
+                (compiler-opt-global-shared-view body-labels)
+                (compiler-opt-global-shared-view marks)
+                (opt-loop-body-blocks-by-id
+                  (compiler-opt-global-shared-view marks)
+                  (compiler-opt-global-shared-view blocks)
+                  header-id
+                  latch-id
+                  (compiler-opt-global-shared-view found)
+                  found-count
+                  n))
+              (opt-natural-loop-find-preheader-by-id
+                (compiler-opt-global-shared-view index)
+                (compiler-opt-global-shared-view marks)
+                header-id))))))))
+
+;; `opt-natural-loop-find-preheader` for the id walk. The candidate scan keeps a
+;; predecessor of the header that is reachable and outside the body, and the
+;; loop has a preheader exactly when there is one such predecessor and its only
+;; successor is the header -- a second one, or an unsafe first one, turns the
+;; candidate to Many whatever the order. With distinct labels the reachable set
+;; is the index's reachable array, body membership is `marks`, and a successor
+;; label set is its CSR row, whose ids are distinct.
+(define (opt-natural-loop-find-preheader-by-id
+  [index : OptCfgIndex]
+  [marks : (__tl_dyn-array bool)]
+  [header-id : i64]) : OptLoopPreheader
+  (if (< header-id 0)
+    (OptLoopPreheader.No)
+    (let
+      [edge : i64 (array-ref index.preds.offsets header-id)]
+      [end : i64 (array-ref index.preds.offsets (+ header-id 1))]
+      [candidate : i64 (- 0 1)]
+      [count : i64 0]
+      (begin
+        (while (< edge end)
+          (let
+            [p : i64 (array-ref index.preds.edges edge)]
+            (begin
+              (when
+                (and (array-ref index.reachable p) (not (array-ref marks p)))
+                (begin
+                  (set! candidate p)
+                  (set! count (+ count 1))))
+              (set! edge (+ edge 1)))))
+        (if (and
+          (= count 1)
+          (=
+            (-
+              (array-ref index.succs.offsets (+ candidate 1))
+              (array-ref index.succs.offsets candidate))
+            1)
+          (=
+            (array-ref
+              index.succs.edges
+              (array-ref index.succs.offsets candidate))
+            header-id))
+          (OptLoopPreheader.Some
+            (opt-cfg-index-label
+              (compiler-opt-global-shared-view index)
+              candidate))
+          (OptLoopPreheader.No))))))
+
+;; The body's blocks for the id walk. `opt-loop-body-blocks-from-seq` walks the
+;; whole block array to cons the members up in block order; the id walk already
+;; holds them -- the header, the latch and the recorded ids, which are exactly
+;; `marks` -- so a small body sorts those few ids and conses the same blocks in
+;; the same order without visiting the rest of the function. A large body, or
+;; a block list that is not an array, keeps the walk.
+(define (opt-loop-body-blocks-by-id
+  [marks : (__tl_dyn-array bool)]
+  [blocks : ir.CompilerIrBlockList]
+  [header-id : i64]
+  [latch-id : i64]
+  [found : (__tl_dyn-array i64)]
+  [found-count : i64]
+  [n : i64]) : ir.CompilerIrBlockList
+  (match (compiler-opt-global-shared-view blocks)
+    [(ir.CompilerIrBlockList.Array seq)
+      (if (> n (opt-loop-body-sorted-id-limit))
+        (opt-loop-body-blocks-from-seq marks seq 0)
+        (let
+          [ids : (__tl_dyn-array i64) (__tl_make-array i64 (+ found-count 2))]
+          [k : i64 0]
+          [i : i64 0]
+          [out : ir.CompilerIrBlockList (ir.CompilerIrBlockList.Nil)]
+          (begin
+            (when
+              (>= header-id 0)
+              (begin
+                (set! (array-ref ids k) header-id)
+                (set! k (+ k 1))))
+            (when
+              (and (>= latch-id 0) (!= latch-id header-id))
+              (begin
+                (set! (array-ref ids k) latch-id)
+                (set! k (+ k 1))))
+            (while (< i found-count)
+              (begin
+                (set! (array-ref ids k) (array-ref found i))
+                (set! k (+ k 1))
+                (set! i (+ i 1))))
+            ;; Insertion sort: at most the limit's worth of distinct ids.
+            (set! i 1)
+            (while (< i k)
+              (let
+                [id : i64 (array-ref ids i)]
+                [j : i64 (- i 1)]
+                (begin
+                  (while (and (>= j 0) (> (array-ref ids j) id))
+                    (begin
+                      (set! (array-ref ids (+ j 1)) (array-ref ids j))
+                      (set! j (- j 1))))
+                  (set! (array-ref ids (+ j 1)) id)
+                  (set! i (+ i 1)))))
+            (set! i (- k 1))
+            (while (>= i 0)
+              (begin
+                (set!
+                  out
+                  (ir.compiler-ir-block-cons
+                    (ir.compiler-ir-block-seq-ref
+                      (compiler-opt-global-shared-view seq)
+                      (array-ref ids i))
+                    out))
+                (set! i (- i 1))))
+            out)))]
+    [_ (opt-loop-body-blocks-from marks blocks 0 n)]))
+
+(define (opt-loop-body-sorted-id-limit) : i64
+  32)
+
+(define (opt-natural-loop-build-by-label
+  [blocks : ir.CompilerIrBlockList]
+  [pred-map : OptPredMap]
+  [reachable : OptLabelSet]
+  [header : i64]
+  [latch : i64]) : OptNaturalLoop
   (let
     [index : OptCfgIndex (compiler-opt-global-shared-view pred-map.index)]
     [marks : (__tl_dyn-array bool)
@@ -24162,61 +24404,6 @@
         (compiler-opt-global-shared-view reachable)
         header
         body-labels))))
-
-;; `remaining` starts as the very block list `doms`'s index was built from, and
-;; `opt-cfg-index-build` numbers blocks in this walk order, so `source-id` is the
-;; walk position. The range guard replaces the old missing-label arm: an id past
-;; the indexed block count is exactly the case a label lookup would have missed.
-;; Edges come from that same index's successor CSR row instead of re-deriving the
-;; block's successor label set from its instruction stream -- see the row-order
-;; note on `opt-cfg-natural-loop-edges-csr`; this walk consumes the row exactly
-;; as the Array walk below does.
-(define (opt-cfg-natural-loop-blocks
-  [all-blocks : ir.CompilerIrBlockList]
-  [remaining : ir.CompilerIrBlockList]
-  [pred-map : OptPredMap]
-  [reachable : OptLabelSet]
-  [doms : OptDomInfo]
-  [source-id : i64]) : OptNaturalLoopList
-  (match remaining
-    [(ir.CompilerIrBlockList.Nil) (OptNaturalLoopList.Nil)]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match (compiler-opt-global-shared-view block)
-        [(ir.CompilerIrBlock.Block label _)
-          (let
-            [tail : OptNaturalLoopList
-              (opt-cfg-natural-loop-blocks
-                (compiler-opt-global-shared-view all-blocks)
-                (compiler-opt-box-shared-view rest)
-                (compiler-opt-global-shared-view pred-map)
-                (compiler-opt-global-shared-view reachable)
-                (compiler-opt-global-shared-view doms)
-                (+ source-id 1))]
-            [index : OptCfgIndex doms.index]
-            [reachable-ids : (__tl_dyn-array bool) index.reachable]
-            (if (and
-              (< source-id (array-length reachable-ids))
-              (array-ref reachable-ids source-id))
-              (opt-cfg-natural-loop-edges-csr
-                (compiler-opt-global-shared-view all-blocks)
-                (compiler-opt-global-shared-view index)
-                pred-map
-                reachable
-                (compiler-opt-global-shared-view doms)
-                source-id
-                label
-                (array-ref index.succs.offsets source-id)
-                (array-ref index.succs.offsets (+ source-id 1))
-                tail)
-              tail))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (opt-cfg-natural-loop-blocks
-        all-blocks
-        (ir.compiler-ir-block-seq-to-list seq)
-        pred-map
-        reachable
-        doms
-        source-id)]))
 
 ;; Back-edge scan for one block, reading its successors from the context's CSR
 ;; index instead of recomputing the block's successor set from its instruction
@@ -24333,14 +24520,26 @@
         (compiler-opt-global-shared-view context.reachable)
         (compiler-opt-global-shared-view context.doms)
         (OptNaturalLoopList.Nil))]
+    ;; A cons list scans as the array it spells: the scan emits the same loops
+    ;; in the same order either way, and each loop's body blocks are then read
+    ;; off the array by id instead of by walking the list to its last member.
     [_
-      (opt-cfg-natural-loop-blocks
-        (compiler-opt-global-shared-view blocks)
-        (compiler-opt-global-shared-view blocks)
-        context.pred-map
-        context.reachable
-        context.doms
-        0)]))
+      (let
+        [seq : ir.CompilerIrBlockSeq
+          (ir.compiler-ir-block-seq-from-list
+            (compiler-opt-global-shared-view blocks))]
+        (opt-cfg-natural-loop-block-seq-csr
+          (ir.CompilerIrBlockList.Array (compiler-opt-global-shared-view seq))
+          (compiler-opt-global-shared-view seq)
+          (-
+            (ir.compiler-ir-block-seq-count
+              (compiler-opt-global-shared-view seq))
+            1)
+          (compiler-opt-global-shared-view context)
+          (compiler-opt-global-shared-view context.pred-map)
+          (compiler-opt-global-shared-view context.reachable)
+          (compiler-opt-global-shared-view context.doms)
+          (OptNaturalLoopList.Nil)))]))
 
 (define (opt-cfg-natural-loops [blocks : ir.CompilerIrBlockList]) : OptNaturalLoopList
   (opt-cfg-natural-loops-with-context

@@ -103560,9 +103560,122 @@
 
 ;; Classify every outside block with a direct loop-def use as the wire point or
 ;; as a far block.
+;; --- far-scan body defs -------------------------------------------------------
+;; The far scan asks, once per outside block and once per far phi input, which
+;; loop defs a small use set names, in the body's walk order -- and
+;; `opt-bce-mb-wire-vars-blocks` answered by walking every body instruction per
+;; question. The body is fixed for the scan, so its defs are indexed once, by
+;; walk position. With every var defined at most once in the body, the answer is
+;; the use set's vars that have a position, taken in position order: the same
+;; vars, prepended in the same order. A body that defines some var twice keeps
+;; the walk.
+(defstruct OptBceMbBodyDefs
+  (single bool)
+  (vars opt_dense_i64_vec.Vec)
+  (positions opt_i64_i64_map.Map))
+
+(define (opt-bce-mb-body-defs [blocks : ir.CompilerIrBlockList]) : OptBceMbBodyDefs
+  (let
+    [seq : ir.CompilerIrBlockSeq
+      (ir.compiler-ir-block-seq-from-list
+        (compiler-opt-global-shared-view blocks))]
+    [count : i64
+      (ir.compiler-ir-block-seq-count (compiler-opt-global-shared-view seq))]
+    [vars : opt_dense_i64_vec.Vec (opt_dense_i64_vec.with-capacity 16)]
+    [positions : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 16)]
+    [single : bool true]
+    [b : i64 0]
+    (begin
+      (while (< b count)
+        (begin
+          (match (ir.compiler-ir-block-seq-ref
+            (compiler-opt-global-shared-view seq)
+            b)
+            [(ir.CompilerIrBlock.Block _ instrs)
+              (let
+                [n : i64
+                  (ir.compiler-ir-instr-seq-count
+                    (compiler-opt-global-shared-view instrs))]
+                [i : i64 0]
+                (while (< i n)
+                  (let
+                    [dst : i64
+                      (opt-bce-mb-instr-seq-dst-or
+                        (compiler-opt-global-shared-view instrs)
+                        i
+                        (- 0 1))]
+                    (begin
+                      (when
+                        (>= dst 0)
+                        (if (opt_i64_i64_map.contains? (& positions) dst)
+                          (set! single false)
+                          (begin
+                            (opt_i64_i64_map.insert-ref!
+                              (&mut positions)
+                              dst
+                              (opt_dense_i64_vec.len (& vars)))
+                            (opt_dense_i64_vec.push-ref! (&mut vars) dst))))
+                      (set! i (+ i 1))))))])
+          (set! b (+ b 1))))
+      (OptBceMbBodyDefs single vars positions))))
+
+(define (opt-bce-mb-body-defs-used
+  [defs : OptBceMbBodyDefs]
+  [body-blocks : ir.CompilerIrBlockList]
+  [uses : opt_i64_i64_map.Map]
+  [acc : OptBceMbVarList]) : OptBceMbVarList
+  (if (not defs.single)
+    (opt-bce-mb-wire-vars-blocks body-blocks uses acc)
+    (let
+      [capacity : i64 (opt_i64_i64_map.capacity (& uses))]
+      [hits : (__tl_dyn-array i64)
+        (__tl_make-array i64 (opt_i64_i64_map.len (& uses)))]
+      [k : i64 0]
+      [i : i64 (opt_i64_i64_map.next-occupied (& uses) 0)]
+      [out : OptBceMbVarList acc]
+      (begin
+        (while (< i capacity)
+          (begin
+            (match (opt_i64_i64_map.entry-at (& uses) i)
+              [(opt_i64_i64_map.EntrySome var _)
+                (match (opt_i64_i64_map.get (& defs.positions) var)
+                  [(opt_i64_i64_map.LookupFound position)
+                    (begin
+                      (set! (array-ref hits k) position)
+                      (set! k (+ k 1)))]
+                  [(opt_i64_i64_map.LookupMissing) unit])]
+              [(opt_i64_i64_map.EntryNone) unit])
+            (set! i (opt_i64_i64_map.next-occupied (& uses) (+ i 1)))))
+        ;; Insertion sort: a use set names few loop defs.
+        (set! i 1)
+        (while (< i k)
+          (let
+            [position : i64 (array-ref hits i)]
+            [j : i64 (- i 1)]
+            (begin
+              (while (and (>= j 0) (> (array-ref hits j) position))
+                (begin
+                  (set! (array-ref hits (+ j 1)) (array-ref hits j))
+                  (set! j (- j 1))))
+              (set! (array-ref hits (+ j 1)) position)
+              (set! i (+ i 1)))))
+        (set! i 0)
+        (while (< i k)
+          (begin
+            (set!
+              out
+              (opt-bce-mb-var-list-prepend
+                out
+                (array-ref
+                  (opt_dense_i64_vec.slots (& defs.vars))
+                  (array-ref hits i))))
+            (set! i (+ i 1))))
+        out))))
+
 (define (opt-bce-mb-far-phi-inputs
   [body-labels : OptLabelSet]
   [body-blocks : ir.CompilerIrBlockList]
+  [defs : OptBceMbBodyDefs]
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]
   [count : i64]
@@ -103578,6 +103691,7 @@
             (opt-bce-mb-far-phi-input-seq
               (compiler-opt-global-shared-view body-labels)
               (compiler-opt-global-shared-view body-blocks)
+              (compiler-opt-global-shared-view defs)
               (compiler-opt-global-shared-view inputs)
               0
               plan)]
@@ -103585,6 +103699,7 @@
       (opt-bce-mb-far-phi-inputs
         body-labels
         body-blocks
+        defs
         instrs
         (+ index 1)
         count
@@ -103593,6 +103708,7 @@
 (define (opt-bce-mb-far-phi-input-seq
   [body-labels : OptLabelSet]
   [body-blocks : ir.CompilerIrBlockList]
+  [defs : OptBceMbBodyDefs]
   [inputs : ir.CompilerIrPhiInputSeq]
   [index : i64]
   [plan : OptBceMbFarPlan]) : OptBceMbFarPlan
@@ -103615,7 +103731,8 @@
                 [uses : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 2)]
                 [_mark : unit (opt_i64_i64_map.insert-ref! (&mut uses) var 1)]
                 [vars : OptBceMbVarList
-                  (opt-bce-mb-wire-vars-blocks
+                  (opt-bce-mb-body-defs-used
+                    (compiler-opt-global-shared-view defs)
                     (compiler-opt-global-shared-view body-blocks)
                     uses
                     (opt-bce-mb-var-list-new))]
@@ -103633,6 +103750,7 @@
       (opt-bce-mb-far-phi-input-seq
         body-labels
         body-blocks
+        defs
         inputs
         (+ index 1)
         next))))
@@ -103720,6 +103838,7 @@
   [all-blocks : ir.CompilerIrBlockList]
   [body-labels : OptLabelSet]
   [body-blocks : ir.CompilerIrBlockList]
+  [defs : OptBceMbBodyDefs]
   [plan : OptBceMbFarPlan]) : OptBceMbFarPlan
   (match blocks
     [(ir.CompilerIrBlockList.Nil) plan]
@@ -103730,6 +103849,7 @@
         all-blocks
         body-labels
         body-blocks
+        defs
         plan)]
     [(ir.CompilerIrBlockList.Cons block rest)
       (opt-bce-mb-far-scan
@@ -103738,6 +103858,7 @@
         (compiler-opt-global-shared-view all-blocks)
         (compiler-opt-global-shared-view body-labels)
         (compiler-opt-global-shared-view body-blocks)
+        (compiler-opt-global-shared-view defs)
         (match block
           [(ir.CompilerIrBlock.Block label instrs)
             (if (opt-label-contains
@@ -103756,6 +103877,7 @@
                   (opt-bce-mb-far-phi-inputs
                     (compiler-opt-global-shared-view body-labels)
                     (compiler-opt-global-shared-view body-blocks)
+                    (compiler-opt-global-shared-view defs)
                     (compiler-opt-global-shared-view instrs)
                     0
                     (opt-unroll-phi-prefix-count
@@ -103763,7 +103885,8 @@
                       0)
                     plan)]
                 [vars : OptBceMbVarList
-                  (opt-bce-mb-wire-vars-blocks
+                  (opt-bce-mb-body-defs-used
+                    (compiler-opt-global-shared-view defs)
                     body-blocks
                     (opt-bce-mb-nonphi-uses-seq
                       (opt_i64_i64_map.with-capacity 8)
@@ -104016,6 +104139,8 @@
   [body-blocks : ir.CompilerIrBlockList]
   [cell : (__tl_dyn-array i64)]) : OptBceMbFarResult
   (let
+    [defs : OptBceMbBodyDefs
+      (opt-bce-mb-body-defs (compiler-opt-global-shared-view body-blocks))]
     [scanned : OptBceMbFarPlan
       (opt-bce-mb-far-scan
         (compiler-opt-global-shared-view pred-map)
@@ -104023,6 +104148,7 @@
         (compiler-opt-global-shared-view blocks)
         (compiler-opt-global-shared-view body-labels)
         (compiler-opt-global-shared-view body-blocks)
+        (compiler-opt-global-shared-view defs)
         (OptBceMbFarPlan
           -1
           (opt-bce-mb-var-list-new)

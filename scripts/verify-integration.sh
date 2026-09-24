@@ -950,6 +950,17 @@ compiler_arena_debug
 EOF
 }
 
+# The Windows no-libc gate owns these fixtures. It runs the shadow-identity
+# program with a preloaded application-directory DLL and records the timing
+# program's output; neither setup fits the seed-backed integration manifest.
+# On Linux the Windows loader and Winsock boundary are not applicable.
+winsock_no_libc_gate_cases() {
+    cat <<'EOF'
+winsock_capability_measure
+winsock_shadow_identity
+EOF
+}
+
 # Windows COFF-plan rows use forced assembly only when an integration assertion
 # needs to inspect the textual backend artifact. Keep the human-readable reason
 # beside the classification so summary output explains every intentional clang
@@ -1064,6 +1075,7 @@ validate_manifest() {
     selfhost_native_manifest_cases >> "$_known"
     spmd_simd_manifest_cases >> "$_known"
     compiler_cfg_native_fixture_cases >> "$_known"
+    winsock_no_libc_gate_cases >> "$_known"
 
     find tests/integration -type f -name '*.tl' |
         sed 's#^tests/integration/##; s#\.tl$##' | sort > "$_actual"

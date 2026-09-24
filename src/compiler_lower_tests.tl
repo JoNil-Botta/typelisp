@@ -472,6 +472,171 @@
 (define (main) : i64
   (+ (apply1 inc 41) (shadow-inc inc 1)))")
 
+;; #8012: a multiply by a wide power-of-two constant global must be optimized
+;; exactly like a multiply by any other wide constant: dead products removed,
+;; loop-invariant products hoisted, product-conditioned loops rotated. Only the
+;; instruction itself differs (the late pass selects a shift). The same program
+;; is optimized at level 2 with `big` = 2^34 and with the non-power 2^34 + 1,
+;; and each function must keep the same block count and the block its product
+;; sits in, with no more instructions than the control.
+(define (compiler-optimize-wide-power-product-source [big : String]) : String
+  (str_cat.str-cat
+    "(define big : i64 "
+    big
+    ")
+(define (dead [x : i64]) : i64
+  (let
+    [t : i64 (* x big)]
+    (+ x 1)))
+(define (hoisted [n : i64] [count : i64]) : i64
+  (let
+    [i : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< i count)
+        (begin
+          (set! acc (+ acc (* n big)))
+          (set! i (+ i 1))))
+      acc)))
+(define (rotated [lim : i64]) : i64
+  (let
+    [i : i64 0]
+    (begin
+      (while (< (* i big) lim)
+        (set! i (+ i 1)))
+      i)))
+(define keep-dead : (-> i64 i64) dead)
+(define keep-hoisted : (-> i64 i64 i64) hoisted)
+(define keep-rotated : (-> i64 i64) rotated)
+(define (main) : i64
+  0)"))
+
+;; Block count, instruction count and the index of the block holding the first
+;; 64-bit multiply or shift (-1 when there is none) of function NAME.
+(defstruct LowerTestProductShape
+  (blocks i64)
+  (instrs i64)
+  (product-block i64))
+
+(define (lower-test-product-instr? [instr : compiler_ir_types.CompilerIrInstr]) : bool
+  (match instr
+    [(compiler_ir_types.CompilerIrInstr.BinOp
+        _
+        (compiler_ir_types.CompilerIrBinOp.Mul)
+        _
+        _
+        (compiler_ast_types.AstType.I64))
+      true]
+    [(compiler_ir_types.CompilerIrInstr.BinOp
+        _
+        (compiler_ir_types.CompilerIrBinOp.Shl _)
+        _
+        _
+        (compiler_ast_types.AstType.I64))
+      true]
+    [_ false]))
+
+(define (lower-test-product-shape-blocks
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [block-index : i64]
+  [shape : LowerTestProductShape]) : LowerTestProductShape
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil) shape]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (lower-test-product-shape-blocks
+        (compiler_ir_types.compiler-ir-block-seq-to-list seq)
+        block-index
+        shape)]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (let
+            [count : i64 (compiler_ir_types.compiler-ir-instr-seq-count instrs)]
+            [index : i64 0]
+            [product-block : i64 shape.product-block]
+            (begin
+              (while (< index count)
+                (begin
+                  (if (and
+                    (< product-block 0)
+                    (lower-test-product-instr?
+                      (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)))
+                    (set! product-block block-index)
+                    unit)
+                  (set! index (+ index 1))))
+              (lower-test-product-shape-blocks
+                (compiler_ir_types.compiler-ir-box-shared-view rest)
+                (+ block-index 1)
+                (LowerTestProductShape
+                  (+ shape.blocks 1)
+                  (+ shape.instrs count)
+                  product-block))))])]))
+
+(define (lower-test-optimized-product-shape [source : String] [name : String]) : LowerTestProductShape
+  (match (compiler_lower.lower-compiler-source source)
+    [(compiler_lower.ResultCompilerLower.Ok program _)
+      (match (compiler_optimize.optimize-program-with-level program 2)
+        [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
+          (match (lower-test-function-seq-find
+            (compiler_ir_types.compiler-ir-global-shared-view functions)
+            (owned_view.compiler-owned-shared-view name))
+            [(LowerTestMaybeFunction.Some func)
+              (match func
+                [(compiler_ir_types.CompilerIrFunction.Function
+                    _
+                    _
+                    _
+                    _
+                    blocks
+                    _)
+                  (lower-test-product-shape-blocks
+                    blocks
+                    0
+                    (LowerTestProductShape 0 0 -1))])]
+            [(LowerTestMaybeFunction.No) (LowerTestProductShape -1 -1 -2)])])]
+    [(compiler_lower.ResultCompilerLower.Err _)
+      (LowerTestProductShape -1 -1 -3)]))
+
+(define (lower-test-product-shapes-match? [name : String]) : bool
+  (let
+    [power : LowerTestProductShape
+      (lower-test-optimized-product-shape
+        (compiler-optimize-wide-power-product-source "17179869184")
+        (owned_view.compiler-owned-shared-view name))]
+    [control : LowerTestProductShape
+      (lower-test-optimized-product-shape
+        (compiler-optimize-wide-power-product-source "17179869185")
+        (owned_view.compiler-owned-shared-view name))]
+    (and
+      (>= power.blocks 1)
+      (= power.blocks control.blocks)
+      ;; the control reads its non-substituted global through one more
+      ;; instruction; the power product never needs more than it
+      (<= power.instrs control.instrs)
+      (= power.product-block control.product-block))))
+
+(define (compiler-optimize-wide-power-product-shape-ok?) : bool
+  (and
+    (lower-test-product-shapes-match? "dead")
+    (lower-test-product-shapes-match? "hoisted")
+    (lower-test-product-shapes-match? "rotated")
+    ;; the dead product is really gone, and the live ones really exist
+    (<
+      (lower-test-product-shape-block
+        (lower-test-optimized-product-shape
+          (compiler-optimize-wide-power-product-source "17179869184")
+          "dead"))
+      0)
+    (>=
+      (lower-test-product-shape-block
+        (lower-test-optimized-product-shape
+          (compiler-optimize-wide-power-product-source "17179869184")
+          "hoisted"))
+      0)))
+
+(define (lower-test-product-shape-block [shape : LowerTestProductShape]) : i64
+  shape.product-block)
+
 ;; Globals initialized from other globals (#7804): a variable's value is read by
 ;; a runtime initializer, while a function name keeps its closure-descriptor
 ;; initializer.

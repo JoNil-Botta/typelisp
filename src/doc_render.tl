@@ -313,7 +313,7 @@
     [docs : doc_extract.DocExtraction (doc-module-docs module)]
     (str_cat.str-cat
       "<a id=\""
-      (doc-render-anchor (owned_view.compiler-owned-shared-view path))
+      (doc-render-anchor path)
       "\"></a>\n\n## "
       (doc-render-escape-markdown (owned_view.compiler-owned-shared-view path))
       "\n\nSource: `"
@@ -341,7 +341,7 @@
   (doc-render-module-sections-from
     (owned_view.compiler-owned-shared-view modules)
     0
-    (doc-module-list-count (owned_view.compiler-owned-shared-view modules))))
+    (doc-module-list-count modules)))
 
 (define (doc-render-module-graph-markdown [modules : doc_module_vec.Vec]) : String
   (str_cat.str-cat

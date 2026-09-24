@@ -240,15 +240,11 @@
 (define (compiler-live-instr-ids-seq-match-set-from?
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]) : bool
-  (if (>=
-    index
-    (ir.compiler-ir-instr-seq-count (live.compiler-live-shared-view instrs)))
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
     true
     (and
       (compiler-live-instr-ids-match-set?
-        (ir.compiler-ir-instr-seq-ref
-          (live.compiler-live-shared-view instrs)
-          index))
+        (ir.compiler-ir-instr-seq-ref instrs index))
       (compiler-live-instr-ids-seq-match-set-from? instrs (+ index 1)))))
 
 (define (compiler-live-instr-ids-seq-match-set?
@@ -379,12 +375,8 @@
       (and
         (= set-count id-count)
         (live.compiler-live-set-eq?
-          (live.compiler-live-scratch-freeze
-            (live.compiler-live-shared-view set-words)
-            set-count)
-          (live.compiler-live-scratch-freeze
-            (live.compiler-live-shared-view id-words)
-            id-count)))]
+          (live.compiler-live-scratch-freeze set-words set-count)
+          (live.compiler-live-scratch-freeze id-words id-count)))]
     ;; The block use/def accumulation: `9` is already defined by an earlier
     ;; instruction, so using it here must NOT make it a block use; `70` must.
     [_seed-defs : unit
@@ -418,19 +410,11 @@
             6)
           (live.compiler-live-set1 70))
         (live.compiler-live-set-eq?
-          (live.compiler-live-scratch-freeze
-            (live.compiler-live-shared-view set-use-words)
-            6)
-          (live.compiler-live-scratch-freeze
-            (live.compiler-live-shared-view id-use-words)
-            6))
+          (live.compiler-live-scratch-freeze set-use-words 6)
+          (live.compiler-live-scratch-freeze id-use-words 6))
         (live.compiler-live-set-eq?
-          (live.compiler-live-scratch-freeze
-            (live.compiler-live-shared-view set-def-words)
-            6)
-          (live.compiler-live-scratch-freeze
-            (live.compiler-live-shared-view id-def-words)
-            6)))]
+          (live.compiler-live-scratch-freeze set-def-words 6)
+          (live.compiler-live-scratch-freeze id-def-words 6)))]
     ;; A use list wider than the buffer reports -1 so the caller can fall back.
     [narrow : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [overflow-ok : bool

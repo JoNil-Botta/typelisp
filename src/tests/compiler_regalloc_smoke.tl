@@ -181,7 +181,7 @@
     [groups : live.CompilerLiveI64Set
       (reg.compiler-reg-function-group-vars
         (ast.ast-node-pool-reader-type-segment-bases)
-        (reg.compiler-reg-global-shared-view func)
+        func
         types)]
     (and
       ;; Source handles remain scalar even though structurally-created pair
@@ -194,7 +194,7 @@
       (not
         (reg.compiler-reg-type-register-group?
           (ast.ast-node-pool-reader-type-segment-bases)
-          (reg.compiler-reg-global-shared-view representations)
+          representations
           (ast.AstType.DynArray 1)))
       (= (live.compiler-live-set-count groups) 2)
       (not (live.compiler-live-set-contains? groups 0))

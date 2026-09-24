@@ -334,10 +334,7 @@
           [(ir.CompilerIrInstr.Alloc dst _)
             (begin
               (if (and
-                (not
-                  (opt.opt-used-contains
-                    (opt.compiler-opt-global-shared-view set)
-                    dst))
+                (not (opt.opt-used-contains set dst))
                 (not
                   (or
                     (= prev-alloc-dst (- dst 1))
@@ -463,11 +460,11 @@
         (begin
           (match (opt.opt-load-cse-dispatch
             type-segment-bases
-            (opt.compiler-opt-global-shared-view no-canon)
+            (&mut no-canon)
             (opt.compiler-opt-global-shared-view hs)
             false
-            (opt.compiler-opt-global-shared-view sources)
-            (opt.compiler-opt-global-shared-view call-memory)
+            sources
+            call-memory
             (opt.compiler-opt-global-shared-view cells)
             (opt.compiler-opt-global-shared-view next-state)
             (ir.compiler-ir-instr-seq-ref
@@ -1053,31 +1050,24 @@
       (set! sources (opt.opt-gvn-defs-add sources 512))
       (set! sources (opt.opt-gvn-defs-add sources 0))
       (test.assert-i64-eq
-        (opt.opt-gvn-count (opt.compiler-opt-global-shared-view sources) -1)
+        (opt.opt-gvn-count sources -1)
         1
         "growth preserves the expression candidate count")
       (test.assert-i64-eq
-        (opt.opt-gvn-count (opt.compiler-opt-global-shared-view sources) 0)
+        (opt.opt-gvn-count sources 0)
         2
         "multiple definitions prevent reuse")
       (test.assert-true
-        (not
-          (opt.opt-gvn-stable-var?
-            (opt.compiler-opt-global-shared-view sources)
-            0))
+        (not (opt.opt-gvn-stable-var? sources 0))
         "a reassigned parameter is not stable")
       (test.assert-true
-        (opt.opt-gvn-stable-var?
-          (opt.compiler-opt-global-shared-view sources)
-          15)
+        (opt.opt-gvn-stable-var? sources 15)
         "the former capacity boundary retains its definition")
       (test.assert-true
-        (opt.opt-gvn-stable-var?
-          (opt.compiler-opt-global-shared-view sources)
-          512)
+        (opt.opt-gvn-stable-var? sources 512)
         "a new large value id is stable")
       (test.assert-i64-eq
-        (opt.opt-gvn-count (opt.compiler-opt-global-shared-view sources) 511)
+        (opt.opt-gvn-count sources 511)
         0
         "unwritten grown slots are absent")
       (test.assert-i64-eq
@@ -1884,8 +1874,7 @@
     [registered-count : i64 registered.entry-count]
     [base : opt.OptSsaRenameEnv
       (opt-dense-test-ssa-env-bind-range registered 0 11)]
-    [checkpoint : i64
-      (opt.opt-ssa-env-checkpoint (opt.compiler-opt-global-shared-view base))]
+    [checkpoint : i64 (opt.opt-ssa-env-checkpoint base)]
     [branch-a : opt.OptSsaRenameEnv
       (opt.opt-ssa-env-bind (opt.opt-ssa-env-bind base 3 303) 12 312)]
     [outs-a : opt.OptSsaBlockOuts
@@ -2019,9 +2008,7 @@
         (opt.opt-unroll-simd-memory-new)
         1
         8)]
-    [memory-count : i64
-      (opt.opt-unroll-simd-memory-count
-        (opt.compiler-opt-global-shared-view memories))]
+    [memory-count : i64 (opt.opt-unroll-simd-memory-count memories)]
     [newest-index : i64
       (opt.opt-unroll-simd-memory-index
         type-segment-bases
@@ -2042,9 +2029,7 @@
         memories
         (ir.CompilerIrValue.Var 4)
         (ast.AstType.I64))]
-    [deduped-count : i64
-      (opt.opt-unroll-simd-memory-count
-        (opt.compiler-opt-global-shared-view deduped))]
+    [deduped-count : i64 (opt.opt-unroll-simd-memory-count deduped)]
     [typed : opt.OptUnrollSimdMemoryList
       (opt.opt-unroll-simd-memory-add
         type-segment-bases
@@ -2169,12 +2154,7 @@
       [(not (= newest-index 0)) 4]
       [(not (= oldest-index 7)) 5]
       [(not (= deduped-count 8)) 6]
-      [(not
-          (=
-            (opt.opt-unroll-simd-memory-count
-              (opt.compiler-opt-global-shared-view typed))
-            9))
-        7]
+      [(not (= (opt.opt-unroll-simd-memory-count typed) 9)) 7]
       [(not
           (=
             (opt.opt-unroll-simd-memory-index
@@ -2208,12 +2188,7 @@
             32))
         14]
       [(opt.opt-scratch-root-list-contains? roots 33) 15]
-      [(not
-          (=
-            (opt.opt-global-copy-facts-count
-              (opt.compiler-opt-global-shared-view global-copy))
-            8))
-        16]
+      [(not (= (opt.opt-global-copy-facts-count global-copy) 8)) 16]
       [(not
           (opt-dense-test-global-copy-fact-is?
             (opt.compiler-opt-global-shared-view global-copy)
@@ -2221,12 +2196,7 @@
             8))
         17]
       [(not (opt-dense-test-global-copy-fact-is? global-copy 7 1)) 18]
-      [(not
-          (=
-            (opt.opt-global-expr-facts-count
-              (opt.compiler-opt-global-shared-view global-expr))
-            8))
-        19]
+      [(not (= (opt.opt-global-expr-facts-count global-expr) 8)) 19]
       [(not
           (opt-dense-test-global-expr-fact-is?
             (opt.compiler-opt-global-shared-view global-expr)
@@ -2297,12 +2267,7 @@
         30]
       [(not (opt-dense-test-gvn-scope-rollback? type-segment-bases)) 31]
       [(not (= (opt.opt-ssa-phi-sites-count ssa-sites-empty) 0)) 32]
-      [(not
-          (=
-            (opt.opt-ssa-phi-sites-count
-              (opt.compiler-opt-global-shared-view ssa-sites))
-            9))
-        33]
+      [(not (= (opt.opt-ssa-phi-sites-count ssa-sites) 9)) 33]
       [(not
           (opt-dense-test-ssa-site-is?
             (opt.compiler-opt-global-shared-view ssa-sites)
@@ -2316,18 +2281,8 @@
             8))
         35]
       [(not (opt-dense-test-ssa-site-is? ssa-sites 8 1)) 36]
-      [(not
-          (=
-            (opt.opt-ssa-rename-blocks-count
-              (opt.compiler-opt-global-shared-view ssa-renamed))
-            9))
-        37]
-      [(not
-          (=
-            (opt.opt-ssa-rename-blocks-count
-              (opt.compiler-opt-global-shared-view ssa-renamed-independent))
-            0))
-        38]
+      [(not (= (opt.opt-ssa-rename-blocks-count ssa-renamed) 9)) 37]
+      [(not (= (opt.opt-ssa-rename-blocks-count ssa-renamed-independent) 0)) 38]
       [(opt.opt-ssa-rename-blocks-contains? ssa-renamed-independent 1) 39]
       [(not
           (opt.opt-ssa-rename-blocks-contains?
@@ -2350,18 +2305,8 @@
             8))
         44]
       [(not (opt-dense-test-ssa-rename-block-is? ssa-renamed 8 1)) 45]
-      [(not
-          (=
-            (opt.opt-ssa-block-outs-count
-              (opt.compiler-opt-global-shared-view ssa-outs))
-            9))
-        46]
-      [(not
-          (=
-            (opt.opt-ssa-block-outs-count
-              (opt.compiler-opt-global-shared-view ssa-outs-independent))
-            0))
-        47]
+      [(not (= (opt.opt-ssa-block-outs-count ssa-outs) 9)) 46]
+      [(not (= (opt.opt-ssa-block-outs-count ssa-outs-independent) 0)) 47]
       [(not
           (opt-dense-test-ssa-block-out-newest?
             (opt.compiler-opt-global-shared-view ssa-outs)))
@@ -7620,9 +7565,7 @@
           (match live-result
             [(opt.OptBlockListPassResult.Result _ changed) (not changed)]))
         2]
-      [(not
-          (opt.opt-used-contains (opt.compiler-opt-global-shared-view used) 1))
-        3]
+      [(not (opt.opt-used-contains used 1)) 3]
       [(opt.opt-used-contains used 0) 4]
       [(not (= (ir.compiler-ir-instr-seq-count instrs) 4)) 5]
       [(not (= (ir.compiler-ir-instr-seq-count cleaned) 2)) 6]
@@ -9281,14 +9224,14 @@
       (opt.opt-const-divisors-build globals functions)]
     [rewritten : ir.CompilerIrBlockList
       (opt.opt-const-divisor-rewrite-blocks
-        (opt.compiler-opt-global-shared-view table)
+        table
         (opt.compiler-opt-global-shared-view blocks))]
     ;; The P6 leg: run the same rewrite the pipeline runs at the top of the
     ;; level-2 iteration, then hand the result to SCCP exactly as the pipeline's
     ;; sccp slot does.
     [sccp-input : ir.CompilerIrBlockList
       (opt.opt-const-divisor-rewrite-blocks
-        (opt.compiler-opt-global-shared-view table)
+        table
         (opt-const-divisor-test-sccp-blocks symbols))]
     [sccp-folded : ir.CompilerIrBlockList
       (opt.opt-sccp-blocks
@@ -11179,34 +11122,22 @@
       ;; variables are re-evaluable; the compare's own destination, a
       ;; multiply-defined variable, and implicit global reads are not.
       (unless
-        (opt.opt-cmp-dup-operand-ok?
-          (ir.CompilerIrValue.I64 3)
-          5
-          (opt.compiler-opt-global-shared-view defs))
+        (opt.opt-cmp-dup-operand-ok? (ir.CompilerIrValue.I64 3) 5 defs)
         (return 9))
       (unless
-        (opt.opt-cmp-dup-operand-ok?
-          (ir.CompilerIrValue.Var 0)
-          5
-          (opt.compiler-opt-global-shared-view defs))
+        (opt.opt-cmp-dup-operand-ok? (ir.CompilerIrValue.Var 0) 5 defs)
         (return 10))
       (when
-        (opt.opt-cmp-dup-operand-ok?
-          (ir.CompilerIrValue.Var 3)
-          5
-          (opt.compiler-opt-global-shared-view defs))
+        (opt.opt-cmp-dup-operand-ok? (ir.CompilerIrValue.Var 3) 5 defs)
         (return 11))
       (when
-        (opt.opt-cmp-dup-operand-ok?
-          (ir.CompilerIrValue.Var 5)
-          5
-          (opt.compiler-opt-global-shared-view defs))
+        (opt.opt-cmp-dup-operand-ok? (ir.CompilerIrValue.Var 5) 5 defs)
         (return 12))
       (when
         (opt.opt-cmp-dup-operand-ok?
           (ir.CompilerIrValue.RuntimeGlobal 2)
           5
-          (opt.compiler-opt-global-shared-view defs))
+          defs)
         (return 13))
       ;; Both extra readers refuse outright: nothing is copied and the phi
       ;; input still names the shared comparison.
@@ -24488,8 +24419,8 @@
         (opt.compiler-opt-global-shared-view index)
         functions)]
     (opt.opt-inline-caller-facts-install!
-      (opt.compiler-opt-global-shared-view index)
-      (opt.compiler-opt-global-shared-view census)
+      index
+      census
       (opt-inline-pos-caller-name)
       (opt.compiler-opt-global-shared-view blocks))))
 
@@ -26151,20 +26082,15 @@
     [_build : unit
       (opt.opt-inline-synth-build!
         (opt.compiler-opt-global-shared-view index)
-        (opt.compiler-opt-global-shared-view census)
+        census
         (opt.compiler-opt-global-shared-view graph)
         (opt.compiler-opt-global-shared-view scc-result)
         (opt.opt-inline-slot-order
           (opt.compiler-opt-global-shared-view scc-result)))]
     [out : i64
       (if hot?
-        (opt.opt-inline-census-hot-refcount
-          (opt.compiler-opt-global-shared-view index)
-          (opt.compiler-opt-global-shared-view census)
-          name)
-        (opt.opt-inline-synth-for-name
-          (opt.compiler-opt-global-shared-view index)
-          name))]
+        (opt.opt-inline-census-hot-refcount index census name)
+        (opt.opt-inline-synth-for-name index name))]
     [_reset : unit (opt.opt-inline-synth-reset!)]
     out))
 
@@ -29445,8 +29371,8 @@
         functions)]
     [_install-flat : unit
       (opt.opt-inline-caller-facts-install!
-        (opt.compiler-opt-global-shared-view index)
-        (opt.compiler-opt-global-shared-view census)
+        index
+        census
         symbols.main
         (opt.opt-function-blocks
           (opt-inline-switch-caller-named symbols callee-name)))]
@@ -29454,15 +29380,15 @@
     [flat-recursive? : bool (opt.opt-inline-caller-recursive?)]
     [_install-recursive : unit
       (opt.opt-inline-caller-facts-install!
-        (opt.compiler-opt-global-shared-view index)
-        (opt.compiler-opt-global-shared-view census)
+        index
+        census
         symbols.main
         (opt-inline-recursive-caller-blocks symbols.main callee-name))]
     [recursive-loop-free? : bool (opt.opt-inline-caller-loop-free?)]
     [recursive-recursive? : bool (opt.opt-inline-caller-recursive?)]
     [_install-loop : unit
       (opt.opt-inline-caller-facts-install!
-        (opt.compiler-opt-global-shared-view index)
+        index
         census
         symbols.main
         (opt-inline-loop-site-caller-blocks
@@ -31679,17 +31605,9 @@
         (opt.compiler-opt-global-shared-view index)
         functions)]
     (and
-      (=
-        (opt.opt-inline-census-refcount
-          (opt.compiler-opt-global-shared-view index)
-          (opt.compiler-opt-global-shared-view census)
-          symbols.inline-add)
-        1)
+      (= (opt.opt-inline-census-refcount index census symbols.inline-add) 1)
       (not
-        (opt.opt-inline-census-address-taken?
-          (opt.compiler-opt-global-shared-view index)
-          (opt.compiler-opt-global-shared-view census)
-          symbols.inline-add))
+        (opt.opt-inline-census-address-taken? index census symbols.inline-add))
       (opt.opt-inline-census-absorbable?
         index
         census
@@ -31709,10 +31627,7 @@
         (opt.compiler-opt-global-shared-view index)
         functions)]
     (and
-      (opt.opt-inline-census-address-taken?
-        (opt.compiler-opt-global-shared-view index)
-        (opt.compiler-opt-global-shared-view census)
-        symbols.inline-add)
+      (opt.opt-inline-census-address-taken? index census symbols.inline-add)
       (not
         (opt.opt-inline-census-absorbable?
           index
@@ -42023,55 +41938,18 @@
                   (opt.compiler-opt-global-shared-view blocks)
                   (opt.opt-used-array-new 64))]
               (cond
-                [(opt.opt-used-array-contains
-                    (opt.compiler-opt-global-shared-view hot)
-                    10)
-                  3]
-                [(not
-                    (opt.opt-used-array-contains
-                      (opt.compiler-opt-global-shared-view hot)
-                      11))
-                  4]
-                [(not
-                    (opt.opt-used-array-contains
-                      (opt.compiler-opt-global-shared-view hot)
-                      12))
-                  5]
-                [(not
-                    (opt.opt-used-array-contains
-                      (opt.compiler-opt-global-shared-view hot)
-                      13))
-                  6]
-                [(not
-                    (opt.opt-used-array-contains
-                      (opt.compiler-opt-global-shared-view hot)
-                      14))
-                  7]
-                [(not
-                    (opt.opt-used-array-contains
-                      (opt.compiler-opt-global-shared-view ungated)
-                      10))
-                  8]
+                [(opt.opt-used-array-contains hot 10) 3]
+                [(not (opt.opt-used-array-contains hot 11)) 4]
+                [(not (opt.opt-used-array-contains hot 12)) 5]
+                [(not (opt.opt-used-array-contains hot 13)) 6]
+                [(not (opt.opt-used-array-contains hot 14)) 7]
+                [(not (opt.opt-used-array-contains ungated 10)) 8]
                 ;; A compare whose every use is a branch condition is not
                 ;; collected, gated or not; one with a non-branch use still is.
-                [(opt.opt-used-array-contains
-                    (opt.compiler-opt-global-shared-view hot)
-                    24)
-                  9]
-                [(opt.opt-used-array-contains
-                    (opt.compiler-opt-global-shared-view ungated)
-                    24)
-                  10]
-                [(not
-                    (opt.opt-used-array-contains
-                      (opt.compiler-opt-global-shared-view hot)
-                      25))
-                  11]
-                [(not
-                    (opt.opt-used-array-contains
-                      (opt.compiler-opt-global-shared-view ungated)
-                      25))
-                  12]
+                [(opt.opt-used-array-contains hot 24) 9]
+                [(opt.opt-used-array-contains ungated 24) 10]
+                [(not (opt.opt-used-array-contains hot 25)) 11]
+                [(not (opt.opt-used-array-contains ungated 25)) 12]
                 [else 42]))])])))
 
 (define (compiler-optimize-licm-profitability-self-test) : i64
@@ -44819,13 +44697,17 @@
     ;; the optimistic phase of the fixpoint resolves that cycle at the lattice
     ;; bottom, so it is admitted too.
     [direct-clean-union : opt_i64_i64_map.Map
-      (opt.opt-loop-bce-direct-call-clean-add-memory-clean
-        (opt-licm-direct-call-clean-test-functions symbols)
-        (opt.opt-call-memory-build
-          (ast.ast-node-pool-reader-type-segment-bases)
-          (opt-licm-direct-call-clean-test-functions symbols)
-          8)
-        (opt_i64_i64_map.with-capacity 8))]
+      (let
+        [arg (opt-licm-direct-call-clean-test-functions symbols)]
+        [arg-arg
+          (opt.opt-call-memory-build
+            (ast.ast-node-pool-reader-type-segment-bases)
+            (opt-licm-direct-call-clean-test-functions symbols)
+            8)]
+        (opt.opt-loop-bce-direct-call-clean-add-memory-clean
+          arg
+          arg-arg
+          (opt_i64_i64_map.with-capacity 8)))]
     (cond
       ;; The cheap gate admits real invariant arithmetic and Word seeds, but
       ;; rejects both a loop whose only arithmetic can trap and a loop without
@@ -44995,18 +44877,24 @@
       ;; A global operand is a hidden rip-relative load of that global's cell:
       ;; variant when the body may write globals, invariant when it provably
       ;; cannot.
-      [(opt.opt-licm-value-invariant?
-          false
-          (opt_i64_i64_map.with-capacity 4)
-          (opt_i64_i64_map.with-capacity 4)
-          (ir.CompilerIrValue.Global (opt-test-symbol "g")))
+      [(let
+          [arg (opt_i64_i64_map.with-capacity 4)]
+          [arg-arg (opt_i64_i64_map.with-capacity 4)]
+          (opt.opt-licm-value-invariant?
+            false
+            arg
+            arg-arg
+            (ir.CompilerIrValue.Global (opt-test-symbol "g"))))
         26]
       [(not
-          (opt.opt-licm-value-invariant?
-            true
-            (opt_i64_i64_map.with-capacity 4)
-            (opt_i64_i64_map.with-capacity 4)
-            (ir.CompilerIrValue.Global (opt-test-symbol "g"))))
+          (let
+            [arg (opt_i64_i64_map.with-capacity 4)]
+            [arg-arg (opt_i64_i64_map.with-capacity 4)]
+            (opt.opt-licm-value-invariant?
+              true
+              arg
+              arg-arg
+              (ir.CompilerIrValue.Global (opt-test-symbol "g")))))
         126]
       [(opt.opt-licm-globals-clean? true) 127]
       [(not (opt.opt-licm-globals-clean? false)) 128]
@@ -55316,9 +55204,9 @@
 
 (define (opt-pcd-test-run [pure-writes? : bool]) : ir.CompilerIrBlockList
   (opt.opt-function-blocks
-    (opt.opt-pure-call-dedupe-function
-      (opt-pcd-test-map pure-writes?)
-      (opt-pcd-test-function))))
+    (let
+      [arg (opt-pcd-test-map pure-writes?)]
+      (opt.opt-pure-call-dedupe-function arg (opt-pcd-test-function)))))
 
 ;; Pre-SSA shapes, which the inline stage hands the pass:
 ;;
@@ -55614,15 +55502,17 @@
                 variant))
             (set! cursor (+ cursor 1)))))
       (opt.opt-function-blocks
-        (opt.opt-pure-call-dedupe-function
-          (opt-pcd-test-map false)
-          (ir.CompilerIrFunction.Function
-            (opt-test-symbol "pcd_join_fixture")
-            (opt-pcd-test-params)
-            (ast.AstType.I64)
-            opt-pcd-test-frame
-            (ir.compiler-ir-block-builder-to-list builder)
-            ir.CompilerIrFunctionAbi.Ordinary))))))
+        (let
+          [arg (opt-pcd-test-map false)]
+          (opt.opt-pure-call-dedupe-function
+            arg
+            (ir.CompilerIrFunction.Function
+              (opt-test-symbol "pcd_join_fixture")
+              (opt-pcd-test-params)
+              (ast.AstType.I64)
+              opt-pcd-test-frame
+              (ir.compiler-ir-block-builder-to-list builder)
+              ir.CompilerIrFunctionAbi.Ordinary)))))))
 
 (cfg
   test
@@ -66284,35 +66174,35 @@
   (let
     [root-1 : i64
       (opt.opt-verify-owned-fresh-root
-        (opt.compiler-opt-global-shared-view defs)
+        defs
         (opt.compiler-opt-global-shared-view context.doms)
         (& return-alias)
         1
         64)]
     [root-13 : i64
       (opt.opt-verify-owned-fresh-root
-        (opt.compiler-opt-global-shared-view defs)
+        defs
         (opt.compiler-opt-global-shared-view context.doms)
         (& return-alias)
         13
         64)]
     [root-14 : i64
       (opt.opt-verify-owned-fresh-root
-        (opt.compiler-opt-global-shared-view defs)
+        defs
         (opt.compiler-opt-global-shared-view context.doms)
         (& return-alias)
         14
         64)]
     [root-15 : i64
       (opt.opt-verify-owned-fresh-root
-        (opt.compiler-opt-global-shared-view defs)
+        defs
         (opt.compiler-opt-global-shared-view context.doms)
         (& return-alias)
         15
         64)]
     [root : i64
       (opt.opt-verify-owned-fresh-root
-        (opt.compiler-opt-global-shared-view defs)
+        defs
         (opt.compiler-opt-global-shared-view context.doms)
         (& return-alias)
         16
@@ -66328,7 +66218,7 @@
       [(= root 0) 2]
       [else
         (match (opt.opt-verify-owned-path
-          (opt.compiler-opt-global-shared-view defs)
+          defs
           (opt.compiler-opt-global-shared-view context.doms)
           (& return-alias)
           5
@@ -66704,7 +66594,7 @@
             (opt.opt-verify-function-with-context-and-return-alias
               (opt.compiler-opt-global-shared-view boundary-promoted)
               (opt.compiler-opt-global-shared-view boundary-promoted-context)
-              (opt.compiler-opt-global-shared-view empty))))
+              empty)))
         68]
       [(not
           (=
@@ -66728,7 +66618,7 @@
             (opt.opt-verify-function-with-context-and-return-alias
               (opt.compiler-opt-global-shared-view positive)
               (opt.opt-cfg-context-build positive-blocks)
-              (opt.compiler-opt-global-shared-view empty))))
+              empty)))
         2]
       [(not
           (=
@@ -66769,7 +66659,7 @@
           (opt.opt-verify-function-with-context-and-return-alias
             mismatch
             mismatch-context
-            (opt.compiler-opt-global-shared-view empty)))
+            empty))
         6]
       [(not
           (opt-owned-test-summary-is?
@@ -66804,21 +66694,14 @@
               (ir.compiler-ir-label "loop"))
             1))
         13]
-      [(opt.opt-verify-cfg-reaches-id?
-          (opt.compiler-opt-global-shared-view same-phi-context.index)
-          3
-          0)
-        15]
-      [(opt.opt-verify-cfg-id-cyclic?
-          (opt.compiler-opt-global-shared-view same-phi-context.index)
-          3)
-        16]
+      [(opt.opt-verify-cfg-reaches-id? same-phi-context.index 3 0) 15]
+      [(opt.opt-verify-cfg-id-cyclic? same-phi-context.index 3) 16]
       [(not (= same-phi-proof-code 42)) (+ 20 same-phi-proof-code)]
       [(not
           (match (opt.opt-verify-function-with-context-and-return-alias
             (opt.compiler-opt-global-shared-view same-phi-unsanitized)
             (opt.compiler-opt-global-shared-view same-phi-context)
-            (opt.compiler-opt-global-shared-view empty))
+            empty)
             [(opt.ResultCompilerOptimizeVerify.Ok) true]
             [(opt.ResultCompilerOptimizeVerify.Err _) false]))
         14]
@@ -70449,12 +70332,7 @@
                 (ir.compiler-ir-label "join")))
             2))
         1]
-      [(not
-          (=
-            (opt.opt-cfg-index-block-count
-              (opt.compiler-opt-global-shared-view diamond-index))
-            4))
-        2]
+      [(not (= (opt.opt-cfg-index-block-count diamond-index) 4)) 2]
       [(not
           (opt.opt-verify-ok?
             (opt.opt-verify-function (opt-ssa-diamond-function))))
@@ -70494,9 +70372,7 @@
         9]
       [(not
           (=
-            (opt.opt-cfg-index-rpo-label
-              (opt.compiler-opt-global-shared-view loop-index)
-              0)
+            (opt.opt-cfg-index-rpo-label loop-index 0)
             (ir.compiler-ir-label "entry")))
         10]
       [(not
@@ -70581,7 +70457,7 @@
       [(not
           (=
             (opt.opt-cfg-index-rpo-num
-              (opt.compiler-opt-global-shared-view loop-index)
+              loop-index
               (opt.opt-cfg-index-rpo-id loop-index 0))
             0))
         27]
@@ -75019,7 +74895,7 @@
         (&mut roots)
         (owned_view.compiler-owned-shared-view params))
       (opt.opt-call-memory-root-scan-blocks!
-        (owned_view.compiler-owned-shared-view sources)
+        sources
         (&mut roots)
         (owned_view.compiler-owned-shared-view blocks))
       (let
@@ -75036,7 +74912,7 @@
             (opt-call-block-scan-root-code (& roots) (+ 9 count))
             (opt-call-block-scan-root-code (& roots) 999)
             (opt.opt-call-memory-blocks-need-roots?
-              (owned_view.compiler-owned-shared-view summaries)
+              summaries
               (owned_view.compiler-owned-shared-view blocks))
             (opt.opt-call-memory-blocks-write-memory?
               (owned_view.compiler-owned-shared-view blocks))
@@ -75174,15 +75050,21 @@
   [candidate : opt.OptCallMemoryCandidate]
   [unresolved : i64]) : i64
   (opt.opt-call-memory-candidate-code
-    (opt.opt-call-memory-candidate-blocks
-      (ast.ast-node-pool-reader-type-segment-bases)
-      candidate
-      (opt_i64_i64_map.with-capacity 1)
-      (opt-call-memory-test-map unresolved 1)
-      (ir.compiler-ir-param-seq-empty)
-      (opt.opt-licm-root-env-with-capacity 1 (opt_i64_i64_map.with-capacity 1))
-      (opt_i64_i64_map.with-capacity 1)
-      blocks)))
+    (let
+      [arg (ast.ast-node-pool-reader-type-segment-bases)]
+      [arg-arg (opt_i64_i64_map.with-capacity 1)]
+      [arg-arg2 (opt-call-memory-test-map unresolved 1)]
+      (opt.opt-call-memory-candidate-blocks
+        arg
+        candidate
+        arg-arg
+        arg-arg2
+        (ir.compiler-ir-param-seq-empty)
+        (opt.opt-licm-root-env-with-capacity
+          1
+          (opt_i64_i64_map.with-capacity 1))
+        (opt_i64_i64_map.with-capacity 1)
+        blocks))))
 
 (define (opt-call-block-scan-early-exits? [unresolved : i64]) : bool
   (let
@@ -75199,9 +75081,11 @@
           (ir.CompilerIrCallArgs.Nil)
           (ast.AstType.Unit)))]
     (and
-      (opt.opt-call-memory-blocks-need-roots?
-        (opt_i64_i64_map.with-capacity 1)
-        (owned_view.compiler-owned-shared-view writes))
+      (let
+        [arg (opt_i64_i64_map.with-capacity 1)]
+        (opt.opt-call-memory-blocks-need-roots?
+          arg
+          (owned_view.compiler-owned-shared-view writes)))
       (opt.opt-call-memory-blocks-write-memory? writes)
       (=
         (opt-call-block-scan-early-candidate
@@ -75420,13 +75304,17 @@
   [first : i64]
   [second : i64]
   [cell : i64]) : opt_i64_i64_map.Map
-  (opt.opt-loop-bce-direct-call-clean-add-memory-clean
-    (opt-call-memory-cycle-functions first second cell false)
-    (opt.opt-call-memory-build
-      (ast.ast-node-pool-reader-type-segment-bases)
-      (opt-call-memory-cycle-functions first second cell false)
-      8)
-    (opt_i64_i64_map.with-capacity 8)))
+  (let
+    [arg (opt-call-memory-cycle-functions first second cell false)]
+    [arg-arg
+      (opt.opt-call-memory-build
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (opt-call-memory-cycle-functions first second cell false)
+        8)]
+    (opt.opt-loop-bce-direct-call-clean-add-memory-clean
+      arg
+      arg-arg
+      (opt_i64_i64_map.with-capacity 8))))
 
 (define (opt-call-memory-summary-is?
   [summaries : opt_i64_i64_map.Map]
@@ -83065,41 +82953,58 @@
         20]
       ;; the decision itself, spelled directly
       [(not
-          (opt.opt-licm-direct-call-keeps-globals-clean?
-            (opt-lp-test-clean-map symbols global-bit)
-            (opt-lp-test-cells symbols)
-            symbols.callee))
+          (let
+            [arg (opt-lp-test-clean-map symbols global-bit)]
+            [arg-arg (opt-lp-test-cells symbols)]
+            (opt.opt-licm-direct-call-keeps-globals-clean?
+              arg
+              arg-arg
+              symbols.callee)))
         9]
-      [(opt.opt-licm-direct-call-keeps-globals-clean?
-          (opt-lp-test-clean-map symbols global-bit)
-          (opt.opt-global-cell-summary-build
-            (ast.ast-node-pool-reader-type-segment-bases)
-            (opt-lp-test-globals symbols)
-            (opt-gc-test-functions1
-              (opt-licm-test-function
-                (ir.compiler-ir-global-shared-view addr-blocks))))
-          symbols.callee)
+      [(let
+          [arg (opt-lp-test-clean-map symbols global-bit)]
+          [arg-arg
+            (opt.opt-global-cell-summary-build
+              (ast.ast-node-pool-reader-type-segment-bases)
+              (opt-lp-test-globals symbols)
+              (opt-gc-test-functions1
+                (opt-licm-test-function
+                  (ir.compiler-ir-global-shared-view addr-blocks))))]
+          (opt.opt-licm-direct-call-keeps-globals-clean?
+            arg
+            arg-arg
+            symbols.callee))
         10]
-      [(opt.opt-licm-direct-call-keeps-globals-clean?
-          (opt-lp-test-clean-map symbols 0)
-          (opt-lp-test-cells symbols)
-          symbols.callee)
+      [(let
+          [arg (opt-lp-test-clean-map symbols 0)]
+          [arg-arg (opt-lp-test-cells symbols)]
+          (opt.opt-licm-direct-call-keeps-globals-clean?
+            arg
+            arg-arg
+            symbols.callee))
         11]
       ;; memory-clean implies global-clean, so the predicate itself now says yes
       ;; and the budget is what prices it (see the (e) case above)
       [(not
-          (opt.opt-licm-direct-call-keeps-globals-clean?
-            (opt-lp-test-clean-map symbols (bit-or memory-bit global-bit))
-            (opt-lp-test-cells symbols)
-            symbols.callee))
+          (let
+            [arg (opt-lp-test-clean-map symbols (bit-or memory-bit global-bit))]
+            [arg-arg (opt-lp-test-cells symbols)]
+            (opt.opt-licm-direct-call-keeps-globals-clean?
+              arg
+              arg-arg
+              symbols.callee)))
         21]
-      [(opt.opt-licm-direct-call-keeps-globals-clean?
-          (opt-lp-test-clean-map symbols (bit-or memory-bit global-bit))
-          (opt.opt-global-cell-summary-build
-            (ast.ast-node-pool-reader-type-segment-bases)
-            (opt-lp-test-globals symbols)
-            (opt-gc-test-functions1 (opt-licm-test-function addr-blocks)))
-          symbols.callee)
+      [(let
+          [arg (opt-lp-test-clean-map symbols (bit-or memory-bit global-bit))]
+          [arg-arg
+            (opt.opt-global-cell-summary-build
+              (ast.ast-node-pool-reader-type-segment-bases)
+              (opt-lp-test-globals symbols)
+              (opt-gc-test-functions1 (opt-licm-test-function addr-blocks)))]
+          (opt.opt-licm-direct-call-keeps-globals-clean?
+            arg
+            arg-arg
+            symbols.callee))
         22]
       ;; a callee whose summary sets the global-write bit earns neither global
       ;; bit -- only the header bit (SUM-6), since a named-cell write cannot move
@@ -83407,10 +83312,10 @@
 ;; ALIAS-2. The index the real builder computes for a program of `count`
 ;; stored globals, overflow bit and all.
 (define (opt-mr-wide-index-fill [count : i64]) : opt.OptGlobalModRefIndex
-  (opt.opt-global-mod-ref-index-build
-    (opt-mr-wide-globals count)
-    (opt-mr-wide-stores count (opt_i64_i64_map.with-capacity 128) 0)
-    128))
+  (let
+    [arg (opt-mr-wide-globals count)]
+    [arg-arg (opt-mr-wide-stores count (opt_i64_i64_map.with-capacity 128) 0)]
+    (opt.opt-global-mod-ref-index-build arg arg-arg 128)))
 
 ;; P18-2. The same program with every EVEN global an array: the two pools.
 (define (opt-mr-mixed-globals-fill!
@@ -83436,10 +83341,11 @@
       (ir.compiler-ir-global-builder-with-capacity 64)]
     (begin
       (opt-mr-mixed-globals-fill! (&mut builder) 0 count)
-      (match (opt.opt-global-mod-ref-index-build
-        (ir.compiler-ir-global-builder-to-seq builder)
-        (opt-mr-wide-stores count (opt_i64_i64_map.with-capacity 128) 0)
-        128)
+      (match (let
+        [arg (ir.compiler-ir-global-builder-to-seq builder)]
+        [arg-arg
+          (opt-mr-wide-stores count (opt_i64_i64_map.with-capacity 128) 0)]
+        (opt.opt-global-mod-ref-index-build arg arg-arg 128))
         [(opt.OptGlobalModRefIndex.No) 0]
         [(opt.OptGlobalModRefIndex.Some index _)
           (opt.opt-global-mod-ref-cell-bit
@@ -83471,30 +83377,15 @@
     [addr-cells : opt.OptGlobalCellSummary (opt-mr-addr-cells symbols)]
     [addr-mod-ref : opt.OptGlobalModRef
       (opt-mr-mod-ref (opt.compiler-opt-global-shared-view addr-cells))]
-    [a-mask : i64
-      (opt.opt-global-mod-ref-call-mask
-        (opt.compiler-opt-global-shared-view mod-ref)
-        symbols.write-a)]
+    [a-mask : i64 (opt.opt-global-mod-ref-call-mask mod-ref symbols.write-a)]
     [via-mask : i64
-      (opt.opt-global-mod-ref-call-mask
-        (opt.compiler-opt-global-shared-view mod-ref)
-        symbols.write-via)]
-    [b-mask : i64
-      (opt.opt-global-mod-ref-call-mask
-        (opt.compiler-opt-global-shared-view mod-ref)
-        symbols.write-b)]
-    [elem-mask : i64
-      (opt.opt-global-mod-ref-call-mask
-        (opt.compiler-opt-global-shared-view mod-ref)
-        symbols.elem)]
+      (opt.opt-global-mod-ref-call-mask mod-ref symbols.write-via)]
+    [b-mask : i64 (opt.opt-global-mod-ref-call-mask mod-ref symbols.write-b)]
+    [elem-mask : i64 (opt.opt-global-mod-ref-call-mask mod-ref symbols.elem)]
     [opaque-mask : i64
-      (opt.opt-global-mod-ref-call-mask
-        (opt.compiler-opt-global-shared-view mod-ref)
-        symbols.opaque)]
+      (opt.opt-global-mod-ref-call-mask mod-ref symbols.opaque)]
     [extern-mask : i64
-      (opt.opt-global-mod-ref-call-mask
-        (opt.compiler-opt-global-shared-view mod-ref)
-        symbols.extern)]
+      (opt.opt-global-mod-ref-call-mask mod-ref symbols.extern)]
     ;; the loop decisions, all under an empty direct-call-clean map
     [via-a : ir.CompilerIrBlockList
       (opt-mr-promoted
@@ -83537,34 +83428,25 @@
       [(opt.opt-global-mod-ref-any? a-mask) 2]
       [(not
           (opt.opt-global-mod-ref-mask-may-write?
-            (opt.compiler-opt-global-shared-view mod-ref.index)
+            mod-ref.index
             a-mask
             symbols.a))
         3]
-      [(opt.opt-global-mod-ref-mask-may-write?
-          (opt.compiler-opt-global-shared-view mod-ref.index)
-          a-mask
-          symbols.b)
+      [(opt.opt-global-mod-ref-mask-may-write? mod-ref.index a-mask symbols.b)
         4]
       ;; a global no `Store` in the program targets has no bit at all
-      [(opt.opt-global-mod-ref-mask-may-write?
-          (opt.compiler-opt-global-shared-view mod-ref.index)
-          a-mask
-          symbols.c)
+      [(opt.opt-global-mod-ref-mask-may-write? mod-ref.index a-mask symbols.c)
         5]
       ;; the fixpoint carries the callee's bit up one call-graph edge
       [(not (= via-mask a-mask)) 6]
       ;; the other writer names the other cell
       [(not
           (opt.opt-global-mod-ref-mask-may-write?
-            (opt.compiler-opt-global-shared-view mod-ref.index)
+            mod-ref.index
             b-mask
             symbols.b))
         7]
-      [(opt.opt-global-mod-ref-mask-may-write?
-          (opt.compiler-opt-global-shared-view mod-ref.index)
-          b-mask
-          symbols.a)
+      [(opt.opt-global-mod-ref-mask-may-write? mod-ref.index b-mask symbols.a)
         8]
       ;; a pointer write reaches no cell while no cell address exists
       [(not (= elem-mask 0)) 9]
@@ -83576,9 +83458,7 @@
       [addr-mod-ref.built? 12]
       [(not
           (opt.opt-global-mod-ref-any?
-            (opt.opt-global-mod-ref-call-mask
-              (opt.compiler-opt-global-shared-view addr-mod-ref)
-              symbols.write-a)))
+            (opt.opt-global-mod-ref-call-mask addr-mod-ref symbols.write-a)))
         13]
       ;; the packed row's capacity: one bit per stored global up to it...
       [(not (opt-mr-wide-index-built? (opt.opt-global-mod-ref-limit))) 14]
@@ -84837,7 +84717,7 @@
     (opt_i64_i64_map.with-capacity 1)
     (opt.opt-len-eq-use-build
       (opt.compiler-opt-global-shared-view cells.len-eq)
-      (opt.compiler-opt-global-shared-view cells.len-eq-clean)
+      cells.len-eq-clean
       name
       64
       (opt.compiler-opt-global-shared-view blocks)
@@ -84864,7 +84744,7 @@
     (opt.opt-len-eq-late-sweep
       (ast.ast-node-pool-reader-type-segment-bases)
       (opt.compiler-opt-global-shared-view cells.len-eq)
-      (opt.compiler-opt-global-shared-view cells.len-eq-clean)
+      cells.len-eq-clean
       (opt_i64_i64_map.with-capacity 1)
       (opt.compiler-opt-global-shared-view cells.arg-global)
       (opt.compiler-opt-global-shared-view cells.content)
@@ -84919,29 +84799,34 @@
   [array-cell : i64]) : bool
   (let
     [blocks : ir.CompilerIrBlockList (opt-le-field-blocks len-cell array-cell)]
-    (opt.opt-len-eq-field-guarded?
-      (ast.ast-node-pool-reader-type-segment-bases)
-      (opt.opt-len-eq-use-build
-        (opt.compiler-opt-global-shared-view cells.len-eq)
-        (opt.compiler-opt-global-shared-view cells.len-eq-clean)
-        name
-        64
-        blocks
-        (opt.compiler-opt-global-shared-view cells.arg-global)
-        (opt-le-params 1))
-      (opt_i64_i64_map.with-capacity 1)
-      (opt.opt-dom-cmp-facts-cons
-        (opt.OptDomCmpFact.Fact
-          (ir.CompilerIrBinOp.Lt)
-          (ir.CompilerIrValue.Var 0)
-          (ir.CompilerIrValue.Var 2)
-          (ast.AstType.I64)
-          true
-          0)
-        (opt.OptDomCmpFacts.Nil))
-      0
-      (ir.CompilerIrValue.Var 0)
-      (ir.CompilerIrValue.Var 6))))
+    (let
+      [arg (ast.ast-node-pool-reader-type-segment-bases)]
+      [arg-arg
+        (opt.opt-len-eq-use-build
+          (opt.compiler-opt-global-shared-view cells.len-eq)
+          cells.len-eq-clean
+          name
+          64
+          blocks
+          (opt.compiler-opt-global-shared-view cells.arg-global)
+          (opt-le-params 1))]
+      [arg-arg2 (opt_i64_i64_map.with-capacity 1)]
+      (opt.opt-len-eq-field-guarded?
+        arg
+        arg-arg
+        arg-arg2
+        (opt.opt-dom-cmp-facts-cons
+          (opt.OptDomCmpFact.Fact
+            (ir.CompilerIrBinOp.Lt)
+            (ir.CompilerIrValue.Var 0)
+            (ir.CompilerIrValue.Var 2)
+            (ast.AstType.I64)
+            true
+            0)
+          (opt.OptDomCmpFacts.Nil))
+        0
+        (ir.CompilerIrValue.Var 0)
+        (ir.CompilerIrValue.Var 6)))))
 
 ;; --- IAG-2: the per-function global-STORAGE write table ----------------------
 ;;
@@ -85154,13 +85039,12 @@
 (define (opt-og-build
   [symbols : OptOgTestSymbols]
   [functions : ir.CompilerIrFunctionSeq]) : opt.OptGlobalObjModRef
-  (opt.opt-global-obj-build
-    (ast.ast-node-pool-reader-type-segment-bases)
-    (opt-og-test-globals symbols)
-    (ir.compiler-ir-extern-seq-empty)
-    functions
-    (opt_i64_i64_map.with-capacity 1)
-    64))
+  (let
+    [arg (ast.ast-node-pool-reader-type-segment-bases)]
+    [arg-arg (opt-og-test-globals symbols)]
+    [arg-arg2 (ir.compiler-ir-extern-seq-empty)]
+    [arg-arg3 (opt_i64_i64_map.with-capacity 1)]
+    (opt.opt-global-obj-build arg arg-arg arg-arg2 functions arg-arg3 64)))
 
 ;; The table with the address-taken precondition applied the way the program
 ;; summary applies it: the cell summary's own `addr-taken` set.
@@ -85178,7 +85062,7 @@
       (opt-og-test-globals symbols)
       (ir.compiler-ir-extern-seq-empty)
       functions
-      (opt.compiler-opt-global-shared-view cells.addr-taken)
+      cells.addr-taken
       64)))
 
 (define (opt-og-writes?
@@ -85186,10 +85070,8 @@
   [name : i64]
   [global : i64]) : bool
   (opt.opt-global-obj-mask-may-write?
-    (opt.compiler-opt-global-shared-view obj.index)
-    (opt.opt-global-obj-call-mask
-      (opt.compiler-opt-global-shared-view obj)
-      name)
+    obj.index
+    (opt.opt-global-obj-call-mask obj name)
     global))
 
 (define (opt-og-any? [obj : opt.OptGlobalObjModRef] [name : i64]) : bool
@@ -85536,13 +85418,12 @@
   [symbols : OptOgTestSymbols]
   [functions : ir.CompilerIrFunctionSeq]
   [pad : i64]) : opt.OptGlobalObjModRef
-  (opt.opt-global-obj-build
-    (ast.ast-node-pool-reader-type-segment-bases)
-    (opt-og-padded-globals symbols pad)
-    (ir.compiler-ir-extern-seq-empty)
-    functions
-    (opt_i64_i64_map.with-capacity 1)
-    128))
+  (let
+    [arg (ast.ast-node-pool-reader-type-segment-bases)]
+    [arg-arg (opt-og-padded-globals symbols pad)]
+    [arg-arg2 (ir.compiler-ir-extern-seq-empty)]
+    [arg-arg3 (opt_i64_i64_map.with-capacity 1)]
+    (opt.opt-global-obj-build arg arg-arg arg-arg2 functions arg-arg3 128)))
 
 (define (opt-og-cells-padded
   [symbols : OptOgTestSymbols]
@@ -86659,21 +86540,30 @@
   [blocks : ir.CompilerIrBlockList]) : i64
   (opt.opt-count-bounds-blocks
     (opt.opt-function-blocks
-      (opt.opt-len-eq-late-sweep-with-locals
-        (ast.ast-node-pool-reader-type-segment-bases)
-        (opt_i64_i64_map.with-capacity 1)
-        (opt_i64_i64_map.with-capacity 1)
-        (opt_i64_i64_map.with-capacity 1)
-        (opt_i64_i64_map.with-capacity 1)
-        (opt_i64_i64_map.with-capacity 1)
-        (opt.opt-ck-locals-build
-          (ast.ast-node-pool-reader-type-segment-bases)
-          ctors
-          (opt-ck-call-memory (opt.compiler-opt-global-shared-view symbols))
-          64
-          (opt.compiler-opt-global-shared-view blocks))
-        (opt.opt-cfg-context-build (opt.compiler-opt-global-shared-view blocks))
-        (opt-le-blocks-function symbols.host blocks)))))
+      (let
+        [arg (ast.ast-node-pool-reader-type-segment-bases)]
+        [arg-arg (opt_i64_i64_map.with-capacity 1)]
+        [arg-arg2 (opt_i64_i64_map.with-capacity 1)]
+        (opt.opt-len-eq-late-sweep-with-locals
+          arg
+          arg-arg
+          arg-arg2
+          (opt_i64_i64_map.with-capacity 1)
+          (opt_i64_i64_map.with-capacity 1)
+          (opt_i64_i64_map.with-capacity 1)
+          (let
+            [arg (ast.ast-node-pool-reader-type-segment-bases)]
+            [arg-arg
+              (opt-ck-call-memory (opt.compiler-opt-global-shared-view symbols))]
+            (opt.opt-ck-locals-build
+              arg
+              ctors
+              arg-arg
+              64
+              (opt.compiler-opt-global-shared-view blocks)))
+          (opt.opt-cfg-context-build
+            (opt.compiler-opt-global-shared-view blocks))
+          (opt-le-blocks-function symbols.host blocks))))))
 
 (define (compiler-optimize-ck-local-len-eq-self-test) : i64
   (let
@@ -87178,7 +87068,7 @@
     ;; the reader with its seeds: the guarded check retires
     [seeded? : bool
       (opt.opt-pd-install-seeds!
-        (opt.compiler-opt-global-shared-view cells.len-eq-clean)
+        cells.len-eq-clean
         pd.use
         (opt.compiler-opt-global-shared-view use-blocks))]
     [retired : i64
@@ -87199,7 +87089,7 @@
     ;; value there, so no fact is recorded against it
     [_writer : bool
       (opt.opt-pd-install-seeds!
-        (opt.compiler-opt-global-shared-view cells.len-eq-clean)
+        cells.len-eq-clean
         pd.cover
         (opt.compiler-opt-global-shared-view use-blocks))]
     [in-writer : i64
@@ -87722,10 +87612,7 @@
   [facts : opt_i64_i64_map.Map]
   [name : i64]
   [position : i64]) : i64
-  (opt.opt-arg-global-fact
-    (opt.compiler-opt-global-shared-view facts)
-    name
-    position))
+  (opt.opt-arg-global-fact facts name position))
 
 ;; The consumption side, driven exactly like the LE fixture's late-slot sweep:
 ;; a function the LE table calls clean, whose two checks reach their lengths
@@ -87770,7 +87657,7 @@
         (opt.opt-len-eq-late-sweep
           (ast.ast-node-pool-reader-type-segment-bases)
           (opt.compiler-opt-global-shared-view cells.len-eq)
-          (opt.compiler-opt-global-shared-view cells.len-eq-clean)
+          cells.len-eq-clean
           (opt_i64_i64_map.with-capacity 1)
           facts
           (opt_i64_i64_map.with-capacity 1)
@@ -87794,11 +87681,7 @@
         (opt.compiler-opt-global-shared-view cells)
         false)]
     [slots : (__tl_dyn-array i64)
-      (opt.opt-arg-global-slots
-        (opt.compiler-opt-global-shared-view facts)
-        symbols.helper
-        (opt-ag-params)
-        64)]
+      (opt.opt-arg-global-slots facts symbols.helper (opt-ag-params) 64)]
     [retired : i64
       (opt-ag-swept-checks
         (opt.compiler-opt-global-shared-view cells)
@@ -87945,31 +87828,23 @@
       ;; --- the per-var slot table the LE lookups read ---
       [(not
           (=
-            (opt.opt-arg-global-of-value
-              (opt.compiler-opt-global-shared-view slots)
-              (ir.CompilerIrValue.Var 1))
+            (opt.opt-arg-global-of-value slots (ir.CompilerIrValue.Var 1))
             le.a))
         12]
       [(not
           (=
-            (opt.opt-arg-global-of-value
-              (opt.compiler-opt-global-shared-view slots)
-              (ir.CompilerIrValue.Var 2))
+            (opt.opt-arg-global-of-value slots (ir.CompilerIrValue.Var 2))
             le.b))
         13]
       [(not
           (=
-            (opt.opt-arg-global-of-value
-              (opt.compiler-opt-global-shared-view slots)
-              (ir.CompilerIrValue.Var 0))
+            (opt.opt-arg-global-of-value slots (ir.CompilerIrValue.Var 0))
             (- 0 1)))
         14]
       ;; no var the body defines inherits it
       [(not
           (=
-            (opt.opt-arg-global-of-value
-              (opt.compiler-opt-global-shared-view slots)
-              (ir.CompilerIrValue.Var 6))
+            (opt.opt-arg-global-of-value slots (ir.CompilerIrValue.Var 6))
             (- 0 1)))
         15]
       ;; --- the decision the class moves ---
@@ -88034,8 +87909,8 @@
         [settled? : bool
           (opt.opt-lga-roots-fixed!
             blocks
-            (opt.compiler-opt-global-shared-view roots)
-            (opt.compiler-opt-global-shared-view writes)
+            (&mut roots)
+            (&mut writes)
             (opt.opt-lga-root-round-cap))]
         (cond
           [settled? 1]
@@ -88502,10 +88377,10 @@
       ir.CompilerIrBlockList.Nil)))
 
 (define (opt-pe-self-phi-value [back : ir.CompilerIrInstr]) : i64
-  (match (opt.opt-bce-mb-self-phi-value
-    (opt-pe-loop-blocks back)
-    (opt-pe-loop-defs 2)
-    1)
+  (match (let
+    [arg (opt-pe-loop-blocks back)]
+    [arg-arg (opt-pe-loop-defs 2)]
+    (opt.opt-bce-mb-self-phi-value arg arg-arg 1))
     [(ir.CompilerIrMaybeValue.No) (- 0 1)]
     [(ir.CompilerIrMaybeValue.Some value)
       (match value
@@ -88889,15 +88764,19 @@
         ir.CompilerIrFunctionAbi.Ordinary)]
     (opt.opt-count-bounds-blocks
       (opt.opt-function-blocks
-        (opt.opt-len-eq-late-sweep
-          (ast.ast-node-pool-reader-type-segment-bases)
-          (opt_i64_i64_map.with-capacity 1)
-          (opt_i64_i64_map.with-capacity 1)
-          (opt_i64_i64_map.with-capacity 1)
-          (opt_i64_i64_map.with-capacity 1)
-          (opt_i64_i64_map.with-capacity 1)
-          (opt.opt-cfg-context-build blocks)
-          func)))))
+        (let
+          [arg (ast.ast-node-pool-reader-type-segment-bases)]
+          [arg-arg (opt_i64_i64_map.with-capacity 1)]
+          [arg-arg2 (opt_i64_i64_map.with-capacity 1)]
+          (opt.opt-len-eq-late-sweep
+            arg
+            arg-arg
+            arg-arg2
+            (opt_i64_i64_map.with-capacity 1)
+            (opt_i64_i64_map.with-capacity 1)
+            (opt_i64_i64_map.with-capacity 1)
+            (opt.opt-cfg-context-build blocks)
+            func))))))
 
 (define (opt-pc-shape-mut-source) : OptPcTestShape
   (OptPcTestShape true false false false))
@@ -89095,15 +88974,19 @@
         ir.CompilerIrFunctionAbi.Ordinary)]
     (opt.opt-count-bounds-blocks
       (opt.opt-function-blocks
-        (opt.opt-len-eq-late-sweep
-          (ast.ast-node-pool-reader-type-segment-bases)
-          (opt_i64_i64_map.with-capacity 1)
-          (opt_i64_i64_map.with-capacity 1)
-          (opt_i64_i64_map.with-capacity 1)
-          (opt_i64_i64_map.with-capacity 1)
-          (opt_i64_i64_map.with-capacity 1)
-          (opt.opt-cfg-context-build blocks)
-          func)))))
+        (let
+          [arg (ast.ast-node-pool-reader-type-segment-bases)]
+          [arg-arg (opt_i64_i64_map.with-capacity 1)]
+          [arg-arg2 (opt_i64_i64_map.with-capacity 1)]
+          (opt.opt-len-eq-late-sweep
+            arg
+            arg-arg
+            arg-arg2
+            (opt_i64_i64_map.with-capacity 1)
+            (opt_i64_i64_map.with-capacity 1)
+            (opt_i64_i64_map.with-capacity 1)
+            (opt.opt-cfg-context-build blocks)
+            func))))))
 
 (define (compiler-optimize-pc-memo-self-test) : i64
   (let
@@ -89383,15 +89266,19 @@
         ir.CompilerIrFunctionAbi.Ordinary)]
     (opt.opt-count-bounds-blocks
       (opt.opt-function-blocks
-        (opt.opt-len-eq-late-sweep
-          (ast.ast-node-pool-reader-type-segment-bases)
-          (opt_i64_i64_map.with-capacity 1)
-          (opt_i64_i64_map.with-capacity 1)
-          (opt_i64_i64_map.with-capacity 1)
-          (opt_i64_i64_map.with-capacity 1)
-          (opt_i64_i64_map.with-capacity 1)
-          (opt.opt-cfg-context-build blocks)
-          func)))))
+        (let
+          [arg (ast.ast-node-pool-reader-type-segment-bases)]
+          [arg-arg (opt_i64_i64_map.with-capacity 1)]
+          [arg-arg2 (opt_i64_i64_map.with-capacity 1)]
+          (opt.opt-len-eq-late-sweep
+            arg
+            arg-arg
+            arg-arg2
+            (opt_i64_i64_map.with-capacity 1)
+            (opt_i64_i64_map.with-capacity 1)
+            (opt_i64_i64_map.with-capacity 1)
+            (opt.opt-cfg-context-build blocks)
+            func))))))
 
 (define (compiler-optimize-vg-guard-arm-self-test) : i64
   (let
@@ -89596,15 +89483,18 @@
 ;; The pipeline's own composition: call-memory summaries unioned into the
 ;; syntactic clean walk, which is what a LICM call site reads.
 (define (opt-cm-elem-clean-map [functions : ir.CompilerIrFunctionSeq]) : opt_i64_i64_map.Map
-  (opt.opt-loop-bce-direct-call-clean-add-memory-clean
-    (ir.compiler-ir-global-shared-view functions)
-    (opt.opt-call-memory-build
-      (ast.ast-node-pool-reader-type-segment-bases)
+  (let
+    [arg
+      (opt.opt-call-memory-build
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (ir.compiler-ir-global-shared-view functions)
+        16)]
+    (opt.opt-loop-bce-direct-call-clean-add-memory-clean
       (ir.compiler-ir-global-shared-view functions)
-      16)
-    (opt.opt-loop-bce-direct-call-clean-map
-      (ir.compiler-ir-global-shared-view functions)
-      16)))
+      arg
+      (opt.opt-loop-bce-direct-call-clean-map
+        (ir.compiler-ir-global-shared-view functions)
+        16))))
 
 (define (compiler-optimize-call-memory-element-write-self-test) : i64
   (let
@@ -89777,36 +89667,47 @@
         15]
       ;; the derived map carries exactly the global bit for the accessor writer
       [(not
-          (opt.opt-direct-call-global-clean?
-            (opt-cm-elem-clean-map
-              (ir.compiler-ir-global-shared-view lp-functions))
-            lp.callee))
+          (let
+            [arg
+              (opt-cm-elem-clean-map
+                (ir.compiler-ir-global-shared-view lp-functions))]
+            (opt.opt-direct-call-global-clean? arg lp.callee)))
         16]
-      [(opt.opt-direct-call-memory-clean?
-          (opt-cm-elem-clean-map
-            (ir.compiler-ir-global-shared-view lp-functions))
-          lp.callee)
+      [(let
+          [arg
+            (opt-cm-elem-clean-map
+              (ir.compiler-ir-global-shared-view lp-functions))]
+          (opt.opt-direct-call-memory-clean? arg lp.callee))
         17]
       ;; (d) element storage is disjoint from cells regardless of the args;
       ;; even taking a cell address elsewhere cannot invalidate this tier.
       [(not
-          (opt.opt-licm-direct-call-keeps-globals-clean?
-            (opt-cm-elem-clean-map
-              (ir.compiler-ir-global-shared-view lp-functions))
-            (opt-lp-test-cells lp)
-            lp.callee))
+          (let
+            [arg
+              (opt-cm-elem-clean-map
+                (ir.compiler-ir-global-shared-view lp-functions))]
+            [arg-arg (opt-lp-test-cells lp)]
+            (opt.opt-licm-direct-call-keeps-globals-clean?
+              arg
+              arg-arg
+              lp.callee)))
         18]
       [(not
-          (opt.opt-licm-direct-call-keeps-globals-clean?
-            (opt-cm-elem-clean-map
-              (ir.compiler-ir-global-shared-view lp-functions))
-            (opt.opt-global-cell-summary-build
-              (ast.ast-node-pool-reader-type-segment-bases)
-              (opt-lp-test-globals lp)
-              (opt-gc-test-functions1
-                (opt-licm-test-function
-                  (opt-lp-test-call-body-blocks lp addr-args))))
-            lp.callee))
+          (let
+            [arg
+              (opt-cm-elem-clean-map
+                (ir.compiler-ir-global-shared-view lp-functions))]
+            [arg-arg
+              (opt.opt-global-cell-summary-build
+                (ast.ast-node-pool-reader-type-segment-bases)
+                (opt-lp-test-globals lp)
+                (opt-gc-test-functions1
+                  (opt-licm-test-function
+                    (opt-lp-test-call-body-blocks lp addr-args))))]
+            (opt.opt-licm-direct-call-keeps-globals-clean?
+              arg
+              arg-arg
+              lp.callee)))
         19]
       [(not (= memory-bit 1)) 20]
       [else 42])))
@@ -92511,7 +92412,7 @@
         (opt-xchk-exit-label)
         (ir.CompilerIrValue.I64 8)
         ir.CompilerIrBlockList.Nil
-        cell
+        (&mut cell)
         gen
         opt.OptLabelSet.Nil))))
 
@@ -98796,7 +98697,7 @@
       [(not
           (opt-const-divisor-test-is-global?
             (opt.opt-const-global-subst-value
-              (opt.compiler-opt-global-shared-view const-table)
+              const-table
               (ir.CompilerIrValue.Global (opt-test-symbol "t22_wide")))
             "t22_wide"))
         16]
@@ -101597,23 +101498,28 @@
   [facts : opt.OptBoundsFacts]) : bool
   (let
     [blocks : ir.CompilerIrBlockList (opt-cb-use-blocks array-cell len-cell)]
-    (opt.opt-cb-content-covers?
-      (ast.ast-node-pool-reader-type-segment-bases)
-      (opt.opt-len-eq-use-with-content
-        (opt.opt-len-eq-use-build-late
-          (opt.compiler-opt-global-shared-view cells.len-eq)
-          (opt.compiler-opt-global-shared-view cells.len-eq-clean)
-          name
-          64
-          (opt.compiler-opt-global-shared-view blocks)
-          (opt.compiler-opt-global-shared-view cells.arg-global)
-          (opt-le-params 0))
-        (opt.compiler-opt-global-shared-view cells.content))
-      (opt_i64_i64_map.with-capacity 1)
-      facts
-      0
-      (ir.CompilerIrValue.Var 6)
-      (ir.CompilerIrValue.Var 10))))
+    (let
+      [arg (ast.ast-node-pool-reader-type-segment-bases)]
+      [arg-arg
+        (opt.opt-len-eq-use-with-content
+          (opt.opt-len-eq-use-build-late
+            (opt.compiler-opt-global-shared-view cells.len-eq)
+            cells.len-eq-clean
+            name
+            64
+            (opt.compiler-opt-global-shared-view blocks)
+            cells.arg-global
+            (opt-le-params 0))
+          (opt.compiler-opt-global-shared-view cells.content))]
+      [arg-arg2 (opt_i64_i64_map.with-capacity 1)]
+      (opt.opt-cb-content-covers?
+        arg
+        arg-arg
+        arg-arg2
+        facts
+        0
+        (ir.CompilerIrValue.Var 6)
+        (ir.CompilerIrValue.Var 10)))))
 
 ;; A dominating passed check against a family member's length, which is what
 ;; discharges the zero fill (`v <u L` forces `L >= 1`).
@@ -105689,14 +105595,13 @@
     ;; so LICM, rotation and DCE still see a non-trapping BinOp.
     [early : ir.CompilerIrInstr
       (opt.opt-const-divisor-rewrite-instr
-        (opt.compiler-opt-global-shared-view table)
+        table
         (opt.compiler-opt-global-shared-view product))]
     [out : ir.CompilerIrInstr
-      (opt.opt-const-global-mul-shift-instr
-        (opt.compiler-opt-global-shared-view table)
-        (opt_i64_i64_map.with-capacity 1)
-        (opt_i64_i64_map.with-capacity 1)
-        product)]
+      (let
+        [arg (opt_i64_i64_map.with-capacity 1)]
+        [arg-arg (opt_i64_i64_map.with-capacity 1)]
+        (opt.opt-const-global-mul-shift-instr table arg arg-arg product))]
     (and
       (match early
         [(ir.CompilerIrInstr.BinOp 9 (ir.CompilerIrBinOp.Mul) lhs rhs _)
@@ -105726,11 +105631,9 @@
   [instr : ir.CompilerIrInstr]
   [copies : opt_i64_i64_map.Map]
   [counts : opt_i64_i64_map.Map]) : bool
-  (match (opt.opt-const-global-mul-shift-instr
-    (opt-wide-power-table 34)
-    copies
-    counts
-    instr)
+  (match (let
+    [arg (opt-wide-power-table 34)]
+    (opt.opt-const-global-mul-shift-instr arg copies counts instr))
     [(ir.CompilerIrInstr.BinOp 9 (ir.CompilerIrBinOp.Mul) _ _ _) true]
     [_ false]))
 
@@ -105760,16 +105663,18 @@
         5
         (ir.compiler-ir-symbol-id (opt-test-symbol "wide_power")))
       (opt_i64_i64_map.insert-ref! (&mut counts) 5 definitions)
-      (match (opt.opt-const-global-mul-shift-instr
-        (opt-wide-power-table 34)
-        copies
-        counts
-        (ir.CompilerIrInstr.BinOp
-          9
-          (ir.CompilerIrBinOp.Mul)
-          (ir.CompilerIrValue.Var 7)
-          (ir.CompilerIrValue.Var 5)
-          (ast.AstType.I64)))
+      (match (let
+        [arg (opt-wide-power-table 34)]
+        (opt.opt-const-global-mul-shift-instr
+          arg
+          copies
+          counts
+          (ir.CompilerIrInstr.BinOp
+            9
+            (ir.CompilerIrBinOp.Mul)
+            (ir.CompilerIrValue.Var 7)
+            (ir.CompilerIrValue.Var 5)
+            (ast.AstType.I64))))
         [(ir.CompilerIrInstr.BinOp
             9
             (ir.CompilerIrBinOp.Shl _)
@@ -105854,16 +105759,20 @@
       (= shifts 0))))
 
 (define (opt-wide-power-mul-shift-both?) : bool
-  (match (opt.opt-const-global-mul-shift-instr
-    (opt-wide-power-table 34)
-    (opt_i64_i64_map.with-capacity 1)
-    (opt_i64_i64_map.with-capacity 1)
-    (ir.CompilerIrInstr.BinOp
-      9
-      (ir.CompilerIrBinOp.Mul)
-      (ir.CompilerIrValue.Global (opt-test-symbol "wide_power"))
-      (ir.CompilerIrValue.Global (opt-test-symbol "wide_power"))
-      (ast.AstType.I64)))
+  (match (let
+    [arg (opt-wide-power-table 34)]
+    [arg-arg (opt_i64_i64_map.with-capacity 1)]
+    [arg-arg2 (opt_i64_i64_map.with-capacity 1)]
+    (opt.opt-const-global-mul-shift-instr
+      arg
+      arg-arg
+      arg-arg2
+      (ir.CompilerIrInstr.BinOp
+        9
+        (ir.CompilerIrBinOp.Mul)
+        (ir.CompilerIrValue.Global (opt-test-symbol "wide_power"))
+        (ir.CompilerIrValue.Global (opt-test-symbol "wide_power"))
+        (ast.AstType.I64))))
     [(ir.CompilerIrInstr.BinOp
         9
         (ir.CompilerIrBinOp.Shl _)
@@ -105894,14 +105803,16 @@
             "unsigned left power becomes a shift")
           (set! power (+ power 1))))
       (test.assert-true
-        (match (opt.opt-const-divisor-rewrite-instr
-          (opt-t22-const-table)
-          (ir.CompilerIrInstr.BinOp
-            9
-            (ir.CompilerIrBinOp.Mul)
-            (ir.CompilerIrValue.Var 7)
-            (ir.CompilerIrValue.I64 281474976710656)
-            (ast.AstType.I64)))
+        (match (let
+          [arg (opt-t22-const-table)]
+          (opt.opt-const-divisor-rewrite-instr
+            arg
+            (ir.CompilerIrInstr.BinOp
+              9
+              (ir.CompilerIrBinOp.Mul)
+              (ir.CompilerIrValue.Var 7)
+              (ir.CompilerIrValue.I64 281474976710656)
+              (ast.AstType.I64))))
           [(ir.CompilerIrInstr.BinOp _ (ir.CompilerIrBinOp.Mul) _ _ _) true]
           [_ false])
         "literal products from unrolling stay in their existing reduction path")
@@ -106345,10 +106256,12 @@
               (opt-lcc-test-callee (= mode 4))
               (ir.compiler-ir-function-seq-empty)))]
         [out : ir.CompilerIrFunction
-          (opt.opt-loop-call-cache-function
-            index
-            (opt-pcd-test-map (= mode 3))
-            (opt-lcc-test-function mode))]
+          (let
+            [arg (opt-pcd-test-map (= mode 3))]
+            (opt.opt-loop-call-cache-function
+              index
+              arg
+              (opt-lcc-test-function mode)))]
         [blocks : ir.CompilerIrBlockList
           (opt.opt-function-blocks (ir.compiler-ir-global-shared-view out))]
         (begin
@@ -106582,7 +106495,7 @@
         [site : i64 (ir.compiler-ir-label "sum.body")]
         (begin
           (opt.opt-def-counts-blocks!
-            (opt.compiler-opt-global-shared-view defs)
+            (&mut defs)
             (opt.compiler-opt-global-shared-view blocks))
           (match (opt.opt-cfg-find-block
             (opt.compiler-opt-global-shared-view blocks)
@@ -106817,10 +106730,12 @@
               (opt-lcc-test-callee false)
               (ir.compiler-ir-function-seq-empty)))]
         [out
-          (opt.opt-loop-call-cache-function
-            index
-            (opt-pcd-test-map false)
-            (opt-lcp-test-input mode))]
+          (let
+            [arg (opt-pcd-test-map false)]
+            (opt.opt-loop-call-cache-function
+              index
+              arg
+              (opt-lcp-test-input mode)))]
         [blocks
           (opt.opt-function-blocks (opt.compiler-opt-global-shared-view out))]
         (begin

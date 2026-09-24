@@ -532,6 +532,27 @@ serialize_missing_sequence_hook_reject|check-fail|tests/safety/serialize_missing
 serialize_missing_extra_decls_hook_reject|check-fail|tests/safety/serialize_missing_extra_decls_hook_reject.tl|-|typecheck: strategy module serialize_missing_extra_decls_hook_format does not export hook extra-decls
 serialize_bad_object_finish_hook_reject|check-fail|tests/safety/serialize_bad_object_finish_hook_reject.tl|-|typecheck: return type mismatch
 module_catalog_invalid_unused_helper_reject|check-fail|tests/safety/module_catalog_invalid_unused_helper_reject.tl|-|typecheck: return type mismatch
+
+# Every declaration of every generated-module identity gets the normal
+# post-expansion typecheck, including declarations nothing references.
+generated_module_unused_invalid_reject|check-fail|tests/safety/generated_module_unused_invalid_reject.tl|-|typecheck: integer literal 300 does not fit expected type u8
+generated_module_literal_narrowing_reject|check-fail|tests/safety/generated_module_literal_narrowing_reject.tl|-|typecheck: integer literal 300 does not fit expected type u8
+generated_module_bool_arithmetic_reject|check-fail|tests/safety/generated_module_bool_arithmetic_reject.tl|-|typecheck: integer operator expects matching integer operands
+generated_module_uncloneable_clone_reject|check-fail|tests/safety/generated_module_uncloneable_clone_reject.tl|-|typecheck: clone unsupported type (-> i64 i64)
+generated_module_equality_ok|check-ok|tests/safety/generated_module_equality_ok.tl|-|-
+generated_module_cleanup_ownership_reject|check-fail|tests/safety/generated_module_cleanup_ownership_reject.tl|-|field value stores cleanup-owning type FileHandle without :owned
+generated_module_reflection_fixed_shape_reject|check-fail|tests/safety/generated_module_reflection_fixed_shape_reject.tl|-|typecheck: array elements must have same type: expected i64, found bool
+generated_module_nested_unused_invalid_reject|check-fail|tests/safety/generated_module_nested_unused_invalid_reject.tl|-|typecheck: integer literal 300 does not fit expected type u8
+generated_module_fixed_callee_reject|check-fail|tests/safety/generated_module_fixed_callee_reject.tl|-|typecheck: call `fixed-callee-only-i64` argument 1 (parameter `x`) type mismatch: expected i64, found u8
+generated_module_fixed_value_reject|check-fail|tests/safety/generated_module_fixed_value_reject.tl|-|typecheck: return type mismatch: expected u8, found i64
+generated_module_fixed_local_annotation_reject|check-fail|tests/safety/generated_module_fixed_local_annotation_reject.tl|-|typecheck: let binding `y` type mismatch: expected i64, found u8
+generated_module_fixed_return_reject|check-fail|tests/safety/generated_module_fixed_return_reject.tl|-|typecheck: return type mismatch: expected i64, found u8
+generated_module_fixed_field_access_reject|check-fail|tests/safety/generated_module_fixed_field_access_reject.tl|-|typecheck: return type mismatch: expected u8, found i64
+generated_module_substituted_condition_reject|check-fail|tests/safety/generated_module_substituted_condition_reject.tl|-|typecheck: if condition must be bool: expected bool, found u8
+generated_module_fixed_constructor_argument_reject|check-fail|tests/safety/generated_module_fixed_constructor_argument_reject.tl|-|typecheck: call `Box` argument 1 (parameter `fixed`) type mismatch: expected i64, found u8
+generated_module_partial_catalog_ok|check-ok|tests/safety/generated_module_partial_catalog_ok.tl|-|-
+generated_module_sibling_value_dependency_reject|check-fail|tests/safety/generated_module_sibling_value_dependency_reject.tl|-|typecheck: integer operator expects matching integer operands
+
 serialize_unsupported_char_root_reject|check-fail|tests/safety/serialize_unsupported_char_root_reject.tl|-|serialize: unsupported root type
 serialize_unsupported_tuple_element_reject|check-fail|tests/safety/serialize_unsupported_tuple_element_reject.tl|-|serialize: unsupported type char
 import_arg_mismatch_diagnostic|check-fail|tests/safety/import_arg_mismatch_root.tl|-|typecheck: call `takes-i64` argument 1 (parameter `x`) type mismatch: expected i64, found bool

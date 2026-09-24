@@ -182701,6 +182701,16 @@
                             (compiler-opt-global-shared-view guard)
                             0)))
                       (return (OptMaybeFunction.No)))
+                    ;; Guard destinations are duplicated before SSA. A trapping
+                    ;; definition would lose its unique source-span key during
+                    ;; renaming, including on the first check. Keep such guards
+                    ;; in the general lazy-cache path, as loop rotation does.
+                    (unless
+                      (opt-loop-rotation-header-prefix-ok?
+                        (compiler-opt-global-shared-view guard)
+                        0
+                        (- guard.len 1))
+                      (return (OptMaybeFunction.No)))
                     (match (ir.compiler-ir-instr-seq-ref
                       (compiler-opt-global-shared-view guard)
                       (- guard.len 1))

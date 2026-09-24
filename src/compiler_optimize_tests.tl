@@ -112137,21 +112137,50 @@
               (compiler_ir_types.CompilerIrValue.I64 0)
               (compiler_ast_types.AstType.I64))
             (compiler_ir_types.CompilerIrInstr.Jump header))))
-      (compiler_ir_types.compiler-ir-block-builder-push!
-        (&mut out)
-        (compiler_ir_types.CompilerIrBlock.Block
-          header
-          (opt-test-instrs
+      (let
+        [guard : compiler_ir_types.CompilerIrInstrBuilder
+          (compiler_ir_types.compiler-ir-instr-builder-with-capacity 3)]
+        (begin
+          (when
+            (>= mode 13)
+            (compiler_ir_types.compiler-ir-instr-builder-push!
+              (&mut guard)
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                7
+                (cond
+                  [(= mode 13) (compiler_ir_types.CompilerIrBinOp.Div)]
+                  [(= mode 14) (compiler_ir_types.CompilerIrBinOp.Mod)]
+                  [(= mode 15)
+                    (compiler_ir_types.CompilerIrBinOp.Shl
+                      (compiler_ast_types.AstType.I64))]
+                  [else
+                    (compiler_ir_types.CompilerIrBinOp.Shr
+                      (compiler_ast_types.AstType.I64))])
+                (compiler_ir_types.CompilerIrValue.I64 60)
+                (compiler_ir_types.CompilerIrValue.Var 2)
+                (compiler_ast_types.AstType.I64))))
+          (compiler_ir_types.compiler-ir-instr-builder-push!
+            (&mut guard)
             (compiler_ir_types.CompilerIrInstr.BinOp
               3
               (compiler_ir_types.CompilerIrBinOp.Lt)
-              (compiler_ir_types.CompilerIrValue.Var 2)
+              (compiler_ir_types.CompilerIrValue.Var
+                (if (>= mode 13)
+                  7
+                  2))
               (compiler_ir_types.CompilerIrValue.Var 0)
-              (compiler_ast_types.AstType.I64))
+              (compiler_ast_types.AstType.I64)))
+          (compiler_ir_types.compiler-ir-instr-builder-push!
+            (&mut guard)
             (compiler_ir_types.CompilerIrInstr.Branch
               (compiler_ir_types.CompilerIrValue.Var 3)
               body
-              exit))))
+              exit))
+          (compiler_ir_types.compiler-ir-block-builder-push!
+            (&mut out)
+            (compiler_ir_types.CompilerIrBlock.Block
+              header
+              (compiler_ir_types.compiler-ir-instr-builder-to-seq guard)))))
       (let
         [b : compiler_ir_types.CompilerIrInstrBuilder
           (compiler_ir_types.compiler-ir-instr-builder-with-capacity 6)]
@@ -112454,7 +112483,7 @@
   invariant-loop-call-cache
   (let
     [mode : i64 0]
-    (while (< mode 13)
+    (while (< mode 17)
       (let
         [index : compiler_optimize.OptFunctionIndex
           (compiler_optimize.opt-function-index-build
@@ -112480,7 +112509,8 @@
                 (= mode 6)
                 (= mode 10)
                 (= mode 11)
-                (= mode 12))
+                (= mode 12)
+                (>= mode 13))
                 6
                 4))
             "cache only a costly, invariant call in a write-free loop")
@@ -112491,9 +112521,15 @@
               (= mode 6)
               (= mode 10)
               (= mode 11)
-              (= mode 12))
+              (= mode 12)
+              (>= mode 13))
             (test.assert-true
-              (if (or (= mode 5) (= mode 10) (= mode 11) (= mode 12))
+              (if (or
+                (= mode 5)
+                (= mode 10)
+                (= mode 11)
+                (= mode 12)
+                (>= mode 13))
                 (opt-lcc-test-control?
                   (compiler_optimize.compiler-opt-global-shared-view blocks))
                 (and

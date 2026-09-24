@@ -59,3 +59,11 @@ Reproduce with `scripts/bench.sh --runs 5 --cpu 14`, and
 `scripts/measure-instruction-counts.sh --benchmarks-only --cases
 opt_runtime_string_eq,opt_string_scan --runs 1`, selecting each compiler with
 `TYPELISP_BIN`. Detailed local artifacts are under `target/exp/guarded-call/`.
+
+Review hardening: guards now use the loop-rotation whitelist for their prefix.
+Division, remainder, shifts and other potentially trapping operations retain
+the general lazy-cache path, so their destination-keyed source spans survive
+SSA renaming. `guarded_loop_call_traps.tl` pins exact location, operands and
+exit code at opt0/1/2, for both the first and a later check of all four arithmetic
+operations. The IR fixture also requires the lazy-cache structure for each.
+The stack includes the address-taken-local write check from #8036.

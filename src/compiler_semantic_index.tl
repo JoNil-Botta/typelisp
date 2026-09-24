@@ -3410,7 +3410,7 @@
       (begin
         (compiler-semantic-walk-type-list!
           (owned_view.compiler-owned-shared-view state)
-          (ast.ast-type-list-box-shared-view args))
+          (deref args))
         (compiler-semantic-walk-type!
           (owned_view.compiler-owned-shared-view state)
           (tc.tc-context-type-get state.ctx ret)))]
@@ -3419,9 +3419,7 @@
         (owned_view.compiler-owned-shared-view state)
         (tc.tc-context-type-get state.ctx signature))]
     [(ast.AstType.Tuple items)
-      (compiler-semantic-walk-type-list!
-        state
-        (ast.ast-type-list-box-shared-view items))]
+      (compiler-semantic-walk-type-list! state (deref items))]
     [(ast.AstType.Array elem _)
       (compiler-semantic-walk-type!
         (owned_view.compiler-owned-shared-view state)
@@ -5130,7 +5128,7 @@
         fact-env
         facts-available
         bound-names
-        (ast.ast-pattern-list-box-shared-view items)
+        (deref items)
         ast.AstMaybeType.No
         search-start
         search-limit)]
@@ -5142,7 +5140,7 @@
         fact-env
         facts-available
         bound-names
-        (ast.ast-pattern-list-box-shared-view items)
+        (deref items)
         ast.AstMaybeType.No
         search-start
         search-limit)]
@@ -5159,7 +5157,7 @@
           fact-env
           facts-available
           bound-names
-          (ast.ast-pattern-list-box-shared-view items)
+          (deref items)
           ast.AstMaybeType.No
           search-start
           search-limit))]
@@ -6872,7 +6870,7 @@
       (compiler-semantic-record-module-declaration! state)]
     [(ast.AstDecl.Import _ spec) (compiler-semantic-walk-import! state spec)]
     [(ast.AstDecl.Unsafe inner)
-      (compiler-semantic-walk-decl! state (ast.ast-decl-box-shared-view inner))]
+      (compiler-semantic-walk-decl! state (deref inner))]
     [_ unit]))
 
 (define (compiler-semantic-source-for-path
@@ -7885,8 +7883,7 @@
           [decls : ast.AstDeclList
             (match (tc.tc-context-program
               (owned_view.compiler-owned-shared-view ctx))
-              [(ast.AstProgram.Program decls-box)
-                (ast.ast-decl-list-box-shared-view decls-box)])]
+              [(ast.AstProgram.Program decls-box) (deref decls-box)])]
           [decl-count : i64 (ast.ast-decl-list-len (& decls))]
           [symbol-count : i64
             (csym.compiler-symbols-decl-count (tc.tc-context-symbols (& ctx)))]

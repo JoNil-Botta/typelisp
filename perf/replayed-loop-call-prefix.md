@@ -40,3 +40,16 @@ fixtures compare wrapping recurrences from negative through 129 trip counts,
 including zero-trip calls that would divide by zero if speculated. Separate
 first/later division, remainder and shift failures pin diagnostic locations at
 all three optimization levels.
+
+## Parallel-phi regression
+
+Independent review found a backend bug exposed by the replay block: a lagged
+loop counter could receive the incremented value when two leading phis were
+processed sequentially by conservative liveness. The IR transformation itself
+preserves the old counter. This branch includes the parallel-phi fix from
+#8064 and depends on that fix landing before this optimization.
+
+`replayed_loop_call_lagged.tl` retains the exact failing replay shape. Linux
+and Windows manifest rows cover negative and zero trips plus 1, 2, 3, 10 and
+65 trips at every optimization level. Before the fix, the three-trip opt-2
+program prints `r=2 d=-3`; the expected result is `r=1 d=-3`.

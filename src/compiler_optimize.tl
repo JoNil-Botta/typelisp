@@ -183859,7 +183859,8 @@
           (compiler-opt-box-shared-view rest)))]))
 
 ;; A two-block while loop can keep the original first guard and call, then
-;; return through a second copy of the guard to the suffix after the call.
+;; return through a second copy of the guard, replay any scalar prefix, and
+;; resume at the suffix after the call.
 ;; That makes the completed result dominate every later use without a flag
 ;; test on every iteration. The first call keeps its original trap ordering.
 ;; This is before SSA: the copied guard's definitions are renamed later.
@@ -184369,6 +184370,7 @@
                       (compiler-opt-global-shared-view instrs)
                       i))
                   (and
+                    ;; Bound replayed code growth and the local safety scan.
                     (<= at 8)
                     (opt-loop-call-replay-instr?
                       (ir.compiler-ir-instr-seq-ref

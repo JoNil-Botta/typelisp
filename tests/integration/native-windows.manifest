@@ -813,3 +813,25 @@ pure_call_join_live_opt2|tests/integration/pure_call_join_live.tl|0|938916483573
 wide_power_multiply_o0|tests/integration/wide_power_multiply.tl|42|-|-|-|opt-level:0+stage-stdlib
 wide_power_multiply_o1|tests/integration/wide_power_multiply.tl|42|-|-|-|opt-level:1+stage-stdlib
 wide_power_multiply_o2|tests/integration/wide_power_multiply.tl|42|-|-|-|opt-level:2+stage-stdlib
+
+replayed_loop_call_lagged_neg3_opt0|tests/integration/replayed_loop_call_lagged.tl|0|r=0 d=0\n|-3|stdlib/io.tl stdlib/string.tl|opt-level:0+stage-stdlib
+replayed_loop_call_lagged_neg3_opt1|tests/integration/replayed_loop_call_lagged.tl|0|r=0 d=0\n|-3|stdlib/io.tl stdlib/string.tl|opt-level:1+stage-stdlib
+replayed_loop_call_lagged_neg3_opt2|tests/integration/replayed_loop_call_lagged.tl|0|r=0 d=0\n|-3|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib
+replayed_loop_call_lagged_0_opt0|tests/integration/replayed_loop_call_lagged.tl|0|r=0 d=0\n|0|stdlib/io.tl stdlib/string.tl|opt-level:0+stage-stdlib
+replayed_loop_call_lagged_0_opt1|tests/integration/replayed_loop_call_lagged.tl|0|r=0 d=0\n|0|stdlib/io.tl stdlib/string.tl|opt-level:1+stage-stdlib
+replayed_loop_call_lagged_0_opt2|tests/integration/replayed_loop_call_lagged.tl|0|r=0 d=0\n|0|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib
+replayed_loop_call_lagged_1_opt0|tests/integration/replayed_loop_call_lagged.tl|0|r=100 d=-1\n|1|stdlib/io.tl stdlib/string.tl|opt-level:0+stage-stdlib
+replayed_loop_call_lagged_1_opt1|tests/integration/replayed_loop_call_lagged.tl|0|r=100 d=-1\n|1|stdlib/io.tl stdlib/string.tl|opt-level:1+stage-stdlib
+replayed_loop_call_lagged_1_opt2|tests/integration/replayed_loop_call_lagged.tl|0|r=100 d=-1\n|1|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib
+replayed_loop_call_lagged_2_opt0|tests/integration/replayed_loop_call_lagged.tl|0|r=0 d=-2\n|2|stdlib/io.tl stdlib/string.tl|opt-level:0+stage-stdlib
+replayed_loop_call_lagged_2_opt1|tests/integration/replayed_loop_call_lagged.tl|0|r=0 d=-2\n|2|stdlib/io.tl stdlib/string.tl|opt-level:1+stage-stdlib
+replayed_loop_call_lagged_2_opt2|tests/integration/replayed_loop_call_lagged.tl|0|r=0 d=-2\n|2|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib
+replayed_loop_call_lagged_3_opt0|tests/integration/replayed_loop_call_lagged.tl|0|r=1 d=-3\n|3|stdlib/io.tl stdlib/string.tl|opt-level:0+stage-stdlib
+replayed_loop_call_lagged_3_opt1|tests/integration/replayed_loop_call_lagged.tl|0|r=1 d=-3\n|3|stdlib/io.tl stdlib/string.tl|opt-level:1+stage-stdlib
+replayed_loop_call_lagged_3_opt2|tests/integration/replayed_loop_call_lagged.tl|0|r=1 d=-3\n|3|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib
+replayed_loop_call_lagged_10_opt0|tests/integration/replayed_loop_call_lagged.tl|0|r=8 d=-10\n|10|stdlib/io.tl stdlib/string.tl|opt-level:0+stage-stdlib
+replayed_loop_call_lagged_10_opt1|tests/integration/replayed_loop_call_lagged.tl|0|r=8 d=-10\n|10|stdlib/io.tl stdlib/string.tl|opt-level:1+stage-stdlib
+replayed_loop_call_lagged_10_opt2|tests/integration/replayed_loop_call_lagged.tl|0|r=8 d=-10\n|10|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib
+replayed_loop_call_lagged_65_opt0|tests/integration/replayed_loop_call_lagged.tl|0|r=63 d=-65\n|65|stdlib/io.tl stdlib/string.tl|opt-level:0+stage-stdlib
+replayed_loop_call_lagged_65_opt1|tests/integration/replayed_loop_call_lagged.tl|0|r=63 d=-65\n|65|stdlib/io.tl stdlib/string.tl|opt-level:1+stage-stdlib
+replayed_loop_call_lagged_65_opt2|tests/integration/replayed_loop_call_lagged.tl|0|r=63 d=-65\n|65|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib

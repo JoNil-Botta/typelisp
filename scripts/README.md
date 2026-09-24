@@ -224,13 +224,6 @@ On Windows, `verify-integration.sh` sends independent manifest links through
 `lld-link` children; set `TYPELISP_WINDOWS_LINK_JOBS=1` for serial debugging or
 to another value from 1 through 64 for a host-specific measurement.
 
-For process-level safe-thread stress, `measure-thread-integration-stress.sh`
-builds the seven `thread_safe_*` manifest fixtures once and repeatedly runs the
-native executables on Linux or Windows. It retains every exit code and stream;
-use `TYPELISP_THREAD_STRESS_ITERATIONS=1000`,
-`TYPELISP_THREAD_STRESS_JOBS=8`, and, on Linux,
-`TYPELISP_THREAD_STRESS_CPU=0` to increase scheduling pressure.
-
 Some gate-owned helpers deliberately retain measurement-oriented names:
 
 | Helper | Owning gate |
@@ -239,7 +232,7 @@ Some gate-owned helpers deliberately retain measurement-oriented names:
 | `measure-spmd-avx512-instructions.sh` | `ci-verify.sh` self-test and AVX-512 baseline checks |
 | `measure-spmd-mode-instruction-counts.sh` | `ci-verify.sh` self-test and SPMD baseline checks |
 | `measure-compile-batch-memory.ps1` | `verify-compile-profile.sh` |
-| `measure-heavy-closure-profile.sh` | `verify-compile-profile.sh` and `measure-compile-rss.sh` |
+| `measure-heavy-closure-profile.sh` | `verify-compile-profile.sh` |
 | `measure-result-import-cost.sh` | `verify-result-import-harness.sh` fixture preparation |
 | `analyze-stage0-size.sh` | `verify-stage0-smoke.sh` report |
 | `analyze-selfhost-build-asm-size.sh` | `ci-verify.sh` parser self-test; optional linked-size report |
@@ -258,13 +251,12 @@ Keep these at the top level while their owning gate references them.
 - Data files next to scripts are owned by the gate that reads them.
 
 Active optional tools stay at the top level when they support recurring work:
-the compiler and CLI benchmarks, selfhost size report, compile-memory and RSS
-tools, instruction-count runners, the compiler-scale semantic-index benchmark,
-the SFrame v3 codec scale measurement, ISPC/SPMD comparisons, LSP latency,
-typecheck-prefix-cache measurements, the `run-bounded-process.ps1` job-memory
-cap wrapper, and platform profilers. See
-`src/TESTING.md`, `perf/README.md`, and `benchmarks/README.md` for their
-workload-specific instructions.
+the compiler and CLI benchmarks, selfhost size report, instruction-count
+runners, the compiler-scale semantic-index benchmark, the SFrame v3 codec scale
+measurement, ISPC/SPMD comparisons, LSP latency, and the
+`run-bounded-process.ps1` job-memory cap wrapper. See `src/TESTING.md`,
+`perf/README.md`, and `benchmarks/README.md` for their workload-specific
+instructions.
 
 ## Moving a script
 

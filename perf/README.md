@@ -276,7 +276,9 @@ for a benchmark-only pass over `spmd_map`, `spmd_mask`, `spmd_zip`,
 `spmd_short_tail`, and `string_scan`, checked exactly against
 `perf/insn-exec-heavy-baseline.tsv`. This adds one `Linux heavy
 instruction-count baseline` gate row to the `ci-timing-Linux` artifact without
-repeating the compiler bootstrap.
+repeating the compiler bootstrap. Heavy improvements and regressions therefore
+block the PR that introduces them; accept intentional changes by committing an
+explicit `perf/insn-exec-heavy-baseline.tsv` refresh.
 
 ## Host-keyed AVX-512 retired instructions
 
@@ -346,45 +348,6 @@ grep -E 'compile-profile\|optimize\.functions\||compile-profile-detail\|optimize
 Use the same target and cfgs that match the host being measured. The escape rows
 are `compile-profile-detail|optimize.escape.<phase>|elapsed_ms|opt_level|function`
 with phases for `body`, `compact`, `clone`, and `restore`.
-
-## Heavy compile RSS checks
-
-Use `scripts/measure-compile-rss.sh` from Linux or WSL before reopening checked
-program compaction work from #3863. The harness wraps real compiler invocations
-with GNU `/usr/bin/time -v`, writes a stable TSV summary, and keeps command,
-stdout, stderr, and time transcripts under `target/compile-rss/`. It fails
-clearly when GNU time is not available.
-
-Run the same workloads once with current `main` and once with the candidate
-branch compiler, then compare `elapsed_ms`, `exit_code`, and `max_rss_kb` in
-`target/compile-rss/measurements.tsv`:
-
-```sh
-TYPELISP_COMPILE_RSS_OUT=target/compile-rss-main \
-  TYPELISP_BIN=target/main/typelisp \
-  scripts/measure-compile-rss.sh --mode all
-TYPELISP_COMPILE_RSS_OUT=target/compile-rss-candidate \
-  TYPELISP_BIN=target/candidate/typelisp \
-  scripts/measure-compile-rss.sh --mode all
-```
-
-The default `all` mode runs both required #3863 workloads:
-
-```sh
-scripts/measure-compile-rss.sh --mode single --input src/doc_test.tl <typelisp-bin>
-scripts/measure-compile-rss.sh --mode manifest-chunk --chunk-id 0002 <typelisp-bin>
-```
-
-Manifest chunk ids are zero-based file ids. The required heavy chunk is
-`0002`, which is human chunk 3. Keep the default manifest batch size at 16;
-reducing the batch size hides the memory behavior being measured. If a different
-output directory is useful for side-by-side runs, set `TYPELISP_COMPILE_RSS_OUT`.
-
-The required Linux PR gate measures `spmd_map`, `spmd_mask`, `spmd_zip`,
-`spmd_short_tail`, and `string_scan` as benchmark-only cases with one
-cachegrind run. Heavy improvements and regressions therefore block the PR that
-introduces them; accept intentional changes by committing an explicit
-`perf/insn-exec-heavy-baseline.tsv` refresh.
 
 ## SPMD scalar/AVX2 mode matrix
 

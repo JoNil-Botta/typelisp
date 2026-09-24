@@ -565,37 +565,15 @@ mismatch.
 `compile-startup-profile` is a build cfg for attributing one fresh `typelisp
 compile` process from the backend-owned process entry through the start of
 user-entry loading. The runtime captures `process.entry` before argv or arena
-setup, and the Windows harness reports `launch_to_process_entry` plus
-`process_entry_to_globals` alongside the source-level intervals. It records raw
-monotonic ticks in memory and prints them only after the compile finishes,
-keeping marker formatting and stderr I/O outside the measured preamble. The
-required cross-platform verifier builds an instrumented compiler, checks marker
-presence/order, and requires its generated assembly to match the normal
-compiler:
+setup. It records raw monotonic ticks in memory and prints them only after the
+compile finishes, keeping marker formatting and stderr I/O outside the measured
+preamble. The required cross-platform verifier builds an instrumented
+compiler, checks marker presence/order, and requires its generated assembly to
+match the normal compiler:
 
 ```sh
 TYPELISP_BIN=target/stage0/typelisp scripts/verify-compile-startup-profile.sh
 ```
-
-For native Windows distributions, use
-[`../scripts/measure-compile-startup.ps1`](../scripts/measure-compile-startup.ps1)
-with a compiler built using `--cfg compile-startup-profile` and, for embedded
-surface-hydration attribution, `--cfg embedded-stdlib-tlci`. A normal compiler
-from the same source revision can be supplied as `-BaselineCompiler`; the
-harness alternates process order and writes raw `markers.tsv`, per-run
-`samples.tsv`, percentile `summary.tsv`, and environment/compiler hashes in
-`metadata.tsv`:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\measure-compile-startup.ps1 `
-  -Compiler target\compile-startup\typelisp-profile.exe `
-  -BaselineCompiler target\compile-startup\typelisp-control.exe `
-  -Source target\compile-startup\empty.tl
-```
-
-These wall-clock distributions are diagnostic local measurements rather than
-committed performance baselines. Keep the source, compiler revisions, cfgs,
-warmups, iteration count, and Defender state with any reported comparison.
 
 ### Selfhost linked-size attribution
 
@@ -759,22 +737,6 @@ scripts/measure-spmd-mode-instruction-counts.sh --self-test
 
 Do not add AVX-512 cachegrind rows; use the methodology tracked by #4933.
 
-`scripts/measure-typecheck-prefix-cache.sh` reports the opt-in typecheck prefix
-snapshot cache counters for two informational compile controls and one
-cache-active production workload: repeated stdlib imports, one selfhost
-compile-manifest chunk, and doctests.
-
-```sh
-TYPELISP_BIN=target/stage0/typelisp scripts/measure-typecheck-prefix-cache.sh
-```
-
-Each line includes elapsed time plus `hits`, `misses`, `stores`, `lookups`, and
-integer `hit-rate-per-mille` from the compiler's `--prefix-cache-stats` report.
-The two compile-batch rows are informational controls and may legitimately
-report zero lookups because code-generation typechecking collects clone-root
-and/or surface semantic observations. The doctest batch is the cache-active
-regression row and fails unless it records at least one cache hit.
-
 `scripts/measure-lsp-check-latency.sh` is the local interactive LSP latency
 harness for repeated `tl/check` requests. It starts one `typelisp lsp` process,
 opens generated roughly 500-line and 6000-line documents with a shared stdlib
@@ -872,21 +834,6 @@ stage is the full census/SCC pipeline, and where the late passes run. So
 copied into the carrier) and the carrier second (released after the loop). At
 `--opt-level 1` the loop reads the inline arena directly and only the
 `optimize-inline` row is emitted, after the loop.
-
-On Windows, correlate those rows with the compiler process's working set and
-private bytes using:
-
-```powershell
-scripts/measure-compile-memory.ps1 `
-  -Compiler target/stage0/typelisp.exe `
-  -Source src/main.tl `
-  -OptLevel 1
-```
-
-The helper samples the child every 5 ms by default and writes raw owner samples
-plus per-phase, de-duplicated committed totals under
-`target/compile-memory/windows/`. This distinguishes arena commitment from
-unattributed process memory such as stacks, code, and other mappings.
 
 `lsp-frame-run-transcript` is the TypeLisp-only in-process framing adapter for
 tests that need exact stdin bytes plus exact captured stdout, stderr, and exit

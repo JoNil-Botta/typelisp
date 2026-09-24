@@ -16,6 +16,8 @@
 (import compiler_diagnostic)
 (import compiler_object as cobj)
 (import compiler_backend)
+(import compiler_lower)
+(import compiler_optimize)
 (import compiler_tlci_native_image)
 (import tlci_core)
 (import compiler_builtin_ids as cbi)
@@ -8871,6 +8873,36 @@
     (owned_view.compiler-owned-shared-view names)
     (embedded-native-source names captures)))
 
+;; The generated entries are chains of host calls, each bound to a temporary and
+;; tested for a nonzero status. Straight from lowering, every argument and
+;; status is a separately stored temporary, and the object backend gives each
+;; one a stack slot. The opt-1 pipeline propagates the constant arguments and
+;; drops the copies. That shrinks the stdlib image's code section by a quarter
+;; (15.4 MB to 11.7 MB), and every compile expands and hashes the whole image.
+;; Keep this at 1: switch formation runs at opt 2, and the object backend's
+;; switch emitter emits no phi edge copies, so a switch whose targets open with
+;; phis would miscompile.
+(define (embedded-native-opt-level) : i64
+  1)
+
+(define (embedded-native-lower-source
+  [source : String]
+  [target : compiler_backend.CompilerBackendTarget]) : compiler_lower.ResultCompilerLower
+  (match (compiler_backend.compiler-backend-lower-source-for-target-in-session
+    source
+    target)
+    [(compiler_lower.ResultCompilerLower.Ok program spans)
+      (match (compiler_optimize.optimize-program-with-spans-and-level
+        program
+        spans
+        (embedded-native-opt-level))
+        [(compiler_optimize.CompilerOptimizedProgram.Program
+            optimized
+            optimized-spans)
+          (compiler_lower.ResultCompilerLower.Ok optimized optimized-spans)])]
+    [(compiler_lower.ResultCompilerLower.Err diag)
+      (compiler_lower.ResultCompilerLower.Err diag)]))
+
 ;; The source string is the complete transformer input. Callers may capture it
 ;; while source AST pools are live and compile it after those pools are retired.
 (define (embedded-native-emit-package-source
@@ -8885,9 +8917,7 @@
       (if windows-target
         (compiler_backend.CompilerBackendTarget.Windows)
         (compiler_backend.CompilerBackendTarget.Linux))]
-    (match (compiler_backend.compiler-backend-lower-source-for-target-in-session
-      source
-      target)
+    (match (embedded-native-lower-source source target)
       [(ResultCompilerLower.Err diag)
         (ResultProducerBytes.Err
           (str_cat.str-cat

@@ -141,7 +141,7 @@
         compiler_backend.CompilerDirectObjectFallbackReason.MissingRuntimeEntry)]
     [(<=
         (compiler_object_coff.compiler-object-coff-section-raw-size
-          (owned_view.compiler-owned-shared-view image)
+          image
           (cobj.CompilerObjectSectionKind.Text))
         0)
       (CompilerWindowsCoffLinkability.Unavailable
@@ -175,7 +175,7 @@
     compiler_diagnostic.CompilerDiagnostic)
   (box
     (compiler_diagnostic.compiler-diagnostic-with-fallback-path
-      (owned_view.compiler-owned-box-shared-view diag)
+      (deref diag)
       input-path)))
 
 (define (compiler-windows-batch-emit-assembly
@@ -208,7 +208,7 @@
           (cfg
             compile-profile
             (compiler_driver_core.compiler-driver-profile-finish-phase
-              (profile_state.compiler-profile-state-shared-view profile-state)
+              profile-state
               "backend.assembly"))
           (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
             typecheck-state
@@ -223,7 +223,7 @@
           (cfg
             compile-profile
             (compiler_driver_core.compiler-driver-profile-finish-phase
-              (profile_state.compiler-profile-state-shared-view profile-state)
+              profile-state
               "backend.assembly"))
           (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
             typecheck-state
@@ -268,7 +268,7 @@
       profile-state
       typecheck-state)
     (match (compiler-windows-coff-object-program-eligibility
-      (owned_view.compiler-owned-shared-view backend-state)
+      backend-state
       (owned_view.compiler-owned-shared-view pools)
       (owned_view.compiler-owned-shared-view program)
       (profile_state.compiler-profile-state-shared-view profile-state))
@@ -327,8 +327,7 @@
                             (cfg
                               compile-profile
                               (compiler_driver_core.compiler-driver-profile-finish-phase
-                                (profile_state.compiler-profile-state-shared-view
-                                  profile-state)
+                                profile-state
                                 "render.coff-object"))
                             (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
                               typecheck-state
@@ -364,8 +363,7 @@
                             (cfg
                               compile-profile
                               (compiler_driver_core.compiler-driver-profile-finish-phase
-                                (profile_state.compiler-profile-state-shared-view
-                                  profile-state)
+                                profile-state
                                 "render.coff-object"))
                             (ResultCompilerWindowsBatchArtifact.Err
                               (compiler-windows-batch-diagnostic
@@ -391,8 +389,7 @@
                 (cfg
                   compile-profile
                   (compiler_driver_core.compiler-driver-profile-finish-phase
-                    (profile_state.compiler-profile-state-shared-view
-                      profile-state)
+                    profile-state
                     "backend.object-image"))
                 (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
                   typecheck-state
@@ -430,8 +427,8 @@
           (profile_state.compiler-profile-state-shared-view profile-state)))
       (match (compiler_optimize.optimize-program-with-spans-and-pools-and-level-and-profile-state-and-advisory-sink
         (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view program)
-        (owned_view.compiler-owned-shared-view spans)
+        program
+        spans
         opt-level
         (profile_state.compiler-profile-state-shared-view profile-state)
         (compiler_typecheck_core.tc-job-state-advisory-sink typecheck-state))
@@ -492,8 +489,8 @@
             opt-level)
             (compiler_ir_types.compiler-ir-clone-program-shell
               (owned_view.compiler-owned-shared-view pools)
-              (owned_view.compiler-owned-shared-view program))
-            (owned_view.compiler-owned-shared-view program))]
+              program)
+            program)]
         [emit-spans : compiler_ir_types.CompilerSourceSpans
           (if (compiler_driver_core.compiler-driver-retirement-clone-shells?
             opt-level)
@@ -555,7 +552,7 @@
           stdlib-roots
           mode
           (compiler_driver_core.compiler-driver-state-target-cfgs
-            (owned_view.compiler-owned-shared-view state)
+            state
             target
             cfgs)
           (>= opt-level 1))]

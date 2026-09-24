@@ -5244,16 +5244,13 @@
     (tltest-stdlib-env-fixture-self-test?)
     (io.panic "test CLI stdlib/env fixture routing mismatch")))
 
-;; The lower mode and the backend mode are one selection: a SIMD lower mode
-;; emits vector IR that only the matching backend mode can encode. The scalar
-;; default keeps the target-neutral lower mode the harness has always used; a
-;; SIMD request follows the driver's shared target/mode policy.
+;; Test harnesses use the driver's target/backend mode pairing, just like
+;; compile/build/run. A target-neutral Scalar lower mode misses target ABI
+;; rules, including Win64's caller copy for by-value aggregates (#8009).
 (define (tltest-harness-lower-mode
   [target : compiler_backend.CompilerBackendTarget]
   [backend-mode : compiler_backend.CompilerBackendMode]) : lower.CompilerLowerMode
-  (if (compiler_backend.compiler-backend-mode-scalar? backend-mode)
-    (lower.CompilerLowerMode.Scalar)
-    (driver.compiler-driver-lower-mode-for-target target backend-mode)))
+  (driver.compiler-driver-lower-mode-for-target target backend-mode))
 
 (define (tltest-run-harness-in-temp-with-lower-state
   [lower-state : lower.CompilerLowerState]
@@ -7280,6 +7277,8 @@
     [(lower.CompilerLowerMode.WindowsAvx2) 2]
     [(lower.CompilerLowerMode.LinuxAvx512) 3]
     [(lower.CompilerLowerMode.WindowsAvx512) 4]
+    [(lower.CompilerLowerMode.LinuxScalar) 5]
+    [(lower.CompilerLowerMode.WindowsScalar) 6]
     [_ -1]))
 
 (test
@@ -7291,13 +7290,13 @@
           (tltest-harness-lower-mode
             (compiler_backend.CompilerBackendTarget.Linux)
             (compiler_backend.CompilerBackendMode.Scalar)))
-        0)
+        5)
       (=
         (tltest-lower-mode-tag
           (tltest-harness-lower-mode
             (compiler_backend.CompilerBackendTarget.Windows)
             (compiler_backend.CompilerBackendMode.Scalar)))
-        0)
+        6)
       (=
         (tltest-lower-mode-tag
           (tltest-harness-lower-mode

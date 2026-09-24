@@ -620,6 +620,247 @@
         next
         fallback)]))
 
+(define (opt-bg-test-plan
+  [block : i64]
+  [ok : i64]
+  [slow : i64]
+  [pre : i64]
+  [marker : i64]) : opt.OptBgPlan
+  (let
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity 1)]
+    (begin
+      (ir.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (ir.CompilerIrInstr.Mov
+          marker
+          (ir.CompilerIrValue.I64 marker)
+          (ast.AstType.I64)))
+      (opt.OptBgPlan
+        block
+        ok
+        slow
+        pre
+        0
+        marker
+        marker
+        (ir.CompilerIrValue.I64 marker)
+        (__tl_make-array bool 0)
+        (ir.compiler-ir-instr-builder-to-seq builder)
+        (ir.compiler-ir-instr-seq-empty)))))
+
+(define (opt-bg-test-slow-label-order?
+  [blocks : ir.CompilerIrBlockList]
+  [expected : i64]
+  [remaining : i64]) : bool
+  (match (ir.compiler-ir-block-list-force-cons blocks)
+    [(ir.CompilerIrBlockList.Nil) (= remaining 0)]
+    [(ir.CompilerIrBlockList.Array _) false]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block label _)
+          (and
+            (> remaining 0)
+            (= label expected)
+            (opt-bg-test-slow-label-order?
+              (ir.compiler-ir-block-list-box-shared-view rest)
+              (- expected 1)
+              (- remaining 1)))])]))
+
+(define (opt-bg-test-relabel-order? [inputs : ir.CompilerIrPhiInputSeq]) : bool
+  (let
+    [phi-inputs-at-103173-5 : ir.CompilerIrPhiInputSeq inputs]
+    (if (<= phi-inputs-at-103173-5.len 0)
+      false
+      (let
+        [phi-input-at-103173-5 : ir.CompilerIrPhiInput
+          (ir.compiler-ir-phi-input-seq-ref
+            (ir.compiler-ir-global-shared-view phi-inputs-at-103173-5)
+            0)]
+        [first : i64 phi-input-at-103173-5.label]
+        [rest : ir.CompilerIrPhiInputSeq
+          (ir.CompilerIrPhiInputSeq
+            (ir.compiler-ir-global-shared-view phi-inputs-at-103173-5.slots)
+            (+ phi-inputs-at-103173-5.start 1)
+            (- phi-inputs-at-103173-5.len 1))]
+        (and
+          (= first 200)
+          (let
+            [phi-inputs-at-103177-11 : ir.CompilerIrPhiInputSeq
+              (opt.compiler-opt-global-shared-view rest)]
+            (if (<= phi-inputs-at-103177-11.len 0)
+              false
+              (let
+                [phi-input-at-103177-11 : ir.CompilerIrPhiInput
+                  (ir.compiler-ir-phi-input-seq-ref
+                    (ir.compiler-ir-global-shared-view phi-inputs-at-103177-11)
+                    0)]
+                [second : i64 phi-input-at-103177-11.label]
+                [tail : ir.CompilerIrPhiInputSeq
+                  (ir.CompilerIrPhiInputSeq
+                    (ir.compiler-ir-global-shared-view
+                      phi-inputs-at-103177-11.slots)
+                    (+ phi-inputs-at-103177-11.start 1)
+                    (- phi-inputs-at-103177-11.len 1))]
+                (and
+                  (= second 208)
+                  (let
+                    [phi-inputs-at-103182-17 : ir.CompilerIrPhiInputSeq
+                      (opt.compiler-opt-global-shared-view tail)]
+                    (if (<= phi-inputs-at-103182-17.len 0)
+                      true
+                      false)))))))))))
+
+(test
+  optimizer-bounds-group-plan-dense-storage-grows-and-preserves-rewrite-order
+  (let
+    [empty : opt.OptBgPlanList (opt.OptBgPlanList.Nil)]
+    [retained : opt.OptBgPlanList
+      (opt.opt-bg-plan-list-prepend
+        (opt-bg-test-plan 44 144 244 77 44)
+        (opt.compiler-opt-global-shared-view empty))]
+    [two : opt.OptBgPlanList
+      (opt.opt-bg-plan-list-prepend
+        (opt-bg-test-plan 45 145 245 77 45)
+        (opt.compiler-opt-global-shared-view retained))]
+    ;; Branch from the retained prefix after `two` extended its shared
+    ;; backing store. The high-water marker must protect both views.
+    [branched : opt.OptBgPlanList
+      (opt.opt-bg-plan-list-prepend
+        (opt-bg-test-plan 46 146 246 77 46)
+        (opt.compiler-opt-global-shared-view retained))]
+    [duplicate : opt.OptBgPlanList
+      (opt.opt-bg-plan-list-prepend
+        (opt-bg-test-plan 44 145 345 77 145)
+        (opt.compiler-opt-global-shared-view retained))]
+    [plans : opt.OptBgPlanList (opt.OptBgPlanList.Nil)]
+    [cursor : i64 0]
+    (begin
+      (test.assert-i64-eq
+        (opt.opt-bg-plan-list-count (opt.compiler-opt-global-shared-view empty))
+        0
+        "bounds-group empty plan storage")
+      (test.assert-i64-eq
+        (opt.opt-bg-plan-ok-of (opt.compiler-opt-global-shared-view empty) 91)
+        91
+        "bounds-group empty lookup keeps the label")
+      (match (opt.opt-bg-plan-for
+        (opt.compiler-opt-global-shared-view empty)
+        91)
+        [(opt.OptBgMaybePlan.No) unit]
+        [_ (test.assert-true false "bounds-group empty lookup has no plan")])
+      (test.assert-i64-eq
+        (opt.opt-bg-plan-list-count
+          (opt.compiler-opt-global-shared-view retained))
+        1
+        "bounds-group retained singleton length")
+      (test.assert-i64-eq
+        (opt.opt-bg-plan-ok-of
+          (opt.compiler-opt-global-shared-view retained)
+          44)
+        144
+        "bounds-group retained singleton value")
+      (test.assert-i64-eq
+        (opt.opt-bg-plan-ok-of
+          (opt.compiler-opt-global-shared-view retained)
+          45)
+        45
+        "bounds-group retained singleton excludes later extension")
+      (test.assert-i64-eq
+        (opt.opt-bg-plan-ok-of (opt.compiler-opt-global-shared-view two) 45)
+        145
+        "bounds-group first retained branch survives")
+      (test.assert-i64-eq
+        (opt.opt-bg-plan-ok-of
+          (opt.compiler-opt-global-shared-view branched)
+          46)
+        146
+        "bounds-group second retained branch survives")
+      (test.assert-i64-eq
+        (opt.opt-bg-plan-ok-of (opt.compiler-opt-global-shared-view two) 46)
+        46
+        "bounds-group sibling branches stay independent")
+      (test.assert-i64-eq
+        (opt.opt-bg-plan-ok-of
+          (opt.compiler-opt-global-shared-view duplicate)
+          44)
+        145
+        "bounds-group newest duplicate plan wins")
+      (while (< cursor 9)
+        (begin
+          (set!
+            plans
+            (opt.opt-bg-plan-list-prepend
+              (opt-bg-test-plan cursor (+ cursor 200) (+ cursor 100) 77 cursor)
+              plans))
+          (set! cursor (+ cursor 1))))
+      (match (opt.compiler-opt-global-shared-view plans)
+        [(opt.OptBgPlanList.Nil)
+          (test.assert-true false "bounds-group plan storage is non-empty")]
+        [(opt.OptBgPlanList.Dense items extent len)
+          (begin
+            (test.assert-i64-eq len 9 "bounds-group plan storage length")
+            (test.assert-i64-eq
+              (array-ref extent 0)
+              9
+              "bounds-group plan high-water length")
+            (test.assert-true
+              (>= (array-length items) 9)
+              "bounds-group plan storage grows past eight"))])
+      (test.assert-i64-eq
+        (opt.opt-bg-plan-list-ref (opt.compiler-opt-global-shared-view plans) 0).block
+        8
+        "bounds-group newest plan stays first")
+      (test.assert-i64-eq
+        (opt.opt-bg-plan-list-ref (opt.compiler-opt-global-shared-view plans) 8).block
+        0
+        "bounds-group oldest plan stays last")
+      (let
+        [hoisted : ir.CompilerIrInstrSeq
+          (opt.opt-bg-hoisted-for-label
+            (opt.compiler-opt-global-shared-view plans)
+            77)]
+        [inputs : ir.CompilerIrPhiInputSeq
+          (ir.compiler-ir-phi-input-seq-prepend
+            (ir.CompilerIrValue.I64 10)
+            0
+            (ir.compiler-ir-phi-input-seq-prepend
+              (ir.CompilerIrValue.I64 11)
+              8
+              (ir.compiler-ir-phi-input-seq-empty)))]
+        (begin
+          (test.assert-i64-eq
+            (ir.compiler-ir-instr-seq-count
+              (opt.compiler-opt-global-shared-view hoisted))
+            9
+            "bounds-group multiple hoists share one preheader")
+          (match (ir.compiler-ir-instr-seq-ref
+            (opt.compiler-opt-global-shared-view hoisted)
+            0)
+            [(ir.CompilerIrInstr.Mov dst _ _)
+              (test.assert-i64-eq dst 8 "bounds-group newest hoist stays first")]
+            [_ (test.assert-true false "bounds-group first hoist shape")])
+          (match (ir.compiler-ir-instr-seq-ref
+            (opt.compiler-opt-global-shared-view hoisted)
+            8)
+            [(ir.CompilerIrInstr.Mov dst _ _)
+              (test.assert-i64-eq dst 0 "bounds-group oldest hoist stays last")]
+            [_ (test.assert-true false "bounds-group last hoist shape")])
+          (test.assert-true
+            (opt-bg-test-relabel-order?
+              (opt.opt-bg-relabel-inputs
+                inputs
+                (opt.compiler-opt-global-shared-view plans)))
+            "bounds-group lookup relabels multiple split blocks in phi order")
+          (test.assert-true
+            (opt-bg-test-slow-label-order?
+              (opt.opt-bg-slow-blocks
+                (opt.compiler-opt-global-shared-view plans)
+                (ir.CompilerIrBlockList.Nil))
+              108
+              9)
+            "bounds-group slow blocks keep deterministic newest-first order"))))))
+
 (define (opt-sccp-blocks-with-context-result
   [type-segment-bases : i64]
   [context : opt.OptCfgContext]

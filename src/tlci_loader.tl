@@ -179,7 +179,7 @@
       (tlci-loader-section-contains-slot? slot-offset code-offset code-len))))
 
 (define (tlci-loader-validate-fixups-at
-  [fixups : (__tl_dyn-array u8)]
+  [fixups : (& fixups (__tl_dyn-array u8))]
   [index : i64]
   [count : i64]
   [rodata-offset : i64]
@@ -213,11 +213,11 @@
             (string.int->string slot-offset)))))))
 
 (define (tlci-loader-validate-fixups
-  [image : tlci.TlciImage]
+  [image : (& image tlci.TlciImage)]
   [rodata-offset : i64]
   [code-offset : i64]) : ResultTlciLoaderUnit
   (tlci-loader-validate-fixups-at
-    (tlci-loader-global-shared-view image.fixups)
+    image.fixups
     0
     (/ (array-length image.fixups) tlci.tlci-section-fixup-record-size)
     rodata-offset
@@ -226,7 +226,7 @@
     (array-length image.code)))
 
 (define (tlci-loader-validate-imports-at
-  [imports : (__tl_dyn-array u8)]
+  [imports : (& imports (__tl_dyn-array u8))]
   [index : i64]
   [count : i64]
   [rodata-offset : i64]
@@ -261,11 +261,11 @@
             (string.int->string slot-offset)))))))
 
 (define (tlci-loader-validate-imports
-  [image : tlci.TlciImage]
+  [image : (& image tlci.TlciImage)]
   [rodata-offset : i64]
   [code-offset : i64]) : ResultTlciLoaderUnit
   (tlci-loader-validate-imports-at
-    (tlci-loader-global-shared-view image.imports)
+    image.imports
     0
     (tlci.tlci-import-section-count image.imports)
     rodata-offset
@@ -839,18 +839,14 @@
     [(tlci.ResultTlciImage.Ok parsed)
       (let
         [native-table : i64 (tlci-loader-native-table-offset parsed)]
-        (match (tlci-loader-load-parsed
-          owner-arena
-          (owned_view.compiler-owned-shared-view bytes)
-          parsed
-          (& host-table))
+        (match (tlci-loader-load-parsed owner-arena bytes parsed (& host-table))
           [(ResultTlciLoadedImage.Err message)
             (ResultTlciLoadedImage.Err message)]
           [(ResultTlciLoadedImage.Ok loaded)
             (if (>= native-table 0)
               (tlci-loader-install-native-table
                 owner-arena
-                (owned_view.compiler-owned-shared-view bytes)
+                bytes
                 loaded
                 host-table
                 native-table)
@@ -908,7 +904,7 @@
 
 (define (tlci-loader-load-mapped-region
   [owner-arena : i64]
-  [bytes : (__tl_dyn-array u8)]
+  [bytes : (& bytes (__tl_dyn-array u8))]
   [image : tlci.TlciImage]
   [image-region : pages.TlciPageRegion]
   [entry-code-offset : i64]
@@ -959,7 +955,7 @@
 
 (define (tlci-loader-load-parsed
   [owner-arena : i64]
-  [bytes : (__tl_dyn-array u8)]
+  [bytes : (& bytes (__tl_dyn-array u8))]
   [image : tlci.TlciImage]
   [host-table : (& host-table tlci.TlciHostCallbackTable)]) : ResultTlciLoadedImage
   (match (tlci.tlci-image-admit-host
@@ -979,15 +975,12 @@
           [(ResultTlciLoaderI64.Err message)
             (ResultTlciLoadedImage.Err message)]
           [(ResultTlciLoaderI64.Ok entry-code-offset)
-            (match (tlci-loader-validate-fixups
-              (tlci-loader-global-shared-view image)
-              rodata-offset
-              code-offset)
+            (match (tlci-loader-validate-fixups image rodata-offset code-offset)
               [(ResultTlciLoaderUnit.Err message)
                 (ResultTlciLoadedImage.Err message)]
               [(ResultTlciLoaderUnit.Ok)
                 (match (tlci-loader-validate-imports
-                  (tlci-loader-global-shared-view image)
+                  image
                   rodata-offset
                   code-offset)
                   [(ResultTlciLoaderUnit.Err message)
@@ -2730,7 +2723,7 @@
                 (tlci.tlci-test-host-callback-table)]
               (match (tlci-loader-load-parsed
                 (tlci-loader-test-owner-arena)
-                (owned_view.compiler-owned-shared-view bytes)
+                bytes
                 parsed
                 (& table))
                 [(ResultTlciLoadedImage.Err _) false]

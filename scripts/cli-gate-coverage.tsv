@@ -1,28 +1,28 @@
 # cli-gate-coverage-schema	1
 # cli-gate-coverage-counts	1
-# count	total	all	rows	556
-# count	total	all	annotations	556
+# count	total	all	rows	561
+# count	total	all	annotations	561
 # count	total	all	sources	3
 # count	total	all	source-sites	413
-# count	total	all	expanded-cases	186
-# count	gate	public-tools	rows	358
+# count	total	all	expanded-cases	191
+# count	gate	public-tools	rows	361
 # count	gate	public-tools	source-sites	232
-# count	gate	public-tools	expanded-cases	151
+# count	gate	public-tools	expanded-cases	154
 # count	gate	selfhost-cli	rows	93
 # count	gate	selfhost-cli	source-sites	92
 # count	gate	selfhost-cli	expanded-cases	17
-# count	gate	stage1-wrapper	rows	105
+# count	gate	stage1-wrapper	rows	107
 # count	gate	stage1-wrapper	source-sites	89
-# count	gate	stage1-wrapper	expanded-cases	18
-# count	host	all	rows	430
-# count	host	linux	rows	123
+# count	gate	stage1-wrapper	expanded-cases	20
+# count	host	all	rows	433
+# count	host	linux	rows	125
 # count	host	windows	rows	3
-# count	platform	linux	rows	553
-# count	platform	windows	rows	433
+# count	platform	linux	rows	558
+# count	platform	windows	rows	436
 # count	kind	delegated	rows	9
 # count	kind	direct	rows	58
-# count	kind	wrapper	rows	489
-# count	process	compiler	rows	361
+# count	kind	wrapper	rows	494
+# count	process	compiler	rows	366
 # count	process	compiler+assembler+archiver	rows	1
 # count	process	compiler+assembler+archiver+linker	rows	4
 # count	process	compiler+assembler+linker	rows	2
@@ -44,9 +44,9 @@
 # count	process	gate+seed+generated-compiler-processes	rows	3
 # count	process	host-tool	rows	4
 # count	process	program	rows	5
-# count	duplicates	all	groups	9
-# count	duplicates	all	rows	18
-# child-corpus	public-lsp-corpus	all	tests/public-tools/lsp	*.in.json	-	80
+# count	duplicates	all	groups	10
+# count	duplicates	all	rows	20
+# child-corpus	public-lsp-corpus	all	tests/public-tools/lsp	*.in.json	-	72
 # child-corpus	public-repl-corpus	windows	tests/public-tools/repl	*.in	*.linux.in	14
 # child-corpus	public-repl-corpus	linux	tests/public-tools/repl	*.in	-	21
 # child-corpus	public-repl-corpus	linux	tests/public-tools/selfhost-repl	*.linux.in	-	17
@@ -55,7 +55,7 @@ schema	case_id	gate	source	kind	host	compiler	argv	fixture	stdin	cwd	process	env
 # example	1	public-help	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage3/run_cmd	typelisp --help	-	none	repository	one-process	none	0	usage	ignore	none	public-help	-
 # source	scripts/check-stage1-wrapper.sh
 # stage1-wrapper inventory: 86 source sites and 102 behavior rows; each of the
-# two format-corpus sites expands to the nine names in format_manifest.
+# two format-corpus sites expands to the ten names in format_manifest.
 1	stage1-wrapper-compile	stage1-wrapper	scripts/check-stage1-wrapper.sh	wrapper	linux	stage1/host-action	compile <smoke.tl> -o <smoke.s>	main-returns-7	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	contains:Wrote-smoke.s	not-asserted	writes:smoke.s	stage1-wrapper-compile	-
 1	stage1-wrapper-compile-synthesized-entry	stage1-wrapper	scripts/check-stage1-wrapper.sh	wrapper	linux	stage1/host-action	compile <synthesized-entry.tl> -o <synthesized-entry.s>	source-without-main	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	contains:Wrote-synthesized-entry.s	not-asserted	writes:synthesized-entry.s	stage1-wrapper-compile-synthesized-entry	-
 1	stage1-wrapper-compile-cfg	stage1-wrapper	scripts/check-stage1-wrapper.sh	wrapper	linux	stage1/host-action	compile <cfg-feature.tl> -o <cfg-feature.s> --cfg feature	cfg-enabled-and-disabled-definitions	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	not-asserted	not-asserted	asm-contains:enabled;asm-excludes:disabled	stage1-wrapper-compile-cfg	-
@@ -114,6 +114,7 @@ schema	case_id	gate	source	kind	host	compiler	argv	fixture	stdin	cwd	process	env
 1	stage1-wrapper-test-missing-opt	stage1-wrapper	scripts/check-stage1-wrapper.sh	direct	linux	stage1/host-action	test <inline-test.tl> --opt-level	missing-opt-level-value	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	nonzero	empty	contains:opt-level-requires-value	none	stage1-wrapper-test-missing-opt	-
 1	stage1-wrapper-test-invalid-opt	stage1-wrapper	scripts/check-stage1-wrapper.sh	direct	linux	stage1/host-action	test <inline-test.tl> --opt-level 3	unsupported-opt-level	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	nonzero	empty	contains:expected-0-1-or-2	none	stage1-wrapper-test-invalid-opt	-
 1	stage1-wrapper-test-bad-target	stage1-wrapper	scripts/check-stage1-wrapper.sh	direct	linux	stage1/host-action	test --check <inline-test.tl> --target nope	unknown-target	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	nonzero	empty	contains:unknown-target-nope	none	stage1-wrapper-test-bad-target	-
+1	stage1-wrapper-fmt-golden-call_wrap	stage1-wrapper	scripts/check-stage1-wrapper.sh	wrapper	linux	stage1/host-action	fmt <all-format-manifest-files>	format-golden:call_wrap	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	empty	rewrites:call_wrap.tl-to-exact-expected	stage1-wrapper-fmt-golden-call_wrap	-
 1	stage1-wrapper-fmt-golden-char_literal	stage1-wrapper	scripts/check-stage1-wrapper.sh	wrapper	linux	stage1/host-action	fmt <all-format-manifest-files>	format-golden:char_literal	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	empty	rewrites:char_literal.tl-to-exact-expected	stage1-wrapper-fmt-golden-char_literal	-
 1	stage1-wrapper-fmt-golden-comments	stage1-wrapper	scripts/check-stage1-wrapper.sh	wrapper	linux	stage1/host-action	fmt <all-format-manifest-files>	format-golden:comments	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	empty	rewrites:comments.tl-to-exact-expected	stage1-wrapper-fmt-golden-comments	-
 1	stage1-wrapper-fmt-golden-decls	stage1-wrapper	scripts/check-stage1-wrapper.sh	wrapper	linux	stage1/host-action	fmt <all-format-manifest-files>	format-golden:decls	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	empty	rewrites:decls.tl-to-exact-expected	stage1-wrapper-fmt-golden-decls	-
@@ -123,6 +124,7 @@ schema	case_id	gate	source	kind	host	compiler	argv	fixture	stdin	cwd	process	env
 1	stage1-wrapper-fmt-golden-quote	stage1-wrapper	scripts/check-stage1-wrapper.sh	wrapper	linux	stage1/host-action	fmt <all-format-manifest-files>	format-golden:quote	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	empty	rewrites:quote.tl-to-exact-expected	stage1-wrapper-fmt-golden-quote	-
 1	stage1-wrapper-fmt-golden-signature_colon	stage1-wrapper	scripts/check-stage1-wrapper.sh	wrapper	linux	stage1/host-action	fmt <all-format-manifest-files>	format-golden:signature_colon	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	empty	rewrites:signature_colon.tl-to-exact-expected	stage1-wrapper-fmt-golden-signature_colon	-
 1	stage1-wrapper-fmt-golden-tail_comment	stage1-wrapper	scripts/check-stage1-wrapper.sh	wrapper	linux	stage1/host-action	fmt <all-format-manifest-files>	format-golden:tail_comment	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	empty	rewrites:tail_comment.tl-to-exact-expected	stage1-wrapper-fmt-golden-tail_comment	-
+1	stage1-wrapper-fmt-golden-check-call_wrap	stage1-wrapper	scripts/check-stage1-wrapper.sh	wrapper	linux	stage1/host-action	fmt --check <all-format-manifest-files>	formatted-golden:call_wrap	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	empty	none	stage1-wrapper-fmt-golden-check-call_wrap	-
 1	stage1-wrapper-fmt-golden-check-char_literal	stage1-wrapper	scripts/check-stage1-wrapper.sh	wrapper	linux	stage1/host-action	fmt --check <all-format-manifest-files>	formatted-golden:char_literal	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	empty	none	stage1-wrapper-fmt-golden-check-char_literal	-
 1	stage1-wrapper-fmt-golden-check-comments	stage1-wrapper	scripts/check-stage1-wrapper.sh	wrapper	linux	stage1/host-action	fmt --check <all-format-manifest-files>	formatted-golden:comments	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	empty	none	stage1-wrapper-fmt-golden-check-comments	-
 1	stage1-wrapper-fmt-golden-check-decls	stage1-wrapper	scripts/check-stage1-wrapper.sh	wrapper	linux	stage1/host-action	fmt --check <all-format-manifest-files>	formatted-golden:decls	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	empty	none	stage1-wrapper-fmt-golden-check-decls	-
@@ -162,7 +164,7 @@ schema	case_id	gate	source	kind	host	compiler	argv	fixture	stdin	cwd	process	env
 1	stage1-wrapper-opt2-handoff-missing-release	stage1-wrapper	scripts/check-stage1-wrapper.sh	delegated	linux	stage1/opt2-handoff-fixture	check-opt2-cli-regression.sh	seed-skips-generated-compiler	inherited	repository	gate+seed-process	none;OPT2_HANDOFF_TEST_SKIP_GENERATED=1	nonzero	not-asserted	contains:generated-compiler-missing-or-empty	none	stage1-wrapper-opt2-handoff-missing-release	-
 1	stage1-wrapper-opt2-handoff-cross-mismatch	stage1-wrapper	scripts/check-stage1-wrapper.sh	delegated	linux	stage1/opt2-handoff-fixture	check-opt2-cli-regression.sh	generated-cross-fixpoint-mismatch	inherited	repository	gate+seed+generated-compiler-processes	none;OPT2_HANDOFF_TEST_CROSS_MISMATCH=1	nonzero	not-asserted	contains:CROSS-FIXPOINT-MISMATCH	writes:mismatching-assembly	stage1-wrapper-opt2-handoff-cross-mismatch	-
 # source	scripts/verify-public-tools.sh
-# public-tools inventory: 187 source sites and 298 behavior rows; expansions cover 30 command-help cases, 18 inline backend/opt cases, 3 backend modes, 2 target aliases, 4 run-backend branches, 5 SPMD execution branches, 27 formatter cases, and 37 executable SPEC cases.
+# public-tools inventory: 187 source sites and 298 behavior rows; expansions cover 30 command-help cases, 18 inline backend/opt cases, 3 backend modes, 2 target aliases, 4 run-backend branches, 5 SPMD execution branches, 30 formatter cases, and 37 executable SPEC cases.
 1	usage	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp --help	prepared-by-gate	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	assert_contains stderr repl;assert_contains stderr fmt;assert_contains stderr doc;assert_contains stderr Synopsis:;assert_contains stderr Commands:;assert_contains stderr typelisp repl;assert_contains stderr typelisp lsp;assert_contains stderr typelisp fmt;assert_contains stderr typelisp doc;assert_contains stderr typelisp explain;assert_contains stderr typelisp clean;assert_contains stderr Global Options:;assert_contains stderr Common Command Options:;assert_contains stderr Environment:;assert_contains stderr typelisp compile        Generate assembly or IR;assert_contains stderr --opt-level <0|1|2>            Select optimizer level;assert_contains stderr 'Run `typelisp <command> --help` for command-specific usage.'	none	usage	-
 1	version	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp --version	prepared-by-gate	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout typelisp ;assert_contains stdout  built	empty	none	version	-
 1	lsp-command-probe	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_stdin	typelisp lsp	prepared-by-gate	file:<lsp-command-probe>	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	any-capability-probe	not-asserted	not-asserted	none	lsp-command-probe	-
@@ -366,6 +368,7 @@ schema	case_id	gate	source	kind	host	compiler	argv	fixture	stdin	cwd	process	env
 1	lint-missing	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd_cwd	typelisp lint	prepared-by-gate	inherited	<lint-nopkg>	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	nonzero	empty	assert_contains stderr could not find typelisp.pkg;assert_contains stderr Error: missing file argument;assert_contains stderr typelisp lint	none	lint-missing	-
 1	lint-parse-error-check	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp lint <workdir>/lint_parse_error.tl --check	<workdir>/lint_parse_error.tl	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	nonzero	empty	nonempty	none	lint-parse-error-check	-
 1	fmt-cfg-target	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp fmt <check-cfg-src> --target windows-x86_64 --cfg tooling-feature	<check-cfg-src>	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	empty	assert_contains <check-cfg-src> platform-value;assert_contains <check-cfg-src> cfg-value	fmt-cfg-target	-
+1	fmt-call-wrap	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp fmt <workdir>/call_wrap.tl	<workdir>/call_wrap.tl	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	empty	check_file_exact <workdir>/call_wrap.tl <workdir>/call_wrap.expected	fmt-call-wrap	intentional-idempotence-replay
 1	fmt-char-literal	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp fmt <workdir>/char_literal.tl	<workdir>/char_literal.tl	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	empty	check_file_exact <workdir>/char_literal.tl <workdir>/char_literal.expected	fmt-char-literal	intentional-idempotence-replay
 1	fmt-comments	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp fmt <workdir>/comments.tl	<workdir>/comments.tl	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	empty	check_file_exact <workdir>/comments.tl <workdir>/comments.expected	fmt-comments	intentional-idempotence-replay
 1	fmt-decls	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp fmt <workdir>/decls.tl	<workdir>/decls.tl	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	empty	check_file_exact <workdir>/decls.tl <workdir>/decls.expected	fmt-decls	intentional-idempotence-replay
@@ -375,6 +378,7 @@ schema	case_id	gate	source	kind	host	compiler	argv	fixture	stdin	cwd	process	env
 1	fmt-quote	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp fmt <workdir>/quote.tl	<workdir>/quote.tl	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	empty	check_file_exact <workdir>/quote.tl <workdir>/quote.expected	fmt-quote	intentional-idempotence-replay
 1	fmt-signature-colon	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp fmt <workdir>/signature_colon.tl	<workdir>/signature_colon.tl	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	empty	check_file_exact <workdir>/signature_colon.tl <workdir>/signature_colon.expected	fmt-signature-colon	intentional-idempotence-replay
 1	fmt-tail-comment	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp fmt <workdir>/tail_comment.tl	<workdir>/tail_comment.tl	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	empty	check_file_exact <workdir>/tail_comment.tl <workdir>/tail_comment.expected	fmt-tail-comment	intentional-idempotence-replay
+1	fmt-call-wrap-check	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp fmt --check <workdir>/call_wrap.tl	<workdir>/call_wrap.tl	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	empty	none	fmt-call-wrap-check	-
 1	fmt-char-literal-check	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp fmt --check <workdir>/char_literal.tl	<workdir>/char_literal.tl	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	empty	none	fmt-char-literal-check	-
 1	fmt-comments-check	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp fmt --check <workdir>/comments.tl	<workdir>/comments.tl	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	empty	none	fmt-comments-check	-
 1	fmt-decls-check	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp fmt --check <workdir>/decls.tl	<workdir>/decls.tl	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	empty	none	fmt-decls-check	-
@@ -384,6 +388,7 @@ schema	case_id	gate	source	kind	host	compiler	argv	fixture	stdin	cwd	process	env
 1	fmt-quote-check	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp fmt --check <workdir>/quote.tl	<workdir>/quote.tl	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	empty	none	fmt-quote-check	-
 1	fmt-signature-colon-check	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp fmt --check <workdir>/signature_colon.tl	<workdir>/signature_colon.tl	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	empty	none	fmt-signature-colon-check	-
 1	fmt-tail-comment-check	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp fmt --check <workdir>/tail_comment.tl	<workdir>/tail_comment.tl	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	empty	none	fmt-tail-comment-check	-
+1	fmt-call-wrap-idempotent	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp fmt <workdir>/call_wrap.tl	<workdir>/call_wrap.tl	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	empty	check_file_exact <workdir>/call_wrap.tl <workdir>/call_wrap.expected	fmt-call-wrap	intentional-idempotence-replay
 1	fmt-char-literal-idempotent	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp fmt <workdir>/char_literal.tl	<workdir>/char_literal.tl	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	empty	check_file_exact <workdir>/char_literal.tl <workdir>/char_literal.expected	fmt-char-literal	intentional-idempotence-replay
 1	fmt-comments-idempotent	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp fmt <workdir>/comments.tl	<workdir>/comments.tl	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	empty	check_file_exact <workdir>/comments.tl <workdir>/comments.expected	fmt-comments	intentional-idempotence-replay
 1	fmt-decls-idempotent	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp fmt <workdir>/decls.tl	<workdir>/decls.tl	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	empty	check_file_exact <workdir>/decls.tl <workdir>/decls.expected	fmt-decls	intentional-idempotence-replay

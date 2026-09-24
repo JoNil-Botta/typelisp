@@ -303,7 +303,7 @@
     value
     "; expected 0, 1, or 2"))
 
-;; `--backend-mode` parity with Rust (which accepts scalar/avx2/avx512).
+;; `--backend-mode` accepts scalar, avx2 and avx512.
 (defenum ResultCompileCliBackendMode
   (Ok backend.CompilerBackendMode)
   (Err String))

@@ -1,10 +1,9 @@
 ;; format_rules.tl - TypeLisp-aware formatter rules.
 ;;
 ;; `format_core.tl` stays syntax-neutral. This module adds deterministic
-;; gofmt-like rules for common TypeLisp special forms. The normal source
-;; formatting path renders those rules directly from the CST; doc-algebra
-;; compatibility coverage lives in format_rules_doc_compat.tl so production CLI
-;; builds do not import the full document algebra.
+;; gofmt-like rules for common TypeLisp special forms and renders them directly
+;; from the CST. `tests/format_golden/` and `format-rules-self-test` pin the
+;; output.
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.io)
 (import format_tokens as tokens)
@@ -159,10 +158,9 @@
     [_ rest]))
 
 ;; Direct CST layout interpreter for the normal `fmt`/LSP path. `emit=false`
-;; computes the same capped flat width as `flat-width-capped`; `emit=true`
-;; writes the same bytes as `render-doc-into`. Keeping both modes in one set of
-;; rule walkers prevents the hot path from allocating per-form Doc trees while
-;; preserving the existing grouping decisions.
+;; computes the flat width of a fragment, capped at `limit`; `emit=true` writes
+;; its bytes. Keeping both modes in one set of rule walkers keeps the grouping
+;; decisions in one place without allocating per-form document trees.
 (define (format-rules-layout-text
   [text : String]
   [emit : bool]

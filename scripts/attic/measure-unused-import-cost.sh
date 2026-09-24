@@ -6,7 +6,10 @@ set -eu
 # This is a diagnostic harness, not a CI gate. It measures one compiler binary
 # compiling two scratch copies of the selfhost CLI source:
 #   base:        src/main.tl unchanged
-#   with-import: src/main.tl plus `(import format_doc)`
+#   with-import: src/main.tl plus `(import lint_fix_plan_core)`
+#
+# #3803 originally imported the doc-algebra formatter module, which has been
+# removed since; any src/ module that main.tl does not import serves.
 #
 # Use this before and after compiler-throughput work for #3803/#3857:
 #
@@ -174,13 +177,13 @@ inject_unused_import() {
     awk '
         BEGIN { inserted = 0 }
         inserted == 0 && /^\(import / {
-            print "(import format_doc)"
+            print "(import lint_fix_plan_core)"
             inserted = 1
         }
         { print }
         END {
             if (inserted == 0) {
-                print "(import format_doc)"
+                print "(import lint_fix_plan_core)"
             }
         }
     ' "$main_file" > "$tmp_file"
@@ -362,7 +365,7 @@ if [ "$PROFILE_ONLY" -eq 0 ]; then
         {
             printf 'case\tir_count\n'
             printf 'base\t%s\n' "$BASE_IR"
-            printf 'with-format-doc\t%s\n' "$WITH_IR"
+            printf 'with-import\t%s\n' "$WITH_IR"
             printf 'delta\t%s\n' "$(signed_delta "$IR_DELTA")"
             printf 'delta-pct\t%s\n' "$(pct_delta "$BASE_IR" "$IR_DELTA")"
         } > "$WORKDIR/summary.tsv"

@@ -269,21 +269,6 @@ assert_doctest_temp_cleaned() {
     [ ! -d "$temp_dir" ] || fail "$case_name left temp directory behind: $temp_dir"
 }
 
-host_netstring() {
-    value=$1
-    bytes=$(printf '%s' "$value" | wc -c | tr -d ' ')
-    printf '%s:%s' "$bytes" "$value"
-}
-
-host_plan_path() {
-    path=$1
-    if [ "$HOST_OS" = windows ] && command -v cygpath > /dev/null 2>&1; then
-        cygpath -w "$path"
-    else
-        printf '%s' "$path"
-    fi
-}
-
 echo "[public-tools] CLI usage and frontend aliases"
 # cli-gate-case usage wrapper run_cmd
 run_cmd usage "$COMPILER" --help
@@ -2538,6 +2523,7 @@ fi
 echo "[public-tools] formatter golden corpus"
 format_manifest() {
     cat <<'EOF'
+call_wrap
 char_literal
 comments
 decls
@@ -2571,20 +2557,20 @@ while IFS= read -r fmt_name; do
     cp "tests/format_golden/$fmt_name.tl" "$WORKDIR/$fmt_name.tl"
     strip_expected_trailing_lf "tests/format_golden/$fmt_name.expected" "$WORKDIR/$fmt_name.expected"
 
-    # cli-gate-expand fmt-{format} wrapper run_cmd format=char-literal,comments,decls,flow,let-bindings,negative-int,quote,signature-colon,tail-comment
+    # cli-gate-expand fmt-{format} wrapper run_cmd format=call-wrap,char-literal,comments,decls,flow,let-bindings,negative-int,quote,signature-colon,tail-comment
     run_cmd "$case_name" "$COMPILER" fmt "$WORKDIR/$fmt_name.tl"
     assert_success
     assert_stdout_empty
     assert_stderr_empty
     check_file_exact "$WORKDIR/$fmt_name.tl" "$WORKDIR/$fmt_name.expected"
 
-    # cli-gate-expand fmt-{format}-check wrapper run_cmd format=char-literal,comments,decls,flow,let-bindings,negative-int,quote,signature-colon,tail-comment
+    # cli-gate-expand fmt-{format}-check wrapper run_cmd format=call-wrap,char-literal,comments,decls,flow,let-bindings,negative-int,quote,signature-colon,tail-comment
     run_cmd "$case_name-check" "$COMPILER" fmt --check "$WORKDIR/$fmt_name.tl"
     assert_success
     assert_stdout_empty
     assert_stderr_empty
 
-    # cli-gate-expand fmt-{format}-idempotent wrapper run_cmd format=char-literal,comments,decls,flow,let-bindings,negative-int,quote,signature-colon,tail-comment
+    # cli-gate-expand fmt-{format}-idempotent wrapper run_cmd format=call-wrap,char-literal,comments,decls,flow,let-bindings,negative-int,quote,signature-colon,tail-comment
     run_cmd "$case_name-idempotent" "$COMPILER" fmt "$WORKDIR/$fmt_name.tl"
     assert_success
     assert_stdout_empty

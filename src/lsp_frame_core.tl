@@ -9898,9 +9898,10 @@
           [else "unknown"])))))
 
 ;; LSP SymbolKind values are protocol-facing and intentionally separate from
-;; the custom declaration kind strings consumed by tl/find. In particular,
-;; legacy tl/find continues to classify every define as "function", while the
-;; standard outline distinguishes function-head and value declarations.
+;; the custom declaration kind strings consumed by the tl/* tools (for example
+;; the tl/findPosition kind filter). In particular, those tools continue to
+;; classify every define as "function", while the standard outline
+;; distinguishes function-head and value declarations.
 (define (lsp-decl-symbol-kind-at [text : String] [i : i64] [n : i64]) : i64
   (let
     [after-open : i64
@@ -13556,33 +13557,6 @@
         (json.JsonString name)
         (lsp-decls-to-name-list decls (+ idx 1))))))
 
-;; Helper: build json.Json array of all declarations with metadata
-(define (lsp-decls-to-json-list [decls : lsp_decl_vec.Vec] [idx : i64]) : json.JsonSeq
-  (if (>= idx (lsp_decl_vec.len (& decls)))
-    (json.list-empty)
-    (let
-      [entry : lsp_vector_families.LspDeclEntry
-        (lsp_decl_vec.get (& decls) idx (lsp-decl-entry-fallback))]
-      [obj : json.Json
-        (lsp-json-object
-          (lsp-json-member
-            "kind"
-            (json.JsonString entry.kind)
-            (lsp-json-member
-              "name"
-              (json.JsonString entry.name)
-              (lsp-json-member
-                "line"
-                (lsp-json-number entry.name-line)
-                (lsp-json-member
-                  "column"
-                  (lsp-json-number entry.name-col)
-                  (lsp-json-member
-                    "length"
-                    (lsp-json-number entry.name-len)
-                    (json.member-list-empty)))))))]
-      (lsp-json-list-cons obj (lsp-decls-to-json-list decls (+ idx 1))))))
-
 (define (lsp-decl-selection-range-json
   [entry : lsp_vector_families.LspDeclEntry]) : json.Json
   (lsp-json-object2
@@ -13722,92 +13696,6 @@
 (define (lsp-position-map-for-text [text : String]) : json.Json
   (lsp-json-object (lsp-decls-to-position-map-members (lsp-scan-decls text) 0)))
 
-(define (lsp-decl-query-name-ok?
-  [entry : lsp_vector_families.LspDeclEntry]
-  [exact-name : String]
-  [contains-filter : String]
-  [prefix : String]) : bool
-  (let
-    [name : String entry.name]
-    (and
-      (or (= (string.string-length exact-name) 0) (string.eq name exact-name))
-      (or
-        (= (string.string-length contains-filter) 0)
-        (string.contains (& name) (& contains-filter)))
-      (or
-        (= (string.string-length prefix) 0)
-        (string.is-string-prefix-at (& name) (& prefix) 0)))))
-
-(define (lsp-decl-query-kind-ok?
-  [entry : lsp_vector_families.LspDeclEntry]
-  [kind : String]) : bool
-  (or (= (string.string-length kind) 0) (string.eq entry.kind kind)))
-
-(define (lsp-decl-find-entry-json [entry : lsp_vector_families.LspDeclEntry]) : json.Json
-  (let
-    [line : i64 (- entry.name-line 1)]
-    [character : i64 (- entry.name-col 1)]
-    (lsp-json-object
-      (lsp-json-member
-        "name"
-        (json.JsonString entry.name)
-        (lsp-json-member
-          "kind"
-          (json.JsonString entry.kind)
-          (lsp-json-member
-            "line"
-            (lsp-json-number line)
-            (lsp-json-member
-              "character"
-              (lsp-json-number character)
-              (lsp-json-member
-                "position"
-                (lsp-position line character)
-                (lsp-json-member
-                  "range"
-                  (lsp-json-object2
-                    "start"
-                    (lsp-position
-                      (- entry.form-start-line 1)
-                      (- entry.form-start-col 1))
-                    "end"
-                    (lsp-position
-                      (- entry.form-end-line 1)
-                      (- entry.form-end-col 1)))
-                  (json.member-list-empty))))))))))
-
-(define (lsp-decls-to-find-list
-  [decls : lsp_decl_vec.Vec]
-  [idx : i64]
-  [exact-name : String]
-  [contains-filter : String]
-  [prefix : String]
-  [kind : String]) : json.JsonSeq
-  (if (>= idx (lsp_decl_vec.len (& decls)))
-    (json.list-empty)
-    (let
-      [entry : lsp_vector_families.LspDeclEntry
-        (lsp_decl_vec.get (& decls) idx (lsp-decl-entry-fallback))]
-      [rest : json.JsonSeq
-        (lsp-decls-to-find-list
-          decls
-          (+ idx 1)
-          (owned_view.compiler-owned-shared-view exact-name)
-          (owned_view.compiler-owned-shared-view contains-filter)
-          (owned_view.compiler-owned-shared-view prefix)
-          (owned_view.compiler-owned-shared-view kind))]
-      (if (and
-        (lsp-decl-query-name-ok?
-          (owned_view.compiler-owned-shared-view entry)
-          exact-name
-          contains-filter
-          prefix)
-        (lsp-decl-query-kind-ok?
-          (owned_view.compiler-owned-shared-view entry)
-          kind))
-        (lsp-json-list-cons (lsp-decl-find-entry-json entry) rest)
-        rest))))
-
 ;; Helper: replace text from (sl,sc) to (el,ec) with new-text
 ;; Positions are 1-based (from scanner), convert to 0-based for offset-at-position
 (define (lsp-edit-range-at-offset
@@ -13864,74 +13752,6 @@
     [(LspDocumentDeclsLookup.Found path text _ decls)
       (let
         [items : json.JsonSeq (lsp-decls-to-name-list decls 0)]
-        (begin
-          (lsp-write-response id (lsp-json-array items))
-          (LspDocumentHandleResult.Continue docs)))]
-    [(LspDocumentDeclsLookup.Missing)
-      (begin
-        (lsp-write-error id -32600 "Document not found")
-        (LspDocumentHandleResult.Continue docs))]))
-
-;; tl/astDump - Return full declaration metadata
-(define (lsp-handle-tl-ast-dump
-  [id : json.Json]
-  [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
-  (match (lsp-get-document-decls
-    params
-    (owned_view.compiler-owned-shared-view docs))
-    [(LspDocumentDeclsLookup.Found path text _ decls)
-      (let
-        [items : json.JsonSeq (lsp-decls-to-json-list decls 0)]
-        (begin
-          (lsp-write-response id (lsp-json-array items))
-          (LspDocumentHandleResult.Continue docs)))]
-    [(LspDocumentDeclsLookup.Missing)
-      (begin
-        (lsp-write-error id -32600 "Document not found")
-        (LspDocumentHandleResult.Continue docs))]))
-
-;; tl/find - Find top-level declarations by exact name, substring/prefix, and
-;; kind. Empty string filters are treated like missing filters.
-(define (lsp-handle-tl-find
-  [id : json.Json]
-  [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
-  (match (lsp-get-document-decls
-    (owned_view.compiler-owned-shared-view params)
-    (owned_view.compiler-owned-shared-view docs))
-    [(LspDocumentDeclsLookup.Found path text _ decls)
-      (let
-        [exact-name : String
-          (lsp-json-string-field-default
-            (owned_view.compiler-owned-shared-view params)
-            "name"
-            "")]
-        [contains-filter : String
-          (lsp-json-string-field-default
-            (owned_view.compiler-owned-shared-view params)
-            "contains"
-            (lsp-json-string-field-default
-              (owned_view.compiler-owned-shared-view params)
-              "query"
-              (lsp-json-string-field-default
-                (owned_view.compiler-owned-shared-view params)
-                "pattern"
-                "")))]
-        [prefix : String
-          (lsp-json-string-field-default
-            (owned_view.compiler-owned-shared-view params)
-            "prefix"
-            "")]
-        [kind : String (lsp-json-string-field-default params "kind" "")]
-        [items : json.JsonSeq
-          (lsp-decls-to-find-list
-            decls
-            0
-            exact-name
-            contains-filter
-            prefix
-            kind)]
         (begin
           (lsp-write-response id (lsp-json-array items))
           (LspDocumentHandleResult.Continue docs)))]
@@ -14002,7 +13822,6 @@
         (LspDocumentHandleResult.Continue docs))]))
 
 ;; tl/replace - Replace a top-level declaration by name, with position fallback
-;; tl/deleteFunction - legacy method name routed to tl/delete behavior
 ;; Helper: get offset from LspDeclEntry start position
 (define (lsp-offset-from-entry-start
   [text : String]
@@ -16098,49 +15917,6 @@
     [(LspDocumentLookup.Missing)
       (lsp-write-response id (lsp-json-array (json.list-empty)))]))
 
-;; tl/evalAtPoint - Evaluate expression at cursor
-(define (lsp-handle-tl-eval-at-point
-  [id : json.Json]
-  [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
-  (match (lsp-get-document params (owned_view.compiler-owned-shared-view docs))
-    [(LspDocumentLookup.Found path text _)
-      (let
-        [result : LspEditResult (LspEditResult.Err "Not yet implemented")]
-        (match result
-          [(LspEditResult.Ok new-text)
-            (begin
-              (lsp-write-response
-                id
-                (lsp-json-object2
-                  "success"
-                  (json.JsonBool true)
-                  "text"
-                  (json.JsonString new-text)))
-              (LspDocumentHandleResult.Continue docs))]
-          [(LspEditResult.Err message)
-            (begin
-              (lsp-write-error id -32600 message)
-              (LspDocumentHandleResult.Continue docs))]))]
-    [(LspDocumentLookup.Missing)
-      (begin
-        (lsp-write-error id -32600 "Document not found")
-        (LspDocumentHandleResult.Continue docs))]))
-
-;; tl/signatureHelp - Parameter types for function at cursor
-(define (lsp-handle-tl-signature-help
-  [id : json.Json]
-  [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
-  (begin
-    ;; Compatibility alias: custom clients receive the standard response shape
-    ;; and share every current-text/semantic-identity decision with LSP 3.17.
-    (lsp-signature-help-respond
-      (owned_view.compiler-owned-shared-view id)
-      (owned_view.compiler-owned-shared-view params)
-      (owned_view.compiler-owned-shared-view docs))
-    (LspDocumentHandleResult.Continue docs)))
-
 ;; tl/appendFunction - Append a form at the end of the file
 (define (lsp-handle-tl-append-function
   [id : json.Json]
@@ -16671,8 +16447,6 @@
 (define (lsp-tool-method-mutates-document? [method : String]) : bool
   (or
     (string.eq method "tl/replace")
-    (string.eq method "tl/replaceAt")
-    (string.eq method "tl/deleteFunction")
     (string.eq method "tl/move")
     (string.eq method "tl/appendFunction")
     (string.eq method "tl/replaceBody")
@@ -17356,23 +17130,15 @@
 
 (define (lsp-known-tool-method? [method : String]) : bool
   (or
-    (string.eq method "tl/astDump")
     (string.eq method "tl/listFunctions")
-    (string.eq method "tl/listNested")
-    (string.eq method "tl/find")
     (string.eq method "tl/findPosition")
-    (string.eq method "tl/findPath")
     (string.eq method "tl/replace")
-    (string.eq method "tl/replaceAt")
-    (string.eq method "tl/deleteFunction")
     (string.eq method "tl/move")
     (string.eq method "tl/expandMacro")
     (string.eq method "tl/check")
     (string.eq method "tl/getType")
-    (string.eq method "tl/evalAtPoint")
     (string.eq method "tl/appendFunction")
     (string.eq method "tl/replaceBody")
-    (string.eq method "tl/signatureHelp")
     (string.eq method "tl/replacePattern")
     (string.eq method "tl/patch")
     (string.eq method "tl/delete")
@@ -17385,7 +17151,7 @@
   [message : json.Json]
   [id : json.Json]) : unit
   (cond
-    [(or (string.eq method "tl/astDump") (string.eq method "tl/listFunctions"))
+    [(string.eq method "tl/listFunctions")
       (begin
         (lsp-write-response id (lsp-json-array (json.list-empty)))
         unit)]
@@ -17407,21 +17173,12 @@
   [stdlib-roots : lsp_svec.Vec]
   [job-state : tc.TcJobState]) : LspDocumentHandleResult
   (cond
-    [(string.eq method "tl/astDump") (lsp-handle-tl-ast-dump id params docs)]
     [(string.eq method "tl/listFunctions")
       (lsp-handle-tl-list-functions id params docs)]
-    [(string.eq method "tl/listNested")
-      (lsp-handle-tl-list-nested id params docs)]
-    [(string.eq method "tl/find") (lsp-handle-tl-find id params docs)]
     [(string.eq method "tl/findPosition")
       (lsp-handle-tl-find-position id params docs)]
-    [(string.eq method "tl/findPath") (lsp-handle-tl-find-path id params docs)]
     [(string.eq method "tl/replace")
       (lsp-handle-tl-structural-replace-at id params docs)]
-    [(string.eq method "tl/replaceAt")
-      (lsp-handle-tl-structural-replace-at-position id params docs)]
-    [(string.eq method "tl/deleteFunction")
-      (lsp-handle-tl-delete-at id params docs)]
     [(string.eq method "tl/move")
       (lsp-handle-tl-structural-move id params docs)]
     [(string.eq method "tl/expandMacro")
@@ -17440,14 +17197,10 @@
             (lsp-handle-tl-get-type-at id params docs stdlib-roots job-state))
           (lsp-typecheck-tool-session-after!)
           tool-result))]
-    [(string.eq method "tl/evalAtPoint")
-      (lsp-handle-tl-eval-at-point id params docs)]
     [(string.eq method "tl/appendFunction")
       (lsp-handle-tl-append-function id params docs)]
     [(string.eq method "tl/replaceBody")
       (lsp-handle-tl-replace-body id params docs)]
-    [(string.eq method "tl/signatureHelp")
-      (lsp-handle-tl-signature-help id params docs)]
     [(string.eq method "tl/replacePattern")
       (lsp-handle-tl-replace-pattern-at id params docs)]
     [(string.eq method "tl/patch") (lsp-handle-tl-patch id params docs)]
@@ -18671,37 +18424,6 @@
       [(json.JsonMissing)
         (LspEditResult.Err "Missing name or position parameter")])))
 
-;; tl/replaceAt - Explicit position-based top-level replacement
-(define (lsp-handle-tl-structural-replace-at-position
-  [id : json.Json]
-  [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
-  (match (lsp-get-document-decls
-    (owned_view.compiler-owned-shared-view params)
-    (owned_view.compiler-owned-shared-view docs))
-    [(LspDocumentDeclsLookup.Found path text _ decls)
-      (match (lsp-json-string-field
-        (owned_view.compiler-owned-shared-view params)
-        "newText")
-        [(LspJsonText.Ok new-text)
-          (lsp-write-structural-edit-result
-            id
-            (owned_view.compiler-owned-shared-view params)
-            docs
-            (lsp-replace-form-at-position-from-params-with-decls
-              (owned_view.compiler-owned-shared-view text)
-              (owned_view.compiler-owned-shared-view decls)
-              (owned_view.compiler-owned-shared-view params)
-              new-text))]
-        [(LspJsonText.Missing)
-          (begin
-            (lsp-write-error id -32600 "Missing newText parameter")
-            (LspDocumentHandleResult.Continue docs))])]
-    [(LspDocumentDeclsLookup.Missing)
-      (begin
-        (lsp-write-error id -32600 "Document not found")
-        (LspDocumentHandleResult.Continue docs))]))
-
 ;; tl/replace - Replace a top-level declaration by name, with position fallback
 (define (lsp-handle-tl-structural-replace-at
   [id : json.Json]
@@ -18892,9 +18614,6 @@
     [(json.JsonFound _) true]
     [(json.JsonMissing) false]))
 
-(define (lsp-json-list-append [left : json.JsonSeq] [right : json.JsonSeq]) : json.JsonSeq
-  (json.list-concat left right))
-
 (define (lsp-json-list-all-strings? [items : json.JsonSeq]) : bool
   (let
     [n : i64 (json.list-count (owned_view.compiler-owned-shared-view items))]
@@ -18975,26 +18694,6 @@
               (string.substring text head-start (- head-end head-start)))
             ""))))))
 
-(define (lsp-nested-kind-for-head [head : String]) : String
-  (cond
-    [(or
-        (string.eq head "define")
-        (string.eq head "defmacro")
-        (string.eq head "defstruct")
-        (string.eq head "defenum")
-        (string.eq head "defdispatch")
-        (string.eq head "extern"))
-      "declaration"]
-    [(or (string.eq head "let") (string.eq head "let*")) "binding"]
-    [(or
-        (string.eq head "if")
-        (string.eq head "match")
-        (string.eq head "cond")
-        (string.eq head "while")
-        (string.eq head "begin"))
-      "control"]
-    [else "expression"]))
-
 (define (lsp-offset-position-json [text : String] [off : i64]) : json.Json
   (let
     [lc : LspLineCol (lsp-line-col-at-offset text off)]
@@ -19012,176 +18711,6 @@
       start)
     "end"
     (lsp-offset-position-json text end)))
-
-(define (lsp-nested-form-json [text : String] [start : i64] [end : i64]) : json.Json
-  (let
-    [name : String
-      (lsp-form-head-name-at
-        (owned_view.compiler-owned-shared-view text)
-        start
-        end)]
-    [lc : LspLineCol
-      (lsp-line-col-at-offset
-        (owned_view.compiler-owned-shared-view text)
-        start)]
-    (lsp-json-object
-      (lsp-json-member
-        "name"
-        (json.JsonString (owned_view.compiler-owned-shared-view name))
-        (lsp-json-member
-          "kind"
-          (json.JsonString (lsp-nested-kind-for-head name))
-          (lsp-json-member
-            "line"
-            (lsp-json-number (- lc.line 1))
-            (lsp-json-member
-              "character"
-              (lsp-json-number (- lc.col 1))
-              (lsp-json-member
-                "type"
-                (json.JsonString "s-expression")
-                (lsp-json-member
-                  "range"
-                  (lsp-offset-range-json
-                    (owned_view.compiler-owned-shared-view text)
-                    start
-                    end)
-                  (lsp-json-member
-                    "text"
-                    (json.JsonString
-                      (string.substring text start (- end start)))
-                    (json.member-list-empty)))))))))))
-
-(define (lsp-path-result-json
-  [text : String]
-  [start : i64]
-  [end : i64]
-  [name : String]) : json.Json
-  (let
-    [lc : LspLineCol
-      (lsp-line-col-at-offset
-        (owned_view.compiler-owned-shared-view text)
-        start)]
-    (lsp-json-object
-      (lsp-json-member
-        "success"
-        (json.JsonBool true)
-        (lsp-json-member
-          "name"
-          (json.JsonString (owned_view.compiler-owned-shared-view name))
-          (lsp-json-member
-            "kind"
-            (json.JsonString (lsp-nested-kind-for-head name))
-            (lsp-json-member
-              "line"
-              (lsp-json-number (- lc.line 1))
-              (lsp-json-member
-                "character"
-                (lsp-json-number (- lc.col 1))
-                (lsp-json-member
-                  "position"
-                  (lsp-offset-position-json
-                    (owned_view.compiler-owned-shared-view text)
-                    start)
-                  (lsp-json-member
-                    "range"
-                    (lsp-offset-range-json
-                      (owned_view.compiler-owned-shared-view text)
-                      start
-                      end)
-                    (lsp-json-member
-                      "text"
-                      (json.JsonString
-                        (string.substring text start (- end start)))
-                      (json.member-list-empty))))))))))))
-
-(define (lsp-list-nested-forms-in-range
-  [text : String]
-  [start : i64]
-  [end : i64]
-  [depth : i64]
-  [max-depth : i64]) : json.JsonSeq
-  (let
-    [n : i64 (string.string-length text)]
-    [limit : i64
-      (if (> end n)
-        n
-        end)]
-    [i : i64 (+ start 1)]
-    [acc : json.JsonSeq (json.list-empty)]
-    (begin
-      (while (and (< i limit) (<= depth max-depth))
-        (let
-          [c : char (string.string-ref text i)]
-          (cond
-            [(= c ';')
-              (set!
-                i
-                (lsp-skip-line
-                  (owned_view.compiler-owned-shared-view text)
-                  i
-                  limit))]
-            [(= c '\'')
-              (set!
-                i
-                (lsp-skip-apostrophe-char-literal
-                  (owned_view.compiler-owned-shared-view text)
-                  i
-                  limit))]
-            [(= c '"')
-              (set!
-                i
-                (lsp-skip-string
-                  (owned_view.compiler-owned-shared-view text)
-                  i
-                  limit))]
-            [(= c '(')
-              (let
-                [child-end0 : i64
-                  (lsp-skip-paren-group
-                    (owned_view.compiler-owned-shared-view text)
-                    i
-                    limit)]
-                [child-end : i64
-                  (if (> child-end0 limit)
-                    limit
-                    child-end0)]
-                [name : String ""]
-                [child-items : json.JsonSeq (json.list-empty)]
-                (if (<= child-end i)
-                  (set! i limit)
-                  (begin
-                    (set!
-                      name
-                      (lsp-form-head-name-at
-                        (owned_view.compiler-owned-shared-view text)
-                        i
-                        child-end))
-                    (if (< depth max-depth)
-                      (set!
-                        child-items
-                        (lsp-list-nested-forms-in-range
-                          (owned_view.compiler-owned-shared-view text)
-                          i
-                          child-end
-                          (+ depth 1)
-                          max-depth))
-                      unit)
-                    (if (> (string.string-length name) 0)
-                      (set!
-                        acc
-                        (lsp-json-list-append
-                          acc
-                          (lsp-json-list-cons
-                            (lsp-nested-form-json
-                              (owned_view.compiler-owned-shared-view text)
-                              i
-                              child-end)
-                            child-items)))
-                      (set! acc (lsp-json-list-append acc child-items)))
-                    (set! i child-end))))]
-            [else (set! i (+ i 1))])))
-      acc)))
 
 (define (lsp-find-nested-form-by-head
   [text : String]
@@ -19387,135 +18916,6 @@
                 (LspEditResult.Ok
                   (lsp-edit-range-at-offset text body-start body-end new-body))))]
           [(LspPathLookup.Err message) (LspEditResult.Err message)])))))
-
-(define (lsp-list-nested-result-json
-  [text : String]
-  [start : i64]
-  [end : i64]
-  [max-depth : i64]) : json.Json
-  (lsp-json-object
-    (lsp-json-member
-      "success"
-      (json.JsonBool true)
-      (lsp-json-member
-        "root"
-        (lsp-nested-form-json
-          (owned_view.compiler-owned-shared-view text)
-          start
-          end)
-        (lsp-json-member
-          "forms"
-          (lsp-json-array
-            (if (< max-depth 1)
-              (json.list-empty)
-              (lsp-list-nested-forms-in-range
-                (owned_view.compiler-owned-shared-view text)
-                start
-                end
-                1
-                max-depth)))
-          (json.member-list-empty))))))
-
-(define (lsp-handle-tl-list-nested
-  [id : json.Json]
-  [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
-  (match (lsp-get-document
-    (owned_view.compiler-owned-shared-view params)
-    (owned_view.compiler-owned-shared-view docs))
-    [(LspDocumentLookup.Found path text _)
-      (let
-        [pos-key : String "position"]
-        (match (json.object-get
-          (owned_view.compiler-owned-shared-view params)
-          (& pos-key))
-          [(json.JsonFound position)
-            (let
-              [line : i64
-                (lsp-json-int-field-default
-                  (owned_view.compiler-owned-shared-view position)
-                  "line"
-                  0)]
-              [col : i64 (lsp-json-int-field-default position "character" 0)]
-              [depth : i64 (lsp-json-int-field-default params "depth" 2)]
-              [safe-depth : i64
-                (if (< depth 0)
-                  0
-                  depth)]
-              [offset : i64
-                (lsp-offset-at-position
-                  (owned_view.compiler-owned-shared-view text)
-                  line
-                  col)]
-              [form-start : i64
-                (lsp-find-form-at-offset
-                  (owned_view.compiler-owned-shared-view text)
-                  offset)]
-              (if (= form-start -1)
-                (begin
-                  (lsp-write-error id -32600 "No form found at position")
-                  (LspDocumentHandleResult.Continue docs))
-                (let
-                  [form-end : i64
-                    (lsp-skip-paren-group
-                      (owned_view.compiler-owned-shared-view text)
-                      form-start
-                      (string.string-length text))]
-                  (if (<= form-end form-start)
-                    (begin
-                      (lsp-write-error id -32600 "No form found at position")
-                      (LspDocumentHandleResult.Continue docs))
-                    (begin
-                      (lsp-write-response
-                        id
-                        (lsp-list-nested-result-json
-                          text
-                          form-start
-                          form-end
-                          safe-depth))
-                      (LspDocumentHandleResult.Continue docs))))))]
-          [(json.JsonMissing)
-            (begin
-              (lsp-write-error id -32600 "Missing position parameter")
-              (LspDocumentHandleResult.Continue docs))]))]
-    [(LspDocumentLookup.Missing)
-      (begin
-        (lsp-write-error id -32600 "Document not found")
-        (LspDocumentHandleResult.Continue docs))]))
-
-(define (lsp-handle-tl-find-path
-  [id : json.Json]
-  [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
-  (match (lsp-get-document-decls
-    (owned_view.compiler-owned-shared-view params)
-    (owned_view.compiler-owned-shared-view docs))
-    [(LspDocumentDeclsLookup.Found path text _ decls)
-      (match (lsp-json-path-field
-        (owned_view.compiler-owned-shared-view params))
-        [(LspPathParam.Ok path-items)
-          (match (lsp-lookup-form-path
-            (owned_view.compiler-owned-shared-view text)
-            decls
-            path-items)
-            [(LspPathLookup.Found start end name)
-              (begin
-                (lsp-write-response
-                  id
-                  (lsp-path-result-json text start end name))
-                (LspDocumentHandleResult.Continue docs))]
-            [(LspPathLookup.Err message)
-              (begin
-                (lsp-write-error id -32600 message)
-                (LspDocumentHandleResult.Continue docs))])]
-        [(LspPathParam.Err message)
-          (begin
-            (lsp-write-error id -32600 message)
-            (LspDocumentHandleResult.Continue docs))])]
-    [(LspDocumentDeclsLookup.Missing)
-      (begin
-        (lsp-write-error id -32600 "Document not found")
-        (LspDocumentHandleResult.Continue docs))]))
 
 (define (lsp-delete-form-at-position-with-decls
   [text : String]
@@ -20140,18 +19540,6 @@
     [text-copy : String (string.copy (& text))]
     [decls : lsp_decl_vec.Vec (lsp-scan-decls text-copy)]
     (cond
-      [(string.eq method "tl/replaceAt")
-        (match (lsp-json-string-field
-          (owned_view.compiler-owned-shared-view params)
-          "newText")
-          [(LspJsonText.Ok new-text)
-            (lsp-replace-form-at-position-from-params-with-decls
-              text
-              decls
-              params
-              new-text)]
-          [(LspJsonText.Missing)
-            (LspEditResult.Err "Missing newText parameter")])]
       [(string.eq method "tl/replace")
         (match (lsp-json-string-field
           (owned_view.compiler-owned-shared-view params)
@@ -20192,9 +19580,7 @@
                     new-text)]))]
           [(LspJsonText.Missing)
             (LspEditResult.Err "Missing newText parameter")])]
-      [(or
-          (string.eq method "tl/delete")
-          (string.eq method "tl/deleteFunction"))
+      [(string.eq method "tl/delete")
         (match (lsp-json-string-field
           (owned_view.compiler-owned-shared-view params)
           "name")
@@ -20275,25 +19661,15 @@
                 (LspEditResult.Err "Missing newPattern parameter")])]
           [(LspJsonText.Missing)
             (LspEditResult.Err "Missing oldPattern parameter")])]
-      [(string.eq method "tl/format")
-        (LspEditResult.Ok (lsp-format-edit-text text))]
       [else
         (LspEditResult.Err (lsp-str2 "Unsupported batch operation: " method))])))
 
-(define (lsp-batch-operation-result [index : i64] [method : String]) : json.Json
-  (if (string.eq method "tl/format")
-    (lsp-json-object3
-      "index"
-      (lsp-json-number index)
-      "success"
-      (json.JsonBool true)
-      "formatted"
-      (json.JsonBool true))
-    (lsp-json-object2
-      "index"
-      (lsp-json-number index)
-      "success"
-      (json.JsonBool true))))
+(define (lsp-batch-operation-result [index : i64]) : json.Json
+  (lsp-json-object2
+    "index"
+    (lsp-json-number index)
+    "success"
+    (json.JsonBool true)))
 
 (define (lsp-batch-position-error? [operation : json.Json] [message : String]) : bool
   (if (lsp-json-has-field? operation "position")
@@ -20418,9 +19794,7 @@
           (match (lsp-validate-edited-document
             (owned_view.compiler-owned-shared-view next-text))
             [(LspEditResult.Ok _)
-              (LspBatchOpResult.Ok
-                next-text
-                (lsp-batch-operation-result index method))]
+              (LspBatchOpResult.Ok next-text (lsp-batch-operation-result index))]
             [(LspEditResult.Err message)
               (LspBatchOpResult.Err message json.JsonNull)])]
         [(LspEditResult.Err message)
@@ -20655,38 +20029,6 @@
     [copy : String (string.copy (& text))]
     (lsp-scan-decls copy)))
 
-(define (lsp-find-decls-query-smoke-ok?) : bool
-  (let
-    [text : String
-      "(define (foo) : i64 1)\n(define (bar) : i64 2)\n(define (baz) : i64 3)"]
-    [decls : lsp_decl_vec.Vec (lsp-test-scan-decls text)]
-    [rendered : String
-      (json.stringify
-        (lsp-json-array
-          (lsp-decls-to-find-list
-            (owned_view.compiler-owned-shared-view decls)
-            0
-            ""
-            "ba"
-            ""
-            "function")))]
-    [prefix-rendered : String
-      (json.stringify
-        (lsp-json-array (lsp-decls-to-find-list decls 0 "" "" "ba" "function")))]
-    [bar-name : String "bar"]
-    [baz-name : String "baz"]
-    [foo-name : String "foo"]
-    [line-field : String "\"line\":"]
-    [character-field : String "\"character\":"]
-    (and
-      (string.contains (& rendered) (& bar-name))
-      (string.contains (& rendered) (& baz-name))
-      (string.contains (& rendered) (& line-field))
-      (string.contains (& rendered) (& character-field))
-      (string.contains (& prefix-rendered) (& bar-name))
-      (string.contains (& prefix-rendered) (& baz-name))
-      (not (string.contains (& rendered) (& foo-name))))))
-
 (define (lsp-structural-replace-by-name-smoke-ok?) : bool
   (let
     [text : String "(define (foo) : i64 1)\n(define (bar) : i64 2)"]
@@ -20811,26 +20153,6 @@
           (string.contains (& replaced) (& new-body))
           (not (string.contains (& replaced) (& old-match))))]
       [(LspEditResult.Err _) false])))
-
-(define (lsp-list-nested-forms-smoke-ok?) : bool
-  (let
-    [text : String (lsp-nested-path-test-text)]
-    [end : i64
-      (lsp-skip-paren-group
-        (owned_view.compiler-owned-shared-view text)
-        0
-        (string.string-length text))]
-    [rendered : String
-      (json.stringify (lsp-list-nested-result-json text 0 end 4))]
-    [success-needle : String "\"success\":true"]
-    [let-needle : String "\"name\":\"let\""]
-    [match-needle : String "\"name\":\"match\""]
-    [ok-needle : String "\"name\":\"Ok\""]
-    (and
-      (string.contains (& rendered) (& success-needle))
-      (string.contains (& rendered) (& let-needle))
-      (string.contains (& rendered) (& match-needle))
-      (string.contains (& rendered) (& ok-needle)))))
 
 (define (lsp-workspace-symbol-test-decl [name : String] [line : i64]) : lsp_vector_families.LspDeclEntry
   (let
@@ -21035,12 +20357,6 @@
     (io.panic "lsp-replace-form-at-position-noop failed")))
 
 (test
-  lsp-find-decls-query-smoke
-  (unless
-    (lsp-find-decls-query-smoke-ok?)
-    (io.panic "lsp-find-decls-query-smoke failed")))
-
-(test
   lsp-structural-replace-by-name-smoke
   (unless
     (lsp-structural-replace-by-name-smoke-ok?)
@@ -21081,9 +20397,3 @@
   (unless
     (lsp-replace-body-by-path-smoke-ok?)
     (io.panic "lsp-replace-body-by-path-smoke failed")))
-
-(test
-  lsp-list-nested-forms-smoke
-  (unless
-    (lsp-list-nested-forms-smoke-ok?)
-    (io.panic "lsp-list-nested-forms-smoke failed")))

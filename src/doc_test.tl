@@ -1338,7 +1338,7 @@
 
 ;; Render a failure as `path:line: message`. Fence-level extraction
 ;; errors use index `-1`; example failures include the example number in their
-;; message so the public CLI text matches the stage0 Rust runner.
+;; message.
 (define (doc-test-run-failure-render [failure : DocTestRunFailure]) : String
   (match failure
     [(DocTestRunFailure.Failure path line index message)
@@ -2506,8 +2506,8 @@
 (define (doc-test-run-failures-render [failures : doc_run_failure_vec.Vec]) : String
   (doc-test-run-failures-render-from failures 0))
 
-;; Human-readable report text. Success mirrors the Rust CLI's
-;; `Doc tests passed: N example(s)` line; failure mirrors its
+;; Human-readable report text. Success renders the
+;; `Doc tests passed: N example(s)` line; failure renders the
 ;; `doc tests failed: M failure(s) across N example(s)` summary followed by each
 ;; rendered failure.
 (define (doc-test-run-report-render [report : DocTestRunReport]) : String
@@ -3287,9 +3287,9 @@ typecheck: return type mismatch"))]
         false)
       false)))
 
-;; The report-level text mirrors the Rust CLI: a clean run renders the
-;; `Doc tests passed: N example(s)` line with status 0, and a failing run renders
-;; the `doc tests failed: M failure(s) across N example(s)` summary with status 1.
+;; Report-level text: a clean run renders the `Doc tests passed: N example(s)`
+;; line with status 0, and a failing run renders the
+;; `doc tests failed: M failure(s) across N example(s)` summary with status 1.
 (define (doc-test-run-smoke-report-render-ok?) : bool
   (let
     [pass-report : DocTestRunReport

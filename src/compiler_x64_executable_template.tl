@@ -92,7 +92,9 @@
   (WindowsObjectRuntimeSupportContribution)
   (WindowsObjectStartContribution)
   (WindowsObjectMainFiberContribution)
-  (WindowsObjectOverflowFilterContribution))
+  (WindowsObjectOverflowFilterContribution)
+  (LinuxRuntimeCopyFwd)
+  (LinuxRuntimeCopy8Fwd))
 
 (defenum CompilerX64TemplateTarget
   (AnyX64)

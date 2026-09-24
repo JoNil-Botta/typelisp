@@ -452,7 +452,7 @@
   (cond
     [(string.eq domain "ir_instr")
       (if (bsm-route-present?
-        (bsm-function-body backend "compiler-backend-emit-instr")
+        (bsm-function-body backend "compiler-backend-emit-instr-with-bound")
         "CompilerIrInstr"
         identity)
         true

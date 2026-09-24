@@ -162,6 +162,13 @@ regalloc_shifted_loop_bound|tests/integration/regalloc_shifted_loop_bound.tl|42|
 regalloc_loop_split_evicted_region_var|tests/integration/regalloc_loop_split_evicted_region_var.tl|42|-|-|stdlib/io.tl stdlib/string.tl
 regalloc_coalesce_class_return_value|tests/integration/regalloc_coalesce_class_return_value.tl|42|-|-|stdlib/io.tl
 loop_invariant_array_sum|tests/integration/loop_invariant_array_sum.tl|42|-|-|stdlib/io.tl
+unrolled_sum_chains_o0|tests/integration/unrolled_sum_chains.tl|42|-|-|-|opt-level:0+stage-stdlib
+unrolled_sum_chains_o1|tests/integration/unrolled_sum_chains.tl|42|-|-|-|opt-level:1+stage-stdlib
+unrolled_sum_chains_o2|tests/integration/unrolled_sum_chains.tl|42|-|-|-|opt-level:2+stage-stdlib
+unrolled_sum_chains_trap|tests/integration/unrolled_sum_chains.tl|134|-|130|-|opt-level:2+stage-stdlib+expected-stderr:tl: target/integration-verify/windows/unrolled_sum_chains_trap/unrolled_sum_chains_trap.tl:12:42: array index out of bounds: index=129 length=129\n
+unrolled_sum_floor_headroom_o0|tests/integration/unrolled_sum_floor_headroom.tl|42|0\n1\n1\n2\n2\n3\n3\n4\n4\n5\n5\n6\n6\n7\n7\n8\n8\n9\n9\n10\n10\n|20|-|opt-level:0+stage-stdlib
+unrolled_sum_floor_headroom_o1|tests/integration/unrolled_sum_floor_headroom.tl|42|0\n1\n1\n2\n2\n3\n3\n4\n4\n5\n5\n6\n6\n7\n7\n8\n8\n9\n9\n10\n10\n|20|-|opt-level:1+stage-stdlib
+unrolled_sum_floor_headroom_o2|tests/integration/unrolled_sum_floor_headroom.tl|42|0\n1\n1\n2\n2\n3\n3\n4\n4\n5\n5\n6\n6\n7\n7\n8\n8\n9\n9\n10\n10\n|20|-|opt-level:2+stage-stdlib
 csr_occupant_split|tests/integration/csr_occupant_split.tl|42|-|-|stdlib/io.tl
 callrun_subrange_home|tests/integration/callrun_subrange_home.tl|42|-|-|stdlib/io.tl
 scavenge_destructure_clobber|tests/integration/scavenge_destructure_clobber.tl|42|-|-|stdlib/io.tl stdlib/string.tl
@@ -307,9 +314,6 @@ clone_dynarray_scalar_bulk|tests/integration/clone_dynarray_scalar_bulk.tl|42|-|
 clone_generated_vector_element|tests/integration/clone_generated_vector_element.tl|42|-|-|stdlib/vector.tl stdlib/string.tl
 generated_macro_clone_handoff|tests/integration/generated_macro_clone_handoff.tl|42|-|-|stdlib/clone.tl stdlib/comptime.tl stdlib/string.tl
 generated_cfg|tests/integration/generated_cfg.tl|42|-|-|-
-bit_length_loop|tests/integration/bit_length_loop.tl|42|0\n1\n2\n2\n3\n4\n10\n0\n0\n63\n63\n|0 1 2 3 7 8 1000 -1 -9223372036854775808 9223372036854775807 4611686018427387904|stdlib/io.tl stdlib/string.tl
-bit_length_loop_opt0|tests/integration/bit_length_loop.tl|42|0\n1\n2\n2\n3\n4\n10\n0\n0\n63\n63\n|0 1 2 3 7 8 1000 -1 -9223372036854775808 9223372036854775807 4611686018427387904|stdlib/io.tl stdlib/string.tl|opt-level:0+stage-stdlib
-bit_length_loop_opt2|tests/integration/bit_length_loop.tl|42|0\n1\n2\n2\n3\n4\n10\n0\n0\n63\n63\n|0 1 2 3 7 8 1000 -1 -9223372036854775808 9223372036854775807 4611686018427387904|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib
 generated_cfg_opt0|tests/integration/generated_cfg.tl|42|-|-|-|opt-level:0+stage-stdlib
 generated_cfg_opt1|tests/integration/generated_cfg.tl|42|-|-|-|opt-level:1+stage-stdlib
 generated_cfg_opt2|tests/integration/generated_cfg.tl|42|-|-|-|opt-level:2+stage-stdlib
@@ -464,6 +468,15 @@ register_scalar_homes|tests/integration/register_scalar_homes.tl|42|-|-|-
 rem_zero_trap|tests/integration/rem_zero_trap.tl|135|-|-|-|expected-stderr:tl: target/integration-verify/windows/rem_zero_trap/rem_zero_trap.tl:3:5: integer division or remainder error: dividend=1 divisor=0\n
 short_circuit|tests/integration/short_circuit.tl|42|-|-|-
 shl_count_width_trap|tests/integration/shl_count_width_trap.tl|129|-|-|-|expected-stderr:tl: target/integration-verify/windows/shl_count_width_trap/shl_count_width_trap.tl:3:5: shift count out of range: count=64 width=32\n
+dead_valid_shifts_o0|tests/integration/dead_valid_shifts.tl|42|-|-|-|opt-level:0+stage-stdlib
+dead_valid_shifts_o1|tests/integration/dead_valid_shifts.tl|42|-|-|-|opt-level:1+stage-stdlib
+dead_valid_shifts_o2|tests/integration/dead_valid_shifts.tl|42|-|-|-|opt-level:2+stage-stdlib
+dead_valid_shifts_dynamic|tests/integration/dead_valid_shifts.tl|42|-|63|-|opt-level:2+stage-stdlib
+dead_shift_dynamic_width|tests/integration/dead_valid_shifts.tl|129|-|64|-|opt-level:2+stage-stdlib+expected-stderr:tl: target/integration-verify/windows/dead_shift_dynamic_width/dead_shift_dynamic_width.tl:22:5: shift count out of range: count=64 width=64\n
+dead_shift_dynamic_negative|tests/integration/dead_valid_shifts.tl|129|-|-1|-|opt-level:2+stage-stdlib+expected-stderr:tl: target/integration-verify/windows/dead_shift_dynamic_negative/dead_shift_dynamic_negative.tl:22:5: shift count out of range: count=-1 width=64\n
+shl_count_width_trap_opt2|tests/integration/shl_count_width_trap.tl|129|-|-|-|opt-level:2+expected-stderr:tl: target/integration-verify/windows/shl_count_width_trap_opt2/shl_count_width_trap_opt2.tl:3:5: shift count out of range: count=64 width=32\n
+shl_neg_count_trap_opt2|tests/integration/shl_neg_count_trap.tl|129|-|-|-|opt-level:2+expected-stderr:tl: target/integration-verify/windows/shl_neg_count_trap_opt2/shl_neg_count_trap_opt2.tl:3:5: shift count out of range: count=-1 width=32\n
+shr_u64_high_count_trap_opt2|tests/integration/shr_u64_high_count_trap.tl|129|-|-|-|opt-level:2+expected-stderr:tl: target/integration-verify/windows/shr_u64_high_count_trap_opt2/shr_u64_high_count_trap_opt2.tl:3:5: shift count out of range: count=18446744073709551615 width=64\n
 shl_neg_count_trap|tests/integration/shl_neg_count_trap.tl|129|-|-|-|expected-stderr:tl: target/integration-verify/windows/shl_neg_count_trap/shl_neg_count_trap.tl:3:5: shift count out of range: count=-1 width=32\n
 shr_u64_high_count_trap|tests/integration/shr_u64_high_count_trap.tl|129|-|-|-|expected-stderr:tl: target/integration-verify/windows/shr_u64_high_count_trap/shr_u64_high_count_trap.tl:3:5: shift count out of range: count=18446744073709551615 width=64\n
 valid_scalar_shift_matrix|tests/integration/valid_scalar_shift_matrix.tl|42|-|-|-
@@ -599,6 +612,7 @@ lint_smoke|src/tests/lint_smoke.tl|42|-|-|lint_policy_core_tests.tl lint_core_te
 lint_driver_smoke|src/tests/lint_driver_smoke.tl|42|target/lint_unsafe_surface/safe.tl:3:3: unused unsafe block: body does not require unsafe context\nlint: 1 finding(s)\ntarget/lint_unsafe_surface/shadow.tl:5:3: unused unsafe block: body does not require unsafe context\nlint: 1 finding(s)\ntarget/lint_unsafe_surface/macro.tl:3:3: unused unsafe block: body does not require unsafe context\nlint: 1 finding(s)\ntarget/lint_unsafe_surface/local_value.tl:2:3: unused unsafe block: body does not require unsafe context\nlint: 1 finding(s)\ntarget/lint_unsafe_surface/callable_value.tl:4:5: unused unsafe block: body does not require unsafe context\nlint: 1 finding(s)\nlint: 0 finding(s)\ntarget/lint_unsafe_surface/macro.tl:3:3: unused unsafe block: body does not require unsafe context\nlint: 1 finding(s)\ntarget/lint_unsafe_surface/macro.tl:3:3: unused unsafe block: body does not require unsafe context\nlint: 1 finding(s)\nlint: 0 finding(s)\nlint: 0 finding(s)\nlint: 0 finding(s)\nlint: 0 finding(s)\n|-|lint_driver_core_tests.tl compiler_check_core.tl compiler_load.tl compiler_embedded_stdlib.tl compiler_typecheck.tl compiler_typecheck_api.tl compiler_typecheck_core.tl compiler_ctfe.tl compiler_float.tl compiler_specialize.tl compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl stdlib/dense_list.tl compiler_intern.tl compiler_builtin_ids.tl sym_i64_env.tl read.tl lex.tl token.tl lint_core.tl lint_policy_core.tl lint_driver_core.tl package_source_core.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/vector.tl stdlib/fs.tl stdlib/env.tl stdlib/io.tl stdlib/hash.tl stdlib/hashmap.tl stdlib/string.tl stdlib/str_cat.tl stdlib/arena.tl compiler_clone.tl tlci_core.tl|expected-stderr:target/lint_unsafe_surface/type_error.tl:3:21: typecheck: unbound name missing-value\nrelated: target/lint_unsafe_surface/type_error.tl:3:11: in expansion of macro `identity` invoked here\ntarget/lint_unsafe_surface/type_error.tl:3:21: typecheck: unbound name missing-value\nrelated: target/lint_unsafe_surface/type_error.tl:3:11: in expansion of macro `identity` invoked here\ntarget/lint_unsafe_surface/type_error.tl:3:21: typecheck: unbound name missing-value\nrelated: target/lint_unsafe_surface/type_error.tl:3:11: in expansion of macro `identity` invoked here\n
 package_cache_smoke|src/tests/package_cache_smoke.tl|42|-|-|package_cache_core.tl stdlib/fs.tl stdlib/env.tl stdlib/vector.tl stdlib/io.tl stdlib/string.tl
 git_delta_smoke|src/tests/git_delta_smoke.tl|42|-|-|git_delta_tests.tl git_delta_core.tl stdlib/byte_buf_core.tl stdlib/io.tl stdlib/string.tl
+git_object_smoke|src/tests/git_object_smoke.tl|42|-|-|git_object_tests.tl git_object_core.tl stdlib/byte_buf.tl stdlib/byte_buf_core.tl stdlib/crypto_sha1_git.tl stdlib/crypto_sha256.tl stdlib/io.tl stdlib/str_cat.tl stdlib/str_cat_runtime.tl stdlib/string.tl
 git_ssh_remote_smoke|src/tests/git_ssh_remote_smoke.tl|42|-|-|git_ssh_remote_tests.tl git_ssh_remote_core.tl stdlib/byte_buf_core.tl stdlib/io.tl stdlib/string.tl
 array_push_aggregate|tests/integration/array_push_aggregate.tl|42|-|-|-
 nested_repr_c_aggregate|tests/integration/nested_repr_c_aggregate.tl|42|-|-|-
@@ -709,21 +723,17 @@ nested_flag_loops_opt2|tests/integration/nested_flag_loops.tl|42|309\n-206\n-203
 lagged_phi_across_call|tests/integration/lagged_phi_across_call.tl|42|997\n1\n101\n|3|stdlib/io.tl stdlib/string.tl
 lagged_phi_across_call_opt0|tests/integration/lagged_phi_across_call.tl|42|997\n1\n101\n|3|stdlib/io.tl stdlib/string.tl|opt-level:0+stage-stdlib
 lagged_phi_across_call_opt2|tests/integration/lagged_phi_across_call.tl|42|997\n1\n101\n|3|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib
+masked_shift_count|tests/integration/masked_shift_count.tl|43|0 43690 1 1 3\n1 21845 131072 131072 393216\n1 21845 -9223372036854775808 2147483648 -9223372036854775808\n0 43690 1 1 3\n0 43690 1099511627776 256 3298534883328\n1 21845 2305843009213693952 536870912 6917529027641081856\n-192153584101141163 96\n|-|stdlib/io.tl
+masked_shift_count_opt0|tests/integration/masked_shift_count.tl|43|0 43690 1 1 3\n1 21845 131072 131072 393216\n1 21845 -9223372036854775808 2147483648 -9223372036854775808\n0 43690 1 1 3\n0 43690 1099511627776 256 3298534883328\n1 21845 2305843009213693952 536870912 6917529027641081856\n-192153584101141163 96\n|-|stdlib/io.tl|opt-level:0+stage-stdlib
+masked_shift_count_opt2|tests/integration/masked_shift_count.tl|43|0 43690 1 1 3\n1 21845 131072 131072 393216\n1 21845 -9223372036854775808 2147483648 -9223372036854775808\n0 43690 1 1 3\n0 43690 1099511627776 256 3298534883328\n1 21845 2305843009213693952 536870912 6917529027641081856\n-192153584101141163 96\n|-|stdlib/io.tl|opt-level:2+stage-stdlib
 
-pure_call_join_opt0|tests/integration/pure_call_join.tl|42|-|13|stdlib/io.tl stdlib/string.tl|opt-level:0+stage-stdlib
-pure_call_join_opt1|tests/integration/pure_call_join.tl|42|-|13|stdlib/io.tl stdlib/string.tl|opt-level:1+stage-stdlib
-pure_call_join_opt2|tests/integration/pure_call_join.tl|42|-|13|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib
-pure_call_join_live_opt0|tests/integration/pure_call_join_live.tl|0|9389164835730396772\n|13 64|stdlib/io.tl stdlib/string.tl|opt-level:0+stage-stdlib
-pure_call_join_live_opt1|tests/integration/pure_call_join_live.tl|0|9389164835730396772\n|13 64|stdlib/io.tl stdlib/string.tl|opt-level:1+stage-stdlib
-pure_call_join_live_opt2|tests/integration/pure_call_join_live.tl|0|9389164835730396772\n|13 64|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib
+literal_loop_call_opt0|tests/integration/literal_loop_call.tl|0|0 0 54 190 215 0 0\n|-|-|opt-level:0+stage-stdlib
+literal_loop_call_opt2|tests/integration/literal_loop_call.tl|0|0 0 54 190 215 0 0\n|-|-|opt-level:2+stage-stdlib
+guarded_loop_call_opt0|tests/integration/guarded_loop_call.tl|0|0 0 37 78957 5040933774284876412\n|-|-|opt-level:0+stage-stdlib
+guarded_loop_call_opt2|tests/integration/guarded_loop_call.tl|0|0 0 37 78957 5040933774284876412\n|-|-|opt-level:2+stage-stdlib
+invariant_call_sum_opt0|tests/integration/invariant_call_sum.tl|0|-6073119532877662048 7 9 171 192 132\n|-|-|opt-level:0+stage-stdlib
+invariant_call_sum_opt2|tests/integration/invariant_call_sum.tl|0|-6073119532877662048 7 9 171 192 132\n|-|-|opt-level:2+stage-stdlib
 
-git_object_smoke|src/tests/git_object_smoke.tl|42|-|-|git_object_tests.tl git_object_core.tl stdlib/byte_buf.tl stdlib/byte_buf_core.tl stdlib/crypto_sha1_git.tl stdlib/crypto_sha256.tl stdlib/io.tl stdlib/str_cat.tl stdlib/str_cat_runtime.tl stdlib/string.tl
-bit_length_order_opt0|tests/integration/bit_length_order.tl|0|104\n104\n|100 8|stdlib/io.tl stdlib/string.tl|opt-level:0+stage-stdlib
-bit_length_order_opt1|tests/integration/bit_length_order.tl|0|104\n104\n|100 8|stdlib/io.tl stdlib/string.tl|opt-level:1+stage-stdlib
-bit_length_order_opt2|tests/integration/bit_length_order.tl|0|104\n104\n|100 8|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib
-bit_length_order_zero|tests/integration/bit_length_order.tl|0|0\n64\n|0 -1|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib
-bit_length_order_signed_wrap|tests/integration/bit_length_order.tl|0|-9223372036854775805\n9223372036854775811\n|9223372036854775807 8|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib
-bit_length_order_unsigned_wrap|tests/integration/bit_length_order.tl|0|-1\n63\n|-1 -9223372036854775808|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib
 signed_division_flags_opt0|tests/integration/signed_division_flags.tl|42|-|-|stdlib/io.tl stdlib/string.tl|opt-level:0+stage-stdlib
 signed_division_flags_opt1|tests/integration/signed_division_flags.tl|42|-|-|stdlib/io.tl stdlib/string.tl|opt-level:1+stage-stdlib
 signed_division_flags_opt2|tests/integration/signed_division_flags.tl|42|-|-|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib
@@ -747,6 +757,129 @@ signed_div_64_overflow_opt2|tests/integration/signed_division_flags.tl|135|-|64 
 signed_div_64_zero_opt2|tests/integration/signed_division_flags.tl|135|-|64 1 0 0|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/windows/signed_div_64_zero_opt2/signed_div_64_zero_opt2.tl:10:14: integer division or remainder error: dividend=1 divisor=0\n
 signed_rem_64_overflow_opt2|tests/integration/signed_division_flags.tl|135|-|64 -9223372036854775808 -1 1|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/windows/signed_rem_64_overflow_opt2/signed_rem_64_overflow_opt2.tl:17:14: integer division or remainder error: dividend=-9223372036854775808 divisor=-1\n
 signed_rem_64_zero_opt2|tests/integration/signed_division_flags.tl|135|-|64 1 0 1|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/windows/signed_rem_64_zero_opt2/signed_rem_64_zero_opt2.tl:17:14: integer division or remainder error: dividend=1 divisor=0\n
+invariant_call_sum_opt1|tests/integration/invariant_call_sum.tl|0|-6073119532877662048 7 9 171 192 132\n|-|-|opt-level:1+stage-stdlib
+invariant_call_sum_trap_opt0|tests/integration/invariant_call_sum.tl|135|-|trap|-|opt-level:0+stage-stdlib+expected-stderr:tl: target/integration-verify/windows/invariant_call_sum_trap_opt0/invariant_call_sum_trap_opt0.tl:12:10: integer division or remainder error: dividend=44 divisor=0\n
+invariant_call_sum_trap_opt1|tests/integration/invariant_call_sum.tl|135|-|trap|-|opt-level:1+stage-stdlib+expected-stderr:tl: target/integration-verify/windows/invariant_call_sum_trap_opt1/invariant_call_sum_trap_opt1.tl:12:10: integer division or remainder error: dividend=44 divisor=0\n
+invariant_call_sum_trap_opt2|tests/integration/invariant_call_sum.tl|135|-|trap|-|opt-level:2+stage-stdlib+expected-stderr:tl: target/integration-verify/windows/invariant_call_sum_trap_opt2/invariant_call_sum_trap_opt2.tl:12:10: integer division or remainder error: dividend=44 divisor=0\n
+
+bit_length_loop|tests/integration/bit_length_loop.tl|42|0\n1\n2\n2\n3\n4\n10\n0\n0\n63\n63\n|0 1 2 3 7 8 1000 -1 -9223372036854775808 9223372036854775807 4611686018427387904|stdlib/io.tl stdlib/string.tl
+bit_length_loop_opt0|tests/integration/bit_length_loop.tl|42|0\n1\n2\n2\n3\n4\n10\n0\n0\n63\n63\n|0 1 2 3 7 8 1000 -1 -9223372036854775808 9223372036854775807 4611686018427387904|stdlib/io.tl stdlib/string.tl|opt-level:0+stage-stdlib
+bit_length_loop_opt2|tests/integration/bit_length_loop.tl|42|0\n1\n2\n2\n3\n4\n10\n0\n0\n63\n63\n|0 1 2 3 7 8 1000 -1 -9223372036854775808 9223372036854775807 4611686018427387904|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib
+bit_length_order_opt0|tests/integration/bit_length_order.tl|0|104\n104\n|100 8|stdlib/io.tl stdlib/string.tl|opt-level:0+stage-stdlib
+bit_length_order_opt1|tests/integration/bit_length_order.tl|0|104\n104\n|100 8|stdlib/io.tl stdlib/string.tl|opt-level:1+stage-stdlib
+bit_length_order_opt2|tests/integration/bit_length_order.tl|0|104\n104\n|100 8|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib
+bit_length_order_zero|tests/integration/bit_length_order.tl|0|0\n64\n|0 -1|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib
+bit_length_order_signed_wrap|tests/integration/bit_length_order.tl|0|-9223372036854775805\n9223372036854775811\n|9223372036854775807 8|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib
+bit_length_order_unsigned_wrap|tests/integration/bit_length_order.tl|0|-1\n63\n|-1 -9223372036854775808|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib
+guarded_call_div_first_opt0|tests/integration/guarded_loop_call_traps.tl|135|-|0 0|stdlib/io.tl stdlib/string.tl|opt-level:0+expected-stderr:tl: target/integration-verify/windows/guarded_call_div_first_opt0/guarded_call_div_first_opt0.tl:21:17: integer division or remainder error: dividend=60 divisor=0\n
+guarded_call_div_later_opt0|tests/integration/guarded_loop_call_traps.tl|135|-|0 3|stdlib/io.tl stdlib/string.tl|opt-level:0+expected-stderr:tl: target/integration-verify/windows/guarded_call_div_later_opt0/guarded_call_div_later_opt0.tl:21:17: integer division or remainder error: dividend=60 divisor=0\n
+guarded_call_rem_first_opt0|tests/integration/guarded_loop_call_traps.tl|135|-|1 0|stdlib/io.tl stdlib/string.tl|opt-level:0+expected-stderr:tl: target/integration-verify/windows/guarded_call_rem_first_opt0/guarded_call_rem_first_opt0.tl:31:18: integer division or remainder error: dividend=60 divisor=0\n
+guarded_call_rem_later_opt0|tests/integration/guarded_loop_call_traps.tl|135|-|1 3|stdlib/io.tl stdlib/string.tl|opt-level:0+expected-stderr:tl: target/integration-verify/windows/guarded_call_rem_later_opt0/guarded_call_rem_later_opt0.tl:31:18: integer division or remainder error: dividend=60 divisor=0\n
+guarded_call_shl_first_opt0|tests/integration/guarded_loop_call_traps.tl|129|-|2 -1|stdlib/io.tl stdlib/string.tl|opt-level:0+expected-stderr:tl: target/integration-verify/windows/guarded_call_shl_first_opt0/guarded_call_shl_first_opt0.tl:41:17: shift count out of range: count=-1 width=64\n
+guarded_call_shl_later_opt0|tests/integration/guarded_loop_call_traps.tl|129|-|2 3|stdlib/io.tl stdlib/string.tl|opt-level:0+expected-stderr:tl: target/integration-verify/windows/guarded_call_shl_later_opt0/guarded_call_shl_later_opt0.tl:41:17: shift count out of range: count=-1 width=64\n
+guarded_call_shr_first_opt0|tests/integration/guarded_loop_call_traps.tl|129|-|3 -1|stdlib/io.tl stdlib/string.tl|opt-level:0+expected-stderr:tl: target/integration-verify/windows/guarded_call_shr_first_opt0/guarded_call_shr_first_opt0.tl:51:18: shift count out of range: count=-1 width=64\n
+guarded_call_shr_later_opt0|tests/integration/guarded_loop_call_traps.tl|129|-|3 3|stdlib/io.tl stdlib/string.tl|opt-level:0+expected-stderr:tl: target/integration-verify/windows/guarded_call_shr_later_opt0/guarded_call_shr_later_opt0.tl:51:18: shift count out of range: count=-1 width=64\n
+guarded_call_div_first_opt1|tests/integration/guarded_loop_call_traps.tl|135|-|0 0|stdlib/io.tl stdlib/string.tl|opt-level:1+expected-stderr:tl: target/integration-verify/windows/guarded_call_div_first_opt1/guarded_call_div_first_opt1.tl:21:17: integer division or remainder error: dividend=60 divisor=0\n
+guarded_call_div_later_opt1|tests/integration/guarded_loop_call_traps.tl|135|-|0 3|stdlib/io.tl stdlib/string.tl|opt-level:1+expected-stderr:tl: target/integration-verify/windows/guarded_call_div_later_opt1/guarded_call_div_later_opt1.tl:21:17: integer division or remainder error: dividend=60 divisor=0\n
+guarded_call_rem_first_opt1|tests/integration/guarded_loop_call_traps.tl|135|-|1 0|stdlib/io.tl stdlib/string.tl|opt-level:1+expected-stderr:tl: target/integration-verify/windows/guarded_call_rem_first_opt1/guarded_call_rem_first_opt1.tl:31:18: integer division or remainder error: dividend=60 divisor=0\n
+guarded_call_rem_later_opt1|tests/integration/guarded_loop_call_traps.tl|135|-|1 3|stdlib/io.tl stdlib/string.tl|opt-level:1+expected-stderr:tl: target/integration-verify/windows/guarded_call_rem_later_opt1/guarded_call_rem_later_opt1.tl:31:18: integer division or remainder error: dividend=60 divisor=0\n
+guarded_call_shl_first_opt1|tests/integration/guarded_loop_call_traps.tl|129|-|2 -1|stdlib/io.tl stdlib/string.tl|opt-level:1+expected-stderr:tl: target/integration-verify/windows/guarded_call_shl_first_opt1/guarded_call_shl_first_opt1.tl:41:17: shift count out of range: count=-1 width=64\n
+guarded_call_shl_later_opt1|tests/integration/guarded_loop_call_traps.tl|129|-|2 3|stdlib/io.tl stdlib/string.tl|opt-level:1+expected-stderr:tl: target/integration-verify/windows/guarded_call_shl_later_opt1/guarded_call_shl_later_opt1.tl:41:17: shift count out of range: count=-1 width=64\n
+guarded_call_shr_first_opt1|tests/integration/guarded_loop_call_traps.tl|129|-|3 -1|stdlib/io.tl stdlib/string.tl|opt-level:1+expected-stderr:tl: target/integration-verify/windows/guarded_call_shr_first_opt1/guarded_call_shr_first_opt1.tl:51:18: shift count out of range: count=-1 width=64\n
+guarded_call_shr_later_opt1|tests/integration/guarded_loop_call_traps.tl|129|-|3 3|stdlib/io.tl stdlib/string.tl|opt-level:1+expected-stderr:tl: target/integration-verify/windows/guarded_call_shr_later_opt1/guarded_call_shr_later_opt1.tl:51:18: shift count out of range: count=-1 width=64\n
+guarded_call_div_first_opt2|tests/integration/guarded_loop_call_traps.tl|135|-|0 0|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/windows/guarded_call_div_first_opt2/guarded_call_div_first_opt2.tl:21:17: integer division or remainder error: dividend=60 divisor=0\n
+guarded_call_div_later_opt2|tests/integration/guarded_loop_call_traps.tl|135|-|0 3|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/windows/guarded_call_div_later_opt2/guarded_call_div_later_opt2.tl:21:17: integer division or remainder error: dividend=60 divisor=0\n
+guarded_call_rem_first_opt2|tests/integration/guarded_loop_call_traps.tl|135|-|1 0|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/windows/guarded_call_rem_first_opt2/guarded_call_rem_first_opt2.tl:31:18: integer division or remainder error: dividend=60 divisor=0\n
+guarded_call_rem_later_opt2|tests/integration/guarded_loop_call_traps.tl|135|-|1 3|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/windows/guarded_call_rem_later_opt2/guarded_call_rem_later_opt2.tl:31:18: integer division or remainder error: dividend=60 divisor=0\n
+guarded_call_shl_first_opt2|tests/integration/guarded_loop_call_traps.tl|129|-|2 -1|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/windows/guarded_call_shl_first_opt2/guarded_call_shl_first_opt2.tl:41:17: shift count out of range: count=-1 width=64\n
+guarded_call_shl_later_opt2|tests/integration/guarded_loop_call_traps.tl|129|-|2 3|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/windows/guarded_call_shl_later_opt2/guarded_call_shl_later_opt2.tl:41:17: shift count out of range: count=-1 width=64\n
+guarded_call_shr_first_opt2|tests/integration/guarded_loop_call_traps.tl|129|-|3 -1|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/windows/guarded_call_shr_first_opt2/guarded_call_shr_first_opt2.tl:51:18: shift count out of range: count=-1 width=64\n
+guarded_call_shr_later_opt2|tests/integration/guarded_loop_call_traps.tl|129|-|3 3|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/windows/guarded_call_shr_later_opt2/guarded_call_shr_later_opt2.tl:51:18: shift count out of range: count=-1 width=64\n
+replayed_loop_call_prefix_opt0|tests/integration/replayed_loop_call_prefix.tl|0|17596912462254008154\n|-|-|opt-level:0+stage-stdlib
+replayed_loop_call_prefix_opt1|tests/integration/replayed_loop_call_prefix.tl|0|17596912462254008154\n|-|-|opt-level:1+stage-stdlib
+replayed_loop_call_prefix_opt2|tests/integration/replayed_loop_call_prefix.tl|0|17596912462254008154\n|-|-|opt-level:2+stage-stdlib
+replayed_prefix_div_first_opt0|tests/integration/replayed_loop_call_prefix_traps.tl|135|-|0 0|stdlib/io.tl stdlib/string.tl|opt-level:0+expected-stderr:tl: target/integration-verify/windows/replayed_prefix_div_first_opt0/replayed_prefix_div_first_opt0.tl:22:26: integer division or remainder error: dividend=60 divisor=0\n
+replayed_prefix_div_later_opt0|tests/integration/replayed_loop_call_prefix_traps.tl|135|-|0 3|stdlib/io.tl stdlib/string.tl|opt-level:0+expected-stderr:tl: target/integration-verify/windows/replayed_prefix_div_later_opt0/replayed_prefix_div_later_opt0.tl:22:26: integer division or remainder error: dividend=60 divisor=0\n
+replayed_prefix_rem_first_opt0|tests/integration/replayed_loop_call_prefix_traps.tl|135|-|1 0|stdlib/io.tl stdlib/string.tl|opt-level:0+expected-stderr:tl: target/integration-verify/windows/replayed_prefix_rem_first_opt0/replayed_prefix_rem_first_opt0.tl:32:26: integer division or remainder error: dividend=60 divisor=0\n
+replayed_prefix_rem_later_opt0|tests/integration/replayed_loop_call_prefix_traps.tl|135|-|1 3|stdlib/io.tl stdlib/string.tl|opt-level:0+expected-stderr:tl: target/integration-verify/windows/replayed_prefix_rem_later_opt0/replayed_prefix_rem_later_opt0.tl:32:26: integer division or remainder error: dividend=60 divisor=0\n
+replayed_prefix_shl_first_opt0|tests/integration/replayed_loop_call_prefix_traps.tl|129|-|2 -1|stdlib/io.tl stdlib/string.tl|opt-level:0+expected-stderr:tl: target/integration-verify/windows/replayed_prefix_shl_first_opt0/replayed_prefix_shl_first_opt0.tl:42:26: shift count out of range: count=-1 width=64\n
+replayed_prefix_shl_later_opt0|tests/integration/replayed_loop_call_prefix_traps.tl|129|-|2 3|stdlib/io.tl stdlib/string.tl|opt-level:0+expected-stderr:tl: target/integration-verify/windows/replayed_prefix_shl_later_opt0/replayed_prefix_shl_later_opt0.tl:42:26: shift count out of range: count=-1 width=64\n
+replayed_prefix_shr_first_opt0|tests/integration/replayed_loop_call_prefix_traps.tl|129|-|3 -1|stdlib/io.tl stdlib/string.tl|opt-level:0+expected-stderr:tl: target/integration-verify/windows/replayed_prefix_shr_first_opt0/replayed_prefix_shr_first_opt0.tl:52:26: shift count out of range: count=-1 width=64\n
+replayed_prefix_shr_later_opt0|tests/integration/replayed_loop_call_prefix_traps.tl|129|-|3 3|stdlib/io.tl stdlib/string.tl|opt-level:0+expected-stderr:tl: target/integration-verify/windows/replayed_prefix_shr_later_opt0/replayed_prefix_shr_later_opt0.tl:52:26: shift count out of range: count=-1 width=64\n
+replayed_prefix_div_first_opt1|tests/integration/replayed_loop_call_prefix_traps.tl|135|-|0 0|stdlib/io.tl stdlib/string.tl|opt-level:1+expected-stderr:tl: target/integration-verify/windows/replayed_prefix_div_first_opt1/replayed_prefix_div_first_opt1.tl:22:26: integer division or remainder error: dividend=60 divisor=0\n
+replayed_prefix_div_later_opt1|tests/integration/replayed_loop_call_prefix_traps.tl|135|-|0 3|stdlib/io.tl stdlib/string.tl|opt-level:1+expected-stderr:tl: target/integration-verify/windows/replayed_prefix_div_later_opt1/replayed_prefix_div_later_opt1.tl:22:26: integer division or remainder error: dividend=60 divisor=0\n
+replayed_prefix_rem_first_opt1|tests/integration/replayed_loop_call_prefix_traps.tl|135|-|1 0|stdlib/io.tl stdlib/string.tl|opt-level:1+expected-stderr:tl: target/integration-verify/windows/replayed_prefix_rem_first_opt1/replayed_prefix_rem_first_opt1.tl:32:26: integer division or remainder error: dividend=60 divisor=0\n
+replayed_prefix_rem_later_opt1|tests/integration/replayed_loop_call_prefix_traps.tl|135|-|1 3|stdlib/io.tl stdlib/string.tl|opt-level:1+expected-stderr:tl: target/integration-verify/windows/replayed_prefix_rem_later_opt1/replayed_prefix_rem_later_opt1.tl:32:26: integer division or remainder error: dividend=60 divisor=0\n
+replayed_prefix_shl_first_opt1|tests/integration/replayed_loop_call_prefix_traps.tl|129|-|2 -1|stdlib/io.tl stdlib/string.tl|opt-level:1+expected-stderr:tl: target/integration-verify/windows/replayed_prefix_shl_first_opt1/replayed_prefix_shl_first_opt1.tl:42:26: shift count out of range: count=-1 width=64\n
+replayed_prefix_shl_later_opt1|tests/integration/replayed_loop_call_prefix_traps.tl|129|-|2 3|stdlib/io.tl stdlib/string.tl|opt-level:1+expected-stderr:tl: target/integration-verify/windows/replayed_prefix_shl_later_opt1/replayed_prefix_shl_later_opt1.tl:42:26: shift count out of range: count=-1 width=64\n
+replayed_prefix_shr_first_opt1|tests/integration/replayed_loop_call_prefix_traps.tl|129|-|3 -1|stdlib/io.tl stdlib/string.tl|opt-level:1+expected-stderr:tl: target/integration-verify/windows/replayed_prefix_shr_first_opt1/replayed_prefix_shr_first_opt1.tl:52:26: shift count out of range: count=-1 width=64\n
+replayed_prefix_shr_later_opt1|tests/integration/replayed_loop_call_prefix_traps.tl|129|-|3 3|stdlib/io.tl stdlib/string.tl|opt-level:1+expected-stderr:tl: target/integration-verify/windows/replayed_prefix_shr_later_opt1/replayed_prefix_shr_later_opt1.tl:52:26: shift count out of range: count=-1 width=64\n
+replayed_prefix_div_first_opt2|tests/integration/replayed_loop_call_prefix_traps.tl|135|-|0 0|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/windows/replayed_prefix_div_first_opt2/replayed_prefix_div_first_opt2.tl:22:26: integer division or remainder error: dividend=60 divisor=0\n
+replayed_prefix_div_later_opt2|tests/integration/replayed_loop_call_prefix_traps.tl|135|-|0 3|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/windows/replayed_prefix_div_later_opt2/replayed_prefix_div_later_opt2.tl:22:26: integer division or remainder error: dividend=60 divisor=0\n
+replayed_prefix_rem_first_opt2|tests/integration/replayed_loop_call_prefix_traps.tl|135|-|1 0|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/windows/replayed_prefix_rem_first_opt2/replayed_prefix_rem_first_opt2.tl:32:26: integer division or remainder error: dividend=60 divisor=0\n
+replayed_prefix_rem_later_opt2|tests/integration/replayed_loop_call_prefix_traps.tl|135|-|1 3|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/windows/replayed_prefix_rem_later_opt2/replayed_prefix_rem_later_opt2.tl:32:26: integer division or remainder error: dividend=60 divisor=0\n
+replayed_prefix_shl_first_opt2|tests/integration/replayed_loop_call_prefix_traps.tl|129|-|2 -1|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/windows/replayed_prefix_shl_first_opt2/replayed_prefix_shl_first_opt2.tl:42:26: shift count out of range: count=-1 width=64\n
+replayed_prefix_shl_later_opt2|tests/integration/replayed_loop_call_prefix_traps.tl|129|-|2 3|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/windows/replayed_prefix_shl_later_opt2/replayed_prefix_shl_later_opt2.tl:42:26: shift count out of range: count=-1 width=64\n
+replayed_prefix_shr_first_opt2|tests/integration/replayed_loop_call_prefix_traps.tl|129|-|3 -1|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/windows/replayed_prefix_shr_first_opt2/replayed_prefix_shr_first_opt2.tl:52:26: shift count out of range: count=-1 width=64\n
+replayed_prefix_shr_later_opt2|tests/integration/replayed_loop_call_prefix_traps.tl|129|-|3 3|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/windows/replayed_prefix_shr_later_opt2/replayed_prefix_shr_later_opt2.tl:52:26: shift count out of range: count=-1 width=64\n
+
+pure_call_join_opt0|tests/integration/pure_call_join.tl|42|-|13|stdlib/io.tl stdlib/string.tl|opt-level:0+stage-stdlib
+pure_call_join_opt1|tests/integration/pure_call_join.tl|42|-|13|stdlib/io.tl stdlib/string.tl|opt-level:1+stage-stdlib
+pure_call_join_opt2|tests/integration/pure_call_join.tl|42|-|13|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib
+pure_call_join_live_opt0|tests/integration/pure_call_join_live.tl|0|9389164835730396772\n|13 64|stdlib/io.tl stdlib/string.tl|opt-level:0+stage-stdlib
+pure_call_join_live_opt1|tests/integration/pure_call_join_live.tl|0|9389164835730396772\n|13 64|stdlib/io.tl stdlib/string.tl|opt-level:1+stage-stdlib
+pure_call_join_live_opt2|tests/integration/pure_call_join_live.tl|0|9389164835730396772\n|13 64|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib
 wide_power_multiply_o0|tests/integration/wide_power_multiply.tl|42|-|-|-|opt-level:0+stage-stdlib
 wide_power_multiply_o1|tests/integration/wide_power_multiply.tl|42|-|-|-|opt-level:1+stage-stdlib
 wide_power_multiply_o2|tests/integration/wide_power_multiply.tl|42|-|-|-|opt-level:2+stage-stdlib
+mul_near_power_zero_o0|tests/integration/mul_near_power.tl|0|4145518161272886947 1737046605924864488\n|0|-|opt-level:0+stage-stdlib
+mul_near_power_one_o0|tests/integration/mul_near_power.tl|0|735075253528713822 14309744142121583456\n|1|-|opt-level:0+stage-stdlib
+mul_near_power_negative_o0|tests/integration/mul_near_power.tl|0|6665283474596016352 7019787720678018336\n|-1|-|opt-level:0+stage-stdlib
+mul_near_power_max_o0|tests/integration/mul_near_power.tl|0|15888655511450792160 7019787720678018336\n|9223372036854775807|-|opt-level:0+stage-stdlib
+mul_near_power_min_o0|tests/integration/mul_near_power.tl|0|13368890198127662755 1737046605924864488\n|-9223372036854775808|-|opt-level:0+stage-stdlib
+mul_near_power_zero_o1|tests/integration/mul_near_power.tl|0|4145518161272886947 1737046605924864488\n|0|-|opt-level:1+stage-stdlib
+mul_near_power_one_o1|tests/integration/mul_near_power.tl|0|735075253528713822 14309744142121583456\n|1|-|opt-level:1+stage-stdlib
+mul_near_power_negative_o1|tests/integration/mul_near_power.tl|0|6665283474596016352 7019787720678018336\n|-1|-|opt-level:1+stage-stdlib
+mul_near_power_max_o1|tests/integration/mul_near_power.tl|0|15888655511450792160 7019787720678018336\n|9223372036854775807|-|opt-level:1+stage-stdlib
+mul_near_power_min_o1|tests/integration/mul_near_power.tl|0|13368890198127662755 1737046605924864488\n|-9223372036854775808|-|opt-level:1+stage-stdlib
+mul_near_power_zero_o2|tests/integration/mul_near_power.tl|0|4145518161272886947 1737046605924864488\n|0|-|opt-level:2+stage-stdlib
+mul_near_power_one_o2|tests/integration/mul_near_power.tl|0|735075253528713822 14309744142121583456\n|1|-|opt-level:2+stage-stdlib
+mul_near_power_negative_o2|tests/integration/mul_near_power.tl|0|6665283474596016352 7019787720678018336\n|-1|-|opt-level:2+stage-stdlib
+mul_near_power_max_o2|tests/integration/mul_near_power.tl|0|15888655511450792160 7019787720678018336\n|9223372036854775807|-|opt-level:2+stage-stdlib
+mul_near_power_min_o2|tests/integration/mul_near_power.tl|0|13368890198127662755 1737046605924864488\n|-9223372036854775808|-|opt-level:2+stage-stdlib
+
+factored_addresses_opt0|tests/integration/factored_addresses.tl|0|257269108\n|-|-|opt-level:0+stage-stdlib
+factored_addresses_opt1|tests/integration/factored_addresses.tl|0|257269108\n|-|-|opt-level:1+stage-stdlib
+factored_addresses_opt2|tests/integration/factored_addresses.tl|0|257269108\n|-|-|opt-level:2+stage-stdlib
+inline_alloc_alias_opt0|tests/integration/inline_alloc_alias.tl|42|-|-|-|opt-level:0+stage-stdlib
+inline_alloc_alias_opt1|tests/integration/inline_alloc_alias.tl|42|-|-|-|opt-level:1+stage-stdlib
+inline_alloc_alias_opt2|tests/integration/inline_alloc_alias.tl|42|-|-|-|opt-level:2+stage-stdlib
+memcpy_short_runtime_opt0|tests/integration/memcpy_short_runtime.tl|42|-|-|stdlib/runtime.tl|opt-level:0+stage-stdlib
+memcpy_short_runtime_opt1|tests/integration/memcpy_short_runtime.tl|42|-|-|stdlib/runtime.tl|opt-level:1+stage-stdlib
+memcpy_short_runtime_opt2|tests/integration/memcpy_short_runtime.tl|42|-|-|stdlib/runtime.tl|opt-level:2+stage-stdlib
+
+runtime_leaf_aliases_opt0|tests/integration/runtime_leaf_aliases.tl|42|-|-|-|opt-level:0+stage-stdlib
+runtime_leaf_aliases_opt1|tests/integration/runtime_leaf_aliases.tl|42|-|-|-|opt-level:1+stage-stdlib
+runtime_leaf_aliases_opt2|tests/integration/runtime_leaf_aliases.tl|42|-|-|-|opt-level:2+stage-stdlib
+
+replayed_loop_call_lagged_neg3_opt0|tests/integration/replayed_loop_call_lagged.tl|0|r=0 d=0\n|-3|stdlib/io.tl stdlib/string.tl|opt-level:0+stage-stdlib
+replayed_loop_call_lagged_neg3_opt1|tests/integration/replayed_loop_call_lagged.tl|0|r=0 d=0\n|-3|stdlib/io.tl stdlib/string.tl|opt-level:1+stage-stdlib
+replayed_loop_call_lagged_neg3_opt2|tests/integration/replayed_loop_call_lagged.tl|0|r=0 d=0\n|-3|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib
+replayed_loop_call_lagged_0_opt0|tests/integration/replayed_loop_call_lagged.tl|0|r=0 d=0\n|0|stdlib/io.tl stdlib/string.tl|opt-level:0+stage-stdlib
+replayed_loop_call_lagged_0_opt1|tests/integration/replayed_loop_call_lagged.tl|0|r=0 d=0\n|0|stdlib/io.tl stdlib/string.tl|opt-level:1+stage-stdlib
+replayed_loop_call_lagged_0_opt2|tests/integration/replayed_loop_call_lagged.tl|0|r=0 d=0\n|0|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib
+replayed_loop_call_lagged_1_opt0|tests/integration/replayed_loop_call_lagged.tl|0|r=100 d=-1\n|1|stdlib/io.tl stdlib/string.tl|opt-level:0+stage-stdlib
+replayed_loop_call_lagged_1_opt1|tests/integration/replayed_loop_call_lagged.tl|0|r=100 d=-1\n|1|stdlib/io.tl stdlib/string.tl|opt-level:1+stage-stdlib
+replayed_loop_call_lagged_1_opt2|tests/integration/replayed_loop_call_lagged.tl|0|r=100 d=-1\n|1|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib
+replayed_loop_call_lagged_2_opt0|tests/integration/replayed_loop_call_lagged.tl|0|r=0 d=-2\n|2|stdlib/io.tl stdlib/string.tl|opt-level:0+stage-stdlib
+replayed_loop_call_lagged_2_opt1|tests/integration/replayed_loop_call_lagged.tl|0|r=0 d=-2\n|2|stdlib/io.tl stdlib/string.tl|opt-level:1+stage-stdlib
+replayed_loop_call_lagged_2_opt2|tests/integration/replayed_loop_call_lagged.tl|0|r=0 d=-2\n|2|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib
+replayed_loop_call_lagged_3_opt0|tests/integration/replayed_loop_call_lagged.tl|0|r=1 d=-3\n|3|stdlib/io.tl stdlib/string.tl|opt-level:0+stage-stdlib
+replayed_loop_call_lagged_3_opt1|tests/integration/replayed_loop_call_lagged.tl|0|r=1 d=-3\n|3|stdlib/io.tl stdlib/string.tl|opt-level:1+stage-stdlib
+replayed_loop_call_lagged_3_opt2|tests/integration/replayed_loop_call_lagged.tl|0|r=1 d=-3\n|3|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib
+replayed_loop_call_lagged_10_opt0|tests/integration/replayed_loop_call_lagged.tl|0|r=8 d=-10\n|10|stdlib/io.tl stdlib/string.tl|opt-level:0+stage-stdlib
+replayed_loop_call_lagged_10_opt1|tests/integration/replayed_loop_call_lagged.tl|0|r=8 d=-10\n|10|stdlib/io.tl stdlib/string.tl|opt-level:1+stage-stdlib
+replayed_loop_call_lagged_10_opt2|tests/integration/replayed_loop_call_lagged.tl|0|r=8 d=-10\n|10|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib
+replayed_loop_call_lagged_65_opt0|tests/integration/replayed_loop_call_lagged.tl|0|r=63 d=-65\n|65|stdlib/io.tl stdlib/string.tl|opt-level:0+stage-stdlib
+replayed_loop_call_lagged_65_opt1|tests/integration/replayed_loop_call_lagged.tl|0|r=63 d=-65\n|65|stdlib/io.tl stdlib/string.tl|opt-level:1+stage-stdlib
+replayed_loop_call_lagged_65_opt2|tests/integration/replayed_loop_call_lagged.tl|0|r=63 d=-65\n|65|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib

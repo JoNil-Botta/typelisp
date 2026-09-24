@@ -63,3 +63,4 @@ instruction-heavy	spmd_short_tail
 instruction-heavy	spmd_zip
 instruction-heavy	string_scan
 instruction-main	pure_call_join
+instruction-main	loop_call_literal

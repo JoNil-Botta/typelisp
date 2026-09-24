@@ -12,7 +12,13 @@
   (tlci-macro-entry bool)
   (write-exit bool)
   (startup-profile bool)
-  (backtrace bool))
+  (backtrace bool)
+  (leaf-mask i64))
+
+(define (compiler-backend-runtime-features-leaf?
+  [features : (& features CompilerBackendRuntimeFeatures)]
+  [bit : i64]) : bool
+  (!= (bit-and features.leaf-mask bit) 0))
 
 (define (compiler-backend-runtime-features-alloc?
   [features : (& features CompilerBackendRuntimeFeatures)]) : bool

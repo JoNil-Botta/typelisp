@@ -2370,7 +2370,14 @@ check_hashmap_slot_value_update() {
             _tl_hashmap_slot_update_shape_stdlib_hashmap_generated_String_i64_set_occupied_value_bang)
 
         # The scalar and general slots retain their 24- and 32-byte layouts.
-        assert_contains "$_scalar" 'imulq $24' "hashmap-scalar-slot-stride-$_target"
+        # The scalar stride is materialized as two LEAs (#8062): index*3, then
+        # base + that*8, which is exactly 24 bytes per slot.
+        assert_regex_count_eq "$_scalar" \
+            '^[[:space:]]+leaq \(%r[a-z0-9]+,%r[a-z0-9]+,2\), %r[a-z0-9]+$' 1 \
+            "hashmap-scalar-slot-stride-times3-$_target"
+        assert_regex_count_eq "$_scalar" \
+            '^[[:space:]]+leaq \(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$' 1 \
+            "hashmap-scalar-slot-stride-times8-$_target"
         assert_contains "$_general" 'shlq $5' "hashmap-general-slot-stride-$_target"
 
         # Both paths guard on Occupied at state offset 0 and perform exactly one

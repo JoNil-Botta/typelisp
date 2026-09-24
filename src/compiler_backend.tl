@@ -2612,8 +2612,14 @@
 ;; block: doing so would step over the spliced prologue.
 (define compiler-backend-function-i64-swb-saving-label : i64
   21)
-(define compiler-backend-function-i64-count : i64
+
+;; The bound of the shift count of the IR instruction being emitted, plus one:
+;; 0 when that instruction is not a shift or its count is not bounded (see
+;; compiler-backend-shift-count-bounds). Read by compiler-backend-shift-guard-asm.
+(define compiler-backend-function-i64-shift-count-bound : i64
   22)
+(define compiler-backend-function-i64-count : i64
+  23)
 (define compiler-backend-function-bool-current-fn-win64 : i64
   0)
 (define compiler-backend-function-bool-addr-of-forwarding-enabled : i64
@@ -2725,8 +2731,12 @@
 ;; prologue stays at entry.
 (define compiler-backend-function-i64-array-swb-bare-labels : i64
   7)
-(define compiler-backend-function-i64-array-count : i64
+
+;; Per var: the bound compiler-backend-shift-count-bounds proved, plus one.
+(define compiler-backend-function-i64-array-shift-count-bounds : i64
   8)
+(define compiler-backend-function-i64-array-count : i64
+  9)
 (define compiler-backend-function-live-set-group-vars : i64
   0)
 (define compiler-backend-function-live-set-addressable-group-vars : i64
@@ -3220,6 +3230,11 @@
         (array-ref i64-arrays compiler-backend-function-i64-array-jump-forward)
         empty-i64-array)
       (set!
+        (array-ref
+          i64-arrays
+          compiler-backend-function-i64-array-shift-count-bounds)
+        empty-i64-array)
+      (set!
         (array-ref live-sets compiler-backend-function-live-set-group-vars)
         empty-live-set)
       (set!
@@ -3653,6 +3668,11 @@
         (array-ref
           data.i64-arrays
           compiler-backend-function-i64-array-jump-forward)
+        data.empty-i64-array)
+      (set!
+        (array-ref
+          data.i64-arrays
+          compiler-backend-function-i64-array-shift-count-bounds)
         data.empty-i64-array)
       (set! (array-ref data.assignment-indexes 0) data.empty-assignment-index)
       (set!
@@ -28689,7 +28709,191 @@
             count
             (compiler-backend-shift-count-width type-segment-bases lhs-ty)))])))
 
+;; Shift counts proven in range. `(shr x (bit-and n 63))` is the idiom for a
+;; bit position, and its count can only be 0..63: a `bit_and` with a literal
+;; `c >= 0` keeps no bit `c` lacks, so the result lies in [0, c]. A shift whose
+;; count var is that bounded, below the shifted width, can neither abort, so its
+;; guard is unreachable.
+;;
+;; The table is read off the blocks being EMITTED (after coloring, where one var
+;; id may name several values), per var id: the largest `c` over its
+;; definitions, plus one, when EVERY definition is such a `bit_and`; -1 when any
+;; is not, when a parameter binds it, or when an `addr_of` takes its address (a
+;; store through the address redefines it with no instruction naming it); 0 when
+;; nothing defines it.
+(define (compiler-backend-bit-and-literal-bound
+  [lhs : compiler_ir_types.CompilerIrValue]
+  [rhs : compiler_ir_types.CompilerIrValue]) : i64
+  (match rhs
+    [(compiler_ir_types.CompilerIrValue.I64 c) c]
+    [_
+      (match lhs
+        [(compiler_ir_types.CompilerIrValue.I64 c) c]
+        [_ -1])]))
+
+(define (compiler-backend-shift-count-bounds-note!
+  [bounds : (__tl_dyn-array i64)]
+  [var : i64]
+  [bound : i64]) : unit
+  (if (or (< var 0) (>= var (array-length bounds)))
+    unit
+    (let
+      [current : i64 (array-ref bounds var)]
+      (cond
+        [(< current 0) unit]
+        [(or (< bound 0) (>= bound 2147483647))
+          (set! (array-ref bounds var) -1)]
+        [(> (+ bound 1) current) (set! (array-ref bounds var) (+ bound 1))]
+        [else unit]))))
+
+(define (compiler-backend-shift-count-bounds-instr-seq!
+  [bounds : (__tl_dyn-array i64)]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]) : unit
+  (let
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (match (compiler-backend-global-array-element-shared-view slots index)
+          [(compiler_ir_types.CompilerIrInstr.BinOp
+              dst
+              (compiler_ir_types.CompilerIrBinOp.BitAnd)
+              lhs
+              rhs
+              _)
+            (compiler-backend-shift-count-bounds-note!
+              (compiler-backend-global-shared-view bounds)
+              dst
+              (compiler-backend-bit-and-literal-bound
+                (compiler-backend-global-shared-view lhs)
+                (compiler-backend-global-shared-view rhs)))]
+          [(compiler_ir_types.CompilerIrInstr.AddrOf dst src)
+            (begin
+              (compiler-backend-shift-count-bounds-note!
+                (compiler-backend-global-shared-view bounds)
+                dst
+                -1)
+              (compiler-backend-shift-count-bounds-note!
+                (compiler-backend-global-shared-view bounds)
+                src
+                -1))]
+          [_
+            (compiler-backend-shift-count-bounds-note!
+              (compiler-backend-global-shared-view bounds)
+              (compiler_liveness.compiler-live-instr-def-var
+                (compiler-backend-global-array-element-shared-view slots index))
+              -1)])
+        (set! index (+ index 1))))))
+
+(define (compiler-backend-shift-count-bounds
+  [vars : i64]
+  [params : compiler_ir_types.CompilerIrParamSeq]
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : (__tl_dyn-array i64)
+  (let
+    [bounds : (__tl_dyn-array i64)
+      (__tl_make-array
+        i64
+        (if (< vars 0)
+          0
+          vars))]
+    [position : i64 0]
+    [seq : compiler_ir_types.CompilerIrBlockSeq
+      (compiler_liveness.compiler-live-ir-block-list-to-seq
+        (compiler-backend-global-shared-view blocks))]
+    [block-count : i64
+      (compiler_ir_types.compiler-ir-block-seq-count
+        (compiler-backend-global-shared-view seq))]
+    [b : i64 0]
+    (begin
+      (while (< position params.len)
+        (begin
+          (match (compiler_ir_types.compiler-ir-param-seq-ref
+            (compiler-backend-global-shared-view params)
+            position)
+            [(compiler_ir_types.CompilerIrParam.Param _ _ id)
+              (compiler-backend-shift-count-bounds-note!
+                (compiler-backend-global-shared-view bounds)
+                id
+                -1)])
+          (set! position (+ position 1))))
+      (while (< b block-count)
+        (begin
+          (match (compiler_ir_types.compiler-ir-block-seq-ref
+            (compiler-backend-global-shared-view seq)
+            b)
+            [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+              (compiler-backend-shift-count-bounds-instr-seq!
+                (compiler-backend-global-shared-view bounds)
+                instrs)])
+          (set! b (+ b 1))))
+      bounds)))
+
+;; The bound (plus one) of `instr`'s shift count, or 0: only a scalar shift whose
+;; count is a var the table bounds has one.
+(define (compiler-backend-instr-shift-count-bound
+  [function-state : CompilerBackendFunctionState]
+  [instr : compiler_ir_types.CompilerIrInstr]) : i64
+  (match instr
+    [(compiler_ir_types.CompilerIrInstr.BinOp
+        _
+        op
+        _
+        (compiler_ir_types.CompilerIrValue.Var count)
+        _)
+      (if (compiler-backend-binop-shift-op?
+        (compiler-backend-global-shared-view op))
+        (let
+          [bounds : (__tl_dyn-array i64)
+            (compiler-backend-function-state-i64-array
+              (compiler-backend-global-shared-view function-state)
+              compiler-backend-function-i64-array-shift-count-bounds)]
+          (if (or (< count 0) (>= count (array-length bounds)))
+            0
+            (let
+              [bound : i64 (array-ref bounds count)]
+              (if (> bound 0)
+                bound
+                0))))
+        0)]
+    [_ 0]))
+
+(define (compiler-backend-set-shift-count-bound!
+  [function-state : CompilerBackendFunctionState]
+  [bound : i64]) : unit
+  (compiler-backend-function-state-set-i64!
+    function-state
+    compiler-backend-function-i64-shift-count-bound
+    bound))
+
 (define (compiler-backend-shift-guard-asm
+  [type-segment-bases : i64]
+  [lhs-ty : compiler_ast_types.AstType]
+  [count-ty : compiler_ast_types.AstType]
+  [count-reg : String]
+  [backend-state : CompilerBackendState]) : String
+  (let
+    [bound : i64
+      (compiler-backend-function-state-i64
+        (compiler-backend-state-function-state backend-state)
+        compiler-backend-function-i64-shift-count-bound)]
+    (if (and
+      (> bound 0)
+      (<
+        (- bound 1)
+        (compiler-backend-shift-count-width
+          type-segment-bases
+          (compiler-backend-global-shared-view lhs-ty))))
+      ;; The count is proven in [0, width): neither abort is reachable.
+      ""
+      (compiler-backend-shift-guard-asm-checked
+        type-segment-bases
+        lhs-ty
+        count-ty
+        count-reg
+        backend-state))))
+
+(define (compiler-backend-shift-guard-asm-checked
   [type-segment-bases : i64]
   [lhs-ty : compiler_ast_types.AstType]
   [count-ty : compiler_ast_types.AstType]
@@ -52720,7 +52924,16 @@
     (cond
       [(and
           (> fast-alloc-size 0)
-          (cbi.compiler-builtin-backend-tl-alloc-id? name)
+          ;; An extern alias with a pointer result uses the same register ABI.
+          ;; Its resolved symbol and the runtime plan below must still prove
+          ;; that this is our allocator, including its shared-arena slow path.
+          ;; Scratch planning already reserves both GP roles for every direct
+          ;; one-literal call of this size, independently of the callee name.
+          (or
+            (cbi.compiler-builtin-backend-tl-alloc-id? name)
+            (match (compiler-backend-global-shared-view ty)
+              [(compiler_ast_types.AstType.MutPtr _) true]
+              [_ false]))
           (compiler-backend-plan-provides-id?
             (compiler-backend-global-shared-view plan)
             cbi.compiler-builtin-id-tl-alloc)
@@ -55639,7 +55852,36 @@
             [(CompilerBackendSwitchValidation.Err message)
               (CompilerBackendSwitchValidation.Err message)]))])))
 
+;; Every instruction emitted through here guards its shift against its OWN
+;; count's bound, whichever instruction's step it runs inside; the step's bound
+;; is restored afterwards for the rest of the step.
 (define (compiler-backend-emit-instr
+  [ctx : CompilerBackendEmissionContext]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [instr : compiler_ir_types.CompilerIrInstr]) : ResultCompilerBackend
+  (let
+    [saved : i64
+      (compiler-backend-function-state-i64
+        (compiler-backend-global-shared-view ctx.function-state)
+        compiler-backend-function-i64-shift-count-bound)]
+    [_own : unit
+      (compiler-backend-set-shift-count-bound!
+        (compiler-backend-global-shared-view ctx.function-state)
+        (compiler-backend-instr-shift-count-bound
+          (compiler-backend-global-shared-view ctx.function-state)
+          (compiler-backend-global-shared-view instr)))]
+    [result : ResultCompilerBackend
+      (compiler-backend-emit-instr-with-bound
+        (compiler-backend-global-shared-view ctx)
+        fallthrough
+        instr)]
+    (begin
+      (compiler-backend-set-shift-count-bound!
+        (compiler-backend-global-shared-view ctx.function-state)
+        saved)
+      result)))
+
+(define (compiler-backend-emit-instr-with-bound
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [instr : compiler_ir_types.CompilerIrInstr]) : ResultCompilerBackend
@@ -68713,6 +68955,136 @@
         index
         out))))
 
+;; A sole-use byte offset such as i*24 followed by an address addition can
+;; use two LEAs: i*3, then base + scaled-index*8. This removes multiply latency
+;; without adding instructions. Keep the existing homes and refuse any shape
+;; whose Gep could disappear into a later memory operation.
+;; The successful path owns the absorbed Gep ordinal; rejected probes are pure.
+(define (compiler-backend-mul-gep-asm
+  [ctx : CompilerBackendEmissionContext]
+  [dst : i64]
+  [lhs : compiler_ir_types.CompilerIrValue]
+  [rhs : compiler_ir_types.CompilerIrValue]
+  [ty : compiler_ast_types.AstType]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]) : CompilerBackendMaybeAsm
+  (begin
+    (unless
+      (and
+        (< index instrs.len)
+        (compiler-backend-gep-fold-64bit-int? ty)
+        (compiler-backend-var-single-use?
+          (compiler-backend-global-shared-view ctx.use-counts)
+          dst))
+      (return (CompilerBackendMaybeAsm.No)))
+    (match rhs
+      [(compiler_ir_types.CompilerIrValue.I64 n)
+        (let
+          [factor : i64
+            (cond
+              [(or (= n 6) (= n 12) (= n 24)) 3]
+              [(or (= n 10) (= n 20) (= n 40)) 5]
+              [(or (= n 18) (= n 36) (= n 72)) 9]
+              [else 0])]
+          (begin
+            (when (= factor 0) (return (CompilerBackendMaybeAsm.No)))
+            (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+              [(compiler_ir_types.CompilerIrInstr.Gep
+                  address-dst
+                  base
+                  offset
+                  elem-ty)
+                (begin
+                  (unless
+                    (and
+                      (compiler-backend-branch-uses-var?
+                        (compiler-backend-global-shared-view offset)
+                        dst)
+                      (=
+                        (compiler-backend-type-size
+                          ctx.type-segment-bases
+                          (compiler-backend-global-shared-view elem-ty))
+                        1)
+                      (not
+                        (compiler-backend-var-single-use?
+                          (compiler-backend-global-shared-view ctx.use-counts)
+                          address-dst))
+                      (not
+                        (compiler-backend-var-fuse-safe?
+                          (compiler-backend-global-shared-view
+                            ctx.backend-state)
+                          address-dst))
+                      (=
+                        (compiler-backend-gep-fold-peek
+                          (compiler-backend-global-shared-view
+                            ctx.function-state)
+                          ctx.type-segment-bases
+                          0
+                          (compiler-backend-global-shared-view offset)
+                          (compiler-backend-global-shared-view elem-ty))
+                        0))
+                    (return (CompilerBackendMaybeAsm.No)))
+                  (let
+                    [source
+                      (compiler-backend-value-scalar-register
+                        (compiler-backend-global-shared-view ctx.backend-state)
+                        (compiler-backend-global-shared-view ctx.assignments)
+                        lhs)]
+                    [base-home
+                      (compiler-backend-value-scalar-register
+                        (compiler-backend-global-shared-view ctx.backend-state)
+                        (compiler-backend-global-shared-view ctx.assignments)
+                        base)]
+                    [temp
+                      (compiler-backend-var-register-home
+                        (compiler-backend-global-shared-view ctx.backend-state)
+                        (compiler-backend-global-shared-view ctx.assignments)
+                        dst)]
+                    [target
+                      (compiler-backend-var-register-home
+                        (compiler-backend-global-shared-view ctx.backend-state)
+                        (compiler-backend-global-shared-view ctx.assignments)
+                        address-dst)]
+                    (begin
+                      ;; A %rbp base would be mistaken for a frame reference by
+                      ;; FPO rebasing. The scaled temporary may use the index slot.
+                      (when
+                        (or
+                          (string.eq source "")
+                          (string.eq base-home "")
+                          (string.eq temp "")
+                          (string.eq target "")
+                          (string.eq source "%rbp")
+                          (string.eq base-home "%rbp")
+                          (string.eq temp base-home))
+                        (return (CompilerBackendMaybeAsm.No)))
+                      (compiler-backend-gep-fold-next!
+                        (compiler-backend-global-shared-view ctx.function-state)
+                        ctx.type-segment-bases
+                        offset
+                        elem-ty)
+                      (CompilerBackendMaybeAsm.Some
+                        (str_cat.str-cat
+                          "    leaq ("
+                          (compiler-backend-global-shared-view source)
+                          ","
+                          source
+                          ","
+                          (string.int->string (- factor 1))
+                          "), "
+                          (compiler-backend-global-shared-view temp)
+                          "\n    leaq ("
+                          base-home
+                          ","
+                          temp
+                          ","
+                          (string.int->string (/ n factor))
+                          "), "
+                          target
+                          "\n")))))]
+              [_ (CompilerBackendMaybeAsm.No)])))]
+      [_ (CompilerBackendMaybeAsm.No)])))
+
 (define (compiler-backend-emit-binop-step
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
@@ -68725,49 +69097,72 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
-  (match (compiler-backend-bit-test-branch-match
-    (compiler-backend-global-shared-view ctx)
-    dst
-    (compiler-backend-global-shared-view op)
-    (compiler-backend-global-shared-view lhs)
-    (compiler-backend-global-shared-view rhs)
-    (compiler-backend-global-shared-view instrs)
-    index)
-    [(CompilerBackendMaybeBitTest.Some
-        mask
-        count
-        true-label
-        false-label
-        after-branch
-        base-dst
-        guard?)
-      (compiler-backend-emit-bit-test-branch
+  (begin
+    (when
+      (match (compiler-backend-global-shared-view op)
+        [(compiler_ir_types.CompilerIrBinOp.Mul) true]
+        [_ false])
+      (match (compiler-backend-mul-gep-asm
         (compiler-backend-global-shared-view ctx)
-        fallthrough
-        base-dst
-        (compiler-backend-global-shared-view op)
-        ty
-        mask
-        count
-        true-label
-        false-label
-        guard?
-        (compiler-backend-global-shared-view instrs)
-        after-branch
-        out)]
-    [(CompilerBackendMaybeBitTest.No)
-      (compiler-backend-emit-binop-step-general
-        (compiler-backend-global-shared-view ctx)
-        fallthrough
-        (compiler-backend-global-shared-view instr)
         dst
-        (compiler-backend-global-shared-view op)
         (compiler-backend-global-shared-view lhs)
         (compiler-backend-global-shared-view rhs)
         (compiler-backend-global-shared-view ty)
         (compiler-backend-global-shared-view instrs)
-        index
-        out)]))
+        index)
+        [(CompilerBackendMaybeAsm.Some text)
+          (return
+            (compiler-backend-emit-fused-result-rest
+              ctx
+              fallthrough
+              (ResultCompilerBackend.Ok text)
+              instrs
+              (+ index 1)
+              out))]
+        [(CompilerBackendMaybeAsm.No) unit]))
+    (match (compiler-backend-bit-test-branch-match
+      (compiler-backend-global-shared-view ctx)
+      dst
+      (compiler-backend-global-shared-view op)
+      (compiler-backend-global-shared-view lhs)
+      (compiler-backend-global-shared-view rhs)
+      (compiler-backend-global-shared-view instrs)
+      index)
+      [(CompilerBackendMaybeBitTest.Some
+          mask
+          count
+          true-label
+          false-label
+          after-branch
+          base-dst
+          guard?)
+        (compiler-backend-emit-bit-test-branch
+          (compiler-backend-global-shared-view ctx)
+          fallthrough
+          base-dst
+          (compiler-backend-global-shared-view op)
+          ty
+          mask
+          count
+          true-label
+          false-label
+          guard?
+          (compiler-backend-global-shared-view instrs)
+          after-branch
+          out)]
+      [(CompilerBackendMaybeBitTest.No)
+        (compiler-backend-emit-binop-step-general
+          (compiler-backend-global-shared-view ctx)
+          fallthrough
+          (compiler-backend-global-shared-view instr)
+          dst
+          (compiler-backend-global-shared-view op)
+          (compiler-backend-global-shared-view lhs)
+          (compiler-backend-global-shared-view rhs)
+          (compiler-backend-global-shared-view ty)
+          (compiler-backend-global-shared-view instrs)
+          index
+          out)])))
 
 (defenum CompilerBackendMaybeFlagsBranch
   (No)
@@ -69845,6 +70240,20 @@
                     current-instrs
                     current-index))
                 unit)
+              ;; The head instruction's shift-count bound, for the same
+              ;; reason: a fast emitter that bypasses compiler-backend-emit-instr
+              ;; emits the head's own guard. A fused emitter that reaches a
+              ;; later instruction through compiler-backend-emit-instr gets that
+              ;; instruction's bound there.
+              (compiler-backend-set-shift-count-bound!
+                (compiler-backend-global-shared-view ctx.function-state)
+                (if (< current-index current-count)
+                  (compiler-backend-instr-shift-count-bound
+                    (compiler-backend-global-shared-view ctx.function-state)
+                    (compiler_ir_types.compiler-ir-instr-seq-ref
+                      current-instrs
+                      current-index))
+                  0))
               (match current-mode
                 [(CompilerBackendEmitInstrsMode.Normal)
                   (compiler-backend-emit-instrs-divmod-polish-step
@@ -69871,6 +70280,9 @@
                     (compiler-backend-global-shared-view current-instrs)
                     current-index
                     out)]))]
+          (compiler-backend-set-shift-count-bound!
+            (compiler-backend-global-shared-view ctx.function-state)
+            0)
           (match step-result
             [(ResultCompilerBackend.Ok asm)
               (if (compiler-backend-function-state-bool?
@@ -83892,6 +84304,15 @@
                       program-index.backend-state
                       (compiler-backend-global-shared-view use-counts)
                       (compiler-backend-global-shared-view fuse-free-counts))]
+                  [_shift-count-bounds : unit
+                    (compiler-backend-function-state-set-i64-array!
+                      (compiler-backend-state-function-state
+                        program-index.backend-state)
+                      compiler-backend-function-i64-array-shift-count-bounds
+                      (compiler-backend-shift-count-bounds
+                        scratch-vars
+                        (compiler-backend-global-shared-view emit-params)
+                        (compiler-backend-global-shared-view emit-blocks-list)))]
                   [_identity-tail-forwarder : unit
                     (compiler-backend-function-state-set-bool!
                       (compiler-backend-state-function-state
@@ -89145,7 +89566,124 @@
             (compiler-backend-runtime-tail-tlci-macro-entry? tail-plan)
             write-exit
             (compiler-backend-runtime-tail-startup-profile? tail-plan)
-            (compiler_ir_types.compiler-debug-info-enabled?)))])))
+            (compiler_ir_types.compiler-debug-info-enabled?)
+            31))])))
+
+;; These leaves have no incoming edges from the always-emitted runtime. Keep
+;; them for direct calls, address-taken symbols, and any referenced extern alias.
+;; Reuse the call and reference inventories already built for symbol emission.
+;; Every direct-callee IR form capable of targeting these leaves must be indexed.
+;; No pass after runtime indexing may introduce a new runtime-leaf call.
+(define (compiler-backend-runtime-leaf-bit
+  [backend-state : CompilerBackendState]
+  [name : i64]) : i64
+  (let
+    [text : String (compiler-backend-symbol-text-state backend-state name)]
+    (cond
+      [(string.eq (compiler-backend-global-shared-view text) "tl_memchr") 1]
+      [(string.eq
+          (compiler-backend-global-shared-view text)
+          "tl_tlci_call_image_entry")
+        2]
+      [(string.eq (compiler-backend-global-shared-view text) "tl_mem_copy_fwd")
+        4]
+      [(string.eq (compiler-backend-global-shared-view text) "tl_mem_copy8_fwd")
+        8]
+      [(string.eq (compiler-backend-global-shared-view text) "tl_mem_fill8") 16]
+      [else 0])))
+
+(define (compiler-backend-runtime-used-leaf-mask
+  [backend-state : CompilerBackendState]
+  [runtime-index : CompilerBackendRuntimeIndex]
+  [referenced : BackendSymbolSeq]
+  [externs : compiler_ir_types.CompilerIrExternSeq]) : i64
+  (let
+    [mask : i64 0]
+    [i : i64 0]
+    [capacity : i64 (backend_i64_i64_map.capacity (& runtime-index.calls))]
+    (begin
+      (while (< i capacity)
+        (begin
+          (match (backend_i64_i64_map.entry-at (& runtime-index.calls) i)
+            [(backend_i64_i64_map.Entry.EntrySome name _)
+              (set!
+                mask
+                (bit-or
+                  mask
+                  (compiler-backend-runtime-leaf-bit backend-state name)))]
+            [_ unit])
+          (set! i (+ i 1))))
+      (set! i 0)
+      (while (< i referenced.len)
+        (begin
+          (set!
+            mask
+            (bit-or
+              mask
+              (compiler-backend-runtime-leaf-bit
+                backend-state
+                (array-ref referenced.slots i))))
+          (set! i (+ i 1))))
+      (set! i 0)
+      (while (<
+        i
+        (compiler_ir_types.compiler-ir-extern-seq-count
+          (compiler-backend-global-shared-view externs)))
+        (begin
+          (match (compiler_ir_types.compiler-ir-extern-seq-ref
+            (compiler-backend-global-shared-view externs)
+            i)
+            [(compiler_ir_types.CompilerIrExtern.Extern
+                name
+                source
+                _
+                _
+                _
+                link
+                _
+                _)
+              (let
+                [bit : i64
+                  (compiler-backend-runtime-leaf-bit backend-state link)]
+                (when
+                  (and
+                    (!= bit 0)
+                    (= (bit-and mask bit) 0)
+                    (compiler-backend-extern-symbol-referenced?
+                      (compiler-backend-global-shared-view runtime-index)
+                      (compiler-backend-global-shared-view referenced)
+                      name
+                      source
+                      link))
+                  (set! mask (bit-or mask bit))))])
+          (set! i (+ i 1))))
+      mask)))
+
+(define (compiler-backend-runtime-features-for-emission
+  [target : CompilerBackendTarget]
+  [plan : CompilerBackendRuntimePlan]
+  [backend-state : CompilerBackendState]
+  [runtime-index : CompilerBackendRuntimeIndex]
+  [referenced : BackendSymbolSeq]
+  [externs : compiler_ir_types.CompilerIrExternSeq]
+  [emit-entry : bool]) : runtime_common.CompilerBackendRuntimeFeatures
+  (let
+    [features : runtime_common.CompilerBackendRuntimeFeatures
+      (compiler-backend-runtime-features plan)]
+    (begin
+      (match target
+        [(CompilerBackendTarget.Linux)
+          (when
+            emit-entry
+            (set!
+              features.leaf-mask
+              (compiler-backend-runtime-used-leaf-mask
+                backend-state
+                runtime-index
+                referenced
+                externs)))]
+        [_ unit])
+      features)))
 
 (define (compiler-backend-current-arena-load
   [target : CompilerBackendTarget]
@@ -89820,8 +90358,14 @@
       (compiler-backend-global-types
         (compiler-backend-global-shared-view globals))]
     [runtime-features : runtime_common.CompilerBackendRuntimeFeatures
-      (compiler-backend-runtime-features
-        (compiler-backend-global-shared-view plan))]
+      (compiler-backend-runtime-features-for-emission
+        (compiler-backend-global-shared-view target)
+        (compiler-backend-global-shared-view plan)
+        program-index.backend-state
+        (compiler-backend-global-shared-view runtime-index)
+        (compiler-backend-global-shared-view referenced-symbols)
+        (compiler-backend-global-shared-view externs)
+        emit-entry)]
     (begin
       (cfg
         compile-profile

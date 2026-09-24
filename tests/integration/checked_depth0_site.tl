@@ -67,8 +67,11 @@
       (set! i 0)
       (while (< i 64)
         (begin
-          (set! total (+ total (probe (& data) 0 16)))
+          ;; A loop-variant start keeps this call in the loop: with literal
+          ;; arguments the optimizer would cache it and multiply, and `probe`
+          ;; would no longer be reached from inside a loop.
+          (set! total (+ total (probe (& data) (bit-and i 1) 16)))
           (set! i (+ i 1))))
-      (unless (= total 762880) (return 1))
+      (unless (= total 410624) (return 1))
       (unless (= (checksum (& data) 8) 22601) (return 2))
       42)))

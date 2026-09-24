@@ -455,6 +455,13 @@
     (compiler-diagnostic-typecheck-code-kind-is?
       "typecheck: danger is an unsafe callable and cannot be used as a plain function value; call it directly inside unsafe"
       (compiler_diagnostic.compiler-diagnostic-code-typecheck-unsafe-callable-effect))
+    (compiler-diagnostic-typecheck-code-kind-is?
+      "typecheck: cannot assign to global `counter` owned by module `dep` from module `main`; only its defining module may write it, so call a function that `dep` defines instead"
+      (compiler_diagnostic.compiler-diagnostic-code-typecheck-foreign-global-write))
+    ;; The `mutably borrow` wording must not fall into the borrow rule.
+    (compiler-diagnostic-typecheck-code-kind-is?
+      "typecheck: cannot mutably borrow global `counter` owned by module `dep` from module `main`; only its defining module may write it, so call a function that `dep` defines instead"
+      (compiler_diagnostic.compiler-diagnostic-code-typecheck-foreign-global-write))
     ;; A lifetime cause appended to a type-mismatch prefix must win over E0206.
     (compiler-diagnostic-typecheck-code-kind-is?
       "typecheck: call argument type mismatch; source lifetime `short` does not outlive required lifetime `long`"
@@ -512,7 +519,7 @@
   (let
     [count : i64 (compiler_diagnostic.compiler-diagnostic-code-registry-count)]
     [index : i64 0]
-    [ok : bool (= count 21)]
+    [ok : bool (= count 22)]
     (begin
       (while (and ok (< index count))
         (let

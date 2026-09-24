@@ -6081,7 +6081,7 @@
             "    movsd -16(%rsp), %xmm0\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            (compiler-backend-asm-function-body asm "main")
             "%xmm3")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
@@ -20663,22 +20663,26 @@ g:
     (compiler-backend-total-switch-source)
     (compiler_backend.CompilerBackendTarget.Linux))
     [(compiler_backend.ResultCompilerBackend.Ok asm)
-      (and
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          "_switch_table")
-        (not
+      ;; Inspect the dispatch function: unrelated runtime helpers can have
+      ;; unsigned range checks of their own.
+      (let
+        [body : String (compiler-backend-asm-function-body asm "_tl_f0")]
+        (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "    cmpq $5"))
-        (not
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "    ja "))
-        (not
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "match_total_trap(%rip)")))]
+            (owned_view.compiler-owned-shared-view body)
+            "_switch_table")
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view body)
+              "    cmpq $5"))
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view body)
+              "    ja "))
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view body)
+              "match_total_trap(%rip)"))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-total-switch-asm-ok?) : bool
@@ -45027,6 +45031,100 @@ g:
     (compiler-backend-inline-fast-alloc-multi-size-target-ok?
       (compiler_backend.CompilerBackendTarget.Windows))))
 
+(define (compiler-backend-inline-alloc-alias-case-ok?
+  [target : compiler_backend.CompilerBackendTarget]
+  [result-type : String]
+  [symbol : String]
+  [abi : String]
+  [size : i64]
+  [expected : i64]) : bool
+  (match (compiler-backend-emit-source-opt2-for-target
+    (str_cat.str-cat
+      "(extern (tl_alloc [bytes : i64]) : u64)\n(extern (reserve [bytes : i64]) : "
+      result-type
+      abi
+      (str_cat.str-cat
+        " (:symbol \""
+        symbol
+        "\"))\n(define (main) : i64 (begin (tl_alloc 128) (reserve "
+        (str_cat.str-cat (string.int->string size) ") 42))")))
+    target)
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (if (> expected 0)
+        (compiler-backend-string-contains-inline-alloc-size? asm expected)
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "_slow:\n    call .L_tl_alloc")))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-inline-alloc-alias-target-ok?
+  [target : compiler_backend.CompilerBackendTarget]) : bool
+  (and
+    (compiler-backend-inline-alloc-alias-case-ok?
+      target
+      "(MutPtr u8)"
+      "tl_alloc"
+      ""
+      1
+      8)
+    (compiler-backend-inline-alloc-alias-case-ok?
+      target
+      "(MutPtr i64)"
+      "tl_alloc"
+      ""
+      24
+      24)
+    (compiler-backend-inline-alloc-alias-case-ok?
+      target
+      "(MutPtr u8)"
+      "tl_alloc"
+      " (:abi c)"
+      63
+      64)
+    (compiler-backend-inline-alloc-alias-case-ok?
+      target
+      "(MutPtr u8)"
+      "tl_alloc"
+      ""
+      0
+      0)
+    (compiler-backend-inline-alloc-alias-case-ok?
+      target
+      "(MutPtr u8)"
+      "tl_alloc"
+      ""
+      65
+      0)
+    (compiler-backend-inline-alloc-alias-case-ok?
+      target
+      "(MutPtr u8)"
+      "unrelated_allocator"
+      ""
+      24
+      0)
+    (compiler-backend-inline-alloc-alias-case-ok?
+      target
+      "u64"
+      "tl_alloc"
+      ""
+      24
+      0)
+    (compiler-backend-inline-alloc-alias-case-ok?
+      target
+      "f64"
+      "tl_alloc"
+      " (:abi c)"
+      24
+      0)))
+
+(define (compiler-backend-inline-alloc-alias-ok?) : bool
+  (and
+    (compiler-backend-inline-alloc-alias-target-ok?
+      (compiler_backend.CompilerBackendTarget.Linux))
+    (compiler-backend-inline-alloc-alias-target-ok?
+      (compiler_backend.CompilerBackendTarget.Windows))))
+
 (define compiler-backend-inline-fast-alloc-emergency-live-count : i64
   13)
 
@@ -59518,9 +59616,97 @@ b_keep:
           (ci.intern-compat-state-capture-active)))
       "")))
 
+;; Shift counts proven in range (compiler-backend-shift-count-bounds): a var
+;; whose every definition is a `bit_and` with a literal c >= 0 is bounded by the
+;; largest such c (stored plus one); a parameter, any other definition, a
+;; negative literal or an `addr_of` of the var leaves it unbounded (-1).
+(define (compiler-backend-shift-count-bounds-ok?) : bool
+  (let
+    [bounds : (__tl_dyn-array i64)
+      (compiler_backend.compiler-backend-shift-count-bounds
+        9
+        (compiler_ir_types.compiler-ir-param-seq-prepend
+          (compiler_ir_types.CompilerIrParam.Param
+            "x"
+            (compiler_ast_types.AstType.I64)
+            0)
+          (compiler_ir_types.compiler-ir-param-seq-empty))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "entry")
+            (compiler-backend-test-instr-seq-prepend
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                1
+                (compiler_ir_types.CompilerIrBinOp.BitAnd)
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (compiler_ir_types.CompilerIrValue.I64 63)
+                (compiler_ast_types.AstType.I64))
+              (compiler-backend-test-instr-seq-prepend
+                (compiler_ir_types.CompilerIrInstr.BinOp
+                  2
+                  (compiler_ir_types.CompilerIrBinOp.BitAnd)
+                  (compiler_ir_types.CompilerIrValue.I64 7)
+                  (compiler_ir_types.CompilerIrValue.Var 0)
+                  (compiler_ast_types.AstType.I64))
+                (compiler-backend-test-instr-seq-prepend
+                  (compiler_ir_types.CompilerIrInstr.BinOp
+                    3
+                    (compiler_ir_types.CompilerIrBinOp.BitAnd)
+                    (compiler_ir_types.CompilerIrValue.Var 0)
+                    (compiler_ir_types.CompilerIrValue.I64 31)
+                    (compiler_ast_types.AstType.I64))
+                  (compiler-backend-test-instr-seq-prepend
+                    (compiler_ir_types.CompilerIrInstr.Mov
+                      3
+                      (compiler_ir_types.CompilerIrValue.Var 0)
+                      (compiler_ast_types.AstType.I64))
+                    (compiler-backend-test-instr-seq-prepend
+                      (compiler_ir_types.CompilerIrInstr.BinOp
+                        4
+                        (compiler_ir_types.CompilerIrBinOp.BitAnd)
+                        (compiler_ir_types.CompilerIrValue.Var 0)
+                        (compiler_ir_types.CompilerIrValue.I64 -1)
+                        (compiler_ast_types.AstType.I64))
+                      (compiler-backend-test-instr-seq-prepend
+                        (compiler_ir_types.CompilerIrInstr.BinOp
+                          5
+                          (compiler_ir_types.CompilerIrBinOp.BitAnd)
+                          (compiler_ir_types.CompilerIrValue.Var 0)
+                          (compiler_ir_types.CompilerIrValue.I64 15)
+                          (compiler_ast_types.AstType.I64))
+                        (compiler-backend-test-instr-seq-prepend
+                          (compiler_ir_types.CompilerIrInstr.AddrOf 6 5)
+                          (compiler-backend-test-instr-seq-prepend
+                            (compiler_ir_types.CompilerIrInstr.BinOp
+                              7
+                              (compiler_ir_types.CompilerIrBinOp.BitAnd)
+                              (compiler_ir_types.CompilerIrValue.Var 1)
+                              (compiler_ir_types.CompilerIrValue.I64 40)
+                              (compiler_ast_types.AstType.I64))
+                            (compiler-backend-test-instr-seq-prepend
+                              (compiler_ir_types.CompilerIrInstr.BinOp
+                                7
+                                (compiler_ir_types.CompilerIrBinOp.BitAnd)
+                                (compiler_ir_types.CompilerIrValue.Var 2)
+                                (compiler_ir_types.CompilerIrValue.I64 9)
+                                (compiler_ast_types.AstType.I64))
+                              (compiler_ir_types.compiler-ir-instr-seq-empty)))))))))))
+          compiler_ir_types.CompilerIrBlockList.Nil))]
+    (and
+      (= (array-ref bounds 0) -1)
+      (= (array-ref bounds 1) 64)
+      (= (array-ref bounds 2) 8)
+      (= (array-ref bounds 3) -1)
+      (= (array-ref bounds 4) -1)
+      (= (array-ref bounds 5) -1)
+      (= (array-ref bounds 6) -1)
+      (= (array-ref bounds 7) 41)
+      (= (array-ref bounds 8) 0))))
+
 (define (compiler-backend-self-test) : i64
   (if (and
     (compiler-backend-signed-div-guard-shapes-ok?)
+    (compiler-backend-shift-count-bounds-ok?)
     (compiler-backend-avx2-i64-reduce-source-ok?)
     (compiler-backend-avx2-i64-reduce-spilled-source-ok?)
     (compiler-backend-i64-reduce-mask-plan-ok?)
@@ -59870,6 +60056,7 @@ b_keep:
         (compiler-backend-inline-fast-alloc-result-ok?)
         (compiler-backend-inline-fast-alloc-reused-vreg-labels-ok?)
         (compiler-backend-inline-fast-alloc-multi-size-ok?)
+        (compiler-backend-inline-alloc-alias-ok?)
         (compiler-backend-inline-fast-alloc-emergency-preserved-ok?)
         (compiler-backend-inline-aggregate-storage-ok?)))
     (compiler-backend-tuple-ok?)

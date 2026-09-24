@@ -1237,11 +1237,23 @@ tl_region_reset:
 ;; `rep movsq` preserves element granularity under fast-string operation, which
 ;; the architecture does not promise for overlapping regions.
 ;; Arguments are SysV: %rdi = dst, %rsi = src, %rdx = count (8-byte slots).
+;;
+;; For tl_memcpy/tl_memcpy_fresh, counts up to 64 avoid the startup cost of
+;; two repeated-string instructions. Each size class loads its entire source
+;; before the first store, so even overlapping head/tail windows preserve
+;; memmove semantics. Every access stays within the requested range; zero
+;; touches neither pointer. The one-byte entry also avoids dispatch overhead
+;; for text-buffer appends. Only SysV caller-saved GPRs and XMM0..3 are used.
+;; The forward-loop helpers retain their separate propagation semantics.
 (define (compiler-backend-runtime-memcpy-functions) : String
   "    .globl tl_memcpy
     .type tl_memcpy,@function
 tl_memcpy:
+    cmpq $1, %rdx
+    je .Ltl_memcpy_one
     movq %rdx, %rcx
+    cmpq $64, %rcx
+    jbe .Ltl_memcpy_small
     movq %rsi, %rax
     addq %rcx, %rax
     cmpq %rax, %rdi
@@ -1262,14 +1274,73 @@ tl_memcpy:
     andq $7, %rcx
     rep movsb
     ret
+.Ltl_memcpy_small:
+    cmpq $16, %rcx
+    ja .Ltl_memcpy_above_16
+    cmpq $8, %rcx
+    jae .Ltl_memcpy_small_16
+    cmpq $4, %rcx
+    jae .Ltl_memcpy_small_8
+    cmpq $2, %rcx
+    jae .Ltl_memcpy_small_4
+    testq %rcx, %rcx
+    je .Ltl_memcpy_small_done
+.Ltl_memcpy_one:
+    movzbl (%rsi), %eax
+    movb %al, (%rdi)
+.Ltl_memcpy_small_done:
+    ret
+.Ltl_memcpy_small_4:
+    movzwl (%rsi), %eax
+    movzwl -2(%rsi,%rcx), %edx
+    movw %ax, (%rdi)
+    movw %dx, -2(%rdi,%rcx)
+    ret
+.Ltl_memcpy_small_8:
+    movl (%rsi), %eax
+    movl -4(%rsi,%rcx), %edx
+    movl %eax, (%rdi)
+    movl %edx, -4(%rdi,%rcx)
+    ret
+.Ltl_memcpy_small_16:
+    movq (%rsi), %rax
+    movq -8(%rsi,%rcx), %rdx
+    movq %rax, (%rdi)
+    movq %rdx, -8(%rdi,%rcx)
+    ret
+.Ltl_memcpy_small_32:
+    movups (%rsi), %xmm0
+    movups -16(%rsi,%rcx), %xmm1
+    movups %xmm0, (%rdi)
+    movups %xmm1, -16(%rdi,%rcx)
+    ret
+.Ltl_memcpy_above_16:
+    cmpq $32, %rcx
+    jbe .Ltl_memcpy_small_32
+    movups (%rsi), %xmm0
+    movups 16(%rsi), %xmm1
+    movups -32(%rsi,%rcx), %xmm2
+    movups -16(%rsi,%rcx), %xmm3
+    movups %xmm0, (%rdi)
+    movups %xmm1, 16(%rdi)
+    movups %xmm2, -32(%rdi,%rcx)
+    movups %xmm3, -16(%rdi,%rcx)
+    ret
     .size tl_memcpy, . - tl_memcpy
     .globl tl_memcpy_fresh
     .type tl_memcpy_fresh,@function
 tl_memcpy_fresh:
+    cmpq $1, %rdx
+    je .Ltl_memcpy_one
     movq %rdx, %rcx
+    cmpq $64, %rcx
+    jbe .Ltl_memcpy_small
     jmp .Ltl_memcpy_fwd
     .size tl_memcpy_fresh, . - tl_memcpy_fresh
-    .globl tl_mem_copy_fwd
+")
+
+(define (compiler-backend-runtime-copy-fwd-functions) : String
+  "    .globl tl_mem_copy_fwd
     .type tl_mem_copy_fwd,@function
 tl_mem_copy_fwd:
     testq %rdx, %rdx
@@ -1285,7 +1356,10 @@ tl_mem_copy_fwd:
 .Ltl_mem_copy_fwd_done:
     ret
     .size tl_mem_copy_fwd, . - tl_mem_copy_fwd
-    .globl tl_mem_copy8_fwd
+")
+
+(define (compiler-backend-runtime-copy8-fwd-functions) : String
+  "    .globl tl_mem_copy8_fwd
     .type tl_mem_copy8_fwd,@function
 tl_mem_copy8_fwd:
     testq %rdx, %rdx
@@ -1560,26 +1634,46 @@ tl_backtrace_stack_set:
         (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeMemcpy)
         (x64_template.CompilerX64TemplateTarget.LinuxX64)
         (compiler-backend-runtime-memcpy-functions))]
+    [copy-fwd-asm : String
+      (if (runtime_common.compiler-backend-runtime-features-leaf? features 4)
+        (x64_catalog.compiler-x64-template-render-assembly
+          (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeCopyFwd)
+          (x64_template.CompilerX64TemplateTarget.LinuxX64)
+          (compiler-backend-runtime-copy-fwd-functions))
+        "")]
+    [copy8-fwd-asm : String
+      (if (runtime_common.compiler-backend-runtime-features-leaf? features 8)
+        (x64_catalog.compiler-x64-template-render-assembly
+          (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeCopy8Fwd)
+          (x64_template.CompilerX64TemplateTarget.LinuxX64)
+          (compiler-backend-runtime-copy8-fwd-functions))
+        "")]
     [memchr-asm : String
-      (x64_catalog.compiler-x64-template-render-assembly
-        (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeMemchr)
-        (x64_template.CompilerX64TemplateTarget.LinuxX64)
-        (compiler-backend-runtime-memchr-functions))]
+      (if (runtime_common.compiler-backend-runtime-features-leaf? features 1)
+        (x64_catalog.compiler-x64-template-render-assembly
+          (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeMemchr)
+          (x64_template.CompilerX64TemplateTarget.LinuxX64)
+          (compiler-backend-runtime-memchr-functions))
+        "")]
     [array-zero-asm : String
       (x64_catalog.compiler-x64-template-render-assembly
         (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeArrayZero)
         (x64_template.CompilerX64TemplateTarget.LinuxX64)
         (compiler-backend-runtime-array-zero-functions))]
     [mem-fill8-asm : String
-      (x64_catalog.compiler-x64-template-render-assembly
-        (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeMemFill8)
-        (x64_template.CompilerX64TemplateTarget.LinuxX64)
-        (compiler-backend-runtime-mem-fill8-functions))]
+      (if (runtime_common.compiler-backend-runtime-features-leaf? features 16)
+        (x64_catalog.compiler-x64-template-render-assembly
+          (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeMemFill8)
+          (x64_template.CompilerX64TemplateTarget.LinuxX64)
+          (compiler-backend-runtime-mem-fill8-functions))
+        "")]
     [tlci-entry-asm : String
-      (x64_catalog.compiler-x64-template-render-assembly
-        (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeTlciImage)
-        (x64_template.CompilerX64TemplateTarget.LinuxX64)
-        (compiler-backend-runtime-tlci-entry-functions))]
+      (if (runtime_common.compiler-backend-runtime-features-leaf? features 2)
+        (x64_catalog.compiler-x64-template-render-assembly
+          (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeTlciImage)
+          (x64_template.CompilerX64TemplateTarget.LinuxX64)
+          (compiler-backend-runtime-tlci-entry-functions))
+        "")]
     [tlci-macro-entry-asm : String
       (if (runtime_common.compiler-backend-runtime-features-tlci-macro-entry?
         features)
@@ -1597,7 +1691,7 @@ tl_backtrace_stack_set:
         "")]
     [runtime-front-asm : String
       (str_cat.str-cat
-        memcpy-asm
+        (str_cat.str-cat memcpy-asm copy-fwd-asm copy8-fwd-asm "")
         memchr-asm
         array-zero-asm
         mem-fill8-asm

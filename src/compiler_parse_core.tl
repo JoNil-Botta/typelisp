@@ -1324,8 +1324,8 @@
     (begin
       (while (< read-index end)
         (begin
-          (set!
-            (array-ref reader.sp-node-pool-slots write-index)
+          (reader.sp-node-pool-fill!
+            write-index
             (reader.sp-node-get read-index))
           (set! write-index (+ write-index 1))
           (set! read-index (+ read-index 1))))
@@ -11383,8 +11383,8 @@
                     markers
                     parsed-variants)
                   (begin
-                    (set!
-                      (array-ref reader.sp-node-pool-slots member-marker)
+                    (reader.sp-node-pool-fill!
+                      member-marker
                       (reader.SpannedSexpr.Int
                         (unsafe
                           (cast
@@ -11459,8 +11459,8 @@
                     markers
                     parsed-fields)
                   (begin
-                    (set!
-                      (array-ref reader.sp-node-pool-slots member-marker)
+                    (reader.sp-node-pool-fill!
+                      member-marker
                       (reader.SpannedSexpr.Int
                         (unsafe
                           (cast
@@ -12717,14 +12717,14 @@
       [run-start : i64 (reader.sp-node-pool-reserve! (+ count 2))]
       [index : i64 0]
       (begin
-        (set!
-          (array-ref reader.sp-node-pool-slots run-start)
+        (reader.sp-node-pool-fill!
+          run-start
           (reader.SpannedSexpr.Int
             (compiler-parse-decl-list-storage-key decls)
             "__tl_semantic_origin"
             marker-span))
-        (set!
-          (array-ref reader.sp-node-pool-slots (+ run-start 1))
+        (reader.sp-node-pool-fill!
+          (+ run-start 1)
           (reader.SpannedSexpr.Int
             (+ decls.offset slot)
             "__tl_semantic_origin_start"
@@ -12734,8 +12734,8 @@
             [origin : ParseSemanticOriginRecord
               (array-ref origins.items (+ start index))]
             (begin
-              (set!
-                (array-ref reader.sp-node-pool-slots (+ (+ run-start 2) index))
+              (reader.sp-node-pool-fill!
+                (+ (+ run-start 2) index)
                 (reader.SpannedSexpr.Int
                   origin.written-name
                   (compiler-parse-semantic-origin-kind-marker

@@ -1989,6 +1989,12 @@
     CompilerLoadSessionState)
   (__tl_make-array (compiler-load-standalone-session-state-new)))
 
+;; Install the process-lifetime compatibility default session. Only this module
+;; writes its globals; test harnesses swap the default through this function.
+(define (compiler-load-default-session-state-set!
+  [state : CompilerLoadSessionState]) : unit
+  (set! (array-ref compiler-load-default-session-state 0) state))
+
 ;; Serial/test compatibility selector. Production call sites are migrated to
 ;; explicit state APIs incrementally; do not add new compile-job dependencies.
 (define compiler-load-active-session-state : CompilerLoadSessionState

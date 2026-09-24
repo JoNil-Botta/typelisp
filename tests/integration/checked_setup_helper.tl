@@ -93,8 +93,11 @@
       (set! i 0)
       (while (< i 64)
         (begin
-          (set! total (+ total (run (& rows) (& cols) 16 2)))
+          ;; A loop-variant `m` keeps this call in the loop: with literal
+          ;; arguments the optimizer would cache it and multiply, and `run`
+          ;; would no longer be reached from inside a loop.
+          (set! total (+ total (run (& rows) (& cols) 16 (+ 2 (bit-and i 1)))))
           (set! i (+ i 1))))
-      (unless (= total 1991360) (return 1))
+      (unless (= total 2005696) (return 1))
       (unless (= (rebuild (& rows) (& cols) 8) 336) (return 2))
       42)))

@@ -22,7 +22,8 @@
     false
     false
     false
-    false))
+    false
+    31))
 
 (define (compiler-backend-runtime-test-full-features) : runtime_common.CompilerBackendRuntimeFeatures
   (runtime_common.CompilerBackendRuntimeFeatures
@@ -34,7 +35,8 @@
     true
     true
     true
-    true))
+    true
+    31))
 
 (test
   compiler-backend-runtime-leaf-feature-subsets
@@ -176,7 +178,7 @@
       (test.assert-true
         (compiler-backend-runtime-test-contains?
           (& linux-min-functions)
-          "tl_memcpy_fresh:\n    movq %rdx, %rcx\n    jmp .Ltl_memcpy_fwd")
+          "tl_memcpy_fresh:\n    cmpq $1, %rdx\n    je .Ltl_memcpy_one\n    movq %rdx, %rcx\n    cmpq $64, %rcx\n    jbe .Ltl_memcpy_small\n    jmp .Ltl_memcpy_fwd")
         "Linux fresh-copy entry shares the forward copy core")
       (test.assert-true
         (compiler-backend-runtime-test-contains?

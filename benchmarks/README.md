@@ -80,6 +80,7 @@ Linux opt2 pass uses its positive case list from the CI suite manifest.
 | `opt_array_sum` | Optimizer-corpus array fill and sum case, distinct from the generic `array_sum` benchmark. |
 | `opt_string_scan` | Optimizer-corpus command-line string scan, distinct from the generic `string_scan` benchmark. |
 | `opt_runtime_string_eq` | Runtime string equality helper workload. |
+| `loop_call_literal` | Read-only helper with a loop-local literal argument; a varying checksum retains the outer loop. |
 | `opt_runtime_string_ops` | Runtime substring and concatenation helper workload. |
 | `opt_runtime_string_int` | Runtime string-to-int conversion workload. |
 | `opt_runtime_path_helpers` | Runtime path helper copy and join workload. |

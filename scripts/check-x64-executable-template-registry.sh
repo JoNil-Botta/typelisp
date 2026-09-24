@@ -20,7 +20,7 @@ count_matches() {
 # Runtime leaf composition has one registration at every selected fragment.
 # The Linux entry prefix has two mutually exclusive construction arms, so its
 # source contains three registrations while one emitted program selects two.
-count_matches 13 'compiler-x64-template-render-assembly' src/compiler_backend_runtime_linux.tl
+count_matches 15 'compiler-x64-template-render-assembly' src/compiler_backend_runtime_linux.tl
 count_matches 15 'compiler-x64-template-render-assembly' src/compiler_backend_runtime_windows.tl
 count_matches 3 'compiler-x64-template-render-assembly' src/compiler_backend.tl
 
@@ -32,7 +32,7 @@ count_matches 9 '(^|[^[:alnum:]_])ret([^[:alnum:]_]|$)' src/compiler_backend_run
 count_matches 0 '(^|[^[:alnum:]_])call([^[:alnum:]_]|$)' src/compiler_backend_runtime_common.tl
 count_matches 1 '(^|[^[:alnum:]_])jmp([^[:alnum:]_]|$)' src/compiler_backend_runtime_common.tl
 count_matches 35 '\.globl' src/compiler_backend_runtime_linux.tl
-count_matches 47 '(^|[^[:alnum:]_])ret([^[:alnum:]_]|$)' src/compiler_backend_runtime_linux.tl
+count_matches 53 '(^|[^[:alnum:]_])ret([^[:alnum:]_]|$)' src/compiler_backend_runtime_linux.tl
 count_matches 9 '(^|[^[:alnum:]_])call([^[:alnum:]_]|$)' src/compiler_backend_runtime_linux.tl
 count_matches 24 '(^|[^[:alnum:]_])jmp([^[:alnum:]_]|$)' src/compiler_backend_runtime_linux.tl
 count_matches 30 '\.globl' src/compiler_backend_runtime_windows.tl
@@ -85,7 +85,7 @@ if ! awk -F '\t' '
         render["0:Assembly"] = render["1:OpaqueBytes"] = render["2:StructuredObject"] = 1
         contribution["0:RuntimeFunctions"] = contribution["1:Startup"] = contribution["2:TlciBridge"] = contribution["3:ExternalFiberCallback"] = contribution["4:ExternalExceptionCallback"] = contribution["5:ByteFragment"] = contribution["6:MixedRuntimeBundle"] = 1
         terminal["0:FallsThrough"] = terminal["1:Returns"] = terminal["2:TailTransfers"] = terminal["3:TerminatesProcess"] = terminal["4:SuspendsOrTerminates"] = terminal["5:ReturnsOrTerminates"] = terminal["6:Mixed"] = terminal["7:Unknown"] = 1
-        feature["0:Always"] = feature["1:Alloc"] = feature["2:RegionMark"] = feature["3:RegionReset"] = feature["4:Profile"] = feature["5:StartupProfile"] = feature["6:TlciMacroEntry"] = feature["7:Backtrace"] = feature["8:ArenaDebug"] = feature["9:ProfileArenaDebug"] = feature["10:AllocProfile"] = feature["11:AllocArenaDebug"] = feature["12:AllocProfileArenaDebug"] = feature["13:RegionResetProfile"] = feature["14:RegionResetArenaDebug"] = feature["15:RegionResetProfileArenaDebug"] = feature["16:NativeEntryStartupProfile"] = feature["17:NativeEntryBacktrace"] = feature["18:NativeEntry"] = 1
+        feature["0:Always"] = feature["1:Alloc"] = feature["2:RegionMark"] = feature["3:RegionReset"] = feature["4:Profile"] = feature["5:StartupProfile"] = feature["6:TlciMacroEntry"] = feature["7:Backtrace"] = feature["8:ArenaDebug"] = feature["9:ProfileArenaDebug"] = feature["10:AllocProfile"] = feature["11:AllocArenaDebug"] = feature["12:AllocProfileArenaDebug"] = feature["13:RegionResetProfile"] = feature["14:RegionResetArenaDebug"] = feature["15:RegionResetProfileArenaDebug"] = feature["16:NativeEntryStartupProfile"] = feature["17:NativeEntryBacktrace"] = feature["18:NativeEntry"] = feature["19:Memchr"] = feature["20:TlciImage"] = feature["21:CopyFwd"] = feature["22:Copy8Fwd"] = feature["23:MemFill8"] = 1
     }
     NR == 1 { next }
     NF != 16 { exit 1 }
@@ -95,9 +95,9 @@ if ! awk -F '\t' '
     $14 !~ /^[0-9]+$/ || $15 !~ /^-?[0-9]+$/ || $16 !~ /^-?[0-9]+$/ { exit 1 }
     seen_variant[$1]++ { exit 1 }
     seen_name[$2]++ { exit 1 }
-    END { if (NR != 83) exit 1 }
+    END { if (NR != 85) exit 1 }
 ' "$CATALOG_DATA"; then
-    fail "catalog data must contain 82 unique, typed 16-field rows"
+    fail "catalog data must contain 84 unique, typed 16-field rows"
 fi
 
 # Nullary enum tags are 0-based in declaration order (SPEC 3.5.1). Keep the
@@ -113,4 +113,4 @@ ENUM_VARIANTS=$(sed -n \
 count_matches 3 '\.pdata:.*->\.L_tl_start_xdata' \
     src/compiler_x64_executable_template_evidence.tl
 
-echo "check-x64-executable-template-registry: 82 rows, 49 assembly variants, 24 opaque byte helpers, and 9 structured contributions covered"
+echo "check-x64-executable-template-registry: 84 rows, 51 assembly variants, 24 opaque byte helpers, and 9 structured contributions covered"

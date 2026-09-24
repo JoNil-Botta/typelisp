@@ -29,7 +29,12 @@
   (RegionResetProfileArenaDebug)
   (NativeEntryStartupProfile)
   (NativeEntryBacktrace)
-  (NativeEntry))
+  (NativeEntry)
+  (Memchr)
+  (TlciImage)
+  (CopyFwd)
+  (Copy8Fwd)
+  (MemFill8))
 
 (defenum CompilerX64TemplateContributionKind
   (RuntimeFunctions)
@@ -127,7 +132,7 @@
 (define (compiler-x64-template-feature-from-catalog [value : (& value str)]) : CompilerX64TemplateFeature
   (let
     [tag : i64 (catalog.compiler-x64-template-catalog-tag value)]
-    (if (or (< tag 0) (>= tag 19))
+    (if (or (< tag 0) (>= tag 24))
       (io.panic "x64 executable template: evidence enum tag is out of range")
       (unsafe
         (ptr-read

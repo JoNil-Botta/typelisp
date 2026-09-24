@@ -688,7 +688,11 @@ main:
     .globl tl_memcpy
     .type tl_memcpy,@function
 tl_memcpy:
+    cmpq $1, %rdx
+    je .Ltl_memcpy_one
     movq %rdx, %rcx
+    cmpq $64, %rcx
+    jbe .Ltl_memcpy_small
     movq %rsi, %rax
     addq %rcx, %rax
     cmpq %rax, %rdi
@@ -709,71 +713,69 @@ tl_memcpy:
     andq $7, %rcx
     rep movsb
     ret
+.Ltl_memcpy_small:
+    cmpq $16, %rcx
+    ja .Ltl_memcpy_above_16
+    cmpq $8, %rcx
+    jae .Ltl_memcpy_small_16
+    cmpq $4, %rcx
+    jae .Ltl_memcpy_small_8
+    cmpq $2, %rcx
+    jae .Ltl_memcpy_small_4
+    testq %rcx, %rcx
+    je .Ltl_memcpy_small_done
+.Ltl_memcpy_one:
+    movzbl (%rsi), %eax
+    movb %al, (%rdi)
+.Ltl_memcpy_small_done:
+    ret
+.Ltl_memcpy_small_4:
+    movzwl (%rsi), %eax
+    movzwl -2(%rsi,%rcx), %edx
+    movw %ax, (%rdi)
+    movw %dx, -2(%rdi,%rcx)
+    ret
+.Ltl_memcpy_small_8:
+    movl (%rsi), %eax
+    movl -4(%rsi,%rcx), %edx
+    movl %eax, (%rdi)
+    movl %edx, -4(%rdi,%rcx)
+    ret
+.Ltl_memcpy_small_16:
+    movq (%rsi), %rax
+    movq -8(%rsi,%rcx), %rdx
+    movq %rax, (%rdi)
+    movq %rdx, -8(%rdi,%rcx)
+    ret
+.Ltl_memcpy_small_32:
+    movups (%rsi), %xmm0
+    movups -16(%rsi,%rcx), %xmm1
+    movups %xmm0, (%rdi)
+    movups %xmm1, -16(%rdi,%rcx)
+    ret
+.Ltl_memcpy_above_16:
+    cmpq $32, %rcx
+    jbe .Ltl_memcpy_small_32
+    movups (%rsi), %xmm0
+    movups 16(%rsi), %xmm1
+    movups -32(%rsi,%rcx), %xmm2
+    movups -16(%rsi,%rcx), %xmm3
+    movups %xmm0, (%rdi)
+    movups %xmm1, 16(%rdi)
+    movups %xmm2, -32(%rdi,%rcx)
+    movups %xmm3, -16(%rdi,%rcx)
+    ret
     .size tl_memcpy, . - tl_memcpy
     .globl tl_memcpy_fresh
     .type tl_memcpy_fresh,@function
 tl_memcpy_fresh:
+    cmpq $1, %rdx
+    je .Ltl_memcpy_one
     movq %rdx, %rcx
+    cmpq $64, %rcx
+    jbe .Ltl_memcpy_small
     jmp .Ltl_memcpy_fwd
     .size tl_memcpy_fresh, . - tl_memcpy_fresh
-    .globl tl_mem_copy_fwd
-    .type tl_mem_copy_fwd,@function
-tl_mem_copy_fwd:
-    testq %rdx, %rdx
-    jle .Ltl_mem_copy_fwd_done
-    movq %rdx, %rcx
-    cmpq %rsi, %rdi
-    jbe .Ltl_memcpy_fwd
-    movq %rsi, %rax
-    addq %rdx, %rax
-    cmpq %rax, %rdi
-    jae .Ltl_memcpy_fwd
-    rep movsb
-.Ltl_mem_copy_fwd_done:
-    ret
-    .size tl_mem_copy_fwd, . - tl_mem_copy_fwd
-    .globl tl_mem_copy8_fwd
-    .type tl_mem_copy8_fwd,@function
-tl_mem_copy8_fwd:
-    testq %rdx, %rdx
-    jle .Ltl_mem_copy8_fwd_done
-    movq %rdx, %rcx
-    cmpq %rsi, %rdi
-    jbe .Ltl_mem_copy8_fwd_wide
-    leaq (%rsi,%rdx,8), %rax
-    cmpq %rax, %rdi
-    jae .Ltl_mem_copy8_fwd_wide
-.Ltl_mem_copy8_fwd_loop:
-    movq (%rsi), %rax
-    movq %rax, (%rdi)
-    addq $8, %rsi
-    addq $8, %rdi
-    subq $1, %rcx
-    jne .Ltl_mem_copy8_fwd_loop
-    ret
-.Ltl_mem_copy8_fwd_wide:
-    rep movsq
-.Ltl_mem_copy8_fwd_done:
-    ret
-    .size tl_mem_copy8_fwd, . - tl_mem_copy8_fwd
-    .globl tl_memchr
-    .type tl_memchr,@function
-tl_memchr:
-    testq %rsi, %rsi
-    jle .Ltl_memchr_not_found
-    movzbl %dl, %edx
-    xorq %rax, %rax
-.Ltl_memchr_loop:
-    cmpb %dl, (%rdi,%rax)
-    je .Ltl_memchr_found
-    incq %rax
-    cmpq %rsi, %rax
-    jl .Ltl_memchr_loop
-.Ltl_memchr_not_found:
-    movq $-1, %rax
-.Ltl_memchr_found:
-    ret
-    .size tl_memchr, . - tl_memchr
     .globl tl_array_zero
     .type tl_array_zero,@function
 tl_array_zero:
@@ -798,27 +800,6 @@ tl_array_zero:
     rep stosb
     ret
     .size tl_array_zero, . - tl_array_zero
-    .globl tl_mem_fill8
-tl_mem_fill8:
-    testq %rsi, %rsi
-    jle .Ltl_mem_fill8_done
-    movq %rsi, %rcx
-    movq %rdx, %rax
-    rep stosq
-.Ltl_mem_fill8_done:
-    ret
-    .globl tl_tlci_call_image_entry
-    .type tl_tlci_call_image_entry,@function
-tl_tlci_call_image_entry:
-    movq %rdi, %rax
-    movq %rsi, %rdi
-    movq %rdx, %rsi
-    subq $8, %rsp
-    call *%rax
-    addq $8, %rsp
-    ret
-    .size tl_tlci_call_image_entry, . - tl_tlci_call_image_entry
-
     .globl tl_thread_init
     .type tl_thread_init,@function
 tl_thread_init:

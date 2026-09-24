@@ -49,9 +49,9 @@
 (define (compiler-x64-template-feature-name
   [feature : evidence.CompilerX64TemplateFeature]) : String
   (compiler-x64-template-enum-name-at
-    "always|alloc|region-mark|region-reset|profile|startup-profile|tlci-macro-entry|backtrace|arena-debug|profile+arena-debug|alloc+profile|alloc+arena-debug|alloc+profile+arena-debug|region-reset+profile|region-reset+arena-debug|region-reset+profile+arena-debug|native-entry+startup-profile|native-entry+backtrace|native-entry"
+    "always|alloc|region-mark|region-reset|profile|startup-profile|tlci-macro-entry|backtrace|arena-debug|profile+arena-debug|alloc+profile|alloc+arena-debug|alloc+profile+arena-debug|region-reset+profile|region-reset+arena-debug|region-reset+profile+arena-debug|native-entry+startup-profile|native-entry+backtrace|native-entry|memchr|tlci-image|copy-fwd|copy8-fwd|mem-fill8"
     (x64.compiler-x64-template-enum-tag feature)
-    19))
+    24))
 
 (define (compiler-x64-template-render-kind-name
   [kind : x64.CompilerX64TemplateRenderKind]) : String

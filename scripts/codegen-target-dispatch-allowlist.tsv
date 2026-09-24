@@ -94,6 +94,7 @@ src/compiler_backend.tl	compiler-backend-entry-for-target-with-crt	entry	Compile
 src/compiler_backend.tl	compiler-backend-emit-runtime-global	runtime	CompilerBackendTarget[.](Linux|Windows)	2	Runtime globals are emitted in target-specific assembly form.
 src/compiler_backend.tl	compiler-backend-current-arena-load	runtime	CompilerBackendTarget[.](Linux|Windows)	2	Instruction emission selects the target leaf once when materializing a current-arena load.
 src/compiler_backend.tl	compiler-backend-current-arena-store	runtime	CompilerBackendTarget[.](Linux|Windows)	2	Instruction emission selects the target leaf once when materializing a current-arena store.
+src/compiler_backend.tl	compiler-backend-runtime-features-for-emission	runtime	CompilerBackendTarget[.]Linux	1	Linux executable assembly omits unreferenced runtime leaves; entryless and other target recipes retain all helpers.
 src/compiler_backend.tl	compiler-backend-runtime-data-for-target	runtime	CompilerBackendTarget[.](Linux|Windows)	2	Runtime data composition selects one platform leaf.
 src/compiler_backend.tl	compiler-backend-runtime-functions-for-target	runtime	CompilerBackendTarget[.](Linux|Windows)	2	Runtime function composition selects one platform leaf.
 src/compiler_backend.tl	compiler-backend-runtime-externs-for-target	runtime	CompilerBackendTarget[.](Linux|Windows)	2	Runtime extern composition selects one platform leaf.

@@ -373,6 +373,20 @@ requests. Generated import spans and declaration paths both refer to the macro
 call site; materialization failures preserve the dependency diagnostic and add
 that call site as a structured related location.
 
+Write authority over globals (SPEC §4.4.2) is enforced in the move checker's
+write arms, so other nodes pay nothing. Each write-capable arm of
+`tc-move-check-expr` (plain and dotted `set!`, field/tuple/element/`deref`
+writes, `replace!`, `array-take!`, the private dynamic-array push/take, and
+mutable `Borrow`) calls `tc-move-foreign-global-place-check` or
+`tc-move-foreign-global-set-check` before its own rules. The check resolves the
+projection root through the same symbol-handle path as the global-move rule and
+compares the declaration's owner module with the module being checked. Expanded
+macro code sits in the caller's body, so it is checked as the caller's module.
+A new write-capable place form needs the same call in its arm. Alias-qualified
+`set!` targets never bind in the value environment and are diagnosed while
+typing (`tc-set-foreign-qualified-global-message`). The
+`tests/safety/foreign_global_*` fixtures pin every route and import spelling.
+
 Macro surface searches borrow declaration records while inspecting their module,
 name and kind. A rejected candidate must not clone signature or parameter-list
 payloads. `compiler-load-surface-decl-list-borrow-at` ties the view to its source
@@ -573,8 +587,8 @@ violation), `E0209` (unsafe context required), `E0210` (lifetime mismatch),
 `E0211` (resource ownership violation), `E0212` (arena ownership violation),
 `E0213` (invalid pattern), `E0214` (SPMD restriction), `E0215`
 (invalid storage place), `E0216` (control-flow misuse), `E0217` (thread-safety
-violation), `E0218` (compile-time constraint), and `E0219` (unsafe callable
-effect erasure). Run
+violation), `E0218` (compile-time constraint), `E0219` (unsafe callable
+effect erasure), and `E0220` (global written outside its module). Run
 `typelisp explain <code>` for a description, minimal failing
 example, suggested fix, and related references. Code lookup is ASCII
 case-insensitive. `typelisp explain --list` prints the registry and

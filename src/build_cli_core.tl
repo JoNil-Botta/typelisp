@@ -4956,7 +4956,8 @@
         [(package_source_core.ResultPackageSourceSet.Err message)
           (ResultBuildPackageTlciSourceInputs.Err message)]
         [(package_source_core.ResultPackageSourceSet.Ok source-set)
-          (match (package_source_core.package-source-set-digest source-set)
+          (match (package_source_core.package-source-set-digest
+            (owned_view.compiler-owned-shared-view source-set))
             [(package_source_core.ResultPackageSourceDigest.Err message)
               (ResultBuildPackageTlciSourceInputs.Err
                 (str_cat.str-cat
@@ -7219,7 +7220,7 @@
           request.debug-info
           request.path-budget
           request.linux-budget-override
-          request.decls
+          (owned_view.compiler-owned-shared-view request.decls)
           (& request.paths))]
       [lowered : compiler_driver_core.ResultCompilerDriverLowered
         (compiler_driver_core.compiler-driver-package-runtime-lower
@@ -7255,7 +7256,7 @@
       (unless
         (array-ref scope.released 0)
         (compiler_dependency_tlci.compiler-dependency-tlci-verification-record!
-          scope.state.load-session
+          (owned_view.compiler-owned-shared-view scope.state.load-session)
           "runtime-finished"
           -1)))
     (compiler_driver_core.compiler-driver-package-runtime-scope-release! scope)))
@@ -7290,10 +7291,10 @@
     (begin
       (package_surface.package-surface-capture-start!
         (package_surface.package-surface-identity-key
-          name
-          owned-paths
+          (owned_view.compiler-owned-shared-view name)
+          (owned_view.compiler-owned-shared-view owned-paths)
           source-inputs.digest
-          producer-identity
+          (owned_view.compiler-owned-shared-view producer-identity)
           (build_run_core.source-tool-target-name target))
         (sym_i64_env.sym-i64-copy seen))
       (let
@@ -7301,14 +7302,14 @@
           (build-package-tlci-capture-exports
             manifest
             mode
-            decls
+            (owned_view.compiler-owned-shared-view decls)
             source-paths
-            source-inputs.source-set)]
+            (owned_view.compiler-owned-shared-view source-inputs.source-set))]
         [prepared : ResultBuildPackagePreparedRuntime
           (build-package-prepare-owned-runtime
-            scope
+            (owned_view.compiler-owned-shared-view scope)
             (build-package-direct-object-default-request
-              name
+              (owned_view.compiler-owned-shared-view name)
               kind
               target
               opt-level
@@ -7319,14 +7320,14 @@
               owned-paths
               cfgs))]
         [_abort : unit
-          (match prepared
+          (match (owned_view.compiler-owned-shared-view prepared)
             [(ResultBuildPackagePreparedRuntime.Err message)
               (package_surface.package-surface-capture-abort! message)]
             [_ unit])]
         [captured : package_surface.ResultPackageSurfacePayloads
           (package_surface.package-surface-capture-take)]
         [_release : unit (build-package-runtime-scope-release! scope)]
-        (match prepared
+        (match (owned_view.compiler-owned-shared-view prepared)
           [(ResultBuildPackagePreparedRuntime.Err message)
             (begin
               (io.print-error message)
@@ -7343,7 +7344,7 @@
               [(package_surface.ResultPackageSurfacePayloads.Ok surface)
                 (match (build-package-tlci-text-with-surface
                   exports
-                  producer-identity
+                  (owned_view.compiler-owned-shared-view producer-identity)
                   source-inputs
                   surface)
                   [(ResultBuildPackageTlciText.Err message)
@@ -7490,7 +7491,7 @@
             (in-arena
               home
               (build-package-emit-one-in-runtime-scope
-                scope
+                (owned_view.compiler-owned-shared-view scope)
                 manifest-path
                 manifest
                 target
@@ -7539,18 +7540,20 @@
     [emit-entry : bool]
     [compile-cfgs : sym_i64_env.SymI64Env]
     [announce : bool]) : i64
-    (match (build-package-tlci-source-inputs manifest-path producer-identity)
+    (match (build-package-tlci-source-inputs
+      manifest-path
+      (owned_view.compiler-owned-shared-view producer-identity))
       [(ResultBuildPackageTlciSourceInputs.Err message)
         (begin
           (io.print-error message)
           1)]
       [(ResultBuildPackageTlciSourceInputs.Ok source-inputs)
         (match (compiler_driver_core.compiler-driver-package-runtime-load
-          scope
-          entry-path
-          stdlib-roots
-          manifest-dir
-          manifest.deps
+          (owned_view.compiler-owned-shared-view scope)
+          (owned_view.compiler-owned-shared-view entry-path)
+          (owned_view.compiler-owned-shared-view stdlib-roots)
+          (owned_view.compiler-owned-shared-view manifest-dir)
+          (owned_view.compiler-owned-shared-view manifest.deps)
           emit-entry
           compile-cfgs)
           [(load.ResultCompilerLoadWithPaths.Err diag)
@@ -7563,15 +7566,15 @@
             (let
               [owned-paths : ast.AstDeclPathList
                 (load.compiler-load-package-owned-paths-for-decls
-                  manifest.name
-                  manifest-dir
+                  (owned_view.compiler-owned-shared-view manifest.name)
+                  (owned_view.compiler-owned-shared-view manifest-dir)
                   stdlib-roots
                   entry-path
-                  decls
-                  paths)]
+                  (owned_view.compiler-owned-shared-view decls)
+                  (owned_view.compiler-owned-shared-view paths))]
               [metadata-link-inputs : build_run_core.SourceToolLinkInputs
                 (build_run_core.source-tool-link-inputs-from-decls
-                  decls
+                  (owned_view.compiler-owned-shared-view decls)
                   (build_run_core.source-tool-link-inputs-empty))]
               [effective-link-inputs : build_run_core.SourceToolLinkInputs
                 (clone
@@ -7585,13 +7588,14 @@
                   emit-entry
                   (build_run_core.source-tool-linux-crt-entry?
                     target
-                    effective-link-inputs))]
+                    (owned_view.compiler-owned-shared-view
+                      effective-link-inputs)))]
               (build-package-finish-fresh-artifacts-with-surface
                 scope
-                manifest
+                (owned_view.compiler-owned-shared-view manifest)
                 source-inputs
                 seen
-                manifest.name
+                (owned_view.compiler-owned-shared-view manifest.name)
                 kind
                 target
                 opt-level
@@ -7640,22 +7644,39 @@
           unit)]
       [manifest-dir : String (load.compiler-load-dirname manifest-path)]
       [compile-context : BuildPackageCompileContext
-        (build-package-compile-context manifest-dir manifest)]
+        (build-package-compile-context
+          (owned_view.compiler-owned-shared-view manifest-dir)
+          (owned_view.compiler-owned-shared-view manifest))]
       [entry-path : String
-        (load.compiler-load-join-root-path manifest-dir manifest.entry)]
-      [name : String manifest.name]
+        (load.compiler-load-join-root-path
+          (owned_view.compiler-owned-shared-view manifest-dir)
+          (owned_view.compiler-owned-shared-view manifest.entry))]
+      [name : String (owned_view.compiler-owned-shared-view manifest.name)]
       [_package-artifact-profile : unit
         (load.compiler-load-set-package-artifact-profile!
           (build-profile-name profile))]
       [kind : load.CompilerPkgKind manifest.kind]
       [asm-path : String
-        (build-package-asm-path-profile manifest-dir name profile)]
+        (build-package-asm-path-profile
+          (owned_view.compiler-owned-shared-view manifest-dir)
+          (owned_view.compiler-owned-shared-view name)
+          profile)]
       [obj-path : String
-        (build-package-obj-path-profile manifest-dir name profile target)]
+        (build-package-obj-path-profile
+          (owned_view.compiler-owned-shared-view manifest-dir)
+          (owned_view.compiler-owned-shared-view name)
+          profile
+          target)]
       [artifact-paths : BuildPackageArtifactPaths
-        (build-package-artifact-paths manifest-dir name kind profile target)]
+        (build-package-artifact-paths
+          (owned_view.compiler-owned-shared-view manifest-dir)
+          (owned_view.compiler-owned-shared-view name)
+          kind
+          profile
+          target)]
       [artifact-path : String
-        (build-package-runtime-artifact-path artifact-paths)]
+        (build-package-runtime-artifact-path
+          (owned_view.compiler-owned-shared-view artifact-paths))]
       [tlci-path : String
         (build-package-host-tlci-artifact-path artifact-paths)]
       [_reset-file-state : unit
@@ -7663,11 +7684,15 @@
       [_dependency-catalogs : unit
         (compiler_dependency_tlci.compiler-dependency-tlci-prepare-deps!
           (load.compiler-load-serial-test-session-state)
-          manifest-dir
+          (owned_view.compiler-owned-shared-view manifest-dir)
           (load.compiler-pkg-deps-from-list catalog-deps))]
       (if (or
         (> (string.string-length compile-context.error) 0)
-        (not (build-ensure-package-output-dirs manifest-dir name profile)))
+        (not
+          (build-ensure-package-output-dirs
+            (owned_view.compiler-owned-shared-view manifest-dir)
+            (owned_view.compiler-owned-shared-view name)
+            profile)))
         (let
           [message : String
             (if (> (string.string-length compile-context.error) 0)
@@ -7681,19 +7706,19 @@
         (let
           [manifest-link-inputs : build_run_core.SourceToolLinkInputs
             (build-package-manifest-link-inputs
-              manifest.link
-              manifest-dir
+              (owned_view.compiler-owned-shared-view manifest.link)
+              (owned_view.compiler-owned-shared-view manifest-dir)
               target)]
           [dep-link-inputs : build_run_core.SourceToolLinkInputs
             (build_run_core.source-tool-link-inputs-from-archives dep-libs)]
           [emit-entry : bool (build-package-kind-entry? kind)]
           [inline-test-status : i64
             (build-inline-test-typecheck-package-sources
-              manifest-path
-              stdlib-roots
-              manifest-dir
-              name
-              manifest.deps
+              (owned_view.compiler-owned-shared-view manifest-path)
+              (owned_view.compiler-owned-shared-view stdlib-roots)
+              (owned_view.compiler-owned-shared-view manifest-dir)
+              (owned_view.compiler-owned-shared-view name)
+              (owned_view.compiler-owned-shared-view manifest.deps)
               (build-package-compile-cfgs target compile-context.root-compiler))]
           [_reset-after-inline-tests : unit
             (if (= inline-test-status 0)
@@ -7706,17 +7731,18 @@
               [pre-emit-doctest-status : i64
                 (build-package-run-doctest-worker-or-inline
                   name
-                  entry-path
-                  manifest-path
+                  (owned_view.compiler-owned-shared-view entry-path)
+                  (owned_view.compiler-owned-shared-view manifest-path)
                   target
                   opt-level
                   profile
                   mode
                   lock-policy
-                  manifest.deps
-                  (load.compiler-pkg-deps-list manifest.deps)
-                  stdlib-roots
-                  manifest-dir
+                  (owned_view.compiler-owned-shared-view manifest.deps)
+                  (load.compiler-pkg-deps-list
+                    (owned_view.compiler-owned-shared-view manifest.deps))
+                  (owned_view.compiler-owned-shared-view stdlib-roots)
+                  (owned_view.compiler-owned-shared-view manifest-dir)
                   emit-entry)]
               [_reset-after-pre-emit-doctests : unit
                 (begin

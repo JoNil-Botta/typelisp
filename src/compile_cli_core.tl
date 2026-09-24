@@ -1415,7 +1415,8 @@
               (cfg
                 compile-profile
                 (compiler_driver_core.compiler-driver-profile-start-phase
-                  (compiler_driver_core.compiler-driver-state-profile _state)))
+                  (compiler_driver_core.compiler-driver-state-profile
+                    (owned_view.compiler-owned-shared-view _state))))
               (match (io.try-write-file
                 (& object-path)
                 (byte_buf.str-as-bytes (& object)))
@@ -1434,10 +1435,12 @@
             (cfg
               compile-profile
               (compiler_driver_core.compiler-driver-profile-finish-phase
-                (compiler_driver_core.compiler-driver-state-profile _state)
+                (compiler_driver_core.compiler-driver-state-profile
+                  (owned_view.compiler-owned-shared-view _state))
                 "write"))
             (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
-              (compiler_driver_core.compiler-driver-state-typecheck _state)
+              (compiler_driver_core.compiler-driver-state-typecheck
+                (owned_view.compiler-owned-shared-view _state))
               "write")
             (cfg
               compile-profile
@@ -1468,7 +1471,8 @@
               (cfg
                 compile-profile
                 (compiler_driver_core.compiler-driver-profile-start-phase
-                  (compiler_driver_core.compiler-driver-state-profile _state)))
+                  (compiler_driver_core.compiler-driver-state-profile
+                    (owned_view.compiler-owned-shared-view _state))))
               (compiler_driver_core.compiler-driver-write-text-buf
                 (owned_view.compiler-owned-shared-view assembly-path)
                 asm))]
@@ -1476,10 +1480,12 @@
             (cfg
               compile-profile
               (compiler_driver_core.compiler-driver-profile-finish-phase
-                (compiler_driver_core.compiler-driver-state-profile _state)
+                (compiler_driver_core.compiler-driver-state-profile
+                  (owned_view.compiler-owned-shared-view _state))
                 "write"))
             (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
-              (compiler_driver_core.compiler-driver-state-typecheck _state)
+              (compiler_driver_core.compiler-driver-state-typecheck
+                (owned_view.compiler-owned-shared-view _state))
               "write")
             (cfg
               compile-profile
@@ -1504,7 +1510,8 @@
         (begin
           (compiler_driver_core.compiler-driver-print-advisories (& advisories))
           (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
-            (compiler_driver_core.compiler-driver-state-typecheck _state)
+            (compiler_driver_core.compiler-driver-state-typecheck
+              (owned_view.compiler-owned-shared-view _state))
             "write-error")
           (cfg
             compile-profile
@@ -1981,7 +1988,8 @@
         (cfg
           compile-profile
           (compiler_driver_core.compiler-driver-batch-profile-start-entry!
-            (compiler_driver_core.compiler-driver-state-profile state)
+            (compiler_driver_core.compiler-driver-state-profile
+              (owned_view.compiler-owned-shared-view state))
             ordinal)
           unit)]
       [input-path : String (cli_svec.get entries index "")]
@@ -2017,7 +2025,8 @@
         (cfg
           compile-profile
           (compiler_driver_core.compiler-driver-batch-profile-mark!
-            (compiler_driver_core.compiler-driver-state-profile state)
+            (compiler_driver_core.compiler-driver-state-profile
+              (owned_view.compiler-owned-shared-view state))
             ordinal
             "emit-complete")
           unit)]
@@ -2043,7 +2052,7 @@
         (cfg
           compile-profile
           (compiler_driver_core.compiler-driver-state-release-file-state-profiled!
-            state
+            (owned_view.compiler-owned-shared-view state)
             ordinal)
           (compiler_driver_core.compiler-driver-state-release-file-state!
             (owned_view.compiler-owned-shared-view state)))
@@ -2083,7 +2092,8 @@
         (cfg
           compile-profile
           (compiler_driver_core.compiler-driver-batch-profile-mark!
-            (compiler_driver_core.compiler-driver-state-profile state)
+            (compiler_driver_core.compiler-driver-state-profile
+              (owned_view.compiler-owned-shared-view state))
             ordinal
             "scratch-destroy-steady")
           unit)
@@ -2188,7 +2198,8 @@
         (cfg
           compile-profile
           (compiler_driver_core.compiler-driver-batch-profile-start-entry!
-            (compiler_driver_core.compiler-driver-state-profile state)
+            (compiler_driver_core.compiler-driver-state-profile
+              (owned_view.compiler-owned-shared-view state))
             ordinal)
           unit)]
       [input-path : String (cli_svec.get entries index "")]
@@ -2217,7 +2228,8 @@
         (cfg
           compile-profile
           (compiler_driver_core.compiler-driver-batch-profile-mark!
-            (compiler_driver_core.compiler-driver-state-profile state)
+            (compiler_driver_core.compiler-driver-state-profile
+              (owned_view.compiler-owned-shared-view state))
             ordinal
             "emit-complete")
           unit)]
@@ -2257,7 +2269,7 @@
         (cfg
           compile-profile
           (compiler_driver_core.compiler-driver-state-release-file-state-profiled!
-            state
+            (owned_view.compiler-owned-shared-view state)
             ordinal)
           (compiler_driver_core.compiler-driver-state-release-file-state!
             (owned_view.compiler-owned-shared-view state)))
@@ -2291,7 +2303,8 @@
         (cfg
           compile-profile
           (compiler_driver_core.compiler-driver-batch-profile-mark!
-            (compiler_driver_core.compiler-driver-state-profile state)
+            (compiler_driver_core.compiler-driver-state-profile
+              (owned_view.compiler-owned-shared-view state))
             ordinal
             "scratch-destroy-steady")
           unit)

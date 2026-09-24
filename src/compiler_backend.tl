@@ -103396,9 +103396,7 @@
   [asm : String]
   [relocs : cobj.CompilerObjectRelocationList]) : String
   (let
-    [count : i64
-      (cobj.compiler-object-relocation-list-count
-        (compiler-backend-global-shared-view relocs))]
+    [count : i64 (cobj.compiler-object-relocation-list-count relocs)]
     [index : i64 0]
     [out : String asm]
     (begin
@@ -103498,9 +103496,7 @@
   [relocs : cobj.CompilerObjectRelocationList]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (let
-    [count : i64
-      (cobj.compiler-object-relocation-list-count
-        (compiler-backend-global-shared-view relocs))]
+    [count : i64 (cobj.compiler-object-relocation-list-count relocs)]
     [index : i64 0]
     [out : text_buf.TextBuf buf]
     (begin
@@ -103622,9 +103618,7 @@
   [image : cobj.CompilerObjectImage]
   [relocs : cobj.CompilerObjectRelocationList]) : bool
   (let
-    [count : i64
-      (cobj.compiler-object-relocation-list-count
-        (compiler-backend-global-shared-view relocs))]
+    [count : i64 (cobj.compiler-object-relocation-list-count relocs)]
     [index : i64 0]
     [ok : bool true]
     (begin

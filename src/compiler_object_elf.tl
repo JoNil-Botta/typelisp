@@ -334,9 +334,7 @@
 (define (compiler-object-elf-relocation-list-supported?
   [relocs : cobj.CompilerObjectRelocationList]) : bool
   (let
-    [count : i64
-      (cobj.compiler-object-relocation-list-count
-        (owned_view.compiler-owned-shared-view relocs))]
+    [count : i64 (cobj.compiler-object-relocation-list-count relocs)]
     [index : i64 0]
     [ok : bool true]
     (begin
@@ -392,9 +390,7 @@
 (define (compiler-object-elf-sections-supported?
   [sections : cobj.CompilerObjectSectionList]) : bool
   (let
-    [count : i64
-      (cobj.compiler-object-section-list-count
-        (owned_view.compiler-owned-shared-view sections))]
+    [count : i64 (cobj.compiler-object-section-list-count sections)]
     [index : i64 0]
     [ok : bool true]
     (begin
@@ -599,9 +595,7 @@
   [image : cobj.CompilerObjectImage]
   [relocs : cobj.CompilerObjectRelocationList]) : bool
   (let
-    [count : i64
-      (cobj.compiler-object-relocation-list-count
-        (owned_view.compiler-owned-shared-view relocs))]
+    [count : i64 (cobj.compiler-object-relocation-list-count relocs)]
     [index : i64 0]
     [ok : bool true]
     (begin
@@ -823,9 +817,7 @@
   [relocs : cobj.CompilerObjectRelocationList]
   [kind : cobj.CompilerObjectSectionKind]) : i64
   (let
-    [count : i64
-      (cobj.compiler-object-relocation-list-count
-        (owned_view.compiler-owned-shared-view relocs))]
+    [count : i64 (cobj.compiler-object-relocation-list-count relocs)]
     [index : i64 0]
     [total : i64 0]
     (begin
@@ -1582,9 +1574,7 @@
   [relocs : cobj.CompilerObjectRelocationList]
   [kind : cobj.CompilerObjectSectionKind]) : unit
   (let
-    [count : i64
-      (cobj.compiler-object-relocation-list-count
-        (owned_view.compiler-owned-shared-view relocs))]
+    [count : i64 (cobj.compiler-object-relocation-list-count relocs)]
     [index : i64 0]
     (begin
       (while (< index count)

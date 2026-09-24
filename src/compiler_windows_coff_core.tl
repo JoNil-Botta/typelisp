@@ -92,9 +92,7 @@
   [symbols : cobj.CompilerObjectSymbolList]
   [relocs : cobj.CompilerObjectRelocationList]) : bool
   (let
-    [count : i64
-      (cobj.compiler-object-relocation-list-count
-        (owned_view.compiler-owned-shared-view relocs))]
+    [count : i64 (cobj.compiler-object-relocation-list-count relocs)]
     [index : i64 0]
     [ok : bool true]
     (begin

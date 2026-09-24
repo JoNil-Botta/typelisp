@@ -424,7 +424,7 @@
 
 (define (compiler-object-symbol-builder-contains?
   [builder : CompilerObjectSymbolBuilder]
-  [name : String]
+  [name : (& name str)]
   [binding : CompilerObjectSymbolBinding]
   [kind : CompilerObjectSymbolKind]) : bool
   (let
@@ -574,7 +574,7 @@
   (array-ref symbols.slots index))
 
 (define (compiler-object-relocation-list-count
-  [relocs : CompilerObjectRelocationList]) : i64
+  [relocs : (& relocs CompilerObjectRelocationList)]) : i64
   relocs.len)
 
 (define (compiler-object-relocation-list-ref
@@ -600,7 +600,7 @@
   (array-ref instrs.slots index))
 
 (define (compiler-object-section-list-count
-  [sections : CompilerObjectSectionList]) : i64
+  [sections : (& sections CompilerObjectSectionList)]) : i64
   sections.len)
 
 (define (compiler-object-section-list-ref
@@ -615,9 +615,7 @@
   [sections : CompilerObjectSectionList]
   [kind : CompilerObjectSectionKind]) : CompilerObjectSection
   (let
-    [count : i64
-      (compiler-object-section-list-count
-        (owned_view.compiler-owned-shared-view sections))]
+    [count : i64 (compiler-object-section-list-count sections)]
     [index : i64 0]
     [result : CompilerObjectSection
       (CompilerObjectSection.Section
@@ -689,9 +687,7 @@
   [kind : CompilerObjectRelocationKind]
   [target : String]) : bool
   (let
-    [count : i64
-      (compiler-object-relocation-list-count
-        (owned_view.compiler-owned-shared-view relocs))]
+    [count : i64 (compiler-object-relocation-list-count relocs)]
     [index : i64 0]
     [found : bool false]
     (begin
@@ -978,7 +974,7 @@
 
 (define (compiler-object-string-contains?
   [haystack : String]
-  [needle : String]
+  [needle : (& needle str)]
   [start : i64]) : bool
   (cond
     [(= (string.string-length needle) 0) true]
@@ -989,7 +985,7 @@
 
 (define (compiler-object-instr-list-contains-bytes?
   [instrs : CompilerObjectX64InstrList]
-  [bytes : String]) : bool
+  [bytes : (& bytes str)]) : bool
   (let
     [count : i64
       (compiler-object-instr-list-count
@@ -1002,17 +998,11 @@
           (owned_view.compiler-owned-shared-view instrs)
           index)
           [(CompilerObjectX64Instr.Bytes value)
-            (if (compiler-object-string-contains?
-              value
-              (owned_view.compiler-owned-shared-view bytes)
-              0)
+            (if (compiler-object-string-contains? value bytes 0)
               (set! found true)
               (set! index (+ index 1)))]
           [(CompilerObjectX64Instr.Raw value)
-            (if (compiler-object-string-contains?
-              value
-              (owned_view.compiler-owned-shared-view bytes)
-              0)
+            (if (compiler-object-string-contains? value bytes 0)
               (set! found true)
               (set! index (+ index 1)))]
           [_ (set! index (+ index 1))]))

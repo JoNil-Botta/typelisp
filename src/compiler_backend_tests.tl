@@ -2077,10 +2077,7 @@
         (and
           (cobj.compiler-object-image-dense? image)
           (compiler_backend.backend-and8
-            (=
-              (cobj.compiler-object-section-list-count
-                (owned_view.compiler-owned-shared-view sections))
-              4)
+            (= (cobj.compiler-object-section-list-count sections) 4)
             (>
               (cobj.compiler-object-section-instr-count
                 (owned_view.compiler-owned-shared-view sections)
@@ -2241,10 +2238,7 @@
             (owned_view.compiler-owned-shared-view relocs)
             (cobj.CompilerObjectRelocationKind.RipValue)
             "_tl_answer")
-          (>
-            (cobj.compiler-object-relocation-list-count
-              (owned_view.compiler-owned-shared-view relocs))
-            5)))]
+          (> (cobj.compiler-object-relocation-list-count relocs) 5)))]
     [(compiler_backend.ResultCompilerBackendObject.Err _) false]))
 
 (define (compiler-backend-object-tlci-macro-entry-gate-ok?) : bool
@@ -2276,9 +2270,7 @@
       (cobj.compiler-object-instr-builder-finish
         (owned_view.compiler-owned-shared-view disabled-parts.text))]
     (and
-      (cobj.compiler-object-instr-list-contains-bytes?
-        enabled
-        (owned_view.compiler-owned-shared-view expected))
+      (cobj.compiler-object-instr-list-contains-bytes? enabled expected)
       (not (cobj.compiler-object-instr-list-contains-bytes? disabled expected)))))
 
 ;; Let-bound if-merges whose phi destination differs from both inputs: the
@@ -2793,10 +2785,7 @@
             (cobj.compiler-object-image-dense?
               (owned_view.compiler-owned-shared-view image))
             (compiler_backend.backend-and8
-              (=
-                (cobj.compiler-object-section-list-count
-                  (owned_view.compiler-owned-shared-view sections))
-                7)
+              (= (cobj.compiler-object-section-list-count sections) 7)
               (cobj.compiler-object-symbol-list-contains?
                 (owned_view.compiler-owned-shared-view symbols)
                 "_tl_start"

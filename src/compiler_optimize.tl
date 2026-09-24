@@ -7455,6 +7455,22 @@
           (ast.AstType.Unit))]
       [_ (ast.AstType.Unit)])))
 
+;; A String's descriptor is a fixed pair of words even though its byte buffer
+;; is dynamic. Admit only the exact runtime descriptor allocation here; all
+;; pointer-use, ownership-edge and escape checks of word splitting still apply.
+;; This does not make String storage a general stack-promotion candidate.
+(define (opt-aggregate-split-direct-alloc [instr : ir.CompilerIrInstr]) : OptMaybeAggregateAlloc
+  (match (compiler-opt-global-shared-view instr)
+    [(ir.CompilerIrInstr.Call
+        dst
+        name
+        (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.I64 16))
+        (ast.AstType.String))
+      (if (ir.compiler-ir-symbol-eq? name cbi.compiler-builtin-id-tl-alloc)
+        (OptMaybeAggregateAlloc.Some dst (ast.AstType.String) 16)
+        (OptMaybeAggregateAlloc.No))]
+    [_ (opt-aggregate-direct-alloc instr)]))
+
 ;; Word count of the allocation rooted at `index`: 0 when the instruction is not
 ;; a root at all, -1 when it is a root this pass will not take (a `tl_alloc`
 ;; whose size is not a whole number of words).
@@ -7477,7 +7493,8 @@
           storage)
         0)]
     [_
-      (match (opt-aggregate-direct-alloc (opt-aggregate-split-at flat index))
+      (match (opt-aggregate-split-direct-alloc
+        (opt-aggregate-split-at flat index))
         [(OptMaybeAggregateAlloc.Some _ _ size)
           (if (= (- size (* (/ size 8) 8)) 0)
             (/ size 8)
@@ -7493,7 +7510,8 @@
         (array-ref flat.starts index)
         storage)]
     [_
-      (match (opt-aggregate-direct-alloc (opt-aggregate-split-at flat index))
+      (match (opt-aggregate-split-direct-alloc
+        (opt-aggregate-split-at flat index))
         [(OptMaybeAggregateAlloc.Some _ ty _) ty]
         [(OptMaybeAggregateAlloc.No) (ast.AstType.Unit)])]))
 

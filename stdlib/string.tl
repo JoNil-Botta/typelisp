@@ -530,32 +530,54 @@
         (let
           [lp : (Ptr u8) (string-data left)]
           [rp : (Ptr u8) (string-data right)]
-          (if (= (ptr->int lp) (ptr->int rp))
-            true
-            (let
-              [lw : (Ptr i64) (ptr-cast lp : (Ptr i64))]
-              [rw : (Ptr i64) (ptr-cast rp : (Ptr i64))]
-              [words : i64 (shr left-len 3)]
-              [i : i64 0]
-              (begin
-                (while (< i words)
-                  (if (not
-                    (=
-                      (ptr-read (ptr-offset lw i))
-                      (ptr-read (ptr-offset rw i))))
-                    (return false)
-                    (set! i (+ i 1))))
-                (let
-                  [j : i64 (* words 8)]
-                  (begin
-                    (while (< j left-len)
-                      (if (not
-                        (=
-                          (cast (ptr-read (ptr-offset lp j)) : i64)
-                          (cast (ptr-read (ptr-offset rp j)) : i64)))
-                        (return false)
-                        (set! j (+ j 1))))
-                    true))))))))))
+          ;; Every read below lies inside [0, len). Past the whole words, the
+          ;; last 8 bytes are read as one word that overlaps what was already
+          ;; compared; below 8 bytes, the first and the last 4 (or 2) bytes
+          ;; together cover the string, overlapping in the middle -- two
+          ;; compares where a byte loop spends one per byte.
+          (cond
+            [(= (ptr->int lp) (ptr->int rp)) true]
+            [(>= left-len 8)
+              (let
+                [lw : (Ptr i64) (ptr-cast lp : (Ptr i64))]
+                [rw : (Ptr i64) (ptr-cast rp : (Ptr i64))]
+                [words : i64 (shr left-len 3)]
+                [i : i64 0]
+                (begin
+                  (while (< i words)
+                    (if (not
+                      (=
+                        (ptr-read (ptr-offset lw i))
+                        (ptr-read (ptr-offset rw i))))
+                      (return false)
+                      (set! i (+ i 1))))
+                  (=
+                    (ptr-read
+                      (ptr-cast (ptr-offset lp (- left-len 8)) : (Ptr i64)))
+                    (ptr-read
+                      (ptr-cast (ptr-offset rp (- left-len 8)) : (Ptr i64))))))]
+            [(>= left-len 4)
+              (and
+                (=
+                  (ptr-read (ptr-cast lp : (Ptr u32)))
+                  (ptr-read (ptr-cast rp : (Ptr u32))))
+                (=
+                  (ptr-read
+                    (ptr-cast (ptr-offset lp (- left-len 4)) : (Ptr u32)))
+                  (ptr-read
+                    (ptr-cast (ptr-offset rp (- left-len 4)) : (Ptr u32)))))]
+            [(>= left-len 2)
+              (and
+                (=
+                  (ptr-read (ptr-cast lp : (Ptr u16)))
+                  (ptr-read (ptr-cast rp : (Ptr u16))))
+                (=
+                  (ptr-read
+                    (ptr-cast (ptr-offset lp (- left-len 2)) : (Ptr u16)))
+                  (ptr-read
+                    (ptr-cast (ptr-offset rp (- left-len 2)) : (Ptr u16)))))]
+            [(= left-len 1) (= (ptr-read lp) (ptr-read rp))]
+            [else true]))))))
 
 ;: Alias for `eq`.
 ;; lint-allow: function-name-case -- compatibility API spelling

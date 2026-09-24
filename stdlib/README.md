@@ -116,6 +116,19 @@ Vec bang place macros as available yet.
   spelling; IPv6 accepts RFC 4291 compression and embedded dotted suffixes and
   emits lowercase RFC 5952 pure hexadecimal. Import it with
   `(import stdlib.net.ip)`.
+- `net_windows_winsock.tl`: private Windows x86-64 Winsock 2.2 substrate for
+  the socket adapter in #7379. It checks the actual System32 identity of one
+  dynamically loaded `Ws2_32.dll`, resolves a fixed 21-function typed table,
+  and publishes the complete table once. The published module reference stays
+  loaded for process lifetime so stored function pointers remain valid. Each
+  successful `WSAStartup` owns one move-only lease whose cleanup calls
+  `WSACleanup` exactly once; table access and socket construction require a
+  live lease. A 176-byte table and a bounded 32 KiB lease registry are retained
+  for process lifetime; at most 4096 leases are live at once, and acquisition
+  past that balances its startup and fails. Each lease is one pointer-width Box
+  handle whose 8-byte Box is allocated in the acquiring arena. Module globals
+  remain assignable by importers (#7976). This internal module defines no
+  public TCP/UDP handle or I/O API.
 - `ssh_known_hosts_parse.tl`: pure bounded OpenSSH `known_hosts` snapshot
   scanner, canonical host/port lookup identity, and ASCII case-folded plain
   pattern matcher. It preflights whole-source byte/line/record limits before

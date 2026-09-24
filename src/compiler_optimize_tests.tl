@@ -113186,3 +113186,245 @@
                 [_ (test.assert-true false "fixture guard exists")])]
             [_ (test.assert-true false "fixture body exists")])
           (set! mode (+ mode 1)))))))
+
+;; Prefix arithmetic updates a loop-carried value before the invariant call.
+(define (opt-lcp-test-input [mode : i64]) : compiler_ir_types.CompilerIrFunction
+  (match (opt-lcc-test-function 0)
+    [(compiler_ir_types.CompilerIrFunction.Function
+        name
+        params
+        ret
+        frame
+        blocks
+        abi)
+      (let
+        [seq (compiler_ir_types.compiler-ir-block-seq-from-list blocks)]
+        [out (compiler_ir_types.compiler-ir-block-builder-with-capacity 4)]
+        [i : i64 0]
+        (begin
+          (while (< i 4)
+            (begin
+              (match (compiler_ir_types.compiler-ir-block-seq-ref seq i)
+                [(compiler_ir_types.CompilerIrBlock.Block label instrs)
+                  (if (= label (compiler_ir_types.compiler-ir-label "body"))
+                    (let
+                      [b
+                        (compiler_ir_types.compiler-ir-instr-builder-with-capacity
+                          16)]
+                      [j : i64 0]
+                      (begin
+                        (if (= mode 11)
+                          (while (< j 9)
+                            (begin
+                              (compiler_ir_types.compiler-ir-instr-builder-push!
+                                (&mut b)
+                                (compiler_ir_types.CompilerIrInstr.Mov
+                                  7
+                                  (compiler_ir_types.CompilerIrValue.Var 2)
+                                  (compiler_ast_types.AstType.I64)))
+                              (set! j (+ j 1))))
+                          (compiler_ir_types.compiler-ir-instr-builder-push!
+                            (&mut b)
+                            (compiler_ir_types.CompilerIrInstr.BinOp
+                              7
+                              (cond
+                                [(= mode 0)
+                                  (compiler_ir_types.CompilerIrBinOp.Add)]
+                                [(= mode 1)
+                                  (compiler_ir_types.CompilerIrBinOp.Sub)]
+                                [(= mode 2)
+                                  (compiler_ir_types.CompilerIrBinOp.Mul)]
+                                [(= mode 3)
+                                  (compiler_ir_types.CompilerIrBinOp.BitAnd)]
+                                [(= mode 4)
+                                  (compiler_ir_types.CompilerIrBinOp.BitOr)]
+                                [(= mode 5)
+                                  (compiler_ir_types.CompilerIrBinOp.BitXor)]
+                                [(= mode 6)
+                                  (compiler_ir_types.CompilerIrBinOp.Div)]
+                                [(= mode 7)
+                                  (compiler_ir_types.CompilerIrBinOp.Mod)]
+                                [(= mode 8)
+                                  (compiler_ir_types.CompilerIrBinOp.Shl
+                                    (compiler_ast_types.AstType.I64))]
+                                [else
+                                  (compiler_ir_types.CompilerIrBinOp.Shr
+                                    (compiler_ast_types.AstType.I64))])
+                              (compiler_ir_types.CompilerIrValue.Var 2)
+                              (compiler_ir_types.CompilerIrValue.I64 2)
+                              (compiler_ast_types.AstType.I64))))
+                        (compiler_ir_types.compiler-ir-instr-builder-push!
+                          (&mut b)
+                          (compiler_ir_types.CompilerIrInstr.Mov
+                            2
+                            (if (= mode 10)
+                              (compiler_ir_types.CompilerIrValue.Global
+                                (opt-test-symbol "prefix_global"))
+                              (compiler_ir_types.CompilerIrValue.Var 7))
+                            (compiler_ast_types.AstType.I64)))
+                        (compiler_ir_types.compiler-ir-instr-builder-append-seq-range!
+                          (&mut b)
+                          (compiler_optimize.compiler-opt-global-shared-view
+                            instrs)
+                          0
+                          instrs.len)
+                        (compiler_ir_types.compiler-ir-block-builder-push!
+                          (&mut out)
+                          (compiler_ir_types.CompilerIrBlock.Block
+                            label
+                            (compiler_ir_types.compiler-ir-instr-builder-to-seq
+                              b)))))
+                    (compiler_ir_types.compiler-ir-block-builder-push!
+                      (&mut out)
+                      (compiler_ir_types.CompilerIrBlock.Block label instrs)))])
+              (set! i (+ i 1))))
+          (compiler_ir_types.CompilerIrFunction.Function
+            name
+            params
+            ret
+            frame
+            (compiler_ir_types.compiler-ir-block-builder-to-list out)
+            abi)))]))
+
+(define (opt-lcp-test-control? [blocks : compiler_ir_types.CompilerIrBlockList]) : bool
+  (match (compiler_optimize.opt-cfg-find-block
+    (compiler_optimize.compiler-opt-global-shared-view blocks)
+    (compiler_ir_types.compiler-ir-label "body"))
+    [(compiler_optimize.OptMaybeBlock.Some
+        (compiler_ir_types.CompilerIrBlock.Block _ first))
+      (and
+        (= first.len 4)
+        (match (compiler_ir_types.compiler-ir-instr-seq-ref
+          (compiler_optimize.compiler-opt-global-shared-view first)
+          2)
+          [(compiler_ir_types.CompilerIrInstr.Call 4 _ _ _) true]
+          [_ false])
+        (match (compiler_ir_types.compiler-ir-instr-seq-ref first 3)
+          [(compiler_ir_types.CompilerIrInstr.Jump resume)
+            (match (compiler_optimize.opt-cfg-find-block
+              (compiler_optimize.compiler-opt-global-shared-view blocks)
+              resume)
+              [(compiler_optimize.OptMaybeBlock.Some
+                  (compiler_ir_types.CompilerIrBlock.Block _ rest))
+                (and
+                  (= rest.len 3)
+                  (match (compiler_ir_types.compiler-ir-instr-seq-ref rest 2)
+                    [(compiler_ir_types.CompilerIrInstr.Jump repeat)
+                      (match (compiler_optimize.opt-cfg-find-block
+                        (compiler_optimize.compiler-opt-global-shared-view
+                          blocks)
+                        repeat)
+                        [(compiler_optimize.OptMaybeBlock.Some
+                            (compiler_ir_types.CompilerIrBlock.Block _ guard))
+                          (and
+                            (= guard.len 2)
+                            (match (compiler_ir_types.compiler-ir-instr-seq-ref
+                              guard
+                              1)
+                              [(compiler_ir_types.CompilerIrInstr.Branch
+                                  _
+                                  prefix
+                                  exit)
+                                (and
+                                  (!= prefix resume)
+                                  (=
+                                    exit
+                                    (compiler_ir_types.compiler-ir-label "exit"))
+                                  (match (compiler_optimize.opt-cfg-find-block
+                                    blocks
+                                    prefix)
+                                    [(compiler_optimize.OptMaybeBlock.Some
+                                        (compiler_ir_types.CompilerIrBlock.Block
+                                          _
+                                          replay))
+                                      (and
+                                        (= replay.len 3)
+                                        (match (compiler_ir_types.compiler-ir-instr-seq-ref
+                                          (compiler_optimize.compiler-opt-global-shared-view
+                                            replay)
+                                          0)
+                                          [(compiler_ir_types.CompilerIrInstr.BinOp
+                                              7
+                                              _
+                                              (compiler_ir_types.CompilerIrValue.Var
+                                                2)
+                                              (compiler_ir_types.CompilerIrValue.I64
+                                                2)
+                                              _)
+                                            true]
+                                          [_ false])
+                                        (match (compiler_ir_types.compiler-ir-instr-seq-ref
+                                          (compiler_optimize.compiler-opt-global-shared-view
+                                            replay)
+                                          1)
+                                          [(compiler_ir_types.CompilerIrInstr.Mov
+                                              2
+                                              (compiler_ir_types.CompilerIrValue.Var
+                                                7)
+                                              _)
+                                            true]
+                                          [_ false])
+                                        (match (compiler_ir_types.compiler-ir-instr-seq-ref
+                                          replay
+                                          2)
+                                          [(compiler_ir_types.CompilerIrInstr.Jump
+                                              target)
+                                            (= target resume)]
+                                          [_ false]))]
+                                    [_ false]))]
+                              [_ false]))]
+                        [_ false])]
+                    [_ false]))]
+              [_ false])]
+          [_ false]))]
+    [_ false]))
+
+(test
+  invariant-loop-call-replays-pure-prefix
+  (let
+    [mode : i64 0]
+    (while (< mode 12)
+      (let
+        [index
+          (compiler_optimize.opt-function-index-build
+            (compiler_ir_types.compiler-ir-function-seq-prepend
+              (opt-lcc-test-callee false)
+              (compiler_ir_types.compiler-ir-function-seq-empty)))]
+        [out
+          (compiler_optimize.opt-loop-call-cache-function
+            index
+            (opt-pcd-test-map false)
+            (opt-lcp-test-input mode))]
+        [blocks
+          (compiler_optimize.opt-function-blocks
+            (compiler_optimize.compiler-opt-global-shared-view out))]
+        (begin
+          (test.assert-i64-eq
+            (if (< mode 6)
+              7
+              6)
+            (compiler_ir_types.compiler-ir-block-list-count
+              (compiler_optimize.compiler-opt-global-shared-view blocks))
+            "replay only bounded nontrapping scalar prefixes")
+          (test.assert-i64-eq
+            (if (< mode 6)
+              8
+              10)
+            (compiler_optimize.opt-function-frame
+              (compiler_optimize.compiler-opt-global-shared-view out))
+            "replayed prefix needs no cache flag or value slots")
+          (when
+            (< mode 6)
+            (test.assert-true
+              (opt-lcp-test-control?
+                (compiler_optimize.compiler-opt-global-shared-view blocks))
+              "execute prefix once on every taken guard, preserving order before first call"))
+          (test.assert-true
+            (compiler_optimize.opt-inline-structure-ok? blocks)
+            "valid replay CFG")
+          (test.assert-true
+            (compiler_optimize.opt-verify-ok?
+              (compiler_optimize.opt-verify-function
+                (compiler_optimize.opt-ssa-construct-function 0 out)))
+            "loop-carried prefix definitions remain valid after SSA")
+          (set! mode (+ mode 1)))))))

@@ -548,10 +548,10 @@ end
 decision|src/compiler_optimize_tests.tl|optimizer self-test/fixture companion split from compiler_optimize.tl (#5169): main-less, imported by src/tests/compiler_optimize_smoke.tl and exercised through both native integration manifests; production optimizer imports remain fixture-free
 
 case|selfhost_compiler_optimize|src/compiler_optimize.tl|assembly|skip|direct
-contains|_tl_optimize_program:
-contains|_tl_optimize_program_with_level:
-contains|_tl_opt_fold_instrs_bang:
-contains|_tl_opt_strength_instrs_bang:
+contains|_tl_optimize_program_with_spans_and_level:
+contains|_tl_optimize_function_with_level:
+contains|_tl_opt_fold_instr:
+contains|_tl_opt_strength_instr:
 contains|_tl_opt_cfg_dominators:
 contains|_tl_opt_verify_function:
 end

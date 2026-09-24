@@ -3754,73 +3754,18 @@ assert_profile_counter_eq_in \
     "$VECTOR_FIVE_STDOUT" \
     "$VECTOR_FIVE_STDERR"
 
-# The constrained vector type operand is validated once at definition time.
-# The explicit-clone producer contributes two more definition-time proofs for
-# the constrained type operands of `clone-nominal-value` and `gen-clone`.
-# The first concrete identity still checks all fifteen generated declarations,
+# Every generated vector identity checks all fifteen generated declarations,
 # including the two public place macros reconstructed by #5262.
-# Later distinct identities may reuse persisted proofs for the six declarations
-# admitted as proven safe by the exact guard; all remaining declarations stay
-# on the ordinary check path.
 assert_profile_counter_eq_in \
     "$VECTOR_ONE_STDERR" \
-    "typecheck.macro.generated_module_abstract_proofs" \
-    3 \
-    "$VECTOR_ONE_STDOUT" \
-    "$VECTOR_ONE_STDERR"
-assert_profile_counter_eq_in \
-    "$VECTOR_FIVE_STDERR" \
-    "typecheck.macro.generated_module_abstract_proofs" \
-    3 \
-    "$VECTOR_FIVE_STDOUT" \
-    "$VECTOR_FIVE_STDERR"
-assert_profile_counter_eq_in \
-    "$VECTOR_ONE_STDERR" \
-    "typecheck.macro.generated_decl_checks_invariant_eligible" \
+    "typecheck.macro.generated_decl_checks" \
     15 \
     "$VECTOR_ONE_STDOUT" \
     "$VECTOR_ONE_STDERR"
 assert_profile_counter_eq_in \
     "$VECTOR_FIVE_STDERR" \
-    "typecheck.macro.generated_decl_checks_invariant_eligible" \
+    "typecheck.macro.generated_decl_checks" \
     75 \
-    "$VECTOR_FIVE_STDOUT" \
-    "$VECTOR_FIVE_STDERR"
-assert_profile_counter_eq_in \
-    "$VECTOR_ONE_STDERR" \
-    "typecheck.macro.generated_decl_checks_concrete_required" \
-    0 \
-    "$VECTOR_ONE_STDOUT" \
-    "$VECTOR_ONE_STDERR"
-assert_profile_counter_eq_in \
-    "$VECTOR_FIVE_STDERR" \
-    "typecheck.macro.generated_decl_checks_concrete_required" \
-    0 \
-    "$VECTOR_FIVE_STDOUT" \
-    "$VECTOR_FIVE_STDERR"
-assert_profile_counter_eq_in \
-    "$VECTOR_ONE_STDERR" \
-    "typecheck.macro.generated_decl_checks_proof_reused" \
-    0 \
-    "$VECTOR_ONE_STDOUT" \
-    "$VECTOR_ONE_STDERR"
-assert_profile_counter_eq_in \
-    "$VECTOR_FIVE_STDERR" \
-    "typecheck.macro.generated_decl_checks_proof_reused" \
-    24 \
-    "$VECTOR_FIVE_STDOUT" \
-    "$VECTOR_FIVE_STDERR"
-
-assert_profile_counter_eq_in \
-    "$VECTOR_ONE_STDERR" \
-    "typecheck.macro.generated_decl_checks" \
-    15 \
-    "$VECTOR_ONE_STDOUT" \
-    "$VECTOR_ONE_STDERR"
-assert_profile_counter_eq_in \
-    "$VECTOR_FIVE_STDERR" \
-    "typecheck.macro.generated_decl_checks" \
-    51 \
     "$VECTOR_FIVE_STDOUT" \
     "$VECTOR_FIVE_STDERR"
 
@@ -3830,34 +3775,6 @@ VECTOR_ONE_DECL_CHECKS=$(profile_counter_value_in \
 VECTOR_FIVE_DECL_CHECKS=$(profile_counter_value_in \
     "$VECTOR_FIVE_STDERR" \
     "typecheck.macro.generated_decl_checks")
-VECTOR_ONE_INVARIANT_ELIGIBLE=$(profile_counter_value_in \
-    "$VECTOR_ONE_STDERR" \
-    "typecheck.macro.generated_decl_checks_invariant_eligible")
-VECTOR_FIVE_INVARIANT_ELIGIBLE=$(profile_counter_value_in \
-    "$VECTOR_FIVE_STDERR" \
-    "typecheck.macro.generated_decl_checks_invariant_eligible")
-VECTOR_ONE_CONCRETE_REQUIRED=$(profile_counter_value_in \
-    "$VECTOR_ONE_STDERR" \
-    "typecheck.macro.generated_decl_checks_concrete_required")
-VECTOR_FIVE_CONCRETE_REQUIRED=$(profile_counter_value_in \
-    "$VECTOR_FIVE_STDERR" \
-    "typecheck.macro.generated_decl_checks_concrete_required")
-VECTOR_ONE_PROOF_REUSED=$(profile_counter_value_in \
-    "$VECTOR_ONE_STDERR" \
-    "typecheck.macro.generated_decl_checks_proof_reused")
-VECTOR_FIVE_PROOF_REUSED=$(profile_counter_value_in \
-    "$VECTOR_FIVE_STDERR" \
-    "typecheck.macro.generated_decl_checks_proof_reused")
-VECTOR_ONE_CHECK_ACCOUNTING=$((VECTOR_ONE_DECL_CHECKS + VECTOR_ONE_PROOF_REUSED))
-VECTOR_ONE_ELIGIBILITY_ACCOUNTING=$((VECTOR_ONE_INVARIANT_ELIGIBLE + VECTOR_ONE_CONCRETE_REQUIRED))
-VECTOR_FIVE_CHECK_ACCOUNTING=$((VECTOR_FIVE_DECL_CHECKS + VECTOR_FIVE_PROOF_REUSED))
-VECTOR_FIVE_ELIGIBILITY_ACCOUNTING=$((VECTOR_FIVE_INVARIANT_ELIGIBLE + VECTOR_FIVE_CONCRETE_REQUIRED))
-if [ "$VECTOR_ONE_CHECK_ACCOUNTING" -ne "$VECTOR_ONE_ELIGIBILITY_ACCOUNTING" ] ||
-    [ "$VECTOR_FIVE_CHECK_ACCOUNTING" -ne "$VECTOR_FIVE_ELIGIBILITY_ACCOUNTING" ]; then
-    show_failure_logs "$VECTOR_ONE_STDOUT" "$VECTOR_ONE_STDERR"
-    show_failure_logs "$VECTOR_FIVE_STDOUT" "$VECTOR_FIVE_STDERR"
-    fail "generated declaration check accounting mismatch: one checks=$VECTOR_ONE_DECL_CHECKS proof_reused=$VECTOR_ONE_PROOF_REUSED invariant_eligible=$VECTOR_ONE_INVARIANT_ELIGIBLE concrete_required=$VECTOR_ONE_CONCRETE_REQUIRED; five checks=$VECTOR_FIVE_DECL_CHECKS proof_reused=$VECTOR_FIVE_PROOF_REUSED invariant_eligible=$VECTOR_FIVE_INVARIANT_ELIGIBLE concrete_required=$VECTOR_FIVE_CONCRETE_REQUIRED"
-fi
 
 # The initial table build is the only whole-program symbol/registry build.
 # Every generated vector module extends the live tables at their logical end.
@@ -3930,7 +3847,7 @@ for counter in \
     fi
 done
 
-echo "[compile-profile] compact vector identity counters generated_decl_checks=$VECTOR_ONE_DECL_CHECKS/$VECTOR_FIVE_DECL_CHECKS proof_reused=$VECTOR_ONE_PROOF_REUSED/$VECTOR_FIVE_PROOF_REUSED"
+echo "[compile-profile] compact vector identity counters generated_decl_checks=$VECTOR_ONE_DECL_CHECKS/$VECTOR_FIVE_DECL_CHECKS"
 
 echo "[compile-profile] check generated import fixture"
 if ! "$PROFILE_BIN" check tests/integration/compile_profile_generated_import.tl \

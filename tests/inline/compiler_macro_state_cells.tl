@@ -9,7 +9,7 @@
     (arena.Arena owner)
     (tc.tc-job-state-macro-state (tc.tc-job-state-new))))
 
-(define (initializers) : (Array (-> tc.TcMacroState i64) 12)
+(define (initializers) : (Array (-> tc.TcMacroState i64) 11)
   (array
     tc.tc-macro-module-env-state-address-initialize
     tc.tc-macro-helper-state-address-initialize
@@ -21,10 +21,9 @@
     tc.tc-macro-hygiene-produced-state-address-initialize
     tc.tc-macro-import-index-state-address-initialize
     tc.tc-macro-result-identity-state-address-initialize
-    tc.tc-macro-proof-reuse-state-address-initialize
     tc.tc-macro-identity-state-address-initialize))
 
-(define (accessors) : (Array (-> tc.TcMacroState i64) 12)
+(define (accessors) : (Array (-> tc.TcMacroState i64) 11)
   (array
     tc.tc-macro-module-env-state-address
     tc.tc-macro-helper-state-address
@@ -36,15 +35,14 @@
     tc.tc-macro-hygiene-produced-state-address
     tc.tc-macro-import-index-state-address
     tc.tc-macro-result-identity-state-address
-    tc.tc-macro-proof-reuse-state-address
     tc.tc-macro-identity-state-address))
 
 (define (initialize-and-probe [a : tc.TcMacroState] [b : tc.TcMacroState]) : unit
   (let
-    [init : (Array (-> tc.TcMacroState i64) 12) (initializers)]
-    [get : (Array (-> tc.TcMacroState i64) 12) (accessors)]
+    [init : (Array (-> tc.TcMacroState i64) 11) (initializers)]
+    [get : (Array (-> tc.TcMacroState i64) 11) (accessors)]
     [slot : i64 0]
-    (while (< slot 12)
+    (while (< slot 11)
       (let
         [initialize : (-> tc.TcMacroState i64) (array-ref init slot)]
         [address-of : (-> tc.TcMacroState i64) (array-ref get slot)]

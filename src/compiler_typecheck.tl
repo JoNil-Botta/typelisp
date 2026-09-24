@@ -8832,13 +8832,7 @@
       (compiler-typecheck-reference-element-kind-mismatch-source)
       "reference-element-type requires reference type")))
 
-;; --- #5296 report-only generated-declaration lane instrumentation -----------
-;;
-;; The abstract-proof checks remain directly available, while the full
-;; declaration scan fixture is test-only alongside the gated full classifier:
-;; typecheck a constrained defmacro and inspect the persisted proof, and run
-;; the scan on parsed declarations.
-(define (compiler-typecheck-macro-abstract-proof-source) : String
+(define (compiler-typecheck-macro-kind-generated-decl-source) : String
   "(defstruct Point (x i64) (y bool))
 (defenum Maybe (None) (Some i64))
 (defmacro (emit-kind-count [T : type (:kind struct enum)]) : Decls
@@ -8850,248 +8844,29 @@
 (emit-kind-count Point)
 (define (main) : i64 (generated-struct-count))")
 
-(define (compiler-typecheck-macro-abstract-proof-module-source) : String
+(define (compiler-typecheck-macro-kind-module-generated-decl-source) : String
   "(module app)
 (defmacro (emit-one [T : type (:kind i64)]) : Decls
   `(define (generated-one) : i64 1))
 (emit-one i64)
 (define (main) : i64 (generated-one))")
 
-(define (compiler-typecheck-macro-unconstrained-proof-source) : String
+(define (compiler-typecheck-macro-unconstrained-generated-decl-source) : String
   "(defmacro (emit-two [v : Expr]) : Decls
   `(define (generated-two) : i64 2))
 (emit-two 5)
 (define (main) : i64 (generated-two))")
 
-(define (compiler-typecheck-macro-abstract-proof-tests-ok?) : bool
-  (let
-    [ok : bool true]
-    [macro-state : tc_core.TcMacroState
-      (tc_core.tc-job-state-macro-state (tc_core.tc-serial-job-state))]
-    (begin
-      ;; A passing constrained defmacro persists one proof per (macro, param)
-      ;; with the checked kind mask.
-      (if (compiler-typecheck-ok?
-        (compiler-typecheck-macro-abstract-proof-source))
-        unit
-        (set! ok false))
-      (if (tc_core.tc-macro-abstract-proof-exists-for-macro?
-        macro-state
-        "emit-kind-count")
-        unit
-        (set! ok false))
-      (if (=
-        (tc_core.tc-macro-abstract-proof-lookup
-          macro-state
-          "emit-kind-count"
-          "T")
-        (bit-or
-          (tc_core.tc-macro-abstract-kind-bit "struct")
-          (tc_core.tc-macro-abstract-kind-bit "enum")))
-        unit
-        (set! ok false))
-      (if (=
-        (tc_core.tc-macro-abstract-proof-lookup
-          macro-state
-          "emit-kind-count"
-          "U")
-        -1)
-        unit
-        (set! ok false))
-      ;; Proof keys carry the definition module, matching the generator string
-      ;; stamped into generated declaration metadata.
-      (if (compiler-typecheck-ok?
-        (compiler-typecheck-macro-abstract-proof-module-source))
-        unit
-        (set! ok false))
-      (if (tc_core.tc-macro-abstract-proof-exists-for-macro?
-        macro-state
-        "app/emit-one")
-        unit
-        (set! ok false))
-      (if (tc_core.tc-macro-abstract-proof-exists-for-macro?
-        macro-state
-        "emit-one")
-        (set! ok false)
-        unit)
-      (if (=
-        (tc_core.tc-macro-abstract-proof-lookup macro-state "app/emit-one" "T")
-        (tc_core.tc-macro-abstract-kind-bit "i64"))
-        unit
-        (set! ok false))
-      ;; Macros without :kind constraints record no proof.
-      (if (compiler-typecheck-ok?
-        (compiler-typecheck-macro-unconstrained-proof-source))
-        unit
-        (set! ok false))
-      (if (tc_core.tc-macro-abstract-proof-exists-for-macro?
-        macro-state
-        "emit-two")
-        (set! ok false)
-        unit)
-      ok)))
-
-(cfg
-  test
-  (define (compiler-typecheck-generated-decl-scan?
-    [src : String]
-    [decl-index : i64]) : bool
-    (begin
-      (tc_core.tc-agg-caches-reset!)
-      (match (parser.parse-ast-source src)
-        [(parser.ResultAstProgram.Ok program)
-          (match (csym.build-compiler-symbols program)
-            [(csym.ResultCompilerSymbols.Ok symbols)
-              (match (csym.build-compiler-registries program)
-                [(csym.ResultCompilerRegistries.Ok registries)
-                  (match (ast.ast-global-shared-view program)
-                    [(ast.AstProgram.Program decls-box)
-                      (let
-                        [decls : ast.AstDeclList
-                          (ast.ast-decl-list-box-shared-view decls-box)]
-                        [decl : ast.AstDecl
-                          (ast.ast-decl-list-get
-                            (& decls)
-                            decl-index
-                            (ast.ast-decl-fallback))]
-                        [ctx : tc_core.TcContext
-                          (tc_core.tc-context-new
-                            (ast.ast-global-shared-view program)
-                            symbols
-                            registries
-                            ""
-                            cbi.compiler-builtin-id-fix-empty
-                            (ast.ast-node-pool-context-capture-active))]
-                        (tc_core.tc-generated-decl-dependent-construct?
-                          (tc_core.tc-global-shared-view ctx)
-                          decl))])]
-                [(csym.ResultCompilerRegistries.Err _) false])]
-            [(csym.ResultCompilerSymbols.Err _) false])]
-        [(parser.ResultAstProgram.Err _) false]))))
-
-(cfg
-  test
-  (define (compiler-typecheck-generated-scan-tests-ok?) : bool
-    (let
-      [ok : bool true]
-      (begin
-        ;; A fixed-size array field is substitution-dependent.
-        (if (compiler-typecheck-generated-decl-scan?
-          "(defstruct Fixed (buf (Array i64 8)))"
-          0)
-          unit
-          (set! ok false))
-        ;; A reference wrapper around an invariant pointee is invariant itself.
-        (if (compiler-typecheck-generated-decl-scan?
-          "(defstruct RefBox (:lifetimes a) (value (& a i64)))"
-          0)
-          (set! ok false)
-          unit)
-        ;; A dependent fixed array remains dependent beneath a reference.
-        (if (compiler-typecheck-generated-decl-scan?
-          "(defstruct RefArray (:lifetimes a) (value (& a (Array i64 4))))"
-          0)
-          unit
-          (set! ok false))
-        ;; Raw pointers follow the same invariant-wrapper rule.
-        (if (compiler-typecheck-generated-decl-scan?
-          "(define (ptr-id [p : (Ptr i64)]) : (Ptr i64) p)"
-          0)
-          (set! ok false)
-          unit)
-        (if (compiler-typecheck-generated-decl-scan?
-          "(define (ptr-array [p : (Ptr (Array i64 4))]) : (Ptr (Array i64 4)) p)"
-          0)
-          unit
-          (set! ok false))
-        ;; A struct-level cleanup function is substitution-dependent.
-        (if (compiler-typecheck-generated-decl-scan?
-          "(defstruct Cleaned (:cleanup drop-cleaned) (fd i64))"
-          0)
-          unit
-          (set! ok false))
-        ;; An :owned field annotation is substitution-dependent (the parser
-        ;; requires a struct-level :cleanup before field metadata, so the field
-        ;; predicate is also probed directly below).
-        (if (compiler-typecheck-generated-decl-scan?
-          "(defstruct Holds (:cleanup drop-holds) (fd i64 (:owned)))"
-          0)
-          unit
-          (set! ok false))
-        (if (tc_core.tc-generated-field-cleanup-dependent?
-          (ast.AstFieldCleanup.Owned))
-          unit
-          (set! ok false))
-        (if (tc_core.tc-generated-field-cleanup-dependent?
-          (ast.AstFieldCleanup.No))
-          (set! ok false)
-          unit)
-        ;; A cast anywhere in the body is substitution-dependent.
-        (if (compiler-typecheck-generated-decl-scan?
-          "(define (narrow [x : i64]) : i32 (cast x : i32))"
-          0)
-          unit
-          (set! ok false))
-        ;; A fixed array in a let annotation is substitution-dependent.
-        (if (compiler-typecheck-generated-decl-scan?
-          "(define (first-elt) : i64 (let [v : (Array i64 4) (array 1 2 3 4)] (array-ref v 0)))"
-          0)
-          unit
-          (set! ok false))
-        ;; A reference parameter around an invariant pointee is invariant.
-        (if (compiler-typecheck-generated-decl-scan?
-          "(define (deref [p : (& caller i64)]) : i64 p)"
-          0)
-          (set! ok false)
-          unit)
-        ;; A fixed array in a return type is substitution-dependent.
-        (if (compiler-typecheck-generated-decl-scan?
-          "(define (pair-array) : (Array i64 2) (array 7 9))"
-          0)
-          unit
-          (set! ok false))
-        ;; A nested generated-module import keeps its concrete checks.
-        (if (compiler-typecheck-generated-decl-scan? "(import dep)" 0)
-          unit
-          (set! ok false))
-        ;; A struct with only DynArray/i64 fields is free of dependent
-        ;; constructs, as is a body that only projects one of its fields.
-        (if (compiler-typecheck-generated-decl-scan?
-          "(defstruct Plain (x i64) (ys (DynArray i64)))"
-          0)
-          (set! ok false)
-          unit)
-        (if (compiler-typecheck-generated-decl-scan?
-          "(defstruct Pair (x i64) (ys (DynArray i64)))
-(define (sum [p : Pair]) : i64 p.x)"
-          1)
-          (set! ok false)
-          unit)
-        ;; A body that only calls array-ref on a DynArray is not dependent.
-        (if (compiler-typecheck-generated-decl-scan?
-          "(define (head [v : (DynArray i64)]) : i64 (array-ref v 0))"
-          0)
-          (set! ok false)
-          unit)
-        ;; A make-array element type in expression position is not dependent:
-        ;; the produced value is a length-erased dynamic array.
-        (if (compiler-typecheck-generated-decl-scan?
-          "(define (scratch) : i64 (begin (__tl_make-array (Array i64 2) 3) 0))"
-          0)
-          (set! ok false)
-          unit)
-        ok))))
-
-(define (compiler-typecheck-generated-lanes-tests-ok?) : bool
-  (let
-    [ok : bool (compiler-typecheck-macro-abstract-proof-tests-ok?)]
-    (begin
-      (cfg
-        test
-        (if (compiler-typecheck-generated-scan-tests-ok?)
-          unit
-          (set! ok false)))
-      ok)))
+;; Kind-constrained and unconstrained Decls macros, inside and outside a named
+;; module, generate declarations that pass the ordinary post-expansion check.
+(define (compiler-typecheck-macro-generated-decl-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok?
+      (compiler-typecheck-macro-kind-generated-decl-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-macro-kind-module-generated-decl-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-macro-unconstrained-generated-decl-source))))
 
 (define (compiler-typecheck-defmacro-source) : String
   "(defmacro (and2 [lhs : bool] [rhs : bool]) : bool
@@ -13811,9 +13586,9 @@
     (if (compiler-typecheck-reflection-tests-ok?)
       unit
       (io.panic "typecheck: comptime reflection tests failed"))
-    (if (compiler-typecheck-generated-lanes-tests-ok?)
+    (if (compiler-typecheck-macro-generated-decl-tests-ok?)
       unit
-      (io.panic "typecheck: generated-declaration lane tests failed"))
+      (io.panic "typecheck: macro generated-declaration tests failed"))
     (if (compiler-typecheck-layout-query-tests-ok?)
       unit
       (io.panic "typecheck: layout query tests failed"))

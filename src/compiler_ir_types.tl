@@ -3139,10 +3139,7 @@
   (match blocks
     [(CompilerIrBlockList.Nil) 0]
     [(CompilerIrBlockList.Cons _ rest)
-      (+
-        1
-        (compiler-ir-block-list-count-cons
-          (compiler-ir-block-list-box-shared-view rest)))]
+      (+ 1 (compiler-ir-block-list-count-cons (deref rest)))]
     [(CompilerIrBlockList.Array seq) seq.len]))
 
 (define (compiler-ir-block-list-fill-array
@@ -3154,10 +3151,7 @@
     [(CompilerIrBlockList.Cons block rest)
       (begin
         (set! (array-ref slots index) block)
-        (compiler-ir-block-list-fill-array
-          (compiler-ir-block-list-box-shared-view rest)
-          slots
-          (+ index 1)))]
+        (compiler-ir-block-list-fill-array (deref rest) slots (+ index 1)))]
     [(CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -3179,7 +3173,7 @@
       (begin
         (set! (array-ref slots index) block)
         (compiler-ir-block-list-fill-array-reversed
-          (compiler-ir-block-list-box-shared-view rest)
+          (deref rest)
           slots
           (- index 1)))]
     [(CompilerIrBlockList.Array seq)
@@ -3693,9 +3687,7 @@
     [(CompilerIrBlockList.Cons block rest)
       (begin
         (compiler-ir-block-builder-push! builder block)
-        (compiler-ir-block-builder-append-list!
-          builder
-          (compiler-ir-block-list-box-shared-view rest)))]
+        (compiler-ir-block-builder-append-list! builder (deref rest)))]
     [(CompilerIrBlockList.Array seq)
       (let
         [index : i64 0]
@@ -4330,7 +4322,7 @@
         (box
           (compiler-ir-clone-type-list
             (compiler-ir-global-shared-view pools)
-            (ast.ast-type-list-box-shared-view args)))
+            (deref args)))
         (ast.ast-node-pool-context-type-push
           (compiler-ir-global-shared-view pools)
           (compiler-ir-clone-type
@@ -4338,10 +4330,7 @@
             (ast.ast-node-pool-context-type-get (& pools) ret))))]
     [(ast.AstType.Tuple elems)
       (ast.AstType.Tuple
-        (box
-          (compiler-ir-clone-type-list
-            pools
-            (ast.ast-type-list-box-shared-view elems))))]
+        (box (compiler-ir-clone-type-list pools (deref elems))))]
     [(ast.AstType.Array elem len)
       (ast.AstType.Array
         (ast.ast-node-pool-context-type-push
@@ -4881,7 +4870,7 @@
     [(CompilerIrBlockList.Cons block rest)
       (compiler-ir-clone-block-list-acc
         (compiler-ir-global-shared-view pools)
-        (compiler-ir-block-list-box-shared-view rest)
+        (deref rest)
         (compiler-ir-block-cons (compiler-ir-clone-block pools block) acc))]
     ;; Same forward order the cons walk used, so the accumulated (reversed)
     ;; result is unchanged (refs #5729).
@@ -4910,7 +4899,7 @@
     [(CompilerIrBlockList.Nil) acc]
     [(CompilerIrBlockList.Cons block rest)
       (compiler-ir-block-list-reverse-onto
-        (compiler-ir-block-list-box-shared-view rest)
+        (deref rest)
         (compiler-ir-block-cons block acc))]
     [(CompilerIrBlockList.Array seq)
       (compiler-ir-block-list-reverse-onto
@@ -5206,7 +5195,7 @@
         (compiler-ir-type-list-render
           structural-session
           type-segment-bases
-          (ast.ast-type-list-box-shared-view args))
+          (deref args))
         " "
         (compiler-ir-type-render
           structural-session
@@ -5229,7 +5218,7 @@
         (compiler-ir-type-list-render
           structural-session
           type-segment-bases
-          (ast.ast-type-list-box-shared-view elems))
+          (deref elems))
         ")")]
     [(ast.AstType.Array elem count)
       (str_cat.str-cat
@@ -5300,19 +5289,19 @@
       (compiler-ir-nominal-lifetime-render
         structural-session
         (ast.ast-nominal-name-id-display name)
-        (ast.ast-lifetime-list-box-shared-view lifetimes))]
+        (deref lifetimes))]
     [(ast.AstType.Struct name) (ast.ast-nominal-name-id-display name)]
     [(ast.AstType.StructArgs name lifetimes)
       (compiler-ir-nominal-lifetime-render
         structural-session
         (ast.ast-nominal-name-id-display name)
-        (ast.ast-lifetime-list-box-shared-view lifetimes))]
+        (deref lifetimes))]
     [(ast.AstType.Var name) (ci.intern-str name)]
     [(ast.AstType.VarArgs name lifetimes)
       (compiler-ir-nominal-lifetime-render
         structural-session
         (ci.intern-str name)
-        (ast.ast-lifetime-list-box-shared-view lifetimes))]
+        (deref lifetimes))]
     [(ast.AstType.Ptr elem)
       (str_cat.str-cat
         "(Ptr "

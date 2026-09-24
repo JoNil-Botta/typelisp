@@ -15169,16 +15169,11 @@
           pools
           used
           (lower-global-shared-view module)
-          (ast.ast-type-list-box-shared-view args))
+          (deref args))
         module
         ret)]
     [(ast.AstType.Tuple elems)
-      (lower-used-types-add-type-list
-        session
-        pools
-        used
-        module
-        (ast.ast-type-list-box-shared-view elems))]
+      (lower-used-types-add-type-list session pools used module (deref elems))]
     [(ast.AstType.Array elem _)
       (lower-used-types-add-type-id session pools used module elem)]
     [(ast.AstType.DynArray elem)

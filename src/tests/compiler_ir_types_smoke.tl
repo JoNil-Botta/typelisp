@@ -172,10 +172,7 @@
       (if (= index 0)
         (match block
           [(compiler_ir_types.CompilerIrBlock.Block label _) (= label want)])
-        (compiler-ir-smoke-block-list-label-at?
-          (compiler_ir_types.compiler-ir-block-list-box-shared-view rest)
-          (- index 1)
-          want))]
+        (compiler-ir-smoke-block-list-label-at? (deref rest) (- index 1) want))]
     [(compiler_ir_types.CompilerIrBlockList.Nil) false]
     [(compiler_ir_types.CompilerIrBlockList.Array _) false]))
 

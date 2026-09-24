@@ -2797,11 +2797,6 @@
     (opt-value-global-cell? (compiler-opt-global-shared-view lhs))
     (opt-value-var? rhs)))
 
-(define (opt-fold-cell-lhs-binop? [instr : ir.CompilerIrInstr]) : bool
-  (match (compiler-opt-global-shared-view instr)
-    [(ir.CompilerIrInstr.BinOp _ _ (ir.CompilerIrValue.Global _) _ _) true]
-    [_ false]))
-
 ;; Is `next` the store of `instr`'s result back into the cell `instr` reads on
 ;; its left -- the read-modify-write of one global?
 (define (opt-fold-rmw-shape?
@@ -3049,37 +3044,6 @@
     [(ir.CompilerIrInstr.Phi dst inputs ty) (opt-invalidate-def env dst instr)]
     [_ (OptInstrResult.Result env instr)]))
 
-(define (opt-fold-instrs!
-  [type-segment-bases : i64]
-  [env : OptConstEnv]
-  [instrs : (&mut instrs ir.CompilerIrInstrSeq)]) : unit
-  (let
-    [count : i64 instrs.len]
-    [state : OptConstEnv env]
-    [index : i64 0]
-    (while (< index count)
-      (let
-        [cur : ir.CompilerIrInstr (clone (array-ref instrs.slots index))]
-        ;; the peek clones the next slot only behind a cell-lhs binop, which
-        ;; is rare; every other instruction pays one shape test
-        [rmw? : bool
-          (and
-            (opt-fold-cell-lhs-binop? (compiler-opt-global-shared-view cur))
-            (< (+ index 1) count)
-            (opt-fold-rmw-shape?
-              (compiler-opt-global-shared-view cur)
-              (clone (array-ref instrs.slots (+ index 1)))))]
-        (match (opt-fold-instr
-          type-segment-bases
-          (compiler-opt-global-shared-view state)
-          cur
-          rmw?)
-          [(OptInstrResult.Result next-state rewritten)
-            (begin
-              (set! (array-ref instrs.slots index) rewritten)
-              (set! state next-state)
-              (set! index (+ index 1)))])))))
-
 (define (opt-strength-instr [env : OptConstEnv] [instr : ir.CompilerIrInstr]) : OptInstrResult
   (match (compiler-opt-global-shared-view instr)
     [(ir.CompilerIrInstr.Mov dst value ty)
@@ -3223,23 +3187,6 @@
     [(ir.CompilerIrInstr.TailCall _ _ _) (OptInstrResult.Result env instr)]
     [(ir.CompilerIrInstr.Phi dst inputs ty) (opt-invalidate-def env dst instr)]
     [_ (OptInstrResult.Result env instr)]))
-
-(define (opt-strength-instrs!
-  [env : OptConstEnv]
-  [instrs : (&mut instrs ir.CompilerIrInstrSeq)]) : unit
-  (let
-    [count : i64 instrs.len]
-    [state : OptConstEnv env]
-    [index : i64 0]
-    (while (< index count)
-      (match (opt-strength-instr
-        (compiler-opt-global-shared-view state)
-        (clone (array-ref instrs.slots index)))
-        [(OptInstrResult.Result next-state rewritten)
-          (begin
-            (set! (array-ref instrs.slots index) rewritten)
-            (set! state next-state)
-            (set! index (+ index 1)))]))))
 
 ;; --- dead-code elimination ---------------------------------------------------
 ;;
@@ -3581,23 +3528,6 @@
   [instrs : ir.CompilerIrInstrSeq]) : opt_i64_i64_map.Map
   (opt-collect-instr-seq-uses-from set instrs.slots 0 instrs.len))
 
-(define (opt-collect-instrs-uses
-  [set : opt_i64_i64_map.Map]
-  [instrs : (& instrs ir.CompilerIrInstrSeq)]) : opt_i64_i64_map.Map
-  (let
-    [state : opt_i64_i64_map.Map set]
-    [index : i64 0]
-    (begin
-      (while (< index instrs.len)
-        (begin
-          (set!
-            state
-            (opt-collect-instr-uses
-              state
-              (clone (array-ref instrs.slots index))))
-          (set! index (+ index 1))))
-      state)))
-
 ;; Division, modulo, and shift can trap at runtime (zero divisor, signed
 ;; MIN / -1, shift count out of range), so a BinOp using one of those operators
 ;; is NOT pure: dropping it as dead would elide the trap the safe-code contract
@@ -3663,118 +3593,6 @@
     (opt-instr-alloc-dst?
       (compiler-opt-global-array-element-shared-view slots (+ index 1))
       (+ dst 1))))
-
-(define (opt-array-next-adjacent-alloc-ref?
-  [slots : (& slots (__tl_dyn-array ir.CompilerIrInstr))]
-  [count : i64]
-  [index : i64]
-  [dst : i64]) : bool
-  (if (>= (+ index 1) count)
-    false
-    (opt-instr-alloc-dst? (clone (array-ref slots (+ index 1))) (+ dst 1))))
-
-;; A pure temporary-producing instruction is dead when its result var is unused.
-;; Calls (side-effecting) and control-flow instructions are never dead here.
-;;
-;; Address creation (`CompilerIrInstr.AddrOf`), address arithmetic (`CompilerIrInstr.Gep`), value
-;; conversions (`CompilerIrInstr.Cast`), and non-volatile reads (`CompilerIrInstr.Load`) are pure
-;; or read-only
-;; (`compiler-ir-instr-effect` classes `CompilerIrEffect.Pure` / `CompilerIrEffect.MemoryRead`): a
-;; dead address calculation/read never writes state and only ever feeds its
-;; result var, so when that var is unused the whole computation is dead. These
-;; arms let DCE clear the dead length-load / addr-of / gep / cast chain that
-;; `opt-loop-bce-blocks` leaves behind once it proves an array index in range,
-;; which otherwise survives every later pass because these producers were
-;; excluded here.
-(define (opt-instr-dead?
-  [set : opt_i64_i64_map.Map]
-  [instr : ir.CompilerIrInstr]) : bool
-  (match (compiler-opt-global-shared-view instr)
-    [(ir.CompilerIrInstr.Mov dst _ _) (not (opt-used-contains set dst))]
-    [(ir.CompilerIrInstr.AddrOf dst _) (not (opt-used-contains set dst))]
-    [(ir.CompilerIrInstr.Gep dst _ _ _) (not (opt-used-contains set dst))]
-    [(ir.CompilerIrInstr.Cast dst _ _ _) (not (opt-used-contains set dst))]
-    [(ir.CompilerIrInstr.Load dst _ _) (not (opt-used-contains set dst))]
-    [(ir.CompilerIrInstr.LoadOwned dst _ _ _) (not (opt-used-contains set dst))]
-    [(ir.CompilerIrInstr.BinOp dst op _ rhs ty)
-      (and
-        (not (opt-dce-binop-traps? op rhs ty))
-        (not (opt-used-contains set dst)))]
-    [(ir.CompilerIrInstr.UnOp dst _ _ _) (not (opt-used-contains set dst))]
-    [(ir.CompilerIrInstr.Phi dst _ _) (not (opt-used-contains set dst))]
-    [(ir.CompilerIrInstr.LaneId dst _ _) (not (opt-used-contains set dst))]
-    [(ir.CompilerIrInstr.Splat dst _ _ _) (not (opt-used-contains set dst))]
-    [(ir.CompilerIrInstr.VectorBinOp payload-box)
-      (let
-        [dst (compiler-opt-box-field-shared-view payload-box dst)]
-        (not (opt-used-contains set dst)))]
-    [(ir.CompilerIrInstr.VectorPrefix payload-box)
-      (let
-        [dst (compiler-opt-box-field-shared-view payload-box dst)]
-        (not (opt-used-contains set dst)))]
-    [(ir.CompilerIrInstr.VectorReduce dst _ _ _ _)
-      (not (opt-used-contains set dst))]
-    [(ir.CompilerIrInstr.VectorCompare payload-box)
-      (let
-        [dst (compiler-opt-box-field-shared-view payload-box dst)]
-        (not (opt-used-contains set dst)))]
-    [(ir.CompilerIrInstr.MaskBinOp dst _ _ _ _)
-      (not (opt-used-contains set dst))]
-    [(ir.CompilerIrInstr.MaskNot dst _ _) (not (opt-used-contains set dst))]
-    [(ir.CompilerIrInstr.MaskReduce dst _ _ _)
-      (not (opt-used-contains set dst))]
-    [(ir.CompilerIrInstr.Select payload-box)
-      (let
-        [dst (compiler-opt-box-field-shared-view payload-box dst)]
-        (not (opt-used-contains set dst)))]
-    [(ir.CompilerIrInstr.TailMask dst _ _ _) (not (opt-used-contains set dst))]
-    [(ir.CompilerIrInstr.Pack dst _ _) (not (opt-used-contains set dst))]
-    [(ir.CompilerIrInstr.Word dst _ _ _) (not (opt-used-contains set dst))]
-    [_ false]))
-
-(define (opt-dce-instrs-from
-  [set : opt_i64_i64_map.Map]
-  [slots : (& slots (__tl_dyn-array ir.CompilerIrInstr))]
-  [count : i64]
-  [index : i64]
-  [prev-alloc-dst : i64]
-  [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
-  (if (>= index count)
-    unit
-    (let
-      [instr : ir.CompilerIrInstr (clone (array-ref slots index))]
-      (if (opt-instr-dead?
-        (compiler-opt-global-shared-view set)
-        (compiler-opt-global-shared-view instr))
-        (opt-dce-instrs-from set slots count (+ index 1) -2 builder)
-        (match (compiler-opt-global-shared-view instr)
-          [(ir.CompilerIrInstr.Alloc dst _)
-            (begin
-              (if (and
-                (not
-                  (opt-used-contains (compiler-opt-global-shared-view set) dst))
-                (not
-                  (or
-                    (= prev-alloc-dst (- dst 1))
-                    (opt-array-next-adjacent-alloc-ref? slots count index dst))))
-                unit
-                (ir.compiler-ir-instr-builder-push! builder instr))
-              (opt-dce-instrs-from set slots count (+ index 1) dst builder))]
-          [_
-            (begin
-              (ir.compiler-ir-instr-builder-push! builder instr)
-              (opt-dce-instrs-from set slots count (+ index 1) -2 builder))])))))
-
-(define (opt-dce-instrs!
-  [set : opt_i64_i64_map.Map]
-  [instrs : (&mut instrs ir.CompilerIrInstrSeq)]) : unit
-  (let
-    [builder : ir.CompilerIrInstrBuilder
-      (ir.compiler-ir-instr-builder-with-capacity instrs.len)]
-    (begin
-      (opt-dce-instrs-from set (& instrs.slots) instrs.len 0 -2 (&mut builder))
-      (set! instrs.slots builder.slots)
-      (set! instrs.len builder.len))))
 
 ;; `make-array` already returns zeroed memory, so a fresh use-count array needs
 ;; no initialising pass. The `opt-used-array-fill` helper existed only to run
@@ -4595,10 +4413,18 @@
       (opt-collect-instr-uses-array mirror next))
     unit))
 
-;; Mirror of `opt-instr-dead?` for the array-backed use set the pipeline DCE
-;; runs on. The pure/read-only addr-of/gep/cast/load arms drop the dead
-;; length-load/address chain that `opt-loop-bce-blocks` strands once a bounds
-;; check is proven redundant.
+;; A pure temporary-producing instruction is dead when its result var is unused
+;; in the array-backed use set the pipeline DCE runs on. Calls (side-effecting)
+;; and control-flow instructions are never dead here.
+;;
+;; Address creation (`CompilerIrInstr.AddrOf`), address arithmetic
+;; (`CompilerIrInstr.Gep`), value conversions (`CompilerIrInstr.Cast`), and
+;; non-volatile reads (`CompilerIrInstr.Load`) are pure or read-only
+;; (`compiler-ir-instr-effect` classes `CompilerIrEffect.Pure` /
+;; `CompilerIrEffect.MemoryRead`): a dead address calculation/read never writes
+;; state and only ever feeds its result var, so when that var is unused the
+;; whole computation is dead. These arms drop the dead length-load/address chain
+;; that `opt-loop-bce-blocks` strands once a bounds check is proven redundant.
 (define (opt-instr-dead-array?
   [items : (__tl_dyn-array i64)]
   [mirror : (__tl_dyn-array i64)]
@@ -4807,7 +4633,7 @@
       (not (opt-used-array-contains items dst))]
     ;; Register-group ops are pure producers like the scalar temps above: a
     ;; Pack whose group is never read (every Word extraction folded away) is
-    ;; dead, and so is a Word nobody reads. Mirrors `opt-instr-dead?`.
+    ;; dead, and so is a Word nobody reads.
     [(ir.CompilerIrInstr.Pack dst _ _)
       (not (opt-used-array-contains items dst))]
     [(ir.CompilerIrInstr.Word dst _ _ _)
@@ -11337,25 +11163,6 @@
     [(ir.CompilerIrInstr.TotalEnumSwitch _ _ _ _ _)
       (OptCseResult.Result (OptExprTable.Nil) instr)]))
 
-(define (opt-cse-instrs!
-  [type-segment-bases : i64]
-  [table : OptExprTable]
-  [instrs : (&mut instrs ir.CompilerIrInstrSeq)]) : unit
-  (let
-    [count : i64 instrs.len]
-    [state : OptExprTable table]
-    [index : i64 0]
-    (while (< index count)
-      (match (opt-cse-instr
-        type-segment-bases
-        (compiler-opt-global-shared-view state)
-        (clone (array-ref instrs.slots index)))
-        [(OptCseResult.Result next-state rewritten)
-          (begin
-            (set! (array-ref instrs.slots index) rewritten)
-            (set! state next-state)
-            (set! index (+ index 1)))]))))
-
 ;; --- block-local copy propagation -------------------------------------------
 ;;
 ;; The lowerer and the CSE pass both materialize values through `CompilerIrInstr.Mov`
@@ -12068,23 +11875,6 @@
       (opt-copy-update-env env (compiler-opt-global-shared-view rewritten))
       rewritten)))
 
-(define (opt-copy-instrs!
-  [env : OptCopyEnv]
-  [instrs : (&mut instrs ir.CompilerIrInstrSeq)]) : unit
-  (let
-    [count : i64 instrs.len]
-    [state : OptCopyEnv env]
-    [index : i64 0]
-    (while (< index count)
-      (match (opt-copy-instr
-        (compiler-opt-global-shared-view state)
-        (clone (array-ref instrs.slots index)))
-        [(OptCopyResult.Result next-state rewritten)
-          (begin
-            (set! (array-ref instrs.slots index) rewritten)
-            (set! state next-state)
-            (set! index (+ index 1)))]))))
-
 ;; --- block-local redundant bounds-check elimination -------------------------
 ;;
 ;; `CompilerIrInstr.BoundsCheck index length ok-label` is a trapping side-effect: it must be kept
@@ -12734,52 +12524,6 @@
                 (OptBoundsSeqStep.Step
                   (OptBoundsSeqState.Object next-facts lengths ptrs next-casts)
                   true)])]))]))
-
-(define (opt-bounds-instrs!
-  [type-segment-bases : i64]
-  [facts : OptBoundsFacts]
-  [casts : OptBoundsCastEnv]
-  [instrs : (&mut instrs ir.CompilerIrInstrSeq)]) : unit
-  (let
-    [count : i64 instrs.len]
-    [builder : ir.CompilerIrInstrBuilder
-      (ir.compiler-ir-instr-builder-with-capacity count)]
-    [state : OptBoundsSeqState (OptBoundsSeqState.Plain facts casts)]
-    [index : i64 0]
-    (begin
-      (while (< index count)
-        (let
-          [instr : ir.CompilerIrInstr (clone (array-ref instrs.slots index))]
-          [step : OptBoundsSeqStep
-            (match state
-              [(OptBoundsSeqState.Plain current-facts current-casts)
-                (opt-bounds-seq-step-plain
-                  type-segment-bases
-                  current-facts
-                  current-casts
-                  (compiler-opt-global-shared-view instr))]
-              [(OptBoundsSeqState.Object
-                  current-facts
-                  lengths
-                  ptrs
-                  current-casts)
-                (opt-bounds-seq-step-object
-                  type-segment-bases
-                  current-facts
-                  lengths
-                  ptrs
-                  current-casts
-                  (compiler-opt-global-shared-view instr))])]
-          (match step
-            [(OptBoundsSeqStep.Step next-state keep)
-              (begin
-                (if keep
-                  (ir.compiler-ir-instr-builder-push! (&mut builder) instr)
-                  unit)
-                (set! state next-state)
-                (set! index (+ index 1)))])))
-      (set! instrs.slots builder.slots)
-      (set! instrs.len builder.len))))
 
 (define (opt-bounds-instr-seq-rewrite!
   [type-segment-bases : i64]
@@ -181417,56 +181161,6 @@
           (opt-load-cse-forward-cell
             (compiler-opt-global-shared-view state)
             (compiler-opt-global-shared-view instr))))]))
-
-(define (opt-load-cse-instrs-from
-  [type-segment-bases : i64]
-  [hs : OptLoadHeaderSet]
-  [sources : OptValueSources]
-  [call-memory : opt_i64_i64_map.Map]
-  [state : OptLoadCseState]
-  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
-  (let
-    [cells : OptGlobalCellSummary (opt-load-cse-no-cells-view)]
-    [no-canon : (__tl_dyn-array i64) (opt-load-canon-none)]
-    [next-state : OptLoadCseState state]
-    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
-    [builder : ir.CompilerIrInstrBuilder
-      (ir.compiler-ir-instr-builder-with-capacity count)]
-    [index : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (match (opt-load-cse-dispatch
-            type-segment-bases
-            (compiler-opt-global-shared-view no-canon)
-            (compiler-opt-global-shared-view hs)
-            false
-            (compiler-opt-global-shared-view sources)
-            (compiler-opt-global-shared-view call-memory)
-            (compiler-opt-global-shared-view cells)
-            (compiler-opt-global-shared-view next-state)
-            (ir.compiler-ir-instr-seq-ref
-              (compiler-opt-global-shared-view instrs)
-              index))
-            [(OptLoadCseResult.Result after-state new-instr)
-              (begin
-                (set! next-state after-state)
-                (ir.compiler-ir-instr-builder-push! (&mut builder) new-instr))])
-          (set! index (+ index 1))))
-      (ir.compiler-ir-instr-builder-to-seq builder))))
-
-(define (opt-load-cse-instrs
-  [type-segment-bases : i64]
-  [hs : OptLoadHeaderSet]
-  [state : OptLoadCseState]
-  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
-  (opt-load-cse-instrs-from
-    type-segment-bases
-    hs
-    (opt-value-sources-new)
-    (opt_i64_i64_map.with-capacity 1)
-    state
-    instrs))
 
 ;; --- pure direct-call dedupe (CSE-CALL) ---------------------------------------
 ;;

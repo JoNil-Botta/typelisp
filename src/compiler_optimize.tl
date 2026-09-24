@@ -184937,6 +184937,11 @@
         [edge : i64 (array-ref index.succs.offsets pred)]
         [end : i64 (array-ref index.succs.offsets (+ pred 1))]
         (begin
+          ;; Several already-processed back edges can precede many unprocessed
+          ;; single-predecessor exits in a switch row. Rescanning those back
+          ;; edges for every exit would make this copy-saving probe quadratic
+          ;; in the fanout. Large rows retain the ordinary clone path.
+          (when (> (- end edge) 32) (return (- 0 1)))
           (while (< edge end)
             (let
               [succ : i64 (array-ref index.succs.edges edge)]

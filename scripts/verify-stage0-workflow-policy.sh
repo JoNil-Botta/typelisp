@@ -65,6 +65,10 @@ require_fixed 'gh api --paginate "repos/$REPO/releases?per_page=100"' "$PUBLISHE
     "stable release discovery must not age out of the first API page"
 require_count 'latest_main=$(current_main_sha)' "$PUBLISHER" 3 \
     "main must be checked before staging, before cutover, and after promotion"
+require_count 'candidate_newer_than_latest && newer_status=0' "$PUBLISHER" 2 \
+    "the alias must only move forward: compare with it before staging and before cutover (#8055)"
+require_count 'candidate_on_main "$latest_main" && on_main_status=0' "$PUBLISHER" 3 \
+    "every main check must require the candidate on main rather than main unchanged (#8055)"
 require_fixed "CUTOVER_STARTED=1" "$PUBLISHER" \
     "candidate cleanup must stop once stable cutover begins"
 require_fixed "validate_candidate_assets" "$PUBLISHER" \

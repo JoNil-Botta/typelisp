@@ -19,9 +19,9 @@ The workflow files are authoritative:
   successful bootstrap run ID, so it uses the same exact source/compiler pair.
 
 `ci-verify.sh` is the full pull-request development gate. It bootstraps a
-branch compiler and explicitly invokes the source hygiene, deterministic
-codegen, compiler/profile, public-tool, integration, stdlib, documentation,
-SPMD, benchmark, and instruction-count gates. A helper such as
+branch compiler and runs every row of `ci-gates.tsv`: the source hygiene,
+deterministic codegen, compiler/profile, public-tool, integration, stdlib,
+documentation, SPMD, benchmark, and instruction-count gates. A helper such as
 `measure-instruction-counts.sh` can therefore be CI-critical even though its
 own header calls it a measurement harness: `check-instruction-counts.sh` owns
 the policy and invokes that helper.

@@ -526,9 +526,9 @@ CI_VERIFY_NO_COMPILER="$CI_VERIFY_UNPRODUCED/gate-names-no-compiler"
 # run_gate LABEL COMPILER COMMAND
 run_gate() {
     case "$2" in
-        stage2) gate_compiler=$STAGE2_BIN ;;
-        profile) gate_compiler=$COMPILE_PROFILE_BIN ;;
-        *) gate_compiler=$CI_VERIFY_NO_COMPILER ;;
+        stage2) gate_bin=$STAGE2_BIN ;;
+        profile) gate_bin=$COMPILE_PROFILE_BIN ;;
+        *) gate_bin=$CI_VERIFY_NO_COMPILER ;;
     esac
     TYPELISP_CI_TIMING_GATE=$1
     export TYPELISP_CI_TIMING_GATE
@@ -541,11 +541,11 @@ run_gate() {
     echo
     echo "[ci-verify] START $1"
     set +e
-    if [ "$2" != - ] && [ ! -x "$gate_compiler" ]; then
-        ci_verify_error "$1 compiler was not produced by this run: $gate_compiler"
+    if [ "$2" != - ] && [ ! -x "$gate_bin" ]; then
+        ci_verify_error "$1 compiler was not produced by this run: $gate_bin"
         status=126
     else
-        TYPELISP_BIN=$gate_compiler
+        TYPELISP_BIN=$gate_bin
         export TYPELISP_BIN
         eval "$3"
         status=$?

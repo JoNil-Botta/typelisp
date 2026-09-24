@@ -73,3 +73,53 @@
                   (arena.destroy-safe! scope)))
               (set! pattern (+ pattern 1)))))
         (set! n (+ n 1))))))
+
+(define (check-stream-boundaries [n : i64] [pattern : i64]) : unit
+  (let
+    [bytes : (__tl_dyn-array u8)
+      (if (= pattern 0)
+        (__tl_make-array u8 (+ n 32))
+        (tlci.tlci-test-hash-bytes
+          (+ n 32)
+          (if (= pattern 1)
+            -1
+            (+ n 13))))]
+    [start : i64 0]
+    (while (< start 32)
+      (begin
+        (test.assert-i64-eq
+          (tlci.tlci-hash-extend (& bytes) 0 start (+ start n))
+          (reference (& bytes) 0 start (+ start n))
+          "parallel streams at each alignment with zero seed")
+        (test.assert-i64-eq
+          (tlci.tlci-hash-extend (& bytes) 2147483646 start (+ start n))
+          (reference (& bytes) 2147483646 start (+ start n))
+          "parallel streams at each alignment with maximal seed")
+        (set! start (+ start 1))))))
+
+(test
+  parallel_tlci_hash_boundaries
+  (let
+    [centers : (Array i64 8) (array 32 64 96 128 256 1024 4096 8192)]
+    [c : i64 0]
+    (while (< c (array-length centers))
+      (let
+        [delta : i64 -1]
+        (begin
+          (while (<= delta 1)
+            (let
+              [pattern : i64 0]
+              (begin
+                (while (< pattern 3)
+                  (let
+                    [scope (arena.make)]
+                    (begin
+                      (in-arena
+                        scope
+                        (check-stream-boundaries
+                          (+ (array-ref centers c) delta)
+                          pattern))
+                      (arena.destroy-safe! scope)
+                      (set! pattern (+ pattern 1)))))
+                (set! delta (+ delta 1)))))
+          (set! c (+ c 1)))))))

@@ -837,7 +837,7 @@ else
         -File scripts/windows-integration-linker-self-test.ps1
 fi
 run_with_compiler "$STAGE2_BIN" stage2-native-integration-corpus scripts/verify-integration.sh
-run_with_compiler "$STAGE2_BIN" stage2-must-use-metadata-and-abi-codegen scripts/verify-must-use-abi.sh
+run_with_compiler "$STAGE2_BIN" stage2-must-use-metadata-and-abi-codegen scripts/verify-codegen-cases.sh tests/codegen/must-use-abi.cases
 if [ "$HOST_OS" = linux ]; then
     run_with_compiler "$STAGE2_BIN" stage2-regalloc-backend-asm-shape-gates scripts/verify-asm-shape-gates.sh
     run_with_compiler "$STAGE2_BIN" stage2-git-sha-1-fixed-round-wipe-asm-shape-gate scripts/verify-codegen-cases.sh --only 'sha1-*' tests/codegen/crypto-sha.cases

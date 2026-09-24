@@ -173,8 +173,11 @@ cc_resolve_path() {
 }
 
 cc_variant_name() {
-    printf '%s' "$CV_TARGET-o$CV_OPT"
-    [ "$CV_MODE" = - ] || printf '%s' "-$CV_MODE"
+    _vn=
+    [ "$CV_TARGET" = - ] || _vn=$CV_TARGET
+    [ "$CV_OPT" = - ] || _vn="${_vn:+$_vn-}o$CV_OPT"
+    [ "$CV_MODE" = - ] || _vn="${_vn:+$_vn-}$CV_MODE"
+    printf '%s' "${_vn:-default}"
 }
 
 # Record a failed row. $1 = line, $2 = message.

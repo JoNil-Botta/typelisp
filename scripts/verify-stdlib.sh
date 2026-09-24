@@ -125,7 +125,7 @@ if [ ! -x "$COMPILER" ]; then
     exit 1
 fi
 
-TYPELISP_BIN="$COMPILER" scripts/verify-for-source-macro.sh
+TYPELISP_BIN="$COMPILER" scripts/verify-codegen-cases.sh tests/codegen/for-source-macro.cases
 
 # The generated `(hashmap K V)` modules are the only supported scalar hashmap
 # surface. Keep the removed flat family spellings from returning in source,

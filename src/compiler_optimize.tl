@@ -13391,7 +13391,7 @@
   (edges (__tl_dyn-array i64)))
 
 ;; `targets-known` is one of the optimizer verifier's two structural CFG checks.
-;; It falls out of the build for free: `opt-cfg-index-label-set-to-ids` drops
+;; It falls out of the build for free: `opt-cfg-index-build-csr` drops
 ;; successor labels it cannot resolve, so an unknown target is a short CSR row.
 ;; The other check needs no field -- see `opt-cfg-index-labels-unique?`. Together
 ;; they replace rebuilding a label map and rehashing every label and every
@@ -13523,139 +13523,6 @@
         (opt-label-count
           (compiler-opt-global-array-element-shared-view rows index))))))
 
-(define (opt-cfg-index-label-set-to-ids
-  [labels : OptLabelSet]
-  [generation : i64]) : OptLabelSet
-  (match (compiler-opt-global-shared-view labels)
-    [(OptLabelSet.Nil) (OptLabelSet.Nil)]
-    [(OptLabelSet.Dense _ _)
-      (let
-        [label : i64 (opt-label-ref (compiler-opt-global-shared-view labels) 0)]
-        [tail : OptLabelSet
-          (opt-cfg-index-label-set-to-ids (opt-label-tail labels) generation)]
-        [idx : i64 (opt-cfg-label-table-get label generation)]
-        (if (< idx 0)
-          tail
-          (opt-label-cons idx tail)))]))
-
-;; The successor row for this block already holds every resolved target id, in
-;; label-set order, with unresolvable labels dropped -- exactly the sequence the
-;; label-walking version produced. Reuse it instead of hashing each successor
-;; label a second time: `opt-cfg-index-label-set-to-ids` has already paid one
-;; `opt_string_i64_map.get` per edge.
-(define (opt-cfg-index-add-pred-edges-from-ids!
-  [pred-rows : (__tl_dyn-array OptLabelSet)]
-  [source-id : i64]
-  [succ-ids : OptLabelSet]) : unit
-  (match succ-ids
-    [(OptLabelSet.Nil) unit]
-    [(OptLabelSet.Dense integer-items integer-count)
-      (let
-        [idx : i64 (array-ref integer-items integer-count)]
-        [rest : OptLabelSet
-          (opt-label-tail (OptLabelSet.Dense integer-items integer-count))]
-        (begin
-          (set!
-            (array-ref pred-rows idx)
-            (opt-label-add
-              (compiler-opt-global-array-element-shared-view pred-rows idx)
-              source-id))
-          (opt-cfg-index-add-pred-edges-from-ids!
-            pred-rows
-            source-id
-            (compiler-opt-global-shared-view rest))))]))
-
-;; Returns whether every successor label resolved. `opt-cfg-index-label-set-to-ids`
-;; drops the ones that miss, so a short row is exactly an unknown target -- the
-;; question `opt-cfg-successor-targets-known?` answered by rebuilding the label
-;; map and reprobing it.
-(define (opt-cfg-index-fill-row-seq!
-  [blocks : ir.CompilerIrBlockSeq]
-  [generation : i64]
-  [succ-rows : (__tl_dyn-array OptLabelSet)]
-  [pred-rows : (__tl_dyn-array OptLabelSet)]
-  [base : i64]) : bool
-  (let
-    [index : i64 0]
-    [count : i64
-      (ir.compiler-ir-block-seq-count (compiler-opt-global-shared-view blocks))]
-    [known : bool true]
-    (begin
-      (while (< index count)
-        (let
-          [block : ir.CompilerIrBlock
-            (ir.compiler-ir-block-seq-ref
-              (compiler-opt-global-shared-view blocks)
-              index)]
-          [next-label : i64
-            (if (< (+ index 1) count)
-              (match (ir.compiler-ir-block-seq-ref
-                (compiler-opt-global-shared-view blocks)
-                (+ index 1))
-                [(ir.CompilerIrBlock.Block label _) label])
-              (ir.compiler-ir-label-none))]
-          [succs : OptLabelSet
-            (opt-cfg-block-successors-with-next block next-label)]
-          [row : i64 (+ base index)]
-          [succ-ids : OptLabelSet
-            (opt-cfg-index-label-set-to-ids
-              (compiler-opt-global-shared-view succs)
-              generation)]
-          (begin
-            (set! (array-ref succ-rows row) succ-ids)
-            (opt-cfg-index-add-pred-edges-from-ids!
-              (compiler-opt-global-shared-view pred-rows)
-              row
-              (compiler-opt-global-shared-view succ-ids))
-            (unless
-              (= (opt-label-count succs) (opt-label-count succ-ids))
-              (set! known false))
-            (set! index (+ index 1)))))
-      known)))
-
-(define (opt-cfg-index-fill-rows!
-  [blocks : ir.CompilerIrBlockList]
-  [generation : i64]
-  [succ-rows : (__tl_dyn-array OptLabelSet)]
-  [pred-rows : (__tl_dyn-array OptLabelSet)]
-  [index : i64]) : bool
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) true]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match (compiler-opt-global-shared-view block)
-        [(ir.CompilerIrBlock.Block _ _)
-          (let
-            [succs : OptLabelSet
-              (opt-cfg-block-successors-with-next
-                block
-                (opt-cfg-entry-label (compiler-opt-box-shared-view rest)))]
-            [succ-ids : OptLabelSet
-              (opt-cfg-index-label-set-to-ids
-                (compiler-opt-global-shared-view succs)
-                generation)]
-            [known : bool
-              (=
-                (opt-label-count succs)
-                (opt-label-count (compiler-opt-global-shared-view succ-ids)))]
-            (begin
-              (set! (array-ref succ-rows index) succ-ids)
-              (opt-cfg-index-add-pred-edges-from-ids!
-                (compiler-opt-global-shared-view pred-rows)
-                index
-                succ-ids)
-              ;; The recursion comes first: `and` short-circuits, and the rest of
-              ;; the rows still have to be filled.
-              (and
-                (opt-cfg-index-fill-rows!
-                  (compiler-opt-box-shared-view rest)
-                  generation
-                  succ-rows
-                  pred-rows
-                  (+ index 1))
-                known)))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (opt-cfg-index-fill-row-seq! seq generation succ-rows pred-rows index)]))
-
 (define (opt-cfg-csr-fill-rows!
   [rows : (__tl_dyn-array OptLabelSet)]
   [count : i64]
@@ -13690,6 +13557,301 @@
         0
         0)
       (OptCfgCsr offsets edges))))
+
+;; The two CSRs of an index, written directly. A successor row holds the ids of
+;; the labels `opt-cfg-block-successors-with-next` collects for the block, in
+;; its order (first occurrence), with labels that name no block dropped; a
+;; predecessor row holds its sources in increasing block order. Those are the
+;; rows the label-set build produced one `OptLabelSet` at a time -- a successor
+;; set and an id set per block and a growing predecessor set per edge, each
+;; then copied out -- and a short successor row is still exactly an unknown
+;; target.
+(defstruct OptCfgCsrRows
+  (succs OptCfgCsr)
+  (preds OptCfgCsr)
+  (targets-known bool))
+
+(define (opt-cfg-edges-grow [edges : (__tl_dyn-array i64)] [used : i64]) : (__tl_dyn-array
+    i64)
+  (let
+    [grown : (__tl_dyn-array i64) (__tl_make-array i64 (* 2 (+ used 4)))]
+    [i : i64 0]
+    (begin
+      (while (< i used)
+        (begin
+          (set! (array-ref grown i) (array-ref edges i))
+          (set! i (+ i 1))))
+      grown)))
+
+;; Appends block id `id` to the row edges[start, end) unless the row holds it
+;; already, and returns the row's new end. Distinct labels name distinct
+;; blocks, so this is `opt-label-add`'s first-occurrence rule on the labels.
+;; The caller guarantees room for one more edge.
+(define (opt-cfg-row-push!
+  [edges : (__tl_dyn-array i64)]
+  [start : i64]
+  [end : i64]
+  [id : i64]) : i64
+  (let
+    [k : i64 start]
+    (begin
+      (while (< k end)
+        (if (= (array-ref edges k) id)
+          (return end)
+          (set! k (+ k 1))))
+      (set! (array-ref edges end) id)
+      (+ end 1))))
+
+(define (opt-cfg-index-build-csr
+  [dense-blocks : (__tl_dyn-array ir.CompilerIrBlock)]
+  [labels : (__tl_dyn-array i64)]
+  [count : i64]
+  [generation : i64]) : OptCfgCsrRows
+  (let
+    [succ-offsets : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+    [edges : (__tl_dyn-array i64) (__tl_make-array i64 (+ (* 2 count) 4))]
+    [end : i64 0]
+    [known : bool true]
+    [b : i64 0]
+    (begin
+      (while (< b count)
+        (let
+          [start : i64 end]
+          [next-label : i64
+            (if (< (+ b 1) count)
+              (array-ref labels (+ b 1))
+              (ir.compiler-ir-label-none))]
+          [general : bool false]
+          (begin
+            (set! (array-ref succ-offsets b) start)
+            (match (compiler-opt-global-array-element-shared-view
+              dense-blocks
+              b)
+              [(ir.CompilerIrBlock.Block _ instrs)
+                (let
+                  [slots : (__tl_dyn-array ir.CompilerIrInstr)
+                    (compiler-opt-global-shared-view instrs.slots)]
+                  [n : i64 instrs.len]
+                  [i : i64 0]
+                  (begin
+                    ;; Jumps and two-way branches, in instruction order: the
+                    ;; labels `opt-cfg-instr-seq-successors` adds, in its order.
+                    ;; Most instructions branch nowhere, so the loop test is
+                    ;; the bound alone and room for a row's two new edges is
+                    ;; made only in the arms that push them; a switch leaves by
+                    ;; moving `i` to the end.
+                    (while (< i n)
+                      (begin
+                        (match (compiler-opt-global-array-element-shared-view
+                          slots
+                          i)
+                          [(ir.CompilerIrInstr.Jump label)
+                            (let
+                              [id : i64
+                                (opt-cfg-label-table-get label generation)]
+                              (if (< id 0)
+                                (set! known false)
+                                (begin
+                                  (when
+                                    (>= (+ end 2) (array-length edges))
+                                    (set!
+                                      edges
+                                      (opt-cfg-edges-grow
+                                        (compiler-opt-global-shared-view edges)
+                                        end)))
+                                  (set!
+                                    end
+                                    (opt-cfg-row-push!
+                                      (compiler-opt-global-shared-view edges)
+                                      start
+                                      end
+                                      id)))))]
+                          [(ir.CompilerIrInstr.Branch _ true-label false-label)
+                            (let
+                              [t : i64
+                                (opt-cfg-label-table-get true-label generation)]
+                              [f : i64
+                                (opt-cfg-label-table-get false-label generation)]
+                              (begin
+                                (when
+                                  (>= (+ end 2) (array-length edges))
+                                  (set!
+                                    edges
+                                    (opt-cfg-edges-grow
+                                      (compiler-opt-global-shared-view edges)
+                                      end)))
+                                (if (< t 0)
+                                  (set! known false)
+                                  (set!
+                                    end
+                                    (opt-cfg-row-push!
+                                      (compiler-opt-global-shared-view edges)
+                                      start
+                                      end
+                                      t)))
+                                (if (< f 0)
+                                  (set! known false)
+                                  (set!
+                                    end
+                                    (opt-cfg-row-push!
+                                      (compiler-opt-global-shared-view edges)
+                                      start
+                                      end
+                                      f)))))]
+                          [(ir.CompilerIrInstr.TotalEnumBranch
+                              _
+                              true-label
+                              false-label)
+                            (let
+                              [t : i64
+                                (opt-cfg-label-table-get true-label generation)]
+                              [f : i64
+                                (opt-cfg-label-table-get false-label generation)]
+                              (begin
+                                (when
+                                  (>= (+ end 2) (array-length edges))
+                                  (set!
+                                    edges
+                                    (opt-cfg-edges-grow
+                                      (compiler-opt-global-shared-view edges)
+                                      end)))
+                                (if (< t 0)
+                                  (set! known false)
+                                  (set!
+                                    end
+                                    (opt-cfg-row-push!
+                                      (compiler-opt-global-shared-view edges)
+                                      start
+                                      end
+                                      t)))
+                                (if (< f 0)
+                                  (set! known false)
+                                  (set!
+                                    end
+                                    (opt-cfg-row-push!
+                                      (compiler-opt-global-shared-view edges)
+                                      start
+                                      end
+                                      f)))))]
+                          [(ir.CompilerIrInstr.Switch _ _ _ _)
+                            (begin
+                              (set! general true)
+                              (set! i n))]
+                          [(ir.CompilerIrInstr.TotalEnumSwitch _ _ _ _ _)
+                            (begin
+                              (set! general true)
+                              (set! i n))]
+                          [_ unit])
+                        (set! i (+ i 1))))
+                    (if general
+                      ;; A switch: take the label set itself, whose large-switch
+                      ;; dedup this row must not repeat per case. Its labels are
+                      ;; distinct, so every resolved one is appended.
+                      (let
+                        [succs : OptLabelSet
+                          (opt-cfg-block-successors-with-next
+                            (compiler-opt-global-array-element-shared-view
+                              dense-blocks
+                              b)
+                            next-label)]
+                        [slot : i64 1]
+                        (begin
+                          (set! end start)
+                          (match (compiler-opt-global-shared-view succs)
+                            [(OptLabelSet.Nil) unit]
+                            [(OptLabelSet.Dense values len)
+                              (while (<= slot len)
+                                (let
+                                  [id : i64
+                                    (opt-cfg-label-table-get
+                                      (array-ref values slot)
+                                      generation)]
+                                  (begin
+                                    (if (< id 0)
+                                      (set! known false)
+                                      (begin
+                                        (when
+                                          (>= end (array-length edges))
+                                          (set!
+                                            edges
+                                            (opt-cfg-edges-grow
+                                              (compiler-opt-global-shared-view
+                                                edges)
+                                              end)))
+                                        (set! (array-ref edges end) id)
+                                        (set! end (+ end 1))))
+                                    (set! slot (+ slot 1)))))])))
+                      (when
+                        (and
+                          (ir.compiler-ir-label-some? next-label)
+                          (opt-cfg-instr-seq-can-fallthrough? instrs))
+                        (let
+                          [id : i64
+                            (opt-cfg-label-table-get next-label generation)]
+                          (if (< id 0)
+                            (set! known false)
+                            (begin
+                              (when
+                                (>= end (array-length edges))
+                                (set!
+                                  edges
+                                  (opt-cfg-edges-grow
+                                    (compiler-opt-global-shared-view edges)
+                                    end)))
+                              (set!
+                                end
+                                (opt-cfg-row-push!
+                                  (compiler-opt-global-shared-view edges)
+                                  start
+                                  end
+                                  id)))))))))])
+            (set! b (+ b 1)))))
+      (set! (array-ref succ-offsets count) end)
+      (let
+        [succ-edges : (__tl_dyn-array i64) (__tl_make-array i64 end)]
+        [pred-offsets : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+        [cursor : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+        [pred-edges : (__tl_dyn-array i64) (__tl_make-array i64 end)]
+        [e : i64 0]
+        [row : i64 0]
+        [total : i64 0]
+        (begin
+          (while (< e end)
+            (let
+              [target : i64 (array-ref edges e)]
+              (begin
+                (set! (array-ref succ-edges e) target)
+                (set! (array-ref cursor target) (+ (array-ref cursor target) 1))
+                (set! e (+ e 1)))))
+          ;; Counts to offsets; `cursor` then walks each predecessor row.
+          (while (< row count)
+            (let
+              [n : i64 (array-ref cursor row)]
+              (begin
+                (set! (array-ref pred-offsets row) total)
+                (set! (array-ref cursor row) total)
+                (set! total (+ total n))
+                (set! row (+ row 1)))))
+          (set! (array-ref pred-offsets count) total)
+          (set! row 0)
+          (while (< row count)
+            (let
+              [k : i64 (array-ref succ-offsets row)]
+              [stop : i64 (array-ref succ-offsets (+ row 1))]
+              (begin
+                (while (< k stop)
+                  (let
+                    [target : i64 (array-ref succ-edges k)]
+                    [at : i64 (array-ref cursor target)]
+                    (begin
+                      (set! (array-ref pred-edges at) row)
+                      (set! (array-ref cursor target) (+ at 1))
+                      (set! k (+ k 1)))))
+                (set! row (+ row 1)))))
+          (OptCfgCsrRows
+            (OptCfgCsr succ-offsets succ-edges)
+            (OptCfgCsr pred-offsets pred-edges)
+            known))))))
 
 ;; Only for arrays being *re*-initialised. `make-array` already hands back
 ;; zeroed memory -- `tl_array_zero` either fills the allocation or skips the
@@ -13854,10 +14016,6 @@
         0)]
     [id-map : (__tl_dyn-array i64)
       (__tl_make-array i64 (opt-cfg-index-id-map-capacity count))]
-    [succ-rows : (__tl_dyn-array OptLabelSet)
-      (__tl_make-array OptLabelSet count)]
-    [pred-rows : (__tl_dyn-array OptLabelSet)
-      (__tl_make-array OptLabelSet count)]
     [reachable : (__tl_dyn-array bool) (__tl_make-array bool count)]
     [postorder : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [rpo : (__tl_dyn-array i64) (__tl_make-array i64 count)]
@@ -13869,14 +14027,6 @@
         (compiler-opt-global-shared-view id-map)
         (compiler-opt-global-shared-view labels)
         count)
-      (set!
-        targets-known
-        (opt-cfg-index-fill-rows!
-          blocks
-          generation
-          (compiler-opt-global-shared-view succ-rows)
-          (compiler-opt-global-shared-view pred-rows)
-          0))
       (opt-cfg-fill-i64!
         (compiler-opt-global-shared-view postorder)
         count
@@ -13887,9 +14037,16 @@
         count
         (- 0 1))
       (let
-        [succ-csr : OptCfgCsr (opt-cfg-csr-build succ-rows count)]
-        [pred-csr : OptCfgCsr (opt-cfg-csr-build pred-rows count)]
+        [rows : OptCfgCsrRows
+          (opt-cfg-index-build-csr
+            (compiler-opt-global-shared-view dense-blocks)
+            (compiler-opt-global-shared-view labels)
+            count
+            generation)]
+        [succ-csr : OptCfgCsr (compiler-opt-global-shared-view rows.succs)]
+        [pred-csr : OptCfgCsr (compiler-opt-global-shared-view rows.preds)]
         (begin
+          (set! targets-known rows.targets-known)
           (if (> count 0)
             (set!
               reach-count
@@ -14166,15 +14323,59 @@
   32)
 
 (define (opt-cfg-index-reachable-labels [index : OptCfgIndex]) : OptLabelSet
-  (if (<
-    (opt-cfg-index-block-count (compiler-opt-global-shared-view index))
-    (opt-cfg-index-reachable-hash-threshold))
-    (opt-cfg-index-reachable-labels-from-linear index 0 (OptLabelSet.Nil))
-    (opt-cfg-index-reachable-labels-from-seen
-      (compiler-opt-global-shared-view index)
-      0
-      (OptLabelSet.Nil)
-      (opt_string_i64_map.with-capacity (opt-cfg-index-block-count index)))))
+  (cond
+    [index.labels-unique
+      (opt-cfg-index-reachable-labels-dense
+        (compiler-opt-global-shared-view index))]
+    [(<
+        (opt-cfg-index-block-count (compiler-opt-global-shared-view index))
+        (opt-cfg-index-reachable-hash-threshold))
+      (opt-cfg-index-reachable-labels-from-linear index 0 (OptLabelSet.Nil))]
+    [else
+      (opt-cfg-index-reachable-labels-from-seen
+        (compiler-opt-global-shared-view index)
+        0
+        (OptLabelSet.Nil)
+        (opt_string_i64_map.with-capacity (opt-cfg-index-block-count index)))]))
+
+;; With every block label distinct, neither dedup above ever finds a label
+;; already present: the set is the reachable blocks' labels in id order, built
+;; here in one allocation.
+(define (opt-cfg-index-reachable-labels-dense [index : OptCfgIndex]) : OptLabelSet
+  (let
+    [count : i64
+      (opt-cfg-index-block-count (compiler-opt-global-shared-view index))]
+    [n : i64 0]
+    [id : i64 0]
+    (begin
+      (while (< id count)
+        (begin
+          (when (array-ref index.reachable id) (set! n (+ n 1)))
+          (set! id (+ id 1))))
+      (if (= n 0)
+        (OptLabelSet.Nil)
+        (let
+          [items : (__tl_dyn-array i64)
+            (__tl_make-array
+              i64
+              (+
+                (if (< n 4)
+                  4
+                  n)
+                1))]
+          [k : i64 1]
+          (begin
+            (set! id 0)
+            (while (< id count)
+              (begin
+                (when
+                  (array-ref index.reachable id)
+                  (begin
+                    (set! (array-ref items k) (array-ref index.labels id))
+                    (set! k (+ k 1))))
+                (set! id (+ id 1))))
+            (set! (array-ref items 0) n)
+            (OptLabelSet.Dense items n)))))))
 
 (define (opt-cfg-index-rpo-id [index : OptCfgIndex] [slot : i64]) : i64
   (if (and (>= slot 0) (< slot index.reach-count))
@@ -14694,6 +14895,60 @@
             (set! id (+ id 1)))))
       unit)))
 
+;; The dom tree's child rows: each reachable id with a parent, under that
+;; parent, in increasing id order -- the rows `opt-dom-child-rows-fill!`'s
+;; `opt-label-add` walk builds, counted into place instead of grown one set
+;; per parent.
+(define (opt-dom-children-csr
+  [index : OptCfgIndex]
+  [idom : (__tl_dyn-array i64)]) : OptCfgCsr
+  (let
+    [count : i64
+      (opt-cfg-index-block-count (compiler-opt-global-shared-view index))]
+    [offsets : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+    [cursor : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+    [id : i64 0]
+    [total : i64 0]
+    (begin
+      (while (< id count)
+        (let
+          [parent : i64 (array-ref idom id)]
+          (begin
+            (when
+              (and (array-ref index.reachable id) (>= parent 0) (!= parent id))
+              (set! (array-ref cursor parent) (+ (array-ref cursor parent) 1)))
+            (set! id (+ id 1)))))
+      (set! id 0)
+      (while (< id count)
+        (let
+          [n : i64 (array-ref cursor id)]
+          (begin
+            (set! (array-ref offsets id) total)
+            (set! (array-ref cursor id) total)
+            (set! total (+ total n))
+            (set! id (+ id 1)))))
+      (set! (array-ref offsets count) total)
+      (let
+        [edges : (__tl_dyn-array i64) (__tl_make-array i64 total)]
+        (begin
+          (set! id 0)
+          (while (< id count)
+            (let
+              [parent : i64 (array-ref idom id)]
+              (begin
+                (when
+                  (and
+                    (array-ref index.reachable id)
+                    (>= parent 0)
+                    (!= parent id))
+                  (let
+                    [at : i64 (array-ref cursor parent)]
+                    (begin
+                      (set! (array-ref edges at) id)
+                      (set! (array-ref cursor parent) (+ at 1)))))
+                (set! id (+ id 1)))))
+          (OptCfgCsr offsets edges))))))
+
 (define (opt-dom-euler-dfs!
   [children : OptCfgCsr]
   [tin : (__tl_dyn-array i64)]
@@ -14729,22 +14984,18 @@
   (let
     [count : i64
       (opt-cfg-index-block-count (compiler-opt-global-shared-view index))]
-    [child-rows : (__tl_dyn-array OptLabelSet)
-      (__tl_make-array OptLabelSet count)]
     (begin
       (opt-cfg-fill-i64! (compiler-opt-global-shared-view tin) count (- 0 1))
       (opt-cfg-fill-i64! (compiler-opt-global-shared-view tout) count (- 0 1))
       (if (>= entry-id 0)
-        (begin
-          (opt-dom-child-rows-fill!
-            index
-            idom
-            (compiler-opt-global-shared-view child-rows))
-          (let
-            [children : OptCfgCsr (opt-cfg-csr-build child-rows count)]
-            (begin
-              (opt-dom-euler-dfs! children tin tout entry-id 0)
-              unit)))
+        (let
+          [children : OptCfgCsr
+            (opt-dom-children-csr
+              (compiler-opt-global-shared-view index)
+              (compiler-opt-global-shared-view idom))]
+          (begin
+            (opt-dom-euler-dfs! children tin tout entry-id 0)
+            unit))
         unit))))
 
 (define (opt-cfg-dominators-with [index : OptCfgIndex] [entry-label : i64]) : OptDomInfo
@@ -14794,7 +15045,7 @@
 ;;
 ;; The `reachable` array is deliberately NOT consulted. `opt-dom-build-euler!`
 ;; pre-fills tin/tout with -1, and its DFS reaches only the entry plus ids that
-;; `opt-dom-child-rows-fill!` linked into the dom tree -- and that fill admits
+;; `opt-dom-children-csr` linked into the dom tree -- and that fill admits
 ;; an id only when `reachable[id]` is set. So `tin[id] >= 0` already implies
 ;; `reachable[id]`, and the `(>= dom-tin 0)` guard below subsumes both
 ;; reachability tests exactly rather than merely approximating them.
@@ -23928,10 +24179,10 @@
 ;; Back-edge scan for one block, reading its successors from the context's CSR
 ;; index instead of recomputing the block's successor set from its instruction
 ;; stream. The CSR row holds exactly the deduplicated
-;; opt-cfg-block-successors-with-next set in reverse insertion order
-;; (opt-label-add prepends; opt-cfg-index-label-set-to-ids keeps label-set order
-;; and drops labels the index cannot resolve -- precisely the old missing-label
-;; arm; opt-cfg-csr-fill-rows! reverses the row), so visiting blocks from last to
+;; opt-cfg-block-successors-with-next set in insertion order
+;; (opt-cfg-index-build-csr writes each label's id the first time the block
+;; names it and drops labels the index cannot resolve -- precisely the old
+;; missing-label arm), so visiting blocks from last to
 ;; first and each CSR row forward while front-consing emits loops in precisely
 ;; the order the label-set walk produced. Reachability and ids come from the same
 ;; index that walk consulted (the reachable set is built from this reachable

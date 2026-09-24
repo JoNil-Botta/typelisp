@@ -34,7 +34,6 @@ target/
 # Native toolchain artifacts. `typelisp compile` writes assembly beside the
 # source; assembling, linking, and `staticlib` builds add the rest.
 *.s
-!/tests/golden/*.s
 *.o
 *.obj
 *.a

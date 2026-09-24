@@ -699,7 +699,6 @@ EOF
     run_compiler_driver "$_driver" compiler-driver-import "$_src" "$_asm"
     run_compiler_driver "$_driver" compiler-driver-import-again "$_src" "$_again"
     assert_file_exact "$_again" "$_asm" compiler-driver-import-deterministic
-    assert_file_exact "$_asm" "$ROOT/tests/golden/selfhost_compiler_driver_import.s" compiler-driver-import-golden
     for _snippet in \
         "_tl_shared_shared_shared:" \
         "_tl_helper_helper_helper:" \

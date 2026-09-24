@@ -8,6 +8,7 @@
 (import compiler_intern as ci)
 (import compiler_owned_view as owned)
 (import stdlib.string)
+(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.test)
 
 (define (leaf-name [i : i64]) : String
@@ -139,8 +140,7 @@
             "Linux leaf selection preserves Windows runtime")
           (while (< which 5)
             (let
-              [anchor
-                (string.append ".globl " (string.append (leaf-name which) "\n"))]
+              [anchor (str_cat.str-cat ".globl " (leaf-name which) "\n" "")]
               (begin
                 (test.assert-true
                   (=

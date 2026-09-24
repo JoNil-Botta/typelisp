@@ -16048,9 +16048,9 @@
   [rhs : compiler_ir_types.CompilerIrValue]
   [ty : compiler_ast_types.AstType]
   [value : bool]) : compiler_optimize.OptDomCmpFacts
-  (compiler_optimize.OptDomCmpFacts.Cons
+  (compiler_optimize.opt-dom-cmp-facts-cons
     (compiler_optimize.OptDomCmpFact.Fact op lhs rhs ty value 0)
-    (box (compiler_optimize.OptDomCmpFacts.Nil))))
+    (compiler_optimize.OptDomCmpFacts.Nil)))
 
 (define (opt-rule-a-probe
   [fact-op : compiler_ir_types.CompilerIrBinOp]
@@ -16394,7 +16394,7 @@
   [op : compiler_ir_types.CompilerIrBinOp]) : i64
   (match (compiler_optimize.opt-dom-cmp-lookup-chained
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-    (compiler_optimize.OptDomCmpFacts.Cons
+    (compiler_optimize.opt-dom-cmp-facts-cons
       (compiler_optimize.OptDomCmpFact.Fact
         head-op
         (opt-rule-a-var)
@@ -16402,7 +16402,7 @@
         (opt-rule-a-i64)
         true
         0)
-      (box (opt-rule-a-chain-tail-facts mid-op)))
+      (opt-rule-a-chain-tail-facts mid-op))
     op
     (opt-rule-a-var)
     (compiler_ir_types.CompilerIrValue.Var 3)
@@ -16415,7 +16415,7 @@
 
 (define (opt-rule-a-chain-tail-facts
   [mid-op : compiler_ir_types.CompilerIrBinOp]) : compiler_optimize.OptDomCmpFacts
-  (compiler_optimize.OptDomCmpFacts.Cons
+  (compiler_optimize.opt-dom-cmp-facts-cons
     (compiler_optimize.OptDomCmpFact.Fact
       mid-op
       (opt-rule-a-other)
@@ -16423,7 +16423,7 @@
       (opt-rule-a-i64)
       true
       0)
-    (box (compiler_optimize.OptDomCmpFacts.Nil))))
+    (compiler_optimize.OptDomCmpFacts.Nil)))
 
 ;; `i < n` chained through `n <mid-op> len`, queried as `i <op> len`.
 (define (opt-rule-a-chain-probe
@@ -91173,7 +91173,7 @@
         (compiler_optimize.compiler-opt-global-shared-view cells.arg-global)
         (opt-le-params 1))
       (opt_i64_i64_map.with-capacity 1)
-      (compiler_optimize.OptDomCmpFacts.Cons
+      (compiler_optimize.opt-dom-cmp-facts-cons
         (compiler_optimize.OptDomCmpFact.Fact
           (compiler_ir_types.CompilerIrBinOp.Lt)
           (compiler_ir_types.CompilerIrValue.Var 0)
@@ -91181,7 +91181,7 @@
           (compiler_ast_types.AstType.I64)
           true
           0)
-        (box (compiler_optimize.OptDomCmpFacts.Nil)))
+        (compiler_optimize.OptDomCmpFacts.Nil))
       0
       (compiler_ir_types.CompilerIrValue.Var 0)
       (compiler_ir_types.CompilerIrValue.Var 6))))

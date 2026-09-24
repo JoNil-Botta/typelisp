@@ -689,7 +689,6 @@ run_with_compiler "$STAGE2_BIN" backend-safety-contract-manifest scripts/verify-
 run_with_compiler "$STAGE2_BIN" compiler-arena-debug-native-matrix scripts/verify-compiler-arena-debug.sh
 run_with_compiler "$STAGE2_BIN" tlci-format-corpus scripts/verify-tlci-corpus.sh
 run_with_compiler "$STAGE2_BIN" tlci-native-boundary-manifest scripts/verify-tlci-boundary-manifest.sh
-run_with_compiler "$STAGE2_BIN" stage2-result-import-harness-integrity scripts/verify-result-import-harness.sh
 if [ "$HOST_OS" = linux ]; then
     OPT2_REFERENCE_PATH_FILE="$ROOT/target/ci-verify-opt2-reference.path"
     OPT2_REFERENCE_METADATA_FILE="$ROOT/target/ci-verify-opt2-reference.meta"

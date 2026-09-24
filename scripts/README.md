@@ -233,7 +233,6 @@ Some gate-owned helpers deliberately retain measurement-oriented names:
 | `measure-spmd-mode-instruction-counts.sh` | `ci-verify.sh` self-test and SPMD baseline checks |
 | `measure-compile-batch-memory.ps1` | `verify-compile-profile.sh` |
 | `measure-heavy-closure-profile.sh` | `verify-compile-profile.sh` |
-| `measure-result-import-cost.sh` | `verify-result-import-harness.sh` fixture preparation |
 | `analyze-stage0-size.sh` | `verify-stage0-smoke.sh` report |
 | `analyze-selfhost-build-asm-size.sh` | `ci-verify.sh` parser self-test; optional linked-size report |
 | `benchmark-bootstrap.ps1` | `ci-verify.sh` command-construction self-test |

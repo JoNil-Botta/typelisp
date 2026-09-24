@@ -859,17 +859,6 @@ existing fixture specs. Windows defaults to `lsp batch`. Use
 `scripts/verify-lsp-transcript-batch.sh` for the fast manifest/parser mutation
 coverage, including raw malformed-frame input and incomplete result sets.
 
-`scripts/measure-result-import-cost.sh` is the paired #3903/#3215 diagnostic
-harness for generated `(result.result T E)` imports in hot selfhost modules. It copies
-`src/*.tl` into scratch trees under `target/` and injects one unused generated
-result import into each variant source (`format_tokens.tl`, `lex.tl`, or
-`compiler_ctfe.tl`) without editing tracked sources. Linux/cachegrind mode
-reports a baseline plus one `self_compile/compile_cli_opt1` instruction-count
-delta for each variant; `--profile` also emits phase deltas and generated
-macro/import counter deltas. The full cost measurement is opt-in;
-`scripts/verify-result-import-harness.sh` invokes its `--prepare-only` path to
-gate source-preserving fixture injection.
-
 ### Coverage policy
 
 New behavior should get TypeLisp-owned coverage: a module-local self-test, a

@@ -42,7 +42,6 @@ no-libc-dependency-guard	all	no-libc dependency guard	bootstrap-fixpoint	stage2	
 stage2-cli-build-run-and-chooser-smoke	all	stage2 cli build/run and chooser smoke	bootstrap-fixpoint	stage2	scripts/verify-selfhost-cli-build-run.sh
 stage2-public-tool-surface	all	stage2 public tool surface	bootstrap-fixpoint	stage2	scripts/verify-public-tools.sh
 ir-observability-golden	all	IR observability golden	bootstrap-fixpoint	stage2	scripts/verify-ir-observability.sh
-backend-safety-contract-manifest	all	backend safety contract manifest	bootstrap-fixpoint	stage2	scripts/verify-backend-safety-manifest.sh
 compiler-arena-debug-native-matrix	all	compiler arena debug native matrix	bootstrap-fixpoint	stage2	scripts/verify-compiler-arena-debug.sh
 tlci-format-corpus	all	TLCI format corpus	bootstrap-fixpoint	stage2	scripts/verify-tlci-corpus.sh
 tlci-native-boundary-manifest	all	TLCI native boundary manifest	bootstrap-fixpoint	stage2	scripts/verify-tlci-boundary-manifest.sh

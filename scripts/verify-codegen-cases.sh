@@ -204,7 +204,8 @@ cc_isa_runnable() {
 # ---------------------------------------------------------------- actions
 
 cc_flags() {
-    # Prints nothing; sets CV_FLAGS for "$@"-style use via eval.
+    # CV_FLAGS: the variant's --target/--opt-level/--backend-mode plus the
+    # case's args, word-split where they are used.
     CV_FLAGS=
     [ "$CV_TARGET" = - ] || CV_FLAGS="$CV_FLAGS --target $CV_TARGET"
     [ "$CV_OPT" = - ] || CV_FLAGS="$CV_FLAGS --opt-level $CV_OPT"
@@ -415,7 +416,6 @@ cc_variant() {
     : > "$CV_ERR"
     CV_EXIT=0
     CV_RAN=1
-    CV_AFTER=
     CV_N=0
     if [ -n "$CC_SOURCE" ]; then
         CV_SOURCE=$(cc_resolve_path "$CC_SOURCE")
@@ -450,9 +450,11 @@ cc_variant() {
 # ---------------------------------------------------------------- rows
 
 cc_row() {
-    CC_ROWS=$((CC_ROWS + 1))
     case "$CV_BAD_SUBJECT" in
-        0) return 0 ;;
+        0)
+            CC_ROWS=$((CC_ROWS + 1))
+            return 0
+            ;;
         2) cc_skip ;;
     esac
     return 1
@@ -492,7 +494,6 @@ a_in() {
         stdout | stderr)
             if [ "$CV_RAN" -eq 0 ]; then
                 CV_BAD_SUBJECT=2
-                cc_skip
                 return 0
             fi
             if [ "$_ai_kind" = stdout ]; then CV_SUBJECT=$CV_OUT; else CV_SUBJECT=$CV_ERR; fi
@@ -548,8 +549,8 @@ a_narrow() {
 }
 
 a_exit() {
-    CC_ROWS=$((CC_ROWS + 1))
     cc_run_output_row || return 0
+    CC_ROWS=$((CC_ROWS + 1))
     _ex_want=$2
     case "$_ex_want" in
         *=*)

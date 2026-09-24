@@ -3864,18 +3864,18 @@
           "    call tl_cabi_wide_arg_score\n")
         (compiler-backend-register-indirect-call?
           (owned_view.compiler-owned-shared-view asm))
-        ;; With inline-by-value aggregates, a WideArg construction
-        ;; no longer heap-allocates -- the value is built in inline storage. So
-        ;; the two by-value call sites need exactly the two 16-byte byref buffers
-        ;; the Win64 ABI requires (down from four, when each construction also
-        ;; allocated). The 16-byte buffer size is asserted just below.
-        (>=
+        ;; A WideArg construction is built in inline storage, and the
+        ;; by-reference copy the Win64 ABI requires at each of the two call
+        ;; sites is a frame temporary (#7885), so nothing here allocates: no
+        ;; allocator call and no inline 16-byte arena bump.
+        (=
           (compiler-backend-alloc-call-count
             (owned_view.compiler-owned-shared-view asm))
-          2)
-        (compiler-backend-string-contains-alloc-size?
-          (owned_view.compiler-owned-shared-view asm)
-          16)
+          0)
+        (not
+          (compiler-backend-string-contains-alloc-size?
+            (owned_view.compiler-owned-shared-view asm)
+            16))
         (not
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
@@ -3972,9 +3972,14 @@
             "    call tl_win64_return_choice_make\n")
           (compiler-backend-register-indirect-call?
             (owned_view.compiler-owned-shared-view asm))
-          (compiler-backend-string-contains-alloc-size?
-            (owned_view.compiler-owned-shared-view asm)
-            16)
+          ;; The by-reference `SmallChoice` (16 bytes) and `WideChoice` (24
+          ;; bytes) arguments are frame temporaries (#7885). The only
+          ;; allocations left are the two 24-byte hidden-sret buffers for the
+          ;; `ReturnChoice` results (#7990).
+          (not
+            (compiler-backend-string-contains-alloc-size?
+              (owned_view.compiler-owned-shared-view asm)
+              16))
           (compiler-backend-string-contains-alloc-size?
             (owned_view.compiler-owned-shared-view asm)
             24)
@@ -3986,7 +3991,10 @@
             (compiler_backend.compiler-backend-string-contains?
               (owned_view.compiler-owned-shared-view asm)
               (compiler-backend-todo-marker)))
-          true)
+          (=
+            (compiler-backend-alloc-call-count
+              (owned_view.compiler-owned-shared-view asm))
+            2))
         true)]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
@@ -11858,7 +11866,7 @@
                               "    addq $5, %rax\n"))
                           (compiler_backend.compiler-backend-string-contains?
                             (owned_view.compiler-owned-shared-view mul-asm)
-                            "    imulq $3, %r12, %r13\n")
+                            "    leaq (%r12,%r12,2), %r13\n")
                           (not
                             (compiler_backend.compiler-backend-string-contains?
                               mul-asm
@@ -16148,6 +16156,49 @@ g:
           (string.eq asm "    movq %r12, %r13\n    negq %r13\n")]
         [(compiler_backend.ResultCompilerBackend.Err _) false])
       (compiler-backend-word-scratch-staging-ok?))))
+
+;; BITLEN: `bit_length` is `bsr` + 1 in place, 0 for a value with no
+;; significant bit (<= 0 signed, 0 unsigned), with no scratch register.
+(define (compiler-backend-bit-length-ok?) : bool
+  (let
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    (and
+      (string.eq
+        (compiler_backend.compiler-backend-bit-length-reg-asm true "%rax")
+        "    testq %rax, %rax\n    jle 1f\n    bsrq %rax, %rax\n    addq $1, %rax\n    jmp 2f\n1:\n    xorq %rax, %rax\n2:\n")
+      (string.eq
+        (compiler_backend.compiler-backend-bit-length-reg-asm false "%r9")
+        "    testq %r9, %r9\n    je 1f\n    bsrq %r9, %r9\n    addq $1, %r9\n    jmp 2f\n1:\n    xorq %r9, %r9\n2:\n")
+      (match (compiler_backend.compiler-backend-emit-unop
+        (compiler_regalloc.compiler-reg-assignment-table-empty)
+        1
+        (compiler_ir_types.CompilerIrUnOp.BitLength)
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ast_types.AstType.I64)
+        backend-state)
+        [(compiler_backend.ResultCompilerBackend.Ok asm)
+          (and
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view asm)
+              "    jle 1f\n    bsrq ")
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view asm)
+              "\n2:\n"))]
+        [(compiler_backend.ResultCompilerBackend.Err _) false])
+      (match (compiler_backend.compiler-backend-emit-unop
+        (compiler_regalloc.compiler-reg-assignment-table-empty)
+        1
+        (compiler_ir_types.CompilerIrUnOp.BitLength)
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ast_types.AstType.U64)
+        backend-state)
+        [(compiler_backend.ResultCompilerBackend.Ok asm)
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            "    je 1f\n    bsrq ")]
+        [(compiler_backend.ResultCompilerBackend.Err _) false]))))
 
 (define (compiler-backend-call-return-program) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
@@ -32211,6 +32262,7 @@ g:
       (compiler-backend-gep-fold-disp-shape-ok?)
       (compiler-backend-gep-fold-multi-use-keeps-add-ok?)
       (compiler-backend-gep-fold-builders-ok?))
+    (compiler-backend-mul-scale-add-shapes-ok?)
     (compiler-backend-gep-fold-sub-shape-ok?)
     (compiler-backend-gep-fold-zero-shape-ok?)
     (compiler-backend-gep-fold-drift-detected-ok?)
@@ -33050,6 +33102,157 @@ g:
             "    cmpb ")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
+;; M6-J: `gep ; load ; compare AT THE LOAD'S OWN WIDTH ; branch` -- no widening
+;; cast, the shape a `char`/`u8` scanner has. Var 3 is the loaded value and Var 4
+;; the register-homed (%r14) other operand, as in the M6-C fixture.
+(define (compiler-backend-cmp-mem-direct-asm
+  [ty : compiler_ast_types.AstType]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [lhs : compiler_ir_types.CompilerIrValue]
+  [rhs : compiler_ir_types.CompilerIrValue]) : compiler_backend.ResultCompilerBackend
+  (compiler-backend-emit-test-instrs
+    (compiler-backend-test-instr-seq-prepend
+      (compiler_ir_types.CompilerIrInstr.Gep
+        2
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        (owned_view.compiler-owned-shared-view ty))
+      (compiler-backend-test-instr-seq-prepend
+        (compiler_ir_types.CompilerIrInstr.Load
+          3
+          (compiler_ir_types.CompilerIrValue.Var 2)
+          (owned_view.compiler-owned-shared-view ty))
+        (compiler-backend-test-instr-seq-prepend
+          (compiler_ir_types.CompilerIrInstr.BinOp 5 op lhs rhs ty)
+          (compiler-backend-test-instr-seq-prepend
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 5)
+              (compiler_ir_types.compiler-ir-label "hit")
+              (compiler_ir_types.compiler-ir-label "miss"))
+            (compiler_ir_types.compiler-ir-instr-seq-empty)))))
+    (compiler-backend-cmp-mem-fold-assignments)
+    8))
+
+(define (compiler-backend-cmp-mem-direct-has? [asm : String] [want : String]) : bool
+  (compiler_backend.compiler-backend-string-contains? asm want))
+
+;; A `char` compared with a char literal reads the byte in place:
+;; `movzbq (mem), %r13 ; cmpb $47, %r13b` becomes `cmpb $47, (mem)`.
+(define (compiler-backend-cmp-mem-direct-char-fold-ok?) : bool
+  (match (compiler-backend-cmp-mem-direct-asm
+    (compiler_ast_types.AstType.Char)
+    (compiler_ir_types.CompilerIrBinOp.Ne)
+    (compiler_ir_types.CompilerIrValue.Var 3)
+    (compiler_ir_types.CompilerIrValue.Char '/'))
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (and
+        (compiler-backend-cmp-mem-direct-has?
+          (owned_view.compiler-owned-shared-view asm)
+          "    cmpb $47, (%r12,%r8,1)\n")
+        (not
+          (compiler-backend-cmp-mem-direct-has?
+            (owned_view.compiler-owned-shared-view asm)
+            "    movzbq ")))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+;; Unlike M6-C, an ORDERED compare folds too: the compare already runs at the
+;; byte width and its own (unsigned) jcc, so only the operand source changes.
+(define (compiler-backend-cmp-mem-direct-ordered-fold-ok?) : bool
+  (match (compiler-backend-cmp-mem-direct-asm
+    (compiler_ast_types.AstType.U8)
+    (compiler_ir_types.CompilerIrBinOp.Lt)
+    (compiler_ir_types.CompilerIrValue.Var 3)
+    (compiler_ir_types.CompilerIrValue.I64 10))
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (and
+        (compiler-backend-cmp-mem-direct-has?
+          (owned_view.compiler-owned-shared-view asm)
+          "    cmpb $10, (%r12,%r8,1)\n")
+        (or
+          (compiler-backend-cmp-mem-direct-has?
+            (owned_view.compiler-owned-shared-view asm)
+            "    jb ")
+          (compiler-backend-cmp-mem-direct-has?
+            (owned_view.compiler-owned-shared-view asm)
+            "    jae "))
+        (not
+          (compiler-backend-cmp-mem-direct-has?
+            (owned_view.compiler-owned-shared-view asm)
+            "    movzbq ")))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+;; A register other operand is spelled at the byte width, on whichever side
+;; the IR compare put it: `cmpb %r14b, (mem)` for `mem != r`, and
+;; `cmpb (mem), %r14b` for the ordered `r < mem`.
+(define (compiler-backend-cmp-mem-direct-register-fold-ok?) : bool
+  (and
+    (match (compiler-backend-cmp-mem-direct-asm
+      (compiler_ast_types.AstType.U8)
+      (compiler_ir_types.CompilerIrBinOp.Ne)
+      (compiler_ir_types.CompilerIrValue.Var 3)
+      (compiler_ir_types.CompilerIrValue.Var 4))
+      [(compiler_backend.ResultCompilerBackend.Ok asm)
+        (and
+          (compiler-backend-cmp-mem-direct-has?
+            (owned_view.compiler-owned-shared-view asm)
+            "    cmpb %r14b, (%r12,%r8,1)\n")
+          (not
+            (compiler-backend-cmp-mem-direct-has?
+              (owned_view.compiler-owned-shared-view asm)
+              "    movzbq ")))]
+      [(compiler_backend.ResultCompilerBackend.Err _) false])
+    (match (compiler-backend-cmp-mem-direct-asm
+      (compiler_ast_types.AstType.U8)
+      (compiler_ir_types.CompilerIrBinOp.Lt)
+      (compiler_ir_types.CompilerIrValue.Var 4)
+      (compiler_ir_types.CompilerIrValue.Var 3))
+      [(compiler_backend.ResultCompilerBackend.Ok asm)
+        (and
+          (compiler-backend-cmp-mem-direct-has?
+            (owned_view.compiler-owned-shared-view asm)
+            "    cmpb (%r12,%r8,1), %r14b\n")
+          (not
+            (compiler-backend-cmp-mem-direct-has?
+              (owned_view.compiler-owned-shared-view asm)
+              "    movzbq ")))]
+      [(compiler_backend.ResultCompilerBackend.Err _) false])))
+
+;; Refusals: an ordered compare with the literal on the LEFT (the memory operand
+;; would have to be the source and a literal cannot be the destination), and a
+;; literal the signed byte cannot hold. Both keep the load.
+(define (compiler-backend-cmp-mem-direct-refusals-ok?) : bool
+  (and
+    (match (compiler-backend-cmp-mem-direct-asm
+      (compiler_ast_types.AstType.U8)
+      (compiler_ir_types.CompilerIrBinOp.Lt)
+      (compiler_ir_types.CompilerIrValue.I64 10)
+      (compiler_ir_types.CompilerIrValue.Var 3))
+      [(compiler_backend.ResultCompilerBackend.Ok asm)
+        (and
+          (compiler-backend-cmp-mem-direct-has?
+            (owned_view.compiler-owned-shared-view asm)
+            "    movzbq (%r12,%r8,1), ")
+          (not
+            (compiler-backend-cmp-mem-direct-has?
+              (owned_view.compiler-owned-shared-view asm)
+              ", (%r12,%r8,1)\n")))]
+      [(compiler_backend.ResultCompilerBackend.Err _) false])
+    (match (compiler-backend-cmp-mem-direct-asm
+      (compiler_ast_types.AstType.I8)
+      (compiler_ir_types.CompilerIrBinOp.Eq)
+      (compiler_ir_types.CompilerIrValue.Var 3)
+      (compiler_ir_types.CompilerIrValue.I64 200))
+      [(compiler_backend.ResultCompilerBackend.Ok asm)
+        (and
+          (compiler-backend-cmp-mem-direct-has?
+            (owned_view.compiler-owned-shared-view asm)
+            "    movsbq (%r12,%r8,1), ")
+          (not
+            (compiler-backend-cmp-mem-direct-has?
+              (owned_view.compiler-owned-shared-view asm)
+              "    cmpb $200, (%r12,%r8,1)")))]
+      [(compiler_backend.ResultCompilerBackend.Err _) false])))
+
 ;; M6-A: `gep(i64, base + 1) ; load ; bounds_check(index, load)`. `tail` lets a
 ;; fixture add a SECOND use of the loaded value behind the check.
 (define (compiler-backend-cmp-mem-bounds-asm
@@ -33738,6 +33941,11 @@ g:
       (compiler-backend-cmp-mem-staged-second-use-refused-ok?))
     (compiler-backend-cmp-mem-spilled-rhs-fold-ok?)
     (compiler-backend-cmp-mem-narrow-phi-copy-fold-ok?)
+    (compiler_backend.backend-and4
+      (compiler-backend-cmp-mem-direct-char-fold-ok?)
+      (compiler-backend-cmp-mem-direct-ordered-fold-ok?)
+      (compiler-backend-cmp-mem-direct-register-fold-ok?)
+      (compiler-backend-cmp-mem-direct-refusals-ok?))
     (compiler-backend-gep-load-alu-commuted-shapes-ok?)
     (compiler-backend-cmp-mem-store-between-refused-ok?)
     (compiler-backend-cmp-mem-flags-between-refused-ok?)
@@ -33798,6 +34006,52 @@ g:
             (owned_view.compiler-owned-shared-view asm)
             "imulq")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-mul-scale-add-shape-ok?
+  [factor : i64]
+  [dst-reg : i64]
+  [expected : String]) : bool
+  (match (compiler-backend-mul-pow2-test-asm factor dst-reg)
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (and
+        (compiler_backend.compiler-backend-string-contains?
+          (owned_view.compiler-owned-shared-view asm)
+          expected)
+        (not (compiler_backend.compiler-backend-string-contains? asm "imulq")))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-mul-scale-add-shapes-ok?) : bool
+  (and
+    (compiler-backend-mul-scale-add-shape-ok?
+      3
+      compiler_abi.compiler-reg-id-rcx
+      "    leaq (%r12,%r12,2), %rcx\n")
+    (compiler-backend-mul-scale-add-shape-ok?
+      5
+      compiler_abi.compiler-reg-id-rcx
+      "    leaq (%r12,%r12,4), %rcx\n")
+    (compiler-backend-mul-scale-add-shape-ok?
+      9
+      compiler_abi.compiler-reg-id-rcx
+      "    leaq (%r12,%r12,8), %rcx\n")
+    (compiler-backend-mul-scale-add-shape-ok?
+      5
+      compiler_abi.compiler-reg-id-r12
+      "    leaq (%r12,%r12,4), %r12\n")
+    (string.eq
+      (compiler_backend.compiler-backend-mul-immediate-direct-asm
+        "%rbp"
+        "%rcx"
+        "$3"
+        (compiler_ir_types.CompilerIrValue.I64 3))
+      "    imulq $3, %rbp, %rcx\n")
+    (string.eq
+      (compiler_backend.compiler-backend-mul-immediate-direct-asm
+        "%rbp"
+        "%rbp"
+        "$9"
+        (compiler_ir_types.CompilerIrValue.I64 9))
+      "    imulq $9, %rbp, %rbp\n")))
 
 (define (compiler-backend-mul-non-pow2-imul-shape-ok?) : bool
   (match (compiler-backend-mul-pow2-test-asm
@@ -39929,10 +40183,10 @@ g:
             "    call tl_div_abort_at\n")
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
-            "    cmpq %r10, %rax\n    jne 1f\n")
+            "    cmpq $1, %rax\n    jno 1f\n")
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
-            "    cmpq %r9, %r8\n    jne 1f\n")
+            "    cmpq $-1, %r8\n    jne 1f\n")
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
             "    cqto\n")
@@ -56178,10 +56432,15 @@ g:
             "%rax"))
         (compiler_backend.compiler-backend-string-contains?
           (owned_view.compiler-owned-shared-view div-guard)
-          "%r12")
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view div-guard)
-          "%r13")
+          "    cmpq $1, %rax\n    jno 1f\n    cmpq $-1, %r8\n")
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view div-guard)
+            "%r12"))
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view div-guard)
+            "%r13"))
         literal-ok
         non-divmod-lazy?
         non-divmod-dst-lazy?
@@ -59045,8 +59304,72 @@ b_keep:
           [(object_asm.ResultCompilerObjectAsm.Err _) false]))]
     [(compiler_backend.ResultCompilerBackendObject.Err _) false]))
 
+(define (compiler-backend-signed-div-guard-shape-ok?
+  [ty : compiler_ast_types.AstType]
+  [suffix : String]
+  [lhs : String]
+  [rhs : String]) : bool
+  (let
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [asm : String
+      (compiler_backend.compiler-backend-div-overflow-guard-asm-with-plan
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        ty
+        "%r8"
+        "%r12"
+        "%r13"
+        backend-state)]
+    (string.eq
+      asm
+      (str_cat.str-cat
+        "    cmp"
+        (owned_view.compiler-owned-shared-view suffix)
+        " $1, "
+        lhs
+        "\n    jno 1f\n    cmp"
+        suffix
+        " $-1, "
+        rhs
+        "\n    jne 1f\n    call tl_div_abort\n1:\n"))))
+
+(define (compiler-backend-signed-div-guard-shapes-ok?) : bool
+  (and
+    (compiler-backend-signed-div-guard-shape-ok?
+      (compiler_ast_types.AstType.I8)
+      "b"
+      "%al"
+      "%r8b")
+    (compiler-backend-signed-div-guard-shape-ok?
+      (compiler_ast_types.AstType.I16)
+      "w"
+      "%ax"
+      "%r8w")
+    (compiler-backend-signed-div-guard-shape-ok?
+      (compiler_ast_types.AstType.I32)
+      "l"
+      "%eax"
+      "%r8d")
+    (compiler-backend-signed-div-guard-shape-ok?
+      (compiler_ast_types.AstType.I64)
+      "q"
+      "%rax"
+      "%r8")
+    (string.eq
+      (compiler_backend.compiler-backend-div-overflow-guard-asm-with-plan
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (compiler_ast_types.AstType.U64)
+        "%r8"
+        "%r12"
+        "%r13"
+        (compiler_backend.compiler-backend-state-new
+          (ci.intern-compat-state-capture-active)))
+      "")))
+
 (define (compiler-backend-self-test) : i64
   (if (and
+    (compiler-backend-signed-div-guard-shapes-ok?)
     (compiler-backend-avx2-i64-reduce-source-ok?)
     (compiler-backend-avx2-i64-reduce-spilled-source-ok?)
     (compiler-backend-i64-reduce-mask-plan-ok?)
@@ -59437,7 +59760,8 @@ b_keep:
       (compiler-backend-aggregate-storage-shape-ok?)
       (and
         (compiler-backend-shift-guard-ok?)
-        (compiler-backend-scalar-shift-matrix-ok?))
+        (compiler-backend-scalar-shift-matrix-ok?)
+        (compiler-backend-bit-length-ok?))
       (and
         (compiler-backend-windows-runtime-guard-ok?)
         (compiler-backend-simd-vector-ok?)

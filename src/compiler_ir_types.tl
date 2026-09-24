@@ -117,7 +117,11 @@
   (Neg)
   (Not)
   (BitNot)
-  (Sqrt))
+  (Sqrt)
+  ;; Number of significant bits of a 64-bit integer: floor(log2 x) + 1 for
+  ;; x > 0 (signed operand) or x != 0 (unsigned operand), and 0 otherwise.
+  ;; Introduced only by the optimizer's bit-length loop idiom (BITLEN).
+  (BitLength))
 
 (defenum CompilerIrMaskBinOp
   (And)
@@ -5839,7 +5843,8 @@
     [(CompilerIrUnOp.Neg) "neg"]
     [(CompilerIrUnOp.Not) "not"]
     [(CompilerIrUnOp.BitNot) "bit_not"]
-    [(CompilerIrUnOp.Sqrt) "sqrt"]))
+    [(CompilerIrUnOp.Sqrt) "sqrt"]
+    [(CompilerIrUnOp.BitLength) "bit_length"]))
 
 (define (compiler-ir-mask-bin-op-render [op : CompilerIrMaskBinOp]) : String
   (match op

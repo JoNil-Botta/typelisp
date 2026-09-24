@@ -754,6 +754,37 @@ assert_profile_live_counter_at_most_in() {
     fi
 }
 
+assert_lower_name_cache_storage_in() {
+    _storage_file=$1
+    _storage_stdout=$2
+    _storage_stderr=$3
+    for _storage_metric in \
+        lower.name_cache.id_growth_views \
+        lower.name_cache.logical_growth_views; do
+        assert_profile_live_counter_eq_in \
+            "$_storage_file" "$_storage_metric" 0 \
+            "$_storage_stdout" "$_storage_stderr"
+    done
+    _storage_builds=$(profile_live_counter_value_in \
+        "$_storage_file" lower.name_cache.builds) ||
+        fail "missing name-cache build count"
+    _storage_resets=$(profile_live_counter_value_in \
+        "$_storage_file" lower.alias_overlay.resets) ||
+        fail "missing alias-overlay reset count"
+    _storage_capacity=$(profile_live_counter_value_in \
+        "$_storage_file" lower.alias_overlay.capacity_slots) ||
+        fail "missing alias-overlay capacity"
+    _storage_growth=$(profile_live_counter_value_in \
+        "$_storage_file" lower.alias_overlay.growth_slots) ||
+        fail "missing alias-overlay allocation count"
+    [ "$_storage_builds" -ge 2 ] && [ "$_storage_resets" -ge 2 ] &&
+        [ "$_storage_capacity" -ge 16 ] &&
+        [ "$_storage_growth" -le "$((2 * _storage_capacity))" ] || {
+        show_failure_logs "$_storage_stdout" "$_storage_stderr"
+        fail "name-cache tables grew or alias-overlay allocations scaled with views: builds=$_storage_builds resets=$_storage_resets capacity=$_storage_capacity growth_slots=$_storage_growth"
+    }
+}
+
 assert_profile_counter_at_most_in() {
     _file=$1
     _phase=$2
@@ -2133,6 +2164,8 @@ if [ "$NL_HOST_OS" = windows ]; then
         1500000 \
         "$SELFHOST_STDOUT" \
         "$SELFHOST_STDERR"
+    assert_lower_name_cache_storage_in \
+        "$SELFHOST_STDERR" "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     for cache in module_name_cache module_local_view; do
         cache_lookups=$(profile_live_counter_value_in \
             "$SELFHOST_STDERR" "lower.$cache.lookups") ||
@@ -2155,6 +2188,24 @@ if [ "$NL_HOST_OS" = windows ]; then
 else
     echo "[compile-profile] selfhost allocation probe and pool pins SKIPPED (windows-gated)"
 fi
+
+echo "[compile-profile] alias module name-cache storage"
+ALIAS_VIEW_ASM="$WORKDIR/profile-alias-view.s"
+ALIAS_VIEW_STDOUT="$WORKDIR/profile-alias-view.stdout"
+ALIAS_VIEW_STDERR="$WORKDIR/profile-alias-view.stderr"
+if ! "$PROFILE_BIN" compile tests/integration/generated_import_alias_scopes.tl \
+    -o "$ALIAS_VIEW_ASM" \
+    --target "$NL_BOOTSTRAP_TARGET" \
+    $(native_target_cfg_args) \
+    --stdlib-root tests/integration \
+    --stdlib-root stdlib \
+    --opt-level 1 \
+    > "$ALIAS_VIEW_STDOUT" 2> "$ALIAS_VIEW_STDERR"; then
+    show_failure_logs "$ALIAS_VIEW_STDOUT" "$ALIAS_VIEW_STDERR"
+    fail "profiled alias-module fixture compile failed"
+fi
+assert_lower_name_cache_storage_in \
+    "$ALIAS_VIEW_STDERR" "$ALIAS_VIEW_STDOUT" "$ALIAS_VIEW_STDERR"
 
 echo "[compile-profile] compile deep string concat fixture"
 if ! "$PROFILE_BIN" compile tests/integration/string_concat_deep.tl \

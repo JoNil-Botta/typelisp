@@ -8,6 +8,24 @@
 # the row then compiles standalone at that level instead of the default one the
 # batched pre-pass uses, so a claim that only holds at a particular level can be
 # pinned beside the default-level row for the same source.
+invariant_loop_call_negative_opt0|tests/integration/invariant_loop_call.tl|0|0\n|0|-|opt-level:0+stage-stdlib
+invariant_loop_call_zero_opt0|tests/integration/invariant_loop_call.tl|0|0\n|1|-|opt-level:0+stage-stdlib
+invariant_loop_call_skipped_opt0|tests/integration/invariant_loop_call.tl|0|5\n|2|-|opt-level:0+stage-stdlib
+invariant_loop_call_delayed_opt0|tests/integration/invariant_loop_call.tl|0|59\n|3|-|opt-level:0+stage-stdlib
+invariant_loop_call_division_opt0|tests/integration/invariant_loop_call.tl|135|-|4|-|opt-level:0+stage-stdlib+expected-stderr:tl: target/integration-verify/linux/invariant_loop_call_division_opt0/invariant_loop_call_division_opt0.tl:15:10: integer division or remainder error: dividend=36 divisor=0\n
+invariant_loop_call_trap_order_opt0|tests/integration/invariant_loop_call.tl|129|-|5|-|opt-level:0+stage-stdlib+expected-stderr:tl: target/integration-verify/linux/invariant_loop_call_trap_order_opt0/invariant_loop_call_trap_order_opt0.tl:29:32: shift count out of range: count=-1 width=64\n
+invariant_loop_call_write_opt0|tests/integration/invariant_loop_call.tl|0|190\n|6|-|opt-level:0+stage-stdlib
+invariant_loop_call_nested_opt0|tests/integration/invariant_loop_call.tl|0|438\n|7|-|opt-level:0+stage-stdlib
+invariant_loop_call_varying_opt0|tests/integration/invariant_loop_call.tl|0|75\n|8|-|opt-level:0+stage-stdlib
+invariant_loop_call_negative_opt2|tests/integration/invariant_loop_call.tl|0|0\n|0|-|opt-level:2+stage-stdlib
+invariant_loop_call_zero_opt2|tests/integration/invariant_loop_call.tl|0|0\n|1|-|opt-level:2+stage-stdlib
+invariant_loop_call_skipped_opt2|tests/integration/invariant_loop_call.tl|0|5\n|2|-|opt-level:2+stage-stdlib
+invariant_loop_call_delayed_opt2|tests/integration/invariant_loop_call.tl|0|59\n|3|-|opt-level:2+stage-stdlib
+invariant_loop_call_division_opt2|tests/integration/invariant_loop_call.tl|135|-|4|-|opt-level:2+stage-stdlib+expected-stderr:tl: target/integration-verify/linux/invariant_loop_call_division_opt2/invariant_loop_call_division_opt2.tl:15:10: integer division or remainder error: dividend=36 divisor=0\n
+invariant_loop_call_trap_order_opt2|tests/integration/invariant_loop_call.tl|129|-|5|-|opt-level:2+stage-stdlib+expected-stderr:tl: target/integration-verify/linux/invariant_loop_call_trap_order_opt2/invariant_loop_call_trap_order_opt2.tl:29:32: shift count out of range: count=-1 width=64\n
+invariant_loop_call_write_opt2|tests/integration/invariant_loop_call.tl|0|190\n|6|-|opt-level:2+stage-stdlib
+invariant_loop_call_nested_opt2|tests/integration/invariant_loop_call.tl|0|438\n|7|-|opt-level:2+stage-stdlib
+invariant_loop_call_varying_opt2|tests/integration/invariant_loop_call.tl|0|75\n|8|-|opt-level:2+stage-stdlib
 hash_length_chain|tests/integration/hash_length_chain.tl|42|-|-|-|opt-level:2+stage-stdlib
 aggregate_globals|tests/integration/aggregate_globals.tl|42|-|-|stdlib/string.tl
 inline_aggregate_global|tests/integration/inline_aggregate_global.tl|42|98\n|-|stdlib/io.tl stdlib/string.tl
@@ -196,6 +214,9 @@ cpuid_operand_homes|tests/integration/cpuid_operand_homes.tl|42|-|-|stdlib/io.tl
 global_cell_writer_loop_reads|tests/integration/global_cell_writer_loop_reads.tl|42|-|-|stdlib/io.tl stdlib/vector.tl
 lftr_counter_retire|tests/integration/lftr_counter_retire.tl|42|-|-|stdlib/io.tl
 licm_alias_stress|tests/integration/licm_alias_stress.tl|42|-|-|stdlib/io.tl
+licm_element_bound|tests/integration/licm_element_bound.tl|42|0\n0\n0\n0\n|4 0|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
+licm_element_bound_opt2|tests/integration/licm_element_bound.tl|42|0\n0\n0\n0\n|4 0|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|opt-level:2+stage-stdlib
+licm_element_bound_abort_opt2|tests/integration/licm_element_bound.tl|134|0\n0\n0\n|4 1|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|opt-level:2+expected-stderr:tl: target/integration-verify/linux/licm_element_bound_abort_opt2/licm_element_bound_abort_opt2.tl:88:62: array index out of bounds: index=4398046511104 length=4\n
 loadcse_forward|tests/integration/loadcse_forward.tl|42|-|-|stdlib/io.tl
 loadcse_alias|tests/integration/loadcse_alias.tl|42|-|-|stdlib/io.tl
 rotate_multi_exit_live_out|tests/integration/rotate_multi_exit_live_out.tl|42|-|-|stdlib/io.tl
@@ -268,6 +289,9 @@ clone_dynarray_scalar_bulk|tests/integration/clone_dynarray_scalar_bulk.tl|42|-|
 clone_generated_vector_element|tests/integration/clone_generated_vector_element.tl|42|-|-|stdlib/vector.tl stdlib/string.tl
 generated_macro_clone_handoff|tests/integration/generated_macro_clone_handoff.tl|42|-|-|stdlib/clone.tl stdlib/comptime.tl stdlib/string.tl
 generated_cfg|tests/integration/generated_cfg.tl|42|-|-|-
+bit_length_loop|tests/integration/bit_length_loop.tl|42|0\n1\n2\n2\n3\n4\n10\n0\n0\n63\n63\n|0 1 2 3 7 8 1000 -1 -9223372036854775808 9223372036854775807 4611686018427387904|stdlib/io.tl stdlib/string.tl
+bit_length_loop_opt0|tests/integration/bit_length_loop.tl|42|0\n1\n2\n2\n3\n4\n10\n0\n0\n63\n63\n|0 1 2 3 7 8 1000 -1 -9223372036854775808 9223372036854775807 4611686018427387904|stdlib/io.tl stdlib/string.tl|opt-level:0+stage-stdlib
+bit_length_loop_opt2|tests/integration/bit_length_loop.tl|42|0\n1\n2\n2\n3\n4\n10\n0\n0\n63\n63\n|0 1 2 3 7 8 1000 -1 -9223372036854775808 9223372036854775807 4611686018427387904|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib
 generated_cfg_opt0|tests/integration/generated_cfg.tl|42|-|-|-|opt-level:0+stage-stdlib
 generated_cfg_opt1|tests/integration/generated_cfg.tl|42|-|-|-|opt-level:1+stage-stdlib
 generated_cfg_opt2|tests/integration/generated_cfg.tl|42|-|-|-|opt-level:2+stage-stdlib
@@ -285,6 +309,9 @@ tail_aggregate_return|tests/integration/tail_aggregate_return.tl|42|-|-|-
 aggregate_return_no_alloc|tests/integration/aggregate_return_no_alloc.tl|42|-|-|stdlib/profile.tl stdlib/string.tl
 aggregate_return_no_alloc_opt0|tests/integration/aggregate_return_no_alloc.tl|42|-|-|stdlib/profile.tl stdlib/string.tl|opt-level:0+stage-stdlib
 aggregate_return_no_alloc_opt2|tests/integration/aggregate_return_no_alloc.tl|42|-|-|stdlib/profile.tl stdlib/string.tl|opt-level:2+stage-stdlib
+c_abi_aggregate_arg_no_alloc|tests/integration/c_abi_aggregate_arg_no_alloc.tl|42|-|-|benchmarks/c_abi_aggregate_arg_no_alloc/baseline.c stdlib/profile.tl
+c_abi_aggregate_arg_no_alloc_opt0|tests/integration/c_abi_aggregate_arg_no_alloc.tl|42|-|-|benchmarks/c_abi_aggregate_arg_no_alloc/baseline.c stdlib/profile.tl|opt-level:0+stage-stdlib
+c_abi_aggregate_arg_no_alloc_opt2|tests/integration/c_abi_aggregate_arg_no_alloc.tl|42|-|-|benchmarks/c_abi_aggregate_arg_no_alloc/baseline.c stdlib/profile.tl|opt-level:2+stage-stdlib
 tuple_inline_storage_lifetime|tests/integration/tuple_inline_storage_lifetime.tl|42|-|-|stdlib/string.tl
 tuple_inline_storage_lifetime_opt0|tests/integration/tuple_inline_storage_lifetime.tl|42|-|-|stdlib/string.tl|opt-level:0+stage-stdlib
 tuple_inline_storage_lifetime_opt2|tests/integration/tuple_inline_storage_lifetime.tl|42|-|-|stdlib/string.tl|opt-level:2+stage-stdlib
@@ -554,6 +581,7 @@ lint_smoke|src/tests/lint_smoke.tl|42|-|-|lint_policy_core_tests.tl lint_core_te
 lint_driver_smoke|src/tests/lint_driver_smoke.tl|42|target/lint_unsafe_surface/safe.tl:3:3: unused unsafe block: body does not require unsafe context\nlint: 1 finding(s)\ntarget/lint_unsafe_surface/shadow.tl:5:3: unused unsafe block: body does not require unsafe context\nlint: 1 finding(s)\ntarget/lint_unsafe_surface/macro.tl:3:3: unused unsafe block: body does not require unsafe context\nlint: 1 finding(s)\ntarget/lint_unsafe_surface/local_value.tl:2:3: unused unsafe block: body does not require unsafe context\nlint: 1 finding(s)\ntarget/lint_unsafe_surface/callable_value.tl:4:5: unused unsafe block: body does not require unsafe context\nlint: 1 finding(s)\nlint: 0 finding(s)\ntarget/lint_unsafe_surface/macro.tl:3:3: unused unsafe block: body does not require unsafe context\nlint: 1 finding(s)\ntarget/lint_unsafe_surface/macro.tl:3:3: unused unsafe block: body does not require unsafe context\nlint: 1 finding(s)\nlint: 0 finding(s)\nlint: 0 finding(s)\nlint: 0 finding(s)\nlint: 0 finding(s)\n|-|lint_driver_core_tests.tl compiler_check_core.tl compiler_load.tl compiler_embedded_stdlib.tl compiler_typecheck.tl compiler_typecheck_api.tl compiler_typecheck_core.tl compiler_ctfe.tl compiler_float.tl compiler_specialize.tl compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl stdlib/dense_list.tl compiler_intern.tl compiler_builtin_ids.tl sym_i64_env.tl read.tl lex.tl token.tl lint_core.tl lint_policy_core.tl lint_driver_core.tl package_source_core.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/vector.tl stdlib/fs.tl stdlib/env.tl stdlib/io.tl stdlib/hash.tl stdlib/hashmap.tl stdlib/string.tl stdlib/str_cat.tl stdlib/arena.tl compiler_clone.tl tlci_core.tl|expected-stderr:target/lint_unsafe_surface/type_error.tl:3:21: typecheck: unbound name missing-value\nrelated: target/lint_unsafe_surface/type_error.tl:3:11: in expansion of macro `identity` invoked here\ntarget/lint_unsafe_surface/type_error.tl:3:21: typecheck: unbound name missing-value\nrelated: target/lint_unsafe_surface/type_error.tl:3:11: in expansion of macro `identity` invoked here\ntarget/lint_unsafe_surface/type_error.tl:3:21: typecheck: unbound name missing-value\nrelated: target/lint_unsafe_surface/type_error.tl:3:11: in expansion of macro `identity` invoked here\n
 package_cache_smoke|src/tests/package_cache_smoke.tl|42|-|-|package_cache_core.tl stdlib/fs.tl stdlib/env.tl stdlib/vector.tl stdlib/io.tl stdlib/string.tl
 git_delta_smoke|src/tests/git_delta_smoke.tl|42|-|-|git_delta_tests.tl git_delta_core.tl stdlib/byte_buf_core.tl stdlib/io.tl stdlib/string.tl
+git_object_smoke|src/tests/git_object_smoke.tl|42|-|-|git_object_tests.tl git_object_core.tl stdlib/byte_buf.tl stdlib/byte_buf_core.tl stdlib/crypto_sha1_git.tl stdlib/crypto_sha256.tl stdlib/io.tl stdlib/str_cat.tl stdlib/str_cat_runtime.tl stdlib/string.tl
 git_ssh_remote_smoke|src/tests/git_ssh_remote_smoke.tl|42|-|-|git_ssh_remote_tests.tl git_ssh_remote_core.tl stdlib/byte_buf_core.tl stdlib/io.tl stdlib/string.tl
 array_push_aggregate|tests/integration/array_push_aggregate.tl|42|-|-|-
 nested_repr_c_aggregate|tests/integration/nested_repr_c_aggregate.tl|42|-|-|-
@@ -670,3 +698,39 @@ wide_enum_variants_opt2|tests/integration/wide_enum_variants.tl|42|-|-|wide_aggr
 wide_struct_literal|tests/integration/wide_struct_literal.tl|42|-|-|wide_struct_literal_decls.tl
 wide_struct_literal_opt0|tests/integration/wide_struct_literal.tl|42|-|-|wide_struct_literal_decls.tl|opt-level:0+stage-stdlib
 wide_struct_literal_opt2|tests/integration/wide_struct_literal.tl|42|-|-|wide_struct_literal_decls.tl|opt-level:2+stage-stdlib
+global_reference_initializers|tests/integration/global_reference_initializers.tl|42|-|-|global_reference_initializer_dep.tl
+global_reference_initializers_opt0|tests/integration/global_reference_initializers.tl|42|-|-|global_reference_initializer_dep.tl|opt-level:0+stage-stdlib
+global_reference_initializers_opt2|tests/integration/global_reference_initializers.tl|42|-|-|global_reference_initializer_dep.tl|opt-level:2+stage-stdlib
+generated_import_global_initializers|tests/integration/generated_import_global_initializers.tl|42|-|-|decls_generated_import_dep.tl decls_generated_import_empty.tl generated_import_alias_other_dep.tl
+generated_import_global_initializers_opt0|tests/integration/generated_import_global_initializers.tl|42|-|-|decls_generated_import_dep.tl decls_generated_import_empty.tl generated_import_alias_other_dep.tl|opt-level:0+stage-stdlib
+generated_import_global_initializers_opt2|tests/integration/generated_import_global_initializers.tl|42|-|-|decls_generated_import_dep.tl decls_generated_import_empty.tl generated_import_alias_other_dep.tl|opt-level:2+stage-stdlib
+
+bit_length_order_opt0|tests/integration/bit_length_order.tl|0|104\n104\n|100 8|stdlib/io.tl stdlib/string.tl|opt-level:0+stage-stdlib
+bit_length_order_opt1|tests/integration/bit_length_order.tl|0|104\n104\n|100 8|stdlib/io.tl stdlib/string.tl|opt-level:1+stage-stdlib
+bit_length_order_opt2|tests/integration/bit_length_order.tl|0|104\n104\n|100 8|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib
+bit_length_order_zero|tests/integration/bit_length_order.tl|0|0\n64\n|0 -1|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib
+bit_length_order_signed_wrap|tests/integration/bit_length_order.tl|0|-9223372036854775805\n9223372036854775811\n|9223372036854775807 8|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib
+bit_length_order_unsigned_wrap|tests/integration/bit_length_order.tl|0|-1\n63\n|-1 -9223372036854775808|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib
+signed_division_flags_opt0|tests/integration/signed_division_flags.tl|42|-|-|stdlib/io.tl stdlib/string.tl|opt-level:0+stage-stdlib
+signed_division_flags_opt1|tests/integration/signed_division_flags.tl|42|-|-|stdlib/io.tl stdlib/string.tl|opt-level:1+stage-stdlib
+signed_division_flags_opt2|tests/integration/signed_division_flags.tl|42|-|-|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib
+signed_div_8_overflow_opt0|tests/integration/signed_division_flags.tl|135|-|8 -128 -1 0|stdlib/io.tl stdlib/string.tl|opt-level:0+expected-stderr:tl: target/integration-verify/linux/signed_div_8_overflow_opt0/signed_div_8_overflow_opt0.tl:7:24: integer division or remainder error: dividend=-128 divisor=-1\n
+signed_rem_8_overflow_opt0|tests/integration/signed_division_flags.tl|135|-|8 -128 -1 1|stdlib/io.tl stdlib/string.tl|opt-level:0+expected-stderr:tl: target/integration-verify/linux/signed_rem_8_overflow_opt0/signed_rem_8_overflow_opt0.tl:14:24: integer division or remainder error: dividend=-128 divisor=-1\n
+signed_div_16_overflow_opt0|tests/integration/signed_division_flags.tl|135|-|16 -32768 -1 0|stdlib/io.tl stdlib/string.tl|opt-level:0+expected-stderr:tl: target/integration-verify/linux/signed_div_16_overflow_opt0/signed_div_16_overflow_opt0.tl:8:25: integer division or remainder error: dividend=-32768 divisor=-1\n
+signed_rem_16_overflow_opt0|tests/integration/signed_division_flags.tl|135|-|16 -32768 -1 1|stdlib/io.tl stdlib/string.tl|opt-level:0+expected-stderr:tl: target/integration-verify/linux/signed_rem_16_overflow_opt0/signed_rem_16_overflow_opt0.tl:15:25: integer division or remainder error: dividend=-32768 divisor=-1\n
+signed_div_32_overflow_opt0|tests/integration/signed_division_flags.tl|135|-|32 -2147483648 -1 0|stdlib/io.tl stdlib/string.tl|opt-level:0+expected-stderr:tl: target/integration-verify/linux/signed_div_32_overflow_opt0/signed_div_32_overflow_opt0.tl:9:25: integer division or remainder error: dividend=-2147483648 divisor=-1\n
+signed_rem_32_overflow_opt0|tests/integration/signed_division_flags.tl|135|-|32 -2147483648 -1 1|stdlib/io.tl stdlib/string.tl|opt-level:0+expected-stderr:tl: target/integration-verify/linux/signed_rem_32_overflow_opt0/signed_rem_32_overflow_opt0.tl:16:25: integer division or remainder error: dividend=-2147483648 divisor=-1\n
+signed_div_64_overflow_opt0|tests/integration/signed_division_flags.tl|135|-|64 -9223372036854775808 -1 0|stdlib/io.tl stdlib/string.tl|opt-level:0+expected-stderr:tl: target/integration-verify/linux/signed_div_64_overflow_opt0/signed_div_64_overflow_opt0.tl:10:14: integer division or remainder error: dividend=-9223372036854775808 divisor=-1\n
+signed_div_64_zero_opt0|tests/integration/signed_division_flags.tl|135|-|64 1 0 0|stdlib/io.tl stdlib/string.tl|opt-level:0+expected-stderr:tl: target/integration-verify/linux/signed_div_64_zero_opt0/signed_div_64_zero_opt0.tl:10:14: integer division or remainder error: dividend=1 divisor=0\n
+signed_rem_64_overflow_opt0|tests/integration/signed_division_flags.tl|135|-|64 -9223372036854775808 -1 1|stdlib/io.tl stdlib/string.tl|opt-level:0+expected-stderr:tl: target/integration-verify/linux/signed_rem_64_overflow_opt0/signed_rem_64_overflow_opt0.tl:17:14: integer division or remainder error: dividend=-9223372036854775808 divisor=-1\n
+signed_rem_64_zero_opt0|tests/integration/signed_division_flags.tl|135|-|64 1 0 1|stdlib/io.tl stdlib/string.tl|opt-level:0+expected-stderr:tl: target/integration-verify/linux/signed_rem_64_zero_opt0/signed_rem_64_zero_opt0.tl:17:14: integer division or remainder error: dividend=1 divisor=0\n
+signed_div_8_overflow_opt2|tests/integration/signed_division_flags.tl|135|-|8 -128 -1 0|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/linux/signed_div_8_overflow_opt2/signed_div_8_overflow_opt2.tl:7:24: integer division or remainder error: dividend=-128 divisor=-1\n
+signed_rem_8_overflow_opt2|tests/integration/signed_division_flags.tl|135|-|8 -128 -1 1|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/linux/signed_rem_8_overflow_opt2/signed_rem_8_overflow_opt2.tl:14:24: integer division or remainder error: dividend=-128 divisor=-1\n
+signed_div_16_overflow_opt2|tests/integration/signed_division_flags.tl|135|-|16 -32768 -1 0|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/linux/signed_div_16_overflow_opt2/signed_div_16_overflow_opt2.tl:8:25: integer division or remainder error: dividend=-32768 divisor=-1\n
+signed_rem_16_overflow_opt2|tests/integration/signed_division_flags.tl|135|-|16 -32768 -1 1|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/linux/signed_rem_16_overflow_opt2/signed_rem_16_overflow_opt2.tl:15:25: integer division or remainder error: dividend=-32768 divisor=-1\n
+signed_div_32_overflow_opt2|tests/integration/signed_division_flags.tl|135|-|32 -2147483648 -1 0|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/linux/signed_div_32_overflow_opt2/signed_div_32_overflow_opt2.tl:9:25: integer division or remainder error: dividend=-2147483648 divisor=-1\n
+signed_rem_32_overflow_opt2|tests/integration/signed_division_flags.tl|135|-|32 -2147483648 -1 1|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/linux/signed_rem_32_overflow_opt2/signed_rem_32_overflow_opt2.tl:16:25: integer division or remainder error: dividend=-2147483648 divisor=-1\n
+signed_div_64_overflow_opt2|tests/integration/signed_division_flags.tl|135|-|64 -9223372036854775808 -1 0|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/linux/signed_div_64_overflow_opt2/signed_div_64_overflow_opt2.tl:10:14: integer division or remainder error: dividend=-9223372036854775808 divisor=-1\n
+signed_div_64_zero_opt2|tests/integration/signed_division_flags.tl|135|-|64 1 0 0|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/linux/signed_div_64_zero_opt2/signed_div_64_zero_opt2.tl:10:14: integer division or remainder error: dividend=1 divisor=0\n
+signed_rem_64_overflow_opt2|tests/integration/signed_division_flags.tl|135|-|64 -9223372036854775808 -1 1|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/linux/signed_rem_64_overflow_opt2/signed_rem_64_overflow_opt2.tl:17:14: integer division or remainder error: dividend=-9223372036854775808 divisor=-1\n
+signed_rem_64_zero_opt2|tests/integration/signed_division_flags.tl|135|-|64 1 0 1|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/linux/signed_rem_64_zero_opt2/signed_rem_64_zero_opt2.tl:17:14: integer division or remainder error: dividend=1 divisor=0\n

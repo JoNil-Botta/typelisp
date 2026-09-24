@@ -2679,8 +2679,28 @@
     77))
 (cfg
   (any compile-profile test)
+  (define compiler-lower-profile-name-cache-id-growth-views-metric : i64
+    374))
+(cfg
+  (any compile-profile test)
+  (define compiler-lower-profile-name-cache-logical-growth-views-metric : i64
+    375))
+(cfg
+  (any compile-profile test)
+  (define compiler-lower-profile-alias-overlay-growth-slots-metric : i64
+    376))
+(cfg
+  (any compile-profile test)
+  (define compiler-lower-profile-alias-overlay-resets-metric : i64
+    377))
+(cfg
+  (any compile-profile test)
   (define compiler-lower-profile-metric-end : i64
     78))
+(cfg
+  (any compile-profile test)
+  (define compiler-lower-profile-storage-metric-end : i64
+    378))
 
 ;; Non-resetting stage snapshots inside lower.typecheck: the checked-program
 ;; build's retention decomposes across the walk / clone augmentation / context
@@ -2691,10 +2711,15 @@
 (define (compiler-lower-profile-reset! [_state : CompilerLowerState]) : unit
   (cfg
     (any compile-profile test)
-    (profile_state.compiler-profile-state-metric-reset-range!
-      (compiler-lower-state-profile _state)
-      compiler-lower-profile-start-ms-metric
-      compiler-lower-profile-metric-end)
+    (begin
+      (profile_state.compiler-profile-state-metric-reset-range!
+        (compiler-lower-state-profile _state)
+        compiler-lower-profile-start-ms-metric
+        compiler-lower-profile-metric-end)
+      (profile_state.compiler-profile-state-metric-reset-range!
+        (compiler-lower-state-profile _state)
+        compiler-lower-profile-name-cache-id-growth-views-metric
+        compiler-lower-profile-storage-metric-end))
     unit))
 
 (define (compiler-lower-profile-value
@@ -3264,10 +3289,15 @@
 (cfg
   (any compile-profile test)
   (define (compiler-lower-profile-name-reset [state : CompilerLowerState]) : unit
-    (profile_state.compiler-profile-state-metric-reset-range!
-      (compiler-lower-state-profile state)
-      compiler-lower-profile-name-env-binds-metric
-      compiler-lower-profile-metric-end)))
+    (begin
+      (profile_state.compiler-profile-state-metric-reset-range!
+        (compiler-lower-state-profile state)
+        compiler-lower-profile-name-env-binds-metric
+        compiler-lower-profile-metric-end)
+      (profile_state.compiler-profile-state-metric-reset-range!
+        (compiler-lower-state-profile state)
+        compiler-lower-profile-name-cache-id-growth-views-metric
+        compiler-lower-profile-alias-overlay-growth-slots-metric))))
 
 (cfg
   test
@@ -3535,6 +3565,35 @@
         (compiler-lower-profile-value
           state
           compiler-lower-profile-name-cache-entries-metric))
+      (compiler-lower-profile-counter
+        "name_cache.id_growth_views"
+        (compiler-lower-profile-value
+          state
+          compiler-lower-profile-name-cache-id-growth-views-metric))
+      (compiler-lower-profile-counter
+        "name_cache.logical_growth_views"
+        (compiler-lower-profile-value
+          state
+          compiler-lower-profile-name-cache-logical-growth-views-metric))
+      (compiler-lower-profile-counter
+        "alias_overlay.growth_slots"
+        (compiler-lower-profile-value
+          state
+          compiler-lower-profile-alias-overlay-growth-slots-metric))
+      (compiler-lower-profile-counter
+        "alias_overlay.resets"
+        (compiler-lower-profile-value
+          state
+          compiler-lower-profile-alias-overlay-resets-metric))
+      (let
+        [ids : lower_i64_i64_map.Map
+          (compiler-lower-state-read
+            state
+            lower_i64_i64_map.Map
+            alias-overlay-ids)]
+        (compiler-lower-profile-counter
+          "alias_overlay.capacity_slots"
+          (lower_i64_i64_map.capacity (& ids))))
       (compiler-lower-profile-counter
         "name_cache.lookups"
         (compiler-lower-profile-value
@@ -4597,10 +4656,95 @@
     `(lower-name-env-copy-into-pools-profile ,_state ,names ,pools)
     `(lower-name-env-copy-into-pools ,names ,pools)))
 
+;; The generated hashmap grows at three-quarter occupancy. One-and-a-half
+;; slots per potential entry leaves space below that limit after power-of-two
+;; rounding without retaining a mostly empty table in every module view.
 (define (lower-name-cache-capacity [count : i64]) : i64
   (if (< count 4)
     8
-    (* count 2)))
+    (+ count (shr count 1))))
+
+;; Only nonidentity names can enter `logical-symbols`. Count an upper bound
+;; before allocating a view so its map never grows in the lowering arena. The
+;; dense chain is read in place, as `lower-name-env-copy-chain-into!` does:
+;; stepping through `lower-name-env-view` rebuilt a view per binding and cost
+;; more than the growth it avoids.
+(define (lower-name-binding-logical-alias? [source-id : i64] [logical-id : i64]) : bool
+  (and (>= source-id 0) (not (= source-id logical-id))))
+
+(define (lower-name-env-logical-alias-count [names : LowerNameEnv]) : i64
+  (match names
+    [(LowerNameEnv.Nil) 0]
+    [(LowerNameEnv.Inline source-id logical-id _)
+      (if (lower-name-binding-logical-alias? source-id logical-id)
+        1
+        0)]
+    [(LowerNameEnv.Dense store head _)
+      (let
+        [cursor : i64 head]
+        [count : i64 0]
+        (begin
+          (while (>= cursor 0)
+            (let
+              [binding : LowerNameBinding
+                (lower-name-store-binding-at (& (__tl-box-place store)) cursor)]
+              (begin
+                (when
+                  (lower-name-binding-logical-alias?
+                    binding.source-id
+                    binding.logical-id)
+                  (set! count (+ count 1)))
+                (set! cursor binding.parent))))
+          count))]))
+
+(cfg
+  (any compile-profile test)
+  (define (lower-name-cache-map-growth-profile
+    [before : LowerNameCache]
+    [after : LowerNameCache]) : unit
+    (let
+      [metrics : profile_state.CompilerProfileMetrics
+        (compiler-lower-profile-metrics-view
+          (lower-name-cache-owner-state (& after)))]
+      (begin
+        (when
+          (>
+            (lower_i64_i64_map.capacity (& after.ids))
+            (lower_i64_i64_map.capacity (& before.ids)))
+          (profile_state.compiler-profile-metrics-add!
+            (profile_state.compiler-profile-state-shared-view metrics)
+            compiler-lower-profile-name-cache-id-growth-views-metric
+            1))
+        (when
+          (>
+            (lower_i64_i64_map.capacity (& after.logical-symbols))
+            (lower_i64_i64_map.capacity (& before.logical-symbols)))
+          (profile_state.compiler-profile-metrics-add!
+            (profile_state.compiler-profile-state-shared-view metrics)
+            compiler-lower-profile-name-cache-logical-growth-views-metric
+            1))))))
+
+(cfg
+  (any compile-profile test)
+  (define (lower-alias-overlay-growth-profile
+    [state : CompilerLowerState]
+    [next : (& next lower_i64_i64_map.Map)]) : unit
+    (let
+      [old : lower_i64_i64_map.Map
+        (compiler-lower-state-read
+          state
+          lower_i64_i64_map.Map
+          alias-overlay-ids)]
+      [old-cap : i64 (lower_i64_i64_map.capacity (& old))]
+      [next-cap : i64 (lower_i64_i64_map.capacity next)]
+      (when
+        (> next-cap old-cap)
+        ;; The map doubles. Sum the slots allocated by every intermediate
+        ;; table, not just the final capacity increase.
+        (profile_state.compiler-profile-metrics-add!
+          (compiler-lower-profile-metrics-view state)
+          compiler-lower-profile-alias-overlay-growth-slots-metric
+          (* 2 (- next-cap old-cap)))))))
 
 (define (lower-logical-display-name-select
   [lower-state : CompilerLowerState]
@@ -4931,22 +5075,36 @@
   [names : LowerNameEnv]
   [cache : LowerNameCache]) : LowerNameCache
   (let
-    [cur : LowerNameEnv names]
     [out : LowerNameCache (lower-global-shared-view cache)]
     (begin
-      (while (match (lower-global-shared-view cur)
-        [(LowerNameEnv.Nil) false]
-        [_ true])
-        (match (lower-name-env-view (lower-global-shared-view cur))
-          [(LowerNameEnvView.Nil) unit]
-          [(LowerNameEnvView.Bind source-id logical-id symbol-id rest)
-            (begin
-              (lower-name-cache-add-id!
-                (&mut out)
-                source-id
-                logical-id
-                symbol-id)
-              (set! cur rest))]))
+      ;; Walk the dense chain in place, head first, in the order
+      ;; `lower-name-env-view` yields it, without rebuilding a view per binding.
+      (match (lower-global-shared-view names)
+        [(LowerNameEnv.Nil) unit]
+        [(LowerNameEnv.Inline source-id logical-id symbol-id)
+          (lower-name-cache-add-id! (&mut out) source-id logical-id symbol-id)]
+        [(LowerNameEnv.Dense store head _)
+          (let
+            [cursor : i64 head]
+            (while (>= cursor 0)
+              (let
+                [binding : LowerNameBinding
+                  (lower-name-store-binding-at
+                    (& (__tl-box-place store))
+                    cursor)]
+                (begin
+                  (lower-name-cache-add-id!
+                    (&mut out)
+                    binding.source-id
+                    binding.logical-id
+                    binding.symbol-id)
+                  (set! cursor binding.parent)))))])
+      (cfg
+        (any compile-profile test)
+        (lower-name-cache-map-growth-profile
+          (lower-global-shared-view cache)
+          (lower-global-shared-view out))
+        unit)
       out)))
 
 (define (lower-name-cache-from-env
@@ -4961,13 +5119,16 @@
         1))
     (let
       [count : i64 (lower-name-env-count (lower-global-shared-view names))]
+      [logical-alias-count : i64
+        (lower-name-env-logical-alias-count (lower-global-shared-view names))]
       (lower-name-cache-from-env-into
         names
         (LowerNameCache
           (lower_i64_i64_map.with-capacity (lower-name-cache-capacity count))
           (__tl_make-array i64 count)
           (__tl_make-array i64 count)
-          (lower_i64_i64_map.with-capacity 64)
+          (lower_i64_i64_map.with-capacity
+            (lower-name-cache-capacity logical-alias-count))
           (lower-module-path-index-empty)
           (clone_support.CloneRootEntries.Empty)
           cbi.compiler-builtin-id-fix-empty
@@ -4990,13 +5151,16 @@
         1))
     (let
       [count : i64 (lower-name-env-count (lower-global-shared-view names))]
+      [logical-alias-count : i64
+        (lower-name-env-logical-alias-count (lower-global-shared-view names))]
       (lower-name-cache-from-env-into
         names
         (LowerNameCache
           (lower_i64_i64_map.with-capacity (lower-name-cache-capacity count))
           (__tl_make-array i64 count)
           (__tl_make-array i64 count)
-          (lower_i64_i64_map.with-capacity 16)
+          (lower_i64_i64_map.with-capacity
+            (lower-name-cache-capacity logical-alias-count))
           (lower-module-path-index-empty)
           (clone_support.CloneRootEntries.Empty)
           module-id
@@ -5945,14 +6109,58 @@
 ;; resolves through its string-compare gate rather than the id gate -- we drop
 ;; back to the exact scan for the remainder of the overlay so the Some/No result
 ;; stays byte-identical to the pure linear scan.
+(define (lower-alias-overlay-owner-arena [lower-state : CompilerLowerState]) : arena.Arena
+  ;; The lower state survives entry scratch and batch arena resets. Its map
+  ;; backing must therefore live beside the state's other retained memo data.
+  (let
+    [storage : CompilerLowerFunctionMemoStorage
+      (compiler-lower-function-memo-storage lower-state)]
+    (arena.Arena storage.arena)))
+
+;; Only an insert that grows the table allocates, so only that insert needs
+;; the retained arena; the rest skip the arena switch.
+(define (lower-alias-overlay-insert!
+  [lower-state : CompilerLowerState]
+  [ids : (&mut ids lower_i64_i64_map.Map)]
+  [source-id : i64]
+  [logical-id : i64]) : unit
+  (if (>= ids.len ids.growth-limit)
+    (in-arena
+      (lower-alias-overlay-owner-arena lower-state)
+      (lower_i64_i64_map.insert-ref! ids source-id logical-id))
+    (lower_i64_i64_map.insert-ref! ids source-id logical-id)))
+
+;; The overlay set is insert-only, so an empty table has no tombstones and
+;; already has its full growth limit. Clearing costs its whole capacity, so
+;; skip it for a table that is already empty.
+(define (lower-alias-overlay-clear! [ids : (&mut ids lower_i64_i64_map.Map)]) : unit
+  (when (> ids.len 0) (lower_i64_i64_map.clear-ref! ids)))
+
 (define (lower-alias-overlay-reset! [lower-state : CompilerLowerState]) : unit
-  (begin
-    (compiler-lower-state-write!
-      lower-state
-      lower_i64_i64_map.Map
-      alias-overlay-ids
-      (lower_i64_i64_map.with-capacity 16))
-    (compiler-lower-state-write! lower-state bool alias-overlay-valid true)))
+  (let
+    [ids : lower_i64_i64_map.Map
+      (compiler-lower-state-read
+        lower-state
+        lower_i64_i64_map.Map
+        alias-overlay-ids)]
+    (begin
+      ;; The set is consulted only while constructing the current overlay.
+      ;; Keep its largest table for the next build instead of stranding every
+      ;; grown table in the lowering arena.
+      (lower-alias-overlay-clear! (&mut ids))
+      (cfg
+        (any compile-profile test)
+        (profile_state.compiler-profile-metrics-add!
+          (compiler-lower-profile-metrics-view lower-state)
+          compiler-lower-profile-alias-overlay-resets-metric
+          1)
+        unit)
+      (compiler-lower-state-write!
+        lower-state
+        lower_i64_i64_map.Map
+        alias-overlay-ids
+        ids)
+      (compiler-lower-state-write! lower-state bool alias-overlay-valid true))))
 
 (define (lower-alias-overlay-contains?
   [lower-state : CompilerLowerState]
@@ -5990,7 +6198,11 @@
         lower_i64_i64_map.Map
         alias-overlay-ids)]
     (begin
-      (lower_i64_i64_map.insert-ref! (&mut ids) source-id logical-id)
+      (lower-alias-overlay-insert! lower-state (&mut ids) source-id logical-id)
+      (cfg
+        (any compile-profile test)
+        (lower-alias-overlay-growth-profile lower-state (& ids))
+        unit)
       (compiler-lower-state-write!
         lower-state
         lower_i64_i64_map.Map
@@ -6002,10 +6214,15 @@
   [lower-state : CompilerLowerState]
   [names : LowerNameEnv]) : unit
   (let
-    [ids : lower_i64_i64_map.Map (lower_i64_i64_map.with-capacity 256)]
+    [ids : lower_i64_i64_map.Map
+      (compiler-lower-state-read
+        lower-state
+        lower_i64_i64_map.Map
+        alias-overlay-ids)]
     [valid : bool true]
     [cur : LowerNameEnv names]
     (begin
+      (lower-alias-overlay-clear! (&mut ids))
       (while (match (lower-global-shared-view cur)
         [(LowerNameEnv.Nil) false]
         [_ true])
@@ -6015,8 +6232,16 @@
             (begin
               (if (< bind-id 0)
                 (set! valid false)
-                (lower_i64_i64_map.insert-ref! (&mut ids) bind-id logical-id))
+                (lower-alias-overlay-insert!
+                  lower-state
+                  (&mut ids)
+                  bind-id
+                  logical-id))
               (set! cur rest))]))
+      (cfg
+        (any compile-profile test)
+        (lower-alias-overlay-growth-profile lower-state (& ids))
+        unit)
       (compiler-lower-state-write!
         lower-state
         lower_i64_i64_map.Map
@@ -20577,12 +20802,29 @@
     [(ResultLowerSize.Err message)
       (ResultLowerExpr.Err (box (lower-diagnostic message)))]))
 
-(define (lower-copy-inline-aggregate-to-heap-as
+;; The frame copy with its address typed as `storage-ty`. The Win64 C-ABI
+;; by-reference argument passes that address as a plain `u64`, so direct
+;; extern-call register assignment never reclassifies the pointer as a
+;; multi-word register group. The callee may write through it; the frame slot
+;; is private to this call site and covers the call (#7885).
+(define (lower-copy-inline-aggregate-to-inline-as
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [value : ir.CompilerIrValue]
   [ty : ast.AstType]
   [storage-ty : ast.AstType]) : ResultLowerExpr
+  (match (lower-copy-inline-aggregate-to-inline ctx state value ty)
+    [(ResultLowerExpr.Ok copied)
+      (match copied
+        [(LowerExpr.Expr copy-state copy-value _)
+          (ResultLowerExpr.Ok (LowerExpr.Expr copy-state copy-value storage-ty))])]
+    [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
+
+(define (lower-copy-inline-aggregate-to-heap
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [value : ir.CompilerIrValue]
+  [ty : ast.AstType]) : ResultLowerExpr
   (match (lower-inline-aggregate-copy-size
     (lower-global-shared-view ctx)
     (lower-global-shared-view ty))
@@ -20590,13 +20832,12 @@
       (match (lower-reserve-heap-storage
         state
         size
-        (lower-global-shared-view storage-ty))
+        (lower-global-shared-view ty))
         [(LowerExpr.Expr copy-state copy-value _)
           (ResultLowerExpr.Ok
             (LowerExpr.Expr
-              ;; Group-aware store here too -- the Win64 C-ABI byref
-              ;; path spills register-resident aggregates through this copy,
-              ;; and a 2-word group must write BOTH words.
+              ;; Group-aware store: a 2-word register group must write BOTH
+              ;; words.
               (if (lower-type-register-resident?
                 (lower-global-shared-view ctx)
                 (lower-global-shared-view ty))
@@ -20606,7 +20847,7 @@
                   (lower-global-shared-view copy-value)
                   0
                   value
-                  ty
+                  (lower-global-shared-view ty)
                   size)
                 (lower-copy-bytes-compact
                   copy-state
@@ -20616,21 +20857,9 @@
                   0
                   size))
               copy-value
-              storage-ty))])]
+              ty))])]
     [(ResultLowerSize.Err message)
       (ResultLowerExpr.Err (box (lower-diagnostic message)))]))
-
-(define (lower-copy-inline-aggregate-to-heap
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [value : ir.CompilerIrValue]
-  [ty : ast.AstType]) : ResultLowerExpr
-  (lower-copy-inline-aggregate-to-heap-as
-    ctx
-    state
-    value
-    (lower-global-shared-view ty)
-    ty))
 
 (define (lower-inline-aggregate-abi-copy-needed?
   [ctx : tc_core.TcContext]
@@ -39404,11 +39633,11 @@
                       [(ResultLowerArgs.Err message)
                         (ResultLowerArgs.Err message)])]
                   [(LowerCAbiAggregate.ByRef _)
-                    ;; The ABI argument is the address of the copied object,
-                    ;; not the aggregate itself. Type the value as u64 so
-                    ;; direct extern-call register assignment does not
-                    ;; reclassify this pointer as a multi-word group.
-                    (match (lower-copy-inline-aggregate-to-heap-as
+                    ;; The ABI argument is the address of a caller-owned copy,
+                    ;; not the aggregate itself. The copy lives in this
+                    ;; function's frame, not the arena, so a call in a loop
+                    ;; allocates nothing (#7885).
+                    (match (lower-copy-inline-aggregate-to-inline-as
                       (lower-global-shared-view ctx)
                       arg-state
                       value
@@ -76969,31 +77198,41 @@
       (let
         [logical-id : i64
           (lower-name-cache-resolve-logical-id (& names) name name)]
-        [display-name : String
-          (match (lower-name-cache-resolve-id-display
-            (lower-global-shared-view names)
-            name)
-            [(tc_core.TcMaybeString.Some resolved) resolved]
-            [(tc_core.TcMaybeString.No)
-              (lower-name-cache-intern-str
-                names
-                (tc_core.macro-hygiene-global-source-name-id-or
-                  (lower-name-cache-structural-session (& names))
-                  name
-                  name))])]
-        [symbol : i64
-          (lower-name-cache-ir-symbol names logical-id name display-name)]
-        (ResultLowerValue.Ok
-          (if (and
-            (lower-function-type? (lower-global-shared-view ty))
-            (lower-symbol-function-value-id?
-              (lower-global-shared-view ctx)
-              logical-id))
-            ;; Function values are closure-descriptor pointers. A plain Global
-            ;; initializer names the function's code symbol instead, which makes
-            ;; the first indirect call interpret instruction bytes as a closure.
-            (ir.CompilerIrValue.Function symbol)
-            (ir.CompilerIrValue.Global symbol))))]
+        (if (lower-symbol-function-value-id?
+          (lower-global-shared-view ctx)
+          logical-id)
+          (let
+            [display-name : String
+              (match (lower-name-cache-resolve-id-display
+                (lower-global-shared-view names)
+                name)
+                [(tc_core.TcMaybeString.Some resolved) resolved]
+                [(tc_core.TcMaybeString.No)
+                  (lower-name-cache-intern-str
+                    names
+                    (tc_core.macro-hygiene-global-source-name-id-or
+                      (lower-name-cache-structural-session (& names))
+                      name
+                      name))])]
+            [symbol : i64
+              (lower-name-cache-ir-symbol names logical-id name display-name)]
+            (ResultLowerValue.Ok
+              (if (lower-function-type? (lower-global-shared-view ty))
+                ;; Function values are closure-descriptor pointers. A plain
+                ;; Global initializer names the function's code symbol instead,
+                ;; which makes the first indirect call interpret instruction
+                ;; bytes as a closure.
+                (ir.CompilerIrValue.Function symbol)
+                (ir.CompilerIrValue.Global symbol))))
+          ;; Any other name is a global variable, an extern data symbol or an
+          ;; enum variant, and the initializer wants its value. Static data can
+          ;; only hold the symbol's address (`.quad symbol`), so the value is
+          ;; read by the runtime initializer the caller builds for non-constant
+          ;; initializers (#7804).
+          (ResultLowerValue.Err
+            (box
+              (lower-diagnostic
+                "lower: global initializer reads a value at startup")))))]
     [_
       (ResultLowerValue.Err
         (box (lower-diagnostic "lower: unsupported global initializer")))]))

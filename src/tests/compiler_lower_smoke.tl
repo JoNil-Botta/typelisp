@@ -942,6 +942,9 @@
       (compiler_lower_tests.compiler-lower-mutable-global-function-value-shape-ok?)
       (io.panic "lower: mutable global function value smoke mismatch"))
     (unless
+      (compiler_lower_tests.compiler-lower-global-reference-initializer-shape-ok?)
+      (io.panic "lower: global reference initializer smoke mismatch"))
+    (unless
       (compiler_lower_tests.compiler-lower-function-value-contextual-init-ok?)
       (io.panic "lower: contextual function value smoke mismatch"))
     (unless
@@ -1054,6 +1057,9 @@
     (unless
       (compiler_lower_tests.compiler-lower-c-abi-windows-byref-aggregate-shape-ok?)
       (io.panic "lower: windows byref aggregate C ABI smoke mismatch"))
+    (unless
+      (compiler_lower_tests.compiler-lower-c-abi-windows-byref-aggregate-temps-shape-ok?)
+      (io.panic "lower: windows byref aggregate temporaries smoke mismatch"))
     (unless
       (compiler_lower_tests.compiler-lower-c-abi-windows-small-float-aggregate-shape-ok?)
       (io.panic "lower: windows small float aggregate C ABI smoke mismatch"))

@@ -472,6 +472,21 @@
 (define (main) : i64
   (+ (apply1 inc 41) (shadow-inc inc 1)))")
 
+;; Globals initialized from other globals (#7804): a variable's value is read by
+;; a runtime initializer, while a function name keeps its closure-descriptor
+;; initializer.
+(define (compiler-lower-global-reference-initializer-source) : String
+  "(define (inc [x : i64]) : i64 (+ x 1))
+(defenum Color (Red) (Green))
+(define base : i64 14)
+(define copy : i64 base)
+(define widened : i64 (cast base : i64))
+(define color : Color Green)
+(define callback : (-> i64 i64) inc)
+(define callback-copy : (-> i64 i64) callback)
+(define (main) : i64
+  (+ copy (callback-copy widened)))")
+
 (define (compiler-lower-mutable-global-function-value-source) : String
   "(define (initial [x : i64]) : i64 x)
 (define (replacement [x : i64]) : i64 (- x 1))
@@ -6016,6 +6031,94 @@
         [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
           (lower-test-blocks-addr-of-count blocks)])]))
 
+(define (lower-test-values-distinct-vars
+  [a : compiler_ir_types.CompilerIrValue]
+  [b : compiler_ir_types.CompilerIrValue]) : i64
+  (match a
+    [(compiler_ir_types.CompilerIrValue.Var a-id)
+      (match b
+        [(compiler_ir_types.CompilerIrValue.Var b-id)
+          (if (= a-id b-id)
+            0
+            1)]
+        [_ 0])]
+    [_ 0]))
+
+(define (lower-test-call-args-array-distinct-vars
+  [values : (__tl_dyn-array compiler_ir_types.CompilerIrValue)]) : i64
+  (if (< (array-length values) 2)
+    0
+    (lower-test-values-distinct-vars
+      (compiler_ir_types.compiler-ir-array-shared-view values 0)
+      (compiler_ir_types.compiler-ir-array-shared-view values 1))))
+
+;; 1 when the call's first two arguments are two different variables.
+(define (lower-test-call-args-distinct-vars
+  [args : compiler_ir_types.CompilerIrCallArgs]) : i64
+  (match args
+    [(compiler_ir_types.CompilerIrCallArgs.Two a b)
+      (lower-test-values-distinct-vars a b)]
+    [(compiler_ir_types.CompilerIrCallArgs.Array values)
+      (lower-test-call-args-array-distinct-vars values)]
+    [(compiler_ir_types.CompilerIrCallArgs.Sret values _)
+      (lower-test-call-args-array-distinct-vars values)]
+    [_ 0]))
+
+(define (lower-test-instr-seq-distinct-arg-call-count
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [call-name : String]) : i64
+  (let
+    [count : i64 instrs.len]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (match (compiler_ir_types.compiler-ir-array-shared-view slots index)
+            [(compiler_ir_types.CompilerIrInstr.Call _ found args _)
+              (when
+                (string.eq
+                  (compiler_ir_types.compiler-ir-symbol-text found)
+                  call-name)
+                (set! acc (+ acc (lower-test-call-args-distinct-vars args))))]
+            [_ unit])
+          (set! index (+ index 1))))
+      acc)))
+
+(define (lower-test-blocks-distinct-arg-call-count
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [call-name : String]) : i64
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil) 0]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (+
+            (lower-test-instr-seq-distinct-arg-call-count
+              instrs
+              (owned_view.compiler-owned-shared-view call-name))
+            (lower-test-blocks-distinct-arg-call-count
+              (compiler_ir_types.compiler-ir-box-shared-view rest)
+              call-name))])]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (lower-test-blocks-distinct-arg-call-count
+        (compiler_ir_types.compiler-ir-block-seq-to-list seq)
+        call-name)]))
+
+;; How many `call-name` calls in `name` pass two different variables as their
+;; first two arguments.
+(define (lower-test-function-distinct-arg-call-count
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
+  [name : String]
+  [call-name : String]) : i64
+  (match (lower-test-function-seq-find funcs name)
+    [(LowerTestMaybeFunction.No) (- 0 1)]
+    [(LowerTestMaybeFunction.Some func)
+      (match func
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
+          (lower-test-blocks-distinct-arg-call-count blocks call-name)])]))
+
 (define (lower-test-function-vector-load-count
   [funcs : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]) : i64
@@ -7283,14 +7386,78 @@
             ;; `Big` is a 16-byte all-integer struct, register-resident,
             ;; so building `(Big 1 2)` does not heap-allocate -- the value is
             ;; constructed in a register pair. The Win64 C ABI still requires the
-            ;; >8 B aggregate to be passed BY REFERENCE, so exactly one tl_alloc
-            ;; remains: the byref buffer the register pair is spilled into before
-            ;; the call (down from two when construction also allocated).
-            (>=
+            ;; >8 B aggregate to be passed BY REFERENCE: the register pair is
+            ;; spilled into a frame temporary (two 8-byte slots and their
+            ;; address), not an arena buffer, so nothing calls tl_alloc (#7885).
+            (=
               (lower-test-function-call-count
                 (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "main"
                 "tl_alloc")
+              0)
+            (>=
+              (lower-test-function-alloc-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main")
+              2)
+            (>=
+              (lower-test-function-addr-of-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main")
+              1))])]
+    [(compiler_lower.ResultCompilerLower.Err _) false]))
+
+(define (compiler-lower-c-abi-windows-byref-aggregate-temps-source) : String
+  "(defstruct Big (lo i64) (hi i64))
+(defstruct Wide (a i64) (b i64) (c i64))
+(extern (big-pair-use [arg0 : Big] [arg1 : Big]) : i64 (:symbol \"tl_cabi_big_pair_use\"))
+(extern (wide-pair-use [arg0 : Wide] [arg1 : Wide]) : i64 (:symbol \"tl_cabi_wide_pair_use\"))
+(extern (made-pair-use [arg0 : Big] [arg1 : Big]) : i64 (:symbol \"tl_cabi_made_pair_use\"))
+(extern (big-make [seed : i64]) : Big (:symbol \"tl_cabi_big_make\"))
+(define (main) : i64
+  (let
+    [big : Big (Big 1 2)]
+    [wide : Wide (Wide 3 4 5)]
+    (+
+      (big-pair-use big big)
+      (+ (wide-pair-use wide wide) (made-pair-use (big-make 7) (big-make 8))))))")
+
+;; Every Win64 by-reference argument gets its own frame temporary: the callee
+;; may write through either pointer, so two arguments built from the same value,
+;; register-resident or memory-class, and call results passed straight on,
+;; never share one copy. None of the six copies allocates (#7885); the two
+;; allocations left are the hidden-sret result buffers of `big-make` (#7990).
+(define (compiler-lower-c-abi-windows-byref-aggregate-temps-shape-ok?) : bool
+  (match (compiler_lower.lower-compiler-source-with-mode
+    (compiler-lower-c-abi-windows-byref-aggregate-temps-source)
+    (compiler_lower.CompilerLowerMode.WindowsScalar))
+    [(compiler_lower.ResultCompilerLower.Ok program _)
+      (match program
+        [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
+          (and
+            (=
+              (lower-test-function-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main"
+                "tl_alloc")
+              2)
+            (=
+              (lower-test-function-distinct-arg-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main"
+                "big-pair-use")
+              1)
+            (=
+              (lower-test-function-distinct-arg-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main"
+                "wide-pair-use")
+              1)
+            (=
+              (lower-test-function-distinct-arg-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main"
+                "made-pair-use")
               1))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
@@ -7659,12 +7826,15 @@
                 (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "main")
               4)
-            (>=
+            ;; The two by-reference `WideChoice` arguments are copied into
+            ;; frame temporaries (#7885). The two allocations left are the
+            ;; hidden-sret result buffers of the `ReturnChoice` calls (#7990).
+            (=
               (lower-test-function-call-count
                 (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "main"
                 "tl_alloc")
-              3))])]
+              2))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-global-source) : String
@@ -9705,6 +9875,91 @@
     (compiler-lower-mutable-global-function-value-mode-shape-ok?
       (compiler_lower.CompilerLowerMode.LinuxScalar))
     (compiler-lower-mutable-global-function-value-mode-shape-ok?
+      (compiler_lower.CompilerLowerMode.WindowsScalar))))
+
+;; The initializer of global `global-name`, classified as "i64", "runtime",
+;; "function:<symbol>", "global:<symbol>", "other" or "missing".
+(define (lower-test-global-initializer-kind-at
+  [globals : compiler_ir_types.CompilerIrGlobalSeq]
+  [global-name : String]
+  [index : i64]) : String
+  (if (>= index globals.len)
+    "missing"
+    (match (compiler_ir_types.compiler-ir-global-seq-ref
+      (owned_view.compiler-owned-shared-view globals)
+      index)
+      [(compiler_ir_types.CompilerIrGlobal.Global name _ initial)
+        (if (string.eq
+          (compiler_ir_types.compiler-ir-symbol-text name)
+          (owned_view.compiler-owned-shared-view global-name))
+          (match initial
+            [(compiler_ir_types.CompilerIrValue.I64 _) "i64"]
+            [(compiler_ir_types.CompilerIrValue.RuntimeGlobal _) "runtime"]
+            [(compiler_ir_types.CompilerIrValue.Function found)
+              (str_cat.str-cat
+                "function:"
+                (compiler_ir_types.compiler-ir-symbol-text found))]
+            [(compiler_ir_types.CompilerIrValue.Global found)
+              (str_cat.str-cat
+                "global:"
+                (compiler_ir_types.compiler-ir-symbol-text found))]
+            [_ "other"])
+          (lower-test-global-initializer-kind-at
+            globals
+            global-name
+            (+ index 1)))])))
+
+(define (lower-test-global-initializer-kind
+  [globals : compiler_ir_types.CompilerIrGlobalSeq]
+  [global-name : String]) : String
+  (lower-test-global-initializer-kind-at globals global-name 0))
+
+(define (compiler-lower-global-reference-initializer-mode-shape-ok?
+  [mode : compiler_lower.CompilerLowerMode]) : bool
+  (match (compiler_lower.lower-compiler-source-with-mode
+    (compiler-lower-global-reference-initializer-source)
+    mode)
+    [(compiler_lower.ResultCompilerLower.Ok program _)
+      (match program
+        [(compiler_ir_types.CompilerIrProgram.Program globals _ _)
+          (and
+            (string.eq
+              (lower-test-global-initializer-kind
+                (compiler_ir_types.compiler-ir-global-shared-view globals)
+                "base")
+              "i64")
+            (string.eq
+              (lower-test-global-initializer-kind
+                (compiler_ir_types.compiler-ir-global-shared-view globals)
+                "copy")
+              "runtime")
+            (string.eq
+              (lower-test-global-initializer-kind
+                (compiler_ir_types.compiler-ir-global-shared-view globals)
+                "widened")
+              "runtime")
+            (string.eq
+              (lower-test-global-initializer-kind
+                (compiler_ir_types.compiler-ir-global-shared-view globals)
+                "color")
+              "runtime")
+            (string.eq
+              (lower-test-global-initializer-kind
+                (compiler_ir_types.compiler-ir-global-shared-view globals)
+                "callback")
+              "function:inc")
+            (string.eq
+              (lower-test-global-initializer-kind
+                (compiler_ir_types.compiler-ir-global-shared-view globals)
+                "callback-copy")
+              "runtime"))])]
+    [(compiler_lower.ResultCompilerLower.Err _) false]))
+
+(define (compiler-lower-global-reference-initializer-shape-ok?) : bool
+  (and
+    (compiler-lower-global-reference-initializer-mode-shape-ok?
+      (compiler_lower.CompilerLowerMode.LinuxScalar))
+    (compiler-lower-global-reference-initializer-mode-shape-ok?
       (compiler_lower.CompilerLowerMode.WindowsScalar))))
 
 (define (compiler-lower-noncapturing-lambda-value-ok?) : bool
@@ -16302,6 +16557,171 @@
     (compiler-lower-name-env-dense-snapshots-ok?)
     "dense lower-name snapshots preserve overlays, append order, and names"))
 
+(define (compiler-lower-alias-overlay-map-reuse-ok?) : bool
+  (let
+    [state : compiler_lower.CompilerLowerState
+      (compiler_lower.compiler-lower-state-new)]
+    [scratch : arena.Arena (arena.make)]
+    [index : i64 0]
+    (begin
+      ;; Grow while entry scratch is active, then retire it. The state and
+      ;; reused table must still be valid for the next batch entry.
+      (in-arena
+        scratch
+        (while (< index 128)
+          (begin
+            (compiler_lower.lower-alias-overlay-record!
+              state
+              index
+              (+ index 1000))
+            (set! index (+ index 1)))))
+      (unsafe
+        (arena.tl_arena_destroy (arena.raw-handle scratch)))
+      (let
+        [before : lower_i64_i64_map.Map
+          (compiler_lower.compiler-lower-state-read
+            state
+            lower_i64_i64_map.Map
+            compiler_lower.alias-overlay-ids)]
+        [capacity : i64 (lower_i64_i64_map.capacity (& before))]
+        [storage : i64
+          (cast
+            (unsafe
+              (ptr->int (ptr-cast (__tl_array-data before.slots) : (Ptr i64))))
+            : i64)]
+        (begin
+          (compiler_lower.lower-alias-overlay-reset! state)
+          (compiler_lower.lower-alias-overlay-seed-from-env!
+            state
+            compiler_lower.LowerNameEnv.Nil)
+          (let
+            [after : lower_i64_i64_map.Map
+              (compiler_lower.compiler-lower-state-read
+                state
+                lower_i64_i64_map.Map
+                compiler_lower.alias-overlay-ids)]
+            [empty : bool
+              (and
+                (= (lower_i64_i64_map.capacity (& after)) capacity)
+                (=
+                  (cast
+                    (unsafe
+                      (ptr->int
+                        (ptr-cast (__tl_array-data after.slots) : (Ptr i64))))
+                    : i64)
+                  storage)
+                (= (lower_i64_i64_map.len (& after)) 0)
+                (=
+                  (compiler_lower.lower-alias-overlay-logical-id-or state 31 -1)
+                  -1))]
+            (begin
+              (compiler_lower.lower-alias-overlay-record! state 31 2031)
+              (and
+                empty
+                (=
+                  (compiler_lower.lower-alias-overlay-logical-id-or state 31 -1)
+                  2031)))))))))
+
+(test
+  compiler-lower-alias-overlay-map-reuse
+  (test.assert-true
+    (compiler-lower-alias-overlay-map-reuse-ok?)
+    "alias overlay reset and seed reuse storage, clear old entries, and accept new ones"))
+
+(define (compiler-lower-alias-overlay-negative-id-scan-ok?) : bool
+  (let
+    [state : compiler_lower.CompilerLowerState
+      (compiler_lower.compiler-lower-state-new)]
+    [source-id : i64
+      (ci.intern-generated-canonical-name "alias-overlay-positive-source")]
+    [symbol-id : i64
+      (ci.intern-generated-canonical-name "alias-overlay-positive-symbol")]
+    [names : compiler_lower.LowerNameEnv
+      (compiler_lower.lower-name-env-bind-logical-symbol-id
+        source-id
+        source-id
+        symbol-id
+        (compiler_lower.lower-name-env-bind-logical-symbol-id
+          -1
+          -1
+          symbol-id
+          compiler_lower.LowerNameEnv.Nil))]
+    (begin
+      (compiler_lower.lower-alias-overlay-seed-from-env!
+        state
+        (compiler_lower.lower-global-shared-view names))
+      (let
+        [degraded : bool
+          (not
+            (compiler_lower.compiler-lower-state-read
+              state
+              bool
+              compiler_lower.alias-overlay-valid))]
+        [positive : compiler_lower.LowerNameEnv
+          (compiler_lower.lower-name-env-add-import-alias-binding-symbol-id
+            state
+            (compiler_lower.lower-global-shared-view names)
+            ""
+            ""
+            source-id
+            ""
+            source-id
+            symbol-id)]
+        [negative : compiler_lower.LowerNameEnv
+          (compiler_lower.lower-name-env-add-import-alias-binding-symbol-id
+            state
+            (compiler_lower.lower-global-shared-view names)
+            ""
+            ""
+            -1
+            ""
+            -1
+            symbol-id)]
+        (and
+          degraded
+          (= (compiler_lower.lower-name-env-count positive) 2)
+          (= (compiler_lower.lower-name-env-count negative) 3)
+          (=
+            (compiler_lower.lower-alias-overlay-logical-id-or
+              state
+              source-id
+              -1)
+            source-id))))))
+
+(test
+  compiler-lower-alias-overlay-negative-id-scan
+  (test.assert-true
+    (compiler-lower-alias-overlay-negative-id-scan-ok?)
+    "negative source id degrades to exact scan while interned duplicate still resolves"))
+
+(define (compiler-lower-name-cache-capacity-ok?) : bool
+  (let
+    [count : i64 0]
+    (begin
+      (while (<= count 256)
+        (let
+          [ids : lower_i64_i64_map.Map
+            (lower_i64_i64_map.with-capacity
+              (compiler_lower.lower-name-cache-capacity count))]
+          [initial-capacity : i64 (lower_i64_i64_map.capacity (& ids))]
+          [key : i64 0]
+          (begin
+            (while (< key count)
+              (begin
+                (lower_i64_i64_map.insert-ref! (&mut ids) key key)
+                (set! key (+ key 1))))
+            (when
+              (not (= (lower_i64_i64_map.capacity (& ids)) initial-capacity))
+              (return false))
+            (set! count (+ count 1)))))
+      true)))
+
+(test
+  compiler-lower-name-cache-capacity
+  (test.assert-true
+    (compiler-lower-name-cache-capacity-ok?)
+    "name cache capacity admits every counted entry without a grow"))
+
 ;; The id-keyed compat prescan walker must agree with the two string-keyed
 ;; walks it replaces on every env-key family the prescan can meet: pool ids,
 ;; hygiene-local ids (post-splice trees), structural-local ids, and
@@ -19160,6 +19580,15 @@
         unit
         (set! ok false))
       (if (compiler-lower-name-env-dense-snapshots-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-alias-overlay-map-reuse-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-alias-overlay-negative-id-scan-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-name-cache-capacity-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-slice-reference-layout-ok?)

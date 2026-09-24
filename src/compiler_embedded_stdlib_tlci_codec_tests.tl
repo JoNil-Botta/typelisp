@@ -1,5 +1,7 @@
 ;; Focused malformed-frame coverage for the TLCI-only deployment envelope.
 (import compiler_embedded_stdlib_tlci_codec as codec)
+(import compiler_embedded_stdlib_tlci_encoder as encoder)
+(import stdlib.byte_buf_core)
 (import stdlib.string)
 
 (define (tlci-codec-test-write-i64-le!
@@ -390,3 +392,80 @@
   (if (= (tlci-codec-self-test-status) 0)
     unit
     (string.tl_oob_abort)))
+
+;; Round trip through the build-time encoder: a byte run (distance-1 matches), a
+;; period-7 pattern (every match nearer than a word), a period-8 one (exactly a
+;; word back), pseudo-random literals and a long repeated block, ending on a
+;; match, so the decoder's word copies, byte copies and tails all run.
+(define (tlci-codec-test-round-trip-source) : String
+  (let
+    [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
+    [i : i64 0]
+    [state : i64 12345]
+    (begin
+      (while (< i 300)
+        (begin
+          (byte_buf_core.byte-buf-builder-push (&mut out) (cast 97 : u8))
+          (set! i (+ i 1))))
+      (set! i 0)
+      (while (< i 700)
+        (begin
+          (byte_buf_core.byte-buf-builder-push
+            (&mut out)
+            (cast (+ 65 (% i 7)) : u8))
+          (set! i (+ i 1))))
+      (set! i 0)
+      (while (< i 800)
+        (begin
+          (byte_buf_core.byte-buf-builder-push
+            (&mut out)
+            (cast (+ 48 (% i 8)) : u8))
+          (set! i (+ i 1))))
+      (set! i 0)
+      (while (< i 2000)
+        (begin
+          (set! state (+ (* state 6364136223846793005) 1442695040888963407))
+          (byte_buf_core.byte-buf-builder-push
+            (&mut out)
+            (cast (bit-and (shr state 33) 255) : u8))
+          (set! i (+ i 1))))
+      (set! i 0)
+      (while (< i 3000)
+        (begin
+          (byte_buf_core.byte-buf-builder-push
+            (&mut out)
+            (cast (+ 32 (% (* i 37) 91)) : u8))
+          (set! i (+ i 1))))
+      (byte_buf_core.byte-buf-builder-finish-string (& out)))))
+
+(test
+  compiler-embedded-stdlib-tlci-round-trip
+  (let
+    [source : String (tlci-codec-test-round-trip-source)]
+    (match (encoder.compiler-embedded-stdlib-tlci-encoder-encode
+      (string.copy source))
+      [(encoder.ResultCompilerEmbeddedStdlibTlciEncoderBytes.Err _)
+        (string.tl_oob_abort)]
+      [(encoder.ResultCompilerEmbeddedStdlibTlciEncoderBytes.Ok encoded)
+        (match (codec.compiler-embedded-stdlib-tlci-codec-decode
+          (& encoded)
+          1048576)
+          [(codec.CompilerEmbeddedStdlibTlciCodecBytes.Err _)
+            (string.tl_oob_abort)]
+          [(codec.CompilerEmbeddedStdlibTlciCodecBytes.Ok decoded)
+            (let
+              [n : i64 (string.string-length source)]
+              [i : i64 0]
+              [same : bool (= (array-length decoded) n)]
+              (begin
+                (while (and same (< i n))
+                  (begin
+                    (when
+                      (!=
+                        (array-ref decoded i)
+                        (cast (string.string-ref source i) : u8))
+                      (set! same false))
+                    (set! i (+ i 1))))
+                (if same
+                  unit
+                  (string.tl_oob_abort))))])])))

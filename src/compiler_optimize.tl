@@ -185951,7 +185951,7 @@
           (match empty-state
             [(OptLoadCseState.State empty-facts empty-table _ empty-cap _ _ _)
               (OptLoadCseState.State
-                empty-facts
+                (opt-alias-clone empty-facts)
                 (cond
                   ;; GVN-LOOP-2: nothing on the back edge writes memory, so
                   ;; every entry whose value is already live across the loop
@@ -186130,7 +186130,7 @@
       entry-label)
       [(option_i64.Some entry-id)
         (if (= id entry-id)
-          (compiler-opt-global-shared-view empty-state)
+          (opt-load-cse-state-clone-facts empty-state)
           (opt-load-gvn-entry-from-preds
             type-segment-bases
             (compiler-opt-global-shared-view index)

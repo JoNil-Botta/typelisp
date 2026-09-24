@@ -280,6 +280,15 @@ repeating the compiler bootstrap. Heavy improvements and regressions therefore
 block the PR that introduces them; accept intentional changes by committing an
 explicit `perf/insn-exec-heavy-baseline.tsv` refresh.
 
+## Optimizer pass-firing census
+
+`scripts/measure-pass-firing.sh <compiler>` compiles the benchmarks, examples,
+integration and inline tests, the `tools/` programs and `src/main.tl` at
+`--opt-level 2` and counts, per optimizer pass slot and program, the functions
+the slot changed (`firing.tsv`); `summary.tsv` marks slots that change code only
+in benchmark programs. The script header describes its exact (IR dump diff) and
+counts (trace-only) methods and their limits.
+
 ## Compile-profile optimizer escape capture
 
 Use the compile-profile verifier to build a profile-enabled CLI, then capture an

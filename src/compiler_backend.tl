@@ -2612,8 +2612,14 @@
 ;; block: doing so would step over the spliced prologue.
 (define compiler-backend-function-i64-swb-saving-label : i64
   21)
-(define compiler-backend-function-i64-count : i64
+
+;; The bound of the shift count of the IR instruction being emitted, plus one:
+;; 0 when that instruction is not a shift or its count is not bounded (see
+;; compiler-backend-shift-count-bounds). Read by compiler-backend-shift-guard-asm.
+(define compiler-backend-function-i64-shift-count-bound : i64
   22)
+(define compiler-backend-function-i64-count : i64
+  23)
 (define compiler-backend-function-bool-current-fn-win64 : i64
   0)
 (define compiler-backend-function-bool-addr-of-forwarding-enabled : i64
@@ -2725,8 +2731,12 @@
 ;; prologue stays at entry.
 (define compiler-backend-function-i64-array-swb-bare-labels : i64
   7)
-(define compiler-backend-function-i64-array-count : i64
+
+;; Per var: the bound compiler-backend-shift-count-bounds proved, plus one.
+(define compiler-backend-function-i64-array-shift-count-bounds : i64
   8)
+(define compiler-backend-function-i64-array-count : i64
+  9)
 (define compiler-backend-function-live-set-group-vars : i64
   0)
 (define compiler-backend-function-live-set-addressable-group-vars : i64
@@ -3220,6 +3230,11 @@
         (array-ref i64-arrays compiler-backend-function-i64-array-jump-forward)
         empty-i64-array)
       (set!
+        (array-ref
+          i64-arrays
+          compiler-backend-function-i64-array-shift-count-bounds)
+        empty-i64-array)
+      (set!
         (array-ref live-sets compiler-backend-function-live-set-group-vars)
         empty-live-set)
       (set!
@@ -3653,6 +3668,11 @@
         (array-ref
           data.i64-arrays
           compiler-backend-function-i64-array-jump-forward)
+        data.empty-i64-array)
+      (set!
+        (array-ref
+          data.i64-arrays
+          compiler-backend-function-i64-array-shift-count-bounds)
         data.empty-i64-array)
       (set! (array-ref data.assignment-indexes 0) data.empty-assignment-index)
       (set!
@@ -28689,7 +28709,191 @@
             count
             (compiler-backend-shift-count-width type-segment-bases lhs-ty)))])))
 
+;; Shift counts proven in range. `(shr x (bit-and n 63))` is the idiom for a
+;; bit position, and its count can only be 0..63: a `bit_and` with a literal
+;; `c >= 0` keeps no bit `c` lacks, so the result lies in [0, c]. A shift whose
+;; count var is that bounded, below the shifted width, can neither abort, so its
+;; guard is unreachable.
+;;
+;; The table is read off the blocks being EMITTED (after coloring, where one var
+;; id may name several values), per var id: the largest `c` over its
+;; definitions, plus one, when EVERY definition is such a `bit_and`; -1 when any
+;; is not, when a parameter binds it, or when an `addr_of` takes its address (a
+;; store through the address redefines it with no instruction naming it); 0 when
+;; nothing defines it.
+(define (compiler-backend-bit-and-literal-bound
+  [lhs : compiler_ir_types.CompilerIrValue]
+  [rhs : compiler_ir_types.CompilerIrValue]) : i64
+  (match rhs
+    [(compiler_ir_types.CompilerIrValue.I64 c) c]
+    [_
+      (match lhs
+        [(compiler_ir_types.CompilerIrValue.I64 c) c]
+        [_ -1])]))
+
+(define (compiler-backend-shift-count-bounds-note!
+  [bounds : (__tl_dyn-array i64)]
+  [var : i64]
+  [bound : i64]) : unit
+  (if (or (< var 0) (>= var (array-length bounds)))
+    unit
+    (let
+      [current : i64 (array-ref bounds var)]
+      (cond
+        [(< current 0) unit]
+        [(or (< bound 0) (>= bound 2147483647))
+          (set! (array-ref bounds var) -1)]
+        [(> (+ bound 1) current) (set! (array-ref bounds var) (+ bound 1))]
+        [else unit]))))
+
+(define (compiler-backend-shift-count-bounds-instr-seq!
+  [bounds : (__tl_dyn-array i64)]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]) : unit
+  (let
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (match (compiler-backend-global-array-element-shared-view slots index)
+          [(compiler_ir_types.CompilerIrInstr.BinOp
+              dst
+              (compiler_ir_types.CompilerIrBinOp.BitAnd)
+              lhs
+              rhs
+              _)
+            (compiler-backend-shift-count-bounds-note!
+              (compiler-backend-global-shared-view bounds)
+              dst
+              (compiler-backend-bit-and-literal-bound
+                (compiler-backend-global-shared-view lhs)
+                (compiler-backend-global-shared-view rhs)))]
+          [(compiler_ir_types.CompilerIrInstr.AddrOf dst src)
+            (begin
+              (compiler-backend-shift-count-bounds-note!
+                (compiler-backend-global-shared-view bounds)
+                dst
+                -1)
+              (compiler-backend-shift-count-bounds-note!
+                (compiler-backend-global-shared-view bounds)
+                src
+                -1))]
+          [_
+            (compiler-backend-shift-count-bounds-note!
+              (compiler-backend-global-shared-view bounds)
+              (compiler_liveness.compiler-live-instr-def-var
+                (compiler-backend-global-array-element-shared-view slots index))
+              -1)])
+        (set! index (+ index 1))))))
+
+(define (compiler-backend-shift-count-bounds
+  [vars : i64]
+  [params : compiler_ir_types.CompilerIrParamSeq]
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : (__tl_dyn-array i64)
+  (let
+    [bounds : (__tl_dyn-array i64)
+      (__tl_make-array
+        i64
+        (if (< vars 0)
+          0
+          vars))]
+    [position : i64 0]
+    [seq : compiler_ir_types.CompilerIrBlockSeq
+      (compiler_liveness.compiler-live-ir-block-list-to-seq
+        (compiler-backend-global-shared-view blocks))]
+    [block-count : i64
+      (compiler_ir_types.compiler-ir-block-seq-count
+        (compiler-backend-global-shared-view seq))]
+    [b : i64 0]
+    (begin
+      (while (< position params.len)
+        (begin
+          (match (compiler_ir_types.compiler-ir-param-seq-ref
+            (compiler-backend-global-shared-view params)
+            position)
+            [(compiler_ir_types.CompilerIrParam.Param _ _ id)
+              (compiler-backend-shift-count-bounds-note!
+                (compiler-backend-global-shared-view bounds)
+                id
+                -1)])
+          (set! position (+ position 1))))
+      (while (< b block-count)
+        (begin
+          (match (compiler_ir_types.compiler-ir-block-seq-ref
+            (compiler-backend-global-shared-view seq)
+            b)
+            [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+              (compiler-backend-shift-count-bounds-instr-seq!
+                (compiler-backend-global-shared-view bounds)
+                instrs)])
+          (set! b (+ b 1))))
+      bounds)))
+
+;; The bound (plus one) of `instr`'s shift count, or 0: only a scalar shift whose
+;; count is a var the table bounds has one.
+(define (compiler-backend-instr-shift-count-bound
+  [function-state : CompilerBackendFunctionState]
+  [instr : compiler_ir_types.CompilerIrInstr]) : i64
+  (match instr
+    [(compiler_ir_types.CompilerIrInstr.BinOp
+        _
+        op
+        _
+        (compiler_ir_types.CompilerIrValue.Var count)
+        _)
+      (if (compiler-backend-binop-shift-op?
+        (compiler-backend-global-shared-view op))
+        (let
+          [bounds : (__tl_dyn-array i64)
+            (compiler-backend-function-state-i64-array
+              (compiler-backend-global-shared-view function-state)
+              compiler-backend-function-i64-array-shift-count-bounds)]
+          (if (or (< count 0) (>= count (array-length bounds)))
+            0
+            (let
+              [bound : i64 (array-ref bounds count)]
+              (if (> bound 0)
+                bound
+                0))))
+        0)]
+    [_ 0]))
+
+(define (compiler-backend-set-shift-count-bound!
+  [function-state : CompilerBackendFunctionState]
+  [bound : i64]) : unit
+  (compiler-backend-function-state-set-i64!
+    function-state
+    compiler-backend-function-i64-shift-count-bound
+    bound))
+
 (define (compiler-backend-shift-guard-asm
+  [type-segment-bases : i64]
+  [lhs-ty : compiler_ast_types.AstType]
+  [count-ty : compiler_ast_types.AstType]
+  [count-reg : String]
+  [backend-state : CompilerBackendState]) : String
+  (let
+    [bound : i64
+      (compiler-backend-function-state-i64
+        (compiler-backend-state-function-state backend-state)
+        compiler-backend-function-i64-shift-count-bound)]
+    (if (and
+      (> bound 0)
+      (<
+        (- bound 1)
+        (compiler-backend-shift-count-width
+          type-segment-bases
+          (compiler-backend-global-shared-view lhs-ty))))
+      ;; The count is proven in [0, width): neither abort is reachable.
+      ""
+      (compiler-backend-shift-guard-asm-checked
+        type-segment-bases
+        lhs-ty
+        count-ty
+        count-reg
+        backend-state))))
+
+(define (compiler-backend-shift-guard-asm-checked
   [type-segment-bases : i64]
   [lhs-ty : compiler_ast_types.AstType]
   [count-ty : compiler_ast_types.AstType]
@@ -55639,7 +55843,36 @@
             [(CompilerBackendSwitchValidation.Err message)
               (CompilerBackendSwitchValidation.Err message)]))])))
 
+;; Every instruction emitted through here guards its shift against its OWN
+;; count's bound, whichever instruction's step it runs inside; the step's bound
+;; is restored afterwards for the rest of the step.
 (define (compiler-backend-emit-instr
+  [ctx : CompilerBackendEmissionContext]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [instr : compiler_ir_types.CompilerIrInstr]) : ResultCompilerBackend
+  (let
+    [saved : i64
+      (compiler-backend-function-state-i64
+        (compiler-backend-global-shared-view ctx.function-state)
+        compiler-backend-function-i64-shift-count-bound)]
+    [_own : unit
+      (compiler-backend-set-shift-count-bound!
+        (compiler-backend-global-shared-view ctx.function-state)
+        (compiler-backend-instr-shift-count-bound
+          (compiler-backend-global-shared-view ctx.function-state)
+          (compiler-backend-global-shared-view instr)))]
+    [result : ResultCompilerBackend
+      (compiler-backend-emit-instr-with-bound
+        (compiler-backend-global-shared-view ctx)
+        fallthrough
+        instr)]
+    (begin
+      (compiler-backend-set-shift-count-bound!
+        (compiler-backend-global-shared-view ctx.function-state)
+        saved)
+      result)))
+
+(define (compiler-backend-emit-instr-with-bound
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [instr : compiler_ir_types.CompilerIrInstr]) : ResultCompilerBackend
@@ -69845,6 +70078,20 @@
                     current-instrs
                     current-index))
                 unit)
+              ;; The head instruction's shift-count bound, for the same
+              ;; reason: a fast emitter that bypasses compiler-backend-emit-instr
+              ;; emits the head's own guard. A fused emitter that reaches a
+              ;; later instruction through compiler-backend-emit-instr gets that
+              ;; instruction's bound there.
+              (compiler-backend-set-shift-count-bound!
+                (compiler-backend-global-shared-view ctx.function-state)
+                (if (< current-index current-count)
+                  (compiler-backend-instr-shift-count-bound
+                    (compiler-backend-global-shared-view ctx.function-state)
+                    (compiler_ir_types.compiler-ir-instr-seq-ref
+                      current-instrs
+                      current-index))
+                  0))
               (match current-mode
                 [(CompilerBackendEmitInstrsMode.Normal)
                   (compiler-backend-emit-instrs-divmod-polish-step
@@ -69871,6 +70118,9 @@
                     (compiler-backend-global-shared-view current-instrs)
                     current-index
                     out)]))]
+          (compiler-backend-set-shift-count-bound!
+            (compiler-backend-global-shared-view ctx.function-state)
+            0)
           (match step-result
             [(ResultCompilerBackend.Ok asm)
               (if (compiler-backend-function-state-bool?
@@ -83892,6 +84142,15 @@
                       program-index.backend-state
                       (compiler-backend-global-shared-view use-counts)
                       (compiler-backend-global-shared-view fuse-free-counts))]
+                  [_shift-count-bounds : unit
+                    (compiler-backend-function-state-set-i64-array!
+                      (compiler-backend-state-function-state
+                        program-index.backend-state)
+                      compiler-backend-function-i64-array-shift-count-bounds
+                      (compiler-backend-shift-count-bounds
+                        scratch-vars
+                        (compiler-backend-global-shared-view emit-params)
+                        (compiler-backend-global-shared-view emit-blocks-list)))]
                   [_identity-tail-forwarder : unit
                     (compiler-backend-function-state-set-bool!
                       (compiler-backend-state-function-state

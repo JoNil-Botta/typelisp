@@ -59518,9 +59518,97 @@ b_keep:
           (ci.intern-compat-state-capture-active)))
       "")))
 
+;; Shift counts proven in range (compiler-backend-shift-count-bounds): a var
+;; whose every definition is a `bit_and` with a literal c >= 0 is bounded by the
+;; largest such c (stored plus one); a parameter, any other definition, a
+;; negative literal or an `addr_of` of the var leaves it unbounded (-1).
+(define (compiler-backend-shift-count-bounds-ok?) : bool
+  (let
+    [bounds : (__tl_dyn-array i64)
+      (compiler_backend.compiler-backend-shift-count-bounds
+        9
+        (compiler_ir_types.compiler-ir-param-seq-prepend
+          (compiler_ir_types.CompilerIrParam.Param
+            "x"
+            (compiler_ast_types.AstType.I64)
+            0)
+          (compiler_ir_types.compiler-ir-param-seq-empty))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "entry")
+            (compiler-backend-test-instr-seq-prepend
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                1
+                (compiler_ir_types.CompilerIrBinOp.BitAnd)
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (compiler_ir_types.CompilerIrValue.I64 63)
+                (compiler_ast_types.AstType.I64))
+              (compiler-backend-test-instr-seq-prepend
+                (compiler_ir_types.CompilerIrInstr.BinOp
+                  2
+                  (compiler_ir_types.CompilerIrBinOp.BitAnd)
+                  (compiler_ir_types.CompilerIrValue.I64 7)
+                  (compiler_ir_types.CompilerIrValue.Var 0)
+                  (compiler_ast_types.AstType.I64))
+                (compiler-backend-test-instr-seq-prepend
+                  (compiler_ir_types.CompilerIrInstr.BinOp
+                    3
+                    (compiler_ir_types.CompilerIrBinOp.BitAnd)
+                    (compiler_ir_types.CompilerIrValue.Var 0)
+                    (compiler_ir_types.CompilerIrValue.I64 31)
+                    (compiler_ast_types.AstType.I64))
+                  (compiler-backend-test-instr-seq-prepend
+                    (compiler_ir_types.CompilerIrInstr.Mov
+                      3
+                      (compiler_ir_types.CompilerIrValue.Var 0)
+                      (compiler_ast_types.AstType.I64))
+                    (compiler-backend-test-instr-seq-prepend
+                      (compiler_ir_types.CompilerIrInstr.BinOp
+                        4
+                        (compiler_ir_types.CompilerIrBinOp.BitAnd)
+                        (compiler_ir_types.CompilerIrValue.Var 0)
+                        (compiler_ir_types.CompilerIrValue.I64 -1)
+                        (compiler_ast_types.AstType.I64))
+                      (compiler-backend-test-instr-seq-prepend
+                        (compiler_ir_types.CompilerIrInstr.BinOp
+                          5
+                          (compiler_ir_types.CompilerIrBinOp.BitAnd)
+                          (compiler_ir_types.CompilerIrValue.Var 0)
+                          (compiler_ir_types.CompilerIrValue.I64 15)
+                          (compiler_ast_types.AstType.I64))
+                        (compiler-backend-test-instr-seq-prepend
+                          (compiler_ir_types.CompilerIrInstr.AddrOf 6 5)
+                          (compiler-backend-test-instr-seq-prepend
+                            (compiler_ir_types.CompilerIrInstr.BinOp
+                              7
+                              (compiler_ir_types.CompilerIrBinOp.BitAnd)
+                              (compiler_ir_types.CompilerIrValue.Var 1)
+                              (compiler_ir_types.CompilerIrValue.I64 40)
+                              (compiler_ast_types.AstType.I64))
+                            (compiler-backend-test-instr-seq-prepend
+                              (compiler_ir_types.CompilerIrInstr.BinOp
+                                7
+                                (compiler_ir_types.CompilerIrBinOp.BitAnd)
+                                (compiler_ir_types.CompilerIrValue.Var 2)
+                                (compiler_ir_types.CompilerIrValue.I64 9)
+                                (compiler_ast_types.AstType.I64))
+                              (compiler_ir_types.compiler-ir-instr-seq-empty)))))))))))
+          compiler_ir_types.CompilerIrBlockList.Nil))]
+    (and
+      (= (array-ref bounds 0) -1)
+      (= (array-ref bounds 1) 64)
+      (= (array-ref bounds 2) 8)
+      (= (array-ref bounds 3) -1)
+      (= (array-ref bounds 4) -1)
+      (= (array-ref bounds 5) -1)
+      (= (array-ref bounds 6) -1)
+      (= (array-ref bounds 7) 41)
+      (= (array-ref bounds 8) 0))))
+
 (define (compiler-backend-self-test) : i64
   (if (and
     (compiler-backend-signed-div-guard-shapes-ok?)
+    (compiler-backend-shift-count-bounds-ok?)
     (compiler-backend-avx2-i64-reduce-source-ok?)
     (compiler-backend-avx2-i64-reduce-spilled-source-ok?)
     (compiler-backend-i64-reduce-mask-plan-ok?)

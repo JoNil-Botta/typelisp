@@ -365,6 +365,19 @@
   (unsafe
     (ptr-write! (int->ptr address : (MutPtr CloneRootEntryStore)) store)))
 
+;; Entry lookups are the hot read (every root walk in lowering and typecheck
+;; goes through them), so they load only the store's `entries` handle, which is
+;; its first field (declaration-order layout, SPEC 3.5.3), instead of copying
+;; the whole store.
+(define (clone-root-entries-store-entry-at-address
+  [address : u64]
+  [index : i64]) : CloneRootEntry
+  (unsafe
+    (let
+      [entries : (__tl_dyn-array CloneRootEntry)
+        (ptr-read (int->ptr address : (Ptr (__tl_dyn-array CloneRootEntry))))]
+      (ptr-read (ptr-offset (__tl_array-data entries) index)))))
+
 (define (clone-root-entries-capacity [roots : CloneRootEntries]) : i64
   (match roots
     [(CloneRootEntries.Empty) 0]
@@ -446,10 +459,9 @@
     [(CloneRootEntries.Empty) fallback]
     [(CloneRootEntries.Dense address start len)
       (if (and (>= logical-index 0) (< logical-index len))
-        (let
-          [physical : i64 (+ start (- len (+ logical-index 1)))]
-          [store : CloneRootEntryStore (clone-root-entries-store-read address)]
-          (clone-root-entries-store-entry-at (& store) physical))
+        (clone-root-entries-store-entry-at-address
+          address
+          (+ start (- len (+ logical-index 1))))
         fallback)]))
 
 (define (clone-root-entries-key-id-at-or

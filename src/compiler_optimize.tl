@@ -185921,11 +185921,13 @@
   [loop-safe : OptLabelSet]
   [carry : OptLoadLoopCarry]
   [label : i64]
+  [take : i64]
   [empty-state : OptLoadCseState]
   [edge : i64]
   [end : i64]
   [has-state : bool]
   [saw-unprocessed : bool]
+  [shared : bool]
   [acc : OptLoadCseState]) : OptLoadCseState
   (if (>= edge end)
     (if saw-unprocessed
@@ -185982,7 +185984,12 @@
                 acc-epoch
                 (opt-load-global-bases-empty)
                 profile-state)])])
-      acc)
+      ;; One predecessor's state arrived unchanged: it is still that block's
+      ;; stored exit state, which this block's rewrite will mutate, so it is
+      ;; cloned -- unless this block is its last reader and takes it.
+      (if (and shared (< take 0))
+        (opt-load-cse-state-clone-facts acc)
+        acc))
     (let
       [pred : i64 (array-ref index.preds.edges edge)]
       (if (not (array-ref index.reachable pred))
@@ -185995,11 +186002,13 @@
           loop-safe
           carry
           label
+          take
           empty-state
           (+ edge 1)
           end
           has-state
           saw-unprocessed
+          shared
           acc)
         (if (not (array-ref processed pred))
           (opt-load-gvn-entry-from-preds
@@ -186011,11 +186020,13 @@
             loop-safe
             carry
             label
+            take
             empty-state
             (+ edge 1)
             end
             has-state
             true
+            shared
             acc)
           (match (array-ref exit-states pred)
             [(OptMaybeLoadCseState.Some pred-state)
@@ -186028,17 +186039,22 @@
                 loop-safe
                 carry
                 label
+                take
                 empty-state
                 (+ edge 1)
                 end
                 true
                 saw-unprocessed
+                ;; The first state is held as it is stored; an intersection
+                ;; builds a fresh one, so only a state that reaches the end
+                ;; unchanged is cloned (above).
+                (not has-state)
                 (if has-state
                   (opt-load-cse-state-intersect
                     type-segment-bases
                     acc
                     pred-state)
-                  (opt-load-cse-state-clone-facts pred-state)))]
+                  pred-state))]
             [(OptMaybeLoadCseState.No)
               (opt-load-gvn-entry-from-preds
                 type-segment-bases
@@ -186049,12 +186065,51 @@
                 loop-safe
                 carry
                 label
+                take
                 empty-state
                 (+ edge 1)
                 end
                 has-state
                 true
+                shared
                 acc)]))))))
+
+;; The one predecessor whose exit state block `id` may take instead of cloning,
+;; or -1. A processed block's exit state is read again only by another of its
+;; successors still to be processed, or by a successor's join phis, which need
+;; two or more predecessors. So `id` may take it when that block is its only
+;; predecessor and every other successor of that block is already processed or
+;; unreachable.
+(define (opt-load-gvn-take-pred
+  [index : OptCfgIndex]
+  [processed : (__tl_dyn-array bool)]
+  [id : i64]) : i64
+  (let
+    [pred-start : i64 (array-ref index.preds.offsets id)]
+    (if (!= (- (array-ref index.preds.offsets (+ id 1)) pred-start) 1)
+      (- 0 1)
+      (let
+        [pred : i64 (array-ref index.preds.edges pred-start)]
+        [edge : i64 (array-ref index.succs.offsets pred)]
+        [end : i64 (array-ref index.succs.offsets (+ pred 1))]
+        (begin
+          ;; Several already-processed back edges can precede many unprocessed
+          ;; single-predecessor exits in a switch row. Rescanning those back
+          ;; edges for every exit would make this copy-saving probe quadratic
+          ;; in the fanout. Large rows retain the ordinary clone path.
+          (when (> (- end edge) 32) (return (- 0 1)))
+          (while (< edge end)
+            (let
+              [succ : i64 (array-ref index.succs.edges edge)]
+              (begin
+                (when
+                  (and
+                    (!= succ id)
+                    (array-ref index.reachable succ)
+                    (not (array-ref processed succ)))
+                  (return (- 0 1)))
+                (set! edge (+ edge 1)))))
+          pred)))))
 
 (define (opt-load-gvn-entry-state
   [type-segment-bases : i64]
@@ -186085,9 +186140,14 @@
             (compiler-opt-global-shared-view loop-safe)
             (compiler-opt-global-shared-view carry)
             (opt-cfg-index-label (compiler-opt-global-shared-view index) id)
+            (opt-load-gvn-take-pred
+              (compiler-opt-global-shared-view index)
+              (compiler-opt-global-shared-view processed)
+              id)
             (compiler-opt-global-shared-view empty-state)
             (array-ref preds.offsets id)
             (array-ref preds.offsets (+ id 1))
+            false
             false
             false
             (compiler-opt-global-shared-view empty-state)))]

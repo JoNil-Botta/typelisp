@@ -5,10 +5,10 @@
 (import compiler_object as cobj)
 (cfg test (import stdlib.test))
 
-(define (compiler-object-elf-string-length [text : String]) : i64
+(define (compiler-object-elf-string-length [text : (& text str)]) : i64
   (__tl_string_length text))
 
-(define (compiler-object-elf-string-ref [text : String] [index : i64]) : char
+(define (compiler-object-elf-string-ref [text : (& text str)] [index : i64]) : char
   (__tl_string_ref text index))
 
 (defenum ResultCompilerObjectElf
@@ -130,22 +130,16 @@
 
 (define (compiler-object-elf-push-string-bytes!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
-  [text : String]) : unit
+  [text : (& text str)]) : unit
   (let
     [i : i64 0]
-    [n : i64
-      (compiler-object-elf-string-length
-        (owned_view.compiler-owned-shared-view text))]
+    [n : i64 (compiler-object-elf-string-length text)]
     (begin
       (while (< i n)
         (begin
           (byte_buf_core.byte-buf-builder-push
             out
-            (cast
-              (compiler-object-elf-string-ref
-                (owned_view.compiler-owned-shared-view text)
-                i)
-              : u8))
+            (cast (compiler-object-elf-string-ref text i) : u8))
           (set! i (+ i 1))))
       unit)))
 
@@ -793,9 +787,7 @@
     (owned_view.compiler-owned-shared-view image.sections)
     (cobj.CompilerObjectSectionKind.Text))
     [(cobj.CompilerObjectSection.Section _ _ instrs)
-      (compiler-object-elf-instr-targets-known?
-        (owned_view.compiler-owned-shared-view image)
-        instrs)]))
+      (compiler-object-elf-instr-targets-known? image instrs)]))
 
 (define (compiler-object-elf-text-instr-relocation-count
   [image : cobj.CompilerObjectImage]) : i64
@@ -811,8 +803,7 @@
     (compiler-object-elf-relocation-count
       (owned_view.compiler-owned-shared-view image.relocations)
       (cobj.CompilerObjectSectionKind.Text))
-    (compiler-object-elf-text-instr-relocation-count
-      (owned_view.compiler-owned-shared-view image))))
+    (compiler-object-elf-text-instr-relocation-count image)))
 
 (define (compiler-object-elf-image-supported?
   [image : cobj.CompilerObjectImage]) : bool
@@ -921,14 +912,14 @@
     (compiler-object-elf-push-shstrtab-name! out ".shstrtab")
     (compiler-object-elf-push-shstrtab-name! out ".note.GNU-stack")))
 
-(define (compiler-object-elf-text-offset [_image : cobj.CompilerObjectImage]) : i64
+(define (compiler-object-elf-text-offset
+  [_image : (& _image cobj.CompilerObjectImage)]) : i64
   (compiler-object-elf-align-offset compiler-object-elf-header-size 16))
 
 (define (compiler-object-elf-data-offset [image : cobj.CompilerObjectImage]) : i64
   (compiler-object-elf-align-offset
     (+
-      (compiler-object-elf-text-offset
-        (owned_view.compiler-owned-shared-view image))
+      (compiler-object-elf-text-offset image)
       (compiler-object-elf-section-raw-size
         image
         (cobj.CompilerObjectSectionKind.Text)))
@@ -1131,15 +1122,11 @@
           aligned))]
     [(cobj.CompilerObjectDataRecord.Bytes bytes)
       (begin
-        (compiler-object-elf-push-string-bytes!
-          out
-          (owned_view.compiler-owned-shared-view bytes))
+        (compiler-object-elf-push-string-bytes! out bytes)
         (+ offset (compiler-object-elf-string-length bytes)))]
     [(cobj.CompilerObjectDataRecord.String text)
       (begin
-        (compiler-object-elf-push-string-bytes!
-          out
-          (owned_view.compiler-owned-shared-view text))
+        (compiler-object-elf-push-string-bytes! out text)
         (compiler-object-elf-push-u8! out 0)
         (compiler-object-elf-data-record-end-offset
           (cobj.CompilerObjectDataRecord.String text)
@@ -1352,8 +1339,7 @@
   (begin
     (compiler-object-elf-render-padding-to!
       out
-      (compiler-object-elf-text-offset
-        (owned_view.compiler-owned-shared-view image)))
+      (compiler-object-elf-text-offset image))
     (compiler-object-elf-render-section!
       out
       (owned_view.compiler-owned-shared-view image)
@@ -1588,11 +1574,7 @@
     (owned_view.compiler-owned-shared-view image.sections)
     (cobj.CompilerObjectSectionKind.Text))
     [(cobj.CompilerObjectSection.Section _ _ instrs)
-      (compiler-object-elf-render-text-instr-relocations!
-        out
-        (owned_view.compiler-owned-shared-view image)
-        instrs
-        0)]))
+      (compiler-object-elf-render-text-instr-relocations! out image instrs 0)]))
 
 (define (compiler-object-elf-render-relocations-for-section!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
@@ -1645,7 +1627,7 @@
 
 (define (compiler-object-elf-symbol-string-offset-from
   [symbols : cobj.CompilerObjectSymbolList]
-  [name : String]
+  [name : (& name str)]
   [offset : i64]) : i64
   (let
     [count : i64
@@ -1674,7 +1656,7 @@
 
 (define (compiler-object-elf-symbol-string-offset
   [image : cobj.CompilerObjectImage]
-  [name : String]) : i64
+  [name : (& name str)]) : i64
   (compiler-object-elf-symbol-string-offset-from image.symbols name 1))
 
 (define (compiler-object-elf-symbol-binding
@@ -1733,7 +1715,7 @@
           out
           (compiler-object-elf-symbol-string-offset
             (owned_view.compiler-owned-shared-view image)
-            (owned_view.compiler-owned-shared-view name)))
+            name))
         (compiler-object-elf-push-u8!
           out
           (compiler-object-elf-symbol-info binding kind))
@@ -1832,8 +1814,7 @@
       (owned_view.compiler-owned-shared-view image.symbols))
     (compiler-object-elf-render-padding-to!
       out
-      (compiler-object-elf-shstrtab-offset
-        (owned_view.compiler-owned-shared-view image)))
+      (compiler-object-elf-shstrtab-offset image))
     (compiler-object-elf-push-shstrtab! out)))
 
 (define (compiler-object-elf-section-flags
@@ -2088,30 +2069,22 @@
         (compiler-object-elf-render-string-tables!
           (&mut out)
           (owned_view.compiler-owned-shared-view image))
-        (compiler-object-elf-push-section-headers!
-          (&mut out)
-          (owned_view.compiler-owned-shared-view image))
+        (compiler-object-elf-push-section-headers! (&mut out) image)
         (ResultCompilerObjectElf.Ok (compiler-object-elf-bytes-string (& out)))))
     (ResultCompilerObjectElf.Err
       "elf: object image contains unsupported text instructions or relocation records")))
 
-(define (compiler-object-elf-u16-at [text : String] [offset : i64]) : i64
+(define (compiler-object-elf-u16-at [text : (& text str)] [offset : i64]) : i64
   (+
-    (cast
-      (compiler-object-elf-string-ref
-        (owned_view.compiler-owned-shared-view text)
-        offset)
-      : i64)
+    (cast (compiler-object-elf-string-ref text offset) : i64)
     (shl (cast (compiler-object-elf-string-ref text (+ offset 1)) : i64) 8)))
 
-(define (compiler-object-elf-u32-at [text : String] [offset : i64]) : i64
+(define (compiler-object-elf-u32-at [text : (& text str)] [offset : i64]) : i64
   (+
-    (compiler-object-elf-u16-at
-      (owned_view.compiler-owned-shared-view text)
-      offset)
+    (compiler-object-elf-u16-at text offset)
     (shl (compiler-object-elf-u16-at text (+ offset 2)) 16)))
 
-(define (compiler-object-elf-u8-at [text : String] [offset : i64]) : i64
+(define (compiler-object-elf-u8-at [text : (& text str)] [offset : i64]) : i64
   (cast (compiler-object-elf-string-ref text offset) : i64))
 
 (define (compiler-object-elf-section-header-start
@@ -2135,7 +2108,7 @@
   (+ section-offset (* compiler-object-elf-relocation-size index)))
 
 (define (compiler-object-elf-rela-type-at
-  [text : String]
+  [text : (& text str)]
   [section-offset : i64]
   [index : i64]) : i64
   (compiler-object-elf-u32-at
@@ -2143,7 +2116,7 @@
     (+ (compiler-object-elf-rela-entry-offset section-offset index) 8)))
 
 (define (compiler-object-elf-rela-target-offset-at
-  [text : String]
+  [text : (& text str)]
   [section-offset : i64]
   [index : i64]) : i64
   (compiler-object-elf-u32-at
@@ -2151,30 +2124,22 @@
     (compiler-object-elf-rela-entry-offset section-offset index)))
 
 (define (compiler-object-elf-rela-addend-rel32?
-  [text : String]
+  [text : (& text str)]
   [section-offset : i64]
   [index : i64]) : bool
   (let
     [entry : i64 (compiler-object-elf-rela-entry-offset section-offset index)]
     (and
-      (=
-        (compiler-object-elf-u32-at
-          (owned_view.compiler-owned-shared-view text)
-          (+ entry 16))
-        0xfffffffc)
+      (= (compiler-object-elf-u32-at text (+ entry 16)) 0xfffffffc)
       (= (compiler-object-elf-u32-at text (+ entry 20)) 0xffffffff))))
 
 (define (compiler-object-elf-prefix-at?
-  [text : String]
-  [needle : String]
+  [text : (& text str)]
+  [needle : (& needle str)]
   [start : i64]) : bool
   (let
-    [text-len : i64
-      (compiler-object-elf-string-length
-        (owned_view.compiler-owned-shared-view text))]
-    [needle-len : i64
-      (compiler-object-elf-string-length
-        (owned_view.compiler-owned-shared-view needle))]
+    [text-len : i64 (compiler-object-elf-string-length text)]
+    [needle-len : i64 (compiler-object-elf-string-length needle)]
     (if (> (+ start needle-len) text-len)
       false
       (let
@@ -2184,12 +2149,8 @@
           (while ok
             (if (< i needle-len)
               (if (=
-                (compiler-object-elf-string-ref
-                  (owned_view.compiler-owned-shared-view text)
-                  (+ start i))
-                (compiler-object-elf-string-ref
-                  (owned_view.compiler-owned-shared-view needle)
-                  i))
+                (compiler-object-elf-string-ref text (+ start i))
+                (compiler-object-elf-string-ref needle i))
                 (set! i (+ i 1))
                 (set! ok false))
               (set! ok false)))
@@ -2198,17 +2159,12 @@
 (define (compiler-object-elf-contains? [text : String] [needle : String]) : bool
   (let
     [i : i64 0]
-    [n : i64
-      (compiler-object-elf-string-length
-        (owned_view.compiler-owned-shared-view text))]
+    [n : i64 (compiler-object-elf-string-length text)]
     [found : bool false]
     (begin
       (while (and (not found) (< i n))
         (begin
-          (if (compiler-object-elf-prefix-at?
-            (owned_view.compiler-owned-shared-view text)
-            (owned_view.compiler-owned-shared-view needle)
-            i)
+          (if (compiler-object-elf-prefix-at? text needle i)
             (set! found true)
             unit)
           (set! i (+ i 1))))
@@ -2416,35 +2372,12 @@
       (and
         (= after-empty 1)
         (= after-interior-nul 5)
-        (=
-          (compiler-object-elf-string-length
-            (owned_view.compiler-owned-shared-view bytes))
-          5)
-        (=
-          (compiler-object-elf-u8-at
-            (owned_view.compiler-owned-shared-view bytes)
-            0)
-          0)
-        (=
-          (compiler-object-elf-u8-at
-            (owned_view.compiler-owned-shared-view bytes)
-            1)
-          0x61)
-        (=
-          (compiler-object-elf-u8-at
-            (owned_view.compiler-owned-shared-view bytes)
-            2)
-          0)
-        (=
-          (compiler-object-elf-u8-at
-            (owned_view.compiler-owned-shared-view bytes)
-            3)
-          0x62)
-        (=
-          (compiler-object-elf-u8-at
-            (owned_view.compiler-owned-shared-view bytes)
-            4)
-          0)))))
+        (= (compiler-object-elf-string-length bytes) 5)
+        (= (compiler-object-elf-u8-at bytes 0) 0)
+        (= (compiler-object-elf-u8-at bytes 1) 0x61)
+        (= (compiler-object-elf-u8-at bytes 2) 0)
+        (= (compiler-object-elf-u8-at bytes 3) 0x62)
+        (= (compiler-object-elf-u8-at bytes 4) 0)))))
 
 (cfg
   test
@@ -2504,8 +2437,8 @@
           sections3
           (cobj.CompilerObjectSection.Section
             (cobj.CompilerObjectSectionKind.Bss)
-            (owned_view.compiler-owned-shared-view empty-data)
-            (owned_view.compiler-owned-shared-view empty-instrs)))]
+            empty-data
+            empty-instrs))]
       [symbols0 : cobj.CompilerObjectSymbolBuilder
         (cobj.compiler-object-symbol-builder-with-capacity 7)]
       [symbols1 : cobj.CompilerObjectSymbolBuilder
@@ -2648,7 +2581,7 @@
           sections0
           (cobj.CompilerObjectSection.Section
             (cobj.CompilerObjectSectionKind.Text)
-            (owned_view.compiler-owned-shared-view empty-data)
+            empty-data
             (cobj.compiler-object-instr-builder-finish text2)))]
       [sections2 : cobj.CompilerObjectSectionBuilder
         (cobj.compiler-object-section-builder-push
@@ -2670,7 +2603,7 @@
           (cobj.CompilerObjectSection.Section
             (cobj.CompilerObjectSectionKind.Bss)
             (cobj.compiler-object-data-record-builder-finish bss2)
-            (owned_view.compiler-owned-shared-view empty-instrs)))]
+            empty-instrs))]
       [symbols0 : cobj.CompilerObjectSymbolBuilder
         (cobj.compiler-object-symbol-builder-with-capacity 5)]
       [symbols1 : cobj.CompilerObjectSymbolBuilder
@@ -2738,42 +2671,21 @@
       [(ResultCompilerObjectElf.Ok obj)
         (and
           (=
-            (compiler-object-elf-string-length
-              (owned_view.compiler-owned-shared-view obj))
+            (compiler-object-elf-string-length obj)
             (+
               (compiler-object-elf-section-header-offset
                 (compiler-object-elf-smoke-image))
               (*
                 compiler-object-elf-section-header-size
                 compiler-object-elf-section-count)))
+          (= (cast (compiler-object-elf-string-ref obj 0) : i64) 0x7f)
+          (= (cast (compiler-object-elf-string-ref obj 1) : i64) 0x45)
+          (= (compiler-object-elf-u16-at obj 18) 62)
           (=
-            (cast
-              (compiler-object-elf-string-ref
-                (owned_view.compiler-owned-shared-view obj)
-                0)
-              : i64)
-            0x7f)
-          (=
-            (cast
-              (compiler-object-elf-string-ref
-                (owned_view.compiler-owned-shared-view obj)
-                1)
-              : i64)
-            0x45)
-          (=
-            (compiler-object-elf-u16-at
-              (owned_view.compiler-owned-shared-view obj)
-              18)
-            62)
-          (=
-            (compiler-object-elf-u16-at
-              (owned_view.compiler-owned-shared-view obj)
-              58)
+            (compiler-object-elf-u16-at obj 58)
             compiler-object-elf-section-header-size)
           (=
-            (compiler-object-elf-u16-at
-              (owned_view.compiler-owned-shared-view obj)
-              60)
+            (compiler-object-elf-u16-at obj 60)
             compiler-object-elf-section-count)
           (compiler-object-elf-contains?
             (owned_view.compiler-owned-shared-view obj)
@@ -2784,9 +2696,7 @@
           (compiler-object-elf-contains?
             (owned_view.compiler-owned-shared-view obj)
             "_tl_message")
-          (compiler-object-elf-contains?
-            (owned_view.compiler-owned-shared-view obj)
-            "foreign_exact"))]
+          (compiler-object-elf-contains? obj "foreign_exact"))]
       [(ResultCompilerObjectElf.Err _) false])))
 
 (cfg
@@ -2798,9 +2708,7 @@
         (owned_view.compiler-owned-shared-view image))
         [(ResultCompilerObjectElf.Ok obj)
           (let
-            [text-offset : i64
-              (compiler-object-elf-text-offset
-                (owned_view.compiler-owned-shared-view image))]
+            [text-offset : i64 (compiler-object-elf-text-offset image)]
             [rela-offset : i64
               (compiler-object-elf-rela-text-offset
                 (owned_view.compiler-owned-shared-view image))]
@@ -2814,83 +2722,38 @@
               (=
                 (compiler-object-elf-section-header-size-at
                   (owned_view.compiler-owned-shared-view obj)
-                  (owned_view.compiler-owned-shared-view image)
+                  image
                   compiler-object-elf-section-rela-text-index)
                 (* 10 compiler-object-elf-relocation-size))
+              (= (compiler-object-elf-u8-at obj text-offset) 0xe8)
+              (= (compiler-object-elf-u8-at obj (+ text-offset 26)) 0x48)
+              (= (compiler-object-elf-u8-at obj (+ text-offset 27)) 0x85)
+              (= (compiler-object-elf-u8-at obj (+ text-offset 28)) 0xc0)
               (=
-                (compiler-object-elf-u8-at
-                  (owned_view.compiler-owned-shared-view obj)
-                  text-offset)
-                0xe8)
-              (=
-                (compiler-object-elf-u8-at
-                  (owned_view.compiler-owned-shared-view obj)
-                  (+ text-offset 26))
-                0x48)
-              (=
-                (compiler-object-elf-u8-at
-                  (owned_view.compiler-owned-shared-view obj)
-                  (+ text-offset 27))
-                0x85)
-              (=
-                (compiler-object-elf-u8-at
-                  (owned_view.compiler-owned-shared-view obj)
-                  (+ text-offset 28))
-                0xc0)
-              (=
-                (compiler-object-elf-rela-target-offset-at
-                  (owned_view.compiler-owned-shared-view obj)
-                  rela-offset
-                  0)
+                (compiler-object-elf-rela-target-offset-at obj rela-offset 0)
                 1)
               (=
-                (compiler-object-elf-rela-type-at
-                  (owned_view.compiler-owned-shared-view obj)
-                  rela-offset
-                  0)
+                (compiler-object-elf-rela-type-at obj rela-offset 0)
                 compiler-object-elf-r-x86-64-plt32)
-              (compiler-object-elf-rela-addend-rel32?
-                (owned_view.compiler-owned-shared-view obj)
-                rela-offset
-                0)
+              (compiler-object-elf-rela-addend-rel32? obj rela-offset 0)
               (=
-                (compiler-object-elf-rela-target-offset-at
-                  (owned_view.compiler-owned-shared-view obj)
-                  rela-offset
-                  1)
+                (compiler-object-elf-rela-target-offset-at obj rela-offset 1)
                 8)
               (=
-                (compiler-object-elf-rela-type-at
-                  (owned_view.compiler-owned-shared-view obj)
-                  rela-offset
-                  1)
+                (compiler-object-elf-rela-type-at obj rela-offset 1)
                 compiler-object-elf-r-x86-64-pc32)
-              (compiler-object-elf-rela-addend-rel32?
-                (owned_view.compiler-owned-shared-view obj)
-                rela-offset
-                1)
+              (compiler-object-elf-rela-addend-rel32? obj rela-offset 1)
               (=
-                (compiler-object-elf-rela-target-offset-at
-                  (owned_view.compiler-owned-shared-view obj)
-                  rela-offset
-                  5)
+                (compiler-object-elf-rela-target-offset-at obj rela-offset 5)
                 36)
               (=
-                (compiler-object-elf-rela-type-at
-                  (owned_view.compiler-owned-shared-view obj)
-                  rela-offset
-                  5)
+                (compiler-object-elf-rela-type-at obj rela-offset 5)
                 compiler-object-elf-r-x86-64-pc32)
-              (compiler-object-elf-rela-addend-rel32?
-                (owned_view.compiler-owned-shared-view obj)
-                rela-offset
-                5)
+              (compiler-object-elf-rela-addend-rel32? obj rela-offset 5)
               (compiler-object-elf-contains?
                 (owned_view.compiler-owned-shared-view obj)
                 "_tl_cell")
-              (compiler-object-elf-contains?
-                (owned_view.compiler-owned-shared-view obj)
-                "foreign_exact")))]
+              (compiler-object-elf-contains? obj "foreign_exact")))]
         [(ResultCompilerObjectElf.Err _) false]))))
 
 (cfg

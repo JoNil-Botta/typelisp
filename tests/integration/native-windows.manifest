@@ -748,6 +748,6 @@ wide_power_multiply_o0|tests/integration/wide_power_multiply.tl|42|-|-|-|opt-lev
 wide_power_multiply_o1|tests/integration/wide_power_multiply.tl|42|-|-|-|opt-level:1+stage-stdlib
 wide_power_multiply_o2|tests/integration/wide_power_multiply.tl|42|-|-|-|opt-level:2+stage-stdlib
 
-factored_addresses_opt0|tests/integration/factored_addresses.tl|0|252391746\n|-|-|opt-level:0+stage-stdlib
-factored_addresses_opt1|tests/integration/factored_addresses.tl|0|252391746\n|-|-|opt-level:1+stage-stdlib
-factored_addresses_opt2|tests/integration/factored_addresses.tl|0|252391746\n|-|-|opt-level:2+stage-stdlib
+factored_addresses_opt0|tests/integration/factored_addresses.tl|0|257269108\n|-|-|opt-level:0+stage-stdlib
+factored_addresses_opt1|tests/integration/factored_addresses.tl|0|257269108\n|-|-|opt-level:1+stage-stdlib
+factored_addresses_opt2|tests/integration/factored_addresses.tl|0|257269108\n|-|-|opt-level:2+stage-stdlib

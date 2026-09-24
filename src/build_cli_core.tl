@@ -2389,7 +2389,7 @@
 
 (define (build-package-lock-list-contains-all?
   [haystack : package_lock_entry_vec.Vec]
-  [needles : package_lock_entry_vec.Vec]) : bool
+  [needles : (& needles package_lock_entry_vec.Vec)]) : bool
   (build-package-lock-list-contains-all-from haystack (& needles) 0))
 
 (define (build-package-lock-list-contains-all-from
@@ -2409,7 +2409,7 @@
 
 (define (build-package-lock-list-eq?
   [left : package_lock_entry_vec.Vec]
-  [right : package_lock_entry_vec.Vec]) : bool
+  [right : (& right package_lock_entry_vec.Vec)]) : bool
   (and
     (=
       (package_lock_entry_vec.len (& left))
@@ -2419,7 +2419,7 @@
 (define (build-package-lock-policy-check
   [policy : BuildPackageLockPolicy]
   [lock-state : BuildPackageLockState]
-  [resolved : BuildResolvedPkgDeps]) : ResultBuildString
+  [resolved : (& resolved BuildResolvedPkgDeps)]) : ResultBuildString
   (if (build-package-lock-policy-locked? policy)
     (if (and resolved.has-remote (not lock-state.has-lock))
       (ResultBuildString.Err
@@ -2530,7 +2530,7 @@
                 (match (build-package-lock-policy-check
                   lock-policy
                   (owned_view.compiler-owned-shared-view lock-state)
-                  (owned_view.compiler-owned-shared-view resolved))
+                  resolved)
                   [(ResultBuildString.Err message)
                     (ResultBuildManifest.Err message)]
                   [(ResultBuildString.Ok _)
@@ -2553,10 +2553,11 @@
 (define (build-package-normalize-manifest-path [manifest-path : String]) : String
   (load.compiler-load-normalize-path manifest-path))
 
-(define (build-package-graph-node-vec-len [v : BuildPackageGraphNodeVec]) : i64
+(define (build-package-graph-node-vec-len [v : (& v BuildPackageGraphNodeVec)]) : i64
   v.len)
 
-(define (build-package-graph-node-vec-capacity [v : BuildPackageGraphNodeVec]) : i64
+(define (build-package-graph-node-vec-capacity
+  [v : (& v BuildPackageGraphNodeVec)]) : i64
   (array-length v.slots))
 
 (define (build-package-graph-node-vec-with-capacity [capacity : i64]) : BuildPackageGraphNodeVec
@@ -2576,7 +2577,7 @@
   (array-ref v.slots index))
 
 (define (build-package-graph-node-vec-copy-range!
-  [dst : (__tl_dyn-array BuildPackageGraphNode)]
+  [dst : (&mut dst (__tl_dyn-array BuildPackageGraphNode))]
   [src : (__tl_dyn-array BuildPackageGraphNode)]
   [count : i64]) : unit
   (let
@@ -2588,40 +2589,26 @@
 
 (define (build-package-graph-node-vec-grow [v : BuildPackageGraphNodeVec]) : BuildPackageGraphNodeVec
   (let
-    [count : i64
-      (build-package-graph-node-vec-len
-        (owned_view.compiler-owned-shared-view v))]
+    [count : i64 (build-package-graph-node-vec-len v)]
     [bigger : (__tl_dyn-array BuildPackageGraphNode)
       (__tl_make-array
         BuildPackageGraphNode
-        (*
-          (build-package-graph-node-vec-capacity
-            (owned_view.compiler-owned-shared-view v))
-          2))]
+        (* (build-package-graph-node-vec-capacity v) 2))]
     (begin
-      (build-package-graph-node-vec-copy-range!
-        (owned_view.compiler-owned-shared-view bigger)
-        v.slots
-        count)
+      (build-package-graph-node-vec-copy-range! (&mut bigger) v.slots count)
       (BuildPackageGraphNodeVec bigger count))))
 
 (define (build-package-graph-node-vec-push
   [v : BuildPackageGraphNodeVec]
   [node : BuildPackageGraphNode]) : BuildPackageGraphNodeVec
   (if (<
-    (build-package-graph-node-vec-len (owned_view.compiler-owned-shared-view v))
-    (build-package-graph-node-vec-capacity
-      (owned_view.compiler-owned-shared-view v)))
+    (build-package-graph-node-vec-len v)
+    (build-package-graph-node-vec-capacity v))
     (let
       [slots : (__tl_dyn-array BuildPackageGraphNode)
         (owned_view.compiler-owned-shared-view v.slots)]
       (begin
-        (set!
-          (array-ref
-            slots
-            (build-package-graph-node-vec-len
-              (owned_view.compiler-owned-shared-view v)))
-          node)
+        (set! (array-ref slots (build-package-graph-node-vec-len v)) node)
         (BuildPackageGraphNodeVec
           slots
           (+ (build-package-graph-node-vec-len v) 1))))
@@ -3703,10 +3690,7 @@
 (define (build-package-validate-graph-checkouts-from
   [nodes : BuildPackageGraphNodeVec]
   [index : i64]) : ResultBuildString
-  (if (>=
-    index
-    (build-package-graph-node-vec-len
-      (owned_view.compiler-owned-shared-view nodes)))
+  (if (>= index (build-package-graph-node-vec-len nodes))
     (ResultBuildString.Ok "")
     (match (build-package-validate-graph-node-checkout
       (build-package-graph-node-vec-at
@@ -3725,11 +3709,7 @@
   [profile : BuildProfile]
   [target : backend.CompilerBackendTarget]) : process.ProcessStringList
   (let
-    [index : i64
-      (-
-        (build-package-graph-node-vec-len
-          (owned_view.compiler-owned-shared-view nodes))
-        1)]
+    [index : i64 (- (build-package-graph-node-vec-len nodes) 1)]
     [libs : process.ProcessStringList (process.args-empty)]
     (begin
       (while (>= index 0)
@@ -3753,9 +3733,7 @@
   [profile : BuildProfile]) : process.ProcessStringList
   (let
     [index : i64 0]
-    [count : i64
-      (build-package-graph-node-vec-len
-        (owned_view.compiler-owned-shared-view nodes))]
+    [count : i64 (build-package-graph-node-vec-len nodes)]
     [paths : process.ProcessStringList (process.args-empty)]
     (begin
       (while (< index count)
@@ -3782,7 +3760,7 @@
       (load.compiler-load-join-root-path manifest-dir dep.path))))
 
 (define (build-package-catalog-deps-contain-root?
-  [deps : load.CompilerPkgDepList]
+  [deps : (& deps load.CompilerPkgDepList)]
   [count : i64]
   [manifest-dir : String]
   [root : String]) : bool
@@ -3808,9 +3786,7 @@
   [direct-deps : load.CompilerPkgDepList]) : load.CompilerPkgDepList
   (let
     [index : i64 0]
-    [count : i64
-      (build-package-graph-node-vec-len
-        (owned_view.compiler-owned-shared-view nodes))]
+    [count : i64 (build-package-graph-node-vec-len nodes)]
     [direct-count : i64 (load.compiler-pkg-dep-list-count (& direct-deps))]
     [deps : load.CompilerPkgDepList direct-deps]
     (begin
@@ -3828,7 +3804,7 @@
             ;; roots. Only direct manifest requests need comparison here so
             ;; their aliases and duplicate request telemetry stay intact.
             (if (build-package-catalog-deps-contain-root?
-              (owned_view.compiler-owned-shared-view deps)
+              deps
               direct-count
               (owned_view.compiler-owned-shared-view manifest-dir)
               (owned_view.compiler-owned-shared-view root))
@@ -3959,10 +3935,7 @@
           first
           (backend.CompilerBackendTarget.Windows)))]
     (and
-      (=
-        (build-package-graph-node-vec-len
-          (owned_view.compiler-owned-shared-view nodes))
-        3)
+      (= (build-package-graph-node-vec-len nodes) 3)
       (string.eq
         (__tl-project-field
           (build-package-graph-node-vec-at nodes 0)
@@ -4602,7 +4575,7 @@
   [owned-path : String]
   [module : String]
   [package-name : String]
-  [owned-sources : build_string_i64_map.Map]
+  [owned-sources : (& owned-sources build_string_i64_map.Map)]
   [out : (&mut out cli_svec.Vec)]
   [captures
     : (&mut captures compiler_tlci_native_producer.TlciNativeMacroCaptures)]) : unit
@@ -4650,7 +4623,7 @@
         captures)]
     [_ unit]))
 
-(define (build-package-tlci-source-map [sources : cli_svec.Vec]) : build_string_i64_map.Map
+(define (build-package-tlci-source-map [sources : (& sources cli_svec.Vec)]) : build_string_i64_map.Map
   (let
     [out : build_string_i64_map.Map
       (build_string_i64_map.with-capacity
@@ -4668,7 +4641,7 @@
       out)))
 
 (define (build-package-tlci-source-owned?
-  [owned-sources : build_string_i64_map.Map]
+  [owned-sources : (& owned-sources build_string_i64_map.Map)]
   [path : String]) : bool
   (match (build_string_i64_map.get
     (& owned-sources)
@@ -4682,7 +4655,7 @@
   [fallback-path : String]
   [initial-module : String]
   [package-name : String]
-  [owned-sources : build_string_i64_map.Map]
+  [owned-sources : (& owned-sources build_string_i64_map.Map)]
   [out : (&mut out cli_svec.Vec)]
   [captures
     : (&mut captures compiler_tlci_native_producer.TlciNativeMacroCaptures)]) : unit
@@ -4704,7 +4677,7 @@
                 [(ast.AstDeclPathListStep.Cons path _) path])]
             [owned-path : String
               (if (build-package-tlci-source-owned?
-                (owned_view.compiler-owned-shared-view owned-sources)
+                owned-sources
                 (owned_view.compiler-owned-shared-view decl-path))
                 decl-path
                 "")]
@@ -4717,7 +4690,7 @@
                     owned-path
                     (owned_view.compiler-owned-shared-view module)
                     (owned_view.compiler-owned-shared-view package-name)
-                    (owned_view.compiler-owned-shared-view owned-sources)
+                    owned-sources
                     out
                     captures)])
               (set! decl-cursor rest)
@@ -4858,7 +4831,7 @@
   [initial-module : String]
   [package-name : String]
   [mode : backend.CompilerBackendMode]
-  [owned-sources : build_string_i64_map.Map]
+  [owned-sources : (& owned-sources build_string_i64_map.Map)]
   [collector : BuildPackageTlciCallableCollector]) : BuildPackageTlciCallableCollector
   (let
     [decl-cursor : ast.AstDeclList decls]
@@ -4880,7 +4853,7 @@
                   [(ast.AstDeclPathListStep.Cons path _) path])]
               [owned-path : String
                 (if (build-package-tlci-source-owned?
-                  (owned_view.compiler-owned-shared-view owned-sources)
+                  owned-sources
                   (owned_view.compiler-owned-shared-view decl-path))
                   decl-path
                   "")]
@@ -4897,7 +4870,7 @@
                         (ci.intern-str nested-module)
                         (owned_view.compiler-owned-shared-view package-name)
                         mode
-                        (owned_view.compiler-owned-shared-view owned-sources)
+                        owned-sources
                         current))]
                   [_
                     (set!
@@ -4918,7 +4891,7 @@
       current)))
 
 (define (build-package-tlci-callable-collector
-  [source-set : package_source_core.PackageSourceSet]
+  [source-set : (& source-set package_source_core.PackageSourceSet)]
   [manifest : load.CompilerPkgManifest]
   [mode : backend.CompilerBackendMode]
   [decls : ast.AstDeclList]
@@ -5046,7 +5019,7 @@
   (let
     [collector : BuildPackageTlciCallableCollector
       (build-package-tlci-callable-collector
-        (owned_view.compiler-owned-shared-view source-set)
+        source-set
         (owned_view.compiler-owned-shared-view manifest)
         mode
         (owned_view.compiler-owned-shared-view decls)
@@ -7837,7 +7810,7 @@
 
 (define (build-package-worker-append-stdlib-roots
   [args : process.ProcessStringList]
-  [roots : cli_svec.Vec]) : process.ProcessStringList
+  [roots : (& roots cli_svec.Vec)]) : process.ProcessStringList
   (let
     [i : i64 0]
     [n : i64 (cli_svec.len (& roots))]
@@ -7917,7 +7890,7 @@
   [mode : backend.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [resolved-deps : load.CompilerPkgDepList]
-  [stdlib-roots : cli_svec.Vec]) : process.ProcessStringList
+  [stdlib-roots : (& stdlib-roots cli_svec.Vec)]) : process.ProcessStringList
   (let
     [args0 : process.ProcessStringList
       (build-package-worker-command-prefix (process.args-empty))]
@@ -7962,7 +7935,7 @@
   [profile : BuildProfile]
   [mode : backend.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
-  [stdlib-roots : cli_svec.Vec]) : process.ProcessStringList
+  [stdlib-roots : (& stdlib-roots cli_svec.Vec)]) : process.ProcessStringList
   (build-package-worker-args-with-flag
     "--package-worker"
     manifest-path
@@ -7981,7 +7954,7 @@
   [profile : BuildProfile]
   [mode : backend.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
-  [stdlib-roots : cli_svec.Vec]) : process.ProcessCommand
+  [stdlib-roots : (& stdlib-roots cli_svec.Vec)]) : process.ProcessCommand
   (process.command
     (io.arg 0)
     (build-package-worker-args
@@ -8001,7 +7974,7 @@
   [mode : backend.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [resolved-deps : load.CompilerPkgDepList]
-  [stdlib-roots : cli_svec.Vec]) : process.ProcessCommand
+  [stdlib-roots : (& stdlib-roots cli_svec.Vec)]) : process.ProcessCommand
   (process.command
     (io.arg 0)
     (build-package-worker-args-with-flag
@@ -8046,7 +8019,7 @@
       mode
       lock-policy
       resolved-deps
-      (owned_view.compiler-owned-shared-view stdlib-roots)))
+      stdlib-roots))
     [(process.OkProcessOutput output)
       (begin
         (build_run_core.source-tool-forward-output
@@ -8230,7 +8203,7 @@
       built)))
 
 (define (build-package-node-scheduled?
-  [scheduled : build_string_i64_map.Map]
+  [scheduled : (& scheduled build_string_i64_map.Map)]
   [manifest-path : String]) : bool
   (match (build_string_i64_map.get (& scheduled) manifest-path)
     [(build_string_i64_map.LookupFound _) true]
@@ -8265,7 +8238,7 @@
   [profile : BuildProfile]
   [mode : backend.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
-  [stdlib-roots : cli_svec.Vec]) : ResultBuildPackageGraphWorker
+  [stdlib-roots : (& stdlib-roots cli_svec.Vec)]) : ResultBuildPackageGraphWorker
   (let
     [manifest-path : String
       (owned_view.compiler-owned-shared-view node.manifest-path)]
@@ -8330,7 +8303,7 @@
         (owned_view.compiler-owned-shared-view node.manifest-path)]
       (if (or
         (build-package-node-scheduled?
-          (owned_view.compiler-owned-shared-view scheduled)
+          scheduled
           (owned_view.compiler-owned-shared-view manifest-path))
         (not
           (build-package-node-ready?
@@ -8356,7 +8329,7 @@
           profile
           mode
           lock-policy
-          (owned_view.compiler-owned-shared-view stdlib-roots))
+          stdlib-roots)
           [(ResultBuildPackageGraphWorker.Err message)
             (ResultBuildPackageSchedulePass.Err message)]
           [(ResultBuildPackageGraphWorker.Ok worker)
@@ -8387,9 +8360,7 @@
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]) : ResultBuildPackageSchedulePass
   (let
-    [count : i64
-      (build-package-graph-node-vec-len
-        (owned_view.compiler-owned-shared-view nodes))]
+    [count : i64 (build-package-graph-node-vec-len nodes)]
     (build-package-schedule-pass-with
       nodes
       scheduled
@@ -8406,12 +8377,10 @@
 
 (define (build-package-all-built?
   [nodes : BuildPackageGraphNodeVec]
-  [built : build_string_i64_map.Map]) : bool
+  [built : (& built build_string_i64_map.Map)]) : bool
   (let
     [index : i64 0]
-    [count : i64
-      (build-package-graph-node-vec-len
-        (owned_view.compiler-owned-shared-view nodes))]
+    [count : i64 (build-package-graph-node-vec-len nodes)]
     [all-built : bool true]
     (begin
       (while (and all-built (< index count))
@@ -8554,7 +8523,7 @@
   [built : build_string_i64_map.Map]) : i64
   (if (build-package-all-built?
     (owned_view.compiler-owned-shared-view nodes)
-    (owned_view.compiler-owned-shared-view built))
+    built)
     0
     (match (build-package-schedule-pass
       (owned_view.compiler-owned-shared-view nodes)
@@ -8624,9 +8593,7 @@
   [announce : bool]) : i64
   (let
     [index : i64 0]
-    [count : i64
-      (build-package-graph-node-vec-len
-        (owned_view.compiler-owned-shared-view nodes))]
+    [count : i64 (build-package-graph-node-vec-len nodes)]
     [status : i64 0]
     (begin
       (while (and (= status 0) (< index count))

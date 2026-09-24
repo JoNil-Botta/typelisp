@@ -122,7 +122,7 @@
       modules)))
 
 (define (doc-modules-from-package-sources-relative-from
-  [paths : doc_svec.Vec]
+  [paths : (& paths doc_svec.Vec)]
   [root : String]
   [index : i64]
   [modules : (&mut modules doc_module_vec.Vec)]) : unit
@@ -147,7 +147,7 @@
           modules)))))
 
 (define (doc-modules-from-package-source-set
-  [source-set : package_source_core.PackageSourceSet]) : doc_module_vec.Vec
+  [source-set : (& source-set package_source_core.PackageSourceSet)]) : doc_module_vec.Vec
   (let
     [root : String
       (compiler_load.compiler-load-normalize-path source-set.manifest-dir)]
@@ -509,8 +509,7 @@
         [source-identity : String
           (doc_local_site.doc-local-site-source-identity source-digest)]
         [modules : doc_module_vec.Vec
-          (doc-modules-from-package-source-set
-            (owned_view.compiler-owned-shared-view source-set))]
+          (doc-modules-from-package-source-set source-set)]
         (if (not (doc-ensure-directory target-dir))
           1
           (if (not (doc-ensure-directory output-dir))
@@ -628,7 +627,7 @@
       roots)))
 
 (define (doc-modules-from-input-paths-before-last
-  [paths : doc_svec.Vec]
+  [paths : (& paths doc_svec.Vec)]
   [index : i64]
   [last-index : i64]) : doc_module_vec.Vec
   (let
@@ -653,7 +652,7 @@
     [output-path : String (doc_svec.last (& paths) "")]
     [modules : doc_module_vec.Vec
       (doc-modules-from-input-paths-before-last
-        (owned_view.compiler-owned-shared-view paths)
+        paths
         0
         (- (doc_svec.len (& paths)) 1))]
     (begin
@@ -877,7 +876,7 @@
       (DocMaybeString.No))))
 
 (define (doc-test-files-from
-  [input-paths : doc_svec.Vec]
+  [input-paths : (& input-paths doc_svec.Vec)]
   [index : i64]
   [stdlib-roots : doc_svec.Vec]
   [print-headers : bool]
@@ -909,7 +908,7 @@
           status)))))
 
 (define (doc-test-files
-  [input-paths : doc_svec.Vec]
+  [input-paths : (& input-paths doc_svec.Vec)]
   [stdlib-roots : doc_svec.Vec]
   [print-headers : bool]
   [status : i64]) : i64
@@ -1210,7 +1209,7 @@
                     (tc.tc-prefix-snapshot-cache-clear!)
                     unit)
                   (doc-test-files
-                    (owned_view.compiler-owned-shared-view input-paths)
+                    input-paths
                     stdlib-roots
                     (> (doc_svec.len (& input-paths)) 1)
                     0))]

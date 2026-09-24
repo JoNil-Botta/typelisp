@@ -5222,9 +5222,11 @@
             (compiler_backend.compiler-backend-string-contains?
               (owned_view.compiler-owned-shared-view asm)
               "    cmpq %r11, %rax\n"))
+          ;; COLD-1: the passing check falls through; the abort stub is
+          ;; out of line at the end of the function.
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
-            "    jb .Lf0_str_bounds_ok")
+            "    jae .Lf0_str_bounds_ok.0.cold\n.Lf0_str_bounds_ok.0:\n")
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
             "    call tl_oob_abort")
@@ -5256,7 +5258,7 @@
         (not
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
-            "    jl .Lf0_str_bounds_ok"))
+            "    jge .Lf0_str_bounds_ok"))
         (not
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
@@ -13193,6 +13195,102 @@
         (compiler_backend.compiler-backend-peephole-text-buf-once chunks))]
     (string.eq legacy chunked)))
 
+;; COLD-1: the render moves each abort stub behind its function and inverts
+;; the check's branch; a guard that is not a pure abort stub stays inline.
+(define (compiler-backend-cold-split-source) : String
+  (str_cat.str-cat
+    ".text\n.globl f\n    .type f,@function\nf:\n"
+    "    cmpq %r9, %rdi\n    jb .Lf0_bounds_ok.1\n"
+    "    pushq %r9\n    pushq %rdi\n"
+    "    leaq .L_tl_abort_site_1_bounds(%rip), %rdi\n"
+    "    popq %rsi\n    popq %rdx\n    call tl_oob_abort_at\n"
+    "    jmp .L_tl_abort_site_1_bounds_end\n    .balign 8\n"
+    ".L_tl_abort_site_1_bounds:\n    .quad 7\n"
+    ".L_tl_abort_site_1_bounds_end:\n.Lf0_bounds_ok.1:\n"
+    "    testq %r8, %r8\n    jne 1f\n    call tl_div_abort\n1:\n"
+    "    cmpq $0, %rax\n    jb .Lf0_mixed\n    testq %rcx, %rcx\n"
+    "    jne .Lf0_mixed\n    call tl_oob_abort\n.Lf0_mixed:\n"
+    "    cmpq $5, %rax\n    jb .Lf0_calls\n    call helper\n"
+    "    call tl_oob_abort\n.Lf0_calls:\n"
+    "    cmpq $3, %rax\n    jne .Lf0_keep\n    movq $1, %rax\n"
+    ".Lf0_keep:\n    ret\n    .size f, . - f\n"))
+
+(define (compiler-backend-cold-split-ok?) : bool
+  (let
+    [out : String
+      (text_buf.render
+        (compiler_backend.compiler-backend-peephole-text-buf-once
+          (text_buf.append
+            (text_buf.empty)
+            (compiler-backend-cold-split-source))))]
+    [ret-at : i64
+      (compiler_backend.compiler-backend-string-find-from
+        (owned_view.compiler-owned-shared-view out)
+        "    ret\n"
+        0)]
+    [bounds-stub-at : i64
+      (compiler_backend.compiler-backend-string-find-from
+        (owned_view.compiler-owned-shared-view out)
+        ".Lf0_bounds_ok.1.cold:\n    pushq %r9\n"
+        0)]
+    [div-stub-at : i64
+      (compiler_backend.compiler-backend-string-find-from
+        (owned_view.compiler-owned-shared-view out)
+        ".Lf0_bounds_ok.1.stub1.cold:\n    call tl_div_abort\n.Lf0_mixed.cold:\n"
+        0)]
+    [size-at : i64
+      (compiler_backend.compiler-backend-string-find-from
+        (owned_view.compiler-owned-shared-view out)
+        "    .size f, . - f\n"
+        0)]
+    (and
+      ;; Named continuation: the passing check falls through.
+      (compiler_backend.compiler-backend-string-contains?
+        (owned_view.compiler-owned-shared-view out)
+        "    cmpq %r9, %rdi\n    jae .Lf0_bounds_ok.1.cold\n.Lf0_bounds_ok.1:\n    testq %r8, %r8\n")
+      ;; Numeric `1:` without a site label: named after the closest preceding
+      ;; label, with `1:` kept in place.
+      (compiler_backend.compiler-backend-string-contains?
+        (owned_view.compiler-owned-shared-view out)
+        "    je .Lf0_bounds_ok.1.stub1.cold\n1:\n    cmpq $0, %rax\n")
+      ;; A guard whose skipped text holds a conditional jump is no stub; the
+      ;; inner guard it skips is one, and still moves. A returning call in the
+      ;; skipped text disqualifies it, and an ordinary branch is no guard:
+      ;; both stay exactly as emitted.
+      (compiler_backend.compiler-backend-string-contains?
+        (owned_view.compiler-owned-shared-view out)
+        "    jb .Lf0_mixed\n    testq %rcx, %rcx\n    je .Lf0_mixed.cold\n.Lf0_mixed:\n")
+      (compiler_backend.compiler-backend-string-contains?
+        (owned_view.compiler-owned-shared-view out)
+        "    jb .Lf0_calls\n    call helper\n    call tl_oob_abort\n.Lf0_calls:\n")
+      (compiler_backend.compiler-backend-string-contains?
+        (owned_view.compiler-owned-shared-view out)
+        "    jne .Lf0_keep\n    movq $1, %rax\n")
+      ;; The stubs, descriptor data included, sit after the last hot
+      ;; instruction and inside the function's `.size` range. The abort call
+      ;; never returns, so nothing follows it but the descriptor: no jump over
+      ;; the descriptor, no jump back to the continuation, and no `.back`
+      ;; label for one.
+      (compiler_backend.compiler-backend-string-contains?
+        (owned_view.compiler-owned-shared-view out)
+        "    call tl_oob_abort_at\n    .balign 8\n.L_tl_abort_site_1_bounds:\n    .quad 7\n.Lf0_bounds_ok.1.stub1.cold:\n")
+      (not
+        (compiler_backend.compiler-backend-string-contains?
+          (owned_view.compiler-owned-shared-view out)
+          "_bounds_end"))
+      (not
+        (compiler_backend.compiler-backend-string-contains?
+          (owned_view.compiler-owned-shared-view out)
+          ".back"))
+      (> ret-at 0)
+      (> bounds-stub-at ret-at)
+      (> div-stub-at bounds-stub-at)
+      (> size-at div-stub-at)
+      (not
+        (compiler_backend.compiler-backend-string-contains?
+          (owned_view.compiler-owned-shared-view out)
+          "    jb .Lf0_bounds_ok.1\n")))))
+
 ;; Compare the final streaming path against the former raw-buffer -> whole
 ;; peephole -> sweep sequence on the same lowered program. Re-lowering resets
 ;; the recorded FPO sweep metadata before the streaming run.
@@ -15276,6 +15374,7 @@ g:
     (compiler-backend-deadstore-sweep-win64-ok?)
     (compiler-backend-r10-dead-scan-long-gap-ok?)
     (compiler-backend-chunked-peephole-equivalent?)
+    (compiler-backend-cold-split-ok?)
     (compiler-backend-peephole-flags-branch-ok?)
     (compiler-backend-streamed-final-output-equivalent?)
     (compiler-backend-streamed-final-batch-equivalent?)
@@ -16156,6 +16255,49 @@ g:
           (string.eq asm "    movq %r12, %r13\n    negq %r13\n")]
         [(compiler_backend.ResultCompilerBackend.Err _) false])
       (compiler-backend-word-scratch-staging-ok?))))
+
+;; BITLEN: `bit_length` is `bsr` + 1 in place, 0 for a value with no
+;; significant bit (<= 0 signed, 0 unsigned), with no scratch register.
+(define (compiler-backend-bit-length-ok?) : bool
+  (let
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    (and
+      (string.eq
+        (compiler_backend.compiler-backend-bit-length-reg-asm true "%rax")
+        "    testq %rax, %rax\n    jle 1f\n    bsrq %rax, %rax\n    addq $1, %rax\n    jmp 2f\n1:\n    xorq %rax, %rax\n2:\n")
+      (string.eq
+        (compiler_backend.compiler-backend-bit-length-reg-asm false "%r9")
+        "    testq %r9, %r9\n    je 1f\n    bsrq %r9, %r9\n    addq $1, %r9\n    jmp 2f\n1:\n    xorq %r9, %r9\n2:\n")
+      (match (compiler_backend.compiler-backend-emit-unop
+        (compiler_regalloc.compiler-reg-assignment-table-empty)
+        1
+        (compiler_ir_types.CompilerIrUnOp.BitLength)
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ast_types.AstType.I64)
+        backend-state)
+        [(compiler_backend.ResultCompilerBackend.Ok asm)
+          (and
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view asm)
+              "    jle 1f\n    bsrq ")
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view asm)
+              "\n2:\n"))]
+        [(compiler_backend.ResultCompilerBackend.Err _) false])
+      (match (compiler_backend.compiler-backend-emit-unop
+        (compiler_regalloc.compiler-reg-assignment-table-empty)
+        1
+        (compiler_ir_types.CompilerIrUnOp.BitLength)
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ast_types.AstType.U64)
+        backend-state)
+        [(compiler_backend.ResultCompilerBackend.Ok asm)
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            "    je 1f\n    bsrq ")]
+        [(compiler_backend.ResultCompilerBackend.Err _) false]))))
 
 (define (compiler-backend-call-return-program) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
@@ -33059,6 +33201,157 @@ g:
             "    cmpb ")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
+;; M6-J: `gep ; load ; compare AT THE LOAD'S OWN WIDTH ; branch` -- no widening
+;; cast, the shape a `char`/`u8` scanner has. Var 3 is the loaded value and Var 4
+;; the register-homed (%r14) other operand, as in the M6-C fixture.
+(define (compiler-backend-cmp-mem-direct-asm
+  [ty : compiler_ast_types.AstType]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [lhs : compiler_ir_types.CompilerIrValue]
+  [rhs : compiler_ir_types.CompilerIrValue]) : compiler_backend.ResultCompilerBackend
+  (compiler-backend-emit-test-instrs
+    (compiler-backend-test-instr-seq-prepend
+      (compiler_ir_types.CompilerIrInstr.Gep
+        2
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        (owned_view.compiler-owned-shared-view ty))
+      (compiler-backend-test-instr-seq-prepend
+        (compiler_ir_types.CompilerIrInstr.Load
+          3
+          (compiler_ir_types.CompilerIrValue.Var 2)
+          (owned_view.compiler-owned-shared-view ty))
+        (compiler-backend-test-instr-seq-prepend
+          (compiler_ir_types.CompilerIrInstr.BinOp 5 op lhs rhs ty)
+          (compiler-backend-test-instr-seq-prepend
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 5)
+              (compiler_ir_types.compiler-ir-label "hit")
+              (compiler_ir_types.compiler-ir-label "miss"))
+            (compiler_ir_types.compiler-ir-instr-seq-empty)))))
+    (compiler-backend-cmp-mem-fold-assignments)
+    8))
+
+(define (compiler-backend-cmp-mem-direct-has? [asm : String] [want : String]) : bool
+  (compiler_backend.compiler-backend-string-contains? asm want))
+
+;; A `char` compared with a char literal reads the byte in place:
+;; `movzbq (mem), %r13 ; cmpb $47, %r13b` becomes `cmpb $47, (mem)`.
+(define (compiler-backend-cmp-mem-direct-char-fold-ok?) : bool
+  (match (compiler-backend-cmp-mem-direct-asm
+    (compiler_ast_types.AstType.Char)
+    (compiler_ir_types.CompilerIrBinOp.Ne)
+    (compiler_ir_types.CompilerIrValue.Var 3)
+    (compiler_ir_types.CompilerIrValue.Char '/'))
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (and
+        (compiler-backend-cmp-mem-direct-has?
+          (owned_view.compiler-owned-shared-view asm)
+          "    cmpb $47, (%r12,%r8,1)\n")
+        (not
+          (compiler-backend-cmp-mem-direct-has?
+            (owned_view.compiler-owned-shared-view asm)
+            "    movzbq ")))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+;; Unlike M6-C, an ORDERED compare folds too: the compare already runs at the
+;; byte width and its own (unsigned) jcc, so only the operand source changes.
+(define (compiler-backend-cmp-mem-direct-ordered-fold-ok?) : bool
+  (match (compiler-backend-cmp-mem-direct-asm
+    (compiler_ast_types.AstType.U8)
+    (compiler_ir_types.CompilerIrBinOp.Lt)
+    (compiler_ir_types.CompilerIrValue.Var 3)
+    (compiler_ir_types.CompilerIrValue.I64 10))
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (and
+        (compiler-backend-cmp-mem-direct-has?
+          (owned_view.compiler-owned-shared-view asm)
+          "    cmpb $10, (%r12,%r8,1)\n")
+        (or
+          (compiler-backend-cmp-mem-direct-has?
+            (owned_view.compiler-owned-shared-view asm)
+            "    jb ")
+          (compiler-backend-cmp-mem-direct-has?
+            (owned_view.compiler-owned-shared-view asm)
+            "    jae "))
+        (not
+          (compiler-backend-cmp-mem-direct-has?
+            (owned_view.compiler-owned-shared-view asm)
+            "    movzbq ")))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+;; A register other operand is spelled at the byte width, on whichever side
+;; the IR compare put it: `cmpb %r14b, (mem)` for `mem != r`, and
+;; `cmpb (mem), %r14b` for the ordered `r < mem`.
+(define (compiler-backend-cmp-mem-direct-register-fold-ok?) : bool
+  (and
+    (match (compiler-backend-cmp-mem-direct-asm
+      (compiler_ast_types.AstType.U8)
+      (compiler_ir_types.CompilerIrBinOp.Ne)
+      (compiler_ir_types.CompilerIrValue.Var 3)
+      (compiler_ir_types.CompilerIrValue.Var 4))
+      [(compiler_backend.ResultCompilerBackend.Ok asm)
+        (and
+          (compiler-backend-cmp-mem-direct-has?
+            (owned_view.compiler-owned-shared-view asm)
+            "    cmpb %r14b, (%r12,%r8,1)\n")
+          (not
+            (compiler-backend-cmp-mem-direct-has?
+              (owned_view.compiler-owned-shared-view asm)
+              "    movzbq ")))]
+      [(compiler_backend.ResultCompilerBackend.Err _) false])
+    (match (compiler-backend-cmp-mem-direct-asm
+      (compiler_ast_types.AstType.U8)
+      (compiler_ir_types.CompilerIrBinOp.Lt)
+      (compiler_ir_types.CompilerIrValue.Var 4)
+      (compiler_ir_types.CompilerIrValue.Var 3))
+      [(compiler_backend.ResultCompilerBackend.Ok asm)
+        (and
+          (compiler-backend-cmp-mem-direct-has?
+            (owned_view.compiler-owned-shared-view asm)
+            "    cmpb (%r12,%r8,1), %r14b\n")
+          (not
+            (compiler-backend-cmp-mem-direct-has?
+              (owned_view.compiler-owned-shared-view asm)
+              "    movzbq ")))]
+      [(compiler_backend.ResultCompilerBackend.Err _) false])))
+
+;; Refusals: an ordered compare with the literal on the LEFT (the memory operand
+;; would have to be the source and a literal cannot be the destination), and a
+;; literal the signed byte cannot hold. Both keep the load.
+(define (compiler-backend-cmp-mem-direct-refusals-ok?) : bool
+  (and
+    (match (compiler-backend-cmp-mem-direct-asm
+      (compiler_ast_types.AstType.U8)
+      (compiler_ir_types.CompilerIrBinOp.Lt)
+      (compiler_ir_types.CompilerIrValue.I64 10)
+      (compiler_ir_types.CompilerIrValue.Var 3))
+      [(compiler_backend.ResultCompilerBackend.Ok asm)
+        (and
+          (compiler-backend-cmp-mem-direct-has?
+            (owned_view.compiler-owned-shared-view asm)
+            "    movzbq (%r12,%r8,1), ")
+          (not
+            (compiler-backend-cmp-mem-direct-has?
+              (owned_view.compiler-owned-shared-view asm)
+              ", (%r12,%r8,1)\n")))]
+      [(compiler_backend.ResultCompilerBackend.Err _) false])
+    (match (compiler-backend-cmp-mem-direct-asm
+      (compiler_ast_types.AstType.I8)
+      (compiler_ir_types.CompilerIrBinOp.Eq)
+      (compiler_ir_types.CompilerIrValue.Var 3)
+      (compiler_ir_types.CompilerIrValue.I64 200))
+      [(compiler_backend.ResultCompilerBackend.Ok asm)
+        (and
+          (compiler-backend-cmp-mem-direct-has?
+            (owned_view.compiler-owned-shared-view asm)
+            "    movsbq (%r12,%r8,1), ")
+          (not
+            (compiler-backend-cmp-mem-direct-has?
+              (owned_view.compiler-owned-shared-view asm)
+              "    cmpb $200, (%r12,%r8,1)")))]
+      [(compiler_backend.ResultCompilerBackend.Err _) false])))
+
 ;; M6-A: `gep(i64, base + 1) ; load ; bounds_check(index, load)`. `tail` lets a
 ;; fixture add a SECOND use of the loaded value behind the check.
 (define (compiler-backend-cmp-mem-bounds-asm
@@ -33747,6 +34040,11 @@ g:
       (compiler-backend-cmp-mem-staged-second-use-refused-ok?))
     (compiler-backend-cmp-mem-spilled-rhs-fold-ok?)
     (compiler-backend-cmp-mem-narrow-phi-copy-fold-ok?)
+    (compiler_backend.backend-and4
+      (compiler-backend-cmp-mem-direct-char-fold-ok?)
+      (compiler-backend-cmp-mem-direct-ordered-fold-ok?)
+      (compiler-backend-cmp-mem-direct-register-fold-ok?)
+      (compiler-backend-cmp-mem-direct-refusals-ok?))
     (compiler-backend-gep-load-alu-commuted-shapes-ok?)
     (compiler-backend-cmp-mem-store-between-refused-ok?)
     (compiler-backend-cmp-mem-flags-between-refused-ok?)
@@ -39976,9 +40274,11 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.backend-and8
+          ;; COLD-1: both abort stubs are out of line; the INT_MIN test
+          ;; still skips the -1 test through the kept `1:`.
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
-            "    testq %r8, %r8\n    jne 1f\n")
+            "    testq %r8, %r8\n    je .L_tl_abort_site_1_div_zero.cold\n1:\n")
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
             "    call tl_div_abort_at\n")
@@ -39987,7 +40287,7 @@ g:
             "    cmpq $1, %rax\n    jno 1f\n")
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
-            "    cmpq $-1, %r8\n    jne 1f\n")
+            "    cmpq $-1, %r8\n    je .L_tl_abort_site_2_div_overflow.cold\n1:\n    cqto\n")
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
             "    cqto\n")
@@ -40969,7 +41269,7 @@ g:
         (owned_view.compiler-owned-shared-view reg)
         ", "
         (owned_view.compiler-owned-shared-view reg)
-        "\n    jge 1f\n")]
+        "\n    jl .L_tl_abort_site_")]
     [cmp : String
       (str_cat.str-cat
         "    cmp"
@@ -40978,7 +41278,7 @@ g:
         width
         ", "
         reg
-        "\n    jb 1f\n")]
+        "\n    jae .L_tl_abort_site_")]
     [count-push : String
       (str_cat.str-cat
         "    pushq "
@@ -41020,7 +41320,7 @@ g:
           (not
             (compiler_backend.compiler-backend-string-contains?
               (owned_view.compiler-owned-shared-view body)
-              "    jge 1f\n"))
+              "_shift_negative.cold"))
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view body)
             one-flag)
@@ -41191,10 +41491,10 @@ g:
           "    movq $-1,")
         (compiler_backend.compiler-backend-string-contains?
           (owned_view.compiler-owned-shared-view asm)
-          "    testq %r8, %r8\n    jge 1f\n")
+          "    testq %r8, %r8\n    jl .L_tl_abort_site_1_shift_negative.cold\n")
         (compiler_backend.compiler-backend-string-contains?
           (owned_view.compiler-owned-shared-view asm)
-          "    cmpq $64, %r8\n    jb 1f\n")
+          "    cmpq $64, %r8\n    jae .L_tl_abort_site_2_shift_large.cold\n")
         (compiler_backend.compiler-backend-string-contains?
           (owned_view.compiler-owned-shared-view asm)
           "    call tl_shift_abort_at\n")
@@ -59561,7 +59861,8 @@ b_keep:
       (compiler-backend-aggregate-storage-shape-ok?)
       (and
         (compiler-backend-shift-guard-ok?)
-        (compiler-backend-scalar-shift-matrix-ok?))
+        (compiler-backend-scalar-shift-matrix-ok?)
+        (compiler-backend-bit-length-ok?))
       (and
         (compiler-backend-windows-runtime-guard-ok?)
         (compiler-backend-simd-vector-ok?)

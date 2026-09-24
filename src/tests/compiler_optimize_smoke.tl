@@ -3311,6 +3311,10 @@
       (compiler_optimize_tests.compiler-optimize-divrem-safety-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bit-length-self-test"
+      (compiler_optimize_tests.compiler-optimize-bit-length-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-const-divisor-self-test"
       (compiler_optimize_tests.compiler-optimize-const-divisor-self-test)
       42)

@@ -168,9 +168,10 @@
 ;;   head-tracking to keep an overflow segment reachable for a destroy that
 ;;   does not happen (H4).
 ;; * The retention is two 8-word arrays, the loader's one-element liveness
-;;   cell, and at most one failure message per process. The payload byte copy
-;;   and parse, which are megabytes, remain in the caller's current arena and
-;;   are dropped with it, so this does not move the macro-walk peak.
+;;   cell, and at most one failure message per process. The payload bytes and
+;;   parse, which are megabytes, are the driver surface's (owned by its surface
+;;   arena) or a copy in the caller's current arena that is dropped with it, so
+;;   this does not move the macro-walk peak.
 (define compiler-embedded-stdlib-tlci-session-arena-handle : i64
   0)
 
@@ -198,8 +199,8 @@
 ;;
 ;; Expansion is per call, exactly where the byte copy used to be: the decoded
 ;; image is transient working memory owned by whatever arena the caller made
-;; current, and caching it would retain megabytes for the process to save a few
-;; milliseconds per compile (~17 ms to expand 5.0 MB, measured on Windows).
+;; current, and caching it for the process would retain megabytes. The one
+;; reuse is the driver's surface expansion below, whose owner already keeps it.
 ;; 256 MiB is far above the current image while bounding a corrupt static
 ;; length before allocation.
 (define (compiler-embedded-stdlib-tlci-raw-limit) : i64
@@ -238,12 +239,64 @@
             (string.tl_oob_abort)
             (__tl_make-array u8 0))]))))
 
-(define (compiler-embedded-stdlib-tlci-surface) : CompilerEmbeddedStdlibTlciSurface
+;; The one expansion a driver's prelude surface made, and the arena holding it.
+;; The driver builds its surface with its own surface arena current, so those
+;; bytes already stay mapped for the driver state's whole lifetime; the session
+;; open that follows in that lifetime (and any nested package's surface) maps
+;; the same bytes instead of expanding the 16 MB image again, which was a tenth
+;; of a mid-sized compile. Nothing outlives its owner: the driver forgets the
+;; bytes before it destroys that arena, and a session opened with no surface
+;; still expands into the caller's current arena as before.
+(define compiler-embedded-stdlib-tlci-decoded-owner : i64
+  0)
+(define compiler-embedded-stdlib-tlci-decoded : (__tl_dyn-array
+    (__tl_dyn-array u8))
+  (__tl_make-array (__tl_dyn-array u8) 1))
+
+(define (compiler-embedded-stdlib-tlci-decoded-shared-view) : (__tl_dyn-array
+    u8)
+  (cfg
+    stage0-seed-bootstrap
+    (array-ref compiler-embedded-stdlib-tlci-decoded 0)
+    (unsafe
+      (ptr-read
+        (ptr-offset (__tl_array-data compiler-embedded-stdlib-tlci-decoded) 0)))))
+
+;; The expanded image: the surface's bytes while their owner is alive, else a
+;; fresh expansion in the caller's current arena.
+(define (compiler-embedded-stdlib-tlci-image-bytes) : (__tl_dyn-array u8)
+  (if (= compiler-embedded-stdlib-tlci-decoded-owner 0)
+    (compiler-embedded-stdlib-tlci-copy)
+    (compiler-embedded-stdlib-tlci-decoded-shared-view)))
+
+;; `owner` must be the current arena, and must stay alive until the caller
+;; passes it to `compiler-embedded-stdlib-tlci-forget-decoded!`.
+(define (compiler-embedded-stdlib-tlci-surface-bytes [owner : i64]) : (__tl_dyn-array
+    u8)
+  (if (= compiler-embedded-stdlib-tlci-decoded-owner 0)
+    (let
+      [bytes : (__tl_dyn-array u8) (compiler-embedded-stdlib-tlci-copy)]
+      (begin
+        (set!
+          (array-ref compiler-embedded-stdlib-tlci-decoded 0)
+          (owned_view.compiler-owned-shared-view bytes))
+        (set! compiler-embedded-stdlib-tlci-decoded-owner owner)
+        bytes))
+    (compiler-embedded-stdlib-tlci-decoded-shared-view)))
+
+;; Called before `owner` is destroyed.
+(define (compiler-embedded-stdlib-tlci-forget-decoded! [owner : i64]) : unit
+  (if (and (> owner 0) (= compiler-embedded-stdlib-tlci-decoded-owner owner))
+    (set! compiler-embedded-stdlib-tlci-decoded-owner 0)
+    unit))
+
+(define (compiler-embedded-stdlib-tlci-surface [owner : i64]) : CompilerEmbeddedStdlibTlciSurface
   (if (= (compiler-embedded-stdlib-tlci-length) 0)
     (CompilerEmbeddedStdlibTlciSurface.Unavailable
       "embedded stdlib tlci is unavailable in the seed/test build")
     (let
-      [bytes : (__tl_dyn-array u8) (compiler-embedded-stdlib-tlci-copy)]
+      [bytes : (__tl_dyn-array u8)
+        (compiler-embedded-stdlib-tlci-surface-bytes owner)]
       (match (tlci.tlci-parse-image bytes)
         [(tlci.ResultTlciImage.Err message)
           (CompilerEmbeddedStdlibTlciSurface.Unavailable message)]
@@ -275,7 +328,8 @@
           ;; is retained for the rest of the pass and dispatched from
           ;; declarations that outlive any macro-walk generation.
           (let
-            [bytes : (__tl_dyn-array u8) (compiler-embedded-stdlib-tlci-copy)]
+            [bytes : (__tl_dyn-array u8)
+              (compiler-embedded-stdlib-tlci-image-bytes)]
             [host : tlci.TlciHostCallbackTable (compiler-comptime-host-table)]
             (match (loader.tlci-loader-load-from-bytes-with-host
               (compiler-embedded-stdlib-tlci-session-arena)

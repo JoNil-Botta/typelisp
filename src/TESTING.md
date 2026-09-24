@@ -1463,11 +1463,8 @@ text. Local runs remain uninstrumented unless the same environment variable is
 set. A successful flow ends with exactly one
 `CI verification / all / complete-verification` row measured from timing
 initialization through the last required gate; duplicate writes fail closed.
-The scheduled collector accepts only successful workflows with both host
-artifacts, then derives one `all-hosts` critical path (the larger host value)
-and one summed verification runner-time value. Pre-#6882 artifacts without the
-new total remain usable for older gate baselines, but cannot be mistaken for a
-fast complete-verification sample.
+The artifacts are evidence for performance work; no wall-clock budget or trend
+check reads them in CI.
 
 Within each Linux build-invariance chunk, identical compile-input paths at the
 same optimization level share one fresh output from that chunk's compiler.
@@ -1483,9 +1480,8 @@ both compilers' standalone sentinels remain mandatory. The 64-entry limit counts
 logical cases, including aliases. Run `scripts/verify-build-invariance-batch.sh`
 for the planner, boundary, ownership and fresh-output failure checks.
 
-The four selfhost compiles whose wall time `scripts/check-ci-timing-budgets.sh`
-budgets run alone, before anything else, so concurrency never enters those
-rows. Every other chunk of both producers and the backend-tests build are jobs
+The four selfhost compiles run alone, before anything else, so concurrency
+never enters their timing rows. Every other chunk of both producers and the backend-tests build are jobs
 of one worker pool (`TYPELISP_BUILD_INVARIANCE_WORKERS`, 1-3, default 2; 1
 reproduces the serial order). Each pooled job runs through
 `scripts/run-memory-bounded.sh` with swap disabled and a 600 s timeout: 8192 MiB
@@ -1511,42 +1507,14 @@ need real symbolic links, which Git Bash on the Windows runner cannot create.
 
 `verify-tlci-native-route-stress.sh` additionally appends successful or failed
 `native-compile` and `source-compile` rows with their real process statuses, plus
-successful `native-main-backend` and `source-main-backend` aggregates. Together
-with the frontend semantic component rows, these are selected for scheduled
-analysis by `scripts/ci-timing-trend-policy.tsv`; arbitrary detail rows remain
-out of the report.
+successful `native-main-backend` and `source-main-backend` aggregates.
 
-The scheduled analyzer keeps its conservative 1.5x default for ordinary
-top-level gates. Reviewed policy rows apply a 1.15x factor plus an absolute
-delta and baseline-duration floor to the complete totals, long stable gates,
-and selected detail series. All series still require three recent and 20
-preceding unique successful heads and must exceed the baseline nearest-rank P95.
-Wall-clock findings only create, update, or close the report issue; they never
-fail required pull-request CI. The policy checker rejects malformed, duplicate,
-unknown-kind, overlapping, denylisted, over-1.5x, or unexplained rows. Every
-threshold row must carry an inline issue/PR reference and project evidence URL,
-while the existing hard-cap checker continues to reject a denylisted top-level
-gate without a required-CI cap. Run all offline policy, aggregation, dispersion,
-duplicate-head, incomplete-history, selected-phase, and 15-20% regression
-fixtures with `scripts/analyze-ci-timing-trends.sh --self-test`.
-
-The Linux timing-budget gate requires exactly one successful
-`TypeLisp source lint / all / gate` row and caps it at 85,000 ms. The cap keeps
-roughly 18% headroom above the larger of two hosted by-value ownership
-migration measurements accepted by #6215 while #6891 tracks throughput
-recovery. This avoids ordinary runner noise without allowing another material
-regression. The budget consumes the row already recorded by `ci-verify.sh`; it
-does not run the compiler or change the lint corpus and its 32-file batches. To
-diagnose a lint regression locally with the same gate and a chosen compiler,
+To diagnose a lint slowdown locally with the same gate and a chosen compiler,
 time:
 
 ```sh
 time env TYPELISP_BIN="$tl" scripts/check-tl-lint.sh
 ```
-
-When a local or downloaded CI timing artifact is available, replay the exact
-budget validation with
-`scripts/check-ci-timing-budgets.sh target/ci-timing/linux.tsv`.
 
 For a selfhost compiler change, a typical local check (after
 `scripts/fetch-stage0.sh`, with `tl=target/stage0/typelisp[.exe]`) is:

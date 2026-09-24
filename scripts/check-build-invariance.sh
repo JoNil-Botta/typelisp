@@ -26,7 +26,7 @@ compiler. Builds one opt1 compiler from src/main.tl, then compares emitted
 assembly for a fixed corpus. The same fresh opt1 compiler must also compile
 the complete codegen smoke and build backend-tests at opt2 within 8 GiB.
 
-The four selfhost compiles whose wall time CI budgets run alone. Every other
+The four selfhost compiles run alone. Every other
 compile and the backend-tests build run in a pool of
 TYPELISP_BUILD_INVARIANCE_WORKERS processes (1-3, default 2), each under a
 kernel-enforced memory cap, with at most 12288 MiB of caps running at once.
@@ -462,8 +462,8 @@ run_batch_chunk() {
         batch_single_name=$(awk -F'|' 'NR == 1 { print $1; exit }' "$batch_case_chunk")
         case "$batch_single_name" in
             selfhost_main_opt1 | selfhost_main_opt2)
-                # Preserve the timing-budget contract and self-build ratio rows
-                # while compiling the selfhost cases through singleton batches.
+                # Keep the stable selfhost timing rows while compiling the
+                # selfhost cases through singleton batches.
                 batch_timing_label="$batch_compiler_label:$batch_single_name"
                 ;;
         esac

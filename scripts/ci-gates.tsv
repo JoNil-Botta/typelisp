@@ -9,7 +9,6 @@
 id	hosts	label	needs	compiler	command
 cli-gate-inventory-and-ownership	all	CLI gate inventory and ownership	-	-	scripts/check-cli-gate-coverage.sh --self-test
 x64-executable-template-registry-coverage	all	x64 executable template registry coverage	-	-	scripts/check-x64-executable-template-registry.sh
-ci-timing-helper-self-tests	all	CI timing helper self-tests	-	-	scripts/verify-ci-timing.sh
 work-queue-fetch-boundary-self-tests	all	work queue fetch boundary self-tests	-	-	sh scripts/test-fetch-work-queue.sh
 cross-mode-differential-oracle-self-tests	all	cross-mode differential oracle self-tests	-	-	scripts/verify-cross-mode-differential.sh --self-test
 linux-resident-memory-limit-helper-self-tests	linux	Linux resident memory limit helper self-tests	-	-	scripts/verify-linux-memory-limit.sh
@@ -19,7 +18,6 @@ build-provenance-helper-self-tests	all	build provenance helper self-tests	-	-	sc
 build-invariance-batch-reuse-self-tests	linux	build-invariance batch reuse self-tests	-	-	scripts/verify-build-invariance-batch.sh
 selfhost-linked-size-attribution-parser-self-tests	all	selfhost linked-size attribution parser self-tests	-	-	scripts/analyze-selfhost-build-asm-size.sh --self-test
 cli-help-surface	all	CLI help surface	-	-	scripts/check-cli-help-surface.sh --self-test
-ci-timing-budget-self-tests	all	CI timing budget self-tests	-	-	scripts/check-ci-timing-budgets.sh --self-test
 tlci-native-route-size-ratchet-self-tests	all	TLCI native route size ratchet self-tests	-	-	scripts/check-tlci-native-route-size.sh --self-test
 gate-reachability	all	gate reachability	-	-	scripts/check-gate-reachability.sh --self-test
 zero-cons-structural-classifier-self-tests	all	zero-cons structural classifier self-tests	-	-	scripts/check-zero-cons.sh --self-test

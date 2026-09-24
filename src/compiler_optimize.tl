@@ -132658,13 +132658,23 @@
                       (compiler-opt-global-shared-view final)))]
                 ;; IV-AFF: derived counters, after the unswitch has shaped the
                 ;; loops it wanted and before the last CFG cleanup.
-                [counted : ir.CompilerIrFunction
+                [derived : ir.CompilerIrFunction
                   (compiler-opt-debug-observe-function
                     type-segment-bases
                     "iv_aff"
                     (opt-iv-aff-final
                       type-segment-bases
                       (compiler-opt-global-shared-view unswitched)))]
+                ;; A wide power-of-two global multiply becomes a shift only
+                ;; here, after every pass that treats a shift as a possible
+                ;; abort (opt-const-global-mul-shift-final).
+                [counted : ir.CompilerIrFunction
+                  (compiler-opt-debug-observe-function
+                    type-segment-bases
+                    "mul_shift"
+                    (opt-const-global-mul-shift-final
+                      (compiler-opt-global-shared-view summaries.const-divisors)
+                      (compiler-opt-global-shared-view derived)))]
                 [unswitch-changed : bool
                   (not
                     (opt-function-eq
@@ -154130,7 +154140,8 @@
   [functions : ir.CompilerIrFunctionSeq]) : opt_i64_i64_map.Map
   (opt-const-globals-disqualified-from disq functions 0))
 
-;; A constant only earns substitution when it fits a signed 32-bit immediate, so
+;; An ordinary operand only earns substitution when it fits a signed 32-bit
+;; immediate, so
 ;; the backend can fold it directly into the instruction (`and reg, $imm32`)
 ;; instead of loading it. A wider constant has to be materialized into a
 ;; register with `movabs` at every use, and -- decisively -- the global form it
@@ -154169,12 +154180,18 @@
 ;; No variant is a net win and each moves a row by more than the 0.05% this
 ;; tree gates on, so the rule stays until the allocator can rematerialize a
 ;; `movabs`.
+;;
+;; A narrow exception is a positive wide power of two used by a 64-bit multiply:
+;; consume it as a shift count in [31, 62], so no wide literal is materialized.
+;; The table retains those powers, but ordinary substitutions still check imm32.
 (define (opt-const-globals-imm32-fits? [n : i64]) : bool
   (and (>= n (- 0 2147483648)) (<= n 2147483647)))
 
 ;; Build the constant table: literal `CompilerIrValue.I64` globals that are not
 ;; disqualified (stored anywhere / address-taken anywhere) and are
-;; imm32-encodable. ZERO is a member like any other value. It used to be
+;; imm32-encodable or positive powers of two. Wide powers are consumed only by
+;; the multiply-to-shift rewrite; all ordinary positions retain the imm32 gate.
+;; ZERO is a member like any other value. It used to be
 ;; excluded here so a substituted divisor could never become a literal `0`, but
 ;; that is a property of the DIVISOR POSITION and not of the global, so the
 ;; refusal now lives at the substitution site
@@ -154218,7 +154235,10 @@
           (match value
             [(ir.CompilerIrValue.I64 n)
               (if (or
-                (not (opt-const-globals-imm32-fits? n))
+                (not
+                  (or
+                    (opt-const-globals-imm32-fits? n)
+                    (opt-bounds-dom-positive-power-of-two? n)))
                 (opt_i64_i64_map.contains?
                   (& disq)
                   (ir.compiler-ir-symbol-id name)))
@@ -155826,7 +155846,10 @@
       (match (opt_i64_i64_map.get
         (& const-divisors)
         (ir.compiler-ir-symbol-id name))
-        [(opt_i64_i64_map.LookupFound n) (ir.CompilerIrValue.I64 n)]
+        [(opt_i64_i64_map.LookupFound n)
+          (if (opt-const-globals-imm32-fits? n)
+            (ir.CompilerIrValue.I64 n)
+            v)]
         [(opt_i64_i64_map.LookupMissing) v])]
     [_ v]))
 
@@ -155871,6 +155894,284 @@
     (opt-const-global-subst-divisor-value const-divisors v)
     (opt-const-global-subst-value const-divisors v)))
 
+(define (opt-const-global-wide-power-shift [value : ir.CompilerIrValue]) : i64
+  (match value
+    [(ir.CompilerIrValue.I64 n)
+      (if (and (> n 2147483647) (opt-bounds-dom-positive-power-of-two? n))
+        (let
+          [power : i64 n]
+          [shift : i64 0]
+          (begin
+            (while (> power 1)
+              (begin
+                (set! power (shr power 1))
+                (set! shift (+ shift 1))))
+            shift))
+        -1)]
+    [_ -1]))
+
+;; --- wide power-of-two multiply as a shift (final slot) -----------------------
+;;
+;; A 64-bit multiply by a never-written global whose literal is a positive power
+;; of two past imm32 (2^31 .. 2^62) is the shift by its exponent: wrapping
+;; multiplication and a left shift compute the same low 64 bits for every
+;; input, signed or unsigned. Without this the multiplier is a `movabs` held in
+;; a register and the product an `imul`, three cycles of latency on a serial
+;; recurrence where the shift is one (benchmarks/mul_wide_power).
+;;
+;; WHY THE FINAL SLOT. The early constant-global rewrite keeps a wide literal
+;; out of every operand, so until here the product is a `Mul` of a Global
+;; operand: a pure, non-trapping BinOp. An IR `Shl` is not one to the passes
+;; that ask opt-binop-traps? -- LICM, rotation, DCE, range analysis all treat
+;; every shift as a possible abort -- so rewriting early made them keep an
+;; invariant product in its loop, leave a loop unrotated and a dead product in
+;; place. After unswitch and the derived-counter pass no pass that asks that
+;; question runs on the function, and the whole-program inline stage ran
+;; before any of this, so the shift is never re-examined as a hazard. The count
+;; is a literal in [31, 62], valid for the 64-bit operand: the shift cannot
+;; abort at run time either.
+;;
+;; The multiplier is recognized as the Global operand itself, or through the
+;; single-definition copy global-cell promotion leaves in a preheader. The other
+;; operand must not be a literal: `c * g` is a constant, and as a shift of two
+;; literals a later fold turns it into a wide literal that a loop then
+;; rematerializes on every trip, where the `imul` of the hoisted product ran
+;; once.
+(define (opt-const-global-mul-shift-power
+  [constants : opt_i64_i64_map.Map]
+  [copies : opt_i64_i64_map.Map]
+  [counts : opt_i64_i64_map.Map]
+  [value : ir.CompilerIrValue]) : i64
+  (let
+    [symbol : i64
+      (match (compiler-opt-global-shared-view value)
+        [(ir.CompilerIrValue.Global name) (ir.compiler-ir-symbol-id name)]
+        [(ir.CompilerIrValue.Var var)
+          (match (opt_i64_i64_map.get (& counts) var)
+            [(opt_i64_i64_map.LookupFound 1)
+              (match (opt_i64_i64_map.get (& copies) var)
+                [(opt_i64_i64_map.LookupFound id) id]
+                [_ (- 0 1)])]
+            [_ (- 0 1)])]
+        [_ (- 0 1)])]
+    (if (< symbol 0)
+      (- 0 1)
+      (match (opt_i64_i64_map.get (& constants) symbol)
+        [(opt_i64_i64_map.LookupFound n)
+          (opt-const-global-wide-power-shift (ir.CompilerIrValue.I64 n))]
+        [_ (- 0 1)]))))
+
+(define (opt-const-global-mul-shift-literal? [value : ir.CompilerIrValue]) : bool
+  (match (compiler-opt-global-shared-view value)
+    [(ir.CompilerIrValue.I64 _) true]
+    [_ false]))
+
+;; One instruction: an i64/u64 `Mul` with a wide-power multiplier on either side
+;; becomes `Shl` of the other operand; everything else is returned as is.
+(define (opt-const-global-mul-shift-instr
+  [constants : opt_i64_i64_map.Map]
+  [copies : opt_i64_i64_map.Map]
+  [counts : opt_i64_i64_map.Map]
+  [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
+  (match (compiler-opt-global-shared-view instr)
+    [(ir.CompilerIrInstr.BinOp dst op lhs rhs ty)
+      (if (and
+        (opt-binop-eq
+          (compiler-opt-global-shared-view op)
+          (ir.CompilerIrBinOp.Mul))
+        (match (compiler-opt-global-shared-view ty)
+          [(ast.AstType.I64) true]
+          [(ast.AstType.U64) true]
+          [_ false]))
+        (let
+          [right : i64
+            (opt-const-global-mul-shift-power
+              (compiler-opt-global-shared-view constants)
+              (compiler-opt-global-shared-view copies)
+              (compiler-opt-global-shared-view counts)
+              (compiler-opt-global-shared-view rhs))]
+          [left : i64
+            (opt-const-global-mul-shift-power
+              (compiler-opt-global-shared-view constants)
+              (compiler-opt-global-shared-view copies)
+              (compiler-opt-global-shared-view counts)
+              (compiler-opt-global-shared-view lhs))]
+          (cond
+            [(opt-const-global-mul-shift-literal?
+                (compiler-opt-global-shared-view lhs))
+              instr]
+            [(opt-const-global-mul-shift-literal?
+                (compiler-opt-global-shared-view rhs))
+              instr]
+            [(>= right 0)
+              (ir.CompilerIrInstr.BinOp
+                dst
+                (ir.CompilerIrBinOp.Shl (ast.AstType.I64))
+                lhs
+                (ir.CompilerIrValue.I64 right)
+                ty)]
+            [(>= left 0)
+              (ir.CompilerIrInstr.BinOp
+                dst
+                (ir.CompilerIrBinOp.Shl (ast.AstType.I64))
+                rhs
+                (ir.CompilerIrValue.I64 left)
+                ty)]
+            [else instr]))
+        instr)]
+    [_ instr]))
+
+;; var -> global symbol id for `Mov var (Global g)`, and var -> definition count.
+(define (opt-const-global-mul-shift-scan!
+  [copies : opt_i64_i64_map.Map]
+  [counts : opt_i64_i64_map.Map]
+  [blocks : ir.CompilerIrBlockList]) : unit
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (begin
+        (match (compiler-opt-global-shared-view block)
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (let
+              [count : i64
+                (ir.compiler-ir-instr-seq-count
+                  (compiler-opt-global-shared-view instrs))]
+              [index : i64 0]
+              (while (< index count)
+                (let
+                  [instr : ir.CompilerIrInstr
+                    (ir.compiler-ir-instr-seq-ref instrs index)]
+                  (begin
+                    (match (opt-instr-def-var
+                      (compiler-opt-global-shared-view instr))
+                      [(option_i64.Some var)
+                        (opt_i64_i64_map.insert-ref!
+                          (&mut counts)
+                          var
+                          (match (opt_i64_i64_map.get (& counts) var)
+                            [(opt_i64_i64_map.LookupFound n) (+ n 1)]
+                            [_ 1]))]
+                      [(option_i64.None) unit])
+                    (match instr
+                      [(ir.CompilerIrInstr.Mov
+                          dst
+                          (ir.CompilerIrValue.Global name)
+                          _)
+                        (opt_i64_i64_map.insert-ref!
+                          (&mut copies)
+                          dst
+                          (ir.compiler-ir-symbol-id name))]
+                      [_ unit])
+                    (set! index (+ index 1))))))])
+        (opt-const-global-mul-shift-scan!
+          copies
+          counts
+          (compiler-opt-box-shared-view rest)))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-const-global-mul-shift-scan!
+        copies
+        counts
+        (ir.compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-const-global-mul-shift-count-params!
+  [counts : opt_i64_i64_map.Map]
+  [params : ir.CompilerIrParamSeq]) : unit
+  (let
+    [position : i64 0]
+    (while (< position params.len)
+      (begin
+        (match (ir.compiler-ir-param-seq-ref
+          (compiler-opt-global-shared-view params)
+          position)
+          [(ir.CompilerIrParam.Param _ _ var)
+            (opt_i64_i64_map.insert-ref!
+              (&mut counts)
+              var
+              (match (opt_i64_i64_map.get (& counts) var)
+                [(opt_i64_i64_map.LookupFound n) (+ n 1)]
+                [_ 1]))])
+        (set! position (+ position 1))))))
+
+(define (opt-const-global-mul-shift-blocks
+  [constants : opt_i64_i64_map.Map]
+  [copies : opt_i64_i64_map.Map]
+  [counts : opt_i64_i64_map.Map]
+  [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) (ir.CompilerIrBlockList.Nil)]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match (compiler-opt-global-shared-view block)
+        [(ir.CompilerIrBlock.Block label instrs)
+          (let
+            [count : i64
+              (ir.compiler-ir-instr-seq-count
+                (compiler-opt-global-shared-view instrs))]
+            [builder : ir.CompilerIrInstrBuilder
+              (ir.compiler-ir-instr-builder-with-capacity count)]
+            [index : i64 0]
+            (begin
+              (while (< index count)
+                (begin
+                  (ir.compiler-ir-instr-builder-push!
+                    (&mut builder)
+                    (opt-const-global-mul-shift-instr
+                      (compiler-opt-global-shared-view constants)
+                      (compiler-opt-global-shared-view copies)
+                      (compiler-opt-global-shared-view counts)
+                      (ir.compiler-ir-instr-seq-ref instrs index)))
+                  (set! index (+ index 1))))
+              (ir.compiler-ir-block-cons
+                (ir.CompilerIrBlock.Block
+                  label
+                  (ir.compiler-ir-instr-builder-to-seq builder))
+                (opt-const-global-mul-shift-blocks
+                  constants
+                  copies
+                  counts
+                  (compiler-opt-box-shared-view rest)))))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-const-global-mul-shift-blocks
+        constants
+        copies
+        counts
+        (ir.compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-const-global-mul-shift-final
+  [constants : opt_i64_i64_map.Map]
+  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  (if (= (opt_i64_i64_map.len (& constants)) 0)
+    func
+    (match (compiler-opt-global-shared-view func)
+      [(ir.CompilerIrFunction.Function
+          name
+          params
+          ret-ty
+          frame
+          blocks
+          function-abi)
+        (let
+          [copies : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 8)]
+          [counts : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 64)]
+          (begin
+            ;; A parameter is a definition too. When SSA construction fell
+            ;; back, `(set! x g)` on a parameter is `%x = mov @g` in place, the
+            ;; only definition the block scan sees, and a use of %x before it
+            ;; still reads the argument.
+            (opt-const-global-mul-shift-count-params!
+              (compiler-opt-global-shared-view counts)
+              (compiler-opt-global-shared-view params))
+            (opt-const-global-mul-shift-scan!
+              (compiler-opt-global-shared-view copies)
+              (compiler-opt-global-shared-view counts)
+              (compiler-opt-global-shared-view blocks))
+            (ir.CompilerIrFunction.Function
+              name
+              params
+              ret-ty
+              frame
+              (opt-const-global-mul-shift-blocks constants copies counts blocks)
+              function-abi)))])))
+
 ;; The early rewrite substitutes every scalar operand position whose literal
 ;; the round-1 local fold and the loop passes can both consume: BinOp operands
 ;; (compare operands feeding branches included), UnOp sources, Cast/Bitcast
@@ -155889,6 +156190,10 @@
 ;; other passes). Load/StorePtr/Gep and the vector arms keep the global's
 ;; hidden-load form: their operand is an address or a descriptor pointer, not
 ;; a scalar the fold can use.
+;; A wide power-of-two global stays a Global operand here like every other
+;; wide constant: its multiply becomes a shift only in the final pipeline slot
+;; (opt-const-global-mul-shift-final), after every pass that reads
+;; opt-binop-traps? has seen it as the pure Mul it is.
 (define (opt-const-divisor-rewrite-instr
   [const-divisors : opt_i64_i64_map.Map]
   [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr

@@ -15,7 +15,7 @@ benchmark/typelisp/hashmap_insert	23036363
 benchmark/c-scalar/hashmap_insert	65952384
 benchmark/typelisp/opt_bytecode_vm	712000799
 benchmark/c-scalar/opt_bytecode_vm	716006209
-benchmark/typelisp/opt_crc32	323300350
+benchmark/typelisp/opt_crc32	323240350
 benchmark/c-scalar/opt_crc32	400704123
 benchmark/typelisp/opt_quicksort	394817921
 benchmark/c-scalar/opt_quicksort	398372863
@@ -48,5 +48,5 @@ benchmark/c-scalar/asm_render	644231943
 self_compile/compile_cli_opt1	94136900509
 benchmark/typelisp/pure_call_join	154501100
 benchmark/c-scalar/pure_call_join	218406456
-benchmark/typelisp/loop_call_literal	9001513
+benchmark/typelisp/loop_call_literal	7001504
 benchmark/c-scalar/loop_call_literal	100005191

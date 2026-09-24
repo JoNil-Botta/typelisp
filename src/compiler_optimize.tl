@@ -31775,6 +31775,27 @@
     0
     (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs))))
 
+(define (opt-licm-collect-nonbranch-uses-array
+  [items : (__tl_dyn-array i64)]
+  [instrs : ir.CompilerIrInstrSeq]) : unit
+  (let
+    [index : i64 0]
+    [count : i64
+      (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs))]
+    (while (< index count)
+      (begin
+        (match (ir.compiler-ir-instr-seq-ref
+          (compiler-opt-global-shared-view instrs)
+          index)
+          [(ir.CompilerIrInstr.Branch _ _ _) unit]
+          [_
+            (opt-collect-instr-uses-array
+              (compiler-opt-global-shared-view items)
+              (ir.compiler-ir-instr-seq-ref
+                (compiler-opt-global-shared-view instrs)
+                index))])
+        (set! index (+ index 1))))))
+
 ;; Collect consumers whose frequency can pay for an arithmetic value's longer
 ;; live range. Uses outside the loop must remain available, blocks dominating
 ;; the latch execute on every continuing iteration, and nested-loop uses can be
@@ -31788,7 +31809,7 @@
   [body : OptLabelSet]
   [gate? : bool]
   [blocks : ir.CompilerIrBlockList]
-  [set : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
+  [set : (__tl_dyn-array i64)]) : (__tl_dyn-array i64)
   (opt-licm-hot-use-vars-from
     context
     latch-id
@@ -31806,19 +31827,13 @@
   [body : OptLabelSet]
   [gate? : bool]
   [blocks : ir.CompilerIrBlockList]
-  [set : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
+  [set : (__tl_dyn-array i64)]) : (__tl_dyn-array i64)
   (match (compiler-opt-global-shared-view blocks)
     [(ir.CompilerIrBlockList.Nil) set]
     [(ir.CompilerIrBlockList.Cons block rest)
       (match block
         [(ir.CompilerIrBlock.Block label instrs)
-          (opt-licm-hot-use-vars-from
-            (compiler-opt-global-shared-view context)
-            latch-id
-            (compiler-opt-global-shared-view nested)
-            (compiler-opt-global-shared-view body)
-            gate?
-            (compiler-opt-box-shared-view rest)
+          (begin
             (if (or
               (not
                 (opt-label-contains
@@ -31827,7 +31842,7 @@
               (opt-licm-label-in-loops?
                 (compiler-opt-global-shared-view nested)
                 label))
-              (opt-collect-instr-seq-uses
+              (opt-collect-instr-seq-uses-array
                 (compiler-opt-global-shared-view set)
                 instrs)
               (if (or
@@ -31836,10 +31851,18 @@
                   (compiler-opt-global-shared-view context)
                   latch-id
                   label))
-                (opt-licm-collect-nonbranch-uses
+                (opt-licm-collect-nonbranch-uses-array
                   (compiler-opt-global-shared-view set)
                   instrs)
-                set)))])]
+                unit))
+            (opt-licm-hot-use-vars-from
+              (compiler-opt-global-shared-view context)
+              latch-id
+              (compiler-opt-global-shared-view nested)
+              (compiler-opt-global-shared-view body)
+              gate?
+              (compiler-opt-box-shared-view rest)
+              set))])]
     [(ir.CompilerIrBlockList.Array seq)
       (opt-licm-hot-use-vars-from
         (compiler-opt-global-shared-view context)
@@ -31848,7 +31871,7 @@
         (compiler-opt-global-shared-view body)
         gate?
         (ir.compiler-ir-block-seq-to-list seq)
-        (compiler-opt-global-shared-view set))]))
+        set)]))
 
 ;; --- element-load dereferenceability (#7992) ---------------------------------
 ;;
@@ -32718,7 +32741,7 @@
   ;; load of that global's cell. See OptLicmGlobalFacts,
   ;; opt-licm-value-invariant? and opt-licm-globals-clean?.
   [globals : OptLicmGlobalFacts]
-  [hot-uses : opt_i64_i64_map.Map]
+  [hot-uses : (__tl_dyn-array i64)]
   ;; #7992: where this loop's hoist lands, and the facts that bound an
   ;; element load there (opt-licm-deref-load-ok?).
   [deref-site : OptLicmDerefSite]
@@ -32777,12 +32800,12 @@
       (opt-licm-global-value-invariant? globals loop-defs hoisted src)]
     [(ir.CompilerIrInstr.BinOp dst op lhs rhs _)
       (and
-        (opt-used-contains hot-uses dst)
+        (opt-used-array-contains hot-uses dst)
         (not (opt-binop-traps? op))
         (opt-licm-global-values-invariant? globals loop-defs hoisted lhs rhs))]
     [(ir.CompilerIrInstr.UnOp dst _ src _)
       (and
-        (opt-used-contains hot-uses dst)
+        (opt-used-array-contains hot-uses dst)
         (opt-licm-global-value-invariant? globals loop-defs hoisted src))]
     ;; Pure SIMD values use the same hot-consumer gate as scalar arithmetic:
     ;; moving one out lengthens a vector or mask live range across the loop,
@@ -32792,7 +32815,7 @@
     ;; turn admits dependent invariant SIMD chains in program order.
     [(ir.CompilerIrInstr.Splat dst src _ _)
       (and
-        (opt-used-contains hot-uses dst)
+        (opt-used-array-contains hot-uses dst)
         (opt-licm-global-value-invariant? globals loop-defs hoisted src))]
     [(ir.CompilerIrInstr.VectorBinOp payload-box)
       (let
@@ -32801,7 +32824,7 @@
         [lhs (compiler-opt-box-field-shared-view payload-box lhs)]
         [rhs (compiler-opt-box-field-shared-view payload-box rhs)]
         (and
-          (opt-used-contains hot-uses dst)
+          (opt-used-array-contains hot-uses dst)
           ;; A checked vector div/mod/shift may still trap when executed.  Do
           ;; not speculate it into a preheader for a zero-trip loop.
           (not (opt-binop-traps? op))
@@ -32812,7 +32835,7 @@
         [lhs (compiler-opt-box-field-shared-view payload-box lhs)]
         [rhs (compiler-opt-box-field-shared-view payload-box rhs)]
         (and
-          (opt-used-contains hot-uses dst)
+          (opt-used-array-contains hot-uses dst)
           (opt-licm-global-values-invariant? globals loop-defs hoisted lhs rhs)))]
     [(ir.CompilerIrInstr.Gep dst base offset ty)
       (and
@@ -33105,7 +33128,7 @@
   [licm-mode : i64]
   [descriptor-header-hoist? : bool]
   [globals : OptLicmGlobalFacts]
-  [hot-uses : opt_i64_i64_map.Map]
+  [hot-uses : (__tl_dyn-array i64)]
   [deref-site : OptLicmDerefSite]
   [hoisted : opt_i64_i64_map.Map]) : OptLicmInstrsResult
   (let
@@ -33172,7 +33195,7 @@
   [licm-mode : i64]
   [descriptor-header-hoist? : bool]
   [globals : OptLicmGlobalFacts]
-  [hot-uses : opt_i64_i64_map.Map]
+  [hot-uses : (__tl_dyn-array i64)]
   [deref-site : OptLicmDerefSite]
   [hoisted : opt_i64_i64_map.Map]) : OptLicmInstrsResult
   (opt-licm-filter-instr-seq-from
@@ -33210,7 +33233,7 @@
   [licm-mode : i64]
   [descriptor-header-hoist? : bool]
   [globals : OptLicmGlobalFacts]
-  [hot-uses : opt_i64_i64_map.Map]
+  [hot-uses : (__tl_dyn-array i64)]
   [deref-site : OptLicmDerefSite]
   [hoisted : opt_i64_i64_map.Map]) : OptLicmBlocksResult
   (match blocks
@@ -35724,7 +35747,7 @@
         [raw-rooted-summary : OptLicmStoreSummary store-state.rooted-summary]
         [raw-legacy-summary : OptLicmStoreSummary
           (opt-licm-store-summary-merge raw-summary raw-rooted-summary)]
-        [hot-uses : opt_i64_i64_map.Map
+        [hot-uses : (__tl_dyn-array i64)
           (opt-licm-hot-use-vars
             (compiler-opt-global-shared-view context)
             (match (opt-cfg-index-id
@@ -35737,7 +35760,7 @@
             (opt-natural-loop-body (compiler-opt-global-shared-view loop))
             (= preheader context.entry-label)
             (compiler-opt-global-shared-view blocks)
-            (opt_i64_i64_map.with-capacity map-capacity))]
+            (opt-used-array-new (+ (array-ref frame-cell 0) 1)))]
         [side-exit-kind : i64
           (opt-licm-loop-side-exit-kind
             (compiler-opt-global-shared-view blocks)

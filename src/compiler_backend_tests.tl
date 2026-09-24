@@ -17834,19 +17834,19 @@ g:
     [_backend-state : compiler_backend.CompilerBackendState index.backend-state]
     [_prev-register-count : i64
       (cfg
-        (any regalloc-census test)
+        test
         (compiler_backend.compiler-backend-test-get-compiler-backend-phi-xmm-cycle-register-count
           _backend-state)
         0)]
     [_prev-fallback-count : i64
       (cfg
-        (any regalloc-census test)
+        test
         (compiler_backend.compiler-backend-test-get-compiler-backend-phi-xmm-cycle-fallback-count
           _backend-state)
         0)]
     [_set : unit
       (cfg
-        (any regalloc-census test)
+        test
         (begin
           (compiler_backend.compiler-backend-test-set-compiler-backend-phi-xmm-cycle-register-count!
             _backend-state
@@ -18005,7 +18005,7 @@ g:
                   "%xmm15")))]
           [(compiler_backend.ResultCompilerBackend.Err _) false])
         (cfg
-          (any regalloc-census test)
+          test
           (and
             (=
               (compiler_backend.compiler-backend-test-get-compiler-backend-phi-xmm-cycle-register-count
@@ -18018,7 +18018,7 @@ g:
           true))]
     [_restore : unit
       (cfg
-        (any regalloc-census test)
+        test
         (begin
           (compiler_backend.compiler-backend-test-set-compiler-backend-phi-xmm-cycle-register-count!
             _backend-state
@@ -49138,7 +49138,7 @@ b_keep:
         ;; observations. These setters target the phi metric slots, not a
         ;; functional backend-state field.
         (cfg
-          (any regalloc-census test)
+          test
           (begin
             (compiler_backend.compiler-backend-test-set-compiler-backend-phi-xmm-cycle-register-count!
               state-a
@@ -49165,7 +49165,7 @@ b_keep:
         plan-state-b)]
     [metrics-before-reset : bool
       (cfg
-        (any regalloc-census test)
+        test
         (and
           (=
             (compiler_backend.compiler-backend-test-get-compiler-backend-phi-xmm-cycle-register-count
@@ -49186,7 +49186,7 @@ b_keep:
         true)]
     [_reset-metrics-a : unit
       (cfg
-        (any regalloc-census test)
+        test
         (begin
           (compiler_backend.compiler-backend-test-set-compiler-backend-phi-xmm-cycle-register-count!
             state-a
@@ -49220,7 +49220,7 @@ b_keep:
         rsp-success-b.ok
         (not rsp-failure-a.ok)
         (cfg
-          (any regalloc-census test)
+          test
           (and
             (=
               (compiler_backend.compiler-backend-test-get-compiler-backend-phi-xmm-cycle-register-count

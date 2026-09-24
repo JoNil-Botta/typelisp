@@ -9,13 +9,7 @@
 (cfg test (import stdlib.test))
 
 (define compiler-profile-state-metric-capacity : i64
-  (cfg
-    (any compile-profile test)
-    378
-    (cfg
-      regalloc-census
-      223
-      (cfg regalloc-liveness-census 164 (cfg scavenge-census 147 0)))))
+  (cfg (any compile-profile test) 378 0))
 (define compiler-profile-state-summary-row-capacity : i64
   (cfg (any compile-profile-summary test) 40 0))
 (define compiler-profile-state-summary-scope-capacity : i64
@@ -30,13 +24,7 @@
   (cfg (any compile-profile-summary test) 24 0))
 
 (cfg
-  (any
-    compile-profile
-    compile-profile-summary
-    regalloc-census
-    regalloc-liveness-census
-    scavenge-census
-    test)
+  (any compile-profile compile-profile-summary test)
   (defstruct CompilerProfileStateStorage
     (metrics (__tl_dyn-array i64))
     (summary-keys (__tl_dyn-array i64))
@@ -55,48 +43,24 @@
     (summary-exact-top (__tl_dyn-array i64))))
 
 (cfg
-  (any
-    compile-profile
-    compile-profile-summary
-    regalloc-census
-    regalloc-liveness-census
-    scavenge-census
-    test)
+  (any compile-profile compile-profile-summary test)
   (defstruct CompilerProfileState
     (storage (__tl_dyn-array CompilerProfileStateStorage))))
 
 ;; Hot instrumentation passes this one-word view instead of repeatedly copying
 ;; the wide profile storage record out of its job-owned array.
 (cfg
-  (any
-    compile-profile
-    regalloc-census
-    regalloc-liveness-census
-    scavenge-census
-    test)
+  (any compile-profile test)
   (defstruct CompilerProfileMetrics
     (values (__tl_dyn-array i64))))
 
 (cfg
-  (not
-    (any
-      compile-profile
-      regalloc-census
-      regalloc-liveness-census
-      scavenge-census
-      test))
+  (not (any compile-profile test))
   (defstruct CompilerProfileMetrics
     (disabled i64)))
 
 (cfg
-  (not
-    (any
-      compile-profile
-      compile-profile-summary
-      regalloc-census
-      regalloc-liveness-census
-      scavenge-census
-      test))
+  (not (any compile-profile compile-profile-summary test))
   (defstruct CompilerProfileState
     (disabled i64)))
 
@@ -113,13 +77,7 @@
 
 (define (compiler-profile-state-new) : CompilerProfileState
   (cfg
-    (any
-      compile-profile
-      compile-profile-summary
-      regalloc-census
-      regalloc-liveness-census
-      scavenge-census
-      test)
+    (any compile-profile compile-profile-summary test)
     (let
       [storage : (__tl_dyn-array CompilerProfileStateStorage)
         (__tl_make-array CompilerProfileStateStorage 1)]
@@ -160,13 +118,7 @@
     (CompilerProfileState 0)))
 
 (cfg
-  (any
-    compile-profile
-    compile-profile-summary
-    regalloc-census
-    regalloc-liveness-census
-    scavenge-census
-    test)
+  (any compile-profile compile-profile-summary test)
   (define (compiler-profile-state-storage [state : CompilerProfileState]) : CompilerProfileStateStorage
     (let
       [items : (__tl_dyn-array CompilerProfileStateStorage)
@@ -176,12 +128,7 @@
 
 (define (compiler-profile-state-metrics [_state : CompilerProfileState]) : CompilerProfileMetrics
   (cfg
-    (any
-      compile-profile
-      regalloc-census
-      regalloc-liveness-census
-      scavenge-census
-      test)
+    (any compile-profile test)
     (CompilerProfileMetrics
       (compiler-profile-state-storage-field-shared-view _state metrics))
     (CompilerProfileMetrics 0)))
@@ -191,12 +138,7 @@
 ;; the array remains owned by `CompilerProfileState` for the whole job.
 (defmacro (compiler-profile-state-metrics-address [_state : Expr]) : Expr
   (cfg
-    (any
-      compile-profile
-      regalloc-census
-      regalloc-liveness-census
-      scavenge-census
-      test)
+    (any compile-profile test)
     `(unsafe
       (ptr->int
         (ptr-cast
@@ -230,24 +172,14 @@
     `(cast 0 : u64)))
 
 (cfg
-  (any
-    compile-profile
-    regalloc-census
-    regalloc-liveness-census
-    scavenge-census
-    test)
+  (any compile-profile test)
   (define (compiler-profile-metrics-value
     [metrics : CompilerProfileMetrics]
     [metric : i64]) : i64
     (array-ref metrics.values metric)))
 
 (cfg
-  (any
-    compile-profile
-    regalloc-census
-    regalloc-liveness-census
-    scavenge-census
-    test)
+  (any compile-profile test)
   (define (compiler-profile-metrics-set!
     [metrics : CompilerProfileMetrics]
     [metric : i64]
@@ -255,12 +187,7 @@
     (set! (array-ref metrics.values metric) value)))
 
 (cfg
-  (any
-    compile-profile
-    regalloc-census
-    regalloc-liveness-census
-    scavenge-census
-    test)
+  (any compile-profile test)
   (define (compiler-profile-metrics-add!
     [metrics : CompilerProfileMetrics]
     [metric : i64]
@@ -275,12 +202,7 @@
       (compiler-profile-metrics-set! metrics metric next))))
 
 (cfg
-  (any
-    compile-profile
-    regalloc-census
-    regalloc-liveness-census
-    scavenge-census
-    test)
+  (any compile-profile test)
   (define (compiler-profile-metrics-reset-range!
     [metrics : CompilerProfileMetrics]
     [start : i64]
@@ -296,12 +218,7 @@
           (set! metric (+ metric 1)))))))
 
 (cfg
-  (any
-    compile-profile
-    regalloc-census
-    regalloc-liveness-census
-    scavenge-census
-    test)
+  (any compile-profile test)
   (define (compiler-profile-state-metric-value
     [state : CompilerProfileState]
     [metric : i64]) : i64
@@ -310,12 +227,7 @@
       metric)))
 
 (cfg
-  (any
-    compile-profile
-    regalloc-census
-    regalloc-liveness-census
-    scavenge-census
-    test)
+  (any compile-profile test)
   (define (compiler-profile-state-metric-set!
     [state : CompilerProfileState]
     [metric : i64]
@@ -326,12 +238,7 @@
       value)))
 
 (cfg
-  (any
-    compile-profile
-    regalloc-census
-    regalloc-liveness-census
-    scavenge-census
-    test)
+  (any compile-profile test)
   (define (compiler-profile-state-metric-add!
     [state : CompilerProfileState]
     [metric : i64]
@@ -342,12 +249,7 @@
       value)))
 
 (cfg
-  (any
-    compile-profile
-    regalloc-census
-    regalloc-liveness-census
-    scavenge-census
-    test)
+  (any compile-profile test)
   (define (compiler-profile-state-metric-reset-range!
     [state : CompilerProfileState]
     [start : i64]

@@ -1,7 +1,7 @@
 # ci-gate-ledger-schema	2
-# count	all	123
-# count	linux	120
-# count	windows	106
+# count	all	122
+# count	linux	119
+# count	windows	105
 id	hosts	label	needs
 cli-gate-inventory-and-ownership	all	CLI gate inventory and ownership	-
 ci-gate-ledger-self-tests	all	CI gate ledger self-tests	-
@@ -40,7 +40,6 @@ bootstrap-adaptive-control-flow	all	bootstrap adaptive control flow	-
 bootstrap-fixpoint	all	bootstrap fixpoint	-
 tlci-mutation-bootstrap-fixpoint	all	TLCI mutation bootstrap fixpoint	bootstrap-fixpoint
 stage2-selfhost-compile-manifest	all	stage2 selfhost compile manifest	bootstrap-fixpoint
-stage2-regalloc-census-compiler-build	all	stage2 regalloc census compiler build	bootstrap-fixpoint
 embedded-stdlib-build-payload	all	embedded stdlib build payload	bootstrap-fixpoint
 embedded-stdlib-tlci-image	all	embedded stdlib tlci image	bootstrap-fixpoint
 stage2-deterministic-assembly	all	stage2 deterministic assembly	bootstrap-fixpoint,stage2-selfhost-compile-manifest

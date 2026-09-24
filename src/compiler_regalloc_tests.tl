@@ -1,9 +1,5 @@
 ;; compiler_regalloc_tests.tl - Selfhost register-allocator fixtures split
 ;; from production (#5169).
-;;
-;; Only blocks gated on exactly `test` moved. The regalloc-census blocks and
-;; the `(any regalloc-census test)` ones stay in the production module: they
-;; compile into instrumentation builds, so they are not self-test code.
 (import stdlib.str_cat_runtime as str_cat)
 (import compiler_regalloc as reg)
 (import compiler_profile_state as profile_state)
@@ -10137,7 +10133,6 @@
             (when already-evicted? (set! (array-ref evicted 3) 1))
             (when coalesced? (set! (array-ref parents 5) 3))
             (reg.compiler-reg-call-region-evict-try
-              metrics
               (owned_view.compiler-owned-shared-view blocks)
               (reg.compiler-reg-function-loop-depths
                 (owned_view.compiler-owned-shared-view blocks))
@@ -11965,59 +11960,6 @@
 
 (cfg
   test
-  (define (compiler-reg-many-call-live-function) : ir.CompilerIrFunction
-    (ir.CompilerIrFunction.Function
-      (ir.compiler-ir-test-symbol "many_call_live")
-      (ir.compiler-ir-param-seq-empty)
-      (ast.AstType.Unit)
-      6
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              0
-              (ir.CompilerIrValue.I64 9)
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Call
-                1
-                (ir.compiler-ir-test-symbol "side_effect_a")
-                (ir.CompilerIrCallArgs.Nil)
-                (ast.AstType.Unit))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Call
-                  2
-                  (ir.compiler-ir-test-symbol "side_effect_b")
-                  (ir.CompilerIrCallArgs.Nil)
-                  (ast.AstType.Unit))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Call
-                    3
-                    (ir.compiler-ir-test-symbol "side_effect_c")
-                    (ir.CompilerIrCallArgs.Nil)
-                    (ast.AstType.Unit))
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Call
-                      4
-                      (ir.compiler-ir-test-symbol "side_effect_d")
-                      (ir.CompilerIrCallArgs.Nil)
-                      (ast.AstType.Unit))
-                    (compiler-reg-test-instr-seq-prepend
-                      (ir.CompilerIrInstr.Mov
-                        5
-                        (ir.CompilerIrValue.Var 0)
-                        (compiler-reg-i64-ty))
-                      (compiler-reg-test-instr-seq-prepend
-                        (ir.CompilerIrInstr.Return
-                          (ir.CompilerIrMaybeValue.Some
-                            (ir.CompilerIrValue.Var 5)))
-                        (ir.compiler-ir-instr-seq-empty)))))))))
-        ir.CompilerIrBlockList.Nil)
-      ir.CompilerIrFunctionAbi.Ordinary)))
-
-(cfg
-  test
   (define (compiler-reg-call-span-counts-ok?) : bool
     (let
       [points : live.CompilerLiveI64Set (live.compiler-live-set4 2 4 6 8)]
@@ -12052,66 +11994,6 @@
             2
             8)
           2)))))
-
-(cfg
-  test
-  (define (compiler-reg-call-span-census-count?
-    [census : reg.CompilerRegCallSpanCensus]
-    [bucket : i64]
-    [outcome : i64]
-    [want : i64]) : bool
-    (= (reg.compiler-reg-call-span-census-count census bucket outcome) want)))
-
-(cfg
-  test
-  (define (compiler-reg-call-span-census-ok?) : bool
-    (let
-      [zero-census : reg.CompilerRegCallSpanCensus
-        (reg.compiler-reg-plan-call-span-census
-          (compiler-reg-overlap-function)
-          (reg.compiler-reg-plan-function-scalar
-            (compiler-reg-overlap-function)))]
-      [one-census : reg.CompilerRegCallSpanCensus
-        (reg.compiler-reg-plan-call-span-census
-          (compiler-reg-call-live-function)
-          (reg.compiler-reg-plan-function-scalar
-            (compiler-reg-call-live-function)))]
-      [many-census : reg.CompilerRegCallSpanCensus
-        (reg.compiler-reg-plan-call-span-census
-          (compiler-reg-many-call-live-function)
-          (reg.compiler-reg-plan-function-scalar
-            (compiler-reg-many-call-live-function)))]
-      (and
-        (compiler-reg-call-span-census-count?
-          (reg.compiler-reg-global-shared-view zero-census)
-          0
-          (reg.compiler-reg-call-span-outcome-register)
-          7)
-        (compiler-reg-call-span-census-count?
-          (reg.compiler-reg-global-shared-view zero-census)
-          0
-          (reg.compiler-reg-call-span-outcome-spill)
-          0)
-        (compiler-reg-call-span-census-count?
-          (reg.compiler-reg-global-shared-view one-census)
-          1
-          (reg.compiler-reg-call-span-outcome-register)
-          1)
-        (compiler-reg-call-span-census-count?
-          (reg.compiler-reg-global-shared-view one-census)
-          0
-          (reg.compiler-reg-call-span-outcome-register)
-          1)
-        (compiler-reg-call-span-census-count?
-          (reg.compiler-reg-global-shared-view many-census)
-          3
-          (reg.compiler-reg-call-span-outcome-register)
-          1)
-        (compiler-reg-call-span-census-count?
-          (reg.compiler-reg-global-shared-view many-census)
-          0
-          (reg.compiler-reg-call-span-outcome-register)
-          1)))))
 
 (cfg
   test
@@ -22450,9 +22332,6 @@
       "compiler-reg-call-span-counts-ok?"
       (cfg test (compiler-reg-call-span-counts-ok?) true))
     (compiler-regalloc-self-test-require!
-      "compiler-reg-call-span-census-ok?"
-      (cfg test (compiler-reg-call-span-census-ok?) true))
-    (compiler-regalloc-self-test-require!
       "compiler-reg-group-pair-widening-ok?"
       (cfg test (compiler-reg-group-pair-widening-ok?) true))
     (compiler-regalloc-self-test-require!
@@ -23140,11 +23019,11 @@
 (cfg
   test
   (test
-    regalloc-call-span-census
+    regalloc-self-test
     (test.assert-i64-eq
       (compiler-regalloc-self-test)
       42
-      "regalloc call-span census fixture result")))
+      "regalloc self-test fixture result")))
 
 (cfg
   test

@@ -634,7 +634,6 @@ if ci_gate_selected stage2-selfhost-compile-manifest; then
         assembly-set-manifest "$MANIFEST_ASSEMBLY_DIGESTS" \
         "$CI_ARTIFACT_MANIFEST_ARGV"
 fi
-run_with_compiler "$STAGE2_BIN" stage2-regalloc-census-compiler-build scripts/verify-regalloc-census.sh
 run_with_compiler "$STAGE2_BIN" embedded-stdlib-build-payload scripts/verify-embedded-stdlib-payload.sh
 EMBEDDED_TLCI_BUNDLE="$ROOT/target/ci-verify-embedded-stdlib-tlci.sha256"
 EMBEDDED_TLCI_PATH_FILE="$ROOT/target/ci-verify-embedded-stdlib-tlci.path"

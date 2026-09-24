@@ -45,8 +45,6 @@
 (import (option.option i64) as option_i64)
 (import compiler_owned_view as owned_view)
 
-(define compiler-backend-scavenge-census-metric-start : i64
-  140)
 (define compiler-backend-phi-xmm-cycle-register-metric : i64
   147)
 (define compiler-backend-phi-xmm-cycle-fallback-metric : i64
@@ -1423,7 +1421,7 @@
     (str_cat.str-cat symbol "+" (string.int->string disp) "(%rip)")))
 
 (cfg
-  (any regalloc-census scavenge-census test)
+  test
   (define (compiler-backend-metric-value
     [state : CompilerBackendState]
     [metric : i64]) : i64
@@ -1432,7 +1430,7 @@
       metric)))
 
 (cfg
-  (any regalloc-census scavenge-census test)
+  test
   (define (compiler-backend-metric-set!
     [state : CompilerBackendState]
     [metric : i64]
@@ -1443,7 +1441,7 @@
       value)))
 
 (cfg
-  (any regalloc-census scavenge-census test)
+  test
   (define (compiler-backend-metric-add!
     [state : CompilerBackendState]
     [metric : i64]
@@ -17363,132 +17361,6 @@
 (define compiler-backend-scavenge-callee-list : compiler_regalloc.CompilerRegIdSeq
   (compiler_regalloc.compiler-reg-sysv-integer-registers))
 
-;; Emergency spill: when the scavenge finds NO free candidate (all pool registers
-;; occupied -- genuine register pressure, not param pressure), it must not silently
-;; degrade to the occupied fallback (that clobbers a live value). Instead the
-;; instruction's asm is wrapped with rbp-relative saves/restores for every occupied
-;; scratch register chosen while building that one head. A single fused operation
-;; can scavenge multiple scratch registers, so the owning function state tracks a
-;; pending set, not just the last register.
-(cfg
-  scavenge-census
-  (define (compiler-backend-scavenge-census-reset!
-    [backend-state : CompilerBackendState]) : unit
-    (profile_state.compiler-profile-metrics-reset-range!
-      (compiler-backend-state-metrics backend-state)
-      compiler-backend-scavenge-census-metric-start
-      compiler-backend-phi-xmm-cycle-register-metric)))
-
-(cfg
-  scavenge-census
-  (define (compiler-backend-scavenge-census-record-fallback-free!
-    [backend-state : CompilerBackendState]) : unit
-    (begin
-      (compiler-backend-metric-add!
-        backend-state
-        (+ compiler-backend-scavenge-census-metric-start 0)
-        1)
-      (compiler-backend-metric-add!
-        backend-state
-        (+ compiler-backend-scavenge-census-metric-start 1)
-        1))))
-
-(cfg
-  scavenge-census
-  (define (compiler-backend-scavenge-census-record-occupied-candidate!
-    [backend-state : CompilerBackendState]) : unit
-    (begin
-      (compiler-backend-metric-add!
-        backend-state
-        (+ compiler-backend-scavenge-census-metric-start 0)
-        1)
-      (compiler-backend-metric-add!
-        backend-state
-        (+ compiler-backend-scavenge-census-metric-start 2)
-        1))))
-
-(cfg
-  scavenge-census
-  (define (compiler-backend-scavenge-census-record-fallback-last-resort!
-    [backend-state : CompilerBackendState]) : unit
-    (begin
-      (compiler-backend-metric-add!
-        backend-state
-        (+ compiler-backend-scavenge-census-metric-start 0)
-        1)
-      (compiler-backend-metric-add!
-        backend-state
-        (+ compiler-backend-scavenge-census-metric-start 3)
-        1))))
-
-(cfg
-  scavenge-census
-  (define (compiler-backend-scavenge-census-record-wrap!
-    [backend-state : CompilerBackendState]
-    [count : i64]) : unit
-    (begin
-      (compiler-backend-metric-add!
-        backend-state
-        (+ compiler-backend-scavenge-census-metric-start 4)
-        1)
-      (compiler-backend-metric-add!
-        backend-state
-        (+ compiler-backend-scavenge-census-metric-start 5)
-        count)
-      (if (>
-        count
-        (compiler-backend-metric-value
-          backend-state
-          (+ compiler-backend-scavenge-census-metric-start 6)))
-        (compiler-backend-metric-set!
-          backend-state
-          (+ compiler-backend-scavenge-census-metric-start 6)
-          count)
-        unit))))
-
-(cfg
-  scavenge-census
-  (define (compiler-backend-scavenge-census-print!
-    [backend-state : CompilerBackendState]) : unit
-    (io.print-error
-      (str_cat.str-cat
-        "emergency-scavenge-census|total="
-        (string.int->string
-          (compiler-backend-metric-value
-            backend-state
-            (+ compiler-backend-scavenge-census-metric-start 0)))
-        "|fallback-free="
-        (string.int->string
-          (compiler-backend-metric-value
-            backend-state
-            (+ compiler-backend-scavenge-census-metric-start 1)))
-        "|occupied-candidate="
-        (string.int->string
-          (compiler-backend-metric-value
-            backend-state
-            (+ compiler-backend-scavenge-census-metric-start 2)))
-        "|fallback-last-resort="
-        (string.int->string
-          (compiler-backend-metric-value
-            backend-state
-            (+ compiler-backend-scavenge-census-metric-start 3)))
-        "|wrapped-instructions="
-        (string.int->string
-          (compiler-backend-metric-value
-            backend-state
-            (+ compiler-backend-scavenge-census-metric-start 4)))
-        "|wrapped-regs="
-        (string.int->string
-          (compiler-backend-metric-value
-            backend-state
-            (+ compiler-backend-scavenge-census-metric-start 5)))
-        "|max-pending="
-        (string.int->string
-          (compiler-backend-metric-value
-            backend-state
-            (+ compiler-backend-scavenge-census-metric-start 6)))
-        "\n"))))
-
 ;; True once a branch terminator has already emitted its emergency restore INLINE
 ;; (right after the flag-setting compare/test, before the conditional jumps) -- so
 ;; the per-instruction emergency-wrap must NOT append a trailing restore after the
@@ -18249,10 +18121,6 @@
               (- count 1)
               backend-state))]
         (begin
-          (cfg
-            scavenge-census
-            (compiler-backend-scavenge-census-record-wrap! backend-state count)
-            unit)
           (compiler-backend-function-scratch-set-bool!
             function-state
             compiler-backend-scratch-bool-emergency-pending
@@ -18319,10 +18187,6 @@
               (- count 1)
               backend-state))]
         (begin
-          (cfg
-            scavenge-census
-            (compiler-backend-scavenge-census-record-wrap! backend-state count)
-            unit)
           (compiler-backend-function-scratch-set-bool!
             function-state
             compiler-backend-scratch-bool-emergency-pending
@@ -34901,13 +34765,11 @@
   [value : compiler_ir_types.CompilerIrValue]
   [scratch : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (begin
-    unit
-    (compiler-backend-emit-load-value-with-plan
-      assignments
-      value
-      scratch
-      backend-state)))
+  (compiler-backend-emit-load-value-with-plan
+    assignments
+    value
+    scratch
+    backend-state))
 
 (define (compiler-backend-emit-bounds-check
   [target : CompilerBackendTarget]
@@ -44485,7 +44347,7 @@
 ;; sound register-free swap, NOT the old raw %r11 fallback (SCAV1). In practice
 ;; the pool always has a free scratch here (%r10/%r11 are caller-saved and never
 ;; participate in a gp-parallel arg cycle nor hold a call-survivor), so invalid is
-;; a saturation guard reached only under --cfg arg-cycle-stack for the forcing test.
+;; a saturation guard.
 (define (compiler-backend-arg-temp-pick-reg
   [backend-state : CompilerBackendState]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -44505,24 +44367,16 @@
     ;; is no longer in `moves`, so excluding only `moves` could pick it as the Temp
     ;; and clobber a placed argument (the sret/rcx<->r9 tail-call cycle bug). The
     ;; occupancy mask reflects the allocation, not these marshalling transients.
-    ;; --cfg arg-temp-legacy forces the OLD (unsound) `moves`-only mask so the
-    ;; forcing gate can build a compiler that reproduces the miscompile.
     [exclude-mask : i64
-      (cfg
-        arg-temp-legacy
+      (bit-or
+        (compiler-backend-arg-move-list-exclude-mask
+          backend-state
+          (compiler-backend-global-shared-view assignments)
+          moves)
         (compiler-backend-arg-move-list-exclude-mask
           backend-state
           assignments
-          moves)
-        (bit-or
-          (compiler-backend-arg-move-list-exclude-mask
-            backend-state
-            (compiler-backend-global-shared-view assignments)
-            moves)
-          (compiler-backend-arg-move-list-exclude-mask
-            backend-state
-            assignments
-            all)))]
+          all))]
     [cands : (__tl_dyn-array i64)
       (compiler-backend-i64-array-shared-view
         (& compiler-backend-scavenge-candidate-pool))]
@@ -44622,19 +44476,12 @@
                     [(ResultCompilerBackend.Err m)
                       (ResultCompilerBackend.Err m)])
                   (let
-                    [picked
-                      : i64
-                      ;; --cfg arg-cycle-stack forces the register-free break so a
-                      ;; forcing fixture can exercise the (otherwise cold) saturation
-                      ;; path -- see the SCAV1 note. Off, self-host is byte-identical.
-                      (cfg
-                        arg-cycle-stack
-                        compiler_abi.compiler-reg-id-invalid
-                        (compiler-backend-arg-temp-pick-reg
-                          backend-state
-                          (compiler-backend-global-shared-view assignments)
-                          (compiler-backend-global-shared-view moves)
-                          (compiler-backend-global-shared-view all)))]
+                    [picked : i64
+                      (compiler-backend-arg-temp-pick-reg
+                        backend-state
+                        (compiler-backend-global-shared-view assignments)
+                        (compiler-backend-global-shared-view moves)
+                        (compiler-backend-global-shared-view all))]
                     (if (= picked compiler_abi.compiler-reg-id-invalid)
                       ;; No free scratch register at saturation: break the cycle
                       ;; through the reserved frame temp. This saves `srcreg`
@@ -47317,25 +47164,17 @@
         ;; dst is no longer in `copies`, so excluding only `copies` could pick it as
         ;; the Temp and clobber a placed phi value -- the same unsound-cycle-break
         ;; class as the arg-move sret/rcx<->r9 bug. The occupancy mask reflects
-        ;; the allocation, not these transient marshalling values. --cfg
-        ;; phi-temp-legacy forces the OLD (unsound) `copies`-only mask so a forcing
-        ;; gate can build a compiler that reproduces the miscompile.
+        ;; the allocation, not these transient marshalling values.
         [exclude-mask : i64
-          (cfg
-            phi-temp-legacy
+          (bit-or
+            (compiler-backend-phi-copy-list-dst-home-mask
+              backend-state
+              (compiler-backend-global-shared-view assignments)
+              copies)
             (compiler-backend-phi-copy-list-dst-home-mask
               backend-state
               assignments
-              copies)
-            (bit-or
-              (compiler-backend-phi-copy-list-dst-home-mask
-                backend-state
-                (compiler-backend-global-shared-view assignments)
-                copies)
-              (compiler-backend-phi-copy-list-dst-home-mask
-                backend-state
-                assignments
-                all)))]
+              all))]
         [cands : (__tl_dyn-array i64)
           (compiler-backend-i64-array-shared-view
             (& compiler-backend-scavenge-candidate-pool))]
@@ -47351,37 +47190,7 @@
             0
             (array-length cands))]
         [reg : String (compiler_abi.compiler-abi-register-spelling reg-id)]
-        (begin
-          ;; Same freeness self-check the sibling scavengers run: prove the picked
-          ;; register really is free at this point (a no-op for "" / sound picks).
-          (cfg
-            scavenge-self-check
-            (if (string.eq reg "")
-              unit
-              (let
-                [check-starts : (__tl_dyn-array i64)
-                  (compiler-backend-function-scratch-i64-array
-                    function-state
-                    compiler-backend-scratch-i64-array-scavenge-starts)]
-                [check-ends : (__tl_dyn-array i64)
-                  (compiler-backend-function-scratch-i64-array
-                    function-state
-                    compiler-backend-scratch-i64-array-scavenge-ends)]
-                [check-assignment-index : compiler_regalloc.CompilerRegAssignmentTable
-                  (compiler-backend-function-scratch-assignment-index
-                    function-state)]
-                (compiler-backend-scavenge-freeness-check!
-                  function-state
-                  check-starts
-                  check-ends
-                  check-assignment-index
-                  (compiler-backend-function-scratch-i64
-                    function-state
-                    compiler-backend-scratch-i64-scavenge-vars)
-                  point
-                  reg)))
-            unit)
-          reg)))))
+        reg))))
 
 ;; A copy is "register-swappable" when emitting it scavenges NO register: it is a
 ;; scalar-int copy (no float/group word staging) whose dst is register-homed and
@@ -48146,21 +47955,6 @@
                   (if (string.eq gp-reg "")
                     xmm-reg
                     gp-reg)]
-                [_xmm-census : unit
-                  (cfg
-                    regalloc-census
-                    (if xmm-candidate
-                      (if (string.eq xmm-reg "")
-                        (compiler-backend-metric-add!
-                          backend-state
-                          compiler-backend-phi-xmm-cycle-fallback-metric
-                          1)
-                        (compiler-backend-metric-add!
-                          backend-state
-                          compiler-backend-phi-xmm-cycle-register-metric
-                          1))
-                      unit)
-                    unit)]
                 (match (if (string.eq reg "")
                   (compiler-backend-emit-phi-temp-save
                     type-segment-bases
@@ -67773,7 +67567,7 @@
 ;; index of the head of `current-instrs` is `post-base - (count current-instrs)`,
 ;; which equals the interval walk's I (point = 2*I), fusion-proof because the emit
 ;; loop maintains current-instrs (consuming K drops its length by K). Consumed
-;; under (cfg scavenge-self-check) to verify, and later by the no-dst scavenge.
+;; by the no-dst scavenge.
 ;; The remaining-instruction count at the current emit step, captured per step so
 ;; the no-dst scavenge (compiler-backend-scavenge-reg-here) can derive its point =
 ;; 2*(post-base - count). Stored as a count, not the list, because the list is a
@@ -67824,20 +67618,6 @@
         (let
           [step-result : ResultCompilerBackend
             (begin
-              ;; The remaining-instruction count derives the
-              ;; scavenge/const-hoist/scratch point 2*(post-base - count).
-              ;; With the cursor the count IS `current-count - current-index`,
-              ;; read off the block sequence length instead of walked: the
-              ;; pre-cursor spine recomputed it once per emitted instruction,
-              ;; an O(n^2) cons-spine walk per block. The needs-count? guard
-              ;; stays because the answer must still be 0 (not the true
-              ;; remaining count) for plans that must not see a point at all -
-              ;; when the plan homes nothing in registers (zero plan mask -
-              ;; every stack-only opt0/opt1 plan) the occupancy masks carry no
-              ;; set bits, so every mask query answers 0 at any point, and with
-              ;; no const-hoist sites the point comparisons are unreachable.
-              ;; AVX2 also uses this point to make predicated-store lane labels
-              ;; unique and retains the count.
               (compiler-backend-function-state-set-emit-current-site!
                 (compiler-backend-global-shared-view ctx.function-state)
                 (-
@@ -67857,39 +67637,6 @@
                     (compiler-backend-global-shared-view ctx.function-state)))
                   (- current-count current-index)
                   0))
-              (cfg
-                scavenge-self-check
-                (if (< current-index current-count)
-                  ;; Per-step used-var check against the LIVE installed ctx
-                  ;; (real point). Live-through validation is done by the
-                  ;; function-level scavenge-self-check (which has the liveness
-                  ;; to supply live-after sets); pass empty here.
-                  (compiler-backend-scavenge-check-instr
-                    (compiler-backend-function-scratch-i64-array
-                      (compiler-backend-global-shared-view ctx.function-state)
-                      compiler-backend-scratch-i64-array-scavenge-starts)
-                    (compiler-backend-function-scratch-i64-array
-                      (compiler-backend-global-shared-view ctx.function-state)
-                      compiler-backend-scratch-i64-array-scavenge-ends)
-                    (compiler-backend-function-scratch-assignment-index
-                      (compiler-backend-global-shared-view ctx.function-state))
-                    (compiler-backend-function-scratch-i64
-                      (compiler-backend-global-shared-view ctx.function-state)
-                      compiler-backend-scratch-i64-scavenge-vars)
-                    (compiler-backend-global-shared-view ctx.function)
-                    (*
-                      2
-                      (-
-                        (compiler-backend-function-state-emit-instr-post-base
-                          (compiler-backend-global-shared-view
-                            ctx.function-state))
-                        (- current-count current-index)))
-                    (compiler_ir_types.compiler-ir-instr-seq-ref
-                      current-instrs
-                      current-index)
-                    (compiler_liveness.compiler-live-set-empty))
-                  unit)
-                unit)
               (compiler-backend-function-state-set-bool!
                 (compiler-backend-global-shared-view ctx.function-state)
                 compiler-backend-function-bool-emit-instrs-continue-pending
@@ -67902,12 +67649,6 @@
                 ctx.function-state
                 compiler-backend-scratch-i64-current-planned-local-preserve-count
                 0)
-              ;; Fast and fused emitters can bypass compiler-backend-emit-instr.
-              ;; Install the head instruction's source context at the shared
-              ;; dispatch seam so every abort guard sees the correct site.
-              ;; Fusions that emit a later div/mod instruction still enter
-              ;; compiler-backend-emit-instr for that instruction and replace
-              ;; this state with its exact source location.
               (if (< current-index current-count)
                 (compiler-backend-runtime-abort-site-install!
                   (compiler-backend-global-shared-view ctx)
@@ -67915,11 +67656,6 @@
                     current-instrs
                     current-index))
                 unit)
-              ;; The head instruction's shift-count bound, for the same
-              ;; reason: a fast emitter that bypasses compiler-backend-emit-instr
-              ;; emits the head's own guard. A fused emitter that reaches a
-              ;; later instruction through compiler-backend-emit-instr gets that
-              ;; instruction's bound there.
               (compiler-backend-set-shift-count-bound!
                 (compiler-backend-global-shared-view ctx.function-state)
                 (if (< current-index current-count)
@@ -69760,13 +69496,11 @@
 ;; ============================================================================
 ;; Register scavenger -- per-instruction occupied-register masks computed on the
 ;; FINAL post-rewrite IR (emit-blocks-list + assignments + slot-vars). The
-;; backend uses this query to pick allocator-owned scratch registers, and
-;; --cfg scavenge-self-check verifies the masks against liveness.
+;; backend uses this query to pick allocator-owned scratch registers.
 ;;
 ;; Point space matches compiler-reg-live-intervals EXACTLY: the global I-th
 ;; emitted instruction (block-list order, then instr-seq order) lives at point
-;; = 2*I. The self-check walks the same traversal, so the mapping is consistent
-;; by construction; the checks below catch any divergence loudly via panic.
+;; = 2*I.
 ;; Does var v occupy `reg` (the register itself, or either half of a pair)?
 ;; Character-dispatch register-name -> scavenge bit. The scavenger queries
 ;; this per emitted operand; the eq-mnemonic ladder paid up to eighteen string
@@ -70398,25 +70132,6 @@
           (set! var (+ var 1))))
       found)))
 
-(cfg
-  scavenge-self-check
-  (define (compiler-backend-scavenge-free-for-instr?
-    [starts : (& starts (__tl_dyn-array i64))]
-    [ends : (& ends (__tl_dyn-array i64))]
-    [assignment-index
-      : (& assignment-index compiler_regalloc.CompilerRegAssignmentTable)]
-    [vars : i64]
-    [point : i64]
-    [reg : String]) : bool
-    (compiler_regalloc.compiler-reg-assignment-table-register-free-over-range?
-      starts
-      ends
-      assignment-index
-      vars
-      point
-      (+ point 1)
-      (compiler_abi.compiler-abi-register-id-from-spelling reg))))
-
 ;; Forward span (in point units; each instruction step is +2) that a scavenged
 ;; STAGING register is queried across, beyond its emit position. Loads sharing a
 ;; base register fuse into one emit step but the lowering numbers their def points
@@ -70607,55 +70322,6 @@
         (__tl_make-array compiler_regalloc.CompilerRegIntervalSeq 0)
         plan-mask
         vars)]))
-
-(cfg
-  scavenge-self-check
-  (define (compiler-backend-scavenge-seed-block-liveins
-    [blocks : compiler_ir_types.CompilerIrBlockList]
-    [liveness : compiler_liveness.CompilerFunctionLiveness]
-    [point : i64]
-    [starts : (__tl_dyn-array i64)]
-    [ends : (__tl_dyn-array i64)]) : i64
-    (match blocks
-      [(compiler_ir_types.CompilerIrBlockList.Nil) point]
-      [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
-        (match block
-          [(compiler_ir_types.CompilerIrBlock.Block label instrs)
-            (let
-              [live-afters : compiler_liveness.CompilerLiveInstrSetVec
-                (compiler_regalloc.compiler-reg-live-intervals-find-afters
-                  liveness
-                  label)]
-              [after-items : (__tl_dyn-array
-                compiler_liveness.CompilerLiveI64Set)
-                live-afters.items]
-              [count : i64 instrs.len]
-              (begin
-                (if (> count 0)
-                  (compiler_regalloc.compiler-reg-extend-set-words
-                    starts
-                    ends
-                    (if (> (array-length after-items) 0)
-                      (array-ref after-items 0)
-                      (compiler_liveness.compiler-live-set-empty))
-                    0
-                    point)
-                  unit)
-                (compiler-backend-scavenge-seed-block-liveins
-                  (compiler_ir_types.compiler-ir-box-shared-view rest)
-                  liveness
-                  (+ point (* 2 count))
-                  starts
-                  ends)))])]
-      [(compiler_ir_types.CompilerIrBlockList.Array seq)
-        ;; cfg-gated self-check only; normal emission installs scavenge state
-        ;; from interval arrays and stays on the dense block path.
-        (compiler-backend-scavenge-seed-block-liveins
-          (compiler_ir_types.compiler-ir-block-seq-to-list seq)
-          liveness
-          point
-          starts
-          ends)])))
 
 (define (compiler-backend-scavenge-install-ctx-from-intervals!
   [function-state : CompilerBackendFunctionState]
@@ -71243,23 +70909,6 @@
         (compiler_abi.compiler-abi-register-spelling (array-ref cands nidx))
         (if (< emidx 0)
           (begin
-            (cfg
-              scavenge-census
-              (if (compiler-backend-scavenge-emergency-fallback-free?
-                function-state
-                exclude
-                exclude-n
-                occupied-mask
-                (compiler-backend-global-shared-view fallback))
-                (compiler-backend-scavenge-census-record-fallback-free!
-                  backend-state)
-                (compiler-backend-scavenge-census-record-fallback-last-resort!
-                  backend-state))
-              unit)
-            ;; emergency-reg MUST equal the returned reg (emergency-wrap saves/
-            ;; restores it). Give the global save set a copy, then return the
-            ;; owned fallback. (emidx<0 = the fallback is FREE here, preferred; or
-            ;; the pathological all-excluded last resort.)
             (if (compiler-backend-scavenge-emergency-reg-supported?
               (compiler-backend-global-shared-view fallback))
               (compiler-backend-emergency-add!
@@ -71271,11 +70920,6 @@
                   (compiler-backend-global-shared-view fallback))))
             fallback)
           (begin
-            (cfg
-              scavenge-census
-              (compiler-backend-scavenge-census-record-occupied-candidate!
-                backend-state)
-              unit)
             (compiler-backend-emergency-add-id!
               function-state
               (array-ref cands emidx))
@@ -71442,69 +71086,7 @@
         ex-n
         fallback
         cands)]
-    (begin
-      (cfg
-        scavenge-self-check
-        (let
-          [check-starts : (__tl_dyn-array i64)
-            (compiler-backend-function-scratch-i64-array
-              function-state
-              compiler-backend-scratch-i64-array-scavenge-starts)]
-          [check-ends : (__tl_dyn-array i64)
-            (compiler-backend-function-scratch-i64-array
-              function-state
-              compiler-backend-scratch-i64-array-scavenge-ends)]
-          (compiler-backend-scavenge-freeness-check!
-            function-state
-            check-starts
-            check-ends
-            assignment-index
-            vars
-            point
-            reg))
-        unit)
-      reg)))
-
-(cfg
-  scavenge-self-check
-  (define (compiler-backend-scavenge-freeness-check!
-    [function-state : CompilerBackendFunctionState]
-    [starts : (& starts (__tl_dyn-array i64))]
-    [ends : (& ends (__tl_dyn-array i64))]
-    [assignment-index
-      : (& assignment-index compiler_regalloc.CompilerRegAssignmentTable)]
-    [vars : i64]
-    [point : i64]
-    [reg : String]) : unit
-    ;; The oracle is the installed occupancy TABLE, not the coarse hull arrays:
-    ;; that table is what every pick consults, it is segment-precise (see
-    ;; compiler-backend-scavenge-var-segment-count), and a hull re-derivation
-    ;; would flag a legitimately free register inside a resident's liveness hole
-    ;; as a violation. `starts`/`ends`/`assignment-index`/`vars` stay in the
-    ;; signature because the used-var and live-through self-checks below still
-    ;; read them as their independent liveness oracle.
-    (if (or
-      (compiler-backend-scavenge-reg-free-in-mask?
-        (compiler-backend-scavenge-occupied-mask-at-point function-state point)
-        reg)
-      (compiler-backend-scavenge-free-for-instr?
-        starts
-        ends
-        assignment-index
-        vars
-        point
-        reg)
-      (compiler-backend-function-scratch-bool?
-        function-state
-        compiler-backend-scratch-bool-emergency-pending))
-      unit
-      (io.panic
-        (str_cat.str-cat
-          "SCAVENGE-FREENESS-VIOLATION reg="
-          reg
-          " point="
-          (string.int->string point)
-          " -- pick returned an occupied register (no free scratch)")))))
+    reg))
 
 ;; Side-effect-free twin of the GP picker for fusion admission.  It predicts the
 ;; exact register the ordinary scavenger will return, including its emergency
@@ -71766,28 +71348,7 @@
         ex
         ex-n
         fallback)]
-    (begin
-      (cfg
-        scavenge-self-check
-        (let
-          [check-starts : (__tl_dyn-array i64)
-            (compiler-backend-function-scratch-i64-array
-              function-state
-              compiler-backend-scratch-i64-array-scavenge-starts)]
-          [check-ends : (__tl_dyn-array i64)
-            (compiler-backend-function-scratch-i64-array
-              function-state
-              compiler-backend-scratch-i64-array-scavenge-ends)]
-          (compiler-backend-scavenge-freeness-check!
-            function-state
-            check-starts
-            check-ends
-            assignment-index
-            vars
-            point
-            reg))
-        unit)
-      reg)))
+    reg))
 
 ;; No-dst scavenge: same as scavenge-reg but the point comes from the drift-proof
 ;; per-instruction position (post-base - length(current-instrs)) instead of a dst
@@ -71812,32 +71373,7 @@
         exclude
         exclude-n
         fallback)]
-    (begin
-      (cfg
-        scavenge-self-check
-        (let
-          [check-starts : (__tl_dyn-array i64)
-            (compiler-backend-function-scratch-i64-array
-              function-state
-              compiler-backend-scratch-i64-array-scavenge-starts)]
-          [check-ends : (__tl_dyn-array i64)
-            (compiler-backend-function-scratch-i64-array
-              function-state
-              compiler-backend-scratch-i64-array-scavenge-ends)]
-          [assignment-index : compiler_regalloc.CompilerRegAssignmentTable
-            (compiler-backend-function-scratch-assignment-index function-state)]
-          (compiler-backend-scavenge-freeness-check!
-            function-state
-            check-starts
-            check-ends
-            assignment-index
-            (compiler-backend-function-scratch-i64
-              function-state
-              compiler-backend-scratch-i64-scavenge-vars)
-            point
-            reg))
-        unit)
-      reg)))
+    reg))
 
 (define (compiler-backend-scavenge-rcx-reg-here
   [exclude : (__tl_dyn-array String)]
@@ -71860,306 +71396,7 @@
         exclude-n
         "%rcx"
         cands)]
-    (begin
-      (cfg
-        scavenge-self-check
-        (let
-          [check-starts : (__tl_dyn-array i64)
-            (compiler-backend-function-scratch-i64-array
-              function-state
-              compiler-backend-scratch-i64-array-scavenge-starts)]
-          [check-ends : (__tl_dyn-array i64)
-            (compiler-backend-function-scratch-i64-array
-              function-state
-              compiler-backend-scratch-i64-array-scavenge-ends)]
-          [assignment-index : compiler_regalloc.CompilerRegAssignmentTable
-            (compiler-backend-function-scratch-assignment-index function-state)]
-          (compiler-backend-scavenge-freeness-check!
-            function-state
-            check-starts
-            check-ends
-            assignment-index
-            (compiler-backend-function-scratch-i64
-              function-state
-              compiler-backend-scratch-i64-scavenge-vars)
-            point
-            reg))
-        unit)
-      reg)))
-
-(cfg
-  scavenge-self-check
-  (define (compiler-backend-scavenge-check-instr
-    [starts : (__tl_dyn-array i64)]
-    [ends : (__tl_dyn-array i64)]
-    [assignment-index : compiler_regalloc.CompilerRegAssignmentTable]
-    [vars : i64]
-    [name : String]
-    [point : i64]
-    [instr : compiler_ir_types.CompilerIrInstr]
-    [live-after : compiler_liveness.CompilerLiveI64Set]) : unit
-    (let
-      [uses : compiler_liveness.CompilerLiveI64Set
-        (compiler_liveness.compiler-live-instr-uses instr)]
-      [v : i64 0]
-      (begin
-        (while (< v vars)
-          (begin
-            (if (compiler_liveness.compiler-live-set-contains? uses v)
-              ;; Only REGISTER-HOMED used vars need interval coverage + a
-              ;; not-free home: a spilled/untracked used var has no register to
-              ;; clobber, and an all-spilled function installs an EMPTY scavenge
-              ;; ctx (Nil intervals -> starts[v]=-1) on purpose, so asserting
-              ;; coverage for non-register vars is a false positive (the old
-              ;; check aborted at the first all-spilled function before reaching
-              ;; the real register hazards). cfg-gated: oracle-only, no codegen.
-              (match (compiler_regalloc.compiler-reg-assignment-table-lookup
-                assignment-index
-                v)
-                [(compiler_regalloc.CompilerRegMaybeLocation.Some loc)
-                  (match loc
-                    [(compiler_regalloc.CompilerRegLocation.Register home)
-                      (let
-                        [home-name : String
-                          (compiler_abi.compiler-abi-register-spelling home)]
-                        (begin
-                          (if (and
-                            (>= (array-ref starts v) 0)
-                            (<= (array-ref starts v) point)
-                            (<= point (array-ref ends v)))
-                            unit
-                            (io.panic
-                              (str_cat.str-cat
-                                "SCAVENGE-VIOLATION interval fn="
-                                name
-                                " point="
-                                (string.int->string point)
-                                " use-var="
-                                (string.int->string v)
-                                " iv=["
-                                (string.int->string (array-ref starts v))
-                                ","
-                                (string.int->string (array-ref ends v))
-                                "]")))
-                          (if (compiler-backend-scavenge-free-for-instr?
-                            starts
-                            ends
-                            assignment-index
-                            vars
-                            point
-                            home-name)
-                            (io.panic
-                              (str_cat.str-cat
-                                "SCAVENGE-VIOLATION free fn="
-                                name
-                                " point="
-                                (string.int->string point)
-                                " use-var="
-                                (string.int->string v)
-                                " reg="
-                                home-name
-                                " wrongly-reported-free"))
-                            unit)))]
-                    [(compiler_regalloc.CompilerRegLocation.RegisterPair _ _)
-                      unit]
-                    [(compiler_regalloc.CompilerRegLocation.Spill _) unit]
-                    [(compiler_regalloc.CompilerRegLocation.Remat _) unit])]
-                [(compiler_regalloc.CompilerRegMaybeLocation.No) unit])
-              unit)
-            (set! v (+ v 1))))
-        ;; #FOUNDATION: the used-var loop above validates OPERAND homes; this
-        ;; second loop validates LIVE-THROUGH values (live-after but not used
-        ;; here). A value live ACROSS this instruction must be reported OCCUPIED
-        ;; on its register -- a scavenge querying `point` would otherwise pick it
-        ;; and clobber a call-spanning / loop-carried value. This is the class the
-        ;; old used-var-only self-check missed (its blind spot).
-        (let
-          [w : i64 0]
-          (while (< w vars)
-            (begin
-              (if (compiler_liveness.compiler-live-set-contains? live-after w)
-                (match (compiler_regalloc.compiler-reg-assignment-table-lookup
-                  assignment-index
-                  w)
-                  [(compiler_regalloc.CompilerRegMaybeLocation.Some loc)
-                    (match loc
-                      [(compiler_regalloc.CompilerRegLocation.Register home)
-                        (let
-                          [home-name : String
-                            (compiler_abi.compiler-abi-register-spelling home)]
-                          (if (compiler-backend-scavenge-free-for-instr?
-                            starts
-                            ends
-                            assignment-index
-                            vars
-                            point
-                            home-name)
-                            (io.panic
-                              (str_cat.str-cat
-                                "SCAVENGE-LIVETHROUGH-VIOLATION fn="
-                                name
-                                " point="
-                                (string.int->string point)
-                                " live-var="
-                                (string.int->string w)
-                                " reg="
-                                home-name
-                                " WRONGLY-FREE iv=["
-                                (string.int->string (array-ref starts w))
-                                ","
-                                (string.int->string (array-ref ends w))
-                                "]"))
-                            unit))]
-                      [(compiler_regalloc.CompilerRegLocation.RegisterPair _ _)
-                        unit]
-                      [(compiler_regalloc.CompilerRegLocation.Spill _) unit]
-                      [(compiler_regalloc.CompilerRegLocation.Remat _) unit])]
-                  [(compiler_regalloc.CompilerRegMaybeLocation.No) unit])
-                unit)
-              (set! w (+ w 1)))))
-        unit))))
-
-(cfg
-  scavenge-self-check
-  (define (compiler-backend-scavenge-check-seq
-    [starts : (__tl_dyn-array i64)]
-    [ends : (__tl_dyn-array i64)]
-    [assignment-index : compiler_regalloc.CompilerRegAssignmentTable]
-    [vars : i64]
-    [name : String]
-    [instrs : compiler_ir_types.CompilerIrInstrSeq]
-    [live-afters : compiler_liveness.CompilerLiveInstrSetVec]
-    [point : i64]) : i64
-    (let
-      [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
-      [count : i64 instrs.len]
-      [after-items : (__tl_dyn-array compiler_liveness.CompilerLiveI64Set)
-        live-afters.items]
-      [index : i64 0]
-      [out : i64 point]
-      (begin
-        (while (< index count)
-          (begin
-            (compiler-backend-scavenge-check-instr
-              starts
-              ends
-              assignment-index
-              vars
-              name
-              out
-              (array-ref slots index)
-              (if (< index (array-length after-items))
-                (array-ref after-items index)
-                (compiler_liveness.compiler-live-set-empty)))
-            (set! out (+ out 2))
-            (set! index (+ index 1))))
-        out))))
-
-(cfg
-  scavenge-self-check
-  (define (compiler-backend-scavenge-check-blocks
-    [starts : (__tl_dyn-array i64)]
-    [ends : (__tl_dyn-array i64)]
-    [assignment-index : compiler_regalloc.CompilerRegAssignmentTable]
-    [vars : i64]
-    [name : String]
-    [liveness : compiler_liveness.CompilerFunctionLiveness]
-    [blocks : compiler_ir_types.CompilerIrBlockList]
-    [point : i64]) : i64
-    (match blocks
-      [(compiler_ir_types.CompilerIrBlockList.Nil) point]
-      [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
-        (match block
-          [(compiler_ir_types.CompilerIrBlock.Block label instrs)
-            (compiler-backend-scavenge-check-blocks
-              starts
-              ends
-              assignment-index
-              vars
-              name
-              liveness
-              (compiler_ir_types.compiler-ir-box-shared-view rest)
-              (compiler-backend-scavenge-check-seq
-                starts
-                ends
-                assignment-index
-                vars
-                name
-                instrs
-                (compiler_regalloc.compiler-reg-live-intervals-find-afters
-                  liveness
-                  label)
-                point))])]
-      [(compiler_ir_types.CompilerIrBlockList.Array seq)
-        ;; cfg-gated self-check only; normal emission installs scavenge state
-        ;; from interval arrays and stays on the dense block path.
-        (compiler-backend-scavenge-check-blocks
-          starts
-          ends
-          assignment-index
-          vars
-          name
-          liveness
-          (compiler_ir_types.compiler-ir-block-seq-to-list seq)
-          point)])))
-
-;; Build the per-var live intervals on the FINAL IR and self-check the query.
-;; cfg-gated -> inert/DCE'd in a normal build (byte-identical codegen).
-(cfg
-  scavenge-self-check
-  (define (compiler-backend-scavenge-self-check
-    [name : i64]
-    [name-text : String]
-    [params : compiler_ir_types.CompilerIrParamSeq]
-    [ret-ty : compiler_ast_types.AstType]
-    [slot-vars : i64]
-    [emit-blocks : compiler_ir_types.CompilerIrBlockList]
-    [function-abi : compiler_ir_types.CompilerIrFunctionAbi]
-    [assignments : compiler_regalloc.CompilerRegAssignmentTable]) : unit
-    (if (< slot-vars 1)
-      unit
-      (let
-        [func : compiler_ir_types.CompilerIrFunction
-          (compiler_ir_types.CompilerIrFunction.Function
-            name
-            params
-            ret-ty
-            slot-vars
-            emit-blocks
-            (compiler-backend-global-shared-view function-abi))]
-        [liveness : compiler_liveness.CompilerFunctionLiveness
-          (compiler_liveness.compiler-live-analyze-function func)]
-        [starts : (__tl_dyn-array i64) (__tl_make-array i64 slot-vars)]
-        [ends : (__tl_dyn-array i64) (__tl_make-array i64 slot-vars)]
-        [assignment-index : compiler_regalloc.CompilerRegAssignmentTable
-          (compiler_regalloc.compiler-reg-assignment-table-with-min-capacity
-            assignments
-            slot-vars)]
-        (begin
-          (compiler_regalloc.compiler-reg-fill-i64-array starts -1)
-          (compiler_regalloc.compiler-reg-fill-i64-array ends -1)
-          (compiler_regalloc.compiler-reg-live-intervals-blocks-with-live
-            emit-blocks
-            liveness
-            0
-            starts
-            ends)
-          (compiler-backend-scavenge-seed-block-liveins
-            emit-blocks
-            liveness
-            0
-            starts
-            ends)
-          (compiler-backend-scavenge-check-blocks
-            starts
-            ends
-            assignment-index
-            slot-vars
-            name-text
-            liveness
-            emit-blocks
-            0)
-          unit)))))
+    reg))
 
 ;; Increment the predecessor count for every label in `labels` (a deduped CFG
 ;; successor set for one block). Each block contributes at most once per
@@ -74409,7 +73646,7 @@
       (if ok
         (begin
           (cfg
-            (any regalloc-census test)
+            test
             (begin
               (compiler-backend-metric-set!
                 backend-state
@@ -74426,7 +73663,7 @@
             csr-mask))
         (begin
           (cfg
-            (any regalloc-census test)
+            test
             (begin
               (compiler-backend-metric-set!
                 backend-state
@@ -74731,7 +73968,7 @@
       (set! data.sweep-sym-bytes-count 0)
       (compiler-backend-stream-state-data-set! stream data)
       (cfg
-        (any regalloc-census test)
+        test
         (profile_state.compiler-profile-metrics-reset-range!
           (compiler-backend-state-metrics _backend-state)
           compiler-backend-sweep-swept-stores-metric
@@ -74771,7 +74008,7 @@
     (if (or (not table-ok) (not bytes-ok))
       (begin
         (cfg
-          (any regalloc-census test)
+          test
           (compiler-backend-metric-add!
             backend-state
             compiler-backend-sweep-dropped-funcs-metric
@@ -74779,7 +74016,7 @@
           unit)
         (if (not table-ok)
           (cfg
-            (any regalloc-census test)
+            test
             (compiler-backend-metric-add!
               backend-state
               compiler-backend-sweep-dropped-table-cap-metric
@@ -74788,7 +74025,7 @@
           unit)
         (if (not bytes-ok)
           (cfg
-            (any regalloc-census test)
+            test
             (compiler-backend-metric-add!
               backend-state
               compiler-backend-sweep-dropped-bytes-cap-metric
@@ -74935,7 +74172,7 @@
   (begin
     (if fpo-ok
       (cfg
-        (any regalloc-census test)
+        test
         (begin
           (compiler-backend-metric-add!
             backend-state
@@ -75797,7 +75034,7 @@
                       (set! k (+ k 1)))))
                 (if (> swept 0)
                   (cfg
-                    (any regalloc-census test)
+                    test
                     (begin
                       (compiler-backend-metric-add!
                         backend-state
@@ -75875,67 +75112,6 @@
                     (set! i rend)))
                 (set! i (+ i 1)))))
           cursor)))))
-
-(define (compiler-backend-deadstore-sweep-report-and-reset!
-  [backend-state : CompilerBackendState]
-  [stream : CompilerBackendStreamState]) : unit
-  (begin
-    (cfg
-      regalloc-census
-      (io.print-error
-        (str_cat.str-cat
-          "deadstore-sweep|funcs="
-          (string.int->string
-            (compiler-backend-metric-value
-              backend-state
-              compiler-backend-sweep-swept-funcs-metric))
-          "|stores="
-          (string.int->string
-            (compiler-backend-metric-value
-              backend-state
-              compiler-backend-sweep-swept-stores-metric))
-          "|dropped="
-          (string.int->string
-            (compiler-backend-metric-value
-              backend-state
-              compiler-backend-sweep-dropped-funcs-metric))
-          "|table-cap-drops="
-          (string.int->string
-            (compiler-backend-metric-value
-              backend-state
-              compiler-backend-sweep-dropped-table-cap-metric))
-          "|bytes-cap-drops="
-          (string.int->string
-            (compiler-backend-metric-value
-              backend-state
-              compiler-backend-sweep-dropped-bytes-cap-metric))
-          "|carry-cap="
-          (string.int->string
-            (compiler-backend-stream-state-carry-capacity stream))
-          "|carry-bytes-cap="
-          (string.int->string
-            (compiler-backend-stream-state-carry-bytes-capacity stream))
-          "|owner-cap="
-          (string.int->string
-            (compiler-backend-stream-state-owner-capacity stream))
-          "|owner-bytes-cap="
-          (string.int->string
-            (compiler-backend-stream-state-owner-bytes-capacity stream))
-          "|sweep-cap="
-          (string.int->string
-            (compiler-backend-stream-state-sweep-capacity stream))
-          "|sweep-bytes-cap="
-          (string.int->string
-            (compiler-backend-stream-state-sweep-bytes-capacity stream))
-          "|coverage-cap="
-          (string.int->string
-            (compiler-backend-stream-state-coverage-capacity stream))
-          "|retained-table-bytes="
-          (string.int->string
-            (compiler-backend-stream-state-retained-table-bytes stream))
-          "\n"
-          "")))
-    (compiler-backend-sweep-reset! backend-state stream)))
 
 ;; ============================================================================
 ;; GAP9: gep displacement folding (codegen phase 9 / P7a).
@@ -81043,20 +80219,6 @@
               raw-alloc-reg-plan
               alloc-preassignments
               split-vars))]
-        [_cold-call-self-check : unit
-          (cfg
-            scavenge-self-check
-            ;; Covers BOTH carrier families: `split-temp-start` is the low
-            ;; watermark of the cold-call carriers when that rewrite fired and of
-            ;; the call-hole carriers otherwise, and the two ranges are
-            ;; contiguous, so one scan to `alloc-vars` checks every carrier.
-            (if (compiler_regalloc.compiler-reg-cold-call-carriers-stack?
-              (compiler-backend-global-shared-view alloc-reg-plan)
-              split-temp-start
-              alloc-vars)
-              unit
-              (io.panic "regalloc: split carrier escaped its stack home"))
-            unit)]
         [call-save-enabled : bool
           (if (compiler-backend-mode-scalar? mode)
             scalar-registers-enabled
@@ -81251,16 +80413,6 @@
                 _
                 _)
               out-vars])]
-        [_regalloc-census : unit
-          (cfg
-            regalloc-census
-            (if call-save-enabled
-              (compiler_regalloc.compiler-reg-call-span-census-record-plan!
-                (compiler-backend-state-metrics program-index.backend-state)
-                alloc-func
-                alloc-reg-plan)
-              unit)
-            unit)]
         ;; Scratch pseudos are no longer published as ordinary assignments.
         ;; Keep storage coloring on the ordinary plan, then build the scratch
         ;; plan below from the FINAL remapped IR and assignment table. Planning
@@ -81376,13 +80528,6 @@
                 scratch-vars
                 (compiler_regalloc.compiler-reg-plan-assignments
                   (compiler-backend-global-shared-view remat-reg-plan)))])]
-        [_regalloc-assignment-census : unit
-          (cfg
-            regalloc-census
-            (compiler_regalloc.compiler-reg-assignment-census-record!
-              (compiler-backend-state-metrics program-index.backend-state)
-              (& assignments))
-            unit)]
         ;; Install the final authoritative table for direct operand-home lookup
         ;; in large functions. Caller-save / loop-split / remat /
         ;; slot-coloring re-plans are all folded into this table, so no emission
@@ -81786,19 +80931,6 @@
             ;; array and fall back to their single-range hulls.
             scavenge-segments
             program-index.backend-state)]
-        [_scavenge-self-check : unit
-          (cfg
-            scavenge-self-check
-            (compiler-backend-scavenge-self-check
-              (compiler-backend-global-shared-view name)
-              symbol
-              (compiler-backend-global-shared-view emit-params)
-              (compiler-backend-global-shared-view ret-ty)
-              scratch-vars
-              (compiler-backend-global-shared-view emit-blocks-list)
-              (compiler-backend-global-shared-view function-abi)
-              (compiler-backend-global-shared-view assignments))
-            unit)]
         (if (compiler-backend-inline-memory-call-name?
           (compiler-backend-global-shared-view symbol))
           (ResultCompilerBackend.Ok
@@ -82462,7 +81594,7 @@
                             ;; (allow-rbp=false => no %rbp homes).
                             (begin
                               (cfg
-                                (any regalloc-census test)
+                                test
                                 (compiler-backend-metric-add!
                                   backend-state
                                   compiler-backend-fpo-demote-metric
@@ -88115,86 +87247,6 @@
                               (profile_state.compiler-profile-state-shared-view
                                 program-index.profile-state)
                               "compose_tail"))
-                          (cfg
-                            regalloc-census
-                            (begin
-                              (compiler_regalloc.compiler-reg-call-span-census-print!
-                                (compiler-backend-state-metrics
-                                  program-index.backend-state))
-                              (compiler_regalloc.compiler-reg-evict-census-print!
-                                (compiler-backend-state-metrics
-                                  program-index.backend-state))
-                              (compiler_regalloc.compiler-reg-assignment-census-print!
-                                (compiler-backend-state-metrics
-                                  program-index.backend-state))
-                              (compiler_regalloc.compiler-reg-move-census-print!
-                                (compiler-backend-state-metrics
-                                  program-index.backend-state))
-                              (io.print-error
-                                (str_cat.str-cat
-                                  "rsp-rebase|ok="
-                                  (string.int->string
-                                    (compiler-backend-metric-value
-                                      program-index.backend-state
-                                      compiler-backend-rsp-rebase-ok-metric))
-                                  "|keep-rbp="
-                                  (string.int->string
-                                    (compiler-backend-metric-value
-                                      program-index.backend-state
-                                      compiler-backend-rsp-rebase-keep-metric))
-                                  "|fpo="
-                                  (string.int->string
-                                    (compiler-backend-metric-value
-                                      program-index.backend-state
-                                      compiler-backend-fpo-metric))
-                                  (str_cat.str-cat
-                                    "|rbp-pool="
-                                    (string.int->string
-                                      (compiler-backend-metric-value
-                                        program-index.backend-state
-                                        compiler-backend-fpo-rbp-plan-metric))
-                                    "|demote="
-                                    (string.int->string
-                                      (compiler-backend-metric-value
-                                        program-index.backend-state
-                                        compiler-backend-fpo-demote-metric))
-                                    "|push="
-                                    (string.int->string
-                                      (compiler-backend-metric-value
-                                        program-index.backend-state
-                                        compiler-backend-fpo-push-metric))
-                                    "\n"
-                                    "")))
-                              (io.print-error
-                                (str_cat.str-cat
-                                  "phi-xmm-cycle|register="
-                                  (string.int->string
-                                    (compiler-backend-metric-value
-                                      program-index.backend-state
-                                      compiler-backend-phi-xmm-cycle-register-metric))
-                                  "|fallback="
-                                  (string.int->string
-                                    (compiler-backend-metric-value
-                                      program-index.backend-state
-                                      compiler-backend-phi-xmm-cycle-fallback-metric))
-                                  "\n"
-                                  ""))
-                              (io.print-error
-                                (str_cat.str-cat
-                                  "peephole-r10-dead-scan|cap="
-                                  (string.int->string
-                                    compiler-backend-peephole-r10-dead-scan-line-cap)
-                                  "|cap-hits="
-                                  (string.int->string
-                                    (compiler-backend-metric-value
-                                      program-index.backend-state
-                                      compiler-backend-peephole-r10-dead-scan-cap-hits-metric))
-                                  "\n"
-                                  ""))))
-                          (cfg
-                            scavenge-census
-                            (compiler-backend-scavenge-census-print!
-                              program-index.backend-state))
                           (ResultCompilerBackendBuffer.Ok
                             (if (compiler-backend-assembly-stream-active?
                               (compiler-backend-state-stream-state
@@ -88266,7 +87318,7 @@
       backend-state
       (and (not pic-emit?) (not (compiler-backend-target-windows? target))))
     (cfg
-      (any regalloc-census test)
+      test
       (profile_state.compiler-profile-metrics-reset-range!
         (compiler-backend-state-metrics backend-state)
         compiler-backend-phi-xmm-cycle-register-metric
@@ -88279,17 +87331,10 @@
       backend-state
       (compiler-backend-state-stream-state backend-state))
     (cfg
-      regalloc-census
-      (compiler_regalloc.compiler-reg-census-reset!
-        (compiler-backend-state-metrics backend-state)))
-    (cfg
-      (any regalloc-liveness-census test)
+      test
       (compiler_regalloc.compiler-reg-liveness-census-reset!
         (compiler-backend-state-metrics backend-state))
       unit)
-    (cfg
-      scavenge-census
-      (compiler-backend-scavenge-census-reset! backend-state))
     (cfg
       compile-profile
       (compiler-backend-profile-start
@@ -94114,7 +93159,7 @@
             (set! k (+ k 1)))))
       (if (and (< result 0) (< i n))
         (cfg
-          (any regalloc-census test)
+          test
           (compiler-backend-metric-add!
             _backend-state
             compiler-backend-peephole-r10-dead-scan-cap-hits-metric
@@ -97467,7 +96512,7 @@
           c
           i))
         (cfg
-          (any regalloc-census test)
+          test
           (compiler-backend-metric-add!
             backend-state
             compiler-backend-peephole-r10-dead-scan-cap-hits-metric
@@ -100442,7 +99487,7 @@
                               (array-ref recs store-at)
                               (compiler-backend-peephole-line-record reload))))
                         (cfg
-                          (any regalloc-census test)
+                          test
                           (if dead?
                             (compiler-backend-metric-add!
                               backend-state
@@ -103945,7 +102990,7 @@
           (compiler-backend-global-shared-view asm)))]
     (begin
       (compiler-backend-peephole-records-retire! stream)
-      (compiler-backend-deadstore-sweep-report-and-reset! backend-state stream)
+      (compiler-backend-sweep-reset! backend-state stream)
       buf)))
 
 (define (compiler-backend-peephole-asm-buffer
@@ -104057,9 +103102,7 @@
                           (arena.destroy raw-arena))
                         (unsafe
                           (arena.set! final-home-arena))
-                        (compiler-backend-deadstore-sweep-report-and-reset!
-                          backend-state
-                          stream)
+                        (compiler-backend-sweep-reset! backend-state stream)
                         (unsafe
                           (arena.destroy peephole-arena))
                         (compiler-backend-clear-scratch-escaped-emit-state!
@@ -106847,7 +105890,7 @@
     value))
 
 (cfg
-  (any regalloc-census test)
+  test
   (define (compiler-backend-test-set-compiler-backend-phi-xmm-cycle-fallback-count!
     [backend-state : CompilerBackendState]
     [value : i64]) : unit
@@ -106857,7 +105900,7 @@
       value)))
 
 (cfg
-  (any regalloc-census test)
+  test
   (define (compiler-backend-test-set-compiler-backend-phi-xmm-cycle-register-count!
     [backend-state : CompilerBackendState]
     [value : i64]) : unit
@@ -106899,7 +105942,7 @@
     compiler-backend-scratch-bool-emergency-restore-suppressed))
 
 (cfg
-  (any regalloc-census test)
+  test
   (define (compiler-backend-test-get-compiler-backend-phi-xmm-cycle-register-count
     [backend-state : CompilerBackendState]) : i64
     (compiler-backend-metric-value
@@ -106907,7 +105950,7 @@
       compiler-backend-phi-xmm-cycle-register-metric)))
 
 (cfg
-  (any regalloc-census test)
+  test
   (define (compiler-backend-test-get-compiler-backend-phi-xmm-cycle-fallback-count
     [backend-state : CompilerBackendState]) : i64
     (compiler-backend-metric-value
@@ -107092,7 +106135,7 @@
     (compiler-backend-state-function-state backend-state)))
 
 (cfg
-  (any regalloc-census test)
+  test
   (define (compiler-backend-test-get-compiler-backend-rsp-rebase-last-ok
     [backend-state : CompilerBackendState]) : bool
     (=

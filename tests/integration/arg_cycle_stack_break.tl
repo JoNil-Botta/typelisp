@@ -12,12 +12,9 @@
 ;; The old fallback was a RAW `movq srcreg, %r11` -- neither occupancy-checked
 ;; nor save/restore-wrapped -- so a value homed in %r11 would be clobbered. The
 ;; fix breaks the cycle through a reserved frame temp instead, a register-free
-;; swap that clobbers nothing. Building the compiler with `--cfg arg-cycle-stack`
-;; forces that saturation path for every cycle break
-;; (the natural path never reaches it: %r10/%r11 are caller-saved and never join
-;; a gp-parallel arg cycle nor hold a call-survivor, so a free scratch always
-;; exists). Run with such a compiler, this fixture asserts that the frame-temp
-;; rotation is correct and still returns 42.
+;; swap that clobbers nothing. The natural path never reaches that saturation
+;; break: %r10/%r11 are caller-saved and never join a gp-parallel arg cycle nor
+;; hold a call-survivor, so a free scratch always exists.
 ;;
 ;; Run normally (register-temp break) it is a runtime regression guard on
 ;; argument-cycle correctness. Values come from (io.arg-count) so the optimizer

@@ -243,7 +243,7 @@
 (define (compiler-reg-liveness-census-reset!
   [_metrics : profile_state.CompilerProfileMetrics]) : unit
   (cfg
-    (any regalloc-liveness-census test)
+    test
     (profile_state.compiler-profile-metrics-reset-range!
       _metrics
       compiler-reg-liveness-census-baseline-metric
@@ -253,7 +253,7 @@
 (define (compiler-reg-liveness-census-baseline-count
   [_metrics : profile_state.CompilerProfileMetrics]) : i64
   (cfg
-    (any regalloc-liveness-census test)
+    test
     (profile_state.compiler-profile-metrics-value
       _metrics
       compiler-reg-liveness-census-baseline-metric)
@@ -262,7 +262,7 @@
 (define (compiler-reg-liveness-census-edge-precise-count
   [_metrics : profile_state.CompilerProfileMetrics]) : i64
   (cfg
-    (any regalloc-liveness-census test)
+    test
     (profile_state.compiler-profile-metrics-value
       _metrics
       compiler-reg-liveness-census-edge-precise-metric)
@@ -315,24 +315,11 @@
         (compiler-reg-global-shared-view func))]
     (begin
       (cfg
-        (any regalloc-liveness-census test)
+        test
         (profile_state.compiler-profile-metrics-add!
           (compiler-reg-global-shared-view _metrics)
           compiler-reg-liveness-census-baseline-metric
           1)
-        unit)
-      (cfg
-        regalloc-liveness-census
-        (let
-          [message : String
-            (if (and
-              need-edge-precise
-              (match func
-                [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-                  (compiler-reg-blocks-have-phi? blocks)]))
-              "regalloc-liveness-census|baseline=1|edge-precise=1\n"
-              "regalloc-liveness-census|baseline=1|edge-precise=0\n")]
-          (io.print-error message))
         unit)
       (if need-edge-precise
         (match (compiler-reg-global-shared-view func)
@@ -348,7 +335,7 @@
                     (compiler-reg-global-shared-view func))]
                 (begin
                   (cfg
-                    (any regalloc-liveness-census test)
+                    test
                     (profile_state.compiler-profile-metrics-add!
                       (compiler-reg-global-shared-view _metrics)
                       compiler-reg-liveness-census-edge-precise-metric
@@ -720,37 +707,6 @@
     CompilerRegAssignmentTable
     live.CompilerLiveI64Set
     live.CompilerLiveI64Set))
-
-(cfg
-  (any regalloc-census test)
-  (defstruct CompilerRegCallSpanCensus
-    (counts (__tl_dyn-array i64))))
-
-(define compiler-reg-call-span-census-metric-start : i64
-  164)
-(define compiler-reg-call-span-census-metric-end : i64
-  176)
-(define compiler-reg-evict-census-metric-start : i64
-  176)
-(define compiler-reg-evict-census-metric-end : i64
-  196)
-(define compiler-reg-assignment-census-metric-start : i64
-  196)
-(define compiler-reg-assignment-census-metric-end : i64
-  207)
-(define compiler-reg-move-census-metric-start : i64
-  207)
-(define compiler-reg-move-census-metric-end : i64
-  223)
-
-(cfg
-  regalloc-census
-  (define (compiler-reg-census-reset!
-    [metrics : profile_state.CompilerProfileMetrics]) : unit
-    (profile_state.compiler-profile-metrics-reset-range!
-      metrics
-      compiler-reg-call-span-census-metric-start
-      compiler-reg-move-census-metric-end)))
 
 (defstruct CompilerRegMove
   (src i64)
@@ -11911,7 +11867,7 @@
               0)))))))
 
 (cfg
-  (any regalloc-census test)
+  test
   (define (compiler-reg-call-word-count-in-range
     [bits : i64]
     [var-base : i64]
@@ -29800,7 +29756,6 @@
 ;; -1 refuses the candidate: an exit edge whose target cannot host a reload
 ;; (phi head, empty block, unresolved label) or more targets than the cap.
 (define (compiler-reg-call-region-evict-exit-points!
-  [_metrics : profile_state.CompilerProfileMetrics]
   [bslots : (__tl_dyn-array ir.CompilerIrBlock)]
   [nblocks : i64]
   [ids : reg_label_i64_map.Map]
@@ -29839,16 +29794,7 @@
                                 nblocks
                                 t)]
                             (begin
-                              (unless
-                                (= status 0)
-                                (begin
-                                  (cfg
-                                    regalloc-census
-                                    (compiler-reg-evict-census-bump!
-                                      (compiler-reg-global-shared-view _metrics)
-                                      (+ 8 status))
-                                    unit)
-                                  (return (- 0 1))))
+                              (unless (= status 0) (return (- 0 1)))
                               (unless
                                 (compiler-reg-call-region-evict-point-recorded?
                                   (compiler-reg-global-shared-view out)
@@ -29861,30 +29807,14 @@
                                     (>=
                                       count
                                       (compiler-reg-call-region-evict-exit-cap))
-                                    (begin
-                                      (cfg
-                                        regalloc-census
-                                        (compiler-reg-evict-census-bump!
-                                          (compiler-reg-global-shared-view
-                                            _metrics)
-                                          12)
-                                        unit)
-                                      (return (- 0 1))))
+                                    (return (- 0 1)))
                                   (set!
                                     (array-ref out count)
                                     (compiler-reg-global-array-element-shared-view
                                       points
                                       t))
                                   (set! count (+ count 1)))))))]
-                      [(reg_label_i64_map.LookupMissing)
-                        (begin
-                          (cfg
-                            regalloc-census
-                            (compiler-reg-evict-census-bump!
-                              (compiler-reg-global-shared-view _metrics)
-                              13)
-                            unit)
-                          (return (- 0 1)))])
+                      [(reg_label_i64_map.LookupMissing) (return (- 0 1))])
                     (set! succs (live.compiler-live-label-set-tail succs)))]))
             (set! b (+ b 1)))))
       count)))
@@ -30098,7 +30028,6 @@
 ;; index to lend, the victim, and the number of reload points left in
 ;; `out-points` after the liveness filter.
 (define (compiler-reg-call-region-evict-try
-  [metrics : profile_state.CompilerProfileMetrics]
   [blocks : ir.CompilerIrBlockList]
   [depths : (__tl_dyn-array i64)]
   [weights : (__tl_dyn-array i64)]
@@ -30229,65 +30158,42 @@
                           (begin
                             (when
                               (>= o 0)
-                              (begin
-                                (cfg
-                                  regalloc-census
-                                  (compiler-reg-evict-census-bump!
-                                    (compiler-reg-global-shared-view metrics)
-                                    5)
-                                  unit)
-                                (when
-                                  (and
-                                    (not (= o root))
-                                    (< o n)
-                                    (= (array-ref evicted o) 0)
-                                    (= (array-ref stamp o) 0)
-                                    ;; parked as a CLASS: a storage-shared
-                                    ;; sibling's read is a read of this
-                                    ;; register
-                                    (=
-                                      (array-ref
-                                        stamp
-                                        (compiler-reg-call-region-root
-                                          (compiler-reg-global-shared-view
-                                            parents)
-                                          n
-                                          o))
-                                      0)
-                                    (compiler-reg-call-region-evict-class-singleton?
-                                      (compiler-reg-global-shared-view parents)
-                                      n
-                                      o))
-                                  (let
-                                    [w : i64
-                                      (compiler-reg-call-region-evict-weight
+                              (when
+                                (and
+                                  (not (= o root))
+                                  (< o n)
+                                  (= (array-ref evicted o) 0)
+                                  (= (array-ref stamp o) 0)
+                                  ;; parked as a CLASS: a storage-shared
+                                  ;; sibling's read is a read of this
+                                  ;; register
+                                  (=
+                                    (array-ref
+                                      stamp
+                                      (compiler-reg-call-region-root
                                         (compiler-reg-global-shared-view
-                                          weights)
-                                        o)]
+                                          parents)
+                                        n
+                                        o))
+                                    0)
+                                  (compiler-reg-call-region-evict-class-singleton?
+                                    (compiler-reg-global-shared-view parents)
+                                    n
+                                    o))
+                                (let
+                                  [w : i64
+                                    (compiler-reg-call-region-evict-weight
+                                      (compiler-reg-global-shared-view weights)
+                                      o)]
+                                  (when
+                                    (or (< victim 0) (< w victim-weight))
                                     (begin
-                                      (cfg
-                                        regalloc-census
-                                        (compiler-reg-evict-census-bump!
-                                          (compiler-reg-global-shared-view
-                                            metrics)
-                                          6)
-                                        unit)
-                                      (when
-                                        (or (< victim 0) (< w victim-weight))
-                                        (begin
-                                          (set! victim o)
-                                          (set! victim-pix pix)
-                                          (set! victim-weight w))))))))
+                                      (set! victim o)
+                                      (set! victim-pix pix)
+                                      (set! victim-weight w))))))
                             (set! pix (+ pix 1)))))
                       (if (< victim 0)
-                        (begin
-                          (cfg
-                            regalloc-census
-                            (compiler-reg-evict-census-bump!
-                              (compiler-reg-global-shared-view metrics)
-                              3)
-                            unit)
-                          (CompilerRegCallEvictPick.CompilerRegCallEvictNoPick))
+                        (CompilerRegCallEvictPick.CompilerRegCallEvictNoPick)
                         (if (compiler-reg-call-region-evict-var-mentioned?
                           (compiler-reg-global-shared-view bslots)
                           (compiler-reg-global-shared-view points)
@@ -30297,14 +30203,7 @@
                           (compiler-reg-global-shared-view parents)
                           n
                           victim)
-                          (begin
-                            (cfg
-                              regalloc-census
-                              (compiler-reg-evict-census-bump!
-                                (compiler-reg-global-shared-view metrics)
-                                7)
-                              unit)
-                            (CompilerRegCallEvictPick.CompilerRegCallEvictNoPick))
+                          (CompilerRegCallEvictPick.CompilerRegCallEvictNoPick)
                           (let
                             [live-exits : i64 0]
                             [i : i64 0]
@@ -30324,19 +30223,11 @@
                               ;; or not -- reads the current value.
                               (when
                                 (< def-count 1)
-                                (begin
-                                  (cfg
-                                    regalloc-census
-                                    (compiler-reg-evict-census-bump!
-                                      (compiler-reg-global-shared-view metrics)
-                                      (- 12 def-count))
-                                    unit)
-                                  (return
-                                    (CompilerRegCallEvictPick.CompilerRegCallEvictNoPick))))
+                                (return
+                                  (CompilerRegCallEvictPick.CompilerRegCallEvictNoPick)))
                               (set!
                                 raw-exits
                                 (compiler-reg-call-region-evict-exit-points!
-                                  (compiler-reg-global-shared-view metrics)
                                   bslots
                                   nblocks
                                   (compiler-reg-global-shared-view ids)
@@ -30346,15 +30237,8 @@
                                   (compiler-reg-global-shared-view out-points)))
                               (when
                                 (< raw-exits 0)
-                                (begin
-                                  (cfg
-                                    regalloc-census
-                                    (compiler-reg-evict-census-bump!
-                                      (compiler-reg-global-shared-view metrics)
-                                      2)
-                                    unit)
-                                  (return
-                                    (CompilerRegCallEvictPick.CompilerRegCallEvictNoPick))))
+                                (return
+                                  (CompilerRegCallEvictPick.CompilerRegCallEvictNoPick)))
                               (while (< i raw-exits)
                                 (begin
                                   (when
@@ -30387,50 +30271,7 @@
                                   victim
                                   live-exits
                                   def-count)
-                                (begin
-                                  (cfg
-                                    regalloc-census
-                                    (begin
-                                      (compiler-reg-evict-census-bump!
-                                        (compiler-reg-global-shared-view
-                                          metrics)
-                                        4)
-                                      ;; how far short: 18 counts the ones
-                                      ;; that clear a bare break-even, so
-                                      ;; the report can say whether the
-                                      ;; safety margin or the model itself
-                                      ;; is what refuses a corpus
-                                      (when
-                                        (>=
-                                          (*
-                                            (*
-                                              uses
-                                              (compiler-reg-loop-depth-weight
-                                                (array-ref depths s)))
-                                            (compiler-reg-call-region-trip-multiplier
-                                              (-
-                                                (array-ref depths s)
-                                                (array-ref depths (- s 1)))))
-                                          (+
-                                            (*
-                                              (+ 1 live-exits)
-                                              (compiler-reg-loop-depth-weight
-                                                (array-ref depths (- s 1))))
-                                            (compiler-reg-call-region-evict-def-weight
-                                              (compiler-reg-global-shared-view
-                                                points)
-                                              nblocks
-                                              (compiler-reg-global-shared-view
-                                                depths)
-                                              (compiler-reg-global-shared-view
-                                                out-saves)
-                                              def-count)))
-                                        (compiler-reg-evict-census-bump!
-                                          (compiler-reg-global-shared-view
-                                            metrics)
-                                          18)))
-                                    unit)
-                                  (CompilerRegCallEvictPick.CompilerRegCallEvictNoPick))))))))))))))))))
+                                (CompilerRegCallEvictPick.CompilerRegCallEvictNoPick)))))))))))))))))
 
 ;; Mark candidate roots in `cand` (spilled + register-eligible scalar/handle
 ;; type + no remat-candidate class member -- a remat'd value has no stable slot
@@ -31076,16 +30917,7 @@
                                                   (set!
                                                     evict-attempts
                                                     (- evict-attempts 1))
-                                                  (cfg
-                                                    regalloc-census
-                                                    (compiler-reg-evict-census-bump!
-                                                      (compiler-reg-global-shared-view
-                                                        type-info.metrics)
-                                                      0)
-                                                    unit)
                                                   (match (compiler-reg-call-region-evict-try
-                                                    (compiler-reg-global-shared-view
-                                                      type-info.metrics)
                                                     (compiler-reg-global-shared-view
                                                       blocks)
                                                     (compiler-reg-global-shared-view
@@ -31188,19 +31020,7 @@
                                                       (array-ref evict-points i)
                                                       (compiler-reg-call-evict-kind-restore))))
                                                 (set! i (+ i 1)))))
-                                          (cfg
-                                            regalloc-census
-                                            (begin
-                                              (compiler-reg-evict-census-bump!
-                                                (compiler-reg-global-shared-view
-                                                  type-info.metrics)
-                                                1)
-                                              (compiler-reg-evict-census-add!
-                                                (compiler-reg-global-shared-view
-                                                  type-info.metrics)
-                                                8
-                                                acc-exits))
-                                            unit))))))
+                                          unit)))))
                                 (if (>= chosen 0)
                                   (let
                                     [j : i64 0]
@@ -31256,7 +31076,7 @@
                         evictions))))])))))))
 
 (cfg
-  (any regalloc-census test)
+  test
   (define (compiler-reg-call-set-count-in-range-words
     [set : live.CompilerLiveI64Set]
     [start : i64]
@@ -31281,830 +31101,12 @@
           (+ word-index 1))))))
 
 (cfg
-  (any regalloc-census test)
+  test
   (define (compiler-reg-call-set-count-in-range
     [set : live.CompilerLiveI64Set]
     [start : i64]
     [end : i64]) : i64
     (compiler-reg-call-set-count-in-range-words set start end 0)))
-
-(cfg
-  (any regalloc-census test)
-  (define (compiler-reg-call-span-census-empty) : CompilerRegCallSpanCensus
-    (CompilerRegCallSpanCensus (__tl_make-array i64 12))))
-
-(cfg
-  (any regalloc-census test)
-  (define (compiler-reg-call-span-outcome-register) : i64
-    0))
-
-(cfg
-  (any regalloc-census test)
-  (define (compiler-reg-call-span-outcome-spill) : i64
-    1))
-
-(cfg
-  (any regalloc-census test)
-  (define (compiler-reg-call-span-outcome-unassigned) : i64
-    2))
-
-(cfg
-  (any regalloc-census test)
-  (define (compiler-reg-call-span-bucket [calls : i64]) : i64
-    (cond [(= calls 0) 0] [(= calls 1) 1] [(< calls 4) 2] [else 3])))
-
-(cfg
-  (any regalloc-census test)
-  (define (compiler-reg-call-span-census-index [bucket : i64] [outcome : i64]) : i64
-    (+ (* bucket 3) outcome)))
-
-(cfg
-  (any regalloc-census test)
-  (define (compiler-reg-call-span-census-add!
-    [census : CompilerRegCallSpanCensus]
-    [calls : i64]
-    [outcome : i64]) : unit
-    (let
-      [counts : (__tl_dyn-array i64) census.counts]
-      [index : i64
-        (compiler-reg-call-span-census-index
-          (compiler-reg-call-span-bucket calls)
-          outcome)]
-      (set! (array-ref counts index) (+ (array-ref counts index) 1)))))
-
-(cfg
-  (any regalloc-census test)
-  (define (compiler-reg-call-span-census-count
-    [census : (& census CompilerRegCallSpanCensus)]
-    [bucket : i64]
-    [outcome : i64]) : i64
-    (array-ref
-      census.counts
-      (compiler-reg-call-span-census-index bucket outcome))))
-
-(cfg
-  (any regalloc-census test)
-  (define (compiler-reg-call-span-assignment-outcome
-    [assignments : CompilerRegAssignmentTable]
-    [split-vars : live.CompilerLiveI64Set]
-    [var : i64]) : i64
-    (if (live.compiler-live-set-contains? split-vars var)
-      (compiler-reg-call-span-outcome-register)
-      (match (compiler-reg-assignment-lookup assignments var)
-        [(CompilerRegMaybeLocation.No)
-          (compiler-reg-call-span-outcome-unassigned)]
-        [(CompilerRegMaybeLocation.Some location)
-          (match location
-            [(CompilerRegLocation.Spill _)
-              (compiler-reg-call-span-outcome-spill)]
-            [_ (compiler-reg-call-span-outcome-register)])]))))
-
-(cfg
-  (any regalloc-census test)
-  (define (compiler-reg-call-span-census-intervals!
-    [census : CompilerRegCallSpanCensus]
-    [intervals : CompilerRegIntervalSeq]
-    [assignments : CompilerRegAssignmentTable]
-    [call-points : live.CompilerLiveI64Set]
-    [split-vars : live.CompilerLiveI64Set]) : unit
-    (let
-      [index : i64 0]
-      (while (< index (compiler-reg-interval-seq-count intervals))
-        (begin
-          (let
-            [interval : CompilerRegInterval
-              (compiler-reg-interval-seq-ref
-                (compiler-reg-global-shared-view intervals)
-                index)]
-            (compiler-reg-call-span-census-add!
-              (compiler-reg-global-shared-view census)
-              (compiler-reg-call-set-count-in-range
-                (compiler-reg-global-shared-view call-points)
-                interval.start
-                interval.end)
-              (compiler-reg-call-span-assignment-outcome
-                (compiler-reg-global-shared-view assignments)
-                (compiler-reg-global-shared-view split-vars)
-                interval.var)))
-          (set! index (+ index 1)))))))
-
-;; Caller-saved integer homes must clear this measured gate before they can be
-;; enabled for call-spanning ranges: the register-home benefit must exceed
-;; 2*calls_spanned memory ops (spill+reload per normal call) plus the spill-slot
-;; and frame overhead. Split-selected originals count as register-covered even
-;; though the canonical original var remains stack-homed across the call.
-(cfg
-  (any regalloc-census test)
-  (define (compiler-reg-plan-call-span-census
-    [func : ir.CompilerIrFunction]
-    [plan : CompilerRegPlan]) : CompilerRegCallSpanCensus
-    (let
-      [plan-types : CompilerRegVarTypes
-        (compiler-reg-plan-types (compiler-reg-global-shared-view plan))]
-      [type-info : CompilerRegVarTypes
-        (compiler-reg-function-var-types-with-metrics
-          (compiler-reg-global-shared-view func)
-          plan-types.metrics)]
-      [census : CompilerRegCallSpanCensus (compiler-reg-call-span-census-empty)]
-      (begin
-        (match plan
-          [(CompilerRegPlan.Plan
-              assignments
-              ineligible
-              intervals
-              _
-              split-vars
-              _)
-            (compiler-reg-call-span-census-intervals!
-              (compiler-reg-global-shared-view census)
-              (compiler-reg-candidates intervals type-info ineligible false)
-              assignments
-              (compiler-reg-call-points (compiler-reg-global-shared-view func))
-              (compiler-reg-call-split-shadows split-vars))])
-        census))))
-
-(cfg
-  (any regalloc-census test)
-  (define (compiler-reg-call-span-census-merge-into!
-    [dst : (&mut dst CompilerRegCallSpanCensus)]
-    [src : CompilerRegCallSpanCensus]) : unit
-    (let
-      [dst-counts : (__tl_dyn-array i64) dst.counts]
-      [src-counts : (__tl_dyn-array i64) src.counts]
-      [index : i64 0]
-      (begin
-        (while (< index (array-length dst-counts))
-          (begin
-            (set!
-              (array-ref dst-counts index)
-              (+ (array-ref dst-counts index) (array-ref src-counts index)))
-            (set! index (+ index 1))))
-        unit))))
-
-(cfg
-  regalloc-census
-  (define (compiler-reg-call-span-census-reset!
-    [metrics : profile_state.CompilerProfileMetrics]) : unit
-    (profile_state.compiler-profile-metrics-reset-range!
-      metrics
-      compiler-reg-call-span-census-metric-start
-      compiler-reg-call-span-census-metric-end)))
-
-(cfg
-  regalloc-census
-  (define (compiler-reg-call-span-census-record-plan!
-    [metrics : profile_state.CompilerProfileMetrics]
-    [func : ir.CompilerIrFunction]
-    [plan : CompilerRegPlan]) : unit
-    (let
-      [census : CompilerRegCallSpanCensus
-        (compiler-reg-plan-call-span-census func plan)]
-      [index : i64 0]
-      (while (< index (array-length census.counts))
-        (begin
-          (profile_state.compiler-profile-metrics-add!
-            (compiler-reg-global-shared-view metrics)
-            (+ compiler-reg-call-span-census-metric-start index)
-            (array-ref census.counts index))
-          (set! index (+ index 1)))))))
-
-(cfg
-  regalloc-census
-  (define (compiler-reg-call-span-census-row
-    [metrics : profile_state.CompilerProfileMetrics]
-    [bucket-name : String]
-    [bucket : i64]) : String
-    (str_cat.str-cat
-      "regalloc-call-span-census|"
-      bucket-name
-      "|"
-      (string.int->string
-        (profile_state.compiler-profile-metrics-value
-          (compiler-reg-global-shared-view metrics)
-          (+
-            compiler-reg-call-span-census-metric-start
-            (compiler-reg-call-span-census-index
-              bucket
-              (compiler-reg-call-span-outcome-register)))))
-      "|"
-      (string.int->string
-        (profile_state.compiler-profile-metrics-value
-          (compiler-reg-global-shared-view metrics)
-          (+
-            compiler-reg-call-span-census-metric-start
-            (compiler-reg-call-span-census-index
-              bucket
-              (compiler-reg-call-span-outcome-spill)))))
-      "|"
-      (string.int->string
-        (profile_state.compiler-profile-metrics-value
-          (compiler-reg-global-shared-view metrics)
-          (+
-            compiler-reg-call-span-census-metric-start
-            (compiler-reg-call-span-census-index
-              bucket
-              (compiler-reg-call-span-outcome-unassigned)))))
-      "\n")))
-
-(cfg
-  regalloc-census
-  (define (compiler-reg-call-span-census-print!
-    [metrics : profile_state.CompilerProfileMetrics]) : unit
-    (begin
-      (io.print-error
-        "regalloc-call-span-census|calls_spanned|register|spill|unassigned\n")
-      (io.print-error
-        (compiler-reg-call-span-census-row
-          (compiler-reg-global-shared-view metrics)
-          "0"
-          0))
-      (io.print-error
-        (compiler-reg-call-span-census-row
-          (compiler-reg-global-shared-view metrics)
-          "1"
-          1))
-      (io.print-error
-        (compiler-reg-call-span-census-row
-          (compiler-reg-global-shared-view metrics)
-          "2-3"
-          2))
-      (io.print-error
-        (compiler-reg-call-span-census-row
-          (compiler-reg-global-shared-view metrics)
-          "4+"
-          3)))))
-
-;; P11b phase 3 eviction census. Slots, in the order the attempt walks them:
-;;   0 attempts        1 accepted        2 refused: an exit edge cannot be served
-;;   3 refused: no parked victim on any pool register
-;;   4 refused: fails the 2x price bar
-;;   5 registers with exactly ONE occupant over the region (the eviction's
-;;     precondition; the gap to slot 6 is how often that occupant is BUSY)
-;;   6 of those, occupants with zero mentions inside the region (parked)
-;;   7 verifier disagreements (must stay 0)
-;;   8 reloads emitted across all accepted evictions
-;; and the exit refusal breakdown, which is the shape of the corpus:
-;;   9 target is backward / out of range   10 target has a predecessor OUTSIDE
-;;   the region (a critical edge)          11 target opens with a phi
-;;  12 more targets than the cap           13 successor label unresolved
-;; and the victim-definition refusals, which decide where the mirror can go:
-;;  14 the def is a phi                    15 the def ends its block
-;;  16 the def is not before the region    17 more defs than the cap
-(cfg
-  regalloc-census
-  (define (compiler-reg-evict-census-bump!
-    [metrics : profile_state.CompilerProfileMetrics]
-    [slot : i64]) : unit
-    (profile_state.compiler-profile-metrics-add!
-      metrics
-      (+ compiler-reg-evict-census-metric-start slot)
-      1)))
-
-(cfg
-  regalloc-census
-  (define (compiler-reg-evict-census-add!
-    [metrics : profile_state.CompilerProfileMetrics]
-    [slot : i64]
-    [amount : i64]) : unit
-    (profile_state.compiler-profile-metrics-add!
-      metrics
-      (+ compiler-reg-evict-census-metric-start slot)
-      amount)))
-
-(cfg
-  regalloc-census
-  (define (compiler-reg-evict-census-value
-    [metrics : profile_state.CompilerProfileMetrics]
-    [slot : i64]) : i64
-    (profile_state.compiler-profile-metrics-value
-      metrics
-      (+ compiler-reg-evict-census-metric-start slot))))
-
-(cfg
-  regalloc-census
-  (define (compiler-reg-evict-census-print!
-    [metrics : profile_state.CompilerProfileMetrics]) : unit
-    (io.print-error
-      (str_cat.str-cat
-        "regalloc-evict-census|attempts="
-        (string.int->string
-          (compiler-reg-evict-census-value
-            (compiler-reg-global-shared-view metrics)
-            0))
-        "|accepted="
-        (string.int->string
-          (compiler-reg-evict-census-value
-            (compiler-reg-global-shared-view metrics)
-            1))
-        (str_cat.str-cat
-          "|no-exit="
-          (string.int->string
-            (compiler-reg-evict-census-value
-              (compiler-reg-global-shared-view metrics)
-              2))
-          "|no-victim="
-          (string.int->string
-            (compiler-reg-evict-census-value
-              (compiler-reg-global-shared-view metrics)
-              3))
-          (str_cat.str-cat
-            "|priced-out="
-            (string.int->string
-              (compiler-reg-evict-census-value
-                (compiler-reg-global-shared-view metrics)
-                4))
-            "|sole-occupant="
-            (string.int->string
-              (compiler-reg-evict-census-value
-                (compiler-reg-global-shared-view metrics)
-                5))
-            (str_cat.str-cat
-              "|parked="
-              (string.int->string
-                (compiler-reg-evict-census-value
-                  (compiler-reg-global-shared-view metrics)
-                  6))
-              "|verifier-refused="
-              (string.int->string
-                (compiler-reg-evict-census-value
-                  (compiler-reg-global-shared-view metrics)
-                  7))
-              (str_cat.str-cat
-                "|reloads="
-                (string.int->string
-                  (compiler-reg-evict-census-value
-                    (compiler-reg-global-shared-view metrics)
-                    8))
-                (str_cat.str-cat
-                  "|exit-backward="
-                  (string.int->string
-                    (compiler-reg-evict-census-value
-                      (compiler-reg-global-shared-view metrics)
-                      9))
-                  "|exit-critical="
-                  (string.int->string
-                    (compiler-reg-evict-census-value
-                      (compiler-reg-global-shared-view metrics)
-                      10))
-                  (str_cat.str-cat
-                    "|exit-phi="
-                    (string.int->string
-                      (compiler-reg-evict-census-value
-                        (compiler-reg-global-shared-view metrics)
-                        11))
-                    "|exit-cap="
-                    (string.int->string
-                      (compiler-reg-evict-census-value
-                        (compiler-reg-global-shared-view metrics)
-                        12))
-                    (str_cat.str-cat
-                      "|exit-label="
-                      (string.int->string
-                        (compiler-reg-evict-census-value
-                          (compiler-reg-global-shared-view metrics)
-                          13))
-                      "|def-phi="
-                      (string.int->string
-                        (compiler-reg-evict-census-value
-                          (compiler-reg-global-shared-view metrics)
-                          14))
-                      (str_cat.str-cat
-                        "|def-last="
-                        (string.int->string
-                          (compiler-reg-evict-census-value
-                            (compiler-reg-global-shared-view metrics)
-                            15))
-                        "|def-late="
-                        (string.int->string
-                          (compiler-reg-evict-census-value
-                            (compiler-reg-global-shared-view metrics)
-                            16))
-                        (str_cat.str-cat
-                          "|def-many="
-                          (string.int->string
-                            (compiler-reg-evict-census-value
-                              (compiler-reg-global-shared-view metrics)
-                              17))
-                          (str_cat.str-cat
-                            "|priced-break-even="
-                            (string.int->string
-                              (compiler-reg-evict-census-value
-                                (compiler-reg-global-shared-view metrics)
-                                18))
-                            "\n"))))))))))))))
-
-;; Dense assignment occupancy for performance and representation audits. These
-;; slots are compiled only for explicit regalloc-census builds.
-(cfg
-  regalloc-census
-  (define (compiler-reg-assignment-census-value
-    [metrics : profile_state.CompilerProfileMetrics]
-    [slot : i64]) : i64
-    (profile_state.compiler-profile-metrics-value
-      metrics
-      (+ compiler-reg-assignment-census-metric-start slot))))
-
-(cfg
-  regalloc-census
-  (define (compiler-reg-assignment-census-reset!
-    [metrics : profile_state.CompilerProfileMetrics]) : unit
-    (profile_state.compiler-profile-metrics-reset-range!
-      metrics
-      compiler-reg-assignment-census-metric-start
-      compiler-reg-assignment-census-metric-end)))
-
-(cfg
-  regalloc-census
-  (define (compiler-reg-assignment-census-record!
-    [metrics : profile_state.CompilerProfileMetrics]
-    [assignments : (& assignments CompilerRegAssignmentTable)]) : unit
-    (let
-      [present : (__tl_dyn-array i64) assignments.present]
-      [items : (__tl_dyn-array CompilerRegLocation) assignments.items]
-      [capacity : i64 (array-length present)]
-      [index : i64 0]
-      [assigned : i64 0]
-      [registers : i64 0]
-      [spills : i64 0]
-      [remats : i64 0]
-      ;; W3 remat-site census: which recompute shape each Remat home carries.
-      [addrs : i64 0]
-      [literals : i64 0]
-      [cells : i64 0]
-      (begin
-        (while (< index capacity)
-          (begin
-            (if (= (array-ref present index) 0)
-              unit
-              (begin
-                (set! assigned (+ assigned 1))
-                (match (clone (array-ref items index))
-                  [(CompilerRegLocation.Register _)
-                    (set! registers (+ registers 1))]
-                  [(CompilerRegLocation.RegisterPair _ _)
-                    (set! registers (+ registers 1))]
-                  [(CompilerRegLocation.Spill _) (set! spills (+ spills 1))]
-                  [(CompilerRegLocation.Remat value)
-                    (begin
-                      (set! remats (+ remats 1))
-                      (match value
-                        [(ir.CompilerIrValue.I64 _)
-                          (set! literals (+ literals 1))]
-                        [(ir.CompilerIrValue.Bool _)
-                          (set! literals (+ literals 1))]
-                        [(ir.CompilerIrValue.Char _)
-                          (set! literals (+ literals 1))]
-                        [(ir.CompilerIrValue.Global _) (set! cells (+ cells 1))]
-                        [_ (set! addrs (+ addrs 1))]))])))
-            (set! index (+ index 1))))
-        (profile_state.compiler-profile-metrics-add!
-          (compiler-reg-global-shared-view metrics)
-          (+ compiler-reg-assignment-census-metric-start 0)
-          1)
-        (profile_state.compiler-profile-metrics-add!
-          (compiler-reg-global-shared-view metrics)
-          (+ compiler-reg-assignment-census-metric-start 1)
-          capacity)
-        (profile_state.compiler-profile-metrics-add!
-          (compiler-reg-global-shared-view metrics)
-          (+ compiler-reg-assignment-census-metric-start 2)
-          assigned)
-        (profile_state.compiler-profile-metrics-add!
-          (compiler-reg-global-shared-view metrics)
-          (+ compiler-reg-assignment-census-metric-start 3)
-          registers)
-        (profile_state.compiler-profile-metrics-add!
-          (compiler-reg-global-shared-view metrics)
-          (+ compiler-reg-assignment-census-metric-start 4)
-          spills)
-        (profile_state.compiler-profile-metrics-add!
-          (compiler-reg-global-shared-view metrics)
-          (+ compiler-reg-assignment-census-metric-start 5)
-          remats)
-        (profile_state.compiler-profile-metrics-add!
-          (compiler-reg-global-shared-view metrics)
-          (+ compiler-reg-assignment-census-metric-start 6)
-          addrs)
-        (profile_state.compiler-profile-metrics-add!
-          (compiler-reg-global-shared-view metrics)
-          (+ compiler-reg-assignment-census-metric-start 7)
-          literals)
-        (profile_state.compiler-profile-metrics-add!
-          (compiler-reg-global-shared-view metrics)
-          (+ compiler-reg-assignment-census-metric-start 8)
-          cells)
-        (if (>
-          capacity
-          (compiler-reg-assignment-census-value
-            (compiler-reg-global-shared-view metrics)
-            9))
-          (profile_state.compiler-profile-metrics-set!
-            (compiler-reg-global-shared-view metrics)
-            (+ compiler-reg-assignment-census-metric-start 9)
-            capacity)
-          unit)
-        (if (>
-          assigned
-          (compiler-reg-assignment-census-value
-            (compiler-reg-global-shared-view metrics)
-            10))
-          (profile_state.compiler-profile-metrics-set!
-            (compiler-reg-global-shared-view metrics)
-            (+ compiler-reg-assignment-census-metric-start 10)
-            assigned)
-          unit)))))
-
-(cfg
-  regalloc-census
-  (define (compiler-reg-assignment-census-print!
-    [metrics : profile_state.CompilerProfileMetrics]) : unit
-    (begin
-      (io.print-error
-        "regalloc-assignment-census|plans|capacity|assigned|register|spill|remat|remat-addr|remat-literal|remat-cell|max-capacity|max-assigned\n")
-      (io.print-error
-        (str_cat.str-cat
-          "regalloc-assignment-census|"
-          (string.int->string
-            (compiler-reg-assignment-census-value
-              (compiler-reg-global-shared-view metrics)
-              0))
-          "|"
-          (string.int->string
-            (compiler-reg-assignment-census-value
-              (compiler-reg-global-shared-view metrics)
-              1))
-          "|"
-          (string.int->string
-            (compiler-reg-assignment-census-value
-              (compiler-reg-global-shared-view metrics)
-              2))
-          "|"
-          (string.int->string
-            (compiler-reg-assignment-census-value
-              (compiler-reg-global-shared-view metrics)
-              3))
-          "|"
-          (string.int->string
-            (compiler-reg-assignment-census-value
-              (compiler-reg-global-shared-view metrics)
-              4))
-          "|"
-          (string.int->string
-            (compiler-reg-assignment-census-value
-              (compiler-reg-global-shared-view metrics)
-              5))
-          "|"
-          (string.int->string
-            (compiler-reg-assignment-census-value
-              (compiler-reg-global-shared-view metrics)
-              6))
-          "|"
-          (string.int->string
-            (compiler-reg-assignment-census-value
-              (compiler-reg-global-shared-view metrics)
-              7))
-          "|"
-          (string.int->string
-            (compiler-reg-assignment-census-value
-              (compiler-reg-global-shared-view metrics)
-              8))
-          "|"
-          (string.int->string
-            (compiler-reg-assignment-census-value
-              (compiler-reg-global-shared-view metrics)
-              9))
-          "|"
-          (string.int->string
-            (compiler-reg-assignment-census-value
-              (compiler-reg-global-shared-view metrics)
-              10))
-          "\n")))))
-
-;; ---- move census (cfg regalloc-census) ------------------------------------
-;; Categorise every harvested IR move by why it survived as a reg-reg copy, to
-;; see where the move flood actually comes from. Slots:
-;;   0 harvested      total moves seen
-;;   1 coalesced      src/dst share a coalesce root -> emitted as a self-move
-;;   2 samevalue_unco un-coalesced but proven SAME VALUE (#2 should catch these;
-;;                    leftovers are multi-def / class-check rejects)
-;;   3 disjoint_unco  un-coalesced, DISTINCT value, but live SEGMENTS are
-;;                    DISJOINT -> the two could share one register via sound
-;;                    hole-filling, so copy-hint *should* fold the copy away
-;;   4 interfere      un-coalesced, distinct value, segments overlap -> a real
-;;                    simultaneous-liveness copy (needs a split, else irreducible)
-(cfg
-  regalloc-census
-  (define (compiler-reg-move-census-reset!
-    [metrics : profile_state.CompilerProfileMetrics]) : unit
-    (profile_state.compiler-profile-metrics-reset-range!
-      metrics
-      compiler-reg-move-census-metric-start
-      compiler-reg-move-census-metric-end)))
-
-(cfg
-  regalloc-census
-  (define (compiler-reg-move-census-bump!
-    [metrics : profile_state.CompilerProfileMetrics]
-    [slot : i64]) : unit
-    (if (if (< slot 0)
-      true
-      (>=
-        slot
-        (-
-          compiler-reg-move-census-metric-end
-          compiler-reg-move-census-metric-start)))
-      unit
-      (profile_state.compiler-profile-metrics-add!
-        metrics
-        (+ compiler-reg-move-census-metric-start slot)
-        1))))
-
-(cfg
-  regalloc-census
-  (define (compiler-reg-move-census-find
-    [parents : (__tl_dyn-array i64)]
-    [v : i64]) : i64
-    (if (if (< v 0)
-      true
-      (>= v (array-length parents)))
-      v
-      (let
-        [p : i64 (array-ref parents v)]
-        (if (= p v)
-          v
-          (compiler-reg-move-census-find parents p))))))
-
-(cfg
-  regalloc-census
-  (define (compiler-reg-move-census-record!
-    [metrics : profile_state.CompilerProfileMetrics]
-    [moves : CompilerRegMoveSeq]
-    [parents : (__tl_dyn-array i64)]
-    [interval-index : CompilerRegIntervalIndex]
-    [eff-index : CompilerRegIntervalIndex]
-    [types : CompilerRegVarTypes]
-    [group-vars : live.CompilerLiveI64Set]
-    [sv-parents : (__tl_dyn-array i64)]) : unit
-    (let
-      [slots : (__tl_dyn-array CompilerRegMove) moves.slots]
-      [index : i64 (- moves.len 1)]
-      (while (>= index 0)
-        (begin
-          (let
-            [item : CompilerRegMove (array-ref slots index)]
-            [src : i64 item.src]
-            [dst : i64 item.dst]
-            (begin
-              (compiler-reg-move-census-bump!
-                (compiler-reg-global-shared-view metrics)
-                0)
-              (let
-                [rs : i64
-                  (compiler-reg-move-census-find
-                    (compiler-reg-global-shared-view parents)
-                    src)]
-                [rd : i64
-                  (compiler-reg-move-census-find
-                    (compiler-reg-global-shared-view parents)
-                    dst)]
-                (if (= rs rd)
-                  (compiler-reg-move-census-bump!
-                    (compiler-reg-global-shared-view metrics)
-                    1)
-                  (if (compiler-reg-same-value-class?
-                    (compiler-reg-global-shared-view sv-parents)
-                    src
-                    dst)
-                    (compiler-reg-move-census-bump!
-                      (compiler-reg-global-shared-view metrics)
-                      2)
-                    (if (not
-                      (compiler-reg-vars-interfere-segmented-index?
-                        (compiler-reg-global-shared-view interval-index)
-                        src
-                        dst))
-                      ;; vars are segment-disjoint. Split by whether their
-                      ;; coalesce ROOTS also stay disjoint (slot 5: a root-level
-                      ;; copy-hint COULD place them in one register) or the merged
-                      ;; classes now conflict (slot 6). Slot 7: of the rootfree
-                      ;; ones, the PAIR is coalesce-vars-compatible? -> the merge
-                      ;; was blocked by the all-pairs class check, not the pair.
-                      (begin
-                        (compiler-reg-move-census-bump!
-                          (compiler-reg-global-shared-view metrics)
-                          3)
-                        (if (compiler-reg-vars-interfere-segmented-index?
-                          (compiler-reg-global-shared-view eff-index)
-                          rs
-                          rd)
-                          (compiler-reg-move-census-bump!
-                            (compiler-reg-global-shared-view metrics)
-                            6)
-                          (begin
-                            (compiler-reg-move-census-bump!
-                              (compiler-reg-global-shared-view metrics)
-                              5)
-                            (if (compiler-reg-coalesce-vars-compatible?
-                              (compiler-reg-global-shared-view interval-index)
-                              (compiler-reg-global-shared-view types)
-                              (compiler-reg-global-shared-view group-vars)
-                              src
-                              dst
-                              false
-                              (compiler-reg-global-shared-view sv-parents))
-                              (compiler-reg-move-census-bump!
-                                (compiler-reg-global-shared-view metrics)
-                                7)
-                              (if (if (live.compiler-live-set-contains?
-                                (compiler-reg-global-shared-view group-vars)
-                                src)
-                                true
-                                (live.compiler-live-set-contains?
-                                  (compiler-reg-global-shared-view group-vars)
-                                  dst))
-                                (compiler-reg-move-census-bump!
-                                  (compiler-reg-global-shared-view metrics)
-                                  8)
-                                (if (not
-                                  (compiler-reg-compatible-types?
-                                    (compiler-reg-global-shared-view types)
-                                    src
-                                    dst))
-                                  (compiler-reg-move-census-bump!
-                                    (compiler-reg-global-shared-view metrics)
-                                    9)
-                                  (compiler-reg-move-census-bump!
-                                    (compiler-reg-global-shared-view metrics)
-                                    10)))))))
-                      (compiler-reg-move-census-bump!
-                        (compiler-reg-global-shared-view metrics)
-                        4)))))))
-          (set! index (- index 1)))))))
-
-(cfg
-  regalloc-census
-  (define (compiler-reg-move-census-count-text
-    [metrics : profile_state.CompilerProfileMetrics]
-    [index : i64]) : String
-    (string.int->string
-      (profile_state.compiler-profile-metrics-value
-        metrics
-        (+ compiler-reg-move-census-metric-start index)))))
-
-(cfg
-  regalloc-census
-  (define (compiler-reg-move-census-print!
-    [metrics : profile_state.CompilerProfileMetrics]) : unit
-    (begin
-      (io.print-error
-        "regalloc-move-census|harvested|coalesced|samevalue_unco|disjoint_unco|interfere|disjoint_rootfree|disjoint_rootblocked|rootfree_paircompat|rootfree_group|rootfree_typemismatch|rootfree_other\n")
-      (io.print-error
-        (str_cat.str-cat
-          "regalloc-move-census|"
-          (compiler-reg-move-census-count-text
-            (compiler-reg-global-shared-view metrics)
-            0)
-          "|"
-          (compiler-reg-move-census-count-text
-            (compiler-reg-global-shared-view metrics)
-            1)
-          "|"
-          (compiler-reg-move-census-count-text
-            (compiler-reg-global-shared-view metrics)
-            2)
-          "|"
-          (compiler-reg-move-census-count-text
-            (compiler-reg-global-shared-view metrics)
-            3)
-          "|"
-          (compiler-reg-move-census-count-text
-            (compiler-reg-global-shared-view metrics)
-            4)
-          "|"
-          (compiler-reg-move-census-count-text
-            (compiler-reg-global-shared-view metrics)
-            5)
-          "|"
-          (compiler-reg-move-census-count-text
-            (compiler-reg-global-shared-view metrics)
-            6)
-          "|"
-          (compiler-reg-move-census-count-text
-            (compiler-reg-global-shared-view metrics)
-            7)
-          "|"
-          (compiler-reg-move-census-count-text
-            (compiler-reg-global-shared-view metrics)
-            8)
-          "|"
-          (compiler-reg-move-census-count-text
-            (compiler-reg-global-shared-view metrics)
-            9)
-          "|"
-          (compiler-reg-move-census-count-text
-            (compiler-reg-global-shared-view metrics)
-            10)
-          "\n")))))
 
 ;; Mark every var that is a member of `member-set` AND whose live interval
 ;; spans a call point as ineligible. Used by the SIMD planner to keep
@@ -37504,20 +36506,6 @@
                     conflicts
                     conflict-count
                     reg1)
-                  (cfg
-                    regalloc-census
-                    (io.print-error
-                      (str_cat.str-cat
-                        "group-pair-assigned|members="
-                        (string.int->string count)
-                        "|"
-                        (string.int->string reg0)
-                        ":"
-                        (string.int->string reg1)
-                        "|evict-cost="
-                        (string.int->string best-cost)
-                        "\n"))
-                    unit)
                   (while (< m count)
                     (let
                       [_ins : CompilerRegAssignmentTable
@@ -38433,24 +37421,6 @@
       (compiler-reg-global-shared-view early-scratch-model.scratch-count)]
     [early-scratch-weights : (__tl_dyn-array i64)
       (compiler-reg-global-shared-view early-scratch-model.scratch-weights)]
-    ;; move census (cfg regalloc-census only; no-op otherwise): categorise the
-    ;; harvested moves against the final coalesce result + per-var and per-root
-    ;; segments.
-    [_move-census : unit
-      (cfg
-        regalloc-census
-        (if allow-caller-saved-zero-call
-          (compiler-reg-move-census-record!
-            (compiler-reg-global-shared-view type-info.metrics)
-            (compiler-reg-global-shared-view moves)
-            (compiler-reg-global-shared-view coalesce.parents)
-            (compiler-reg-global-shared-view interval-index)
-            (compiler-reg-global-shared-view eff-index)
-            (compiler-reg-global-shared-view type-info)
-            (compiler-reg-global-shared-view group-vars)
-            (compiler-reg-global-shared-view sv-parents))
-          unit)
-        unit)]
     [eff-intervals : CompilerRegIntervalSeq
       (if allow-caller-saved-zero-call
         (compiler-reg-interval-arrays-to-seq
@@ -39750,7 +38720,7 @@
 ;; from the GP clobber mask.  Missing assignments are the backend's ordinary
 ;; stack-home representation and are therefore valid here.
 (cfg
-  (any test scavenge-self-check)
+  test
   (define (compiler-reg-cold-call-carriers-stack?
     [plan : CompilerRegPlan]
     [temp-start : i64]

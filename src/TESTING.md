@@ -667,11 +667,6 @@ there is no generated source to refresh. Run
 deterministic output, one-byte source mutation propagation, and byte-for-byte
 decoding with a branch-built compiler.
 
-Completed regalloc census harnesses for move traffic, call spans, and emergency
-scavenging are preserved under
-[`../scripts/attic/`](../scripts/attic/README.md). They are historical
-reproduction tools, not current CI gates.
-
 Register-plan ownership has source-local inline tests in
 `compiler_regalloc_tests.tl`. `compiler-reg-returned-plan-profile-owner` checks
 that resetting metrics through a returned plan reaches the caller's original

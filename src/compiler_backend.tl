@@ -1010,12 +1010,7 @@
   (Err (Box compiler_diagnostic.CompilerDiagnostic)))
 
 (defenum CompilerBackendRuntimePlan
-  (Plan bool bool bool bool bool bool bool CompilerBackendRuntimeTailPlan)
-  ;; Per-function code-generation view.  Reuse the runtime plan already threaded
-  ;; through every emitter instead of installing scratch state in process globals.
-  (WithScratch
-    (Box CompilerBackendRuntimePlan)
-    compiler_regalloc.CompilerRegScratchPlan))
+  (Plan bool bool bool bool bool bool bool CompilerBackendRuntimeTailPlan))
 
 (defstruct CompilerBackendRuntimeIndex
   (defines backend_i64_i64_map.Map)
@@ -2041,20 +2036,7 @@
 
 (define (compiler-backend-runtime-plan-tail [plan : CompilerBackendRuntimePlan]) : CompilerBackendRuntimeTailPlan
   (match plan
-    [(CompilerBackendRuntimePlan.WithScratch base _)
-      (compiler-backend-runtime-plan-tail
-        (compiler_ir_types.compiler-ir-box-shared-view base))]
     [(CompilerBackendRuntimePlan.Plan _ _ _ _ _ _ _ tail) tail]))
-
-(define compiler-backend-empty-scratch-plan : compiler_regalloc.CompilerRegScratchPlan
-  (compiler_regalloc.compiler-reg-scratch-plan-empty))
-
-(define (compiler-backend-runtime-plan-scratch
-  [plan : CompilerBackendRuntimePlan]) : compiler_regalloc.CompilerRegScratchPlan
-  (match plan
-    [(CompilerBackendRuntimePlan.WithScratch _ scratch) scratch]
-    [(CompilerBackendRuntimePlan.Plan _ _ _ _ _ _ _ _)
-      (compiler-backend-global-shared-view compiler-backend-empty-scratch-plan)]))
 
 (define (compiler-backend-target-abi [target : CompilerBackendTarget]) : compiler_abi.CompilerRegTargetAbi
   (match target
@@ -6645,8 +6627,6 @@
   [index : compiler_ir_types.CompilerIrValue]
   [lanes : i64]
   [elem-ty : compiler_ast_types.AstType]
-  [planned-address-base : String]
-  [planned-address-index : String]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (compiler-backend-avx2-shape-ok?
@@ -6666,8 +6646,8 @@
           base
           index
           (compiler-backend-global-shared-view elem-ty)
-          planned-address-base
-          planned-address-index
+          ""
+          ""
           backend-state)
           [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
             (let
@@ -6770,8 +6750,6 @@
   [dst : i64]
   [value : compiler_ir_types.CompilerIrValue]
   [elem-ty : compiler_ast_types.AstType]
-  [planned-gp : String]
-  [planned-xmm : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (match (compiler-backend-splat-memory-load
     (compiler-backend-global-shared-view assignments)
@@ -6783,27 +6761,23 @@
       (let
         [no-exclude : (__tl_dyn-array String) (__tl_make-array String 0)]
         [gp-reg : String
-          (if (> (string.string-length planned-gp) 0)
-            planned-gp
-            (compiler-backend-scavenge-reg
-              dst
-              (compiler-backend-global-shared-view no-exclude)
-              0
-              "%r8"
-              backend-state))]
+          (compiler-backend-scavenge-reg
+            dst
+            (compiler-backend-global-shared-view no-exclude)
+            0
+            "%r8"
+            backend-state)]
         [gp32 : String
           (compiler-backend-reg-part
             (compiler-backend-global-shared-view gp-reg)
             4)]
         [xmm-reg : String
-          (if (> (string.string-length planned-xmm) 0)
-            planned-xmm
-            (compiler-backend-scavenge-xmm-reg
-              dst
-              no-exclude
-              0
-              "%xmm2"
-              backend-state))]
+          (compiler-backend-scavenge-xmm-reg
+            dst
+            no-exclude
+            0
+            "%xmm2"
+            backend-state)]
         (match (compiler-backend-global-shared-view elem-ty)
           [(compiler_ast_types.AstType.F64)
             (match (compiler-backend-emit-load-float-value-with-plan
@@ -6970,8 +6944,6 @@
   [value : compiler_ir_types.CompilerIrValue]
   [lanes : i64]
   [elem-ty : compiler_ast_types.AstType]
-  [planned-gp : String]
-  [planned-xmm : String]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (compiler-backend-avx2-shape-ok?
@@ -6990,8 +6962,6 @@
           dst
           value
           (compiler-backend-global-shared-view elem-ty)
-          planned-gp
-          planned-xmm
           backend-state)
           [(ResultCompilerBackend.Ok load-asm)
             (ResultCompilerBackend.Ok
@@ -7365,8 +7335,6 @@
   [index : compiler_ir_types.CompilerIrValue]
   [lanes : i64]
   [elem-ty : compiler_ast_types.AstType]
-  [planned-address-base : String]
-  [planned-address-index : String]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (compiler-backend-avx2-shape-ok?
@@ -7408,8 +7376,8 @@
                       base
                       index
                       (compiler-backend-global-shared-view elem-ty)
-                      planned-address-base
-                      planned-address-index
+                      ""
+                      ""
                       backend-state)
                       [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
                         (let
@@ -7469,8 +7437,6 @@
   [value : compiler_ir_types.CompilerIrValue]
   [lanes : i64]
   [elem-ty : compiler_ast_types.AstType]
-  [planned-address-base : String]
-  [planned-address-index : String]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (compiler-backend-avx2-shape-ok?
@@ -7493,8 +7459,8 @@
               base
               index
               (compiler-backend-global-shared-view elem-ty)
-              planned-address-base
-              planned-address-index
+              ""
+              ""
               backend-state)
               [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
                 (let
@@ -8564,8 +8530,6 @@
   [index : compiler_ir_types.CompilerIrValue]
   [lanes : i64]
   [elem-ty : compiler_ast_types.AstType]
-  [planned-address-base : String]
-  [planned-address-index : String]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (compiler-backend-avx512-shape-ok?
@@ -8585,8 +8549,8 @@
           base
           index
           (compiler-backend-global-shared-view elem-ty)
-          planned-address-base
-          planned-address-index
+          ""
+          ""
           backend-state)
           [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
             (let
@@ -8637,8 +8601,6 @@
   [value : compiler_ir_types.CompilerIrValue]
   [lanes : i64]
   [elem-ty : compiler_ast_types.AstType]
-  [planned-gp : String]
-  [planned-xmm : String]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (compiler-backend-avx512-shape-ok?
@@ -8657,8 +8619,8 @@
           dst
           value
           (compiler-backend-global-shared-view elem-ty)
-          planned-gp
-          planned-xmm
+          ""
+          ""
           backend-state)
           [(ResultCompilerBackend.Ok load-asm)
             (ResultCompilerBackend.Ok
@@ -8698,8 +8660,6 @@
   [value : compiler_ir_types.CompilerIrValue]
   [lanes : i64]
   [elem-ty : compiler_ast_types.AstType]
-  [planned-gp : String]
-  [planned-xmm : String]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (compiler-backend-avx512-shape-ok?
@@ -8712,8 +8672,6 @@
       value
       lanes
       elem-ty
-      planned-gp
-      planned-xmm
       instr-diag
       backend-state)
     (compiler-backend-emit-avx2-splat
@@ -8723,8 +8681,6 @@
       value
       lanes
       elem-ty
-      planned-gp
-      planned-xmm
       instr-diag
       backend-state)))
 
@@ -8863,8 +8819,6 @@
   [index : compiler_ir_types.CompilerIrValue]
   [lanes : i64]
   [elem-ty : compiler_ast_types.AstType]
-  [planned-address-base : String]
-  [planned-address-index : String]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (compiler-backend-avx512-shape-ok?
@@ -8906,8 +8860,8 @@
                       base
                       index
                       (compiler-backend-global-shared-view elem-ty)
-                      planned-address-base
-                      planned-address-index
+                      ""
+                      ""
                       backend-state)
                       [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
                         (let
@@ -9488,8 +9442,6 @@
   [value : compiler_ir_types.CompilerIrValue]
   [lanes : i64]
   [elem-ty : compiler_ast_types.AstType]
-  [planned-address-base : String]
-  [planned-address-index : String]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (compiler-backend-avx512-shape-ok?
@@ -9512,8 +9464,8 @@
               base
               index
               (compiler-backend-global-shared-view elem-ty)
-              planned-address-base
-              planned-address-index
+              ""
+              ""
               backend-state)
               [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
                 (let
@@ -9556,8 +9508,6 @@
   [index : compiler_ir_types.CompilerIrValue]
   [lanes : i64]
   [elem-ty : compiler_ast_types.AstType]
-  [planned-address-base : String]
-  [planned-address-index : String]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (compiler-backend-avx512-shape-ok?
@@ -9571,8 +9521,6 @@
       index
       lanes
       elem-ty
-      planned-address-base
-      planned-address-index
       instr-diag
       backend-state)
     (compiler-backend-emit-avx2-vector-load
@@ -9583,8 +9531,6 @@
       index
       lanes
       elem-ty
-      planned-address-base
-      planned-address-index
       instr-diag
       backend-state)))
 
@@ -9637,8 +9583,6 @@
       dst
       (compiler-backend-global-shared-view logical-base)
       (compiler_ast_types.AstType.I64)
-      ""
-      ""
       backend-state)
       [(ResultCompilerBackend.Ok first-load)
         (match (compiler-backend-avx2-splat-load
@@ -9646,8 +9590,6 @@
           dst
           logical-base
           (compiler_ast_types.AstType.I64)
-          ""
-          ""
           backend-state)
           [(ResultCompilerBackend.Ok second-load)
             (let
@@ -9727,8 +9669,6 @@
   [lane-offset : bool]
   [lanes : i64]
   [elem-ty : compiler_ast_types.AstType]
-  [planned-address-base : String]
-  [planned-address-index : String]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
@@ -9764,8 +9704,8 @@
               (compiler-backend-global-shared-view index)
               lane-offset)
             (compiler_ast_types.AstType.I64)
-            (compiler-backend-global-shared-view planned-address-base)
-            (compiler-backend-global-shared-view planned-address-index)
+            ""
+            ""
             (compiler-backend-global-shared-view backend-state))
             [(ResultCompilerBackendSimdIndexedAddress.Ok index-plan)
               (let
@@ -9941,8 +9881,6 @@
   [lane-offset : bool]
   [lanes : i64]
   [elem-ty : compiler_ast_types.AstType]
-  [planned-address-base : String]
-  [planned-address-index : String]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
@@ -9978,8 +9916,8 @@
               (compiler-backend-global-shared-view index)
               lane-offset)
             (compiler_ast_types.AstType.I64)
-            (compiler-backend-global-shared-view planned-address-base)
-            (compiler-backend-global-shared-view planned-address-index)
+            ""
+            ""
             (compiler-backend-global-shared-view backend-state))
             [(ResultCompilerBackendSimdIndexedAddress.Ok index-plan)
               (let
@@ -10119,8 +10057,6 @@
   [lane-offset : bool]
   [lanes : i64]
   [elem-ty : compiler_ast_types.AstType]
-  [planned-address-base : String]
-  [planned-address-index : String]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (compiler-backend-current-mode-avx2?
@@ -10135,8 +10071,6 @@
       lane-offset
       lanes
       elem-ty
-      planned-address-base
-      planned-address-index
       instr-diag
       backend-state)
     (compiler-backend-emit-avx512-gather-load
@@ -10149,8 +10083,6 @@
       lane-offset
       lanes
       elem-ty
-      planned-address-base
-      planned-address-index
       instr-diag
       backend-state)))
 
@@ -10359,8 +10291,6 @@
   [active-lanes : compiler_ir_types.CompilerIrValue]
   [lanes : i64]
   [elem-ty : compiler_ast_types.AstType]
-  [planned-active : String]
-  [planned-value : String]
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]) : ResultCompilerBackend
@@ -10394,14 +10324,8 @@
         [(compiler_ast_types.AstType.F32) true]
         [_ false])]
     [needs-high : bool (> lanes selector-lanes)]
-    [active-reg : String
-      (if (string.eq (compiler-backend-global-shared-view planned-active) "")
-        "%r10"
-        (compiler-backend-global-shared-view planned-active))]
-    [value-reg : String
-      (if (string.eq (compiler-backend-global-shared-view planned-value) "")
-        "%r11"
-        (compiler-backend-global-shared-view planned-value))]
+    [active-reg : String "%r10"]
+    [value-reg : String "%r11"]
     [index-reg : String
       (if avx512
         "%zmm0"
@@ -10817,8 +10741,6 @@
   [index : compiler_ir_types.CompilerIrValue]
   [lanes : i64]
   [elem-ty : compiler_ast_types.AstType]
-  [planned-address-base : String]
-  [planned-address-index : String]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (compiler-backend-avx512-shape-ok?
@@ -10834,8 +10756,6 @@
       index
       lanes
       elem-ty
-      planned-address-base
-      planned-address-index
       instr-diag
       backend-state)
     (compiler-backend-emit-avx2-vector-binop-memory-source
@@ -10848,8 +10768,6 @@
       index
       lanes
       elem-ty
-      planned-address-base
-      planned-address-index
       instr-diag
       backend-state)))
 
@@ -12338,9 +12256,6 @@
   [src : compiler_ir_types.CompilerIrValue]
   [lanes : i64]
   [elem-ty : compiler_ast_types.AstType]
-  [planned-acc-xmm : String]
-  [planned-scratch-xmm : String]
-  [planned-mask-xmm : String]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (compiler-backend-avx512-shape-ok?
@@ -12354,8 +12269,6 @@
       src
       lanes
       elem-ty
-      planned-acc-xmm
-      planned-scratch-xmm
       instr-diag
       backend-state)
     (compiler-backend-emit-avx2-vector-reduce
@@ -12366,9 +12279,9 @@
       src
       lanes
       elem-ty
-      planned-acc-xmm
-      planned-scratch-xmm
-      planned-mask-xmm
+      ""
+      ""
+      ""
       instr-diag
       backend-state)))
 
@@ -12380,8 +12293,6 @@
   [value : compiler_ir_types.CompilerIrValue]
   [lanes : i64]
   [elem-ty : compiler_ast_types.AstType]
-  [planned-address-base : String]
-  [planned-address-index : String]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (compiler-backend-avx512-shape-ok?
@@ -12395,8 +12306,6 @@
       value
       lanes
       elem-ty
-      planned-address-base
-      planned-address-index
       instr-diag
       backend-state)
     (compiler-backend-emit-avx2-vector-store
@@ -12407,8 +12316,6 @@
       value
       lanes
       elem-ty
-      planned-address-base
-      planned-address-index
       instr-diag
       backend-state)))
 
@@ -12737,8 +12644,6 @@
   [mask : compiler_ir_types.CompilerIrValue]
   [lanes : i64]
   [elem-ty : compiler_ast_types.AstType]
-  [planned-address-base : String]
-  [planned-address-index : String]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (match (compiler-backend-global-shared-view elem-ty)
@@ -12752,8 +12657,6 @@
       index
       mask
       lanes
-      planned-address-base
-      planned-address-index
       instr-diag
       backend-state)
     (if (compiler-backend-avx512-shape-ok?
@@ -12783,8 +12686,8 @@
                     base
                     index
                     (compiler-backend-global-shared-view elem-ty)
-                    planned-address-base
-                    planned-address-index
+                    ""
+                    ""
                     backend-state)
                     [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
                       (let
@@ -12845,8 +12748,6 @@
   [mask : compiler_ir_types.CompilerIrValue]
   [lanes : i64]
   [elem-ty : compiler_ast_types.AstType]
-  [planned-address-base : String]
-  [planned-address-index : String]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (match (compiler-backend-global-shared-view elem-ty)
@@ -12860,8 +12761,6 @@
       value
       mask
       lanes
-      planned-address-base
-      planned-address-index
       instr-diag
       backend-state)
     (if (compiler-backend-avx512-shape-ok?
@@ -12894,8 +12793,8 @@
                         base
                         index
                         (compiler-backend-global-shared-view elem-ty)
-                        planned-address-base
-                        planned-address-index
+                        ""
+                        ""
                         backend-state)
                         [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
                           (let
@@ -12948,8 +12847,6 @@
   [index : compiler_ir_types.CompilerIrValue]
   [mask : compiler_ir_types.CompilerIrValue]
   [lanes : i64]
-  [planned-address-base : String]
-  [planned-address-index : String]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (= (compiler-backend-avx512-lane-mask lanes) 0)
@@ -12981,8 +12878,8 @@
                   base
                   index
                   (compiler_ast_types.AstType.Bool)
-                  planned-address-base
-                  planned-address-index
+                  ""
+                  ""
                   backend-state)
                   [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
                     (let
@@ -13081,8 +12978,6 @@
   [value : compiler_ir_types.CompilerIrValue]
   [mask : compiler_ir_types.CompilerIrValue]
   [lanes : i64]
-  [planned-address-base : String]
-  [planned-address-index : String]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (= (compiler-backend-avx512-lane-mask lanes) 0)
@@ -13117,8 +13012,8 @@
                       base
                       index
                       (compiler_ast_types.AstType.Bool)
-                      planned-address-base
-                      planned-address-index
+                      ""
+                      ""
                       backend-state)
                       [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
                         (let
@@ -14304,9 +14199,6 @@
   [on-true : compiler_ir_types.CompilerIrValue]
   [on-false : compiler_ir_types.CompilerIrValue]
   [ty : compiler_ast_types.AstType]
-  [planned-result : String]
-  [planned-value : String]
-  [planned-test : String]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (not
@@ -14355,7 +14247,7 @@
           (not (string.eq dst-home true-home)))
           dst-home
           (compiler-backend-planned-or-scavenge-reg
-            planned-result
+            ""
             dst
             (compiler-backend-three-exclude
               (compiler-backend-global-shared-view mask-home)
@@ -14377,7 +14269,7 @@
         (if conditional-direct?
           true-home
           (compiler-backend-planned-or-scavenge-reg
-            planned-value
+            ""
             dst
             (compiler-backend-two-exclude
               (compiler-backend-global-shared-view result-reg)
@@ -14431,7 +14323,7 @@
         (if (not (string.eq var-test ""))
           ""
           (compiler-backend-planned-or-scavenge-reg
-            planned-test
+            ""
             dst
             (compiler-backend-two-exclude
               (compiler-backend-global-shared-view result-reg)
@@ -14493,33 +14385,19 @@
 ;; preservation exactly as compiler-backend-planned-or-scavenge-reg does.
 (define (compiler-backend-flags-select-reg
   [peek? : bool]
-  [planned : String]
   [dst : i64]
   [exclude : (__tl_dyn-array String)]
   [exclude-n : i64]
   [fallback : String]
   [backend-state : CompilerBackendState]) : String
-  (if (string.eq planned "")
-    (if peek?
-      (compiler-backend-scavenge-reg-peek
-        dst
-        exclude
-        exclude-n
-        fallback
-        backend-state)
-      (compiler-backend-scavenge-reg
-        dst
-        exclude
-        exclude-n
-        fallback
-        backend-state))
-    (if peek?
-      planned
-      (begin
-        (compiler-backend-preserve-planned-register!
-          (compiler-backend-global-shared-view planned)
-          backend-state)
-        planned))))
+  (if peek?
+    (compiler-backend-scavenge-reg-peek
+      dst
+      exclude
+      exclude-n
+      fallback
+      backend-state)
+    (compiler-backend-scavenge-reg dst exclude exclude-n fallback backend-state)))
 
 ;; SS-P5(b) / VG-P-B: a scalar Select whose mask is the comparison IMMEDIATELY
 ;; in front of it and is wanted nowhere else. The mask never becomes a value:
@@ -14572,8 +14450,6 @@
   [cmp-lhs : compiler_ir_types.CompilerIrValue]
   [cmp-rhs : compiler_ir_types.CompilerIrValue]
   [cmp-ty : compiler_ast_types.AstType]
-  [planned-result : String]
-  [planned-value : String]
   [backend-state : CompilerBackendState]) : CompilerBackendMaybeAsm
   (if (not
     (compiler-backend-intlike-scalar-type?
@@ -14695,7 +14571,6 @@
           dst-home
           (compiler-backend-flags-select-reg
             true
-            (compiler-backend-global-shared-view planned-result)
             dst
             (compiler-backend-global-shared-view result-exclude)
             4
@@ -14721,7 +14596,6 @@
           ""
           (compiler-backend-flags-select-reg
             true
-            (compiler-backend-global-shared-view planned-value)
             dst
             (compiler-backend-global-shared-view conditional-exclude)
             4
@@ -14757,7 +14631,6 @@
               (compiler-backend-global-shared-view dst-home)
               (compiler-backend-flags-select-reg
                 false
-                (compiler-backend-global-shared-view planned-result)
                 dst
                 (compiler-backend-global-shared-view result-exclude)
                 4
@@ -14768,7 +14641,6 @@
               ""
               (compiler-backend-flags-select-reg
                 false
-                (compiler-backend-global-shared-view planned-value)
                 dst
                 (compiler-backend-global-shared-view conditional-exclude)
                 4
@@ -14861,9 +14733,6 @@
   [on-false : compiler_ir_types.CompilerIrValue]
   [lanes : i64]
   [elem-ty : compiler_ast_types.AstType]
-  [planned-result : String]
-  [planned-value : String]
-  [planned-test : String]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (= lanes 0)
@@ -14875,9 +14744,6 @@
       on-true
       on-false
       elem-ty
-      planned-result
-      planned-value
-      planned-test
       instr-diag
       backend-state)
     (if (compiler-backend-current-mode-avx2?
@@ -15191,8 +15057,6 @@
   [mask : compiler_ir_types.CompilerIrValue]
   [lanes : i64]
   [elem-ty : compiler_ast_types.AstType]
-  [planned-address-base : String]
-  [planned-address-index : String]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (if (match (compiler-backend-global-shared-view elem-ty)
@@ -15227,8 +15091,8 @@
                   base
                   index
                   (compiler-backend-global-shared-view elem-ty)
-                  planned-address-base
-                  planned-address-index
+                  ""
+                  ""
                   backend-state)
                   [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
                     (let
@@ -15323,8 +15187,6 @@
   [mask : compiler_ir_types.CompilerIrValue]
   [lanes : i64]
   [elem-ty : compiler_ast_types.AstType]
-  [planned-address-base : String]
-  [planned-address-index : String]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (if (match (compiler-backend-global-shared-view elem-ty)
@@ -15351,8 +15213,8 @@
               base
               index
               (compiler-backend-global-shared-view elem-ty)
-              planned-address-base
-              planned-address-index
+              ""
+              ""
               backend-state)
               [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
                 (let
@@ -15491,8 +15353,6 @@
   [mask : compiler_ir_types.CompilerIrValue]
   [lanes : i64]
   [elem-ty : compiler_ast_types.AstType]
-  [planned-address-base : String]
-  [planned-address-index : String]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (compiler-backend-current-mode-avx2?
@@ -15508,8 +15368,6 @@
       mask
       lanes
       elem-ty
-      planned-address-base
-      planned-address-index
       instr-diag
       backend-state)
     (compiler-backend-emit-avx512-predicated-load
@@ -15521,8 +15379,6 @@
       mask
       lanes
       elem-ty
-      planned-address-base
-      planned-address-index
       instr-diag
       backend-state)))
 
@@ -15537,8 +15393,6 @@
   [mask : compiler_ir_types.CompilerIrValue]
   [lanes : i64]
   [elem-ty : compiler_ast_types.AstType]
-  [planned-address-base : String]
-  [planned-address-index : String]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (compiler-backend-current-mode-avx2?
@@ -15554,8 +15408,6 @@
       mask
       lanes
       elem-ty
-      planned-address-base
-      planned-address-index
       instr-diag
       backend-state)
     (compiler-backend-emit-avx512-predicated-store
@@ -15567,8 +15419,6 @@
       mask
       lanes
       elem-ty
-      planned-address-base
-      planned-address-index
       instr-diag
       backend-state)))
 
@@ -15716,9 +15566,6 @@
   [index : compiler_ir_types.CompilerIrValue]
   [end-value : compiler_ir_types.CompilerIrValue]
   [lanes : i64]
-  [planned-count : String]
-  [planned-index : String]
-  [planned-mask : String]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (compiler-backend-current-mode-avx2?
@@ -15743,9 +15590,9 @@
       index
       end-value
       lanes
-      planned-count
-      planned-index
-      planned-mask
+      ""
+      ""
+      ""
       instr-diag
       backend-state)))
 
@@ -22509,8 +22356,6 @@
   [src : compiler_ir_types.CompilerIrValue]
   [lanes : i64]
   [elem-ty : compiler_ast_types.AstType]
-  [planned-acc-xmm : String]
-  [planned-scratch-xmm : String]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (compiler-backend-avx512-shape-ok?
@@ -22543,30 +22388,20 @@
                     (compiler-backend-vector-reg-lower-ymm
                       (compiler-backend-global-shared-view zmm))]
                   [acc-xmm : String
-                    (if (> (string.string-length planned-acc-xmm) 0)
-                      planned-acc-xmm
-                      (compiler-backend-scavenge-xmm-reg
-                        dst
-                        (compiler-backend-one-exclude
-                          (compiler-backend-global-shared-view
-                            planned-scratch-xmm))
-                        1
-                        "%xmm2"
-                        backend-state))]
+                    (compiler-backend-scavenge-xmm-reg
+                      dst
+                      (compiler-backend-one-exclude "")
+                      1
+                      "%xmm2"
+                      backend-state)]
                   [scratch-xmm : String
-                    (if (>
-                      (string.string-length
-                        (compiler-backend-global-shared-view
-                          planned-scratch-xmm))
-                      0)
-                      (compiler-backend-global-shared-view planned-scratch-xmm)
-                      (compiler-backend-scavenge-xmm-reg
-                        dst
-                        (compiler-backend-one-exclude
-                          (compiler-backend-global-shared-view acc-xmm))
-                        1
-                        "%xmm3"
-                        backend-state))]
+                    (compiler-backend-scavenge-xmm-reg
+                      dst
+                      (compiler-backend-one-exclude
+                        (compiler-backend-global-shared-view acc-xmm))
+                      1
+                      "%xmm3"
+                      backend-state)]
                   [acc-ymm : String
                     (compiler-backend-xmm-to-ymm
                       (compiler-backend-global-shared-view acc-xmm))]
@@ -22843,8 +22678,6 @@
   [dst1 : String]
   [sse0? : bool]
   [sse1? : bool]
-  [planned0 : String]
-  [planned1 : String]
   [_instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (match (compiler-backend-emit-pack-words-direct-registers
@@ -22886,48 +22719,36 @@
             (compiler-backend-global-shared-view dst0-reg)
             (compiler-backend-global-shared-view dst1-reg))]
         [scratch0 : String
-          (if (string.eq (compiler-backend-global-shared-view planned0) "")
-            (if sse0?
-              (compiler-backend-scavenge-xmm-reg
-                -1
-                (compiler-backend-global-shared-view scratch0-exclude)
-                3
-                "%xmm2"
-                (compiler-backend-global-shared-view backend-state))
-              (compiler-backend-scavenge-reg-here
-                (compiler-backend-global-shared-view scratch0-exclude)
-                3
-                "%r8"
-                (compiler-backend-global-shared-view backend-state)))
-            (begin
-              (compiler-backend-preserve-planned-register!
-                (compiler-backend-global-shared-view planned0)
-                (compiler-backend-global-shared-view backend-state))
-              (compiler-backend-global-shared-view planned0)))]
+          (if sse0?
+            (compiler-backend-scavenge-xmm-reg
+              -1
+              (compiler-backend-global-shared-view scratch0-exclude)
+              3
+              "%xmm2"
+              (compiler-backend-global-shared-view backend-state))
+            (compiler-backend-scavenge-reg-here
+              (compiler-backend-global-shared-view scratch0-exclude)
+              3
+              "%r8"
+              (compiler-backend-global-shared-view backend-state)))]
         [scratch1-exclude : (__tl_dyn-array String)
           (compiler-backend-three-exclude
             (compiler-backend-global-shared-view scratch0)
             (compiler-backend-global-shared-view dst0-reg)
             (compiler-backend-global-shared-view dst1-reg))]
         [scratch1 : String
-          (if (string.eq (compiler-backend-global-shared-view planned1) "")
-            (if sse1?
-              (compiler-backend-scavenge-xmm-reg
-                -1
-                (compiler-backend-global-shared-view scratch1-exclude)
-                3
-                "%xmm3"
-                (compiler-backend-global-shared-view backend-state))
-              (compiler-backend-scavenge-reg-here
-                (compiler-backend-global-shared-view scratch1-exclude)
-                3
-                "%r9"
-                (compiler-backend-global-shared-view backend-state)))
-            (begin
-              (compiler-backend-preserve-planned-register!
-                (compiler-backend-global-shared-view planned1)
-                (compiler-backend-global-shared-view backend-state))
-              (compiler-backend-global-shared-view planned1)))]
+          (if sse1?
+            (compiler-backend-scavenge-xmm-reg
+              -1
+              (compiler-backend-global-shared-view scratch1-exclude)
+              3
+              "%xmm3"
+              (compiler-backend-global-shared-view backend-state))
+            (compiler-backend-scavenge-reg-here
+              (compiler-backend-global-shared-view scratch1-exclude)
+              3
+              "%r9"
+              (compiler-backend-global-shared-view backend-state)))]
         [store0 : CompilerBackendMaybeAsm
           (compiler-backend-emit-pack-word-immediate-store
             type-segment-bases
@@ -23061,8 +22882,6 @@
   [ty : compiler_ast_types.AstType]
   [vars : i64]
   [program-index : CompilerBackendProgramIndex]
-  [planned0 : String]
-  [planned1 : String]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (= words.len 2)
@@ -23101,8 +22920,6 @@
                 (compiler_abi.compiler-abi-register-spelling reg-b)
                 w0-sse
                 w1-sse
-                planned0
-                planned1
                 instr-diag
                 backend-state)]
             [(compiler_regalloc.CompilerRegLocation.Spill offset)
@@ -23120,8 +22937,6 @@
                   (- offset 8))
                 w0-sse
                 w1-sse
-                planned0
-                planned1
                 instr-diag
                 backend-state)]
             [_
@@ -23155,8 +22970,6 @@
                     dst1
                     w0-sse
                     w1-sse
-                    planned0
-                    planned1
                     instr-diag
                     backend-state)]
                 [(ResultCompilerBackend.Err m) (ResultCompilerBackend.Err m)])]
@@ -23176,7 +22989,6 @@
   [index : i64]
   [ty : compiler_ast_types.AstType]
   [vars : i64]
-  [planned : String]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (match src
@@ -23231,26 +23043,19 @@
                       [no-exclude : (__tl_dyn-array String)
                         (__tl_make-array String 0)]
                       [scratch : String
-                        (if (string.eq planned "")
-                          (if is-float
-                            (compiler-backend-scavenge-xmm-reg
-                              dst
-                              no-exclude
-                              0
-                              "%xmm2"
-                              backend-state)
-                            (compiler-backend-scavenge-reg
-                              dst
-                              no-exclude
-                              0
-                              "%r8"
-                              backend-state))
-                          (begin
-                            (compiler-backend-preserve-planned-register!
-                              (compiler-backend-global-shared-view planned)
-                              (compiler-backend-global-shared-view
-                                backend-state))
-                            planned))]
+                        (if is-float
+                          (compiler-backend-scavenge-xmm-reg
+                            dst
+                            no-exclude
+                            0
+                            "%xmm2"
+                            backend-state)
+                          (compiler-backend-scavenge-reg
+                            dst
+                            no-exclude
+                            0
+                            "%r8"
+                            backend-state))]
                       (str_cat.str-cat
                         (compiler-backend-emit-group-word-move
                           operand
@@ -27012,21 +26817,6 @@
           (set! index (+ index 1))))
       found)))
 
-;; No production path installs a scratch plan, so every planned scratch
-;; lookup answers the empty spelling and callers fall back to the scavenger.
-(define (compiler-backend-scratch-plan-register-here
-  [_plan : compiler_regalloc.CompilerRegScratchPlan]
-  [_ordinal : i64]
-  [_backend-state : CompilerBackendState]) : String
-  "")
-
-(define (compiler-backend-scratch-plan-register-ahead
-  [_plan : compiler_regalloc.CompilerRegScratchPlan]
-  [_instruction-offset : i64]
-  [_ordinal : i64]
-  [_backend-state : CompilerBackendState]) : String
-  "")
-
 (define (compiler-backend-missing-modeled-scratch!
   [scratch-class : String]
   [backend-state : CompilerBackendState]) : String
@@ -27286,20 +27076,13 @@
       planned)))
 
 (define (compiler-backend-planned-or-scavenge-divmod-src-reg-here
-  [planned : String]
   [exclude : (__tl_dyn-array String)]
   [exclude-n : i64]
   [backend-state : CompilerBackendState]) : String
-  (if (string.eq (compiler-backend-global-shared-view planned) "")
-    (compiler-backend-scavenge-divmod-src-reg-here
-      exclude
-      exclude-n
-      backend-state)
-    (begin
-      (compiler-backend-preserve-planned-register!
-        (compiler-backend-global-shared-view planned)
-        backend-state)
-      planned)))
+  (compiler-backend-scavenge-divmod-src-reg-here
+    exclude
+    exclude-n
+    backend-state))
 
 (define (compiler-backend-divmod-shift-rax [mnemonic : String] [shift : i64]) : String
   (if (= shift 0)
@@ -28473,9 +28256,6 @@
   [op : compiler_ir_types.CompilerIrBinOp]
   [rhs : compiler_ir_types.CompilerIrValue]
   [ty : compiler_ast_types.AstType]
-  [planned-magic : String]
-  [planned-dividend : String]
-  [planned-mask : String]
   [backend-state : CompilerBackendState]) : CompilerBackendMaybeAsm
   ;; This helper is probed by generic return-binop emission. Reject a
   ;; non-literal/non-divmod shape before touching any planned registers: eager
@@ -28501,7 +28281,7 @@
                 (compiler-backend-global-shared-view op))
               (compiler-backend-global-shared-view hoist))
               (compiler-backend-planned-or-scavenge-reg-here
-                planned-magic
+                ""
                 (compiler-backend-binop-scavenge-exclude-for-op
                   (compiler-backend-global-shared-view op))
                 5
@@ -28510,7 +28290,6 @@
               "")]
           [src : String
             (compiler-backend-planned-or-scavenge-divmod-src-reg-here
-              planned-dividend
               (compiler-backend-divmod-dividend-exclude
                 (compiler-backend-global-shared-view magic))
               5
@@ -28530,7 +28309,7 @@
         (let
           [magic : String
             (compiler-backend-planned-or-scavenge-reg-here
-              planned-magic
+              ""
               (compiler-backend-binop-scavenge-exclude-for-op
                 (compiler-backend-global-shared-view op))
               5
@@ -28538,7 +28317,7 @@
               backend-state)]
           [dividend : String
             (compiler-backend-planned-or-scavenge-reg-here
-              planned-dividend
+              ""
               (compiler-backend-divmod-dividend-exclude
                 (compiler-backend-global-shared-view magic))
               5
@@ -28546,7 +28325,7 @@
               backend-state)]
           [mask : String
             (compiler-backend-planned-or-scavenge-reg-here
-              planned-mask
+              ""
               (compiler-backend-divmod-mask-exclude
                 (compiler-backend-global-shared-view magic)
                 (compiler-backend-global-shared-view dividend))
@@ -29517,7 +29296,6 @@
   [operand-ty : compiler_ast_types.AstType]
   [result-ty : compiler_ast_types.AstType]
   [planned-rcx : String]
-  [planned-result : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
     [count-ty : compiler_ast_types.AstType
@@ -29549,11 +29327,7 @@
           "%r8"
           (compiler-backend-global-shared-view backend-state)))]
     [result-reg : String
-      (if (or
-        (string.eq (compiler-backend-global-shared-view planned-result) "%rcx")
-        (string.eq
-          (compiler-backend-global-shared-view planned-result)
-          (compiler-backend-global-shared-view count-reg)))
+      (if (string.eq "" (compiler-backend-global-shared-view count-reg))
         (compiler-backend-scavenge-reg
           dst
           (compiler-backend-two-exclude
@@ -29563,7 +29337,7 @@
           "%r8"
           (compiler-backend-global-shared-view backend-state))
         (compiler-backend-planned-or-scavenge-reg
-          (compiler-backend-global-shared-view planned-result)
+          ""
           dst
           (compiler-backend-two-exclude
             "%rcx"
@@ -30138,7 +29912,6 @@
   [fty : compiler_ast_types.AstType]
   [result-ty : compiler_ast_types.AstType]
   [planned-primary : String]
-  [planned-rhs : String]
   [planned-result-gp : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (compiler-backend-compare-op? (compiler-backend-global-shared-view op))
@@ -30203,7 +29976,7 @@
               (compiler-backend-global-shared-view lhs-reg))]
           [rhs-temp : String
             (compiler-backend-planned-or-scavenge-xmm-reg
-              planned-rhs
+              ""
               dst
               rhs-temp-exclude
               1
@@ -30296,7 +30069,7 @@
                 (compiler-backend-global-shared-view result-reg))]
             [rhs-temp : String
               (compiler-backend-planned-or-scavenge-xmm-reg
-                planned-rhs
+                ""
                 dst
                 rhs-temp-exclude
                 1
@@ -31476,8 +31249,6 @@
   [rhs : compiler_ir_types.CompilerIrValue]
   [operand-ty : compiler_ast_types.AstType]
   [result-ty : compiler_ast_types.AstType]
-  [planned-magic : String]
-  [planned-src : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
     [hoist : CompilerBackendConstHoistHome
@@ -31497,7 +31268,7 @@
     [magic : String
       (if needs-material
         (compiler-backend-planned-or-scavenge-reg
-          (compiler-backend-global-shared-view planned-magic)
+          ""
           dst
           (if (string.eq (compiler-backend-global-shared-view hoist-reg) "")
             (compiler-backend-binop-scavenge-exclude-for-op
@@ -31585,7 +31356,7 @@
         [dst-src? (compiler-backend-global-shared-view dst-home)]
         [else
           (compiler-backend-planned-or-scavenge-divmod-src-reg
-            (compiler-backend-global-shared-view planned-src)
+            ""
             dst
             (if (string.eq (compiler-backend-global-shared-view hoist-reg) "")
               (compiler-backend-global-shared-view src-excl)
@@ -31649,8 +31420,6 @@
   [lhs : compiler_ir_types.CompilerIrValue]
   [rhs : compiler_ir_types.CompilerIrValue]
   [operand-ty : compiler_ast_types.AstType]
-  [planned-magic : String]
-  [planned-src : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
     [hoist : CompilerBackendConstHoistHome (CompilerBackendNoConstHoistHome)]
@@ -31664,7 +31433,7 @@
     [magic : String
       (if needs-material
         (compiler-backend-planned-or-scavenge-reg-here
-          (compiler-backend-global-shared-view planned-magic)
+          ""
           (compiler-backend-binop-scavenge-exclude-for-op
             (compiler-backend-global-shared-view op))
           5
@@ -31696,7 +31465,6 @@
       (if own-src?
         (compiler-backend-global-shared-view lhs-home)
         (compiler-backend-planned-or-scavenge-divmod-src-reg-here
-          (compiler-backend-global-shared-view planned-src)
           (compiler-backend-divmod-dividend-exclude
             (compiler-backend-global-shared-view magic))
           5
@@ -31736,10 +31504,6 @@
   [rhs : compiler_ir_types.CompilerIrValue]
   [ty : compiler_ast_types.AstType]
   [planned0 : String]
-  [planned1 : String]
-  [planned2 : String]
-  [planned3 : String]
-  [planned4 : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (compiler-backend-binop-f64?
     (compiler-backend-global-shared-view types)
@@ -31787,16 +31551,6 @@
       [planned0-xmm? : bool
         (compiler-backend-string-prefix-at?
           (compiler-backend-global-shared-view planned0)
-          "%xmm"
-          0)]
-      [planned1-xmm? : bool
-        (compiler-backend-string-prefix-at?
-          (compiler-backend-global-shared-view planned1)
-          "%xmm"
-          0)]
-      [planned2-xmm? : bool
-        (compiler-backend-string-prefix-at?
-          (compiler-backend-global-shared-view planned2)
           "%xmm"
           0)]
       (if (and
@@ -31885,23 +31639,9 @@
             result-ty
             (if planned0-xmm?
               (compiler-backend-global-shared-view planned0)
-              (if planned1-xmm?
-                (compiler-backend-global-shared-view planned1)
-                ""))
+              "")
             (if planned0-xmm?
-              (if planned1-xmm?
-                (compiler-backend-global-shared-view planned1)
-                "")
-              (if planned2-xmm?
-                (compiler-backend-global-shared-view planned2)
-                ""))
-            (if planned0-xmm?
-              (if (and
-                (not
-                  (string.eq (compiler-backend-global-shared-view planned1) ""))
-                (not planned1-xmm?))
-                (compiler-backend-global-shared-view planned1)
-                (compiler-backend-global-shared-view planned2))
+              ""
               (compiler-backend-global-shared-view planned0))
             backend-state))))
     (let
@@ -31948,7 +31688,6 @@
           operand-ty
           result-ty
           (compiler-backend-global-shared-view planned0)
-          (compiler-backend-global-shared-view planned1)
           backend-state)
         (if (if (string.eq (compiler-backend-global-shared-view dst-home) "")
           (match (compiler-backend-immediate-operand
@@ -32063,7 +31802,6 @@
                     operand-ty
                     result-ty
                     (compiler-backend-global-shared-view planned0)
-                    (compiler-backend-global-shared-view planned1)
                     backend-state)]
                 [(string.eq dst-home "")
                   (compiler-backend-emit-binop-spill-direct-source
@@ -32291,8 +32029,6 @@
               (compiler-backend-global-shared-view rhs)
               (compiler-backend-global-shared-view operand-ty)
               result-ty
-              (compiler-backend-global-shared-view planned2)
-              planned3
               backend-state)
             (let
               [staging : String
@@ -32326,9 +32062,9 @@
                     (compiler-backend-global-shared-view rhs)
                     (compiler-backend-global-shared-view operand-ty)
                     dst
-                    (compiler-backend-global-shared-view planned2)
-                    (compiler-backend-global-shared-view planned3)
-                    (compiler-backend-global-shared-view planned4)
+                    ""
+                    ""
+                    ""
                     backend-state)
                     [(CompilerBackendMaybeAsm.Some op-asm)
                       (ResultCompilerBackend.Ok
@@ -32374,10 +32110,8 @@
                                   (compiler-backend-planned-or-scavenge-reg-here
                                     (if (compiler-backend-divmod-op?
                                       (compiler-backend-global-shared-view op))
-                                      (compiler-backend-global-shared-view
-                                        planned2)
-                                      (compiler-backend-global-shared-view
-                                        planned1))
+                                      ""
+                                      "")
                                     (compiler-backend-scavenge-exclude-regs2
                                       (compiler-backend-global-shared-view
                                         staging)
@@ -32406,10 +32140,8 @@
                                             scav-rhs)
                                           (compiler-backend-global-shared-view
                                             staging)
-                                          (compiler-backend-global-shared-view
-                                            planned3)
-                                          (compiler-backend-global-shared-view
-                                            planned4)
+                                          ""
+                                          ""
                                           backend-state)
                                         (compiler-backend-emit-store-typed-var-with-plan
                                           (compiler-backend-global-shared-view
@@ -32462,10 +32194,8 @@
                                         (if (compiler-backend-divmod-op?
                                           (compiler-backend-global-shared-view
                                             op))
-                                          (compiler-backend-global-shared-view
-                                            planned2)
-                                          (compiler-backend-global-shared-view
-                                            planned1))
+                                          ""
+                                          "")
                                         (compiler-backend-scavenge-exclude-regs2
                                           (compiler-backend-global-shared-view
                                             staging)
@@ -32495,10 +32225,8 @@
                                                 scav-rhs)
                                               (compiler-backend-global-shared-view
                                                 staging)
-                                              (compiler-backend-global-shared-view
-                                                planned3)
-                                              (compiler-backend-global-shared-view
-                                                planned4)
+                                              ""
+                                              ""
                                               backend-state)
                                             (compiler-backend-emit-store-typed-var-with-plan
                                               (compiler-backend-global-shared-view
@@ -32595,10 +32323,8 @@
                                           (if (compiler-backend-divmod-op?
                                             (compiler-backend-global-shared-view
                                               op))
-                                            (compiler-backend-global-shared-view
-                                              planned2)
-                                            (compiler-backend-global-shared-view
-                                              planned1))
+                                            ""
+                                            "")
                                           (if preserve-rhs-before-lhs?
                                             (compiler-backend-scavenge-exclude-regs2
                                               (compiler-backend-global-shared-view
@@ -32635,10 +32361,8 @@
                                                     scav-rhs)
                                                   (compiler-backend-global-shared-view
                                                     staging)
-                                                  (compiler-backend-global-shared-view
-                                                    planned3)
-                                                  (compiler-backend-global-shared-view
-                                                    planned4)
+                                                  ""
+                                                  ""
                                                   backend-state)
                                                 (compiler-backend-emit-store-typed-var-with-plan
                                                   (compiler-backend-global-shared-view
@@ -32661,10 +32385,8 @@
                                                     scav-rhs)
                                                   (compiler-backend-global-shared-view
                                                     staging)
-                                                  (compiler-backend-global-shared-view
-                                                    planned3)
-                                                  (compiler-backend-global-shared-view
-                                                    planned4)
+                                                  ""
+                                                  ""
                                                   backend-state)
                                                 (compiler-backend-emit-store-typed-var-with-plan
                                                   (compiler-backend-global-shared-view
@@ -32700,10 +32422,6 @@
     lhs
     rhs
     ty
-    ""
-    ""
-    ""
-    ""
     ""
     backend-state))
 
@@ -32963,13 +32681,9 @@
   [op : compiler_ir_types.CompilerIrBinOp]
   [rhs : compiler_ir_types.CompilerIrValue]
   [operand-ty : compiler_ast_types.AstType]
-  [binop-return : bool]
-  [planned0 : String]
-  [planned1 : String]
-  [planned2 : String]) : String
+  [binop-return : bool]) : String
   (cond
-    [(compiler-backend-divmod-op? (compiler-backend-global-shared-view op))
-      planned2]
+    [(compiler-backend-divmod-op? (compiler-backend-global-shared-view op)) ""]
     [(or
         binop-return
         (compiler_regalloc.compiler-reg-clobber-binop-shift?
@@ -32979,9 +32693,8 @@
       ;; Return fusion fixes the result in %rax, so its only scalar slot (0) is
       ;; already the RHS staging home. A variable shift likewise consumes slot
       ;; 0, its fixed %rcx count home.
-      planned0]
-    [(string.eq (compiler-backend-global-shared-view planned1) "") planned0]
-    [else planned1]))
+      ""]
+    [else ""]))
 
 (define (compiler-backend-emit-binop-to-rax
   [type-segment-bases : i64]
@@ -32994,11 +32707,6 @@
   [rhs : compiler_ir_types.CompilerIrValue]
   [ty : compiler_ast_types.AstType]
   [store-result : bool]
-  [planned0 : String]
-  [planned1 : String]
-  [planned2 : String]
-  [planned3 : String]
-  [planned4 : String]
   [binop-return : bool]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (compiler-backend-rax-forwardable-binop?
@@ -33037,17 +32745,14 @@
               (compiler-backend-global-shared-view op)
               (compiler-backend-global-shared-view rhs)
               (compiler-backend-global-shared-view operand-ty)
-              binop-return
-              planned0
-              planned1
-              planned2)
+              binop-return)
             (if (compiler-backend-divmod-op?
               (compiler-backend-global-shared-view op))
-              planned3
+              ""
               "")
             (if (compiler-backend-divmod-op?
               (compiler-backend-global-shared-view op))
-              planned4
+              ""
               "")
             backend-state)
             [(ResultCompilerBackend.Ok op-asm)
@@ -33066,11 +32771,7 @@
       (compiler-backend-global-shared-view lhs)
       (compiler-backend-global-shared-view rhs)
       (compiler-backend-global-shared-view ty)
-      planned0
-      planned1
-      planned2
-      planned3
-      planned4
+      ""
       backend-state)))
 
 (define (compiler-backend-emit-binop-with-rax-value
@@ -33085,11 +32786,6 @@
   [rhs : compiler_ir_types.CompilerIrValue]
   [ty : compiler_ast_types.AstType]
   [store-result : bool]
-  [planned0 : String]
-  [planned1 : String]
-  [planned2 : String]
-  [planned3 : String]
-  [planned4 : String]
   [binop-return : bool]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (compiler-backend-rax-forwardable-binop?
@@ -33125,17 +32821,14 @@
             (compiler-backend-global-shared-view op)
             (compiler-backend-global-shared-view rhs)
             (compiler-backend-global-shared-view operand-ty)
-            binop-return
-            planned0
-            planned1
-            planned2)
+            binop-return)
           (if (compiler-backend-divmod-op?
             (compiler-backend-global-shared-view op))
-            planned3
+            ""
             "")
           (if (compiler-backend-divmod-op?
             (compiler-backend-global-shared-view op))
-            planned4
+            ""
             "")
           backend-state)
         (if (and
@@ -33155,22 +32848,22 @@
             store-result
             (if (compiler-backend-divmod-op?
               (compiler-backend-global-shared-view op))
-              planned2
+              ""
               (if (or
                 binop-return
                 (compiler_regalloc.compiler-reg-clobber-binop-shift?
                   (compiler-backend-global-shared-view op)
                   (compiler-backend-global-shared-view lhs)
                   operand-ty))
-                planned0
-                planned1))
+                ""
+                ""))
             (if (compiler-backend-divmod-op?
               (compiler-backend-global-shared-view op))
-              planned3
+              ""
               "")
             (if (compiler-backend-divmod-op?
               (compiler-backend-global-shared-view op))
-              planned4
+              ""
               "")
             backend-state)
           (compiler-backend-emit-binop-with-plan
@@ -33183,11 +32876,7 @@
             (compiler-backend-global-shared-view lhs)
             (compiler-backend-global-shared-view rhs)
             (compiler-backend-global-shared-view ty)
-            planned0
-            planned1
-            planned2
-            planned3
-            planned4
+            ""
             backend-state))))
     (compiler-backend-emit-binop-with-plan
       type-segment-bases
@@ -33199,11 +32888,7 @@
       (compiler-backend-global-shared-view lhs)
       (compiler-backend-global-shared-view rhs)
       (compiler-backend-global-shared-view ty)
-      planned0
-      planned1
-      planned2
-      planned3
-      planned4
+      ""
       backend-state)))
 
 (define (compiler-backend-emit-float-arith-return
@@ -33305,7 +32990,6 @@
   [fty : compiler_ast_types.AstType]
   [_planned-result : String]
   [planned-lhs : String]
-  [planned-rhs : String]
   [return-tail : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (compiler-backend-compare-op? (compiler-backend-global-shared-view op))
@@ -33380,7 +33064,7 @@
                   2)]
               [rhs-temp : String
                 (compiler-backend-planned-or-scavenge-xmm-reg
-                  planned-rhs
+                  ""
                   -1
                   rhs-temp-exclude
                   rhs-temp-exclude-n
@@ -33638,10 +33322,7 @@
   [rhs : compiler_ir_types.CompilerIrValue]
   [ty : compiler_ast_types.AstType]
   [planned0 : String]
-  [planned1 : String]
-  [planned2 : String]
-  [planned3 : String]
-  [planned4 : String]) : ResultCompilerBackend
+  [planned1 : String]) : ResultCompilerBackend
   (let
     [return-tail : String
       (compiler-backend-return-tail
@@ -33685,7 +33366,6 @@
             fty
             planned0
             planned1
-            planned2
             return-tail
             backend-state)))
       (let
@@ -33708,8 +33388,6 @@
             (compiler-backend-global-shared-view lhs)
             (compiler-backend-global-shared-view rhs)
             (compiler-backend-global-shared-view operand-ty)
-            planned2
-            planned3
             backend-state)
             [(ResultCompilerBackend.Ok asm)
               (ResultCompilerBackend.Ok (str_cat.str-cat asm return-tail))]
@@ -33783,9 +33461,6 @@
                     (compiler-backend-global-shared-view op)
                     (compiler-backend-global-shared-view rhs)
                     (compiler-backend-global-shared-view operand-ty)
-                    (compiler-backend-global-shared-view planned2)
-                    (compiler-backend-global-shared-view planned3)
-                    (compiler-backend-global-shared-view planned4)
                     backend-state)
                     [(CompilerBackendMaybeAsm.Some op-asm)
                       (ResultCompilerBackend.Ok
@@ -33822,8 +33497,7 @@
                                     (compiler-backend-global-shared-view rhs)
                                     (if (compiler-backend-divmod-op?
                                       (compiler-backend-global-shared-view op))
-                                      (compiler-backend-global-shared-view
-                                        planned2)
+                                      ""
                                       planned0)
                                     (if (compiler-backend-divmod-op?
                                       (compiler-backend-global-shared-view op))
@@ -33920,10 +33594,8 @@
                                             (compiler-backend-global-shared-view
                                               rhs-operand)
                                             "%rax"
-                                            (compiler-backend-global-shared-view
-                                              planned3)
-                                            (compiler-backend-global-shared-view
-                                              planned4)
+                                            ""
+                                            ""
                                             backend-state)
                                           return-tail))]
                                     [(ResultCompilerBackend.Err message)
@@ -33971,8 +33643,7 @@
                                     (compiler-backend-global-shared-view rhs)
                                     (if (compiler-backend-divmod-op?
                                       (compiler-backend-global-shared-view op))
-                                      (compiler-backend-global-shared-view
-                                        planned2)
+                                      ""
                                       planned0)
                                     (if (compiler-backend-divmod-op?
                                       (compiler-backend-global-shared-view op))
@@ -34066,10 +33737,8 @@
                                             (compiler-backend-global-shared-view
                                               rhs-operand)
                                             "%rax"
-                                            (compiler-backend-global-shared-view
-                                              planned3)
-                                            (compiler-backend-global-shared-view
-                                              planned4)
+                                            ""
+                                            ""
                                             backend-state)
                                           return-tail))]
                                     [(ResultCompilerBackend.Err message)
@@ -34789,7 +34458,6 @@
   [lhs-operand : String]
   [lhs-register? : bool]
   [lhs-reg : String]
-  [planned-rhs : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (match (compiler-backend-immediate-operand
     backend-state
@@ -34913,7 +34581,6 @@
                 lhs-operand
                 lhs-register?
                 lhs-reg
-                planned-rhs
                 op
                 backend-state)))))]))
 
@@ -34932,25 +34599,17 @@
   [lhs-operand : String]
   [lhs-register? : bool]
   [lhs-reg : String]
-  [planned-rhs : String]
   [op : compiler_ir_types.CompilerIrBinOp]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
     [rhs-reg : String
-      (if (and (not (string.eq planned-rhs "")) (string.eq planned-rhs lhs-reg))
-        (compiler-backend-scavenge-reg-here
-          (compiler-backend-compare-rhs-scavenge-exclude
-            (compiler-backend-global-shared-view lhs-reg))
-          (compiler-backend-compare-rhs-scavenge-exclude-n lhs-reg)
-          "%r8"
-          backend-state)
-        (compiler-backend-planned-or-scavenge-reg-here
-          planned-rhs
-          (compiler-backend-compare-rhs-scavenge-exclude
-            (compiler-backend-global-shared-view lhs-reg))
-          (compiler-backend-compare-rhs-scavenge-exclude-n lhs-reg)
-          "%r8"
-          backend-state))]
+      (compiler-backend-planned-or-scavenge-reg-here
+        ""
+        (compiler-backend-compare-rhs-scavenge-exclude
+          (compiler-backend-global-shared-view lhs-reg))
+        (compiler-backend-compare-rhs-scavenge-exclude-n lhs-reg)
+        "%r8"
+        backend-state)]
     (match (compiler-backend-emit-load-value-with-plan
       assignments
       rhs
@@ -34993,8 +34652,6 @@
   [true-label : i64]
   [false-label : i64]
   [fallthrough : CompilerBackendMaybeLabel]
-  [planned-lhs : String]
-  [planned-rhs : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
     [true-jcc : String
@@ -35026,10 +34683,6 @@
     ;; Compare/branch fusion does not materialize the comparison result. When
     ;; the ordinary plan has no dedicated RHS slot, its result staging home is
     ;; therefore free and can stage a non-encodable RHS instead.
-    [fused-rhs-plan : String
-      (if (string.eq (compiler-backend-global-shared-view planned-rhs) "")
-        (compiler-backend-global-shared-view planned-lhs)
-        planned-rhs)]
     (if (string.eq (compiler-backend-global-shared-view true-jcc) "")
       (ResultCompilerBackend.Err
         (box
@@ -35112,7 +34765,6 @@
                 (compiler-backend-global-shared-view ty))
               true
               (compiler-backend-global-shared-view rhs-home)
-              (compiler-backend-global-shared-view fused-rhs-plan)
               (compiler-backend-global-shared-view backend-state))]
           [(not (string.eq lhs-home ""))
             (compiler-backend-emit-compare-branch-with-lhs-operand
@@ -35134,7 +34786,6 @@
                 (compiler-backend-global-shared-view ty))
               true
               (compiler-backend-global-shared-view lhs-home)
-              (compiler-backend-global-shared-view fused-rhs-plan)
               (compiler-backend-global-shared-view backend-state))]
           [(not (string.eq lhs-address ""))
             (compiler-backend-emit-compare-branch-with-lhs-operand
@@ -35153,13 +34804,12 @@
               (compiler-backend-global-shared-view lhs-address)
               false
               ""
-              (compiler-backend-global-shared-view fused-rhs-plan)
               (compiler-backend-global-shared-view backend-state))]
           [else
             (let
               [lhs-stage : String
                 (compiler-backend-planned-or-scavenge-reg-here
-                  (compiler-backend-global-shared-view planned-lhs)
+                  ""
                   (compiler-backend-binop-scavenge-exclude-build)
                   5
                   "%rax"
@@ -35189,7 +34839,6 @@
                       (compiler-backend-global-shared-view ty))
                     true
                     (compiler-backend-global-shared-view lhs-stage)
-                    (compiler-backend-global-shared-view planned-rhs)
                     (compiler-backend-global-shared-view backend-state))]
                 [(ResultCompilerBackend.Err message)
                   (ResultCompilerBackend.Err message)]))])))))
@@ -35217,8 +34866,6 @@
     true-label
     false-label
     fallthrough
-    ""
-    ""
     backend-state))
 
 (define (compiler-backend-load-compare-type?
@@ -35268,8 +34915,6 @@
   [true-label : i64]
   [false-label : i64]
   [fallthrough : CompilerBackendMaybeLabel]
-  [planned-base : String]
-  [planned-rhs : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
     [true-jcc : String
@@ -35296,7 +34941,7 @@
         [scav-base : String
           (if (string.eq (compiler-backend-global-shared-view base-home) "")
             (compiler-backend-planned-or-scavenge-reg-here
-              (compiler-backend-global-shared-view planned-base)
+              ""
               (compiler-backend-binop-scavenge-exclude-build)
               5
               "%r10"
@@ -35361,7 +35006,7 @@
                     (let
                       [scav-rhs : String
                         (if (string.eq
-                          (compiler-backend-global-shared-view planned-rhs)
+                          ""
                           (compiler-backend-global-shared-view scav-base))
                           (compiler-backend-scavenge-reg-here
                             (compiler-backend-scavenge-exclude-with
@@ -35370,7 +35015,7 @@
                             "%r8"
                             (compiler-backend-global-shared-view backend-state))
                           (compiler-backend-planned-or-scavenge-reg-here
-                            (compiler-backend-global-shared-view planned-rhs)
+                            ""
                             (compiler-backend-scavenge-exclude-with
                               (compiler-backend-global-shared-view scav-base))
                             6
@@ -35418,8 +35063,6 @@
   [true-label : i64]
   [false-label : i64]
   [fallthrough : CompilerBackendMaybeLabel]
-  [planned-base : String]
-  [planned-rhs : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
     [true-jcc : String
@@ -35478,7 +35121,7 @@
                   (compiler-backend-global-shared-view base-home)
                   "")
                   (compiler-backend-planned-or-scavenge-reg-here
-                    (compiler-backend-global-shared-view planned-base)
+                    ""
                     (compiler-backend-addr-scavenge-exclude)
                     0
                     "%r10"
@@ -35556,7 +35199,7 @@
                         (let
                           [scav-rhs : String
                             (if (string.eq
-                              (compiler-backend-global-shared-view planned-rhs)
+                              ""
                               (compiler-backend-global-shared-view scav-base))
                               (compiler-backend-scavenge-reg-here
                                 (compiler-backend-scavenge-exclude-with
@@ -35567,8 +35210,7 @@
                                 (compiler-backend-global-shared-view
                                   backend-state))
                               (compiler-backend-planned-or-scavenge-reg-here
-                                (compiler-backend-global-shared-view
-                                  planned-rhs)
+                                ""
                                 (compiler-backend-scavenge-exclude-with
                                   (compiler-backend-global-shared-view
                                     scav-base))
@@ -35754,12 +35396,9 @@
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
   [scratch : String]
-  [planned : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (begin
-    (if (string.eq planned "")
-      unit
-      (compiler-backend-preserve-planned-register! planned backend-state))
+    unit
     (compiler-backend-emit-load-value-with-plan
       assignments
       value
@@ -35770,8 +35409,6 @@
   [target : CompilerBackendTarget]
   [function : String]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [planned-len : String]
-  [planned-index : String]
   [index : compiler_ir_types.CompilerIrValue]
   [length : compiler_ir_types.CompilerIrValue]
   [ok-label : i64]
@@ -35803,16 +35440,14 @@
     ;; pseudo-var when length staging is required; otherwise retain the proven
     ;; emission-time scavenger fallback.
     [scav-len : String
-      (if (string.eq planned-len "")
-        (if (string.eq direct-length-operand "")
-          (compiler-backend-scavenge-reg-here
-            (compiler-backend-scavenge-exclude-with
-              (compiler-backend-global-shared-view index-reg))
-            6
-            "%r9"
-            program-index.backend-state)
-          "")
-        planned-len)]
+      (if (string.eq direct-length-operand "")
+        (compiler-backend-scavenge-reg-here
+          (compiler-backend-scavenge-exclude-with
+            (compiler-backend-global-shared-view index-reg))
+          6
+          "%r9"
+          program-index.backend-state)
+        "")]
     ;; A constant index materializes into a reserved-set-aware scavenged register
     ;; distinct from the length scratch -- NOT a hardcoded %rax, which (now that
     ;; %rax is pooled) collided with a length loaded into %rax: `movq 8(%r10),%rax`
@@ -35820,14 +35455,12 @@
     ;; tripped the bounds check (false OOB abort).
     [index-operand : String
       (if (string.eq (compiler-backend-global-shared-view index-reg) "")
-        (if (string.eq planned-index "")
-          (compiler-backend-scavenge-reg-here
-            (compiler-backend-scavenge-exclude-with
-              (compiler-backend-global-shared-view scav-len))
-            6
-            "%r10"
-            program-index.backend-state)
-          planned-index)
+        (compiler-backend-scavenge-reg-here
+          (compiler-backend-scavenge-exclude-with
+            (compiler-backend-global-shared-view scav-len))
+          6
+          "%r10"
+          program-index.backend-state)
         (compiler-backend-global-shared-view index-reg))]
     (if (string.eq (compiler-backend-global-shared-view index-reg) "")
       (let
@@ -35863,7 +35496,6 @@
               (compiler-backend-global-shared-view assignments)
               (compiler-backend-global-shared-view length)
               (compiler-backend-global-shared-view scav-len)
-              (compiler-backend-global-shared-view planned-len)
               program-index.backend-state)
               [(ResultCompilerBackend.Ok length-asm)
                 (ResultCompilerBackend.Ok
@@ -35881,7 +35513,6 @@
             (compiler-backend-global-shared-view assignments)
             (compiler-backend-global-shared-view index)
             (compiler-backend-global-shared-view index-operand)
-            (compiler-backend-global-shared-view planned-index)
             program-index.backend-state)
             [(ResultCompilerBackend.Ok index-asm)
               (let
@@ -35905,7 +35536,6 @@
                     (compiler-backend-global-shared-view assignments)
                     (compiler-backend-global-shared-view length)
                     (compiler-backend-global-shared-view scav-len)
-                    (compiler-backend-global-shared-view planned-len)
                     program-index.backend-state)
                     [(ResultCompilerBackend.Ok length-asm)
                       (ResultCompilerBackend.Ok
@@ -35943,7 +35573,6 @@
             (compiler-backend-global-shared-view assignments)
             (compiler-backend-global-shared-view length)
             (compiler-backend-global-shared-view scav-len)
-            (compiler-backend-global-shared-view planned-len)
             program-index.backend-state)
             [(ResultCompilerBackend.Ok length-asm)
               (ResultCompilerBackend.Ok
@@ -35965,7 +35594,6 @@
   [op : compiler_ir_types.CompilerIrUnOp]
   [src : compiler_ir_types.CompilerIrValue]
   [ty : compiler_ast_types.AstType]
-  [planned-result : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (compiler-backend-direct-float-unop?
     (compiler-backend-global-shared-view op)
@@ -36000,7 +35628,7 @@
         (let
           [result-reg : String
             (compiler-backend-planned-or-scavenge-xmm-reg
-              (compiler-backend-global-shared-view planned-result)
+              ""
               dst
               (__tl_make-array String 0)
               0
@@ -36042,7 +35670,7 @@
         (let
           [result-reg : String
             (compiler-backend-planned-or-scavenge-reg
-              (compiler-backend-global-shared-view planned-result)
+              ""
               dst
               (compiler-backend-binop-scavenge-exclude-build)
               5
@@ -36091,20 +35719,12 @@
   [src : compiler_ir_types.CompilerIrValue]
   [ty : compiler_ast_types.AstType]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (compiler-backend-emit-unop-with-plan
-    assignments
-    dst
-    op
-    src
-    ty
-    ""
-    backend-state))
+  (compiler-backend-emit-unop-with-plan assignments dst op src ty backend-state))
 
 (define (compiler-backend-emit-addr-of
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [src : i64]
-  [planned-address : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (>= (compiler-backend-forwarded-addr-of-src backend-state dst) 0)
     (ResultCompilerBackend.Ok "")
@@ -36138,18 +35758,12 @@
               [(compiler_regalloc.CompilerRegLocation.Spill offset)
                 (let
                   [addr-reg : String
-                    (if (string.eq planned-address "")
-                      (compiler-backend-scavenge-reg
-                        dst
-                        (compiler-backend-addr-scavenge-exclude)
-                        0
-                        "%r8"
-                        backend-state)
-                      (begin
-                        (compiler-backend-preserve-planned-register!
-                          (compiler-backend-global-shared-view planned-address)
-                          (compiler-backend-global-shared-view backend-state))
-                        planned-address))]
+                    (compiler-backend-scavenge-reg
+                      dst
+                      (compiler-backend-addr-scavenge-exclude)
+                      0
+                      "%r8"
+                      backend-state)]
                   (str_cat.str-cat
                     (str_cat.str-cat
                       "    leaq "
@@ -36173,18 +35787,12 @@
           [(compiler_regalloc.CompilerRegMaybeLocation.No)
             (let
               [addr-reg : String
-                (if (string.eq planned-address "")
-                  (compiler-backend-scavenge-reg
-                    dst
-                    (compiler-backend-addr-scavenge-exclude)
-                    0
-                    "%r8"
-                    backend-state)
-                  (begin
-                    (compiler-backend-preserve-planned-register!
-                      (compiler-backend-global-shared-view planned-address)
-                      (compiler-backend-global-shared-view backend-state))
-                    planned-address))]
+                (compiler-backend-scavenge-reg
+                  dst
+                  (compiler-backend-addr-scavenge-exclude)
+                  0
+                  "%r8"
+                  backend-state)]
               (str_cat.str-cat
                 (str_cat.str-cat
                   "    leaq "
@@ -36400,8 +36008,6 @@
   [offset : compiler_ir_types.CompilerIrValue]
   [elem-ty : compiler_ast_types.AstType]
   [gep-disp : i64]
-  [planned-address : String]
-  [planned-index : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   ;; vreg-model: when the GEP result has a register home and the base is already
   ;; in a register, compute the address straight into that home with a single
@@ -36505,8 +36111,6 @@
                   offset
                   elem-ty
                   gep-disp
-                  planned-address
-                  planned-index
                   backend-state)))])
         (compiler-backend-emit-gep-staged
           type-segment-bases
@@ -36516,8 +36120,6 @@
           offset
           elem-ty
           gep-disp
-          planned-address
-          planned-index
           backend-state)))))
 
 (define (compiler-backend-emit-gep-staged-avoid
@@ -36530,8 +36132,6 @@
   [gep-disp : i64]
   [avoid1 : String]
   [avoid2 : String]
-  [planned-address : String]
-  [planned-index : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
     [scale : i64 (compiler-backend-type-size type-segment-bases elem-ty)]
@@ -36558,7 +36158,7 @@
               ;; silently clobbers an ordinary value carried across a
               ;; segmented/coalesced liveness gap.
               (compiler-backend-planned-or-scavenge-reg
-                planned-address
+                ""
                 dst
                 (compiler-backend-two-exclude
                   (compiler-backend-global-shared-view avoid1)
@@ -36592,7 +36192,7 @@
                   (let
                     [scav-idx : String
                       (compiler-backend-planned-or-scavenge-reg
-                        planned-index
+                        ""
                         dst
                         (compiler-backend-three-exclude
                           (compiler-backend-global-shared-view result-reg)
@@ -36680,7 +36280,7 @@
             (if use-dst-home?
               dst-home
               (compiler-backend-planned-or-scavenge-reg
-                planned-address
+                ""
                 dst
                 (compiler-backend-three-exclude
                   (compiler-backend-global-shared-view offset-home)
@@ -36696,7 +36296,7 @@
             (if direct-index?
               offset-home
               (compiler-backend-planned-or-scavenge-reg
-                planned-index
+                ""
                 dst
                 (compiler-backend-three-exclude
                   (compiler-backend-global-shared-view result-reg)
@@ -36750,8 +36350,6 @@
   [offset : compiler_ir_types.CompilerIrValue]
   [elem-ty : compiler_ast_types.AstType]
   [gep-disp : i64]
-  [planned-address : String]
-  [planned-index : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (compiler-backend-emit-gep-staged-avoid
     type-segment-bases
@@ -36763,8 +36361,6 @@
     gep-disp
     ""
     ""
-    planned-address
-    planned-index
     backend-state))
 
 (define (compiler-backend-emit-load-instr
@@ -37258,13 +36854,12 @@
 
 (define (compiler-backend-copy-xmm-scratch
   [size : i64]
-  [planned : String]
   [backend-state : CompilerBackendState]) : String
   (if (>= size 16)
     (let
       [no-exclude : (__tl_dyn-array String) (__tl_make-array String 0)]
       (compiler-backend-planned-or-scavenge-xmm-reg
-        planned
+        ""
         -1
         no-exclude
         0
@@ -37529,10 +37124,6 @@
   [size : i64]
   [protect : (__tl_dyn-array String)]
   [protect-n : i64]
-  [planned-dst : String]
-  [planned-src : String]
-  [planned-value : String]
-  [planned-xmm : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (<= size 0)
     (ResultCompilerBackend.Ok "")
@@ -37548,7 +37139,7 @@
       [dst-reg : String
         (if (string.eq dst-home "")
           (compiler-backend-planned-or-scavenge-reg-here
-            planned-dst
+            ""
             (compiler-backend-global-shared-view protect)
             protect-n
             "%r10"
@@ -37581,14 +37172,14 @@
             [src-reg : String
               (if (string.eq src-home "")
                 (compiler-backend-planned-or-scavenge-reg-here
-                  planned-src
+                  ""
                   src-exclude
                   (+ 1 protect-n)
                   "%r9"
                   backend-state)
                 src-home)]
             [copy-xmm : String
-              (compiler-backend-copy-xmm-scratch size planned-xmm backend-state)]
+              (compiler-backend-copy-xmm-scratch size backend-state)]
             [copy-gp-exclude-base : (__tl_dyn-array String)
               (compiler-backend-two-exclude
                 (compiler-backend-global-shared-view dst-reg)
@@ -37604,7 +37195,7 @@
                 size
                 (compiler-backend-global-shared-view copy-xmm))
                 (compiler-backend-planned-or-scavenge-reg-here
-                  planned-value
+                  ""
                   copy-gp-exclude
                   (+ 2 protect-n)
                   "%r8"
@@ -37642,10 +37233,6 @@
   [dst : compiler_ir_types.CompilerIrValue]
   [src : compiler_ir_types.CompilerIrValue]
   [size : i64]
-  [planned-dst : String]
-  [planned-src : String]
-  [planned-value : String]
-  [planned-xmm : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
     [no-protect : (__tl_dyn-array String) (__tl_make-array String 0)]
@@ -37657,10 +37244,6 @@
       size
       no-protect
       0
-      planned-dst
-      planned-src
-      planned-value
-      planned-xmm
       backend-state)))
 
 (define (compiler-backend-copy-run-protect-value-count
@@ -37860,11 +37443,6 @@
   [protect : (__tl_dyn-array String)]
   [protect-n : i64]
   [gep-disp : i64]
-  [planned-dst : String]
-  [planned-index : String]
-  [planned-src : String]
-  [planned-value : String]
-  [planned-xmm : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (<= size 0)
     (ResultCompilerBackend.Ok "")
@@ -37884,10 +37462,6 @@
             gep-disp)
           protect
           protect-n
-          planned-dst
-          planned-src
-          planned-value
-          planned-xmm
           backend-state)]
       [(option_i64.None)
         (compiler-backend-emit-copy-bytes-from-gep-dyn
@@ -37901,11 +37475,6 @@
           protect
           protect-n
           gep-disp
-          planned-dst
-          planned-index
-          planned-src
-          planned-value
-          planned-xmm
           backend-state)])))
 
 ;; Constant-offset fused Gep+CopyBytes. When every chunk address (disp ..
@@ -37923,10 +37492,6 @@
   [disp : i64]
   [protect : (__tl_dyn-array String)]
   [protect-n : i64]
-  [planned-dst : String]
-  [planned-src : String]
-  [planned-value : String]
-  [planned-xmm : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
     [near? : bool
@@ -37950,7 +37515,7 @@
     [dst-reg : String
       (if (string.eq base-home "")
         (compiler-backend-planned-or-scavenge-reg-here
-          planned-dst
+          ""
           (compiler-backend-scavenge-exclude-merge
             (compiler-backend-one-exclude
               (compiler-backend-global-shared-view src-home))
@@ -37989,7 +37554,7 @@
           [src-reg : String
             (if (string.eq (compiler-backend-global-shared-view src-home) "")
               (compiler-backend-planned-or-scavenge-reg-here
-                planned-src
+                ""
                 (compiler-backend-scavenge-exclude-merge
                   (compiler-backend-one-exclude
                     (compiler-backend-global-shared-view dst-reg))
@@ -38003,14 +37568,13 @@
           [copy-xmm : String
             (compiler-backend-copy-xmm-scratch
               size
-              (compiler-backend-global-shared-view planned-xmm)
               (compiler-backend-global-shared-view backend-state))]
           [copy-gp : String
             (if (compiler-backend-copy-needs-gp-scratch?
               size
               (compiler-backend-global-shared-view copy-xmm))
               (compiler-backend-planned-or-scavenge-reg-here
-                (compiler-backend-global-shared-view planned-value)
+                ""
                 (compiler-backend-scavenge-exclude-merge
                   (compiler-backend-two-exclude
                     (compiler-backend-global-shared-view dst-reg)
@@ -38070,11 +37634,6 @@
   [protect : (__tl_dyn-array String)]
   [protect-n : i64]
   [gep-disp : i64]
-  [planned-dst : String]
-  [planned-index : String]
-  [planned-src : String]
-  [planned-value : String]
-  [planned-xmm : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
     [scale : i64
@@ -38126,9 +37685,6 @@
         size
         protect
         protect-n
-        planned-src
-        planned-value
-        planned-xmm
         backend-state)
       ;; M-D: `scav-base` is bound INSIDE the declining branch. Scavenging is
       ;; not a query -- under full occupancy it emergency-adds the picked
@@ -38137,7 +37693,7 @@
       (let
         [scav-base : String
           (compiler-backend-planned-or-scavenge-reg-here
-            planned-dst
+            ""
             (compiler-backend-scavenge-exclude-merge
               (compiler-backend-two-exclude
                 (compiler-backend-global-shared-view src-home)
@@ -38160,7 +37716,6 @@
           (compiler-backend-global-shared-view protect)
           protect-n
           gep-disp
-          planned-index
           backend-state)
           [(ResultCompilerBackend.Ok addr-asm)
             (let
@@ -38169,7 +37724,7 @@
                   (compiler-backend-global-shared-view src-home)
                   "")
                   (compiler-backend-planned-or-scavenge-reg-here
-                    planned-src
+                    ""
                     (compiler-backend-scavenge-exclude-merge
                       (compiler-backend-one-exclude
                         (compiler-backend-global-shared-view scav-base))
@@ -38181,16 +37736,13 @@
                     backend-state)
                   (compiler-backend-global-shared-view src-home))]
               [copy-xmm : String
-                (compiler-backend-copy-xmm-scratch
-                  size
-                  planned-xmm
-                  backend-state)]
+                (compiler-backend-copy-xmm-scratch size backend-state)]
               [copy-gp : String
                 (if (compiler-backend-copy-needs-gp-scratch?
                   size
                   (compiler-backend-global-shared-view copy-xmm))
                   (compiler-backend-planned-or-scavenge-reg-here
-                    planned-value
+                    ""
                     (compiler-backend-scavenge-exclude-merge
                       (compiler-backend-two-exclude
                         (compiler-backend-global-shared-view scav-base)
@@ -38377,9 +37929,6 @@
   [size : i64]
   [protect : (__tl_dyn-array String)]
   [protect-n : i64]
-  [planned-dst : String]
-  [planned-value : String]
-  [planned-xmm : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
     ;; The two registers the fused source operand READS. Excluded from every
@@ -38404,7 +37953,7 @@
     [dst-reg : String
       (if (string.eq dst-home "")
         (compiler-backend-planned-or-scavenge-reg-here
-          planned-dst
+          ""
           (compiler-backend-scavenge-exclude-merge
             (compiler-backend-two-exclude
               (compiler-backend-global-shared-view operand-a)
@@ -38426,13 +37975,13 @@
       [(ResultCompilerBackend.Ok dst-asm)
         (let
           [copy-xmm : String
-            (compiler-backend-copy-xmm-scratch size planned-xmm backend-state)]
+            (compiler-backend-copy-xmm-scratch size backend-state)]
           [copy-gp : String
             (if (compiler-backend-copy-needs-gp-scratch?
               size
               (compiler-backend-global-shared-view copy-xmm))
               (compiler-backend-planned-or-scavenge-reg-here
-                planned-value
+                ""
                 (compiler-backend-scavenge-exclude-merge
                   (compiler-backend-three-exclude
                     (compiler-backend-global-shared-view dst-reg)
@@ -38474,9 +38023,6 @@
   [size : i64]
   [protect : (__tl_dyn-array String)]
   [protect-n : i64]
-  [planned-src : String]
-  [planned-value : String]
-  [planned-xmm : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
     ;; The two registers the fused destination operand READS; excluded from
@@ -38501,7 +38047,7 @@
     [src-reg : String
       (if (string.eq src-home "")
         (compiler-backend-planned-or-scavenge-reg-here
-          (compiler-backend-global-shared-view planned-src)
+          ""
           (compiler-backend-scavenge-exclude-merge
             (compiler-backend-two-exclude
               (compiler-backend-global-shared-view operand-a)
@@ -38523,13 +38069,13 @@
       [(ResultCompilerBackend.Ok src-asm)
         (let
           [copy-xmm : String
-            (compiler-backend-copy-xmm-scratch size planned-xmm backend-state)]
+            (compiler-backend-copy-xmm-scratch size backend-state)]
           [copy-gp : String
             (if (compiler-backend-copy-needs-gp-scratch?
               size
               (compiler-backend-global-shared-view copy-xmm))
               (compiler-backend-planned-or-scavenge-reg-here
-                planned-value
+                ""
                 (compiler-backend-scavenge-exclude-merge
                   (compiler-backend-three-exclude
                     (compiler-backend-global-shared-view src-reg)
@@ -38572,7 +38118,6 @@
   [protect : (__tl_dyn-array String)]
   [protect-n : i64]
   [gep-disp : i64]
-  [planned-index : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (and
     (not (string.eq base-home ""))
@@ -38612,7 +38157,7 @@
           (let
             [scav-idx : String
               (compiler-backend-planned-or-scavenge-reg-here
-                planned-index
+                ""
                 (compiler-backend-scavenge-exclude-merge
                   (compiler-backend-two-exclude
                     (compiler-backend-global-shared-view scav-base)
@@ -39605,7 +39150,6 @@
   [program-index : CompilerBackendProgramIndex]
   [exclude : (__tl_dyn-array String)]
   [exclude-n : i64]
-  [planned-value : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (match (compiler-backend-emit-store-immediate-to-memory
     type-segment-bases
@@ -39627,7 +39171,7 @@
           [store-reg : String
             (if (string.eq src-home "")
               (compiler-backend-planned-or-scavenge-xmm-reg
-                planned-value
+                ""
                 -1
                 exclude
                 exclude-n
@@ -39662,7 +39206,7 @@
           [store-reg : String
             (if (string.eq src-home "")
               (compiler-backend-planned-or-scavenge-reg-here
-                planned-value
+                ""
                 exclude
                 exclude-n
                 "%r8"
@@ -39696,8 +39240,6 @@
   [src : compiler_ir_types.CompilerIrValue]
   [ty : compiler_ast_types.AstType]
   [program-index : CompilerBackendProgramIndex]
-  [planned-address : String]
-  [planned-value : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
     [dst-home : String
@@ -39712,7 +39254,7 @@
         (compiler-backend-global-shared-view src))]
     [scav-base : String
       (compiler-backend-planned-or-scavenge-reg-here
-        planned-address
+        ""
         (compiler-backend-two-exclude dst-home src-home)
         2
         "%r10"
@@ -39739,7 +39281,6 @@
             (compiler-backend-one-exclude
               (compiler_abi.compiler-abi-register-spelling base.reg))
             1
-            planned-value
             backend-state)
             [(ResultCompilerBackend.Ok store-asm)
               (ResultCompilerBackend.Ok (str_cat.str-cat ptr-asm store-asm))]
@@ -39758,9 +39299,6 @@
   [store-ty : compiler_ast_types.AstType]
   [program-index : CompilerBackendProgramIndex]
   [gep-disp : i64]
-  [planned-address : String]
-  [planned-index : String]
-  [planned-value : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (match (compiler-backend-value-as-i64
     (compiler-backend-global-shared-view offset))
@@ -39784,7 +39322,7 @@
             (compiler-backend-global-shared-view value))]
         [scav-base : String
           (compiler-backend-planned-or-scavenge-reg-here
-            planned-address
+            ""
             (compiler-backend-two-exclude base-home value-home)
             2
             "%r10"
@@ -39811,7 +39349,6 @@
                 (compiler-backend-one-exclude
                   (compiler_abi.compiler-abi-register-spelling base-plan.reg))
                 1
-                planned-value
                 backend-state)
                 [(ResultCompilerBackend.Ok store-asm)
                   (ResultCompilerBackend.Ok
@@ -39874,7 +39411,6 @@
               (compiler-backend-global-shared-view base-home)
               offset-home)
             2
-            planned-value
             backend-state)
           (compiler-backend-emit-store-to-gep-staged
             type-segment-bases
@@ -39889,9 +39425,6 @@
             (compiler-backend-global-shared-view base-home)
             offset-home
             gep-disp
-            planned-address
-            planned-index
-            planned-value
             backend-state)))]))
 
 ;; The pre-B2 staged dynamic-index store path: scavenge an index scratch (and a
@@ -39911,9 +39444,6 @@
   [base-home : String]
   [offset-home : String]
   [gep-disp : i64]
-  [planned-address : String]
-  [planned-index : String]
-  [planned-value : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
     ;; SCR-1 (B1): an index that already has a register home and a SIB-encodable
@@ -39932,7 +39462,7 @@
       (if direct-index?
         offset-home
         (compiler-backend-planned-or-scavenge-reg-here
-          planned-index
+          ""
           (compiler-backend-scavenge-exclude-ops2
             backend-state
             (compiler-backend-global-shared-view assignments)
@@ -39947,7 +39477,7 @@
     ;; offset home, the offset copy is emitted before the base reload below.
     [scav-fold : String
       (compiler-backend-planned-or-scavenge-reg-here
-        planned-address
+        ""
         (compiler-backend-scavenge-exclude-append
           (compiler-backend-scavenge-exclude-regs2
             (compiler-backend-global-shared-view scav-idx)
@@ -40037,7 +39567,6 @@
                 (compiler-backend-global-shared-view program-index)
                 store-exclude
                 store-exclude-n
-                planned-value
                 backend-state)
                 [(ResultCompilerBackend.Ok store-asm)
                   (ResultCompilerBackend.Ok
@@ -40059,9 +39588,6 @@
   [value1 : compiler_ir_types.CompilerIrValue]
   [ty1 : compiler_ast_types.AstType]
   [program-index : CompilerBackendProgramIndex]
-  [planned-address : String]
-  [planned-value0 : String]
-  [planned-value1 : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
     [ptr-home : String
@@ -40080,20 +39606,14 @@
         (compiler-backend-global-shared-view assignments)
         (compiler-backend-global-shared-view value1))]
     [scav-base : String
-      (if (string.eq planned-address "")
-        (compiler-backend-scavenge-reg-here
-          (compiler-backend-three-exclude
-            ptr-home
-            value0-home
-            (compiler-backend-global-shared-view value1-home))
-          3
-          "%r10"
-          backend-state)
-        (begin
-          (compiler-backend-preserve-planned-register!
-            (compiler-backend-global-shared-view planned-address)
-            (compiler-backend-global-shared-view backend-state))
-          planned-address))]
+      (compiler-backend-scavenge-reg-here
+        (compiler-backend-three-exclude
+          ptr-home
+          value0-home
+          (compiler-backend-global-shared-view value1-home))
+        3
+        "%r10"
+        backend-state)]
     (match (compiler-backend-emit-address-base
       (compiler-backend-global-shared-view assignments)
       (compiler-backend-global-shared-view ptr)
@@ -40123,7 +39643,6 @@
               (compiler-backend-global-shared-view base-reg)
               (compiler-backend-global-shared-view value1-home))
             2
-            planned-value0
             backend-state)
             [(ResultCompilerBackend.Ok store0)
               (match (compiler-backend-emit-store-value-to-address
@@ -40136,7 +39655,6 @@
                 (compiler-backend-one-exclude
                   (compiler-backend-global-shared-view base-reg))
                 1
-                planned-value1
                 backend-state)
                 [(ResultCompilerBackend.Ok store1)
                   (ResultCompilerBackend.Ok
@@ -40723,7 +40241,6 @@
   [program-index : CompilerBackendProgramIndex]
   [planned-scratch0 : String]
   [planned-scratch1 : String]
-  [planned-scratch2 : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (and
     (compiler_optimize.opt-type-eq
@@ -40770,7 +40287,7 @@
       [planned-gp1 : String
         (if (> gp-count 1)
           (if xmm-needed
-            planned-scratch2
+            ""
             planned-scratch1)
           "")]
       (cond
@@ -40984,8 +40501,6 @@
   [from-ty : compiler_ast_types.AstType]
   [to-ty : compiler_ast_types.AstType]
   [program-index : CompilerBackendProgramIndex]
-  [planned-scratch0 : String]
-  [planned-scratch1 : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
     [from-width : i64
@@ -41005,30 +40520,6 @@
     [to-int : bool
       (compiler-backend-bitcast-int-type?
         (compiler-backend-global-shared-view to-ty))]
-    [xmm-needed : bool
-      (compiler_regalloc.compiler-reg-scratch-bitcast-xmm-needed?
-        (compiler-backend-global-shared-view assignments)
-        dst
-        (compiler-backend-global-shared-view src)
-        (compiler-backend-global-shared-view from-ty)
-        (compiler-backend-global-shared-view to-ty))]
-    [gp-needed : bool
-      (compiler_regalloc.compiler-reg-scratch-bitcast-gp-needed?
-        (compiler-backend-global-shared-view assignments)
-        dst
-        (compiler-backend-global-shared-view src)
-        (compiler-backend-global-shared-view from-ty)
-        (compiler-backend-global-shared-view to-ty))]
-    [planned-xmm : String
-      (if xmm-needed
-        planned-scratch0
-        "")]
-    [planned-gp : String
-      (if gp-needed
-        (if xmm-needed
-          planned-scratch1
-          planned-scratch0)
-        "")]
     (cond
       [(or
           (= from-width 0)
@@ -41102,14 +40593,12 @@
             (let
               [src-tmp : String
                 (if (string.eq src-reg "")
-                  (if (> (string.string-length planned-xmm) 0)
-                    planned-xmm
-                    (compiler-backend-scavenge-xmm-reg
-                      dst
-                      (__tl_make-array String 0)
-                      0
-                      "%xmm2"
-                      backend-state))
+                  (compiler-backend-scavenge-xmm-reg
+                    dst
+                    (__tl_make-array String 0)
+                    0
+                    "%xmm2"
+                    backend-state)
                   src-reg)]
               [dst-reg : String
                 (if (and
@@ -41123,14 +40612,12 @@
                       "%xmm"
                       0)))
                   (compiler-backend-global-shared-view dst-home)
-                  (if (> (string.string-length planned-gp) 0)
-                    planned-gp
-                    (compiler-backend-scavenge-reg
-                      dst
-                      (__tl_make-array String 0)
-                      0
-                      "%r8"
-                      backend-state)))]
+                  (compiler-backend-scavenge-reg
+                    dst
+                    (__tl_make-array String 0)
+                    0
+                    "%r8"
+                    backend-state))]
               (match (if (string.eq src-reg "")
                 (compiler-backend-emit-load-float-value-with-plan
                   (compiler-backend-global-shared-view assignments)
@@ -41181,14 +40668,12 @@
             (let
               [src-tmp : String
                 (if (string.eq src-reg "")
-                  (if (> (string.string-length planned-gp) 0)
-                    planned-gp
-                    (compiler-backend-scavenge-reg
-                      dst
-                      (__tl_make-array String 0)
-                      0
-                      "%r8"
-                      backend-state))
+                  (compiler-backend-scavenge-reg
+                    dst
+                    (__tl_make-array String 0)
+                    0
+                    "%r8"
+                    backend-state)
                   src-reg)]
               [dst-tmp : String
                 (if (compiler-backend-string-prefix-at?
@@ -41196,14 +40681,12 @@
                   "%xmm"
                   0)
                   (compiler-backend-global-shared-view dst-home)
-                  (if (> (string.string-length planned-xmm) 0)
-                    planned-xmm
-                    (compiler-backend-scavenge-xmm-reg
-                      dst
-                      (__tl_make-array String 0)
-                      0
-                      "%xmm2"
-                      backend-state)))]
+                  (compiler-backend-scavenge-xmm-reg
+                    dst
+                    (__tl_make-array String 0)
+                    0
+                    "%xmm2"
+                    backend-state))]
               (match (if (string.eq src-reg "")
                 (compiler-backend-emit-load-typed-value-to-reg-with-plan
                   type-segment-bases
@@ -41246,14 +40729,12 @@
                   "%xmm"
                   0)))
               (compiler-backend-global-shared-view dst-home)
-              (if (> (string.string-length planned-gp) 0)
-                planned-gp
-                (compiler-backend-scavenge-reg
-                  dst
-                  (__tl_make-array String 0)
-                  0
-                  "%r8"
-                  backend-state)))]
+              (compiler-backend-scavenge-reg
+                dst
+                (__tl_make-array String 0)
+                0
+                "%r8"
+                backend-state))]
           (match (compiler-backend-emit-load-typed-value-to-reg-with-plan
             type-segment-bases
             (compiler-backend-global-shared-view assignments)
@@ -41286,14 +40767,12 @@
               "%xmm"
               0)
               (compiler-backend-global-shared-view dst-home)
-              (if (> (string.string-length planned-xmm) 0)
-                planned-xmm
-                (compiler-backend-scavenge-xmm-reg
-                  dst
-                  (__tl_make-array String 0)
-                  0
-                  "%xmm2"
-                  backend-state)))]
+              (compiler-backend-scavenge-xmm-reg
+                dst
+                (__tl_make-array String 0)
+                0
+                "%xmm2"
+                backend-state))]
           (match (compiler-backend-emit-load-float-value-with-plan
             (compiler-backend-global-shared-view assignments)
             (compiler-backend-global-shared-view src)
@@ -41395,8 +40874,6 @@
   [dst : i64]
   [size : i64]
   [profile : bool]
-  [planned-root : String]
-  [planned-head : String]
   [backend-state : CompilerBackendState]) : String
   (let
     [size-text : String (string.int->string size)]
@@ -41427,7 +40904,7 @@
         "24")]
     [scav : String
       (compiler-backend-planned-or-scavenge-reg
-        planned-root
+        ""
         dst
         (compiler-backend-binop-scavenge-exclude-build)
         5
@@ -41446,7 +40923,7 @@
         "%rax")]
     [head-reg : String
       (compiler-backend-planned-or-scavenge-reg
-        planned-head
+        ""
         dst
         head-exclude
         2
@@ -46797,7 +46274,6 @@
   [float-idx : i64]
   [position : i64]
   [stack-idx : i64]
-  [planned-stage : String]
   [func-diag : compiler_diagnostic.CompilerDiagnostic]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]
@@ -46824,7 +46300,7 @@
           float-idx
           position
           stack-idx
-          planned-stage
+          ""
           func-diag
           program-index
           vars
@@ -46849,7 +46325,6 @@
   [float-idx : i64]
   [position : i64]
   [stack-idx : i64]
-  [planned-stage : String]
   [func-diag : compiler_diagnostic.CompilerDiagnostic]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]
@@ -46871,7 +46346,6 @@
       float-idx
       position
       stack-idx
-      planned-stage
       func-diag
       program-index
       vars
@@ -47140,7 +46614,6 @@
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [args : compiler_ir_types.CompilerIrCallArgs]
   [types : compiler_ast_types.AstTypeList]
-  [planned-stage : String]
   [func-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (compiler-backend-emit-direct-tail-call-args-from
@@ -47154,7 +46627,7 @@
     0
     0
     0
-    planned-stage
+    ""
     func-diag
     backend-state))
 
@@ -49484,9 +48957,7 @@
   [moved-dst : i64]
   [moved-src : compiler_ir_types.CompilerIrValue]
   [program-index : CompilerBackendProgramIndex]
-  [vars : i64]
-  [planned-cycle : String]
-  [planned-stage : String]) : ResultCompilerBackend
+  [vars : i64]) : ResultCompilerBackend
   (begin
     ;; The terminator plan sees the Mov destination as the edge source. Fusing
     ;; Mov+Jump substitutes the pre-Mov source, whose home can be dead at the
@@ -49495,11 +48966,11 @@
     (compiler-backend-function-state-set-string!
       (compiler-backend-state-function-state program-index.backend-state)
       compiler-backend-function-string-current-phi-planned-cycle
-      planned-cycle)
+      "")
     (compiler-backend-function-state-set-string!
       (compiler-backend-state-function-state program-index.backend-state)
       compiler-backend-function-string-current-phi-planned-stage
-      planned-stage)
+      "")
     ;; #phi-staged-copy: see emit-phi-edge-copies.
     (compiler-backend-function-state-set-current-phi-target-point!
       program-index.backend-state
@@ -50117,7 +49588,6 @@
   [fallthrough : CompilerBackendMaybeLabel]
   [true-jcc : String]
   [false-jcc : String]
-  [planned-test : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (string.eq true-jcc "")
     (compiler-backend-emit-branch-with-plan
@@ -50127,7 +49597,7 @@
       true-label
       false-label
       fallthrough
-      planned-test
+      ""
       backend-state)
     (ResultCompilerBackend.Ok
       (compiler-backend-emit-compare-branch-jumps
@@ -50152,10 +49622,7 @@
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]
   [true-jcc : String]
-  [false-jcc : String]
-  [planned-test : String]
-  [planned-cycle : String]
-  [planned-stage : String]) : ResultCompilerBackend
+  [false-jcc : String]) : ResultCompilerBackend
   (if (not
     (compiler-backend-branch-needs-phi-copies?
       (compiler-backend-state-function-state program-index.backend-state)
@@ -50170,7 +49637,6 @@
       fallthrough
       true-jcc
       false-jcc
-      planned-test
       program-index.backend-state)
     (match (compiler-backend-emit-phi-edge-copies
       type-segment-bases
@@ -50180,8 +49646,8 @@
       current-label
       (compiler-backend-global-shared-view program-index)
       vars
-      (compiler-backend-global-shared-view planned-cycle)
-      (compiler-backend-global-shared-view planned-stage)
+      ""
+      ""
       (compiler-backend-current-phi-planned-xmm-cycle
         program-index.backend-state))
       [(ResultCompilerBackend.Ok true-copies)
@@ -50193,8 +49659,8 @@
           current-label
           (compiler-backend-global-shared-view program-index)
           vars
-          (compiler-backend-global-shared-view planned-cycle)
-          (compiler-backend-global-shared-view planned-stage)
+          ""
+          ""
           (compiler-backend-current-phi-planned-xmm-cycle
             program-index.backend-state))
           [(ResultCompilerBackend.Ok false-copies)
@@ -50228,7 +49694,6 @@
                 edge-fallthrough
                 true-jcc
                 false-jcc
-                planned-test
                 program-index.backend-state)
                 [(ResultCompilerBackend.Ok branch-asm)
                   (ResultCompilerBackend.Ok
@@ -50262,11 +49727,7 @@
   [false-label : i64]
   [fallthrough : CompilerBackendMaybeLabel]
   [program-index : CompilerBackendProgramIndex]
-  [vars : i64]
-  [planned-lhs : String]
-  [planned-rhs : String]
-  [planned-cycle : String]
-  [planned-stage : String]) : ResultCompilerBackend
+  [vars : i64]) : ResultCompilerBackend
   (if (not
     (compiler-backend-branch-needs-phi-copies?
       (compiler-backend-state-function-state program-index.backend-state)
@@ -50283,8 +49744,6 @@
       true-label
       false-label
       fallthrough
-      planned-lhs
-      planned-rhs
       program-index.backend-state)
     (match (compiler-backend-emit-phi-edge-copies
       type-segment-bases
@@ -50294,8 +49753,8 @@
       current-label
       (compiler-backend-global-shared-view program-index)
       vars
-      (compiler-backend-global-shared-view planned-cycle)
-      (compiler-backend-global-shared-view planned-stage)
+      ""
+      ""
       (compiler-backend-current-phi-planned-xmm-cycle
         program-index.backend-state))
       [(ResultCompilerBackend.Ok true-copies)
@@ -50307,8 +49766,8 @@
           current-label
           (compiler-backend-global-shared-view program-index)
           vars
-          (compiler-backend-global-shared-view planned-cycle)
-          (compiler-backend-global-shared-view planned-stage)
+          ""
+          ""
           (compiler-backend-current-phi-planned-xmm-cycle
             program-index.backend-state))
           [(ResultCompilerBackend.Ok false-copies)
@@ -50344,8 +49803,6 @@
                 true-target
                 false-target
                 edge-fallthrough
-                planned-lhs
-                planned-rhs
                 program-index.backend-state)
                 [(ResultCompilerBackend.Ok branch-asm)
                   (ResultCompilerBackend.Ok
@@ -50379,9 +49836,7 @@
   [false-label : i64]
   [fallthrough : CompilerBackendMaybeLabel]
   [program-index : CompilerBackendProgramIndex]
-  [vars : i64]
-  [planned-cycle : String]
-  [planned-stage : String]) : ResultCompilerBackend
+  [vars : i64]) : ResultCompilerBackend
   (compiler-backend-emit-compare-branch-with-phi-copies-with-plan
     type-segment-bases
     assignments
@@ -50396,11 +49851,7 @@
     false-label
     fallthrough
     program-index
-    vars
-    ""
-    ""
-    planned-cycle
-    planned-stage))
+    vars))
 
 (define (compiler-backend-emit-load-compare-branch-with-phi-copies-with-plan
   [type-segment-bases : i64]
@@ -50416,11 +49867,7 @@
   [false-label : i64]
   [fallthrough : CompilerBackendMaybeLabel]
   [program-index : CompilerBackendProgramIndex]
-  [vars : i64]
-  [planned-base : String]
-  [planned-rhs : String]
-  [planned-cycle : String]
-  [planned-stage : String]) : ResultCompilerBackend
+  [vars : i64]) : ResultCompilerBackend
   (if (not
     (compiler-backend-branch-needs-phi-copies?
       (compiler-backend-state-function-state program-index.backend-state)
@@ -50436,8 +49883,6 @@
       true-label
       false-label
       fallthrough
-      planned-base
-      planned-rhs
       program-index.backend-state)
     (match (compiler-backend-emit-phi-edge-copies
       type-segment-bases
@@ -50447,8 +49892,8 @@
       current-label
       (compiler-backend-global-shared-view program-index)
       vars
-      (compiler-backend-global-shared-view planned-cycle)
-      (compiler-backend-global-shared-view planned-stage)
+      ""
+      ""
       (compiler-backend-current-phi-planned-xmm-cycle
         program-index.backend-state))
       [(ResultCompilerBackend.Ok true-copies)
@@ -50460,8 +49905,8 @@
           current-label
           (compiler-backend-global-shared-view program-index)
           vars
-          (compiler-backend-global-shared-view planned-cycle)
-          (compiler-backend-global-shared-view planned-stage)
+          ""
+          ""
           (compiler-backend-current-phi-planned-xmm-cycle
             program-index.backend-state))
           [(ResultCompilerBackend.Ok false-copies)
@@ -50496,8 +49941,6 @@
                 true-target
                 false-target
                 edge-fallthrough
-                planned-base
-                planned-rhs
                 program-index.backend-state)
                 [(ResultCompilerBackend.Ok branch-asm)
                   (ResultCompilerBackend.Ok
@@ -50533,11 +49976,7 @@
   [false-label : i64]
   [fallthrough : CompilerBackendMaybeLabel]
   [program-index : CompilerBackendProgramIndex]
-  [vars : i64]
-  [planned-base : String]
-  [planned-rhs : String]
-  [planned-cycle : String]
-  [planned-stage : String]) : ResultCompilerBackend
+  [vars : i64]) : ResultCompilerBackend
   (if (not
     (compiler-backend-branch-needs-phi-copies?
       (compiler-backend-state-function-state program-index.backend-state)
@@ -50556,8 +49995,6 @@
       true-label
       false-label
       fallthrough
-      planned-base
-      planned-rhs
       program-index.backend-state)
     (match (compiler-backend-emit-phi-edge-copies
       type-segment-bases
@@ -50567,8 +50004,8 @@
       current-label
       (compiler-backend-global-shared-view program-index)
       vars
-      (compiler-backend-global-shared-view planned-cycle)
-      (compiler-backend-global-shared-view planned-stage)
+      ""
+      ""
       (compiler-backend-current-phi-planned-xmm-cycle
         program-index.backend-state))
       [(ResultCompilerBackend.Ok true-copies)
@@ -50580,8 +50017,8 @@
           current-label
           (compiler-backend-global-shared-view program-index)
           vars
-          (compiler-backend-global-shared-view planned-cycle)
-          (compiler-backend-global-shared-view planned-stage)
+          ""
+          ""
           (compiler-backend-current-phi-planned-xmm-cycle
             program-index.backend-state))
           [(ResultCompilerBackend.Ok false-copies)
@@ -50619,8 +50056,6 @@
                 true-target
                 false-target
                 edge-fallthrough
-                planned-base
-                planned-rhs
                 program-index.backend-state)
                 [(ResultCompilerBackend.Ok branch-asm)
                   (ResultCompilerBackend.Ok
@@ -51106,7 +50541,6 @@
   [args : compiler_ir_types.CompilerIrCallArgs]
   [ty : compiler_ast_types.AstType]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [planned-stage : String]
   [types : compiler_regalloc.CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [vars : i64]
@@ -51190,7 +50624,7 @@
             0
             0
             0
-            planned-stage
+            ""
             instr-diag
             (compiler-backend-global-shared-view program-index)
             vars
@@ -51201,7 +50635,6 @@
             (compiler-backend-global-shared-view assignments)
             (compiler-backend-global-shared-view args)
             (compiler-backend-global-shared-view param-types)
-            planned-stage
             instr-diag
             backend-state)))
         [(ResultCompilerBackend.Ok args-asm)
@@ -51227,7 +50660,7 @@
         0
         0
         0
-        planned-stage
+        ""
         instr-diag
         (compiler-backend-global-shared-view program-index)
         vars
@@ -51694,8 +51127,6 @@
   [ty : compiler_ast_types.AstType]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]
-  [planned0 : String]
-  [planned1 : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
     [function-state : CompilerBackendFunctionState
@@ -51717,8 +51148,6 @@
         ty
         program-index
         vars
-        planned0
-        planned1
         backend-state)
       (match (compiler-backend-simd-copy-shape blocks dst vars)
         [(CompilerBackendSimdCopyShape.No)
@@ -51730,8 +51159,6 @@
             ty
             program-index
             vars
-            planned0
-            planned1
             backend-state)]
         [(CompilerBackendSimdCopyShape.Vector _ elem-ty)
           (compiler-backend-emit-vector-copy
@@ -51788,8 +51215,6 @@
   [ty : compiler_ast_types.AstType]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]
-  [planned0 : String]
-  [planned1 : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (cond
     ;; M-B: a group mov whose src and dst share a home (the coloring's
@@ -51824,8 +51249,8 @@
         vars
         (compiler-backend-global-shared-view ty)
         (compiler-backend-global-shared-view program-index)
-        planned0
-        planned1
+        ""
+        ""
         backend-state)]
     [(compiler-backend-value-same-home?
         backend-state
@@ -51863,14 +51288,12 @@
             1)]
         [reg : String
           (if (string.eq dst-home "")
-            (if (> (string.string-length planned0) 0)
-              planned0
-              (compiler-backend-scavenge-xmm-reg
-                dst
-                exclude
-                exclude-n
-                "%xmm2"
-                backend-state))
+            (compiler-backend-scavenge-xmm-reg
+              dst
+              exclude
+              exclude-n
+              "%xmm2"
+              backend-state)
             dst-home)]
         (match (compiler-backend-emit-load-typed-value-to-reg-with-plan
           type-segment-bases
@@ -51979,7 +51402,7 @@
                         1)]
                     [reg : String
                       (compiler-backend-planned-or-scavenge-reg
-                        planned0
+                        ""
                         dst
                         exclude
                         exclude-n
@@ -52013,7 +51436,6 @@
   [ty : compiler_ast_types.AstType]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]
-  [planned0 : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (compiler-backend-emit-mov-with-plan
     type-segment-bases
@@ -52023,8 +51445,6 @@
     ty
     program-index
     vars
-    planned0
-    ""
     backend-state))
 
 ;; Dead result-store elision (M-B): a call must be emitted for its effects, but
@@ -52321,7 +51741,6 @@
   [target : CompilerBackendTarget]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [arg-assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [planned-stage : String]
   [dst : i64]
   [name : i64]
   [args : compiler_ir_types.CompilerIrCallArgs]
@@ -52369,7 +51788,6 @@
       0
       0
       0
-      planned-stage
       (compiler-backend-global-shared-view instr-diag)
       (compiler-backend-global-shared-view program-index)
       vars
@@ -52622,7 +52040,6 @@
   [target : CompilerBackendTarget]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [arg-assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [planned-stage : String]
   [dst : i64]
   [name : i64]
   [inline-name : String]
@@ -52671,7 +52088,6 @@
       0
       0
       0
-      planned-stage
       (compiler-backend-global-shared-view instr-diag)
       (compiler-backend-global-shared-view program-index)
       vars
@@ -52717,8 +52133,6 @@
   [ty : compiler_ast_types.AstType]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [arg-assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [planned-stage : String]
-  [planned-stage2 : String]
   [types : compiler_regalloc.CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [plan : CompilerBackendRuntimePlan]
@@ -52772,8 +52186,6 @@
                 (compiler-backend-plan-provides-id?
                   (compiler-backend-global-shared-view plan)
                   cbi.compiler-builtin-id-tl-profile-alloc-total)
-                planned-stage
-                planned-stage2
                 backend-state)
               (str_cat.str-cat
                 "    call "
@@ -52798,7 +52210,6 @@
           target
           assignments
           arg-assignments
-          planned-stage
           dst
           name
           args
@@ -52817,7 +52228,6 @@
           target
           assignments
           arg-assignments
-          planned-stage
           dst
           name
           (compiler-backend-global-shared-view inline-memory-name)
@@ -52909,7 +52319,6 @@
               0
               0
               0
-              planned-stage
               (compiler-backend-global-shared-view instr-diag)
               (compiler-backend-global-shared-view program-index)
               vars
@@ -54017,27 +53426,21 @@
                   sse-idx))))]))))
 
 (define (compiler-backend-scavenge-c-abi-return-base-save-reg
-  [planned : String]
   [backend-state : CompilerBackendState]) : String
-  (if (string.eq planned "")
-    (compiler-backend-scavenge-reg-here
-      (compiler-backend-c-abi-stage-exclude-with "%r11")
-      compiler-backend-c-abi-stage-exclude-count
-      "%r10"
-      backend-state)
-    planned))
+  (compiler-backend-scavenge-reg-here
+    (compiler-backend-c-abi-stage-exclude-with "%r11")
+    compiler-backend-c-abi-stage-exclude-count
+    "%r10"
+    backend-state))
 
 (define (compiler-backend-emit-c-abi-return-base-save
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [base : compiler_ir_types.CompilerIrValue]
   [save-offset : i64]
-  [planned : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
     [base-reg : String
-      (compiler-backend-scavenge-c-abi-return-base-save-reg
-        planned
-        backend-state)]
+      (compiler-backend-scavenge-c-abi-return-base-save-reg backend-state)]
     (match (compiler-backend-emit-load-value-with-plan
       assignments
       base
@@ -54060,27 +53463,21 @@
   (__tl_make-array "%rax" "%rdx"))
 
 (define (compiler-backend-scavenge-c-abi-return-store-base-reg
-  [planned : String]
   [backend-state : CompilerBackendState]) : String
-  (if (string.eq planned "")
-    (compiler-backend-scavenge-reg-here
-      (compiler-backend-c-abi-return-store-base-exclude)
-      2
-      "%r11"
-      backend-state)
-    planned))
+  (compiler-backend-scavenge-reg-here
+    (compiler-backend-c-abi-return-store-base-exclude)
+    2
+    "%r11"
+    backend-state))
 
 (define (compiler-backend-emit-c-abi-return-stores
   [type-segment-bases : i64]
   [save-offset : i64]
   [slots : compiler_ir_types.CompilerIrCAbiReturnSlotSeq]
-  [planned : String]
   [backend-state : CompilerBackendState]) : String
   (let
     [base-reg : String
-      (compiler-backend-scavenge-c-abi-return-store-base-reg
-        planned
-        backend-state)]
+      (compiler-backend-scavenge-c-abi-return-store-base-reg backend-state)]
     (str_cat.str-cat
       (str_cat.str-cat
         "    movq "
@@ -54659,9 +54056,7 @@
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [blocks : compiler_ir_types.CompilerIrBlockList]
   [program-index : CompilerBackendProgramIndex]
-  [vars : i64]
-  [planned-cycle : String]
-  [planned-stage : String]) : ResultCompilerBackend
+  [vars : i64]) : ResultCompilerBackend
   (compiler-backend-emit-switch-case-edge-blocks-from
     type-segment-bases
     function
@@ -54672,8 +54067,8 @@
     blocks
     program-index
     vars
-    planned-cycle
-    planned-stage))
+    ""
+    ""))
 
 (define (compiler-backend-switch-table-label
   [function : String]
@@ -55207,7 +54602,6 @@
   [default-label : i64]
   [total-switch : bool]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [planned-index-reg : String]
   [planned-table-reg : String]) : ResultCompilerBackend
   (let
     [index-home : String
@@ -55243,7 +54637,7 @@
     [index-reg : String
       (if need-index-scratch
         (compiler-backend-planned-or-scavenge-reg-here
-          planned-index-reg
+          ""
           index-exclude
           index-exclude-n
           "%r8"
@@ -55420,8 +54814,6 @@
   [default-label : i64]
   [trap-label : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [planned-index-reg : String]
-  [planned-table-reg : String]
   [blocks : compiler_ir_types.CompilerIrBlockList]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]) : ResultCompilerBackend
@@ -55465,9 +54857,7 @@
           (compiler-backend-global-shared-view assignments)
           (compiler-backend-global-shared-view blocks)
           (compiler-backend-global-shared-view program-index)
-          vars
-          (compiler-backend-global-shared-view planned-index-reg)
-          (compiler-backend-global-shared-view planned-table-reg))
+          vars)
           [(ResultCompilerBackend.Ok case-blocks)
             (let
               [default-needs-edge : bool
@@ -55485,8 +54875,8 @@
                   current-label
                   (compiler-backend-global-shared-view program-index)
                   vars
-                  (compiler-backend-global-shared-view planned-index-reg)
-                  (compiler-backend-global-shared-view planned-table-reg)
+                  ""
+                  ""
                   "")
                   [(ResultCompilerBackend.Ok copies)
                     (ResultCompilerBackend.Ok
@@ -55512,8 +54902,7 @@
                       default-label)
                     total-switch
                     (compiler-backend-global-shared-view assignments)
-                    (compiler-backend-global-shared-view planned-index-reg)
-                    (compiler-backend-global-shared-view planned-table-reg))
+                    "")
                     [(ResultCompilerBackend.Ok dispatch)
                       (ResultCompilerBackend.Ok
                         (str_cat.str-cat dispatch case-blocks default-block))]
@@ -55534,8 +54923,7 @@
           default-label
           total-switch
           (compiler-backend-global-shared-view assignments)
-          (compiler-backend-global-shared-view planned-index-reg)
-          (compiler-backend-global-shared-view planned-table-reg))
+          "")
           [(ResultCompilerBackend.Ok dispatch)
             (ResultCompilerBackend.Ok dispatch)]
           [(ResultCompilerBackend.Err message)
@@ -55717,35 +55105,24 @@
       (compiler-backend-runtime-abort-site-install!
         (compiler-backend-global-shared-view ctx)
         (compiler-backend-global-shared-view instr))]
-    [_scratch-plan : compiler_regalloc.CompilerRegScratchPlan
-      (compiler-backend-global-shared-view compiler-backend-empty-scratch-plan)]
-    [planned-scratch0 : String ""]
-    [planned-scratch1 : String ""]
-    [planned-scratch2 : String ""]
-    [planned-scratch3 : String ""]
-    [planned-scratch4 : String ""]
     [_c-memory-planned-xmm : unit
       (compiler-backend-function-state-set-string!
         ctx.function-state
         compiler-backend-function-string-current-c-memory-planned-xmm
         (match (compiler-backend-global-shared-view instr)
-          [(compiler_ir_types.CompilerIrInstr.Call _ _ _ _) planned-scratch1]
-          [(compiler_ir_types.CompilerIrInstr.CallIndirectC _ _ _ _)
-            planned-scratch2]
-          [(compiler_ir_types.CompilerIrInstr.CallCAbiStoreResult _)
-            planned-scratch2]
-          [(compiler_ir_types.CompilerIrInstr.CallIndirectCAbiStoreResult _)
-            planned-scratch2]
+          [(compiler_ir_types.CompilerIrInstr.Call _ _ _ _) ""]
+          [(compiler_ir_types.CompilerIrInstr.CallIndirectC _ _ _ _) ""]
+          [(compiler_ir_types.CompilerIrInstr.CallCAbiStoreResult _) ""]
+          [(compiler_ir_types.CompilerIrInstr.CallIndirectCAbiStoreResult _) ""]
           [_ ""]))]
     [_phi-planned-xmm : unit
       (compiler-backend-function-state-set-string!
         ctx.function-state
         compiler-backend-function-string-current-phi-planned-xmm-cycle
         (match (compiler-backend-global-shared-view instr)
-          [(compiler_ir_types.CompilerIrInstr.Jump _) planned-scratch2]
-          [(compiler_ir_types.CompilerIrInstr.Branch _ _ _) planned-scratch3]
-          [(compiler_ir_types.CompilerIrInstr.TotalEnumBranch _ _ _)
-            planned-scratch3]
+          [(compiler_ir_types.CompilerIrInstr.Jump _) ""]
+          [(compiler_ir_types.CompilerIrInstr.Branch _ _ _) ""]
+          [(compiler_ir_types.CompilerIrInstr.TotalEnumBranch _ _ _) ""]
           [_ ""]))]
     ;; Sound-scavenger: reserve this instruction's operand + result homes so the
     ;; scavenge can never hand one back as scratch (LLVM RegScavenger model).
@@ -55768,8 +55145,6 @@
           ty
           ctx.program-index
           ctx.vars
-          planned-scratch0
-          planned-scratch1
           ctx.backend-state)
           [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
           [(ResultCompilerBackend.Err message)
@@ -55788,8 +55163,6 @@
           ty
           ctx.program-index
           ctx.vars
-          planned-scratch0
-          planned-scratch1
           ctx.backend-state)
           [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
           [(ResultCompilerBackend.Err message)
@@ -55805,7 +55178,6 @@
           ctx.assignments
           dst
           src
-          planned-scratch0
           ctx.backend-state)
           [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
           [(ResultCompilerBackend.Err message)
@@ -55827,8 +55199,6 @@
             ctx.type-segment-bases
             (compiler-backend-global-shared-view offset)
             (compiler-backend-global-shared-view elem-ty))
-          planned-scratch0
-          planned-scratch1
           ctx.backend-state)
           [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
           [(ResultCompilerBackend.Err message)
@@ -55844,8 +55214,8 @@
           dst
           src
           ty
-          planned-scratch0
-          planned-scratch1
+          ""
+          ""
           ctx.backend-state)
           [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
           [(ResultCompilerBackend.Err message)
@@ -55861,8 +55231,8 @@
           dst
           src
           ty
-          planned-scratch0
-          planned-scratch1
+          ""
+          ""
           ctx.backend-state)
           [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
           [(ResultCompilerBackend.Err message)
@@ -55879,8 +55249,6 @@
           src
           ty
           ctx.program-index
-          planned-scratch0
-          planned-scratch1
           ctx.backend-state)
           [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
           [(ResultCompilerBackend.Err message)
@@ -55897,8 +55265,6 @@
           src
           ty
           ctx.program-index
-          planned-scratch0
-          planned-scratch1
           ctx.backend-state)
           [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
           [(ResultCompilerBackend.Err message)
@@ -55914,14 +55280,6 @@
           dst
           src
           size
-          planned-scratch0
-          planned-scratch1
-          (if (>= size 16)
-            planned-scratch3
-            planned-scratch2)
-          (if (>= size 16)
-            planned-scratch2
-            "")
           ctx.backend-state)
           [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
           [(ResultCompilerBackend.Err message)
@@ -55935,8 +55293,6 @@
           ctx.target-policy.target
           ctx.function
           ctx.assignments
-          planned-scratch0
-          planned-scratch1
           index
           length
           ok-label
@@ -55962,9 +55318,8 @@
           from-ty
           to-ty
           ctx.program-index
-          planned-scratch0
-          planned-scratch1
-          planned-scratch2
+          ""
+          ""
           ctx.backend-state)
           [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
           [(ResultCompilerBackend.Err message)
@@ -55982,8 +55337,6 @@
           from-ty
           to-ty
           ctx.program-index
-          planned-scratch0
-          planned-scratch1
           ctx.backend-state)
           [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
           [(ResultCompilerBackend.Err message)
@@ -56003,11 +55356,7 @@
           (compiler-backend-global-shared-view lhs)
           (compiler-backend-global-shared-view rhs)
           (compiler-backend-global-shared-view ty)
-          (compiler-backend-global-shared-view planned-scratch0)
-          (compiler-backend-global-shared-view planned-scratch1)
-          (compiler-backend-global-shared-view planned-scratch2)
-          (compiler-backend-global-shared-view planned-scratch3)
-          (compiler-backend-global-shared-view planned-scratch4)
+          ""
           (compiler-backend-global-shared-view ctx.backend-state))
           [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
           [(ResultCompilerBackend.Err message)
@@ -56023,7 +55372,6 @@
           op
           src
           ty
-          planned-scratch0
           ctx.backend-state)
           [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
           [(ResultCompilerBackend.Err message)
@@ -56051,8 +55399,6 @@
           value
           lanes
           (compiler-backend-global-shared-view elem-ty)
-          planned-scratch0
-          planned-scratch1
           instr-diag
           ctx.backend-state)]
       [(compiler_ir_types.CompilerIrInstr.VectorBinOp payload-box)
@@ -56090,10 +55436,10 @@
             carry
             lanes
             (compiler-backend-global-shared-view elem-ty)
-            planned-scratch0
-            planned-scratch1
-            planned-scratch2
-            planned-scratch3
+            ""
+            ""
+            ""
+            ""
             instr-diag
             ctx.backend-state))]
       [(compiler_ir_types.CompilerIrInstr.VectorReduce dst op src lanes elem-ty)
@@ -56105,9 +55451,6 @@
           src
           lanes
           (compiler-backend-global-shared-view elem-ty)
-          planned-scratch0
-          planned-scratch1
-          planned-scratch2
           instr-diag
           ctx.backend-state)]
       [(compiler_ir_types.CompilerIrInstr.VectorCompare payload-box)
@@ -56177,9 +55520,6 @@
             on-false
             lanes
             (compiler-backend-global-shared-view elem-ty)
-            planned-scratch0
-            planned-scratch1
-            planned-scratch2
             instr-diag
             ctx.backend-state))]
       [(compiler_ir_types.CompilerIrInstr.VectorLoad
@@ -56196,8 +55536,6 @@
           index
           lanes
           (compiler-backend-global-shared-view elem-ty)
-          planned-scratch0
-          planned-scratch1
           instr-diag
           ctx.backend-state)]
       [(compiler_ir_types.CompilerIrInstr.VectorStore payload-box)
@@ -56215,8 +55553,6 @@
             value
             lanes
             (compiler-backend-global-shared-view elem-ty)
-            planned-scratch0
-            planned-scratch1
             instr-diag
             ctx.backend-state))]
       [(compiler_ir_types.CompilerIrInstr.PredicatedStore payload-box)
@@ -56238,8 +55574,6 @@
             mask
             lanes
             (compiler-backend-global-shared-view elem-ty)
-            planned-scratch0
-            planned-scratch1
             instr-diag
             ctx.backend-state))]
       [(compiler_ir_types.CompilerIrInstr.PredicatedLoad payload-box)
@@ -56261,8 +55595,6 @@
             mask
             lanes
             (compiler-backend-global-shared-view elem-ty)
-            planned-scratch0
-            planned-scratch1
             instr-diag
             ctx.backend-state))]
       [(compiler_ir_types.CompilerIrInstr.GatherLoad payload-box)
@@ -56286,8 +55618,6 @@
             lane-offset
             lanes
             (compiler-backend-global-shared-view elem-ty)
-            planned-scratch0
-            planned-scratch1
             instr-diag
             ctx.backend-state))]
       [(compiler_ir_types.CompilerIrInstr.VectorShuffle payload-box)
@@ -56315,8 +55645,6 @@
             active-lanes
             lanes
             (compiler-backend-global-shared-view elem-ty)
-            planned-scratch0
-            planned-scratch1
             ctx.plan
             ctx.program-index
             instr-diag))]
@@ -56330,9 +55658,6 @@
           index
           len
           lanes
-          planned-scratch0
-          planned-scratch1
-          planned-scratch2
           instr-diag
           ctx.backend-state)]
       [(compiler_ir_types.CompilerIrInstr.EntryArgc dst)
@@ -56365,7 +55690,7 @@
           leaf
           subleaf
           reg-index
-          planned-scratch0
+          ""
           ctx.backend-state)]
       [(compiler_ir_types.CompilerIrInstr.Xgetbv dst index)
         (compiler-backend-emit-xgetbv
@@ -56417,8 +55742,6 @@
           ty
           (compiler-backend-global-shared-view ctx.assignments)
           (compiler-backend-global-shared-view ctx.assignments)
-          planned-scratch0
-          planned-scratch1
           ctx.types
           ctx.global-types
           (compiler-backend-global-shared-view ctx.plan)
@@ -56451,8 +55774,7 @@
           args
           ty
           (compiler-backend-global-shared-view ctx.assignments)
-          planned-scratch0
-          planned-scratch1
+          ""
           ctx.types
           ctx.functions
           ctx.externs
@@ -56469,8 +55791,6 @@
           args
           ty
           (compiler-backend-global-shared-view ctx.assignments)
-          planned-scratch0
-          planned-scratch1
           ctx.types
           ctx.functions
           ctx.externs
@@ -56492,8 +55812,6 @@
             args
             slots
             (compiler-backend-global-shared-view ctx.assignments)
-            planned-scratch0
-            planned-scratch1
             ctx.types
             ctx.global-types
             (compiler-backend-global-shared-view ctx.plan)
@@ -56517,8 +55835,6 @@
             args
             slots
             (compiler-backend-global-shared-view ctx.assignments)
-            planned-scratch0
-            planned-scratch1
             ctx.types
             ctx.functions
             ctx.externs
@@ -56536,7 +55852,6 @@
           args
           ty
           (compiler-backend-global-shared-view ctx.assignments)
-          planned-scratch0
           ctx.types
           ctx.global-types
           ctx.vars
@@ -56577,7 +55892,6 @@
               (compiler-backend-global-shared-view symbol)
               inline-size
               value
-              planned-scratch0
               ctx.backend-state)
               [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
               [(ResultCompilerBackend.Err message)
@@ -56670,7 +55984,6 @@
                   (compiler-backend-global-shared-view ctx.program-index)
                   no-exclude
                   0
-                  planned-scratch0
                   ctx.backend-state)
                   [(ResultCompilerBackend.Ok store-asm)
                     (ResultCompilerBackend.Ok store-asm)]
@@ -56702,9 +56015,9 @@
                 ctx.current-label
                 (compiler-backend-global-shared-view ctx.program-index)
                 ctx.vars
-                planned-scratch0
-                planned-scratch1
-                planned-scratch2)
+                ""
+                ""
+                "")
                 [(ResultCompilerBackend.Ok copies)
                   (if (compiler-backend-jump-forward-drift?
                     ctx.backend-state
@@ -56780,10 +56093,7 @@
           (compiler-backend-global-shared-view ctx.program-index)
           ctx.vars
           ""
-          ""
-          planned-scratch0
-          planned-scratch1
-          planned-scratch2)
+          "")
           [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err
@@ -56827,8 +56137,6 @@
           (compiler-backend-global-shared-view ty)
           ctx.vars
           (compiler-backend-global-shared-view ctx.program-index)
-          planned-scratch0
-          planned-scratch1
           (compiler-backend-global-shared-view instr-diag)
           ctx.backend-state)]
       [(compiler_ir_types.CompilerIrInstr.Word dst src index ty)
@@ -56840,7 +56148,6 @@
           index
           (compiler-backend-global-shared-view ty)
           ctx.vars
-          planned-scratch0
           (compiler-backend-global-shared-view instr-diag)
           ctx.backend-state)]
       [(compiler_ir_types.CompilerIrInstr.TailCallIndirect func args ty)
@@ -56853,8 +56160,6 @@
           args
           (compiler-backend-global-shared-view ty)
           (compiler-backend-global-shared-view ctx.assignments)
-          planned-scratch0
-          planned-scratch1
           ctx.types
           ctx.vars
           ctx.functions
@@ -56880,8 +56185,6 @@
           default-label
           (compiler_ir_types.compiler-ir-label-none)
           (compiler-backend-global-shared-view ctx.assignments)
-          planned-scratch0
-          planned-scratch1
           (compiler-backend-global-shared-view ctx.blocks)
           (compiler-backend-global-shared-view ctx.program-index)
           (compiler-backend-global-shared-view ctx.vars))
@@ -56908,8 +56211,6 @@
           default-label
           trap-label
           (compiler-backend-global-shared-view ctx.assignments)
-          planned-scratch0
-          planned-scratch1
           (compiler-backend-global-shared-view ctx.blocks)
           (compiler-backend-global-shared-view ctx.program-index)
           (compiler-backend-global-shared-view ctx.vars))
@@ -58186,16 +57487,6 @@
                   ty
                   (compiler-backend-global-shared-view ctx.assignments)
                   ctx.assignments
-                  (compiler-backend-scratch-plan-register-here
-                    (compiler-backend-runtime-plan-scratch
-                      (compiler-backend-global-shared-view ctx.plan))
-                    0
-                    ctx.backend-state)
-                  (compiler-backend-scratch-plan-register-here
-                    (compiler-backend-runtime-plan-scratch
-                      (compiler-backend-global-shared-view ctx.plan))
-                    1
-                    ctx.backend-state)
                   ctx.types
                   ctx.global-types
                   ctx.plan
@@ -58234,16 +57525,7 @@
                   ty
                   (compiler-backend-global-shared-view ctx.assignments)
                   ctx.assignments
-                  (compiler-backend-scratch-plan-register-here
-                    (compiler-backend-runtime-plan-scratch
-                      (compiler-backend-global-shared-view ctx.plan))
-                    0
-                    (compiler-backend-global-shared-view ctx.backend-state))
-                  (compiler-backend-scratch-plan-register-here
-                    (compiler-backend-runtime-plan-scratch
-                      (compiler-backend-global-shared-view ctx.plan))
-                    1
-                    (compiler-backend-global-shared-view ctx.backend-state))
+                  ""
                   (compiler-backend-global-shared-view ctx.types)
                   (compiler-backend-global-shared-view ctx.functions)
                   (compiler-backend-global-shared-view ctx.externs)
@@ -58513,36 +57795,6 @@
                 rhs
                 (compiler-backend-global-shared-view ty)
                 (not keep-live)
-                (compiler-backend-scratch-plan-register-ahead
-                  (compiler-backend-runtime-plan-scratch
-                    (compiler-backend-global-shared-view ctx.plan))
-                  0
-                  0
-                  (compiler-backend-global-shared-view ctx.backend-state))
-                (compiler-backend-scratch-plan-register-ahead
-                  (compiler-backend-runtime-plan-scratch
-                    (compiler-backend-global-shared-view ctx.plan))
-                  0
-                  1
-                  (compiler-backend-global-shared-view ctx.backend-state))
-                (compiler-backend-scratch-plan-register-ahead
-                  (compiler-backend-runtime-plan-scratch
-                    (compiler-backend-global-shared-view ctx.plan))
-                  0
-                  2
-                  (compiler-backend-global-shared-view ctx.backend-state))
-                (compiler-backend-scratch-plan-register-ahead
-                  (compiler-backend-runtime-plan-scratch
-                    (compiler-backend-global-shared-view ctx.plan))
-                  0
-                  3
-                  (compiler-backend-global-shared-view ctx.backend-state))
-                (compiler-backend-scratch-plan-register-ahead
-                  (compiler-backend-runtime-plan-scratch
-                    (compiler-backend-global-shared-view ctx.plan))
-                  0
-                  4
-                  (compiler-backend-global-shared-view ctx.backend-state))
                 (compiler-backend-rest-starts-return-of-var?
                   dst
                   (compiler-backend-global-shared-view instrs)
@@ -58715,18 +57967,6 @@
           out)))
     (ResultCompilerBackend.Ok "")))
 
-(define (compiler-backend-publish-phi-planned-xmm-ahead!
-  [ctx : CompilerBackendEmissionContext]
-  [instruction-offset : i64]) : unit
-  (compiler-backend-function-state-set-string!
-    ctx.function-state
-    compiler-backend-function-string-current-phi-planned-xmm-cycle
-    (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch ctx.plan)
-      instruction-offset
-      3
-      ctx.backend-state)))
-
 (define (compiler-backend-emit-fused-compare-branch-rest
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
@@ -58763,31 +58003,7 @@
       index
       fallthrough)
     (compiler-backend-global-shared-view ctx.program-index)
-    (compiler-backend-global-shared-view ctx.vars)
-    (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch
-        (compiler-backend-global-shared-view ctx.plan))
-      0
-      0
-      (compiler-backend-global-shared-view ctx.backend-state))
-    (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch
-        (compiler-backend-global-shared-view ctx.plan))
-      0
-      1
-      (compiler-backend-global-shared-view ctx.backend-state))
-    (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch
-        (compiler-backend-global-shared-view ctx.plan))
-      1
-      1
-      (compiler-backend-global-shared-view ctx.backend-state))
-    (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch
-        (compiler-backend-global-shared-view ctx.plan))
-      1
-      2
-      (compiler-backend-global-shared-view ctx.backend-state)))
+    (compiler-backend-global-shared-view ctx.vars))
     [(ResultCompilerBackend.Ok head)
       (begin
         (compiler-backend-asm-append
@@ -58850,31 +58066,7 @@
       index
       fallthrough)
     (compiler-backend-global-shared-view ctx.program-index)
-    (compiler-backend-global-shared-view ctx.vars)
-    (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch
-        (compiler-backend-global-shared-view ctx.plan))
-      0
-      0
-      (compiler-backend-global-shared-view ctx.backend-state))
-    (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch
-        (compiler-backend-global-shared-view ctx.plan))
-      1
-      0
-      (compiler-backend-global-shared-view ctx.backend-state))
-    (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch
-        (compiler-backend-global-shared-view ctx.plan))
-      2
-      1
-      (compiler-backend-global-shared-view ctx.backend-state))
-    (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch
-        (compiler-backend-global-shared-view ctx.plan))
-      2
-      2
-      (compiler-backend-global-shared-view ctx.backend-state)))
+    (compiler-backend-global-shared-view ctx.vars))
     [(ResultCompilerBackend.Ok head)
       (begin
         (compiler-backend-asm-append
@@ -58933,25 +58125,7 @@
     (compiler-backend-global-shared-view ctx.program-index)
     (compiler-backend-global-shared-view ctx.vars)
     ""
-    ""
-    (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch
-        (compiler-backend-global-shared-view ctx.plan))
-      1
-      0
-      (compiler-backend-global-shared-view ctx.backend-state))
-    (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch
-        (compiler-backend-global-shared-view ctx.plan))
-      1
-      1
-      (compiler-backend-global-shared-view ctx.backend-state))
-    (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch
-        (compiler-backend-global-shared-view ctx.plan))
-      1
-      2
-      (compiler-backend-global-shared-view ctx.backend-state)))
+    "")
     [(ResultCompilerBackend.Ok head)
       (begin
         (compiler-backend-asm-append
@@ -59022,33 +58196,10 @@
       fallthrough)
     (compiler-backend-global-shared-view ctx.program-index)
     (compiler-backend-global-shared-view ctx.vars)
-    (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch
-        (compiler-backend-global-shared-view ctx.plan))
-      0
-      0
-      (compiler-backend-global-shared-view ctx.backend-state))
     ;; The comparison result is not materialized in this fusion, so its
     ;; primary scalar slot is the RHS staging home. The address base above is
     ;; owned by the Gep site; these are deliberately different IR points.
-    (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch
-        (compiler-backend-global-shared-view ctx.plan))
-      2
-      0
-      (compiler-backend-global-shared-view ctx.backend-state))
-    (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch
-        (compiler-backend-global-shared-view ctx.plan))
-      3
-      1
-      (compiler-backend-global-shared-view ctx.backend-state))
-    (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch
-        (compiler-backend-global-shared-view ctx.plan))
-      3
-      2
-      (compiler-backend-global-shared-view ctx.backend-state)))
+    )
     [(ResultCompilerBackend.Ok head)
       (begin
         (compiler-backend-asm-append
@@ -59465,20 +58616,6 @@
             div-rhs
             div-ty)
           (let
-            [planned-magic : String
-              (compiler-backend-scratch-plan-register-ahead
-                (compiler-backend-runtime-plan-scratch
-                  (compiler-backend-global-shared-view ctx.plan))
-                5
-                2
-                (compiler-backend-global-shared-view ctx.backend-state))]
-            [planned-src : String
-              (compiler-backend-scratch-plan-register-ahead
-                (compiler-backend-runtime-plan-scratch
-                  (compiler-backend-global-shared-view ctx.plan))
-                5
-                3
-                (compiler-backend-global-shared-view ctx.backend-state))]
             [magic : String
               (compiler-backend-divmod-polish-magic-ahead
                 (compiler-backend-global-shared-view ctx)
@@ -59487,8 +58624,7 @@
                 (compiler-backend-global-shared-view div-op)
                 (compiler-backend-global-shared-view div-rhs)
                 (compiler-backend-global-shared-view div-ty)
-                5
-                planned-magic)]
+                5)]
             [hoist-reg : String
               (compiler-backend-divmod-polish-hoist-reg-ahead
                 (compiler-backend-global-shared-view ctx)
@@ -59501,7 +58637,6 @@
                 (compiler-backend-global-shared-view div-lhs)
                 (compiler-backend-global-shared-view magic)
                 hoist-reg
-                planned-src
                 false
                 (compiler-backend-binop-wants-remainder?
                   (compiler-backend-global-shared-view div-op))
@@ -60069,7 +59204,6 @@
   [offset : compiler_ir_types.CompilerIrValue]
   [elem-ty : compiler_ast_types.AstType]
   [gep-disp : i64]
-  [planned-base : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
     [dst-home : String
@@ -60096,7 +59230,7 @@
           [base-reg : String
             (if (string.eq base-home "")
               (compiler-backend-planned-or-scavenge-reg
-                planned-base
+                ""
                 alu-dst
                 (compiler-backend-one-exclude
                   (compiler-backend-global-shared-view dst-home))
@@ -60157,7 +59291,7 @@
             (if use-base-home?
               base-home
               (compiler-backend-planned-or-scavenge-reg
-                planned-base
+                ""
                 alu-dst
                 (compiler-backend-two-exclude
                   (compiler-backend-global-shared-view offset-home)
@@ -61732,7 +60866,6 @@
   [false-jcc : String]
   [true-label : i64]
   [false-label : i64]
-  [branch-plan-ahead : i64]
   [branch-fallthrough : CompilerBackendMaybeLabel]) : ResultCompilerBackend
   (if (not
     (compiler-backend-branch-needs-phi-copies?
@@ -61751,87 +60884,69 @@
           true-jcc
           false-jcc
           (compiler-backend-global-shared-view ctx.backend-state))))
-    (let
-      [planned-cycle : String
-        (compiler-backend-scratch-plan-register-ahead
-          (compiler-backend-runtime-plan-scratch
-            (compiler-backend-global-shared-view ctx.plan))
-          branch-plan-ahead
-          1
-          (compiler-backend-global-shared-view ctx.backend-state))]
-      [planned-stage : String
-        (compiler-backend-scratch-plan-register-ahead
-          (compiler-backend-runtime-plan-scratch
-            (compiler-backend-global-shared-view ctx.plan))
-          branch-plan-ahead
-          2
-          (compiler-backend-global-shared-view ctx.backend-state))]
-      (match (compiler-backend-emit-phi-edge-copies
-        (compiler-backend-global-shared-view ctx.type-segment-bases)
-        (compiler-backend-global-shared-view ctx.assignments)
-        (compiler-backend-global-shared-view ctx.blocks)
-        true-label
-        (compiler-backend-global-shared-view ctx.current-label)
-        (compiler-backend-global-shared-view ctx.program-index)
-        (compiler-backend-global-shared-view ctx.vars)
-        (compiler-backend-global-shared-view planned-cycle)
-        (compiler-backend-global-shared-view planned-stage)
-        (compiler-backend-current-phi-planned-xmm-cycle
-          (compiler-backend-global-shared-view ctx.backend-state)))
-        [(ResultCompilerBackend.Ok true-copies)
-          (match (compiler-backend-emit-phi-edge-copies
-            (compiler-backend-global-shared-view ctx.type-segment-bases)
-            (compiler-backend-global-shared-view ctx.assignments)
-            (compiler-backend-global-shared-view ctx.blocks)
-            false-label
-            (compiler-backend-global-shared-view ctx.current-label)
-            (compiler-backend-global-shared-view ctx.program-index)
-            (compiler-backend-global-shared-view ctx.vars)
-            planned-cycle
-            planned-stage
-            (compiler-backend-current-phi-planned-xmm-cycle
-              (compiler-backend-global-shared-view ctx.backend-state)))
-            [(ResultCompilerBackend.Ok false-copies)
-              (ResultCompilerBackend.Ok
-                (compiler-backend-emit-branch-edges
-                  (compiler-backend-global-shared-view ctx.backend-state)
-                  (compiler-backend-global-shared-view ctx.function)
-                  (compiler-backend-global-shared-view ctx.current-label)
-                  true-label
-                  false-label
-                  (compiler-backend-global-shared-view true-copies)
-                  (compiler-backend-global-shared-view false-copies)
-                  branch-fallthrough
-                  (str_cat.str-cat
-                    cmp-asm
-                    (compiler-backend-emit-compare-branch-jumps
-                      (compiler-backend-global-shared-view ctx.function)
-                      (compiler-backend-branch-edge-target
-                        (compiler-backend-branch-edge-label
-                          (compiler-backend-global-shared-view
-                            ctx.current-label)
-                          "true")
-                        true-label
-                        (compiler-backend-global-shared-view true-copies))
-                      (compiler-backend-branch-edge-target
-                        (compiler-backend-branch-edge-label
-                          (compiler-backend-global-shared-view
-                            ctx.current-label)
-                          "false")
-                        false-label
-                        (compiler-backend-global-shared-view false-copies))
-                      (compiler-backend-branch-edge-fallthrough
+    (match (compiler-backend-emit-phi-edge-copies
+      (compiler-backend-global-shared-view ctx.type-segment-bases)
+      (compiler-backend-global-shared-view ctx.assignments)
+      (compiler-backend-global-shared-view ctx.blocks)
+      true-label
+      (compiler-backend-global-shared-view ctx.current-label)
+      (compiler-backend-global-shared-view ctx.program-index)
+      (compiler-backend-global-shared-view ctx.vars)
+      ""
+      ""
+      (compiler-backend-current-phi-planned-xmm-cycle
+        (compiler-backend-global-shared-view ctx.backend-state)))
+      [(ResultCompilerBackend.Ok true-copies)
+        (match (compiler-backend-emit-phi-edge-copies
+          (compiler-backend-global-shared-view ctx.type-segment-bases)
+          (compiler-backend-global-shared-view ctx.assignments)
+          (compiler-backend-global-shared-view ctx.blocks)
+          false-label
+          (compiler-backend-global-shared-view ctx.current-label)
+          (compiler-backend-global-shared-view ctx.program-index)
+          (compiler-backend-global-shared-view ctx.vars)
+          ""
+          ""
+          (compiler-backend-current-phi-planned-xmm-cycle
+            (compiler-backend-global-shared-view ctx.backend-state)))
+          [(ResultCompilerBackend.Ok false-copies)
+            (ResultCompilerBackend.Ok
+              (compiler-backend-emit-branch-edges
+                (compiler-backend-global-shared-view ctx.backend-state)
+                (compiler-backend-global-shared-view ctx.function)
+                (compiler-backend-global-shared-view ctx.current-label)
+                true-label
+                false-label
+                (compiler-backend-global-shared-view true-copies)
+                (compiler-backend-global-shared-view false-copies)
+                branch-fallthrough
+                (str_cat.str-cat
+                  cmp-asm
+                  (compiler-backend-emit-compare-branch-jumps
+                    (compiler-backend-global-shared-view ctx.function)
+                    (compiler-backend-branch-edge-target
+                      (compiler-backend-branch-edge-label
                         (compiler-backend-global-shared-view ctx.current-label)
-                        true-copies
-                        false-copies
-                        branch-fallthrough)
-                      true-jcc
-                      false-jcc
-                      (compiler-backend-global-shared-view ctx.backend-state)))))]
-            [(ResultCompilerBackend.Err message)
-              (ResultCompilerBackend.Err message)])]
-        [(ResultCompilerBackend.Err message)
-          (ResultCompilerBackend.Err message)]))))
+                        "true")
+                      true-label
+                      (compiler-backend-global-shared-view true-copies))
+                    (compiler-backend-branch-edge-target
+                      (compiler-backend-branch-edge-label
+                        (compiler-backend-global-shared-view ctx.current-label)
+                        "false")
+                      false-label
+                      (compiler-backend-global-shared-view false-copies))
+                    (compiler-backend-branch-edge-fallthrough
+                      (compiler-backend-global-shared-view ctx.current-label)
+                      true-copies
+                      false-copies
+                      branch-fallthrough)
+                    true-jcc
+                    false-jcc
+                    (compiler-backend-global-shared-view ctx.backend-state)))))]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err message)])]
+      [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
 ;; M6-D emission: put the base in its planned staging register FIRST, then build
 ;; the folded compare and its branch on top -- the same order the unfolded path
@@ -61849,7 +60964,6 @@
   [false-jcc : String]
   [true-label : i64]
   [false-label : i64]
-  [branch-plan-ahead : i64]
   [branch-fallthrough : CompilerBackendMaybeLabel]) : ResultCompilerBackend
   (if (string.eq staged-base "")
     (compiler-backend-gep-load-cmp-branch-emit
@@ -61859,7 +60973,6 @@
       false-jcc
       true-label
       false-label
-      branch-plan-ahead
       branch-fallthrough)
     (match (compiler-backend-emit-load-value-with-plan
       (compiler-backend-global-shared-view ctx.assignments)
@@ -61874,7 +60987,6 @@
           false-jcc
           true-label
           false-label
-          branch-plan-ahead
           branch-fallthrough)
           [(ResultCompilerBackend.Ok body-asm)
             (ResultCompilerBackend.Ok (str_cat.str-cat stage-asm body-asm))]
@@ -62065,7 +61177,6 @@
                   false-jcc
                   true-label
                   false-label
-                  branch-plan-ahead
                   (compiler-backend-fused-compare-fallthrough
                     (compiler-backend-global-shared-view instrs)
                     after-branch
@@ -62927,12 +62038,6 @@
           (compiler-backend-global-shared-view offset)
           elem-ty
           gep-fold-disp
-          (compiler-backend-scratch-plan-register-ahead
-            (compiler-backend-runtime-plan-scratch
-              (compiler-backend-global-shared-view ctx.plan))
-            0
-            0
-            (compiler-backend-global-shared-view ctx.backend-state))
           (compiler-backend-global-shared-view ctx.backend-state))
         (compiler-backend-global-shared-view instrs)
         after-binop
@@ -63152,54 +62257,12 @@
                                         load-dst2
                                         (compiler-backend-global-shared-view
                                           load-ty2)
-                                        (compiler-backend-scratch-plan-register-ahead
-                                          (compiler-backend-runtime-plan-scratch
-                                            (compiler-backend-global-shared-view
-                                              ctx.plan))
-                                          0
-                                          0
-                                          (compiler-backend-global-shared-view
-                                            ctx.backend-state))
-                                        (compiler-backend-scratch-plan-register-ahead
-                                          (compiler-backend-runtime-plan-scratch
-                                            (compiler-backend-global-shared-view
-                                              ctx.plan))
-                                          0
-                                          1
-                                          (compiler-backend-global-shared-view
-                                            ctx.backend-state))
-                                        (compiler-backend-scratch-plan-register-ahead
-                                          (compiler-backend-runtime-plan-scratch
-                                            (compiler-backend-global-shared-view
-                                              ctx.plan))
-                                          1
-                                          1
-                                          (compiler-backend-global-shared-view
-                                            ctx.backend-state))
-                                        (compiler-backend-scratch-plan-register-ahead
-                                          (compiler-backend-runtime-plan-scratch
-                                            (compiler-backend-global-shared-view
-                                              ctx.plan))
-                                          2
-                                          0
-                                          (compiler-backend-global-shared-view
-                                            ctx.backend-state))
-                                        (compiler-backend-scratch-plan-register-ahead
-                                          (compiler-backend-runtime-plan-scratch
-                                            (compiler-backend-global-shared-view
-                                              ctx.plan))
-                                          2
-                                          1
-                                          (compiler-backend-global-shared-view
-                                            ctx.backend-state))
-                                        (compiler-backend-scratch-plan-register-ahead
-                                          (compiler-backend-runtime-plan-scratch
-                                            (compiler-backend-global-shared-view
-                                              ctx.plan))
-                                          3
-                                          1
-                                          (compiler-backend-global-shared-view
-                                            ctx.backend-state))
+                                        ""
+                                        ""
+                                        ""
+                                        ""
+                                        ""
+                                        ""
                                         (compiler-backend-global-shared-view
                                           ctx.backend-state))
                                       (compiler-backend-global-shared-view
@@ -63221,30 +62284,9 @@
                                   (compiler-backend-global-shared-view load-ty)
                                   ""
                                   gep-fold-disp
-                                  (compiler-backend-scratch-plan-register-ahead
-                                    (compiler-backend-runtime-plan-scratch
-                                      (compiler-backend-global-shared-view
-                                        ctx.plan))
-                                    0
-                                    0
-                                    (compiler-backend-global-shared-view
-                                      ctx.backend-state))
-                                  (compiler-backend-scratch-plan-register-ahead
-                                    (compiler-backend-runtime-plan-scratch
-                                      (compiler-backend-global-shared-view
-                                        ctx.plan))
-                                    0
-                                    1
-                                    (compiler-backend-global-shared-view
-                                      ctx.backend-state))
-                                  (compiler-backend-scratch-plan-register-ahead
-                                    (compiler-backend-runtime-plan-scratch
-                                      (compiler-backend-global-shared-view
-                                        ctx.plan))
-                                    1
-                                    1
-                                    (compiler-backend-global-shared-view
-                                      ctx.backend-state))
+                                  ""
+                                  ""
+                                  ""
                                   (compiler-backend-global-shared-view
                                     ctx.backend-state))
                                 (compiler-backend-global-shared-view instrs)
@@ -63266,30 +62308,9 @@
                                 (compiler-backend-global-shared-view load-ty)
                                 ""
                                 gep-fold-disp
-                                (compiler-backend-scratch-plan-register-ahead
-                                  (compiler-backend-runtime-plan-scratch
-                                    (compiler-backend-global-shared-view
-                                      ctx.plan))
-                                  0
-                                  0
-                                  (compiler-backend-global-shared-view
-                                    ctx.backend-state))
-                                (compiler-backend-scratch-plan-register-ahead
-                                  (compiler-backend-runtime-plan-scratch
-                                    (compiler-backend-global-shared-view
-                                      ctx.plan))
-                                  0
-                                  1
-                                  (compiler-backend-global-shared-view
-                                    ctx.backend-state))
-                                (compiler-backend-scratch-plan-register-ahead
-                                  (compiler-backend-runtime-plan-scratch
-                                    (compiler-backend-global-shared-view
-                                      ctx.plan))
-                                  1
-                                  1
-                                  (compiler-backend-global-shared-view
-                                    ctx.backend-state))
+                                ""
+                                ""
+                                ""
                                 (compiler-backend-global-shared-view
                                   ctx.backend-state))
                               (compiler-backend-global-shared-view instrs)
@@ -63309,27 +62330,9 @@
                           (compiler-backend-global-shared-view load-ty)
                           ""
                           gep-fold-disp
-                          (compiler-backend-scratch-plan-register-ahead
-                            (compiler-backend-runtime-plan-scratch
-                              (compiler-backend-global-shared-view ctx.plan))
-                            0
-                            0
-                            (compiler-backend-global-shared-view
-                              ctx.backend-state))
-                          (compiler-backend-scratch-plan-register-ahead
-                            (compiler-backend-runtime-plan-scratch
-                              (compiler-backend-global-shared-view ctx.plan))
-                            0
-                            1
-                            (compiler-backend-global-shared-view
-                              ctx.backend-state))
-                          (compiler-backend-scratch-plan-register-ahead
-                            (compiler-backend-runtime-plan-scratch
-                              (compiler-backend-global-shared-view ctx.plan))
-                            1
-                            1
-                            (compiler-backend-global-shared-view
-                              ctx.backend-state))
+                          ""
+                          ""
+                          ""
                           (compiler-backend-global-shared-view
                             ctx.backend-state))
                         (compiler-backend-global-shared-view instrs)
@@ -63350,27 +62353,9 @@
                         (compiler-backend-global-shared-view load-ty)
                         ""
                         gep-fold-disp
-                        (compiler-backend-scratch-plan-register-ahead
-                          (compiler-backend-runtime-plan-scratch
-                            (compiler-backend-global-shared-view ctx.plan))
-                          0
-                          0
-                          (compiler-backend-global-shared-view
-                            ctx.backend-state))
-                        (compiler-backend-scratch-plan-register-ahead
-                          (compiler-backend-runtime-plan-scratch
-                            (compiler-backend-global-shared-view ctx.plan))
-                          0
-                          1
-                          (compiler-backend-global-shared-view
-                            ctx.backend-state))
-                        (compiler-backend-scratch-plan-register-ahead
-                          (compiler-backend-runtime-plan-scratch
-                            (compiler-backend-global-shared-view ctx.plan))
-                          1
-                          1
-                          (compiler-backend-global-shared-view
-                            ctx.backend-state))
+                        ""
+                        ""
+                        ""
                         (compiler-backend-global-shared-view ctx.backend-state))
                       (compiler-backend-global-shared-view instrs)
                       index
@@ -63388,24 +62373,9 @@
                     (compiler-backend-global-shared-view load-ty)
                     ""
                     gep-fold-disp
-                    (compiler-backend-scratch-plan-register-ahead
-                      (compiler-backend-runtime-plan-scratch
-                        (compiler-backend-global-shared-view ctx.plan))
-                      0
-                      0
-                      (compiler-backend-global-shared-view ctx.backend-state))
-                    (compiler-backend-scratch-plan-register-ahead
-                      (compiler-backend-runtime-plan-scratch
-                        (compiler-backend-global-shared-view ctx.plan))
-                      0
-                      1
-                      (compiler-backend-global-shared-view ctx.backend-state))
-                    (compiler-backend-scratch-plan-register-ahead
-                      (compiler-backend-runtime-plan-scratch
-                        (compiler-backend-global-shared-view ctx.plan))
-                      1
-                      1
-                      (compiler-backend-global-shared-view ctx.backend-state))
+                    ""
+                    ""
+                    ""
                     (compiler-backend-global-shared-view ctx.backend-state))
                   (compiler-backend-global-shared-view instrs)
                   index
@@ -63424,24 +62394,9 @@
                   (compiler-backend-global-shared-view load-ty)
                   ""
                   gep-fold-disp
-                  (compiler-backend-scratch-plan-register-ahead
-                    (compiler-backend-runtime-plan-scratch
-                      (compiler-backend-global-shared-view ctx.plan))
-                    0
-                    0
-                    (compiler-backend-global-shared-view ctx.backend-state))
-                  (compiler-backend-scratch-plan-register-ahead
-                    (compiler-backend-runtime-plan-scratch
-                      (compiler-backend-global-shared-view ctx.plan))
-                    0
-                    1
-                    (compiler-backend-global-shared-view ctx.backend-state))
-                  (compiler-backend-scratch-plan-register-ahead
-                    (compiler-backend-runtime-plan-scratch
-                      (compiler-backend-global-shared-view ctx.plan))
-                    1
-                    1
-                    (compiler-backend-global-shared-view ctx.backend-state))
+                  ""
+                  ""
+                  ""
                   (compiler-backend-global-shared-view ctx.backend-state))
                 (compiler-backend-global-shared-view instrs)
                 index
@@ -63459,24 +62414,9 @@
             (compiler-backend-global-shared-view load-ty)
             ""
             gep-fold-disp
-            (compiler-backend-scratch-plan-register-ahead
-              (compiler-backend-runtime-plan-scratch
-                (compiler-backend-global-shared-view ctx.plan))
-              0
-              0
-              (compiler-backend-global-shared-view ctx.backend-state))
-            (compiler-backend-scratch-plan-register-ahead
-              (compiler-backend-runtime-plan-scratch
-                (compiler-backend-global-shared-view ctx.plan))
-              0
-              1
-              (compiler-backend-global-shared-view ctx.backend-state))
-            (compiler-backend-scratch-plan-register-ahead
-              (compiler-backend-runtime-plan-scratch
-                (compiler-backend-global-shared-view ctx.plan))
-              1
-              1
-              (compiler-backend-global-shared-view ctx.backend-state))
+            ""
+            ""
+            ""
             (compiler-backend-global-shared-view ctx.backend-state))
           (compiler-backend-global-shared-view instrs)
           index
@@ -63495,24 +62435,9 @@
           (compiler-backend-global-shared-view load-ty)
           ""
           gep-fold-disp
-          (compiler-backend-scratch-plan-register-ahead
-            (compiler-backend-runtime-plan-scratch
-              (compiler-backend-global-shared-view ctx.plan))
-            0
-            0
-            (compiler-backend-global-shared-view ctx.backend-state))
-          (compiler-backend-scratch-plan-register-ahead
-            (compiler-backend-runtime-plan-scratch
-              (compiler-backend-global-shared-view ctx.plan))
-            0
-            1
-            (compiler-backend-global-shared-view ctx.backend-state))
-          (compiler-backend-scratch-plan-register-ahead
-            (compiler-backend-runtime-plan-scratch
-              (compiler-backend-global-shared-view ctx.plan))
-            1
-            1
-            (compiler-backend-global-shared-view ctx.backend-state))
+          ""
+          ""
+          ""
           (compiler-backend-global-shared-view ctx.backend-state))
         (compiler-backend-global-shared-view instrs)
         index
@@ -63528,7 +62453,6 @@
   [elem-ty : compiler_ast_types.AstType]
   [value : compiler_ir_types.CompilerIrValue]
   [store-ty : compiler_ast_types.AstType]
-  [store-instruction-offset : i64]
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
@@ -63542,24 +62466,6 @@
     store-ty
     (compiler-backend-global-shared-view ctx.program-index)
     gep-fold-disp
-    (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch
-        (compiler-backend-global-shared-view ctx.plan))
-      0
-      0
-      (compiler-backend-global-shared-view ctx.backend-state))
-    (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch
-        (compiler-backend-global-shared-view ctx.plan))
-      0
-      1
-      (compiler-backend-global-shared-view ctx.backend-state))
-    (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch
-        (compiler-backend-global-shared-view ctx.plan))
-      store-instruction-offset
-      1
-      (compiler-backend-global-shared-view ctx.backend-state))
     (compiler-backend-global-shared-view ctx.backend-state))
     [(ResultCompilerBackend.Ok head)
       (begin
@@ -63626,19 +62532,7 @@
             dst
             (compiler-backend-global-shared-view src)
             (compiler-backend-global-shared-view ctx.program-index)
-            (compiler-backend-global-shared-view ctx.vars)
-            (compiler-backend-scratch-plan-register-ahead
-              (compiler-backend-runtime-plan-scratch
-                (compiler-backend-global-shared-view ctx.plan))
-              1
-              0
-              (compiler-backend-global-shared-view ctx.backend-state))
-            (compiler-backend-scratch-plan-register-ahead
-              (compiler-backend-runtime-plan-scratch
-                (compiler-backend-global-shared-view ctx.plan))
-              1
-              1
-              (compiler-backend-global-shared-view ctx.backend-state)))
+            (compiler-backend-global-shared-view ctx.vars))
             [(ResultCompilerBackend.Ok fused-copies)
               (if (string.eq fused-copies "")
                 (compiler-backend-emit-instrs-normal
@@ -63757,7 +62651,6 @@
   [name : i64]
   [args : compiler_ir_types.CompilerIrCallArgs]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [planned-stage : String]
   [types : compiler_regalloc.CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [vars : i64]
@@ -63812,7 +62705,7 @@
       0
       0
       0
-      planned-stage
+      ""
       (compiler-backend-global-shared-view instr-diag)
       (compiler-backend-global-shared-view program-index)
       vars
@@ -64015,17 +62908,14 @@
     0))
 
 (define (compiler-backend-scavenge-tail-call-target-reg
-  [planned : String]
   [backend-state : CompilerBackendState]) : String
   ;; Tail jumps restore callee-saved homes before the final jmp. Keep the closure
   ;; pointer in a pooled caller-saved non-arg candidate instead.
-  (if (string.eq planned "")
-    (compiler-backend-scavenge-reg-here
-      (compiler-backend-c-abi-stage-exclude-with "%r11")
-      compiler-backend-c-abi-stage-exclude-count
-      "%r10"
-      backend-state)
-    planned))
+  (compiler-backend-scavenge-reg-here
+    (compiler-backend-c-abi-stage-exclude-with "%r11")
+    compiler-backend-c-abi-stage-exclude-count
+    "%r10"
+    backend-state))
 
 (define (compiler-backend-indirect-call-callee-arg-overlap?
   [target : CompilerBackendTarget]
@@ -64064,7 +62954,6 @@
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [arg-assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [planned-target : String]
-  [planned-stage : String]
   [types : compiler_regalloc.CompilerRegVarTypes]
   [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [externs : compiler_ir_types.CompilerIrExternSeq]
@@ -64118,7 +63007,6 @@
       0
       1
       0
-      planned-stage
       (compiler-backend-global-shared-view instr-diag)
       (compiler-backend-global-shared-view program-index)
       ;; vars must be the real frame var count: group-word1 slots live at
@@ -64266,7 +63154,6 @@
   [ty : compiler_ast_types.AstType]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [planned-target : String]
-  [planned-stage : String]
   [types : compiler_regalloc.CompilerRegVarTypes]
   [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [externs : compiler_ir_types.CompilerIrExternSeq]
@@ -64284,7 +63171,6 @@
     (compiler-backend-global-shared-view assignments)
     (compiler-backend-global-shared-view assignments)
     planned-target
-    planned-stage
     types
     functions
     externs
@@ -64302,8 +63188,6 @@
   [args : compiler_ir_types.CompilerIrCallArgs]
   [ty : compiler_ast_types.AstType]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [planned-target : String]
-  [planned-stage : String]
   [types : compiler_regalloc.CompilerRegVarTypes]
   [vars : i64]
   [functions : compiler_ir_types.CompilerIrFunctionSeq]
@@ -64346,7 +63230,7 @@
       0
       1
       0
-      planned-stage
+      ""
       (compiler-backend-global-shared-view instr-diag)
       (compiler-backend-global-shared-view program-index)
       vars
@@ -64354,9 +63238,7 @@
       [(ResultCompilerBackend.Ok args-asm)
         (let
           [clo-reg : String
-            (compiler-backend-scavenge-tail-call-target-reg
-              planned-target
-              backend-state)]
+            (compiler-backend-scavenge-tail-call-target-reg backend-state)]
           (match (compiler-backend-emit-load-value-with-plan
             (compiler-backend-global-shared-view assignments)
             (compiler-backend-global-shared-view func)
@@ -64482,8 +63364,6 @@
   [args : compiler_ir_types.CompilerIrCallArgs]
   [ty : compiler_ast_types.AstType]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [planned-target : String]
-  [planned-stage : String]
   [types : compiler_regalloc.CompilerRegVarTypes]
   [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [externs : compiler_ir_types.CompilerIrExternSeq]
@@ -64547,7 +63427,7 @@
       0
       0
       0
-      planned-stage
+      ""
       (compiler-backend-global-shared-view instr-diag)
       (compiler-backend-global-shared-view program-index)
       ;; Real frame var count for group-word1 slot addressing (see
@@ -64559,9 +63439,7 @@
         (if (string.eq direct-home "")
           (let
             [call-reg : String
-              (compiler-backend-scavenge-call-target-reg
-                planned-target
-                backend-state)]
+              (compiler-backend-scavenge-call-target-reg "" backend-state)]
             (match (compiler-backend-emit-load-value-with-plan
               (compiler-backend-global-shared-view assignments)
               (compiler-backend-global-shared-view func)
@@ -64630,8 +63508,6 @@
   [args : compiler_ir_types.CompilerIrCallArgs]
   [slots : compiler_ir_types.CompilerIrCAbiReturnSlotSeq]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [planned-target : String]
-  [planned-stage : String]
   [types : compiler_regalloc.CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [plan : CompilerBackendRuntimePlan]
@@ -64684,7 +63560,7 @@
       0
       0
       0
-      planned-stage
+      ""
       (compiler-backend-global-shared-view instr-diag)
       (compiler-backend-global-shared-view program-index)
       vars
@@ -64694,7 +63570,6 @@
           (compiler-backend-global-shared-view assignments)
           base
           call-space
-          (compiler-backend-global-shared-view planned-target)
           backend-state)
           [(ResultCompilerBackend.Ok base-save)
             (ResultCompilerBackend.Ok
@@ -64716,7 +63591,6 @@
                       type-segment-bases
                       call-space
                       slots
-                      (compiler-backend-global-shared-view planned-target)
                       backend-state)
                     (compiler-backend-emit-call-space-add dip))
                   "")))]
@@ -64741,8 +63615,6 @@
   [args : compiler_ir_types.CompilerIrCallArgs]
   [slots : compiler_ir_types.CompilerIrCAbiReturnSlotSeq]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [planned-target : String]
-  [planned-stage : String]
   [types : compiler_regalloc.CompilerRegVarTypes]
   [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [externs : compiler_ir_types.CompilerIrExternSeq]
@@ -64804,7 +63676,7 @@
       0
       0
       0
-      planned-stage
+      ""
       (compiler-backend-global-shared-view instr-diag)
       (compiler-backend-global-shared-view program-index)
       vars
@@ -64814,14 +63686,11 @@
           (compiler-backend-global-shared-view assignments)
           base
           call-space
-          (compiler-backend-global-shared-view planned-target)
           backend-state)
           [(ResultCompilerBackend.Ok base-save)
             (let
               [call-reg : String
-                (compiler-backend-scavenge-call-target-reg
-                  (compiler-backend-global-shared-view planned-target)
-                  backend-state)]
+                (compiler-backend-scavenge-call-target-reg "" backend-state)]
               (match (compiler-backend-emit-load-value-with-plan
                 (compiler-backend-global-shared-view assignments)
                 (compiler-backend-global-shared-view func)
@@ -64843,7 +63712,6 @@
                             type-segment-bases
                             call-space
                             slots
-                            (compiler-backend-global-shared-view planned-target)
                             backend-state)
                           (compiler-backend-emit-call-space-add dip))
                         ""
@@ -65287,7 +64155,6 @@
   [lhs : compiler_ir_types.CompilerIrValue]
   [magic : String]
   [hoist-reg : String]
-  [planned-src : String]
   [allow-own : bool]
   [want-remainder? : bool]
   [scavenge-dst : i64]) : String
@@ -65331,9 +64198,7 @@
     (cond
       [own-src? lhs-home]
       [dst-src? dst-home]
-      [(compiler-backend-divmod-src-register?
-          (compiler-backend-global-shared-view planned-src))
-        planned-src]
+      [(compiler-backend-divmod-src-register? "") ""]
       [else
         (compiler-backend-scavenge-divmod-src-reg
           scavenge-dst
@@ -65357,8 +64222,7 @@
   [dst : i64]
   [op : compiler_ir_types.CompilerIrBinOp]
   [rhs : compiler_ir_types.CompilerIrValue]
-  [ty : compiler_ast_types.AstType]
-  [planned-magic : String]) : String
+  [ty : compiler_ast_types.AstType]) : String
   (let
     [hoist : CompilerBackendConstHoistHome
       (compiler-backend-const-hoist-here _ctx.function-state)]
@@ -65371,21 +64235,19 @@
       (compiler-backend-binop-wants-remainder?
         (compiler-backend-global-shared-view op))
       hoist)
-      (if (string.eq planned-magic "")
-        (compiler-backend-scavenge-reg-peek
-          dst
-          (if (string.eq hoist-reg "")
+      (compiler-backend-scavenge-reg-peek
+        dst
+        (if (string.eq hoist-reg "")
+          (compiler-backend-binop-scavenge-exclude-for-op op)
+          (compiler-backend-scavenge-exclude-append
             (compiler-backend-binop-scavenge-exclude-for-op op)
-            (compiler-backend-scavenge-exclude-append
-              (compiler-backend-binop-scavenge-exclude-for-op op)
-              5
-              (compiler-backend-global-shared-view hoist-reg)))
-          (if (string.eq hoist-reg "")
             5
-            6)
-          "%r8"
-          _ctx.backend-state)
-        planned-magic)
+            (compiler-backend-global-shared-view hoist-reg)))
+        (if (string.eq hoist-reg "")
+          5
+          6)
+        "%r8"
+        _ctx.backend-state)
       "")))
 
 (define (compiler-backend-divmod-polish-magic-ahead
@@ -65395,8 +64257,7 @@
   [op : compiler_ir_types.CompilerIrBinOp]
   [rhs : compiler_ir_types.CompilerIrValue]
   [ty : compiler_ast_types.AstType]
-  [instruction-offset : i64]
-  [planned-magic : String]) : String
+  [instruction-offset : i64]) : String
   (let
     [saved-count : i64
       (compiler-backend-function-state-emit-current-count
@@ -65420,8 +64281,7 @@
         dst
         op
         rhs
-        ty
-        planned-magic)]
+        ty)]
     [_restore : unit
       (begin
         (compiler-backend-function-state-set-emit-current-count!
@@ -65545,24 +64405,6 @@
       store-ty
       (compiler-backend-global-shared-view ctx.program-index)
       gep-disp
-      (compiler-backend-scratch-plan-register-ahead
-        (compiler-backend-runtime-plan-scratch
-          (compiler-backend-global-shared-view ctx.plan))
-        0
-        0
-        (compiler-backend-global-shared-view ctx.backend-state))
-      (compiler-backend-scratch-plan-register-ahead
-        (compiler-backend-runtime-plan-scratch
-          (compiler-backend-global-shared-view ctx.plan))
-        0
-        1
-        (compiler-backend-global-shared-view ctx.backend-state))
-      (compiler-backend-scratch-plan-register-ahead
-        (compiler-backend-runtime-plan-scratch
-          (compiler-backend-global-shared-view ctx.plan))
-        1
-        1
-        (compiler-backend-global-shared-view ctx.backend-state))
       (compiler-backend-global-shared-view ctx.backend-state))))
 
 (define (compiler-backend-emit-divmod-polish-continue
@@ -66139,14 +64981,6 @@
                                 (compiler-backend-global-shared-view
                                   ctx.function-state)
                                 (compiler-backend-global-shared-view div-instr)))]
-                          [planned-magic : String
-                            (compiler-backend-scratch-plan-register-ahead
-                              (compiler-backend-runtime-plan-scratch
-                                (compiler-backend-global-shared-view ctx.plan))
-                              0
-                              2
-                              (compiler-backend-global-shared-view
-                                ctx.backend-state))]
                           [magic : String
                             (compiler-backend-divmod-polish-magic-ahead
                               (compiler-backend-global-shared-view ctx)
@@ -66155,8 +64989,7 @@
                               (compiler-backend-global-shared-view div-op)
                               (compiler-backend-global-shared-view div-rhs)
                               (compiler-backend-global-shared-view div-ty)
-                              0
-                              planned-magic)]
+                              0)]
                           [hoist-reg : String
                             (compiler-backend-divmod-polish-hoist-reg-ahead
                               (compiler-backend-global-shared-view ctx)
@@ -66169,13 +65002,6 @@
                               div-lhs
                               (compiler-backend-global-shared-view magic)
                               hoist-reg
-                              (compiler-backend-scratch-plan-register-ahead
-                                (compiler-backend-runtime-plan-scratch
-                                  (compiler-backend-global-shared-view ctx.plan))
-                                0
-                                3
-                                (compiler-backend-global-shared-view
-                                  ctx.backend-state))
                               true
                               (compiler-backend-binop-wants-remainder?
                                 (compiler-backend-global-shared-view div-op))
@@ -66259,13 +65085,6 @@
                       (compiler-backend-instr-reserved-home-mask
                         (compiler-backend-global-shared-view ctx.function-state)
                         (compiler-backend-global-shared-view instr)))]
-                  [planned-magic : String
-                    (compiler-backend-scratch-plan-register-ahead
-                      (compiler-backend-runtime-plan-scratch
-                        (compiler-backend-global-shared-view ctx.plan))
-                      1
-                      2
-                      (compiler-backend-global-shared-view ctx.backend-state))]
                   [magic : String
                     (compiler-backend-divmod-polish-magic-ahead
                       (compiler-backend-global-shared-view ctx)
@@ -66274,8 +65093,7 @@
                       (compiler-backend-global-shared-view div-op)
                       (compiler-backend-global-shared-view div-rhs)
                       (compiler-backend-global-shared-view div-ty)
-                      1
-                      planned-magic)]
+                      1)]
                   [hoist-reg : String
                     (compiler-backend-divmod-polish-hoist-reg-ahead
                       (compiler-backend-global-shared-view ctx)
@@ -66288,12 +65106,6 @@
                       (compiler-backend-global-shared-view div-lhs)
                       (compiler-backend-global-shared-view magic)
                       hoist-reg
-                      (compiler-backend-scratch-plan-register-ahead
-                        (compiler-backend-runtime-plan-scratch
-                          (compiler-backend-global-shared-view ctx.plan))
-                        1
-                        3
-                        (compiler-backend-global-shared-view ctx.backend-state))
                       false
                       (compiler-backend-binop-wants-remainder?
                         (compiler-backend-global-shared-view div-op))
@@ -66389,30 +65201,10 @@
                   (compiler-backend-global-shared-view load-ty)
                   second-dst
                   second-ty
-                  (compiler-backend-scratch-plan-register-ahead
-                    (compiler-backend-runtime-plan-scratch
-                      (compiler-backend-global-shared-view ctx.plan))
-                    0
-                    0
-                    (compiler-backend-global-shared-view ctx.backend-state))
-                  (compiler-backend-scratch-plan-register-ahead
-                    (compiler-backend-runtime-plan-scratch
-                      (compiler-backend-global-shared-view ctx.plan))
-                    0
-                    1
-                    (compiler-backend-global-shared-view ctx.backend-state))
-                  (compiler-backend-scratch-plan-register-ahead
-                    (compiler-backend-runtime-plan-scratch
-                      (compiler-backend-global-shared-view ctx.plan))
-                    1
-                    0
-                    (compiler-backend-global-shared-view ctx.backend-state))
-                  (compiler-backend-scratch-plan-register-ahead
-                    (compiler-backend-runtime-plan-scratch
-                      (compiler-backend-global-shared-view ctx.plan))
-                    1
-                    1
-                    (compiler-backend-global-shared-view ctx.backend-state))
+                  ""
+                  ""
+                  ""
+                  ""
                   (compiler-backend-global-shared-view ctx.backend-state))
                 instrs
                 after-cmp
@@ -66600,30 +65392,6 @@
                                   ty1
                                   (compiler-backend-global-shared-view
                                     ctx.program-index)
-                                  (compiler-backend-scratch-plan-register-ahead
-                                    (compiler-backend-runtime-plan-scratch
-                                      (compiler-backend-global-shared-view
-                                        ctx.plan))
-                                    1
-                                    0
-                                    (compiler-backend-global-shared-view
-                                      ctx.backend-state))
-                                  (compiler-backend-scratch-plan-register-ahead
-                                    (compiler-backend-runtime-plan-scratch
-                                      (compiler-backend-global-shared-view
-                                        ctx.plan))
-                                    0
-                                    1
-                                    (compiler-backend-global-shared-view
-                                      ctx.backend-state))
-                                  (compiler-backend-scratch-plan-register-ahead
-                                    (compiler-backend-runtime-plan-scratch
-                                      (compiler-backend-global-shared-view
-                                        ctx.plan))
-                                    2
-                                    1
-                                    (compiler-backend-global-shared-view
-                                      ctx.backend-state))
                                   (compiler-backend-global-shared-view
                                     ctx.backend-state))
                                 instrs
@@ -66748,16 +65516,6 @@
                       index
                       bin-lanes
                       (compiler-backend-global-shared-view bin-elem-ty)
-                      (compiler-backend-scratch-plan-register-here
-                        (compiler-backend-runtime-plan-scratch
-                          (compiler-backend-global-shared-view ctx.plan))
-                        0
-                        (compiler-backend-global-shared-view ctx.backend-state))
-                      (compiler-backend-scratch-plan-register-here
-                        (compiler-backend-runtime-plan-scratch
-                          (compiler-backend-global-shared-view ctx.plan))
-                        1
-                        (compiler-backend-global-shared-view ctx.backend-state))
                       (compiler-backend-instr-diagnostic
                         (compiler-backend-global-shared-view ctx.spans)
                         (compiler-backend-global-shared-view
@@ -66833,34 +65591,6 @@
         size
         protect
         protect-n
-        (compiler-backend-scratch-plan-register-ahead
-          (compiler-backend-runtime-plan-scratch
-            (compiler-backend-global-shared-view ctx.plan))
-          0
-          0
-          (compiler-backend-global-shared-view ctx.backend-state))
-        (compiler-backend-scratch-plan-register-ahead
-          (compiler-backend-runtime-plan-scratch
-            (compiler-backend-global-shared-view ctx.plan))
-          0
-          1
-          (compiler-backend-global-shared-view ctx.backend-state))
-        (compiler-backend-scratch-plan-register-ahead
-          (compiler-backend-runtime-plan-scratch
-            (compiler-backend-global-shared-view ctx.plan))
-          0
-          (if (>= size 16)
-            3
-            2)
-          (compiler-backend-global-shared-view ctx.backend-state))
-        (if (>= size 16)
-          (compiler-backend-scratch-plan-register-ahead
-            (compiler-backend-runtime-plan-scratch
-              (compiler-backend-global-shared-view ctx.plan))
-            0
-            2
-            (compiler-backend-global-shared-view ctx.backend-state))
-          "")
         (compiler-backend-global-shared-view ctx.backend-state))
       (compiler-backend-global-shared-view instrs)
       index
@@ -66977,7 +65707,6 @@
                 false-jcc
                 true-label
                 false-label
-                branch-plan-ahead
                 (compiler-backend-fused-compare-fallthrough
                   (compiler-backend-global-shared-view instrs)
                   after-branch
@@ -67118,36 +65847,7 @@
                       lhs
                       (compiler-backend-global-shared-view src)
                       (compiler-backend-global-shared-view bin-ty)
-                      (compiler-backend-scratch-plan-register-ahead
-                        (compiler-backend-runtime-plan-scratch
-                          (compiler-backend-global-shared-view ctx.plan))
-                        2
-                        0
-                        (compiler-backend-global-shared-view ctx.backend-state))
-                      (compiler-backend-scratch-plan-register-ahead
-                        (compiler-backend-runtime-plan-scratch
-                          (compiler-backend-global-shared-view ctx.plan))
-                        2
-                        1
-                        (compiler-backend-global-shared-view ctx.backend-state))
-                      (compiler-backend-scratch-plan-register-ahead
-                        (compiler-backend-runtime-plan-scratch
-                          (compiler-backend-global-shared-view ctx.plan))
-                        2
-                        2
-                        (compiler-backend-global-shared-view ctx.backend-state))
-                      (compiler-backend-scratch-plan-register-ahead
-                        (compiler-backend-runtime-plan-scratch
-                          (compiler-backend-global-shared-view ctx.plan))
-                        2
-                        3
-                        (compiler-backend-global-shared-view ctx.backend-state))
-                      (compiler-backend-scratch-plan-register-ahead
-                        (compiler-backend-runtime-plan-scratch
-                          (compiler-backend-global-shared-view ctx.plan))
-                        2
-                        4
-                        (compiler-backend-global-shared-view ctx.backend-state))
+                      ""
                       (compiler-backend-global-shared-view ctx.backend-state))
                       [(ResultCompilerBackend.Ok binop-asm)
                         (begin
@@ -67206,7 +65906,6 @@
                 ty
                 (compiler-backend-global-shared-view ctx.program-index)
                 (compiler-backend-global-shared-view ctx.vars)
-                ""
                 (compiler-backend-global-shared-view ctx.backend-state)))
               [(ResultCompilerBackend.Ok prefix)
                 ;; This fusion emits the consumer while the cursor still names
@@ -67223,36 +65922,7 @@
                   lhs
                   (compiler-backend-global-shared-view src)
                   (compiler-backend-global-shared-view bin-ty)
-                  (compiler-backend-scratch-plan-register-ahead
-                    (compiler-backend-runtime-plan-scratch
-                      (compiler-backend-global-shared-view ctx.plan))
-                    1
-                    0
-                    (compiler-backend-global-shared-view ctx.backend-state))
-                  (compiler-backend-scratch-plan-register-ahead
-                    (compiler-backend-runtime-plan-scratch
-                      (compiler-backend-global-shared-view ctx.plan))
-                    1
-                    1
-                    (compiler-backend-global-shared-view ctx.backend-state))
-                  (compiler-backend-scratch-plan-register-ahead
-                    (compiler-backend-runtime-plan-scratch
-                      (compiler-backend-global-shared-view ctx.plan))
-                    1
-                    2
-                    (compiler-backend-global-shared-view ctx.backend-state))
-                  (compiler-backend-scratch-plan-register-ahead
-                    (compiler-backend-runtime-plan-scratch
-                      (compiler-backend-global-shared-view ctx.plan))
-                    1
-                    3
-                    (compiler-backend-global-shared-view ctx.backend-state))
-                  (compiler-backend-scratch-plan-register-ahead
-                    (compiler-backend-runtime-plan-scratch
-                      (compiler-backend-global-shared-view ctx.plan))
-                    1
-                    4
-                    (compiler-backend-global-shared-view ctx.backend-state))
+                  ""
                   (compiler-backend-global-shared-view ctx.backend-state))
                   [(ResultCompilerBackend.Ok binop-asm)
                     (begin
@@ -67412,11 +66082,6 @@
                       name
                       args
                       (compiler-backend-global-shared-view ctx.assignments)
-                      (compiler-backend-scratch-plan-register-here
-                        (compiler-backend-runtime-plan-scratch
-                          (compiler-backend-global-shared-view ctx.plan))
-                        0
-                        (compiler-backend-global-shared-view ctx.backend-state))
                       (compiler-backend-global-shared-view ctx.types)
                       (compiler-backend-global-shared-view ctx.global-types)
                       (compiler-backend-global-shared-view ctx.vars)
@@ -67549,28 +66214,6 @@
             copy-size
             protect
             protect-n
-            (compiler-backend-scratch-plan-register-ahead
-              (compiler-backend-runtime-plan-scratch
-                (compiler-backend-global-shared-view ctx.plan))
-              0
-              0
-              (compiler-backend-global-shared-view ctx.backend-state))
-            (compiler-backend-scratch-plan-register-ahead
-              (compiler-backend-runtime-plan-scratch
-                (compiler-backend-global-shared-view ctx.plan))
-              1
-              (if (>= copy-size 16)
-                3
-                2)
-              (compiler-backend-global-shared-view ctx.backend-state))
-            (if (>= copy-size 16)
-              (compiler-backend-scratch-plan-register-ahead
-                (compiler-backend-runtime-plan-scratch
-                  (compiler-backend-global-shared-view ctx.plan))
-                1
-                2
-                (compiler-backend-global-shared-view ctx.backend-state))
-              "")
             (compiler-backend-global-shared-view ctx.backend-state))
           (compiler-backend-global-shared-view instrs)
           after-gep
@@ -67849,7 +66492,6 @@
                     (compiler-backend-global-shared-view elem-ty)
                     value
                     store-ty
-                    1
                     instrs
                     after-load
                     out)
@@ -67909,45 +66551,6 @@
                             ctx.type-segment-bases)
                           (compiler-backend-global-shared-view offset)
                           (compiler-backend-global-shared-view elem-ty))
-                        (compiler-backend-scratch-plan-register-ahead
-                          (compiler-backend-runtime-plan-scratch
-                            (compiler-backend-global-shared-view ctx.plan))
-                          0
-                          0
-                          (compiler-backend-global-shared-view
-                            ctx.backend-state))
-                        (compiler-backend-scratch-plan-register-ahead
-                          (compiler-backend-runtime-plan-scratch
-                            (compiler-backend-global-shared-view ctx.plan))
-                          0
-                          1
-                          (compiler-backend-global-shared-view
-                            ctx.backend-state))
-                        (compiler-backend-scratch-plan-register-ahead
-                          (compiler-backend-runtime-plan-scratch
-                            (compiler-backend-global-shared-view ctx.plan))
-                          1
-                          1
-                          (compiler-backend-global-shared-view
-                            ctx.backend-state))
-                        (compiler-backend-scratch-plan-register-ahead
-                          (compiler-backend-runtime-plan-scratch
-                            (compiler-backend-global-shared-view ctx.plan))
-                          1
-                          (if (>= copy-size 16)
-                            3
-                            2)
-                          (compiler-backend-global-shared-view
-                            ctx.backend-state))
-                        (if (>= copy-size 16)
-                          (compiler-backend-scratch-plan-register-ahead
-                            (compiler-backend-runtime-plan-scratch
-                              (compiler-backend-global-shared-view ctx.plan))
-                            1
-                            2
-                            (compiler-backend-global-shared-view
-                              ctx.backend-state))
-                          "")
                         (compiler-backend-global-shared-view ctx.backend-state))
                       (compiler-backend-global-shared-view instrs)
                       after-load
@@ -68018,18 +66621,6 @@
                           ctx.type-segment-bases)
                         (compiler-backend-global-shared-view offset)
                         (compiler-backend-global-shared-view elem-ty))
-                      (compiler-backend-scratch-plan-register-ahead
-                        (compiler-backend-runtime-plan-scratch
-                          (compiler-backend-global-shared-view ctx.plan))
-                        0
-                        0
-                        (compiler-backend-global-shared-view ctx.backend-state))
-                      (compiler-backend-scratch-plan-register-ahead
-                        (compiler-backend-runtime-plan-scratch
-                          (compiler-backend-global-shared-view ctx.plan))
-                        0
-                        1
-                        (compiler-backend-global-shared-view ctx.backend-state))
                       (compiler-backend-global-shared-view ctx.backend-state))
                     (compiler-backend-emit-gep-staged-avoid
                       (compiler-backend-global-shared-view
@@ -68053,18 +66644,6 @@
                         (compiler-backend-global-shared-view ctx.backend-state)
                         (compiler-backend-global-shared-view ctx.assignments)
                         load-offset)
-                      (compiler-backend-scratch-plan-register-ahead
-                        (compiler-backend-runtime-plan-scratch
-                          (compiler-backend-global-shared-view ctx.plan))
-                        0
-                        0
-                        (compiler-backend-global-shared-view ctx.backend-state))
-                      (compiler-backend-scratch-plan-register-ahead
-                        (compiler-backend-runtime-plan-scratch
-                          (compiler-backend-global-shared-view ctx.plan))
-                        0
-                        1
-                        (compiler-backend-global-shared-view ctx.backend-state))
                       (compiler-backend-global-shared-view ctx.backend-state)))
                   (compiler-backend-global-shared-view instrs)
                   index
@@ -68104,7 +66683,6 @@
                               (compiler-backend-global-shared-view elem-ty)
                               value
                               store-ty
-                              2
                               (compiler-backend-global-shared-view instrs)
                               after-store
                               out)
@@ -68181,7 +66759,6 @@
                     (compiler-backend-global-shared-view elem-ty)
                     value
                     store-ty
-                    1
                     (compiler-backend-global-shared-view instrs)
                     after-gep
                     out)
@@ -68233,45 +66810,6 @@
                             ctx.type-segment-bases)
                           (compiler-backend-global-shared-view offset)
                           (compiler-backend-global-shared-view elem-ty))
-                        (compiler-backend-scratch-plan-register-ahead
-                          (compiler-backend-runtime-plan-scratch
-                            (compiler-backend-global-shared-view ctx.plan))
-                          0
-                          0
-                          (compiler-backend-global-shared-view
-                            ctx.backend-state))
-                        (compiler-backend-scratch-plan-register-ahead
-                          (compiler-backend-runtime-plan-scratch
-                            (compiler-backend-global-shared-view ctx.plan))
-                          0
-                          1
-                          (compiler-backend-global-shared-view
-                            ctx.backend-state))
-                        (compiler-backend-scratch-plan-register-ahead
-                          (compiler-backend-runtime-plan-scratch
-                            (compiler-backend-global-shared-view ctx.plan))
-                          1
-                          1
-                          (compiler-backend-global-shared-view
-                            ctx.backend-state))
-                        (compiler-backend-scratch-plan-register-ahead
-                          (compiler-backend-runtime-plan-scratch
-                            (compiler-backend-global-shared-view ctx.plan))
-                          1
-                          (if (>= copy-size 16)
-                            3
-                            2)
-                          (compiler-backend-global-shared-view
-                            ctx.backend-state))
-                        (if (>= copy-size 16)
-                          (compiler-backend-scratch-plan-register-ahead
-                            (compiler-backend-runtime-plan-scratch
-                              (compiler-backend-global-shared-view ctx.plan))
-                            1
-                            2
-                            (compiler-backend-global-shared-view
-                              ctx.backend-state))
-                          "")
                         (compiler-backend-global-shared-view ctx.backend-state))
                       (compiler-backend-global-shared-view instrs)
                       after-gep
@@ -68379,27 +66917,9 @@
         (compiler-backend-global-shared-view ctx.backend-state)
         (compiler-backend-global-shared-view ctx.assignments)
         dst)]
-    [scratch0 : String
-      (compiler-backend-scratch-plan-register-ahead
-        (compiler-backend-runtime-plan-scratch
-          (compiler-backend-global-shared-view ctx.plan))
-        0
-        0
-        (compiler-backend-global-shared-view ctx.backend-state))]
-    [scratch1 : String
-      (compiler-backend-scratch-plan-register-ahead
-        (compiler-backend-runtime-plan-scratch
-          (compiler-backend-global-shared-view ctx.plan))
-        0
-        1
-        (compiler-backend-global-shared-view ctx.backend-state))]
     (cond
       [(and (not (string.eq dst-home "")) (not (string.eq dst-home count-reg)))
         dst-home]
-      [(and (not (string.eq scratch0 "")) (not (string.eq scratch0 count-reg)))
-        scratch0]
-      [(and (not (string.eq scratch1 "")) (not (string.eq scratch1 count-reg)))
-        scratch1]
       [else
         (compiler-backend-scavenge-reg
           dst
@@ -69049,7 +67569,6 @@
   [false-label : i64]
   [true-jcc : String]
   [false-jcc : String]
-  [ahead : i64]
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
@@ -69069,20 +67588,7 @@
     (compiler-backend-global-shared-view ctx.program-index)
     (compiler-backend-global-shared-view ctx.vars)
     true-jcc
-    false-jcc
-    ""
-    (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch
-        (compiler-backend-global-shared-view ctx.plan))
-      ahead
-      1
-      (compiler-backend-global-shared-view ctx.backend-state))
-    (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch
-        (compiler-backend-global-shared-view ctx.plan))
-      ahead
-      2
-      (compiler-backend-global-shared-view ctx.backend-state)))
+    false-jcc)
     [(ResultCompilerBackend.Ok head)
       (begin
         (compiler-backend-asm-append
@@ -69208,7 +67714,6 @@
                     false-label
                     true-jcc
                     false-jcc
-                    (- after index)
                     (compiler-backend-global-shared-view instrs)
                     after
                     out))
@@ -69265,36 +67770,6 @@
       (compiler-backend-global-shared-view rhs)
       (compiler-backend-global-shared-view ty)
       false
-      (compiler-backend-scratch-plan-register-ahead
-        (compiler-backend-runtime-plan-scratch
-          (compiler-backend-global-shared-view ctx.plan))
-        0
-        0
-        (compiler-backend-global-shared-view ctx.backend-state))
-      (compiler-backend-scratch-plan-register-ahead
-        (compiler-backend-runtime-plan-scratch
-          (compiler-backend-global-shared-view ctx.plan))
-        0
-        1
-        (compiler-backend-global-shared-view ctx.backend-state))
-      (compiler-backend-scratch-plan-register-ahead
-        (compiler-backend-runtime-plan-scratch
-          (compiler-backend-global-shared-view ctx.plan))
-        0
-        2
-        (compiler-backend-global-shared-view ctx.backend-state))
-      (compiler-backend-scratch-plan-register-ahead
-        (compiler-backend-runtime-plan-scratch
-          (compiler-backend-global-shared-view ctx.plan))
-        0
-        3
-        (compiler-backend-global-shared-view ctx.backend-state))
-      (compiler-backend-scratch-plan-register-ahead
-        (compiler-backend-runtime-plan-scratch
-          (compiler-backend-global-shared-view ctx.plan))
-        0
-        4
-        (compiler-backend-global-shared-view ctx.backend-state))
       (compiler-backend-rest-starts-return-of-var?
         dst
         (compiler-backend-global-shared-view instrs)
@@ -69369,41 +67844,8 @@
                           (compiler-backend-global-shared-view lhs)
                           (compiler-backend-global-shared-view rhs)
                           (compiler-backend-global-shared-view ty)
-                          (compiler-backend-scratch-plan-register-ahead
-                            (compiler-backend-runtime-plan-scratch
-                              (compiler-backend-global-shared-view ctx.plan))
-                            0
-                            0
-                            (compiler-backend-global-shared-view
-                              ctx.backend-state))
-                          (compiler-backend-scratch-plan-register-ahead
-                            (compiler-backend-runtime-plan-scratch
-                              (compiler-backend-global-shared-view ctx.plan))
-                            0
-                            1
-                            (compiler-backend-global-shared-view
-                              ctx.backend-state))
-                          (compiler-backend-scratch-plan-register-ahead
-                            (compiler-backend-runtime-plan-scratch
-                              (compiler-backend-global-shared-view ctx.plan))
-                            0
-                            2
-                            (compiler-backend-global-shared-view
-                              ctx.backend-state))
-                          (compiler-backend-scratch-plan-register-ahead
-                            (compiler-backend-runtime-plan-scratch
-                              (compiler-backend-global-shared-view ctx.plan))
-                            0
-                            3
-                            (compiler-backend-global-shared-view
-                              ctx.backend-state))
-                          (compiler-backend-scratch-plan-register-ahead
-                            (compiler-backend-runtime-plan-scratch
-                              (compiler-backend-global-shared-view ctx.plan))
-                            0
-                            4
-                            (compiler-backend-global-shared-view
-                              ctx.backend-state)))
+                          ""
+                          "")
                         out
                         (compiler-backend-global-shared-view ctx.backend-state))
                       (compiler-backend-emit-instrs-normal
@@ -69513,18 +67955,6 @@
                       (compiler-backend-global-shared-view lhs)
                       (compiler-backend-global-shared-view rhs)
                       (compiler-backend-global-shared-view ty))
-                    (compiler-backend-scratch-plan-register-ahead
-                      (compiler-backend-runtime-plan-scratch
-                        (compiler-backend-global-shared-view ctx.plan))
-                      1
-                      0
-                      (compiler-backend-global-shared-view ctx.backend-state))
-                    (compiler-backend-scratch-plan-register-ahead
-                      (compiler-backend-runtime-plan-scratch
-                        (compiler-backend-global-shared-view ctx.plan))
-                      1
-                      1
-                      (compiler-backend-global-shared-view ctx.backend-state))
                     (compiler-backend-global-shared-view ctx.backend-state))
                   (CompilerBackendMaybeAsm.No))
                   [(CompilerBackendMaybeAsm.Some head)
@@ -88034,7 +86464,6 @@
   [symbol : String]
   [size : i64]
   [value : compiler_ir_types.CompilerIrValue]
-  [planned-src : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
     [src-home : String
@@ -88046,7 +86475,7 @@
     [src-reg : String
       (if (string.eq src-home "")
         (compiler-backend-planned-or-scavenge-reg-here
-          (compiler-backend-global-shared-view planned-src)
+          ""
           (compiler-backend-addr-scavenge-exclude)
           0
           "%r10"
@@ -88804,10 +87233,6 @@
   [plan : CompilerBackendRuntimePlan]
   [name-id : i64]) : bool
   (match plan
-    [(CompilerBackendRuntimePlan.WithScratch base _)
-      (compiler-backend-plan-provides-rest-id?
-        (compiler_ir_types.compiler-ir-box-shared-view base)
-        name-id)]
     [(CompilerBackendRuntimePlan.Plan
         alloc
         substring
@@ -89271,9 +87696,6 @@
   (begin
     (cbi.compiler-builtin-refresh!)
     (match (compiler-backend-global-shared-view plan)
-      [(CompilerBackendRuntimePlan.WithScratch base _)
-        (compiler-backend-runtime-features
-          (compiler_ir_types.compiler-ir-box-shared-view base))]
       [(CompilerBackendRuntimePlan.Plan
           alloc
           _

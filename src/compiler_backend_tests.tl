@@ -107,8 +107,7 @@
   [value : compiler_ir_types.CompilerIrValue]
   [arg-ty : compiler_ast_types.AstType]
   [is-float : bool]
-  [stack-idx : i64]
-  [planned-stage : String]) : compiler_backend.ResultCompilerBackend
+  [stack-idx : i64]) : compiler_backend.ResultCompilerBackend
   (let
     [body : compiler_backend.CompilerBackendAsmBuf
       (compiler_backend.compiler-backend-asm-buf-with-capacity
@@ -125,7 +124,7 @@
       arg-ty
       is-float
       stack-idx
-      planned-stage
+      ""
       backend-state)
       [(compiler_backend.ResultCompilerBackend.Ok _)
         (compiler_backend.ResultCompilerBackend.Ok
@@ -4608,8 +4607,6 @@
         (compiler_ir_types.CompilerIrCallArgs.Nil)
         (compiler_ast_types.AstType.I64)
         assignments
-        ""
-        ""
         (compiler_regalloc.compiler-reg-var-types-empty)
         (compiler_ir_types.compiler-ir-function-seq-empty)
         (compiler_ir_types.compiler-ir-extern-seq-empty)
@@ -4874,8 +4871,6 @@
         (compiler_ir_types.CompilerIrCallArgs.Nil)
         slots
         assignments
-        ""
-        ""
         (compiler_regalloc.compiler-reg-var-types-empty)
         (compiler_ir_types.compiler-ir-function-seq-empty)
         (compiler_ir_types.compiler-ir-extern-seq-empty)
@@ -5028,7 +5023,6 @@
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         0
         slots
-        ""
         backend-state)]
     [result : bool
       (and
@@ -5341,8 +5335,6 @@
     "-24(%rbp)"
     false
     false
-    ""
-    ""
     (compiler_diagnostic.compiler-diagnostic-at-start "" "")
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active)))
@@ -5356,8 +5348,6 @@
         "%r13"
         false
         false
-        ""
-        ""
         (compiler_diagnostic.compiler-diagnostic-at-start "" "")
         (compiler_backend.compiler-backend-state-new
           (ci.intern-compat-state-capture-active)))
@@ -5429,8 +5419,6 @@
       "-24(%rbp)"
       false
       false
-      ""
-      ""
       (compiler_diagnostic.compiler-diagnostic-at-start "" "")
       (compiler_backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active)))
@@ -5444,8 +5432,6 @@
           "-24(%rbp)"
           true
           true
-          ""
-          ""
           (compiler_diagnostic.compiler-diagnostic-at-start "" "")
           (compiler_backend.compiler-backend-state-new
             (ci.intern-compat-state-capture-active)))
@@ -8748,7 +8734,6 @@
           (compiler_ir_types.compiler-ir-function-seq-empty)
           (compiler_ir_types.compiler-ir-extern-seq-empty))
         8
-        ""
         (compiler_backend.compiler-backend-state-new
           (ci.intern-compat-state-capture-active)))
         [(compiler_backend.ResultCompilerBackend.Ok asm) (string.eq asm "")]
@@ -8766,7 +8751,6 @@
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
           (compiler_ir_types.compiler-ir-function-seq-empty)
           (compiler_ir_types.compiler-ir-extern-seq-empty))
-        ""
         ""
         ""
         (compiler_backend.compiler-backend-state-new
@@ -8793,7 +8777,6 @@
           (compiler_ir_types.compiler-ir-extern-seq-empty))
         ""
         ""
-        ""
         (compiler_backend.compiler-backend-state-new
           (ci.intern-compat-state-capture-active)))
         [(compiler_backend.ResultCompilerBackend.Ok asm) (string.eq asm "")]
@@ -8811,7 +8794,6 @@
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
           (compiler_ir_types.compiler-ir-function-seq-empty)
           (compiler_ir_types.compiler-ir-extern-seq-empty))
-        ""
         ""
         ""
         (compiler_backend.compiler-backend-state-new
@@ -8833,7 +8815,6 @@
           (compiler_ir_types.compiler-ir-extern-seq-empty))
         ""
         ""
-        ""
         (compiler_backend.compiler-backend-state-new
           (ci.intern-compat-state-capture-active)))
         [(compiler_backend.ResultCompilerBackend.Ok asm)
@@ -8852,7 +8833,6 @@
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
           (compiler_ir_types.compiler-ir-function-seq-empty)
           (compiler_ir_types.compiler-ir-extern-seq-empty))
-        ""
         ""
         ""
         (compiler_backend.compiler-backend-state-new
@@ -8890,7 +8870,6 @@
         (compiler_ast_types.AstType.I64)
         (owned_view.compiler-owned-shared-view index)
         8
-        ""
         backend-state)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (string.eq asm "    xorl %r12d, %r12d\n")]
@@ -8903,7 +8882,6 @@
         (compiler_ast_types.AstType.I64)
         (owned_view.compiler-owned-shared-view index)
         8
-        ""
         backend-state)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (string.eq asm "    movq $7, -16(%rbp)\n")]
@@ -8943,7 +8921,6 @@
         (compiler_ast_types.AstType.I64)
         (owned_view.compiler-owned-shared-view index)
         2
-        ""
         index.backend-state)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
@@ -8966,7 +8943,6 @@
         (compiler_ast_types.AstType.F64)
         (owned_view.compiler-owned-shared-view index)
         2
-        ""
         index.backend-state)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
@@ -9026,7 +9002,6 @@
         (compiler_ast_types.AstType.I64)
         (owned_view.compiler-owned-shared-view index)
         2
-        ""
         index.backend-state)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (string.eq asm "    movq %r12, -16(%rbp)\n")]
@@ -9040,7 +9015,6 @@
         (compiler_ast_types.AstType.I64)
         (owned_view.compiler-owned-shared-view index)
         2
-        ""
         index.backend-state)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (string.eq asm "    movq %r12, -40(%rbp)\n")]
@@ -9054,7 +9028,6 @@
         (compiler_ast_types.AstType.I32)
         (owned_view.compiler-owned-shared-view index)
         2
-        ""
         index.backend-state)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (string.eq asm "    movq %r12, -40(%rbp)\n")]
@@ -10167,7 +10140,6 @@
       ty
       (owned_view.compiler-owned-shared-view index)
       4
-      ""
       index.backend-state)
       [(compiler_backend.ResultCompilerBackend.Err diag)
         (string.eq
@@ -10467,8 +10439,6 @@
         ty
         3
         (owned_view.compiler-owned-shared-view index)
-        ""
-        ""
         (compiler_diagnostic.compiler-diagnostic-at-start "" "")
         index.backend-state)]
     [data : compiler_backend.ResultCompilerBackend
@@ -10480,7 +10450,6 @@
         0
         (compiler_ast_types.AstType.U64)
         3
-        ""
         (compiler_diagnostic.compiler-diagnostic-at-start "" "")
         index.backend-state)]
     [length : compiler_backend.ResultCompilerBackend
@@ -10492,7 +10461,6 @@
         1
         (compiler_ast_types.AstType.I64)
         3
-        ""
         (compiler_diagnostic.compiler-diagnostic-at-start "" "")
         index.backend-state)]
     [_group-disable : unit
@@ -10585,8 +10553,6 @@
         (owned_view.compiler-owned-shared-view ty)
         4
         (owned_view.compiler-owned-shared-view index)
-        ""
-        ""
         (compiler_diagnostic.compiler-diagnostic-at-start "" "")
         index.backend-state)]
     [data : compiler_backend.ResultCompilerBackend
@@ -10598,7 +10564,6 @@
         0
         (compiler_ast_types.AstType.U64)
         4
-        ""
         (compiler_diagnostic.compiler-diagnostic-at-start "" "")
         index.backend-state)]
     [length : compiler_backend.ResultCompilerBackend
@@ -10610,7 +10575,6 @@
         1
         (compiler_ast_types.AstType.I64)
         4
-        ""
         (compiler_diagnostic.compiler-diagnostic-at-start "" "")
         index.backend-state)]
     [copied : compiler_backend.ResultCompilerBackend
@@ -10622,7 +10586,6 @@
         ty
         (owned_view.compiler-owned-shared-view index)
         4
-        ""
         index.backend-state)]
     [_group-disable : unit
       (compiler_backend.compiler-backend-group-vars-disable!
@@ -13777,10 +13740,6 @@
       (compiler_ir_types.CompilerIrValue.Var 1)
       (compiler_ast_types.AstType.I64)
       "%r8"
-      ""
-      ""
-      ""
-      ""
       (compiler_backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active)))
       [(compiler_backend.ResultCompilerBackend.Ok add-asm)
@@ -13795,10 +13754,6 @@
           (compiler_ir_types.CompilerIrValue.Var 1)
           (compiler_ast_types.AstType.Bool)
           "%r8"
-          ""
-          ""
-          ""
-          ""
           (compiler_backend.compiler-backend-state-new
             (ci.intern-compat-state-capture-active)))
           [(compiler_backend.ResultCompilerBackend.Ok cmp-asm)
@@ -16127,7 +16082,6 @@ g:
         0
         (compiler_ast_types.AstType.I64)
         8
-        ""
         diag
         backend-state)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
@@ -16687,9 +16641,7 @@ g:
         2
         (compiler_ir_types.CompilerIrValue.Var 4)
         program-index
-        5
-        ""
-        "")
+        5)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
             (compiler_backend.compiler-backend-string-contains?
@@ -16953,9 +16905,7 @@ g:
       (compiler_ir_types.compiler-ir-label "exit")
       (compiler_backend.CompilerBackendMaybeLabel.No)
       program-index
-      4
-      ""
-      "")
+      4)
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           ;; `1 < %r14` is emitted as `%r14 > 1`, so the false edge uses
@@ -20898,7 +20848,6 @@ g:
         (compiler_ir_types.compiler-ir-label "other")
         false
         assignments
-        ""
         "%rsi"))))
 
 ;; A planned table register the allocator BORROWED from a live-through value
@@ -21547,8 +21496,6 @@ g:
     (compiler_ir_types.CompilerIrValue.Var 1)
     4
     (compiler_ast_types.AstType.I64)
-    ""
-    ""
     (compiler_diagnostic.compiler-diagnostic-at-start "" "")
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active)))
@@ -21573,8 +21520,6 @@ g:
     (compiler_ir_types.CompilerIrValue.Var 1)
     4
     (compiler_ast_types.AstType.F64)
-    ""
-    ""
     (compiler_diagnostic.compiler-diagnostic-at-start "" "")
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active)))
@@ -21595,8 +21540,6 @@ g:
     (compiler_ir_types.CompilerIrValue.Var 1)
     8
     (compiler_ast_types.AstType.I64)
-    ""
-    ""
     (compiler_diagnostic.compiler-diagnostic-at-start "" "")
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active)))
@@ -21621,8 +21564,6 @@ g:
     (compiler_ir_types.CompilerIrValue.Var 1)
     8
     (compiler_ast_types.AstType.F64)
-    ""
-    ""
     (compiler_diagnostic.compiler-diagnostic-at-start "" "")
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active)))
@@ -21644,8 +21585,6 @@ g:
       (compiler_ir_types.CompilerIrValue.Var 1)
       4
       (compiler_ast_types.AstType.I64)
-      ""
-      ""
       (compiler_diagnostic.compiler-diagnostic-at-start "" "")
       (compiler_backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active)))
@@ -21670,8 +21609,6 @@ g:
       (compiler_ir_types.CompilerIrValue.Var 1)
       4
       (compiler_ast_types.AstType.F64)
-      ""
-      ""
       (compiler_diagnostic.compiler-diagnostic-at-start "" "")
       (compiler_backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active)))
@@ -21692,8 +21629,6 @@ g:
       (compiler_ir_types.CompilerIrValue.Var 1)
       8
       (compiler_ast_types.AstType.I64)
-      ""
-      ""
       (compiler_diagnostic.compiler-diagnostic-at-start "" "")
       (compiler_backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active)))
@@ -21712,8 +21647,6 @@ g:
       (compiler_ir_types.CompilerIrValue.Var 1)
       8
       (compiler_ast_types.AstType.F64)
-      ""
-      ""
       (compiler_diagnostic.compiler-diagnostic-at-start "" "")
       (compiler_backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active)))
@@ -21842,8 +21775,6 @@ g:
         (compiler_ir_types.CompilerIrValue.Var 4)
         4
         (compiler_ast_types.AstType.I64)
-        ""
-        ""
         (owned_view.compiler-owned-shared-view diag)
         (compiler_backend.compiler-backend-state-new
           (ci.intern-compat-state-capture-active)))
@@ -21863,8 +21794,6 @@ g:
         (compiler_ir_types.CompilerIrValue.Var 4)
         4
         (compiler_ast_types.AstType.I64)
-        ""
-        ""
         (owned_view.compiler-owned-shared-view diag)
         (compiler_backend.compiler-backend-state-new
           (ci.intern-compat-state-capture-active)))
@@ -21899,8 +21828,6 @@ g:
         (compiler_ir_types.CompilerIrValue.Var 4)
         16
         (compiler_ast_types.AstType.I16)
-        ""
-        ""
         (owned_view.compiler-owned-shared-view diag)
         (compiler_backend.compiler-backend-state-new
           (ci.intern-compat-state-capture-active)))
@@ -21928,8 +21855,6 @@ g:
         (compiler_ir_types.CompilerIrValue.Var 4)
         16
         (compiler_ast_types.AstType.I16)
-        ""
-        ""
         diag
         (compiler_backend.compiler-backend-state-new
           (ci.intern-compat-state-capture-active)))
@@ -21956,8 +21881,6 @@ g:
     (compiler_ir_types.CompilerIrValue.I64 0)
     4
     (compiler_ast_types.AstType.I64)
-    ""
-    ""
     (compiler_diagnostic.compiler-diagnostic-at-start "" "")
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active)))
@@ -22527,8 +22450,6 @@ g:
     (compiler_ir_types.CompilerIrValue.Var 4)
     8
     (compiler_ast_types.AstType.I64)
-    ""
-    ""
     (compiler_diagnostic.compiler-diagnostic-at-start "" "")
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active)))
@@ -22594,8 +22515,6 @@ g:
     (compiler_ir_types.CompilerIrValue.Var 3)
     8
     (compiler_ast_types.AstType.I64)
-    ""
-    ""
     (compiler_diagnostic.compiler-diagnostic-at-start "" "")
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active)))
@@ -22895,8 +22814,6 @@ g:
     (compiler_ir_types.CompilerIrValue.I64 4)
     4
     (compiler_ast_types.AstType.I64)
-    ""
-    ""
     (compiler_diagnostic.compiler-diagnostic-at-start "" "")
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active)))
@@ -22913,8 +22830,6 @@ g:
     (compiler_ir_types.CompilerIrValue.Var 4)
     4
     (compiler_ast_types.AstType.I64)
-    ""
-    ""
     (compiler_diagnostic.compiler-diagnostic-at-start "" "")
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active)))
@@ -22932,8 +22847,6 @@ g:
     (compiler_ir_types.CompilerIrValue.Var 5)
     8
     (compiler_ast_types.AstType.I64)
-    ""
-    ""
     (compiler_diagnostic.compiler-diagnostic-at-start "" "")
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active)))
@@ -23108,8 +23021,6 @@ g:
     (compiler_ir_types.CompilerIrValue.I64 0)
     (compiler_ir_types.CompilerIrValue.Var 1)
     8
-    ""
-    ""
     (compiler_diagnostic.compiler-diagnostic-at-start "" "")
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active)))
@@ -23161,8 +23072,6 @@ g:
     (compiler_ir_types.CompilerIrValue.Var 0)
     (compiler_ir_types.CompilerIrValue.Var 1)
     8
-    ""
-    ""
     (compiler_diagnostic.compiler-diagnostic-at-start "" "")
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active)))
@@ -24301,8 +24210,6 @@ g:
     (compiler_ir_types.CompilerIrValue.Var 0)
     lanes
     elem-ty
-    ""
-    ""
     (compiler_diagnostic.compiler-diagnostic-at-start "" "")
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active)))
@@ -24447,8 +24354,6 @@ g:
     (compiler_ir_types.CompilerIrValue.Var 0)
     8
     (compiler_ast_types.AstType.I64)
-    ""
-    ""
     (compiler_diagnostic.compiler-diagnostic-at-start "" "")
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active)))
@@ -24493,8 +24398,6 @@ g:
     (compiler_ir_types.CompilerIrValue.Var 0)
     8
     (compiler_ast_types.AstType.I64)
-    ""
-    ""
     (compiler_diagnostic.compiler-diagnostic-at-start "" "")
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active)))
@@ -25349,8 +25252,6 @@ g:
     (compiler_ir_types.CompilerIrValue.I64 0)
     (compiler_ir_types.CompilerIrValue.Var 1)
     8
-    ""
-    ""
     (compiler_diagnostic.compiler-diagnostic-at-start "" "")
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active)))
@@ -25363,8 +25264,6 @@ g:
         (compiler_ir_types.CompilerIrValue.Var 0)
         (compiler_ir_types.CompilerIrValue.Var 1)
         8
-        ""
-        ""
         (compiler_diagnostic.compiler-diagnostic-at-start "" "")
         (compiler_backend.compiler-backend-state-new
           (ci.intern-compat-state-capture-active)))
@@ -29251,7 +29150,6 @@ g:
       assignments
       2
       1
-      ""
       (compiler_backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active)))
       [(compiler_backend.ResultCompilerBackend.Ok asm)
@@ -30113,8 +30011,6 @@ g:
         (compiler_ir_types.CompilerIrValue.I64 7)
         (compiler_ast_types.AstType.I64)
         (owned_view.compiler-owned-shared-view index)
-        ""
-        ""
         index.backend-state)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
@@ -30134,9 +30030,6 @@ g:
         (compiler_ast_types.AstType.I64)
         (owned_view.compiler-owned-shared-view index)
         0
-        ""
-        ""
-        ""
         index.backend-state)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
@@ -30153,8 +30046,6 @@ g:
         (compiler_ir_types.CompilerIrValue.I64 11)
         (compiler_ast_types.AstType.I64)
         (owned_view.compiler-owned-shared-view index)
-        ""
-        ""
         index.backend-state)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
@@ -31220,7 +31111,6 @@ g:
         (owned_view.compiler-owned-shared-view index)
         ""
         ""
-        ""
         index.backend-state)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (string.eq asm "    movsbq %r12b, %rbx\n")]
@@ -31235,7 +31125,6 @@ g:
         (compiler_ast_types.AstType.U8)
         (compiler_ast_types.AstType.U64)
         (owned_view.compiler-owned-shared-view index)
-        ""
         ""
         ""
         index.backend-state)
@@ -31380,8 +31269,6 @@ g:
         (owned_view.compiler-owned-shared-view ty)
         4
         (owned_view.compiler-owned-shared-view index)
-        ""
-        ""
         (owned_view.compiler-owned-shared-view diag)
         index.backend-state)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
@@ -31395,8 +31282,6 @@ g:
         ty
         4
         (owned_view.compiler-owned-shared-view index)
-        ""
-        ""
         diag
         index.backend-state)
         [(compiler_backend.ResultCompilerBackend.Ok asm) (string.eq asm "")]
@@ -33878,7 +33763,6 @@ g:
       (compiler_ir_types.compiler-ir-extern-seq-empty))
     ""
     ""
-    ""
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active))))
 
@@ -33940,7 +33824,6 @@ g:
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       (compiler_ir_types.compiler-ir-function-seq-empty)
       (compiler_ir_types.compiler-ir-extern-seq-empty))
-    ""
     ""
     ""
     (compiler_backend.compiler-backend-state-new
@@ -34012,7 +33895,6 @@ g:
       (compiler_ir_types.compiler-ir-extern-seq-empty))
     ""
     ""
-    ""
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active))))
 
@@ -34073,7 +33955,6 @@ g:
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       (compiler_ir_types.compiler-ir-function-seq-empty)
       (compiler_ir_types.compiler-ir-extern-seq-empty))
-    ""
     ""
     ""
     (compiler_backend.compiler-backend-state-new
@@ -34142,7 +34023,6 @@ g:
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       (compiler_ir_types.compiler-ir-function-seq-empty)
       (compiler_ir_types.compiler-ir-extern-seq-empty))
-    ""
     ""
     ""
     (compiler_backend.compiler-backend-state-new
@@ -34226,7 +34106,6 @@ g:
       (compiler_ir_types.compiler-ir-extern-seq-empty))
     ""
     ""
-    ""
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active))))
 
@@ -34287,7 +34166,6 @@ g:
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       (compiler_ir_types.compiler-ir-function-seq-empty)
       (compiler_ir_types.compiler-ir-extern-seq-empty))
-    ""
     ""
     ""
     (compiler_backend.compiler-backend-state-new
@@ -34351,7 +34229,6 @@ g:
       (compiler_ir_types.compiler-ir-extern-seq-empty))
     "%xmm4"
     planned-gp
-    ""
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active))))
 
@@ -34618,7 +34495,6 @@ g:
       (compiler_ir_types.compiler-ir-extern-seq-empty))
     ""
     ""
-    ""
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active)))
     [(compiler_backend.ResultCompilerBackend.Ok asm)
@@ -34699,8 +34575,6 @@ g:
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       (compiler_ir_types.compiler-ir-function-seq-empty)
       (compiler_ir_types.compiler-ir-extern-seq-empty))
-    ""
-    ""
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active))))
 
@@ -34802,8 +34676,6 @@ g:
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       (compiler_ir_types.compiler-ir-function-seq-empty)
       (compiler_ir_types.compiler-ir-extern-seq-empty))
-    ""
-    ""
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active))))
 
@@ -34868,8 +34740,6 @@ g:
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       (compiler_ir_types.compiler-ir-function-seq-empty)
       (compiler_ir_types.compiler-ir-extern-seq-empty))
-    ""
-    ""
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active))))
 
@@ -34934,8 +34804,6 @@ g:
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       (compiler_ir_types.compiler-ir-function-seq-empty)
       (compiler_ir_types.compiler-ir-extern-seq-empty))
-    ""
-    ""
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active))))
 
@@ -34991,8 +34859,6 @@ g:
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       (compiler_ir_types.compiler-ir-function-seq-empty)
       (compiler_ir_types.compiler-ir-extern-seq-empty))
-    ""
-    ""
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active)))
     [(compiler_backend.ResultCompilerBackend.Ok asm)
@@ -36369,7 +36235,6 @@ g:
     (compiler_ir_types.CompilerIrUnOp.Neg)
     (compiler_ir_types.CompilerIrValue.Var 0)
     (compiler_ast_types.AstType.F64)
-    ""
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active)))
     [(compiler_backend.ResultCompilerBackend.Ok asm)
@@ -36443,7 +36308,6 @@ g:
         (compiler_ir_types.CompilerIrUnOp.Sqrt)
         (compiler_ir_types.CompilerIrValue.Var 0)
         (compiler_ast_types.AstType.F64)
-        ""
         (compiler_backend.compiler-backend-state-new
           (ci.intern-compat-state-capture-active)))
         [(compiler_backend.ResultCompilerBackend.Ok asm)
@@ -36457,7 +36321,6 @@ g:
         (compiler_ir_types.CompilerIrUnOp.Sqrt)
         (compiler_ir_types.CompilerIrValue.Var 0)
         (compiler_ast_types.AstType.F32)
-        ""
         (compiler_backend.compiler-backend-state-new
           (ci.intern-compat-state-capture-active)))
         [(compiler_backend.ResultCompilerBackend.Ok asm)
@@ -36848,10 +36711,6 @@ g:
     (compiler_ir_types.CompilerIrValue.Var 1)
     ty
     ""
-    ""
-    ""
-    ""
-    ""
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active))))
 
@@ -36983,10 +36842,6 @@ g:
     (compiler_ir_types.CompilerIrValue.Var 1)
     (compiler_ast_types.AstType.Bool)
     ""
-    ""
-    ""
-    ""
-    ""
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active))))
 
@@ -37080,10 +36935,6 @@ g:
     (compiler_ir_types.CompilerIrValue.Var 1)
     (compiler_ast_types.AstType.Bool)
     ""
-    ""
-    ""
-    ""
-    ""
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active))))
 
@@ -37176,10 +37027,6 @@ g:
     (compiler_ir_types.CompilerIrValue.Var 2)
     ty
     ""
-    ""
-    ""
-    ""
-    ""
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active))))
 
@@ -37218,10 +37065,6 @@ g:
     (compiler_ir_types.CompilerIrValue.Var 0)
     (compiler_ir_types.CompilerIrValue.Var 1)
     (compiler_ast_types.AstType.Bool)
-    ""
-    ""
-    ""
-    ""
     ""
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active))))
@@ -37312,9 +37155,6 @@ g:
       (compiler_ir_types.CompilerIrValue.Var 1)
       (compiler_ast_types.AstType.F64)
       ""
-      ""
-      ""
-      ""
       "")))
 
 (define (compiler-backend-float-return-binop-home-ok?) : bool
@@ -37395,9 +37235,6 @@ g:
       (compiler_ir_types.CompilerIrValue.Var 1)
       (compiler_ast_types.AstType.Bool)
       ""
-      ""
-      ""
-      ""
       "")))
 
 (define (compiler-backend-float-return-compare-spill-asm) : compiler_backend.ResultCompilerBackend
@@ -37434,9 +37271,6 @@ g:
       (compiler_ir_types.CompilerIrValue.Var 0)
       (compiler_ir_types.CompilerIrValue.Var 1)
       (compiler_ast_types.AstType.Bool)
-      ""
-      ""
-      ""
       ""
       "")))
 
@@ -37564,9 +37398,6 @@ g:
         (compiler_ir_types.CompilerIrValue.Var 1)
         (compiler_ast_types.AstType.I64)
         ""
-        ""
-        ""
-        ""
         "")]
     [_restore : unit
       (begin
@@ -37633,9 +37464,6 @@ g:
       (compiler_ir_types.CompilerIrValue.Var 1)
       (compiler_ast_types.AstType.I64)
       ""
-      ""
-      ""
-      ""
       "")
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
@@ -37680,9 +37508,6 @@ g:
       (compiler_ir_types.CompilerIrValue.Var 0)
       (compiler_ir_types.CompilerIrValue.Var 1)
       (compiler_ast_types.AstType.I64)
-      ""
-      ""
-      ""
       ""
       "")
       [(compiler_backend.ResultCompilerBackend.Ok asm)
@@ -37730,9 +37555,6 @@ g:
       (compiler_ir_types.CompilerIrValue.Var 1)
       (compiler_ast_types.AstType.I64)
       ""
-      ""
-      ""
-      ""
       "")
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
@@ -37779,10 +37601,7 @@ g:
       (compiler_ir_types.CompilerIrValue.Var 1)
       (compiler_ast_types.AstType.I64)
       "%rax"
-      "%r8"
-      ""
-      ""
-      "")
+      "%r8")
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
@@ -37827,10 +37646,7 @@ g:
       (compiler_ir_types.CompilerIrValue.Var 1)
       (compiler_ast_types.AstType.I64)
       "%rcx"
-      "%r8"
-      ""
-      ""
-      "")
+      "%r8")
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (compiler_backend.compiler-backend-string-contains?
           (owned_view.compiler-owned-shared-view asm)
@@ -37868,9 +37684,6 @@ g:
       (compiler_ir_types.CompilerIrValue.Var 0)
       (compiler_ir_types.CompilerIrValue.Var 1)
       (compiler_ast_types.AstType.I64)
-      ""
-      ""
-      ""
       ""
       "")
       [(compiler_backend.ResultCompilerBackend.Ok asm)
@@ -37913,9 +37726,6 @@ g:
       (compiler_ir_types.CompilerIrValue.I64 0x7ff0000000000000)
       (compiler_ast_types.AstType.U64)
       ""
-      ""
-      ""
-      ""
       "")
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (compiler_backend.compiler-backend-string-contains?
@@ -37952,9 +37762,6 @@ g:
       (compiler_ir_types.CompilerIrValue.Var 0)
       (compiler_ir_types.CompilerIrValue.Var 1)
       (compiler_ast_types.AstType.U64)
-      ""
-      ""
-      ""
       ""
       "")
       [(compiler_backend.ResultCompilerBackend.Ok asm)
@@ -38002,9 +37809,6 @@ g:
       (compiler_ir_types.CompilerIrValue.Var 0)
       (compiler_ir_types.CompilerIrValue.Var 1)
       (compiler_ast_types.AstType.U64)
-      ""
-      ""
-      ""
       ""
       "")
       [(compiler_backend.ResultCompilerBackend.Ok asm)
@@ -38054,9 +37858,6 @@ g:
       (compiler_ir_types.CompilerIrValue.Var 0)
       (compiler_ir_types.CompilerIrValue.Var 1)
       (compiler_ast_types.AstType.U64)
-      ""
-      ""
-      ""
       ""
       "")
       [(compiler_backend.ResultCompilerBackend.Ok asm)
@@ -41362,8 +41163,7 @@ g:
       (compiler_ir_types.CompilerIrValue.Var 0)
       (compiler_ast_types.AstType.F32)
       true
-      0
-      "")
+      0)
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
@@ -42501,7 +42301,6 @@ g:
     (compiler_regalloc.compiler-reg-assignment-table-empty)
     (compiler-backend-i64-immediate-call-args8)
     (compiler-backend-i64-type-list8)
-    ""
     (compiler_diagnostic.compiler-diagnostic-at-start "" "")
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active)))
@@ -42773,8 +42572,6 @@ g:
         (compiler_ir_types.CompilerIrCallArgs.Nil)
         (compiler_ast_types.AstType.I64)
         assignments
-        ""
-        ""
         types
         1
         (compiler_ir_types.compiler-ir-function-seq-empty)
@@ -42880,7 +42677,6 @@ g:
           args
           ret
           (compiler_regalloc.compiler-reg-assignment-table-empty)
-          ""
           (compiler_regalloc.compiler-reg-var-types-empty)
           (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
           0
@@ -43132,7 +42928,6 @@ g:
       (compiler_ast_types.AstType.I64)
       (compiler_regalloc.compiler-reg-assignment-table-empty)
       ""
-      ""
       (compiler_regalloc.compiler-reg-var-types-empty)
       functions
       (compiler_ir_types.compiler-ir-extern-seq-empty)
@@ -43157,7 +42952,6 @@ g:
       compiler_ir_types.CompilerIrCallArgs.Nil
       (compiler_ast_types.AstType.I64)
       (compiler_regalloc.compiler-reg-assignment-table-empty)
-      ""
       ""
       (compiler_regalloc.compiler-reg-var-types-empty)
       functions
@@ -43248,7 +43042,6 @@ g:
             (compiler_ast_types.AstType.I64)
             assignments
             "%r10"
-            ""
             (compiler_regalloc.compiler-reg-var-types-empty)
             functions
             (compiler_ir_types.compiler-ir-extern-seq-empty)
@@ -43333,7 +43126,6 @@ g:
           (compiler_ast_types.AstType.I64)
           assignments
           "%r10"
-          ""
           (compiler_regalloc.compiler-reg-var-types-empty)
           functions
           (compiler_ir_types.compiler-ir-extern-seq-empty)

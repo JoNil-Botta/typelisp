@@ -45671,28 +45671,6 @@
             dst))]
       [else false])))
 
-(define (compiler-reg-scratch-bitcast-gp-needed?
-  [assignments : CompilerRegAssignmentTable]
-  [dst : i64]
-  [src : ir.CompilerIrValue]
-  [from-ty : ast.AstType]
-  [to-ty : ast.AstType]) : bool
-  (let
-    [from-float : bool (compiler-reg-float-type? from-ty)]
-    [to-float : bool (compiler-reg-float-type? to-ty)]
-    (cond
-      [(and from-float (not to-float))
-        (not
-          (compiler-reg-scratch-var-register-homed?
-            (compiler-reg-global-shared-view assignments)
-            dst))]
-      [(and (not from-float) to-float)
-        (not
-          (compiler-reg-scratch-value-register-homed?
-            (compiler-reg-global-shared-view assignments)
-            src))]
-      [else false])))
-
 (define (compiler-reg-scratch-binop-return-next?
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]) : bool

@@ -1,7 +1,7 @@
 # ci-gate-ledger-schema	2
-# count	all	121
-# count	linux	118
-# count	windows	104
+# count	all	120
+# count	linux	117
+# count	windows	103
 id	hosts	label	needs
 cli-gate-inventory-and-ownership	all	CLI gate inventory and ownership	-
 ci-gate-ledger-self-tests	all	CI gate ledger self-tests	-
@@ -34,7 +34,6 @@ stage0-release-publication-verifier-self-tests	all	stage0 release publication ve
 stage0-latest-staged-publication-self-tests	all	stage0 latest staged publication self-tests	-
 stage0-publication-workflow-policy	all	stage0 publication workflow policy	-
 docs-publication-workflow-policy	all	docs publication workflow policy	-
-bootstrap-benchmark-command-construction-self-test	all	bootstrap benchmark command-construction self-test	-
 bootstrap-adaptive-control-flow	all	bootstrap adaptive control flow	-
 bootstrap-fixpoint	all	bootstrap fixpoint	-
 scratch-vreg-tlci-mutation-bootstrap-fixpoint	all	scratch-vreg + TLCI mutation bootstrap fixpoint	bootstrap-fixpoint

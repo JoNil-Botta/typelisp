@@ -150,7 +150,6 @@ not-contains|root_list_append
 contains|_tl_build_cli_config_from:
 contains|_tl_source_tool_build_source:
 contains|_tl_build_config_from:
-contains|_tl_build_source_plan_render:
 contains|_tl_build_package:
 contains|_tl_build_package_emit:
 contains|build: package emission requires checked frontend surface support
@@ -158,7 +157,6 @@ contains|_tl_build_doctest_build_source:
 contains|_tl_build_cli_core_build_doctest_typecheck_package_paths:
 contains|_tl_doc_test_typecheck_source_with_roots:
 contains|_tl_doc_test_doc_test_typecheck_package_paths_with_roots:
-contains|_tl_host_plan_netline:
 contains|could not find typelisp.pkg
 contains|Built
 # clean
@@ -717,12 +715,6 @@ case|selfhost_format_tokens|src/format_tokens.tl|assembly|skip|direct
 contains|_tl_format_lex:
 contains|_tl_format_token_tag:
 contains|format lexer: unexpected character
-end
-
-case|selfhost_host_plan|src/host_plan.tl|assembly|skip|direct
-contains|_tl_host_plan_header:
-contains|_tl_host_plan_netline:
-contains|_tl_host_plan_target_valid_question:
 end
 
 case|selfhost_lex|src/lex.tl|assembly|skip|direct

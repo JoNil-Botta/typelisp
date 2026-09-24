@@ -269,21 +269,6 @@ assert_doctest_temp_cleaned() {
     [ ! -d "$temp_dir" ] || fail "$case_name left temp directory behind: $temp_dir"
 }
 
-host_netstring() {
-    value=$1
-    bytes=$(printf '%s' "$value" | wc -c | tr -d ' ')
-    printf '%s:%s' "$bytes" "$value"
-}
-
-host_plan_path() {
-    path=$1
-    if [ "$HOST_OS" = windows ] && command -v cygpath > /dev/null 2>&1; then
-        cygpath -w "$path"
-    else
-        printf '%s' "$path"
-    fi
-}
-
 echo "[public-tools] CLI usage and frontend aliases"
 # cli-gate-case usage wrapper run_cmd
 run_cmd usage "$COMPILER" --help

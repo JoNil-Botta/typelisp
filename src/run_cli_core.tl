@@ -111,7 +111,7 @@
                   lock-policy
                   stdlib-roots)
                 runtime-args))]
-          [(build_cli_core.BuildConfig.Source _ _ _ _ _ _ _ _)
+          [(build_cli_core.BuildConfig.Source)
             (ResultRunCliConfig.Err
               "run: source file arguments must appear before run options; use -- before package runtime args")])])))
 

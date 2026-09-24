@@ -26541,9 +26541,9 @@
                                 (compiler-reg-loop-park-site-direct)
                                 (compiler-reg-loop-park-site-splice))]
                             ;; A spliced edge has to be redirectable at its
-                            ;; source; the one position that is not is a
-                            ;; `TotalEnumSwitch` trap edge, which carries the
-                            ;; late total-switch pass exhaustiveness proof.
+                            ;; source; switch case edges and `TotalEnumSwitch`
+                            ;; trap edges are not (see
+                            ;; `compiler-reg-loop-park-redirectable?`).
                             [_splice-ok : unit
                               (when
                                 (and
@@ -27312,12 +27312,23 @@
 ;; The rewrite.
 ;; ---------------------------------------------------------------------------
 ;; Does `b` terminator name `target-label` in a position this pass can point at
-;; a spliced block? A `TotalEnumSwitch` TRAP edge is deliberately excluded: the
-;; late total-switch pass stores that block explicitly as its exhaustiveness
-;; proof, so it is left exactly where it is and a loop that would have to
-;; redirect it is refused instead. (It cannot arise in practice -- a trap block
-;; aborts, so nothing is live into it -- but the refusal is what makes that a
-;; fact about the code rather than about the optimizer.)
+;; a spliced block? Two positions are deliberately excluded, and a loop that
+;; would have to redirect either is refused instead:
+;;
+;;   * A switch CASE edge. The backend renders every jump table into the
+;;     assembly prefix from the function's IR BEFORE this rewrite runs
+;;     (`compiler-backend-emit-switch-tables-functions-into`), so a table entry
+;;     keeps naming the case's original target. A redirected case would leave
+;;     the table jumping past the reloads into the unspliced target, or, when
+;;     that target opens with a phi, naming a `_switch_case_N` edge block that
+;;     the dispatch -- which sees the spliced, phi-free target -- never emits.
+;;     The default edge is emitted by the dispatch itself from the rewritten
+;;     IR, so it may move, unless a case names the same label.
+;;   * A `TotalEnumSwitch` TRAP edge: the late total-switch pass stores that
+;;     block explicitly as its exhaustiveness proof, so it is left exactly
+;;     where it is. (It cannot arise in practice -- a trap block aborts, so
+;;     nothing is live into it -- but the refusal is what makes that a fact
+;;     about the code rather than about the optimizer.)
 (define (compiler-reg-loop-park-cases-name?
   [cases : ir.CompilerIrSwitchCaseSeq]
   [target-label : i64]) : bool
@@ -27350,15 +27361,14 @@
         [(ir.CompilerIrInstr.TotalEnumBranch _ t f)
           (or (= t target-label) (= f target-label))]
         [(ir.CompilerIrInstr.Switch _ _ cases default)
-          (or
+          (and
             (= default target-label)
-            (compiler-reg-loop-park-cases-name? cases target-label))]
+            (not (compiler-reg-loop-park-cases-name? cases target-label)))]
         [(ir.CompilerIrInstr.TotalEnumSwitch _ _ cases default trap)
           (and
             (not (= trap target-label))
-            (or
-              (= default target-label)
-              (compiler-reg-loop-park-cases-name? cases target-label)))]
+            (= default target-label)
+            (not (compiler-reg-loop-park-cases-name? cases target-label)))]
         [_ false]))))
 
 ;; The spliced block that now carries the reloads of edge (b -> label), or

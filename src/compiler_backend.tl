@@ -515,13 +515,21 @@
 ;; rewrites a whole element.
 ;; `rmw-cands` holds the RMW-2 candidate spans the walk recognized, as the
 ;; record index of each window's middle (ALU) line, in emission order. It is
-;; empty for a group with no foldable op at all.
+;; empty for a group with no foldable op at all. `abort-cands` and
+;; `close-cands` are COLD-1's: the record index of every noreturn abort call
+;; and of every line that closes a function (`.size`, `.cfi_endproc`,
+;; `.seh_endproc`, `.globl`, the debug and backtrace end labels), in emission
+;; order.
 (defstruct CompilerBackendPeepholeLineVec
   (lines (__tl_dyn-array CompilerBackendPeepholeLineRecord))
   (live (__tl_dyn-array i64))
   (len i64)
   (rmw-cands (__tl_dyn-array i64))
-  (rmw-cand-len i64))
+  (rmw-cand-len i64)
+  (abort-cands (__tl_dyn-array i64))
+  (abort-cand-len i64)
+  (close-cands (__tl_dyn-array i64))
+  (close-cand-len i64))
 
 ;; The physical chunks the streaming peephole parses in place, in emission
 ;; order, plus their combined byte count. A group chunk is one whole emitted
@@ -98487,6 +98495,11 @@
   (len i64)
   (rmw-cands (__tl_dyn-array i64))
   (rmw-cand-len i64)
+  ;; COLD-1's candidates; see CompilerBackendPeepholeLineVec.
+  (abort-cands (__tl_dyn-array i64))
+  (abort-cand-len i64)
+  (close-cands (__tl_dyn-array i64))
+  (close-cand-len i64)
   ;; FLAGS-1: the tracked register the last pushed line wrote with an
   ;; arithmetic that sets ZF and SF from its result (sub/add/and/or/xor and
   ;; the one-operand inc/dec/neg), or -1 after any other line.
@@ -98525,7 +98538,11 @@
       walk.live
       walk.len
       walk.rmw-cands
-      walk.rmw-cand-len)))
+      walk.rmw-cand-len
+      walk.abort-cands
+      walk.abort-cand-len
+      walk.close-cands
+      walk.close-cand-len)))
 
 (define (compiler-backend-peephole-records-retire!
   [stream : CompilerBackendStreamState]) : unit
@@ -98908,6 +98925,27 @@
           (bit-and line.flags compiler-backend-peephole-desc-flag-single-dest)
           0)
         (compiler-backend-peephole-rmw-note-alu! walk (& line) index))
+      ;; COLD-1's candidates: the parser already flagged abort calls, and only
+      ;; a line whose first byte is `.` can close a function.
+      (unless
+        (=
+          (bit-and
+            line.flags
+            compiler-backend-peephole-desc-flag-noreturn-abort)
+          0)
+        (compiler-backend-cold-note-abort! walk index))
+      (let
+        [first : i64
+          (bit-and line.mnemonic compiler-backend-peephole-desc-pack-mask)]
+        (when
+          (and
+            (<
+              first
+              (bit-and
+                (shr line.span compiler-backend-peephole-desc-pack-shift)
+                compiler-backend-peephole-desc-pack-mask))
+            (= (compiler-backend-peephole-byte-at line.data first) 46))
+          (compiler-backend-cold-note-closing! walk (& line) index)))
       (unless
         (< index (array-length walk.lines))
         (compiler-backend-peephole-records-grow! walk))
@@ -99798,10 +99836,24 @@
   [v : CompilerBackendPeepholeLineVec]
   [dst : (MutPtr u8)]) : unit
   (let
-    [recs : (__tl_dyn-array CompilerBackendPeepholeLineRecord) v.lines]
-    [live : (__tl_dyn-array i64) v.live]
     [count : i64 v.len]
-    [out-pos : i64 0]
+    (begin
+      (compiler-backend-peephole-records-blit-range! v 0 count dst 0)
+      unit)))
+
+;; Copy the surviving records of [lo, hi) into `dst` at `out-pos`; the next
+;; free position is returned.
+(define (compiler-backend-peephole-records-blit-range!
+  [v : CompilerBackendPeepholeLineVec]
+  [lo : i64]
+  [count : i64]
+  [dst : (MutPtr u8)]
+  [start-pos : i64]) : i64
+  (let
+    [recs : (__tl_dyn-array CompilerBackendPeepholeLineRecord)
+      (compiler-backend-global-shared-view v.lines)]
+    [live : (__tl_dyn-array i64) (compiler-backend-global-shared-view v.live)]
+    [out-pos : i64 start-pos]
     [run-active : bool false]
     [run-data : (Ptr u8)
       (unsafe
@@ -99811,7 +99863,7 @@
         (ptr->int (string-data "")))]
     [run-start : i64 0]
     [run-end : i64 0]
-    [i : i64 0]
+    [i : i64 lo]
     (begin
       (while (< i count)
         (begin
@@ -99884,12 +99936,12 @@
             dst
             out-pos)
           (set! out-pos (+ out-pos (- run-end run-start)))))
-      unit)))
+      out-pos)))
 
 ;; The single render of the group: one allocation in the active arena, then the
 ;; surviving records' bytes blitted straight in. Records carry their own source
 ;; string, so the group never has to be flattened first.
-(define (compiler-backend-peephole-records-render
+(define (compiler-backend-peephole-records-render-plain
   [v : CompilerBackendPeepholeLineVec]) : String
   (let
     [total : i64
@@ -99906,6 +99958,1361 @@
           (compiler-backend-peephole-records-blit! v dst)
           (unsafe
             (string-from-bytes (ptr-cast dst : (Ptr u8)) total)))))))
+
+;; ---------------------------------------------------------------------------
+;; COLD-1: move runtime abort stubs out of the hot path.
+;;
+;; Every checked operation the emitter lowers -- a bounds check, a division's
+;; zero and overflow guards, a shift-count guard -- is spelled as a conditional
+;; jump OVER an inline call to a noreturn runtime abort helper:
+;;
+;;       cmpq %r9, %rdi                       cmpq %r9, %rdi
+;;       jb .Lf27_bounds_ok.3                 jae .Lf27_bounds_ok.3.cold
+;;       pushq %r9                          .Lf27_bounds_ok.3:
+;;       ...                                  ...
+;;       call tl_oob_abort_at                 (last line of the function body)
+;;       jmp .L_tl_abort_site_1_bounds_end  .Lf27_bounds_ok.3.cold:
+;;       .balign 8                            pushq %r9
+;;     .L_tl_abort_site_1_bounds:             ...
+;;       .quad ...                            call tl_oob_abort_at
+;;     .L_tl_abort_site_1_bounds_end:         ... site descriptor ...
+;;     .Lf27_bounds_ok.3:                     jmp .Lf27_bounds_ok.3
+;;
+;; Inline, every passed check costs a TAKEN branch and leaves 40-80 bytes of
+;; never-executed code and descriptor data between two hot instructions, which
+;; spreads a loop over more fetch blocks, i-cache lines and uop-cache ways. This
+;; is the placement LLVM gives a noreturn path (cold-block placement): out of
+;; line, so the passing check falls through, not-taken, into the next hot
+;; instruction. The executed instruction count is unchanged; only the order of
+;; the text is.
+;;
+;; The rewrite runs at render time, after every peephole, sweep and fold has
+;; finished with the record stream, so no textual analysis ever sees the new
+;; order. It preserves semantics by construction: the inverted jump reaches the
+;; stub under exactly the condition that used to fall into it, the stub runs
+;; with the same registers and stack, and the `jmp` appended to it keeps the
+;; original (never taken) fall-through edge back to the continuation.
+;;
+;; A stub moves only when the records between the jump and its target label are
+;; all stub-shaped: at least one noreturn abort call
+;; (`compiler-backend-peephole-line-noreturn-abort?`), no other call, no `ret`,
+;; no conditional jump, `jmp` only to the stub's own `.L_tl_abort_site_` labels,
+;; no directive but `.balign`/`.p2align`/`.quad`, and no label but the stub's own
+;; `.L_tl_abort_site_` data labels. Nothing position-dependent (`.loc`, CFI, SEH,
+;; a section switch, a numeric local label) can therefore move. The moved stub
+;; is named after its unique continuation label (`T.cold`); a stub that closes
+;; at a numeric `1:` is named after its unique abort-site label instead, keeps
+;; `1:` in place for any other `1f` that targets it, and returns through a
+;; named `.back` label beside it. A numeric-target stub without a site label
+;; (the location-free helpers) is named after the closest preceding named label
+;; `L` and its ordinal among the stubs since `L`: `L.stub1.cold`, `L.stub2.cold`,
+;; ... returning through `L.stub1.back`, ...
+;;
+;; Stubs are appended before the function's first closing line (`.size`,
+;; `.cfi_endproc`, `.seh_endproc`, the debug or backtrace end label) so they
+;; stay inside the function's symbol, unwind and backtrace ranges; a following
+;; `.globl`, or the end of the group, flushes anything still pending. The only
+;; CFI this backend emits sits in the prologue, so the frame rule at the end of
+;; the body is the one every moved stub already ran under. Each moved stub is
+;; prefixed with the `.loc`/`.cv_loc` line that was in force at its jump, so a
+;; debug line table attributes it to its check rather than to the function's
+;; last statement.
+(define compiler-backend-cold-stub-scan-limit : i64
+  48)
+
+;; Instructions a stub may stage before its abort call (arguments, pushes, the
+;; site address, Win64 call space).
+(define compiler-backend-cold-stub-setup-limit : i64
+  12)
+
+;; How far back a stub looks for the label that names it, or for the `.loc`
+;; line in force at its check.
+(define compiler-backend-cold-label-scan-limit : i64
+  4096)
+
+;; First non-space byte of the record's line, or its end.
+(define (compiler-backend-cold-line-first
+  [data : (Ptr u8)]
+  [start : i64]
+  [end : i64]) : i64
+  (if (and
+    ;; The emitter's four-space instruction indent, decided in two loads.
+    (< (+ start 4) end)
+    (= (compiler-backend-peephole-byte-at data start) 32)
+    (= (compiler-backend-peephole-byte-at data (+ start 3)) 32)
+    (not (= (compiler-backend-peephole-byte-at data (+ start 4)) 32))
+    (= (compiler-backend-peephole-byte-at data (+ start 1)) 32)
+    (= (compiler-backend-peephole-byte-at data (+ start 2)) 32))
+    (+ start 4)
+    (let
+      [i : i64 start]
+      (begin
+        (while (and (< i end) (= (compiler-backend-peephole-byte-at data i) 32))
+          (set! i (+ i 1)))
+        i))))
+
+;; End of the line with trailing spaces removed.
+(define (compiler-backend-cold-line-last
+  [data : (Ptr u8)]
+  [first : i64]
+  [end : i64]) : i64
+  (let
+    [e : i64 end]
+    (begin
+      (while (and
+        (> e first)
+        (= (compiler-backend-peephole-byte-at data (- e 1)) 32))
+        (set! e (- e 1)))
+      e)))
+
+;; End of the first space-delimited token starting at `first`.
+(define (compiler-backend-cold-token-end
+  [data : (Ptr u8)]
+  [first : i64]
+  [end : i64]) : i64
+  (let
+    [i : i64 first]
+    (begin
+      (while (and
+        (< i end)
+        (not (= (compiler-backend-peephole-byte-at data i) 32)))
+        (set! i (+ i 1)))
+      i)))
+
+(define (compiler-backend-cold-prefix?
+  [data : (Ptr u8)]
+  [s : i64]
+  [e : i64]
+  [lit : String]) : bool
+  (let
+    [n : i64 (string.string-length lit)]
+    (and
+      (<= (+ s n) e)
+      (compiler-backend-peephole-range-eq? data s (+ s n) lit))))
+
+;; A label line: unindented and colon-terminated.
+(define (compiler-backend-cold-label-line?
+  [data : (Ptr u8)]
+  [start : i64]
+  [first : i64]
+  [last : i64]) : bool
+  (and
+    (= first start)
+    (> last first)
+    (= (compiler-backend-peephole-byte-at data (- last 1)) 58)))
+
+;; The inverse of a conditional-jump mnemonic, or "" when the mnemonic is not a
+;; flag-condition jump this pass knows how to invert (`jmp`, `jrcxz`, ...).
+(define (compiler-backend-cold-jcc-inverse
+  [data : (Ptr u8)]
+  [s : i64]
+  [e : i64]) : String
+  (let
+    [n : i64 (- e s)]
+    [c1 : i64
+      (if (> n 1)
+        (compiler-backend-peephole-byte-at data (+ s 1))
+        0)]
+    [c2 : i64
+      (if (> n 2)
+        (compiler-backend-peephole-byte-at data (+ s 2))
+        0)]
+    [c3 : i64
+      (if (> n 3)
+        (compiler-backend-peephole-byte-at data (+ s 3))
+        0)]
+    (cond
+      [(or (< n 2) (> n 4)) ""]
+      ;; `jn<cc>`: the positive condition, or its named synonym.
+      [(and (= c1 110) (= n 3))
+        (cond
+          [(= c2 101) "je"]
+          [(= c2 122) "jz"]
+          [(= c2 98) "jb"]
+          [(= c2 99) "jc"]
+          [(= c2 97) "ja"]
+          [(= c2 108) "jl"]
+          [(= c2 103) "jg"]
+          [(= c2 115) "js"]
+          [(= c2 111) "jo"]
+          [(= c2 112) "jp"]
+          [else ""])]
+      [(and (= c1 110) (= n 4))
+        (cond
+          [(and (= c2 97) (= c3 101)) "jae"]
+          [(and (= c2 98) (= c3 101)) "jbe"]
+          [(and (= c2 103) (= c3 101)) "jge"]
+          [(and (= c2 108) (= c3 101)) "jle"]
+          [else ""])]
+      [(= n 2)
+        (cond
+          [(= c1 101) "jne"]
+          [(= c1 122) "jnz"]
+          [(= c1 98) "jae"]
+          [(= c1 99) "jnc"]
+          [(= c1 97) "jbe"]
+          [(= c1 108) "jge"]
+          [(= c1 103) "jle"]
+          [(= c1 115) "jns"]
+          [(= c1 111) "jno"]
+          [(= c1 112) "jnp"]
+          [else ""])]
+      ;; three letters, second is `e`: `jae` `jbe` `jge` `jle` `jpe`
+      [(and (= n 3) (= c2 101))
+        (cond
+          [(= c1 97) "jb"]
+          [(= c1 98) "ja"]
+          [(= c1 103) "jl"]
+          [(= c1 108) "jg"]
+          [(= c1 112) "jpo"]
+          [else ""])]
+      [(and (= n 3) (= c1 112) (= c2 111)) "jpe"]
+      [else ""])))
+
+;; A line that closes the current function's text: stubs must land before it.
+;; Dispatches on the bytes after the `.` first, since every block label also
+;; starts with one.
+(define (compiler-backend-cold-closing-line?
+  [data : (Ptr u8)]
+  [start : i64]
+  [first : i64]
+  [last : i64]) : bool
+  (let
+    [b1 : i64
+      (if (< (+ first 2) last)
+        (compiler-backend-peephole-byte-at data (+ first 1))
+        0)]
+    [b2 : i64
+      (if (< (+ first 2) last)
+        (compiler-backend-peephole-byte-at data (+ first 2))
+        0)]
+    (cond
+      [(= b1 115)
+        (or
+          (compiler-backend-cold-prefix? data first last ".size ")
+          (compiler-backend-cold-prefix? data first last ".seh_endproc"))]
+      [(= b1 99) (compiler-backend-cold-prefix? data first last ".cfi_endproc")]
+      [(= b1 103) (compiler-backend-cold-prefix? data first last ".globl ")]
+      [(and (= b1 76) (= first start))
+        (cond
+          [(= b2 99)
+            (compiler-backend-cold-prefix? data first last ".Lcv_func_end_")]
+          [(= b2 95)
+            (compiler-backend-cold-prefix?
+              data
+              first
+              last
+              ".L_tl_backtrace_function_end_")]
+          [else false])]
+      [else false])))
+
+(define (compiler-backend-cold-loc-line?
+  [data : (Ptr u8)]
+  [first : i64]
+  [last : i64]) : bool
+  (or
+    (compiler-backend-cold-prefix? data first last ".loc ")
+    (compiler-backend-cold-prefix? data first last ".cv_loc ")))
+
+;; Index of the live record holding the continuation label that closes the
+;; abort stub opened by the conditional jump at live record `i`, or -1 when the
+;; records after it are not a movable stub (see COLD-1 above).
+(define (compiler-backend-cold-stub-scan
+  [v : CompilerBackendPeepholeLineVec]
+  [i : i64]) : i64
+  (let
+    [recs : (__tl_dyn-array CompilerBackendPeepholeLineRecord)
+      (compiler-backend-global-shared-view v.lines)]
+    [live : (__tl_dyn-array i64) (compiler-backend-global-shared-view v.live)]
+    [count : i64 v.len]
+    [jrec : CompilerBackendPeepholeLineRecord
+      (compiler-backend-global-array-element-shared-view recs i)]
+    [jdata : (Ptr u8)
+      (compiler-backend-peephole-record-data
+        (compiler-backend-global-shared-view jrec))]
+    [jstart : i64
+      (compiler-backend-peephole-record-start
+        (compiler-backend-global-shared-view jrec))]
+    [jend : i64
+      (compiler-backend-peephole-record-end
+        (compiler-backend-global-shared-view jrec))]
+    [jfirst : i64 (compiler-backend-cold-line-first jdata jstart jend)]
+    [jlast : i64 (compiler-backend-cold-line-last jdata jfirst jend)]
+    [mend : i64 (compiler-backend-cold-token-end jdata jfirst jlast)]
+    [tfirst : i64 (compiler-backend-cold-line-first jdata mend jlast)]
+    (if (or
+      (= jfirst jstart)
+      (>= jfirst jlast)
+      (not (= (compiler-backend-peephole-byte-at jdata jfirst) 106))
+      (=
+        (string.string-length
+          (compiler-backend-cold-jcc-inverse jdata jfirst mend))
+        0)
+      (>= tfirst jlast)
+      (not (= (compiler-backend-cold-token-end jdata tfirst jlast) jlast)))
+      (- 0 1)
+      (let
+        [numeric? : bool
+          (compiler-backend-peephole-range-eq? jdata tfirst jlast "1f")]
+        [j : i64 (+ i 1)]
+        [limit : i64 (+ i compiler-backend-cold-stub-scan-limit)]
+        [saw-abort : bool false]
+        [setup : i64 0]
+        [result : i64 (- 0 2)]
+        (begin
+          (while (and (= result (- 0 2)) (< j count))
+            (if (>= j limit)
+              (set! result (- 0 1))
+              (begin
+                (when
+                  (= (array-ref live j) 1)
+                  (let
+                    [rec : CompilerBackendPeepholeLineRecord
+                      (compiler-backend-global-array-element-shared-view recs j)]
+                    [kind : i64
+                      (compiler-backend-peephole-record-kind
+                        (compiler-backend-global-shared-view rec))]
+                    [data : (Ptr u8)
+                      (compiler-backend-peephole-record-data
+                        (compiler-backend-global-shared-view rec))]
+                    [start : i64
+                      (compiler-backend-peephole-record-start
+                        (compiler-backend-global-shared-view rec))]
+                    [end : i64
+                      (compiler-backend-peephole-record-end
+                        (compiler-backend-global-shared-view rec))]
+                    (cond
+                      [(= kind compiler-backend-sweep-line-kind-label)
+                        (let
+                          [last : i64
+                            (compiler-backend-cold-line-last data start end)]
+                          (cond
+                            [(if numeric?
+                                (compiler-backend-peephole-range-eq?
+                                  data
+                                  start
+                                  last
+                                  "1:")
+                                (and
+                                  (> last start)
+                                  (compiler-backend-peephole-ranges-eq?
+                                    data
+                                    start
+                                    (- last 1)
+                                    jdata
+                                    tfirst
+                                    jlast)))
+                              (set!
+                                result
+                                (if saw-abort
+                                  j
+                                  (- 0 1)))]
+                            [(compiler-backend-cold-prefix?
+                                data
+                                start
+                                last
+                                ".L_tl_abort_site_")
+                              unit]
+                            [else (set! result (- 0 1))]))]
+                      [(= kind compiler-backend-sweep-line-kind-instruction)
+                        (let
+                          [first : i64
+                            (compiler-backend-cold-line-first data start end)]
+                          [lead : i64
+                            (if (< first end)
+                              (compiler-backend-peephole-byte-at data first)
+                              0)]
+                          (cond
+                            ;; `c`: only a noreturn abort call belongs in a stub.
+                            [(= lead 99)
+                              (let
+                                [last : i64
+                                  (compiler-backend-cold-line-last
+                                    data
+                                    first
+                                    end)]
+                                (cond
+                                  [(compiler-backend-peephole-line-noreturn-abort?
+                                      data
+                                      first
+                                      last)
+                                    (set! saw-abort true)]
+                                  [(compiler-backend-cold-prefix?
+                                      data
+                                      first
+                                      last
+                                      "call")
+                                    (set! result (- 0 1))]
+                                  [else unit]))]
+                            [(= lead 106)
+                              (let
+                                [last : i64
+                                  (compiler-backend-cold-line-last
+                                    data
+                                    first
+                                    end)]
+                                [op-end : i64
+                                  (compiler-backend-cold-token-end
+                                    data
+                                    first
+                                    last)]
+                                (if (and
+                                  (compiler-backend-peephole-range-eq?
+                                    data
+                                    first
+                                    op-end
+                                    "jmp")
+                                  (compiler-backend-cold-prefix?
+                                    data
+                                    (compiler-backend-cold-line-first
+                                      data
+                                      op-end
+                                      last)
+                                    last
+                                    ".L_tl_abort_site_"))
+                                  unit
+                                  (set! result (- 0 1))))]
+                            [(and
+                                (= lead 114)
+                                (compiler-backend-cold-prefix?
+                                  data
+                                  first
+                                  end
+                                  "ret"))
+                              (set! result (- 0 1))]
+                            ;; A stub stages at most a handful of abort arguments
+                            ;; before its call; a longer run is ordinary code.
+                            [saw-abort unit]
+                            [(>= setup compiler-backend-cold-stub-setup-limit)
+                              (set! result (- 0 1))]
+                            [else (set! setup (+ setup 1))]))]
+                      [else
+                        (let
+                          [first : i64
+                            (compiler-backend-cold-line-first data start end)]
+                          [last : i64
+                            (compiler-backend-cold-line-last data first end)]
+                          (if (or
+                            (>= first last)
+                            (compiler-backend-cold-prefix?
+                              data
+                              first
+                              last
+                              ".balign ")
+                            (compiler-backend-cold-prefix?
+                              data
+                              first
+                              last
+                              ".p2align ")
+                            (compiler-backend-cold-prefix?
+                              data
+                              first
+                              last
+                              ".quad "))
+                            unit
+                            (set! result (- 0 1))))])))
+                (set! j (+ j 1)))))
+          (if (< result 0)
+            (- 0 1)
+            result))))))
+
+;; Name the moved stub. A named continuation label `T` gives `T.cold`. A
+;; numeric `1:` continuation gives the stub's first `.L_tl_abort_site_` label
+;; plus `.cold`, or "" when the stub has none.
+(define (compiler-backend-cold-stub-name
+  [v : CompilerBackendPeepholeLineVec]
+  [i : i64]
+  [t : i64]) : String
+  (let
+    [recs : (__tl_dyn-array CompilerBackendPeepholeLineRecord)
+      (compiler-backend-global-shared-view v.lines)]
+    [live : (__tl_dyn-array i64) (compiler-backend-global-shared-view v.live)]
+    [trec : CompilerBackendPeepholeLineRecord
+      (compiler-backend-global-array-element-shared-view recs t)]
+    [tdata : (Ptr u8)
+      (compiler-backend-peephole-record-data
+        (compiler-backend-global-shared-view trec))]
+    [tstart : i64
+      (compiler-backend-peephole-record-start
+        (compiler-backend-global-shared-view trec))]
+    [tend : i64
+      (compiler-backend-peephole-record-end
+        (compiler-backend-global-shared-view trec))]
+    [tlast : i64 (compiler-backend-cold-line-last tdata tstart tend)]
+    (if (not (compiler-backend-peephole-range-eq? tdata tstart tlast "1:"))
+      (string.substring trec.src tstart (- tlast (+ tstart 1)))
+      (let
+        [j : i64 (+ i 1)]
+        [name : String ""]
+        (begin
+          (while (and (< j t) (= (string.string-length name) 0))
+            (begin
+              (when
+                (= (array-ref live j) 1)
+                (let
+                  [rec : CompilerBackendPeepholeLineRecord
+                    (compiler-backend-global-array-element-shared-view recs j)]
+                  [data : (Ptr u8)
+                    (compiler-backend-peephole-record-data
+                      (compiler-backend-global-shared-view rec))]
+                  [start : i64
+                    (compiler-backend-peephole-record-start
+                      (compiler-backend-global-shared-view rec))]
+                  [end : i64
+                    (compiler-backend-peephole-record-end
+                      (compiler-backend-global-shared-view rec))]
+                  [last : i64 (compiler-backend-cold-line-last data start end)]
+                  (when
+                    (and
+                      (compiler-backend-cold-label-line? data start start last)
+                      (compiler-backend-cold-prefix?
+                        data
+                        start
+                        last
+                        ".L_tl_abort_site_"))
+                    (set!
+                      name
+                      (string.substring rec.src start (- last (+ start 1)))))))
+              (set! j (+ j 1))))
+          (compiler-backend-global-shared-view name))))))
+
+;; The edits COLD-1 makes to one group, in record order. Stub `k` opens with the
+;; conditional jump at record `jcc[k]` and closes at the continuation label at
+;; record `target[k]`; `inverse[k]` replaces the jump, `back[k]` (numeric
+;; continuations only, else "") is emitted before the kept `1:`, and at the
+;; next flush point the stub is emitted as `head[k]`, the `.loc` record
+;; `loc[k]` (or none when -1), records (jcc[k], target[k]) and `tail[k]`. A
+;; flush point `flush-at[f]` emits stubs up to `flush-end[f]` right before that
+;; record; stubs still pending at the end of the group follow its last record.
+;; `extra` is the rendered byte count the edits add to the plain render.
+(defstruct CompilerBackendColdPlan
+  (stubs i64)
+  (jcc (__tl_dyn-array i64))
+  (target (__tl_dyn-array i64))
+  (loc (__tl_dyn-array i64))
+  (inverse (__tl_dyn-array String))
+  (head (__tl_dyn-array String))
+  (flushes i64)
+  (flush-at (__tl_dyn-array i64))
+  (flush-end (__tl_dyn-array i64))
+  (extra i64))
+
+(define (compiler-backend-cold-plan-empty) : CompilerBackendColdPlan
+  (CompilerBackendColdPlan
+    0
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array String 0)
+    (__tl_make-array String 0)
+    0
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
+    0))
+
+(define (compiler-backend-cold-grow-i64
+  [items : (__tl_dyn-array i64)]
+  [len : i64]) : (__tl_dyn-array i64)
+  (if (< len (array-length items))
+    items
+    (let
+      [fresh : (__tl_dyn-array i64)
+        (__tl_make-array i64 (+ (* (array-length items) 2) 8))]
+      [k : i64 0]
+      (begin
+        (while (< k len)
+          (begin
+            (set! (array-ref fresh k) (array-ref items k))
+            (set! k (+ k 1))))
+        fresh))))
+
+(define (compiler-backend-cold-grow-strings
+  [items : (__tl_dyn-array String)]
+  [len : i64]) : (__tl_dyn-array String)
+  (if (< len (array-length items))
+    items
+    (let
+      [fresh : (__tl_dyn-array String)
+        (__tl_make-array String (+ (* (array-length items) 2) 8))]
+      [k : i64 0]
+      (begin
+        (while (< k len)
+          (begin
+            (set!
+              (array-ref fresh k)
+              (compiler-backend-global-array-element-shared-view items k))
+            (set! k (+ k 1))))
+        fresh))))
+
+;; Rendered bytes of one record: its line plus the newline it carries.
+(define (compiler-backend-cold-record-bytes
+  [rec : CompilerBackendPeepholeLineRecord]) : i64
+  (+
+    (-
+      (compiler-backend-peephole-record-end
+        (compiler-backend-global-shared-view rec))
+      (compiler-backend-peephole-record-start
+        (compiler-backend-global-shared-view rec)))
+    (if (compiler-backend-peephole-record-newline? rec)
+      1
+      0)))
+
+;; COLD-1 candidate: the record index of a noreturn abort call. Grown like
+;; RMW-2's candidate array: empty until a group has one.
+(define (compiler-backend-cold-note-abort!
+  [walk : (&mut walk CompilerBackendPeepholeWalkState)]
+  [index : i64]) : unit
+  (begin
+    (unless
+      (< walk.abort-cand-len (array-length walk.abort-cands))
+      (let
+        [old : (__tl_dyn-array i64) walk.abort-cands]
+        [len : i64 walk.abort-cand-len]
+        [grown : (__tl_dyn-array i64)
+          (__tl_make-array i64 (+ (* (array-length old) 2) 16))]
+        [k : i64 0]
+        (begin
+          (while (< k len)
+            (begin
+              (set! (array-ref grown k) (array-ref old k))
+              (set! k (+ k 1))))
+          (set! walk.abort-cands grown))))
+    (set! (array-ref walk.abort-cands walk.abort-cand-len) index)
+    (set! walk.abort-cand-len (+ walk.abort-cand-len 1))))
+
+;; COLD-1 candidate: the record index of a line that closes a function. Only a
+;; line whose first byte is `.` is examined further.
+(define (compiler-backend-cold-note-closing!
+  [walk : (&mut walk CompilerBackendPeepholeWalkState)]
+  [line : (& line CompilerBackendPeepholeLine)]
+  [index : i64]) : unit
+  (let
+    [data : (Ptr u8) line.data]
+    [start : i64 (bit-and line.span compiler-backend-peephole-desc-pack-mask)]
+    [end : i64
+      (bit-and
+        (shr line.span compiler-backend-peephole-desc-pack-shift)
+        compiler-backend-peephole-desc-pack-mask)]
+    [first : i64
+      (bit-and line.mnemonic compiler-backend-peephole-desc-pack-mask)]
+    (when
+      (and
+        (< first end)
+        (= (compiler-backend-peephole-byte-at data first) 46)
+        (compiler-backend-cold-closing-line?
+          data
+          start
+          first
+          (compiler-backend-cold-line-last data first end)))
+      (begin
+        (unless
+          (< walk.close-cand-len (array-length walk.close-cands))
+          (let
+            [old : (__tl_dyn-array i64) walk.close-cands]
+            [len : i64 walk.close-cand-len]
+            [grown : (__tl_dyn-array i64)
+              (__tl_make-array i64 (+ (* (array-length old) 2) 16))]
+            [k : i64 0]
+            (begin
+              (while (< k len)
+                (begin
+                  (set! (array-ref grown k) (array-ref old k))
+                  (set! k (+ k 1))))
+              (set! walk.close-cands grown))))
+        (set! (array-ref walk.close-cands walk.close-cand-len) index)
+        (set! walk.close-cand-len (+ walk.close-cand-len 1))))))
+
+;; The conditional jump that opens the stub whose abort call is record `call`:
+;; walking back over the call's argument staging -- live instructions that are
+;; not jumps, calls or returns, at most compiler-backend-cold-stub-setup-limit
+;; of them -- the first record must be that jump. -1 otherwise.
+(define (compiler-backend-cold-stub-jump
+  [v : CompilerBackendPeepholeLineVec]
+  [call : i64]) : i64
+  (let
+    [recs : (__tl_dyn-array CompilerBackendPeepholeLineRecord)
+      (compiler-backend-global-shared-view v.lines)]
+    [live : (__tl_dyn-array i64) (compiler-backend-global-shared-view v.live)]
+    [j : i64 (- call 1)]
+    [setup : i64 0]
+    [result : i64 (- 0 2)]
+    (begin
+      (while (= result (- 0 2))
+        (cond
+          [(< j 0) (set! result (- 0 1))]
+          [(not (= (array-ref live j) 1)) (set! j (- j 1))]
+          [else
+            (let
+              [rec : CompilerBackendPeepholeLineRecord
+                (compiler-backend-global-array-element-shared-view recs j)]
+              [data : (Ptr u8)
+                (compiler-backend-peephole-record-data
+                  (compiler-backend-global-shared-view rec))]
+              [start : i64
+                (compiler-backend-peephole-record-start
+                  (compiler-backend-global-shared-view rec))]
+              [end : i64
+                (compiler-backend-peephole-record-end
+                  (compiler-backend-global-shared-view rec))]
+              [first : i64 (compiler-backend-cold-line-first data start end)]
+              [lead : i64
+                (if (< first end)
+                  (compiler-backend-peephole-byte-at data first)
+                  0)]
+              (cond
+                [(not
+                    (=
+                      (compiler-backend-peephole-record-kind
+                        (compiler-backend-global-shared-view rec))
+                      compiler-backend-sweep-line-kind-instruction))
+                  (set! result (- 0 1))]
+                [(= lead 106)
+                  (set!
+                    result
+                    (if (compiler-backend-peephole-range-eq?
+                      data
+                      first
+                      (compiler-backend-cold-token-end data first end)
+                      "jmp")
+                      (- 0 1)
+                      j))]
+                [(or
+                    (= lead 99)
+                    (= lead 114)
+                    (>= setup compiler-backend-cold-stub-setup-limit))
+                  (set! result (- 0 1))]
+                [else
+                  (begin
+                    (set! setup (+ setup 1))
+                    (set! j (- j 1)))]))]))
+      result)))
+
+;; The closest live named label (not the numeric `1:`) before record `j`, or
+;; -1 within compiler-backend-cold-label-scan-limit records.
+(define (compiler-backend-cold-label-before
+  [v : CompilerBackendPeepholeLineVec]
+  [j : i64]) : i64
+  (let
+    [recs : (__tl_dyn-array CompilerBackendPeepholeLineRecord)
+      (compiler-backend-global-shared-view v.lines)]
+    [live : (__tl_dyn-array i64) (compiler-backend-global-shared-view v.live)]
+    [k : i64 (- j 1)]
+    [stop : i64 (- j compiler-backend-cold-label-scan-limit)]
+    [result : i64 (- 0 2)]
+    (begin
+      (while (= result (- 0 2))
+        (if (or (< k 0) (< k stop))
+          (set! result (- 0 1))
+          (let
+            [rec : CompilerBackendPeepholeLineRecord
+              (compiler-backend-global-array-element-shared-view recs k)]
+            (begin
+              (when
+                (and
+                  (= (array-ref live k) 1)
+                  (=
+                    (compiler-backend-peephole-record-kind
+                      (compiler-backend-global-shared-view rec))
+                    compiler-backend-sweep-line-kind-label))
+                (let
+                  [data : (Ptr u8)
+                    (compiler-backend-peephole-record-data
+                      (compiler-backend-global-shared-view rec))]
+                  [start : i64
+                    (compiler-backend-peephole-record-start
+                      (compiler-backend-global-shared-view rec))]
+                  [last : i64
+                    (compiler-backend-cold-line-last
+                      data
+                      start
+                      (compiler-backend-peephole-record-end
+                        (compiler-backend-global-shared-view rec)))]
+                  (when
+                    (and
+                      (compiler-backend-cold-label-line? data start start last)
+                      (not
+                        (compiler-backend-peephole-range-eq?
+                          data
+                          start
+                          last
+                          "1:")))
+                    (set! result k))))
+              (set! k (- k 1))))))
+      result)))
+
+;; The `.loc`/`.cv_loc` line in force at record `j`: the closest one before it
+;; in the same function, or -1. Only a debug build carries such lines.
+(define (compiler-backend-cold-loc-before
+  [v : CompilerBackendPeepholeLineVec]
+  [j : i64]) : i64
+  (if (not (compiler_ir_types.compiler-debug-info-enabled?))
+    (- 0 1)
+    (let
+      [recs : (__tl_dyn-array CompilerBackendPeepholeLineRecord)
+        (compiler-backend-global-shared-view v.lines)]
+      [live : (__tl_dyn-array i64) (compiler-backend-global-shared-view v.live)]
+      [k : i64 (- j 1)]
+      [stop : i64 (- j compiler-backend-cold-label-scan-limit)]
+      [result : i64 (- 0 2)]
+      (begin
+        (while (= result (- 0 2))
+          (if (or (< k 0) (< k stop))
+            (set! result (- 0 1))
+            (let
+              [rec : CompilerBackendPeepholeLineRecord
+                (compiler-backend-global-array-element-shared-view recs k)]
+              (begin
+                (when
+                  (and
+                    (= (array-ref live k) 1)
+                    (not
+                      (=
+                        (compiler-backend-peephole-record-kind
+                          (compiler-backend-global-shared-view rec))
+                        compiler-backend-sweep-line-kind-instruction)))
+                  (let
+                    [data : (Ptr u8)
+                      (compiler-backend-peephole-record-data
+                        (compiler-backend-global-shared-view rec))]
+                    [start : i64
+                      (compiler-backend-peephole-record-start
+                        (compiler-backend-global-shared-view rec))]
+                    [end : i64
+                      (compiler-backend-peephole-record-end
+                        (compiler-backend-global-shared-view rec))]
+                    [first : i64
+                      (compiler-backend-cold-line-first data start end)]
+                    [last : i64
+                      (compiler-backend-cold-line-last data first end)]
+                    (cond
+                      [(compiler-backend-cold-loc-line? data first last)
+                        (set! result k)]
+                      [(compiler-backend-cold-closing-line?
+                          data
+                          start
+                          first
+                          last)
+                        (set! result (- 0 1))]
+                      [else unit])))
+                (set! k (- k 1))))))
+        result))))
+
+;; Plan COLD-1 for one group (see above) from the walk's candidates alone: each
+;; abort call locates its stub by a short walk back to the opening jump and a
+;; checked walk forward to the continuation, and is flushed before the first
+;; closing line after it. Nothing else in the group is examined.
+(define (compiler-backend-cold-plan [v : CompilerBackendPeepholeLineVec]) : CompilerBackendColdPlan
+  (let
+    [recs : (__tl_dyn-array CompilerBackendPeepholeLineRecord)
+      (compiler-backend-global-shared-view v.lines)]
+    [count : i64 v.len]
+    [aborts : (__tl_dyn-array i64)
+      (compiler-backend-global-shared-view v.abort-cands)]
+    [abort-count : i64 v.abort-cand-len]
+    [closes : (__tl_dyn-array i64)
+      (compiler-backend-global-shared-view v.close-cands)]
+    [close-count : i64 v.close-cand-len]
+    [plan : CompilerBackendColdPlan (compiler-backend-cold-plan-empty)]
+    [a : i64 0]
+    [c : i64 0]
+    [done-to : i64 (- 0 1)]
+    [pending-at : i64 count]
+    [fallback-label : i64 (- 0 1)]
+    [fallback-ord : i64 0]
+    (begin
+      (while (< a abort-count)
+        (let
+          [call : i64 (array-ref aborts a)]
+          (begin
+            (when
+              (> call done-to)
+              (let
+                [j : i64
+                  (compiler-backend-cold-stub-jump
+                    (compiler-backend-global-shared-view v)
+                    call)]
+                [t : i64
+                  (if (>= j 0)
+                    (compiler-backend-cold-stub-scan
+                      (compiler-backend-global-shared-view v)
+                      j)
+                    (- 0 1))]
+                (when
+                  (> t call)
+                  (let
+                    [site-name : String
+                      (compiler-backend-cold-stub-name
+                        (compiler-backend-global-shared-view v)
+                        j
+                        t)]
+                    [label : i64
+                      (if (> (string.string-length site-name) 0)
+                        (- 0 1)
+                        (compiler-backend-cold-label-before
+                          (compiler-backend-global-shared-view v)
+                          j))]
+                    [name : String
+                      (if (or
+                        (> (string.string-length site-name) 0)
+                        (< label 0))
+                        site-name
+                        (let
+                          [lrec : CompilerBackendPeepholeLineRecord
+                            (compiler-backend-global-array-element-shared-view
+                              recs
+                              label)]
+                          [lstart : i64
+                            (compiler-backend-peephole-record-start
+                              (compiler-backend-global-shared-view lrec))]
+                          [llast : i64
+                            (compiler-backend-cold-line-last
+                              (compiler-backend-peephole-record-data
+                                (compiler-backend-global-shared-view lrec))
+                              lstart
+                              (compiler-backend-peephole-record-end
+                                (compiler-backend-global-shared-view lrec)))]
+                          (begin
+                            (if (= label fallback-label)
+                              (set! fallback-ord (+ fallback-ord 1))
+                              (begin
+                                (set! fallback-label label)
+                                (set! fallback-ord 1)))
+                            (str_cat.str-cat
+                              (string.substring
+                                lrec.src
+                                lstart
+                                (- llast (+ lstart 1)))
+                              ".stub"
+                              (string.int->string fallback-ord)))))]
+                    (when
+                      (> (string.string-length name) 0)
+                      (let
+                        [rec : CompilerBackendPeepholeLineRecord
+                          (compiler-backend-global-array-element-shared-view
+                            recs
+                            j)]
+                        [data : (Ptr u8)
+                          (compiler-backend-peephole-record-data
+                            (compiler-backend-global-shared-view rec))]
+                        [start : i64
+                          (compiler-backend-peephole-record-start
+                            (compiler-backend-global-shared-view rec))]
+                        [end : i64
+                          (compiler-backend-peephole-record-end
+                            (compiler-backend-global-shared-view rec))]
+                        [first : i64
+                          (compiler-backend-cold-line-first data start end)]
+                        [last : i64
+                          (compiler-backend-cold-line-last data first end)]
+                        [mend : i64
+                          (compiler-backend-cold-token-end data first last)]
+                        [cold-label : String
+                          (str_cat.str-cat
+                            (compiler-backend-global-shared-view name)
+                            ".cold")]
+                        [inverse : String
+                          (str_cat.str-cat
+                            "    "
+                            (compiler-backend-cold-jcc-inverse data first mend)
+                            " "
+                            (compiler-backend-global-shared-view cold-label))]
+                        [head : String
+                          (str_cat.str-cat
+                            (compiler-backend-global-shared-view cold-label)
+                            ":")]
+                        [loc : i64
+                          (compiler-backend-cold-loc-before
+                            (compiler-backend-global-shared-view v)
+                            j)]
+                        [loc-bytes : i64
+                          (if (< loc 0)
+                            0
+                            (compiler-backend-cold-record-bytes
+                              (compiler-backend-global-array-element-shared-view
+                                recs
+                                loc)))]
+                        [k : i64 plan.stubs]
+                        [added : i64
+                          (+
+                            (-
+                              (+ (string.string-length inverse) 1)
+                              (compiler-backend-cold-record-bytes rec))
+                            (+ (+ (string.string-length head) 1) loc-bytes))]
+                        [flush-at : i64 count]
+                        (begin
+                          ;; This stub's flush point: the first closing line
+                          ;; after its continuation.
+                          (while (and
+                            (< c close-count)
+                            (<= (array-ref closes c) t))
+                            (set! c (+ c 1)))
+                          (set!
+                            flush-at
+                            (if (< c close-count)
+                              (array-ref closes c)
+                              count))
+                          ;; Stubs still pending for an earlier function are
+                          ;; flushed at that function's closing line.
+                          (when
+                            (and (> k 0) (not (= flush-at pending-at)))
+                            (begin
+                              (set!
+                                plan.flush-at
+                                (compiler-backend-cold-grow-i64
+                                  plan.flush-at
+                                  plan.flushes))
+                              (set!
+                                plan.flush-end
+                                (compiler-backend-cold-grow-i64
+                                  plan.flush-end
+                                  plan.flushes))
+                              (set!
+                                (array-ref plan.flush-at plan.flushes)
+                                pending-at)
+                              (set! (array-ref plan.flush-end plan.flushes) k)
+                              (set! plan.flushes (+ plan.flushes 1))))
+                          (set! pending-at flush-at)
+                          (set!
+                            plan.jcc
+                            (compiler-backend-cold-grow-i64 plan.jcc k))
+                          (set!
+                            plan.target
+                            (compiler-backend-cold-grow-i64 plan.target k))
+                          (set!
+                            plan.loc
+                            (compiler-backend-cold-grow-i64 plan.loc k))
+                          (set!
+                            plan.inverse
+                            (compiler-backend-cold-grow-strings plan.inverse k))
+                          (set!
+                            plan.head
+                            (compiler-backend-cold-grow-strings plan.head k))
+                          (set! (array-ref plan.jcc k) j)
+                          (set! (array-ref plan.target k) t)
+                          (set! (array-ref plan.loc k) loc)
+                          (set! (array-ref plan.inverse k) inverse)
+                          (set! (array-ref plan.head k) head)
+                          (set! plan.stubs (+ k 1))
+                          (set! plan.extra (+ plan.extra added))
+                          (set! done-to t))))))))
+            (set! a (+ a 1)))))
+      ;; The last group of stubs lands before its function's closing line, or
+      ;; after the group's last record when the group has none.
+      (when
+        (and (> plan.stubs 0) (< pending-at count))
+        (begin
+          (set!
+            plan.flush-at
+            (compiler-backend-cold-grow-i64 plan.flush-at plan.flushes))
+          (set!
+            plan.flush-end
+            (compiler-backend-cold-grow-i64 plan.flush-end plan.flushes))
+          (set! (array-ref plan.flush-at plan.flushes) pending-at)
+          (set! (array-ref plan.flush-end plan.flushes) plan.stubs)
+          (set! plan.flushes (+ plan.flushes 1))))
+      plan)))
+
+;; Write `text` and a newline at `pos`; the next free position is returned.
+(define (compiler-backend-cold-write-line!
+  [dst : (MutPtr u8)]
+  [pos : i64]
+  [text : String]) : i64
+  (let
+    [n : i64 (string.string-length text)]
+    (begin
+      (text_buf_borrowed.copy-byte-range-into
+        (unsafe
+          (string-data text))
+        0
+        n
+        dst
+        pos)
+      (unsafe
+        (ptr-write! (ptr-offset dst (+ pos n)) (cast 10 : u8)))
+      (+ pos (+ n 1)))))
+
+;; Emit planned stubs [from, to) out of line.
+;; A stub's records, copied out of line. Its abort call never returns, so
+;; nothing after the call is reached: the `jmp` that stepped over the site
+;; descriptor, and the continuation label that jump was the only reader of, are
+;; left behind, and no jump back to the hot path is written. The descriptor
+;; itself stays -- the call's argument addresses it. A stub has no other exit
+;; (the planner admits only the abort sequence), so this drops no live path.
+(define (compiler-backend-cold-stub-body!
+  [v : CompilerBackendPeepholeLineVec]
+  [from : i64]
+  [to : i64]
+  [dst : (MutPtr u8)]
+  [start-pos : i64]) : i64
+  (let
+    [pos : i64 start-pos]
+    [cursor : i64 from]
+    [j : i64 from]
+    [after-call? : bool false]
+    [skip-label : String ""]
+    (begin
+      (while (< j to)
+        (begin
+          (when
+            (= (array-ref v.live j) 1)
+            (let
+              [rec : CompilerBackendPeepholeLineRecord
+                (compiler-backend-global-array-element-shared-view v.lines j)]
+              [data : (Ptr u8)
+                (compiler-backend-peephole-record-data
+                  (compiler-backend-global-shared-view rec))]
+              [start : i64
+                (compiler-backend-peephole-record-start
+                  (compiler-backend-global-shared-view rec))]
+              [end : i64
+                (compiler-backend-peephole-record-end
+                  (compiler-backend-global-shared-view rec))]
+              [first : i64 (compiler-backend-cold-line-first data start end)]
+              [last : i64 (compiler-backend-cold-line-last data first end)]
+              [kind : i64
+                (compiler-backend-peephole-record-kind
+                  (compiler-backend-global-shared-view rec))]
+              (cond
+                [(and
+                    (= kind compiler-backend-sweep-line-kind-instruction)
+                    (compiler-backend-peephole-line-noreturn-abort?
+                      data
+                      start
+                      end))
+                  (set! after-call? true)]
+                [(and
+                    after-call?
+                    (= kind compiler-backend-sweep-line-kind-instruction)
+                    (compiler-backend-cold-prefix? data first last "jmp "))
+                  (begin
+                    (set!
+                      pos
+                      (compiler-backend-peephole-records-blit-range!
+                        (compiler-backend-global-shared-view v)
+                        cursor
+                        j
+                        dst
+                        pos))
+                    (set! cursor (+ j 1))
+                    (set!
+                      skip-label
+                      (str_cat.str-cat
+                        (string.substring
+                          rec.src
+                          (+ first 4)
+                          (- last (+ first 4)))
+                        ":"))
+                    (set! after-call? false))]
+                [(and
+                    (= kind compiler-backend-sweep-line-kind-label)
+                    (> (string.string-length skip-label) 1)
+                    (compiler-backend-peephole-range-eq?
+                      data
+                      first
+                      last
+                      (compiler-backend-global-shared-view skip-label)))
+                  (begin
+                    (set!
+                      pos
+                      (compiler-backend-peephole-records-blit-range!
+                        (compiler-backend-global-shared-view v)
+                        cursor
+                        j
+                        dst
+                        pos))
+                    (set! cursor (+ j 1))
+                    (set! skip-label ""))]
+                [(= kind compiler-backend-sweep-line-kind-instruction)
+                  (set! after-call? false)]
+                [else unit])))
+          (set! j (+ j 1))))
+      (compiler-backend-peephole-records-blit-range! v cursor to dst pos))))
+
+(define (compiler-backend-cold-emit-stubs!
+  [v : CompilerBackendPeepholeLineVec]
+  [plan : CompilerBackendColdPlan]
+  [from : i64]
+  [to : i64]
+  [dst : (MutPtr u8)]
+  [start-pos : i64]) : i64
+  (let
+    [pos : i64 start-pos]
+    [k : i64 from]
+    (begin
+      (while (< k to)
+        (let
+          [loc : i64 (array-ref plan.loc k)]
+          (begin
+            (set!
+              pos
+              (compiler-backend-cold-write-line!
+                dst
+                pos
+                (compiler-backend-global-array-element-shared-view plan.head k)))
+            (when
+              (>= loc 0)
+              (set!
+                pos
+                (compiler-backend-peephole-records-blit-range!
+                  (compiler-backend-global-shared-view v)
+                  loc
+                  (+ loc 1)
+                  dst
+                  pos)))
+            (set!
+              pos
+              (compiler-backend-cold-stub-body!
+                (compiler-backend-global-shared-view v)
+                (+ (array-ref plan.jcc k) 1)
+                (array-ref plan.target k)
+                dst
+                pos))
+            (set! k (+ k 1)))))
+      pos)))
+
+;; Render the group in COLD-1 order: the plain render's bytes, ranges of
+;; records blitted in place, with each stub's jump inverted and the stubs
+;; themselves emitted at their flush points.
+(define (compiler-backend-cold-render
+  [v : CompilerBackendPeepholeLineVec]
+  [plan : CompilerBackendColdPlan]) : String
+  (let
+    [total : i64
+      (+
+        (compiler-backend-peephole-records-length
+          (compiler-backend-global-shared-view v))
+        plan.extra)]
+    [count : i64 v.len]
+    [out : (__tl_dyn-array u8) (__tl_make-array u8 total)]
+    [dst : (MutPtr u8)
+      (unsafe
+        (__tl_array-data out))]
+    [pos : i64 0]
+    [cursor : i64 0]
+    [flushed : i64 0]
+    [f : i64 0]
+    [k : i64 0]
+    (begin
+      (while (< k plan.stubs)
+        (let
+          [jcc : i64 (array-ref plan.jcc k)]
+          [t : i64 (array-ref plan.target k)]
+          (begin
+            (while (and (< f plan.flushes) (<= (array-ref plan.flush-at f) jcc))
+              (let
+                [at : i64 (array-ref plan.flush-at f)]
+                [upto : i64 (array-ref plan.flush-end f)]
+                (begin
+                  (set!
+                    pos
+                    (compiler-backend-peephole-records-blit-range!
+                      (compiler-backend-global-shared-view v)
+                      cursor
+                      at
+                      dst
+                      pos))
+                  (set!
+                    pos
+                    (compiler-backend-cold-emit-stubs!
+                      (compiler-backend-global-shared-view v)
+                      (compiler-backend-global-shared-view plan)
+                      flushed
+                      upto
+                      dst
+                      pos))
+                  (set! cursor at)
+                  (set! flushed upto)
+                  (set! f (+ f 1)))))
+            (set!
+              pos
+              (compiler-backend-peephole-records-blit-range!
+                (compiler-backend-global-shared-view v)
+                cursor
+                jcc
+                dst
+                pos))
+            (set!
+              pos
+              (compiler-backend-cold-write-line!
+                dst
+                pos
+                (compiler-backend-global-array-element-shared-view
+                  plan.inverse
+                  k)))
+            (set! cursor t)
+            (set! k (+ k 1)))))
+      (while (< f plan.flushes)
+        (let
+          [at : i64 (array-ref plan.flush-at f)]
+          [upto : i64 (array-ref plan.flush-end f)]
+          (begin
+            (set!
+              pos
+              (compiler-backend-peephole-records-blit-range!
+                (compiler-backend-global-shared-view v)
+                cursor
+                at
+                dst
+                pos))
+            (set!
+              pos
+              (compiler-backend-cold-emit-stubs!
+                (compiler-backend-global-shared-view v)
+                (compiler-backend-global-shared-view plan)
+                flushed
+                upto
+                dst
+                pos))
+            (set! cursor at)
+            (set! flushed upto)
+            (set! f (+ f 1)))))
+      (set!
+        pos
+        (compiler-backend-peephole-records-blit-range!
+          (compiler-backend-global-shared-view v)
+          cursor
+          count
+          dst
+          pos))
+      (set!
+        pos
+        (compiler-backend-cold-emit-stubs!
+          (compiler-backend-global-shared-view v)
+          (compiler-backend-global-shared-view plan)
+          flushed
+          plan.stubs
+          dst
+          pos))
+      (unsafe
+        (string-from-bytes (ptr-cast dst : (Ptr u8)) pos)))))
+
+;; The single render of the group, with COLD-1's out-of-line abort stubs. A
+;; group without an abort call renders as before; otherwise the plan and its
+;; synthesized lines are scratch and only the rendered string lands in the
+;; caller's arena.
+(define (compiler-backend-peephole-records-render
+  [v : CompilerBackendPeepholeLineVec]) : String
+  (if (= v.abort-cand-len 0)
+    (compiler-backend-peephole-records-render-plain v)
+    (let
+      [output-arena : arena.Arena (arena.current)]
+      [rendered : String ""]
+      (begin
+        (with-scratch
+          (let
+            [plan : CompilerBackendColdPlan
+              (compiler-backend-cold-plan
+                (compiler-backend-global-shared-view v))]
+            (begin
+              (set!
+                rendered
+                (in-arena
+                  output-arena
+                  (compiler-backend-cold-render
+                    (compiler-backend-global-shared-view v)
+                    plan)))
+              unit)))
+        rendered))))
 
 ;; ---------------------------------------------------------------------------
 ;; RMW-2/RMW-3: fold an adjacent load / ALU / store of ONE memory location into
@@ -103828,6 +105235,10 @@
         carry-safe
         (__tl_make-array CompilerBackendPeepholeLineRecord sink-capacity)
         (__tl_make-array i64 sink-capacity)
+        0
+        (__tl_make-array i64 0)
+        0
+        (__tl_make-array i64 0)
         0
         (__tl_make-array i64 0)
         0

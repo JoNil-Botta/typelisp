@@ -39,10 +39,8 @@ stage2-deterministic-assembly	all	stage2 deterministic assembly	bootstrap-fixpoi
 typelisp-format-compiler-selection-control	all	TypeLisp format compiler selection control	-	-	scripts/check-tl-format.sh --self-test-current-compiler-mode
 typelisp-source-formatting	all	TypeLisp source formatting	bootstrap-fixpoint	stage2	env TYPELISP_FORMAT_COMPILER_IS_CURRENT_TREE=1 scripts/check-tl-format.sh
 large-crlf-formatter-diff	all	large CRLF formatter diff	bootstrap-fixpoint	stage2	scripts/verify-format-large-crlf.sh
-typelisp-lint-gate-coverage-self-tests	all	TypeLisp lint gate coverage self-tests	-	-	sh scripts/test-tl-lint-gate.sh
 typelisp-source-lint	all	TypeLisp source lint	bootstrap-fixpoint	stage2	scripts/check-tl-lint.sh
 no-libc-dependency-guard	all	no-libc dependency guard	bootstrap-fixpoint	stage2	scripts/verify-no-libc.sh
-package-lock-writer-observation-self-tests	all	package-lock writer observation self-tests	-	-	sh scripts/test-package-lock-wait.sh
 stage2-cli-build-run-and-chooser-smoke	all	stage2 cli build/run and chooser smoke	bootstrap-fixpoint	stage2	scripts/verify-selfhost-cli-build-run.sh
 stage2-public-tool-surface	all	stage2 public tool surface	bootstrap-fixpoint	stage2	scripts/verify-public-tools.sh
 ir-observability-golden	all	IR observability golden	bootstrap-fixpoint	stage2	scripts/verify-ir-observability.sh

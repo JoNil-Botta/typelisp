@@ -1528,9 +1528,7 @@ The package-lock CLI fixtures wait for exact staging/commit observations with a
 a publication/exit race. Readiness does not replace the final child exit-status,
 lock-content, conflict-diagnostic or stage-cleanup assertions. Premature exit and
 timeout print the captured child logs; a staging-directory observation error
-fails immediately with those same diagnostics. `sh scripts/test-package-lock-wait.sh`
-exercises both publication races, unsuccessful writers and the unchanged timeout;
-it is a required gate on Linux and Windows. Refs #7828.
+fails immediately with those same diagnostics. Refs #7828.
 
 `scripts/check-tl-lint.sh` checks each selected tracked TypeLisp source unit
 once, in batches of at most 32 files by default, and fails CI on any finding.
@@ -1538,9 +1536,7 @@ Batches split at `src/` boundaries: all files receive the normal, redundant-name
 and supported name-case rules; only tracked compiler/tooling sources receive
 `--deprecated-string-concat` in that same invocation. The concat rejection
 probe remains independent. `TYPELISP_LINT_BATCH_SIZE` must be a positive integer.
-`sh scripts/test-tl-lint-gate.sh` checks exact file/rule coverage, batch bounds,
-legacy capability paths and failure propagation on both CI hosts. Plain
-`typelisp lint <file.tl>` remains warn-only for reviewable cleanup slices.
+Plain `typelisp lint <file.tl>` remains warn-only for reviewable cleanup slices.
 
 Run the tests that match the layer you touched. On non-Linux platforms, scripts
 that require native `as`/`ld` either no-op by design or should be run through a

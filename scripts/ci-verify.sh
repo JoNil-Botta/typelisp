@@ -872,8 +872,8 @@ run_with_compiler \
     stage2-cross-mode-semantic-abi-differential \
     env TYPELISP_CROSS_MODE_PREVIOUS_COMPILER="$STAGE1_BIN" \
     scripts/verify-cross-mode-differential.sh
-run_with_compiler "$STAGE2_BIN" stage2-spmd-lane-identity scripts/verify-spmd-lane-identity.sh
-run_with_compiler "$STAGE2_BIN" stage2-spmd-broadcast scripts/verify-spmd-broadcast.sh
+run_with_compiler "$STAGE2_BIN" stage2-spmd-lane-identity scripts/verify-codegen-cases.sh --only 'lane-identity-*' tests/spmd/gang-width.cases
+run_with_compiler "$STAGE2_BIN" stage2-spmd-broadcast scripts/verify-codegen-cases.sh --only 'broadcast-*' tests/spmd/gang-width.cases
 if ci_gate_selected stage2-docs-pages-build-path; then
     DOC_SITE_OUT="$ROOT/target/ci-verify-docs-pages-site"
     export DOC_SITE_OUT

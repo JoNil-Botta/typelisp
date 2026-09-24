@@ -133,7 +133,7 @@ mkdir -p "$WORKDIR"
 
 # SPMD corpus: each program's exit code is computed by a SIMD-lowered `foreach`
 # or `spmd-reduce`, so a wrong SIMD result (especially in the tail) changes it.
-# Keep this list in sync with tests/spmd/README.md.
+# Each program documents its shape and result in its header comment.
 spmd_corpus() {
     cat <<'EOF'
 tests/spmd/tail_i64_add.tl

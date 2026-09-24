@@ -8242,9 +8242,9 @@ ordered or non-canonical execution; it is not an unsupported fallback.
 | `spmd-reduce` | Supported: reference semantics | Supported: native eligible folds; scalar reference for other supported value shapes | Supported: native eligible folds; scalar reference for other supported value shapes | Reduction-matrix and gather-reduce gates; direct byte-product results receive the specified unsupported sum-result type diagnostic |
 | `spmd-scan` | Supported: reference semantics | Supported: native canonical range-wide prefixes; scalar reference for other supported shapes | Supported: native canonical range-wide prefixes; scalar reference for other supported shapes | AVX2 and AVX-512 prefix-shape gates |
 | `spmd-compact` | Supported: ordered scalar reference | Supported: ordered scalar reference | Supported: ordered scalar reference | Cross-mode runtime, overflow-order, and destination-proof gates |
-| `spmd-broadcast` | Supported: one-lane reference | Supported: gang-width semantics | Supported: gang-width semantics | `scripts/verify-spmd-broadcast.sh` |
+| `spmd-broadcast` | Supported: one-lane reference | Supported: gang-width semantics | Supported: gang-width semantics | `tests/spmd/gang-width.cases` (broadcast cases) |
 | `spmd-shuffle` | Supported: one-lane reference | Supported: native numeric permutations | Supported: native numeric permutations | Shuffle differential, trap, and shape gates |
-| `program-index` / `program-count` | Supported: `0` / `1` | Supported: backend gang identity | Supported: backend gang identity | `scripts/verify-spmd-lane-identity.sh` |
+| `program-index` / `program-count` | Supported: `0` / `1` | Supported: backend gang identity | Supported: backend gang identity | `tests/spmd/gang-width.cases` (lane-identity cases) |
 | Same-program private out-of-line varying helpers | Supported: scalar ABI | Supported: native AVX2 private ABI | Supported: native AVX-512 private ABI | Private-helper differential/shape gates; imported package helpers retain the separately specified scalar/AVX-512 `spmd-call-v1` catalog ABI |
 | `defdispatch` | Supported: scalar variant | Supported: cached runtime AVX2 selection | Supported: cached runtime AVX-512 selection | Runtime-dispatch gate |
 

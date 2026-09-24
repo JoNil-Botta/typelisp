@@ -48,7 +48,8 @@ set -eu
 #   narrow WINDOW[:ARG]             replace the subject by an analyzer window
 #                                   (scripts/codegen-cases-analyzers.awk); an empty
 #                                   window fails
-#   exit N | nonzero                exit status of the last step (default: 0)
+#   exit N | nonzero | MODE=N...    exit status of the last step (default: 0);
+#                                   MODE=N words pick by backend mode
 #   contains TEXT / not-contains TEXT
 #   match ERE / not-match ERE / match-i ERE / not-match-i ERE
 #   count OP N ERE / count-fixed OP N TEXT     OP is =, >= or <=
@@ -547,13 +548,30 @@ a_narrow() {
 a_exit() {
     CC_ROWS=$((CC_ROWS + 1))
     cc_run_output_row || return 0
-    case "$2" in
+    _ex_want=$2
+    case "$_ex_want" in
+        *=*)
+            # MODE=STATUS words: the expectation of the variant's backend mode.
+            _ex_pick=
+            for _ex_word in $_ex_want; do
+                case "$_ex_word" in
+                    "$CV_MODE="*) _ex_pick=${_ex_word#*=} ;;
+                esac
+            done
+            [ -n "$_ex_pick" ] || {
+                cc_fail "$1" "no expected exit status for mode $CV_MODE"
+                return 0
+            }
+            _ex_want=$_ex_pick
+            ;;
+    esac
+    case "$_ex_want" in
         nonzero)
             [ "$CV_EXIT" -ne 0 ] || cc_fail "$1" "exited 0, expected a nonzero status"
             ;;
         *)
-            [ "$CV_EXIT" -eq "$2" ] || {
-                cc_fail "$1" "exited $CV_EXIT, expected $2"
+            [ "$CV_EXIT" -eq "$_ex_want" ] || {
+                cc_fail "$1" "exited $CV_EXIT, expected $_ex_want"
                 echo "  stderr:" >&2
                 cc_quote_lines "$CV_ERR"
             }

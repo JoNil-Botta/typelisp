@@ -178,7 +178,7 @@
       (test.assert-true
         (compiler-backend-runtime-test-contains?
           (& linux-min-functions)
-          "tl_memcpy_fresh:\n    movq %rdx, %rcx\n    jmp .Ltl_memcpy_fwd")
+          "tl_memcpy_fresh:\n    cmpq $1, %rdx\n    je .Ltl_memcpy_one\n    movq %rdx, %rcx\n    cmpq $64, %rcx\n    jbe .Ltl_memcpy_small\n    jmp .Ltl_memcpy_fwd")
         "Linux fresh-copy entry shares the forward copy core")
       (test.assert-true
         (compiler-backend-runtime-test-contains?

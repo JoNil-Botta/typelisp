@@ -32,7 +32,7 @@ count_matches 9 '(^|[^[:alnum:]_])ret([^[:alnum:]_]|$)' src/compiler_backend_run
 count_matches 0 '(^|[^[:alnum:]_])call([^[:alnum:]_]|$)' src/compiler_backend_runtime_common.tl
 count_matches 1 '(^|[^[:alnum:]_])jmp([^[:alnum:]_]|$)' src/compiler_backend_runtime_common.tl
 count_matches 35 '\.globl' src/compiler_backend_runtime_linux.tl
-count_matches 47 '(^|[^[:alnum:]_])ret([^[:alnum:]_]|$)' src/compiler_backend_runtime_linux.tl
+count_matches 53 '(^|[^[:alnum:]_])ret([^[:alnum:]_]|$)' src/compiler_backend_runtime_linux.tl
 count_matches 9 '(^|[^[:alnum:]_])call([^[:alnum:]_]|$)' src/compiler_backend_runtime_linux.tl
 count_matches 24 '(^|[^[:alnum:]_])jmp([^[:alnum:]_]|$)' src/compiler_backend_runtime_linux.tl
 count_matches 30 '\.globl' src/compiler_backend_runtime_windows.tl

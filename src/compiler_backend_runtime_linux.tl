@@ -1237,11 +1237,23 @@ tl_region_reset:
 ;; `rep movsq` preserves element granularity under fast-string operation, which
 ;; the architecture does not promise for overlapping regions.
 ;; Arguments are SysV: %rdi = dst, %rsi = src, %rdx = count (8-byte slots).
+;;
+;; For tl_memcpy/tl_memcpy_fresh, counts up to 64 avoid the startup cost of
+;; two repeated-string instructions. Each size class loads its entire source
+;; before the first store, so even overlapping head/tail windows preserve
+;; memmove semantics. Every access stays within the requested range; zero
+;; touches neither pointer. The one-byte entry also avoids dispatch overhead
+;; for text-buffer appends. Only SysV caller-saved GPRs and XMM0..3 are used.
+;; The forward-loop helpers retain their separate propagation semantics.
 (define (compiler-backend-runtime-memcpy-functions) : String
   "    .globl tl_memcpy
     .type tl_memcpy,@function
 tl_memcpy:
+    cmpq $1, %rdx
+    je .Ltl_memcpy_one
     movq %rdx, %rcx
+    cmpq $64, %rcx
+    jbe .Ltl_memcpy_small
     movq %rsi, %rax
     addq %rcx, %rax
     cmpq %rax, %rdi
@@ -1262,11 +1274,67 @@ tl_memcpy:
     andq $7, %rcx
     rep movsb
     ret
+.Ltl_memcpy_small:
+    cmpq $16, %rcx
+    ja .Ltl_memcpy_above_16
+    cmpq $8, %rcx
+    jae .Ltl_memcpy_small_16
+    cmpq $4, %rcx
+    jae .Ltl_memcpy_small_8
+    cmpq $2, %rcx
+    jae .Ltl_memcpy_small_4
+    testq %rcx, %rcx
+    je .Ltl_memcpy_small_done
+.Ltl_memcpy_one:
+    movzbl (%rsi), %eax
+    movb %al, (%rdi)
+.Ltl_memcpy_small_done:
+    ret
+.Ltl_memcpy_small_4:
+    movzwl (%rsi), %eax
+    movzwl -2(%rsi,%rcx), %edx
+    movw %ax, (%rdi)
+    movw %dx, -2(%rdi,%rcx)
+    ret
+.Ltl_memcpy_small_8:
+    movl (%rsi), %eax
+    movl -4(%rsi,%rcx), %edx
+    movl %eax, (%rdi)
+    movl %edx, -4(%rdi,%rcx)
+    ret
+.Ltl_memcpy_small_16:
+    movq (%rsi), %rax
+    movq -8(%rsi,%rcx), %rdx
+    movq %rax, (%rdi)
+    movq %rdx, -8(%rdi,%rcx)
+    ret
+.Ltl_memcpy_small_32:
+    movups (%rsi), %xmm0
+    movups -16(%rsi,%rcx), %xmm1
+    movups %xmm0, (%rdi)
+    movups %xmm1, -16(%rdi,%rcx)
+    ret
+.Ltl_memcpy_above_16:
+    cmpq $32, %rcx
+    jbe .Ltl_memcpy_small_32
+    movups (%rsi), %xmm0
+    movups 16(%rsi), %xmm1
+    movups -32(%rsi,%rcx), %xmm2
+    movups -16(%rsi,%rcx), %xmm3
+    movups %xmm0, (%rdi)
+    movups %xmm1, 16(%rdi)
+    movups %xmm2, -32(%rdi,%rcx)
+    movups %xmm3, -16(%rdi,%rcx)
+    ret
     .size tl_memcpy, . - tl_memcpy
     .globl tl_memcpy_fresh
     .type tl_memcpy_fresh,@function
 tl_memcpy_fresh:
+    cmpq $1, %rdx
+    je .Ltl_memcpy_one
     movq %rdx, %rcx
+    cmpq $64, %rcx
+    jbe .Ltl_memcpy_small
     jmp .Ltl_memcpy_fwd
     .size tl_memcpy_fresh, . - tl_memcpy_fresh
 ")

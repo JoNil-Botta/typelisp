@@ -81129,34 +81129,33 @@
   [array-cell : i64]) : bool
   (let
     [blocks : ir.CompilerIrBlockList (opt-le-field-blocks len-cell array-cell)]
-    (let
-      [type-segment-bases (ast.ast-node-pool-reader-type-segment-bases)]
-      [use
-        (opt.opt-len-eq-use-build
-          cells.len-eq
-          cells.len-eq-clean
-          name
-          64
-          blocks
-          cells.arg-global
-          (opt-le-params 1))]
-      [copies (opt_i64_i64_map.with-capacity 1)]
-      (opt.opt-len-eq-field-guarded?
-        type-segment-bases
-        use
-        copies
-        (opt.opt-dom-cmp-facts-cons
-          (opt.OptDomCmpFact.Fact
-            (ir.CompilerIrBinOp.Lt)
-            (ir.CompilerIrValue.Var 0)
-            (ir.CompilerIrValue.Var 2)
-            (ast.AstType.I64)
-            true
-            0)
-          (opt.OptDomCmpFacts.Nil))
-        0
-        (ir.CompilerIrValue.Var 0)
-        (ir.CompilerIrValue.Var 6)))))
+    [type-segment-bases (ast.ast-node-pool-reader-type-segment-bases)]
+    [use
+      (opt.opt-len-eq-use-build
+        cells.len-eq
+        cells.len-eq-clean
+        name
+        64
+        blocks
+        cells.arg-global
+        (opt-le-params 1))]
+    [copies (opt_i64_i64_map.with-capacity 1)]
+    (opt.opt-len-eq-field-guarded?
+      type-segment-bases
+      use
+      copies
+      (opt.opt-dom-cmp-facts-cons
+        (opt.OptDomCmpFact.Fact
+          (ir.CompilerIrBinOp.Lt)
+          (ir.CompilerIrValue.Var 0)
+          (ir.CompilerIrValue.Var 2)
+          (ast.AstType.I64)
+          true
+          0)
+        (opt.OptDomCmpFacts.Nil))
+      0
+      (ir.CompilerIrValue.Var 0)
+      (ir.CompilerIrValue.Var 6))))
 
 ;; --- IAG-2: the per-function global-STORAGE write table ----------------------
 ;;
@@ -96994,28 +96993,27 @@
   [facts : opt.OptBoundsFacts]) : bool
   (let
     [blocks : ir.CompilerIrBlockList (opt-cb-use-blocks array-cell len-cell)]
-    (let
-      [type-segment-bases (ast.ast-node-pool-reader-type-segment-bases)]
-      [use
-        (opt.opt-len-eq-use-with-content
-          (opt.opt-len-eq-use-build-late
-            cells.len-eq
-            cells.len-eq-clean
-            name
-            64
-            blocks
-            cells.arg-global
-            (opt-le-params 0))
-          cells.content)]
-      [copies (opt_i64_i64_map.with-capacity 1)]
-      (opt.opt-cb-content-covers?
-        type-segment-bases
-        use
-        copies
-        facts
-        0
-        (ir.CompilerIrValue.Var 6)
-        (ir.CompilerIrValue.Var 10)))))
+    [type-segment-bases (ast.ast-node-pool-reader-type-segment-bases)]
+    [use
+      (opt.opt-len-eq-use-with-content
+        (opt.opt-len-eq-use-build-late
+          cells.len-eq
+          cells.len-eq-clean
+          name
+          64
+          blocks
+          cells.arg-global
+          (opt-le-params 0))
+        cells.content)]
+    [copies (opt_i64_i64_map.with-capacity 1)]
+    (opt.opt-cb-content-covers?
+      type-segment-bases
+      use
+      copies
+      facts
+      0
+      (ir.CompilerIrValue.Var 6)
+      (ir.CompilerIrValue.Var 10))))
 
 ;; A dominating passed check against a family member's length, which is what
 ;; discharges the zero fill (`v <u L` forces `L >= 1`).

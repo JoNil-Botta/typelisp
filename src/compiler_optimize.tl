@@ -144644,17 +144644,16 @@
   [remaining : i64]) : opt_i64_i64_map.Map
   (let
     [_reset : unit (opt-call-memory-callees-reset!)]
-    (let
-      [descriptor-globals (opt_i64_i64_map.with-capacity 1)]
-      (opt-call-memory-optimistic-fixed-with-descriptor-globals
-        type-segment-bases
-        descriptor-globals
-        functions
-        resolved
-        function-set
-        current
-        capacity
-        remaining))))
+    [descriptor-globals (opt_i64_i64_map.with-capacity 1)]
+    (opt-call-memory-optimistic-fixed-with-descriptor-globals
+      type-segment-bases
+      descriptor-globals
+      functions
+      resolved
+      function-set
+      current
+      capacity
+      remaining)))
 
 (define (opt-call-memory-build-with-descriptor-globals
   [type-segment-bases : i64]

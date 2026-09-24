@@ -49,7 +49,7 @@
       [src : (Ptr u8)]
       [n : i64]) : unit (:symbol "tl_memcpy"))))
 
-;; Internal raw byte-search primitive backed by the always-emitted runtime
+;; Internal raw byte-search primitive backed by the selected runtime
 ;; helper. Returns the zero-based offset in `ptr[0..len)` or -1 when absent.
 (unsafe
   (extern (string-runtime-index-of-byte

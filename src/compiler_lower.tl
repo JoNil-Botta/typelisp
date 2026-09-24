@@ -2902,7 +2902,7 @@
           (io.print-error
             (str_cat.str-cat
               "compile-profile-detail|intern.lower_phase.generated|"
-              (lower-global-shared-view phase)
+              phase
               "|"
               (string.int->string
                 (-
@@ -3018,8 +3018,7 @@
           (profile_state.compiler-profile-state-shared-view state)))
       (compiler-lower-profile-counter
         "specialization.render.cache_misses"
-        (spec.spec-profile-name-render-cache-misses-value
-          (profile_state.compiler-profile-state-shared-view state))))))
+        (spec.spec-profile-name-render-cache-misses-value state)))))
 
 (cfg
   compile-profile
@@ -3653,11 +3652,11 @@
         1)
       (if hit
         (profile_state.compiler-profile-metrics-add!
-          (profile_state.compiler-profile-state-shared-view metrics)
+          metrics
           compiler-lower-profile-name-cache-local-hits-metric
           1)
         (profile_state.compiler-profile-metrics-add!
-          (profile_state.compiler-profile-state-shared-view metrics)
+          metrics
           compiler-lower-profile-name-cache-local-misses-metric
           1)))))
 
@@ -3764,10 +3763,7 @@
           ".segments")
         (ast.ast-node-pool-context-type-segment-count pools))
       (compiler-lower-profile-counter
-        (str_cat.str-cat
-          "ast_type_pool."
-          (lower-global-shared-view point)
-          ".segment_bytes")
+        (str_cat.str-cat "ast_type_pool." point ".segment_bytes")
         (ast.ast-node-pool-context-type-segment-bytes pools)))))
 
 (cfg
@@ -3780,10 +3776,10 @@
   (define (compiler-lower-profile-program-counts
     [point : String]
     [program : ast.AstProgram]) : unit
-    (match (lower-global-shared-view program)
+    (match program
       [(ast.AstProgram.Program decls-box)
         (let
-          [decls : ast.AstDeclList (lower-box-shared-view decls-box)]
+          [decls : ast.AstDeclList (deref decls-box)]
           (begin
             (compiler-lower-profile-counter
               (str_cat.str-cat
@@ -3793,11 +3789,8 @@
               (compiler-lower-profile-decl-list-count
                 (lower-global-shared-view decls)))
             (compiler-lower-profile-counter
-              (str_cat.str-cat
-                "checked_program."
-                (lower-global-shared-view point)
-                ".functions")
-              (lower-function-decl-count (lower-global-shared-view decls)))))])))
+              (str_cat.str-cat "checked_program." point ".functions")
+              (lower-function-decl-count decls))))])))
 
 (cfg
   compile-profile
@@ -4374,7 +4367,7 @@
   (define (lower-name-env-bind-ids-profile-storage-note!
     [metrics : profile_state.CompilerProfileMetrics]
     [rest : LowerNameEnv]) : unit
-    (match (lower-global-shared-view rest)
+    (match rest
       [(LowerNameEnv.Nil) unit]
       [(LowerNameEnv.Inline _ _ _)
         (profile_state.compiler-profile-metrics-add!
@@ -4383,7 +4376,7 @@
           1)]
       [(LowerNameEnv.Dense store _ _)
         (let
-          [storage : LowerNameStore (lower-box-shared-view store)]
+          [storage : LowerNameStore (deref store)]
           (when
             (>= storage.len (* storage.segment-count 16))
             (profile_state.compiler-profile-metrics-add!
@@ -4445,12 +4438,12 @@
           1)
         (if (< source-id 0)
           fallback
-          (match (lower-global-shared-view names)
+          (match names
             [(LowerNameEnv.Nil) fallback]
             [(LowerNameEnv.Inline bind-id _ symbol-id)
               (begin
                 (profile_state.compiler-profile-metrics-add!
-                  (profile_state.compiler-profile-state-shared-view metrics)
+                  metrics
                   compiler-lower-profile-name-env-lookup-steps-metric
                   1)
                 (if (= bind-id source-id)
@@ -4459,7 +4452,7 @@
             [(LowerNameEnv.Dense store head _)
               (let
                 [cursor : i64 head]
-                [storage : LowerNameStore (lower-box-shared-view store)]
+                [storage : LowerNameStore (deref store)]
                 (begin
                   (while (>= cursor 0)
                     (let
@@ -4550,7 +4543,7 @@
                 (/ append-count 16)))]
           [(LowerNameEnv.Dense store _ _)
             (let
-              [storage : LowerNameStore (lower-box-shared-view store)]
+              [storage : LowerNameStore (deref store)]
               [needed : i64 (+ storage.len append-count)]
               [needed-segments : i64
                 (if (< needed 1)
@@ -4705,7 +4698,7 @@
             (lower_i64_i64_map.capacity (& after.logical-symbols))
             (lower_i64_i64_map.capacity (& before.logical-symbols)))
           (profile_state.compiler-profile-metrics-add!
-            (profile_state.compiler-profile-state-shared-view metrics)
+            metrics
             compiler-lower-profile-name-cache-logical-growth-views-metric
             1))))))
 
@@ -5055,7 +5048,7 @@
       (cfg
         (any compile-profile test)
         (lower-name-cache-map-growth-profile
-          (lower-global-shared-view cache)
+          cache
           (lower-global-shared-view out))
         unit)
       out)))
@@ -5204,7 +5197,7 @@
             (compiler-lower-profile-metrics-view lower-state)
             compiler-lower-profile-module-name-cache-lookups-metric
             1)
-          (match (lower-global-shared-view result)
+          (match (& result)
             [(LowerMaybeModuleNameCache.Some _)
               (profile_state.compiler-profile-metrics-add!
                 (compiler-lower-profile-metrics-view lower-state)
@@ -6861,8 +6854,7 @@
 
 (define (lower-resolve-name-symbol-id [state : LowerState] [source-id : i64]) : i64
   (let
-    [names : LowerNameCache
-      (lower-state-names (lower-global-shared-view state))]
+    [names : LowerNameCache (lower-state-names state)]
     [logical-id : i64
       (lower-name-cache-resolve-logical-id (& names) source-id source-id)]
     [resolved-name : String (lower-resolve-name-id state source-id)]
@@ -6968,8 +6960,7 @@
   [source-id : i64]) : i64
   (let
     [local? : bool (sym_i64_env.sym-i64-contains-id env source-id)]
-    [state-names : LowerNameCache
-      (lower-state-names (lower-global-shared-view state))]
+    [state-names : LowerNameCache (lower-state-names state)]
     [logical-id : i64
       (if local?
         source-id
@@ -9712,7 +9703,7 @@
             (compiler-lower-profile-metrics-view lower-state)
             compiler-lower-profile-module-local-view-lookups-metric
             1)
-          (match (lower-global-shared-view result)
+          (match (& result)
             [(LowerMaybeModuleLocalView.Some _)
               (profile_state.compiler-profile-metrics-add!
                 (compiler-lower-profile-metrics-view lower-state)
@@ -15591,7 +15582,7 @@
         (lower-global-shared-view pools)
         (lower-used-types-add-expr-id
           session
-          (lower-global-shared-view pools)
+          pools
           used
           (lower-global-shared-view module)
           callee-box)
@@ -17853,7 +17844,7 @@
   [state : LowerState]
   [mask : i64]
   [index : i64]) : i64
-  (match (lower-state-masked-load-cache (lower-global-shared-view state))
+  (match (lower-state-masked-load-cache state)
     [(LowerMaybeMaskedLoadCache.No) -2]
     [(LowerMaybeMaskedLoadCache.Some cache)
       (let
@@ -17880,11 +17871,7 @@
     (if (or (<= fuel 0) (< current-mask 0))
       false
       (let
-        [parent : i64
-          (lower-masked-load-mask-parent-at
-            (lower-global-shared-view state)
-            current-mask
-            0)]
+        [parent : i64 (lower-masked-load-mask-parent-at state current-mask 0)]
         (if (= parent -2)
           false
           (lower-masked-load-mask-dominates-with-fuel?
@@ -17897,7 +17884,7 @@
   [state : LowerState]
   [defining-mask : i64]
   [current-mask : i64]) : bool
-  (match (lower-state-masked-load-cache (lower-global-shared-view state))
+  (match (lower-state-masked-load-cache state)
     [(LowerMaybeMaskedLoadCache.No) false]
     [(LowerMaybeMaskedLoadCache.Some cache)
       (lower-masked-load-mask-dominates-with-fuel?
@@ -17916,7 +17903,7 @@
       (lower-masked-load-mask-key (ir.CompilerIrMaybeValue.Some child))]
     (if (or (< parent-key -1) (< child-key 0) (= parent-key child-key))
       unit
-      (match (lower-state-masked-load-cache (lower-global-shared-view state))
+      (match (lower-state-masked-load-cache state)
         [(LowerMaybeMaskedLoadCache.No) unit]
         [(LowerMaybeMaskedLoadCache.Some cache)
           (let
@@ -17947,7 +17934,7 @@
   [offset : i64]
   [mask : i64]
   [index : i64]) : LowerMaybeMaskedLoad
-  (match (lower-state-masked-load-cache (lower-global-shared-view state))
+  (match (lower-state-masked-load-cache state)
     [(LowerMaybeMaskedLoadCache.No) (LowerMaybeMaskedLoad.No)]
     [(LowerMaybeMaskedLoadCache.Some cache)
       (let
@@ -17966,7 +17953,7 @@
                 index)
               offset)
             (lower-masked-load-mask-dominates?
-              (lower-global-shared-view state)
+              state
               (array-ref
                 (__tl-project-field (__tl-box-place cache) masks)
                 index)
@@ -18059,8 +18046,7 @@
   [state : LowerState]
   [var-id : i64]) : LowerState
   (let
-    [data : (Box LowerStateData)
-      (lower-state-box (lower-global-shared-view state))]
+    [data : (Box LowerStateData) (lower-state-box state)]
     (begin
       (lower_i64_i64_map.insert-ref!
         (&mut (__tl-project-field (__tl-box-place data) address-taken))
@@ -18082,13 +18068,12 @@
   [state : LowerState]
   [var-id : i64]) : bool
   (and
-    (>= var-id (lower-state-tail-param-start (lower-global-shared-view state)))
+    (>= var-id (lower-state-tail-param-start state))
     (< var-id (lower-state-tail-param-end state))))
 
 (define (lower-state-clear-tail-param-range [state : LowerState]) : LowerState
   (let
-    [data : (Box LowerStateData)
-      (lower-state-box (lower-global-shared-view state))]
+    [data : (Box LowerStateData) (lower-state-box state)]
     (begin
       (__tl-project-set-field (__tl-box-place data) tail-param-start 0)
       (__tl-project-set-field (__tl-box-place data) tail-param-end 0)
@@ -18096,8 +18081,7 @@
 
 (define (lower-state-alloc-var [state : LowerState]) : LowerAlloc
   (let
-    [data : (Box LowerStateData)
-      (lower-state-box (lower-global-shared-view state))]
+    [data : (Box LowerStateData) (lower-state-box state)]
     [next-var : i64 (__tl-project-field (__tl-box-place data) next-var)]
     (begin
       (__tl-project-set-field (__tl-box-place data) next-var (+ next-var 1))
@@ -18110,8 +18094,7 @@
 
 (define (lower-state-fresh-label [state : LowerState] [prefix : String]) : LowerLabel
   (let
-    [data : (Box LowerStateData)
-      (lower-state-box (lower-global-shared-view state))]
+    [data : (Box LowerStateData) (lower-state-box state)]
     [next-label : i64 (__tl-project-field (__tl-box-place data) next-label)]
     (begin
       (__tl-project-set-field (__tl-box-place data) next-label (+ next-label 1))
@@ -18122,8 +18105,7 @@
 
 (define (lower-state-fresh-lambda-name [state : LowerState]) : LowerLambdaName
   (let
-    [data : (Box LowerStateData)
-      (lower-state-box (lower-global-shared-view state))]
+    [data : (Box LowerStateData) (lower-state-box state)]
     [next-lambda : i64 (__tl-project-field (__tl-box-place data) next-lambda)]
     [intern-state : ci.InternCompatState
       (compiler-lower-state-interns
@@ -18149,8 +18131,7 @@
 
 (define (lower-state-emit [state : LowerState] [instr : ir.CompilerIrInstr]) : LowerState
   (let
-    [data : (Box LowerStateData)
-      (lower-state-box (lower-global-shared-view state))]
+    [data : (Box LowerStateData) (lower-state-box state)]
     (begin
       (ir.compiler-ir-instr-builder-push!
         (&mut (__tl-project-field (__tl-box-place data) current-instrs))
@@ -18183,12 +18164,10 @@
   (if (or
     (ir.compiler-debug-info-enabled?)
     (and
-      (not
-        (lower-state-current-decl-generated? (lower-global-shared-view state)))
+      (not (lower-state-current-decl-generated? state))
       (lower-runtime-abort-instr? (lower-global-shared-view instr))))
     (let
-      [data : (Box LowerStateData)
-        (lower-state-box (lower-global-shared-view state))]
+      [data : (Box LowerStateData) (lower-state-box state)]
       [pools : ast.AstNodePoolContext
         (tc_core.tc-context-pools
           (owned_view.compiler-owned-reference-shared-view ctx))]
@@ -18200,8 +18179,7 @@
               (ir.compiler-ir-symbol-typed-id
                 (lower-box-field-shared-view data function))
               (lower-global-shared-view instr)
-              (lower-state-current-source-path-id
-                (lower-global-shared-view state))
+              (lower-state-current-source-path-id state)
               span)]
           [(ir.CompilerMaybeSourceSpan.No)
             (lower-boxed-box-field-shared-view data spans)])]
@@ -18226,15 +18204,14 @@
       (tc_core.tc-context-pools
         (owned_view.compiler-owned-reference-shared-view ctx))]
     (if (and
-      (lower-state-current-decl-generated? (lower-global-shared-view state))
+      (lower-state-current-decl-generated? state)
       (not (ir.compiler-debug-info-enabled?)))
       state
       (match (lower-ast-expr-span (& pools) expr)
         [(ir.CompilerMaybeSourceSpan.No) state]
         [(ir.CompilerMaybeSourceSpan.Some span)
           (let
-            [data : (Box LowerStateData)
-              (lower-state-box (lower-global-shared-view state))]
+            [data : (Box LowerStateData) (lower-state-box state)]
             [bounds-label : i64
               (ir.compiler-ir-label
                 (str_cat.str-cat
@@ -18250,8 +18227,7 @@
                   ir.CompilerIrValue.Unit
                   ir.CompilerIrValue.Unit
                   bounds-label)
-                (lower-state-current-source-path-id
-                  (lower-global-shared-view state))
+                (lower-state-current-source-path-id state)
                 span)]
             (begin
               (__tl-project-set-field
@@ -18272,8 +18248,7 @@
 
 (define (lower-state-finish-block [state : LowerState] [next-label : i64]) : LowerState
   (let
-    [data : (Box LowerStateData)
-      (lower-state-box (lower-global-shared-view state))]
+    [data : (Box LowerStateData) (lower-state-box state)]
     [current-label : i64 (lower-box-field-shared-view data current-label)]
     [current-instrs : ir.CompilerIrInstrBuilder
       (lower-box-field-shared-view data current-instrs)]
@@ -18327,8 +18302,7 @@
   [new-functions : ir.CompilerIrFunctionSeq]
   [new-spans : ir.CompilerSourceSpans]) : LowerState
   (let
-    [data : (Box LowerStateData)
-      (lower-state-box (lower-global-shared-view state))]
+    [data : (Box LowerStateData) (lower-state-box state)]
     (begin
       (ir.compiler-ir-function-builder-append-seq!
         (&mut (__tl-project-field (__tl-box-place data) functions))
@@ -20381,11 +20355,9 @@
   [target-var : i64]) : ResultLowerExpr
   (if (and
     (=
-      (lower-state-current-function-id (lower-global-shared-view state))
-      (lower-state-active-loop-function (lower-global-shared-view state)))
-    (<
-      target-var
-      (lower-state-active-loop-entry-var-limit (lower-global-shared-view state)))
+      (lower-state-current-function-id state)
+      (lower-state-active-loop-function state))
+    (< target-var (lower-state-active-loop-entry-var-limit state))
     (lower-inline-aggregate-abi-copy-needed?
       (lower-global-shared-view ctx)
       (lower-global-shared-view ty)))
@@ -20462,8 +20434,7 @@
   [value : ir.CompilerIrValue]
   [ret-ty : ast.AstType]) : ResultLowerExpr
   (let
-    [sret-var : i64
-      (lower-current-sret-var (lower-global-shared-view state) env)]
+    [sret-var : i64 (lower-current-sret-var state env)]
     (if (and
       (>= sret-var 0)
       (lower-type-inline-struct-or-enum?
@@ -20501,9 +20472,9 @@
       [class : LowerCAbiAggregate
         (lower-internal-return-class-for-symbol
           (lower-global-shared-view ctx)
-          (lower-state-mode (lower-global-shared-view state))
-          (lower-state-names (lower-global-shared-view state))
-          (lower-state-current-function-id (lower-global-shared-view state))
+          (lower-state-mode state)
+          (lower-state-names state)
+          (lower-state-current-function-id state)
           (lower-global-shared-view ret-ty))]
       (match (lower-global-shared-view class)
         [(LowerCAbiAggregate.Integer scalar-ty _)
@@ -20537,8 +20508,7 @@
               (lower-c-abi-slot-list-ref slots 1)))]
         [(LowerCAbiAggregate.Sret size)
           (let
-            [sret-var : i64
-              (lower-current-sret-var (lower-global-shared-view state) env)]
+            [sret-var : i64 (lower-current-sret-var state env)]
             (if (< sret-var 0)
               (ResultLowerExpr.Err
                 (box
@@ -21003,7 +20973,7 @@
     (cfg
       compile-profile
       (compiler-lower-profile-string-concat-note-runtime-call!
-        (lower-state-owner (lower-global-shared-view state))))
+        (lower-state-owner state)))
     (match (lower-state-alloc-var state)
       [(LowerAlloc.Alloc allocated var-id)
         (LowerExpr.Expr
@@ -21122,7 +21092,7 @@
     (cfg
       compile-profile
       (compiler-lower-profile-string-concat-note-tree!
-        (lower-state-owner (lower-global-shared-view state))
+        (lower-state-owner state)
         exprs.len))
     (lower-string-concat-exprs-batched
       ctx
@@ -21659,7 +21629,7 @@
         (LowerExpr.Expr state (ir.CompilerIrValue.Var id) result-ty))
       (ResultLowerExpr.Ok
         (LowerExpr.Expr
-          (lower-global-shared-view state)
+          state
           (ir.CompilerIrValue.Global
             (lower-resolve-name-symbol-id state name-id))
           result-ty)))))
@@ -21706,7 +21676,7 @@
                 result-ty))]))
       (ResultLowerExpr.Ok
         (LowerExpr.Expr
-          (lower-global-shared-view state)
+          state
           (if (lower-borrow-place-value-reference? ctx referent-ty)
             (ir.CompilerIrValue.Global
               (lower-resolve-name-symbol-id state name-id))
@@ -22061,8 +22031,8 @@
     (lower-global-shared-view ctx)
     env
     type-env
-    (lower-state-type-cache (lower-global-shared-view state))
-    (lower-state-function-state (lower-global-shared-view state))
+    (lower-state-type-cache state)
+    (lower-state-function-state state)
     (lower-global-shared-view arr))
     [(tc_core.ResultTcType.Ok arr-ty)
       ;; A reference-valued iterator field is already an address of its array
@@ -22102,10 +22072,8 @@
                       (lower-global-shared-view ctx)
                       env
                       type-env
-                      (lower-state-type-cache
-                        (lower-global-shared-view arr-state))
-                      (lower-state-function-state
-                        (lower-global-shared-view arr-state))
+                      (lower-state-type-cache arr-state)
+                      (lower-state-function-state arr-state)
                       (lower-global-shared-view index))
                       [(tc_core.ResultTcType.Ok idx-ty)
                         (match (lower-expr-expected
@@ -22159,10 +22127,8 @@
                       (lower-global-shared-view ctx)
                       env
                       type-env
-                      (lower-state-type-cache
-                        (lower-global-shared-view arr-state))
-                      (lower-state-function-state
-                        (lower-global-shared-view arr-state))
+                      (lower-state-type-cache arr-state)
+                      (lower-state-function-state arr-state)
                       (lower-global-shared-view index))
                       [(tc_core.ResultTcType.Ok idx-ty)
                         (match (lower-expr-expected
@@ -22221,10 +22187,8 @@
                         (lower-global-shared-view ctx)
                         env
                         type-env
-                        (lower-state-type-cache
-                          (lower-global-shared-view arr-state))
-                        (lower-state-function-state
-                          (lower-global-shared-view arr-state))
+                        (lower-state-type-cache arr-state)
+                        (lower-state-function-state arr-state)
                         (lower-global-shared-view index))
                         [(tc_core.ResultTcType.Ok idx-ty)
                           (match (lower-expr-expected
@@ -24460,7 +24424,7 @@
       (ResultLowerExpr.Ok (LowerExpr.Expr state (ir.CompilerIrValue.Var id) ty))
       (ResultLowerExpr.Ok
         (LowerExpr.Expr
-          (lower-global-shared-view state)
+          state
           (ir.CompilerIrValue.Global
             (lower-resolve-name-symbol-id state name-id))
           ty)))))
@@ -24474,9 +24438,7 @@
     (lower-type-register-resident?
       (lower-global-shared-view ctx)
       (lower-global-shared-view ty))
-    (lower-state-register-address-taken-var?
-      (lower-global-shared-view state)
-      local-id))
+    (lower-state-register-address-taken-var? state local-id))
     (match (lower-state-alloc-var state)
       [(LowerAlloc.Alloc addr-state addr-var)
         (match (lower-load-register-resident-from-ptr
@@ -24507,7 +24469,7 @@
       (lower-register-address-taken-local-read ctx state id ty)
       (ResultLowerExpr.Ok
         (LowerExpr.Expr
-          (lower-global-shared-view state)
+          state
           (ir.CompilerIrValue.Global
             (lower-resolve-name-symbol-id state name-id))
           ty)))))
@@ -24529,9 +24491,7 @@
           (sym_i64_env.sym-i64-lookup-id-or
             env
             (cis.intern-lower-private-identity-raw
-              (lower-cleanup-live-name-id
-                (lower-global-shared-view state)
-                local-id))
+              (lower-cleanup-live-name-id state local-id))
             (csym.compiler-symbols-missing-handle))]
         (if (csym.compiler-symbols-handle-found? live-id)
           (lower-state-emit
@@ -24831,7 +24791,7 @@
         (lower-symbol-function-value-id? ctx name-id))
       (ResultLowerExpr.Ok
         (LowerExpr.Expr
-          (lower-global-shared-view state)
+          state
           (ir.CompilerIrValue.Function
             (lower-resolve-name-symbol-id state name-id))
           ty))]
@@ -26018,8 +25978,7 @@
                     (sym_i64_env.sym-i64-bind-id
                       captured-env
                       (cis.intern-lower-private-identity-raw
-                        (lower-sret-param-marker-id
-                          (lower-global-shared-view captured-state)))
+                        (lower-sret-param-marker-id captured-state))
                       sret-var)
                     captured-env)]
                 [type-env : tc_core.TcTypeEnv
@@ -26086,15 +26045,13 @@
                               source-params)]
                           (ResultLowerFunction.Ok
                             (lower-state-build-functions-with
-                              (lower-global-shared-view final-state)
+                              final-state
                               (ir.CompilerIrFunction.Function
                                 logical-name
                                 all-params
                                 ret-ir-ty
-                                (lower-state-next-var
-                                  (lower-global-shared-view final-state))
-                                (lower-state-build-function-blocks
-                                  (lower-global-shared-view final-state))
+                                (lower-state-next-var final-state)
+                                (lower-state-build-function-blocks final-state)
                                 ir.CompilerIrFunctionAbi.Ordinary))
                             (lower-state-spans final-state)))]
                       [(ResultLowerState.Err message)
@@ -26120,20 +26077,20 @@
     [(tc_core.ResultTcType.Err message)
       (ResultLowerExpr.Err (box (lower-diagnostic-at-expr ctx origin message)))]
     [(tc_core.ResultTcType.Ok ret-ty)
-      (match (lower-state-fresh-lambda-name (lower-global-shared-view state))
+      (match (lower-state-fresh-lambda-name state)
         [(LowerLambdaName.Name named-state lambda-name)
           (match (lower-function
             ctx
             type-env
-            (lower-state-type-cache (lower-global-shared-view state))
+            (lower-state-type-cache state)
             (compiler-lower-function-state-new (lower-state-owner state))
             lambda-name
             params
             ret-ty
             body
-            (lower-state-spans (lower-global-shared-view named-state))
-            (lower-state-names (lower-global-shared-view named-state))
-            (lower-state-mode (lower-global-shared-view named-state)))
+            (lower-state-spans named-state)
+            (lower-state-names named-state)
+            (lower-state-mode named-state))
             [(ResultLowerFunction.Ok lambda-functions lambda-spans)
               (ResultLowerExpr.Ok
                 (LowerExpr.Expr
@@ -26179,18 +26136,17 @@
                   (match (lower-function-with-captures
                     (lower-global-shared-view ctx)
                     type-env
-                    (lower-state-type-cache
-                      (lower-global-shared-view named-state))
+                    (lower-state-type-cache named-state)
                     (compiler-lower-function-state-new
-                      (lower-state-owner (lower-global-shared-view named-state)))
+                      (lower-state-owner named-state))
                     lambda-name
                     params
                     ret-ty
                     body
                     (lower-global-shared-view captures)
-                    (lower-state-spans (lower-global-shared-view named-state))
-                    (lower-state-names (lower-global-shared-view named-state))
-                    (lower-state-mode (lower-global-shared-view named-state)))
+                    (lower-state-spans named-state)
+                    (lower-state-names named-state)
+                    (lower-state-mode named-state))
                     [(ResultLowerFunction.Ok lambda-functions lambda-spans)
                       (match (lower-capturing-lambda-value
                         ctx
@@ -26434,10 +26390,7 @@
         [(LowerAlloc.Alloc allocated var-id)
           (let
             [call-name : i64
-              (lower-resolve-call-name-id
-                (lower-global-shared-view allocated)
-                env
-                cleanup-name-id)]
+              (lower-resolve-call-name-id allocated env cleanup-name-id)]
             (ResultLowerState.Ok
               (lower-state-emit
                 allocated
@@ -26712,9 +26665,7 @@
         (match (tc_core.tc-type-env-spine-step cur-env)
           [(tc_core.TcTypeEnvSpineStep.Done)
             (begin
-              (set!
-                result
-                (ResultLowerState.Ok (lower-global-shared-view cur-state)))
+              (set! result (ResultLowerState.Ok cur-state))
               (set! done true))]
           [(tc_core.TcTypeEnvSpineStep.Cache rest-env) (set! cur-env rest-env)]
           [(tc_core.TcTypeEnvSpineStep.Bind key ty rest-env)
@@ -26727,16 +26678,14 @@
               ;; lint-allow: nested-if-ladder
               (if (= key (tc_core.tc-hygiene-global-boundary-id))
                 (begin
-                  (set!
-                    result
-                    (ResultLowerState.Ok (lower-global-shared-view cur-state)))
+                  (set! result (ResultLowerState.Ok cur-state))
                   (set! done true))
                 (if (= key cleanup-marker-id)
                   (match ty
                     [(ast.AstType.Tuple types)
                       (match (lower-emit-cleanup-marker-tuple
                         (lower-global-shared-view ctx)
-                        (lower-global-shared-view cur-state)
+                        cur-state
                         env
                         (deref types))
                         [(ResultLowerState.Ok next-state)
@@ -26750,7 +26699,7 @@
                     (match ty
                       [(ast.AstType.Var hidden-name)
                         (match (lower-emit-region-reset
-                          (lower-global-shared-view cur-state)
+                          cur-state
                           env
                           hidden-name)
                           [(ResultLowerState.Ok next-state)
@@ -26762,7 +26711,7 @@
                       [(ast.AstType.Tuple types)
                         (match (lower-emit-arena-restore-marker-tuple
                           (lower-global-shared-view ctx)
-                          (lower-global-shared-view cur-state)
+                          cur-state
                           env
                           (deref types))
                           [(ResultLowerState.Ok next-state)
@@ -26785,10 +26734,8 @@
   [type-env : tc_core.TcTypeEnv]) : ResultLowerState
   (lower-emit-active-exits-with
     ctx
-    (cis.intern-lower-private-identity-raw
-      (lower-cleanup-marker-id (lower-global-shared-view state)))
-    (cis.intern-lower-private-identity-raw
-      (lower-region-reset-marker-id (lower-global-shared-view state)))
+    (cis.intern-lower-private-identity-raw (lower-cleanup-marker-id state))
+    (cis.intern-lower-private-identity-raw (lower-region-reset-marker-id state))
     state
     env
     type-env))
@@ -26843,7 +26790,7 @@
           (ResultLowerLoopTarget.Ok
             (LowerLoopTarget.Target
               (lower-loop-label-name
-                (lower-global-shared-view state)
+                state
                 (cis.InternLowerPrivateIdentity break-name))
               (lower-loop-label-name
                 state
@@ -26909,9 +26856,7 @@
         (match (tc_core.tc-type-env-spine-step cur-env)
           [(tc_core.TcTypeEnvSpineStep.Done)
             (begin
-              (set!
-                result
-                (ResultLowerState.Ok (lower-global-shared-view cur-state)))
+              (set! result (ResultLowerState.Ok cur-state))
               (set! done true))]
           [(tc_core.TcTypeEnvSpineStep.Cache rest-env) (set! cur-env rest-env)]
           [(tc_core.TcTypeEnvSpineStep.Bind key ty rest-env)
@@ -26919,16 +26864,14 @@
               ;; lint-allow: nested-if-ladder
               (if (= key loop-target-id)
                 (begin
-                  (set!
-                    result
-                    (ResultLowerState.Ok (lower-global-shared-view cur-state)))
+                  (set! result (ResultLowerState.Ok cur-state))
                   (set! done true))
                 (if (= key cleanup-marker-id)
                   (match ty
                     [(ast.AstType.Tuple types)
                       (match (lower-emit-cleanup-marker-tuple
                         (lower-global-shared-view ctx)
-                        (lower-global-shared-view cur-state)
+                        cur-state
                         env
                         (deref types))
                         [(ResultLowerState.Ok next-state)
@@ -26942,7 +26885,7 @@
                     (match ty
                       [(ast.AstType.Var hidden-name)
                         (match (lower-emit-region-reset
-                          (lower-global-shared-view cur-state)
+                          cur-state
                           env
                           hidden-name)
                           [(ResultLowerState.Ok next-state)
@@ -26954,7 +26897,7 @@
                       [(ast.AstType.Tuple types)
                         (match (lower-emit-arena-restore-marker-tuple
                           (lower-global-shared-view ctx)
-                          (lower-global-shared-view cur-state)
+                          cur-state
                           env
                           (deref types))
                           [(ResultLowerState.Ok next-state)
@@ -26977,10 +26920,8 @@
   [type-env : tc_core.TcTypeEnv]) : ResultLowerState
   (lower-emit-active-loop-exits-with
     ctx
-    (cis.intern-lower-private-identity-raw
-      (lower-cleanup-marker-id (lower-global-shared-view state)))
-    (cis.intern-lower-private-identity-raw
-      (lower-region-reset-marker-id (lower-global-shared-view state)))
+    (cis.intern-lower-private-identity-raw (lower-cleanup-marker-id state))
+    (cis.intern-lower-private-identity-raw (lower-region-reset-marker-id state))
     (tc_core.tc-loop-target-id)
     state
     env
@@ -26994,7 +26935,7 @@
   [origin : ast.AstExpr]
   [form : String]) : ResultLowerExpr
   (match (lower-current-loop-target
-    (lower-global-shared-view state)
+    state
     (lower-global-shared-view ctx)
     (lower-global-shared-view origin)
     type-env
@@ -27861,15 +27802,11 @@
     [requested-key-id : i64
       (lower-clone-type-key-id (lower-global-shared-view ctx) name-id)]
     [type-key-id : i64
-      (lower-name-cache-clone-key-id
-        (lower-state-names (lower-global-shared-view state))
-        requested-key-id)]
+      (lower-name-cache-clone-key-id (lower-state-names state) requested-key-id)]
     [helper-name-id : i64
       (if (< type-key-id 0)
         -1
-        (lower-name-cache-clone-helper-id
-          (lower-state-names (lower-global-shared-view state))
-          type-key-id))]
+        (lower-name-cache-clone-helper-id (lower-state-names state) type-key-id))]
     (if (< helper-name-id 0)
       (ResultLowerExpr.Err
         (box
@@ -27888,7 +27825,7 @@
               (let
                 [call-name : i64
                   (lower-resolve-call-name-id
-                    (lower-global-shared-view allocated)
+                    allocated
                     env
                     (lower-clone-helper-lookup-id type-key-id helper-name-id))]
                 (ResultLowerExpr.Ok
@@ -31757,7 +31694,7 @@
     (if (csym.compiler-symbols-handle-found? local-id)
       (match (lower-lookup-type-id
         (lower-global-shared-view ctx)
-        (lower-state-type-cache (lower-global-shared-view state))
+        (lower-state-type-cache state)
         env
         type-env
         name)
@@ -31801,14 +31738,14 @@
             (box (lower-diagnostic-at-expr ctx origin message)))])
       (match (lower-lookup-type-id
         (lower-global-shared-view ctx)
-        (lower-state-type-cache (lower-global-shared-view state))
+        (lower-state-type-cache state)
         env
         type-env
         name)
         [(tc_core.ResultTcType.Ok place-ty)
           (ResultLowerExpr.Ok
             (LowerExpr.Expr
-              (lower-global-shared-view state)
+              state
               (if (lower-ptr-addr-of-storage-value-reference?
                 (lower-global-shared-view ctx)
                 (lower-global-shared-view place-ty))
@@ -32032,8 +31969,8 @@
     (lower-global-shared-view ctx)
     env
     type-env
-    (lower-state-type-cache (lower-global-shared-view state))
-    (lower-state-function-state (lower-global-shared-view state))
+    (lower-state-type-cache state)
+    (lower-state-function-state state)
     (lower-context-expr-get (lower-global-shared-view ctx) source-id))
     [(tc_core.ResultTcType.Ok source-ty)
       (match (tc_core.tc-type-strip-region
@@ -32154,7 +32091,7 @@
               (box (lower-diagnostic-at-expr ctx origin message)))])
         (match (lower-lookup-type-id
           (lower-global-shared-view ctx)
-          (lower-state-type-cache (lower-global-shared-view state))
+          (lower-state-type-cache state)
           env
           type-env
           name)
@@ -32218,9 +32155,8 @@
           (lower-global-shared-view ctx)
           env
           type-env
-          (lower-state-type-cache (lower-global-shared-view state))
-          (lower-state-function-state
-            (lower-state-clone (lower-global-shared-view state)))
+          (lower-state-type-cache state)
+          (lower-state-function-state (lower-state-clone state))
           func
           args)
           [(tc_core.ResultTcType.Ok expr-ty)
@@ -32261,8 +32197,8 @@
           (lower-global-shared-view ctx)
           env
           type-env
-          (lower-state-type-cache (lower-global-shared-view state))
-          (lower-state-function-state (lower-global-shared-view state))
+          (lower-state-type-cache state)
+          (lower-state-function-state state)
           (lower-global-shared-view then-branch)
           (lower-global-shared-view else-branch))
           [(tc_core.ResultTcType.Ok expr-ty)
@@ -32289,8 +32225,8 @@
               (lower-global-shared-view ctx)
               env
               type-env
-              (lower-state-type-cache (lower-global-shared-view state))
-              (lower-state-function-state (lower-global-shared-view state))
+              (lower-state-type-cache state)
+              (lower-state-function-state state)
               (lower-global-shared-view scrutinee)
               arms)
               [(tc_core.ResultTcType.Ok expr-ty)
@@ -32302,8 +32238,8 @@
         (lower-global-shared-view ctx)
         env
         type-env
-        (lower-state-type-cache (lower-global-shared-view state))
-        (lower-state-function-state (lower-global-shared-view state))
+        (lower-state-type-cache state)
+        (lower-state-function-state state)
         (lower-global-shared-view expr))
         [(tc_core.ResultTcType.Ok expr-ty)
           (lower-expr-with-type ctx state env type-env expr origin expr-ty)]
@@ -32830,7 +32766,7 @@
                 (box (lower-diagnostic-at-expr ctx origin message)))])
           (match (lower-lookup-type-id
             (lower-global-shared-view ctx)
-            (lower-state-type-cache (lower-global-shared-view state))
+            (lower-state-type-cache state)
             env
             type-env
             name-id)
@@ -32883,8 +32819,7 @@
                                         ;; longer proves tail-call forwarding is safe.
                                         (if (and
                                           (lower-state-tail-param-range-contains?
-                                            (lower-global-shared-view
-                                              assign-value-state)
+                                            assign-value-state
                                             id)
                                           (lower-type-contains-inline-aggregate?
                                             (lower-global-shared-view ctx)
@@ -32917,7 +32852,7 @@
                                     (let
                                       [target-id : i64
                                         (lower-resolve-name-symbol-id
-                                          (lower-global-shared-view store-state)
+                                          store-state
                                           name-id)]
                                       (ResultLowerExpr.Ok
                                         (LowerExpr.Expr
@@ -34372,7 +34307,7 @@
             [(ast.AstExpr.Var name)
               (match (lower-lookup-type-id
                 (lower-global-shared-view ctx)
-                (lower-state-type-cache (lower-global-shared-view state))
+                (lower-state-type-cache state)
                 env
                 type-env
                 name)
@@ -34848,8 +34783,8 @@
     (lower-global-shared-view ctx)
     env
     type-env
-    (lower-state-type-cache (lower-global-shared-view state))
-    (lower-state-function-state (lower-global-shared-view state))
+    (lower-state-type-cache state)
+    (lower-state-function-state state)
     (lower-global-shared-view inner))
     [(tc_core.ResultTcType.Ok receiver-ty)
       (match (tc_core.tc-type-strip-region
@@ -34906,8 +34841,8 @@
     (lower-global-shared-view ctx)
     env
     type-env
-    (lower-state-type-cache (lower-global-shared-view state))
-    (lower-state-function-state (lower-global-shared-view state))
+    (lower-state-type-cache state)
+    (lower-state-function-state state)
     (lower-global-shared-view box-expr))
     [(tc_core.ResultTcType.Ok box-ty)
       (match (tc_core.tc-type-strip-region
@@ -35174,7 +35109,7 @@
       (if (> elem-size 0)
         (match (lower-direct-store-rhs-at-offset
           (lower-global-shared-view ctx)
-          (lower-global-shared-view state)
+          state
           env
           type-env
           (lower-global-shared-view base)
@@ -35333,7 +35268,7 @@
           [(LowerExpr.Expr addr-state elem-ptr _)
             (match (lower-direct-store-rhs-into
               (lower-global-shared-view ctx)
-              (lower-global-shared-view addr-state)
+              addr-state
               env
               type-env
               (lower-global-shared-view elem-ptr)
@@ -38034,7 +37969,7 @@
               [(LowerExpr.Expr arg-state value _)
                 (match (lower-c-abi-aggregate-class
                   (lower-global-shared-view ctx)
-                  (lower-state-mode (lower-global-shared-view arg-state))
+                  (lower-state-mode arg-state)
                   (lower-global-shared-view arg-ty))
                   [(LowerCAbiAggregate.No)
                     (match (lower-c-abi-args-as-at
@@ -38408,7 +38343,7 @@
     [(ResultLowerArgs.Ok args-state values)
       (match (lower-c-abi-return-aggregate-class
         (lower-global-shared-view ctx)
-        (lower-state-mode (lower-global-shared-view args-state))
+        (lower-state-mode args-state)
         (lower-global-shared-view result-ty))
         [(LowerCAbiAggregate.Unsupported message)
           (ResultLowerExpr.Err
@@ -38421,7 +38356,7 @@
                   (ir.CompilerIrInstr.Call
                     var-id
                     (lower-resolve-call-name-id-with-display
-                      (lower-global-shared-view allocated)
+                      allocated
                       env
                       name-id
                       name)
@@ -38446,7 +38381,7 @@
                   (ir.CompilerIrInstr.Call
                     var-id
                     (lower-resolve-call-name-id-with-display
-                      (lower-global-shared-view allocated)
+                      allocated
                       env
                       name-id
                       name)
@@ -38479,7 +38414,7 @@
                             (ir.CompilerIrInstr.Call
                               var-id
                               (lower-resolve-call-name-id-with-display
-                                (lower-global-shared-view allocated)
+                                allocated
                                 env
                                 name-id
                                 name)
@@ -38516,7 +38451,7 @@
                         (ir.ir-instr-call-cabi-store-result
                           (lower-global-shared-view base)
                           (lower-resolve-call-name-id-with-display
-                            (lower-global-shared-view base-state)
+                            base-state
                             env
                             name-id
                             name)
@@ -38566,7 +38501,7 @@
                       (ir.CompilerIrInstr.Call
                         var-id
                         (lower-resolve-call-name-id-with-display
-                          (lower-global-shared-view allocated)
+                          allocated
                           env
                           name-id
                           name)
@@ -38598,7 +38533,7 @@
   [origin : ast.AstExpr]) : ResultLowerExpr
   (match (lower-c-abi-return-aggregate-class
     (lower-global-shared-view ctx)
-    (lower-state-mode (lower-global-shared-view state))
+    (lower-state-mode state)
     (lower-global-shared-view result-ty))
     [(LowerCAbiAggregate.Unsupported message)
       (ResultLowerExpr.Err (box (lower-diagnostic-at-expr ctx origin message)))]
@@ -39132,8 +39067,7 @@
   [result-ty : ast.AstType]
   [origin : ast.AstExpr]) : ResultLowerExpr
   (let
-    [mode : CompilerLowerMode
-      (lower-state-mode (lower-global-shared-view state))]
+    [mode : CompilerLowerMode (lower-state-mode state)]
     [result-class : LowerCAbiAggregate
       (lower-internal-return-class
         (lower-global-shared-view ctx)
@@ -39165,7 +39099,7 @@
                         (let
                           [callee : i64
                             (lower-resolve-call-name-id-with-display
-                              (lower-global-shared-view allocated)
+                              allocated
                               env
                               source-id
                               name)]
@@ -39200,7 +39134,7 @@
                     (let
                       [callee : i64
                         (lower-resolve-call-name-id-with-display
-                          (lower-global-shared-view allocated)
+                          allocated
                           env
                           source-id
                           name)]
@@ -39232,7 +39166,7 @@
                 (let
                   [callee : i64
                     (lower-resolve-call-name-id-with-display
-                      (lower-global-shared-view allocated)
+                      allocated
                       env
                       source-id
                       name)]
@@ -39270,8 +39204,7 @@
   [result-ty : ast.AstType]
   [origin : ast.AstExpr]) : ResultLowerExpr
   (let
-    [mode : CompilerLowerMode
-      (lower-state-mode (lower-global-shared-view state))]
+    [mode : CompilerLowerMode (lower-state-mode state)]
     [result-class : LowerCAbiAggregate
       (lower-internal-return-class
         (lower-global-shared-view ctx)
@@ -39378,7 +39311,7 @@
                 (lower-global-shared-view result-ty))]
             [callee : i64
               (lower-resolve-call-name-id-with-display
-                (lower-global-shared-view allocated)
+                allocated
                 env
                 source-id
                 name)]
@@ -39578,7 +39511,7 @@
       origin)
     (match (lower-lookup-type-id
       (lower-global-shared-view ctx)
-      (lower-state-type-cache (lower-global-shared-view state))
+      (lower-state-type-cache state)
       env
       type-env
       lookup-id)
@@ -39621,7 +39554,7 @@
               [(tc_core.ResultTcTypeList.Ok call-param-types)
                 (if (lower-c-abi-extern-call?
                   (lower-global-shared-view ctx)
-                  (lower-global-shared-view state)
+                  state
                   env
                   (if (>= lookup-id 0)
                     lookup-id
@@ -39642,7 +39575,7 @@
                     origin)
                   (if (lower-c-abi-extern-value-call?
                     (lower-global-shared-view ctx)
-                    (lower-global-shared-view state)
+                    state
                     env
                     (if (>= lookup-id 0)
                       lookup-id
@@ -40960,7 +40893,7 @@
     ;; stored value; indirect dispatch selects C code or a closure from its type.
     (match (lower-lookup-type-id
       (lower-global-shared-view ctx)
-      (lower-state-type-cache (lower-global-shared-view state))
+      (lower-state-type-cache state)
       env
       type-env
       lookup-name-id)
@@ -41080,7 +41013,7 @@
         [struct-handle : i64
           (lower-struct-constructor-handle-id-or
             (lower-global-shared-view ctx)
-            (lower-global-shared-view state)
+            state
             raw-name-id
             callable-lookup-id
             (lower-global-shared-view result-ty)
@@ -41219,7 +41152,7 @@
       [struct-handle : i64
         (lower-struct-constructor-handle-id-or
           (lower-global-shared-view ctx)
-          (lower-global-shared-view state)
+          state
           raw-name-id
           callable-lookup-id
           (lower-global-shared-view result-ty)
@@ -41607,8 +41540,7 @@
         (if (<=
           (lower-spmd-call-args-lanes
             (lower-global-shared-view ctx)
-            (lower-state-function-state
-              (lower-state-clone (lower-global-shared-view state)))
+            (lower-state-function-state (lower-state-clone state))
             (CompilerLowerMode.Avx512)
             env
             type-env
@@ -41632,8 +41564,7 @@
                 [call-args : ir.CompilerIrSpmdCallArgSeq
                   (lower-spmd-call-args-from-values
                     (lower-global-shared-view ctx)
-                    (lower-state-function-state
-                      (lower-global-shared-view args-state))
+                    (lower-state-function-state args-state)
                     env
                     type-env
                     (lower-global-shared-view index)
@@ -41654,8 +41585,7 @@
                     args)]
                 [imported-interns : ci.InternCompatState
                   (compiler-lower-state-interns
-                    (lower-state-owner
-                      (lower-state-clone (lower-global-shared-view args-state))))]
+                    (lower-state-owner (lower-state-clone args-state)))]
                 (match (lower-imported-spmd-select
                   (& imported-interns)
                   (tc_core.tc-context-pools (lower-global-shared-view ctx))
@@ -41724,12 +41654,12 @@
   [result-ty : ast.AstType]
   [origin : ast.AstExpr]) : LowerMaybeSpmdCall
   (match (compiler-lower-function-state-scalar-call-context
-    (lower-state-function-state (lower-global-shared-view state)))
+    (lower-state-function-state state))
     [(LowerSpmdScalarCallContext.No) (LowerMaybeSpmdCall.No)]
     [(LowerSpmdScalarCallContext.Some index)
       (match (lower-spmd-inline-helper-lookup
         (lower-global-shared-view ctx)
-        (lower-state-function-state (lower-global-shared-view state))
+        (lower-state-function-state state)
         env
         type-env
         (lower-id-set-empty)
@@ -41744,8 +41674,7 @@
                 (>
                   (lower-spmd-call-args-lanes
                     (lower-global-shared-view ctx)
-                    (lower-state-function-state
-                      (lower-global-shared-view state))
+                    (lower-state-function-state state)
                     (CompilerLowerMode.Avx512)
                     env
                     type-env
@@ -41769,8 +41698,7 @@
                           [call-args : ir.CompilerIrSpmdCallArgSeq
                             (lower-spmd-call-args-from-values
                               (lower-global-shared-view ctx)
-                              (lower-state-function-state
-                                (lower-global-shared-view named-state))
+                              (lower-state-function-state named-state)
                               env
                               type-env
                               (lower-global-shared-view index)
@@ -41779,17 +41707,14 @@
                               values)]
                           [helper-function-state : CompilerLowerFunctionState
                             (compiler-lower-function-state-new-with-stack
-                              (lower-state-owner
-                                (lower-global-shared-view named-state))
+                              (lower-state-owner named-state)
                               (compiler-lower-function-state-inline-helper-stack
-                                (lower-state-function-state
-                                  (lower-global-shared-view named-state))))]
+                                (lower-state-function-state named-state)))]
                           [result-varying : bool
                             (>
                               (lower-spmd-direct-call-result-lanes
                                 (lower-global-shared-view ctx)
-                                (lower-state-function-state
-                                  (lower-global-shared-view named-state))
+                                (lower-state-function-state named-state)
                                 (CompilerLowerMode.Avx512)
                                 env
                                 type-env
@@ -41801,8 +41726,7 @@
                           (match (lower-spmd-specialized-helper-function
                             (lower-global-shared-view ctx)
                             type-env
-                            (lower-state-type-cache
-                              (lower-global-shared-view named-state))
+                            (lower-state-type-cache named-state)
                             helper-function-state
                             hidden-name
                             params
@@ -41814,12 +41738,9 @@
                             1
                             ""
                             -1
-                            (lower-state-spans
-                              (lower-global-shared-view named-state))
-                            (lower-state-names
-                              (lower-global-shared-view named-state))
-                            (lower-state-mode
-                              (lower-global-shared-view named-state)))
+                            (lower-state-spans named-state)
+                            (lower-state-names named-state)
+                            (lower-state-mode named-state))
                             [(ResultLowerFunction.Ok functions helper-spans)
                               (match (lower-spmd-generated-helper-abi
                                 (lower-global-shared-view functions)
@@ -42072,14 +41993,13 @@
                       [lowered-name : String
                         (if hygiene-global
                           (match (lower-name-cache-lookup-id
-                            (lower-state-names (lower-global-shared-view state))
+                            (lower-state-names state)
                             source-key-id)
                             [(tc_core.TcMaybeString.Some logical-name)
                               logical-name]
                             [(tc_core.TcMaybeString.No)
                               (lower-hygiene-source-name-in-context-id
-                                (lower-state-owner
-                                  (lower-global-shared-view state))
+                                (lower-state-owner state)
                                 (lower-global-shared-view ctx)
                                 type-env
                                 raw-name)])
@@ -42398,7 +42318,7 @@
                             result-ty
                             origin)]
                         [(lower-comptime-error-source-or-lookup-id?
-                            (lower-state-owner (lower-global-shared-view state))
+                            (lower-state-owner state)
                             source-id
                             name-id)
                           (ResultLowerExpr.Err
@@ -42410,7 +42330,7 @@
                         [else
                           (match (lower-spmd-scalar-call-maybe
                             (lower-global-shared-view ctx)
-                            (lower-global-shared-view state)
+                            state
                             env
                             type-env
                             func
@@ -42491,8 +42411,8 @@
         (lower-global-shared-view ctx)
         env
         type-env
-        (lower-state-type-cache (lower-global-shared-view state))
-        (lower-state-function-state (lower-global-shared-view state))
+        (lower-state-type-cache state)
+        (lower-state-function-state state)
         (lower-global-shared-view arr))
         [(tc_core.ResultTcType.Ok arr-ty)
           (lower-array-length-with-type
@@ -43800,7 +43720,7 @@
     [array-ty : ast.AstType (ast.ast-ty-dyn-array elem-ty)]
     (match (lower-expr
       (lower-global-shared-view ctx)
-      (lower-global-shared-view state)
+      state
       env
       type-env
       (lower-global-shared-view storage))
@@ -43888,8 +43808,8 @@
             (lower-global-shared-view ctx)
             env
             type-env
-            (lower-state-type-cache (lower-global-shared-view arr-state))
-            (lower-state-function-state (lower-global-shared-view arr-state))
+            (lower-state-type-cache arr-state)
+            (lower-state-function-state arr-state)
             (lower-global-shared-view index))
             [(tc_core.ResultTcType.Ok idx-ty)
               (match (lower-expr-expected
@@ -45225,8 +45145,8 @@
     (lower-global-shared-view ctx)
     env
     type-env
-    (lower-state-type-cache (lower-global-shared-view state))
-    (lower-state-function-state (lower-global-shared-view state))
+    (lower-state-type-cache state)
+    (lower-state-function-state state)
     (lower-global-shared-view array))
     [(tc_core.ResultTcType.Ok array-ty)
       (match (tc_core.tc-array-set-receiver
@@ -45438,8 +45358,8 @@
     (lower-global-shared-view ctx)
     env
     type-env
-    (lower-state-type-cache (lower-global-shared-view state))
-    (lower-state-function-state (lower-global-shared-view state))
+    (lower-state-type-cache state)
+    (lower-state-function-state state)
     (lower-global-shared-view array))
     [(tc_core.ResultTcType.Ok array-ty)
       (match (tc_core.tc-fixed-array-take-receiver
@@ -45467,10 +45387,8 @@
                           (lower-global-shared-view ctx)
                           env
                           type-env
-                          (lower-state-type-cache
-                            (lower-global-shared-view array-state))
-                          (lower-state-function-state
-                            (lower-global-shared-view array-state))
+                          (lower-state-type-cache array-state)
+                          (lower-state-function-state array-state)
                           (lower-global-shared-view index))
                           [(tc_core.ResultTcType.Ok index-ty)
                             (match (lower-expr-expected
@@ -45546,8 +45464,8 @@
     (lower-global-shared-view ctx)
     env
     type-env
-    (lower-state-type-cache (lower-global-shared-view state))
-    (lower-state-function-state (lower-global-shared-view state))
+    (lower-state-type-cache state)
+    (lower-state-function-state state)
     (lower-global-shared-view arr))
     [(tc_core.ResultTcType.Ok arr-ty)
       (match (tc_core.tc-array-readable-receiver
@@ -45572,10 +45490,8 @@
                           (lower-global-shared-view ctx)
                           env
                           type-env
-                          (lower-state-type-cache
-                            (lower-global-shared-view arr-state))
-                          (lower-state-function-state
-                            (lower-global-shared-view arr-state))
+                          (lower-state-type-cache arr-state)
+                          (lower-state-function-state arr-state)
                           (lower-global-shared-view index))
                           [(tc_core.ResultTcType.Ok idx-ty)
                             (match (lower-expr-expected
@@ -46045,7 +45961,7 @@
                 place-ty)))])
       (ResultLowerExpr.Ok
         (LowerExpr.Expr
-          (lower-global-shared-view state)
+          state
           (ir.CompilerIrValue.GlobalAddr
             (lower-resolve-name-symbol-id state name))
           place-ty)))))
@@ -46059,7 +45975,7 @@
   [origin : ast.AstExpr]) : ResultLowerExpr
   (match (lower-lookup-type-id
     (lower-global-shared-view ctx)
-    (lower-state-type-cache (lower-global-shared-view state))
+    (lower-state-type-cache state)
     env
     type-env
     name)
@@ -46235,8 +46151,8 @@
     (lower-global-shared-view ctx)
     env
     type-env
-    (lower-state-type-cache (lower-global-shared-view state))
-    (lower-state-function-state (lower-global-shared-view state))
+    (lower-state-type-cache state)
+    (lower-state-function-state state)
     (lower-global-shared-view arr))
     [(tc_core.ResultTcType.Ok arr-ty)
       (match (tc_core.tc-array-set-receiver
@@ -46355,8 +46271,8 @@
           (lower-global-shared-view ctx)
           env
           type-env
-          (lower-state-type-cache (lower-global-shared-view state))
-          (lower-state-function-state (lower-global-shared-view state))
+          (lower-state-type-cache state)
+          (lower-state-function-state state)
           (lower-global-shared-view box-expr))
           [(tc_core.ResultTcType.Ok box-ty)
             (match (tc_core.tc-box-set-inner-type
@@ -46386,8 +46302,8 @@
           (lower-global-shared-view ctx)
           env
           type-env
-          (lower-state-type-cache (lower-global-shared-view state))
-          (lower-state-function-state (lower-global-shared-view state))
+          (lower-state-type-cache state)
+          (lower-state-function-state state)
           (lower-global-shared-view receiver))
           [(tc_core.ResultTcType.Ok receiver-ty)
             (match (tc_core.tc-box-set-inner-type
@@ -46463,7 +46379,7 @@
     0)
     (match (lower-direct-store-rhs-into
       (lower-global-shared-view ctx)
-      (lower-global-shared-view state)
+      state
       env
       type-env
       (lower-global-shared-view dst)
@@ -46524,8 +46440,8 @@
     (lower-global-shared-view ctx)
     env
     type-env
-    (lower-state-type-cache (lower-global-shared-view state))
-    (lower-state-function-state (lower-global-shared-view state))
+    (lower-state-type-cache state)
+    (lower-state-function-state state)
     (lower-global-shared-view box-expr))
     [(tc_core.ResultTcType.Ok box-ty)
       (match (tc_core.tc-box-set-inner-type
@@ -46910,8 +46826,8 @@
     (lower-global-shared-view ctx)
     env
     type-env
-    (lower-state-type-cache (lower-global-shared-view state))
-    (lower-state-function-state (lower-global-shared-view state))
+    (lower-state-type-cache state)
+    (lower-state-function-state state)
     (lower-global-shared-view receiver))
     [(tc_core.ResultTcType.Ok receiver-ty)
       (if (ast.ast-tuple-set-field-id? field-id)
@@ -47021,8 +46937,8 @@
     (lower-global-shared-view ctx)
     env
     type-env
-    (lower-state-type-cache (lower-global-shared-view state))
-    (lower-state-function-state (lower-global-shared-view state))
+    (lower-state-type-cache state)
+    (lower-state-function-state state)
     (lower-global-shared-view arr))
     [(tc_core.ResultTcType.Ok arr-ty)
       (match (tc_core.tc-array-set-receiver
@@ -47047,10 +46963,8 @@
                           (lower-global-shared-view ctx)
                           env
                           type-env
-                          (lower-state-type-cache
-                            (lower-global-shared-view arr-state))
-                          (lower-state-function-state
-                            (lower-global-shared-view arr-state))
+                          (lower-state-type-cache arr-state)
+                          (lower-state-function-state arr-state)
                           (lower-global-shared-view index))
                           [(tc_core.ResultTcType.Ok idx-ty)
                             (match (lower-expr-expected
@@ -47069,8 +46983,7 @@
                                       idx-value-ty)
                                     (match (lower-array-set-direct-store
                                       (lower-global-shared-view ctx)
-                                      (lower-state-clone
-                                        (lower-global-shared-view idx-state))
+                                      (lower-state-clone idx-state)
                                       env
                                       type-env
                                       (lower-global-shared-view arr)
@@ -47413,8 +47326,8 @@
     (lower-global-shared-view ctx)
     env
     type-env
-    (lower-state-type-cache (lower-global-shared-view state))
-    (lower-state-function-state (lower-global-shared-view state))
+    (lower-state-type-cache state)
+    (lower-state-function-state state)
     (lower-global-shared-view arr))
     [(tc_core.ResultTcType.Ok arr-ty)
       (match (tc_core.tc-array-push-receiver
@@ -47810,7 +47723,7 @@
                                   [hidden-name-id : i64
                                     (cis.intern-lower-private-identity-raw
                                       (lower-cleanup-hidden-name-id
-                                        (lower-global-shared-view allocated)
+                                        allocated
                                         var-id))]
                                   [bound-state : LowerState
                                     (lower-state-emit
@@ -47829,7 +47742,7 @@
                                       var-id)]
                                   [bound-type-env : tc_core.TcTypeEnv
                                     (lower-type-env-push-cleanup
-                                      (lower-global-shared-view bound-state)
+                                      bound-state
                                       (tc_core.tc-bind-id
                                         type-env
                                         name
@@ -47843,13 +47756,11 @@
                                           [live-name-id : i64
                                             (cis.intern-lower-private-identity-raw
                                               (lower-cleanup-live-name-id
-                                                (lower-global-shared-view
-                                                  live-state)
+                                                live-state
                                                 var-id))]
                                           [move-aware-type-env : tc_core.TcTypeEnv
                                             (lower-type-env-push-move-aware-cleanup
-                                              (lower-global-shared-view
-                                                live-state)
+                                              live-state
                                               (tc_core.tc-bind-id
                                                 type-env
                                                 name
@@ -48061,9 +47972,7 @@
       (let
         [hidden-name-id : i64
           (cis.intern-lower-private-identity-raw
-            (lower-region-hidden-name-id
-              (lower-global-shared-view mark-allocated)
-              mark-var))]
+            (lower-region-hidden-name-id mark-allocated mark-var))]
         [marked-state : LowerState
           (lower-state-emit
             mark-allocated
@@ -48076,7 +47985,7 @@
           (sym_i64_env.sym-i64-bind-id env hidden-name-id mark-var)]
         [region-type-env : tc_core.TcTypeEnv
           (lower-type-env-push-region-reset
-            (lower-global-shared-view marked-state)
+            marked-state
             type-env
             hidden-name-id)]
         (match (lower-begin ctx marked-state region-env region-type-env body)
@@ -48175,7 +48084,7 @@
                           [hidden-name-id : i64
                             (cis.intern-lower-private-identity-raw
                               (lower-arena-restore-hidden-name-id
-                                (lower-global-shared-view set-state)
+                                set-state
                                 saved-var))]
                           [body-env : sym_i64_env.SymI64Env
                             (sym_i64_env.sym-i64-bind-id
@@ -48184,7 +48093,7 @@
                               saved-var)]
                           [body-type-env : tc_core.TcTypeEnv
                             (lower-type-env-push-arena-restore
-                              (lower-global-shared-view set-state)
+                              set-state
                               type-env
                               hidden-name-id)]
                           (match (lower-begin
@@ -48556,8 +48465,7 @@
   [merge-label : i64]
   [expr-ty : ast.AstType]) : ResultLowerExpr
   (let
-    [else-end-label : i64
-      (lower-state-current-label (lower-global-shared-view else-state))]
+    [else-end-label : i64 (lower-state-current-label else-state)]
     [expr-ir-ty : ast.AstType
       (lower-one-word-register-storage-type
         ctx
@@ -48686,8 +48594,7 @@
       (match then-lowered
         [(LowerExpr.Expr then-state then-value then-ty)
           (let
-            [then-end-label : i64
-              (lower-state-current-label (lower-global-shared-view then-state))]
+            [then-end-label : i64 (lower-state-current-label then-state)]
             [else-start : LowerState
               (if (tc_core.tc-never-type? (lower-global-shared-view then-ty))
                 (lower-state-finish-block then-state else-label)
@@ -48767,14 +48674,12 @@
   [type-env : tc_core.TcTypeEnv]
   [cond : ast.AstExpr]
   [body : ast.AstExpr]) : ResultLowerExpr
-  (match (lower-state-fresh-label
-    (lower-state-clone (lower-global-shared-view state))
-    "while_header")
+  (match (lower-state-fresh-label (lower-state-clone state) "while_header")
     [(LowerLabel.Label header-label-state header-label)
       (match (lower-state-fresh-label header-label-state "while_body")
         [(LowerLabel.Label body-label-state body-label)
           (match (lower-state-fresh-label
-            (lower-state-clone (lower-global-shared-view body-label-state))
+            (lower-state-clone body-label-state)
             "while_exit")
             [(LowerLabel.Label exit-label-state exit-label)
               (let
@@ -48811,12 +48716,12 @@
                               type-env
                               (cis.intern-lower-private-identity-raw
                                 (lower-while-exit-label-id
-                                  (lower-global-shared-view body-label-state)
+                                  body-label-state
                                   (lower-state-next-label-number
                                     body-label-state)))
                               (cis.intern-lower-private-identity-raw
                                 (lower-while-header-label-id
-                                  (lower-global-shared-view state)
+                                  state
                                   (lower-state-next-label-number state))))
                             body)
                             [(ResultLowerExpr.Ok body-lowered)
@@ -48848,23 +48753,20 @@
   [cond : ast.AstExpr]
   [body : ast.AstExpr]) : ResultLowerExpr
   (let
-    [lower-state : CompilerLowerState
-      (lower-state-owner (lower-global-shared-view state))]
-    [previous-function : i64
-      (lower-state-active-loop-function (lower-global-shared-view state))]
-    [previous-var-limit : i64
-      (lower-state-active-loop-entry-var-limit (lower-global-shared-view state))]
+    [lower-state : CompilerLowerState (lower-state-owner state)]
+    [previous-function : i64 (lower-state-active-loop-function state)]
+    [previous-var-limit : i64 (lower-state-active-loop-entry-var-limit state)]
     (begin
       (compiler-lower-state-write!
         lower-state
         i64
         active-loop-function
-        (lower-state-current-function-id (lower-global-shared-view state)))
+        (lower-state-current-function-id state))
       (compiler-lower-state-write!
         lower-state
         i64
         active-loop-entry-var-limit
-        (lower-state-next-var (lower-global-shared-view state)))
+        (lower-state-next-var state))
       (let
         [result : ResultLowerExpr
           (lower-while-active ctx state env type-env cond body)]
@@ -48912,8 +48814,7 @@
   [value : i64]) : i64
   (let
     [acc-id : i64
-      (cis.intern-lower-private-identity-raw
-        (lower-spmd-reduce-acc-id (lower-global-shared-view state)))]
+      (cis.intern-lower-private-identity-raw (lower-spmd-reduce-acc-id state))]
     [value-id : i64
       (cis.intern-lower-private-identity-raw (lower-spmd-reduce-val-id state))]
     (ast.ast-expr-let-with-pools
@@ -49342,17 +49243,14 @@
     [pools : ast.AstNodePoolContext
       (tc_core.tc-context-pools (lower-global-shared-view ctx))]
     [acc-name-id : i64
-      (cis.intern-lower-private-identity-raw
-        (lower-spmd-reduce-acc-id (lower-global-shared-view state)))]
+      (cis.intern-lower-private-identity-raw (lower-spmd-reduce-acc-id state))]
     [end-name-id : i64
-      (cis.intern-lower-private-identity-raw
-        (lower-spmd-reduce-end-id (lower-global-shared-view state)))]
+      (cis.intern-lower-private-identity-raw (lower-spmd-reduce-end-id state))]
     [start-name-id : i64
-      (cis.intern-lower-private-identity-raw
-        (lower-spmd-reduce-start-id (lower-global-shared-view state)))]
+      (cis.intern-lower-private-identity-raw (lower-spmd-reduce-start-id state))]
     [uniform-name-id : i64
       (cis.intern-lower-private-identity-raw
-        (lower-spmd-reduce-uniform-id (lower-global-shared-view state)))]
+        (lower-spmd-reduce-uniform-id state))]
     [loop-id : i64
       (ast.ast-expr-while-with-pools
         (lower-global-shared-view pools)
@@ -49532,26 +49430,26 @@
           (match split
             [(LowerMaybeReduceSplit.Split x-id _)
               (spmd-reduce-acc-binop-update
-                (lower-global-shared-view state)
+                state
                 (tc_core.tc-context-pools (lower-global-shared-view ctx))
                 (ast.AstBinOp.Add)
                 x-id)]
             [_
               (spmd-reduce-acc-update-expr
-                (lower-global-shared-view state)
+                state
                 (tc_core.tc-context-pools (lower-global-shared-view ctx))
                 op
                 (lower-context-expr-push
                   (lower-global-shared-view ctx)
                   (lower-global-shared-view value)))])]
         (if (and
-          (lower-mode-simd? (lower-state-mode (lower-global-shared-view state)))
+          (lower-mode-simd? (lower-state-mode state))
           (lower-type-i64? (lower-global-shared-view index-ty)))
           (let
             [plan : LowerMaybeVectorReduce
               (lower-simple-vector-reduce
                 (lower-global-shared-view ctx)
-                (lower-state-mode (lower-global-shared-view state))
+                (lower-state-mode state)
                 env
                 type-env
                 op
@@ -49586,8 +49484,8 @@
               [(LowerMaybeVectorReduce.No)
                 (match (lower-spmd-numeric-failure
                   (lower-global-shared-view ctx)
-                  (lower-state-function-state (lower-global-shared-view state))
-                  (lower-state-mode (lower-global-shared-view state))
+                  (lower-state-function-state state)
+                  (lower-state-mode state)
                   env
                   (tc_core.tc-bind-id
                     type-env
@@ -49657,8 +49555,7 @@
   [value : i64]) : i64
   (let
     [acc-id : i64
-      (cis.intern-lower-private-identity-raw
-        (lower-spmd-scan-acc-id (lower-global-shared-view state)))]
+      (cis.intern-lower-private-identity-raw (lower-spmd-scan-acc-id state))]
     [value-id : i64
       (cis.intern-lower-private-identity-raw (lower-spmd-scan-val-id state))]
     (ast.ast-expr-let-with-pools
@@ -49719,11 +49616,9 @@
     [pools : ast.AstNodePoolContext
       (tc_core.tc-context-pools (lower-global-shared-view ctx))]
     [acc-name-id : i64
-      (cis.intern-lower-private-identity-raw
-        (lower-spmd-scan-acc-id (lower-global-shared-view state)))]
+      (cis.intern-lower-private-identity-raw (lower-spmd-scan-acc-id state))]
     [end-name-id : i64
-      (cis.intern-lower-private-identity-raw
-        (lower-spmd-scan-end-id (lower-global-shared-view state)))]
+      (cis.intern-lower-private-identity-raw (lower-spmd-scan-end-id state))]
     (lower-expr
       (lower-global-shared-view ctx)
       state
@@ -49828,7 +49723,7 @@
   (let
     [scalar-prefix : i64
       (spmd-scan-prefix-expr
-        (lower-global-shared-view state)
+        state
         (tc_core.tc-context-pools (lower-global-shared-view ctx))
         op
         (lower-context-expr-push
@@ -49837,7 +49732,7 @@
     [vector-plan : LowerMaybeVectorScan
       (lower-simple-vector-scan
         (lower-global-shared-view ctx)
-        (lower-state-mode (lower-global-shared-view state))
+        (lower-state-mode state)
         env
         type-env
         op
@@ -49847,7 +49742,7 @@
         (lower-global-shared-view value)
         (lower-global-shared-view body))]
     (if (and
-      (lower-mode-simd? (lower-state-mode (lower-global-shared-view state)))
+      (lower-mode-simd? (lower-state-mode state))
       (lower-type-i64? (lower-global-shared-view index-ty)))
       (match (lower-global-shared-view vector-plan)
         [(LowerMaybeVectorScan.Scan _ _ _ _ _)
@@ -49921,11 +49816,9 @@
     [pools : ast.AstNodePoolContext
       (tc_core.tc-context-pools (lower-global-shared-view ctx))]
     [cursor-id : i64
-      (cis.intern-lower-private-identity-raw
-        (lower-spmd-scan-acc-id (lower-global-shared-view state)))]
+      (cis.intern-lower-private-identity-raw (lower-spmd-scan-acc-id state))]
     [end-id : i64
-      (cis.intern-lower-private-identity-raw
-        (lower-spmd-scan-end-id (lower-global-shared-view state)))]
+      (cis.intern-lower-private-identity-raw (lower-spmd-scan-end-id state))]
     [zero-id : i64
       (ast.ast-node-pool-context-expr-push
         (lower-global-shared-view pools)
@@ -50113,7 +50006,7 @@
   [type-env : tc_core.TcTypeEnv]
   [value : ast.AstExpr]
   [lane : ast.AstExpr]) : ResultLowerExpr
-  (if (lower-mode-simd? (lower-state-mode (lower-global-shared-view state)))
+  (if (lower-mode-simd? (lower-state-mode state))
     (ResultLowerExpr.Err
       (box (lower-diagnostic (lower-spmd-shuffle-diagnostic))))
     (match (lower-expr-expected
@@ -57336,9 +57229,7 @@
 (define (lower-sequence-data-pointer-value
   [state : LowerState]
   [sequence-var : i64]) : LowerExpr
-  (match (lower-masked-preheader-array-data-get
-    (lower-global-shared-view state)
-    sequence-var)
+  (match (lower-masked-preheader-array-data-get state sequence-var)
     [(LowerMaybeIrValue.Some data-ptr)
       (LowerExpr.Expr state data-ptr (ast.AstType.U64))]
     [(LowerMaybeIrValue.No)
@@ -57641,20 +57532,18 @@
   [lanes : i64]
   [elem-ty : ast.AstType]) : LowerExpr
   (match (lower-masked-preheader-uniform-get
-    (lower-global-shared-view state)
+    state
     (lower-global-shared-view value)
     (lower-global-shared-view elem-ty))
     [(LowerMaybeIrValue.Some cached) (LowerExpr.Expr state cached elem-ty)]
     [(LowerMaybeIrValue.No)
-      (if (lower-masked-preheader-uniform-can-add?
-        (lower-global-shared-view state))
+      (if (lower-masked-preheader-uniform-can-add? state)
         (match (lower-state-alloc-var state)
           [(LowerAlloc.Alloc next-state vector-var)
             (let
               [vector : ir.CompilerIrValue (ir.CompilerIrValue.Var vector-var)]
               (begin
-                (match (lower-state-masked-preheader-cache
-                  (lower-global-shared-view next-state))
+                (match (lower-state-masked-preheader-cache next-state)
                   [(LowerMaybeMaskedPreheaderCache.Some cache)
                     (ir.compiler-ir-instr-builder-push!
                       (&mut
@@ -57668,7 +57557,7 @@
                         (lower-global-shared-view elem-ty)))]
                   [(LowerMaybeMaskedPreheaderCache.No) unit])
                 (lower-masked-preheader-uniform-add!
-                  (lower-global-shared-view next-state)
+                  next-state
                   value
                   (lower-global-shared-view elem-ty)
                   (lower-global-shared-view vector))
@@ -57788,7 +57677,7 @@
     [continue-label : i64 (ir.compiler-ir-label-none)]
     (begin
       (match (lower-emit-splat
-        (lower-global-shared-view s)
+        s
         (ir.CompilerIrValue.I64 0)
         lanes
         (lower-global-shared-view count-ty))
@@ -57797,7 +57686,7 @@
             (set! s next-s)
             (set! zero value))])
       (match (lower-emit-splat
-        (lower-global-shared-view s)
+        s
         (ir.CompilerIrValue.I64
           (lower-spmd-shift-width (lower-global-shared-view lane-ty)))
         lanes
@@ -57808,7 +57697,7 @@
             (set! width value))])
       (match (if (lower-type-signed? (lower-global-shared-view count-ty))
         (lower-emit-vector-compare
-          (lower-global-shared-view s)
+          s
           (ir.CompilerIrBinOp.Lt)
           (lower-global-shared-view right-value)
           zero
@@ -57817,7 +57706,7 @@
         ;; Unsigned counts cannot be negative. Materialize an all-false mask
         ;; without relying on the backend's signed/unsigned compare expansion.
         (lower-emit-vector-compare
-          (lower-global-shared-view s)
+          s
           (ir.CompilerIrBinOp.Ne)
           (lower-global-shared-view zero)
           zero
@@ -57828,7 +57717,7 @@
             (set! s next-s)
             (set! negative value))])
       (match (lower-emit-vector-compare
-        (lower-global-shared-view s)
+        s
         (ir.CompilerIrBinOp.Ge)
         (lower-global-shared-view right-value)
         width
@@ -57839,7 +57728,7 @@
             (set! s next-s)
             (set! too-large value))])
       (match (lower-emit-mask-binop
-        (lower-global-shared-view s)
+        s
         (ir.CompilerIrMaskBinOp.Or)
         negative
         too-large
@@ -57851,7 +57740,7 @@
       (match active-mask
         [(ir.CompilerIrMaybeValue.Some mask)
           (match (lower-emit-mask-binop
-            (lower-global-shared-view s)
+            s
             (ir.CompilerIrMaskBinOp.And)
             invalid
             mask
@@ -57862,7 +57751,7 @@
                 (set! active-invalid value))])]
         [(ir.CompilerIrMaybeValue.No) (set! active-invalid invalid)])
       (match (lower-emit-mask-reduce
-        (lower-global-shared-view s)
+        s
         (ir.CompilerIrMaskReduceOp.Any)
         active-invalid
         lanes)
@@ -57870,16 +57759,12 @@
           (begin
             (set! s next-s)
             (set! any-invalid value))])
-      (match (lower-state-fresh-label
-        (lower-global-shared-view s)
-        "spmd_shift_abort")
+      (match (lower-state-fresh-label s "spmd_shift_abort")
         [(LowerLabel.Label next-s label)
           (begin
             (set! s next-s)
             (set! abort-label label))])
-      (match (lower-state-fresh-label
-        (lower-global-shared-view s)
-        "spmd_shift_continue")
+      (match (lower-state-fresh-label s "spmd_shift_continue")
         [(LowerLabel.Label next-s label)
           (begin
             (set! s next-s)
@@ -57936,7 +57821,7 @@
     [else-bits : ir.CompilerIrValue ir.CompilerIrValue.Unit]
     (begin
       (match (lower-emit-mask-binop
-        (lower-global-shared-view s)
+        s
         (ir.CompilerIrMaskBinOp.And)
         then-mask
         then-value
@@ -57946,7 +57831,7 @@
             (set! s next-s)
             (set! then-bits value))])
       (match (lower-emit-mask-binop
-        (lower-global-shared-view s)
+        s
         (ir.CompilerIrMaskBinOp.And)
         else-mask
         else-value
@@ -58014,17 +57899,13 @@
     [different-bits : ir.CompilerIrValue ir.CompilerIrValue.Unit]
     [selected-bits : ir.CompilerIrValue ir.CompilerIrValue.Unit]
     (begin
-      (match (lower-emit-cast
-        (lower-global-shared-view s)
-        condition
-        (ast.AstType.Bool)
-        (ast.AstType.I64))
+      (match (lower-emit-cast s condition (ast.AstType.Bool) (ast.AstType.I64))
         [(LowerExpr.Expr next-s value _)
           (begin
             (set! s next-s)
             (set! condition-i64 value))])
       (match (lower-emit-binop
-        (lower-global-shared-view s)
+        s
         (ir.CompilerIrBinOp.Sub)
         (ir.CompilerIrValue.I64 0)
         condition-i64
@@ -58034,7 +57915,7 @@
             (set! s next-s)
             (set! mask value))])
       (match (lower-emit-binop
-        (lower-global-shared-view s)
+        s
         (ir.CompilerIrBinOp.BitXor)
         on-true
         (lower-global-shared-view on-false)
@@ -58044,7 +57925,7 @@
             (set! s next-s)
             (set! different-bits value))])
       (match (lower-emit-binop
-        (lower-global-shared-view s)
+        s
         (ir.CompilerIrBinOp.BitAnd)
         different-bits
         mask
@@ -58105,7 +57986,7 @@
           [candidate : ir.CompilerIrValue ir.CompilerIrValue.Unit]
           (begin
             (match (lower-vector-loop-i64-compare
-              (lower-global-shared-view s)
+              s
               (ir.CompilerIrBinOp.Ge)
               (lower-global-shared-view array-len)
               (ir.CompilerIrValue.I64 offset))
@@ -58114,7 +57995,7 @@
                   (set! s next-s)
                   (set! offset-valid value))])
             (match (lower-emit-binop
-              (lower-global-shared-view s)
+              s
               (ir.CompilerIrBinOp.Sub)
               array-len
               (ir.CompilerIrValue.I64 offset)
@@ -58155,7 +58036,7 @@
           ;; header's index + lanes calculation cannot overflow after a
           ;; successful gang.
           (match (lower-vector-loop-min
-            (lower-global-shared-view s)
+            s
             (ir.CompilerIrValue.Var end-var)
             (ir.CompilerIrValue.I64 (- 9223372036854775807 lanes)))
             [(LowerExpr.Expr next-s value _)
@@ -58165,7 +58046,7 @@
           (while (< index count)
             (begin
               (match (lower-vector-loop-array-limit
-                (lower-global-shared-view s)
+                s
                 (array-ref arrays.vars index)
                 (array-ref arrays.offsets index))
                 [(LowerExpr.Expr array-state array-limit _)
@@ -58261,16 +58142,15 @@
   [value-var : i64]) : ResultLowerExpr
   (let
     [acc-name-id : i64
-      (cis.intern-lower-private-identity-raw
-        (lower-spmd-reduce-acc-id (lower-global-shared-view state)))]
+      (cis.intern-lower-private-identity-raw (lower-spmd-reduce-acc-id state))]
     [current-name-id : i64
       (cis.intern-lower-private-identity-raw
-        (lower-spmd-reduce-current-id (lower-global-shared-view state)))]
+        (lower-spmd-reduce-current-id state))]
     [pools : ast.AstNodePoolContext
       (tc_core.tc-context-pools (lower-global-shared-view ctx))]
     (lower-expr
       (lower-global-shared-view ctx)
-      (lower-global-shared-view state)
+      state
       (sym_i64_env.sym-i64-bind-id
         (sym_i64_env.sym-i64-bind-id env acc-name-id acc-var)
         current-name-id
@@ -58644,7 +58524,7 @@
           (match (lower-global-shared-view scalar-value)
             [(ir.CompilerIrValue.Var var) (set! value-var var)]
             [_
-              (match (lower-state-alloc-var (lower-global-shared-view s))
+              (match (lower-state-alloc-var s)
                 [(LowerAlloc.Alloc alloc-state tmp-var)
                   (begin
                     (set!
@@ -58710,7 +58590,7 @@
       (if (lower-type-bool? (lower-global-shared-view elem-ty))
         (begin
           (match (lower-emit-tail-mask
-            (lower-global-shared-view s)
+            s
             (ir.CompilerIrValue.Var index-var)
             (lower-global-shared-view next-index)
             lanes)
@@ -58719,7 +58599,7 @@
                 (set! s next-s)
                 (set! full-mask value))])
           (match (lower-emit-sequence-predicated-load
-            (lower-global-shared-view s)
+            s
             input-var
             (ir.CompilerIrValue.Var index-var)
             (lower-global-shared-view full-mask)
@@ -58730,7 +58610,7 @@
                 (set! s next-s)
                 (set! chunk value))]))
         (match (lower-emit-sequence-vector-load
-          (lower-global-shared-view s)
+          s
           input-var
           (ir.CompilerIrValue.Var index-var)
           lanes
@@ -58739,7 +58619,7 @@
             (begin
               (set! s next-s)
               (set! chunk value))]))
-      (match (lower-state-alloc-var (lower-global-shared-view s))
+      (match (lower-state-alloc-var s)
         [(LowerAlloc.Alloc next-s prefix-var)
           (begin
             (set!
@@ -58775,7 +58655,7 @@
             lanes
             (lower-global-shared-view elem-ty))))
       (match (lower-emit-binop
-        (lower-global-shared-view s)
+        s
         ir.CompilerIrBinOp.Sub
         (lower-global-shared-view next-index)
         (ir.CompilerIrValue.I64 1)
@@ -58787,9 +58667,7 @@
       ;; `vector-limit` already proves the whole output gang is in bounds.
       ;; Reload the stored final lane through its raw data pointer so carry
       ;; handoff does not add a redundant scalar bounds-check block.
-      (match (lower-sequence-data-pointer-value
-        (lower-global-shared-view s)
-        output-var)
+      (match (lower-sequence-data-pointer-value s output-var)
         [(LowerExpr.Expr data-state data-ptr _)
           (match (lower-emit-elem-addr-gep
             ctx
@@ -58859,7 +58737,7 @@
                 (match (lower-global-shared-view value-ir)
                   [(ir.CompilerIrValue.Var var) (set! value-var var)]
                   [_
-                    (match (lower-state-alloc-var (lower-global-shared-view s))
+                    (match (lower-state-alloc-var s)
                       [(LowerAlloc.Alloc alloc-state var)
                         (begin
                           (set! value-var var)
@@ -58982,46 +58860,36 @@
             [tail-cond : ir.CompilerIrValue ir.CompilerIrValue.Unit]
             (begin
               (match (lower-state-fresh-label
-                (lower-global-shared-view s)
-                (lower-spmd-scan-vector-label
-                  (lower-global-shared-view s)
-                  "header"))
+                s
+                (lower-spmd-scan-vector-label s "header"))
                 [(LowerLabel.Label next-s label)
                   (begin
                     (set! s next-s)
                     (set! header-label label))])
               (match (lower-state-fresh-label
-                (lower-global-shared-view s)
-                (lower-spmd-scan-vector-label
-                  (lower-global-shared-view s)
-                  "body"))
+                s
+                (lower-spmd-scan-vector-label s "body"))
                 [(LowerLabel.Label next-s label)
                   (begin
                     (set! s next-s)
                     (set! body-label label))])
-              (match (lower-state-fresh-label
-                (lower-global-shared-view s)
-                "spmd_scan_tail_header")
+              (match (lower-state-fresh-label s "spmd_scan_tail_header")
                 [(LowerLabel.Label next-s label)
                   (begin
                     (set! s next-s)
                     (set! tail-header-label label))])
-              (match (lower-state-fresh-label
-                (lower-global-shared-view s)
-                "spmd_scan_tail_body")
+              (match (lower-state-fresh-label s "spmd_scan_tail_body")
                 [(LowerLabel.Label next-s label)
                   (begin
                     (set! s next-s)
                     (set! tail-body-label label))])
-              (match (lower-state-fresh-label
-                (lower-global-shared-view s)
-                "spmd_scan_exit")
+              (match (lower-state-fresh-label s "spmd_scan_exit")
                 [(LowerLabel.Label next-s label)
                   (begin
                     (set! s next-s)
                     (set! exit-label label))])
               (match (lower-vector-loop-limit
-                (lower-global-shared-view s)
+                s
                 (lower-global-shared-view end-value)
                 arrays
                 lanes)
@@ -59029,10 +58897,7 @@
                   (begin
                     (set! s next-s)
                     (set! vector-limit limit))])
-              (match (lower-vector-loop-start-ok
-                (lower-global-shared-view s)
-                index-var
-                lanes)
+              (match (lower-vector-loop-start-ok s index-var lanes)
                 [(LowerExpr.Expr next-s ok _)
                   (begin
                     (set! s next-s)
@@ -59048,7 +58913,7 @@
                       tail-header-label))
                   header-label))
               (match (lower-emit-binop
-                (lower-global-shared-view s)
+                s
                 ir.CompilerIrBinOp.Add
                 (ir.CompilerIrValue.Var index-var)
                 (ir.CompilerIrValue.I64 lanes)
@@ -59058,7 +58923,7 @@
                     (set! s next-s)
                     (set! next-index value-ir))])
               (match (lower-vector-loop-next-ok
-                (lower-global-shared-view s)
+                s
                 (lower-global-shared-view next-index)
                 vector-limit)
                 [(LowerExpr.Expr next-s ok _)
@@ -59077,7 +58942,7 @@
                   body-label))
               (match (lower-spmd-scan-vector-body
                 (lower-global-shared-view ctx)
-                (lower-global-shared-view s)
+                s
                 index-var
                 next-index
                 acc-var
@@ -59095,7 +58960,7 @@
                         (ir.CompilerIrInstr.Jump header-label))
                       tail-header-label))])
               (match (lower-vector-loop-i64-compare
-                (lower-global-shared-view s)
+                s
                 ir.CompilerIrBinOp.Lt
                 (ir.CompilerIrValue.Var index-var)
                 end-value)
@@ -59265,7 +59130,7 @@
             (begin
               (if (lower-spmd-reduce-vector-accumulator?
                 (lower-global-shared-view elem-ty))
-                (match (lower-state-alloc-var (lower-global-shared-view s))
+                (match (lower-state-alloc-var s)
                   [(LowerAlloc.Alloc next-s var)
                     (begin
                       (set! vector-acc-var var)
@@ -59281,53 +59146,41 @@
                             lanes
                             (lower-global-shared-view elem-ty)))))])
                 unit)
-              (match (lower-state-fresh-label
-                (lower-global-shared-view s)
-                "spmd_reduce_avx2_header")
+              (match (lower-state-fresh-label s "spmd_reduce_avx2_header")
                 [(LowerLabel.Label next-s label)
                   (begin
                     (set! s next-s)
                     (set! header-label label))])
-              (match (lower-state-fresh-label
-                (lower-global-shared-view s)
-                "spmd_reduce_avx2_body")
+              (match (lower-state-fresh-label s "spmd_reduce_avx2_body")
                 [(LowerLabel.Label next-s label)
                   (begin
                     (set! s next-s)
                     (set! body-label label))])
-              (match (lower-state-fresh-label
-                (lower-global-shared-view s)
-                "spmd_reduce_tail_header")
+              (match (lower-state-fresh-label s "spmd_reduce_tail_header")
                 [(LowerLabel.Label next-s label)
                   (begin
                     (set! s next-s)
                     (set! tail-header-label label))])
               (if (lower-spmd-reduce-vector-accumulator?
                 (lower-global-shared-view elem-ty))
-                (match (lower-state-fresh-label
-                  (lower-global-shared-view s)
-                  "spmd_reduce_tail_init")
+                (match (lower-state-fresh-label s "spmd_reduce_tail_init")
                   [(LowerLabel.Label next-s label)
                     (begin
                       (set! s next-s)
                       (set! tail-init-label label))])
                 unit)
-              (match (lower-state-fresh-label
-                (lower-global-shared-view s)
-                "spmd_reduce_tail_body")
+              (match (lower-state-fresh-label s "spmd_reduce_tail_body")
                 [(LowerLabel.Label next-s label)
                   (begin
                     (set! s next-s)
                     (set! tail-body-label label))])
-              (match (lower-state-fresh-label
-                (lower-global-shared-view s)
-                "spmd_reduce_exit")
+              (match (lower-state-fresh-label s "spmd_reduce_exit")
                 [(LowerLabel.Label next-s label)
                   (begin
                     (set! s next-s)
                     (set! exit-label label))])
               (match (lower-vector-loop-limit
-                (lower-global-shared-view s)
+                s
                 (lower-global-shared-view end-value)
                 arrays
                 lanes)
@@ -59335,17 +59188,12 @@
                   (begin
                     (set! s next-s)
                     (set! vector-limit value))])
-              (match (lower-vector-loop-start-ok
-                (lower-global-shared-view s)
-                index-var
-                lanes)
+              (match (lower-vector-loop-start-ok s index-var lanes)
                 [(LowerExpr.Expr next-s value _)
                   (begin
                     (set! s next-s)
                     (set! vector-start-ok value))])
-              (match (lower-sequence-data-pointer-value
-                (lower-global-shared-view s)
-                array-var)
+              (match (lower-sequence-data-pointer-value s array-var)
                 [(LowerExpr.Expr next-s value _)
                   (begin
                     (set! s next-s)
@@ -59373,7 +59221,7 @@
                         tail-header-label))
                     header-label)))
               (match (lower-emit-binop
-                (lower-global-shared-view s)
+                s
                 (ir.CompilerIrBinOp.Add)
                 (ir.CompilerIrValue.Var index-var)
                 (ir.CompilerIrValue.I64 lanes)
@@ -59383,7 +59231,7 @@
                     (set! s next-s)
                     (set! next-index value))])
               (match (lower-vector-loop-next-ok
-                (lower-global-shared-view s)
+                s
                 (lower-global-shared-view next-index)
                 vector-limit)
                 [(LowerExpr.Expr next-s value _)
@@ -59469,7 +59317,7 @@
                                 tail-header-label)))
                           unit)
                         (match (lower-vector-loop-i64-compare
-                          (lower-global-shared-view s)
+                          s
                           (ir.CompilerIrBinOp.Lt)
                           (ir.CompilerIrValue.Var index-var)
                           end-value)
@@ -59570,7 +59418,7 @@
                 (begin
                   (if (lower-spmd-reduce-vector-accumulator?
                     (lower-global-shared-view elem-ty))
-                    (match (lower-state-alloc-var (lower-global-shared-view s))
+                    (match (lower-state-alloc-var s)
                       [(LowerAlloc.Alloc next-s var)
                         (begin
                           (set! vector-acc-var var)
@@ -59586,50 +59434,44 @@
                                 lanes
                                 (lower-global-shared-view elem-ty)))))])
                     unit)
-                  (match (lower-state-fresh-label
-                    (lower-global-shared-view s)
-                    "spmd_reduce_value_header")
+                  (match (lower-state-fresh-label s "spmd_reduce_value_header")
                     [(LowerLabel.Label next-s label)
                       (begin
                         (set! s next-s)
                         (set! header-label label))])
-                  (match (lower-state-fresh-label
-                    (lower-global-shared-view s)
-                    "spmd_reduce_value_body")
+                  (match (lower-state-fresh-label s "spmd_reduce_value_body")
                     [(LowerLabel.Label next-s label)
                       (begin
                         (set! s next-s)
                         (set! body-label label))])
                   (match (lower-state-fresh-label
-                    (lower-global-shared-view s)
+                    s
                     "spmd_reduce_value_tail_init")
                     [(LowerLabel.Label next-s label)
                       (begin
                         (set! s next-s)
                         (set! tail-init-label label))])
                   (match (lower-state-fresh-label
-                    (lower-global-shared-view s)
+                    s
                     "spmd_reduce_value_tail_check")
                     [(LowerLabel.Label next-s label)
                       (begin
                         (set! s next-s)
                         (set! tail-check-label label))])
                   (match (lower-state-fresh-label
-                    (lower-global-shared-view s)
+                    s
                     "spmd_reduce_value_tail_body")
                     [(LowerLabel.Label next-s label)
                       (begin
                         (set! s next-s)
                         (set! tail-body-label label))])
-                  (match (lower-state-fresh-label
-                    (lower-global-shared-view s)
-                    "spmd_reduce_value_exit")
+                  (match (lower-state-fresh-label s "spmd_reduce_value_exit")
                     [(LowerLabel.Label next-s label)
                       (begin
                         (set! s next-s)
                         (set! exit-label label))])
                   (match (lower-vector-loop-limit
-                    (lower-global-shared-view s)
+                    s
                     (lower-global-shared-view end-value)
                     arrays
                     lanes)
@@ -59637,16 +59479,13 @@
                       (begin
                         (set! s next-s)
                         (set! vector-limit value))])
-                  (match (lower-vector-loop-start-ok
-                    (lower-global-shared-view s)
-                    index-var
-                    lanes)
+                  (match (lower-vector-loop-start-ok s index-var lanes)
                     [(LowerExpr.Expr next-s value _)
                       (begin
                         (set! s next-s)
                         (set! vector-start-ok value))])
                   (match (lower-vector-map-preheader-cache-plan
-                    (lower-global-shared-view s)
+                    s
                     arrays
                     lanes
                     (lower-global-shared-view elem-ty)
@@ -59666,7 +59505,7 @@
                           tail-init-label))
                       header-label))
                   (match (lower-emit-binop
-                    (lower-global-shared-view s)
+                    s
                     (ir.CompilerIrBinOp.Add)
                     (ir.CompilerIrValue.Var index-var)
                     (ir.CompilerIrValue.I64 lanes)
@@ -59676,7 +59515,7 @@
                         (set! s next-s)
                         (set! next-index value))])
                   (match (lower-vector-loop-next-ok
-                    (lower-global-shared-view s)
+                    s
                     (lower-global-shared-view next-index)
                     vector-limit)
                     [(LowerExpr.Expr next-s value _)
@@ -59742,7 +59581,7 @@
                                   (ir.CompilerIrValue.Var index-var)
                                   (lower-global-shared-view index-ty))))
                             (match (lower-emit-binop
-                              (lower-global-shared-view s)
+                              s
                               ir.CompilerIrBinOp.Sub
                               (lower-global-shared-view end-value)
                               (ir.CompilerIrValue.Var index-var)
@@ -59759,7 +59598,7 @@
                                   (ir.CompilerIrInstr.Jump tail-check-label))
                                 tail-check-label))
                             (match (lower-vector-loop-i64-compare
-                              (lower-global-shared-view s)
+                              s
                               (ir.CompilerIrBinOp.Lt)
                               (ir.CompilerIrValue.Var index-var)
                               end-value)
@@ -60299,9 +60138,7 @@
         (let
           [array-var : i64 (array-ref arrays.vars index)]
           (begin
-            (match (lower-sequence-data-pointer-value
-              (lower-global-shared-view s)
-              array-var)
+            (match (lower-sequence-data-pointer-value s array-var)
               [(LowerExpr.Expr next-s data-ptr _)
                 (begin
                   (set! s next-s)
@@ -60354,7 +60191,7 @@
               index)
               [(LowerVectorMapStore _ value-plan)
                 (match (lower-vector-map-preheader-cache-leaves
-                  (lower-global-shared-view s)
+                  s
                   lanes
                   (lower-global-shared-view elem-ty)
                   value-plan
@@ -60481,9 +60318,7 @@
   [emit-mode : LowerVectorMapEmitMode]) : LowerExpr
   (let
     [selector-lanes : i64
-      (lower-simd-lanes-for-elem
-        (lower-state-mode (lower-global-shared-view state))
-        (ast.AstType.I64))]
+      (lower-simd-lanes-for-elem (lower-state-mode state) (ast.AstType.I64))]
     [index-value : ir.CompilerIrValue (ir.CompilerIrValue.Var index-var)]
     (match emit-mode
       [(LowerVectorMapEmitMode.Full)
@@ -61527,7 +61362,7 @@
         [elem-ptr : ir.CompilerIrValue ir.CompilerIrValue.Unit]
         [store-index : i64 0]
         (begin
-          (match (lower-state-alloc-var (lower-global-shared-view s))
+          (match (lower-state-alloc-var s)
             [(LowerAlloc.Alloc next-s var)
               (begin
                 (set! s next-s)
@@ -61540,22 +61375,18 @@
                 tail-lane-var
                 (ir.CompilerIrValue.I64 0)
                 (ast.AstType.I64))))
-          (match (lower-state-fresh-label
-            (lower-global-shared-view s)
-            "foreach_broadcast_tail_header")
+          (match (lower-state-fresh-label s "foreach_broadcast_tail_header")
             [(LowerLabel.Label next-s label)
               (begin
                 (set! s next-s)
                 (set! header-label label))])
-          (match (lower-state-fresh-label
-            (lower-global-shared-view s)
-            "foreach_broadcast_tail_body")
+          (match (lower-state-fresh-label s "foreach_broadcast_tail_body")
             [(LowerLabel.Label next-s label)
               (begin
                 (set! s next-s)
                 (set! body-label label))])
           (match (lower-emit-binop
-            (lower-global-shared-view s)
+            s
             ir.CompilerIrBinOp.Sub
             (lower-global-shared-view end-value)
             (ir.CompilerIrValue.Var index-var)
@@ -61570,7 +61401,7 @@
               (lower-state-emit s (ir.CompilerIrInstr.Jump header-label))
               header-label))
           (match (lower-emit-binop
-            (lower-global-shared-view s)
+            s
             ir.CompilerIrBinOp.Lt
             (ir.CompilerIrValue.Var tail-var)
             end-value
@@ -61594,7 +61425,7 @@
                 (begin
                   (match (lower-emit-scalar-vector-map-value
                     (lower-global-shared-view ctx)
-                    (lower-global-shared-view s)
+                    s
                     index-var
                     tail-var
                     (ir.CompilerIrValue.Var tail-lane-var)
@@ -61608,7 +61439,7 @@
                         (set! scalar-value value))])
                   (match (lower-sequence-element-addr
                     (lower-global-shared-view ctx)
-                    (lower-global-shared-view s)
+                    s
                     dst-array
                     (ir.CompilerIrValue.Var tail-var)
                     (ast.AstType.I64)
@@ -61692,7 +61523,7 @@
                 (begin
                   (match (lower-emit-vector-map-value-cached
                     (lower-global-shared-view ctx)
-                    (lower-global-shared-view s)
+                    s
                     index-var
                     lanes
                     (lower-global-shared-view elem-ty)
@@ -61776,7 +61607,7 @@
           [offset : i64 (array-ref arrays.offsets index)]
           (begin
             (match (lower-predicated-index-plus-offset
-              (lower-global-shared-view s)
+              s
               (lower-global-shared-view end-value)
               offset)
               [(LowerExpr.Expr index-state limit-index _)
@@ -61816,7 +61647,7 @@
     [within : ir.CompilerIrValue ir.CompilerIrValue.Unit]
     (begin
       (match (lower-vector-loop-i64-compare
-        (lower-global-shared-view s)
+        s
         (ir.CompilerIrBinOp.Ge)
         (ir.CompilerIrValue.Var index-var)
         (ir.CompilerIrValue.I64 0))
@@ -61825,7 +61656,7 @@
             (set! s next-s)
             (set! ok value))])
       (match (lower-vector-loop-i64-compare
-        (lower-global-shared-view s)
+        s
         (ir.CompilerIrBinOp.Le)
         (lower-global-shared-view end-value)
         (ir.CompilerIrValue.I64 (lower-predicated-tail-limit max-offset)))
@@ -61834,7 +61665,7 @@
             (set! s next-s)
             (set! within value))])
       (match (lower-emit-binop
-        (lower-global-shared-view s)
+        s
         (ir.CompilerIrBinOp.And)
         (lower-global-shared-view ok)
         (lower-global-shared-view within)
@@ -61844,7 +61675,7 @@
             (set! s next-s)
             (set! ok value))])
       (match (lower-vector-loop-i64-compare
-        (lower-global-shared-view s)
+        s
         (ir.CompilerIrBinOp.Le)
         (ir.CompilerIrValue.Var index-var)
         (lower-global-shared-view end-value))
@@ -61908,7 +61739,7 @@
     [(LowerExpr.Expr child-state child-mask child-ty)
       (begin
         (lower-masked-load-register-mask!
-          (lower-global-shared-view child-state)
+          child-state
           active-mask
           (lower-global-shared-view child-mask))
         (LowerExpr.Expr child-state child-mask child-ty))]))
@@ -62068,7 +61899,7 @@
                 [lane-ty : ast.AstType (tc_core.tc-type-without-regions ty)]
                 (if (>
                   (lower-simd-lanes-for-elem
-                    (lower-state-mode (lower-global-shared-view state))
+                    (lower-state-mode state)
                     (lower-global-shared-view lane-ty))
                   0)
                   (ResultLowerExpr.Ok
@@ -62119,7 +61950,7 @@
           (not
             (=
               (lower-simd-lanes-for-elem
-                (lower-state-mode (lower-global-shared-view state))
+                (lower-state-mode state)
                 (lower-global-shared-view lane-ty))
               lanes)))
           (lower-avx512-masked-unsupported
@@ -62132,7 +61963,7 @@
               expr
               "non-contiguous array indexes in this AVX-512 slice")
             (match (lower-masked-load-cache-get
-              (lower-global-shared-view state)
+              state
               array-var
               offset
               (lower-global-shared-view active-mask))
@@ -62158,7 +61989,7 @@
                           [(LowerExpr.Expr load-state load-value load-ty)
                             (begin
                               (lower-masked-load-cache-put!
-                                (lower-global-shared-view load-state)
+                                load-state
                                 array-var
                                 offset
                                 active-mask
@@ -62236,7 +62067,7 @@
             [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])
           (if (=
             (lower-simd-lanes-for-elem
-              (lower-state-mode (lower-global-shared-view state))
+              (lower-state-mode state)
               (lower-global-shared-view lane-ty))
             lanes)
             (match (lower-avx512-masked-index-value
@@ -62462,13 +62293,11 @@
             (lower-context-expr-get (lower-global-shared-view ctx) init-box)]
           [enum-source : ResultLowerMaskedEnumSource
             (if (or
-              (lower-mode-avx2?
-                (lower-state-mode (lower-global-shared-view state)))
-              (lower-mode-avx512?
-                (lower-state-mode (lower-global-shared-view state))))
+              (lower-mode-avx2? (lower-state-mode state))
+              (lower-mode-avx512? (lower-state-mode state)))
               (lower-avx2-masked-enum-source
                 (lower-global-shared-view ctx)
-                (lower-global-shared-view state)
+                state
                 env
                 type-env
                 lane-locals
@@ -62669,23 +62498,17 @@
             [cond-active : ir.CompilerIrValue ir.CompilerIrValue.Unit]
             [any-active : ir.CompilerIrValue ir.CompilerIrValue.Unit]
             (begin
-              (match (lower-state-fresh-label
-                (lower-global-shared-view s)
-                "spmd_vwhile_header")
+              (match (lower-state-fresh-label s "spmd_vwhile_header")
                 [(LowerLabel.Label next-s label)
                   (begin
                     (set! s next-s)
                     (set! header-label label))])
-              (match (lower-state-fresh-label
-                (lower-global-shared-view s)
-                "spmd_vwhile_body")
+              (match (lower-state-fresh-label s "spmd_vwhile_body")
                 [(LowerLabel.Label next-s label)
                   (begin
                     (set! s next-s)
                     (set! body-label label))])
-              (match (lower-state-fresh-label
-                (lower-global-shared-view s)
-                "spmd_vwhile_exit")
+              (match (lower-state-fresh-label s "spmd_vwhile_exit")
                 [(LowerLabel.Label next-s label)
                   (begin
                     (set! s next-s)
@@ -62697,7 +62520,7 @@
                   header-label))
               (match (lower-avx512-masked-expr
                 (lower-global-shared-view ctx)
-                (lower-global-shared-view s)
+                s
                 env
                 type-env
                 (lower-global-shared-view lane-locals)
@@ -62722,7 +62545,7 @@
                               (set! s next-s)
                               (set! cond-active value))])
                         (match (lower-emit-mask-reduce
-                          (lower-global-shared-view s)
+                          s
                           (ir.CompilerIrMaskReduceOp.Any)
                           (lower-global-shared-view cond-active)
                           lanes)
@@ -62741,7 +62564,7 @@
                   body-label))
               (match (lower-avx512-masked-expr-expected
                 ctx
-                (lower-global-shared-view s)
+                s
                 env
                 type-env
                 lane-locals
@@ -62885,8 +62708,7 @@
                                                   then-ty)
                                                 else-ty)
                                               (lower-avx512-masked-select-result-supported?
-                                                (lower-global-shared-view
-                                                  else-state)
+                                                else-state
                                                 lanes
                                                 (lower-global-shared-view
                                                   then-ty)))
@@ -62920,16 +62742,13 @@
     [result : ir.CompilerIrValue ir.CompilerIrValue.Unit]
     [lane : i64 0]
     (begin
-      (match (lower-emit-lane-id
-        (lower-global-shared-view s)
-        lanes
-        (ast.AstType.I64))
+      (match (lower-emit-lane-id s lanes (ast.AstType.I64))
         [(LowerExpr.Expr next-state value _)
           (begin
             (set! s next-state)
             (set! lane-id value))])
       (match (lower-emit-splat
-        (lower-global-shared-view s)
+        s
         (ir.CompilerIrValue.I64 0)
         lanes
         (ast.AstType.I64))
@@ -62944,7 +62763,7 @@
           [lane-remainder : ir.CompilerIrValue ir.CompilerIrValue.Unit]
           (begin
             (match (lower-emit-splat
-              (lower-global-shared-view s)
+              s
               (ir.CompilerIrValue.I64 lane)
               lanes
               (ast.AstType.I64))
@@ -62961,7 +62780,7 @@
                       (set! s next-state)
                       (set! one-lane value))])])
             (match (lower-emit-binop
-              (lower-global-shared-view s)
+              s
               (ir.CompilerIrBinOp.Add)
               (ir.CompilerIrValue.Var index-var)
               (ir.CompilerIrValue.I64 (+ index-offset lane))
@@ -62971,7 +62790,7 @@
                   (set! s next-state)
                   (set! lane-value value))])
             (match (lower-emit-binop
-              (lower-global-shared-view s)
+              s
               (ir.CompilerIrBinOp.Mod)
               lane-value
               (ir.CompilerIrValue.I64 divisor)
@@ -62980,11 +62799,7 @@
                 (begin
                   (set! s next-state)
                   (set! lane-remainder value))])
-            (match (lower-emit-splat
-              (lower-global-shared-view s)
-              lane-remainder
-              lanes
-              (ast.AstType.I64))
+            (match (lower-emit-splat s lane-remainder lanes (ast.AstType.I64))
               [(LowerExpr.Expr splat-state lane-vector _)
                 (match (lower-emit-select
                   splat-state
@@ -63018,8 +62833,8 @@
     (lower-global-shared-view ctx)
     env
     type-env
-    (lower-state-type-cache (lower-global-shared-view state))
-    (lower-state-function-state (lower-global-shared-view state))
+    (lower-state-type-cache state)
+    (lower-state-function-state state)
     (lower-global-shared-view expr))
     [(tc_core.ResultTcType.Ok result-ty)
       (let
@@ -63137,8 +62952,8 @@
     (lower-global-shared-view ctx)
     env
     type-env
-    (lower-state-type-cache (lower-global-shared-view state))
-    (lower-state-function-state (lower-global-shared-view state))
+    (lower-state-type-cache state)
+    (lower-state-function-state state)
     (lower-global-shared-view expr))
     [(tc_core.ResultTcType.Ok result-ty)
       (let
@@ -63154,7 +62969,7 @@
             lane-ty)
           (match (lower-avx512-masked-expr-expected
             (lower-global-shared-view ctx)
-            (lower-global-shared-view state)
+            state
             env
             type-env
             (lower-global-shared-view lane-locals)
@@ -63252,7 +63067,7 @@
               source)
             (if (>
               (compiler-lower-function-state-inline-helper-stack
-                (lower-state-function-state (lower-global-shared-view state))).len
+                (lower-state-function-state state)).len
               0)
               (spmd_numeric.CompilerSpmdNumericContext.PrivateHelper)
               (spmd_numeric.CompilerSpmdNumericContext.MaskedControl))
@@ -63501,18 +63316,14 @@
             (lower-global-shared-view left))]
         (if (and
           (or
-            (lower-mode-avx2?
-              (lower-state-mode (lower-global-shared-view state)))
-            (and
-              (lower-mode-avx512?
-                (lower-state-mode (lower-global-shared-view state)))
-              (< divisor 0)))
+            (lower-mode-avx2? (lower-state-mode state))
+            (and (lower-mode-avx512? (lower-state-mode state)) (< divisor 0)))
           (> positive-divisor 0)
           (>= index-offset 0)
           (=
             lanes
             (lower-simd-lanes-for-elem
-              (lower-state-mode (lower-global-shared-view state))
+              (lower-state-mode state)
               (ast.AstType.I64))))
           (lower-simd-masked-index-mod
             state
@@ -63854,8 +63665,7 @@
                   lanes
                   (lower-global-shared-view lane-ty))
                   [(LowerExpr.Expr splat-state splat-value _)
-                    (if (lower-mode-avx512?
-                      (lower-state-mode (lower-global-shared-view splat-state)))
+                    (if (lower-mode-avx512? (lower-state-mode splat-state))
                       (match (lower-emit-splat
                         splat-state
                         (ir.CompilerIrValue.I64 0)
@@ -63895,30 +63705,25 @@
   [field-ty : ast.AstType]) : LowerExpr
   (let
     [lane-ty : ast.AstType
-      (lower-enum-mask-lane-type
-        (lower-state-mode (lower-global-shared-view state))
-        lanes)]
+      (lower-enum-mask-lane-type (lower-state-mode state) lanes)]
     [s : LowerState state]
     [lane-id : ir.CompilerIrValue ir.CompilerIrValue.Unit]
     [result : ir.CompilerIrValue ir.CompilerIrValue.Unit]
     [lane : i64 0]
     (begin
-      (match (lower-emit-lane-id
-        (lower-global-shared-view s)
-        lanes
-        (lower-global-shared-view lane-ty))
+      (match (lower-emit-lane-id s lanes (lower-global-shared-view lane-ty))
         [(LowerExpr.Expr next-state value _)
           (begin
             (set! s next-state)
             (set! lane-id value))])
       (match (if (lower-type-bool? (lower-global-shared-view field-ty))
         (lower-avx2-enum-zero-mask
-          (lower-global-shared-view s)
+          s
           (lower-global-shared-view lane-id)
           lanes
           (lower-global-shared-view lane-ty))
         (lower-emit-splat
-          (lower-global-shared-view s)
+          s
           (lower-avx2-enum-zero-value (lower-global-shared-view field-ty))
           lanes
           (lower-global-shared-view field-ty)))
@@ -63934,7 +63739,7 @@
           [loaded : ir.CompilerIrValue ir.CompilerIrValue.Unit]
           (begin
             (match (lower-avx2-enum-one-lane-mask
-              (lower-global-shared-view s)
+              s
               (lower-global-shared-view lane-id)
               lane
               lanes
@@ -63944,7 +63749,7 @@
                   (set! s next-state)
                   (set! one-lane value))])
             (match (lower-emit-mask-binop
-              (lower-global-shared-view s)
+              s
               (ir.CompilerIrMaskBinOp.And)
               (lower-global-shared-view active-mask)
               (lower-global-shared-view one-lane)
@@ -63954,7 +63759,7 @@
                   (set! s next-state)
                   (set! lane-active-mask value))])
             (match (lower-emit-mask-reduce
-              (lower-global-shared-view s)
+              s
               (ir.CompilerIrMaskReduceOp.Any)
               lane-active-mask
               lanes)
@@ -63963,7 +63768,7 @@
                   (set! s next-state)
                   (set! lane-active value))])
             (match (lower-avx2-enum-load-active-lane
-              (lower-global-shared-view s)
+              s
               (lower-global-shared-view base)
               (+ field-offset (* lane stride))
               lane-active
@@ -63974,7 +63779,7 @@
                   (set! loaded value))])
             (if (lower-type-bool? (lower-global-shared-view field-ty))
               (match (lower-avx2-enum-scalar-bool-lane-mask
-                (lower-global-shared-view s)
+                s
                 loaded
                 one-lane
                 lanes
@@ -63991,7 +63796,7 @@
                         (set! s next-state)
                         (set! result value))])])
               (match (lower-emit-splat
-                (lower-global-shared-view s)
+                s
                 loaded
                 lanes
                 (lower-global-shared-view field-ty))
@@ -64025,7 +63830,7 @@
     [lane : i64 0]
     (begin
       (match (lower-avx2-enum-zero-mask
-        (lower-global-shared-view s)
+        s
         (lower-global-shared-view lane-id)
         lanes
         (lower-global-shared-view lane-ty))
@@ -64042,7 +63847,7 @@
           [tag-eq : ir.CompilerIrValue ir.CompilerIrValue.Unit]
           (begin
             (match (lower-avx2-enum-one-lane-mask
-              (lower-global-shared-view s)
+              s
               (lower-global-shared-view lane-id)
               lane
               lanes
@@ -64052,7 +63857,7 @@
                   (set! s next-state)
                   (set! one-lane value))])
             (match (lower-emit-mask-binop
-              (lower-global-shared-view s)
+              s
               (ir.CompilerIrMaskBinOp.And)
               (lower-global-shared-view active-mask)
               (lower-global-shared-view one-lane)
@@ -64062,7 +63867,7 @@
                   (set! s next-state)
                   (set! lane-active-mask value))])
             (match (lower-emit-mask-reduce
-              (lower-global-shared-view s)
+              s
               (ir.CompilerIrMaskReduceOp.Any)
               lane-active-mask
               lanes)
@@ -64071,7 +63876,7 @@
                   (set! s next-state)
                   (set! lane-active value))])
             (match (lower-avx2-enum-load-active-lane
-              (lower-global-shared-view s)
+              s
               (lower-global-shared-view base)
               (* lane stride)
               lane-active
@@ -64081,7 +63886,7 @@
                   (set! s next-state)
                   (set! loaded-tag value))])
             (match (lower-emit-binop
-              (lower-global-shared-view s)
+              s
               (ir.CompilerIrBinOp.Eq)
               loaded-tag
               (ir.CompilerIrValue.I64 tag)
@@ -64091,7 +63896,7 @@
                   (set! s next-state)
                   (set! tag-eq value))])
             (match (lower-avx2-enum-scalar-bool-lane-mask
-              (lower-global-shared-view s)
+              s
               tag-eq
               one-lane
               lanes
@@ -64651,9 +64456,7 @@
         [(LowerMaskedEnumSource.Source source-state base enum-ty)
           (let
             [lane-ty : ast.AstType
-              (lower-enum-mask-lane-type
-                (lower-state-mode (lower-global-shared-view source-state))
-                lanes)]
+              (lower-enum-mask-lane-type (lower-state-mode source-state) lanes)]
             (match (lower-emit-lane-id
               source-state
               lanes
@@ -64757,12 +64560,12 @@
                     [(LowerExpr.Expr rest-mask-state rest-mask _)
                       (begin
                         (lower-masked-load-register-mask!
-                          (lower-global-shared-view rest-mask-state)
+                          rest-mask-state
                           (ir.CompilerIrMaybeValue.Some
                             (lower-global-shared-view active-mask))
                           (lower-global-shared-view arm-mask))
                         (lower-masked-load-register-mask!
-                          (lower-global-shared-view rest-mask-state)
+                          rest-mask-state
                           (ir.CompilerIrMaybeValue.Some active-mask)
                           (lower-global-shared-view rest-mask))
                         (ResultLowerMaskedMatchMasks.Ok
@@ -64792,7 +64595,7 @@
         rest-value
         lanes))
     (if (lower-avx512-masked-select-result-supported?
-      (lower-global-shared-view state)
+      state
       lanes
       (lower-global-shared-view ty))
       (ResultLowerExpr.Ok
@@ -65080,8 +64883,8 @@
     (lower-global-shared-view ctx)
     env
     type-env
-    (lower-state-type-cache (lower-global-shared-view state))
-    (lower-state-function-state (lower-global-shared-view state))
+    (lower-state-type-cache state)
+    (lower-state-function-state state)
     (lower-global-shared-view scrutinee))
     [(tc_core.ResultTcType.Ok scrut-ty) (lower-spmd-enum-type? scrut-ty)]
     [(tc_core.ResultTcType.Err _) false])
@@ -65162,7 +64965,7 @@
         (ast.ast-param-list-len (& params)))]
     (lower-avx512-spmd-call-args-at
       ctx
-      (lower-state-function-state (lower-global-shared-view state))
+      (lower-state-function-state state)
       state
       env
       type-env
@@ -65220,8 +65023,8 @@
             [arg-lanes : i64
               (lower-masked-vector-expr-lanes-with-locals
                 (lower-global-shared-view ctx)
-                (lower-state-function-state (lower-global-shared-view state))
-                (lower-state-mode (lower-global-shared-view state))
+                (lower-state-function-state state)
+                (lower-state-mode state)
                 env
                 type-env
                 (lower-global-shared-view index)
@@ -66885,15 +66688,13 @@
                   result-varying)]
               (ResultLowerFunction.Ok
                 (lower-state-build-functions-with
-                  (lower-global-shared-view final-state)
+                  final-state
                   (ir.CompilerIrFunction.Function
                     hidden-name
                     physical-params
                     ret-ty
-                    (lower-state-next-var
-                      (lower-global-shared-view final-state))
-                    (lower-state-build-function-blocks
-                      (lower-global-shared-view final-state))
+                    (lower-state-next-var final-state)
+                    (lower-state-build-function-blocks final-state)
                     (ir.compiler-ir-function-abi-private abi)))
                 (lower-state-spans final-state)))])]
       [(ResultLowerExpr.Err message) (ResultLowerFunction.Err message)])))
@@ -66979,14 +66780,13 @@
               result-varying)]
           (ResultLowerFunction.Ok
             (lower-state-build-functions-with
-              (lower-global-shared-view final-state)
+              final-state
               (ir.CompilerIrFunction.Function
                 hidden-name
                 physical-params
                 ret-ty
-                (lower-state-next-var (lower-global-shared-view final-state))
-                (lower-state-build-function-blocks
-                  (lower-global-shared-view final-state))
+                (lower-state-next-var final-state)
+                (lower-state-build-function-blocks final-state)
                 (ir.compiler-ir-function-abi-private abi)))
             (lower-state-spans final-state)))]
       [(ResultLowerState.Err message) (ResultLowerFunction.Err message)])))
@@ -67493,8 +67293,8 @@
         (lower-global-shared-view ctx)
         env
         type-env
-        (lower-state-type-cache (lower-global-shared-view state))
-        (lower-state-function-state (lower-global-shared-view state))
+        (lower-state-type-cache state)
+        (lower-state-function-state state)
         (lower-global-shared-view expr))
         [(tc_core.ResultTcType.Err message)
           (ResultLowerExpr.Err
@@ -67512,8 +67312,8 @@
             [arg-lanes : i64
               (lower-spmd-call-args-lanes
                 (lower-global-shared-view ctx)
-                (lower-state-function-state (lower-global-shared-view state))
-                (lower-state-mode (lower-global-shared-view state))
+                (lower-state-function-state state)
+                (lower-state-mode state)
                 env
                 type-env
                 (lower-global-shared-view index)
@@ -67567,9 +67367,7 @@
                           args)]
                       [imported-interns : ci.InternCompatState
                         (compiler-lower-state-interns
-                          (lower-state-owner
-                            (lower-state-clone
-                              (lower-global-shared-view args-state))))]
+                          (lower-state-owner (lower-state-clone args-state)))]
                       (match (lower-imported-spmd-select
                         (& imported-interns)
                         (tc_core.tc-context-pools
@@ -67632,7 +67430,7 @@
   [args : ast.AstExprList]) : ResultLowerExpr
   (match (lower-spmd-inline-helper-lookup
     (lower-global-shared-view ctx)
-    (lower-state-function-state (lower-global-shared-view state))
+    (lower-state-function-state state)
     env
     type-env
     (lower-global-shared-view lane-locals)
@@ -67644,17 +67442,16 @@
             (lower-global-shared-view ctx)
             env
             type-env
-            (lower-state-type-cache (lower-global-shared-view state))
-            (lower-state-function-state (lower-global-shared-view state))
+            (lower-state-type-cache state)
+            (lower-state-function-state state)
             (lower-global-shared-view expr))
             [(tc_core.ResultTcType.Ok result-ty)
               (let
                 [arg-lanes : i64
                   (lower-spmd-call-args-lanes
                     (lower-global-shared-view ctx)
-                    (lower-state-function-state
-                      (lower-global-shared-view state))
-                    (lower-state-mode (lower-global-shared-view state))
+                    (lower-state-function-state state)
+                    (lower-state-mode state)
                     env
                     type-env
                     (lower-global-shared-view index)
@@ -67716,10 +67513,8 @@
                                 (>
                                   (lower-spmd-direct-call-result-lanes
                                     (lower-global-shared-view ctx)
-                                    (lower-state-function-state
-                                      (lower-global-shared-view named-state))
-                                    (lower-state-mode
-                                      (lower-global-shared-view named-state))
+                                    (lower-state-function-state named-state)
+                                    (lower-state-mode named-state)
                                     env
                                     type-env
                                     index
@@ -67731,29 +67526,24 @@
                                   0)]
                               [backend : ir.CompilerIrSpmdBackend
                                 (if (lower-mode-avx2?
-                                  (lower-state-mode
-                                    (lower-global-shared-view named-state)))
+                                  (lower-state-mode named-state))
                                   ir.CompilerIrSpmdBackend.Avx2
                                   ir.CompilerIrSpmdBackend.Avx512)]
                               [private-name : i64
                                 (lower-spmd-private-helper-name
-                                  (lower-state-names
-                                    (lower-global-shared-view named-state))
+                                  (lower-state-names named-state)
                                   hidden-name
                                   (lower-global-shared-view result-ty)
                                   result-varying)]
                               [helper-function-state : CompilerLowerFunctionState
                                 (compiler-lower-function-state-new-with-stack
-                                  (lower-state-owner
-                                    (lower-global-shared-view named-state))
+                                  (lower-state-owner named-state)
                                   (compiler-lower-function-state-inline-helper-stack
-                                    (lower-state-function-state
-                                      (lower-global-shared-view named-state))))]
+                                    (lower-state-function-state named-state)))]
                               (match (lower-spmd-specialized-helper-function
                                 (lower-global-shared-view ctx)
                                 type-env
-                                (lower-state-type-cache
-                                  (lower-global-shared-view named-state))
+                                (lower-state-type-cache named-state)
                                 helper-function-state
                                 private-name
                                 params
@@ -67765,12 +67555,9 @@
                                 lanes
                                 helper-index
                                 -1
-                                (lower-state-spans
-                                  (lower-global-shared-view named-state))
-                                (lower-state-names
-                                  (lower-global-shared-view named-state))
-                                (lower-state-mode
-                                  (lower-global-shared-view named-state)))
+                                (lower-state-spans named-state)
+                                (lower-state-names named-state)
+                                (lower-state-mode named-state))
                                 [(ResultLowerFunction.Ok functions helper-spans)
                                   (match (lower-spmd-generated-helper-abi
                                     (lower-global-shared-view functions)
@@ -67813,8 +67600,7 @@
             canonical-name
             fn-ty
             callables)
-          (if (lower-mode-avx2?
-            (lower-state-mode (lower-global-shared-view state)))
+          (if (lower-mode-avx2? (lower-state-mode state))
             (ResultLowerExpr.Err
               (box
                 (lower-diagnostic-at-expr
@@ -68045,8 +67831,8 @@
           (lower-global-shared-view ctx)
           env
           type-env
-          (lower-state-type-cache (lower-global-shared-view state))
-          (lower-state-function-state (lower-global-shared-view state))
+          (lower-state-type-cache state)
+          (lower-state-function-state state)
           (lower-global-shared-view expr))
           [(tc_core.ResultTcType.Ok result-ty)
             (lower-avx512-masked-if
@@ -68074,8 +67860,8 @@
             (lower-global-shared-view ctx)
             env
             type-env
-            (lower-state-type-cache (lower-global-shared-view state))
-            (lower-state-function-state (lower-global-shared-view state))
+            (lower-state-type-cache state)
+            (lower-state-function-state state)
             (lower-global-shared-view expr))
             [(tc_core.ResultTcType.Ok result-ty)
               (lower-avx512-masked-match
@@ -68097,7 +67883,7 @@
                 (box (lower-diagnostic-at-expr ctx expr message)))])])]
     [(ast.AstExpr.While cond-box body-box)
       (begin
-        (lower-masked-load-cache-invalidate! (lower-global-shared-view state))
+        (lower-masked-load-cache-invalidate! state)
         (lower-masked-load-cache-invalidate-result
           (lower-avx512-masked-while
             (lower-global-shared-view ctx)
@@ -68227,7 +68013,7 @@
             (tc_core.tc-resolve-type (lower-global-shared-view ctx) expected-ty))]
         (match (lower-simple-vector-map-casted-literal
           (lower-global-shared-view ctx)
-          (lower-state-mode (lower-global-shared-view state))
+          (lower-state-mode state)
           resolved-cast
           (lower-global-shared-view resolved-expected)
           inner)
@@ -68352,7 +68138,7 @@
         [result-vec : ir.CompilerIrValue ir.CompilerIrValue.Unit]
         (begin
           (match (lower-emit-tail-mask
-            (lower-global-shared-view s)
+            s
             (ir.CompilerIrValue.Var index-var)
             (lower-global-shared-view end-value)
             lanes)
@@ -68368,7 +68154,7 @@
                 (begin
                   (match (lower-emit-vector-map-value-cached
                     (lower-global-shared-view ctx)
-                    (lower-global-shared-view s)
+                    s
                     index-var
                     lanes
                     (lower-global-shared-view elem-ty)
@@ -68418,9 +68204,7 @@
         (let
           [array-var : i64 (array-ref arrays.vars array-index)]
           (begin
-            (match (lower-sequence-data-pointer-value
-              (lower-global-shared-view s)
-              array-var)
+            (match (lower-sequence-data-pointer-value s array-var)
               [(LowerExpr.Expr next-state data-ptr _)
                 (begin
                   (set! s next-state)
@@ -68441,7 +68225,7 @@
   [lanes : i64]
   [body : ast.AstExpr]) : ResultLowerExpr
   (begin
-    (lower-masked-load-cache-enable! (lower-global-shared-view state))
+    (lower-masked-load-cache-enable! state)
     (lower-avx512-masked-expr
       ctx
       state
@@ -68511,64 +68295,48 @@
             [tail-safe : ir.CompilerIrValue ir.CompilerIrValue.Unit]
             [active-mask : ir.CompilerIrValue ir.CompilerIrValue.Unit]
             (begin
-              (match (lower-state-fresh-label
-                (lower-global-shared-view s)
-                "foreach_avx512_mask_header")
+              (match (lower-state-fresh-label s "foreach_avx512_mask_header")
                 [(LowerLabel.Label next-s label)
                   (begin
                     (set! s next-s)
                     (set! header-label label))])
-              (match (lower-state-fresh-label
-                (lower-global-shared-view s)
-                "foreach_avx512_mask_body")
+              (match (lower-state-fresh-label s "foreach_avx512_mask_body")
                 [(LowerLabel.Label next-s label)
                   (begin
                     (set! s next-s)
                     (set! body-label label))])
-              (match (lower-state-fresh-label
-                (lower-global-shared-view s)
-                "foreach_tail_header")
+              (match (lower-state-fresh-label s "foreach_tail_header")
                 [(LowerLabel.Label next-s label)
                   (begin
                     (set! s next-s)
                     (set! tail-header-label label))])
-              (match (lower-state-fresh-label
-                (lower-global-shared-view s)
-                "foreach_tail_check")
+              (match (lower-state-fresh-label s "foreach_tail_check")
                 [(LowerLabel.Label next-s label)
                   (begin
                     (set! s next-s)
                     (set! tail-check-label label))])
-              (match (lower-state-fresh-label
-                (lower-global-shared-view s)
-                "foreach_tail_mask")
+              (match (lower-state-fresh-label s "foreach_tail_mask")
                 [(LowerLabel.Label next-s label)
                   (begin
                     (set! s next-s)
                     (set! tail-mask-label label))])
-              (match (lower-state-fresh-label
-                (lower-global-shared-view s)
-                "foreach_tail_body")
+              (match (lower-state-fresh-label s "foreach_tail_body")
                 [(LowerLabel.Label next-s label)
                   (begin
                     (set! s next-s)
                     (set! tail-body-label label))])
-              (match (lower-state-fresh-label
-                (lower-global-shared-view s)
-                "foreach_exit")
+              (match (lower-state-fresh-label s "foreach_exit")
                 [(LowerLabel.Label next-s label)
                   (begin
                     (set! s next-s)
                     (set! exit-label label))])
-              (match (lower-state-fresh-label
-                (lower-global-shared-view s)
-                "foreach_mask_preheader")
+              (match (lower-state-fresh-label s "foreach_mask_preheader")
                 [(LowerLabel.Label next-s label)
                   (begin
                     (set! s next-s)
                     (set! preheader-label label))])
               (match (lower-vector-loop-limit
-                (lower-global-shared-view s)
+                s
                 (lower-global-shared-view end-value)
                 arrays
                 lanes)
@@ -68576,17 +68344,12 @@
                   (begin
                     (set! s next-s)
                     (set! vector-limit value))])
-              (match (lower-vector-loop-start-ok
-                (lower-global-shared-view s)
-                index-var
-                lanes)
+              (match (lower-vector-loop-start-ok s index-var lanes)
                 [(LowerExpr.Expr next-s value _)
                   (begin
                     (set! s next-s)
                     (set! vector-start-ok value))])
-              (lower-masked-preheader-cache-set!
-                (lower-global-shared-view s)
-                preheader-cache)
+              (lower-masked-preheader-cache-set! s preheader-cache)
               (set! s (lower-masked-preheader-cache-array-data s arrays))
               (set!
                 s
@@ -68594,8 +68357,7 @@
                   (lower-state-emit s (ir.CompilerIrInstr.Jump preheader-label))
                   preheader-label))
               (let
-                [data : (Box LowerStateData)
-                  (lower-state-box (lower-global-shared-view s))]
+                [data : (Box LowerStateData) (lower-state-box s)]
                 [blocks : ir.CompilerIrBlockBuilder
                   (lower-box-field-shared-view data blocks)]
                 (set! preheader-block-index blocks.len))
@@ -68610,7 +68372,7 @@
                       tail-header-label))
                   header-label))
               (match (lower-emit-binop
-                (lower-global-shared-view s)
+                s
                 (ir.CompilerIrBinOp.Add)
                 (ir.CompilerIrValue.Var index-var)
                 (ir.CompilerIrValue.I64 lanes)
@@ -68620,7 +68382,7 @@
                     (set! s next-s)
                     (set! next-index value))])
               (match (lower-vector-loop-next-ok
-                (lower-global-shared-view s)
+                s
                 (lower-global-shared-view next-index)
                 vector-limit)
                 [(LowerExpr.Expr next-s value _)
@@ -68639,7 +68401,7 @@
                   body-label))
               (match (lower-avx512-masked-map-body
                 (lower-global-shared-view ctx)
-                (lower-global-shared-view s)
+                s
                 env
                 type-env
                 index-id
@@ -68668,7 +68430,7 @@
                   (lower-state-emit s (ir.CompilerIrInstr.Jump header-label))
                   tail-header-label))
               (match (lower-vector-loop-i64-compare
-                (lower-global-shared-view s)
+                s
                 (ir.CompilerIrBinOp.Lt)
                 (ir.CompilerIrValue.Var index-var)
                 (lower-global-shared-view end-value))
@@ -68687,7 +68449,7 @@
                       exit-label))
                   tail-check-label))
               (match (lower-predicated-tail-ok
-                (lower-global-shared-view s)
+                s
                 index-var
                 (lower-global-shared-view end-value)
                 arrays)
@@ -68706,7 +68468,7 @@
                       tail-body-label))
                   tail-mask-label))
               (match (lower-emit-tail-mask
-                (lower-global-shared-view s)
+                s
                 (ir.CompilerIrValue.Var index-var)
                 end-value
                 lanes)
@@ -68716,7 +68478,7 @@
                     (set! active-mask value))])
               (match (lower-avx512-masked-map-body
                 (lower-global-shared-view ctx)
-                (lower-global-shared-view s)
+                s
                 env
                 type-env
                 index-id
@@ -68738,8 +68500,7 @@
                           tail-body-label))])]
                 [(ResultLowerExpr.Err message)
                   (return (ResultLowerExpr.Err message))])
-              (match (lower-state-masked-preheader-cache
-                (lower-global-shared-view s))
+              (match (lower-state-masked-preheader-cache s)
                 [(LowerMaybeMaskedPreheaderCache.Some cache)
                   (begin
                     (ir.compiler-ir-instr-builder-push!
@@ -68752,8 +68513,7 @@
                         header-label
                         tail-header-label))
                     (let
-                      [data : (Box LowerStateData)
-                        (lower-state-box (lower-global-shared-view s))]
+                      [data : (Box LowerStateData) (lower-state-box s)]
                       [blocks : ir.CompilerIrBlockBuilder
                         (lower-box-field-shared-view data blocks)]
                       (set!
@@ -68763,8 +68523,7 @@
                           (ir.compiler-ir-instr-builder-to-seq
                             (lower-box-field-shared-view cache uniform-instrs))))))]
                 [(LowerMaybeMaskedPreheaderCache.No) unit])
-              (lower-masked-preheader-cache-disable!
-                (lower-global-shared-view s))
+              (lower-masked-preheader-cache-disable! s)
               (match (lower-expr ctx s body-env body-type-env body)
                 [(ResultLowerExpr.Ok scalar-tail-lowered)
                   (match scalar-tail-lowered
@@ -68820,7 +68579,7 @@
   [body : ast.AstExpr]) : ResultLowerExpr
   (let
     [function-state : CompilerLowerFunctionState
-      (lower-state-function-state (lower-global-shared-view state))]
+      (lower-state-function-state state)]
     [previous : LowerSpmdScalarCallContext
       (compiler-lower-function-state-scalar-call-context function-state)]
     [result : ResultLowerExpr
@@ -68938,7 +68697,7 @@
   [plan : LowerMaybeVectorMap]) : ResultLowerExpr
   (match (lower-global-shared-view plan)
     [(LowerMaybeVectorMap.Some stores elem-ty lanes)
-      (match (lower-state-alloc-var (lower-global-shared-view state))
+      (match (lower-state-alloc-var state)
         [(LowerAlloc.Alloc index-alloc index-var)
           (let
             [s : LowerState
@@ -68973,57 +68732,43 @@
             [preheader-cache : LowerVectorMapValueCache
               (lower-vector-map-value-cache-empty)]
             (begin
-              (match (lower-state-fresh-label
-                (lower-global-shared-view s)
-                "foreach_avx2_header")
+              (match (lower-state-fresh-label s "foreach_avx2_header")
                 [(LowerLabel.Label next-s label)
                   (begin
                     (set! s next-s)
                     (set! header-label label))])
-              (match (lower-state-fresh-label
-                (lower-global-shared-view s)
-                "foreach_avx2_body")
+              (match (lower-state-fresh-label s "foreach_avx2_body")
                 [(LowerLabel.Label next-s label)
                   (begin
                     (set! s next-s)
                     (set! body-label label))])
-              (match (lower-state-fresh-label
-                (lower-global-shared-view s)
-                "foreach_tail_header")
+              (match (lower-state-fresh-label s "foreach_tail_header")
                 [(LowerLabel.Label next-s label)
                   (begin
                     (set! s next-s)
                     (set! tail-header-label label))])
-              (match (lower-state-fresh-label
-                (lower-global-shared-view s)
-                "foreach_tail_check")
+              (match (lower-state-fresh-label s "foreach_tail_check")
                 [(LowerLabel.Label next-s label)
                   (begin
                     (set! s next-s)
                     (set! tail-check-label label))])
-              (match (lower-state-fresh-label
-                (lower-global-shared-view s)
-                "foreach_tail_mask")
+              (match (lower-state-fresh-label s "foreach_tail_mask")
                 [(LowerLabel.Label next-s label)
                   (begin
                     (set! s next-s)
                     (set! tail-mask-label label))])
-              (match (lower-state-fresh-label
-                (lower-global-shared-view s)
-                "foreach_tail_body")
+              (match (lower-state-fresh-label s "foreach_tail_body")
                 [(LowerLabel.Label next-s label)
                   (begin
                     (set! s next-s)
                     (set! tail-body-label label))])
-              (match (lower-state-fresh-label
-                (lower-global-shared-view s)
-                "foreach_exit")
+              (match (lower-state-fresh-label s "foreach_exit")
                 [(LowerLabel.Label next-s label)
                   (begin
                     (set! s next-s)
                     (set! exit-label label))])
               (match (lower-vector-loop-limit
-                (lower-global-shared-view s)
+                s
                 (lower-global-shared-view end-value)
                 arrays
                 lanes)
@@ -69031,16 +68776,13 @@
                   (begin
                     (set! s next-s)
                     (set! vector-limit value))])
-              (match (lower-vector-loop-start-ok
-                (lower-global-shared-view s)
-                index-var
-                lanes)
+              (match (lower-vector-loop-start-ok s index-var lanes)
                 [(LowerExpr.Expr next-s value _)
                   (begin
                     (set! s next-s)
                     (set! vector-start-ok value))])
               (match (lower-vector-map-preheader-cache-stores
-                (lower-global-shared-view s)
+                s
                 arrays
                 stores
                 lanes
@@ -69060,7 +68802,7 @@
                       tail-header-label))
                   header-label))
               (match (lower-emit-binop
-                (lower-global-shared-view s)
+                s
                 (ir.CompilerIrBinOp.Add)
                 (ir.CompilerIrValue.Var index-var)
                 (ir.CompilerIrValue.I64 lanes)
@@ -69070,7 +68812,7 @@
                     (set! s next-s)
                     (set! next-index value))])
               (match (lower-vector-loop-next-ok
-                (lower-global-shared-view s)
+                s
                 (lower-global-shared-view next-index)
                 vector-limit)
                 [(LowerExpr.Expr next-s value _)
@@ -69102,7 +68844,7 @@
                   (lower-state-emit s (ir.CompilerIrInstr.Jump header-label))
                   tail-header-label))
               (match (lower-vector-loop-i64-compare
-                (lower-global-shared-view s)
+                s
                 (ir.CompilerIrBinOp.Lt)
                 (ir.CompilerIrValue.Var index-var)
                 (lower-global-shared-view end-value))
@@ -69145,7 +68887,7 @@
                       tail-body-label))
                   (begin
                     (match (lower-predicated-tail-ok
-                      (lower-global-shared-view s)
+                      s
                       index-var
                       (lower-global-shared-view end-value)
                       arrays)
@@ -69183,9 +68925,7 @@
                 (lower-maybe-vector-map-needs-scalar-tail?
                   (lower-global-shared-view plan))
                 (or
-                  (not
-                    (lower-mode-avx512?
-                      (lower-state-mode (lower-global-shared-view s))))
+                  (not (lower-mode-avx512? (lower-state-mode s)))
                   (lower-maybe-vector-map-has-gather?
                     (lower-global-shared-view plan))
                   (lower-maybe-vector-map-has-shuffle?
@@ -69266,11 +69006,11 @@
   [diagnostic-body : ast.AstExpr]
   [body : ast.AstExpr]) : ResultLowerExpr
   (if (and
-    (lower-mode-simd? (lower-state-mode (lower-global-shared-view state)))
+    (lower-mode-simd? (lower-state-mode state))
     (lower-type-i64? (lower-global-shared-view index-ty)))
     (match (lower-simple-vector-map
       (lower-global-shared-view ctx)
-      (lower-state-mode (lower-global-shared-view state))
+      (lower-state-mode state)
       env
       type-env
       (lower-global-shared-view index)
@@ -69278,7 +69018,7 @@
       [(LowerMaybeVectorMap.Some _ _ _)
         (lower-avx2-foreach-lowered
           (lower-global-shared-view ctx)
-          (lower-global-shared-view state)
+          state
           env
           type-env
           index-id
@@ -69297,7 +69037,7 @@
       [(LowerMaybeVectorMap.No)
         (if (lower-vector-body-has-atomic-call?
           (lower-global-shared-view ctx)
-          (lower-state-function-state (lower-global-shared-view state))
+          (lower-state-function-state state)
           env
           type-env
           (lower-global-shared-view body))
@@ -69314,8 +69054,8 @@
             body)
           (match (lower-masked-vector-map
             (lower-global-shared-view ctx)
-            (lower-state-function-state (lower-global-shared-view state))
-            (lower-state-mode (lower-global-shared-view state))
+            (lower-state-function-state state)
+            (lower-state-mode state)
             env
             type-env
             (lower-global-shared-view index)
@@ -69323,7 +69063,7 @@
             [(LowerMaybeMaskedVectorMap.Some _)
               (lower-avx512-masked-foreach-lowered
                 (lower-global-shared-view ctx)
-                (lower-global-shared-view state)
+                state
                 env
                 type-env
                 index-id
@@ -69334,7 +69074,7 @@
                 (lower-global-shared-view body)
                 (lower-masked-vector-map
                   ctx
-                  (lower-state-function-state (lower-global-shared-view state))
+                  (lower-state-function-state state)
                   (lower-state-mode state)
                   env
                   type-env
@@ -69343,8 +69083,8 @@
             [(LowerMaybeMaskedVectorMap.No)
               (match (lower-spmd-numeric-failure
                 (lower-global-shared-view ctx)
-                (lower-state-function-state (lower-global-shared-view state))
-                (lower-state-mode (lower-global-shared-view state))
+                (lower-state-function-state state)
+                (lower-state-mode state)
                 env
                 (tc_core.tc-bind-id
                   type-env
@@ -69363,9 +69103,8 @@
                   (cond
                     [(lower-masked-vector-body-has-varying-while?
                         (lower-global-shared-view ctx)
-                        (lower-state-function-state
-                          (lower-global-shared-view state))
-                        (lower-state-mode (lower-global-shared-view state))
+                        (lower-state-function-state state)
+                        (lower-state-mode state)
                         env
                         type-env
                         (lower-global-shared-view index)
@@ -69380,9 +69119,8 @@
                               "lower: SPMD varying while AVX-512 lowering is not available for this backend mode or loop shape"))))]
                     [(lower-masked-vector-body-has-varying-if?
                         (lower-global-shared-view ctx)
-                        (lower-state-function-state
-                          (lower-global-shared-view state))
-                        (lower-state-mode (lower-global-shared-view state))
+                        (lower-state-function-state state)
+                        (lower-state-mode state)
                         env
                         type-env
                         (lower-global-shared-view index)
@@ -69411,9 +69149,8 @@
                               "lower: AVX-512 varying enum match requires a contiguous dynamic-array lane source and supported payload bindings"))))]
                     [(lower-masked-vector-body-has-varying-match?
                         (lower-global-shared-view ctx)
-                        (lower-state-function-state
-                          (lower-global-shared-view state))
-                        (lower-state-mode (lower-global-shared-view state))
+                        (lower-state-function-state state)
+                        (lower-state-mode state)
                         env
                         type-env
                         (lower-global-shared-view index)
@@ -69440,7 +69177,7 @@
                         (lower-global-shared-view body))
                       (match (lower-simple-vector-map-unsupported-shift-lane
                         (lower-global-shared-view ctx)
-                        (lower-state-mode (lower-global-shared-view state))
+                        (lower-state-mode state)
                         env
                         type-env
                         (lower-global-shared-view index)
@@ -69459,7 +69196,7 @@
                         [(LowerMaybeAstType.No)
                           (match (lower-simple-vector-map-unsupported-shift-lane
                             (lower-global-shared-view ctx)
-                            (lower-state-mode (lower-global-shared-view state))
+                            (lower-state-mode state)
                             env
                             type-env
                             index
@@ -69519,7 +69256,7 @@
   [body : ast.AstExpr]) : ResultLowerExpr
   (match (lower-spmd-inline-expr
     (lower-global-shared-view ctx)
-    (lower-state-function-state (lower-global-shared-view state))
+    (lower-state-function-state state)
     env
     type-env
     (lower-global-shared-view body)
@@ -69552,18 +69289,18 @@
   [end-value : ir.CompilerIrValue]
   [body : ast.AstExpr]) : ResultLowerExpr
   (if (and
-    (lower-mode-simd? (lower-state-mode (lower-global-shared-view state)))
+    (lower-mode-simd? (lower-state-mode state))
     (lower-type-i64? (lower-global-shared-view index-ty))
     (lower-spmd-expr-has-out-of-line-call?
       (lower-global-shared-view ctx)
-      (lower-state-function-state (lower-global-shared-view state))
+      (lower-state-function-state state)
       env
       type-env
       (lower-global-shared-view body)))
     (match (lower-spmd-numeric-failure
       (lower-global-shared-view ctx)
-      (lower-state-function-state (lower-global-shared-view state))
-      (lower-state-mode (lower-global-shared-view state))
+      (lower-state-function-state state)
+      (lower-state-mode state)
       env
       (tc_core.tc-bind-id type-env index-id (lower-global-shared-view index-ty))
       (spmd_numeric.CompilerSpmdNumericContext.DirectMap)
@@ -71609,7 +71346,7 @@
                         "lower: refutable payload pattern in final match arm requires a trailing catch-all")))
                   (match (lower-bind-match-variant-payloads
                     (lower-global-shared-view ctx)
-                    (lower-global-shared-view state)
+                    state
                     env
                     type-env
                     borrow-lifetime
@@ -71644,8 +71381,7 @@
                             [(LowerExpr.Expr body-state body-value body-ty)
                               (let
                                 [body-end-label : i64
-                                  (lower-state-current-label
-                                    (lower-global-shared-view body-state))]
+                                  (lower-state-current-label body-state)]
                                 (if (tc_core.tc-never-type? body-ty)
                                   (lower-match-finish
                                     ctx
@@ -71697,7 +71433,7 @@
   [total-enum-switch? : bool]) : ResultLowerExpr
   (match (lower-bind-match-variant-payloads
     (lower-global-shared-view ctx)
-    (lower-global-shared-view body-start)
+    body-start
     env
     type-env
     borrow-lifetime
@@ -71726,9 +71462,7 @@
           (match body-lowered
             [(LowerExpr.Expr body-state body-value body-ty)
               (let
-                [body-end-label : i64
-                  (lower-state-current-label
-                    (lower-global-shared-view body-state))]
+                [body-end-label : i64 (lower-state-current-label body-state)]
                 (lower-match-enum-arms
                   ctx
                   (if (tc_core.tc-never-type?
@@ -71975,8 +71709,7 @@
                         [(LowerExpr.Expr body-state body-value body-ty)
                           (let
                             [body-end-label : i64
-                              (lower-state-current-label
-                                (lower-global-shared-view body-state))]
+                              (lower-state-current-label body-state)]
                             (lower-match-arms
                               ctx
                               (if (tc_core.tc-never-type?
@@ -72041,8 +71774,7 @@
                   [(LowerExpr.Expr body-state body-value body-ty)
                     (let
                       [body-end-label : i64
-                        (lower-state-current-label
-                          (lower-global-shared-view body-state))]
+                        (lower-state-current-label body-state)]
                       (if (tc_core.tc-never-type? body-ty)
                         (lower-match-finish
                           ctx
@@ -72144,7 +71876,7 @@
 
 (define (lower-tail-call-self-target? [state : LowerState] [name : i64]) : bool
   (string.eq
-    (lower-resolve-name-id (lower-global-shared-view state) name)
+    (lower-resolve-name-id state name)
     (lower-state-current-function state)))
 
 (define (lower-symbol-function-define-id?
@@ -72205,19 +71937,16 @@
         (lower-inline-aggregate-abi-copy-needed?
           (lower-global-shared-view ctx)
           (lower-global-shared-view ret-ty))
-        (lower-rvo-callee-has-early-return-id?
-          (lower-global-shared-view state)
-          env
-          name))
+        (lower-rvo-callee-has-early-return-id? state env name))
       false]
     [(lower-tail-call-direct-structural-param?
         (lower-global-shared-view ctx)
-        (lower-global-shared-view state)
+        state
         env
         type-env
         name)
       false]
-    [(lower-tail-call-self-target? (lower-global-shared-view state) name) true]
+    [(lower-tail-call-self-target? state name) true]
     [(lower-symbol-function-define-id? (lower-global-shared-view ctx) name)
       (match (lower-lookup-type-id
         (lower-global-shared-view ctx)
@@ -72246,7 +71975,7 @@
   [args : ast.AstExprList]) : ResultLowerArgs
   (match (lower-lookup-type-id
     (lower-global-shared-view ctx)
-    (lower-state-type-cache (lower-global-shared-view state))
+    (lower-state-type-cache state)
     env
     type-env
     name)
@@ -72260,9 +71989,7 @@
             env
             type-env
             args
-            (tc_core.tc-resolve-type-list
-              ctx
-              (lower-box-shared-view param-types)))]
+            (tc_core.tc-resolve-type-list ctx (deref param-types)))]
         [_ (lower-args ctx state env type-env args)])]
     [(tc_core.ResultTcType.Err _) (lower-args ctx state env type-env args)]))
 
@@ -72315,7 +72042,7 @@
     [(tc_core.ResultTcType.Ok func-ty)
       (if (lower-tail-call-indirect-supported?
         (lower-global-shared-view ctx)
-        (lower-global-shared-view state)
+        state
         env
         type-env
         func-ty
@@ -72900,8 +72627,7 @@
       (if (sym_i64_env.sym-i64-contains-id env name-id)
         name-id
         (let
-          [names : LowerNameCache
-            (lower-state-names (lower-global-shared-view state))]
+          [names : LowerNameCache (lower-state-names state)]
           (lower-name-cache-resolve-logical-id (& names) name-id name-id)))]
     [early-returns : lower_i64_i64_map.Map
       (compiler-lower-state-read
@@ -72952,20 +72678,17 @@
       (lower-symbol-function-define-id? (lower-global-shared-view ctx) name-id))
     ;; Explicit early exits are still lowered through return paths that may hand
     ;; back an allocated aggregate in `rax` instead of filling the forwarded sret.
-    (lower-rvo-callee-has-early-return-id?
-      (lower-global-shared-view state)
-      env
-      name-id)
+    (lower-rvo-callee-has-early-return-id? state env name-id)
     (lower-bytes-view-from-parts-name? (lower-global-shared-view name))
     (lower-c-abi-extern-call?
       (lower-global-shared-view ctx)
-      (lower-global-shared-view state)
+      state
       env
       name-id
       (lower-global-shared-view name))
     (lower-c-abi-extern-value-call?
       (lower-global-shared-view ctx)
-      (lower-global-shared-view state)
+      state
       env
       name-id
       (lower-global-shared-view name))
@@ -72979,7 +72702,7 @@
     (LowerMaybeDirectStore.No)
     (match (lower-lookup-type-id
       (lower-global-shared-view ctx)
-      (lower-state-type-cache (lower-global-shared-view state))
+      (lower-state-type-cache state)
       env
       type-env
       name-id)
@@ -73030,7 +72753,7 @@
                                 (ir.CompilerIrValue.Var sret-var))]
                             [call-name : i64
                               (lower-resolve-call-name-id-with-display
-                                (lower-global-shared-view allocated)
+                                allocated
                                 env
                                 name-id
                                 name)]
@@ -73081,7 +72804,7 @@
   [origin : ast.AstExpr]) : ResultLowerState
   (match (lower-return-direct-call-into-sret
     (lower-global-shared-view ctx)
-    (lower-global-shared-view state)
+    state
     env
     type-env
     name
@@ -73165,7 +72888,7 @@
         [struct-handle : i64
           (lower-struct-constructor-handle-id-or
             (lower-global-shared-view ctx)
-            (lower-global-shared-view state)
+            state
             raw-name-id
             lookup-name-id
             (lower-global-shared-view ret-ty)
@@ -73245,7 +72968,7 @@
                 [(tc_core.TcNameLookup.Ok _ resolved-id)
                   (tc_core.TcNameLookup.Ok
                     (lower-hygiene-source-name-in-context-id
-                      (lower-state-owner (lower-global-shared-view state))
+                      (lower-state-owner state)
                       (lower-global-shared-view ctx)
                       type-env
                       raw-name)
@@ -73253,7 +72976,7 @@
                 [(tc_core.TcNameLookup.Err _)
                   (tc_core.TcNameLookup.Ok
                     (lower-hygiene-source-name-in-context-id
-                      (lower-state-owner (lower-global-shared-view state))
+                      (lower-state-owner state)
                       (lower-global-shared-view ctx)
                       type-env
                       raw-name)
@@ -73396,7 +73119,7 @@
               (not
                 (lower-tail-call-safe-param-aggregate-arg?
                   (lower-global-shared-view ctx)
-                  (lower-global-shared-view state)
+                  state
                   env
                   expr)))
             (lower-expr-list-contains-unsafe-inline-aggregate-at?
@@ -73477,9 +73200,7 @@
         (cond
           [(and
               unshadowed
-              (lower-comptime-error-call-id?
-                (lower-state-owner (lower-global-shared-view state))
-                name))
+              (lower-comptime-error-call-id? (lower-state-owner state) name))
             (ResultLowerState.Err
               (box
                 (lower-diagnostic-at-expr
@@ -73514,7 +73235,7 @@
               (not
                 (lower-tail-call-inline-aggregate-risk?
                   (lower-global-shared-view ctx)
-                  (lower-global-shared-view state)
+                  state
                   env
                   type-env
                   args
@@ -73522,7 +73243,7 @@
                   sret-var))
               (lower-tail-call-direct-supported?
                 (lower-global-shared-view ctx)
-                (lower-global-shared-view state)
+                state
                 env
                 type-env
                 name
@@ -73544,9 +73265,7 @@
                   [(ResultLowerArgs.Ok tail-state tail-values)
                     (let
                       [target-id : i64
-                        (lower-resolve-name-symbol-id
-                          (lower-global-shared-view tail-state)
-                          name)]
+                        (lower-resolve-name-symbol-id tail-state name)]
                       (ResultLowerState.Ok
                         (lower-state-emit-at-expr
                           ctx
@@ -74283,7 +74002,7 @@
     [(tc_core.TcContext _ symbols registries _ _ _ _ _ _)
       (match (lower-variant-arm-resolution
         (lower-global-shared-view ctx)
-        (lower-state-function-state (lower-global-shared-view state))
+        (lower-state-function-state state)
         symbols
         scrut-ty
         variant-name-id)
@@ -74310,14 +74029,14 @@
                   "lower: refutable payload pattern in final match arm requires a trailing catch-all")))
             (match (lower-bind-match-variant-payloads
               (lower-global-shared-view ctx)
-              (lower-global-shared-view state)
+              state
               env
               type-env
               borrow-lifetime
               (ir.CompilerIrValue.Var scrut-var)
               args
               resolved-fields
-              (lower-state-mode (lower-global-shared-view state))
+              (lower-state-mode state)
               (lower-enum-type-name-id-or
                 (lower-global-shared-view resolved-scrut-ty)
                 -1)
@@ -74361,7 +74080,7 @@
   [total-enum-switch? : bool]) : ResultLowerState
   (match (lower-bind-match-variant-payloads
     (lower-global-shared-view ctx)
-    (lower-global-shared-view body-start)
+    body-start
     env
     type-env
     borrow-lifetime
@@ -74425,7 +74144,7 @@
     [(tc_core.TcContext _ symbols registries _ _ _ _ _ _)
       (match (lower-variant-arm-resolution
         (lower-global-shared-view ctx)
-        (lower-state-function-state (lower-global-shared-view state))
+        (lower-state-function-state state)
         symbols
         (lower-global-shared-view scrut-ty)
         variant-name-id)
@@ -75353,8 +75072,7 @@
                   (sym_i64_env.sym-i64-bind-id
                     (sym_i64_env.sym-i64-empty)
                     (cis.intern-lower-private-identity-raw
-                      (lower-sret-param-marker-id
-                        (lower-global-shared-view state)))
+                      (lower-sret-param-marker-id state))
                     sret-var)
                   (sym_i64_env.sym-i64-empty))]
               (match (if structural-params?
@@ -75409,15 +75127,13 @@
                             source-params)]
                         (ResultLowerFunction.Ok
                           (lower-state-build-functions-with
-                            (lower-global-shared-view final-state)
+                            final-state
                             (ir.CompilerIrFunction.Function
                               logical-name
                               all-params
                               ret-ir-ty
-                              (lower-state-next-var
-                                (lower-global-shared-view final-state))
-                              (lower-state-build-function-blocks
-                                (lower-global-shared-view final-state))
+                              (lower-state-next-var final-state)
+                              (lower-state-build-function-blocks final-state)
                               ir.CompilerIrFunctionAbi.Ordinary))
                           (lower-state-spans final-state)))]
                     [(ResultLowerState.Err message)
@@ -78288,7 +78004,7 @@
                                     (compiler-lower-profile-detail-finish
                                       lower-state
                                       "function"
-                                      (lower-global-shared-view logical-name)))
+                                      logical-name))
                                   (set! result (ResultLowerDecls.Err message))
                                   (set! done true))]
                               [(ResultLowerFunction.Ok
@@ -78342,7 +78058,7 @@
                                 (compiler-lower-profile-detail-finish
                                   lower-state
                                   "function"
-                                  (lower-global-shared-view logical-name)))
+                                  logical-name))
                               (set! result (ResultLowerDecls.Err message))
                               (set! done true))]))))]
                 [(ast.AstDecl.DefMacro decl-meta _ _ _ _) (set! cur-decls rest)]

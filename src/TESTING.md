@@ -1311,14 +1311,23 @@ tools\stage0\typelisp.exe run src\compiler_parse_core.tl --stdlib-root stdlib --
 tools\stage0\typelisp.exe run src\compiler_backend_tests.tl --stdlib-root stdlib --stdlib-root src
 ```
 
-### Assembly shape gates
+### Codegen case files
 
-`scripts/verify-asm-shape-gates.sh` owns Linux opt2 assembly-shape assertions
-for performance-sensitive regalloc/backend fixtures. Use this layer when a
-native integration fixture can still return the right exit code while silently
-falling back to slow codegen. The script compiles each fixture with the selected
-CI compiler, extracts the intended function body, and checks for the fast shape
-and the absence of known slow markers.
+`tests/codegen/*.cases` hold the table-driven compile/run/assembly-shape
+checks, run by `scripts/verify-codegen-cases.sh` (the format is documented in
+its header). A case names a source, the targets, opt levels and backend modes
+it runs under, and an action (compile, build, link and run, `typelisp run` or
+`check`); its rows then assert on the exit status, stdout/stderr, the whole
+assembly or one function body: fixed text, regular expressions, match counts,
+and named analyzers from `scripts/codegen-cases-analyzers.awk` for shapes a
+grep cannot express (backward branches, prologue pushes, unrolled groups).
+Everything is evaluated with sh/grep/awk, never with the compiler under test.
+Each CI gate runs one file, or one case of it with `--only`.
+
+Use this layer when a native integration fixture can still return the right
+exit code while silently falling back to slow codegen: `math.cases` pins
+freestanding stdlib math (no allocation, libm or x87/FMA code on either
+target).
 
 ### Selfhost native generated programs
 

@@ -810,10 +810,10 @@ if ci_gate_selected package-dependency-tlci-frontend-surfaces; then
 fi
 run_with_compiler "$STAGE2_BIN" stage2-compile-startup-profile-verifier scripts/verify-compile-startup-profile.sh
 run_with_compiler "$STAGE2_BIN" stage2-allocation-profile-verifier scripts/verify-allocation-profile.sh
-run_with_compiler "$STAGE2_BIN" stage2-math-exp-codegen-verifier scripts/verify-math-exp-codegen.sh
-run_with_compiler "$STAGE2_BIN" stage2-math-log-codegen-verifier scripts/verify-math-log-codegen.sh
-run_with_compiler "$STAGE2_BIN" stage2-math-pow-codegen-verifier scripts/verify-math-pow-codegen.sh
-run_with_compiler "$STAGE2_BIN" stage2-math-trig-codegen-verifier scripts/verify-math-trig-codegen.sh
+run_with_compiler "$STAGE2_BIN" stage2-math-exp-codegen-verifier scripts/verify-codegen-cases.sh --only exp tests/codegen/math.cases
+run_with_compiler "$STAGE2_BIN" stage2-math-log-codegen-verifier scripts/verify-codegen-cases.sh --only log tests/codegen/math.cases
+run_with_compiler "$STAGE2_BIN" stage2-math-pow-codegen-verifier scripts/verify-codegen-cases.sh --only pow tests/codegen/math.cases
+run_with_compiler "$STAGE2_BIN" stage2-math-trig-codegen-verifier scripts/verify-codegen-cases.sh --only trig tests/codegen/math.cases
 run_with_compiler "$STAGE2_BIN" stage2-codegen-target-parity scripts/check-codegen-target-parity.sh
 run_with_compiler "$STAGE2_BIN" stage2-backend-target-assembly-parity scripts/check-backend-target-asm-parity.sh
 run_with_compiler "$STAGE2_BIN" stage2-windows-coff-batch-plan scripts/verify-compile-batch-windows-coff.sh

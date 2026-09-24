@@ -26122,8 +26122,12 @@
                 (compiler_ir_types.compiler-ir-label "latch")
                 (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
             (compiler_ast_types.AstType.I64))
+          ;; `idx`, not `tag`: the builder's own loop exits only on a false
+          ;; `tag`, so a header testing `tag` again would be decided dead below
+          ;; the inlined body by the flag's own test, and the priced plan would
+          ;; measure that fixture artifact instead of the site.
           (compiler_ir_types.CompilerIrInstr.Branch
-            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.CompilerIrValue.Var 1)
             (compiler_ir_types.compiler-ir-label "body")
             (compiler_ir_types.compiler-ir-label "exit"))))
       (compiler_ir_types.compiler-ir-block-cons

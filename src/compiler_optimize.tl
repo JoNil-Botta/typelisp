@@ -23732,10 +23732,13 @@
               (OptLoopBody
                 (compiler-opt-global-shared-view body-labels)
                 (compiler-opt-global-shared-view marks)
-                (opt-loop-body-blocks-from
+                (opt-loop-body-blocks-by-id
                   (compiler-opt-global-shared-view marks)
                   (compiler-opt-global-shared-view blocks)
-                  0
+                  header-id
+                  latch-id
+                  (compiler-opt-global-shared-view found)
+                  found-count
                   n))
               (opt-natural-loop-find-preheader-by-id
                 (compiler-opt-global-shared-view index)
@@ -23788,6 +23791,75 @@
               (compiler-opt-global-shared-view index)
               candidate))
           (OptLoopPreheader.No))))))
+
+;; The body's blocks for the id walk. `opt-loop-body-blocks-from-seq` walks the
+;; whole block array to cons the members up in block order; the id walk already
+;; holds them -- the header, the latch and the recorded ids, which are exactly
+;; `marks` -- so a small body sorts those few ids and conses the same blocks in
+;; the same order without visiting the rest of the function. A large body, or
+;; a block list that is not an array, keeps the walk.
+(define (opt-loop-body-blocks-by-id
+  [marks : (__tl_dyn-array bool)]
+  [blocks : ir.CompilerIrBlockList]
+  [header-id : i64]
+  [latch-id : i64]
+  [found : (__tl_dyn-array i64)]
+  [found-count : i64]
+  [n : i64]) : ir.CompilerIrBlockList
+  (match (compiler-opt-global-shared-view blocks)
+    [(ir.CompilerIrBlockList.Array seq)
+      (if (> n (opt-loop-body-sorted-id-limit))
+        (opt-loop-body-blocks-from-seq marks seq 0)
+        (let
+          [ids : (__tl_dyn-array i64) (__tl_make-array i64 (+ found-count 2))]
+          [k : i64 0]
+          [i : i64 0]
+          [out : ir.CompilerIrBlockList (ir.CompilerIrBlockList.Nil)]
+          (begin
+            (when
+              (>= header-id 0)
+              (begin
+                (set! (array-ref ids k) header-id)
+                (set! k (+ k 1))))
+            (when
+              (and (>= latch-id 0) (!= latch-id header-id))
+              (begin
+                (set! (array-ref ids k) latch-id)
+                (set! k (+ k 1))))
+            (while (< i found-count)
+              (begin
+                (set! (array-ref ids k) (array-ref found i))
+                (set! k (+ k 1))
+                (set! i (+ i 1))))
+            ;; Insertion sort: at most the limit's worth of distinct ids.
+            (set! i 1)
+            (while (< i k)
+              (let
+                [id : i64 (array-ref ids i)]
+                [j : i64 (- i 1)]
+                (begin
+                  (while (and (>= j 0) (> (array-ref ids j) id))
+                    (begin
+                      (set! (array-ref ids (+ j 1)) (array-ref ids j))
+                      (set! j (- j 1))))
+                  (set! (array-ref ids (+ j 1)) id)
+                  (set! i (+ i 1)))))
+            (set! i (- k 1))
+            (while (>= i 0)
+              (begin
+                (set!
+                  out
+                  (ir.compiler-ir-block-cons
+                    (ir.compiler-ir-block-seq-ref
+                      (compiler-opt-global-shared-view seq)
+                      (array-ref ids i))
+                    out))
+                (set! i (- i 1))))
+            out)))]
+    [_ (opt-loop-body-blocks-from marks blocks 0 n)]))
+
+(define (opt-loop-body-sorted-id-limit) : i64
+  32)
 
 (define (opt-natural-loop-build-by-label
   [blocks : ir.CompilerIrBlockList]

@@ -13932,13 +13932,55 @@
   (if (and
     (>= id 0)
     (< id (opt-cfg-index-block-count (compiler-opt-global-shared-view index))))
-    (opt-cfg-index-row-labels-from
-      (compiler-opt-global-shared-view index)
-      (compiler-opt-global-shared-view csr)
-      (array-ref csr.offsets id)
-      (array-ref csr.offsets (+ id 1))
-      (OptLabelSet.Nil))
+    (if index.labels-unique
+      (opt-cfg-index-row-labels-dense
+        (compiler-opt-global-shared-view index)
+        (compiler-opt-global-shared-view csr)
+        (array-ref csr.offsets id)
+        (array-ref csr.offsets (+ id 1)))
+      (opt-cfg-index-row-labels-from
+        (compiler-opt-global-shared-view index)
+        (compiler-opt-global-shared-view csr)
+        (array-ref csr.offsets id)
+        (array-ref csr.offsets (+ id 1))
+        (OptLabelSet.Nil)))
     (OptLabelSet.Nil)))
+
+;; A row's label set built in one allocation. The rows hold distinct block ids,
+;; and with every block label distinct they name distinct labels, so the
+;; per-edge `opt-label-add` above never finds its label already present: this
+;; is the set it builds, in the same order, without the membership scans or the
+;; growth copies.
+(define (opt-cfg-index-row-labels-dense
+  [index : OptCfgIndex]
+  [csr : OptCfgCsr]
+  [start : i64]
+  [end : i64]) : OptLabelSet
+  (let
+    [n : i64 (- end start)]
+    (if (<= n 0)
+      (OptLabelSet.Nil)
+      (let
+        [items : (__tl_dyn-array i64)
+          (__tl_make-array
+            i64
+            (+
+              (if (< n 4)
+                4
+                n)
+              1))]
+        [k : i64 0]
+        (begin
+          (while (< k n)
+            (begin
+              (set!
+                (array-ref items (+ k 1))
+                (opt-cfg-index-label
+                  (compiler-opt-global-shared-view index)
+                  (array-ref csr.edges (+ start k))))
+              (set! k (+ k 1))))
+          (set! (array-ref items 0) n)
+          (OptLabelSet.Dense items n))))))
 
 (define (opt-cfg-index-successors [index : OptCfgIndex] [label : i64]) : OptLabelSet
   (match (opt-cfg-index-id (compiler-opt-global-shared-view index) label)

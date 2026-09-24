@@ -106,9 +106,9 @@ type; about a thousand probes fail during a self-compile and their errors are
 dropped. `tc-expr-discarding-errors` opens a job-owned suppression scope so such
 an error is not finalized with a near-miss scan over every visible name (2.7%
 of the self-compile before #7868). The `tc-unbound-suggestion-suppression-scope`
-inline test checks nesting, that only the owning job is silenced, that the memo
-is not filled with suppressed answers, and that the suggestion returns after the
-scope; `tc-expr-discarding-errors-balances-its-scope` checks both outcomes close
+inline test checks nesting, that only the owning job is silenced, and that the
+suggestion returns after the scope;
+`tc-expr-discarding-errors-balances-its-scope` checks both outcomes close
 the scope. `macro_operand_unbound_suggestion_reject` is the user-visible half: a
 name that fails the probe and then fails for real must still report "did you
 mean". Only a caller that drops the error unconditionally may use the wrapper;

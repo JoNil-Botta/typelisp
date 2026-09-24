@@ -25923,6 +25923,28 @@
         (ir.compiler-ir-block-seq-to-list seq)
         header)]))
 
+(define (opt-rotate-ssa-uses-except-header-array
+  [items : (__tl_dyn-array i64)]
+  [blocks : ir.CompilerIrBlockList]
+  [header : i64]) : unit
+  (let
+    [seq : ir.CompilerIrBlockSeq
+      (ir.compiler-ir-block-seq-from-list
+        (compiler-opt-global-shared-view blocks))]
+    [i : i64 0]
+    (while (< i seq.len)
+      (begin
+        (match (ir.compiler-ir-block-seq-ref
+          (compiler-opt-global-shared-view seq)
+          i)
+          [(ir.CompilerIrBlock.Block label instrs)
+            (unless
+              (= label header)
+              (opt-collect-instr-seq-uses-array
+                (compiler-opt-global-shared-view items)
+                instrs))])
+        (set! i (+ i 1))))))
+
 ;; LCSSA-style exit-value placement. Rotation deletes the header, so a
 ;; loop-carried value `p` that used to be defined there is defined in the body
 ;; block afterwards; an outside reader of `p` is only still dominated by a
@@ -26000,6 +26022,32 @@
         set
         (ir.compiler-ir-block-seq-to-list seq)
         body)]))
+
+;; Dense twin of opt-rotate-ssa-uses-outside-body for rotation's own checks,
+;; which only ask about a handful of phi and guard destinations: counting into
+;; an array indexed by var replaces a hash insert per use, and this walk runs
+;; once per rotation candidate over the whole function.
+(define (opt-rotate-ssa-uses-outside-body-array
+  [items : (__tl_dyn-array i64)]
+  [blocks : ir.CompilerIrBlockList]
+  [body : OptLabelSet]) : unit
+  (let
+    [seq : ir.CompilerIrBlockSeq
+      (ir.compiler-ir-block-seq-from-list
+        (compiler-opt-global-shared-view blocks))]
+    [i : i64 0]
+    (while (< i seq.len)
+      (begin
+        (match (ir.compiler-ir-block-seq-ref
+          (compiler-opt-global-shared-view seq)
+          i)
+          [(ir.CompilerIrBlock.Block label instrs)
+            (unless
+              (opt-label-contains (compiler-opt-global-shared-view body) label)
+              (opt-collect-instr-seq-uses-array
+                (compiler-opt-global-shared-view items)
+                instrs))])
+        (set! i (+ i 1))))))
 
 ;; A read's POSITION is the block holding it, except for a phi input, whose
 ;; position is the label on the input's edge.
@@ -26153,7 +26201,7 @@
 ;; blocks plus the header's own phi inputs.
 (define (opt-rotate-ssa-guard-dsts-local?
   [guard : ir.CompilerIrInstrSeq]
-  [uses : opt_i64_i64_map.Map]) : bool
+  [uses : (__tl_dyn-array i64)]) : bool
   (let
     [count : i64
       (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view guard))]
@@ -26171,7 +26219,9 @@
               (and
                 (>= dst 0)
                 (not
-                  (opt-used-contains (compiler-opt-global-shared-view uses) dst))))
+                  (opt-used-array-contains
+                    (compiler-opt-global-shared-view uses)
+                    dst))))
             (set! index (+ index 1)))))
       local?)))
 
@@ -26330,7 +26380,7 @@
 ;; phi itself and get no entry here.
 (define (opt-rotate-ssa-exit-phis-from
   [recs : OptRotateSsaPhiRecs]
-  [outside-uses : opt_i64_i64_map.Map]
+  [outside-uses : (__tl_dyn-array i64)]
   [preheader : i64]
   [latch : i64]
   [next-var : i64]
@@ -26349,7 +26399,7 @@
         [(OptRotateSsaPhiRec.Rec dst init back ty)
           (let
             [rest : OptRotateSsaPhiRecs (opt-rotate-ssa-phi-recs-tail recs)]
-            (if (opt-used-contains
+            (if (opt-used-array-contains
               (compiler-opt-global-shared-view outside-uses)
               dst)
               (begin
@@ -26392,7 +26442,7 @@
 
 (define (opt-rotate-ssa-exit-phis
   [recs : OptRotateSsaPhiRecs]
-  [outside-uses : opt_i64_i64_map.Map]
+  [outside-uses : (__tl_dyn-array i64)]
   [preheader : i64]
   [latch : i64]
   [next-var : i64]) : OptRotateSsaExitPhis
@@ -27011,6 +27061,24 @@
               (opt-rotate-ssa-phi-recs-tail recs)
               outside-uses))])]))
 
+(define (opt-rotate-ssa-recs-used-outside-array?
+  [recs : OptRotateSsaPhiRecs]
+  [outside-uses : (__tl_dyn-array i64)]) : bool
+  (match (compiler-opt-global-shared-view recs)
+    [(OptRotateSsaPhiRecs.Nil) false]
+    [(OptRotateSsaPhiRecs.Dense _ _)
+      (match (opt-rotate-ssa-phi-rec-ref
+        (compiler-opt-global-shared-view recs)
+        0)
+        [(OptRotateSsaPhiRec.Rec dst _ _ _)
+          (or
+            (opt-used-array-contains
+              (compiler-opt-global-shared-view outside-uses)
+              dst)
+            (opt-rotate-ssa-recs-used-outside-array?
+              (opt-rotate-ssa-phi-recs-tail recs)
+              outside-uses))])]))
+
 (define (opt-rotate-ssa-apply
   [blocks : ir.CompilerIrBlockList]
   [pred-map : OptPredMap]
@@ -27030,16 +27098,20 @@
     [guard : ir.CompilerIrInstrSeq shape.guard]
     ;; THE PRE-EXISTING WALK, and the pre-existing cost. Every candidate still
     ;; pays exactly this one traversal of the outside region and nothing else.
-    [outside-uses : opt_i64_i64_map.Map
-      (opt-rotate-ssa-uses-outside-body
-        (opt_i64_i64_map.with-capacity 64)
-        (compiler-opt-global-shared-view blocks)
-        (compiler-opt-global-shared-view body))]
+    [outside-uses : (__tl_dyn-array i64)
+      (let
+        [items : (__tl_dyn-array i64) (opt-used-array-new (+ frame 1))]
+        (begin
+          (opt-rotate-ssa-uses-outside-body-array
+            (compiler-opt-global-shared-view items)
+            (compiler-opt-global-shared-view blocks)
+            (compiler-opt-global-shared-view body))
+          items))]
     ;; The classified placement is reached only for the multi-exit shape the
     ;; original rotation gate declined, and only while its body stays cheap.
     [classify? : bool
       (and
-        (opt-rotate-ssa-recs-used-outside?
+        (opt-rotate-ssa-recs-used-outside-array?
           (compiler-opt-global-shared-view recs)
           (compiler-opt-global-shared-view outside-uses))
         (opt-rotate-ssa-only-label?
@@ -27094,7 +27166,7 @@
     ;; block, so the pre-existing clause refused BOTH halves of every versioned
     ;; counted loop -- including the hot fast half.
     [exit-phis-needed? : bool
-      (opt-rotate-ssa-recs-used-outside?
+      (opt-rotate-ssa-recs-used-outside-array?
         (compiler-opt-global-shared-view recs)
         (compiler-opt-global-shared-view outside-uses))]
     (if (and
@@ -27151,10 +27223,17 @@
           exit-label))
       (opt-rotate-ssa-guard-dsts-local?
         (compiler-opt-global-shared-view guard)
-        (opt-rotate-ssa-uses-except-header
-          (opt-collect-instr-seq-uses (opt_i64_i64_map.with-capacity 64) phis)
-          (compiler-opt-global-shared-view blocks)
-          header)))
+        (let
+          [items : (__tl_dyn-array i64) (opt-used-array-new (+ frame 1))]
+          (begin
+            (opt-collect-instr-seq-uses-array
+              (compiler-opt-global-shared-view items)
+              phis)
+            (opt-rotate-ssa-uses-except-header-array
+              (compiler-opt-global-shared-view items)
+              (compiler-opt-global-shared-view blocks)
+              header)
+            items))))
       ;; The preheader clone's loop arm targets the landing block instead of
       ;; the body so the rotated loop keeps a dedicated single-successor
       ;; preheader for LICM; the latch clone branches straight to the body.
@@ -31893,6 +31972,27 @@
     0
     (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs))))
 
+(define (opt-licm-collect-nonbranch-uses-array
+  [items : (__tl_dyn-array i64)]
+  [instrs : ir.CompilerIrInstrSeq]) : unit
+  (let
+    [index : i64 0]
+    [count : i64
+      (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs))]
+    (while (< index count)
+      (begin
+        (match (ir.compiler-ir-instr-seq-ref
+          (compiler-opt-global-shared-view instrs)
+          index)
+          [(ir.CompilerIrInstr.Branch _ _ _) unit]
+          [_
+            (opt-collect-instr-uses-array
+              (compiler-opt-global-shared-view items)
+              (ir.compiler-ir-instr-seq-ref
+                (compiler-opt-global-shared-view instrs)
+                index))])
+        (set! index (+ index 1))))))
+
 ;; Collect consumers whose frequency can pay for an arithmetic value's longer
 ;; live range. Uses outside the loop must remain available, blocks dominating
 ;; the latch execute on every continuing iteration, and nested-loop uses can be
@@ -31906,7 +32006,7 @@
   [body : OptLabelSet]
   [gate? : bool]
   [blocks : ir.CompilerIrBlockList]
-  [set : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
+  [set : (__tl_dyn-array i64)]) : (__tl_dyn-array i64)
   (opt-licm-hot-use-vars-from
     context
     latch-id
@@ -31924,19 +32024,13 @@
   [body : OptLabelSet]
   [gate? : bool]
   [blocks : ir.CompilerIrBlockList]
-  [set : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
+  [set : (__tl_dyn-array i64)]) : (__tl_dyn-array i64)
   (match (compiler-opt-global-shared-view blocks)
     [(ir.CompilerIrBlockList.Nil) set]
     [(ir.CompilerIrBlockList.Cons block rest)
       (match block
         [(ir.CompilerIrBlock.Block label instrs)
-          (opt-licm-hot-use-vars-from
-            (compiler-opt-global-shared-view context)
-            latch-id
-            (compiler-opt-global-shared-view nested)
-            (compiler-opt-global-shared-view body)
-            gate?
-            (compiler-opt-box-shared-view rest)
+          (begin
             (if (or
               (not
                 (opt-label-contains
@@ -31945,7 +32039,7 @@
               (opt-licm-label-in-loops?
                 (compiler-opt-global-shared-view nested)
                 label))
-              (opt-collect-instr-seq-uses
+              (opt-collect-instr-seq-uses-array
                 (compiler-opt-global-shared-view set)
                 instrs)
               (if (or
@@ -31954,10 +32048,18 @@
                   (compiler-opt-global-shared-view context)
                   latch-id
                   label))
-                (opt-licm-collect-nonbranch-uses
+                (opt-licm-collect-nonbranch-uses-array
                   (compiler-opt-global-shared-view set)
                   instrs)
-                set)))])]
+                unit))
+            (opt-licm-hot-use-vars-from
+              (compiler-opt-global-shared-view context)
+              latch-id
+              (compiler-opt-global-shared-view nested)
+              (compiler-opt-global-shared-view body)
+              gate?
+              (compiler-opt-box-shared-view rest)
+              set))])]
     [(ir.CompilerIrBlockList.Array seq)
       (opt-licm-hot-use-vars-from
         (compiler-opt-global-shared-view context)
@@ -31966,7 +32068,7 @@
         (compiler-opt-global-shared-view body)
         gate?
         (ir.compiler-ir-block-seq-to-list seq)
-        (compiler-opt-global-shared-view set))]))
+        set)]))
 
 ;; --- element-load dereferenceability (#7992) ---------------------------------
 ;;
@@ -32836,7 +32938,7 @@
   ;; load of that global's cell. See OptLicmGlobalFacts,
   ;; opt-licm-value-invariant? and opt-licm-globals-clean?.
   [globals : OptLicmGlobalFacts]
-  [hot-uses : opt_i64_i64_map.Map]
+  [hot-uses : (__tl_dyn-array i64)]
   ;; #7992: where this loop's hoist lands, and the facts that bound an
   ;; element load there (opt-licm-deref-load-ok?).
   [deref-site : OptLicmDerefSite]
@@ -32895,12 +32997,12 @@
       (opt-licm-global-value-invariant? globals loop-defs hoisted src)]
     [(ir.CompilerIrInstr.BinOp dst op lhs rhs _)
       (and
-        (opt-used-contains hot-uses dst)
+        (opt-used-array-contains hot-uses dst)
         (not (opt-binop-traps? op))
         (opt-licm-global-values-invariant? globals loop-defs hoisted lhs rhs))]
     [(ir.CompilerIrInstr.UnOp dst _ src _)
       (and
-        (opt-used-contains hot-uses dst)
+        (opt-used-array-contains hot-uses dst)
         (opt-licm-global-value-invariant? globals loop-defs hoisted src))]
     ;; Pure SIMD values use the same hot-consumer gate as scalar arithmetic:
     ;; moving one out lengthens a vector or mask live range across the loop,
@@ -32910,7 +33012,7 @@
     ;; turn admits dependent invariant SIMD chains in program order.
     [(ir.CompilerIrInstr.Splat dst src _ _)
       (and
-        (opt-used-contains hot-uses dst)
+        (opt-used-array-contains hot-uses dst)
         (opt-licm-global-value-invariant? globals loop-defs hoisted src))]
     [(ir.CompilerIrInstr.VectorBinOp payload-box)
       (let
@@ -32919,7 +33021,7 @@
         [lhs (compiler-opt-box-field-shared-view payload-box lhs)]
         [rhs (compiler-opt-box-field-shared-view payload-box rhs)]
         (and
-          (opt-used-contains hot-uses dst)
+          (opt-used-array-contains hot-uses dst)
           ;; A checked vector div/mod/shift may still trap when executed.  Do
           ;; not speculate it into a preheader for a zero-trip loop.
           (not (opt-binop-traps? op))
@@ -32930,7 +33032,7 @@
         [lhs (compiler-opt-box-field-shared-view payload-box lhs)]
         [rhs (compiler-opt-box-field-shared-view payload-box rhs)]
         (and
-          (opt-used-contains hot-uses dst)
+          (opt-used-array-contains hot-uses dst)
           (opt-licm-global-values-invariant? globals loop-defs hoisted lhs rhs)))]
     [(ir.CompilerIrInstr.Gep dst base offset ty)
       (and
@@ -33223,7 +33325,7 @@
   [licm-mode : i64]
   [descriptor-header-hoist? : bool]
   [globals : OptLicmGlobalFacts]
-  [hot-uses : opt_i64_i64_map.Map]
+  [hot-uses : (__tl_dyn-array i64)]
   [deref-site : OptLicmDerefSite]
   [hoisted : opt_i64_i64_map.Map]) : OptLicmInstrsResult
   (let
@@ -33290,7 +33392,7 @@
   [licm-mode : i64]
   [descriptor-header-hoist? : bool]
   [globals : OptLicmGlobalFacts]
-  [hot-uses : opt_i64_i64_map.Map]
+  [hot-uses : (__tl_dyn-array i64)]
   [deref-site : OptLicmDerefSite]
   [hoisted : opt_i64_i64_map.Map]) : OptLicmInstrsResult
   (opt-licm-filter-instr-seq-from
@@ -33328,7 +33430,7 @@
   [licm-mode : i64]
   [descriptor-header-hoist? : bool]
   [globals : OptLicmGlobalFacts]
-  [hot-uses : opt_i64_i64_map.Map]
+  [hot-uses : (__tl_dyn-array i64)]
   [deref-site : OptLicmDerefSite]
   [hoisted : opt_i64_i64_map.Map]) : OptLicmBlocksResult
   (match blocks
@@ -35842,7 +35944,7 @@
         [raw-rooted-summary : OptLicmStoreSummary store-state.rooted-summary]
         [raw-legacy-summary : OptLicmStoreSummary
           (opt-licm-store-summary-merge raw-summary raw-rooted-summary)]
-        [hot-uses : opt_i64_i64_map.Map
+        [hot-uses : (__tl_dyn-array i64)
           (opt-licm-hot-use-vars
             (compiler-opt-global-shared-view context)
             (match (opt-cfg-index-id
@@ -35855,7 +35957,7 @@
             (opt-natural-loop-body (compiler-opt-global-shared-view loop))
             (= preheader context.entry-label)
             (compiler-opt-global-shared-view blocks)
-            (opt_i64_i64_map.with-capacity map-capacity))]
+            (opt-used-array-new (+ (array-ref frame-cell 0) 1)))]
         [side-exit-kind : i64
           (opt-licm-loop-side-exit-kind
             (compiler-opt-global-shared-view blocks)

@@ -44505,7 +44505,7 @@
           [(option_i64.None) 2]
           [(option_i64.Some latch-id)
             (let
-              [hot : opt_i64_i64_map.Map
+              [hot : (__tl_dyn-array i64)
                 (compiler_optimize.opt-licm-hot-use-vars
                   (compiler_optimize.compiler-opt-global-shared-view context)
                   latch-id
@@ -44516,8 +44516,8 @@
                     (compiler_optimize.compiler-opt-global-shared-view outer))
                   true
                   (compiler_optimize.compiler-opt-global-shared-view blocks)
-                  (opt_i64_i64_map.with-capacity 16))]
-              [ungated : opt_i64_i64_map.Map
+                  (compiler_optimize.opt-used-array-new 64))]
+              [ungated : (__tl_dyn-array i64)
                 (compiler_optimize.opt-licm-hot-use-vars
                   (compiler_optimize.compiler-opt-global-shared-view context)
                   latch-id
@@ -44528,55 +44528,55 @@
                     (compiler_optimize.compiler-opt-global-shared-view outer))
                   false
                   (compiler_optimize.compiler-opt-global-shared-view blocks)
-                  (opt_i64_i64_map.with-capacity 16))]
+                  (compiler_optimize.opt-used-array-new 64))]
               (cond
-                [(compiler_optimize.opt-used-contains
+                [(compiler_optimize.opt-used-array-contains
                     (compiler_optimize.compiler-opt-global-shared-view hot)
                     10)
                   3]
                 [(not
-                    (compiler_optimize.opt-used-contains
+                    (compiler_optimize.opt-used-array-contains
                       (compiler_optimize.compiler-opt-global-shared-view hot)
                       11))
                   4]
                 [(not
-                    (compiler_optimize.opt-used-contains
+                    (compiler_optimize.opt-used-array-contains
                       (compiler_optimize.compiler-opt-global-shared-view hot)
                       12))
                   5]
                 [(not
-                    (compiler_optimize.opt-used-contains
+                    (compiler_optimize.opt-used-array-contains
                       (compiler_optimize.compiler-opt-global-shared-view hot)
                       13))
                   6]
                 [(not
-                    (compiler_optimize.opt-used-contains
+                    (compiler_optimize.opt-used-array-contains
                       (compiler_optimize.compiler-opt-global-shared-view hot)
                       14))
                   7]
                 [(not
-                    (compiler_optimize.opt-used-contains
+                    (compiler_optimize.opt-used-array-contains
                       (compiler_optimize.compiler-opt-global-shared-view
                         ungated)
                       10))
                   8]
                 ;; A compare whose every use is a branch condition is not
                 ;; collected, gated or not; one with a non-branch use still is.
-                [(compiler_optimize.opt-used-contains
+                [(compiler_optimize.opt-used-array-contains
                     (compiler_optimize.compiler-opt-global-shared-view hot)
                     24)
                   9]
-                [(compiler_optimize.opt-used-contains
+                [(compiler_optimize.opt-used-array-contains
                     (compiler_optimize.compiler-opt-global-shared-view ungated)
                     24)
                   10]
                 [(not
-                    (compiler_optimize.opt-used-contains
+                    (compiler_optimize.opt-used-array-contains
                       (compiler_optimize.compiler-opt-global-shared-view hot)
                       25))
                   11]
                 [(not
-                    (compiler_optimize.opt-used-contains
+                    (compiler_optimize.opt-used-array-contains
                       (compiler_optimize.compiler-opt-global-shared-view
                         ungated)
                       25))

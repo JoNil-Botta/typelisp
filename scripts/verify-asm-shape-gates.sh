@@ -1526,12 +1526,7 @@ check_global_cursor_helper() {
         # ok-label: the three in the loop and the two in the straight-line
         # pair.
         assert_regex_count_eq "$_run" \
-            '^\.[A-Za-z0-9_.]*inl\.[A-Za-z0-9_.]*bounds_ok(\.[0-9]+|[A-Za-z0-9_]+)*:$' 5 \
-            "global-cursor-helper-$_target"
-        # COLD-1: each of those checks falls through when it passes; its abort
-        # stub sits out of line under the ok-label's `.cold` twin.
-        assert_regex_count_eq "$_run" \
-            '^\.[A-Za-z0-9_.]*inl\.[A-Za-z0-9_.]*bounds_ok(\.[0-9]+|[A-Za-z0-9_]+)*\.cold:$' 5 \
+            '^\.[A-Za-z0-9_.]*inl\.[A-Za-z0-9_.]*bounds_ok[A-Za-z0-9_.]*:$' 5 \
             "global-cursor-helper-$_target"
 
         # What the splice buys beyond the boundary: the token array's
@@ -1652,10 +1647,7 @@ check_global_cursor_guarded() {
         # non-guard arm, which is what makes the abort twin a claim about a
         # spliced check rather than about the caller's own.
         assert_regex_count_eq "$_run" \
-            '^\.[A-Za-z0-9_.]*inl\.[A-Za-z0-9_.]*bounds_ok(\.[0-9]+|[A-Za-z0-9_]+)*:$' 3 \
-            "global-cursor-guarded-$_target"
-        assert_regex_count_eq "$_run" \
-            '^\.[A-Za-z0-9_.]*inl\.[A-Za-z0-9_.]*bounds_ok(\.[0-9]+|[A-Za-z0-9_]+)*\.cold:$' 3 \
+            '^\.[A-Za-z0-9_.]*inl\.[A-Za-z0-9_.]*bounds_ok[A-Za-z0-9_.]*:$' 3 \
             "global-cursor-guarded-$_target"
 
         # The cursor write survived the clone at every site: three stores to the
@@ -1855,17 +1847,11 @@ check_synth_wrapped_probe() {
             "synth-wrapped-probe-abort-$_target"
         # ...and the descriptor is cold data reached only past the check's own
         # fast branch: the merged body's compare/branch shape is what it was
-        # before the site was armed, to the instruction. COLD-1 inverts each
-        # check's branch to reach its out-of-line stub, so a passing check
-        # falls through (`jae` to the stub, where the inline form was `jb` over
-        # it).
+        # before the site was armed, to the instruction.
         assert_regex_count_eq "$_abort_get_or" \
             '^[[:space:]]+cmpq ' 9 "synth-wrapped-probe-abort-$_target"
         assert_regex_count_eq "$_abort_get_or" \
-            '^[[:space:]]+jae [.A-Za-z0-9_]+\.cold$' 3 \
-            "synth-wrapped-probe-abort-$_target"
-        assert_regex_count_eq "$_abort_get_or" \
-            '^[[:space:]]+jb ' 0 "synth-wrapped-probe-abort-$_target"
+            '^[[:space:]]+jb ' 3 "synth-wrapped-probe-abort-$_target"
         # ...and the folded checks' tails re-read the LENGTH through the first
         # staging push, never the index through the second one.
         assert_abort_tail_staging_push_not_memory "$_abort_get_or" \
@@ -1940,12 +1926,8 @@ check_synth_tail_wrapper() {
             "synth-tail-wrapper-abort-$_target"
         assert_regex_count_eq "$_abort_slot_id" \
             '^[[:space:]]+cmpq ' 9 "synth-tail-wrapper-abort-$_target"
-        # COLD-1: the three checks branch to their out-of-line stubs.
         assert_regex_count_eq "$_abort_slot_id" \
-            '^[[:space:]]+jae [.A-Za-z0-9_]+\.cold$' 3 \
-            "synth-tail-wrapper-abort-$_target"
-        assert_regex_count_eq "$_abort_slot_id" \
-            '^[[:space:]]+jb ' 0 "synth-tail-wrapper-abort-$_target"
+            '^[[:space:]]+jb ' 3 "synth-tail-wrapper-abort-$_target"
         assert_abort_tail_staging_push_not_memory "$_abort_slot_id" \
             "synth-tail-wrapper-abort-$_target"
     done

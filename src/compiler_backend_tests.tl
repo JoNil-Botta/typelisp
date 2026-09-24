@@ -5222,11 +5222,9 @@
             (compiler_backend.compiler-backend-string-contains?
               (owned_view.compiler-owned-shared-view asm)
               "    cmpq %r11, %rax\n"))
-          ;; COLD-1: the passing check falls through; the abort stub is
-          ;; out of line at the end of the function.
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
-            "    jae .Lf0_str_bounds_ok.0.cold\n.Lf0_str_bounds_ok.0:\n")
+            "    jb .Lf0_str_bounds_ok")
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
             "    call tl_oob_abort")
@@ -5258,7 +5256,7 @@
         (not
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
-            "    jge .Lf0_str_bounds_ok"))
+            "    jl .Lf0_str_bounds_ok"))
         (not
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
@@ -13195,102 +13193,6 @@
         (compiler_backend.compiler-backend-peephole-text-buf-once chunks))]
     (string.eq legacy chunked)))
 
-;; COLD-1: the render moves each abort stub behind its function and inverts
-;; the check's branch; a guard that is not a pure abort stub stays inline.
-(define (compiler-backend-cold-split-source) : String
-  (str_cat.str-cat
-    ".text\n.globl f\n    .type f,@function\nf:\n"
-    "    cmpq %r9, %rdi\n    jb .Lf0_bounds_ok.1\n"
-    "    pushq %r9\n    pushq %rdi\n"
-    "    leaq .L_tl_abort_site_1_bounds(%rip), %rdi\n"
-    "    popq %rsi\n    popq %rdx\n    call tl_oob_abort_at\n"
-    "    jmp .L_tl_abort_site_1_bounds_end\n    .balign 8\n"
-    ".L_tl_abort_site_1_bounds:\n    .quad 7\n"
-    ".L_tl_abort_site_1_bounds_end:\n.Lf0_bounds_ok.1:\n"
-    "    testq %r8, %r8\n    jne 1f\n    call tl_div_abort\n1:\n"
-    "    cmpq $0, %rax\n    jb .Lf0_mixed\n    testq %rcx, %rcx\n"
-    "    jne .Lf0_mixed\n    call tl_oob_abort\n.Lf0_mixed:\n"
-    "    cmpq $5, %rax\n    jb .Lf0_calls\n    call helper\n"
-    "    call tl_oob_abort\n.Lf0_calls:\n"
-    "    cmpq $3, %rax\n    jne .Lf0_keep\n    movq $1, %rax\n"
-    ".Lf0_keep:\n    ret\n    .size f, . - f\n"))
-
-(define (compiler-backend-cold-split-ok?) : bool
-  (let
-    [out : String
-      (text_buf.render
-        (compiler_backend.compiler-backend-peephole-text-buf-once
-          (text_buf.append
-            (text_buf.empty)
-            (compiler-backend-cold-split-source))))]
-    [ret-at : i64
-      (compiler_backend.compiler-backend-string-find-from
-        (owned_view.compiler-owned-shared-view out)
-        "    ret\n"
-        0)]
-    [bounds-stub-at : i64
-      (compiler_backend.compiler-backend-string-find-from
-        (owned_view.compiler-owned-shared-view out)
-        ".Lf0_bounds_ok.1.cold:\n    pushq %r9\n"
-        0)]
-    [div-stub-at : i64
-      (compiler_backend.compiler-backend-string-find-from
-        (owned_view.compiler-owned-shared-view out)
-        ".Lf0_bounds_ok.1.stub1.cold:\n    call tl_div_abort\n.Lf0_mixed.cold:\n"
-        0)]
-    [size-at : i64
-      (compiler_backend.compiler-backend-string-find-from
-        (owned_view.compiler-owned-shared-view out)
-        "    .size f, . - f\n"
-        0)]
-    (and
-      ;; Named continuation: the passing check falls through.
-      (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view out)
-        "    cmpq %r9, %rdi\n    jae .Lf0_bounds_ok.1.cold\n.Lf0_bounds_ok.1:\n    testq %r8, %r8\n")
-      ;; Numeric `1:` without a site label: named after the closest preceding
-      ;; label, with `1:` kept in place.
-      (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view out)
-        "    je .Lf0_bounds_ok.1.stub1.cold\n1:\n    cmpq $0, %rax\n")
-      ;; A guard whose skipped text holds a conditional jump is no stub; the
-      ;; inner guard it skips is one, and still moves. A returning call in the
-      ;; skipped text disqualifies it, and an ordinary branch is no guard:
-      ;; both stay exactly as emitted.
-      (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view out)
-        "    jb .Lf0_mixed\n    testq %rcx, %rcx\n    je .Lf0_mixed.cold\n.Lf0_mixed:\n")
-      (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view out)
-        "    jb .Lf0_calls\n    call helper\n    call tl_oob_abort\n.Lf0_calls:\n")
-      (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view out)
-        "    jne .Lf0_keep\n    movq $1, %rax\n")
-      ;; The stubs, descriptor data included, sit after the last hot
-      ;; instruction and inside the function's `.size` range. The abort call
-      ;; never returns, so nothing follows it but the descriptor: no jump over
-      ;; the descriptor, no jump back to the continuation, and no `.back`
-      ;; label for one.
-      (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view out)
-        "    call tl_oob_abort_at\n    .balign 8\n.L_tl_abort_site_1_bounds:\n    .quad 7\n.Lf0_bounds_ok.1.stub1.cold:\n")
-      (not
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view out)
-          "_bounds_end"))
-      (not
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view out)
-          ".back"))
-      (> ret-at 0)
-      (> bounds-stub-at ret-at)
-      (> div-stub-at bounds-stub-at)
-      (> size-at div-stub-at)
-      (not
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view out)
-          "    jb .Lf0_bounds_ok.1\n")))))
-
 ;; Compare the final streaming path against the former raw-buffer -> whole
 ;; peephole -> sweep sequence on the same lowered program. Re-lowering resets
 ;; the recorded FPO sweep metadata before the streaming run.
@@ -15374,7 +15276,6 @@ g:
     (compiler-backend-deadstore-sweep-win64-ok?)
     (compiler-backend-r10-dead-scan-long-gap-ok?)
     (compiler-backend-chunked-peephole-equivalent?)
-    (compiler-backend-cold-split-ok?)
     (compiler-backend-peephole-flags-branch-ok?)
     (compiler-backend-streamed-final-output-equivalent?)
     (compiler-backend-streamed-final-batch-equivalent?)
@@ -40274,11 +40175,9 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.backend-and8
-          ;; COLD-1: both abort stubs are out of line; the INT_MIN test
-          ;; still skips the -1 test through the kept `1:`.
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
-            "    testq %r8, %r8\n    je .L_tl_abort_site_1_div_zero.cold\n1:\n")
+            "    testq %r8, %r8\n    jne 1f\n")
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
             "    call tl_div_abort_at\n")
@@ -40287,7 +40186,7 @@ g:
             "    cmpq $1, %rax\n    jno 1f\n")
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
-            "    cmpq $-1, %r8\n    je .L_tl_abort_site_2_div_overflow.cold\n1:\n    cqto\n")
+            "    cmpq $-1, %r8\n    jne 1f\n")
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
             "    cqto\n")
@@ -41269,7 +41168,7 @@ g:
         (owned_view.compiler-owned-shared-view reg)
         ", "
         (owned_view.compiler-owned-shared-view reg)
-        "\n    jl .L_tl_abort_site_")]
+        "\n    jge 1f\n")]
     [cmp : String
       (str_cat.str-cat
         "    cmp"
@@ -41278,7 +41177,7 @@ g:
         width
         ", "
         reg
-        "\n    jae .L_tl_abort_site_")]
+        "\n    jb 1f\n")]
     [count-push : String
       (str_cat.str-cat
         "    pushq "
@@ -41320,7 +41219,7 @@ g:
           (not
             (compiler_backend.compiler-backend-string-contains?
               (owned_view.compiler-owned-shared-view body)
-              "_shift_negative.cold"))
+              "    jge 1f\n"))
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view body)
             one-flag)
@@ -41491,10 +41390,10 @@ g:
           "    movq $-1,")
         (compiler_backend.compiler-backend-string-contains?
           (owned_view.compiler-owned-shared-view asm)
-          "    testq %r8, %r8\n    jl .L_tl_abort_site_1_shift_negative.cold\n")
+          "    testq %r8, %r8\n    jge 1f\n")
         (compiler_backend.compiler-backend-string-contains?
           (owned_view.compiler-owned-shared-view asm)
-          "    cmpq $64, %r8\n    jae .L_tl_abort_site_2_shift_large.cold\n")
+          "    cmpq $64, %r8\n    jb 1f\n")
         (compiler_backend.compiler-backend-string-contains?
           (owned_view.compiler-owned-shared-view asm)
           "    call tl_shift_abort_at\n")

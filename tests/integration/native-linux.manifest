@@ -705,6 +705,8 @@ literal_loop_call_opt0|tests/integration/literal_loop_call.tl|0|0 0 54 190 215 0
 literal_loop_call_opt2|tests/integration/literal_loop_call.tl|0|0 0 54 190 215 0 0\n|-|-|opt-level:2+stage-stdlib
 guarded_loop_call_opt0|tests/integration/guarded_loop_call.tl|0|0 0 37 78957 5040933774284876412\n|-|-|opt-level:0+stage-stdlib
 guarded_loop_call_opt2|tests/integration/guarded_loop_call.tl|0|0 0 37 78957 5040933774284876412\n|-|-|opt-level:2+stage-stdlib
+invariant_call_sum_opt0|tests/integration/invariant_call_sum.tl|0|-6073119532877662048 7 9 171 192 132\n|-|-|opt-level:0+stage-stdlib
+invariant_call_sum_opt2|tests/integration/invariant_call_sum.tl|0|-6073119532877662048 7 9 171 192 132\n|-|-|opt-level:2+stage-stdlib
 
 signed_division_flags_opt0|tests/integration/signed_division_flags.tl|42|-|-|stdlib/io.tl stdlib/string.tl|opt-level:0+stage-stdlib
 signed_division_flags_opt1|tests/integration/signed_division_flags.tl|42|-|-|stdlib/io.tl stdlib/string.tl|opt-level:1+stage-stdlib
@@ -729,6 +731,10 @@ signed_div_64_overflow_opt2|tests/integration/signed_division_flags.tl|135|-|64 
 signed_div_64_zero_opt2|tests/integration/signed_division_flags.tl|135|-|64 1 0 0|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/linux/signed_div_64_zero_opt2/signed_div_64_zero_opt2.tl:10:14: integer division or remainder error: dividend=1 divisor=0\n
 signed_rem_64_overflow_opt2|tests/integration/signed_division_flags.tl|135|-|64 -9223372036854775808 -1 1|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/linux/signed_rem_64_overflow_opt2/signed_rem_64_overflow_opt2.tl:17:14: integer division or remainder error: dividend=-9223372036854775808 divisor=-1\n
 signed_rem_64_zero_opt2|tests/integration/signed_division_flags.tl|135|-|64 1 0 1|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/linux/signed_rem_64_zero_opt2/signed_rem_64_zero_opt2.tl:17:14: integer division or remainder error: dividend=1 divisor=0\n
+invariant_call_sum_opt1|tests/integration/invariant_call_sum.tl|0|-6073119532877662048 7 9 171 192 132\n|-|-|opt-level:1+stage-stdlib
+invariant_call_sum_trap_opt0|tests/integration/invariant_call_sum.tl|135|-|trap|-|opt-level:0+stage-stdlib+expected-stderr:tl: target/integration-verify/linux/invariant_call_sum_trap_opt0/invariant_call_sum_trap_opt0.tl:12:10: integer division or remainder error: dividend=44 divisor=0\n
+invariant_call_sum_trap_opt1|tests/integration/invariant_call_sum.tl|135|-|trap|-|opt-level:1+stage-stdlib+expected-stderr:tl: target/integration-verify/linux/invariant_call_sum_trap_opt1/invariant_call_sum_trap_opt1.tl:12:10: integer division or remainder error: dividend=44 divisor=0\n
+invariant_call_sum_trap_opt2|tests/integration/invariant_call_sum.tl|135|-|trap|-|opt-level:2+stage-stdlib+expected-stderr:tl: target/integration-verify/linux/invariant_call_sum_trap_opt2/invariant_call_sum_trap_opt2.tl:12:10: integer division or remainder error: dividend=44 divisor=0\n
 
 loop_call_addr_taken_opt0|tests/integration/loop_call_addr_taken.tl|0|594\n1156\n|-|-|opt-level:0+stage-stdlib
 loop_call_addr_taken_opt2|tests/integration/loop_call_addr_taken.tl|0|594\n1156\n|-|-|opt-level:2+stage-stdlib

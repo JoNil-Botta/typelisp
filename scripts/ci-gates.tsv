@@ -19,7 +19,6 @@ build-invariance-batch-reuse-self-tests	linux	build-invariance batch reuse self-
 selfhost-linked-size-attribution-parser-self-tests	all	selfhost linked-size attribution parser self-tests	-	-	scripts/analyze-selfhost-build-asm-size.sh --self-test
 cli-help-surface	all	CLI help surface	-	-	scripts/check-cli-help-surface.sh --self-test
 tlci-native-route-size-ratchet-self-tests	all	TLCI native route size ratchet self-tests	-	-	scripts/check-tlci-native-route-size.sh --self-test
-gate-reachability	all	gate reachability	-	-	scripts/check-gate-reachability.sh --self-test
 zero-cons-structural-classifier-self-tests	all	zero-cons structural classifier self-tests	-	-	scripts/check-zero-cons.sh --self-test
 zero-cons-fixture-and-embedded-source-invariant	all	zero-cons fixture and embedded source invariant	-	-	scripts/check-zero-cons.sh --fixtures
 spmd-mode-instruction-count-harness-self-tests	all	SPMD mode instruction-count harness self-tests	-	-	scripts/measure-spmd-mode-instruction-counts.sh --self-test

@@ -142,7 +142,7 @@
 
 (define (compile-cli-cfg-names-add [names : CompileCliCfgNames] [name : String]) : CompileCliCfgNames
   (let
-    [next : CompileCliCfgNames (owned_view.compiler-owned-shared-view names)]
+    [next : CompileCliCfgNames names]
     (begin
       (compile-cli-cfg-names-push! (&mut next) name)
       next)))
@@ -158,7 +158,7 @@
       (+ index 1)
       (cfg_core.compiler-cfg-enable env (compile-cli-cfg-names-get names index)))))
 
-(define (compile-cli-cfg-names-to-env [names : CompileCliCfgNames]) : sym_i64_env.SymI64Env
+(define (compile-cli-cfg-names-to-env [names : (& names CompileCliCfgNames)]) : sym_i64_env.SymI64Env
   (compile-cli-cfg-names-to-env-from (& names) 0 (cfg_core.compiler-cfg-empty)))
 
 (define (compile-cli-cfg-names-to-env-with-intern-state-from
@@ -351,8 +351,7 @@
         has-target
         target
         (let
-          [next-roots : cli_svec.Vec
-            (owned_view.compiler-owned-shared-view stdlib-roots)]
+          [next-roots : cli_svec.Vec stdlib-roots]
           (begin
             (cli_svec.push-ref! (&mut next-roots) value)
             next-roots))
@@ -725,8 +724,7 @@
         has-target
         target
         (let
-          [next-roots : cli_svec.Vec
-            (owned_view.compiler-owned-shared-view stdlib-roots)]
+          [next-roots : cli_svec.Vec stdlib-roots]
           (begin
             (cli_svec.push-ref! (&mut next-roots) value)
             next-roots))
@@ -1071,8 +1069,7 @@
             count
             input-path
             (let
-              [next-roots : cli_svec.Vec
-                (owned_view.compiler-owned-shared-view stdlib-roots)]
+              [next-roots : cli_svec.Vec stdlib-roots]
               (begin
                 (cli_svec.push-ref! (&mut next-roots) value)
                 next-roots)))]
@@ -1196,8 +1193,7 @@
     (if (> (string.string-length message) 0)
       (compile-cli-reject-result-on-ir-verification result message)
       (compiler_driver_core.compiler-driver-write-result
-        (compiler_driver_core.compiler-driver-state-profile
-          (owned_view.compiler-owned-shared-view state))
+        (compiler_driver_core.compiler-driver-state-profile state)
         result
         output-path))))
 
@@ -1212,8 +1208,7 @@
       (compiler_driver_core.compiler-driver-write-buffer-result
         (compiler_driver_core.compiler-driver-state-profile
           (owned_view.compiler-owned-shared-view state))
-        (compiler_driver_core.compiler-driver-state-typecheck
-          (owned_view.compiler-owned-shared-view state))
+        (compiler_driver_core.compiler-driver-state-typecheck state)
         result
         output-path))))
 
@@ -1226,8 +1221,7 @@
     (if (> (string.string-length message) 0)
       (compile-cli-reject-pic-result-on-ir-verification result message)
       (compiler_driver_core.compiler-driver-write-pic-result
-        (compiler_driver_core.compiler-driver-state-profile
-          (owned_view.compiler-owned-shared-view state))
+        (compiler_driver_core.compiler-driver-state-profile state)
         result
         output-path))))
 
@@ -1283,8 +1277,7 @@
                 (owned_view.compiler-owned-shared-view stdlib-roots)
                 (compiler_driver_core.compiler-driver-target-cfgs
                   target
-                  (compile-cli-cfg-names-to-env
-                    (owned_view.compiler-owned-shared-view cfgs)))
+                  (compile-cli-cfg-names-to-env cfgs))
                 "typecheck-prefix-inline-compile")
               0)]
           [_preflight-end : unit
@@ -1422,8 +1415,7 @@
               (cfg
                 compile-profile
                 (compiler_driver_core.compiler-driver-profile-start-phase
-                  (compiler_driver_core.compiler-driver-state-profile
-                    (owned_view.compiler-owned-shared-view _state))))
+                  (compiler_driver_core.compiler-driver-state-profile _state)))
               (match (io.try-write-file
                 (& object-path)
                 (byte_buf.str-as-bytes (& object)))
@@ -1442,18 +1434,15 @@
             (cfg
               compile-profile
               (compiler_driver_core.compiler-driver-profile-finish-phase
-                (compiler_driver_core.compiler-driver-state-profile
-                  (owned_view.compiler-owned-shared-view _state))
+                (compiler_driver_core.compiler-driver-state-profile _state)
                 "write"))
             (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
-              (compiler_driver_core.compiler-driver-state-typecheck
-                (owned_view.compiler-owned-shared-view _state))
+              (compiler_driver_core.compiler-driver-state-typecheck _state)
               "write")
             (cfg
               compile-profile
               (compiler_driver_core.compiler-driver-profile-finish-total
-                (compiler_driver_core.compiler-driver-state-profile
-                  (owned_view.compiler-owned-shared-view _state))))
+                (compiler_driver_core.compiler-driver-state-profile _state)))
             (if (= write-status 0)
               (begin
                 (io.print-format
@@ -1479,8 +1468,7 @@
               (cfg
                 compile-profile
                 (compiler_driver_core.compiler-driver-profile-start-phase
-                  (compiler_driver_core.compiler-driver-state-profile
-                    (owned_view.compiler-owned-shared-view _state))))
+                  (compiler_driver_core.compiler-driver-state-profile _state)))
               (compiler_driver_core.compiler-driver-write-text-buf
                 (owned_view.compiler-owned-shared-view assembly-path)
                 asm))]
@@ -1488,18 +1476,15 @@
             (cfg
               compile-profile
               (compiler_driver_core.compiler-driver-profile-finish-phase
-                (compiler_driver_core.compiler-driver-state-profile
-                  (owned_view.compiler-owned-shared-view _state))
+                (compiler_driver_core.compiler-driver-state-profile _state)
                 "write"))
             (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
-              (compiler_driver_core.compiler-driver-state-typecheck
-                (owned_view.compiler-owned-shared-view _state))
+              (compiler_driver_core.compiler-driver-state-typecheck _state)
               "write")
             (cfg
               compile-profile
               (compiler_driver_core.compiler-driver-profile-finish-total
-                (compiler_driver_core.compiler-driver-state-profile
-                  (owned_view.compiler-owned-shared-view _state))))
+                (compiler_driver_core.compiler-driver-state-profile _state)))
             (if (= write-status 0)
               (begin
                 (io.print-format
@@ -1519,18 +1504,15 @@
         (begin
           (compiler_driver_core.compiler-driver-print-advisories (& advisories))
           (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
-            (compiler_driver_core.compiler-driver-state-typecheck
-              (owned_view.compiler-owned-shared-view _state))
+            (compiler_driver_core.compiler-driver-state-typecheck _state)
             "write-error")
           (cfg
             compile-profile
             (compiler_driver_core.compiler-driver-profile-finish-total
-              (compiler_driver_core.compiler-driver-state-profile
-                (owned_view.compiler-owned-shared-view _state))))
+              (compiler_driver_core.compiler-driver-state-profile _state)))
           (io.print-error
             (compiler_driver_core.compiler-driver-render-source-diagnostic
-              (cdiag.compiler-diagnostic-box-shared-view
-                (owned_view.compiler-owned-shared-view diag))))
+              (cdiag.compiler-diagnostic-box-shared-view diag)))
           (ResultCompileCliWindowsBatchEntry.Err 1))])))
 
 (define (compile-cli-run-windows-batch-file
@@ -1628,7 +1610,7 @@
   [stride : i64]
   [target : backend.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
-  [cfgs : CompileCliCfgNames]
+  [cfgs : (& cfgs CompileCliCfgNames)]
   [ran-preflight : bool]) : i64
   (if (>= index (cli_svec.len entries))
     (if ran-preflight
@@ -1664,8 +1646,7 @@
                 (owned_view.compiler-owned-shared-view stdlib-roots)
                 (compiler_driver_core.compiler-driver-target-cfgs
                   target
-                  (compile-cli-cfg-names-to-env
-                    (owned_view.compiler-owned-shared-view cfgs)))
+                  (compile-cli-cfg-names-to-env cfgs))
                 "typecheck-prefix-inline-compile-batch")))
           0)]
       ;; `compiler-load-default-session-use!` copies the active session wrapper
@@ -1695,10 +1676,10 @@
           status)))))
 
 (define (compile-cli-run-batch-inline-tests
-  [entries : cli_svec.Vec]
+  [entries : (& entries cli_svec.Vec)]
   [target : backend.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
-  [cfgs : CompileCliCfgNames]) : i64
+  [cfgs : (& cfgs CompileCliCfgNames)]) : i64
   (compile-cli-run-batch-inline-tests-from
     (& entries)
     0
@@ -1709,10 +1690,10 @@
     false))
 
 (define (compile-cli-run-windows-batch-inline-tests
-  [entries : cli_svec.Vec]
+  [entries : (& entries cli_svec.Vec)]
   [target : backend.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
-  [cfgs : CompileCliCfgNames]) : i64
+  [cfgs : (& cfgs CompileCliCfgNames)]) : i64
   (compile-cli-run-batch-inline-tests-from
     (& entries)
     0
@@ -2000,8 +1981,7 @@
         (cfg
           compile-profile
           (compiler_driver_core.compiler-driver-batch-profile-start-entry!
-            (compiler_driver_core.compiler-driver-state-profile
-              (owned_view.compiler-owned-shared-view state))
+            (compiler_driver_core.compiler-driver-state-profile state)
             ordinal)
           unit)]
       [input-path : String (cli_svec.get entries index "")]
@@ -2037,8 +2017,7 @@
         (cfg
           compile-profile
           (compiler_driver_core.compiler-driver-batch-profile-mark!
-            (compiler_driver_core.compiler-driver-state-profile
-              (owned_view.compiler-owned-shared-view state))
+            (compiler_driver_core.compiler-driver-state-profile state)
             ordinal
             "emit-complete")
           unit)]
@@ -2064,7 +2043,7 @@
         (cfg
           compile-profile
           (compiler_driver_core.compiler-driver-state-release-file-state-profiled!
-            (owned_view.compiler-owned-shared-view state)
+            state
             ordinal)
           (compiler_driver_core.compiler-driver-state-release-file-state!
             (owned_view.compiler-owned-shared-view state)))
@@ -2104,8 +2083,7 @@
         (cfg
           compile-profile
           (compiler_driver_core.compiler-driver-batch-profile-mark!
-            (compiler_driver_core.compiler-driver-state-profile
-              (owned_view.compiler-owned-shared-view state))
+            (compiler_driver_core.compiler-driver-state-profile state)
             ordinal
             "scratch-destroy-steady")
           unit)
@@ -2165,8 +2143,7 @@
         typecheck-state)
       (tc_core.macro-unqualified-import-cache-storage-ensure!
         (tc_core.tc-job-state-macro-state
-          (compiler_driver_core.compiler-driver-state-typecheck
-            (owned_view.compiler-owned-shared-view state)))))))
+          (compiler_driver_core.compiler-driver-state-typecheck state))))))
 
 (define (compile-cli-run-batch-entries
   [state : compiler_driver_core.CompilerDriverState]
@@ -2211,8 +2188,7 @@
         (cfg
           compile-profile
           (compiler_driver_core.compiler-driver-batch-profile-start-entry!
-            (compiler_driver_core.compiler-driver-state-profile
-              (owned_view.compiler-owned-shared-view state))
+            (compiler_driver_core.compiler-driver-state-profile state)
             ordinal)
           unit)]
       [input-path : String (cli_svec.get entries index "")]
@@ -2241,8 +2217,7 @@
         (cfg
           compile-profile
           (compiler_driver_core.compiler-driver-batch-profile-mark!
-            (compiler_driver_core.compiler-driver-state-profile
-              (owned_view.compiler-owned-shared-view state))
+            (compiler_driver_core.compiler-driver-state-profile state)
             ordinal
             "emit-complete")
           unit)]
@@ -2282,7 +2257,7 @@
         (cfg
           compile-profile
           (compiler_driver_core.compiler-driver-state-release-file-state-profiled!
-            (owned_view.compiler-owned-shared-view state)
+            state
             ordinal)
           (compiler_driver_core.compiler-driver-state-release-file-state!
             (owned_view.compiler-owned-shared-view state)))
@@ -2316,8 +2291,7 @@
         (cfg
           compile-profile
           (compiler_driver_core.compiler-driver-batch-profile-mark!
-            (compiler_driver_core.compiler-driver-state-profile
-              (owned_view.compiler-owned-shared-view state))
+            (compiler_driver_core.compiler-driver-state-profile state)
             ordinal
             "scratch-destroy-steady")
           unit)
@@ -2443,10 +2417,10 @@
               (owned_view.compiler-owned-shared-view state)))]
         [inline-test-status : i64
           (compile-cli-run-batch-inline-tests
-            (owned_view.compiler-owned-shared-view entries)
+            entries
             target
             (owned_view.compiler-owned-shared-view stdlib-roots)
-            (owned_view.compiler-owned-shared-view cfgs))]
+            cfgs)]
         (if (= inline-test-status 0)
           (compile-cli-run-batch-entries
             state
@@ -2486,10 +2460,10 @@
               (owned_view.compiler-owned-shared-view state)))]
         [inline-test-status : i64
           (compile-cli-run-windows-batch-inline-tests
-            (owned_view.compiler-owned-shared-view entries)
+            entries
             target
             (owned_view.compiler-owned-shared-view stdlib-roots)
-            (owned_view.compiler-owned-shared-view cfgs))]
+            cfgs)]
         (if (= inline-test-status 0)
           (compile-cli-run-windows-batch-entries
             state
@@ -2590,7 +2564,7 @@
           compile-startup-profile
           (startup_profile.compiler-startup-profile-mark-cli-compile-action!)
           unit)
-        (match (owned_view.compiler-owned-shared-view config)
+        (match config
           [(CompileCliConfig.Config
               input-path
               output-path
@@ -2667,8 +2641,7 @@
               (& advisories))
             (io.print-error
               (compiler_driver_core.compiler-driver-render-source-diagnostic
-                (cdiag.compiler-diagnostic-list-first
-                  (owned_view.compiler-owned-box-shared-view diag))))
+                (cdiag.compiler-diagnostic-list-first (deref diag))))
             1)])]
     [(CompileCliAction.Help)
       (begin

@@ -14183,15 +14183,59 @@
   32)
 
 (define (opt-cfg-index-reachable-labels [index : OptCfgIndex]) : OptLabelSet
-  (if (<
-    (opt-cfg-index-block-count (compiler-opt-global-shared-view index))
-    (opt-cfg-index-reachable-hash-threshold))
-    (opt-cfg-index-reachable-labels-from-linear index 0 (OptLabelSet.Nil))
-    (opt-cfg-index-reachable-labels-from-seen
-      (compiler-opt-global-shared-view index)
-      0
-      (OptLabelSet.Nil)
-      (opt_string_i64_map.with-capacity (opt-cfg-index-block-count index)))))
+  (cond
+    [index.labels-unique
+      (opt-cfg-index-reachable-labels-dense
+        (compiler-opt-global-shared-view index))]
+    [(<
+        (opt-cfg-index-block-count (compiler-opt-global-shared-view index))
+        (opt-cfg-index-reachable-hash-threshold))
+      (opt-cfg-index-reachable-labels-from-linear index 0 (OptLabelSet.Nil))]
+    [else
+      (opt-cfg-index-reachable-labels-from-seen
+        (compiler-opt-global-shared-view index)
+        0
+        (OptLabelSet.Nil)
+        (opt_string_i64_map.with-capacity (opt-cfg-index-block-count index)))]))
+
+;; With every block label distinct, neither dedup above ever finds a label
+;; already present: the set is the reachable blocks' labels in id order, built
+;; here in one allocation.
+(define (opt-cfg-index-reachable-labels-dense [index : OptCfgIndex]) : OptLabelSet
+  (let
+    [count : i64
+      (opt-cfg-index-block-count (compiler-opt-global-shared-view index))]
+    [n : i64 0]
+    [id : i64 0]
+    (begin
+      (while (< id count)
+        (begin
+          (when (array-ref index.reachable id) (set! n (+ n 1)))
+          (set! id (+ id 1))))
+      (if (= n 0)
+        (OptLabelSet.Nil)
+        (let
+          [items : (__tl_dyn-array i64)
+            (__tl_make-array
+              i64
+              (+
+                (if (< n 4)
+                  4
+                  n)
+                1))]
+          [k : i64 1]
+          (begin
+            (set! id 0)
+            (while (< id count)
+              (begin
+                (when
+                  (array-ref index.reachable id)
+                  (begin
+                    (set! (array-ref items k) (array-ref index.labels id))
+                    (set! k (+ k 1))))
+                (set! id (+ id 1))))
+            (set! (array-ref items 0) n)
+            (OptLabelSet.Dense items n)))))))
 
 (define (opt-cfg-index-rpo-id [index : OptCfgIndex] [slot : i64]) : i64
   (if (and (>= slot 0) (< slot index.reach-count))
@@ -14711,6 +14755,60 @@
             (set! id (+ id 1)))))
       unit)))
 
+;; The dom tree's child rows: each reachable id with a parent, under that
+;; parent, in increasing id order -- the rows `opt-dom-child-rows-fill!`'s
+;; `opt-label-add` walk builds, counted into place instead of grown one set
+;; per parent.
+(define (opt-dom-children-csr
+  [index : OptCfgIndex]
+  [idom : (__tl_dyn-array i64)]) : OptCfgCsr
+  (let
+    [count : i64
+      (opt-cfg-index-block-count (compiler-opt-global-shared-view index))]
+    [offsets : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+    [cursor : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+    [id : i64 0]
+    [total : i64 0]
+    (begin
+      (while (< id count)
+        (let
+          [parent : i64 (array-ref idom id)]
+          (begin
+            (when
+              (and (array-ref index.reachable id) (>= parent 0) (!= parent id))
+              (set! (array-ref cursor parent) (+ (array-ref cursor parent) 1)))
+            (set! id (+ id 1)))))
+      (set! id 0)
+      (while (< id count)
+        (let
+          [n : i64 (array-ref cursor id)]
+          (begin
+            (set! (array-ref offsets id) total)
+            (set! (array-ref cursor id) total)
+            (set! total (+ total n))
+            (set! id (+ id 1)))))
+      (set! (array-ref offsets count) total)
+      (let
+        [edges : (__tl_dyn-array i64) (__tl_make-array i64 total)]
+        (begin
+          (set! id 0)
+          (while (< id count)
+            (let
+              [parent : i64 (array-ref idom id)]
+              (begin
+                (when
+                  (and
+                    (array-ref index.reachable id)
+                    (>= parent 0)
+                    (!= parent id))
+                  (let
+                    [at : i64 (array-ref cursor parent)]
+                    (begin
+                      (set! (array-ref edges at) id)
+                      (set! (array-ref cursor parent) (+ at 1)))))
+                (set! id (+ id 1)))))
+          (OptCfgCsr offsets edges))))))
+
 (define (opt-dom-euler-dfs!
   [children : OptCfgCsr]
   [tin : (__tl_dyn-array i64)]
@@ -14746,22 +14844,18 @@
   (let
     [count : i64
       (opt-cfg-index-block-count (compiler-opt-global-shared-view index))]
-    [child-rows : (__tl_dyn-array OptLabelSet)
-      (__tl_make-array OptLabelSet count)]
     (begin
       (opt-cfg-fill-i64! (compiler-opt-global-shared-view tin) count (- 0 1))
       (opt-cfg-fill-i64! (compiler-opt-global-shared-view tout) count (- 0 1))
       (if (>= entry-id 0)
-        (begin
-          (opt-dom-child-rows-fill!
-            index
-            idom
-            (compiler-opt-global-shared-view child-rows))
-          (let
-            [children : OptCfgCsr (opt-cfg-csr-build child-rows count)]
-            (begin
-              (opt-dom-euler-dfs! children tin tout entry-id 0)
-              unit)))
+        (let
+          [children : OptCfgCsr
+            (opt-dom-children-csr
+              (compiler-opt-global-shared-view index)
+              (compiler-opt-global-shared-view idom))]
+          (begin
+            (opt-dom-euler-dfs! children tin tout entry-id 0)
+            unit))
         unit))))
 
 (define (opt-cfg-dominators-with [index : OptCfgIndex] [entry-label : i64]) : OptDomInfo
@@ -14811,7 +14905,7 @@
 ;;
 ;; The `reachable` array is deliberately NOT consulted. `opt-dom-build-euler!`
 ;; pre-fills tin/tout with -1, and its DFS reaches only the entry plus ids that
-;; `opt-dom-child-rows-fill!` linked into the dom tree -- and that fill admits
+;; `opt-dom-children-csr` linked into the dom tree -- and that fill admits
 ;; an id only when `reachable[id]` is set. So `tin[id] >= 0` already implies
 ;; `reachable[id]`, and the `(>= dom-tin 0)` guard below subsumes both
 ;; reachability tests exactly rather than merely approximating them.

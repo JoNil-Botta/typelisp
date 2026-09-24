@@ -103628,58 +103628,91 @@
           (set! b (+ b 1))))
       (OptBceMbBodyDefs single vars positions))))
 
+(define (opt-bce-mb-body-defs-used-linear
+  [vars : opt_dense_i64_vec.Vec]
+  [uses : opt_i64_i64_map.Map]
+  [acc : OptBceMbVarList]) : OptBceMbVarList
+  (let
+    [count : i64 (opt_dense_i64_vec.len (& vars))]
+    [slots (opt_dense_i64_vec.slots (& vars))]
+    [i : i64 0]
+    [out : OptBceMbVarList acc]
+    (begin
+      (while (< i count)
+        (let
+          [var : i64 (array-ref slots i)]
+          (begin
+            (when
+              (opt_i64_i64_map.contains? (& uses) var)
+              (set! out (opt-bce-mb-var-list-prepend out var)))
+            (set! i (+ i 1)))))
+      out)))
+
 (define (opt-bce-mb-body-defs-used
   [defs : OptBceMbBodyDefs]
   [body-blocks : ir.CompilerIrBlockList]
   [uses : opt_i64_i64_map.Map]
   [acc : OptBceMbVarList]) : OptBceMbVarList
-  (if (not defs.single)
-    (opt-bce-mb-wire-vars-blocks body-blocks uses acc)
-    (let
-      [capacity : i64 (opt_i64_i64_map.capacity (& uses))]
-      [hits : (__tl_dyn-array i64)
-        (__tl_make-array i64 (opt_i64_i64_map.len (& uses)))]
-      [k : i64 0]
-      [i : i64 (opt_i64_i64_map.next-occupied (& uses) 0)]
-      [out : OptBceMbVarList acc]
-      (begin
-        (while (< i capacity)
-          (begin
-            (match (opt_i64_i64_map.entry-at (& uses) i)
-              [(opt_i64_i64_map.EntrySome var _)
-                (match (opt_i64_i64_map.get (& defs.positions) var)
-                  [(opt_i64_i64_map.LookupFound position)
-                    (begin
-                      (set! (array-ref hits k) position)
-                      (set! k (+ k 1)))]
-                  [(opt_i64_i64_map.LookupMissing) unit])]
-              [(opt_i64_i64_map.EntryNone) unit])
-            (set! i (opt_i64_i64_map.next-occupied (& uses) (+ i 1)))))
-        ;; Insertion sort: a use set names few loop defs.
-        (set! i 1)
-        (while (< i k)
-          (let
-            [position : i64 (array-ref hits i)]
-            [j : i64 (- i 1)]
+  (cond
+    [(or
+        (= (opt_dense_i64_vec.len (& defs.vars)) 0)
+        (= (opt_i64_i64_map.len (& uses)) 0))
+      acc]
+    [(not defs.single) (opt-bce-mb-wire-vars-blocks body-blocks uses acc)]
+    ;; Hash iteration order is unrelated to body order. Bound insertion sort
+    ;; to 32 uses; dense queries instead walk the compact def vector once.
+    [(or
+        (> (opt_i64_i64_map.len (& uses)) 32)
+        (<=
+          (opt_dense_i64_vec.len (& defs.vars))
+          (opt_i64_i64_map.len (& uses))))
+      (opt-bce-mb-body-defs-used-linear defs.vars uses acc)]
+    [else
+      (let
+        [capacity : i64 (opt_i64_i64_map.capacity (& uses))]
+        [hits : (__tl_dyn-array i64)
+          (__tl_make-array i64 (opt_i64_i64_map.len (& uses)))]
+        [k : i64 0]
+        [i : i64 (opt_i64_i64_map.next-occupied (& uses) 0)]
+        [out : OptBceMbVarList acc]
+        (begin
+          (while (< i capacity)
             (begin
-              (while (and (>= j 0) (> (array-ref hits j) position))
-                (begin
-                  (set! (array-ref hits (+ j 1)) (array-ref hits j))
-                  (set! j (- j 1))))
-              (set! (array-ref hits (+ j 1)) position)
-              (set! i (+ i 1)))))
-        (set! i 0)
-        (while (< i k)
-          (begin
-            (set!
-              out
-              (opt-bce-mb-var-list-prepend
+              (match (opt_i64_i64_map.entry-at (& uses) i)
+                [(opt_i64_i64_map.EntrySome var _)
+                  (match (opt_i64_i64_map.get (& defs.positions) var)
+                    [(opt_i64_i64_map.LookupFound position)
+                      (begin
+                        (set! (array-ref hits k) position)
+                        (set! k (+ k 1)))]
+                    [(opt_i64_i64_map.LookupMissing) unit])]
+                [(opt_i64_i64_map.EntryNone) unit])
+              (set! i (opt_i64_i64_map.next-occupied (& uses) (+ i 1)))))
+          ;; At most 32 uses reach this path, hence at most 32 sortable hits.
+          (set! i 1)
+          (while (< i k)
+            (let
+              [position : i64 (array-ref hits i)]
+              [j : i64 (- i 1)]
+              (begin
+                (while (and (>= j 0) (> (array-ref hits j) position))
+                  (begin
+                    (set! (array-ref hits (+ j 1)) (array-ref hits j))
+                    (set! j (- j 1))))
+                (set! (array-ref hits (+ j 1)) position)
+                (set! i (+ i 1)))))
+          (set! i 0)
+          (while (< i k)
+            (begin
+              (set!
                 out
-                (array-ref
-                  (opt_dense_i64_vec.slots (& defs.vars))
-                  (array-ref hits i))))
-            (set! i (+ i 1))))
-        out))))
+                (opt-bce-mb-var-list-prepend
+                  out
+                  (array-ref
+                    (opt_dense_i64_vec.slots (& defs.vars))
+                    (array-ref hits i))))
+              (set! i (+ i 1))))
+          out))]))
 
 (define (opt-bce-mb-far-phi-inputs
   [body-labels : OptLabelSet]

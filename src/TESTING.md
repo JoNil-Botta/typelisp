@@ -436,7 +436,10 @@ Compile/symbol smoke coverage is driven by
 [`../scripts/verify-selfhost-compile-manifest.sh`](../scripts/verify-selfhost-compile-manifest.sh).
 The runner compiles each manifest case with an already-built TypeLisp compiler,
 rejects generated `# TODO` assembly, applies the case's `main:` label policy,
-and checks representative symbol/literal markers in the emitted assembly.
+and checks the case's codegen markers (calls that must survive, runtime
+helpers, symbols that must not be emitted) in the emitted assembly. Label
+existence alone is not a marker: a compile case already fails when the module
+does not compile, and command behaviour belongs to the CLI gates.
 `_tl_foo` and `call _tl_foo` markers are logical symbol
 markers, so both expectation modes accept direct labels such as `_tl_foo` and
 emitted module/path-qualified labels such as `_tl_calc_foo` without changing the
@@ -1325,9 +1328,10 @@ Everything is evaluated with sh/grep/awk, never with the compiler under test.
 Each CI gate runs one file, or one case of it with `--only`.
 
 Use this layer when a native integration fixture can still return the right
-exit code while silently falling back to slow codegen: `math.cases` pins
-freestanding stdlib math (no allocation, libm or x87/FMA code on either
-target).
+exit code while silently falling back to slow codegen: `crypto-sha.cases` pins
+the hash cores' wipe loops, `by-value-aggregate-abi.cases` the internal
+aggregate ABI, `math.cases` freestanding stdlib math, and `ispc.cases` the ISPC
+comparison corpus contracts.
 
 ### Selfhost native generated programs
 

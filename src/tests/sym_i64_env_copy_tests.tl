@@ -14,8 +14,7 @@
               (env.sym-i64-bind-id (env.sym-i64-empty) 7 11)
               9
               23)]
-          [snapshot : env.SymI64Env
-            (env.sym-i64-bind-id (env.sym-i64-shared-view (& source)) 7 0)]
+          [snapshot : env.SymI64Env (env.sym-i64-bind-id source 7 0)]
           [_other : env.SymI64Env (env.sym-i64-bind-id source 12 99)]
           (in-arena home (env.sym-i64-copy snapshot))))]
     (begin

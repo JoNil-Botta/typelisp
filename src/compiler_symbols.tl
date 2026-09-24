@@ -2096,9 +2096,7 @@
                     (compiler-symbols-module-sets-list
                       (ast.ast-decl-list-box-shared-view body-box)
                       name
-                      (CompilerSymbolsModuleSets
-                        (sym_i64_env.sym-i64-shared-view (& macro-modules))
-                        (sym_i64_env.sym-i64-shared-view (& dotted-modules))))]
+                      (CompilerSymbolsModuleSets macro-modules dotted-modules))]
                   (begin
                     (set! macro-modules nested.macro-modules)
                     (set! dotted-modules nested.dotted-modules)))]
@@ -3137,7 +3135,7 @@
                       body
                       body-paths
                       (compiler-symbols-shared-view cur-symbols)
-                      (sym_i64_env.sym-i64-shared-view (& cur-dotted-modules))
+                      cur-dotted-modules
                       cur-index
                       name)
                       [(ResultCompilerSymbols.Ok next-symbols)

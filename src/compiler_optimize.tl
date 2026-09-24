@@ -148529,12 +148529,16 @@
           (compiler-opt-global-shared-view devirt))]
       [index : OptFunctionIndex
         (opt-function-index-build (compiler-opt-global-shared-view devirt))]
+      [_loop-calls : unit
+        (opt-loop-call-cache-index! (compiler-opt-global-shared-view index))]
       [graph : OptCallGraph
         (opt-callgraph-build (compiler-opt-global-shared-view index))]
       [scc-result : OptSccResult
         (opt-scc-compute (compiler-opt-global-shared-view graph))]
       [census : OptInlineCensus
-        (opt-inline-census-build (compiler-opt-global-shared-view index) devirt)]
+        (opt-inline-census-build
+          (compiler-opt-global-shared-view index)
+          (opt-function-index-to-seq (compiler-opt-global-shared-view index)))]
       (begin
         (opt-inline-owned-state-install!
           (compiler-opt-global-shared-view index))
@@ -148576,12 +148580,16 @@
           (compiler-opt-global-shared-view devirt))]
       [index : OptFunctionIndex
         (opt-function-index-build (compiler-opt-global-shared-view devirt))]
+      [_loop-calls : unit
+        (opt-loop-call-cache-index! (compiler-opt-global-shared-view index))]
       [graph : OptCallGraph
         (opt-callgraph-build (compiler-opt-global-shared-view index))]
       [scc-result : OptSccResult
         (opt-scc-compute (compiler-opt-global-shared-view graph))]
       [census : OptInlineCensus
-        (opt-inline-census-build (compiler-opt-global-shared-view index) devirt)]
+        (opt-inline-census-build
+          (compiler-opt-global-shared-view index)
+          (opt-function-index-to-seq (compiler-opt-global-shared-view index)))]
       [_install-owned-state : unit
         (opt-inline-owned-state-install!
           (compiler-opt-global-shared-view index))]
@@ -181430,6 +181438,442 @@
       (OptPureCallBlockOut.Out
         (ir.compiler-ir-instr-builder-to-seq builder)
         cur))))
+
+;; Cache an expensive invariant call at its original execution point. The
+;; flag starts false in the dedicated loop preheader, so a zero-trip loop or
+;; a skipped call stays skipped, and a first-call trap keeps its ordering.
+;; Every instruction in the loop must be write-free, and arguments must have
+;; one definition outside the loop. This runs before inlining and SSA; the
+;; later SSA construction supplies the flag/result phis. One site per caller
+;; bounds code growth. Splitting a block repairs its successor phi labels;
+;; large callers are left unchanged.
+(defenum OptLoopCallSite
+  (No)
+  (Some i64 i64 i64))
+
+(define (opt-loop-call-value-invariant?
+  [defs : (__tl_dyn-array i64)]
+  [loop-defs : opt_i64_i64_map.Map]
+  [value : ir.CompilerIrValue]) : bool
+  (match value
+    [(ir.CompilerIrValue.Var id)
+      (and
+        (opt-pure-call-single-def? defs id)
+        (not (opt-used-contains loop-defs id)))]
+    [_ true]))
+
+(define (opt-loop-call-args-invariant?
+  [defs : (__tl_dyn-array i64)]
+  [loop-defs : opt_i64_i64_map.Map]
+  [args : ir.CompilerIrCallArgs]) : bool
+  (match args
+    [(ir.CompilerIrCallArgs.Nil) true]
+    [(ir.CompilerIrCallArgs.One a)
+      (opt-loop-call-value-invariant? defs loop-defs a)]
+    [(ir.CompilerIrCallArgs.Two a b)
+      (and
+        (opt-loop-call-value-invariant?
+          (compiler-opt-global-shared-view defs)
+          (compiler-opt-global-shared-view loop-defs)
+          a)
+        (opt-loop-call-value-invariant? defs loop-defs b))]
+    [(ir.CompilerIrCallArgs.Array xs)
+      (let
+        [i : i64 0]
+        (begin
+          (while (< i (array-length xs))
+            (begin
+              (when
+                (not
+                  (opt-loop-call-value-invariant?
+                    (compiler-opt-global-shared-view defs)
+                    (compiler-opt-global-shared-view loop-defs)
+                    (compiler-opt-global-array-element-shared-view xs i)))
+                (return false))
+              (set! i (+ i 1))))
+          true))]
+    [(ir.CompilerIrCallArgs.Sret _ _) false]))
+
+(define (opt-loop-call-readonly?
+  [memory : opt_i64_i64_map.Map]
+  [blocks : ir.CompilerIrBlockList]) : bool
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) true]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-loop-call-readonly? memory (ir.compiler-ir-block-seq-to-list seq))]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (let
+            [i : i64 0]
+            (begin
+              (while (< i instrs.len)
+                (begin
+                  (match (ir.compiler-ir-instr-seq-ref
+                    (compiler-opt-global-shared-view instrs)
+                    i)
+                    [(ir.CompilerIrInstr.Call _ name _ _)
+                      (when
+                        (not
+                          (opt-pure-call-callee-pure?
+                            (compiler-opt-global-shared-view memory)
+                            name))
+                        (return false))]
+                    [_
+                      (when
+                        (opt-alias-instr-clears-all?
+                          (ir.compiler-ir-instr-seq-ref
+                            (compiler-opt-global-shared-view instrs)
+                            i))
+                        (return false))])
+                  (set! i (+ i 1))))
+              (opt-loop-call-readonly?
+                memory
+                (compiler-opt-box-shared-view rest))))])]))
+
+(define (opt-loop-call-expensive? [functions : OptFunctionIndex] [name : i64]) : bool
+  (match (opt-function-index-slot
+    (compiler-opt-global-shared-view functions)
+    name)
+    [(option_i64.None) false]
+    [(option_i64.Some slot)
+      (>=
+        (ir.compiler-ir-block-list-instruction-count
+          (opt-function-blocks (opt-function-index-at-slot functions slot)))
+        16)]))
+
+(define (opt-loop-call-find-in-body
+  [functions : OptFunctionIndex]
+  [memory : opt_i64_i64_map.Map]
+  [defs : (__tl_dyn-array i64)]
+  [loop-defs : opt_i64_i64_map.Map]
+  [blocks : ir.CompilerIrBlockList]
+  [pre : i64]) : OptLoopCallSite
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) (OptLoopCallSite.No)]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-loop-call-find-in-body
+        functions
+        memory
+        defs
+        loop-defs
+        (ir.compiler-ir-block-seq-to-list seq)
+        pre)]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block label instrs)
+          (let
+            [i : i64 0]
+            (begin
+              (while (< i instrs.len)
+                (begin
+                  (match (ir.compiler-ir-instr-seq-ref
+                    (compiler-opt-global-shared-view instrs)
+                    i)
+                    [(ir.CompilerIrInstr.Call _ name args ty)
+                      (when
+                        (and
+                          (opt-pure-call-scalar-type? ty)
+                          (opt-pure-call-callee-pure?
+                            (compiler-opt-global-shared-view memory)
+                            name)
+                          (opt-loop-call-expensive?
+                            (compiler-opt-global-shared-view functions)
+                            name)
+                          (opt-loop-call-args-invariant?
+                            (compiler-opt-global-shared-view defs)
+                            (compiler-opt-global-shared-view loop-defs)
+                            args))
+                        (return (OptLoopCallSite.Some pre label i)))]
+                    [_ unit])
+                  (set! i (+ i 1))))
+              (opt-loop-call-find-in-body
+                functions
+                memory
+                defs
+                loop-defs
+                (compiler-opt-box-shared-view rest)
+                pre)))])]))
+
+(define (opt-loop-call-find
+  [functions : OptFunctionIndex]
+  [memory : opt_i64_i64_map.Map]
+  [defs : (__tl_dyn-array i64)]
+  [loops : OptNaturalLoopList]) : OptLoopCallSite
+  (match loops
+    [(OptNaturalLoopList.Nil) (OptLoopCallSite.No)]
+    [(OptNaturalLoopList.Cons loop rest)
+      (begin
+        (match (opt-natural-loop-preheader
+          (compiler-opt-global-shared-view loop))
+          [(OptLoopPreheader.Some pre)
+            (let
+              [body : ir.CompilerIrBlockList
+                (opt-natural-loop-body-blocks loop)]
+              (when
+                (opt-loop-call-readonly?
+                  (compiler-opt-global-shared-view memory)
+                  (compiler-opt-global-shared-view body))
+                (match (opt-loop-call-find-in-body
+                  (compiler-opt-global-shared-view functions)
+                  (compiler-opt-global-shared-view memory)
+                  (compiler-opt-global-shared-view defs)
+                  (opt-licm-collect-defs-blocks
+                    (compiler-opt-global-shared-view body)
+                    (opt_i64_i64_map.with-capacity
+                      (opt-licm-body-map-capacity
+                        (compiler-opt-global-shared-view body))))
+                  body
+                  pre)
+                  [(OptLoopCallSite.Some p label at)
+                    (return (OptLoopCallSite.Some p label at))]
+                  [(OptLoopCallSite.No) unit])))]
+          [(OptLoopPreheader.No) unit])
+        (opt-loop-call-find
+          functions
+          memory
+          defs
+          (compiler-opt-box-shared-view rest)))]))
+
+(define (opt-loop-call-rewrite
+  [func : ir.CompilerIrFunction]
+  [cfg-index : OptCfgIndex]
+  [pre : i64]
+  [site : i64]
+  [at : i64]) : ir.CompilerIrFunction
+  (match (compiler-opt-global-shared-view func)
+    [(ir.CompilerIrFunction.Function name params ret frame blocks abi)
+      (match (opt-cfg-index-find-block
+        (compiler-opt-global-shared-view cfg-index)
+        site)
+        [(OptMaybeBlock.No) func]
+        [(OptMaybeBlock.Some (ir.CompilerIrBlock.Block _ site-instrs))
+          (match (ir.compiler-ir-instr-seq-ref
+            (compiler-opt-global-shared-view site-instrs)
+            at)
+            [(ir.CompilerIrInstr.Call dst callee args ty)
+              (let
+                [execute : i64
+                  (opt-ubound-fresh-label
+                    (compiler-opt-global-shared-view blocks)
+                    site
+                    "cached_call_execute"
+                    0)]
+                [resume : i64
+                  (opt-ubound-fresh-label
+                    (compiler-opt-global-shared-view blocks)
+                    site
+                    "cached_call_resume"
+                    0)]
+                [out : ir.CompilerIrBlockBuilder
+                  (ir.compiler-ir-block-builder-with-capacity
+                    (+ (array-length cfg-index.blocks) 2))]
+                [i : i64 0]
+                (begin
+                  (while (< i (array-length cfg-index.blocks))
+                    (begin
+                      (match (compiler-opt-global-array-element-shared-view
+                        cfg-index.blocks
+                        i)
+                        [(ir.CompilerIrBlock.Block label instrs)
+                          (cond
+                            [(= label pre)
+                              (let
+                                [b : ir.CompilerIrInstrBuilder
+                                  (ir.compiler-ir-instr-builder-with-capacity
+                                    (+ instrs.len 2))]
+                                (begin
+                                  (ir.compiler-ir-instr-builder-append-seq-range!
+                                    (&mut b)
+                                    (compiler-opt-global-shared-view instrs)
+                                    0
+                                    (- instrs.len 1))
+                                  (ir.compiler-ir-instr-builder-push!
+                                    (&mut b)
+                                    (ir.CompilerIrInstr.Mov
+                                      frame
+                                      (ir.CompilerIrValue.Bool false)
+                                      (ast.AstType.Bool)))
+                                  (ir.compiler-ir-instr-builder-push!
+                                    (&mut b)
+                                    (ir.CompilerIrInstr.Mov
+                                      (+ frame 1)
+                                      (match (compiler-opt-global-shared-view
+                                        ty)
+                                        [(ast.AstType.Bool)
+                                          (ir.CompilerIrValue.Bool false)]
+                                        [_ (ir.CompilerIrValue.I64 0)])
+                                      (compiler-opt-global-shared-view ty)))
+                                  (ir.compiler-ir-instr-builder-append-seq-range!
+                                    (&mut b)
+                                    (compiler-opt-global-shared-view instrs)
+                                    (- instrs.len 1)
+                                    instrs.len)
+                                  (ir.compiler-ir-block-builder-push!
+                                    (&mut out)
+                                    (ir.CompilerIrBlock.Block
+                                      label
+                                      (ir.compiler-ir-instr-builder-to-seq b)))))]
+                            [(= label site)
+                              (let
+                                [before : ir.CompilerIrInstrBuilder
+                                  (ir.compiler-ir-instr-builder-with-capacity
+                                    (+ at 1))]
+                                [first : ir.CompilerIrInstrBuilder
+                                  (ir.compiler-ir-instr-builder-with-capacity 4)]
+                                [after : ir.CompilerIrInstrBuilder
+                                  (ir.compiler-ir-instr-builder-with-capacity
+                                    (- instrs.len at))]
+                                (begin
+                                  (ir.compiler-ir-instr-builder-append-seq-range!
+                                    (&mut before)
+                                    (compiler-opt-global-shared-view instrs)
+                                    0
+                                    at)
+                                  (ir.compiler-ir-instr-builder-push!
+                                    (&mut before)
+                                    (ir.CompilerIrInstr.Branch
+                                      (ir.CompilerIrValue.Var frame)
+                                      resume
+                                      execute))
+                                  (ir.compiler-ir-block-builder-push!
+                                    (&mut out)
+                                    (ir.CompilerIrBlock.Block
+                                      label
+                                      (ir.compiler-ir-instr-builder-to-seq
+                                        before)))
+                                  (ir.compiler-ir-instr-builder-push!
+                                    (&mut first)
+                                    (ir.CompilerIrInstr.Call
+                                      dst
+                                      callee
+                                      (compiler-opt-global-shared-view args)
+                                      (compiler-opt-global-shared-view ty)))
+                                  (ir.compiler-ir-instr-builder-push!
+                                    (&mut first)
+                                    (ir.CompilerIrInstr.Mov
+                                      (+ frame 1)
+                                      (ir.CompilerIrValue.Var dst)
+                                      (compiler-opt-global-shared-view ty)))
+                                  (ir.compiler-ir-instr-builder-push!
+                                    (&mut first)
+                                    (ir.CompilerIrInstr.Mov
+                                      frame
+                                      (ir.CompilerIrValue.Bool true)
+                                      (ast.AstType.Bool)))
+                                  (ir.compiler-ir-instr-builder-push!
+                                    (&mut first)
+                                    (ir.CompilerIrInstr.Jump resume))
+                                  (ir.compiler-ir-block-builder-push!
+                                    (&mut out)
+                                    (ir.CompilerIrBlock.Block
+                                      execute
+                                      (ir.compiler-ir-instr-builder-to-seq
+                                        first)))
+                                  (ir.compiler-ir-instr-builder-push!
+                                    (&mut after)
+                                    (ir.CompilerIrInstr.Mov
+                                      dst
+                                      (ir.CompilerIrValue.Var (+ frame 1))
+                                      (compiler-opt-global-shared-view ty)))
+                                  (ir.compiler-ir-instr-builder-append-seq-range!
+                                    (&mut after)
+                                    (compiler-opt-global-shared-view instrs)
+                                    (+ at 1)
+                                    instrs.len)
+                                  (ir.compiler-ir-block-builder-push!
+                                    (&mut out)
+                                    (ir.CompilerIrBlock.Block
+                                      resume
+                                      (ir.compiler-ir-instr-builder-to-seq
+                                        after)))))]
+                            [else
+                              (ir.compiler-ir-block-builder-push!
+                                (&mut out)
+                                (ir.CompilerIrBlock.Block label instrs))])])
+                      (set! i (+ i 1))))
+                  (ir.CompilerIrFunction.Function
+                    name
+                    params
+                    ret
+                    (+ frame 2)
+                    (opt-inline-repair-successor-phis
+                      (ir.compiler-ir-block-builder-to-list out)
+                      site
+                      resume)
+                    abi)))]
+            [_ func])]
+        [_ func])]))
+
+(define (opt-loop-call-cache-function
+  [functions : OptFunctionIndex]
+  [memory : opt_i64_i64_map.Map]
+  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  (match (compiler-opt-global-shared-view func)
+    [(ir.CompilerIrFunction.Function _ params _ frame blocks _)
+      (if (or
+        (<
+          (ir.compiler-ir-block-list-count
+            (compiler-opt-global-shared-view blocks))
+          2)
+        (>
+          (ir.compiler-ir-block-list-count
+            (compiler-opt-global-shared-view blocks))
+          64)
+        (=
+          (opt-pure-call-count-blocks
+            (compiler-opt-global-shared-view memory)
+            (compiler-opt-global-shared-view blocks)
+            0)
+          0))
+        func
+        (let
+          [context : OptCfgContext
+            (opt-cfg-context-build (compiler-opt-global-shared-view blocks))]
+          [loops : OptNaturalLoopList
+            (opt-cfg-natural-loops-with-context
+              blocks
+              (compiler-opt-global-shared-view context))]
+          [defs : (__tl_dyn-array i64) (__tl_make-array i64 (+ frame 1))]
+          (begin
+            (opt-def-counts-params!
+              (compiler-opt-global-shared-view defs)
+              params)
+            (opt-def-counts-blocks!
+              (compiler-opt-global-shared-view defs)
+              (opt-function-blocks (compiler-opt-global-shared-view func)))
+            (match (opt-loop-call-find functions memory defs loops)
+              [(OptLoopCallSite.No) func]
+              [(OptLoopCallSite.Some pre site at)
+                (match (opt-cfg-index-find-block
+                  (compiler-opt-global-shared-view context.index)
+                  pre)
+                  [(OptMaybeBlock.No) func]
+                  [(OptMaybeBlock.Some (ir.CompilerIrBlock.Block _ instrs))
+                    (if (> instrs.len 0)
+                      (match (ir.compiler-ir-instr-seq-ref
+                        (compiler-opt-global-shared-view instrs)
+                        (- instrs.len 1))
+                        [(ir.CompilerIrInstr.Jump _)
+                          (opt-loop-call-rewrite func context.index pre site at)]
+                        [_ func])
+                      func)]
+                  [_ func])]))))]))
+
+(define (opt-loop-call-cache-index! [index : OptFunctionIndex]) : unit
+  (let
+    [i : i64 0]
+    (while (<
+      i
+      (opt-function-index-count (compiler-opt-global-shared-view index)))
+      (begin
+        (set!
+          (array-ref index.values i)
+          (opt-loop-call-cache-function
+            (compiler-opt-global-shared-view index)
+            (compiler-opt-global-shared-view opt-pure-call-inline-memory)
+            (compiler-opt-global-array-element-shared-view index.values i)))
+        (set! i (+ i 1))))))
 
 (define (opt-pure-call-dedupe-function
   [call-memory : opt_i64_i64_map.Map]

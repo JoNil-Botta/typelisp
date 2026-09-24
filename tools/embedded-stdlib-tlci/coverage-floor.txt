@@ -44,8 +44,11 @@
 # capability macro; all 161 remain native. Issue #7650 removes the generic
 # unsafe shared-view bridge instead of replacing it with an interpreted
 # transformer: the catalog now has 160 entries, all still native. Issue #7005
-# adds the stdlib.math/mul-add dispatch macro: 161 entries, all native.
-native-entries-min 161
+# adds the stdlib.math/mul-add dispatch macro: 161 entries, all native. The
+# shrink refactor merges stdlib.format's materializing and streaming expanders
+# into one sink-operand `format-expand`/`format-expand-call` pair and drops the
+# three start macros and the retained completion step: 155 entries, all native.
+native-entries-min 155
 shell-entries-max 0
 partial-entries-max 0
 interpreted-arms-max 0

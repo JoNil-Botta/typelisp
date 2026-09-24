@@ -35746,7 +35746,7 @@ g:
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-spill-f64-neg-home-ok?) : bool
-  (match (compiler_backend.compiler-backend-emit-unop-with-plan
+  (match (compiler_backend.compiler-backend-emit-unop
     (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         0
@@ -35828,7 +35828,7 @@ g:
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (string.eq asm "    movss %xmm2, %xmm3\n    sqrtss %xmm3, %xmm3\n")]
         [(compiler_backend.ResultCompilerBackend.Err _) false])
-      (match (compiler_backend.compiler-backend-emit-unop-with-plan
+      (match (compiler_backend.compiler-backend-emit-unop
         (owned_view.compiler-owned-shared-view spill)
         1
         (compiler_ir_types.CompilerIrUnOp.Sqrt)
@@ -35841,7 +35841,7 @@ g:
             asm
             "    movsd %xmm3, %xmm2\n    sqrtsd %xmm2, %xmm2\n    movsd %xmm2, -16(%rbp)\n")]
         [(compiler_backend.ResultCompilerBackend.Err _) false])
-      (match (compiler_backend.compiler-backend-emit-unop-with-plan
+      (match (compiler_backend.compiler-backend-emit-unop
         spill
         1
         (compiler_ir_types.CompilerIrUnOp.Sqrt)

@@ -5493,14 +5493,8 @@
       (compiler-reg-param-const-shift-function))
       [(reg.CompilerRegPlan.Plan assignments ineligible _ _ _ _)
         (and
-          (not
-            (live.compiler-live-set-contains?
-              (reg.compiler-reg-global-shared-view ineligible)
-              0))
-          (not
-            (live.compiler-live-set-contains?
-              (reg.compiler-reg-global-shared-view ineligible)
-              1))
+          (not (live.compiler-live-set-contains? ineligible 0))
+          (not (live.compiler-live-set-contains? ineligible 1))
           (reg.compiler-reg-location-register?
             (reg.compiler-reg-assignment-lookup
               (reg.compiler-reg-global-shared-view assignments)
@@ -5526,14 +5520,8 @@
       (compiler-reg-param-var-shift-function))
       [(reg.CompilerRegPlan.Plan assignments ineligible _ _ _ _)
         (and
-          (not
-            (live.compiler-live-set-contains?
-              (reg.compiler-reg-global-shared-view ineligible)
-              0))
-          (not
-            (live.compiler-live-set-contains?
-              (reg.compiler-reg-global-shared-view ineligible)
-              1))
+          (not (live.compiler-live-set-contains? ineligible 0))
+          (not (live.compiler-live-set-contains? ineligible 1))
           (reg.compiler-reg-location-register?
             (reg.compiler-reg-assignment-lookup
               (reg.compiler-reg-global-shared-view assignments)
@@ -5597,10 +5585,7 @@
       (compiler-reg-param-dead-before-call-function))
       [(reg.CompilerRegPlan.Plan assignments ineligible _ _ _ _)
         (and
-          (not
-            (live.compiler-live-set-contains?
-              (reg.compiler-reg-global-shared-view ineligible)
-              0))
+          (not (live.compiler-live-set-contains? ineligible 0))
           (reg.compiler-reg-location-register?
             (reg.compiler-reg-assignment-lookup
               (reg.compiler-reg-global-shared-view assignments)
@@ -5677,10 +5662,7 @@
       (compiler-reg-param-rdx-div-span-function))
       [(reg.CompilerRegPlan.Plan assignments ineligible _ _ _ _)
         (and
-          (not
-            (live.compiler-live-set-contains?
-              (reg.compiler-reg-global-shared-view ineligible)
-              2))
+          (not (live.compiler-live-set-contains? ineligible 2))
           (reg.compiler-reg-location-register?
             (reg.compiler-reg-assignment-lookup
               (reg.compiler-reg-global-shared-view assignments)
@@ -5769,10 +5751,7 @@
       (compiler-reg-param-rcx-shift-span-function))
       [(reg.CompilerRegPlan.Plan assignments ineligible _ _ _ _)
         (and
-          (not
-            (live.compiler-live-set-contains?
-              (reg.compiler-reg-global-shared-view ineligible)
-              3))
+          (not (live.compiler-live-set-contains? ineligible 3))
           (reg.compiler-reg-location-register?
             (reg.compiler-reg-assignment-lookup
               (reg.compiler-reg-global-shared-view assignments)
@@ -5996,18 +5975,9 @@
       (compiler-reg-param-register-function))
       [(reg.CompilerRegPlan.Plan assignments ineligible _ _ _ _)
         (and
-          (not
-            (live.compiler-live-set-contains?
-              (reg.compiler-reg-global-shared-view ineligible)
-              0))
-          (not
-            (live.compiler-live-set-contains?
-              (reg.compiler-reg-global-shared-view ineligible)
-              1))
-          (not
-            (live.compiler-live-set-contains?
-              (reg.compiler-reg-global-shared-view ineligible)
-              2))
+          (not (live.compiler-live-set-contains? ineligible 0))
+          (not (live.compiler-live-set-contains? ineligible 1))
+          (not (live.compiler-live-set-contains? ineligible 2))
           (reg.compiler-reg-location-register?
             (reg.compiler-reg-assignment-lookup
               (reg.compiler-reg-global-shared-view assignments)
@@ -6040,18 +6010,9 @@
       (compiler-reg-param-register-function))
       [(reg.CompilerRegPlan.Plan assignments ineligible _ _ _ _)
         (and
-          (not
-            (live.compiler-live-set-contains?
-              (reg.compiler-reg-global-shared-view ineligible)
-              0))
-          (not
-            (live.compiler-live-set-contains?
-              (reg.compiler-reg-global-shared-view ineligible)
-              1))
-          (not
-            (live.compiler-live-set-contains?
-              (reg.compiler-reg-global-shared-view ineligible)
-              2))
+          (not (live.compiler-live-set-contains? ineligible 0))
+          (not (live.compiler-live-set-contains? ineligible 1))
+          (not (live.compiler-live-set-contains? ineligible 2))
           (reg.compiler-reg-location-register?
             (reg.compiler-reg-assignment-lookup
               (reg.compiler-reg-global-shared-view assignments)
@@ -6286,18 +6247,9 @@
       (compiler-reg-float-param-register-function))
       [(reg.CompilerRegPlan.Plan assignments ineligible _ _ _ _)
         (and
-          (not
-            (live.compiler-live-set-contains?
-              (reg.compiler-reg-global-shared-view ineligible)
-              0))
-          (not
-            (live.compiler-live-set-contains?
-              (reg.compiler-reg-global-shared-view ineligible)
-              1))
-          (not
-            (live.compiler-live-set-contains?
-              (reg.compiler-reg-global-shared-view ineligible)
-              2))
+          (not (live.compiler-live-set-contains? ineligible 0))
+          (not (live.compiler-live-set-contains? ineligible 1))
+          (not (live.compiler-live-set-contains? ineligible 2))
           (and
             (not
               (compiler-reg-location-any-register?
@@ -6323,18 +6275,9 @@
       (compiler-reg-float-param-register-function))
       [(reg.CompilerRegPlan.Plan assignments ineligible _ _ _ _)
         (and
-          (not
-            (live.compiler-live-set-contains?
-              (reg.compiler-reg-global-shared-view ineligible)
-              0))
-          (not
-            (live.compiler-live-set-contains?
-              (reg.compiler-reg-global-shared-view ineligible)
-              1))
-          (not
-            (live.compiler-live-set-contains?
-              (reg.compiler-reg-global-shared-view ineligible)
-              2))
+          (not (live.compiler-live-set-contains? ineligible 0))
+          (not (live.compiler-live-set-contains? ineligible 1))
+          (not (live.compiler-live-set-contains? ineligible 2))
           (reg.compiler-reg-location-register?
             (reg.compiler-reg-assignment-lookup
               (reg.compiler-reg-global-shared-view assignments)
@@ -6359,21 +6302,10 @@
       (compiler-reg-mixed-float-call-arg-function))
       [(reg.CompilerRegPlan.Plan assignments ineligible _ _ _ _)
         (and
-          (live.compiler-live-set-contains?
-            (reg.compiler-reg-global-shared-view ineligible)
-            0)
-          (not
-            (live.compiler-live-set-contains?
-              (reg.compiler-reg-global-shared-view ineligible)
-              1))
-          (not
-            (live.compiler-live-set-contains?
-              (reg.compiler-reg-global-shared-view ineligible)
-              2))
-          (not
-            (live.compiler-live-set-contains?
-              (reg.compiler-reg-global-shared-view ineligible)
-              3))
+          (live.compiler-live-set-contains? ineligible 0)
+          (not (live.compiler-live-set-contains? ineligible 1))
+          (not (live.compiler-live-set-contains? ineligible 2))
+          (not (live.compiler-live-set-contains? ineligible 3))
           (compiler-reg-unassigned?
             (reg.compiler-reg-global-shared-view assignments)
             0)
@@ -6398,21 +6330,10 @@
       (compiler-reg-mixed-float-call-arg-function))
       [(reg.CompilerRegPlan.Plan assignments ineligible _ _ _ _)
         (and
-          (live.compiler-live-set-contains?
-            (reg.compiler-reg-global-shared-view ineligible)
-            0)
-          (not
-            (live.compiler-live-set-contains?
-              (reg.compiler-reg-global-shared-view ineligible)
-              1))
-          (not
-            (live.compiler-live-set-contains?
-              (reg.compiler-reg-global-shared-view ineligible)
-              2))
-          (not
-            (live.compiler-live-set-contains?
-              (reg.compiler-reg-global-shared-view ineligible)
-              3))
+          (live.compiler-live-set-contains? ineligible 0)
+          (not (live.compiler-live-set-contains? ineligible 1))
+          (not (live.compiler-live-set-contains? ineligible 2))
+          (not (live.compiler-live-set-contains? ineligible 3))
           (compiler-reg-unassigned?
             (reg.compiler-reg-global-shared-view assignments)
             0)
@@ -6438,14 +6359,8 @@
       (compiler-reg-win64-rsi-rdi-pressure-function))
       [(reg.CompilerRegPlan.Plan assignments ineligible _ _ _ _)
         (and
-          (not
-            (live.compiler-live-set-contains?
-              (reg.compiler-reg-global-shared-view ineligible)
-              0))
-          (not
-            (live.compiler-live-set-contains?
-              (reg.compiler-reg-global-shared-view ineligible)
-              6))
+          (not (live.compiler-live-set-contains? ineligible 0))
+          (not (live.compiler-live-set-contains? ineligible 6))
           (reg.compiler-reg-assignments-use-register?
             (reg.compiler-reg-global-shared-view assignments)
             cabi.compiler-reg-id-rsi)
@@ -6558,10 +6473,7 @@
       (compiler-reg-param-clobber-function))
       [(reg.CompilerRegPlan.Plan assignments ineligible _ _ _ _)
         (and
-          (not
-            (live.compiler-live-set-contains?
-              (reg.compiler-reg-global-shared-view ineligible)
-              0))
+          (not (live.compiler-live-set-contains? ineligible 0))
           (reg.compiler-reg-location-register?
             (reg.compiler-reg-assignment-lookup
               (reg.compiler-reg-global-shared-view assignments)
@@ -6580,10 +6492,7 @@
       (compiler-reg-param-aggregate-function))
       [(reg.CompilerRegPlan.Plan assignments ineligible _ _ _ _)
         (and
-          (not
-            (live.compiler-live-set-contains?
-              (reg.compiler-reg-global-shared-view ineligible)
-              0))
+          (not (live.compiler-live-set-contains? ineligible 0))
           (reg.compiler-reg-location-register?
             (reg.compiler-reg-assignment-lookup
               (reg.compiler-reg-global-shared-view assignments)
@@ -9458,15 +9367,17 @@
                 (reg.compiler-reg-global-shared-view assignments)
                 6))
             (not
-              (live.compiler-live-set-contains?
-                (reg.compiler-reg-call-split-shadows
-                  (reg.compiler-reg-global-shared-view split-vars))
-                5))
+              (let
+                [call-split-shadows
+                  (reg.compiler-reg-call-split-shadows
+                    (reg.compiler-reg-global-shared-view split-vars))]
+                (live.compiler-live-set-contains? call-split-shadows 5)))
             (not
-              (live.compiler-live-set-contains?
-                (reg.compiler-reg-call-split-shadows
-                  (reg.compiler-reg-global-shared-view split-vars))
-                6)))]))))
+              (let
+                [call-split-shadows
+                  (reg.compiler-reg-call-split-shadows
+                    (reg.compiler-reg-global-shared-view split-vars))]
+                (live.compiler-live-set-contains? call-split-shadows 6))))]))))
 
 (cfg
   test
@@ -9479,15 +9390,17 @@
         [(reg.CompilerRegPlan.Plan _ _ _ _ split-vars _)
           (and
             (not
-              (live.compiler-live-set-contains?
-                (reg.compiler-reg-call-split-shadows
-                  (reg.compiler-reg-global-shared-view split-vars))
-                5))
+              (let
+                [call-split-shadows
+                  (reg.compiler-reg-call-split-shadows
+                    (reg.compiler-reg-global-shared-view split-vars))]
+                (live.compiler-live-set-contains? call-split-shadows 5)))
             (not
-              (live.compiler-live-set-contains?
-                (reg.compiler-reg-call-split-shadows
-                  (reg.compiler-reg-global-shared-view split-vars))
-                6)))]))))
+              (let
+                [call-split-shadows
+                  (reg.compiler-reg-call-split-shadows
+                    (reg.compiler-reg-global-shared-view split-vars))]
+                (live.compiler-live-set-contains? call-split-shadows 6))))]))))
 
 ;; ---------------------------------------------------------------------------
 ;; P11b loop-scoped rescue regions.
@@ -12859,19 +12772,10 @@
                   (live.compiler-live-set1 5)
                   (reg.compiler-reg-global-shared-view members)
                   1))
-              (not
-                (live.compiler-live-set-contains?
-                  (live.compiler-live-shared-view phi-excluded)
-                  0))
-              (live.compiler-live-set-contains?
-                (live.compiler-live-shared-view call-caller-unsafe)
-                0)
-              (live.compiler-live-set-contains?
-                (live.compiler-live-shared-view indirect-call-caller-unsafe)
-                0)
-              (live.compiler-live-set-contains?
-                (live.compiler-live-shared-view indirect-c-call-caller-unsafe)
-                0)
+              (not (live.compiler-live-set-contains? phi-excluded 0))
+              (live.compiler-live-set-contains? call-caller-unsafe 0)
+              (live.compiler-live-set-contains? indirect-call-caller-unsafe 0)
+              (live.compiler-live-set-contains? indirect-c-call-caller-unsafe 0)
               (reg.compiler-reg-group-pair-component-contains?
                 (live.compiler-live-shared-view call-caller-unsafe)
                 (reg.compiler-reg-global-shared-view members)
@@ -16956,13 +16860,8 @@
   (match (reg.compiler-reg-plan-function (compiler-reg-call-live-function))
     [(reg.CompilerRegPlan.Plan assignments ineligible _ _ _ _)
       (and
-        (not
-          (live.compiler-live-set-contains?
-            (reg.compiler-reg-global-shared-view ineligible)
-            0))
-        (live.compiler-live-set-contains?
-          (reg.compiler-reg-global-shared-view ineligible)
-          1)
+        (not (live.compiler-live-set-contains? ineligible 0))
+        (live.compiler-live-set-contains? ineligible 1)
         (compiler-reg-location-any-register?
           (reg.compiler-reg-assignment-lookup
             (reg.compiler-reg-global-shared-view assignments)
@@ -16980,10 +16879,7 @@
     (compiler-reg-call-live-function))
     [(reg.CompilerRegPlan.Plan assignments ineligible _ _ _ _)
       (and
-        (not
-          (live.compiler-live-set-contains?
-            (reg.compiler-reg-global-shared-view ineligible)
-            0))
+        (not (live.compiler-live-set-contains? ineligible 0))
         (compiler-reg-location-any-register?
           (reg.compiler-reg-assignment-lookup
             (reg.compiler-reg-global-shared-view assignments)
@@ -17001,10 +16897,7 @@
     (compiler-reg-f64-call-live-function))
     [(reg.CompilerRegPlan.Plan assignments ineligible _ _ _ _)
       (and
-        (not
-          (live.compiler-live-set-contains?
-            (reg.compiler-reg-global-shared-view ineligible)
-            0))
+        (not (live.compiler-live-set-contains? ineligible 0))
         (not
           (compiler-reg-location-any-register?
             (reg.compiler-reg-assignment-lookup
@@ -17017,10 +16910,7 @@
     (compiler-reg-f64-call-live-function))
     [(reg.CompilerRegPlan.Plan assignments ineligible _ _ _ _)
       (and
-        (not
-          (live.compiler-live-set-contains?
-            (reg.compiler-reg-global-shared-view ineligible)
-            0))
+        (not (live.compiler-live-set-contains? ineligible 0))
         (reg.compiler-reg-location-register?
           (reg.compiler-reg-assignment-lookup
             (reg.compiler-reg-global-shared-view assignments)
@@ -17031,13 +16921,8 @@
   (match (reg.compiler-reg-plan-function (compiler-reg-f64-call-live-function))
     [(reg.CompilerRegPlan.Plan assignments ineligible _ _ _ _)
       (and
-        (not
-          (live.compiler-live-set-contains?
-            (reg.compiler-reg-global-shared-view ineligible)
-            0))
-        (live.compiler-live-set-contains?
-          (reg.compiler-reg-global-shared-view ineligible)
-          1)
+        (not (live.compiler-live-set-contains? ineligible 0))
+        (live.compiler-live-set-contains? ineligible 1)
         (not
           (compiler-reg-location-any-register?
             (reg.compiler-reg-assignment-lookup
@@ -17056,12 +16941,8 @@
   (match (reg.compiler-reg-plan-function (compiler-reg-call-arg-function))
     [(reg.CompilerRegPlan.Plan assignments ineligible _ _ _ _)
       (and
-        (live.compiler-live-set-contains?
-          (reg.compiler-reg-global-shared-view ineligible)
-          0)
-        (live.compiler-live-set-contains?
-          (reg.compiler-reg-global-shared-view ineligible)
-          1)
+        (live.compiler-live-set-contains? ineligible 0)
+        (live.compiler-live-set-contains? ineligible 1)
         (compiler-reg-unassigned?
           (reg.compiler-reg-global-shared-view assignments)
           0)
@@ -17078,9 +16959,7 @@
   (match (reg.compiler-reg-plan-function (compiler-reg-f64-call-arg-function))
     [(reg.CompilerRegPlan.Plan assignments ineligible _ _ _ _)
       (and
-        (live.compiler-live-set-contains?
-          (reg.compiler-reg-global-shared-view ineligible)
-          0)
+        (live.compiler-live-set-contains? ineligible 0)
         (compiler-reg-unassigned?
           (reg.compiler-reg-global-shared-view assignments)
           0)
@@ -17096,22 +16975,11 @@
       (let
         [marked : bool
           (and
-            (live.compiler-live-set-contains?
-              (reg.compiler-reg-global-shared-view ineligible)
-              0)
-            (live.compiler-live-set-contains?
-              (reg.compiler-reg-global-shared-view ineligible)
-              2)
-            (live.compiler-live-set-contains?
-              (reg.compiler-reg-global-shared-view ineligible)
-              3)
-            (live.compiler-live-set-contains?
-              (reg.compiler-reg-global-shared-view ineligible)
-              4)
-            (not
-              (live.compiler-live-set-contains?
-                (reg.compiler-reg-global-shared-view ineligible)
-                6)))]
+            (live.compiler-live-set-contains? ineligible 0)
+            (live.compiler-live-set-contains? ineligible 2)
+            (live.compiler-live-set-contains? ineligible 3)
+            (live.compiler-live-set-contains? ineligible 4)
+            (not (live.compiler-live-set-contains? ineligible 6)))]
         [unassigned : bool
           (and
             (compiler-reg-unassigned?
@@ -17152,25 +17020,11 @@
     (compiler-reg-ineligible-function))
     [(reg.CompilerRegPlan.Plan assignments ineligible _ _ _ _)
       (and
-        (not
-          (live.compiler-live-set-contains?
-            (reg.compiler-reg-global-shared-view ineligible)
-            0))
-        (live.compiler-live-set-contains?
-          (reg.compiler-reg-global-shared-view ineligible)
-          3)
-        (not
-          (live.compiler-live-set-contains?
-            (reg.compiler-reg-global-shared-view ineligible)
-            2))
-        (not
-          (live.compiler-live-set-contains?
-            (reg.compiler-reg-global-shared-view ineligible)
-            4))
-        (not
-          (live.compiler-live-set-contains?
-            (reg.compiler-reg-global-shared-view ineligible)
-            6))
+        (not (live.compiler-live-set-contains? ineligible 0))
+        (live.compiler-live-set-contains? ineligible 3)
+        (not (live.compiler-live-set-contains? ineligible 2))
+        (not (live.compiler-live-set-contains? ineligible 4))
+        (not (live.compiler-live-set-contains? ineligible 6))
         (reg.compiler-reg-location-register?
           (reg.compiler-reg-assignment-lookup
             (reg.compiler-reg-global-shared-view assignments)
@@ -17187,14 +17041,8 @@
     (compiler-reg-handle-call-arg-function))
     [(reg.CompilerRegPlan.Plan assignments ineligible _ _ _ _)
       (and
-        (not
-          (live.compiler-live-set-contains?
-            (reg.compiler-reg-global-shared-view ineligible)
-            0))
-        (not
-          (live.compiler-live-set-contains?
-            (reg.compiler-reg-global-shared-view ineligible)
-            1))
+        (not (live.compiler-live-set-contains? ineligible 0))
+        (not (live.compiler-live-set-contains? ineligible 1))
         (compiler-reg-location-any-register?
           (reg.compiler-reg-assignment-lookup
             (reg.compiler-reg-global-shared-view assignments)
@@ -17206,17 +17054,9 @@
     (compiler-reg-indirect-call-arg-function))
     [(reg.CompilerRegPlan.Plan assignments ineligible _ _ _ _)
       (and
-        (live.compiler-live-set-contains?
-          (reg.compiler-reg-global-shared-view ineligible)
-          0)
-        (not
-          (live.compiler-live-set-contains?
-            (reg.compiler-reg-global-shared-view ineligible)
-            1))
-        (not
-          (live.compiler-live-set-contains?
-            (reg.compiler-reg-global-shared-view ineligible)
-            2))
+        (live.compiler-live-set-contains? ineligible 0)
+        (not (live.compiler-live-set-contains? ineligible 1))
+        (not (live.compiler-live-set-contains? ineligible 2))
         (reg.compiler-reg-location-register?
           (reg.compiler-reg-assignment-lookup
             (reg.compiler-reg-global-shared-view assignments)
@@ -17234,17 +17074,9 @@
     (compiler-reg-c-abi-store-result-arg-function))
     [(reg.CompilerRegPlan.Plan assignments ineligible _ _ _ _)
       (and
-        (live.compiler-live-set-contains?
-          (reg.compiler-reg-global-shared-view ineligible)
-          0)
-        (not
-          (live.compiler-live-set-contains?
-            (reg.compiler-reg-global-shared-view ineligible)
-            1))
-        (not
-          (live.compiler-live-set-contains?
-            (reg.compiler-reg-global-shared-view ineligible)
-            2))
+        (live.compiler-live-set-contains? ineligible 0)
+        (not (live.compiler-live-set-contains? ineligible 1))
+        (not (live.compiler-live-set-contains? ineligible 2))
         (reg.compiler-reg-location-register?
           (reg.compiler-reg-assignment-lookup
             (reg.compiler-reg-global-shared-view assignments)
@@ -17262,21 +17094,11 @@
     (compiler-reg-indirect-call-arg4-function))
     [(reg.CompilerRegPlan.Plan _ ineligible _ _ _ _)
       (and
-        (live.compiler-live-set-contains?
-          (reg.compiler-reg-global-shared-view ineligible)
-          0)
-        (live.compiler-live-set-contains?
-          (reg.compiler-reg-global-shared-view ineligible)
-          1)
-        (live.compiler-live-set-contains?
-          (reg.compiler-reg-global-shared-view ineligible)
-          2)
-        (live.compiler-live-set-contains?
-          (reg.compiler-reg-global-shared-view ineligible)
-          3)
-        (live.compiler-live-set-contains?
-          (reg.compiler-reg-global-shared-view ineligible)
-          4))]))
+        (live.compiler-live-set-contains? ineligible 0)
+        (live.compiler-live-set-contains? ineligible 1)
+        (live.compiler-live-set-contains? ineligible 2)
+        (live.compiler-live-set-contains? ineligible 3)
+        (live.compiler-live-set-contains? ineligible 4))]))
 
 (define (compiler-reg-scalar-function-intervals-ok?) : bool
   (match (reg.compiler-reg-plan-function-scalar
@@ -17649,15 +17471,17 @@
               (reg.compiler-reg-global-shared-view assignments)
               6))
           (not
-            (live.compiler-live-set-contains?
-              (reg.compiler-reg-call-split-shadows
-                (reg.compiler-reg-global-shared-view split-vars))
-              5))
+            (let
+              [call-split-shadows
+                (reg.compiler-reg-call-split-shadows
+                  (reg.compiler-reg-global-shared-view split-vars))]
+              (live.compiler-live-set-contains? call-split-shadows 5)))
           (not
-            (live.compiler-live-set-contains?
-              (reg.compiler-reg-call-split-shadows
-                (reg.compiler-reg-global-shared-view split-vars))
-              6)))])))
+            (let
+              [call-split-shadows
+                (reg.compiler-reg-call-split-shadows
+                  (reg.compiler-reg-global-shared-view split-vars))]
+              (live.compiler-live-set-contains? call-split-shadows 6))))])))
 
 (define (compiler-reg-same-location?
   [assignments : reg.CompilerRegAssignmentTable]
@@ -18173,16 +17997,16 @@
           root-hole-reuses
           root-overlap-conflicts
           var4-disjoint-reuses
-          (live.compiler-live-set-contains? (clone roots) 0)
-          (live.compiler-live-set-contains? (clone roots) 2)
-          (not (live.compiler-live-set-contains? (clone roots) 1))
-          (not (live.compiler-live-set-contains? (clone roots) 3))
-          (not (live.compiler-live-set-contains? (clone roots) 4))
-          (live.compiler-live-set-contains? (clone mapped-blocked) 0)
-          (live.compiler-live-set-contains? (clone mapped-blocked) 4)
-          (not (live.compiler-live-set-contains? (clone mapped-blocked) 1))
-          (not (live.compiler-live-set-contains? (clone mapped-blocked) 2))
-          (not (live.compiler-live-set-contains? (clone mapped-blocked) 3)))))))
+          (live.compiler-live-set-contains? roots 0)
+          (live.compiler-live-set-contains? roots 2)
+          (not (live.compiler-live-set-contains? roots 1))
+          (not (live.compiler-live-set-contains? roots 3))
+          (not (live.compiler-live-set-contains? roots 4))
+          (live.compiler-live-set-contains? mapped-blocked 0)
+          (live.compiler-live-set-contains? mapped-blocked 4)
+          (not (live.compiler-live-set-contains? mapped-blocked 1))
+          (not (live.compiler-live-set-contains? mapped-blocked 2))
+          (not (live.compiler-live-set-contains? mapped-blocked 3)))))))
 
 (define (compiler-reg-coalesce-test-i64-types [vars : i64]) : reg.CompilerRegVarTypes
   (let
@@ -18768,20 +18592,28 @@
       (compiler-reg-tail-dispatch-real-call-function)]
     (and
       (=
-        (live.compiler-live-set-count
-          (reg.compiler-reg-clobber-kind-points bases (clone pure-fn) 0))
+        (let
+          [clobber-kind-points
+            (reg.compiler-reg-clobber-kind-points bases (clone pure-fn) 0)]
+          (live.compiler-live-set-count clobber-kind-points))
         2)
       (=
-        (live.compiler-live-set-count
-          (reg.compiler-reg-clobber-kind-points bases (clone pure-fn) 6))
+        (let
+          [clobber-kind-points
+            (reg.compiler-reg-clobber-kind-points bases (clone pure-fn) 6)]
+          (live.compiler-live-set-count clobber-kind-points))
         0)
       (=
-        (live.compiler-live-set-count
-          (reg.compiler-reg-clobber-kind-points bases (clone real-fn) 0))
+        (let
+          [clobber-kind-points
+            (reg.compiler-reg-clobber-kind-points bases (clone real-fn) 0)]
+          (live.compiler-live-set-count clobber-kind-points))
         2)
       (=
-        (live.compiler-live-set-count
-          (reg.compiler-reg-clobber-kind-points bases (clone real-fn) 6))
+        (let
+          [clobber-kind-points
+            (reg.compiler-reg-clobber-kind-points bases (clone real-fn) 6)]
+          (live.compiler-live-set-count clobber-kind-points))
         1))))
 
 ;; The segment walk itself: one clobber point in the HOLE between two segments
@@ -20203,32 +20035,14 @@
             (reg.compiler-reg-global-shared-view blocks)
             (reg.compiler-reg-global-shared-view words))
           (and
-            (live.compiler-live-set-contains?
-              (reg.compiler-reg-global-shared-view classes.uses)
-              0)
-            (live.compiler-live-set-contains?
-              (reg.compiler-reg-global-shared-view classes.uses)
-              1)
-            (live.compiler-live-set-contains?
-              (reg.compiler-reg-global-shared-view classes.uses)
-              2)
-            (not
-              (live.compiler-live-set-contains?
-                (reg.compiler-reg-global-shared-view classes.uses)
-                3))
-            (live.compiler-live-set-contains?
-              (reg.compiler-reg-global-shared-view classes.defs)
-              3)
-            (live.compiler-live-set-contains?
-              (reg.compiler-reg-global-shared-view classes.defs)
-              4)
-            (live.compiler-live-set-contains?
-              (reg.compiler-reg-global-shared-view classes.defs)
-              5)
-            (not
-              (live.compiler-live-set-contains?
-                (reg.compiler-reg-global-shared-view classes.defs)
-                0))
+            (live.compiler-live-set-contains? classes.uses 0)
+            (live.compiler-live-set-contains? classes.uses 1)
+            (live.compiler-live-set-contains? classes.uses 2)
+            (not (live.compiler-live-set-contains? classes.uses 3))
+            (live.compiler-live-set-contains? classes.defs 3)
+            (live.compiler-live-set-contains? classes.defs 4)
+            (live.compiler-live-set-contains? classes.defs 5)
+            (not (live.compiler-live-set-contains? classes.defs 0))
             (= (array-ref words 0) 8)
             (= (array-ref words 1) 8)
             (= (array-ref words 2) 8)
@@ -20510,9 +20324,11 @@
         (reg.compiler-reg-plan-assignments
           (reg.compiler-reg-global-shared-view plan)))]
     [ineligible-count : i64
-      (live.compiler-live-set-count
-        (reg.compiler-reg-plan-ineligible
-          (reg.compiler-reg-global-shared-view plan)))]
+      (let
+        [plan-ineligible
+          (reg.compiler-reg-plan-ineligible
+            (reg.compiler-reg-global-shared-view plan))]
+        (live.compiler-live-set-count plan-ineligible))]
     [interval-count : i64
       (reg.compiler-reg-interval-seq-count
         (reg.compiler-reg-plan-intervals

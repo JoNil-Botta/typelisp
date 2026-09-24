@@ -4734,7 +4734,7 @@
                             (< var vars))
                             (begin
                               (compiler_liveness.compiler-live-set-builder-insert!
-                                (compiler-backend-global-shared-view words)
+                                (&mut words)
                                 var)
                               (set! pinned true))
                             unit)]
@@ -15771,9 +15771,7 @@
   [set : compiler_liveness.CompilerLiveI64Set]
   [mask : i64]) : i64
   (let
-    [words : i64
-      (compiler_liveness.compiler-live-set-word-count
-        (compiler-backend-global-shared-view set))]
+    [words : i64 (compiler_liveness.compiler-live-set-word-count set)]
     [word-index : i64 0]
     [out : i64 mask]
     (begin
@@ -15782,7 +15780,7 @@
           (let
             [bits : i64
               (compiler_liveness.compiler-live-set-word-at-bounded
-                (compiler-backend-global-shared-view set)
+                set
                 word-index)]
             [base : i64
               (* word-index (compiler_liveness.compiler-live-set-word-bits))]
@@ -22926,10 +22924,13 @@
                     backend-state)
                   (compiler-backend-group-legacy-word0-slot var))
                 (if (=
-                  (compiler_liveness.compiler-live-set-word-count
-                    (compiler-backend-function-state-live-set
-                      (compiler-backend-state-function-state backend-state)
-                      compiler-backend-function-live-set-addressable-group-vars))
+                  (let
+                    [function-state-live-set
+                      (compiler-backend-function-state-live-set
+                        (compiler-backend-state-function-state backend-state)
+                        compiler-backend-function-live-set-addressable-group-vars)]
+                    (compiler_liveness.compiler-live-set-word-count
+                      function-state-live-set))
                   0)
                   (compiler-backend-group-legacy-word1-slot
                     var
@@ -41185,11 +41186,14 @@
       (compiler-backend-function-state-bool?
         function-state
         compiler-backend-function-bool-group-vars-enabled)
-      (compiler_liveness.compiler-live-set-contains?
-        (compiler-backend-function-state-live-set
-          function-state
-          compiler-backend-function-live-set-group-vars)
-        var))))
+      (let
+        [function-state-live-set
+          (compiler-backend-function-state-live-set
+            function-state
+            compiler-backend-function-live-set-group-vars)]
+        (compiler_liveness.compiler-live-set-contains?
+          function-state-live-set
+          var)))))
 
 (define (compiler-backend-value-group-var?
   [backend-state : CompilerBackendState]
@@ -41227,11 +41231,14 @@
       (compiler-backend-function-state-bool?
         function-state
         compiler-backend-function-bool-group-vars-enabled)
-      (compiler_liveness.compiler-live-set-contains?
-        (compiler-backend-function-state-live-set
-          function-state
-          compiler-backend-function-live-set-addressable-group-vars)
-        var))))
+      (let
+        [function-state-live-set
+          (compiler-backend-function-state-live-set
+            function-state
+            compiler-backend-function-live-set-addressable-group-vars)]
+        (compiler_liveness.compiler-live-set-contains?
+          function-state-live-set
+          var)))))
 
 (define (compiler-backend-addressable-group-vars-instr
   [groups : compiler_liveness.CompilerLiveI64Set]
@@ -41312,9 +41319,7 @@
     (begin
       (while (< index (array-length remap))
         (begin
-          (if (compiler_liveness.compiler-live-set-contains?
-            (compiler-backend-global-shared-view groups)
-            index)
+          (if (compiler_liveness.compiler-live-set-contains? groups index)
             (let
               [mapped : i64
                 (compiler_regalloc.compiler-reg-remap-id
@@ -56150,7 +56155,7 @@
                       missing-stack-home?]))
                   (begin
                     (compiler_liveness.compiler-live-set-builder-insert!
-                      (compiler-backend-global-shared-view words)
+                      (&mut words)
                       index)
                     (set! pinned true))
                   unit)
@@ -80308,10 +80313,7 @@
               (compiler-backend-global-shared-view function-abi))
             (compiler-backend-global-shared-view plan-types))]
         [has-group-vars : bool
-          (>
-            (compiler_liveness.compiler-live-set-count
-              (compiler-backend-global-shared-view fn-group-vars))
-            0)]
+          (> (compiler_liveness.compiler-live-set-count fn-group-vars) 0)]
         ;; Address temps the gep fusion peepholes fold into their consumer.
         ;; Computed on the exact blocks and assignments the coloring pass reads,
         ;; so the ids line up; see compiler-backend-gep-fusion-pinned-vars.
@@ -80376,7 +80378,7 @@
             [(compiler_regalloc.CompilerRegColoring.Remap remap _)
               (if (>
                 (compiler_liveness.compiler-live-set-word-count
-                  (compiler-backend-global-shared-view source-span-pinned-vars))
+                  source-span-pinned-vars)
                 0)
                 (compiler-backend-remap-source-spans
                   (compiler-backend-global-shared-view spans)
@@ -80561,10 +80563,7 @@
               (compiler-backend-global-shared-view emit-blocks-list))
             (compiler-backend-global-shared-view emit-blocks-list))]
         [addressable-group-vars : compiler_liveness.CompilerLiveI64Set
-          (if (>
-            (compiler_liveness.compiler-live-set-count
-              (compiler-backend-global-shared-view emit-group-vars))
-            0)
+          (if (> (compiler_liveness.compiler-live-set-count emit-group-vars) 0)
             (compiler-backend-addressable-group-vars-blocks
               (compiler-backend-global-shared-view emit-group-vars)
               (compiler-backend-global-shared-view emit-blocks-list)
@@ -90272,8 +90271,7 @@
                     target
                     (compiler-backend-frame-size
                       (if (>
-                        (compiler_liveness.compiler-live-set-count
-                          (compiler-backend-global-shared-view groups))
+                        (compiler_liveness.compiler-live-set-count groups)
                         0)
                         (* vars 2)
                         vars))))

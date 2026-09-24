@@ -3157,12 +3157,8 @@
             [src : i64 item.src]
             [dst : i64 item.dst]
             (if (or
-              (live.compiler-live-set-contains?
-                (compiler-reg-global-shared-view storage-vars)
-                src)
-              (live.compiler-live-set-contains?
-                (compiler-reg-global-shared-view storage-vars)
-                dst))
+              (live.compiler-live-set-contains? storage-vars src)
+              (live.compiler-live-set-contains? storage-vars dst))
               unit
               (set! out (compiler-reg-move-seq-push out item))))
           (set! index (+ index 1))))
@@ -3802,9 +3798,7 @@
   [live-after : live.CompilerLiveI64Set]
   [point : i64]) : unit
   (let
-    [after-words : i64
-      (live.compiler-live-set-word-count
-        (compiler-reg-global-shared-view live-after))]
+    [after-words : i64 (live.compiler-live-set-word-count live-after)]
     [after-data : (MutPtr i64) (live.compiler-live-set-word-data live-after)]
     [starts-len : i64 (array-length starts)]
     [ends-len : i64 (array-length ends)]
@@ -3981,10 +3975,8 @@
   [live-after : live.CompilerLiveI64Set]
   [point : i64]) : unit
   (let
-    [defs-words : i64
-      (live.compiler-live-set-word-count (compiler-reg-global-shared-view defs))]
-    [uses-words : i64
-      (live.compiler-live-set-word-count (compiler-reg-global-shared-view uses))]
+    [defs-words : i64 (live.compiler-live-set-word-count defs)]
+    [uses-words : i64 (live.compiler-live-set-word-count uses)]
     [word-count : i64
       (if (>= defs-words uses-words)
         defs-words
@@ -4001,14 +3993,10 @@
           [touched : i64
             (bit-or
               (if (< index defs-words)
-                (live.compiler-live-set-word-at-bounded
-                  (compiler-reg-global-shared-view defs)
-                  index)
+                (live.compiler-live-set-word-at-bounded defs index)
                 0)
               (if (< index uses-words)
-                (live.compiler-live-set-word-at-bounded
-                  (compiler-reg-global-shared-view uses)
-                  index)
+                (live.compiler-live-set-word-at-bounded uses index)
                 0))]
           (begin
             (while (not (= touched 0))
@@ -4080,17 +4068,13 @@
   [point : i64]) : unit
   (let
     [index : i64 word-index]
-    [word-count : i64
-      (live.compiler-live-set-word-count (compiler-reg-global-shared-view set))]
+    [word-count : i64 (live.compiler-live-set-word-count set)]
     (while (< index word-count)
       (begin
         ;; `compiler-reg-extend-set-word-bits` returns immediately for an empty
         ;; word, so testing here skips the call setup for the common case.
         (let
-          [bits : i64
-            (live.compiler-live-set-word-at-bounded
-              (compiler-reg-global-shared-view set)
-              index)]
+          [bits : i64 (live.compiler-live-set-word-at-bounded set index)]
           (if (= bits 0)
             unit
             (compiler-reg-extend-set-word-bits
@@ -4303,8 +4287,7 @@
   [set : live.CompilerLiveI64Set]
   [point : i64]) : unit
   (let
-    [count : i64
-      (live.compiler-live-set-word-count (compiler-reg-global-shared-view set))]
+    [count : i64 (live.compiler-live-set-word-count set)]
     [index : i64 0]
     (while (< index count)
       (begin
@@ -4314,9 +4297,7 @@
           (compiler-reg-global-shared-view segments)
           (compiler-reg-global-shared-view segment-starts)
           (compiler-reg-global-shared-view segment-ends)
-          (live.compiler-live-set-word-at-bounded
-            (compiler-reg-global-shared-view set)
-            index)
+          (live.compiler-live-set-word-at-bounded set index)
           (* index (live.compiler-live-set-word-bits))
           point)
         (set! index (+ index 1))))))
@@ -4824,8 +4805,7 @@
   [mask-limit : i64]
   [point : i64]) : unit
   (let
-    [set-words : i64
-      (live.compiler-live-set-word-count (compiler-reg-global-shared-view set))]
+    [set-words : i64 (live.compiler-live-set-word-count set)]
     [mask-len : i64 (array-length mask-words)]
     [word-limit : i64
       (if (< set-words mask-limit)
@@ -4843,9 +4823,7 @@
           (compiler-reg-global-shared-view segment-starts)
           (compiler-reg-global-shared-view segment-ends)
           (bit-and
-            (live.compiler-live-set-word-at-bounded
-              (compiler-reg-global-shared-view set)
-              index)
+            (live.compiler-live-set-word-at-bounded set index)
             (array-ref mask-words index))
           (* index (live.compiler-live-set-word-bits))
           point)
@@ -4901,9 +4879,7 @@
   [mask-limit : i64]
   [point : i64]) : unit
   (let
-    [after-words : i64
-      (live.compiler-live-set-word-count
-        (compiler-reg-global-shared-view live-after))]
+    [after-words : i64 (live.compiler-live-set-word-count live-after)]
     [after-data : (MutPtr i64) (live.compiler-live-set-word-data live-after)]
     [mask-len : i64 (array-length mask-words)]
     [mask-data : (MutPtr i64)
@@ -5000,10 +4976,8 @@
   [mask-limit : i64]
   [point : i64]) : unit
   (let
-    [defs-words : i64
-      (live.compiler-live-set-word-count (compiler-reg-global-shared-view defs))]
-    [uses-words : i64
-      (live.compiler-live-set-word-count (compiler-reg-global-shared-view uses))]
+    [defs-words : i64 (live.compiler-live-set-word-count defs)]
+    [uses-words : i64 (live.compiler-live-set-word-count uses)]
     [widest : i64
       (if (>= defs-words uses-words)
         defs-words
@@ -5021,14 +4995,10 @@
             (bit-and
               (bit-or
                 (if (< index defs-words)
-                  (live.compiler-live-set-word-at-bounded
-                    (compiler-reg-global-shared-view defs)
-                    index)
+                  (live.compiler-live-set-word-at-bounded defs index)
                   0)
                 (if (< index uses-words)
-                  (live.compiler-live-set-word-at-bounded
-                    (compiler-reg-global-shared-view uses)
-                    index)
+                  (live.compiler-live-set-word-at-bounded uses index)
                   0))
               (array-ref mask-words index))]
           (begin
@@ -5425,9 +5395,7 @@
             (- phi-inputs-at-5154-3.len 1))]
         (if (match value
           [(ir.CompilerIrValue.Var v)
-            (live.compiler-live-set-contains?
-              (compiler-reg-global-shared-view live-out)
-              v)]
+            (live.compiler-live-set-contains? live-out v)]
           [_ false])
           true
           (compiler-reg-phi-inputs-any-live-out?
@@ -5473,9 +5441,9 @@
             (match (compiler-reg-global-shared-view instr)
               [(ir.CompilerIrInstr.Phi _ _ _) unit]
               [_
-                (if (live.compiler-live-set-contains?
-                  (live.compiler-live-instr-uses instr)
-                  var)
+                (if (let
+                  [instr-uses (live.compiler-live-instr-uses instr)]
+                  (live.compiler-live-set-contains? instr-uses var))
                   (set! found true)
                   unit)])
             (set! index (+ index 1)))))
@@ -5524,10 +5492,11 @@
     (begin
       (while (and (< index count) clean)
         (begin
-          (if (live.compiler-live-set-contains?
-            (live.compiler-live-instr-uses
-              (compiler-reg-global-array-element-shared-view slots index))
-            var)
+          (if (let
+            [instr-uses
+              (live.compiler-live-instr-uses
+                (compiler-reg-global-array-element-shared-view slots index))]
+            (live.compiler-live-set-contains? instr-uses var))
             (set! clean false)
             unit)
           (set! index (+ index 1))))
@@ -5583,9 +5552,7 @@
         (and
           (match value
             [(ir.CompilerIrValue.Var var)
-              (if (live.compiler-live-set-contains?
-                (compiler-reg-global-shared-view live-out)
-                var)
+              (if (live.compiler-live-set-contains? live-out var)
                 (and
                   (= predecessor block-label)
                   (compiler-reg-instr-seq-defines-var?
@@ -5947,17 +5914,13 @@
   [row : (__tl_dyn-array i64)]
   [base : i64]
   [word-index : i64]) : unit
-  (if (>=
-    word-index
-    (live.compiler-live-set-word-count (compiler-reg-global-shared-view set)))
+  (if (>= word-index (live.compiler-live-set-word-count set))
     unit
     (begin
       (compiler-reg-chunk->row!
         (compiler-reg-global-shared-view row)
         base
-        (live.compiler-live-set-word-at-bounded
-          (compiler-reg-global-shared-view set)
-          word-index)
+        (live.compiler-live-set-word-at-bounded set word-index)
         (* word-index (live.compiler-live-set-word-bits)))
       (compiler-reg-set-words->row! set row base (+ word-index 1)))))
 
@@ -6846,14 +6809,10 @@
   [start : i64]
   [end : i64]
   [word-index : i64]) : bool
-  (if (>=
-    word-index
-    (live.compiler-live-set-word-count (compiler-reg-global-shared-view set)))
+  (if (>= word-index (live.compiler-live-set-word-count set))
     false
     (if (compiler-reg-param-pin-word-in-range?
-      (live.compiler-live-set-word-at-bounded
-        (compiler-reg-global-shared-view set)
-        word-index)
+      (live.compiler-live-set-word-at-bounded set word-index)
       (* word-index (live.compiler-live-set-word-bits))
       start
       end)
@@ -8221,9 +8180,7 @@
           (begin
             (let
               [var : i64 interval.var]
-              (if (live.compiler-live-set-contains?
-                (compiler-reg-global-shared-view ineligible)
-                var)
+              (if (live.compiler-live-set-contains? ineligible var)
                 unit
                 (match (compiler-reg-var-types-lookup
                   (compiler-reg-global-shared-view types)
@@ -8475,24 +8432,16 @@
           (let
             [next-vector : live.CompilerLiveI64Set
               (if (or
-                (live.compiler-live-set-contains?
-                  (compiler-reg-global-shared-view vector-set)
-                  dst)
-                (live.compiler-live-set-contains?
-                  (compiler-reg-global-shared-view vector-set)
-                  source))
+                (live.compiler-live-set-contains? vector-set dst)
+                (live.compiler-live-set-contains? vector-set source))
                 (live.compiler-live-set-insert
                   (live.compiler-live-set-insert vector-set dst)
                   source)
                 vector-set)]
             [next-mask : live.CompilerLiveI64Set
               (if (or
-                (live.compiler-live-set-contains?
-                  (compiler-reg-global-shared-view mask-set)
-                  dst)
-                (live.compiler-live-set-contains?
-                  (compiler-reg-global-shared-view mask-set)
-                  source))
+                (live.compiler-live-set-contains? mask-set dst)
+                (live.compiler-live-set-contains? mask-set source))
                 (live.compiler-live-set-insert
                   (live.compiler-live-set-insert mask-set dst)
                   source)
@@ -8560,15 +8509,11 @@
         (compiler-reg-global-shared-view mask-set))]
     (if (and
       (=
-        (live.compiler-live-set-count
-          (compiler-reg-global-shared-view next.uses))
-        (live.compiler-live-set-count
-          (compiler-reg-global-shared-view vector-set)))
+        (live.compiler-live-set-count next.uses)
+        (live.compiler-live-set-count vector-set))
       (=
-        (live.compiler-live-set-count
-          (compiler-reg-global-shared-view next.defs))
-        (live.compiler-live-set-count
-          (compiler-reg-global-shared-view mask-set))))
+        (live.compiler-live-set-count next.defs)
+        (live.compiler-live-set-count mask-set)))
       next
       (compiler-reg-vector-mask-defs-fixpoint
         (compiler-reg-global-shared-view blocks)
@@ -8609,13 +8554,8 @@
             (let
               [var : i64 interval.var]
               (if (and
-                (live.compiler-live-set-contains?
-                  (compiler-reg-global-shared-view vars)
-                  var)
-                (not
-                  (live.compiler-live-set-contains?
-                    (compiler-reg-global-shared-view blocked)
-                    var)))
+                (live.compiler-live-set-contains? vars var)
+                (not (live.compiler-live-set-contains? blocked var)))
                 (set! out (compiler-reg-interval-seq-append out interval))
                 unit))
             (set! index (+ index 1)))))
@@ -9782,9 +9722,7 @@
     (begin
       (while (< var (array-length eligible))
         (begin
-          (if (live.compiler-live-set-contains?
-            (compiler-reg-global-shared-view storage-vars)
-            var)
+          (if (live.compiler-live-set-contains? storage-vars var)
             (set! (array-ref eligible var) 0)
             unit)
           (set! var (+ var 1))))
@@ -10400,10 +10338,7 @@
   [sv-parents : (__tl_dyn-array i64)]) : bool
   (and
     (not (= left right))
-    (not
-      (live.compiler-live-set-contains?
-        (compiler-reg-global-shared-view group-vars)
-        left))
+    (not (live.compiler-live-set-contains? group-vars left))
     (not (live.compiler-live-set-contains? group-vars right))
     (compiler-reg-compatible-types?
       (compiler-reg-global-shared-view types)
@@ -11893,9 +11828,7 @@
   (if (> word-index last-word)
     false
     (if (compiler-reg-call-word-in-range?
-      (live.compiler-live-set-word-at-bounded
-        (compiler-reg-global-shared-view set)
-        word-index)
+      (live.compiler-live-set-word-at-bounded set word-index)
       (* word-index (live.compiler-live-set-word-bits))
       start
       end)
@@ -11927,9 +11860,7 @@
     (if (> first-pos last-pos)
       false
       (let
-        [count : i64
-          (live.compiler-live-set-word-count
-            (compiler-reg-global-shared-view set))]
+        [count : i64 (live.compiler-live-set-word-count set)]
         [first-word : i64 (/ first-pos bits)]
         [raw-last-word : i64 (/ last-pos bits)]
         [last-word : i64
@@ -13522,19 +13453,14 @@
   [set : live.CompilerLiveI64Set]
   [word-index : i64]
   [weight : i64]) : unit
-  (if (>=
-    word-index
-    (live.compiler-live-set-word-count (compiler-reg-global-shared-view set)))
+  (if (>= word-index (live.compiler-live-set-word-count set))
     unit
     (begin
       ;; `compiler-reg-ref-counts-add-word-weighted!` returns immediately for an
       ;; empty word, so testing here skips the call for the common case in a
       ;; sparse live set without changing what happens.
       (let
-        [bits : i64
-          (live.compiler-live-set-word-at-bounded
-            (compiler-reg-global-shared-view set)
-            word-index)]
+        [bits : i64 (live.compiler-live-set-word-at-bounded set word-index)]
         (if (= bits 0)
           unit
           (compiler-reg-ref-counts-add-word-weighted!
@@ -13691,17 +13617,12 @@
   [marks : (__tl_dyn-array bool)]
   [set : live.CompilerLiveI64Set]
   [word-index : i64]) : unit
-  (if (>=
-    word-index
-    (live.compiler-live-set-word-count (compiler-reg-global-shared-view set)))
+  (if (>= word-index (live.compiler-live-set-word-count set))
     unit
     (begin
       ;; Same empty-word shortcut the weighted walk uses.
       (let
-        [bits : i64
-          (live.compiler-live-set-word-at-bounded
-            (compiler-reg-global-shared-view set)
-            word-index)]
+        [bits : i64 (live.compiler-live-set-word-at-bounded set word-index)]
         (if (= bits 0)
           unit
           (compiler-reg-ref-mark-word!
@@ -14203,9 +14124,7 @@
           ;; restore from around calls, so they must not lose it to remat.
           (if (if (< v (array-length flags))
             (if (= (compiler-reg-global-array-element-shared-view flags v) 1)
-              (if (live.compiler-live-set-contains?
-                (compiler-reg-global-shared-view shadows)
-                v)
+              (if (live.compiler-live-set-contains? shadows v)
                 false
                 (not
                   (compiler-reg-coalesce-var-nonsingleton?
@@ -14822,10 +14741,7 @@
                   (compiler-reg-global-shared-view phi-defs)
                   dst)
                 0)
-              (not
-                (live.compiler-live-set-contains?
-                  (compiler-reg-global-shared-view param-vars)
-                  dst))
+              (not (live.compiler-live-set-contains? param-vars dst))
               (compiler-reg-invariant-base-shape-ok?
                 (compiler-reg-global-shared-view param-vars)
                 (compiler-reg-global-shared-view def-counts)
@@ -15676,12 +15592,12 @@
   [to-block : live.CompilerLiveBlock]
   [var : i64]) : bool
   (and
-    (live.compiler-live-set-contains?
-      (live.compiler-live-block-live-out from-block)
-      var)
-    (live.compiler-live-set-contains?
-      (live.compiler-live-block-live-in to-block)
-      var)))
+    (let
+      [block-live-out (live.compiler-live-block-live-out from-block)]
+      (live.compiler-live-set-contains? block-live-out var))
+    (let
+      [block-live-in (live.compiler-live-block-live-in to-block)]
+      (live.compiler-live-set-contains? block-live-in var))))
 
 ;; Group-aware variant for the SplitKit phi-carried homing: the coalesce group
 ;; (which shares one spill slot) is live across the edge iff SOME member is live
@@ -15694,12 +15610,12 @@
   [to-block : live.CompilerLiveBlock]
   [members : live.CompilerLiveI64Set]) : bool
   (and
-    (live.compiler-live-set-intersects?
-      (live.compiler-live-block-live-out from-block)
-      (compiler-reg-global-shared-view members))
-    (live.compiler-live-set-intersects?
-      (live.compiler-live-block-live-in to-block)
-      members)))
+    (let
+      [block-live-out (live.compiler-live-block-live-out from-block)]
+      (live.compiler-live-set-intersects? block-live-out members))
+    (let
+      [block-live-in (live.compiler-live-block-live-in to-block)]
+      (live.compiler-live-set-intersects? block-live-in members))))
 
 (define (compiler-reg-edge-copy-boundary-one
   [blocks : (__tl_dyn-array live.CompilerLiveBlock)]
@@ -15728,10 +15644,7 @@
           ;; (read-only / non-phi homing -- byte-identical). A non-empty set is
           ;; the phi-carried coalesce group: the slot is live on the edge iff ANY
           ;; member is (no single member is live on every boundary edge).
-          (if (=
-            (live.compiler-live-set-word-count
-              (compiler-reg-global-shared-view members))
-            0)
+          (if (= (live.compiler-live-set-word-count members) 0)
             (compiler-reg-edge-copy-live-on-edge? from-block to-block stack-var)
             (compiler-reg-edge-copy-group-live-on-edge?
               from-block
@@ -16403,10 +16316,13 @@
   [instr : ir.CompilerIrInstr]
   [var : i64]) : bool
   (or
-    (live.compiler-live-set-contains?
-      (live.compiler-live-instr-uses (compiler-reg-global-shared-view instr))
-      var)
-    (live.compiler-live-set-contains? (live.compiler-live-instr-defs instr) var)))
+    (let
+      [instr-uses
+        (live.compiler-live-instr-uses (compiler-reg-global-shared-view instr))]
+      (live.compiler-live-set-contains? instr-uses var))
+    (let
+      [instr-defs (live.compiler-live-instr-defs instr)]
+      (live.compiler-live-set-contains? instr-defs var))))
 
 ;; Group-aware mention count: how many instructions touch ANY member of the homed
 ;; coalesce group (used by the hot-benefit gate for the phi-carried path, where the
@@ -16416,12 +16332,13 @@
   [instr : ir.CompilerIrInstr]
   [members : live.CompilerLiveI64Set]) : bool
   (or
-    (live.compiler-live-set-intersects?
-      (live.compiler-live-instr-uses (compiler-reg-global-shared-view instr))
-      (compiler-reg-global-shared-view members))
-    (live.compiler-live-set-intersects?
-      (live.compiler-live-instr-defs instr)
-      members)))
+    (let
+      [instr-uses
+        (live.compiler-live-instr-uses (compiler-reg-global-shared-view instr))]
+      (live.compiler-live-set-intersects? instr-uses members))
+    (let
+      [instr-defs (live.compiler-live-instr-defs instr)]
+      (live.compiler-live-set-intersects? instr-defs members))))
 
 ;; Read-only counter: scan the sequence in place. refs #5726
 (define (compiler-reg-loop-split-mention-count-group
@@ -17447,14 +17364,16 @@
         (compiler-reg-global-shared-view intervals)
         var)
       (and
-        (live.compiler-live-set-contains?
-          (live.compiler-live-block-live-in
-            (compiler-reg-global-shared-view block))
-          var)
-        (live.compiler-live-set-contains?
-          (live.compiler-live-block-live-out
-            (compiler-reg-global-shared-view block))
-          var)
+        (let
+          [block-live-in
+            (live.compiler-live-block-live-in
+              (compiler-reg-global-shared-view block))]
+          (live.compiler-live-set-contains? block-live-in var))
+        (let
+          [block-live-out
+            (live.compiler-live-block-live-out
+              (compiler-reg-global-shared-view block))]
+          (live.compiler-live-set-contains? block-live-out var))
         ;; SplitKit step 1: admit BOTH read-only loop invariants (var not written in the
         ;; region) AND redefined values, but for redefinition only in the bounded sound
         ;; case: a single-block self-loop where the redefinition is NOT phi-carried. The
@@ -17463,10 +17382,11 @@
         ;; hard-reject every redefined value.
         (or
           (not
-            (live.compiler-live-set-contains?
-              (live.compiler-live-block-defs
-                (compiler-reg-global-shared-view block))
-              var))
+            (let
+              [block-defs
+                (live.compiler-live-block-defs
+                  (compiler-reg-global-shared-view block))]
+              (live.compiler-live-set-contains? block-defs var)))
           (and
             (compiler-reg-loop-split-self-loop?
               (compiler-reg-global-shared-view block)
@@ -17487,10 +17407,11 @@
         ;; and the INTO/OUT copies sync the shared slot at the region boundary -- so a
         ;; coalesced ROOT is accepted (a non-root member is left for its root's turn, so the
         ;; group is homed exactly once).
-        (if (live.compiler-live-set-contains?
-          (live.compiler-live-block-defs
-            (compiler-reg-global-shared-view block))
-          var)
+        (if (let
+          [block-defs
+            (live.compiler-live-block-defs
+              (compiler-reg-global-shared-view block))]
+          (live.compiler-live-set-contains? block-defs var))
           (compiler-reg-loop-split-coalesce-root? parents var)
           (not
             (compiler-reg-coalesce-var-nonsingleton? parents merged-roots var)))))
@@ -17561,9 +17482,12 @@
                               (compiler-reg-loop-split-direction-present?
                                 (compiler-reg-global-shared-view copies)
                                 true)
-                              (if (live.compiler-live-set-contains?
-                                (live.compiler-live-block-defs block)
-                                var)
+                              (if (let
+                                [block-defs
+                                  (live.compiler-live-block-defs block)]
+                                (live.compiler-live-set-contains?
+                                  block-defs
+                                  var))
                                 (compiler-reg-loop-split-copies-bidirectional?
                                   (compiler-reg-global-shared-view copies))
                                 (compiler-reg-loop-split-direction-present?
@@ -18144,10 +18068,11 @@
       (while (< index count)
         (begin
           (when
-            (live.compiler-live-set-contains?
-              (live.compiler-live-instr-defs
-                (ir.compiler-ir-instr-seq-ref instrs index))
-              var)
+            (let
+              [instr-defs
+                (live.compiler-live-instr-defs
+                  (ir.compiler-ir-instr-seq-ref instrs index))]
+              (live.compiler-live-set-contains? instr-defs var))
             (return true))
           (set! index (+ index 1))))
       false)))
@@ -18448,9 +18373,9 @@
   [merged-roots : live.CompilerLiveI64Set]
   [weights : (__tl_dyn-array i64)]) : CompilerRegLoopSplitCandidate
   (if (and
-    (live.compiler-live-set-contains?
-      (live.compiler-live-block-live-in header-block)
-      var)
+    (let
+      [block-live-in (live.compiler-live-block-live-in header-block)]
+      (live.compiler-live-set-contains? block-live-in var))
     (not (compiler-reg-coalesce-var-nonsingleton? parents merged-roots var))
     (compiler-reg-interval-index-var-has-segments?
       (compiler-reg-global-shared-view intervals)
@@ -18884,10 +18809,11 @@
     (begin
       (while (< index count)
         (begin
-          (if (live.compiler-live-set-contains?
-            (live.compiler-live-instr-uses
-              (compiler-reg-global-array-element-shared-view slots index))
-            var)
+          (if (let
+            [instr-uses
+              (live.compiler-live-instr-uses
+                (compiler-reg-global-array-element-shared-view slots index))]
+            (live.compiler-live-set-contains? instr-uses var))
             (set! uses (+ uses 1))
             unit)
           (if (=
@@ -19080,10 +19006,13 @@
         (< index (array-length live-blocks))
         (not found))
         (begin
-          (if (live.compiler-live-set-contains?
-            (live.compiler-live-block-defs
-              (compiler-reg-global-array-element-shared-view live-blocks index))
-            var)
+          (if (let
+            [block-defs
+              (live.compiler-live-block-defs
+                (compiler-reg-global-array-element-shared-view
+                  live-blocks
+                  index))]
+            (live.compiler-live-set-contains? block-defs var))
             (set! found true)
             unit)
           (set! index (+ index 1))))
@@ -19252,24 +19181,21 @@
   [outer-regs : CompilerRegIdSeq]
   [callee-regs : CompilerRegIdSeq]) : CompilerRegLeafCsrSplitCandidate
   (if (or
-    (live.compiler-live-set-contains?
-      (compiler-reg-global-shared-view param-vars)
-      var)
-    (live.compiler-live-set-contains?
-      (compiler-reg-global-shared-view group-vars)
-      var)
+    (live.compiler-live-set-contains? param-vars var)
+    (live.compiler-live-set-contains? group-vars var)
     (compiler-reg-coalesce-var-nonsingleton?
       (compiler-reg-global-shared-view parents)
       (compiler-reg-global-shared-view merged-roots)
       var)
     (>= region-start-index (array-length live-blocks))
     (not
-      (live.compiler-live-set-contains?
-        (live.compiler-live-block-live-in
-          (compiler-reg-global-array-element-shared-view
-            live-blocks
-            region-start-index))
-        var))
+      (let
+        [block-live-in
+          (live.compiler-live-block-live-in
+            (compiler-reg-global-array-element-shared-view
+              live-blocks
+              region-start-index))]
+        (live.compiler-live-set-contains? block-live-in var)))
     (compiler-reg-leaf-csr-region-defines?
       live-blocks
       region-start-index
@@ -19823,11 +19749,13 @@
       (compiler-reg-scalar-full-intervals?
         (compiler-reg-global-shared-view func)))
     (>
-      (live.compiler-live-set-count
-        (compiler-reg-clobber-kind-points
-          type-segment-bases
-          (compiler-reg-global-shared-view func)
-          0))
+      (let
+        [clobber-kind-points
+          (compiler-reg-clobber-kind-points
+            type-segment-bases
+            (compiler-reg-global-shared-view func)
+            0)]
+        (live.compiler-live-set-count clobber-kind-points))
       0))
     (compiler-reg-loop-split-noop blocks vars)
     (let
@@ -20309,18 +20237,20 @@
         (compiler-reg-global-shared-view intervals)
         var)
       (and
-        (live.compiler-live-set-contains?
-          (live.compiler-live-block-live-in
-            (compiler-reg-global-shared-view block))
-          var)
-        (live.compiler-live-set-contains?
-          (live.compiler-live-block-live-out
-            (compiler-reg-global-shared-view block))
-          var)
+        (let
+          [block-live-in
+            (live.compiler-live-block-live-in
+              (compiler-reg-global-shared-view block))]
+          (live.compiler-live-set-contains? block-live-in var))
+        (let
+          [block-live-out
+            (live.compiler-live-block-live-out
+              (compiler-reg-global-shared-view block))]
+          (live.compiler-live-set-contains? block-live-out var))
         (not
-          (live.compiler-live-set-contains?
-            (live.compiler-live-block-defs block)
-            var))
+          (let
+            [block-defs (live.compiler-live-block-defs block)]
+            (live.compiler-live-set-contains? block-defs var)))
         (compiler-reg-interval-index-var-has-segments?
           (compiler-reg-global-shared-view intervals)
           var)
@@ -22128,17 +22058,9 @@
       (while (< v vars)
         (begin
           (if (and
-            (live.compiler-live-set-contains?
-              (compiler-reg-global-shared-view live-after)
-              v)
-            (not
-              (live.compiler-live-set-contains?
-                (compiler-reg-global-shared-view defs)
-                v))
-            (not
-              (live.compiler-live-set-contains?
-                (compiler-reg-global-shared-view memory-vars)
-                v)))
+            (live.compiler-live-set-contains? live-after v)
+            (not (live.compiler-live-set-contains? defs v))
+            (not (live.compiler-live-set-contains? memory-vars v)))
             (match (compiler-reg-var-types-lookup
               (compiler-reg-global-shared-view type-info)
               v)
@@ -23602,16 +23524,12 @@
   [set : live.CompilerLiveI64Set]
   [weight : i64]) : unit
   (let
-    [words : i64
-      (live.compiler-live-set-word-count (compiler-reg-global-shared-view set))]
+    [words : i64 (live.compiler-live-set-word-count set)]
     [word : i64 0]
     (while (< word words)
       (begin
         (let
-          [bits : i64
-            (live.compiler-live-set-word-at-bounded
-              (compiler-reg-global-shared-view set)
-              word)]
+          [bits : i64 (live.compiler-live-set-word-at-bounded set word)]
           [base : i64 (* word (live.compiler-live-set-word-bits))]
           (while (not (= bits 0))
             (begin
@@ -23732,9 +23650,7 @@
   [max-clobber-hot : (__tl_dyn-array i64)]
   [valid : (__tl_dyn-array bool)]) : i64
   (let
-    [words : i64
-      (live.compiler-live-set-word-count
-        (compiler-reg-global-shared-view live-after))]
+    [words : i64 (live.compiler-live-set-word-count live-after)]
     [word : i64 0]
     [found : i64 0]
     (begin
@@ -23742,9 +23658,7 @@
         (begin
           (let
             [bits : i64
-              (live.compiler-live-set-word-at-bounded
-                (compiler-reg-global-shared-view live-after)
-                word)]
+              (live.compiler-live-set-word-at-bounded live-after word)]
             [base : i64 (* word (live.compiler-live-set-word-bits))]
             (while (not (= bits 0))
               (begin
@@ -23807,9 +23721,9 @@
       (live.compiler-live-instr-use-ids!
         (compiler-reg-global-shared-view instr))]
     (if (< id-count 0)
-      (live.compiler-live-set-contains?
-        (live.compiler-live-instr-uses instr)
-        var)
+      (let
+        [instr-uses (live.compiler-live-instr-uses instr)]
+        (live.compiler-live-set-contains? instr-uses var))
       (let
         [index : i64 0]
         [found : bool false]
@@ -24247,7 +24161,7 @@
       (while (< index selected-count)
         (begin
           (if (live.compiler-live-set-contains?
-            (compiler-reg-global-shared-view live-after)
+            live-after
             (array-ref selected index))
             (set! mask (bit-or mask (shl 1 index)))
             unit)
@@ -24335,9 +24249,7 @@
                         [var : i64 (array-ref selected j)]
                         (if (and
                           (not (= var def-var))
-                          (live.compiler-live-set-contains?
-                            (compiler-reg-global-shared-view live-after)
-                            var))
+                          (live.compiler-live-set-contains? live-after var))
                           (set! valid (bit-or valid (shl 1 j)))
                           unit))
                       (set! j (+ j 1)))))
@@ -24893,7 +24805,7 @@
                                   (not (= var def-var))
                                   (not (array-ref valid var))
                                   (live.compiler-live-set-contains?
-                                    (compiler-reg-global-shared-view live-after)
+                                    live-after
                                     var))
                                   (match (compiler-reg-var-types-lookup
                                     (compiler-reg-global-shared-view type-info)
@@ -24925,7 +24837,7 @@
                                 (if (and
                                   (not (= var def-var))
                                   (live.compiler-live-set-contains?
-                                    (compiler-reg-global-shared-view live-after)
+                                    live-after
                                     var)
                                   (compiler-reg-call-hole-reload-needed-flow?
                                     type-segment-bases
@@ -26025,16 +25937,12 @@
   [cursor : (__tl_dyn-array i64)]
   [generation : i64]) : unit
   (let
-    [words : i64
-      (live.compiler-live-set-word-count (compiler-reg-global-shared-view set))]
+    [words : i64 (live.compiler-live-set-word-count set)]
     [word : i64 0]
     (while (< word words)
       (begin
         (let
-          [bits : i64
-            (live.compiler-live-set-word-at-bounded
-              (compiler-reg-global-shared-view set)
-              word)]
+          [bits : i64 (live.compiler-live-set-word-at-bounded set word)]
           [base : i64 (* word (live.compiler-live-set-word-bits))]
           (while (not (= bits 0))
             (begin
@@ -26229,9 +26137,9 @@
   (match (live.compiler-live-function-find-block liveness label)
     [(live.CompilerLiveMaybeBlock.No) true]
     [(live.CompilerLiveMaybeBlock.Some block)
-      (live.compiler-live-set-contains?
-        (live.compiler-live-block-live-in block)
-        var)]))
+      (let
+        [block-live-in (live.compiler-live-block-live-in block)]
+        (live.compiler-live-set-contains? block-live-in var))]))
 
 ;; A through value needs a reload at a site iff it is live-in at the site target
 ;; OR it is a phi input there keyed on the site source block. Direct sites cover
@@ -26511,9 +26419,7 @@
   [picked : (__tl_dyn-array bool)]
   [threshold : i64]) : i64
   (let
-    [words : i64
-      (live.compiler-live-set-word-count
-        (compiler-reg-global-shared-view live-in))]
+    [words : i64 (live.compiler-live-set-word-count live-in)]
     [word : i64 0]
     [best : i64 (- 0 1)]
     [best-weight : i64 0]
@@ -26521,10 +26427,7 @@
       (while (< word words)
         (begin
           (let
-            [bits : i64
-              (live.compiler-live-set-word-at-bounded
-                (compiler-reg-global-shared-view live-in)
-                word)]
+            [bits : i64 (live.compiler-live-set-word-at-bounded live-in word)]
             [base : i64 (* word (live.compiler-live-set-word-bits))]
             (while (not (= bits 0))
               (begin
@@ -28066,14 +27969,10 @@
   [cur-depth : (__tl_dyn-array i64)]) : unit
   (let
     [wi : i64 0]
-    [wc : i64
-      (live.compiler-live-set-word-count (compiler-reg-global-shared-view set))]
+    [wc : i64 (live.compiler-live-set-word-count set)]
     (while (< wi wc)
       (let
-        [bits : i64
-          (live.compiler-live-set-word-at-bounded
-            (compiler-reg-global-shared-view set)
-            wi)]
+        [bits : i64 (live.compiler-live-set-word-at-bounded set wi)]
         (begin
           (while (not (= bits 0))
             (let
@@ -28563,14 +28462,10 @@
   [defs : (__tl_dyn-array i64)]) : unit
   (let
     [wi : i64 0]
-    [wc : i64
-      (live.compiler-live-set-word-count (compiler-reg-global-shared-view set))]
+    [wc : i64 (live.compiler-live-set-word-count set)]
     (while (< wi wc)
       (let
-        [bits : i64
-          (live.compiler-live-set-word-at-bounded
-            (compiler-reg-global-shared-view set)
-            wi)]
+        [bits : i64 (live.compiler-live-set-word-at-bounded set wi)]
         (begin
           (while (not (= bits 0))
             (let
@@ -29355,14 +29250,10 @@
   [busy : (__tl_dyn-array i64)]) : unit
   (let
     [wi : i64 0]
-    [wc : i64
-      (live.compiler-live-set-word-count (compiler-reg-global-shared-view set))]
+    [wc : i64 (live.compiler-live-set-word-count set)]
     (while (< wi wc)
       (let
-        [bits : i64
-          (live.compiler-live-set-word-at-bounded
-            (compiler-reg-global-shared-view set)
-            wi)]
+        [bits : i64 (live.compiler-live-set-word-at-bounded set wi)]
         (begin
           (while (not (= bits 0))
             (let
@@ -29481,15 +29372,11 @@
   [vr : i64]) : bool
   (let
     [wi : i64 0]
-    [wc : i64
-      (live.compiler-live-set-word-count (compiler-reg-global-shared-view set))]
+    [wc : i64 (live.compiler-live-set-word-count set)]
     (begin
       (while (< wi wc)
         (let
-          [bits : i64
-            (live.compiler-live-set-word-at-bounded
-              (compiler-reg-global-shared-view set)
-              wi)]
+          [bits : i64 (live.compiler-live-set-word-at-bounded set wi)]
           (begin
             (while (not (= bits 0))
               (let
@@ -31076,15 +30963,11 @@
     [start : i64]
     [end : i64]
     [word-index : i64]) : i64
-    (if (>=
-      word-index
-      (live.compiler-live-set-word-count (compiler-reg-global-shared-view set)))
+    (if (>= word-index (live.compiler-live-set-word-count set))
       0
       (+
         (compiler-reg-call-word-count-in-range
-          (live.compiler-live-set-word-at-bounded
-            (compiler-reg-global-shared-view set)
-            word-index)
+          (live.compiler-live-set-word-at-bounded set word-index)
           (* word-index (live.compiler-live-set-word-bits))
           start
           end)
@@ -31122,9 +31005,7 @@
             [interval : CompilerRegInterval
               (compiler-reg-interval-seq-ref intervals index)]
             [var : i64 interval.var]
-            (if (if (live.compiler-live-set-contains?
-              (compiler-reg-global-shared-view member-set)
-              var)
+            (if (if (live.compiler-live-set-contains? member-set var)
               (compiler-reg-call-set-in-range?
                 (compiler-reg-global-shared-view call-points)
                 interval.start
@@ -31220,9 +31101,7 @@
             (- phi-inputs-at-31057-3.len 1))]
         (match value
           [(ir.CompilerIrValue.Var v)
-            (if (live.compiler-live-set-contains?
-              (compiler-reg-global-shared-view set)
-              v)
+            (if (live.compiler-live-set-contains? set v)
               true
               (compiler-reg-phi-inputs-any-in-set?
                 set
@@ -31266,12 +31145,8 @@
       (match src
         [(ir.CompilerIrValue.Var v)
           (if (or
-            (live.compiler-live-set-contains?
-              (compiler-reg-global-shared-view set)
-              dst)
-            (live.compiler-live-set-contains?
-              (compiler-reg-global-shared-view set)
-              v))
+            (live.compiler-live-set-contains? set dst)
+            (live.compiler-live-set-contains? set v))
             (live.compiler-live-set-insert
               (live.compiler-live-set-insert set dst)
               v)
@@ -31279,9 +31154,7 @@
         [_ set])]
     [(ir.CompilerIrInstr.Phi dst inputs _)
       (if (or
-        (live.compiler-live-set-contains?
-          (compiler-reg-global-shared-view set)
-          dst)
+        (live.compiler-live-set-contains? set dst)
         (compiler-reg-phi-inputs-any-in-set?
           (compiler-reg-global-shared-view set)
           (compiler-reg-global-shared-view inputs)))
@@ -31351,7 +31224,7 @@
         (compiler-reg-global-shared-view set)
         (compiler-reg-global-shared-view blocks))]
     (if (=
-      (live.compiler-live-set-count (compiler-reg-global-shared-view next))
+      (live.compiler-live-set-count next)
       (live.compiler-live-set-count set))
       next
       (compiler-reg-group-vars-fixpoint next blocks))))
@@ -31901,10 +31774,7 @@
             ;; address is exposed. If coalescing merged them into a register
             ;; root, do not inherit that home; the original copy remains and
             ;; materializes the storage slot for the later AddrOf.
-            (not
-              (live.compiler-live-set-contains?
-                (compiler-reg-global-shared-view storage-vars)
-                v)))
+            (not (live.compiler-live-set-contains? storage-vars v)))
             (let
               [r : i64
                 (if (< v (array-length parents))
@@ -35852,9 +35722,7 @@
     (begin
       (while (and (< i count) (not hit))
         (begin
-          (if (live.compiler-live-set-contains?
-            (compiler-reg-global-shared-view set)
-            (array-ref members i))
+          (if (live.compiler-live-set-contains? set (array-ref members i))
             (set! hit true)
             unit)
           (set! i (+ i 1))))
@@ -36081,22 +35949,15 @@
       (match src
         [(ir.CompilerIrValue.Var src-var)
           (if (and
-            (live.compiler-live-set-contains?
-              (compiler-reg-global-shared-view group-vars)
-              dst)
-            (live.compiler-live-set-contains?
-              (compiler-reg-global-shared-view group-vars)
-              src-var))
+            (live.compiler-live-set-contains? group-vars dst)
+            (live.compiler-live-set-contains? group-vars src-var))
             (if (and
               (not (= dst src-var))
               (>= dst 0)
               (< dst (array-length parents))
               (>= src-var 0)
               (< src-var (array-length parents))
-              (not
-                (live.compiler-live-set-contains?
-                  (compiler-reg-global-shared-view excluded)
-                  dst))
+              (not (live.compiler-live-set-contains? excluded dst))
               (not (live.compiler-live-set-contains? excluded src-var))
               (>= (array-ref starts dst) 0)
               (>= (array-ref starts src-var) 0)
@@ -36116,9 +35977,7 @@
                 (set! (array-ref parents rd) rs))
               unit)
             (if (or
-              (live.compiler-live-set-contains?
-                (compiler-reg-global-shared-view group-vars)
-                dst)
+              (live.compiler-live-set-contains? group-vars dst)
               (live.compiler-live-set-contains? group-vars src-var))
               (begin
                 (if (and (>= dst 0) (< dst (array-length poisoned)))
@@ -36249,10 +36108,7 @@
   ;; union-find and the two per-var walks) writes only to locals, so returning
   ;; `assignments` here yields the identical table by construction. Group-free
   ;; functions are 91.4% of the calls in an opt2 self-compile.
-  (if (=
-    (live.compiler-live-set-word-count
-      (compiler-reg-global-shared-view group-vars))
-    0)
+  (if (= (live.compiler-live-set-word-count group-vars) 0)
     assignments
     (match (compiler-reg-global-shared-view func)
       [(ir.CompilerIrFunction.Function _ params _ _ blocks _)
@@ -36608,16 +36464,12 @@
   [set : live.CompilerLiveI64Set]
   [depth : i64]) : unit
   (let
-    [words : i64
-      (live.compiler-live-set-word-count (compiler-reg-global-shared-view set))]
+    [words : i64 (live.compiler-live-set-word-count set)]
     [word-index : i64 0]
     (while (< word-index words)
       (begin
         (let
-          [bits : i64
-            (live.compiler-live-set-word-at-bounded
-              (compiler-reg-global-shared-view set)
-              word-index)]
+          [bits : i64 (live.compiler-live-set-word-at-bounded set word-index)]
           [base : i64 (* word-index (live.compiler-live-set-word-bits))]
           (while (not (= bits 0))
             (let
@@ -36765,9 +36617,7 @@
                       (begin
                         (set! (array-ref prefix point) acc)
                         (set! (array-ref prefix (+ point 1)) acc)
-                        (if (live.compiler-live-set-contains?
-                          (compiler-reg-global-shared-view call-points)
-                          point)
+                        (if (live.compiler-live-set-contains? call-points point)
                           (set! acc (+ acc weight))
                           unit)
                         (set! point (+ point 2))
@@ -36899,24 +36749,16 @@
   (cond
     [(and (>= forced-spill-from 0) (>= var forced-spill-from))
       (compiler-reg-trace-reason-forced-carrier)]
-    [(live.compiler-live-set-contains?
-        (compiler-reg-global-shared-view ineligible)
-        var)
+    [(live.compiler-live-set-contains? ineligible var)
       (compiler-reg-trace-reason-memory-rule)]
-    [(live.compiler-live-set-contains?
-        (compiler-reg-global-shared-view blocked)
-        var)
+    [(live.compiler-live-set-contains? blocked var)
       (compiler-reg-trace-reason-blocked)]
     ;; A parameter with a register home that no allocation clause claimed was
     ;; preassigned by the ABI pin walk, which runs BEFORE the plan (see
     ;; compiler-reg-param-assign-plan) and so writes no journal entry: the
     ;; journal belongs to the plan whose reset opens it, and a writer outside
     ;; that extent would be writing into the previous function's.
-    [(and
-        register-home?
-        (live.compiler-live-set-contains?
-          (compiler-reg-global-shared-view params)
-          var))
+    [(and register-home? (live.compiler-live-set-contains? params var))
       (compiler-reg-trace-reason-param-abi-pin)]
     [(and
         (< var (array-length parents))
@@ -37265,10 +37107,7 @@
           (compiler-reg-global-shared-view func)
           (compiler-reg-liveness-handle-edge-precise
             (compiler-reg-global-shared-view liveness-handle))
-          (=
-            (live.compiler-live-set-word-count
-              (compiler-reg-global-shared-view destructive-fixed-points))
-            0))
+          (= (live.compiler-live-set-word-count destructive-fixed-points) 0))
         (__tl_make-array i64 0))]
     ;; The coalescer's rows: NO live-in bridge, byte-identical to what it read
     ;; before this packet.
@@ -37798,14 +37637,8 @@
     ;; return their inputs unchanged, so skip the whole vector/mask prep chain.
     [vector-mask-empty? : bool
       (and
-        (=
-          (live.compiler-live-set-count
-            (compiler-reg-global-shared-view vector-vars))
-          0)
-        (=
-          (live.compiler-live-set-count
-            (compiler-reg-global-shared-view mask-vars))
-          0))]
+        (= (live.compiler-live-set-count vector-vars) 0)
+        (= (live.compiler-live-set-count mask-vars) 0))]
     [vector-candidate-vars : live.CompilerLiveI64Set
       (if vector-mask-empty?
         (compiler-reg-global-shared-view vector-vars)
@@ -39395,12 +39228,8 @@
         ;; first interval wins; revisiting would leak the first slot).
         (>= (compiler-reg-global-array-element-shared-view remap var) 0)
         (not (compiler-reg-global-array-element-shared-view colorable var))
-        (live.compiler-live-set-contains?
-          (compiler-reg-global-shared-view pinned)
-          var)
-        (live.compiler-live-set-contains?
-          (compiler-reg-global-shared-view ineligible)
-          var)
+        (live.compiler-live-set-contains? pinned var)
+        (live.compiler-live-set-contains? ineligible var)
         ;; Spilled scalars are re-homed by the id remap (the stale
         ;; assignment entry keyed by the old id is never queried);
         ;; register-homed values keep their ids and homes.
@@ -41187,14 +41016,9 @@
             (>= src-var 0)
             (< src-var (array-length alias))
             (not (= dst src-var))
-            (live.compiler-live-set-contains?
-              (compiler-reg-global-shared-view group-vars)
-              dst)
+            (live.compiler-live-set-contains? group-vars dst)
             (live.compiler-live-set-contains? group-vars src-var)
-            (not
-              (live.compiler-live-set-contains?
-                (compiler-reg-global-shared-view ineligible)
-                dst))
+            (not (live.compiler-live-set-contains? ineligible dst))
             (not (live.compiler-live-set-contains? ineligible src-var))
             (< (compiler-reg-global-array-element-shared-view remap dst) 0)
             (< (compiler-reg-global-array-element-shared-view remap src-var) 0)
@@ -41554,14 +41378,8 @@
           (array-ref slot-eligible i)
           (and
             (array-ref colorable i)
-            (not
-              (live.compiler-live-set-contains?
-                (compiler-reg-global-shared-view group-vars)
-                i))
-            (not
-              (live.compiler-live-set-contains?
-                (compiler-reg-global-shared-view ineligible)
-                i))
+            (not (live.compiler-live-set-contains? group-vars i))
+            (not (live.compiler-live-set-contains? ineligible i))
             (< (array-ref remap i) 0)
             (match (compiler-reg-assignment-table-lookup assignment-index i)
               [(CompilerRegMaybeLocation.Some location)
@@ -42855,10 +42673,7 @@
       CompilerRegColoring.None
       (let
         [has-group-vars? : bool
-          (>
-            (live.compiler-live-set-word-count
-              (compiler-reg-global-shared-view group-vars))
-            0)]
+          (> (live.compiler-live-set-word-count group-vars) 0)]
         [vector-stack-words : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
         [_vector-stack-words : unit
           (begin
@@ -42939,17 +42754,12 @@
             ;; from the phi/mov web builder (the only two mechanisms that hand
             ;; one slot to several variables), leaving the private-slot loop
             ;; below to give it a fresh id of its own.
-            (if (>
-              (live.compiler-live-set-word-count
-                (compiler-reg-global-shared-view identity-pinned))
-              0)
+            (if (> (live.compiler-live-set-word-count identity-pinned) 0)
               (let
                 [i : i64 0]
                 (while (< i vars)
                   (begin
-                    (if (live.compiler-live-set-contains?
-                      (compiler-reg-global-shared-view identity-pinned)
-                      i)
+                    (if (live.compiler-live-set-contains? identity-pinned i)
                       (set! (array-ref colorable i) false)
                       unit)
                     (set! i (+ i 1)))))
@@ -46820,14 +46630,10 @@
   [vars : i64]) : unit
   (let
     [word-index : i64 0]
-    [word-count : i64
-      (live.compiler-live-set-word-count (compiler-reg-global-shared-view uses))]
+    [word-count : i64 (live.compiler-live-set-word-count uses)]
     (while (< word-index word-count)
       (let
-        [bits : i64
-          (live.compiler-live-set-word-at-bounded
-            (compiler-reg-global-shared-view uses)
-            word-index)]
+        [bits : i64 (live.compiler-live-set-word-at-bounded uses word-index)]
         [base : i64 (* word-index (live.compiler-live-set-word-bits))]
         [bit : i64 0]
         (begin
@@ -46876,16 +46682,12 @@
       [out-extra-assignments : CompilerRegAssignmentTable extra-assignments]
       [out-extra-types : CompilerRegVarTypes extra-types]
       [word-index : i64 0]
-      [word-count : i64
-        (live.compiler-live-set-word-count
-          (compiler-reg-global-shared-view uses))]
+      [word-count : i64 (live.compiler-live-set-word-count uses)]
       (begin
         (while (< word-index word-count)
           (let
             [bits : i64
-              (live.compiler-live-set-word-at-bounded
-                (compiler-reg-global-shared-view uses)
-                word-index)]
+              (live.compiler-live-set-word-at-bounded uses word-index)]
             [base : i64 (* word-index (live.compiler-live-set-word-bits))]
             [bit : i64 0]
             (begin

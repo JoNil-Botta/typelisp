@@ -109,15 +109,9 @@
           (live.compiler-live-set-contains? direct-calls 6)
           ;; Call operands retain ordinary spill eligibility; only hidden helper
           ;; parameters are admitted to the fixed private-register allocator.
-          (live.compiler-live-set-contains?
-            (live.compiler-live-shared-view ineligible)
-            0)
-          (live.compiler-live-set-contains?
-            (live.compiler-live-shared-view ineligible)
-            1)
-          (live.compiler-live-set-contains?
-            (live.compiler-live-shared-view ineligible)
-            2))])))
+          (live.compiler-live-set-contains? ineligible 0)
+          (live.compiler-live-set-contains? ineligible 1)
+          (live.compiler-live-set-contains? ineligible 2))])))
 
 (define (compiler-reg-smoke-descriptor-pair-function) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
@@ -202,27 +196,12 @@
           (ast.ast-node-pool-reader-type-segment-bases)
           (reg.compiler-reg-global-shared-view representations)
           (ast.AstType.DynArray 1)))
-      (=
-        (live.compiler-live-set-count (live.compiler-live-shared-view groups))
-        2)
-      (not
-        (live.compiler-live-set-contains?
-          (live.compiler-live-shared-view groups)
-          0))
-      (live.compiler-live-set-contains?
-        (live.compiler-live-shared-view groups)
-        4)
-      (live.compiler-live-set-contains?
-        (live.compiler-live-shared-view groups)
-        5)
-      (not
-        (live.compiler-live-set-contains?
-          (live.compiler-live-shared-view groups)
-          6))
-      (not
-        (live.compiler-live-set-contains?
-          (live.compiler-live-shared-view groups)
-          7)))))
+      (= (live.compiler-live-set-count groups) 2)
+      (not (live.compiler-live-set-contains? groups 0))
+      (live.compiler-live-set-contains? groups 4)
+      (live.compiler-live-set-contains? groups 5)
+      (not (live.compiler-live-set-contains? groups 6))
+      (not (live.compiler-live-set-contains? groups 7)))))
 
 (define (main) : i64
   (begin

@@ -49266,15 +49266,21 @@ b_keep:
           (compiler_backend.compiler-backend-test-get-compiler-backend-current-slot-vars
             state-b)
           23)
-        (compiler_liveness.compiler-live-set-contains?
-          (compiler_backend.compiler-backend-test-get-compiler-backend-group-vars
-            state-a)
-          4)
-        (not
-          (compiler_liveness.compiler-live-set-contains?
+        (let
+          [test-get-compiler-backend-group-vars
             (compiler_backend.compiler-backend-test-get-compiler-backend-group-vars
-              state-b)
+              state-a)]
+          (compiler_liveness.compiler-live-set-contains?
+            test-get-compiler-backend-group-vars
             4))
+        (not
+          (let
+            [test-get-compiler-backend-group-vars
+              (compiler_backend.compiler-backend-test-get-compiler-backend-group-vars
+                state-b)]
+            (compiler_liveness.compiler-live-set-contains?
+              test-get-compiler-backend-group-vars
+              4)))
         (compiler_backend.compiler-backend-test-get-compiler-backend-addr-of-forwarding-enabled
           state-a)
         (not

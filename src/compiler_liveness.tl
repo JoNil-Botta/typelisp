@@ -227,7 +227,7 @@
 (define (compiler-live-set-empty) : CompilerLiveI64Set
   (compiler-live-set-empty-shared-view))
 
-(define (compiler-live-set-word-count [set : CompilerLiveI64Set]) : i64
+(define (compiler-live-set-word-count [set : (& set CompilerLiveI64Set)]) : i64
   (array-length set.words))
 
 ;; There is no bounds-checked `compiler-live-set-word-at` any more. It existed
@@ -240,7 +240,7 @@
 ;;
 ;; Callers must prove `0 <= word-index < compiler-live-set-word-count set`.
 (define (compiler-live-set-word-at-bounded
-  [set : CompilerLiveI64Set]
+  [set : (& set CompilerLiveI64Set)]
   [word-index : i64]) : i64
   (unsafe
     (ptr-read (ptr-offset (__tl_array-data set.words) word-index))))
@@ -375,7 +375,9 @@
 ;; and so carries the two range checks the shift itself needs. Deciding the
 ;; cheap, always-needed comparison first lets those calls skip the whole
 ;; sequence.
-(define (compiler-live-set-contains? [set : CompilerLiveI64Set] [value : i64]) : bool
+(define (compiler-live-set-contains?
+  [set : (& set CompilerLiveI64Set)]
+  [value : i64]) : bool
   (if (< value 0)
     false
     (let
@@ -397,11 +399,11 @@
 ;; on every boundary edge of a phi-carried value, so the per-var live-on-edge test
 ;; is insufficient -- the group/slot is what must be loaded/stored).
 (define (compiler-live-set-intersects?
-  [a : CompilerLiveI64Set]
-  [b : CompilerLiveI64Set]) : bool
+  [a : (& a CompilerLiveI64Set)]
+  [b : (& b CompilerLiveI64Set)]) : bool
   (let
-    [na : i64 (compiler-live-set-word-count (compiler-live-shared-view a))]
-    [nb : i64 (compiler-live-set-word-count (compiler-live-shared-view b))]
+    [na : i64 (compiler-live-set-word-count a)]
+    [nb : i64 (compiler-live-set-word-count b)]
     [n : i64
       (if (< na nb)
         na
@@ -414,12 +416,8 @@
           (if (not
             (=
               (bit-and
-                (compiler-live-set-word-at-bounded
-                  (compiler-live-shared-view a)
-                  i)
-                (compiler-live-set-word-at-bounded
-                  (compiler-live-shared-view b)
-                  i))
+                (compiler-live-set-word-at-bounded a i)
+                (compiler-live-set-word-at-bounded b i))
               0))
             (set! found true)
             unit)
@@ -468,16 +466,12 @@
     set
     (let
       [word-index : i64 (compiler-live-set-word-index value)]
-      [capacity : i64
-        (compiler-live-set-word-count (compiler-live-shared-view set))]
+      [capacity : i64 (compiler-live-set-word-count set)]
       [mask : i64 (compiler-live-set-bit-mask value)]
       (if (>= word-index capacity)
         set
         (let
-          [old-bits : i64
-            (compiler-live-set-word-at-bounded
-              (compiler-live-shared-view set)
-              word-index)]
+          [old-bits : i64 (compiler-live-set-word-at-bounded set word-index)]
           (if (= (bit-and old-bits mask) 0)
             set
             (let
@@ -850,8 +844,7 @@
   [active-count : i64]
   [set : CompilerLiveI64Set]) : bool
   (let
-    [set-count : i64
-      (compiler-live-set-word-count (compiler-live-shared-view set))]
+    [set-count : i64 (compiler-live-set-word-count set)]
     [data : (MutPtr i64)
       (unsafe
         (__tl_array-data words))]
@@ -926,12 +919,11 @@
         1)
       (compiler-live-set-word-count-bits bits (+ bit 1)))))
 
-(define (compiler-live-set-count [set : CompilerLiveI64Set]) : i64
+(define (compiler-live-set-count [set : (& set CompilerLiveI64Set)]) : i64
   (let
     [index : i64 0]
     [count : i64 0]
-    [word-count : i64
-      (compiler-live-set-word-count (compiler-live-shared-view set))]
+    [word-count : i64 (compiler-live-set-word-count set)]
     (begin
       (while (< index word-count)
         (begin
@@ -940,9 +932,7 @@
             (+
               count
               (compiler-live-set-word-count-bits
-                (compiler-live-set-word-at-bounded
-                  (compiler-live-shared-view set)
-                  index)
+                (compiler-live-set-word-at-bounded set index)
                 0)))
           (set! index (+ index 1))))
       count)))
@@ -962,10 +952,9 @@
         acc
         (+ (+ base (+ bit 1)) (* 17 acc))))))
 
-(define (compiler-live-set-score [set : CompilerLiveI64Set]) : i64
+(define (compiler-live-set-score [set : (& set CompilerLiveI64Set)]) : i64
   (let
-    [index : i64
-      (- (compiler-live-set-word-count (compiler-live-shared-view set)) 1)]
+    [index : i64 (- (compiler-live-set-word-count set) 1)]
     [score : i64 0]
     (begin
       (while (>= index 0)
@@ -973,9 +962,7 @@
           (set!
             score
             (compiler-live-set-score-word-desc
-              (compiler-live-set-word-at-bounded
-                (compiler-live-shared-view set)
-                index)
+              (compiler-live-set-word-at-bounded set index)
               (* index (compiler-live-set-word-bits))
               (- (compiler-live-set-word-bits) 1)
               score))
@@ -983,7 +970,7 @@
       score)))
 
 (define (compiler-live-set-builder-insert!
-  [words : (__tl_dyn-array i64)]
+  [words : (&mut words (__tl_dyn-array i64))]
   [value : i64]) : unit
   (if (< value 0)
     unit
@@ -1005,7 +992,7 @@
   (let
     [words : (__tl_dyn-array i64) (compiler-live-set-builder a)]
     (begin
-      (compiler-live-set-builder-insert! (compiler-live-shared-view words) a)
+      (compiler-live-set-builder-insert! (&mut words) a)
       (CompilerLiveI64Set words))))
 
 (define (compiler-live-set2 [a : i64] [b : i64]) : CompilerLiveI64Set
@@ -1013,8 +1000,8 @@
     [words : (__tl_dyn-array i64)
       (compiler-live-set-builder (compiler-live-set-max a b))]
     (begin
-      (compiler-live-set-builder-insert! (compiler-live-shared-view words) a)
-      (compiler-live-set-builder-insert! (compiler-live-shared-view words) b)
+      (compiler-live-set-builder-insert! (&mut words) a)
+      (compiler-live-set-builder-insert! (&mut words) b)
       (CompilerLiveI64Set words))))
 
 (define (compiler-live-set3 [a : i64] [b : i64] [c : i64]) : CompilerLiveI64Set
@@ -1023,9 +1010,9 @@
       (compiler-live-set-builder
         (compiler-live-set-max (compiler-live-set-max a b) c))]
     (begin
-      (compiler-live-set-builder-insert! (compiler-live-shared-view words) a)
-      (compiler-live-set-builder-insert! (compiler-live-shared-view words) b)
-      (compiler-live-set-builder-insert! (compiler-live-shared-view words) c)
+      (compiler-live-set-builder-insert! (&mut words) a)
+      (compiler-live-set-builder-insert! (&mut words) b)
+      (compiler-live-set-builder-insert! (&mut words) c)
       (CompilerLiveI64Set words))))
 
 (define (compiler-live-set4 [a : i64] [b : i64] [c : i64] [d : i64]) : CompilerLiveI64Set
@@ -1036,10 +1023,10 @@
           (compiler-live-set-max a b)
           (compiler-live-set-max c d)))]
     (begin
-      (compiler-live-set-builder-insert! (compiler-live-shared-view words) a)
-      (compiler-live-set-builder-insert! (compiler-live-shared-view words) b)
-      (compiler-live-set-builder-insert! (compiler-live-shared-view words) c)
-      (compiler-live-set-builder-insert! (compiler-live-shared-view words) d)
+      (compiler-live-set-builder-insert! (&mut words) a)
+      (compiler-live-set-builder-insert! (&mut words) b)
+      (compiler-live-set-builder-insert! (&mut words) c)
+      (compiler-live-set-builder-insert! (&mut words) d)
       (CompilerLiveI64Set words))))
 
 (define (compiler-live-label-set-contains?

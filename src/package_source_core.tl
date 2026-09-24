@@ -93,7 +93,7 @@
         (< left-len right-len)))))
 
 (define (package-source-vec-insert-slot-from
-  [items : svec.Vec]
+  [items : (& items svec.Vec)]
   [value : String]
   [index : i64]) : i64
   (if (>= index (svec.len (& items)))
@@ -109,13 +109,13 @@
           (package-source-vec-insert-slot-from items value (+ index 1)))))))
 
 (define (package-source-vec-copy-range
-  [items : svec.Vec]
+  [items : (& items svec.Vec)]
   [out : svec.Vec]
   [start : i64]
   [end : i64]) : svec.Vec
   (let
     [idx : i64 start]
-    [cur : svec.Vec (owned_view.compiler-owned-shared-view out)]
+    [cur : svec.Vec out]
     (begin
       (while (< idx end)
         (begin
@@ -130,28 +130,18 @@
   (let
     [out : svec.Vec (svec.with-capacity (+ (svec.len (& items)) 1))]
     (begin
-      (set!
-        out
-        (package-source-vec-copy-range
-          (owned_view.compiler-owned-shared-view items)
-          out
-          0
-          slot))
+      (set! out (package-source-vec-copy-range items out 0 slot))
       (svec.push-ref! (&mut out) value)
       (set!
         out
-        (package-source-vec-copy-range
-          (owned_view.compiler-owned-shared-view items)
-          out
-          slot
-          (svec.len (& items))))
+        (package-source-vec-copy-range items out slot (svec.len (& items))))
       out)))
 
 (define (package-source-vec-insert [items : svec.Vec] [value : String]) : svec.Vec
   (let
     [slot : i64
       (package-source-vec-insert-slot-from
-        (owned_view.compiler-owned-shared-view items)
+        items
         (owned_view.compiler-owned-shared-view value)
         0)]
     (if (< slot 0)
@@ -281,14 +271,8 @@
         cursor
         n)]
     [segment : String (string.substring normalized cursor (- separator cursor))]
-    [next-prefix : String
-      (package-source-relative-join
-        (owned_view.compiler-owned-shared-view prefix)
-        (owned_view.compiler-owned-shared-view segment))]
-    [candidate : String
-      (package-source-root-join
-        (owned_view.compiler-owned-shared-view checkout-root)
-        (owned_view.compiler-owned-shared-view next-prefix))]
+    [next-prefix : String (package-source-relative-join prefix segment)]
+    [candidate : String (package-source-root-join checkout-root next-prefix)]
     [last : bool (>= separator n)]
     (match (fs.try-file-kind-no-follow (& candidate))
       [(fs.ErrFsFileKind _)
@@ -546,7 +530,7 @@
 (define (package-source-skip-dir? [name : String]) : bool
   (or
     (package-source-internal-dir? (owned_view.compiler-owned-shared-view name))
-    (package-source-test-dir? (owned_view.compiler-owned-shared-view name))))
+    (package-source-test-dir? name)))
 
 (define (package-source-skip-dir-self-test?) : bool
   (and
@@ -605,13 +589,13 @@
     (io.panic "package-source: generated vector growth self-test mismatch")))
 
 (define (package-source-sort-entries-from
-  [entries : fs.FsStringVector]
+  [entries : (& entries fs.FsStringVector)]
   [index : i64]
   [acc : svec.Vec]) : svec.Vec
   (if (>= index (fs.string-vector-len (& entries)))
     acc
     (package-source-sort-entries-from
-      (owned_view.compiler-owned-shared-view entries)
+      entries
       (+ index 1)
       (package-source-vec-insert
         acc
@@ -629,7 +613,7 @@
         (fs.string-vector-push! (&mut entries) "alpha")
         (fs.string-vector-push! (&mut entries) "middle")
         (package-source-sort-entries entries))]
-    (match (owned_view.compiler-owned-shared-view items)
+    (match (& items)
       [_
         (and
           (= (svec.len (& items)) 3)
@@ -738,9 +722,7 @@
       [(fs.ErrIoStringVector error)
         (if (io.error-unsupported?
           (owned_view.compiler-owned-shared-view error))
-          (ResultPackageSourceList.Ok
-            (package-source-entry-list
-              (owned_view.compiler-owned-shared-view source-set)))
+          (ResultPackageSourceList.Ok (package-source-entry-list source-set))
           (package-source-read-dir-error command root error))]
       [(fs.OkIoStringVector entries)
         (package-source-scan-entries
@@ -801,7 +783,7 @@
       [(ResultPackageSourceList.Ok next)
         (package-source-scan-entries-from
           command
-          (owned_view.compiler-owned-shared-view root)
+          root
           relative
           entries
           (+ index 1)
@@ -1434,9 +1416,7 @@
               (io.panic "package-source: unable to add digest fixture")
               unit)
             (match (package-source-set-digest
-              (package-source-binding-test-source-set
-                (owned_view.compiler-owned-shared-view root)
-                true))
+              (package-source-binding-test-source-set root true))
               [(ResultPackageSourceDigest.Ok digest)
                 (if (= digest baseline)
                   (io.panic "package-source: add source did not change digest")
@@ -1489,9 +1469,7 @@
               [(io.OkIoUnit) unit]
               [(io.ErrIoUnit _)
                 (io.panic "package-source: unable to delete fixture")])
-            (match (package-source-verify-binding
-              (owned_view.compiler-owned-shared-view source-set)
-              binding)
+            (match (package-source-verify-binding source-set binding)
               [(PackageSourceBindingVerification.Unreadable _) unit]
               [_ (io.panic "package-source: deleted source was not unreadable")])
             ;; Leave the ignored fixture in a restorable state for a rerun.
@@ -1562,7 +1540,7 @@
               [(ResultPackageSourceDigest.Ok left)
                 (match (package-source-set-digest
                   (package-source-binding-test-source-set-from-sources
-                    (owned_view.compiler-owned-shared-view collision-root)
+                    collision-root
                     collision-right))
                   [(ResultPackageSourceDigest.Ok right)
                     (if (= left right)
@@ -1681,7 +1659,7 @@
               [_ (io.panic "package-source: nested source was accepted")])
             (match (package-source-set-digest
               (package-source-binding-test-source-set-from-sources
-                (owned_view.compiler-owned-shared-view root)
+                root
                 outside-sources))
               [(ResultPackageSourceDigest.Err _) unit]
               [_ (io.panic "package-source: outside source was accepted")])

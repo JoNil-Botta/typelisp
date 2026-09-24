@@ -7485,6 +7485,22 @@
           (ast.AstType.Unit))]
       [_ (ast.AstType.Unit)])))
 
+;; A String's descriptor is a fixed pair of words even though its byte buffer
+;; is dynamic. Admit only the exact runtime descriptor allocation here; all
+;; pointer-use, ownership-edge and escape checks of word splitting still apply.
+;; This does not make String storage a general stack-promotion candidate.
+(define (opt-aggregate-split-direct-alloc [instr : ir.CompilerIrInstr]) : OptMaybeAggregateAlloc
+  (match (compiler-opt-global-shared-view instr)
+    [(ir.CompilerIrInstr.Call
+        dst
+        name
+        (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.I64 16))
+        (ast.AstType.String))
+      (if (ir.compiler-ir-symbol-eq? name cbi.compiler-builtin-id-tl-alloc)
+        (OptMaybeAggregateAlloc.Some dst (ast.AstType.String) 16)
+        (OptMaybeAggregateAlloc.No))]
+    [_ (opt-aggregate-direct-alloc instr)]))
+
 ;; Word count of the allocation rooted at `index`: 0 when the instruction is not
 ;; a root at all, -1 when it is a root this pass will not take (a `tl_alloc`
 ;; whose size is not a whole number of words).
@@ -7507,7 +7523,8 @@
           storage)
         0)]
     [_
-      (match (opt-aggregate-direct-alloc (opt-aggregate-split-at flat index))
+      (match (opt-aggregate-split-direct-alloc
+        (opt-aggregate-split-at flat index))
         [(OptMaybeAggregateAlloc.Some _ _ size)
           (if (= (- size (* (/ size 8) 8)) 0)
             (/ size 8)
@@ -7523,7 +7540,8 @@
         (array-ref flat.starts index)
         storage)]
     [_
-      (match (opt-aggregate-direct-alloc (opt-aggregate-split-at flat index))
+      (match (opt-aggregate-split-direct-alloc
+        (opt-aggregate-split-at flat index))
         [(OptMaybeAggregateAlloc.Some _ ty _) ty]
         [(OptMaybeAggregateAlloc.No) (ast.AstType.Unit)])]))
 
@@ -12841,6 +12859,24 @@
         (OptLabelSet.Nil)
         (OptLabelSet.Dense items (- len 1)))]))
 
+;; `opt-label-tail` for a set whose longer views are all dead -- a worklist its
+;; caller owns outright and pops like a stack. The popped slot is released with
+;; the high-water mark, so the next `opt-label-cons` writes it in place: a plain
+;; tail is below the high-water, and consing onto it copies the whole array,
+;; which makes a pop/push worklist quadratic in its length. The views it returns
+;; hold exactly what `opt-label-tail`'s would.
+(define (opt-label-pop-owned [set : OptLabelSet]) : OptLabelSet
+  (match set
+    [(OptLabelSet.Nil) (OptLabelSet.Nil)]
+    [(OptLabelSet.Dense items len)
+      (if (<= len 1)
+        (OptLabelSet.Nil)
+        (begin
+          (if (= (array-ref items 0) len)
+            (set! (array-ref items 0) (- len 1))
+            unit)
+          (OptLabelSet.Dense items (- len 1))))]))
+
 (define (opt-label-cons [label : i64] [set : OptLabelSet]) : OptLabelSet
   (match set
     [(OptLabelSet.Nil)
@@ -13298,6 +13334,87 @@
     (if (= (array-ref opt-cfg-label-stamp label) generation)
       (array-ref opt-cfg-label-slot label)
       -1)))
+
+;; Which generated-block markers a label's text contains, one row per label.
+;; Label ids are never reused and their text never changes, so each row is
+;; computed once: bit 0 says the row is filled, bit k + 1 that the text contains
+;; marker k. The substring searches this replaces ran for every block of every
+;; pass that asked, inliner trials included. DELIBERATE-RAW (#6620): process
+;; storage in the IR label arena, exactly like opt-cfg-label-slot above.
+(define opt-label-marker-rows : (__tl_dyn-array i64)
+  (__tl_make-array i64 1))
+
+(define (opt-label-marker-bool-and) : i64
+  0)
+
+(define (opt-label-marker-unroll2) : i64
+  1)
+
+(define (opt-label-marker-bce) : i64
+  2)
+
+(define (opt-label-marker-bce-fast) : i64
+  3)
+
+(define (opt-label-marker-text [marker : i64]) : String
+  (cond
+    [(= marker (opt-label-marker-bool-and)) "__bool_and."]
+    [(= marker (opt-label-marker-unroll2)) "__unroll2_1"]
+    [(= marker (opt-label-marker-bce)) "__bce_"]
+    [else "__bce_fast"]))
+
+(define (opt-label-marker-rows-reserve! [count : i64]) : unit
+  (if (<= count (array-length opt-label-marker-rows))
+    unit
+    (let
+      [size : i64 (array-length opt-label-marker-rows)]
+      (begin
+        (while (< size count)
+          (set! size (* size 2)))
+        (in-arena
+          (arena.Arena (ir.compiler-ir-label-arena))
+          (let
+            [next : (__tl_dyn-array i64) (__tl_make-array i64 size)]
+            [index : i64 0]
+            (begin
+              (while (< index (array-length opt-label-marker-rows))
+                (begin
+                  (set!
+                    (array-ref next index)
+                    (array-ref opt-label-marker-rows index))
+                  (set! index (+ index 1))))
+              (set! opt-label-marker-rows next))))))))
+
+(define (opt-label-marker-row-compute [label : i64]) : i64
+  (let
+    [text : String (ir.compiler-ir-label-text label)]
+    [row : i64 1]
+    [marker : i64 0]
+    (begin
+      (while (<= marker (opt-label-marker-bce-fast))
+        (let
+          [needle : String (opt-label-marker-text marker)]
+          (begin
+            (when
+              (string.contains (& text) (& needle))
+              (set! row (bit-or row (shl 2 marker))))
+            (set! marker (+ marker 1)))))
+      row)))
+
+(define (opt-label-has-marker? [label : i64] [marker : i64]) : bool
+  (if (or (< label 0) (>= label (ir.compiler-ir-label-count-value)))
+    false
+    (begin
+      (opt-label-marker-rows-reserve! (+ label 1))
+      (let
+        [row : i64 (array-ref opt-label-marker-rows label)]
+        (if (= row 0)
+          (let
+            [computed : i64 (opt-label-marker-row-compute label)]
+            (begin
+              (set! (array-ref opt-label-marker-rows label) computed)
+              (!= (bit-and computed (shl 2 marker)) 0)))
+          (!= (bit-and row (shl 2 marker)) 0))))))
 
 (defstruct OptCfgCsr
   (offsets (__tl_dyn-array i64))
@@ -22575,10 +22692,7 @@
 ;; iteration, CSE must not merge those clones back into a dominating comparison
 ;; -- doing so recreates the setcc/test materialization the CFG rewrite removed.
 (define (opt-bool-branch-chain-generated-label? [label : i64]) : bool
-  (let
-    [marker : String "__bool_and."]
-    [text : String (ir.compiler-ir-label-text label)]
-    (string.contains (& text) (& marker))))
+  (opt-label-has-marker? label (opt-label-marker-bool-and)))
 
 (define (opt-bool-branch-chain-check-block?
   [block-label : i64]
@@ -22616,21 +22730,18 @@
 (define (opt-global-cse-unroll2-address-offset?
   [block-label : i64]
   [instr : ir.CompilerIrInstr]) : bool
-  (let
-    [marker : String "__unroll2_1"]
-    [text : String (ir.compiler-ir-label-text block-label)]
-    (and
-      (string.contains (& text) (& marker))
-      (match instr
-        [(ir.CompilerIrInstr.BinOp _ op _ rhs _)
-          (and
-            (match op
-              [(ir.CompilerIrBinOp.Add) true]
-              [_ false])
-            (match rhs
-              [(ir.CompilerIrValue.I64 n) (= n 1)]
-              [_ false]))]
-        [_ false]))))
+  (and
+    (opt-label-has-marker? block-label (opt-label-marker-unroll2))
+    (match instr
+      [(ir.CompilerIrInstr.BinOp _ op _ rhs _)
+        (and
+          (match op
+            [(ir.CompilerIrBinOp.Add) true]
+            [_ false])
+          (match rhs
+            [(ir.CompilerIrValue.I64 n) (= n 1)]
+            [_ false]))]
+      [_ false])))
 
 ;; 1:1 rewrite -> dense output sequence (see opt-global-copy-instr-seq). refs #5726
 (define (opt-global-cse-instr-seq
@@ -23230,30 +23341,114 @@
 
 ;; `blocks` is the list `index` was built from, so the walk position is the
 ;; block id. `opt-loop-body-member-array-contains-id?` range-checks it, which is
-;; what the old missing-label arm did.
+;; what the old missing-label arm did. At most `limit` blocks are members, so the
+;; walk stops at the last one instead of running to the end of the function;
+;; this runs once per loop, and was one recursive frame per block of the whole
+;; function.
 (define (opt-loop-body-blocks-from
   [members : (__tl_dyn-array bool)]
   [blocks : ir.CompilerIrBlockList]
-  [block-id : i64]) : ir.CompilerIrBlockList
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) (ir.CompilerIrBlockList.Nil)]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match (compiler-opt-global-shared-view block)
-        [(ir.CompilerIrBlock.Block _ _)
-          (let
-            [tail : ir.CompilerIrBlockList
-              (opt-loop-body-blocks-from
-                (compiler-opt-global-shared-view members)
-                (compiler-opt-box-shared-view rest)
-                (+ block-id 1))]
-            (if (opt-loop-body-member-array-contains-id? members block-id)
-              (ir.compiler-ir-block-cons block tail)
-              tail))])]
+  [block-id : i64]
+  [limit : i64]) : ir.CompilerIrBlockList
+  (match (compiler-opt-global-shared-view blocks)
     [(ir.CompilerIrBlockList.Array seq)
-      (opt-loop-body-blocks-from
-        members
-        (ir.compiler-ir-block-seq-to-list seq)
-        block-id)]))
+      (opt-loop-body-blocks-from-seq members seq block-id)]
+    [_
+      (let
+        [cursor : ir.CompilerIrBlockList blocks]
+        [id : i64 block-id]
+        [remaining : i64 limit]
+        [reversed : ir.CompilerIrBlockList (ir.CompilerIrBlockList.Nil)]
+        (begin
+          (while (> remaining 0)
+            (match cursor
+              [(ir.CompilerIrBlockList.Nil) (set! remaining 0)]
+              [(ir.CompilerIrBlockList.Cons block rest)
+                (begin
+                  (if (opt-loop-body-member-array-contains-id?
+                    (compiler-opt-global-shared-view members)
+                    id)
+                    (begin
+                      (set!
+                        reversed
+                        (ir.compiler-ir-block-cons
+                          (compiler-opt-global-shared-view block)
+                          reversed))
+                      (set! remaining (- remaining 1)))
+                    unit)
+                  (set! id (+ id 1))
+                  (set! cursor (compiler-opt-box-shared-view rest)))]
+              [(ir.CompilerIrBlockList.Array seq)
+                (begin
+                  (set!
+                    reversed
+                    (opt-loop-body-seq-members-onto
+                      (compiler-opt-global-shared-view members)
+                      seq
+                      id
+                      reversed))
+                  (set! remaining 0))]))
+          (ir.compiler-ir-block-list-reverse-onto
+            reversed
+            (ir.CompilerIrBlockList.Nil))))]))
+
+;; Conses `seq`'s member blocks onto `acc` front to back, so they come out in
+;; reverse block order.
+(define (opt-loop-body-seq-members-onto
+  [members : (__tl_dyn-array bool)]
+  [seq : ir.CompilerIrBlockSeq]
+  [block-id : i64]
+  [acc : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
+  (let
+    [index : i64 0]
+    [count : i64
+      (ir.compiler-ir-block-seq-count (compiler-opt-global-shared-view seq))]
+    [out : ir.CompilerIrBlockList acc]
+    (begin
+      (while (< index count)
+        (begin
+          (if (opt-loop-body-member-array-contains-id?
+            (compiler-opt-global-shared-view members)
+            (+ block-id index))
+            (set!
+              out
+              (ir.compiler-ir-block-cons
+                (ir.compiler-ir-block-seq-ref
+                  (compiler-opt-global-shared-view seq)
+                  index)
+                out))
+            unit)
+          (set! index (+ index 1))))
+      out)))
+
+;; Walks `seq` back to front so member blocks cons up in block order without
+;; first converting the whole function's block array into a list per loop.
+(define (opt-loop-body-blocks-from-seq
+  [members : (__tl_dyn-array bool)]
+  [seq : ir.CompilerIrBlockSeq]
+  [block-id : i64]) : ir.CompilerIrBlockList
+  (let
+    [index : i64
+      (-
+        (ir.compiler-ir-block-seq-count (compiler-opt-global-shared-view seq))
+        1)]
+    [out : ir.CompilerIrBlockList (ir.CompilerIrBlockList.Nil)]
+    (begin
+      (while (>= index 0)
+        (begin
+          (if (opt-loop-body-member-array-contains-id?
+            (compiler-opt-global-shared-view members)
+            (+ block-id index))
+            (set!
+              out
+              (ir.compiler-ir-block-cons
+                (ir.compiler-ir-block-seq-ref
+                  (compiler-opt-global-shared-view seq)
+                  index)
+                out))
+            unit)
+          (set! index (- index 1))))
+      out)))
 
 (define (opt-loop-body-build
   [blocks : ir.CompilerIrBlockList]
@@ -23264,6 +23459,7 @@
       (__tl_make-array
         bool
         (opt-cfg-index-block-count (compiler-opt-global-shared-view index)))]
+    [count : i64 (opt-label-count (compiler-opt-global-shared-view labels))]
     (begin
       (opt-loop-body-fill-members!
         index
@@ -23272,7 +23468,7 @@
       (OptLoopBody
         labels
         (compiler-opt-global-shared-view members)
-        (opt-loop-body-blocks-from members blocks 0)))))
+        (opt-loop-body-blocks-from members blocks 0 count)))))
 
 (define (opt-loop-body-labels [body : OptLoopBody]) : OptLabelSet
   body.labels)
@@ -23446,7 +23642,11 @@
             (opt-pred-map-lookup
               (compiler-opt-global-shared-view pred-map)
               label)
-            (OptNaturalLoopCollectState.State body (opt-label-tail worklist)))]
+            ;; The worklist is this walk's own (seeded fresh by the caller),
+            ;; so no other view of it outlives a pop.
+            (OptNaturalLoopCollectState.State
+              body
+              (opt-label-pop-owned worklist)))]
         (match state
           [(OptNaturalLoopCollectState.State next-body next-worklist)
             (opt-natural-loop-collect-body
@@ -31511,31 +31711,41 @@
 ;; A consumer inside a loop nested in the one being processed can execute many
 ;; times per iteration of the outer loop, so it pays for an outer-loop hoist
 ;; even when its block does not dominate the outer latch.
-(define (opt-licm-label-in-nested-loop?
+;; The loops nested in the one headed by `header`: every other loop whose header
+;; lies in `body`. Filtered once per loop, so the per-block question below scans
+;; only nested bodies.
+(define (opt-licm-nested-loops
   [loops : OptNaturalLoopList]
   [header : i64]
-  [body : OptLabelSet]
-  [label : i64]) : bool
-  (match loops
+  [body : OptLabelSet]) : OptNaturalLoopList
+  (match (compiler-opt-global-shared-view loops)
+    [(OptNaturalLoopList.Nil) (OptNaturalLoopList.Nil)]
+    [(OptNaturalLoopList.Cons inner rest)
+      (let
+        [tail : OptNaturalLoopList
+          (opt-licm-nested-loops
+            (compiler-opt-box-shared-view rest)
+            header
+            (compiler-opt-global-shared-view body))]
+        [inner-header : i64
+          (opt-natural-loop-header (compiler-opt-global-shared-view inner))]
+        (if (and
+          (not (= inner-header header))
+          (opt-label-contains
+            (compiler-opt-global-shared-view body)
+            inner-header))
+          (OptNaturalLoopList.Cons inner (box tail))
+          tail))]))
+
+(define (opt-licm-label-in-loops? [loops : OptNaturalLoopList] [label : i64]) : bool
+  (match (compiler-opt-global-shared-view loops)
     [(OptNaturalLoopList.Nil) false]
     [(OptNaturalLoopList.Cons inner rest)
-      (if (and
-        (not
-          (=
-            (opt-natural-loop-header (compiler-opt-global-shared-view inner))
-            header))
-        (opt-label-contains
-          (compiler-opt-global-shared-view body)
-          (opt-natural-loop-header (compiler-opt-global-shared-view inner)))
-        (opt-label-contains
-          (opt-natural-loop-body (compiler-opt-global-shared-view inner))
-          label))
+      (if (opt-label-contains
+        (opt-natural-loop-body (compiler-opt-global-shared-view inner))
+        label)
         true
-        (opt-licm-label-in-nested-loop?
-          (compiler-opt-box-shared-view rest)
-          header
-          (compiler-opt-global-shared-view body)
-          label))]))
+        (opt-licm-label-in-loops? (compiler-opt-box-shared-view rest) label))]))
 
 ;; A BRANCH CONDITION is not a consumer that can pay for a hoist, and it is the
 ;; one use kind where moving the definition out is never a per-iteration win. A
@@ -31623,16 +31833,33 @@
   [gate? : bool]
   [blocks : ir.CompilerIrBlockList]
   [set : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
+  (opt-licm-hot-use-vars-from
+    context
+    latch-id
+    (opt-licm-nested-loops loops header (compiler-opt-global-shared-view body))
+    body
+    gate?
+    blocks
+    set))
+
+;; `nested` is `opt-licm-nested-loops` of the loop whose body is `body`.
+(define (opt-licm-hot-use-vars-from
+  [context : OptCfgContext]
+  [latch-id : i64]
+  [nested : OptNaturalLoopList]
+  [body : OptLabelSet]
+  [gate? : bool]
+  [blocks : ir.CompilerIrBlockList]
+  [set : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
   (match (compiler-opt-global-shared-view blocks)
     [(ir.CompilerIrBlockList.Nil) set]
     [(ir.CompilerIrBlockList.Cons block rest)
       (match block
         [(ir.CompilerIrBlock.Block label instrs)
-          (opt-licm-hot-use-vars
+          (opt-licm-hot-use-vars-from
             (compiler-opt-global-shared-view context)
             latch-id
-            (compiler-opt-global-shared-view loops)
-            header
+            (compiler-opt-global-shared-view nested)
             (compiler-opt-global-shared-view body)
             gate?
             (compiler-opt-box-shared-view rest)
@@ -31641,10 +31868,8 @@
                 (opt-label-contains
                   (compiler-opt-global-shared-view body)
                   label))
-              (opt-licm-label-in-nested-loop?
-                (compiler-opt-global-shared-view loops)
-                header
-                (compiler-opt-global-shared-view body)
+              (opt-licm-label-in-loops?
+                (compiler-opt-global-shared-view nested)
                 label))
               (opt-collect-instr-seq-uses
                 (compiler-opt-global-shared-view set)
@@ -31660,11 +31885,10 @@
                   instrs)
                 set)))])]
     [(ir.CompilerIrBlockList.Array seq)
-      (opt-licm-hot-use-vars
+      (opt-licm-hot-use-vars-from
         (compiler-opt-global-shared-view context)
         latch-id
-        (compiler-opt-global-shared-view loops)
-        header
+        (compiler-opt-global-shared-view nested)
         (compiler-opt-global-shared-view body)
         gate?
         (ir.compiler-ir-block-seq-to-list seq)
@@ -32967,7 +33191,7 @@
                   (compiler-opt-global-shared-view instr))
                 (set!
                   next-hoisted
-                  (opt-licm-add-hoisted-def (clone next-hoisted) instr))
+                  (opt-licm-add-hoisted-def next-hoisted instr))
                 (set! changed true))
               (ir.compiler-ir-instr-builder-push! (&mut kept) instr))
             (set! cursor (+ cursor 1)))))
@@ -36426,14 +36650,11 @@
   (match (compiler-opt-global-shared-view labels)
     [(OptLabelSet.Nil) false]
     [(OptLabelSet.Dense _ _)
-      (let
-        [text : String
-          (ir.compiler-ir-label-text
-            (opt-label-ref (compiler-opt-global-shared-view labels) 0))]
-        [marker : String "__bce_"]
-        (or
-          (string.contains (& text) (& marker))
-          (opt-licm-unswitch-has-versioned-label? (opt-label-tail labels))))]))
+      (or
+        (opt-label-has-marker?
+          (opt-label-ref (compiler-opt-global-shared-view labels) 0)
+          (opt-label-marker-bce))
+        (opt-licm-unswitch-has-versioned-label? (opt-label-tail labels)))]))
 
 (define (opt-licm-unswitch-preheader-jumps-to?
   [blocks : ir.CompilerIrBlockList]
@@ -47645,6 +47866,81 @@
 (defenum OptFlagExitPassResult
   (Result ir.CompilerIrBlockList i64 bool))
 
+;; A loop flag_exit could not plan as written may be one whose flag enters with
+;; a value a dominating test decided -- the outer flag seeding a nested loop's
+;; (see opt-flag-facts-rewrite-seeds). Spell that seed as the literal and plan
+;; again, and keep the rewrite only if the loop then converts: a literal seed on
+;; a loop that still refuses costs a `mov $1` on entry the var did not.
+(define (opt-flag-exit-seed-trial
+  [blocks : ir.CompilerIrBlockList]
+  [context : OptCfgContext]
+  [frame : i64]
+  [loop : OptNaturalLoop]) : OptFlagExitPassResult
+  (match (opt-flag-facts-rewrite-seeds
+    (compiler-opt-global-shared-view context.index)
+    (compiler-opt-global-shared-view context.doms)
+    (opt-gvn-sources-blocks
+      (compiler-opt-global-shared-view blocks)
+      (opt-value-sources-new))
+    (opt-natural-loop-header (compiler-opt-global-shared-view loop))
+    (compiler-opt-global-shared-view blocks))
+    [(OptFlagSeeded.No)
+      (begin
+        (opt-cfg-index-refresh-blocks!
+          (compiler-opt-global-shared-view context.index)
+          (compiler-opt-global-shared-view blocks))
+        (OptFlagExitPassResult.Result blocks frame false))]
+    [(OptFlagSeeded.Some seeded)
+      (let
+        [def-label : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+        [_fill : unit
+          (opt-cfg-fill-i64!
+            (compiler-opt-global-shared-view def-label)
+            frame
+            (- 0 1))]
+        [_defs : unit
+          (opt-flag-exit-def-labels!
+            (compiler-opt-global-shared-view seeded)
+            (compiler-opt-global-shared-view def-label))]
+        [uses : (__tl_dyn-array i64)
+          (opt-gep-offset-effective-uses
+            (compiler-opt-global-shared-view seeded)
+            frame)]
+        [raw-uses : (__tl_dyn-array i64)
+          (opt-collect-blocks-uses-array
+            frame
+            (compiler-opt-global-shared-view seeded))]
+        (match (opt-flag-exit-plan-loop
+          (compiler-opt-global-shared-view seeded)
+          (compiler-opt-global-shared-view context)
+          frame
+          (compiler-opt-global-shared-view uses)
+          (compiler-opt-global-shared-view raw-uses)
+          (compiler-opt-global-shared-view def-label)
+          (compiler-opt-global-shared-view loop))
+          [(OptFlagExitMaybePlan.Some plan)
+            (OptFlagExitPassResult.Result
+              (opt-flag-exit-rewrite-blocks
+                (compiler-opt-global-shared-view seeded)
+                (opt-natural-loop-body-info
+                  (compiler-opt-global-shared-view loop))
+                (compiler-opt-global-shared-view context.index)
+                (compiler-opt-global-shared-view plan))
+              (+
+                frame
+                (opt-flag-exit-mint-count
+                  (compiler-opt-global-shared-view plan.mints)
+                  (opt-flag-exit-gate-count
+                    (compiler-opt-global-shared-view plan.clears)
+                    0)))
+              true)]
+          [(OptFlagExitMaybePlan.No)
+            (begin
+              (opt-cfg-index-refresh-blocks!
+                (compiler-opt-global-shared-view context.index)
+                (compiler-opt-global-shared-view blocks))
+              (OptFlagExitPassResult.Result blocks frame false))]))]))
+
 (define (opt-flag-exit-convert-loops
   [blocks : ir.CompilerIrBlockList]
   [context : OptCfgContext]
@@ -47681,14 +47977,22 @@
                   0)))
             true)]
         [(OptFlagExitMaybePlan.No)
-          (opt-flag-exit-convert-loops
+          (match (opt-flag-exit-seed-trial
             (compiler-opt-global-shared-view blocks)
-            context
+            (compiler-opt-global-shared-view context)
             frame
-            uses
-            raw-uses
-            def-label
-            (compiler-opt-box-shared-view rest))])]))
+            (compiler-opt-global-shared-view loop))
+            [(OptFlagExitPassResult.Result seeded seeded-frame converted?)
+              (if converted?
+                (OptFlagExitPassResult.Result seeded seeded-frame true)
+                (opt-flag-exit-convert-loops
+                  (compiler-opt-global-shared-view blocks)
+                  context
+                  frame
+                  uses
+                  raw-uses
+                  def-label
+                  (compiler-opt-box-shared-view rest)))])])]))
 
 ;; --- driver -------------------------------------------------------------------
 ;; --- the second prescan, once the loops are known -----------------------------
@@ -73047,7 +73351,510 @@
     blocks)
     [(OptBoundsDomResult.Result result _) result]))
 
+;; --- flag values a dominating branch decided ---------------------------------
+;;
+;; A `bool` a branch tests is known on each of that branch's arms: true below
+;; the true edge, false below the false one. The verdicts below decide a later
+;; branch whose condition is a COMPARISON a dominating branch implies, but a
+;; condition that is a flag -- a phi carrying `(set! ok false)` round a loop --
+;; has no comparison behind it, so what its own test established was recorded
+;; nowhere.
+;;
+;; The shape that pays for that is a nested flag loop: `(while (and (< k n) ok)
+;; ...)` whose body runs an inner `(while (and (< b m) ok) ...)` on the same
+;; flag. The inner loop's flag phi is seeded with the OUTER flag -- a value the
+;; outer loop's own test has just proved true -- and flag_exit converts a loop
+;; only off a seed it can decide, so neither loop converts and both re-test the
+;; flag at the top of every iteration. With the seed spelled `true` both
+;; convert: route_http's matcher, which C compiles to direct exits.
+;;
+;; THE FACT. A block X whose only predecessor P ends in `branch v, T, F` with
+;; T != F learns `v = (X == T)`, and every block X dominates inherits it: this
+;; pass only runs on a verified function, so v has one definition and names one
+;; value everywhere it is read. THE REWRITE puts the literal in two places:
+;;   * the condition of a branch in a block the fact holds in;
+;;   * a LOOP-HEADER phi's input on a forward edge (one the header does not
+;;     dominate the source of) -- the seed the loop enters with -- when the
+;;     fact holds in that source block, which is where the value crosses.
+;; Only seeds: inside a loop the flag's own web has to stay the flag, since
+;; flag_exit recognises a loop by the latch carrying the flag (or a copy of it)
+;; on every keep-going path, and a `true` spelled there instead hides the loop
+;; from it -- intern_table's `it-slice-eq?` stops converting and pays 25%.
+;; `branch <literal>` is folded, and its dead edge dropped, by `cfg` below, the
+;; same as for the comparison verdicts.
+;;
+;; Facts are inherited down the dominator tree, so each block keeps only the
+;; one it adds and a link to the nearest dominator that added one: `head` is
+;; that nearest block (itself when it adds a fact), `link` the next one up.
+(defstruct OptFlagFacts
+  (head (__tl_dyn-array i64))
+  (link (__tl_dyn-array i64))
+  (var (__tl_dyn-array i64))
+  (value (__tl_dyn-array bool)))
+
+(define (opt-flag-facts-lookup [facts : OptFlagFacts] [id : i64] [var : i64]) : i64
+  (let
+    [heads : (__tl_dyn-array i64) facts.head]
+    [links : (__tl_dyn-array i64) facts.link]
+    [vars : (__tl_dyn-array i64) facts.var]
+    [values : (__tl_dyn-array bool) facts.value]
+    [at : i64
+      (if (and (>= id 0) (< id (array-length heads)))
+        (array-ref heads id)
+        (- 0 1))]
+    [found : i64 (- 0 1)]
+    (begin
+      (while (and (< found 0) (>= at 0))
+        (if (= (array-ref vars at) var)
+          (set!
+            found
+            (if (array-ref values at)
+              1
+              0))
+          (set! at (array-ref links at))))
+      found)))
+
+;; The one reachable predecessor of `id`, or -1. The entry block -- the root of
+;; the reverse post-order -- also has the implicit edge the call arrives on, so
+;; no edge in the CFG, a back edge to it included, can establish a fact there.
+(define (opt-flag-facts-sole-pred [index : OptCfgIndex] [id : i64]) : i64
+  (let
+    [offsets : (__tl_dyn-array i64) index.preds.offsets]
+    [edges : (__tl_dyn-array i64) index.preds.edges]
+    [edge : i64 (array-ref offsets id)]
+    [end : i64 (array-ref offsets (+ id 1))]
+    [found : i64 (- 0 1)]
+    [ok? : bool
+      (and (> index.reach-count 0) (not (= id (array-ref index.rpo 0))))]
+    (begin
+      (while (and ok? (< edge end))
+        (let
+          [pred : i64 (array-ref edges edge)]
+          (begin
+            (cond
+              [(not (array-ref index.reachable pred)) unit]
+              [(< found 0) (set! found pred)]
+              [(= found pred) unit]
+              [else (set! ok? false)])
+            (set! edge (+ edge 1)))))
+      (if ok?
+        found
+        (- 0 1)))))
+
+(define (opt-flag-facts-build
+  [index : OptCfgIndex]
+  [doms : OptDomInfo]
+  [sources : OptValueSources]) : OptFlagFacts
+  (let
+    [count : i64 (array-length index.labels)]
+    [heads : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [links : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [vars : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [values : (__tl_dyn-array bool) (__tl_make-array bool count)]
+    [idoms : (__tl_dyn-array i64) doms.idom]
+    [i : i64 0]
+    (begin
+      (while (< i count)
+        (begin
+          (set! (array-ref heads i) (- 0 1))
+          (set! (array-ref links i) (- 0 1))
+          (set! (array-ref vars i) (- 0 1))
+          (set! i (+ i 1))))
+      ;; Reverse post-order puts every dominator ahead of what it dominates.
+      (set! i 0)
+      (while (< i index.reach-count)
+        (let
+          [id : i64 (array-ref index.rpo i)]
+          [idom : i64
+            (if (< id (array-length idoms))
+              (array-ref idoms id)
+              (- 0 1))]
+          [inherited : i64
+            (if (and (>= idom 0) (not (= idom id)))
+              (array-ref heads idom)
+              (- 0 1))]
+          [pred : i64
+            (opt-flag-facts-sole-pred
+              (compiler-opt-global-shared-view index)
+              id)]
+          [label : i64 (array-ref index.labels id)]
+          [side : i64
+            (if (< pred 0)
+              (- 0 1)
+              (match (opt-cfg-index-block
+                (compiler-opt-global-shared-view index)
+                pred)
+                [(OptMaybeBlock.No) (- 0 1)]
+                [(OptMaybeBlock.Some block)
+                  (match block
+                    [(ir.CompilerIrBlock.Block _ instrs)
+                      (let
+                        [n : i64 (ir.compiler-ir-instr-seq-count instrs)]
+                        (if (< n 1)
+                          (- 0 1)
+                          (match (ir.compiler-ir-instr-seq-ref instrs (- n 1))
+                            [(ir.CompilerIrInstr.Branch
+                                (ir.CompilerIrValue.Var var)
+                                true-label
+                                false-label)
+                              (cond
+                                [(or
+                                    (= true-label false-label)
+                                    (not
+                                      (opt-gvn-stable-var?
+                                        (compiler-opt-global-shared-view
+                                          sources)
+                                        var)))
+                                  (- 0 1)]
+                                [(= label true-label)
+                                  (begin
+                                    (set! (array-ref vars id) var)
+                                    1)]
+                                [(= label false-label)
+                                  (begin
+                                    (set! (array-ref vars id) var)
+                                    0)]
+                                [else (- 0 1)])]
+                            [_ (- 0 1)])))])]))]
+          (begin
+            (if (< side 0)
+              (set! (array-ref heads id) inherited)
+              (begin
+                (set! (array-ref values id) (= side 1))
+                (set! (array-ref links id) inherited)
+                (set! (array-ref heads id) id)))
+            (set! i (+ i 1)))))
+      (OptFlagFacts heads links vars values))))
+
+(define (opt-flag-facts-value
+  [facts : OptFlagFacts]
+  [id : i64]
+  [value : ir.CompilerIrValue]) : ir.CompilerIrValue
+  (match (compiler-opt-global-shared-view value)
+    [(ir.CompilerIrValue.Var var)
+      (let
+        [known : i64 (opt-flag-facts-lookup facts id var)]
+        (if (< known 0)
+          value
+          (ir.CompilerIrValue.Bool (= known 1))))]
+    [_ value]))
+
+(define (opt-flag-facts-rewrite-instrs
+  [index : OptCfgIndex]
+  [doms : OptDomInfo]
+  [facts : OptFlagFacts]
+  [id : i64]
+  [branches? : bool]
+  [seeds? : bool]
+  [instrs : ir.CompilerIrInstrSeq]
+  [changed : (__tl_dyn-array bool)]) : ir.CompilerIrInstrSeq
+  (let
+    [count : i64
+      (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs))]
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity (+ count 1))]
+    [pos : i64 0]
+    (begin
+      (while (< pos count)
+        (let
+          [instr : ir.CompilerIrInstr
+            (ir.compiler-ir-instr-seq-ref
+              (compiler-opt-global-shared-view instrs)
+              pos)]
+          (begin
+            (match (compiler-opt-global-shared-view instr)
+              [(ir.CompilerIrInstr.Branch
+                  (ir.CompilerIrValue.Var var)
+                  true-label
+                  false-label)
+                (let
+                  [known : i64
+                    (if branches?
+                      (opt-flag-facts-lookup
+                        (compiler-opt-global-shared-view facts)
+                        id
+                        var)
+                      (- 0 1))]
+                  (if (< known 0)
+                    (ir.compiler-ir-instr-builder-push! (&mut builder) instr)
+                    (begin
+                      (set! (array-ref changed 0) true)
+                      (ir.compiler-ir-instr-builder-push!
+                        (&mut builder)
+                        (ir.CompilerIrInstr.Branch
+                          (ir.CompilerIrValue.Bool (= known 1))
+                          true-label
+                          false-label)))))]
+              [(ir.CompilerIrInstr.Phi dst inputs ty)
+                (let
+                  [n : i64
+                    (ir.compiler-ir-phi-input-seq-count
+                      (compiler-opt-global-shared-view inputs))]
+                  [out : ir.CompilerIrPhiInputBuilder
+                    (ir.compiler-ir-phi-input-builder-with-capacity (+ n 1))]
+                  [k : i64 0]
+                  [hit : bool false]
+                  ;; A loop header: some input arrives on a back edge, from a
+                  ;; block this one dominates.
+                  [header? : bool
+                    (and
+                      seeds?
+                      (let
+                        [j : i64 0]
+                        [found : bool false]
+                        (begin
+                          (while (and (not found) (< j n))
+                            (begin
+                              (match (opt-cfg-index-id
+                                (compiler-opt-global-shared-view index)
+                                (ir.compiler-ir-phi-input-seq-ref
+                                  (compiler-opt-global-shared-view inputs)
+                                  j).label)
+                                [(option_i64.Some pred)
+                                  (if (opt-dom-info-dominates-id?
+                                    (compiler-opt-global-shared-view doms)
+                                    id
+                                    pred)
+                                    (set! found true)
+                                    unit)]
+                                [(option_i64.None) unit])
+                              (set! j (+ j 1))))
+                          found)))]
+                  (begin
+                    (while (< k n)
+                      (let
+                        [input : ir.CompilerIrPhiInput
+                          (ir.compiler-ir-phi-input-seq-ref
+                            (compiler-opt-global-shared-view inputs)
+                            k)]
+                        [from : i64
+                          (match (opt-cfg-index-id
+                            (compiler-opt-global-shared-view index)
+                            input.label)
+                            [(option_i64.Some pred) pred]
+                            [(option_i64.None) (- 0 1)])]
+                        [value : ir.CompilerIrValue
+                          (if (and
+                            header?
+                            (>= from 0)
+                            (not
+                              (opt-dom-info-dominates-id?
+                                (compiler-opt-global-shared-view doms)
+                                id
+                                from)))
+                            (opt-flag-facts-value
+                              (compiler-opt-global-shared-view facts)
+                              from
+                              (compiler-opt-global-shared-view input.value))
+                            (compiler-opt-global-shared-view input.value))]
+                        (begin
+                          (if (opt-value-eq
+                            (compiler-opt-global-shared-view value)
+                            (compiler-opt-global-shared-view input.value))
+                            unit
+                            (set! hit true))
+                          (ir.compiler-ir-phi-input-builder-push!
+                            (&mut out)
+                            (ir.CompilerIrPhiInput value input.label))
+                          (set! k (+ k 1)))))
+                    (if hit
+                      (begin
+                        (set! (array-ref changed 0) true)
+                        (ir.compiler-ir-instr-builder-push!
+                          (&mut builder)
+                          (ir.CompilerIrInstr.Phi
+                            dst
+                            (ir.compiler-ir-phi-input-builder-to-seq out)
+                            ty)))
+                      (ir.compiler-ir-instr-builder-push! (&mut builder) instr))))]
+              [_ (ir.compiler-ir-instr-builder-push! (&mut builder) instr)])
+            (set! pos (+ pos 1)))))
+      (ir.compiler-ir-instr-builder-to-seq builder))))
+
+;; The rewrite over the whole function: branch conditions everywhere when
+;; `branches?`, and the forward-edge seeds of the loop header labelled
+;; `seed-header` (or none, at -1). `blocks` is returned untouched, not rebuilt,
+;; when nothing changes.
+(define (opt-flag-facts-rewrite-with
+  [index : OptCfgIndex]
+  [doms : OptDomInfo]
+  [facts : OptFlagFacts]
+  [branches? : bool]
+  [seed-header : i64]
+  [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
+  (opt-flag-facts-rewrite-with-changed
+    index
+    doms
+    facts
+    branches?
+    seed-header
+    blocks
+    (__tl_make-array bool 1)))
+
+(define (opt-flag-facts-rewrite-with-changed
+  [index : OptCfgIndex]
+  [doms : OptDomInfo]
+  [facts : OptFlagFacts]
+  [branches? : bool]
+  [seed-header : i64]
+  [blocks : ir.CompilerIrBlockList]
+  [changed : (__tl_dyn-array bool)]) : ir.CompilerIrBlockList
+  (let
+    [seq : ir.CompilerIrBlockSeq
+      (ir.compiler-ir-block-seq-from-list
+        (compiler-opt-global-shared-view blocks))]
+    [count : i64
+      (ir.compiler-ir-block-seq-count (compiler-opt-global-shared-view seq))]
+    [builder : ir.CompilerIrBlockBuilder
+      (ir.compiler-ir-block-builder-with-capacity (+ count 1))]
+    [i : i64 0]
+    (begin
+      (while (< i count)
+        (begin
+          (match (ir.compiler-ir-block-seq-ref
+            (compiler-opt-global-shared-view seq)
+            i)
+            [(ir.CompilerIrBlock.Block label instrs)
+              (let
+                [id : i64
+                  (match (opt-cfg-index-id
+                    (compiler-opt-global-shared-view index)
+                    label)
+                    [(option_i64.Some found) found]
+                    [(option_i64.None) (- 0 1)])]
+                [seeds? : bool (= label seed-header)]
+                (ir.compiler-ir-block-builder-push!
+                  (&mut builder)
+                  (ir.CompilerIrBlock.Block
+                    label
+                    (if (or (< id 0) (not (or branches? seeds?)))
+                      instrs
+                      (opt-flag-facts-rewrite-instrs
+                        (compiler-opt-global-shared-view index)
+                        (compiler-opt-global-shared-view doms)
+                        (compiler-opt-global-shared-view facts)
+                        id
+                        branches?
+                        seeds?
+                        instrs
+                        (compiler-opt-global-shared-view changed))))))])
+          (set! i (+ i 1))))
+      (if (array-ref changed 0)
+        (ir.compiler-ir-block-builder-to-list builder)
+        blocks))))
+
+;; Any block that learns a fact at all?
+(define (opt-flag-facts-any? [facts : OptFlagFacts]) : bool
+  (let
+    [vars : (__tl_dyn-array i64) facts.var]
+    [i : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< i (array-length vars)))
+        (begin
+          (if (>= (array-ref vars i) 0)
+            (set! found true)
+            unit)
+          (set! i (+ i 1))))
+      found)))
+
+;; The dominated-branch half, run from bounds_dom: a re-test of a flag its own
+;; dominating test decided becomes `branch <literal>`, which cfg folds -- it
+;; only ever removes work. Seeds are NOT rewritten here: a literal seed on a
+;; loop flag_exit then does not convert costs a `mov $1` the var did not
+;; (peephole_lines' `pl-decimal-valid?`), so seeds are flag_exit's to try, one
+;; loop at a time (opt-flag-exit-convert-loops).
+(define (opt-flag-facts-rewrite-blocks
+  [index : OptCfgIndex]
+  [doms : OptDomInfo]
+  [sources : OptValueSources]
+  [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
+  (let
+    ;; The dense block values are read for each predecessor's terminator, so
+    ;; they must be this list's, not whatever the context last indexed.
+    [_refresh : unit
+      (opt-cfg-index-refresh-blocks!
+        (compiler-opt-global-shared-view index)
+        (compiler-opt-global-shared-view blocks))]
+    [facts : OptFlagFacts
+      (opt-flag-facts-build
+        (compiler-opt-global-shared-view index)
+        (compiler-opt-global-shared-view doms)
+        (compiler-opt-global-shared-view sources))]
+    (if (not (opt-flag-facts-any? (compiler-opt-global-shared-view facts)))
+      blocks
+      (opt-flag-facts-rewrite-with index doms facts true (- 0 1) blocks))))
+
+;; The seed half, for one loop: the forward-edge seeds of the header labelled
+;; `header`, from the facts `blocks` itself establishes. flag_exit asks for it
+;; only for a loop it could not plan as written, and keeps the result only if
+;; the loop then converts.
+(defenum OptFlagSeeded
+  (No)
+  (Some ir.CompilerIrBlockList))
+
+(define (opt-flag-facts-rewrite-seeds
+  [index : OptCfgIndex]
+  [doms : OptDomInfo]
+  [sources : OptValueSources]
+  [header : i64]
+  [blocks : ir.CompilerIrBlockList]) : OptFlagSeeded
+  (let
+    [_refresh : unit
+      (opt-cfg-index-refresh-blocks!
+        (compiler-opt-global-shared-view index)
+        (compiler-opt-global-shared-view blocks))]
+    [facts : OptFlagFacts
+      (opt-flag-facts-build
+        (compiler-opt-global-shared-view index)
+        (compiler-opt-global-shared-view doms)
+        (compiler-opt-global-shared-view sources))]
+    [changed : (__tl_dyn-array bool) (__tl_make-array bool 1)]
+    (if (not (opt-flag-facts-any? (compiler-opt-global-shared-view facts)))
+      (OptFlagSeeded.No)
+      (let
+        [out : ir.CompilerIrBlockList
+          (opt-flag-facts-rewrite-with-changed
+            index
+            doms
+            facts
+            false
+            header
+            blocks
+            (compiler-opt-global-shared-view changed))]
+        (if (array-ref changed 0)
+          (OptFlagSeeded.Some out)
+          (OptFlagSeeded.No))))))
+
 (define (opt-bounds-dom-blocks-with-context-result
+  [type-segment-bases : i64]
+  [context : OptCfgContext]
+  [params : ir.CompilerIrParamSeq]
+  [frame : i64]
+  [nonneg : opt_i64_i64_map.Map]
+  [len-eq : OptLenEqUse]
+  [blocks : ir.CompilerIrBlockList]) : OptBoundsDomResult
+  (let
+    [flagged : ir.CompilerIrBlockList
+      (opt-flag-facts-rewrite-blocks
+        (compiler-opt-global-shared-view context.index)
+        (compiler-opt-global-shared-view context.doms)
+        (opt-gvn-sources-blocks
+          (compiler-opt-global-shared-view blocks)
+          (opt-gvn-sources-params
+            (compiler-opt-global-shared-view params)
+            (opt-value-sources-new)))
+        blocks)]
+    (opt-bounds-dom-blocks-with-context-result-core
+      type-segment-bases
+      context
+      params
+      frame
+      nonneg
+      len-eq
+      flagged)))
+
+(define (opt-bounds-dom-blocks-with-context-result-core
   [type-segment-bases : i64]
   [context : OptCfgContext]
   [params : ir.CompilerIrParamSeq]
@@ -100963,10 +101770,7 @@
 ;; benchmark, against a base compiler that produces no nested clone anywhere in
 ;; the corpus.
 (define (opt-bce-mb-label-in-clone? [label : i64]) : bool
-  (let
-    [text : String (ir.compiler-ir-label-text label)]
-    [marker : String "__bce_fast"]
-    (string.contains (& text) (& marker))))
+  (opt-label-has-marker? label (opt-label-marker-bce-fast)))
 
 ;; Idempotence: no fast-clone label may already exist.
 (define (opt-bce-mb-fast-labels-fresh?
@@ -113844,13 +114648,11 @@
   (match (compiler-opt-global-shared-view labels)
     [(OptLabelSet.Nil) true]
     [(OptLabelSet.Dense _ _)
-      (let
-        [label : i64 (opt-label-ref (compiler-opt-global-shared-view labels) 0)]
-        [marker : String "__bce_fast"]
-        [text : String (ir.compiler-ir-label-text label)]
-        (and
-          (string.contains (& text) (& marker))
-          (opt-unroll-mb-all-fast-labels? (opt-label-tail labels))))]))
+      (and
+        (opt-label-has-marker?
+          (opt-label-ref (compiler-opt-global-shared-view labels) 0)
+          (opt-label-marker-bce-fast))
+        (opt-unroll-mb-all-fast-labels? (opt-label-tail labels)))]))
 
 (define (opt-unroll-mb-labels-fresh?
   [blocks : ir.CompilerIrBlockList]
@@ -114917,19 +115719,16 @@
     [(ir.CompilerIrBlockList.Cons block rest)
       (match block
         [(ir.CompilerIrBlock.Block label instrs)
-          (let
-            [marker : String "__bce_fast"]
-            [text : String (ir.compiler-ir-label-text label)]
-            (if (and
-              (string.contains (& text) (& marker))
-              (>
-                (ir.compiler-ir-instr-seq-count
-                  (compiler-opt-global-shared-view instrs))
-                0)
-              (ir.compiler-ir-instr-seq-phi? instrs 0))
-              true
-              (opt-unroll-mb-blocks-have-fast-phi?
-                (compiler-opt-box-shared-view rest))))])]
+          (if (and
+            (opt-label-has-marker? label (opt-label-marker-bce-fast))
+            (>
+              (ir.compiler-ir-instr-seq-count
+                (compiler-opt-global-shared-view instrs))
+              0)
+            (ir.compiler-ir-instr-seq-phi? instrs 0))
+            true
+            (opt-unroll-mb-blocks-have-fast-phi?
+              (compiler-opt-box-shared-view rest)))])]
     [(ir.CompilerIrBlockList.Array seq)
       (opt-unroll-mb-blocks-have-fast-phi?
         (ir.compiler-ir-block-seq-to-list seq))]))
@@ -131907,13 +132706,23 @@
                       (compiler-opt-global-shared-view final)))]
                 ;; IV-AFF: derived counters, after the unswitch has shaped the
                 ;; loops it wanted and before the last CFG cleanup.
-                [counted : ir.CompilerIrFunction
+                [derived : ir.CompilerIrFunction
                   (compiler-opt-debug-observe-function
                     type-segment-bases
                     "iv_aff"
                     (opt-iv-aff-final
                       type-segment-bases
                       (compiler-opt-global-shared-view unswitched)))]
+                ;; A wide power-of-two global multiply becomes a shift only
+                ;; here, after every pass that treats a shift as a possible
+                ;; abort (opt-const-global-mul-shift-final).
+                [counted : ir.CompilerIrFunction
+                  (compiler-opt-debug-observe-function
+                    type-segment-bases
+                    "mul_shift"
+                    (opt-const-global-mul-shift-final
+                      (compiler-opt-global-shared-view summaries.const-divisors)
+                      (compiler-opt-global-shared-view derived)))]
                 [unswitch-changed : bool
                   (not
                     (opt-function-eq
@@ -143186,6 +143995,99 @@
 (define (opt-inline-checked-generation-current) : i64
   opt-inline-checked-generation)
 
+;; --- callee-plan memo ---------------------------------------------------------
+;; A verdict prices the callee by optimizing its body alone and reading the plan
+;; at the site's depth (opt-inline-checked-plan-cost-at, whose entry-weight
+;; argument is unused). The same callee is priced at many sites, and in bottom-up
+;; SCC order its body is usually already final: one run per distinct body and
+;; depth answers them all. Entries hold the priced body itself -- a view into the
+;; inline stage's function index, whose bodies (replaced ones included) live until
+;; the stage ends -- and match structurally with opt-function-eq, so a body that
+;; changed is priced afresh. The memo is emptied whenever the checked tier begins
+;; a program and when an inline stage ends, so no entry outlives the stage that
+;; owns its body. The tables grow in the IR label arena (DELIBERATE-RAW #6620):
+;; verdicts run in a scratch arena that is rewound after each one.
+(define opt-inline-callee-cost-count : i64
+  0)
+(define opt-inline-callee-cost-funcs : (__tl_dyn-array ir.CompilerIrFunction)
+  (__tl_make-array ir.CompilerIrFunction 1))
+(define opt-inline-callee-cost-depths : (__tl_dyn-array i64)
+  (__tl_make-array i64 1))
+(define opt-inline-callee-cost-values : (__tl_dyn-array i64)
+  (__tl_make-array i64 1))
+
+(define (opt-inline-callee-cost-reset!) : unit
+  (set! opt-inline-callee-cost-count 0))
+
+(define (opt-inline-callee-cost-lookup
+  [type-segment-bases : i64]
+  [callee : ir.CompilerIrFunction]
+  [depth : i64]) : i64
+  (let
+    [i : i64 0]
+    (begin
+      (while (< i opt-inline-callee-cost-count)
+        (begin
+          (when
+            (and
+              (= (array-ref opt-inline-callee-cost-depths i) depth)
+              (opt-function-eq
+                type-segment-bases
+                (compiler-opt-global-array-element-shared-view
+                  opt-inline-callee-cost-funcs
+                  i)
+                (compiler-opt-global-shared-view callee)))
+            (return (array-ref opt-inline-callee-cost-values i)))
+          (set! i (+ i 1))))
+      (- 0 1))))
+
+(define (opt-inline-callee-cost-record!
+  [callee : ir.CompilerIrFunction]
+  [depth : i64]
+  [cost : i64]) : unit
+  (begin
+    (when
+      (>=
+        opt-inline-callee-cost-count
+        (array-length opt-inline-callee-cost-funcs))
+      (in-arena
+        (arena.Arena (ir.compiler-ir-label-arena))
+        (let
+          [size : i64 (* 2 (array-length opt-inline-callee-cost-funcs))]
+          [funcs : (__tl_dyn-array ir.CompilerIrFunction)
+            (__tl_make-array ir.CompilerIrFunction size)]
+          [depths : (__tl_dyn-array i64) (__tl_make-array i64 size)]
+          [values : (__tl_dyn-array i64) (__tl_make-array i64 size)]
+          [i : i64 0]
+          (begin
+            (while (< i opt-inline-callee-cost-count)
+              (begin
+                (set!
+                  (array-ref funcs i)
+                  (compiler-opt-global-array-element-shared-view
+                    opt-inline-callee-cost-funcs
+                    i))
+                (set!
+                  (array-ref depths i)
+                  (array-ref opt-inline-callee-cost-depths i))
+                (set!
+                  (array-ref values i)
+                  (array-ref opt-inline-callee-cost-values i))
+                (set! i (+ i 1))))
+            (set! opt-inline-callee-cost-funcs funcs)
+            (set! opt-inline-callee-cost-depths depths)
+            (set! opt-inline-callee-cost-values values)))))
+    (set!
+      (array-ref opt-inline-callee-cost-funcs opt-inline-callee-cost-count)
+      (compiler-opt-global-shared-view callee))
+    (set!
+      (array-ref opt-inline-callee-cost-depths opt-inline-callee-cost-count)
+      depth)
+    (set!
+      (array-ref opt-inline-callee-cost-values opt-inline-callee-cost-count)
+      cost)
+    (set! opt-inline-callee-cost-count (+ opt-inline-callee-cost-count 1))))
+
 (define (opt-inline-checked-program-begin!) : unit
   (begin
     (set! opt-inline-checked-budget (opt-inline-checked-program-budget))
@@ -143193,6 +144095,7 @@
       opt-inline-checked-relaxed-budget
       (opt-inline-checked-relaxed-program-budget))
     (set! opt-inline-caller-checked-taken? false)
+    (opt-inline-callee-cost-reset!)
     (opt-inline-checked-caller-begin!)))
 
 ;; Arm (or disarm) the tier. The whole-program optimizer entries arm it; a
@@ -144517,12 +145420,28 @@
     ;; site's depth, its prologue and its spill traffic once per site
     ;; execution.
     [callee-cost : i64
-      (opt-inline-checked-plan-cost-at
-        (compiler-opt-global-shared-view pools)
-        type-segment-bases
-        (compiler-opt-global-shared-view callee)
-        site-depth
-        site-weight)]
+      (let
+        [memo : i64
+          (opt-inline-callee-cost-lookup
+            type-segment-bases
+            (compiler-opt-global-shared-view callee)
+            site-depth)]
+        (if (>= memo 0)
+          memo
+          (let
+            [priced : i64
+              (opt-inline-checked-plan-cost-at
+                (compiler-opt-global-shared-view pools)
+                type-segment-bases
+                (compiler-opt-global-shared-view callee)
+                site-depth
+                site-weight)]
+            (begin
+              (opt-inline-callee-cost-record!
+                (compiler-opt-global-shared-view callee)
+                site-depth
+                priced)
+              priced))))]
     ;; INL-18: what the site's literal arguments fold out of the callee, priced
     ;; on the callee alone with those parameters pinned. A free inline of such
     ;; a site saves the boundary AND this, so the cap is read against both.
@@ -149343,6 +150262,7 @@
             (opt-inline-synth-reset!)
             (opt-inline-owned-state-reset! true)
             (opt-pure-call-inline-memory-reset!)
+            (opt-inline-callee-cost-reset!)
             out))))))
 
 (define (opt-inline-program-functions-with-spans
@@ -149399,6 +150319,7 @@
         (opt-inline-synth-reset!)
         (opt-inline-owned-state-reset! true)
         (opt-pure-call-inline-memory-reset!)
+        (opt-inline-callee-cost-reset!)
         out))))
 
 (define (opt-function-seq-defines-from?
@@ -153267,7 +154188,8 @@
   [functions : ir.CompilerIrFunctionSeq]) : opt_i64_i64_map.Map
   (opt-const-globals-disqualified-from disq functions 0))
 
-;; A constant only earns substitution when it fits a signed 32-bit immediate, so
+;; An ordinary operand only earns substitution when it fits a signed 32-bit
+;; immediate, so
 ;; the backend can fold it directly into the instruction (`and reg, $imm32`)
 ;; instead of loading it. A wider constant has to be materialized into a
 ;; register with `movabs` at every use, and -- decisively -- the global form it
@@ -153306,12 +154228,18 @@
 ;; No variant is a net win and each moves a row by more than the 0.05% this
 ;; tree gates on, so the rule stays until the allocator can rematerialize a
 ;; `movabs`.
+;;
+;; A narrow exception is a positive wide power of two used by a 64-bit multiply:
+;; consume it as a shift count in [31, 62], so no wide literal is materialized.
+;; The table retains those powers, but ordinary substitutions still check imm32.
 (define (opt-const-globals-imm32-fits? [n : i64]) : bool
   (and (>= n (- 0 2147483648)) (<= n 2147483647)))
 
 ;; Build the constant table: literal `CompilerIrValue.I64` globals that are not
 ;; disqualified (stored anywhere / address-taken anywhere) and are
-;; imm32-encodable. ZERO is a member like any other value. It used to be
+;; imm32-encodable or positive powers of two. Wide powers are consumed only by
+;; the multiply-to-shift rewrite; all ordinary positions retain the imm32 gate.
+;; ZERO is a member like any other value. It used to be
 ;; excluded here so a substituted divisor could never become a literal `0`, but
 ;; that is a property of the DIVISOR POSITION and not of the global, so the
 ;; refusal now lives at the substitution site
@@ -153355,7 +154283,10 @@
           (match value
             [(ir.CompilerIrValue.I64 n)
               (if (or
-                (not (opt-const-globals-imm32-fits? n))
+                (not
+                  (or
+                    (opt-const-globals-imm32-fits? n)
+                    (opt-bounds-dom-positive-power-of-two? n)))
                 (opt_i64_i64_map.contains?
                   (& disq)
                   (ir.compiler-ir-symbol-id name)))
@@ -154963,7 +155894,10 @@
       (match (opt_i64_i64_map.get
         (& const-divisors)
         (ir.compiler-ir-symbol-id name))
-        [(opt_i64_i64_map.LookupFound n) (ir.CompilerIrValue.I64 n)]
+        [(opt_i64_i64_map.LookupFound n)
+          (if (opt-const-globals-imm32-fits? n)
+            (ir.CompilerIrValue.I64 n)
+            v)]
         [(opt_i64_i64_map.LookupMissing) v])]
     [_ v]))
 
@@ -155008,6 +155942,284 @@
     (opt-const-global-subst-divisor-value const-divisors v)
     (opt-const-global-subst-value const-divisors v)))
 
+(define (opt-const-global-wide-power-shift [value : ir.CompilerIrValue]) : i64
+  (match value
+    [(ir.CompilerIrValue.I64 n)
+      (if (and (> n 2147483647) (opt-bounds-dom-positive-power-of-two? n))
+        (let
+          [power : i64 n]
+          [shift : i64 0]
+          (begin
+            (while (> power 1)
+              (begin
+                (set! power (shr power 1))
+                (set! shift (+ shift 1))))
+            shift))
+        -1)]
+    [_ -1]))
+
+;; --- wide power-of-two multiply as a shift (final slot) -----------------------
+;;
+;; A 64-bit multiply by a never-written global whose literal is a positive power
+;; of two past imm32 (2^31 .. 2^62) is the shift by its exponent: wrapping
+;; multiplication and a left shift compute the same low 64 bits for every
+;; input, signed or unsigned. Without this the multiplier is a `movabs` held in
+;; a register and the product an `imul`, three cycles of latency on a serial
+;; recurrence where the shift is one (benchmarks/mul_wide_power).
+;;
+;; WHY THE FINAL SLOT. The early constant-global rewrite keeps a wide literal
+;; out of every operand, so until here the product is a `Mul` of a Global
+;; operand: a pure, non-trapping BinOp. An IR `Shl` is not one to the passes
+;; that ask opt-binop-traps? -- LICM, rotation, DCE, range analysis all treat
+;; every shift as a possible abort -- so rewriting early made them keep an
+;; invariant product in its loop, leave a loop unrotated and a dead product in
+;; place. After unswitch and the derived-counter pass no pass that asks that
+;; question runs on the function, and the whole-program inline stage ran
+;; before any of this, so the shift is never re-examined as a hazard. The count
+;; is a literal in [31, 62], valid for the 64-bit operand: the shift cannot
+;; abort at run time either.
+;;
+;; The multiplier is recognized as the Global operand itself, or through the
+;; single-definition copy global-cell promotion leaves in a preheader. The other
+;; operand must not be a literal: `c * g` is a constant, and as a shift of two
+;; literals a later fold turns it into a wide literal that a loop then
+;; rematerializes on every trip, where the `imul` of the hoisted product ran
+;; once.
+(define (opt-const-global-mul-shift-power
+  [constants : opt_i64_i64_map.Map]
+  [copies : opt_i64_i64_map.Map]
+  [counts : opt_i64_i64_map.Map]
+  [value : ir.CompilerIrValue]) : i64
+  (let
+    [symbol : i64
+      (match (compiler-opt-global-shared-view value)
+        [(ir.CompilerIrValue.Global name) (ir.compiler-ir-symbol-id name)]
+        [(ir.CompilerIrValue.Var var)
+          (match (opt_i64_i64_map.get (& counts) var)
+            [(opt_i64_i64_map.LookupFound 1)
+              (match (opt_i64_i64_map.get (& copies) var)
+                [(opt_i64_i64_map.LookupFound id) id]
+                [_ (- 0 1)])]
+            [_ (- 0 1)])]
+        [_ (- 0 1)])]
+    (if (< symbol 0)
+      (- 0 1)
+      (match (opt_i64_i64_map.get (& constants) symbol)
+        [(opt_i64_i64_map.LookupFound n)
+          (opt-const-global-wide-power-shift (ir.CompilerIrValue.I64 n))]
+        [_ (- 0 1)]))))
+
+(define (opt-const-global-mul-shift-literal? [value : ir.CompilerIrValue]) : bool
+  (match (compiler-opt-global-shared-view value)
+    [(ir.CompilerIrValue.I64 _) true]
+    [_ false]))
+
+;; One instruction: an i64/u64 `Mul` with a wide-power multiplier on either side
+;; becomes `Shl` of the other operand; everything else is returned as is.
+(define (opt-const-global-mul-shift-instr
+  [constants : opt_i64_i64_map.Map]
+  [copies : opt_i64_i64_map.Map]
+  [counts : opt_i64_i64_map.Map]
+  [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
+  (match (compiler-opt-global-shared-view instr)
+    [(ir.CompilerIrInstr.BinOp dst op lhs rhs ty)
+      (if (and
+        (opt-binop-eq
+          (compiler-opt-global-shared-view op)
+          (ir.CompilerIrBinOp.Mul))
+        (match (compiler-opt-global-shared-view ty)
+          [(ast.AstType.I64) true]
+          [(ast.AstType.U64) true]
+          [_ false]))
+        (let
+          [right : i64
+            (opt-const-global-mul-shift-power
+              (compiler-opt-global-shared-view constants)
+              (compiler-opt-global-shared-view copies)
+              (compiler-opt-global-shared-view counts)
+              (compiler-opt-global-shared-view rhs))]
+          [left : i64
+            (opt-const-global-mul-shift-power
+              (compiler-opt-global-shared-view constants)
+              (compiler-opt-global-shared-view copies)
+              (compiler-opt-global-shared-view counts)
+              (compiler-opt-global-shared-view lhs))]
+          (cond
+            [(opt-const-global-mul-shift-literal?
+                (compiler-opt-global-shared-view lhs))
+              instr]
+            [(opt-const-global-mul-shift-literal?
+                (compiler-opt-global-shared-view rhs))
+              instr]
+            [(>= right 0)
+              (ir.CompilerIrInstr.BinOp
+                dst
+                (ir.CompilerIrBinOp.Shl (ast.AstType.I64))
+                lhs
+                (ir.CompilerIrValue.I64 right)
+                ty)]
+            [(>= left 0)
+              (ir.CompilerIrInstr.BinOp
+                dst
+                (ir.CompilerIrBinOp.Shl (ast.AstType.I64))
+                rhs
+                (ir.CompilerIrValue.I64 left)
+                ty)]
+            [else instr]))
+        instr)]
+    [_ instr]))
+
+;; var -> global symbol id for `Mov var (Global g)`, and var -> definition count.
+(define (opt-const-global-mul-shift-scan!
+  [copies : opt_i64_i64_map.Map]
+  [counts : opt_i64_i64_map.Map]
+  [blocks : ir.CompilerIrBlockList]) : unit
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (begin
+        (match (compiler-opt-global-shared-view block)
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (let
+              [count : i64
+                (ir.compiler-ir-instr-seq-count
+                  (compiler-opt-global-shared-view instrs))]
+              [index : i64 0]
+              (while (< index count)
+                (let
+                  [instr : ir.CompilerIrInstr
+                    (ir.compiler-ir-instr-seq-ref instrs index)]
+                  (begin
+                    (match (opt-instr-def-var
+                      (compiler-opt-global-shared-view instr))
+                      [(option_i64.Some var)
+                        (opt_i64_i64_map.insert-ref!
+                          (&mut counts)
+                          var
+                          (match (opt_i64_i64_map.get (& counts) var)
+                            [(opt_i64_i64_map.LookupFound n) (+ n 1)]
+                            [_ 1]))]
+                      [(option_i64.None) unit])
+                    (match instr
+                      [(ir.CompilerIrInstr.Mov
+                          dst
+                          (ir.CompilerIrValue.Global name)
+                          _)
+                        (opt_i64_i64_map.insert-ref!
+                          (&mut copies)
+                          dst
+                          (ir.compiler-ir-symbol-id name))]
+                      [_ unit])
+                    (set! index (+ index 1))))))])
+        (opt-const-global-mul-shift-scan!
+          copies
+          counts
+          (compiler-opt-box-shared-view rest)))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-const-global-mul-shift-scan!
+        copies
+        counts
+        (ir.compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-const-global-mul-shift-count-params!
+  [counts : opt_i64_i64_map.Map]
+  [params : ir.CompilerIrParamSeq]) : unit
+  (let
+    [position : i64 0]
+    (while (< position params.len)
+      (begin
+        (match (ir.compiler-ir-param-seq-ref
+          (compiler-opt-global-shared-view params)
+          position)
+          [(ir.CompilerIrParam.Param _ _ var)
+            (opt_i64_i64_map.insert-ref!
+              (&mut counts)
+              var
+              (match (opt_i64_i64_map.get (& counts) var)
+                [(opt_i64_i64_map.LookupFound n) (+ n 1)]
+                [_ 1]))])
+        (set! position (+ position 1))))))
+
+(define (opt-const-global-mul-shift-blocks
+  [constants : opt_i64_i64_map.Map]
+  [copies : opt_i64_i64_map.Map]
+  [counts : opt_i64_i64_map.Map]
+  [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) (ir.CompilerIrBlockList.Nil)]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match (compiler-opt-global-shared-view block)
+        [(ir.CompilerIrBlock.Block label instrs)
+          (let
+            [count : i64
+              (ir.compiler-ir-instr-seq-count
+                (compiler-opt-global-shared-view instrs))]
+            [builder : ir.CompilerIrInstrBuilder
+              (ir.compiler-ir-instr-builder-with-capacity count)]
+            [index : i64 0]
+            (begin
+              (while (< index count)
+                (begin
+                  (ir.compiler-ir-instr-builder-push!
+                    (&mut builder)
+                    (opt-const-global-mul-shift-instr
+                      (compiler-opt-global-shared-view constants)
+                      (compiler-opt-global-shared-view copies)
+                      (compiler-opt-global-shared-view counts)
+                      (ir.compiler-ir-instr-seq-ref instrs index)))
+                  (set! index (+ index 1))))
+              (ir.compiler-ir-block-cons
+                (ir.CompilerIrBlock.Block
+                  label
+                  (ir.compiler-ir-instr-builder-to-seq builder))
+                (opt-const-global-mul-shift-blocks
+                  constants
+                  copies
+                  counts
+                  (compiler-opt-box-shared-view rest)))))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-const-global-mul-shift-blocks
+        constants
+        copies
+        counts
+        (ir.compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-const-global-mul-shift-final
+  [constants : opt_i64_i64_map.Map]
+  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  (if (= (opt_i64_i64_map.len (& constants)) 0)
+    func
+    (match (compiler-opt-global-shared-view func)
+      [(ir.CompilerIrFunction.Function
+          name
+          params
+          ret-ty
+          frame
+          blocks
+          function-abi)
+        (let
+          [copies : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 8)]
+          [counts : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 64)]
+          (begin
+            ;; A parameter is a definition too. When SSA construction fell
+            ;; back, `(set! x g)` on a parameter is `%x = mov @g` in place, the
+            ;; only definition the block scan sees, and a use of %x before it
+            ;; still reads the argument.
+            (opt-const-global-mul-shift-count-params!
+              (compiler-opt-global-shared-view counts)
+              (compiler-opt-global-shared-view params))
+            (opt-const-global-mul-shift-scan!
+              (compiler-opt-global-shared-view copies)
+              (compiler-opt-global-shared-view counts)
+              (compiler-opt-global-shared-view blocks))
+            (ir.CompilerIrFunction.Function
+              name
+              params
+              ret-ty
+              frame
+              (opt-const-global-mul-shift-blocks constants copies counts blocks)
+              function-abi)))])))
+
 ;; The early rewrite substitutes every scalar operand position whose literal
 ;; the round-1 local fold and the loop passes can both consume: BinOp operands
 ;; (compare operands feeding branches included), UnOp sources, Cast/Bitcast
@@ -155026,6 +156238,10 @@
 ;; other passes). Load/StorePtr/Gep and the vector arms keep the global's
 ;; hidden-load form: their operand is an address or a descriptor pointer, not
 ;; a scalar the fold can use.
+;; A wide power-of-two global stays a Global operand here like every other
+;; wide constant: its multiply becomes a shift only in the final pipeline slot
+;; (opt-const-global-mul-shift-final), after every pass that reads
+;; opt-binop-traps? has seen it as the pure Mul it is.
 (define (opt-const-divisor-rewrite-instr
   [const-divisors : opt_i64_i64_map.Map]
   [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
@@ -182277,13 +183493,52 @@
           true))]
     [(ir.CompilerIrCallArgs.Sret _ _) false]))
 
+;; The vars whose address the function takes (`AddrOf`'s source). A pointer
+;; made by `ptr-addr-of` reads such a var's slot, so redefining it -- which
+;; before SSA is a plain `Mov` -- writes memory a cached call may read.
+(define (opt-loop-call-addr-taken
+  [frame : i64]
+  [blocks : ir.CompilerIrBlockList]) : (__tl_dyn-array bool)
+  (let
+    [taken : (__tl_dyn-array bool) (__tl_make-array bool (+ frame 1))]
+    [seq : ir.CompilerIrBlockSeq
+      (ir.compiler-ir-block-seq-from-list
+        (compiler-opt-global-shared-view blocks))]
+    [b : i64 0]
+    (begin
+      (while (< b seq.len)
+        (match (ir.compiler-ir-block-seq-ref
+          (compiler-opt-global-shared-view seq)
+          b)
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (let
+              [i : i64 0]
+              (begin
+                (while (< i instrs.len)
+                  (begin
+                    (match (ir.compiler-ir-instr-seq-ref
+                      (compiler-opt-global-shared-view instrs)
+                      i)
+                      [(ir.CompilerIrInstr.AddrOf _ src)
+                        (when
+                          (and (>= src 0) (< src (array-length taken)))
+                          (set! (array-ref taken src) true))]
+                      [_ unit])
+                    (set! i (+ i 1))))
+                (set! b (+ b 1))))]))
+      taken)))
+
 (define (opt-loop-call-readonly?
   [memory : opt_i64_i64_map.Map]
+  [addr-taken : (__tl_dyn-array bool)]
   [blocks : ir.CompilerIrBlockList]) : bool
   (match blocks
     [(ir.CompilerIrBlockList.Nil) true]
     [(ir.CompilerIrBlockList.Array seq)
-      (opt-loop-call-readonly? memory (ir.compiler-ir-block-seq-to-list seq))]
+      (opt-loop-call-readonly?
+        memory
+        addr-taken
+        (ir.compiler-ir-block-seq-to-list seq))]
     [(ir.CompilerIrBlockList.Cons block rest)
       (match block
         [(ir.CompilerIrBlock.Block _ instrs)
@@ -182309,9 +183564,24 @@
                             (compiler-opt-global-shared-view instrs)
                             i))
                         (return false))])
+                  ;; Any definition of an address-taken var is a store to its
+                  ;; slot (see opt-loop-call-addr-taken).
+                  (match (opt-instr-def-var
+                    (ir.compiler-ir-instr-seq-ref
+                      (compiler-opt-global-shared-view instrs)
+                      i))
+                    [(option_i64.Some var)
+                      (when
+                        (and
+                          (>= var 0)
+                          (< var (array-length addr-taken))
+                          (array-ref addr-taken var))
+                        (return false))]
+                    [(option_i64.None) unit])
                   (set! i (+ i 1))))
               (opt-loop-call-readonly?
                 memory
+                addr-taken
                 (compiler-opt-box-shared-view rest))))])]))
 
 (define (opt-loop-call-expensive? [functions : OptFunctionIndex] [name : i64]) : bool
@@ -182382,6 +183652,7 @@
   [functions : OptFunctionIndex]
   [memory : opt_i64_i64_map.Map]
   [defs : (__tl_dyn-array i64)]
+  [addr-taken : (__tl_dyn-array bool)]
   [loops : OptNaturalLoopList]) : OptLoopCallSite
   (match loops
     [(OptNaturalLoopList.Nil) (OptLoopCallSite.No)]
@@ -182396,6 +183667,7 @@
               (when
                 (opt-loop-call-readonly?
                   (compiler-opt-global-shared-view memory)
+                  (compiler-opt-global-shared-view addr-taken)
                   (compiler-opt-global-shared-view body))
                 (match (opt-loop-call-find-in-body
                   (compiler-opt-global-shared-view functions)
@@ -182416,6 +183688,7 @@
           functions
           memory
           defs
+          addr-taken
           (compiler-opt-box-shared-view rest)))]))
 
 (define (opt-loop-call-rewrite
@@ -182625,7 +183898,14 @@
             (opt-def-counts-blocks!
               (compiler-opt-global-shared-view defs)
               (opt-function-blocks (compiler-opt-global-shared-view func)))
-            (match (opt-loop-call-find functions memory defs loops)
+            (match (opt-loop-call-find
+              functions
+              memory
+              defs
+              (opt-loop-call-addr-taken
+                frame
+                (opt-function-blocks (compiler-opt-global-shared-view func)))
+              loops)
               [(OptLoopCallSite.No) func]
               [(OptLoopCallSite.Some pre site at)
                 (match (opt-cfg-index-find-block

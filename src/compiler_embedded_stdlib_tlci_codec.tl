@@ -438,74 +438,222 @@
         (CompilerEmbeddedStdlibTlciCodecBytes.Err
           "embedded stdlib tlci envelope: unexpected match huffman table")]
       [else
+        ;; The bit reader lives in locals and a symbol whose 16-bit prefix hits
+        ;; its table's direct entry is decoded right here, exactly as the first
+        ;; branch of decode-symbol would; every other symbol -- a longer code,
+        ;; or one within 16 bits of the stream's end -- goes through
+        ;; decode-symbol itself on a reader rebuilt from the locals. Once per
+        ;; symbol of a 16 MB image, the call, its Result and a reader behind a
+        ;; reference were most of a small program's compile.
         (let
           [out : (__tl_dyn-array u8) (__tl_make-array u8 raw-len)]
           [out-index : i64 0]
-          [reader : CompilerEmbeddedStdlibTlciBitReader
-            (CompilerEmbeddedStdlibTlciBitReader bit-start 0 0 0)]
+          [main-lookup : (__tl_dyn-array i64) main-table.lookup]
+          [distance-lookup : (__tl_dyn-array i64) distance-table.lookup]
+          [length-lookup : (__tl_dyn-array i64) length-table.lookup]
+          [fast-limit : i64
+            (- bit-len (compiler-embedded-stdlib-tlci-codec-lookup-bits))]
+          [next-byte : i64 bit-start]
+          [buffer : i64 0]
+          [available : i64 0]
+          [consumed : i64 0]
+          [stage : i64 0]
+          [symbol : i64 0]
+          [distance-symbol : i64 0]
           (begin
             (while (< out-index raw-len)
-              (match (compiler-embedded-stdlib-tlci-codec-decode-symbol
-                payload
-                bit-len
-                (&mut reader)
-                (& main-table))
-                [(ResultCompilerEmbeddedStdlibTlciHuffmanSymbol.Err message)
-                  (return (CompilerEmbeddedStdlibTlciCodecBytes.Err message))]
-                [(ResultCompilerEmbeddedStdlibTlciHuffmanSymbol.Ok symbol)
-                  (if (< symbol 256)
-                    (begin
-                      (set! (array-ref out out-index) (cast symbol : u8))
-                      (set! out-index (+ out-index 1)))
+              (begin
+                ;; stage 0: main symbol, 1: distance, 2: length
+                (set! symbol (- 0 1))
+                (when
+                  (and
+                    (<= consumed fast-limit)
+                    (> (array-length main-lookup) 0))
+                  (begin
+                    (while (< available 16)
+                      (begin
+                        (set!
+                          buffer
+                          (bit-or
+                            (shl buffer 8)
+                            (cast (array-ref payload next-byte) : i64)))
+                        (set! next-byte (+ next-byte 1))
+                        (set! available (+ available 8))))
                     (let
-                      [distance-symbol : i64
-                        (match (compiler-embedded-stdlib-tlci-codec-decode-symbol
-                          payload
-                          bit-len
-                          (&mut reader)
-                          (& distance-table))
-                          [(ResultCompilerEmbeddedStdlibTlciHuffmanSymbol.Err
-                              message)
-                            (return
-                              (CompilerEmbeddedStdlibTlciCodecBytes.Err message))]
-                          [(ResultCompilerEmbeddedStdlibTlciHuffmanSymbol.Ok
-                              value)
-                            value])]
-                      [length-symbol : i64
-                        (match (compiler-embedded-stdlib-tlci-codec-decode-symbol
-                          payload
-                          bit-len
-                          (&mut reader)
-                          (& length-table))
-                          [(ResultCompilerEmbeddedStdlibTlciHuffmanSymbol.Err
-                              message)
-                            (return
-                              (CompilerEmbeddedStdlibTlciCodecBytes.Err message))]
-                          [(ResultCompilerEmbeddedStdlibTlciHuffmanSymbol.Ok
-                              value)
-                            value])]
-                      [distance : i64 (+ distance-symbol 1)]
-                      [length : i64 (+ length-symbol 3)]
-                      (cond
-                        [(> distance out-index)
-                          (return
-                            (CompilerEmbeddedStdlibTlciCodecBytes.Err
-                              "embedded stdlib tlci envelope: backreference before output"))]
-                        [(> length (- raw-len out-index))
-                          (return
-                            (CompilerEmbeddedStdlibTlciCodecBytes.Err
-                              "embedded stdlib tlci envelope: backreference exceeds output"))]
-                        [else
-                          (let
-                            [copied : i64 0]
-                            (while (< copied length)
+                      [entry : i64
+                        (array-ref
+                          main-lookup
+                          (bit-and (shr buffer (- available 16)) 65535))]
+                      (when
+                        (> entry 0)
+                        (let
+                          [length : i64 (shr entry 13)]
+                          (begin
+                            (set! available (- available length))
+                            (set! consumed (+ consumed length))
+                            (set! symbol (- (bit-and entry 8191) 1))))))))
+                (when
+                  (< symbol 0)
+                  (let
+                    [reader : CompilerEmbeddedStdlibTlciBitReader
+                      (CompilerEmbeddedStdlibTlciBitReader
+                        next-byte
+                        buffer
+                        available
+                        consumed)]
+                    (match (compiler-embedded-stdlib-tlci-codec-decode-symbol
+                      payload
+                      bit-len
+                      (&mut reader)
+                      (& main-table))
+                      [(ResultCompilerEmbeddedStdlibTlciHuffmanSymbol.Err
+                          message)
+                        (return
+                          (CompilerEmbeddedStdlibTlciCodecBytes.Err message))]
+                      [(ResultCompilerEmbeddedStdlibTlciHuffmanSymbol.Ok value)
+                        (begin
+                          (set! symbol value)
+                          (set! next-byte reader.next-byte)
+                          (set! buffer reader.buffer)
+                          (set! available reader.available)
+                          (set! consumed reader.consumed))])))
+                (if (< symbol 256)
+                  (begin
+                    (set! (array-ref out out-index) (cast symbol : u8))
+                    (set! out-index (+ out-index 1)))
+                  (begin
+                    (set! stage 1)
+                    (while (> stage 0)
+                      (let
+                        [lookup : (__tl_dyn-array i64)
+                          (if (= stage 1)
+                            distance-lookup
+                            length-lookup)]
+                        [value : i64 (- 0 1)]
+                        (begin
+                          (when
+                            (and
+                              (<= consumed fast-limit)
+                              (> (array-length lookup) 0))
+                            (begin
+                              (while (< available 16)
+                                (begin
+                                  (set!
+                                    buffer
+                                    (bit-or
+                                      (shl buffer 8)
+                                      (cast (array-ref payload next-byte) : i64)))
+                                  (set! next-byte (+ next-byte 1))
+                                  (set! available (+ available 8))))
+                              (let
+                                [entry : i64
+                                  (array-ref
+                                    lookup
+                                    (bit-and
+                                      (shr buffer (- available 16))
+                                      65535))]
+                                (when
+                                  (> entry 0)
+                                  (let
+                                    [length : i64 (shr entry 13)]
+                                    (begin
+                                      (set! available (- available length))
+                                      (set! consumed (+ consumed length))
+                                      (set! value (- (bit-and entry 8191) 1))))))))
+                          (when
+                            (< value 0)
+                            (let
+                              [reader : CompilerEmbeddedStdlibTlciBitReader
+                                (CompilerEmbeddedStdlibTlciBitReader
+                                  next-byte
+                                  buffer
+                                  available
+                                  consumed)]
+                              (match (compiler-embedded-stdlib-tlci-codec-decode-symbol
+                                payload
+                                bit-len
+                                (&mut reader)
+                                (if (= stage 1)
+                                  (& distance-table)
+                                  (& length-table)))
+                                [(ResultCompilerEmbeddedStdlibTlciHuffmanSymbol.Err
+                                    message)
+                                  (return
+                                    (CompilerEmbeddedStdlibTlciCodecBytes.Err
+                                      message))]
+                                [(ResultCompilerEmbeddedStdlibTlciHuffmanSymbol.Ok
+                                    v)
+                                  (begin
+                                    (set! value v)
+                                    (set! next-byte reader.next-byte)
+                                    (set! buffer reader.buffer)
+                                    (set! available reader.available)
+                                    (set! consumed reader.consumed))])))
+                          (if (= stage 1)
+                            (begin
+                              (set! distance-symbol value)
+                              (set! stage 2))
+                            (let
+                              [distance : i64 (+ distance-symbol 1)]
+                              [length : i64 (+ value 3)]
                               (begin
-                                (set!
-                                  (array-ref out out-index)
-                                  (array-ref out (- out-index distance)))
-                                (set! out-index (+ out-index 1))
-                                (set! copied (+ copied 1)))))])))]))
-            (if (!= reader.consumed bit-len)
+                                (set! stage 0)
+                                (cond
+                                  [(> distance out-index)
+                                    (return
+                                      (CompilerEmbeddedStdlibTlciCodecBytes.Err
+                                        "embedded stdlib tlci envelope: backreference before output"))]
+                                  [(> length (- raw-len out-index))
+                                    (return
+                                      (CompilerEmbeddedStdlibTlciCodecBytes.Err
+                                        "embedded stdlib tlci envelope: backreference exceeds output"))]
+                                  ;; Both ranges were just checked to lie
+                                  ;; inside `out`. A source at least eight
+                                  ;; bytes back is already written for a whole
+                                  ;; word ahead, so words copy it exactly as
+                                  ;; the byte loop would; a nearer, overlapping
+                                  ;; source and the tail go byte by byte.
+                                  [else
+                                    (let
+                                      [copied : i64 0]
+                                      (begin
+                                        (when
+                                          (>= distance 8)
+                                          (let
+                                            [dst : (MutPtr u8)
+                                              (unsafe
+                                                (ptr-offset
+                                                  (__tl_array-data out)
+                                                  out-index))]
+                                            [words : i64 (- length 7)]
+                                            (while (< copied words)
+                                              (begin
+                                                (unsafe
+                                                  (ptr-write!
+                                                    (ptr-cast
+                                                      (ptr-offset dst copied)
+                                                      : (MutPtr i64))
+                                                    (ptr-read
+                                                      (ptr-cast
+                                                        (ptr-offset
+                                                          dst
+                                                          (- copied distance))
+                                                        : (Ptr i64)))))
+                                                (set! copied (+ copied 8))))))
+                                        (while (< copied length)
+                                          (begin
+                                            (set!
+                                              (array-ref
+                                                out
+                                                (+ out-index copied))
+                                              (array-ref
+                                                out
+                                                (-
+                                                  (+ out-index copied)
+                                                  distance)))
+                                            (set! copied (+ copied 1))))
+                                        (set! out-index (+ out-index length))))])))))))))))
+            (if (!= consumed bit-len)
               (CompilerEmbeddedStdlibTlciCodecBytes.Err
                 "embedded stdlib tlci envelope: trailing huffman bits")
               (CompilerEmbeddedStdlibTlciCodecBytes.Ok out))))])))

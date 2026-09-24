@@ -29401,7 +29401,7 @@
 ;; (sccp_lattice's `sccp-rewrite-phi` into `sccp-rewrite-rows` is the shape at
 ;; benchmark size, and it stays out there on SIZE: the in-loop tier's own
 ;; gates refuse it, see check_recursive_loop_import in
-;; scripts/verify-asm-shape-gates.sh.)
+;; tests/codegen/asm-shape.cases.)
 (define (compiler-optimize-inline-hot-loop-leaf-recursive-caller-refusal-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]

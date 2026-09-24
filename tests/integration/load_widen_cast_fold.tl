@@ -20,7 +20,7 @@
 ;; The never-taken self-recursion keeps both functions out of the opt2 inliner
 ;; so the shapes stay in their own frames. A fold that dropped or mis-extended
 ;; the byte yields a different classification -> not 42;
-;; scripts/verify-asm-shape-gates.sh asserts the asm shape.
+;; tests/codegen/asm-shape.cases asserts the asm shape.
 (define (classify
   [bytes : (& bytes (__tl_dyn-array u8))]
   [i : i64]

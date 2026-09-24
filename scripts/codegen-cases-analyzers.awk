@@ -203,6 +203,13 @@ function csr_pushes(   regs, k, r, pushes, pops, saved) {
     return saved + 0
 }
 
+# "even" or "odd" pushed callee-save homes ("unbalanced-REG" as above).
+function csr_pushes_parity(   saved) {
+    saved = csr_pushes()
+    if (saved !~ /^[0-9]+$/) return saved
+    return (saved % 2 == 0) ? "even" : "odd"
+}
+
 # Prologue-pushed callee-saved registers the body never names at any width
 # (frame operands `K(%rbp)` are not a use; the restore does not count).
 function unnamed_pushed_csrs(   n, k, r, pat, i, line, mentions, bad) {
@@ -511,6 +518,7 @@ END {
     else if (analyzer == "literal-then-redef") print literal_then("redef")
     else if (analyzer == "prologue-csrs") print prologue_csrs(unused)
     else if (analyzer == "csr-pushes") print csr_pushes()
+    else if (analyzer == "csr-pushes-parity") print csr_pushes_parity()
     else if (analyzer == "unnamed-pushed-csrs") print unnamed_pushed_csrs()
     else if (analyzer == "call-alignment") print call_alignment(arg)
     else if (analyzer == "dead-slot-region") print dead_slot_region()

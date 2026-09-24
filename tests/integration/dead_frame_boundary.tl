@@ -1,7 +1,7 @@
 (import stdlib.io)
 
 ;; FORCING TEST for W1-frame (dead frame adjust + dead alignment pad for
-;; boundary-only functions), pinned by scripts/verify-asm-shape-gates.sh:
+;; boundary-only functions), pinned by tests/codegen/asm-shape.cases:
 ;; check_dead_frame_boundary reads the Linux emission, and
 ;; check_dead_frame_boundary_win64 reads the same source compiled for Win64,
 ;; where the 32-byte shadow space every call-shaped instruction reserves keeps

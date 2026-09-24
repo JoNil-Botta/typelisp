@@ -15,7 +15,7 @@
 ;;
 ;; The never-taken self-recursion in each kernel blocks the opt2 inliner, so
 ;; each keeps its own frame and its own emitted symbol for the assembly-shape
-;; gate (scripts/verify-asm-shape-gates.sh: check_mask_test_admission).
+;; gate (tests/codegen/asm-shape.cases: case mask-test-admission).
 ;;
 ;; Reference bit read: shift the wanted bit down and mask it. Shares no
 ;; instruction shape with the `(x & m) == m` spelling under test.

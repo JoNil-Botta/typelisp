@@ -19,7 +19,7 @@
 ;;     movups 16(%rBASE,%rIDX,1), %xmm2
 ;;     movups %xmm2, 16(%rDST)
 ;; `take` exercises the element-as-SOURCE side and `put` the element-as-
-;; DESTINATION side; scripts/verify-asm-shape-gates.sh asserts both shapes.
+;; DESTINATION side; tests/codegen/asm-shape.cases asserts both shapes.
 ;;
 ;; `take-const` is the CONSTANT-index sibling of `take`. There is no index
 ;; register at all: the element address is `disp(base)` with the whole element

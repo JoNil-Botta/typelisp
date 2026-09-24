@@ -1328,10 +1328,11 @@ Everything is evaluated with sh/grep/awk, never with the compiler under test.
 Each CI gate runs one file, or one case of it with `--only`.
 
 Use this layer when a native integration fixture can still return the right
-exit code while silently falling back to slow codegen: `crypto-sha.cases` pins
-the hash cores' wipe loops, `by-value-aggregate-abi.cases` the internal
-aggregate ABI, `math.cases` freestanding stdlib math, and `ispc.cases` the ISPC
-comparison corpus contracts.
+exit code while silently falling back to slow codegen: `asm-shape.cases` pins
+the opt2 regalloc/backend/optimizer shapes of the integration fixtures,
+`crypto-sha.cases` the hash cores' wipe loops, `by-value-aggregate-abi.cases`
+the internal aggregate ABI, `math.cases` freestanding stdlib math, and
+`ispc.cases` the ISPC comparison corpus contracts.
 
 ### Selfhost native generated programs
 

@@ -18,7 +18,7 @@
 ;; are seeded through `gcmp-opaque`, whose own self-recursion keeps its result
 ;; out of reach of constant propagation, so the compares stay real compares.
 ;;
-;; The gate is check_global_cmp_mem_fold in scripts/verify-asm-shape-gates.sh;
+;; The gate is case global-cmp-mem-fold in tests/codegen/asm-shape.cases;
 ;; it FAILS on the pre-M6-I compiler, which stages every global read through a
 ;; scratch register first.
 (define gcmp-gen : i64

@@ -21,7 +21,7 @@
 ;;                       store's truncation stop agreeing with a `q` op.
 ;;
 ;; A missed fold is still CORRECT code, only slower, so the exit code cannot
-;; catch it; scripts/verify-asm-shape-gates.sh asserts the shape. `main` is the
+;; catch it; tests/codegen/asm-shape.cases asserts the shape. `main` is the
 ;; correctness twin: every kernel is checked against a hand-computed answer over
 ;; an ODD element count, so the unrolled fast body AND its remainder both run.
 ;; --- admitted: three ALU ops, each a pure word merge ------------------------

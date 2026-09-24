@@ -20613,22 +20613,27 @@ g:
     (compiler-backend-total-switch-source)
     (compiler_backend.CompilerBackendTarget.Linux))
     [(compiler_backend.ResultCompilerBackend.Ok asm)
-      (and
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          "_switch_table")
-        (not
+      ;; Inspect the dispatch function: unrelated runtime helpers can have
+      ;; unsigned range checks of their own.
+      (let
+        [body : String
+          (compiler-backend-asm-function-body asm "_tl_total_switch_score")]
+        (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "    cmpq $5"))
-        (not
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "    ja "))
-        (not
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "match_total_trap(%rip)")))]
+            (owned_view.compiler-owned-shared-view body)
+            "_switch_table")
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view body)
+              "    cmpq $5"))
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view body)
+              "    ja "))
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view body)
+              "match_total_trap(%rip)"))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-total-switch-asm-ok?) : bool

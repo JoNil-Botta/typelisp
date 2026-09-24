@@ -163,11 +163,11 @@
         "bounded all-row construction capacity")
       (test.assert-i64-eq
         event-count
-        3203
+        3219
         "reviewed ordered control/frame event count")
       (test.assert-i64-eq
         event-bytes
-        19040
+        19072
         "reviewed event-transcript byte count")
       (test.assert-i64-eq
         pinned-payloads

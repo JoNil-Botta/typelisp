@@ -99814,6 +99814,7 @@
           (compiler-opt-global-shared-view blocks)
           (compiler-opt-global-shared-view body-labels)
           (compiler-opt-global-shared-view body-blocks)
+          (opt-bce-mb-body-defs (compiler-opt-global-shared-view body-blocks))
           (compiler-opt-global-shared-view cell)
           (OptLabelSet.Nil))
           [(OptBceMbWiring.No)
@@ -103029,13 +103030,15 @@
   [all-blocks : ir.CompilerIrBlockList]
   [body-labels : OptLabelSet]
   [body-blocks : ir.CompilerIrBlockList]
+  [defs : OptBceMbBodyDefs]
   [label : i64]
   [instrs : ir.CompilerIrInstrSeq]
   [uses : opt_i64_i64_map.Map]
   [cell : (__tl_dyn-array i64)]) : OptBceMbWireBlock
   (let
     [loop-vars : OptBceMbVarList
-      (opt-bce-mb-wire-vars-blocks
+      (opt-bce-mb-body-defs-used
+        (compiler-opt-global-shared-view defs)
         body-blocks
         (compiler-opt-global-shared-view uses)
         (opt-bce-mb-var-list-new))]
@@ -103089,6 +103092,7 @@
   [all-blocks : ir.CompilerIrBlockList]
   [body-labels : OptLabelSet]
   [body-blocks : ir.CompilerIrBlockList]
+  [defs : OptBceMbBodyDefs]
   [cell : (__tl_dyn-array i64)]
   [stubs : OptLabelSet]) : OptBceMbWiring
   (match blocks
@@ -103101,6 +103105,7 @@
         (compiler-opt-global-shared-view all-blocks)
         body-labels
         body-blocks
+        defs
         cell
         stubs)]
     [(ir.CompilerIrBlockList.Cons block rest)
@@ -103115,6 +103120,7 @@
               all-blocks
               body-labels
               (compiler-opt-global-shared-view body-blocks)
+              (compiler-opt-global-shared-view defs)
               cell
               stubs)
               [(OptBceMbWiring.No) (OptBceMbWiring.No)]
@@ -103133,6 +103139,7 @@
                 (compiler-opt-global-shared-view all-blocks)
                 (compiler-opt-global-shared-view body-labels)
                 (compiler-opt-global-shared-view body-blocks)
+                (compiler-opt-global-shared-view defs)
                 label
                 (compiler-opt-global-shared-view instrs)
                 uses
@@ -103145,6 +103152,7 @@
                     all-blocks
                     body-labels
                     body-blocks
+                    defs
                     cell
                     stubs)
                     [(OptBceMbWiring.No) (OptBceMbWiring.No)]
@@ -103159,6 +103167,7 @@
                     all-blocks
                     body-labels
                     body-blocks
+                    defs
                     cell
                     (opt-bce-mb-labels-union block-stubs stubs))
                     [(OptBceMbWiring.No) (OptBceMbWiring.No)]
@@ -112046,6 +112055,7 @@
         (compiler-opt-global-shared-view blocks)
         (compiler-opt-global-shared-view body-labels)
         (compiler-opt-global-shared-view body-blocks)
+        (opt-bce-mb-body-defs (compiler-opt-global-shared-view body-blocks))
         (compiler-opt-global-shared-view cell)
         (OptLabelSet.Nil))
         [(OptBceMbWiring.No)

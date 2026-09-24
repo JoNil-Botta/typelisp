@@ -5,6 +5,7 @@
 ;; match distance, and match length. Code lengths are stored explicitly so the
 ;; decoder owns no fixed model and repeated encoder runs are byte-identical.
 (import stdlib.string)
+(import compiler_owned_view as owned_view)
 
 (define (compiler-embedded-stdlib-tlci-codec-main-symbols) : i64
   257)
@@ -482,15 +483,41 @@
               [out-data : (MutPtr u8)
                 (unsafe
                   (__tl_array-data out))]
-              [main-data : (MutPtr i64)
+              ;; The three tables side by side in one array -- main, then
+              ;; distance at `lookup-size`, then length at twice that -- so
+              ;; the loop keeps one base live instead of three; it is register
+              ;; bound, and the other two bases were reloaded from the stack on
+              ;; every lookup.
+              [tables : (__tl_dyn-array i64)
+                (if tables-ok?
+                  (let
+                    [combined : (__tl_dyn-array i64)
+                      (__tl_make-array i64 (* 3 lookup-size))]
+                    [k : i64 0]
+                    (begin
+                      (while (< k lookup-size)
+                        (begin
+                          (set!
+                            (array-ref combined k)
+                            (array-ref main-lookup k))
+                          (set!
+                            (array-ref combined (+ k lookup-size))
+                            (array-ref distance-lookup k))
+                          (set!
+                            (array-ref combined (+ k (* 2 lookup-size)))
+                            (array-ref length-lookup k))
+                          (set! k (+ k 1))))
+                      combined))
+                  (__tl_make-array i64 0))]
+              [table-data : (MutPtr i64)
                 (unsafe
-                  (__tl_array-data main-lookup))]
-              [distance-data : (MutPtr i64)
+                  (__tl_array-data tables))]
+              ;; Refills in this loop read below `next-byte + 8`, inside the
+              ;; payload while `next-byte <= byte-limit`.
+              [payload-data : (MutPtr u8)
                 (unsafe
-                  (__tl_array-data distance-lookup))]
-              [length-data : (MutPtr i64)
-                (unsafe
-                  (__tl_array-data length-lookup))]
+                  (__tl_array-data
+                    (owned_view.compiler-owned-reference-shared-view payload)))]
               (while (< out-index raw-len)
                 (begin
                   (set! fast? tables-ok?)
@@ -507,7 +534,11 @@
                               buffer
                               (bit-or
                                 (shl buffer 8)
-                                (cast (array-ref payload next-byte) : i64)))
+                                (cast
+                                  (unsafe
+                                    (ptr-read
+                                      (ptr-offset payload-data next-byte)))
+                                  : i64)))
                             (set! next-byte (+ next-byte 1))
                             (set! available (+ available 8)))))
                       ;; 48 <= available <= 64 here, so every shift count below
@@ -517,7 +548,7 @@
                           (unsafe
                             (ptr-read
                               (ptr-offset
-                                main-data
+                                table-data
                                 (bit-and
                                   (shr buffer (bit-and (- available 16) 63))
                                   65535))))]
@@ -538,12 +569,14 @@
                                 (unsafe
                                   (ptr-read
                                     (ptr-offset
-                                      distance-data
-                                      (bit-and
-                                        (shr
-                                          buffer
-                                          (bit-and (- after-main 16) 63))
-                                        65535))))]
+                                      table-data
+                                      (+
+                                        lookup-size
+                                        (bit-and
+                                          (shr
+                                            buffer
+                                            (bit-and (- after-main 16) 63))
+                                          65535)))))]
                               (if (<= distance-entry 0)
                                 (set! fast? false)
                                 (let
@@ -553,12 +586,16 @@
                                     (unsafe
                                       (ptr-read
                                         (ptr-offset
-                                          length-data
-                                          (bit-and
-                                            (shr
-                                              buffer
-                                              (bit-and (- after-distance 16) 63))
-                                            65535))))]
+                                          table-data
+                                          (+
+                                            (* 2 lookup-size)
+                                            (bit-and
+                                              (shr
+                                                buffer
+                                                (bit-and
+                                                  (- after-distance 16)
+                                                  63))
+                                              65535)))))]
                                   ;; symbol + 1 is the low field: distance is the
                                   ;; distance symbol + 1, length the symbol + 3.
                                   [distance : i64 (bit-and distance-entry 8191)]

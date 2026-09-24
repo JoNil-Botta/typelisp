@@ -15668,33 +15668,29 @@
   [index : i64]
   [pos : i64]
   [items : (__tl_dyn-array OptMaybeVarDef)]) : bool
-  (if (>=
-    index
-    (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs)))
-    true
-    (let
-      [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
-      (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
-        [(option_i64.Some var)
-          (and
-            (opt-var-defs-checked-add!
-              (compiler-opt-global-shared-view items)
-              var
-              block-id
-              (opt-instr-def-position instr pos))
-            (opt-var-defs-checked-instr-seq-from!
-              (compiler-opt-global-shared-view instrs)
-              block-id
-              (+ index 1)
-              (+ pos 1)
-              items))]
-        [(option_i64.None)
-          (opt-var-defs-checked-instr-seq-from!
-            (compiler-opt-global-shared-view instrs)
-            block-id
-            (+ index 1)
-            (+ pos 1)
-            items)]))))
+  (let
+    [count : i64
+      (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs))]
+    [i : i64 index]
+    [p : i64 pos]
+    (begin
+      (while (< i count)
+        (let
+          [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs i)]
+          (begin
+            (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
+              [(option_i64.Some var)
+                (unless
+                  (opt-var-defs-checked-add!
+                    (compiler-opt-global-shared-view items)
+                    var
+                    block-id
+                    (opt-instr-def-position instr p))
+                  (return false))]
+              [(option_i64.None) unit])
+            (set! i (+ i 1))
+            (set! p (+ p 1)))))
+      true)))
 
 (define (opt-var-defs-checked-blocks!
   [blocks : ir.CompilerIrBlockList]
@@ -17374,28 +17370,27 @@
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]
   [pos : i64]) : ResultCompilerOptimizeVerify
-  (if (>=
-    index
-    (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs)))
-    (ResultCompilerOptimizeVerify.Ok)
-    (match (opt-verify-instr-uses-with-return-alias
-      (compiler-opt-global-shared-view defs)
-      (compiler-opt-global-shared-view doms)
-      (& return-alias)
-      block-id
-      pos
-      (ir.compiler-ir-instr-seq-ref instrs index))
-      [(ResultCompilerOptimizeVerify.Ok)
-        (opt-verify-instr-seq-uses-from
-          defs
-          doms
-          return-alias
-          block-id
-          instrs
-          (+ index 1)
-          (+ pos 1))]
-      [(ResultCompilerOptimizeVerify.Err message)
-        (ResultCompilerOptimizeVerify.Err message)])))
+  (let
+    [count : i64
+      (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs))]
+    [i : i64 index]
+    [p : i64 pos]
+    (begin
+      (while (< i count)
+        (begin
+          (match (opt-verify-instr-uses-with-return-alias
+            (compiler-opt-global-shared-view defs)
+            (compiler-opt-global-shared-view doms)
+            (& return-alias)
+            block-id
+            p
+            (ir.compiler-ir-instr-seq-ref instrs i))
+            [(ResultCompilerOptimizeVerify.Ok) unit]
+            [(ResultCompilerOptimizeVerify.Err message)
+              (return (ResultCompilerOptimizeVerify.Err message))])
+          (set! i (+ i 1))
+          (set! p (+ p 1))))
+      (ResultCompilerOptimizeVerify.Ok))))
 
 (define (opt-phi-input-labels [inputs : ir.CompilerIrPhiInputSeq]) : OptLabelSet
   (let

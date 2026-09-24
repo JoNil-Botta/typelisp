@@ -30947,7 +30947,7 @@
 ;; must have exactly one definition (`sources`), or its definition says nothing
 ;; about the value the load sees.
 (defstruct OptLicmDerefFacts
-  (sources opt_i64_i64_map.Map)
+  (sources OptValueSources)
   ;; Declared global types, for a header-typed global's element type.
   (cells OptGlobalCellSummary)
   ;; var -> the Gep, Load, LoadOwned, Mov or BinOp defining it.
@@ -30988,7 +30988,7 @@
 
 (define (opt-licm-deref-def
   [defs : (__tl_dyn-array OptBoolBranchDef)]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [var : i64]) : OptBoolBranchDef
   (if (opt-gvn-stable-var? sources var)
     (opt-bool-branch-def defs var)
@@ -30997,7 +30997,7 @@
 ;; `value` with single-definition copies looked through.
 (define (opt-licm-deref-resolve
   [defs : (__tl_dyn-array OptBoolBranchDef)]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [value : ir.CompilerIrValue]
   [fuel : i64]) : ir.CompilerIrValue
   (match (compiler-opt-global-shared-view value)
@@ -31063,7 +31063,7 @@
 (define (opt-licm-deref-row!
   [sink : OptLicmDerefSink]
   [defs : (__tl_dyn-array OptBoolBranchDef)]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [index : ir.CompilerIrValue]
   [len : ir.CompilerIrValue]
   [block : i64]) : unit
@@ -31114,7 +31114,7 @@
 (define (opt-licm-deref-cond-rows!
   [sink : OptLicmDerefSink]
   [defs : (__tl_dyn-array OptBoolBranchDef)]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [cond : ir.CompilerIrValue]
   [taken? : bool]
   [block : i64]
@@ -31234,7 +31234,7 @@
 (define (opt-licm-deref-scan-block!
   [sink : OptLicmDerefSink]
   [defs : (__tl_dyn-array OptBoolBranchDef)]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [index : OptCfgIndex]
   [label : i64]
   [instrs : ir.CompilerIrInstrSeq]) : unit
@@ -31298,7 +31298,7 @@
 (define (opt-licm-deref-scan-blocks!
   [sink : OptLicmDerefSink]
   [defs : (__tl_dyn-array OptBoolBranchDef)]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [index : OptCfgIndex]
   [blocks : ir.CompilerIrBlockList]) : unit
   (match blocks
@@ -31329,7 +31329,7 @@
         (ir.compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-licm-deref-facts
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [cells : OptGlobalCellSummary]
   [index : OptCfgIndex]
   [frame : i64]
@@ -31763,7 +31763,7 @@
   [type-segment-bases : i64]
   [loop-defs : opt_i64_i64_map.Map]
   [hoisted : opt_i64_i64_map.Map]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [types : OptSsaVarTypes]
   [store-summary : OptLicmStoreSummary]
   [legacy-store-summary : OptLicmStoreSummary]
@@ -32153,7 +32153,7 @@
   [loop-defs : opt_i64_i64_map.Map]
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [types : OptSsaVarTypes]
   [store-summary : OptLicmStoreSummary]
   [legacy-store-summary : OptLicmStoreSummary]
@@ -32220,7 +32220,7 @@
   [type-segment-bases : i64]
   [loop-defs : opt_i64_i64_map.Map]
   [instrs : ir.CompilerIrInstrSeq]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [types : OptSsaVarTypes]
   [store-summary : OptLicmStoreSummary]
   [legacy-store-summary : OptLicmStoreSummary]
@@ -32258,7 +32258,7 @@
   [type-segment-bases : i64]
   [loop-defs : opt_i64_i64_map.Map]
   [blocks : ir.CompilerIrBlockList]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [types : OptSsaVarTypes]
   [store-summary : OptLicmStoreSummary]
   [legacy-store-summary : OptLicmStoreSummary]
@@ -34733,7 +34733,7 @@
 
 (define (opt-licm-apply-loop
   [type-segment-bases : i64]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [types : OptSsaVarTypes]
   [provenance : OptLicmStoreState]
   [direct-call-clean : opt_i64_i64_map.Map]
@@ -35067,7 +35067,7 @@
 
 (define (opt-licm-apply-loops
   [type-segment-bases : i64]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [types : OptSsaVarTypes]
   [provenance : OptLicmStoreState]
   [direct-call-clean : opt_i64_i64_map.Map]
@@ -35306,12 +35306,12 @@
                 (compiler-opt-global-shared-view loops)))
               (OptFunctionCtxResult.Result func context)
               (let
-                [sources : opt_i64_i64_map.Map
+                [sources : OptValueSources
                   (opt-gvn-sources-blocks
                     (compiler-opt-global-shared-view blocks)
                     (opt-gvn-sources-params
                       (compiler-opt-global-shared-view params)
-                      (opt_i64_i64_map.with-capacity 64)))]
+                      (opt-value-sources-new)))]
                 [types : OptSsaVarTypes
                   (opt-licm-type-env-from-function
                     (compiler-opt-global-shared-view params)
@@ -62021,9 +62021,8 @@
 ;; either arm.
 ;; GVN value-source multiset: maps each def-site var id to how many times it is
 ;; defined (parameter seed + instruction destinations). A var is reusable across
-;; dominance only when its count is exactly 1. Backed by opt_i64_i64_map.Map for O(1)
-;; membership; previously a linked list scanned O(n) per query inside the
-;; per-instruction build and rewrite loops (O(n^2) per GVN pass).
+;; dominance only when its count is exactly 1. A dense value-id array gives
+;; direct lookup without a hash probe in the per-instruction walks.
 ;; The expression table itself is scoped by dominator-tree traversal: each block
 ;; rewrites against facts inherited from strict dominators, then pushes its own
 ;; original recordable expressions while visiting children and restores those
@@ -62068,7 +62067,7 @@
 
 (define (opt-gvn-affine-defs-add!
   [defs : OptGvnAffineDefs]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [dst : i64]
   [v : i64]
   [k : i64]) : OptGvnAffineDefs
@@ -62084,7 +62083,7 @@
 
 (define (opt-gvn-affine-defs-instr
   [defs : OptGvnAffineDefs]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [instr : ir.CompilerIrInstr]) : OptGvnAffineDefs
   (match (compiler-opt-global-shared-view instr)
     [(ir.CompilerIrInstr.BinOp dst op l r ty)
@@ -62124,7 +62123,7 @@
 
 (define (opt-gvn-affine-defs-instr-seq-from
   [defs : OptGvnAffineDefs]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [slots : (__tl_dyn-array ir.CompilerIrInstr)]
   [index : i64]
   [count : i64]) : OptGvnAffineDefs
@@ -62142,7 +62141,7 @@
 
 (define (opt-gvn-affine-defs-blocks
   [defs : OptGvnAffineDefs]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [blocks : ir.CompilerIrBlockList]) : OptGvnAffineDefs
   (match blocks
     [(ir.CompilerIrBlockList.Nil) defs]
@@ -62192,30 +62191,61 @@
       (opt_dense_i64_vec.push-ref! (&mut buckets) bucket)
       (OptGvnScopeChanges buckets))))
 
-;; Number of times `var` appears as a definition site (instruction destination
-;; or seeded parameter) in the collected value-source list.
-(define (opt-gvn-count [sources : opt_i64_i64_map.Map] [var : i64]) : i64
-  (opt_i64_i64_map.get-value-or (& sources) var 0))
+;; Function-local value ids are dense. Slot zero counts expression candidates;
+;; slot var+1 counts a parameter/instruction definition. Keeping these counts
+;; in a zero-filled array avoids hashing and probing at every stability query
+;; in GVN, bounds elimination, LICM, and call-memory analysis. The table belongs
+;; to the caller's optimizer scratch arena and grows geometrically for builders
+;; that do not have a frame bound available.
+(defstruct OptValueSources
+  (counts (__tl_dyn-array i64)))
 
-;; Record one more definition of `var` in the value-source multiset.
-(define (opt-gvn-defs-add [sources : opt_i64_i64_map.Map] [var : i64]) : opt_i64_i64_map.Map
+(define (opt-value-sources-new) : OptValueSources
+  (OptValueSources (__tl_make-array i64 16)))
+
+(define (opt-gvn-count [sources : OptValueSources] [var : i64]) : i64
+  (if (and (>= var -1) (< var (- (array-length sources.counts) 1)))
+    (array-ref sources.counts (+ var 1))
+    0))
+
+(define (opt-gvn-defs-add [sources : OptValueSources] [var : i64]) : OptValueSources
   (let
-    [next-count : i64
-      (+ 1 (opt-gvn-count (compiler-opt-global-shared-view sources) var))]
-    [out : opt_i64_i64_map.Map (compiler-opt-global-shared-view sources)]
+    [counts : (__tl_dyn-array i64)
+      (compiler-opt-global-shared-view sources.counts)]
+    [capacity : i64 (array-length counts)]
     (begin
-      (opt_i64_i64_map.insert-ref! (&mut out) var next-count)
-      out)))
+      ;; Negative ids below the candidate sentinel are not value definitions.
+      (when
+        (>= var -1)
+        (begin
+          (when
+            (>= var (- capacity 1))
+            (let
+              [grown : i64 capacity]
+              [index : i64 0]
+              (begin
+                (while (>= var (- grown 1))
+                  (set! grown (* grown 2)))
+                (let
+                  [fresh : (__tl_dyn-array i64) (__tl_make-array i64 grown)]
+                  (begin
+                    (while (< index capacity)
+                      (begin
+                        (set! (array-ref fresh index) (array-ref counts index))
+                        (set! index (+ index 1))))
+                    (set! counts fresh))))))
+          (set! (array-ref counts (+ var 1)) (+ (array-ref counts (+ var 1)) 1))))
+      (OptValueSources counts))))
 
 ;; A var is reusable across dominance only when it has exactly one value source.
-(define (opt-gvn-stable-var? [sources : opt_i64_i64_map.Map] [var : i64]) : bool
+(define (opt-gvn-stable-var? [sources : OptValueSources] [var : i64]) : bool
   (= (opt-gvn-count sources var) 1))
 
 ;; Operand values that hold a single unchanging value: literals and single-source
 ;; vars. Globals, global addresses, function references, and float/string
 ;; literals are excluded to match the existing copy-propagation conservatism.
 (define (opt-gvn-value-stable?
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [value : ir.CompilerIrValue]) : bool
   (match (compiler-opt-global-shared-view value)
     [(ir.CompilerIrValue.Var id) (opt-gvn-stable-var? sources id)]
@@ -62321,8 +62351,8 @@
 
 (define (opt-gvn-sources-params-from
   [params : ir.CompilerIrParamSeq]
-  [acc : opt_i64_i64_map.Map]
-  [position : i64]) : opt_i64_i64_map.Map
+  [acc : OptValueSources]
+  [position : i64]) : OptValueSources
   (if (>= position params.len)
     acc
     (match (ir.compiler-ir-param-seq-ref
@@ -62336,21 +62366,21 @@
 
 (define (opt-gvn-sources-params
   [params : ir.CompilerIrParamSeq]
-  [acc : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
+  [acc : OptValueSources]) : OptValueSources
   (opt-gvn-sources-params-from params acc 0))
 
 (define (opt-gvn-sources-instr-seq-from
   [slots : (__tl_dyn-array ir.CompilerIrInstr)]
   [index : i64]
   [count : i64]
-  [acc : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
+  [acc : OptValueSources]) : OptValueSources
   (if (>= index count)
     acc
     (let
       [instr : ir.CompilerIrInstr
         (compiler-opt-global-array-element-shared-view slots index)]
       [dst : i64 (opt-gvn-instr-dst (compiler-opt-global-shared-view instr))]
-      [next : opt_i64_i64_map.Map
+      [next : OptValueSources
         (if (opt-gvn-record-candidate? (compiler-opt-global-shared-view instr))
           (opt-gvn-defs-add acc (- 0 1))
           acc)]
@@ -62364,7 +62394,7 @@
 
 (define (opt-gvn-sources-blocks
   [blocks : ir.CompilerIrBlockList]
-  [acc : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
+  [acc : OptValueSources]) : OptValueSources
   (match blocks
     [(ir.CompilerIrBlockList.Nil) acc]
     [(ir.CompilerIrBlockList.Cons block rest)
@@ -62401,7 +62431,7 @@
 
 (define (opt-gvn-recordable-instr?
   [instr : ir.CompilerIrInstr]
-  [sources : opt_i64_i64_map.Map]) : bool
+  [sources : OptValueSources]) : bool
   (match (compiler-opt-global-shared-view instr)
     [(ir.CompilerIrInstr.BinOp dst _ l r _)
       (and
@@ -62616,7 +62646,7 @@
   [type-segment-bases : i64]
   [instr : ir.CompilerIrInstr]
   [def-block-id : i64]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [table : OptGvnMap]
   [changes : OptGvnScopeChanges]) : OptGvnScopeChanges
   (let
@@ -62711,7 +62741,7 @@
 
 (define (opt-gvn-record-scope-instr-seq-from
   [type-segment-bases : i64]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [def-block-id : i64]
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]
@@ -62787,7 +62817,7 @@
 (define (opt-gvn-rewrite-instr-maybe
   [type-segment-bases : i64]
   [table : OptGvnMap]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [instr : ir.CompilerIrInstr]) : OptMaybeInstr
   (match (compiler-opt-global-shared-view instr)
     [(ir.CompilerIrInstr.BinOp dst op l r ty)
@@ -62970,7 +63000,7 @@
 (define (opt-gvn-seq-rewrite-changed?
   [type-segment-bases : i64]
   [table : OptGvnMap]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]) : bool
   (if (< index 0)
@@ -62992,7 +63022,7 @@
 (define (opt-gvn-rewrite-instr-seq
   [type-segment-bases : i64]
   [table : OptGvnMap]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
   (let
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
@@ -63017,7 +63047,7 @@
 (define (opt-gvn-rewrite-block
   [type-segment-bases : i64]
   [table : OptGvnMap]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [block : ir.CompilerIrBlock]) : OptBlockPassResult
   (match (compiler-opt-global-shared-view block)
     [(ir.CompilerIrBlock.Block label instrs)
@@ -63086,7 +63116,7 @@
   [context : OptCfgContext]
   [children : OptCfgCsr]
   [table : OptGvnMap]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [blocks : ir.CompilerIrBlockList]
   [out : (__tl_dyn-array OptGvnBlockResult)]
   [id : i64]) : i64
@@ -63154,7 +63184,7 @@
   [context : OptCfgContext]
   [children : OptCfgCsr]
   [table : OptGvnMap]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [blocks : ir.CompilerIrBlockList]
   [out : (__tl_dyn-array OptGvnBlockResult)]
   [parent-id : i64]) : i64
@@ -63187,7 +63217,7 @@
   [type-segment-bases : i64]
   [context : OptCfgContext]
   [table : OptGvnMap]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
   (let
     [doms : OptDomInfo
@@ -63238,12 +63268,12 @@
   [frame : i64]
   [blocks : ir.CompilerIrBlockList]) : OptLoadGvnResult
   (let
-    [sources : opt_i64_i64_map.Map
+    [sources : OptValueSources
       (opt-gvn-sources-blocks
         (compiler-opt-global-shared-view blocks)
         (opt-gvn-sources-params
           (compiler-opt-global-shared-view params)
-          (opt_i64_i64_map.with-capacity 64)))]
+          (opt-value-sources-new)))]
     [table : OptGvnMap
       (opt-gvn-map-with-affine
         (opt-gvn-count (compiler-opt-global-shared-view sources) (- 0 1))
@@ -63359,7 +63389,7 @@
     (= (opt-int-width to-ty) 64)))
 
 (define (opt-bounds-dom-copies-add-instr!
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [copies : (&mut copies opt_i64_i64_map.Map)]
   [instr : ir.CompilerIrInstr]) : unit
   (match (compiler-opt-global-shared-view instr)
@@ -63379,7 +63409,7 @@
     [_ unit]))
 
 (define (opt-bounds-dom-copies-add-blocks
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [copies : opt_i64_i64_map.Map]
   [blocks : ir.CompilerIrBlockList]) : opt_i64_i64_map.Map
   (match blocks
@@ -63447,7 +63477,7 @@
 ;; is never passed to comparison/range reasoning and is never written into IR.
 (define (opt-bounds-dom-slice-length-add-instr!
   [headers : OptLoadHeaderSet]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [copies : opt_i64_i64_map.Map]
   [lengths : (&mut lengths opt_i64_i64_map.Map)]
   [instr : ir.CompilerIrInstr]) : unit
@@ -63473,7 +63503,7 @@
 
 (define (opt-bounds-dom-slice-lengths-add-blocks
   [headers : OptLoadHeaderSet]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [copies : opt_i64_i64_map.Map]
   [lengths : (&mut lengths opt_i64_i64_map.Map)]
   [blocks : ir.CompilerIrBlockList]) : unit
@@ -63542,7 +63572,7 @@
 (define (opt-bounds-dom-slice-lengths
   [type-segment-bases : i64]
   [params : ir.CompilerIrParamSeq]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [copies : opt_i64_i64_map.Map]
   [blocks : ir.CompilerIrBlockList]) : opt_i64_i64_map.Map
   (if (opt-bounds-dom-params-have-slice?
@@ -64088,7 +64118,7 @@
 (define (opt-dom-cmp-edge-fact
   [defs : (__tl_dyn-array OptBoolBranchDef)]
   [copies : opt_i64_i64_map.Map]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [cond : ir.CompilerIrValue]
   [taken? : bool]
   [block : i64]
@@ -65442,7 +65472,7 @@
   [type-segment-bases : i64]
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
   [copies : opt_i64_i64_map.Map]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [idx : ir.CompilerIrValue]) : i64
   (match (opt-bounds-dom-strip-int-cast
     type-segment-bases
@@ -65473,7 +65503,7 @@
   [type-segment-bases : i64]
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
   [copies : opt_i64_i64_map.Map]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [cursor : (__tl_dyn-array i64)]
   [lens : (__tl_dyn-array ir.CompilerIrValue)]
   [rows : (__tl_dyn-array i64)]
@@ -65529,7 +65559,7 @@
   [index : OptCfgIndex]
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
   [copies : opt_i64_i64_map.Map]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [cursor : (__tl_dyn-array i64)]
   [lens : (__tl_dyn-array ir.CompilerIrValue)]
   [rows : (__tl_dyn-array i64)]
@@ -65593,7 +65623,7 @@
   [index : OptCfgIndex]
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
   [copies : opt_i64_i64_map.Map]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [frame : i64]
   [blocks : ir.CompilerIrBlockList]) : OptBoundsDomChecks
   (let
@@ -66032,7 +66062,7 @@
   [var-facts : (__tl_dyn-array i64)]
   [checks : OptBoundsDomChecks]
   [copies : opt_i64_i64_map.Map]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [cmp-facts : OptDomCmpFacts]
   [phis : OptNonnegPhis]
   [at-id : i64]
@@ -66162,7 +66192,7 @@
   [var-facts : (__tl_dyn-array i64)]
   [checks : OptBoundsDomChecks]
   [copies : opt_i64_i64_map.Map]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [cmp-facts : OptDomCmpFacts]
   [phis : OptNonnegPhis]
   [at-id : i64]
@@ -66341,7 +66371,7 @@
   [var-facts : (__tl_dyn-array i64)]
   [checks : OptBoundsDomChecks]
   [copies : opt_i64_i64_map.Map]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [cmp-facts : OptDomCmpFacts]
   [phis : OptNonnegPhis]
   [home-label : i64]
@@ -66438,7 +66468,7 @@
 (define (opt-bounds-dom-induct-edge-facts
   [terms : (__tl_dyn-array OptBoolBranchDef)]
   [defs : (__tl_dyn-array OptBoolBranchDef)]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [copies : opt_i64_i64_map.Map]
   [cmp-facts : OptDomCmpFacts]
   [from-id : i64]
@@ -66484,7 +66514,7 @@
   [var-facts : (__tl_dyn-array i64)]
   [checks : OptBoundsDomChecks]
   [copies : opt_i64_i64_map.Map]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [cmp-facts : OptDomCmpFacts]
   [phis : OptNonnegPhis]
   [home-label : i64]
@@ -66583,7 +66613,7 @@
   [var-facts : (__tl_dyn-array i64)]
   [checks : OptBoundsDomChecks]
   [copies : opt_i64_i64_map.Map]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [cmp-facts : OptDomCmpFacts]
   [at-id : i64]
   [idx : ir.CompilerIrValue]
@@ -66681,7 +66711,7 @@
   [var-facts : (__tl_dyn-array i64)]
   [checks : OptBoundsDomChecks]
   [copies : opt_i64_i64_map.Map]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [cmp-facts : OptDomCmpFacts]
   [at-id : i64]
   [strict? : bool]
@@ -66784,7 +66814,7 @@
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
   [var-facts : (__tl_dyn-array i64)]
   [checks : OptBoundsDomChecks]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [block-id : i64]
   [cmp-facts : OptDomCmpFacts]
   [copies : opt_i64_i64_map.Map]
@@ -67359,7 +67389,7 @@
     (opt-bounds-dom-resolve copies value)))
 
 (define (opt-bounds-dom-term-ok?
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [base : ir.CompilerIrValue]
   [offset : i64]) : bool
   (and
@@ -67377,7 +67407,7 @@
   [defs : (__tl_dyn-array OptBoolBranchDef)]
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
   [copies : opt_i64_i64_map.Map]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [value : ir.CompilerIrValue]) : OptBoundsDomTerm
   (let
     [self : OptBoundsDomTerm
@@ -67415,7 +67445,7 @@
   [defs : (__tl_dyn-array OptBoolBranchDef)]
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
   [copies : opt_i64_i64_map.Map]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [fact : OptBoundsFact]
   [base : ir.CompilerIrValue]
   [len : ir.CompilerIrValue]
@@ -67529,7 +67559,7 @@
   [defs : (__tl_dyn-array OptBoolBranchDef)]
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
   [copies : opt_i64_i64_map.Map]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [facts : OptBoundsFacts]
   [base : ir.CompilerIrValue]
   [len : ir.CompilerIrValue]
@@ -67607,7 +67637,7 @@
   [var-facts : (__tl_dyn-array i64)]
   [checks : OptBoundsDomChecks]
   [copies : opt_i64_i64_map.Map]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [cmp-facts : OptDomCmpFacts]
   [facts : OptBoundsFacts]
   [block-id : i64]
@@ -67813,7 +67843,7 @@
   [defs : (__tl_dyn-array OptBoolBranchDef)]
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
   [copies : opt_i64_i64_map.Map]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [instrs : ir.CompilerIrInstrSeq]
   [start : i64]) : OptBoundsDomRun
   (match (ir.compiler-ir-instr-seq-ref
@@ -67929,7 +67959,7 @@
   [defs : (__tl_dyn-array OptBoolBranchDef)]
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
   [copies : opt_i64_i64_map.Map]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [instrs : ir.CompilerIrInstrSeq]
   [pos : i64]) : OptBoundsDomRun
   (if (>=
@@ -68078,7 +68108,7 @@
   [defs : (__tl_dyn-array OptBoolBranchDef)]
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
   [copies : opt_i64_i64_map.Map]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [instrs : ir.CompilerIrInstrSeq]
   [fuel : i64]) : ir.CompilerIrInstrSeq
   (if (<= fuel 0)
@@ -69331,7 +69361,7 @@
   [block-id : i64]
   [cmp-facts : OptDomCmpFacts]
   [facts : OptBoundsFacts]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [copies : opt_i64_i64_map.Map]
   [slice-lengths : opt_i64_i64_map.Map]
   [len-eq : OptLenEqUse]
@@ -69693,7 +69723,7 @@
 
 (define (opt-bounds-dom-phi-carrier
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [value : ir.CompilerIrValue]) : OptDomPhiCarrier
   (match value
     [(ir.CompilerIrValue.Var var)
@@ -69821,7 +69851,7 @@
   [index : OptCfgIndex]
   [terms : (__tl_dyn-array OptBoolBranchDef)]
   [defs : (__tl_dyn-array OptBoolBranchDef)]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [copies : opt_i64_i64_map.Map]
   [pred-id : i64]
   [to-label : i64]
@@ -69896,7 +69926,7 @@
   [index : OptCfgIndex]
   [terms : (__tl_dyn-array OptBoolBranchDef)]
   [defs : (__tl_dyn-array OptBoolBranchDef)]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [copies : opt_i64_i64_map.Map]
   [carrier-lhs : OptDomPhiCarrier]
   [carrier-rhs : OptDomPhiCarrier]
@@ -69999,7 +70029,7 @@
   [terms : (__tl_dyn-array OptBoolBranchDef)]
   [defs : (__tl_dyn-array OptBoolBranchDef)]
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [copies : opt_i64_i64_map.Map]
   [block-id : i64]
   [op : ir.CompilerIrBinOp]
@@ -70209,7 +70239,7 @@
   [type-segment-bases : i64]
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
   [copies : opt_i64_i64_map.Map]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [var-facts : (__tl_dyn-array i64)]
   [len : ir.CompilerIrValue]) : unit
   (let
@@ -70251,7 +70281,7 @@
   [header : OptLoadHeaderSet]
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
   [copies : opt_i64_i64_map.Map]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [var-facts : (__tl_dyn-array i64)]
   [instrs : ir.CompilerIrInstrSeq]) : unit
   (let
@@ -70320,7 +70350,7 @@
   [header : OptLoadHeaderSet]
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
   [copies : opt_i64_i64_map.Map]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [var-facts : (__tl_dyn-array i64)]
   [blocks : ir.CompilerIrBlockList]) : unit
   (match blocks
@@ -70367,7 +70397,7 @@
   [header : OptLoadHeaderSet]
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
   [copies : opt_i64_i64_map.Map]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [frame : i64]
   [blocks : ir.CompilerIrBlockList]) : (__tl_dyn-array i64)
   (let
@@ -70554,7 +70584,7 @@
 (define (opt-bounds-dom-nonneg-prepass-instrs
   [type-segment-bases : i64]
   [doms : OptDomInfo]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [copies : opt_i64_i64_map.Map]
   [var-facts : (__tl_dyn-array i64)]
   [cmp-facts : OptDomCmpFacts]
@@ -70620,7 +70650,7 @@
   [context : OptCfgContext]
   [children : OptCfgCsr]
   [defs : (__tl_dyn-array OptBoolBranchDef)]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [copies : opt_i64_i64_map.Map]
   [var-facts : (__tl_dyn-array i64)]
   [cmp-facts : OptDomCmpFacts]
@@ -70683,7 +70713,7 @@
   [context : OptCfgContext]
   [children : OptCfgCsr]
   [defs : (__tl_dyn-array OptBoolBranchDef)]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [copies : opt_i64_i64_map.Map]
   [var-facts : (__tl_dyn-array i64)]) : unit
   (match (opt-cfg-index-id
@@ -70725,7 +70755,7 @@
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
   [var-facts : (__tl_dyn-array i64)]
   [checks : OptBoundsDomChecks]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [block-id : i64]
   [cmp-facts : OptDomCmpFacts]
   [copies : opt_i64_i64_map.Map]
@@ -70852,7 +70882,7 @@
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
   [var-facts : (__tl_dyn-array i64)]
   [checks : OptBoundsDomChecks]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [block-id : i64]
   [cmp-facts : OptDomCmpFacts]
   [copies : opt_i64_i64_map.Map]
@@ -70911,7 +70941,7 @@
   [terms : (__tl_dyn-array OptBoolBranchDef)]
   [defs : (__tl_dyn-array OptBoolBranchDef)]
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [var-facts : (__tl_dyn-array i64)]
   [checks : OptBoundsDomChecks]
   [block-id : i64]
@@ -71530,7 +71560,7 @@
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
   [var-facts : (__tl_dyn-array i64)]
   [checks : OptBoundsDomChecks]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [copies : opt_i64_i64_map.Map]
   [cmp-facts : OptDomCmpFacts]
   [facts : OptBoundsFacts]
@@ -71645,7 +71675,7 @@
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
   [var-facts : (__tl_dyn-array i64)]
   [checks : OptBoundsDomChecks]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [copies : opt_i64_i64_map.Map]
   [cmp-facts : OptDomCmpFacts]
   [facts : OptBoundsFacts]
@@ -71721,7 +71751,7 @@
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
   [var-facts : (__tl_dyn-array i64)]
   [checks : OptBoundsDomChecks]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [copies : opt_i64_i64_map.Map]
   [uses : (__tl_dyn-array i64)]
   [cmp-facts : OptDomCmpFacts]
@@ -71925,7 +71955,7 @@
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
   [var-facts : (__tl_dyn-array i64)]
   [checks : OptBoundsDomChecks]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [copies : opt_i64_i64_map.Map]
   [state : OptRangeMergeState]
   [cmp-facts : OptDomCmpFacts]
@@ -71976,7 +72006,7 @@
   [terms : (__tl_dyn-array OptBoolBranchDef)]
   [var-facts : (__tl_dyn-array i64)]
   [checks : OptBoundsDomChecks]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [copies : opt_i64_i64_map.Map]
   [slice-lengths : opt_i64_i64_map.Map]
   [len-eq : OptLenEqUse]
@@ -72125,7 +72155,7 @@
   [info : OptDomInfo]
   [index : OptCfgIndex]
   [defs : (__tl_dyn-array OptBoolBranchDef)]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [copies : opt_i64_i64_map.Map]
   [cmp-facts : OptDomCmpFacts]
   [parent-instrs : ir.CompilerIrInstrSeq]
@@ -72181,7 +72211,7 @@
   [terms : (__tl_dyn-array OptBoolBranchDef)]
   [var-facts : (__tl_dyn-array i64)]
   [checks : OptBoundsDomChecks]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [copies : opt_i64_i64_map.Map]
   [slice-lengths : opt_i64_i64_map.Map]
   [len-eq : OptLenEqUse]
@@ -72265,12 +72295,12 @@
   [len-eq : OptLenEqUse]
   [blocks : ir.CompilerIrBlockList]) : OptBoundsDomResult
   (let
-    [sources : opt_i64_i64_map.Map
+    [sources : OptValueSources
       (opt-gvn-sources-blocks
         (compiler-opt-global-shared-view blocks)
         (opt-gvn-sources-params
           (compiler-opt-global-shared-view params)
-          (opt_i64_i64_map.with-capacity 64)))]
+          (opt-value-sources-new)))]
     [copies : opt_i64_i64_map.Map
       (opt-bounds-dom-copies-add-blocks
         (compiler-opt-global-shared-view sources)
@@ -76457,7 +76487,7 @@
     child-label))
 
 (define (opt-range-expr-stable?
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [expr : OptLoopBceExpr]) : bool
   (match expr
     [(OptLoopBceExpr.Unknown) false]
@@ -76598,7 +76628,7 @@
 (define (opt-range-add-nonnegative-from-compare
   [type-segment-bases : i64]
   [facts : OptRangeFacts]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [label : i64]
   [op : ir.CompilerIrBinOp]
   [lhs : OptLoopBceExpr]
@@ -76665,7 +76695,7 @@
 (define (opt-range-add-less-than-from-compare
   [type-segment-bases : i64]
   [facts : OptRangeFacts]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [label : i64]
   [op : ir.CompilerIrBinOp]
   [lhs : OptLoopBceExpr]
@@ -76692,7 +76722,7 @@
 (define (opt-range-add-less-than-or-eq-from-compare
   [type-segment-bases : i64]
   [facts : OptRangeFacts]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [label : i64]
   [op : ir.CompilerIrBinOp]
   [lhs : OptLoopBceExpr]
@@ -76729,7 +76759,7 @@
 (define (opt-range-add-edge-facts
   [type-segment-bases : i64]
   [facts : OptRangeFacts]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [types : OptSsaVarTypes]
   [label : i64]
   [op : ir.CompilerIrBinOp]
@@ -76996,7 +77026,7 @@
             (opt-loop-bce-guard-lookup (opt-loop-bce-guard-tail env) label))])]))
 
 (define (opt-loop-bce-value-expr
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [env : OptLoopBceExprEnv]
   [value : ir.CompilerIrValue]) : OptLoopBceExpr
   (match (compiler-opt-global-shared-view value)
@@ -77124,7 +77154,7 @@
 
 (define (opt-loop-bce-state-bind-expr
   [state : OptLoopBceState]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [dst : i64]
   [expr : OptLoopBceExpr]) : OptLoopBceState
   (let
@@ -77181,7 +77211,7 @@
 
 (define (opt-loop-bce-state-bind-cmp
   [state : OptLoopBceState]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [dst : i64]
   [op : ir.CompilerIrBinOp]
   [lhs : OptLoopBceExpr]
@@ -77695,7 +77725,7 @@
   [blocks : ir.CompilerIrBlockList]
   [doms : OptDomInfo]
   [loops : OptNaturalLoopList]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [header-label : i64]
   [body-label : i64]
   [iv : OptLoopBceExpr]
@@ -77739,7 +77769,7 @@
   [blocks : ir.CompilerIrBlockList]
   [doms : OptDomInfo]
   [loops : OptNaturalLoopList]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [header-label : i64]
   [body-label : i64]
   [iv : OptLoopBceExpr]
@@ -77781,7 +77811,7 @@
   [blocks : ir.CompilerIrBlockList]
   [doms : OptDomInfo]
   [loops : OptNaturalLoopList]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [header-label : i64]
   [body-label : i64]
   [op : ir.CompilerIrBinOp]
@@ -77845,7 +77875,7 @@
 (define (opt-loop-bce-branch-state
   [type-segment-bases : i64]
   [state : OptLoopBceState]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [types : OptSsaVarTypes]
   [blocks : ir.CompilerIrBlockList]
   [doms : OptDomInfo]
@@ -78004,7 +78034,7 @@
 (define (opt-loop-bce-update-gep
   [type-segment-bases : i64]
   [state : OptLoopBceState]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [dst : i64]
   [base : ir.CompilerIrValue]
   [offset : ir.CompilerIrValue]
@@ -78047,7 +78077,7 @@
 (define (opt-loop-bce-update-load
   [type-segment-bases : i64]
   [state : OptLoopBceState]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [dst : i64]
   [src : ir.CompilerIrValue]
   [ty : ast.AstType]) : OptLoopBceState
@@ -78109,7 +78139,7 @@
 
 (define (opt-loop-bce-update-storeptr
   [state : OptLoopBceState]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [ptr : ir.CompilerIrValue]
   [value : ir.CompilerIrValue]) : OptLoopBceState
   (let
@@ -78134,7 +78164,7 @@
 (define (opt-loop-bce-update-call
   [state : OptLoopBceState]
   [summaries : OptLoopBceSummaries]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [dst : i64]
   [name : i64]
   [args : ir.CompilerIrCallArgs]) : OptLoopBceState
@@ -78156,7 +78186,7 @@
   [type-segment-bases : i64]
   [state : OptLoopBceState]
   [summaries : OptLoopBceSummaries]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [types : OptSsaVarTypes]
   [blocks : ir.CompilerIrBlockList]
   [doms : OptDomInfo]
@@ -78414,7 +78444,7 @@
 (define (opt-loop-bce-range-can-remove?
   [type-segment-bases : i64]
   [state : OptLoopBceState]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [block-label : i64]
   [index : ir.CompilerIrValue]
   [length : ir.CompilerIrValue]) : bool
@@ -78456,7 +78486,7 @@
 (define (opt-loop-bce-can-remove?
   [type-segment-bases : i64]
   [state : OptLoopBceState]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [block-label : i64]
   [index : ir.CompilerIrValue]
   [length : ir.CompilerIrValue]) : bool
@@ -78501,7 +78531,7 @@
   [type-segment-bases : i64]
   [state : OptLoopBceState]
   [summaries : OptLoopBceSummaries]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [types : OptSsaVarTypes]
   [blocks : ir.CompilerIrBlockList]
   [doms : OptDomInfo]
@@ -78562,7 +78592,7 @@
   [type-segment-bases : i64]
   [state : OptLoopBceState]
   [summaries : OptLoopBceSummaries]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [types : OptSsaVarTypes]
   [blocks : ir.CompilerIrBlockList]
   [doms : OptDomInfo]
@@ -78986,7 +79016,7 @@
 (define (opt-loop-bce-rewrite-id
   [type-segment-bases : i64]
   [summaries : OptLoopBceSummaries]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [types : OptSsaVarTypes]
   [blocks : ir.CompilerIrBlockList]
   [doms : OptDomInfo]
@@ -79039,7 +79069,7 @@
 (define (opt-loop-bce-rewrite-children
   [type-segment-bases : i64]
   [summaries : OptLoopBceSummaries]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [types : OptSsaVarTypes]
   [blocks : ir.CompilerIrBlockList]
   [doms : OptDomInfo]
@@ -79112,12 +79142,12 @@
           (compiler-opt-global-shared-view context))]
       [out : (__tl_dyn-array OptLoopBceBlockResult)
         (__tl_make-array OptLoopBceBlockResult count)]
-      [sources : opt_i64_i64_map.Map
+      [sources : OptValueSources
         (opt-gvn-sources-blocks
           (compiler-opt-global-shared-view blocks)
           (opt-gvn-sources-params
             (compiler-opt-global-shared-view params)
-            (opt_i64_i64_map.with-capacity 64)))]
+            (opt-value-sources-new)))]
       [ssa-facts : OptSsaFacts
         (opt-ssa-facts-from-function-with-representations
           type-segment-bases
@@ -79962,7 +79992,7 @@
   [instrs : ir.CompilerIrInstrSeq]) : unit
   (let
     [index : i64 0]
-    [sources : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 1)]
+    [sources : OptValueSources (opt-value-sources-new)]
     [call-memory : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 1)]
     [cells : OptGlobalCellSummary (opt-load-cse-no-cells-view)]
     ;; One empty rename table for the whole walk: this pipeline records no
@@ -149772,7 +149802,7 @@
               (opt-loop-bce-update-gep
                 type-segment-bases
                 state
-                (opt_i64_i64_map.with-capacity 1)
+                (opt-value-sources-new)
                 dst
                 base
                 offset
@@ -149783,7 +149813,7 @@
               (opt-loop-bce-update-load
                 type-segment-bases
                 state
-                (opt_i64_i64_map.with-capacity 1)
+                (opt-value-sources-new)
                 dst
                 src
                 ty)
@@ -149793,7 +149823,7 @@
               (opt-loop-bce-update-load
                 type-segment-bases
                 state
-                (opt_i64_i64_map.with-capacity 1)
+                (opt-value-sources-new)
                 dst
                 src
                 ty)
@@ -150380,7 +150410,7 @@
 ;; var can never manufacture provenance. A second scan resolves same-root phis
 ;; and later-listed definitions without weakening that single-source gate.
 (define (opt-call-memory-root-update-instr!
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [roots : (&mut roots OptLicmRootEnv)]
   [instr : ir.CompilerIrInstr]) : unit
   (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
@@ -150426,7 +150456,7 @@
           [_ (opt-licm-root-env-remove! roots dst)]))]))
 
 (define (opt-call-memory-root-scan-instrs!
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [roots : (&mut roots OptLicmRootEnv)]
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]) : unit
@@ -150442,7 +150472,7 @@
       (opt-call-memory-root-scan-instrs! sources roots instrs (+ index 1)))))
 
 (define (opt-call-memory-root-scan-blocks!
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [roots : (&mut roots OptLicmRootEnv)]
   [blocks : ir.CompilerIrBlockList]) : unit
   (match blocks
@@ -150476,14 +150506,14 @@
 
 (define (opt-call-memory-sources
   [params : ir.CompilerIrParamSeq]
-  [blocks : ir.CompilerIrBlockList]) : opt_i64_i64_map.Map
+  [blocks : ir.CompilerIrBlockList]) : OptValueSources
   (opt-gvn-sources-blocks
     blocks
-    (opt-gvn-sources-params params (opt_i64_i64_map.with-capacity 32))))
+    (opt-gvn-sources-params params (opt-value-sources-new))))
 
 (define (opt-call-memory-roots-with-sources
   [type-segment-bases : i64]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [params : ir.CompilerIrParamSeq]
   [blocks : ir.CompilerIrBlockList]) : OptLicmRootEnv
   (let
@@ -150548,7 +150578,7 @@
 
 (define (opt-call-memory-element-header-base?
   [type-segment-bases : i64]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [types : OptSsaVarTypes]
   [value : ir.CompilerIrValue]) : bool
   (match value
@@ -150607,7 +150637,7 @@
 (define (opt-call-memory-element-kind-for-instr
   [type-segment-bases : i64]
   [descriptor-globals : opt_i64_i64_map.Map]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [types : OptSsaVarTypes]
   [elements : (& elements opt_i64_i64_map.Map)]
   [instr : ir.CompilerIrInstr]) : i64
@@ -150678,7 +150708,7 @@
 (define (opt-call-memory-element-update-instr!
   [type-segment-bases : i64]
   [descriptor-globals : opt_i64_i64_map.Map]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [types : OptSsaVarTypes]
   [elements : (&mut elements opt_i64_i64_map.Map)]
   [instr : ir.CompilerIrInstr]) : unit
@@ -150702,7 +150732,7 @@
 (define (opt-call-memory-element-scan-instrs!
   [type-segment-bases : i64]
   [descriptor-globals : opt_i64_i64_map.Map]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [types : OptSsaVarTypes]
   [elements : (&mut elements opt_i64_i64_map.Map)]
   [instrs : ir.CompilerIrInstrSeq]
@@ -150733,7 +150763,7 @@
 (define (opt-call-memory-element-scan-blocks!
   [type-segment-bases : i64]
   [descriptor-globals : opt_i64_i64_map.Map]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [types : OptSsaVarTypes]
   [elements : (&mut elements opt_i64_i64_map.Map)]
   [blocks : ir.CompilerIrBlockList]) : unit
@@ -150770,7 +150800,7 @@
 (define (opt-call-memory-element-ptrs
   [type-segment-bases : i64]
   [descriptor-globals : opt_i64_i64_map.Map]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [params : ir.CompilerIrParamSeq]
   [blocks : ir.CompilerIrBlockList]) : opt_i64_i64_map.Map
   (let
@@ -151223,7 +151253,7 @@
           (opt_i64_i64_map.with-capacity 1)
           (compiler-opt-global-shared-view blocks))
         (let
-          [sources : opt_i64_i64_map.Map
+          [sources : OptValueSources
             (opt-call-memory-sources
               (compiler-opt-global-shared-view params)
               (compiler-opt-global-shared-view blocks))]
@@ -153392,10 +153422,10 @@
             (= (array-ref state 8) 0)
             (= (array-ref state 10) 6))
             (let
-              [sources : opt_i64_i64_map.Map
+              [sources : OptValueSources
                 (opt-gvn-sources-blocks
                   (compiler-opt-global-shared-view blocks)
-                  (opt_i64_i64_map.with-capacity 16))]
+                  (opt-value-sources-new))]
               [length : i64
                 (if (>= (array-ref state 6) 0)
                   (array-ref state 6)
@@ -166495,7 +166525,7 @@
         (set! position (+ position 1))))))
 
 (define (opt-owned-param-root-update-instr!
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [roots : (&mut roots OptLicmRootEnv)]
   [instr : ir.CompilerIrInstr]) : unit
   (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
@@ -166542,7 +166572,7 @@
           [_ (opt-licm-root-env-remove! roots dst)]))]))
 
 (define (opt-owned-param-root-scan-instrs!
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [roots : (&mut roots OptLicmRootEnv)]
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]) : unit
@@ -166556,7 +166586,7 @@
       (opt-owned-param-root-scan-instrs! sources roots instrs (+ index 1)))))
 
 (define (opt-owned-param-root-scan-blocks!
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [roots : (&mut roots OptLicmRootEnv)]
   [blocks : ir.CompilerIrBlockList]) : unit
   (match blocks
@@ -166588,7 +166618,7 @@
   (match func
     [(ir.CompilerIrFunction.Function name params _ _ blocks _)
       (let
-        [sources : opt_i64_i64_map.Map
+        [sources : OptValueSources
           (opt-call-memory-sources
             (compiler-opt-global-shared-view params)
             (compiler-opt-global-shared-view blocks))]
@@ -176639,7 +176669,7 @@
 (define (opt-load-header-global-handle-gep?
   [type-segment-bases : i64]
   [cells : OptGlobalCellSummary]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [dst : i64]
   [base : ir.CompilerIrValue]
   [offset : ir.CompilerIrValue]) : bool
@@ -176663,7 +176693,7 @@
 (define (opt-load-header-set-mark-global-handles-seq-from
   [type-segment-bases : i64]
   [cells : OptGlobalCellSummary]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]
   [set : OptLoadHeaderSet]) : OptLoadHeaderSet
@@ -176695,7 +176725,7 @@
 (define (opt-load-header-set-mark-global-handles-block-seq
   [type-segment-bases : i64]
   [cells : OptGlobalCellSummary]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [blocks : ir.CompilerIrBlockSeq]
   [set : OptLoadHeaderSet]) : OptLoadHeaderSet
   (let
@@ -176725,7 +176755,7 @@
 (define (opt-load-header-set-mark-global-handles
   [type-segment-bases : i64]
   [cells : OptGlobalCellSummary]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [blocks : ir.CompilerIrBlockList]
   [set : OptLoadHeaderSet]) : OptLoadHeaderSet
   (match (compiler-opt-global-shared-view blocks)
@@ -177557,7 +177587,7 @@
 ;; var its kind references are single-source, so nothing anywhere redefines
 ;; them and the value property is loop-invariant.
 (define (opt-load-kind-binding-gvn-stable?
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [var : i64]
   [kind : OptLoadLocKind]) : bool
   (and
@@ -177580,7 +177610,7 @@
 (define (opt-load-kinds-filter-stable
   [profile-state : profile_state.CompilerProfileMetrics]
   [kinds : OptLoadPtrKinds]
-  [sources : opt_i64_i64_map.Map]) : OptLoadPtrKinds
+  [sources : OptValueSources]) : OptLoadPtrKinds
   (match (compiler-opt-global-shared-view kinds)
     [(OptLoadPtrKinds.Sparse map _ cap)
       (let
@@ -177702,7 +177732,7 @@
 ;; nothing for the rename at all.
 (define (opt-load-canon-note-mov!
   [canon : (__tl_dyn-array i64)]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [dst : i64]
   [src : ir.CompilerIrValue]) : unit
   (if (= (array-length (compiler-opt-global-shared-view canon)) 0)
@@ -177724,7 +177754,7 @@
   [profile-state : profile_state.CompilerProfileMetrics]
   [type-segment-bases : i64]
   [canon : (__tl_dyn-array i64)]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [kinds : OptLoadPtrKinds]
   [hs : OptLoadHeaderSet]
   [instr : ir.CompilerIrInstr]) : OptLoadPtrKinds
@@ -178733,7 +178763,7 @@
   [cap : i64]
   [entry : OptLoadEntry]
   [gated? : bool]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [src-base : i64]
   [src-off : i64]
   [dst-base : i64]
@@ -178788,7 +178818,7 @@
   [out : OptLoadTable]
   [cap : i64]
   [gated? : bool]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [src-base : i64]
   [src-off : i64]
   [dst-base : i64]
@@ -179410,7 +179440,7 @@
         [kinds : OptLoadPtrKinds initial-kinds]
         ;; This walk records no renames; one empty table serves the whole loop.
         [no-canon : (__tl_dyn-array i64) (opt-load-canon-none)]
-        [no-sources : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 1)]
+        [no-sources : OptValueSources (opt-value-sources-new)]
         [index : i64 0]
         (begin
           (while (< index count)
@@ -179475,7 +179505,7 @@
 ;; caches/forwards through single-source vars, mirroring its original
 ;; gates; the block-local pass needs none).
 (define (opt-load-key-gvn-stable?
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [key : OptLoadKey]) : bool
   (match key
     [(OptLoadKey.Raw value _ _)
@@ -179493,7 +179523,7 @@
     [(OptLoadKey.GlobalField _ _ _ _) true]))
 
 (define (opt-load-value-gvn-stable?
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [value : ir.CompilerIrValue]) : bool
   (match value
     [(ir.CompilerIrValue.Var v) (opt-gvn-stable-var? sources v)]
@@ -179554,7 +179584,7 @@
 (define (opt-load-cse-state-step-other
   [type-segment-bases : i64]
   [canon : (__tl_dyn-array i64)]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [hs : OptLoadHeaderSet]
   [state : OptLoadCseState]
   [instr : ir.CompilerIrInstr]) : OptLoadCseState
@@ -179612,7 +179642,7 @@
 (define (opt-load-cse-state-clear-for-memory
   [type-segment-bases : i64]
   [canon : (__tl_dyn-array i64)]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [hs : OptLoadHeaderSet]
   [state : OptLoadCseState]
   [instr : ir.CompilerIrInstr]) : OptLoadCseState
@@ -179697,7 +179727,7 @@
 (define (opt-load-cse-state-global-store
   [type-segment-bases : i64]
   [canon : (__tl_dyn-array i64)]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [hs : OptLoadHeaderSet]
   [state : OptLoadCseState]
   [global : i64]
@@ -180079,7 +180109,7 @@
 (define (opt-load-cse-state-direct-call
   [type-segment-bases : i64]
   [canon : (__tl_dyn-array i64)]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [hs : OptLoadHeaderSet]
   [call-memory : opt_i64_i64_map.Map]
   [cells : OptGlobalCellSummary]
@@ -180264,7 +180294,7 @@
   ;; lint-allow: unused-variable
   [hs : OptLoadHeaderSet]
   [gated? : bool]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [state : OptLoadCseState]
   [ptr : ir.CompilerIrValue]
   [value : ir.CompilerIrValue]
@@ -180389,7 +180419,7 @@
   [type-segment-bases : i64]
   [hs : OptLoadHeaderSet]
   [gated? : bool]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [state : OptLoadCseState]
   [dst : ir.CompilerIrValue]
   [src : ir.CompilerIrValue]
@@ -180509,7 +180539,7 @@
   [canon : (__tl_dyn-array i64)]
   [hs : OptLoadHeaderSet]
   [gated? : bool]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [state : OptLoadCseState]
   [dst : i64]
   [src : ir.CompilerIrValue]
@@ -180647,7 +180677,7 @@
   [canon : (__tl_dyn-array i64)]
   [hs : OptLoadHeaderSet]
   [gated? : bool]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [call-memory : opt_i64_i64_map.Map]
   [cells : OptGlobalCellSummary]
   [state : OptLoadCseState]
@@ -180773,7 +180803,7 @@
 (define (opt-load-cse-instrs-from
   [type-segment-bases : i64]
   [hs : OptLoadHeaderSet]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [call-memory : opt_i64_i64_map.Map]
   [state : OptLoadCseState]
   [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
@@ -180815,7 +180845,7 @@
   (opt-load-cse-instrs-from
     type-segment-bases
     hs
-    (opt_i64_i64_map.with-capacity 1)
+    (opt-value-sources-new)
     (opt_i64_i64_map.with-capacity 1)
     state
     instrs))
@@ -182479,7 +182509,7 @@
 ;; Keep only descriptor-field entries whose base var is single-source.
 (define (opt-load-table-filter-descriptor-stable
   [table : OptLoadTable]
-  [sources : opt_i64_i64_map.Map]) : OptLoadTable
+  [sources : OptValueSources]) : OptLoadTable
   (match (compiler-opt-global-shared-view table)
     [(OptLoadTable.Nil) (OptLoadTable.Nil)]
     [(OptLoadTable.Cons entry rest)
@@ -182941,7 +182971,7 @@
 ;; entries the loop-safe carry keeps stay as well, whatever their value.
 (define (opt-load-table-filter-live-values
   [table : OptLoadTable]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [uses : opt_i64_i64_map.Map]
   [descriptor? : bool]) : OptLoadTable
   (match (compiler-opt-global-shared-view table)
@@ -183004,7 +183034,7 @@
   [index : OptCfgIndex]
   [exit-states : (__tl_dyn-array OptMaybeLoadCseState)]
   [processed : (__tl_dyn-array bool)]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [loop-safe : OptLabelSet]
   [carry : OptLoadLoopCarry]
   [label : i64]
@@ -183148,7 +183178,7 @@
   [context : OptCfgContext]
   [exit-states : (__tl_dyn-array OptMaybeLoadCseState)]
   [processed : (__tl_dyn-array bool)]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [loop-safe : OptLabelSet]
   [carry : OptLoadLoopCarry]
   [empty-state : OptLoadCseState]
@@ -183866,7 +183896,7 @@
 ;; Is `instr` a `Mov dst <- Global g` of this very cell, with a single-source
 ;; destination? Then it already IS the cell's materialization.
 (define (opt-load-cell-adopts?
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [global : i64]
   [instr : ir.CompilerIrInstr]) : bool
   (match instr
@@ -183883,7 +183913,7 @@
   [type-segment-bases : i64]
   [canon : (__tl_dyn-array i64)]
   [hs : OptLoadHeaderSet]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [cells : OptGlobalCellSummary]
   [promote : OptLoadCellPromote]
   [block-id : i64]
@@ -183957,7 +183987,7 @@
 (define (opt-load-cell-promote-read-key
   [type-segment-bases : i64]
   [canon : (__tl_dyn-array i64)]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [hs : OptLoadHeaderSet]
   [promote : OptLoadCellPromote]
   [block-id : i64]
@@ -184030,7 +184060,7 @@
 (define (opt-load-cell-materialize
   [type-segment-bases : i64]
   [canon : (__tl_dyn-array i64)]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [hs : OptLoadHeaderSet]
   [promote : OptLoadCellPromote]
   [block-id : i64]
@@ -184460,7 +184490,7 @@
 ;; keeps, so a phi over them would only add a copy.
 (define (opt-load-join-inputs-ok?
   [type-segment-bases : i64]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [exit-states : (__tl_dyn-array OptMaybeLoadCseState)]
   [joins : OptLoadJoinPhis]
   [count : i64]
@@ -184611,7 +184641,7 @@
 (define (opt-load-join-scan-table
   [type-segment-bases : i64]
   [index : OptCfgIndex]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [exit-states : (__tl_dyn-array OptMaybeLoadCseState)]
   [joins : OptLoadJoinPhis]
   [count : i64]
@@ -184681,7 +184711,7 @@
 (define (opt-load-join-augment
   [type-segment-bases : i64]
   [context : OptCfgContext]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [exit-states : (__tl_dyn-array OptMaybeLoadCseState)]
   [processed : (__tl_dyn-array bool)]
   [joins : OptLoadJoinPhis]
@@ -185001,7 +185031,7 @@
 (define (opt-load-pre-pair-ok?
   [type-segment-bases : i64]
   [doms : OptDomInfo]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [hs : OptLoadHeaderSet]
   [sites : OptLoadPreSites]
   [def-blocks : (__tl_dyn-array i64)]
@@ -185083,7 +185113,7 @@
 (define (opt-load-pre-prefix-length
   [type-segment-bases : i64]
   [doms : OptDomInfo]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [hs : OptLoadHeaderSet]
   [sites : OptLoadPreSites]
   [def-blocks : (__tl_dyn-array i64)]
@@ -185272,7 +185302,7 @@
   [type-segment-bases : i64]
   [index : OptCfgIndex]
   [doms : OptDomInfo]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [hs : OptLoadHeaderSet]
   [sites : OptLoadPreSites]
   [def-blocks : (__tl_dyn-array i64)]
@@ -185428,7 +185458,7 @@
 (define (opt-load-pre-hoist-blocks
   [type-segment-bases : i64]
   [context : OptCfgContext]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [hs : OptLoadHeaderSet]
   [loops : OptNaturalLoopList]
   [loop-free-dest? : bool]
@@ -185824,7 +185854,7 @@
 (define (opt-guard-dedup-collect-instrs!
   [type-segment-bases : i64]
   [hs : OptLoadHeaderSet]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [uses : (__tl_dyn-array i64)]
   [sites : (__tl_dyn-array i64)]
   [block-id : i64]
@@ -185916,7 +185946,7 @@
   [type-segment-bases : i64]
   [index : OptCfgIndex]
   [hs : OptLoadHeaderSet]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [uses : (__tl_dyn-array i64)]
   [block-count : i64]
   [sites : (__tl_dyn-array i64)]) : i64
@@ -188262,7 +188292,7 @@
   [obj : OptGlobalObjModRef]
   [context : OptCfgContext]
   [hs : OptLoadHeaderSet]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [loops : OptNaturalLoopList]
   [moved : (__tl_dyn-array bool)]
   [uses : (__tl_dyn-array i64)]
@@ -188496,12 +188526,12 @@
               ;; CFG, the dominator tree, the single-source map and the header
               ;; set all keep describing the result; only the index's dense
               ;; block array has to be pointed at it.
-              [sources : opt_i64_i64_map.Map
+              [sources : OptValueSources
                 (opt-gvn-sources-blocks
                   (compiler-opt-global-shared-view blocks)
                   (opt-gvn-sources-params
                     (compiler-opt-global-shared-view params)
-                    (opt_i64_i64_map.with-capacity 64)))]
+                    (opt-value-sources-new)))]
               [hs : OptLoadHeaderSet
                 (opt-load-header-set-from-function-with-size
                   type-segment-bases
@@ -188760,7 +188790,7 @@
   [canon : (__tl_dyn-array i64)]
   [hs : OptLoadHeaderSet]
   [state : OptLoadCseState]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [call-memory : opt_i64_i64_map.Map]
   [cells : OptGlobalCellSummary]
   [promote : OptLoadCellPromote]
@@ -188851,7 +188881,7 @@
   [canon : (__tl_dyn-array i64)]
   [hs : OptLoadHeaderSet]
   [entry-state : OptLoadCseState]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [call-memory : opt_i64_i64_map.Map]
   [cells : OptGlobalCellSummary]
   [promote : OptLoadCellPromote]
@@ -188876,7 +188906,7 @@
   [canon : (__tl_dyn-array i64)]
   [context : OptCfgContext]
   [hs : OptLoadHeaderSet]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [call-memory : opt_i64_i64_map.Map]
   [cells : OptGlobalCellSummary]
   [promote : OptLoadCellPromote]
@@ -188941,7 +188971,7 @@
   [canon : (__tl_dyn-array i64)]
   [context : OptCfgContext]
   [hs : OptLoadHeaderSet]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [call-memory : opt_i64_i64_map.Map]
   [cells : OptGlobalCellSummary]
   [promote : OptLoadCellPromote]
@@ -189123,7 +189153,7 @@
 ;; The gate-free half of the candidate test, shared by the pre-scan and the
 ;; gated walk.
 (define (opt-load-gvn-subst-candidate?
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [original : ir.CompilerIrInstr]
   [rewritten : ir.CompilerIrInstr]) : bool
   (match original
@@ -189143,7 +189173,7 @@
     [_ false]))
 
 (define (opt-load-gvn-subst-pair
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [loop-masks : (__tl_dyn-array i64)]
   [def-blocks : (__tl_dyn-array i64)]
   [load-id : i64]
@@ -189189,7 +189219,7 @@
 ;; order, so an index whose input is a Load and whose output is a Mov to the
 ;; same dst is exactly one redundant-load rewrite.
 (define (opt-load-gvn-subst-block-env
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [loop-masks : (__tl_dyn-array i64)]
   [def-blocks : (__tl_dyn-array i64)]
   [block-id : i64]
@@ -189237,7 +189267,7 @@
 ;; gate-free half of the candidate test? A function with none skips the frame
 ;; walk and the two per-block-id arrays entirely.
 (define (opt-load-gvn-subst-block-any?
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [original : ir.CompilerIrBlock]
   [rewritten : ir.CompilerIrBlock]) : bool
   (match original
@@ -189269,7 +189299,7 @@
 
 (define (opt-load-gvn-subst-any?
   [index : OptCfgIndex]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [out : (__tl_dyn-array OptGvnBlockResult)]) : bool
   (let
     [count : i64 (array-length out)]
@@ -189345,7 +189375,7 @@
 
 (define (opt-load-gvn-subst-env
   [index : OptCfgIndex]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [loop-masks : (__tl_dyn-array i64)]
   [frame : i64]
   [out : (__tl_dyn-array OptGvnBlockResult)]) : OptCopyEnv
@@ -189535,7 +189565,7 @@
   [profile-state : profile_state.CompilerProfileMetrics]
   [type-segment-bases : i64]
   [context : OptCfgContext]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [hs : OptLoadHeaderSet]
   [params : ir.CompilerIrParamSeq]
   [call-memory : opt_i64_i64_map.Map]
@@ -189561,7 +189591,7 @@
   [profile-state : profile_state.CompilerProfileMetrics]
   [type-segment-bases : i64]
   [context : OptCfgContext]
-  [sources : opt_i64_i64_map.Map]
+  [sources : OptValueSources]
   [hs : OptLoadHeaderSet]
   [params : ir.CompilerIrParamSeq]
   [call-memory : opt_i64_i64_map.Map]

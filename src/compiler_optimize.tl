@@ -11839,7 +11839,19 @@
   ;; Extending a prefix is in-place only while it is the unique high-water
   ;; view. Extending a tail or an already-branched prefix copies first, keeping
   ;; the persistent cons semantics callers had with the old linked list.
-  (Dense (__tl_dyn-array i64) i64))
+  ;; The buffer travels as its handle's bits (a dynamic buffer is one
+  ;; pointer), so a set is a Copy value; every view shares the one buffer.
+  (Dense u64 i64))
+
+;; The label buffer behind a Dense set's handle, and the handle of a buffer.
+;; Both only reinterpret the pointer; the views already share the buffer.
+(defmacro (opt-label-items [handle : Expr]) : Expr
+  `(unsafe
+    (ptr-read (ptr-cast (ptr-addr-of ,handle) : (Ptr (__tl_dyn-array i64))))))
+
+(defmacro (opt-label-handle [items : Expr]) : Expr
+  `(unsafe
+    (ptr-read (ptr-cast (ptr-addr-of ,items) : (Ptr u64)))))
 
 (define (opt-dense-next-capacity [len : i64]) : i64
   (if (< len 4)
@@ -11849,7 +11861,10 @@
 (define (opt-label-ref [set : OptLabelSet] [index : i64]) : i64
   (match set
     [(OptLabelSet.Nil) (ir.compiler-ir-label-none)]
-    [(OptLabelSet.Dense items len) (array-ref items (- len index))]))
+    [(OptLabelSet.Dense items-handle len)
+      (let
+        [items : (__tl_dyn-array i64) (opt-label-items items-handle)]
+        (array-ref items (- len index)))]))
 
 (define (opt-label-tail [set : OptLabelSet]) : OptLabelSet
   (match set
@@ -11868,14 +11883,16 @@
 (define (opt-label-pop-owned [set : OptLabelSet]) : OptLabelSet
   (match set
     [(OptLabelSet.Nil) (OptLabelSet.Nil)]
-    [(OptLabelSet.Dense items len)
-      (if (<= len 1)
-        (OptLabelSet.Nil)
-        (begin
-          (if (= (array-ref items 0) len)
-            (set! (array-ref items 0) (- len 1))
-            unit)
-          (OptLabelSet.Dense items (- len 1))))]))
+    [(OptLabelSet.Dense items-handle len)
+      (let
+        [items : (__tl_dyn-array i64) (opt-label-items items-handle)]
+        (if (<= len 1)
+          (OptLabelSet.Nil)
+          (begin
+            (if (= (array-ref items 0) len)
+              (set! (array-ref items 0) (- len 1))
+              unit)
+            (OptLabelSet.Dense items-handle (- len 1)))))]))
 
 (define (opt-label-cons [label : i64] [set : OptLabelSet]) : OptLabelSet
   (match set
@@ -11885,31 +11902,33 @@
         (begin
           (set! (array-ref items 0) 1)
           (set! (array-ref items 1) label)
-          (OptLabelSet.Dense items 1)))]
-    [(OptLabelSet.Dense items len)
-      (if (and (= len (array-ref items 0)) (< len (- (array-length items) 1)))
-        (begin
-          (set! (array-ref items (+ len 1)) label)
-          (set! (array-ref items 0) (+ len 1))
-          (OptLabelSet.Dense items (+ len 1)))
-        (let
-          [old-capacity : i64 (- (array-length items) 1)]
-          [capacity : i64
-            (if (< len old-capacity)
-              old-capacity
-              (opt-dense-next-capacity len))]
-          [bigger : (__tl_dyn-array i64) (__tl_make-array i64 (+ capacity 1))]
-          [index : i64 0]
+          (OptLabelSet.Dense (opt-label-handle items) 1)))]
+    [(OptLabelSet.Dense items-handle len)
+      (let
+        [items : (__tl_dyn-array i64) (opt-label-items items-handle)]
+        (if (and (= len (array-ref items 0)) (< len (- (array-length items) 1)))
           (begin
-            (while (< index len)
-              (begin
-                (set!
-                  (array-ref bigger (+ index 1))
-                  (array-ref items (+ index 1)))
-                (set! index (+ index 1))))
-            (set! (array-ref bigger 0) (+ len 1))
-            (set! (array-ref bigger (+ len 1)) label)
-            (OptLabelSet.Dense bigger (+ len 1)))))]))
+            (set! (array-ref items (+ len 1)) label)
+            (set! (array-ref items 0) (+ len 1))
+            (OptLabelSet.Dense items-handle (+ len 1)))
+          (let
+            [old-capacity : i64 (- (array-length items) 1)]
+            [capacity : i64
+              (if (< len old-capacity)
+                old-capacity
+                (opt-dense-next-capacity len))]
+            [bigger : (__tl_dyn-array i64) (__tl_make-array i64 (+ capacity 1))]
+            [index : i64 0]
+            (begin
+              (while (< index len)
+                (begin
+                  (set!
+                    (array-ref bigger (+ index 1))
+                    (array-ref items (+ index 1)))
+                  (set! index (+ index 1))))
+              (set! (array-ref bigger 0) (+ len 1))
+              (set! (array-ref bigger (+ len 1)) label)
+              (OptLabelSet.Dense (opt-label-handle bigger) (+ len 1))))))]))
 
 ;; Membership walks the backing array directly rather than through
 ;; `opt-label-count` plus one `opt-label-ref` per element. The sets are tiny --
@@ -11920,8 +11939,9 @@
 (define (opt-label-contains [set : OptLabelSet] [label : i64]) : bool
   (match set
     [(OptLabelSet.Nil) false]
-    [(OptLabelSet.Dense items len)
+    [(OptLabelSet.Dense items-handle len)
       (let
+        [items : (__tl_dyn-array i64) (opt-label-items items-handle)]
         [slot : i64 len]
         (begin
           (while (> slot 0)
@@ -11931,7 +11951,7 @@
           false))]))
 
 (define (opt-label-add [set : OptLabelSet] [label : i64]) : OptLabelSet
-  (if (opt-label-contains (compiler-opt-global-shared-view set) label)
+  (if (opt-label-contains set label)
     set
     (opt-label-cons label set)))
 
@@ -11941,32 +11961,23 @@
     [(OptLabelSet.Dense _ len) len]))
 
 (define (opt-label-subset? [a : OptLabelSet] [b : OptLabelSet]) : bool
-  (match (compiler-opt-global-shared-view a)
+  (match a
     [(OptLabelSet.Nil) true]
     [(OptLabelSet.Dense _ _)
       (and
-        (opt-label-contains
-          (compiler-opt-global-shared-view b)
-          (opt-label-ref (compiler-opt-global-shared-view a) 0))
+        (opt-label-contains b (opt-label-ref a 0))
         (opt-label-subset? (opt-label-tail a) b))]))
 
 (define (opt-label-set-eq? [a : OptLabelSet] [b : OptLabelSet]) : bool
-  (and
-    (opt-label-subset?
-      (compiler-opt-global-shared-view a)
-      (compiler-opt-global-shared-view b))
-    (opt-label-subset? b a)))
+  (and (opt-label-subset? a b) (opt-label-subset? b a)))
 
 (define (opt-label-intersection [a : OptLabelSet] [b : OptLabelSet]) : OptLabelSet
-  (match (compiler-opt-global-shared-view a)
+  (match a
     [(OptLabelSet.Nil) (OptLabelSet.Nil)]
     [(OptLabelSet.Dense _ _)
       (let
-        [label : i64 (opt-label-ref (compiler-opt-global-shared-view a) 0)]
-        [tail : OptLabelSet
-          (opt-label-intersection
-            (opt-label-tail a)
-            (compiler-opt-global-shared-view b))]
+        [label : i64 (opt-label-ref a 0)]
+        [tail : OptLabelSet (opt-label-intersection (opt-label-tail a) b)]
         (if (opt-label-contains b label)
           (opt-label-add tail label)
           tail))]))
@@ -12068,11 +12079,11 @@
 (define (opt-cfg-label-set-known-in-map?
   [labels : OptLabelSet]
   [known : opt_string_i64_map.Map]) : bool
-  (match (compiler-opt-global-shared-view labels)
+  (match labels
     [(OptLabelSet.Nil) true]
     [(OptLabelSet.Dense _ _)
       (let
-        [label : i64 (opt-label-ref (compiler-opt-global-shared-view labels) 0)]
+        [label : i64 (opt-label-ref labels 0)]
         (and
           (opt_string_i64_map.contains? (& known) label)
           (opt-cfg-label-set-known-in-map? (opt-label-tail labels) known)))]))
@@ -12134,9 +12145,7 @@
     [(ir.CompilerIrBlockList.Cons block rest)
       (match (compiler-opt-global-shared-view block)
         [(ir.CompilerIrBlock.Block label _)
-          (if (opt-label-contains
-            (compiler-opt-global-shared-view labels)
-            label)
+          (if (opt-label-contains labels label)
             (ir.compiler-ir-block-cons
               block
               (opt-cfg-filter-blocks-by-labels labels (deref rest)))
@@ -12404,8 +12413,9 @@
   [index : i64]) : i64
   (match items
     [(OptLabelSet.Nil) index]
-    [(OptLabelSet.Dense values len)
+    [(OptLabelSet.Dense values-handle len)
       (let
+        [values : (__tl_dyn-array i64) (opt-label-items values-handle)]
         [slot : i64 1]
         (begin
           (while (<= slot len)
@@ -12656,25 +12666,28 @@
                           (set! end start)
                           (match succs
                             [(OptLabelSet.Nil) unit]
-                            [(OptLabelSet.Dense values len)
-                              (while (<= slot len)
-                                (let
-                                  [id : i64
-                                    (opt-cfg-label-table-get
-                                      (array-ref values slot)
-                                      generation)]
-                                  (begin
-                                    (if (< id 0)
-                                      (set! known false)
-                                      (begin
-                                        (when
-                                          (>= end (array-length edges))
-                                          (set!
-                                            edges
-                                            (opt-cfg-edges-grow edges end)))
-                                        (set! (array-ref edges end) id)
-                                        (set! end (+ end 1))))
-                                    (set! slot (+ slot 1)))))])))
+                            [(OptLabelSet.Dense values-handle len)
+                              (let
+                                [values : (__tl_dyn-array i64)
+                                  (opt-label-items values-handle)]
+                                (while (<= slot len)
+                                  (let
+                                    [id : i64
+                                      (opt-cfg-label-table-get
+                                        (array-ref values slot)
+                                        generation)]
+                                    (begin
+                                      (if (< id 0)
+                                        (set! known false)
+                                        (begin
+                                          (when
+                                            (>= end (array-length edges))
+                                            (set!
+                                              edges
+                                              (opt-cfg-edges-grow edges end)))
+                                          (set! (array-ref edges end) id)
+                                          (set! end (+ end 1))))
+                                      (set! slot (+ slot 1))))))])))
                       (when
                         (and
                           (ir.compiler-ir-label-some? next-label)
@@ -13138,7 +13151,7 @@
                   (array-ref csr.edges (+ start k))))
               (set! k (+ k 1))))
           (set! (array-ref items 0) n)
-          (OptLabelSet.Dense items n))))))
+          (OptLabelSet.Dense (opt-label-handle items) n))))))
 
 (define (opt-cfg-index-successors [index : OptCfgIndex] [label : i64]) : OptLabelSet
   (match (opt-cfg-index-id (compiler-opt-global-shared-view index) label)
@@ -13299,7 +13312,7 @@
                     (set! k (+ k 1))))
                 (set! id (+ id 1))))
             (set! (array-ref items 0) n)
-            (OptLabelSet.Dense items n)))))))
+            (OptLabelSet.Dense (opt-label-handle items) n)))))))
 
 (define (opt-cfg-index-rpo-id [index : OptCfgIndex] [slot : i64]) : i64
   (if (and (>= slot 0) (< slot index.reach-count))
@@ -16044,7 +16057,7 @@
             phi-inputs-at-13116-3.slots
             (+ phi-inputs-at-13116-3.start 1)
             (- phi-inputs-at-13116-3.len 1))]
-        (if (opt-label-contains (compiler-opt-global-shared-view seen) label)
+        (if (opt-label-contains seen label)
           false
           (opt-phi-input-labels-unique-from? rest (opt-label-add seen label)))))))
 
@@ -17103,13 +17116,13 @@
   [index : OptCfgIndex]
   [members : (__tl_dyn-array bool)]
   [labels : OptLabelSet]) : unit
-  (match (compiler-opt-global-shared-view labels)
+  (match labels
     [(OptLabelSet.Nil) unit]
     [(OptLabelSet.Dense _ _)
       (begin
         (match (opt-cfg-index-id
           (compiler-opt-global-shared-view index)
-          (opt-label-ref (compiler-opt-global-shared-view labels) 0))
+          (opt-label-ref labels 0))
           [(option_i64.Some id)
             (if (and (>= id 0) (< id (array-length members)))
               (set! (array-ref members id) true)
@@ -17351,14 +17364,14 @@
   [ty : ast.AstType]
   [frontier : OptLabelSet]
   [state : OptSsaPhiInsertState]) : OptSsaPhiInsertState
-  (match (compiler-opt-global-shared-view frontier)
+  (match frontier
     [(OptLabelSet.Nil) state]
     [(OptLabelSet.Dense _ _)
       (opt-ssa-phi-add-frontier
         (compiler-opt-global-shared-view index)
         var
         (compiler-opt-global-shared-view ty)
-        (opt-label-tail (compiler-opt-global-shared-view frontier))
+        (opt-label-tail frontier)
         (opt-ssa-phi-add-site index state var ty (opt-label-ref frontier 0)))]))
 
 (define (opt-ssa-insert-phis-worklist
@@ -17374,12 +17387,11 @@
         worklist
         work-members
         site-members)
-      (match (compiler-opt-global-shared-view worklist)
+      (match worklist
         [(OptLabelSet.Nil) state]
         [(OptLabelSet.Dense _ _)
           (let
-            [label : i64
-              (opt-label-ref (compiler-opt-global-shared-view worklist) 0)]
+            [label : i64 (opt-label-ref worklist 0)]
             (opt-ssa-insert-phis-worklist
               (compiler-opt-global-shared-view context)
               (compiler-opt-global-shared-view blocks)
@@ -17424,7 +17436,7 @@
           (opt-ssa-label-mark-members!
             index
             (compiler-opt-global-shared-view work-members)
-            (compiler-opt-global-shared-view worklist))
+            worklist)
           (opt-ssa-insert-phis-worklist
             (compiler-opt-global-shared-view context)
             blocks
@@ -18896,11 +18908,11 @@
   [outs : OptSsaBlockOuts]
   [var : i64]
   [ty : ast.AstType]) : ir.CompilerIrPhiInputSeq
-  (match (compiler-opt-global-shared-view preds)
+  (match preds
     [(OptLabelSet.Nil) (ir.compiler-ir-phi-input-seq-empty)]
     [(OptLabelSet.Dense _ _)
       (let
-        [pred : i64 (opt-label-ref (compiler-opt-global-shared-view preds) 0)]
+        [pred : i64 (opt-label-ref preds 0)]
         [snapshot : OptSsaRenameSnapshot
           (opt-ssa-block-out-lookup (compiler-opt-global-shared-view outs) pred)]
         [value : ir.CompilerIrValue
@@ -21699,14 +21711,11 @@
   [seen-input : opt_string_i64_map.Map]) : opt_string_i64_map.Map
   (let
     [seen : opt_string_i64_map.Map seen-input]
-    (match (compiler-opt-global-shared-view set)
+    (match set
       [(OptLabelSet.Nil) seen]
       [(OptLabelSet.Dense _ _)
         (begin
-          (opt_string_i64_map.insert-ref!
-            (&mut seen)
-            (opt-label-ref (compiler-opt-global-shared-view set) 0)
-            1)
+          (opt_string_i64_map.insert-ref! (&mut seen) (opt-label-ref set 0) 1)
           (opt-cfg-switch-seen-seed (opt-label-tail set) seen))])))
 
 (define (opt-cfg-switch-case-successors-hashed
@@ -21753,7 +21762,7 @@
     (opt-cfg-switch-case-hash-threshold))
     (opt-cfg-switch-case-successors-linear set cases)
     (opt-cfg-switch-case-successors-hashed
-      (compiler-opt-global-shared-view set)
+      set
       cases
       (opt-cfg-switch-seen-seed set (opt_string_i64_map.with-capacity 64)))))
 
@@ -21903,13 +21912,13 @@
   [index : OptCfgIndex]
   [members : (__tl_dyn-array bool)]
   [labels : OptLabelSet]) : unit
-  (match (compiler-opt-global-shared-view labels)
+  (match labels
     [(OptLabelSet.Nil) unit]
     [(OptLabelSet.Dense _ _)
       (begin
         (match (opt-cfg-index-id
           (compiler-opt-global-shared-view index)
-          (opt-label-ref (compiler-opt-global-shared-view labels) 0))
+          (opt-label-ref labels 0))
           [(option_i64.Some id)
             (if (and (>= id 0) (< id (array-length members)))
               (set! (array-ref members id) true)
@@ -22032,12 +22041,12 @@
       (__tl_make-array
         bool
         (opt-cfg-index-block-count (compiler-opt-global-shared-view index)))]
-    [count : i64 (opt-label-count (compiler-opt-global-shared-view labels))]
+    [count : i64 (opt-label-count labels)]
     (begin
       (opt-loop-body-fill-members!
         index
         (compiler-opt-global-shared-view members)
-        (compiler-opt-global-shared-view labels))
+        labels)
       (OptLoopBody
         labels
         (compiler-opt-global-shared-view members)
@@ -22183,13 +22192,13 @@
   [marks : (__tl_dyn-array bool)]
   [preds : OptLabelSet]
   [state : OptNaturalLoopCollectState]) : OptNaturalLoopCollectState
-  (match (compiler-opt-global-shared-view preds)
+  (match preds
     [(OptLabelSet.Nil) state]
     [(OptLabelSet.Dense _ _)
       (opt-natural-loop-collect-add-preds
         (compiler-opt-global-shared-view index)
         (compiler-opt-global-shared-view marks)
-        (opt-label-tail (compiler-opt-global-shared-view preds))
+        (opt-label-tail preds)
         (opt-natural-loop-collect-add-pred
           index
           marks
@@ -22202,12 +22211,11 @@
   [marks : (__tl_dyn-array bool)]
   [body : OptLabelSet]
   [worklist : OptLabelSet]) : OptLabelSet
-  (match (compiler-opt-global-shared-view worklist)
+  (match worklist
     [(OptLabelSet.Nil) body]
     [(OptLabelSet.Dense _ _)
       (let
-        [label : i64
-          (opt-label-ref (compiler-opt-global-shared-view worklist) 0)]
+        [label : i64 (opt-label-ref worklist 0)]
         [state : OptNaturalLoopCollectState
           (opt-natural-loop-collect-add-preds
             (compiler-opt-global-shared-view index)
@@ -22244,7 +22252,7 @@
   (let
     [successors : OptLabelSet (opt-pred-map-successors pred-map label)]
     (and
-      (= (opt-label-count (compiler-opt-global-shared-view successors)) 1)
+      (= (opt-label-count successors) 1)
       (opt-label-contains successors header))))
 
 (define (opt-natural-loop-preheader-candidate-add
@@ -22267,14 +22275,14 @@
   [body : OptLabelSet]
   [preds : OptLabelSet]
   [candidate : OptLoopPreheaderCandidate]) : OptLoopPreheaderCandidate
-  (match (compiler-opt-global-shared-view preds)
+  (match preds
     [(OptLabelSet.Nil) candidate]
     [(OptLabelSet.Dense _ _)
       (let
-        [pred : i64 (opt-label-ref (compiler-opt-global-shared-view preds) 0)]
+        [pred : i64 (opt-label-ref preds 0)]
         (if (and
-          (opt-label-contains (compiler-opt-global-shared-view reachable) pred)
-          (not (opt-label-contains (compiler-opt-global-shared-view body) pred)))
+          (opt-label-contains reachable pred)
+          (not (opt-label-contains body pred)))
           (opt-natural-loop-preheader-candidate-scan
             (compiler-opt-global-shared-view pred-map)
             reachable
@@ -22421,7 +22429,8 @@
                   (array-ref found k)))
               (set! k (+ k 1))))
           (let
-            [body-labels : OptLabelSet (OptLabelSet.Dense items n)]
+            [body-labels : OptLabelSet
+              (OptLabelSet.Dense (opt-label-handle items) n)]
             (OptNaturalLoop.Loop
               header
               latch
@@ -22591,7 +22600,7 @@
       (opt-loop-body-build
         (compiler-opt-global-shared-view blocks)
         (compiler-opt-global-shared-view pred-map.index)
-        (compiler-opt-global-shared-view body-labels))]
+        body-labels)]
     (OptNaturalLoop.Loop
       header
       latch
@@ -22641,7 +22650,7 @@
               (opt-natural-loop-build
                 (compiler-opt-global-shared-view all-blocks)
                 (compiler-opt-global-shared-view pred-map)
-                (compiler-opt-global-shared-view reachable)
+                reachable
                 (array-ref index.labels header-id)
                 source)
               (box acc))
@@ -22682,7 +22691,7 @@
                 (compiler-opt-global-shared-view all-blocks)
                 (compiler-opt-global-shared-view index)
                 (compiler-opt-global-shared-view pred-map)
-                (compiler-opt-global-shared-view reachable)
+                reachable
                 (compiler-opt-global-shared-view doms)
                 pos
                 label
@@ -22921,17 +22930,17 @@
   [header : i64]
   [body : OptLabelSet]
   [preds : OptLabelSet]) : OptLabelSet
-  (match (compiler-opt-global-shared-view preds)
+  (match preds
     [(OptLabelSet.Nil) (OptLabelSet.Nil)]
     [(OptLabelSet.Dense _ _)
       (let
-        [pred : i64 (opt-label-ref (compiler-opt-global-shared-view preds) 0)]
+        [pred : i64 (opt-label-ref preds 0)]
         [tail : OptLabelSet
           (opt-loop-preheaders-outside-preds-scan
-            (compiler-opt-global-shared-view reachable)
+            reachable
             (compiler-opt-global-shared-view doms)
             header
-            (compiler-opt-global-shared-view body)
+            body
             (opt-label-tail preds))]
         (if (and
           (opt-label-contains reachable pred)
@@ -22994,7 +23003,7 @@
             phi-inputs-at-19481-3.slots
             (+ phi-inputs-at-19481-3.start 1)
             (- phi-inputs-at-19481-3.len 1))]
-        (if (opt-label-contains (compiler-opt-global-shared-view outside) label)
+        (if (opt-label-contains outside label)
           (match (compiler-opt-global-shared-view seen)
             [(ir.CompilerIrMaybeValue.No)
               (opt-loop-preheaders-phi-outside-values-compatible?
@@ -23029,7 +23038,7 @@
     true
     (and
       (opt-loop-preheaders-header-instr-compatible?
-        (compiler-opt-global-shared-view outside)
+        outside
         (ir.compiler-ir-instr-seq-ref instrs index))
       (opt-loop-preheaders-header-instrs-compatible-from?
         outside
@@ -23062,13 +23071,13 @@
   [header : i64]
   [outside : OptLabelSet]
   [candidate : OptLoopPreheaderCandidate]) : OptLoopPreheaderCandidate
-  (match (compiler-opt-global-shared-view outside)
+  (match outside
     [(OptLabelSet.Nil) candidate]
     [(OptLabelSet.Dense _ _)
       (opt-loop-preheaders-existing-candidate-scan
         (compiler-opt-global-shared-view pred-map)
         header
-        (opt-label-tail (compiler-opt-global-shared-view outside))
+        (opt-label-tail outside)
         (opt-natural-loop-preheader-candidate-add
           pred-map
           header
@@ -23114,7 +23123,7 @@
             phi-inputs-at-19579-3.slots
             (+ phi-inputs-at-19579-3.start 1)
             (- phi-inputs-at-19579-3.len 1))]
-        (if (opt-label-contains (compiler-opt-global-shared-view outside) label)
+        (if (opt-label-contains outside label)
           (if emitted
             (opt-loop-preheaders-rewrite-phi-inputs-acc
               rest
@@ -23174,7 +23183,7 @@
           (set!
             (array-ref slots index)
             (opt-loop-preheaders-rewrite-header-instr
-              (compiler-opt-global-shared-view outside)
+              outside
               preheader
               (ir.compiler-ir-instr-seq-ref instrs index)))
           (set! index (+ index 1))))
@@ -23330,7 +23339,7 @@
           block
           (opt-cfg-entry-label (compiler-opt-box-shared-view rest))
           header
-          (compiler-opt-global-shared-view outside)
+          outside
           preheader)
         (opt-loop-preheaders-rewrite-blocks
           (deref rest)
@@ -23384,12 +23393,8 @@
   [header : i64]
   [outside : OptLabelSet]) : i64
   (cond
-    [(<= (opt-label-count (compiler-opt-global-shared-view outside)) 0)
-      (opt-preheader-reason-no-outside)]
-    [(opt-loop-preheaders-existing-safe-preheader?
-        pred-map
-        header
-        (compiler-opt-global-shared-view outside))
+    [(<= (opt-label-count outside) 0) (opt-preheader-reason-no-outside)]
+    [(opt-loop-preheaders-existing-safe-preheader? pred-map header outside)
       (opt-preheader-reason-existing-safe)]
     [else (opt-loop-preheaders-header-reason blocks header outside)]))
 
@@ -23420,14 +23425,13 @@
             context.doms
             header
             body)]
-        [outside-count : i64
-          (opt-label-count (compiler-opt-global-shared-view outside))]
+        [outside-count : i64 (opt-label-count outside)]
         [reason : i64
           (opt-loop-preheaders-refusal-reason
             (compiler-opt-global-shared-view blocks)
             context.pred-map
             header
-            (compiler-opt-global-shared-view outside))]
+            outside)]
         (if (= reason (opt-preheader-reason-ok))
           (let
             [preheader : i64
@@ -23684,15 +23688,13 @@
                       (or
                         (and
                           (opt-loop-rotation-body-target?
-                            (compiler-opt-global-shared-view body)
+                            body
                             header
                             true-label)
-                          (opt-loop-rotation-exit-target?
-                            (compiler-opt-global-shared-view body)
-                            false-label))
+                          (opt-loop-rotation-exit-target? body false-label))
                         (and
                           (opt-loop-rotation-body-target?
-                            (compiler-opt-global-shared-view body)
+                            body
                             header
                             false-label)
                           (opt-loop-rotation-exit-target? body true-label))))
@@ -23849,8 +23851,8 @@
       [(OptLoopPreheader.Some preheader)
         (if (and
           (= (opt-loop-rotation-header-count loops header) 1)
-          (= (opt-label-count (compiler-opt-global-shared-view preds)) 2)
-          (opt-label-contains (compiler-opt-global-shared-view preds) preheader)
+          (= (opt-label-count preds) 2)
+          (opt-label-contains preds preheader)
           (opt-label-contains preds latch)
           (opt-loop-rotation-edge-compatible?
             (compiler-opt-global-shared-view blocks)
@@ -24217,9 +24219,7 @@
     (str_cat.str-cat (ir.compiler-ir-label-text header) "__rotate_land")))
 
 (define (opt-rotate-ssa-only-label? [set : OptLabelSet] [label : i64]) : bool
-  (and
-    (= (opt-label-count (compiler-opt-global-shared-view set)) 1)
-    (opt-label-contains set label)))
+  (and (= (opt-label-count set) 1) (opt-label-contains set label)))
 
 (define (opt-rotate-ssa-leading-phi-end
   [instrs : ir.CompilerIrInstrSeq]
@@ -24349,19 +24349,11 @@
   (let
     [true-is-body : bool
       (and
-        (opt-loop-rotation-body-target?
-          (compiler-opt-global-shared-view body)
-          header
-          true-label)
-        (opt-loop-rotation-exit-target?
-          (compiler-opt-global-shared-view body)
-          false-label))]
+        (opt-loop-rotation-body-target? body header true-label)
+        (opt-loop-rotation-exit-target? body false-label))]
     [false-is-body : bool
       (and
-        (opt-loop-rotation-body-target?
-          (compiler-opt-global-shared-view body)
-          header
-          false-label)
+        (opt-loop-rotation-body-target? body header false-label)
         (opt-loop-rotation-exit-target? body true-label))]
     (if (or true-is-body false-is-body)
       (let
@@ -24470,11 +24462,11 @@
   [body : OptLabelSet]
   [header : i64]
   [exit-label : i64]) : bool
-  (match (compiler-opt-global-shared-view body)
+  (match body
     [(OptLabelSet.Nil) true]
     [(OptLabelSet.Dense _ _)
       (let
-        [label : i64 (opt-label-ref (compiler-opt-global-shared-view body) 0)]
+        [label : i64 (opt-label-ref body 0)]
         (and
           (or
             (= label header)
@@ -24493,13 +24485,11 @@
 (define (opt-rotate-ssa-succs-inside?
   [body : OptLabelSet]
   [succs : OptLabelSet]) : bool
-  (match (compiler-opt-global-shared-view succs)
+  (match succs
     [(OptLabelSet.Nil) true]
     [(OptLabelSet.Dense _ _)
       (and
-        (opt-label-contains
-          (compiler-opt-global-shared-view body)
-          (opt-label-ref (compiler-opt-global-shared-view succs) 0))
+        (opt-label-contains body (opt-label-ref succs 0))
         (opt-rotate-ssa-succs-inside? body (opt-label-tail succs)))]))
 
 ;; True when the header's exit arm is the loop's ONLY way out: no body block
@@ -24512,16 +24502,16 @@
   [body : OptLabelSet]
   [cursor : OptLabelSet]
   [header : i64]) : bool
-  (match (compiler-opt-global-shared-view cursor)
+  (match cursor
     [(OptLabelSet.Nil) true]
     [(OptLabelSet.Dense _ _)
       (let
-        [label : i64 (opt-label-ref (compiler-opt-global-shared-view cursor) 0)]
+        [label : i64 (opt-label-ref cursor 0)]
         (and
           (or
             (= label header)
             (opt-rotate-ssa-succs-inside?
-              (compiler-opt-global-shared-view body)
+              body
               (opt-pred-map-successors
                 (compiler-opt-global-shared-view pred-map)
                 label)))
@@ -24633,9 +24623,7 @@
       (match block
         [(ir.CompilerIrBlock.Block label instrs)
           (opt-rotate-ssa-uses-outside-body
-            (if (opt-label-contains
-              (compiler-opt-global-shared-view body)
-              label)
+            (if (opt-label-contains body label)
               set
               (opt-collect-instr-seq-uses set instrs))
             (deref rest)
@@ -24662,7 +24650,7 @@
         (match (ir.compiler-ir-block-seq-ref seq i)
           [(ir.CompilerIrBlock.Block label instrs)
             (unless
-              (opt-label-contains (compiler-opt-global-shared-view body) label)
+              (opt-label-contains body label)
               (opt-collect-instr-seq-uses-array
                 (compiler-opt-global-shared-view items)
                 instrs))])
@@ -24698,7 +24686,7 @@
           (if (=
             (opt-rotate-ssa-position-class
               (compiler-opt-global-shared-view doms)
-              (compiler-opt-global-shared-view body)
+              body
               exit-label
               body-label
               label)
@@ -24733,7 +24721,7 @@
               set
               inputs
               (compiler-opt-global-shared-view doms)
-              (compiler-opt-global-shared-view body)
+              body
               exit-label
               body-label
               want)]
@@ -24769,9 +24757,7 @@
       (match block
         [(ir.CompilerIrBlock.Block label instrs)
           (opt-rotate-ssa-uses-at-class
-            (if (opt-label-contains
-              (compiler-opt-global-shared-view body)
-              label)
+            (if (opt-label-contains body label)
               set
               (opt-rotate-ssa-class-instr-uses
                 set
@@ -24779,12 +24765,12 @@
                 0
                 (opt-rotate-ssa-position-class
                   (compiler-opt-global-shared-view doms)
-                  (compiler-opt-global-shared-view body)
+                  body
                   exit-label
                   body-label
                   label)
                 (compiler-opt-global-shared-view doms)
-                (compiler-opt-global-shared-view body)
+                body
                 exit-label
                 body-label
                 want))
@@ -25259,8 +25245,7 @@
         [(= label plan.preheader) plan.preheader-guard]
         [(= label plan.latch) plan.latch-guard]
         [else (ir.compiler-ir-instr-seq-empty)])]
-    [inside? : bool
-      (opt-label-contains (compiler-opt-global-shared-view plan.body) label)]
+    [inside? : bool (opt-label-contains plan.body label)]
     (opt-rotate-ssa-rewrite-instr-seq
       (compiler-opt-global-shared-view plan)
       (if inside?
@@ -25335,13 +25320,13 @@
   [cap : i64]) : i64
   (if (>= acc cap)
     acc
-    (match (compiler-opt-global-shared-view cursor)
+    (match cursor
       [(OptLabelSet.Nil) acc]
       [(OptLabelSet.Dense _ _)
         (opt-rotate-ssa-body-instr-count
           (compiler-opt-global-shared-view blocks)
           body
-          (opt-label-tail (compiler-opt-global-shared-view cursor))
+          (opt-label-tail cursor)
           (+
             acc
             (match (opt-cfg-find-block blocks (opt-label-ref cursor 0))
@@ -25558,9 +25543,7 @@
       (match (ir.compiler-ir-instr-seq-ref instrs (- count 1))
         [(ir.CompilerIrInstr.Branch cond-value true-label false-label)
           (and
-            (opt-loop-rotation-exit-target?
-              (compiler-opt-global-shared-view body)
-              true-label)
+            (opt-loop-rotation-exit-target? body true-label)
             (opt-label-contains body false-label)
             (match cond-value
               [(ir.CompilerIrValue.Var gate-var)
@@ -25582,13 +25565,11 @@
           (or
             (opt-rotate-ssa-flag-gate-instrs?
               (compiler-opt-global-shared-view instrs)
-              (compiler-opt-global-shared-view body)
+              body
               (compiler-opt-global-shared-view recs)
               (compiler-opt-global-shared-view nonphi-uses))
             (and
-              (opt-loop-rotation-exit-target?
-                (compiler-opt-global-shared-view body)
-                false-label)
+              (opt-loop-rotation-exit-target? body false-label)
               (opt-label-contains body true-label)
               (match cond-value
                 [(ir.CompilerIrValue.Var gate-var)
@@ -25614,10 +25595,10 @@
           (or
             (and
               (not (= label header))
-              (opt-label-contains (compiler-opt-global-shared-view body) label)
+              (opt-label-contains body label)
               (opt-rotate-ssa-flag-gate-arms?
                 instrs
-                (compiler-opt-global-shared-view body)
+                body
                 (compiler-opt-global-shared-view recs)
                 (compiler-opt-global-shared-view nonphi-uses)))
             (opt-rotate-ssa-flag-gate-blocks?
@@ -25700,7 +25681,7 @@
           (opt-rotate-ssa-uses-outside-body-array
             (compiler-opt-global-shared-view items)
             (compiler-opt-global-shared-view blocks)
-            (compiler-opt-global-shared-view body))
+            body)
           items))]
     ;; The classified placement is reached only for the multi-exit shape the
     ;; original rotation gate declined, and only while its body stays cheap.
@@ -25717,14 +25698,14 @@
         (not
           (opt-rotate-ssa-single-exit?
             (compiler-opt-global-shared-view pred-map)
-            (compiler-opt-global-shared-view body)
-            (compiler-opt-global-shared-view body)
+            body
+            body
             header))
         (<
           (opt-rotate-ssa-body-instr-count
             (compiler-opt-global-shared-view blocks)
-            (compiler-opt-global-shared-view body)
-            (compiler-opt-global-shared-view body)
+            body
+            body
             0
             (opt-rotate-ssa-multi-exit-body-max))
           (opt-rotate-ssa-multi-exit-body-max)))]
@@ -25734,7 +25715,7 @@
           (opt_i64_i64_map.with-capacity 64)
           (compiler-opt-global-shared-view blocks)
           (compiler-opt-global-shared-view doms)
-          (compiler-opt-global-shared-view body)
+          body
           exit-label
           body-label
           0)
@@ -25745,7 +25726,7 @@
           (opt_i64_i64_map.with-capacity 64)
           (compiler-opt-global-shared-view blocks)
           (compiler-opt-global-shared-view doms)
-          (compiler-opt-global-shared-view body)
+          body
           exit-label
           body-label
           -1)
@@ -25787,8 +25768,8 @@
             classify?
             (opt-rotate-ssa-single-exit?
               (compiler-opt-global-shared-view pred-map)
-              (compiler-opt-global-shared-view body)
-              (compiler-opt-global-shared-view body)
+              body
+              body
               header))))
       (not
         (opt-rotate-ssa-recs-used-outside?
@@ -25799,15 +25780,11 @@
         (not
           (opt-rotate-ssa-flag-gate-blocks?
             (compiler-opt-global-shared-view blocks)
-            (compiler-opt-global-shared-view body)
+            body
             header
             (compiler-opt-global-shared-view recs)
             nonphi-uses)))
-      (opt-rotate-ssa-body-avoids-exit?
-        pred-map
-        (compiler-opt-global-shared-view body)
-        header
-        exit-label)
+      (opt-rotate-ssa-body-avoids-exit? pred-map body header exit-label)
       (not
         (opt-rotate-ssa-block-has-phi?
           (compiler-opt-global-shared-view blocks)
@@ -25916,17 +25893,15 @@
             (compiler-opt-global-shared-view blocks)
             latch
             header)
-          (= (opt-label-count (compiler-opt-global-shared-view header-preds)) 2)
-          (opt-label-contains
-            (compiler-opt-global-shared-view header-preds)
-            preheader)
+          (= (opt-label-count header-preds) 2)
+          (opt-label-contains header-preds preheader)
           (opt-label-contains header-preds latch))
           (match (opt-rotate-ssa-header-shape
             (compiler-opt-global-shared-view blocks)
             header
             preheader
             latch
-            (compiler-opt-global-shared-view body))
+            body)
             [(OptRotateSsaMaybeShape.No) (OptRotateSsaRewrite.No)]
             [(OptRotateSsaMaybeShape.Some shape)
               (opt-rotate-ssa-apply
@@ -30367,10 +30342,7 @@
     [(OptNaturalLoopList.Cons inner rest)
       (let
         [tail : OptNaturalLoopList
-          (opt-licm-nested-loops
-            (deref rest)
-            header
-            (compiler-opt-global-shared-view body))]
+          (opt-licm-nested-loops (deref rest) header body)]
         [inner-header : i64
           (opt-natural-loop-header (compiler-opt-global-shared-view inner))]
         (if (and
@@ -30489,7 +30461,7 @@
   (opt-licm-hot-use-vars-from
     context
     latch-id
-    (opt-licm-nested-loops loops header (compiler-opt-global-shared-view body))
+    (opt-licm-nested-loops loops header body)
     body
     gate?
     blocks
@@ -30511,10 +30483,7 @@
         [(ir.CompilerIrBlock.Block label instrs)
           (begin
             (if (or
-              (not
-                (opt-label-contains
-                  (compiler-opt-global-shared-view body)
-                  label))
+              (not (opt-label-contains body label))
               (opt-licm-label-in-loops?
                 (compiler-opt-global-shared-view nested)
                 label))
@@ -32216,11 +32185,7 @@
         (begin
           (match (ir.compiler-ir-switch-case-seq-ref cases index)
             [(ir.CompilerIrSwitchCase.Case _ label)
-              (unless
-                (opt-label-contains
-                  (compiler-opt-global-shared-view body)
-                  label)
-                (return true))])
+              (unless (opt-label-contains body label) (return true))])
           (set! index (+ index 1))))
       false)))
 
@@ -32338,43 +32303,40 @@
           2))]
     [(ir.CompilerIrInstr.Branch _ then-label else-label)
       (if (and
-        (opt-label-contains (compiler-opt-global-shared-view body) then-label)
-        (opt-label-contains (compiler-opt-global-shared-view body) else-label))
+        (opt-label-contains body then-label)
+        (opt-label-contains body else-label))
         0
         (if (and
           (opt-licm-branch-exit-return-shaped?
             (compiler-opt-global-shared-view blocks)
-            (compiler-opt-global-shared-view body)
+            body
             then-label)
           (opt-licm-branch-exit-return-shaped? blocks body else-label))
           1
           2))]
     [(ir.CompilerIrInstr.TotalEnumBranch _ then-label else-label)
       (if (and
-        (opt-label-contains (compiler-opt-global-shared-view body) then-label)
-        (opt-label-contains (compiler-opt-global-shared-view body) else-label))
+        (opt-label-contains body then-label)
+        (opt-label-contains body else-label))
         0
         (if (and
           (opt-licm-branch-exit-return-shaped?
             (compiler-opt-global-shared-view blocks)
-            (compiler-opt-global-shared-view body)
+            body
             then-label)
           (opt-licm-branch-exit-return-shaped? blocks body else-label))
           1
           2))]
     [(ir.CompilerIrInstr.Switch _ _ cases default-label)
       (if (or
-        (not
-          (opt-label-contains
-            (compiler-opt-global-shared-view body)
-            default-label))
+        (not (opt-label-contains body default-label))
         (opt-licm-switch-case-outside?
-          (compiler-opt-global-shared-view body)
+          body
           (compiler-opt-global-shared-view cases)))
         (if (and
           (opt-licm-branch-exit-return-shaped?
             (compiler-opt-global-shared-view blocks)
-            (compiler-opt-global-shared-view body)
+            body
             default-label)
           (opt-licm-switch-cases-return-shaped? blocks body cases))
           1
@@ -32382,17 +32344,14 @@
         0)]
     [(ir.CompilerIrInstr.TotalEnumSwitch _ _ cases default-label _)
       (if (or
-        (not
-          (opt-label-contains
-            (compiler-opt-global-shared-view body)
-            default-label))
+        (not (opt-label-contains body default-label))
         (opt-licm-switch-case-outside?
-          (compiler-opt-global-shared-view body)
+          body
           (compiler-opt-global-shared-view cases)))
         (if (and
           (opt-licm-branch-exit-return-shaped?
             (compiler-opt-global-shared-view blocks)
-            (compiler-opt-global-shared-view body)
+            body
             default-label)
           (opt-licm-switch-cases-return-shaped? blocks body cases))
           1
@@ -32414,7 +32373,7 @@
               (unless
                 (opt-licm-branch-exit-return-shaped?
                   (compiler-opt-global-shared-view blocks)
-                  (compiler-opt-global-shared-view body)
+                  body
                   label)
                 (return false))])
           (set! index (+ index 1))))
@@ -32445,7 +32404,7 @@
                 0
                 (opt-licm-instr-side-exit-kind
                   (compiler-opt-global-shared-view blocks)
-                  (compiler-opt-global-shared-view body)
+                  body
                   (ir.compiler-ir-instr-seq-ref
                     instrs
                     (- (ir.compiler-ir-instr-seq-count instrs) 1))))])]
@@ -32644,11 +32603,14 @@
   [count : i64]) : OptGlobalCellPlan
   (match refs
     [(OptLabelSet.Nil) (OptGlobalCellPlan plan count)]
-    [(OptLabelSet.Dense integer-items integer-count)
+    [(OptLabelSet.Dense integer-items-handle integer-count)
       (let
+        [integer-items : (__tl_dyn-array i64)
+          (opt-label-items integer-items-handle)]
         [name : i64 (array-ref integer-items integer-count)]
         [rest : OptLabelSet
-          (opt-label-tail (OptLabelSet.Dense integer-items integer-count))]
+          (opt-label-tail
+            (OptLabelSet.Dense integer-items-handle integer-count))]
         (match (opt-global-cell-type-lookup
           (compiler-opt-global-shared-view cells)
           name)
@@ -32698,11 +32660,14 @@
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
   (match refs
     [(OptLabelSet.Nil) unit]
-    [(OptLabelSet.Dense integer-items integer-count)
+    [(OptLabelSet.Dense integer-items-handle integer-count)
       (let
+        [integer-items : (__tl_dyn-array i64)
+          (opt-label-items integer-items-handle)]
         [name : i64 (array-ref integer-items integer-count)]
         [rest : OptLabelSet
-          (opt-label-tail (OptLabelSet.Dense integer-items integer-count))]
+          (opt-label-tail
+            (OptLabelSet.Dense integer-items-handle integer-count))]
         (match (opt_i64_i64_map.get (& plan) name)
           [(opt_i64_i64_map.LookupMissing)
             (opt-licm-global-promote-loads-into! plan cells rest builder)]
@@ -32750,7 +32715,7 @@
           (compiler-opt-global-shared-view blocks)
           false)]
       [refs : OptLabelSet scan.ref-list]
-      (match (compiler-opt-global-shared-view refs)
+      (match refs
         [(OptLabelSet.Nil)
           (OptLicmGlobalPromotion blocks (ir.compiler-ir-instr-seq-empty) false)]
         [_
@@ -32758,7 +32723,7 @@
             [planned : OptGlobalCellPlan
               (opt-licm-global-promote-plan
                 (compiler-opt-global-shared-view cells)
-                (compiler-opt-global-shared-view refs)
+                refs
                 frame-cell
                 cell-writes
                 (opt_i64_i64_map.with-capacity 8)
@@ -32835,11 +32800,14 @@
   [count : i64]) : i64
   (match refs
     [(OptLabelSet.Nil) count]
-    [(OptLabelSet.Dense integer-items integer-count)
+    [(OptLabelSet.Dense integer-items-handle integer-count)
       (let
+        [integer-items : (__tl_dyn-array i64)
+          (opt-label-items integer-items-handle)]
         [name : i64 (array-ref integer-items integer-count)]
         [rest : OptLabelSet
-          (opt-label-tail (OptLabelSet.Dense integer-items integer-count))]
+          (opt-label-tail
+            (OptLabelSet.Dense integer-items-handle integer-count))]
         (opt-licm-frozen-ref-count
           (compiler-opt-global-shared-view frozen)
           rest
@@ -32958,11 +32926,14 @@
   [count : i64]) : i64
   (match refs
     [(OptLabelSet.Nil) count]
-    [(OptLabelSet.Dense integer-items integer-count)
+    [(OptLabelSet.Dense integer-items-handle integer-count)
       (let
+        [integer-items : (__tl_dyn-array i64)
+          (opt-label-items integer-items-handle)]
         [name : i64 (array-ref integer-items integer-count)]
         [rest : OptLabelSet
-          (opt-label-tail (OptLabelSet.Dense integer-items integer-count))]
+          (opt-label-tail
+            (OptLabelSet.Dense integer-items-handle integer-count))]
         (opt-licm-global-header-ref-count
           (compiler-opt-global-shared-view cells)
           clean?
@@ -33187,11 +33158,14 @@
   [acc : OptLabelSet]) : OptLabelSet
   (match ids
     [(OptLabelSet.Nil) acc]
-    [(OptLabelSet.Dense integer-items integer-count)
+    [(OptLabelSet.Dense integer-items-handle integer-count)
       (let
+        [integer-items : (__tl_dyn-array i64)
+          (opt-label-items integer-items-handle)]
         [name : i64 (array-ref integer-items integer-count)]
         [rest : OptLabelSet
-          (opt-label-tail (OptLabelSet.Dense integer-items integer-count))]
+          (opt-label-tail
+            (OptLabelSet.Dense integer-items-handle integer-count))]
         (opt-licm-header-admit-eligible
           (compiler-opt-global-shared-view cells)
           clean?
@@ -33221,11 +33195,14 @@
   [out : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
   (match ids
     [(OptLabelSet.Nil) out]
-    [(OptLabelSet.Dense integer-items integer-count)
+    [(OptLabelSet.Dense integer-items-handle integer-count)
       (let
+        [integer-items : (__tl_dyn-array i64)
+          (opt-label-items integer-items-handle)]
         [name : i64 (array-ref integer-items integer-count)]
         [rest : OptLabelSet
-          (opt-label-tail (OptLabelSet.Dense integer-items integer-count))]
+          (opt-label-tail
+            (OptLabelSet.Dense integer-items-handle integer-count))]
         [next : opt_i64_i64_map.Map out]
         (begin
           (opt_i64_i64_map.insert-ref! (&mut next) name 1)
@@ -33241,11 +33218,14 @@
   [best-count : i64]) : i64
   (match ids
     [(OptLabelSet.Nil) best]
-    [(OptLabelSet.Dense integer-items integer-count)
+    [(OptLabelSet.Dense integer-items-handle integer-count)
       (let
+        [integer-items : (__tl_dyn-array i64)
+          (opt-label-items integer-items-handle)]
         [name : i64 (array-ref integer-items integer-count)]
         [rest : OptLabelSet
-          (opt-label-tail (OptLabelSet.Dense integer-items integer-count))]
+          (opt-label-tail
+            (OptLabelSet.Dense integer-items-handle integer-count))]
         [count : i64
           (match (opt_i64_i64_map.get (& counts) name)
             [(opt_i64_i64_map.LookupFound seen) seen]
@@ -33280,7 +33260,7 @@
         (opt-licm-header-admit-best
           (compiler-opt-global-shared-view counts)
           (compiler-opt-global-shared-view out)
-          (compiler-opt-global-shared-view ids)
+          ids
           (- 0 1)
           0)]
       (if (< best 0)
@@ -33329,8 +33309,7 @@
           obj-writes
           scan.ids
           (OptLabelSet.Nil))]
-      [n : i64
-        (opt-licm-header-admit-len (compiler-opt-global-shared-view eligible) 0)]
+      [n : i64 (opt-licm-header-admit-len eligible 0)]
       [room : i64 (- budget live-in)]
       (if (<= (+ live-in (* n (opt-licm-global-header-words))) budget)
         (opt-licm-header-admit-all eligible (opt_i64_i64_map.with-capacity 8))
@@ -34995,13 +34974,11 @@
 (define (opt-licm-unswitch-labels-contained?
   [labels : OptLabelSet]
   [container : OptLabelSet]) : bool
-  (match (compiler-opt-global-shared-view labels)
+  (match labels
     [(OptLabelSet.Nil) true]
     [(OptLabelSet.Dense _ _)
       (and
-        (opt-label-contains
-          (compiler-opt-global-shared-view container)
-          (opt-label-ref (compiler-opt-global-shared-view labels) 0))
+        (opt-label-contains container (opt-label-ref labels 0))
         (opt-licm-unswitch-labels-contained? (opt-label-tail labels) container))]))
 
 ;; LU-2: does `label` enter the nested loop headed by `header` -- itself, its
@@ -35064,9 +35041,7 @@
         [enters? : bool
           (and
             (not (= header outer-header))
-            (opt-label-contains
-              (compiler-opt-global-shared-view outer-body)
-              header)
+            (opt-label-contains outer-body header)
             (or
               (= target header)
               (match (opt-natural-loop-preheader
@@ -35141,26 +35116,22 @@
 (define (opt-licm-unswitch-labels-fresh?
   [blocks : ir.CompilerIrBlockList]
   [labels : OptLabelSet]) : bool
-  (match (compiler-opt-global-shared-view labels)
+  (match labels
     [(OptLabelSet.Nil) true]
     [(OptLabelSet.Dense _ _)
       (and
         (not
           (opt-cfg-block-exists?
             (compiler-opt-global-shared-view blocks)
-            (opt-licm-unswitch-clone-label
-              (compiler-opt-global-shared-view labels)
-              (opt-label-ref (compiler-opt-global-shared-view labels) 0))))
+            (opt-licm-unswitch-clone-label labels (opt-label-ref labels 0))))
         (opt-licm-unswitch-labels-fresh? blocks (opt-label-tail labels)))]))
 
 (define (opt-licm-unswitch-has-versioned-label? [labels : OptLabelSet]) : bool
-  (match (compiler-opt-global-shared-view labels)
+  (match labels
     [(OptLabelSet.Nil) false]
     [(OptLabelSet.Dense _ _)
       (or
-        (opt-label-has-marker?
-          (opt-label-ref (compiler-opt-global-shared-view labels) 0)
-          (opt-label-marker-bce))
+        (opt-label-has-marker? (opt-label-ref labels 0) (opt-label-marker-bce))
         (opt-licm-unswitch-has-versioned-label? (opt-label-tail labels)))]))
 
 (define (opt-licm-unswitch-preheader-jumps-to?
@@ -35295,9 +35266,7 @@
           (match (opt-licm-unswitch-dispatch-branch instrs)
             [(OptLicmUnswitchDispatch.Some cond true-label false-label)
               (if (and
-                (opt-label-contains
-                  (compiler-opt-global-shared-view body-labels)
-                  true-label)
+                (opt-label-contains body-labels true-label)
                 (opt-label-contains body-labels false-label)
                 (opt-licm-unswitch-cond-invariant? blocks loop-defs cond))
                 true-label
@@ -35353,9 +35322,8 @@
     (= label header)
     (= label latch)
     (= label origin)
-    (not
-      (opt-label-contains (compiler-opt-global-shared-view body-labels) label))
-    (opt-label-contains (compiler-opt-global-shared-view acc) label)
+    (not (opt-label-contains body-labels label))
+    (opt-label-contains acc label)
     (opt-licm-unswitch-nested-loop-header?
       (compiler-opt-global-shared-view loops)
       header
@@ -35386,7 +35354,7 @@
                     [taken : i64
                       (opt-licm-unswitch-dispatch-taken
                         (compiler-opt-global-shared-view blocks)
-                        (compiler-opt-global-shared-view body-labels)
+                        body-labels
                         (compiler-opt-global-shared-view loop-defs)
                         label)]
                     ;; LU-1: a dispatch block that re-tests the selected
@@ -35429,7 +35397,7 @@
   [cond : ir.CompilerIrValue]
   [cell : (__tl_dyn-array i64)]) : OptLicmUnswitchFused
   (let
-    [count : i64 (opt-label-count (compiler-opt-global-shared-view labels))]
+    [count : i64 (opt-label-count labels)]
     [cursor : i64 index]
     [builder : ir.CompilerIrInstrBuilder
       (ir.compiler-ir-instr-builder-with-capacity (* 2 (+ 1 (- count index))))]
@@ -35450,7 +35418,7 @@
               (compiler-opt-global-shared-view loop-defs)
               (opt-licm-unswitch-dispatch-cond
                 (compiler-opt-global-shared-view blocks)
-                (opt-label-ref (compiler-opt-global-shared-view labels) cursor))
+                (opt-label-ref labels cursor))
               (compiler-opt-global-shared-view cell)
               (&mut builder))]
           [fresh : i64 (array-ref cell 0)]
@@ -35652,12 +35620,8 @@
         (let
           [candidate? : bool
             (and
-              (opt-label-contains
-                (compiler-opt-global-shared-view body-labels)
-                true-label)
-              (opt-label-contains
-                (compiler-opt-global-shared-view body-labels)
-                false-label)
+              (opt-label-contains body-labels true-label)
+              (opt-label-contains body-labels false-label)
               ;; A branch that enters a nested loop (the entry guard this
               ;; pass was written for), or -- LU-1 -- any invariant branch the
               ;; body tests at least TWICE. The dispatch the unswitch adds runs
@@ -35681,13 +35645,13 @@
                       (opt-licm-unswitch-target-enters-nested-loop?
                         (compiler-opt-global-shared-view loops)
                         header
-                        (compiler-opt-global-shared-view body-labels)
+                        body-labels
                         (compiler-opt-global-shared-view body-blocks-all)
                         true-label)
                       (opt-licm-unswitch-target-enters-nested-loop?
                         (compiler-opt-global-shared-view loops)
                         header
-                        (compiler-opt-global-shared-view body-labels)
+                        body-labels
                         (compiler-opt-global-shared-view body-blocks-all)
                         false-label)
                       (and
@@ -35757,7 +35721,7 @@
             (match (opt-licm-unswitch-find-instrs
               (compiler-opt-global-shared-view loops)
               header
-              (compiler-opt-global-shared-view body-labels)
+              body-labels
               (compiler-opt-global-shared-view loop-defs)
               (compiler-opt-global-shared-view body-blocks-all)
               label
@@ -35816,10 +35780,10 @@
           (set!
             opt-licm-unswitch-body-compare-on
             (>
-              (opt-label-count (compiler-opt-global-shared-view body-labels))
+              (opt-label-count body-labels)
               (opt-licm-unswitch-clone-max-blocks)))]
         (if (or
-          (< (opt-label-count (compiler-opt-global-shared-view body-labels)) 3)
+          (< (opt-label-count body-labels) 3)
           ;; LU-1: the bounds were 16 blocks and 192 instructions, sized for an
           ;; entry guard's outer body; `rg-merge-run!`'s merge loop, with
           ;; `rg-weight-before?` inlined, is 41 blocks. The clone is cold on
@@ -35827,17 +35791,12 @@
           ;; code-size statement, not a pressure one. The refusal of bodies
           ;; holding a `__bce_` label went with it: the corpus's unswitchable
           ;; loops ARE versioned fast copies, and no row moved on the rule.
-          (>
-            (opt-label-count (compiler-opt-global-shared-view body-labels))
-            128)
+          (> (opt-label-count body-labels) 128)
           (>
             (ir.compiler-ir-block-list-instruction-count
               (compiler-opt-global-shared-view body-blocks))
             320)
-          (not
-            (opt-licm-unswitch-labels-contained?
-              (compiler-opt-global-shared-view successors)
-              (compiler-opt-global-shared-view body-labels)))
+          (not (opt-licm-unswitch-labels-contained? successors body-labels))
           (not
             (opt-licm-unswitch-preheader-jumps-to?
               (compiler-opt-global-shared-view blocks)
@@ -35846,7 +35805,7 @@
           (not
             (opt-licm-unswitch-labels-fresh?
               (compiler-opt-global-shared-view blocks)
-              (compiler-opt-global-shared-view body-labels)))
+              body-labels))
           (not
             (opt-licm-unswitch-blocks-supported?
               (compiler-opt-global-shared-view body-blocks))))
@@ -35855,7 +35814,7 @@
             (compiler-opt-global-shared-view loops)
             header
             latch
-            (compiler-opt-global-shared-view body-labels)
+            body-labels
             (compiler-opt-global-shared-view loop-defs)
             (compiler-opt-global-shared-view body-blocks)
             (compiler-opt-global-shared-view body-blocks))
@@ -35865,7 +35824,7 @@
                 (OptLicmUnswitchShape
                   header
                   preheader
-                  (compiler-opt-global-shared-view body-labels)
+                  body-labels
                   body-blocks
                   candidate.branch-label
                   candidate.branch-index
@@ -35875,7 +35834,7 @@
                   (opt-licm-unswitch-chain-from
                     (compiler-opt-global-shared-view blocks)
                     (compiler-opt-global-shared-view loops)
-                    (compiler-opt-global-shared-view body-labels)
+                    body-labels
                     (compiler-opt-global-shared-view loop-defs)
                     header
                     latch
@@ -35883,10 +35842,7 @@
                     (opt-licm-unswitch-cond-var
                       (compiler-opt-global-shared-view candidate.cond))
                     candidate.true-label
-                    (if (=
-                      (opt-label-count
-                        (compiler-opt-global-shared-view successors))
-                      1)
+                    (if (= (opt-label-count successors) 1)
                       (opt-licm-unswitch-chain-from
                         blocks
                         loops
@@ -35919,9 +35875,7 @@
                 (array-ref slots index)
                 (ir.CompilerIrSwitchCase.Case
                   tag
-                  (opt-licm-unswitch-clone-label
-                    (compiler-opt-global-shared-view body-labels)
-                    label)))])
+                  (opt-licm-unswitch-clone-label body-labels label)))])
           (set! index (+ index 1))))
       (ir.CompilerIrSwitchCaseSeq slots cases.len))))
 
@@ -35947,9 +35901,7 @@
             (- phi-inputs-at-27587-3.len 1))]
         (ir.compiler-ir-phi-input-seq-prepend
           (opt-unroll-subst-value (compiler-opt-global-shared-view remap) value)
-          (opt-licm-unswitch-clone-label
-            (compiler-opt-global-shared-view body-labels)
-            label)
+          (opt-licm-unswitch-clone-label body-labels label)
           (opt-licm-unswitch-clone-phi-inputs rest remap body-labels))))))
 
 (define (opt-licm-unswitch-clone-instr
@@ -36024,9 +35976,7 @@
       (ir.CompilerIrInstr.BoundsCheck
         (opt-unroll-subst-value (compiler-opt-global-shared-view remap) index)
         (opt-unroll-subst-value remap length)
-        (if (opt-label-contains
-          (compiler-opt-global-shared-view body-labels)
-          ok-label)
+        (if (opt-label-contains body-labels ok-label)
           (opt-licm-unswitch-clone-label body-labels ok-label)
           (if (opt-label-contains all-labels ok-label)
             ok-label
@@ -36045,24 +35995,18 @@
     [(ir.CompilerIrInstr.Branch cond true-label false-label)
       (ir.CompilerIrInstr.Branch
         (opt-unroll-subst-value remap cond)
-        (opt-licm-unswitch-clone-label
-          (compiler-opt-global-shared-view body-labels)
-          true-label)
+        (opt-licm-unswitch-clone-label body-labels true-label)
         (opt-licm-unswitch-clone-label body-labels false-label))]
     [(ir.CompilerIrInstr.TotalEnumBranch cond true-label false-label)
       (ir.CompilerIrInstr.TotalEnumBranch
         (opt-unroll-subst-value remap cond)
-        (opt-licm-unswitch-clone-label
-          (compiler-opt-global-shared-view body-labels)
-          true-label)
+        (opt-licm-unswitch-clone-label body-labels true-label)
         (opt-licm-unswitch-clone-label body-labels false-label))]
     [(ir.CompilerIrInstr.Switch index base cases default-label)
       (ir.CompilerIrInstr.Switch
         (opt-unroll-subst-value remap index)
         base
-        (opt-licm-unswitch-switch-cases
-          cases
-          (compiler-opt-global-shared-view body-labels))
+        (opt-licm-unswitch-switch-cases cases body-labels)
         (opt-licm-unswitch-clone-label body-labels default-label))]
     [(ir.CompilerIrInstr.TotalEnumSwitch
         index
@@ -36073,12 +36017,8 @@
       (ir.CompilerIrInstr.TotalEnumSwitch
         (opt-unroll-subst-value remap index)
         base
-        (opt-licm-unswitch-switch-cases
-          cases
-          (compiler-opt-global-shared-view body-labels))
-        (opt-licm-unswitch-clone-label
-          (compiler-opt-global-shared-view body-labels)
-          default-label)
+        (opt-licm-unswitch-switch-cases cases body-labels)
+        (opt-licm-unswitch-clone-label body-labels default-label)
         (opt-licm-unswitch-clone-label body-labels trap-label))]
     [_ instr]))
 
@@ -36123,7 +36063,7 @@
                 (ir.compiler-ir-instr-seq-ref instrs cursor)
                 (compiler-opt-global-shared-view remap)
                 shape.body-labels
-                (compiler-opt-global-shared-view all-labels))))
+                all-labels)))
           (set! cursor (+ cursor 1))))
       (ir.compiler-ir-instr-builder-to-seq builder))))
 
@@ -36139,16 +36079,14 @@
         [(ir.CompilerIrBlock.Block label instrs)
           (ir.compiler-ir-block-cons
             (ir.CompilerIrBlock.Block
-              (opt-licm-unswitch-clone-label
-                (compiler-opt-global-shared-view shape.body-labels)
-                label)
+              (opt-licm-unswitch-clone-label shape.body-labels label)
               (opt-licm-unswitch-clone-instrs
                 (compiler-opt-global-shared-view shape)
                 label
                 instrs
                 0
                 (compiler-opt-global-shared-view remap)
-                (compiler-opt-global-shared-view all-labels)))
+                all-labels))
             (opt-licm-unswitch-clone-blocks shape (deref rest) remap all-labels))])]
     [(ir.CompilerIrBlockList.Array seq)
       (opt-licm-unswitch-clone-blocks
@@ -36213,9 +36151,7 @@
         true-label
         false-label)
       (and
-        (opt-label-contains
-          (compiler-opt-global-shared-view shape.body-labels)
-          true-label)
+        (opt-label-contains shape.body-labels true-label)
         (opt-label-contains shape.body-labels false-label)
         (match shape.cond
           [(ir.CompilerIrValue.Var cond-var) (= var cond-var)]
@@ -36324,11 +36260,9 @@
         [tail : ir.CompilerIrPhiInputSeq
           (opt-licm-unswitch-extend-phi-inputs
             rest
-            (compiler-opt-global-shared-view body-labels)
+            body-labels
             (compiler-opt-global-shared-view remap))]
-        (if (opt-label-contains
-          (compiler-opt-global-shared-view body-labels)
-          label)
+        (if (opt-label-contains body-labels label)
           (ir.compiler-ir-phi-input-seq-prepend
             (compiler-opt-global-shared-view value)
             label
@@ -36359,7 +36293,7 @@
                   dst
                   (opt-licm-unswitch-extend-phi-inputs
                     inputs
-                    (compiler-opt-global-shared-view body-labels)
+                    body-labels
                     (compiler-opt-global-shared-view remap))
                   ty)]
               [_ (ir.compiler-ir-instr-seq-ref instrs cursor)]))
@@ -36410,9 +36344,7 @@
                       label
                       (opt-licm-unswitch-original-instrs shape label instrs 0))
                     tail))]
-              [(opt-label-contains
-                  (compiler-opt-global-shared-view shape.body-labels)
-                  label)
+              [(opt-label-contains shape.body-labels label)
                 (ir.compiler-ir-block-cons
                   (ir.CompilerIrBlock.Block
                     label
@@ -36578,10 +36510,7 @@
   [acc : OptLabelSet]
   [fuel : i64]) : OptMaybeLabelSetPh
   (let
-    [chain? : bool
-      (opt-label-contains
-        (compiler-opt-global-shared-view shape.chain-labels)
-        label)]
+    [chain? : bool (opt-label-contains shape.chain-labels label)]
     [cond-var : i64
       (opt-licm-unswitch-cond-var (compiler-opt-global-shared-view shape.cond))]
     (cond
@@ -36671,7 +36600,7 @@
                         (opt-licm-predicate-phi-inputs-agree?
                           inputs
                           shape.branch-label
-                          (compiler-opt-global-shared-view fold))
+                          fold)
                         (return false))]
                     [_ unit])
                   (set! i (+ i 1))))
@@ -36719,9 +36648,7 @@
               (begin
                 (when
                   (and
-                    (opt-label-contains
-                      (compiler-opt-global-shared-view fold)
-                      input.label)
+                    (opt-label-contains fold input.label)
                     (not
                       (opt-value-eq
                         input.value
@@ -36750,9 +36677,7 @@
               (ir.compiler-ir-global-shared-view inputs)
               i)]
           [keep? : bool
-            (if (opt-label-contains
-              (compiler-opt-global-shared-view fold)
-              input.label)
+            (if (opt-label-contains fold input.label)
               (match (opt-licm-predicate-dispatch
                 (compiler-opt-global-shared-view blocks)
                 input.label)
@@ -36777,8 +36702,7 @@
   [fused-cond : ir.CompilerIrValue]) : ir.CompilerIrInstrSeq
   (let
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
-    [fold? : bool
-      (opt-label-contains (compiler-opt-global-shared-view fold) label)]
+    [fold? : bool (opt-label-contains fold label)]
     [preheader? : bool (= label shape.preheader)]
     [builder : ir.CompilerIrInstrBuilder
       (ir.compiler-ir-instr-builder-with-capacity
@@ -36824,7 +36748,7 @@
                         (opt-licm-predicate-phi-inputs-drop
                           inputs
                           (compiler-opt-global-shared-view blocks)
-                          (compiler-opt-global-shared-view fold)
+                          fold
                           label)
                         ty)]
                     [_ instr])]))
@@ -36849,7 +36773,7 @@
               (opt-licm-predicate-block-instrs
                 (compiler-opt-global-shared-view shape)
                 (compiler-opt-global-shared-view all)
-                (compiler-opt-global-shared-view fold)
+                fold
                 label
                 instrs
                 (compiler-opt-global-shared-view fuse-instrs)
@@ -36891,7 +36815,7 @@
   (if (or
     (not (opt-licm-unswitch-widened?))
     ;; at least two conditions, so a trip saves at least two instructions
-    (< (opt-label-count (compiler-opt-global-shared-view shape.chain-labels)) 1))
+    (< (opt-label-count shape.chain-labels) 1))
     (OptUnrollResult.Result blocks frame false)
     (match (opt-licm-predicate-walk
       (compiler-opt-global-shared-view blocks)
@@ -36902,16 +36826,14 @@
       (OptLabelSet.Nil)
       (+
         (opt-licm-unswitch-chain-fuel)
-        (*
-          2
-          (opt-label-count (compiler-opt-global-shared-view shape.chain-labels)))))
+        (* 2 (opt-label-count shape.chain-labels))))
       [(OptMaybeLabelSetPh.No) (OptUnrollResult.Result blocks frame false)]
       [(OptMaybeLabelSetPh.Some fold)
         (if (not
           (opt-licm-predicate-slow-phis-ok?
             (compiler-opt-global-shared-view blocks)
             (compiler-opt-global-shared-view shape)
-            (compiler-opt-global-shared-view fold)))
+            fold))
           (OptUnrollResult.Result blocks frame false)
           (let
             [cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
@@ -36933,7 +36855,7 @@
                 (begin
                   (opt-licm-predicate-trace!
                     (compiler-opt-global-shared-view shape)
-                    (compiler-opt-global-shared-view fold))
+                    fold)
                   (OptUnrollResult.Result
                     (opt-licm-predicate-rewrite-blocks
                       (compiler-opt-global-shared-view blocks)
@@ -36962,8 +36884,7 @@
         loop)
         [(OptMaybeLicmUnswitchShape.Some shape)
           (match (if (>
-            (opt-label-count
-              (compiler-opt-global-shared-view shape.body-labels))
+            (opt-label-count shape.body-labels)
             (opt-licm-unswitch-clone-max-blocks))
             (opt-licm-predicate-apply
               (compiler-opt-global-shared-view blocks)
@@ -39716,9 +39637,7 @@
               (compiler-opt-global-shared-view index)
               current)]
           (begin
-            (unless
-              (= (opt-label-count (compiler-opt-global-shared-view preds)) 1)
-              (return false))
+            (unless (= (opt-label-count preds) 1) (return false))
             (let
               [pred : i64 (opt-label-ref preds 0)]
               (match (opt-cfg-find-block
@@ -42381,7 +42300,7 @@
   [successors : OptLabelSet]
   [seen : (__tl_dyn-array i64)]
   [alt : (__tl_dyn-array i64)]) : unit
-  (match (compiler-opt-global-shared-view successors)
+  (match successors
     [(OptLabelSet.Nil) unit]
     [(OptLabelSet.Dense _ _)
       (begin
@@ -42390,7 +42309,7 @@
           (compiler-opt-global-shared-view index)
           (compiler-opt-global-shared-view pred-map)
           gate
-          (opt-label-ref (compiler-opt-global-shared-view successors) 0)
+          (opt-label-ref successors 0)
           (compiler-opt-global-shared-view seen)
           (compiler-opt-global-shared-view alt))
         (opt-flag-exit-mark-path-successors!
@@ -42508,13 +42427,13 @@
   [index : OptCfgIndex]
   [successors : OptLabelSet]
   [acc : OptLabelSet]) : OptLabelSet
-  (match (compiler-opt-global-shared-view successors)
+  (match successors
     [(OptLabelSet.Nil) acc]
     [(OptLabelSet.Dense _ _)
       (opt-flag-exit-outside-successors
         (compiler-opt-global-shared-view body)
         (compiler-opt-global-shared-view index)
-        (opt-label-tail (compiler-opt-global-shared-view successors))
+        (opt-label-tail successors)
         (let
           [label : i64 (opt-label-ref successors 0)]
           (if (opt-loop-body-label-member? body index label)
@@ -42527,14 +42446,14 @@
   [pred-map : OptPredMap]
   [labels : OptLabelSet]
   [acc : OptLabelSet]) : OptLabelSet
-  (match (compiler-opt-global-shared-view labels)
+  (match labels
     [(OptLabelSet.Nil) acc]
     [(OptLabelSet.Dense _ _)
       (opt-flag-exit-exit-labels-from
         (compiler-opt-global-shared-view body)
         (compiler-opt-global-shared-view index)
         (compiler-opt-global-shared-view pred-map)
-        (opt-label-tail (compiler-opt-global-shared-view labels))
+        (opt-label-tail labels)
         (opt-flag-exit-outside-successors
           body
           index
@@ -42689,13 +42608,13 @@
   [blocks : ir.CompilerIrBlockList]
   [labels : OptLabelSet]
   [merge : i64]) : bool
-  (match (compiler-opt-global-shared-view labels)
+  (match labels
     [(OptLabelSet.Nil) true]
     [(OptLabelSet.Dense _ _)
       (and
         (match (opt-flag-exit-jump-only-target
           (compiler-opt-global-shared-view blocks)
-          (opt-label-ref (compiler-opt-global-shared-view labels) 0))
+          (opt-label-ref labels 0))
           [(OptFlagExitMaybeLabel.No) false]
           [(OptFlagExitMaybeLabel.Some target) (= target merge)])
         (opt-flag-exit-all-jump-only-to? blocks (opt-label-tail labels) merge))]))
@@ -42719,7 +42638,7 @@
             phi-inputs-at-32906-3.slots
             (+ phi-inputs-at-32906-3.start 1)
             (- phi-inputs-at-32906-3.len 1))]
-        (if (opt-label-contains (compiler-opt-global-shared-view keys) label)
+        (if (opt-label-contains keys label)
           (ir.CompilerIrMaybeValue.Some value)
           (opt-flag-exit-first-keyed-value rest keys))))))
 
@@ -42745,7 +42664,7 @@
             (- phi-inputs-at-32919-3.len 1))]
         (or
           (and
-            (opt-label-contains (compiler-opt-global-shared-view keys) label)
+            (opt-label-contains keys label)
             (opt-flag-exit-closure-var?
               value
               (compiler-opt-global-shared-view closure)))
@@ -42773,8 +42692,7 @@
             (- phi-inputs-at-32937-3.len 1))]
         (and
           (or
-            (not
-              (opt-label-contains (compiler-opt-global-shared-view keys) label))
+            (not (opt-label-contains keys label))
             (opt-flag-exit-closure-var?
               value
               (compiler-opt-global-shared-view closure)))
@@ -42802,8 +42720,7 @@
             (- phi-inputs-at-32956-3.len 1))]
         (and
           (or
-            (not
-              (opt-label-contains (compiler-opt-global-shared-view keys) label))
+            (not (opt-label-contains keys label))
             (opt-value-eq value (compiler-opt-global-shared-view want)))
           (opt-flag-exit-keyed-all-eq? rest keys want))))))
 
@@ -42823,17 +42740,14 @@
           (or
             (opt-flag-exit-keyed-all-closure?
               (compiler-opt-global-shared-view inputs)
-              (compiler-opt-global-shared-view keys)
+              keys
               (compiler-opt-global-shared-view closure))
             (match (opt-flag-exit-first-keyed-value
               (compiler-opt-global-shared-view inputs)
-              (compiler-opt-global-shared-view keys))
+              keys)
               [(ir.CompilerIrMaybeValue.No) true]
               [(ir.CompilerIrMaybeValue.Some first)
-                (opt-flag-exit-keyed-all-eq?
-                  inputs
-                  (compiler-opt-global-shared-view keys)
-                  first)]))
+                (opt-flag-exit-keyed-all-eq? inputs keys first)]))
           (opt-flag-exit-merge-phis-agree? instrs (+ pos 1) keys closure))]
       [_ true])))
 
@@ -42875,8 +42789,7 @@
         (begin
           (set! (array-ref seen id) 1)
           (cond
-            [(opt-label-contains (compiler-opt-global-shared-view exits) label)
-              true]
+            [(opt-label-contains exits label) true]
             [(opt-loop-body-contains-id?
                 (compiler-opt-global-shared-view body)
                 id)
@@ -42899,7 +42812,7 @@
   [exits : OptLabelSet]
   [labels : OptLabelSet]
   [seen : (__tl_dyn-array i64)]) : bool
-  (match (compiler-opt-global-shared-view labels)
+  (match labels
     [(OptLabelSet.Nil) false]
     [(OptLabelSet.Dense _ _)
       (or
@@ -42908,8 +42821,8 @@
           (compiler-opt-global-shared-view body)
           (compiler-opt-global-shared-view index)
           (compiler-opt-global-shared-view pred-map)
-          (compiler-opt-global-shared-view exits)
-          (opt-label-ref (compiler-opt-global-shared-view labels) 0)
+          exits
+          (opt-label-ref labels 0)
           (compiler-opt-global-shared-view seen))
         (opt-flag-exit-exit-walk-successors?
           blocks
@@ -42928,7 +42841,7 @@
   [exits : OptLabelSet]
   [labels : OptLabelSet]
   [count : i64]) : bool
-  (match (compiler-opt-global-shared-view labels)
+  (match labels
     [(OptLabelSet.Nil) true]
     [(OptLabelSet.Dense _ _)
       (and
@@ -42938,10 +42851,10 @@
             (compiler-opt-global-shared-view body)
             (compiler-opt-global-shared-view index)
             (compiler-opt-global-shared-view pred-map)
-            (compiler-opt-global-shared-view exits)
+            exits
             (opt-pred-map-successors
               (compiler-opt-global-shared-view pred-map)
-              (opt-label-ref (compiler-opt-global-shared-view labels) 0))
+              (opt-label-ref labels 0))
             (__tl_make-array i64 count)))
         (opt-flag-exit-exits-separate-from?
           blocks
@@ -42980,7 +42893,7 @@
   [alt-labels : OptLabelSet]
   [exit-label : i64]
   [closure : (__tl_dyn-array i64)]) : bool
-  (match (compiler-opt-global-shared-view alt-labels)
+  (match alt-labels
     [(OptLabelSet.Nil) true]
     [(OptLabelSet.Dense _ _)
       (match (opt-flag-exit-jump-only-target
@@ -42991,7 +42904,7 @@
           (and
             (opt-flag-exit-all-jump-only-to?
               (compiler-opt-global-shared-view blocks)
-              (compiler-opt-global-shared-view alt-labels)
+              alt-labels
               merge)
             (opt-flag-exit-merge-ok?
               blocks
@@ -43021,7 +42934,7 @@
             (+ phi-inputs-at-33168-3.start 1)
             (- phi-inputs-at-33168-3.len 1))]
         (begin
-          (if (opt-label-contains (compiler-opt-global-shared-view keys) label)
+          (if (opt-label-contains keys label)
             (opt-collect-value-uses-array
               (compiler-opt-global-shared-view allowed)
               value)
@@ -43084,7 +42997,7 @@
               [(ir.CompilerIrInstr.Phi _ inputs _)
                 (opt-flag-exit-note-keyed-uses!
                   inputs
-                  (compiler-opt-global-shared-view exits)
+                  exits
                   (compiler-opt-global-shared-view allowed))]
               [_ unit])])
         (opt-flag-exit-allowed-instrs!
@@ -43121,7 +43034,7 @@
                 label)
               (= label gate)
               extra
-              (compiler-opt-global-shared-view exits)
+              exits
               (compiler-opt-global-shared-view closure)
               (compiler-opt-global-shared-view allowed))])
         (opt-flag-exit-allowed-blocks!
@@ -43305,7 +43218,7 @@
   [pred-map : OptPredMap]
   [clear-preds : OptLabelSet]
   [targets : OptLabelSet]) : bool
-  (match (compiler-opt-global-shared-view targets)
+  (match targets
     [(OptLabelSet.Nil) true]
     [(OptLabelSet.Dense _ _)
       (and
@@ -43313,13 +43226,10 @@
           [preds : OptLabelSet
             (opt-pred-map-lookup
               (compiler-opt-global-shared-view pred-map)
-              (opt-label-ref (compiler-opt-global-shared-view targets) 0))]
+              (opt-label-ref targets 0))]
           (>
-            (opt-label-count (compiler-opt-global-shared-view preds))
-            (opt-label-count
-              (opt-label-intersection
-                preds
-                (compiler-opt-global-shared-view clear-preds)))))
+            (opt-label-count preds)
+            (opt-label-count (opt-label-intersection preds clear-preds))))
         (opt-flag-exit-preds-survive?
           pred-map
           clear-preds
@@ -43340,11 +43250,11 @@
             (not
               (opt-flag-exit-keyed-any-closure?
                 (compiler-opt-global-shared-view inputs)
-                (compiler-opt-global-shared-view exits)
+                exits
                 (compiler-opt-global-shared-view closure)))
             (opt-flag-exit-keyed-all-closure?
               inputs
-              (compiler-opt-global-shared-view exits)
+              exits
               (compiler-opt-global-shared-view closure)))]
         [_ true])
       (opt-flag-exit-block-phis-uniform? instrs (+ pos 1) exits closure))))
@@ -43369,7 +43279,7 @@
               (opt-flag-exit-block-phis-uniform?
                 instrs
                 0
-                (compiler-opt-global-shared-view exits)
+                exits
                 (compiler-opt-global-shared-view closure)))])
         (opt-flag-exit-outside-phis-uniform?
           (deref rest)
@@ -43420,7 +43330,7 @@
   [gate : i64]
   [preds : OptLabelSet]
   [reach : (__tl_dyn-array i64)]) : unit
-  (match (compiler-opt-global-shared-view preds)
+  (match preds
     [(OptLabelSet.Nil) unit]
     [(OptLabelSet.Dense _ _)
       (begin
@@ -43429,7 +43339,7 @@
           (compiler-opt-global-shared-view index)
           (compiler-opt-global-shared-view pred-map)
           gate
-          (opt-label-ref (compiler-opt-global-shared-view preds) 0)
+          (opt-label-ref preds 0)
           (compiler-opt-global-shared-view reach))
         (opt-flag-exit-reach-gate-preds!
           body
@@ -43500,14 +43410,14 @@
   [reach : (__tl_dyn-array i64)]
   [succs : OptLabelSet]
   [found : i64]) : OptFlagExitStep
-  (match (compiler-opt-global-shared-view succs)
+  (match succs
     [(OptLabelSet.Nil)
       (if (< found 0)
         (OptFlagExitStep.No)
         (OptFlagExitStep.Some found))]
     [(OptLabelSet.Dense _ _)
       (let
-        [label : i64 (opt-label-ref (compiler-opt-global-shared-view succs) 0)]
+        [label : i64 (opt-label-ref succs 0)]
         [candidate? : bool
           (or
             (= label gate)
@@ -43963,14 +43873,12 @@
   [dropped : OptLabelSet]
   [source : i64]
   [values : OptFlagExitEdgeValues]) : OptFlagExitMaybeEdgeValues
-  (match (compiler-opt-global-shared-view preds)
+  (match preds
     [(OptLabelSet.Nil) (OptFlagExitMaybeEdgeValues.Some values)]
     [(OptLabelSet.Dense _ _)
       (let
-        [label : i64 (opt-label-ref (compiler-opt-global-shared-view preds) 0)]
-        (if (or
-          (= label gate)
-          (opt-label-contains (compiler-opt-global-shared-view dropped) label))
+        [label : i64 (opt-label-ref preds 0)]
+        (if (or (= label gate) (opt-label-contains dropped label))
           (opt-flag-exit-mint-survivors
             doms
             def-label
@@ -44013,9 +43921,9 @@
         (match (opt-flag-exit-mint-survivors
           (compiler-opt-global-shared-view doms)
           (compiler-opt-global-shared-view def-label)
-          (compiler-opt-global-shared-view preds)
+          preds
           gate
-          (compiler-opt-global-shared-view dropped)
+          dropped
           mint.source
           mint.values)
           [(OptFlagExitMaybeEdgeValues.No) (OptFlagExitMaybeMints.No)]
@@ -44244,11 +44152,11 @@
   [preds : OptLabelSet]
   [value : ir.CompilerIrValue]
   [want : ir.CompilerIrValue]) : bool
-  (match (compiler-opt-global-shared-view preds)
+  (match preds
     [(OptLabelSet.Nil) true]
     [(OptLabelSet.Dense _ _)
       (let
-        [label : i64 (opt-label-ref (compiler-opt-global-shared-view preds) 0)]
+        [label : i64 (opt-label-ref preds 0)]
         (and
           (or
             (not
@@ -44308,7 +44216,7 @@
                 (compiler-opt-global-shared-view labels)
                 pred
                 len
-                (compiler-opt-global-shared-view ctx.exit-preds)
+                ctx.exit-preds
                 value
                 want)])
           (opt-flag-exit-agree-mints?
@@ -44389,9 +44297,7 @@
               label)
             (not
               (and
-                (opt-label-contains
-                  (compiler-opt-global-shared-view exits)
-                  label)
+                (opt-label-contains exits label)
                 (opt-flag-exit-closure-var?
                   (compiler-opt-global-shared-view value)
                   (compiler-opt-global-shared-view closure)))))
@@ -44427,7 +44333,7 @@
                 inputs
                 (compiler-opt-global-shared-view doms)
                 exit-label
-                (compiler-opt-global-shared-view exits)
+                exits
                 (compiler-opt-global-shared-view closure)
                 (compiler-opt-global-shared-view xdom)))]
           [_
@@ -44479,7 +44385,7 @@
                   label)
                 (compiler-opt-global-shared-view doms)
                 exit-label
-                (compiler-opt-global-shared-view exits)
+                exits
                 (compiler-opt-global-shared-view closure)
                 (compiler-opt-global-shared-view xdom)
                 (compiler-opt-global-shared-view xphi)))])
@@ -44570,7 +44476,7 @@
             (- phi-inputs-at-34704-3.len 1))]
         (opt-flag-exit-folded-inputs
           rest
-          (compiler-opt-global-shared-view exits)
+          exits
           (compiler-opt-global-shared-view closure)
           (if (and
             (opt-label-contains exits label)
@@ -44589,7 +44495,7 @@
     (opt-flag-exit-folded-instrs
       (compiler-opt-global-shared-view instrs)
       (+ pos 1)
-      (compiler-opt-global-shared-view exits)
+      exits
       (compiler-opt-global-shared-view closure)
       (match (ir.compiler-ir-instr-seq-ref instrs pos)
         [(ir.CompilerIrInstr.Phi _ inputs _)
@@ -44610,7 +44516,7 @@
         (deref rest)
         (compiler-opt-global-shared-view body)
         (compiler-opt-global-shared-view index)
-        (compiler-opt-global-shared-view exits)
+        exits
         (compiler-opt-global-shared-view closure)
         (match block
           [(ir.CompilerIrBlock.Block label instrs)
@@ -45239,9 +45145,7 @@
     [(ir.CompilerIrBlockList.Cons block rest)
       (if (match (compiler-opt-global-shared-view block)
         [(ir.CompilerIrBlock.Block label _)
-          (opt-label-contains
-            (compiler-opt-global-shared-view plan.dropped)
-            label)])
+          (opt-label-contains plan.dropped label)])
         (opt-flag-exit-rewrite-blocks (deref rest) body index plan)
         (ir.compiler-ir-block-cons
           (match (compiler-opt-global-shared-view block)
@@ -45259,12 +45163,8 @@
                     0
                     label
                     in-body?
-                    (opt-label-contains
-                      (compiler-opt-global-shared-view plan.clear-targets)
-                      label)
-                    (opt-label-contains
-                      (compiler-opt-global-shared-view plan.clear-preds)
-                      label)
+                    (opt-label-contains plan.clear-targets label)
+                    (opt-label-contains plan.clear-preds label)
                     (= label plan.gate)
                     (= label plan.exit-label)
                     (and
@@ -45329,10 +45229,7 @@
       ;; one -- which a computed clear value never does.
       (or
         (opt-flag-exit-cleared-known? cleared)
-        (not
-          (opt-label-contains
-            (compiler-opt-global-shared-view folded)
-            exit-label)))
+        (not (opt-label-contains folded exit-label)))
       (opt-flag-exit-preds-survive?
         (compiler-opt-global-shared-view pred-map)
         drop-preds
@@ -45345,15 +45242,12 @@
         (compiler-opt-global-shared-view blocks)
         gate
         gate-extra)
-      (opt-flag-exit-exit-preds-ok?
-        pred-map
-        exit-label
-        (compiler-opt-global-shared-view folded))
+      (opt-flag-exit-exit-preds-ok? pred-map exit-label folded)
       (opt-flag-exit-exits-separate?
         (compiler-opt-global-shared-view blocks)
         context
         (compiler-opt-global-shared-view body)
-        (compiler-opt-global-shared-view exits)
+        exits
         folded)
       (opt-flag-exit-outside-phis-uniform?
         (compiler-opt-global-shared-view blocks)
@@ -45392,7 +45286,7 @@
         (compiler-opt-global-shared-view index)
         gate
         gate-extra
-        (compiler-opt-global-shared-view exits)
+        exits
         (compiler-opt-global-shared-view closure)
         (compiler-opt-global-shared-view allowed))]
     [_inside : unit
@@ -45538,7 +45432,7 @@
                   def-label
                   (opt-pred-map-lookup pred-map exit-label)
                   gate
-                  (compiler-opt-global-shared-view dropped)
+                  dropped
                   edge-mints)
                   [(OptFlagExitMaybeMints.No) (OptFlagExitMaybePlan.No)]
                   [(OptFlagExitMaybeMints.Some mints)
@@ -45655,7 +45549,7 @@
         (compiler-opt-global-shared-view blocks)
         (compiler-opt-global-shared-view body)
         (compiler-opt-global-shared-view index)
-        (compiler-opt-global-shared-view exits)
+        exits
         (compiler-opt-global-shared-view closure)
         (OptLabelSet.Nil))]
     (if (and
@@ -45670,9 +45564,9 @@
         (compiler-opt-global-shared-view clears)
         drop-preds
         (compiler-opt-global-shared-view cleared)
-        (compiler-opt-global-shared-view clear-targets)
+        clear-targets
         alt-labels
-        (compiler-opt-global-shared-view exits)
+        exits
         folded
         (compiler-opt-global-shared-view seen)
         (compiler-opt-global-shared-view closure))
@@ -45686,7 +45580,7 @@
         gate
         gate-extra
         exit-label
-        (compiler-opt-global-shared-view exits)
+        exits
         (compiler-opt-global-shared-view closure)
         (compiler-opt-global-shared-view mint)))
       (opt-flag-exit-plan-values
@@ -48263,7 +48157,7 @@
             (opt-thread-jump-target
               (compiler-opt-global-shared-view pred-instrs))
             label))
-        (not (= (opt-label-count (compiler-opt-global-shared-view preds)) 1))
+        (not (= (opt-label-count preds) 1))
         (not (= (opt-label-ref preds 0) pred-label))
         (< pred-rpo 0)
         (<= rpo pred-rpo))
@@ -48314,7 +48208,7 @@
   (let
     [preds : OptLabelSet
       (opt-cfg-index-predecessors (compiler-opt-global-shared-view index) label)]
-    (if (not (= (opt-label-count (compiler-opt-global-shared-view preds)) 1))
+    (if (not (= (opt-label-count preds) 1))
       false
       (let
         [pred-label : i64 (opt-label-ref preds 0)]
@@ -49196,7 +49090,7 @@
         (opt-cfg-block-exists?
           (compiler-opt-global-shared-view blocks)
           candidate)
-        (opt-label-contains (compiler-opt-global-shared-view made) candidate))
+        (opt-label-contains made candidate))
         (opt-bool-branch-chain-labels
           blocks
           source-label
@@ -49215,18 +49109,18 @@
 (define (opt-bool-branch-chain-label-set
   [labels : OptLabelSet]
   [set : OptLabelSet]) : OptLabelSet
-  (match (compiler-opt-global-shared-view labels)
+  (match labels
     [(OptLabelSet.Nil) set]
     [(OptLabelSet.Dense _ _)
       (opt-bool-branch-chain-label-set
-        (opt-label-tail (compiler-opt-global-shared-view labels))
+        (opt-label-tail labels)
         (opt-label-add set (opt-label-ref labels 0)))]))
 
 (define (opt-bool-branch-chain-last-label
   [labels : OptLabelSet]
   [fallback : i64]) : i64
   (let
-    [count : i64 (opt-label-count (compiler-opt-global-shared-view labels))]
+    [count : i64 (opt-label-count labels)]
     (if (= count 0)
       fallback
       (opt-label-ref labels (- count 1)))))
@@ -49234,7 +49128,7 @@
 (define (opt-bool-branch-chain-first-label
   [labels : OptLabelSet]
   [fallback : i64]) : i64
-  (match (compiler-opt-global-shared-view labels)
+  (match labels
     [(OptLabelSet.Nil) fallback]
     [(OptLabelSet.Dense _ _) (opt-label-ref labels 0)]))
 
@@ -49281,17 +49175,14 @@
     (ir.CompilerIrBlockList.Nil)
     (let
       [conj : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref conjs index)]
-      (match (compiler-opt-global-shared-view labels)
+      (match labels
         [(OptLabelSet.Nil) (ir.CompilerIrBlockList.Nil)]
         [(OptLabelSet.Dense _ _)
           (let
-            [label : i64
-              (opt-label-ref (compiler-opt-global-shared-view labels) 0)]
+            [label : i64 (opt-label-ref labels 0)]
             [label-rest : OptLabelSet (opt-label-tail labels)]
             [next-label : i64
-              (opt-bool-branch-chain-first-label
-                (compiler-opt-global-shared-view label-rest)
-                true-label)]
+              (opt-bool-branch-chain-first-label label-rest true-label)]
             (ir.compiler-ir-block-cons
               (ir.CompilerIrBlock.Block
                 label
@@ -49355,11 +49246,11 @@
   [inputs : ir.CompilerIrPhiInputSeq]
   [labels : OptLabelSet]
   [old-label : i64]) : bool
-  (match (compiler-opt-global-shared-view labels)
+  (match labels
     [(OptLabelSet.Nil) true]
     [(OptLabelSet.Dense _ _)
       (let
-        [label : i64 (opt-label-ref (compiler-opt-global-shared-view labels) 0)]
+        [label : i64 (opt-label-ref labels 0)]
         (and
           (if (= label old-label)
             true
@@ -49387,7 +49278,7 @@
             old-label)
           (opt-bool-branch-chain-phi-inputs-have-none-except?
             inputs
-            (compiler-opt-global-shared-view new-preds)
+            new-preds
             old-label)
           (opt-bool-branch-chain-target-phis-repairable-from?
             instrs
@@ -49515,8 +49406,7 @@
                                               (OptLabelSet.Nil))]
                                           [false-preds : OptLabelSet
                                             (opt-bool-branch-chain-label-set
-                                              (compiler-opt-global-shared-view
-                                                labels)
+                                              labels
                                               (opt-label-add
                                                 (OptLabelSet.Nil)
                                                 source-label))]
@@ -49524,8 +49414,7 @@
                                             (opt-label-add
                                               (OptLabelSet.Nil)
                                               (opt-bool-branch-chain-last-label
-                                                (compiler-opt-global-shared-view
-                                                  labels)
+                                                labels
                                                 source-label))]
                                           [same-target? : bool
                                             (= true-label false-label)]
@@ -49540,8 +49429,7 @@
                                                   blocks)
                                                 true-label
                                                 source-label
-                                                (compiler-opt-global-shared-view
-                                                  all-preds)))
+                                                all-preds))
                                             (or
                                               (not
                                                 (opt-bool-branch-chain-target-phis-repairable?
@@ -49549,16 +49437,14 @@
                                                     blocks)
                                                   true-label
                                                   source-label
-                                                  (compiler-opt-global-shared-view
-                                                    true-preds)))
+                                                  true-preds))
                                               (not
                                                 (opt-bool-branch-chain-target-phis-repairable?
                                                   (compiler-opt-global-shared-view
                                                     blocks)
                                                   false-label
                                                   source-label
-                                                  (compiler-opt-global-shared-view
-                                                    false-preds)))))
+                                                  false-preds))))
                                             (OptBoolBranchChainRewrite.No)
                                             (let
                                               [source-prefix : ir.CompilerIrInstrSeq
@@ -49580,8 +49466,7 @@
                                                           (opt-bool-branch-chain-conj-var
                                                             first))
                                                         (opt-bool-branch-chain-first-label
-                                                          (compiler-opt-global-shared-view
-                                                            labels)
+                                                          labels
                                                           true-label)
                                                         false-label))))]
                                               [fresh : ir.CompilerIrBlockList
@@ -49749,12 +49634,8 @@
             (+ phi-inputs-at-39479-3.start 1)
             (- phi-inputs-at-39479-3.len 1))]
         (if (or
-          (opt-label-contains
-            (compiler-opt-global-shared-view true-preds)
-            label)
-          (opt-label-contains
-            (compiler-opt-global-shared-view false-preds)
-            label))
+          (opt-label-contains true-preds label)
+          (opt-label-contains false-preds label))
           (OptBoolBranchConstantInputs.No)
           (match value
             [(ir.CompilerIrValue.Bool known)
@@ -49777,11 +49658,11 @@
     0))
 
 (define (opt-bool-branch-label-union [from : OptLabelSet] [into : OptLabelSet]) : OptLabelSet
-  (match (compiler-opt-global-shared-view from)
+  (match from
     [(OptLabelSet.Nil) into]
     [(OptLabelSet.Dense _ _)
       (opt-bool-branch-label-union
-        (opt-label-tail (compiler-opt-global-shared-view from))
+        (opt-label-tail from)
         (opt-label-add into (opt-label-ref from 0)))]))
 
 (define (opt-bool-branch-pred-constant-rewriteable?
@@ -49805,12 +49686,11 @@
   [blocks : ir.CompilerIrBlockList]
   [merge-label : i64]
   [preds : OptLabelSet]) : bool
-  (match (compiler-opt-global-shared-view preds)
+  (match preds
     [(OptLabelSet.Nil) true]
     [(OptLabelSet.Dense _ _)
       (let
-        [pred-label : i64
-          (opt-label-ref (compiler-opt-global-shared-view preds) 0)]
+        [pred-label : i64 (opt-label-ref preds 0)]
         (and
           (opt-bool-branch-pred-constant-rewriteable?
             (compiler-opt-global-shared-view blocks)
@@ -49846,11 +49726,11 @@
 (define (opt-bool-branch-phi-inputs-have-none?
   [inputs : ir.CompilerIrPhiInputSeq]
   [labels : OptLabelSet]) : bool
-  (match (compiler-opt-global-shared-view labels)
+  (match labels
     [(OptLabelSet.Nil) true]
     [(OptLabelSet.Dense _ _)
       (let
-        [label : i64 (opt-label-ref (compiler-opt-global-shared-view labels) 0)]
+        [label : i64 (opt-label-ref labels 0)]
         (and
           (not
             (opt-bool-branch-phi-input-has-label?
@@ -49871,9 +49751,7 @@
           (opt-bool-branch-phi-input-has-label?
             (compiler-opt-global-shared-view inputs)
             merge-label)
-          (opt-bool-branch-phi-inputs-have-none?
-            inputs
-            (compiler-opt-global-shared-view new-preds))
+          (opt-bool-branch-phi-inputs-have-none? inputs new-preds)
           (opt-bool-branch-target-phis-repairable-from?
             instrs
             (+ index 1)
@@ -49901,12 +49779,12 @@
   [value : ir.CompilerIrValue]
   [preds : OptLabelSet]
   [tail : ir.CompilerIrPhiInputSeq]) : ir.CompilerIrPhiInputSeq
-  (match (compiler-opt-global-shared-view preds)
+  (match preds
     [(OptLabelSet.Nil) tail]
     [(OptLabelSet.Dense _ _)
       (ir.compiler-ir-phi-input-seq-prepend
         (compiler-opt-global-shared-view value)
-        (opt-label-ref (compiler-opt-global-shared-view preds) 0)
+        (opt-label-ref preds 0)
         (opt-bool-branch-prepend-phi-inputs value (opt-label-tail preds) tail))]))
 
 (define (opt-bool-branch-repair-phi-inputs
@@ -49930,10 +49808,7 @@
             (+ phi-inputs-at-39638-3.start 1)
             (- phi-inputs-at-39638-3.len 1))]
         [tail : ir.CompilerIrPhiInputSeq
-          (opt-bool-branch-repair-phi-inputs
-            rest
-            merge-label
-            (compiler-opt-global-shared-view new-preds))]
+          (opt-bool-branch-repair-phi-inputs rest merge-label new-preds)]
         (if (= label merge-label)
           (opt-bool-branch-prepend-phi-inputs value new-preds tail)
           (ir.compiler-ir-phi-input-seq-prepend value label tail))))))
@@ -49952,10 +49827,7 @@
             index
             (ir.CompilerIrInstr.Phi
               dst
-              (opt-bool-branch-repair-phi-inputs
-                inputs
-                merge-label
-                (compiler-opt-global-shared-view new-preds))
+              (opt-bool-branch-repair-phi-inputs inputs merge-label new-preds)
               ty))
           (opt-bool-branch-repair-target-phis-from!
             instrs
@@ -49985,12 +49857,11 @@
   [blocks : ir.CompilerIrBlockList]
   [preds : OptLabelSet]
   [target-label : i64]) : unit
-  (match (compiler-opt-global-shared-view preds)
+  (match preds
     [(OptLabelSet.Nil) unit]
     [(OptLabelSet.Dense _ _)
       (let
-        [pred-label : i64
-          (opt-label-ref (compiler-opt-global-shared-view preds) 0)]
+        [pred-label : i64 (opt-label-ref preds 0)]
         (begin
           (match (opt-cfg-find-block
             (compiler-opt-global-shared-view blocks)
@@ -50041,58 +49912,50 @@
           [preds : OptLabelSet (opt-cfg-index-predecessors index merge-label)]
           [same-target? : bool (= true-label false-label)]
           [all-preds : OptLabelSet
-            (opt-bool-branch-label-union
-              (compiler-opt-global-shared-view true-preds)
-              (compiler-opt-global-shared-view false-preds))]
+            (opt-bool-branch-label-union true-preds false-preds)]
           (if (or
             (<= input-count 0)
-            (not
-              (=
-                input-count
-                (opt-label-count (compiler-opt-global-shared-view preds))))
-            (not
-              (opt-label-set-eq?
-                (compiler-opt-global-shared-view all-preds)
-                preds))
+            (not (= input-count (opt-label-count preds)))
+            (not (opt-label-set-eq? all-preds preds))
             (not
               (opt-bool-branch-preds-constant-rewriteable?
                 (compiler-opt-global-shared-view blocks)
                 merge-label
-                (compiler-opt-global-shared-view true-preds)))
+                true-preds))
             (not
               (opt-bool-branch-preds-constant-rewriteable?
                 (compiler-opt-global-shared-view blocks)
                 merge-label
-                (compiler-opt-global-shared-view false-preds)))
+                false-preds))
             (if same-target?
               (not
                 (opt-bool-branch-target-phis-repairable?
                   (compiler-opt-global-shared-view blocks)
                   true-label
                   branch-label
-                  (compiler-opt-global-shared-view all-preds)))
+                  all-preds))
               (or
                 (not
                   (opt-bool-branch-target-phis-repairable?
                     (compiler-opt-global-shared-view blocks)
                     true-label
                     branch-label
-                    (compiler-opt-global-shared-view true-preds)))
+                    true-preds))
                 (not
                   (opt-bool-branch-target-phis-repairable?
                     (compiler-opt-global-shared-view blocks)
                     false-label
                     branch-label
-                    (compiler-opt-global-shared-view false-preds))))))
+                    false-preds)))))
             false
             (begin
               (opt-bool-branch-apply-constant-pred-rewrites!
                 (compiler-opt-global-shared-view blocks)
-                (compiler-opt-global-shared-view true-preds)
+                true-preds
                 true-label)
               (opt-bool-branch-apply-constant-pred-rewrites!
                 (compiler-opt-global-shared-view blocks)
-                (compiler-opt-global-shared-view false-preds)
+                false-preds
                 false-label)
               (if same-target?
                 (opt-bool-branch-repair-target-phis!
@@ -50239,12 +50102,8 @@
           [preds : OptLabelSet (opt-cfg-index-predecessors index merge-label)]
           (if (or
             (= first-label second-label)
-            (not
-              (= (opt-label-count (compiler-opt-global-shared-view preds)) 2))
-            (not
-              (opt-label-contains
-                (compiler-opt-global-shared-view preds)
-                first-label))
+            (not (= (opt-label-count preds) 2))
+            (not (opt-label-contains preds first-label))
             (not (opt-label-contains preds second-label)))
             false
             (opt-bool-branch-apply-rewrites!
@@ -50334,8 +50193,7 @@
           [new-preds : OptLabelSet (opt-label-add (OptLabelSet.Nil) pred-label)]
           [same-target? : bool (= true-label false-label)]
           (if (or
-            (not
-              (= (opt-label-count (compiler-opt-global-shared-view preds)) 1))
+            (not (= (opt-label-count preds) 1))
             (not (opt-label-contains preds pred-label))
             (= pred-label merge-label)
             (= pred-label branch-label)
@@ -50344,7 +50202,7 @@
                 (compiler-opt-global-shared-view blocks)
                 true-label
                 branch-label
-                (compiler-opt-global-shared-view new-preds)))
+                new-preds))
             (if same-target?
               false
               (not
@@ -50352,7 +50210,7 @@
                   (compiler-opt-global-shared-view blocks)
                   false-label
                   branch-label
-                  (compiler-opt-global-shared-view new-preds)))))
+                  new-preds))))
             false
             (match (opt-bool-branch-pred-rewrite
               (compiler-opt-global-shared-view blocks)
@@ -50371,7 +50229,7 @@
                       (compiler-opt-global-shared-view blocks)
                       true-label
                       branch-label
-                      (compiler-opt-global-shared-view new-preds))
+                      new-preds)
                     (if same-target?
                       unit
                       (opt-bool-branch-repair-target-phis!
@@ -50784,9 +50642,7 @@
   (match blocks
     [(ir.CompilerIrBlockList.Nil) false]
     [(ir.CompilerIrBlockList.Cons block rest)
-      (if (opt-bool-branch-gate-step-block?
-        (compiler-opt-global-shared-view starts)
-        block)
+      (if (opt-bool-branch-gate-step-block? starts block)
         true
         (opt-bool-branch-gate-starts-open? (deref rest) starts))]
     [(ir.CompilerIrBlockList.Array seq)
@@ -50796,7 +50652,7 @@
         (begin
           (while (< pos count)
             (if (opt-bool-branch-gate-step-block?
-              (compiler-opt-global-shared-view starts)
+              starts
               (ir.compiler-ir-block-seq-ref seq pos))
               (return true)
               (set! pos (+ pos 1))))
@@ -50831,7 +50687,7 @@
     [(OptBoolBranchGateScan.Direct) true]
     [(OptBoolBranchGateScan.Starts starts)
       (and
-        (> (opt-label-count (compiler-opt-global-shared-view starts)) 0)
+        (> (opt-label-count starts) 0)
         (opt-bool-branch-gate-starts-open? blocks starts))]))
 
 (define (opt-bool-branch-function-with-context-result
@@ -50937,14 +50793,14 @@
   [index : OptCfgIndex]
   [preds : OptLabelSet]
   [merge-rpo : i64]) : bool
-  (match (compiler-opt-global-shared-view preds)
+  (match preds
     [(OptLabelSet.Nil) true]
     [(OptLabelSet.Dense _ _)
       (let
         [rpo : i64
           (opt-phi-cmp-fold-label-rpo
             (compiler-opt-global-shared-view index)
-            (opt-label-ref (compiler-opt-global-shared-view preds) 0))]
+            (opt-label-ref preds 0))]
         (and
           (>= rpo 0)
           (< rpo merge-rpo)
@@ -51322,7 +51178,7 @@
           (not
             (opt-phi-cmp-fold-preds-forward?
               (compiler-opt-global-shared-view index)
-              (compiler-opt-global-shared-view preds)
+              preds
               merge-rpo)))
           (OptPhiCmpFoldRewrite.No)
           (match (opt-phi-cmp-fold-classify
@@ -51556,7 +51412,7 @@
           (compiler-opt-global-shared-view index)
           label)]
       (if (or
-        (not (= (opt-label-count (compiler-opt-global-shared-view preds)) 1))
+        (not (= (opt-label-count preds) 1))
         (not (= (opt-label-ref preds 0) from-label))
         (< from-rpo 0)
         (<= rpo from-rpo))
@@ -51982,7 +51838,7 @@
       (not
         (opt-phi-cmp-fold-preds-forward?
           (compiler-opt-global-shared-view index)
-          (compiler-opt-global-shared-view preds)
+          preds
           merge-rpo)))
       (OptPhiCmpFoldRewrite.No)
       (match (opt-phi-cmp-fold-chain-classify
@@ -52946,9 +52802,7 @@
   [pred-label : i64]) : bool
   (let
     [preds : OptLabelSet (opt-cfg-index-predecessors index label)]
-    (and
-      (= (opt-label-count (compiler-opt-global-shared-view preds)) 1)
-      (= (opt-label-ref preds 0) pred-label))))
+    (and (= (opt-label-count preds) 1) (= (opt-label-ref preds 0) pred-label))))
 
 ;; The successor whose region holds every foreign reader of `var`, or `No` when
 ;; there is no single such successor. A block dominated by a successor `S` whose
@@ -54067,12 +53921,11 @@
   [false-label : i64]
   [preds : OptLabelSet]
   [changed : bool]) : bool
-  (match (compiler-opt-global-shared-view preds)
+  (match preds
     [(OptLabelSet.Nil) changed]
     [(OptLabelSet.Dense _ _)
       (let
-        [pred-label : i64
-          (opt-label-ref (compiler-opt-global-shared-view preds) 0)]
+        [pred-label : i64 (opt-label-ref preds 0)]
         [step : bool
           (match (opt-cfg-index-find-block
             (compiler-opt-global-shared-view index)
@@ -54137,12 +53990,11 @@
   [false-label : i64]
   [preds : OptLabelSet]
   [changed : bool]) : bool
-  (match (compiler-opt-global-shared-view preds)
+  (match preds
     [(OptLabelSet.Nil) changed]
     [(OptLabelSet.Dense _ _)
       (let
-        [pred-label : i64
-          (opt-label-ref (compiler-opt-global-shared-view preds) 0)]
+        [pred-label : i64 (opt-label-ref preds 0)]
         [step : bool
           (match (ir.compiler-ir-instr-seq-ref merge-instrs mov-limit)
             [(ir.CompilerIrInstr.BinOp _ op left right ty)
@@ -54298,8 +54150,7 @@
                     (opt-cfg-index-predecessors
                       (compiler-opt-global-shared-view index)
                       merge-label)]
-                  [pred-count : i64
-                    (opt-label-count (compiler-opt-global-shared-view preds))]
+                  [pred-count : i64 (opt-label-count preds)]
                   [merge-rpo : i64
                     (opt-phi-cmp-fold-label-rpo
                       (compiler-opt-global-shared-view index)
@@ -54318,16 +54169,13 @@
                     (not
                       (opt-phi-cmp-fold-preds-forward?
                         (compiler-opt-global-shared-view index)
-                        (compiler-opt-global-shared-view preds)
+                        preds
                         merge-rpo)))
                     false
                     (begin
                       (while (< i pred-count)
                         (let
-                          [origin : i64
-                            (opt-label-ref
-                              (compiler-opt-global-shared-view preds)
-                              i)]
+                          [origin : i64 (opt-label-ref preds i)]
                           (begin
                             (opt-thread-facts-collect!
                               (compiler-opt-global-shared-view facts)
@@ -55482,7 +55330,7 @@
         ;; and the phis it reads are defined on all of them.
         (let
           [preds : OptLabelSet (opt-cfg-index-predecessors index blocked)]
-          [n : i64 (opt-label-count (compiler-opt-global-shared-view preds))]
+          [n : i64 (opt-label-count preds)]
           [i : i64 0]
           (begin
             (while (< i n)
@@ -55491,7 +55339,7 @@
                   (opt-thread-labels-contain?
                     (compiler-opt-global-shared-view chain-labels)
                     chain-count
-                    (opt-label-ref (compiler-opt-global-shared-view preds) i))
+                    (opt-label-ref preds i))
                   (return (OptThreadBlocked.No)))
                 (set! i (+ i 1))))
             (OptThreadBlocked.Some blocked)))))))
@@ -55780,8 +55628,7 @@
           (opt-cfg-index-predecessors
             (compiler-opt-global-shared-view index)
             merge-label)]
-        [pred-count : i64
-          (opt-label-count (compiler-opt-global-shared-view preds))]
+        [pred-count : i64 (opt-label-count preds)]
         (if (or
           (= head-label (ir.compiler-ir-label-none))
           (< merge-rpo 0)
@@ -55789,7 +55636,7 @@
           (not
             (opt-phi-cmp-fold-preds-forward?
               (compiler-opt-global-shared-view index)
-              (compiler-opt-global-shared-view preds)
+              preds
               merge-rpo))
           (not
             (opt-thread-chain-link-block?
@@ -55837,10 +55684,7 @@
                     (begin
                       (while (< i pred-count)
                         (let
-                          [origin : i64
-                            (opt-label-ref
-                              (compiler-opt-global-shared-view preds)
-                              i)]
+                          [origin : i64 (opt-label-ref preds i)]
                           (begin
                             (opt-thread-facts-collect!
                               (compiler-opt-global-shared-view facts)
@@ -56184,7 +56028,7 @@
         entry-label
         pred-label
         (compiler-opt-global-shared-view original)
-        (compiler-opt-global-shared-view accepted)
+        accepted
         (compiler-opt-global-shared-view flag)
         default-label
         fuel)]
@@ -56209,7 +56053,7 @@
                     entry-label
                     pred-label
                     (compiler-opt-global-shared-view original)
-                    (compiler-opt-global-shared-view accepted)
+                    accepted
                     (compiler-opt-global-shared-view flag)
                     case-label
                     fuel)]
@@ -56513,10 +56357,7 @@
                 (cond
                   ;; a latch or a preheader: jump-only onto the header
                   [onto-header? (opt_i64_i64_map.insert-ref! out label 1)]
-                  [(opt-label-contains
-                      (compiler-opt-global-shared-view body)
-                      label)
-                    unit]
+                  [(opt-label-contains body label) unit]
                   ;; an exit: a predecessor inside the loop
                   [else
                     (let
@@ -56525,7 +56366,7 @@
                       (while (< edge end)
                         (begin
                           (if (opt-label-contains
-                            (compiler-opt-global-shared-view body)
+                            body
                             (opt-cfg-index-label
                               (compiler-opt-global-shared-view index)
                               (array-ref preds.edges edge)))
@@ -59016,9 +58857,7 @@
   [pred : i64]) : bool
   (let
     [preds : OptLabelSet (opt-cfg-index-predecessors index label)]
-    (and
-      (= (opt-label-count (compiler-opt-global-shared-view preds)) 1)
-      (opt-label-contains preds pred))))
+    (and (= (opt-label-count preds) 1) (opt-label-contains preds pred))))
 
 ;; Table-formation density floor, as a percentage of the [min, max] span that
 ;; the chain's own tags must occupy. A gap tag costs one 8-byte table slot and
@@ -59244,7 +59083,7 @@
   [items : OptSwitchCandidateList]
   [head-prefix : i64]
   [copies : OptSwitchCopyEnv]) : OptMaybeSwitchChain
-  (if (opt-label-contains (compiler-opt-global-shared-view seen) label)
+  (if (opt-label-contains seen label)
     (OptMaybeSwitchChain.No)
     (match (opt-cfg-index-find-block
       (compiler-opt-global-shared-view index)
@@ -59463,7 +59302,7 @@
     [(ir.CompilerIrBlockList.Cons block rest)
       (match (compiler-opt-global-shared-view block)
         [(ir.CompilerIrBlock.Block label _)
-          (if (opt-label-contains (compiler-opt-global-shared-view skip) label)
+          (if (opt-label-contains skip label)
             (match (opt-switch-rewrite-blocks-from
               (deref rest)
               all-blocks
@@ -60386,7 +60225,7 @@
   [block : ir.CompilerIrBlock]) : OptLabelSet
   (match (compiler-opt-global-shared-view block)
     [(ir.CompilerIrBlock.Block head-label _)
-      (if (opt-label-contains (compiler-opt-global-shared-view skip) head-label)
+      (if (opt-label-contains skip head-label)
         skip
         (let
           [value-var : i64
@@ -76286,11 +76125,11 @@
     [_ (OptLoopBceMaybeVar.NoVar)]))
 
 (define (opt-loop-bce-label-set-other-than [labels : OptLabelSet] [skip : i64]) : OptLoopBceMaybeLabel
-  (match (compiler-opt-global-shared-view labels)
+  (match labels
     [(OptLabelSet.Nil) (OptLoopBceMaybeLabel.NoLabel)]
     [(OptLabelSet.Dense _ _)
       (let
-        [label : i64 (opt-label-ref (compiler-opt-global-shared-view labels) 0)]
+        [label : i64 (opt-label-ref labels 0)]
         (if (= label skip)
           (opt-loop-bce-label-set-other-than (opt-label-tail labels) skip)
           (match (opt-loop-bce-label-set-other-than
@@ -76382,11 +76221,14 @@
 (define (opt-loop-bce-i64-list-remove [items : OptLabelSet] [value : i64]) : OptLabelSet
   (match items
     [(OptLabelSet.Nil) (OptLabelSet.Nil)]
-    [(OptLabelSet.Dense integer-items integer-count)
+    [(OptLabelSet.Dense integer-items-handle integer-count)
       (let
+        [integer-items : (__tl_dyn-array i64)
+          (opt-label-items integer-items-handle)]
         [head : i64 (array-ref integer-items integer-count)]
         [rest : OptLabelSet
-          (opt-label-tail (OptLabelSet.Dense integer-items integer-count))]
+          (opt-label-tail
+            (OptLabelSet.Dense integer-items-handle integer-count))]
         [tail : OptLabelSet (opt-loop-bce-i64-list-remove rest value)]
         (if (= head value)
           tail
@@ -76454,7 +76296,7 @@
         (opt-loop-bce-index-increment-step
           type-segment-bases
           current
-          (compiler-opt-global-shared-view plus-one)
+          plus-one
           (compiler-opt-global-shared-view instr)
           index-var)]
       [next-plus : OptLabelSet
@@ -76510,11 +76352,11 @@
   [index-var : i64]
   [seen-init : bool]
   [seen-latch : bool]) : OptLoopBceHeaderEdges
-  (match (compiler-opt-global-shared-view preds)
+  (match preds
     [(OptLabelSet.Nil) (OptLoopBceHeaderEdges.Edges true seen-init seen-latch)]
     [(OptLabelSet.Dense _ _)
       (let
-        [pred : i64 (opt-label-ref (compiler-opt-global-shared-view preds) 0)]
+        [pred : i64 (opt-label-ref preds 0)]
         (match (opt-cfg-find-block
           (compiler-opt-global-shared-view blocks)
           pred)
@@ -76562,12 +76404,10 @@
         [header-preds : OptLabelSet
           (opt-cfg-index-predecessors index header-label)]
         (if (and
-          (= (opt-label-count (compiler-opt-global-shared-view body-preds)) 1)
+          (= (opt-label-count body-preds) 1)
           (opt-label-contains body-preds header-label)
-          (= (opt-label-count (compiler-opt-global-shared-view header-preds)) 2))
-          (if (opt-label-contains
-            (compiler-opt-global-shared-view header-preds)
-            body-label)
+          (= (opt-label-count header-preds) 2))
+          (if (opt-label-contains header-preds body-label)
             (match (opt-loop-bce-label-set-other-than header-preds body-label)
               [(OptLoopBceMaybeLabel.SomeLabel preheader-label)
                 (match (opt-cfg-find-block
@@ -77618,9 +77458,7 @@
       [removed : OptLabelSet
         (if (= dst (- 0 1))
           ptrs
-          (opt-loop-bce-i64-list-remove
-            (compiler-opt-global-shared-view ptrs)
-            dst))]
+          (opt-loop-bce-i64-list-remove ptrs dst))]
       [next-ptrs : OptLabelSet
         (match (compiler-opt-global-shared-view instr)
           [(ir.CompilerIrInstr.Gep gep-dst _ offset ty)
@@ -77687,7 +77525,7 @@
             instrs.slots
             0
             instrs.len
-            (compiler-opt-global-shared-view ptrs))
+            ptrs)
             true
             (opt-loop-bce-length-store-shape-blocks
               type-segment-bases
@@ -77714,9 +77552,7 @@
       [removed : OptLabelSet
         (if (= dst (- 0 1))
           ptrs
-          (opt-loop-bce-i64-list-remove
-            (compiler-opt-global-shared-view ptrs)
-            dst))]
+          (opt-loop-bce-i64-list-remove ptrs dst))]
       [next-ptrs : OptLabelSet
         (match (compiler-opt-global-shared-view instr)
           [(ir.CompilerIrInstr.Gep gep-dst _ offset ty)
@@ -77765,7 +77601,7 @@
             instrs.slots
             0
             instrs.len
-            (compiler-opt-global-shared-view ptrs))
+            ptrs)
             true
             (opt-loop-bce-length-load-shape-blocks
               type-segment-bases
@@ -88843,9 +88679,9 @@
 
 ;; A self-loop candidate must have exactly one predecessor besides itself.
 (define (opt-unroll-simd-outside-pred [preds : OptLabelSet] [loop-label : i64]) : OptLoopPreheader
-  (if (= (opt-label-count (compiler-opt-global-shared-view preds)) 2)
+  (if (= (opt-label-count preds) 2)
     (let
-      [first : i64 (opt-label-ref (compiler-opt-global-shared-view preds) 0)]
+      [first : i64 (opt-label-ref preds 0)]
       [second : i64 (opt-label-ref preds 1)]
       (cond
         [(and (= first loop-label) (!= second loop-label))
@@ -97037,9 +96873,7 @@
         entry-label
         (compiler-opt-global-shared-view block))
         [(OptUnrollMaybeShape.Some shape)
-          (if (opt-label-contains
-            (compiler-opt-global-shared-view rejected)
-            shape.loop-label)
+          (if (opt-label-contains rejected shape.loop-label)
             ;; Already retired by this invocation's verifier: its line was
             ;; emitted when the rewrite was refused, and re-reporting it once
             ;; per rescan would count the same loop many times.
@@ -97815,9 +97649,7 @@
   [label : i64]
   [fuel : i64]
   [chain : OptLabelSet]) : OptBceMbMaybeChain
-  (if (or
-    (<= fuel 0)
-    (opt-label-contains (compiler-opt-global-shared-view chain) label))
+  (if (or (<= fuel 0) (opt-label-contains chain label))
     (OptBceMbMaybeChain.No)
     (match (opt-cfg-find-block (compiler-opt-global-shared-view blocks) label)
       [(OptMaybeBlock.No) (OptBceMbMaybeChain.No)]
@@ -97831,9 +97663,7 @@
                 (OptBceMbMaybeChain.No)
                 (match (ir.compiler-ir-instr-seq-ref instrs (- count 1))
                   [(ir.CompilerIrInstr.Jump target)
-                    (if (opt-label-contains
-                      (compiler-opt-global-shared-view body-labels)
-                      target)
+                    (if (opt-label-contains body-labels target)
                       (opt-bce-mb-chain-walk
                         blocks
                         body-blocks
@@ -97876,14 +97706,8 @@
   [fuel : i64]
   [chain : OptLabelSet]) : OptBceMbMaybeChain
   (let
-    [then-in? : bool
-      (opt-label-contains
-        (compiler-opt-global-shared-view body-labels)
-        then-label)]
-    [else-in? : bool
-      (opt-label-contains
-        (compiler-opt-global-shared-view body-labels)
-        else-label)]
+    [then-in? : bool (opt-label-contains body-labels then-label)]
+    [else-in? : bool (opt-label-contains body-labels else-label)]
     (cond
       [(and then-in? (not else-in?))
         (match cond
@@ -97905,9 +97729,7 @@
                   offset)
                 ;; the compare's continuing successor must lead OUT of the
                 ;; chain, or it does not start the covered region
-                (if (opt-label-contains
-                  (compiler-opt-global-shared-view chain)
-                  then-label)
+                (if (opt-label-contains chain then-label)
                   (OptBceMbMaybeChain.No)
                   (OptBceMbMaybeChain.Some
                     (OptBceMbMaybeCounter.Some
@@ -97979,10 +97801,7 @@
               (or
                 (and
                   (= then-label header)
-                  (not
-                    (opt-label-contains
-                      (compiler-opt-global-shared-view body-labels)
-                      else-label)))
+                  (not (opt-label-contains body-labels else-label)))
                 (and
                   (= else-label header)
                   (not (opt-label-contains body-labels then-label))))]
@@ -97999,17 +97818,13 @@
   [latch : i64]
   [preheader : i64]
   [body-labels : OptLabelSet]) : OptBceMbMaybeChain
-  (if (not
-    (opt-bce-mb-top-test-latch-ok?
-      latch-block
-      header
-      (compiler-opt-global-shared-view body-labels)))
+  (if (not (opt-bce-mb-top-test-latch-ok? latch-block header body-labels))
     (OptBceMbMaybeChain.No)
     (opt-bce-mb-chain-walk
       blocks
       body-blocks
       defs
-      (compiler-opt-global-shared-view body-labels)
+      body-labels
       latch
       preheader
       header
@@ -98799,13 +98614,11 @@
       (match block
         [(ir.CompilerIrBlock.Block label instrs)
           (if (and
-            (opt-label-contains
-              (compiler-opt-global-shared-view body-labels)
-              label)
+            (opt-label-contains body-labels label)
             (opt-cfg-instr-seq-can-fallthrough? instrs)
             (not
               (opt-label-contains
-                (compiler-opt-global-shared-view body-labels)
+                body-labels
                 (opt-cfg-entry-label (compiler-opt-box-shared-view rest)))))
             false
             (opt-bce-mb-fallthroughs-ok? (deref rest) body-labels))])]
@@ -98840,12 +98653,11 @@
 (define (opt-bce-mb-fast-labels-fresh?
   [blocks : ir.CompilerIrBlockList]
   [body-labels : OptLabelSet]) : bool
-  (match (compiler-opt-global-shared-view body-labels)
+  (match body-labels
     [(OptLabelSet.Nil) true]
     [(OptLabelSet.Dense _ _)
       (let
-        [label : i64
-          (opt-label-ref (compiler-opt-global-shared-view body-labels) 0)]
+        [label : i64 (opt-label-ref body-labels 0)]
         (if (opt-cfg-block-exists?
           (compiler-opt-global-shared-view blocks)
           (ir.compiler-ir-label
@@ -99022,9 +98834,7 @@
         [(OptNaturalLoop.Loop other-header _ _ _)
           (if (and
             (not (= other-header header))
-            (opt-label-contains
-              (compiler-opt-global-shared-view body-labels)
-              other-header))
+            (opt-label-contains body-labels other-header))
             true
             (opt-bce-mb-has-nested-loop? (deref rest) header body-labels))])]))
 
@@ -99042,7 +98852,7 @@
           (opt-bce-mb-inner-labels
             (deref rest)
             header
-            (compiler-opt-global-shared-view body-labels)
+            body-labels
             (if (and
               (not (= other-header header))
               (opt-label-contains body-labels other-header))
@@ -99081,7 +98891,7 @@
         (opt-bce-mb-inner-labels
           (compiler-opt-global-shared-view loops)
           header
-          (compiler-opt-global-shared-view body-labels)
+          body-labels
           (OptLabelSet.Nil))
         (OptLabelSet.Nil))]
     [region? : bool
@@ -99113,9 +98923,7 @@
     [reason : i64
       (cond
         [(and
-            (<
-              (opt-label-count (compiler-opt-global-shared-view body-labels))
-              2)
+            (< (opt-label-count body-labels) 2)
             ;; The one-block admission `opt-bce-mb-loop-shape` states: a self-loop
             ;; reaches this scan only when it holds the direct call the
             ;; single-block versioner refuses to clone. Unreachable from that
@@ -99127,9 +98935,7 @@
                 0)
               1))
           (opt-bce-reason-none)]
-        [(>
-            (opt-label-count (compiler-opt-global-shared-view body-labels))
-            block-max)
+        [(> (opt-label-count body-labels) block-max)
           (opt-bce-reason-body-too-big)]
         [(>
             (opt-bce-mb-body-instrs
@@ -99155,12 +98961,12 @@
         [(not
             (opt-bce-mb-fast-labels-fresh?
               (compiler-opt-global-shared-view blocks)
-              (compiler-opt-global-shared-view body-labels)))
+              body-labels))
           (opt-bce-reason-fast-labels)]
         [(not
             (opt-bce-mb-fallthroughs-ok?
               (compiler-opt-global-shared-view blocks)
-              (compiler-opt-global-shared-view body-labels)))
+              body-labels))
           (opt-bce-reason-fallthrough)]
         [else (opt-bce-reason-ok)])]
     (if (not (= reason (opt-bce-reason-ok)))
@@ -99209,7 +99015,7 @@
               (match (opt-bce-mb-latch-branch
                 (compiler-opt-global-shared-view latch-block)
                 header
-                (compiler-opt-global-shared-view body-labels))
+                body-labels)
                 [(OptBceMbMaybeLatch.No)
                   (opt-bce-mb-loop-shape-top
                     blocks
@@ -99229,9 +99035,9 @@
                     header
                     latch
                     pred
-                    (compiler-opt-global-shared-view body-labels)
+                    body-labels
                     (compiler-opt-global-shared-view body-blocks)
-                    (compiler-opt-global-shared-view inner)
+                    inner
                     region?
                     nested-entry?
                     ;; the latch compare covers the whole body: it bounds the
@@ -99282,7 +99088,7 @@
     header
     latch
     pred
-    (compiler-opt-global-shared-view body-labels))
+    body-labels)
     ;; No canonical counter anywhere. The counter-FREE shape is what admits such
     ;; a loop, and it is offered from its own scan phase rather than here, so a
     ;; counted candidate always gets the slot first.
@@ -99330,7 +99136,7 @@
           (opt-bce-mb-has-nested-loop?
             (compiler-opt-global-shared-view loops)
             header
-            (compiler-opt-global-shared-view body.labels))]
+            body.labels)]
         [reason : i64
           (cond
             ;; SINGLE-BLOCK self-loops belong to the dedicated pass above,
@@ -99454,9 +99260,7 @@
             (+ phi-inputs-at-82412-3.start 1)
             (- phi-inputs-at-82412-3.len 1))]
         (opt-bce-mb-outside-phi-uses
-          (if (opt-label-contains
-            (compiler-opt-global-shared-view body-labels)
-            label)
+          (if (opt-label-contains body-labels label)
             set
             (opt-collect-value-uses set value))
           rest
@@ -99474,10 +99278,7 @@
       (opt-bce-mb-outside-uses-seq
         (match (compiler-opt-global-shared-view instr)
           [(ir.CompilerIrInstr.Phi _ inputs _)
-            (opt-bce-mb-outside-phi-uses
-              set
-              inputs
-              (compiler-opt-global-shared-view body-labels))]
+            (opt-bce-mb-outside-phi-uses set inputs body-labels)]
           [_ (opt-collect-instr-uses set instr)])
         instrs
         (+ index 1)
@@ -99493,15 +99294,9 @@
       (opt-bce-mb-outside-uses
         (match block
           [(ir.CompilerIrBlock.Block label instrs)
-            (if (opt-label-contains
-              (compiler-opt-global-shared-view body-labels)
-              label)
+            (if (opt-label-contains body-labels label)
               set
-              (opt-bce-mb-outside-uses-seq
-                set
-                instrs
-                0
-                (compiler-opt-global-shared-view body-labels)))])
+              (opt-bce-mb-outside-uses-seq set instrs 0 body-labels))])
         (deref rest)
         body-labels)]
     [(ir.CompilerIrBlockList.Array seq)
@@ -99761,12 +99556,10 @@
                   "BCE variable duplicate leaves prior order intact")))))))))
 
 (define (opt-bce-mb-labels-all-in? [labels : OptLabelSet] [set : OptLabelSet]) : bool
-  (match (compiler-opt-global-shared-view labels)
+  (match labels
     [(OptLabelSet.Nil) true]
     [(OptLabelSet.Dense _ _)
-      (if (opt-label-contains
-        (compiler-opt-global-shared-view set)
-        (opt-label-ref (compiler-opt-global-shared-view labels) 0))
+      (if (opt-label-contains set (opt-label-ref labels 0))
         (opt-bce-mb-labels-all-in? (opt-label-tail labels) set)
         false)]))
 
@@ -99844,14 +99637,12 @@
   [preds : OptLabelSet]
   [user : i64]
   [stubs : OptLabelSet]) : OptBceMbMaybeLabels
-  (match (compiler-opt-global-shared-view preds)
+  (match preds
     [(OptLabelSet.Nil) (OptBceMbMaybeLabels.Some stubs)]
     [(OptLabelSet.Dense _ _)
       (let
-        [pred : i64 (opt-label-ref (compiler-opt-global-shared-view preds) 0)]
-        (if (opt-label-contains
-          (compiler-opt-global-shared-view body-labels)
-          pred)
+        [pred : i64 (opt-label-ref preds 0)]
+        (if (opt-label-contains body-labels pred)
           (opt-bce-mb-wire-preds
             pred-map
             blocks
@@ -99862,7 +99653,7 @@
           (if (opt-bce-mb-stub-ok?
             (compiler-opt-global-shared-view pred-map)
             (compiler-opt-global-shared-view blocks)
-            (compiler-opt-global-shared-view body-labels)
+            body-labels
             pred
             user)
             (opt-bce-mb-wire-preds
@@ -99897,12 +99688,12 @@
 (define (opt-bce-mb-wire-phi-inputs
   [preds : OptLabelSet]
   [value : ir.CompilerIrValue]) : ir.CompilerIrPhiInputSeq
-  (match (compiler-opt-global-shared-view preds)
+  (match preds
     [(OptLabelSet.Nil) (ir.compiler-ir-phi-input-seq-empty)]
     [(OptLabelSet.Dense _ _)
       (ir.compiler-ir-phi-input-seq-prepend
         (compiler-opt-global-shared-view value)
-        (opt-label-ref (compiler-opt-global-shared-view preds) 0)
+        (opt-label-ref preds 0)
         (opt-bce-mb-wire-phi-inputs (opt-label-tail preds) value))]))
 
 ;; Every input of this phi is `var` on a distinct predecessor edge: the merge
@@ -99933,7 +99724,7 @@
           (match value
             [(ir.CompilerIrValue.Var id) (= id var)]
             [_ false])
-          (opt-label-contains (compiler-opt-global-shared-view preds) label)
+          (opt-label-contains preds label)
           (opt-bce-mb-merge-phi-inputs? rest var preds (+ seen 1)))))))
 
 ;; The var of such a phi in this block, or -1.
@@ -99946,11 +99737,7 @@
     -1
     (match (ir.compiler-ir-instr-seq-ref instrs index)
       [(ir.CompilerIrInstr.Phi dst inputs _)
-        (if (opt-bce-mb-merge-phi-inputs?
-          inputs
-          var
-          (compiler-opt-global-shared-view preds)
-          0)
+        (if (opt-bce-mb-merge-phi-inputs? inputs var preds 0)
           dst
           (opt-bce-mb-existing-merge-phi instrs (+ index 1) var preds))]
       [_ -1])))
@@ -99976,7 +99763,7 @@
           (compiler-opt-global-shared-view instrs)
           0
           var
-          (compiler-opt-global-shared-view preds))]
+          preds)]
       (if (>= existing 0)
         (opt-bce-mb-wire-phis-from
           vars
@@ -100003,7 +99790,7 @@
                     vars
                     (- index 1)
                     all-blocks
-                    (compiler-opt-global-shared-view preds)
+                    preds
                     instrs
                     cell
                     (OptCopyEnv.Cons var (ir.CompilerIrValue.Var pv) (box env))
@@ -100079,12 +99866,12 @@
   [stub-labels : OptLabelSet]
   [uses : opt_i64_i64_map.Map]
   [acc : OptBceMbVarList]) : OptBceMbVarList
-  (match (compiler-opt-global-shared-view stub-labels)
+  (match stub-labels
     [(OptLabelSet.Nil) acc]
     [(OptLabelSet.Dense _ _)
       (match (opt-cfg-find-block
         (compiler-opt-global-shared-view blocks)
-        (opt-label-ref (compiler-opt-global-shared-view stub-labels) 0))
+        (opt-label-ref stub-labels 0))
         [(OptMaybeBlock.No)
           (opt-bce-mb-wire-vars-stubs
             blocks
@@ -100124,13 +99911,13 @@
       (let
         [preds : OptLabelSet
           (opt-pred-map-lookup (compiler-opt-global-shared-view pred-map) label)]
-        (if (= (opt-label-count (compiler-opt-global-shared-view preds)) 0)
+        (if (= (opt-label-count preds) 0)
           (OptBceMbWireBlock.No)
           (match (opt-bce-mb-wire-preds
             pred-map
             (compiler-opt-global-shared-view all-blocks)
             body-labels
-            (compiler-opt-global-shared-view preds)
+            preds
             label
             (OptLabelSet.Nil))
             [(OptBceMbMaybeLabels.No) (OptBceMbWireBlock.No)]
@@ -100139,7 +99926,7 @@
                 [stub-vars : OptBceMbVarList
                   (opt-bce-mb-wire-vars-stubs
                     (compiler-opt-global-shared-view all-blocks)
-                    (compiler-opt-global-shared-view stub-labels)
+                    stub-labels
                     uses
                     (opt-bce-mb-var-list-new))]
                 (match (opt-bce-mb-wire-phis
@@ -100188,9 +99975,7 @@
     [(ir.CompilerIrBlockList.Cons block rest)
       (match (compiler-opt-global-shared-view block)
         [(ir.CompilerIrBlock.Block label instrs)
-          (if (opt-label-contains
-            (compiler-opt-global-shared-view body-labels)
-            label)
+          (if (opt-label-contains body-labels label)
             (match (opt-bce-mb-wire-exits
               pred-map
               (deref rest)
@@ -100214,7 +99999,7 @@
               (match (opt-bce-mb-wire-block
                 (compiler-opt-global-shared-view pred-map)
                 (compiler-opt-global-shared-view all-blocks)
-                (compiler-opt-global-shared-view body-labels)
+                body-labels
                 (compiler-opt-global-shared-view body-blocks)
                 (compiler-opt-global-shared-view defs)
                 label
@@ -100326,20 +100111,18 @@
   [preds : OptLabelSet]
   [join : i64]
   [arms : OptLabelSet]) : OptBceMbMaybeLabels
-  (match (compiler-opt-global-shared-view preds)
+  (match preds
     [(OptLabelSet.Nil) (OptBceMbMaybeLabels.Some arms)]
     [(OptLabelSet.Dense _ _)
       (let
-        [pred : i64 (opt-label-ref (compiler-opt-global-shared-view preds) 0)]
+        [pred : i64 (opt-label-ref preds 0)]
         (if (or
-          (opt-label-contains
-            (compiler-opt-global-shared-view clone-labels)
-            pred)
+          (opt-label-contains clone-labels pred)
           (not
             (opt-bce-mb-stub-ok?
               (compiler-opt-global-shared-view pred-map)
               (compiler-opt-global-shared-view all-blocks)
-              (compiler-opt-global-shared-view clone-labels)
+              clone-labels
               pred
               join)))
           (OptBceMbMaybeLabels.No)
@@ -100368,14 +100151,12 @@
     (let
       [preds : OptLabelSet
         (opt-pred-map-lookup (compiler-opt-global-shared-view pred-map) join)]
-      (if (< (opt-label-count (compiler-opt-global-shared-view preds)) 1)
+      (if (< (opt-label-count preds) 1)
         (OptBceMbMaybeLabels.No)
         ;; All-group: the join is the loop's own exit forwarder and joins the
         ;; group by itself. Otherwise every predecessor must be a stub, which
         ;; the arms walk requires -- and which refuses the mixed set.
-        (if (opt-bce-mb-labels-all-in?
-          (compiler-opt-global-shared-view preds)
-          (compiler-opt-global-shared-view clone-labels))
+        (if (opt-bce-mb-labels-all-in? preds clone-labels)
           (OptBceMbMaybeLabels.Some (opt-label-add stubs join))
           (match (opt-bce-mb-exit-join-arms
             pred-map
@@ -100414,9 +100195,7 @@
             (+ phi-inputs-at-83364-3.start 1)
             (- phi-inputs-at-83364-3.len 1))]
         (if (or
-          (opt-label-contains
-            (compiler-opt-global-shared-view clone-labels)
-            label)
+          (opt-label-contains clone-labels label)
           (not
             (opt-bce-mb-value-group-def?
               value
@@ -100432,7 +100211,7 @@
           (match (opt-bce-mb-exit-join-labels
             (compiler-opt-global-shared-view pred-map)
             (compiler-opt-global-shared-view all-blocks)
-            (compiler-opt-global-shared-view clone-labels)
+            clone-labels
             label
             user
             stubs)
@@ -100463,7 +100242,7 @@
         (match (opt-bce-mb-phi-stub-inputs
           (compiler-opt-global-shared-view pred-map)
           (compiler-opt-global-shared-view all-blocks)
-          (compiler-opt-global-shared-view clone-labels)
+          clone-labels
           (compiler-opt-global-shared-view defs)
           user
           inputs
@@ -100512,9 +100291,7 @@
     [(ir.CompilerIrBlockList.Cons block rest)
       (match block
         [(ir.CompilerIrBlock.Block label instrs)
-          (if (opt-label-contains
-            (compiler-opt-global-shared-view clone-labels)
-            label)
+          (if (opt-label-contains clone-labels label)
             (opt-bce-mb-phi-stub-labels
               pred-map
               (deref rest)
@@ -100525,7 +100302,7 @@
             (match (opt-bce-mb-phi-stub-labels-seq
               (compiler-opt-global-shared-view pred-map)
               (compiler-opt-global-shared-view all-blocks)
-              (compiler-opt-global-shared-view clone-labels)
+              clone-labels
               (compiler-opt-global-shared-view defs)
               label
               instrs
@@ -100797,7 +100574,7 @@
         (match (ir.compiler-ir-instr-seq-ref instrs index)
           [(ir.CompilerIrInstr.Phi _ inputs _)
             (opt-bce-mb-far-phi-input-seq
-              (compiler-opt-global-shared-view body-labels)
+              body-labels
               (compiler-opt-global-shared-view body-blocks)
               (compiler-opt-global-shared-view defs)
               inputs
@@ -100829,9 +100606,7 @@
           index)]
       [label : i64 input.label]
       [next : OptBceMbFarPlan
-        (if (opt-label-contains
-          (compiler-opt-global-shared-view body-labels)
-          label)
+        (if (opt-label-contains body-labels label)
           plan
           (match input.value
             [(ir.CompilerIrValue.Var var)
@@ -100887,7 +100662,7 @@
                     (opt-bce-mb-far-rewrite-inputs
                       inputs
                       wire
-                      (compiler-opt-global-shared-view far-labels)
+                      far-labels
                       (compiler-opt-global-shared-view env))
                     ty)]
                 [_ (ir.compiler-ir-instr-seq-ref instrs index)])
@@ -100915,11 +100690,7 @@
           (begin
             (ir.compiler-ir-phi-input-builder-push!
               (&mut builder)
-              (if (or
-                (= label wire)
-                (opt-label-contains
-                  (compiler-opt-global-shared-view far-labels)
-                  label))
+              (if (or (= label wire) (opt-label-contains far-labels label))
                 (ir.CompilerIrPhiInput
                   (opt-copy-resolve
                     (compiler-opt-global-shared-view env)
@@ -100953,14 +100724,12 @@
         (compiler-opt-global-shared-view pred-map)
         (deref rest)
         (compiler-opt-global-shared-view all-blocks)
-        (compiler-opt-global-shared-view body-labels)
+        body-labels
         (compiler-opt-global-shared-view body-blocks)
         (compiler-opt-global-shared-view defs)
         (match block
           [(ir.CompilerIrBlock.Block label instrs)
-            (if (opt-label-contains
-              (compiler-opt-global-shared-view body-labels)
-              label)
+            (if (opt-label-contains body-labels label)
               plan
               (let
                 ;; BCE-FARPHI: a phi input whose VALUE is a loop def and whose
@@ -100972,7 +100741,7 @@
                 ;; exit-phi extension's and is left alone.
                 [plan : OptBceMbFarPlan
                   (opt-bce-mb-far-phi-inputs
-                    (compiler-opt-global-shared-view body-labels)
+                    body-labels
                     (compiler-opt-global-shared-view body-blocks)
                     (compiler-opt-global-shared-view defs)
                     (compiler-opt-global-shared-view instrs)
@@ -101025,14 +100794,14 @@
   [doms : OptDomInfo]
   [wire : i64]
   [labels : OptLabelSet]) : bool
-  (match (compiler-opt-global-shared-view labels)
+  (match labels
     [(OptLabelSet.Nil) true]
     [(OptLabelSet.Dense _ _)
       (and
         (opt-dom-dominates?
           (compiler-opt-global-shared-view doms)
           wire
-          (opt-label-ref (compiler-opt-global-shared-view labels) 0))
+          (opt-label-ref labels 0))
         (opt-bce-mb-far-labels-dominated? doms wire (opt-label-tail labels)))]))
 
 (define (opt-bce-mb-header-phi-vars
@@ -101144,9 +100913,7 @@
                     (opt-unroll-phi-prefix-count instrs 0)
                     (compiler-opt-global-shared-view phis)
                     (OptCopyEnv.Nil)))]
-              [(opt-label-contains
-                  (compiler-opt-global-shared-view far-labels)
-                  label)
+              [(opt-label-contains far-labels label)
                 (ir.CompilerIrBlock.Block
                   label
                   (opt-bce-mb-far-rewrite-phis
@@ -101156,7 +100923,7 @@
                       (ir.compiler-ir-instr-seq-empty)
                       (compiler-opt-global-shared-view env))
                     wire
-                    (compiler-opt-global-shared-view far-labels)
+                    far-labels
                     (compiler-opt-global-shared-view env)))]
               ;; BCE-FARPHI: an outside block's phi inputs out of the wire point
               ;; or a far label read the merge phis.
@@ -101166,7 +100933,7 @@
                   (opt-bce-mb-far-rewrite-phis
                     instrs
                     wire
-                    (compiler-opt-global-shared-view far-labels)
+                    far-labels
                     (compiler-opt-global-shared-view env)))])
             (opt-bce-mb-far-rewrite (deref rest) wire far-labels phis env))])]))
 
@@ -101247,9 +101014,7 @@
           (compiler-opt-global-shared-view doms)
           scanned
           0))]
-    (if (=
-      (opt-label-count (compiler-opt-global-shared-view plan.far-labels))
-      0)
+    (if (= (opt-label-count plan.far-labels) 0)
       (OptBceMbFarResult.Same)
       (if (not
         (opt-bce-mb-far-plan-ok?
@@ -101284,9 +101049,7 @@
         [(ir.CompilerIrBlock.Block label _)
           (let
             [tail : ir.CompilerIrBlockList
-              (opt-bce-mb-stub-blocks-from
-                (deref rest)
-                (compiler-opt-global-shared-view stub-labels))]
+              (opt-bce-mb-stub-blocks-from (deref rest) stub-labels)]
             (if (opt-label-contains stub-labels label)
               (ir.compiler-ir-block-cons block tail)
               tail))])]
@@ -101296,11 +101059,11 @@
         stub-labels)]))
 
 (define (opt-bce-mb-labels-union [labels : OptLabelSet] [acc : OptLabelSet]) : OptLabelSet
-  (match (compiler-opt-global-shared-view labels)
+  (match labels
     [(OptLabelSet.Nil) acc]
     [(OptLabelSet.Dense _ _)
       (opt-bce-mb-labels-union
-        (opt-label-tail (compiler-opt-global-shared-view labels))
+        (opt-label-tail labels)
         (opt-label-add acc (opt-label-ref labels 0)))]))
 
 (define (opt-bce-mb-blocks-append
@@ -105276,7 +105039,7 @@
             (compiler-opt-global-shared-view bound)
             (compiler-opt-global-shared-view cell)
             (compiler-opt-global-shared-view fan)
-            (compiler-opt-global-shared-view uncovered)
+            uncovered
             (if (opt-label-contains uncovered label)
               (OptBceMbDerive
                 state.guard
@@ -105359,7 +105122,7 @@
       (match block
         [(ir.CompilerIrBlock.Block label instrs)
           (if (and
-            (opt-label-contains (compiler-opt-global-shared-view inner) label)
+            (opt-label-contains inner label)
             (opt-bce-mb-derived-in-inner-instrs?
               (compiler-opt-global-shared-view keep)
               label
@@ -105636,7 +105399,7 @@
             (deref rest)
             iphi
             (compiler-opt-global-shared-view bound)
-            (compiler-opt-global-shared-view uncovered)
+            uncovered
             (if (opt-label-contains uncovered label)
               uppers
               (opt-bce-mb-upper-scan-instrs
@@ -105946,7 +105709,7 @@
           (compiler-opt-global-shared-view blocks)
           label
           (OptLabelSet.Nil))]
-      (if (not (= (opt-label-count (compiler-opt-global-shared-view preds)) 1))
+      (if (not (= (opt-label-count preds) 1))
         false
         (let
           [pred : i64 (opt-label-ref preds 0)]
@@ -106213,7 +105976,7 @@
           (opt-bce-mb-body-calls
             (compiler-opt-global-shared-view shape.body-blocks)
             0)
-          (opt-label-count (compiler-opt-global-shared-view shape.body-labels))))
+          (opt-label-count shape.body-labels)))
       ;; A region-sized clone additionally needs one of them inside an inner
       ;; loop, where the removal repeats per inner iteration.
       (and
@@ -106242,8 +106005,7 @@
                 (opt-bce-mb-body-calls
                   (compiler-opt-global-shared-view shape.body-blocks)
                   0)
-                (opt-label-count
-                  (compiler-opt-global-shared-view shape.body-labels))))
+                (opt-label-count shape.body-labels)))
             (opt-bce-reason-floor)]
           [else (opt-bce-reason-region-inner)]))
       (match (opt-bce-version-guard-finish
@@ -107166,9 +106928,7 @@
                 (array-ref slots index)
                 (ir.CompilerIrSwitchCase.Case
                   tag
-                  (opt-bce-mb-fast-label
-                    (compiler-opt-global-shared-view body-labels)
-                    label)))])
+                  (opt-bce-mb-fast-label body-labels label)))])
           (set! index (+ index 1))))
       (ir.CompilerIrSwitchCaseSeq slots cases.len))))
 
@@ -107200,9 +106960,7 @@
           ;; guard; every other loop-edge input comes from the fast clone.
           (if (= label preheader)
             guard-label
-            (opt-bce-mb-fast-label
-              (compiler-opt-global-shared-view body-labels)
-              label))
+            (opt-bce-mb-fast-label body-labels label))
           (opt-bce-mb-clone-phi-inputs
             rest
             remap
@@ -107323,17 +107081,13 @@
         [(OptBceFoldVerdict.Unknown)
           (ir.CompilerIrInstr.Branch
             (opt-unroll-subst-value remap cond)
-            (opt-bce-mb-fast-label
-              (compiler-opt-global-shared-view body-labels)
-              then-label)
+            (opt-bce-mb-fast-label body-labels then-label)
             (opt-bce-mb-fast-label body-labels else-label))])]
     [(ir.CompilerIrInstr.Switch index base cases default-label)
       (ir.CompilerIrInstr.Switch
         (opt-unroll-subst-value remap index)
         base
-        (opt-bce-mb-clone-switch-cases
-          cases
-          (compiler-opt-global-shared-view body-labels))
+        (opt-bce-mb-clone-switch-cases cases body-labels)
         (opt-bce-mb-fast-label body-labels default-label))]
     ;; A kept (underivable) check: remap operands and the ok edge. An ok-label
     ;; naming a real loop block remaps to its fast clone; one naming a real
@@ -107345,9 +107099,7 @@
       (ir.CompilerIrInstr.BoundsCheck
         (opt-unroll-subst-value (compiler-opt-global-shared-view remap) index)
         (opt-unroll-subst-value remap length)
-        (if (opt-label-contains
-          (compiler-opt-global-shared-view body-labels)
-          ok-label)
+        (if (opt-label-contains body-labels ok-label)
           (opt-bce-mb-fast-label body-labels ok-label)
           (if (opt-label-contains all-labels ok-label)
             ok-label
@@ -107403,8 +107155,8 @@
                 builder
                 (opt-bce-mb-clone-instr
                   (compiler-opt-global-shared-view remap)
-                  (compiler-opt-global-shared-view body-labels)
-                  (compiler-opt-global-shared-view all-labels)
+                  body-labels
+                  all-labels
                   preheader
                   guard-label
                   (compiler-opt-global-shared-view facts)
@@ -107440,8 +107192,8 @@
               builder
               (opt-bce-mb-clone-instr
                 (compiler-opt-global-shared-view remap)
-                (compiler-opt-global-shared-view body-labels)
-                (compiler-opt-global-shared-view all-labels)
+                body-labels
+                all-labels
                 preheader
                 guard-label
                 (compiler-opt-global-shared-view facts)
@@ -107513,8 +107265,8 @@
                 instrs
                 0
                 (compiler-opt-global-shared-view remap)
-                (compiler-opt-global-shared-view body-labels)
-                (compiler-opt-global-shared-view all-labels)
+                body-labels
+                all-labels
                 preheader
                 guard-label
                 (compiler-opt-global-shared-view facts)
@@ -107565,7 +107317,7 @@
         [tail : ir.CompilerIrPhiInputSeq
           (opt-bce-mb-extend-phi-inputs
             rest
-            (compiler-opt-global-shared-view body-labels)
+            body-labels
             (compiler-opt-global-shared-view remap))]
         (if (opt-label-contains body-labels label)
           (ir.compiler-ir-phi-input-seq-prepend
@@ -107602,7 +107354,7 @@
                     dst
                     (opt-bce-mb-extend-phi-inputs
                       inputs
-                      (compiler-opt-global-shared-view body-labels)
+                      body-labels
                       (compiler-opt-global-shared-view remap))
                     ty)]
                 [_ instr]))
@@ -107673,9 +107425,7 @@
                           (ir.compiler-ir-label-text shape.header)
                           "__bce_guard"))))
                   tail)]
-              [(opt-label-contains
-                  (compiler-opt-global-shared-view shape.body-labels)
-                  label)
+              [(opt-label-contains shape.body-labels label)
                 (ir.compiler-ir-block-cons block tail)]
               [else
                 (ir.compiler-ir-block-cons
@@ -107710,11 +107460,11 @@
 ;; every other arrival keeps the original checked block.
 ;; Fast-clone labels of the shape's body labels.
 (define (opt-bce-mb-fast-labels-from [labels : OptLabelSet] [acc : OptLabelSet]) : OptLabelSet
-  (match (compiler-opt-global-shared-view labels)
+  (match labels
     [(OptLabelSet.Nil) acc]
     [(OptLabelSet.Dense _ _)
       (opt-bce-mb-fast-labels-from
-        (opt-label-tail (compiler-opt-global-shared-view labels))
+        (opt-label-tail labels)
         (opt-label-add
           acc
           (ir.compiler-ir-label
@@ -107957,9 +107707,7 @@
             phi-inputs-at-90186-3.slots
             (+ phi-inputs-at-90186-3.start 1)
             (- phi-inputs-at-90186-3.len 1))]
-        (if (opt-label-contains
-          (compiler-opt-global-shared-view fast-labels)
-          label)
+        (if (opt-label-contains fast-labels label)
           (opt-bce-mb-exit-phi-inputs-scan
             rest
             fast-labels
@@ -108134,7 +107882,7 @@
                 (compiler-opt-global-shared-view blocks)
                 label
                 (OptLabelSet.Nil))]
-            (if (= (opt-label-count (compiler-opt-global-shared-view preds)) 1)
+            (if (= (opt-label-count preds) 1)
               (opt-bce-mb-strict-check-chain?
                 blocks
                 (opt-label-ref preds 0)
@@ -108202,12 +107950,9 @@
       (match block
         [(ir.CompilerIrBlock.Block label instrs)
           (let
-            [body-labels : OptLabelSet
-              (compiler-opt-global-shared-view shape.body-labels)]
+            [body-labels : OptLabelSet shape.body-labels]
             (if (or
-              (opt-label-contains
-                (compiler-opt-global-shared-view body-labels)
-                label)
+              (opt-label-contains body-labels label)
               (= label shape.header)
               (= label shape.preheader)
               (=
@@ -108217,9 +107962,7 @@
                     (ir.compiler-ir-label-text shape.header)
                     "__bce_guard")))
               (opt-label-contains
-                (opt-bce-mb-fast-labels-from
-                  (compiler-opt-global-shared-view body-labels)
-                  (OptLabelSet.Nil))
+                (opt-bce-mb-fast-labels-from body-labels (OptLabelSet.Nil))
                 label))
               (opt-bce-mb-find-exit-split
                 (deref rest)
@@ -108251,7 +107994,7 @@
                       (=
                         (opt-bce-mb-exit-phi-inputs-scan
                           inputs
-                          (compiler-opt-global-shared-view fast-labels)
+                          fast-labels
                           (compiler-opt-global-shared-view fast-blocks)
                           fast-bounded
                           0
@@ -108384,7 +108127,7 @@
                         dst
                         (opt-bce-mb-sink-phi-relabel-inputs
                           inputs
-                          (compiler-opt-global-shared-view fast-labels)
+                          fast-labels
                           exit-label
                           gen)
                         ty)
@@ -108453,9 +108196,7 @@
             phi-inputs-at-90687-3.slots
             (+ phi-inputs-at-90687-3.start 1)
             (- phi-inputs-at-90687-3.len 1))]
-        (if (opt-label-contains
-          (compiler-opt-global-shared-view fast-labels)
-          label)
+        (if (opt-label-contains fast-labels label)
           (opt-bce-mb-sink-gen-free? blocks rest fast-labels exit-label gen)
           (let
             [check-label : i64
@@ -108481,7 +108222,7 @@
   (if (opt-bce-mb-sink-gen-free?
     (compiler-opt-global-shared-view blocks)
     (compiler-opt-global-shared-view inputs)
-    (compiler-opt-global-shared-view fast-labels)
+    fast-labels
     exit-label
     gen)
     gen
@@ -108511,9 +108252,7 @@
             (- phi-inputs-at-90739-3.len 1))]
         (ir.compiler-ir-phi-input-seq-prepend
           value
-          (if (opt-label-contains
-            (compiler-opt-global-shared-view fast-labels)
-            label)
+          (if (opt-label-contains fast-labels label)
             label
             (opt-bce-mb-sink-check-label exit-label label gen))
           (opt-bce-mb-sink-phi-relabel-inputs rest fast-labels exit-label gen))))))
@@ -108541,9 +108280,7 @@
             phi-inputs-at-90763-3.slots
             (+ phi-inputs-at-90763-3.start 1)
             (- phi-inputs-at-90763-3.len 1))]
-        (if (opt-label-contains
-          (compiler-opt-global-shared-view fast-labels)
-          label)
+        (if (opt-label-contains fast-labels label)
           (opt-bce-mb-sink-retarget-all blocks rest fast-labels exit-label gen)
           (opt-bce-mb-sink-retarget-all
             (opt-bce-mb-sink-retarget-preds
@@ -108623,9 +108360,7 @@
             phi-inputs-at-90837-3.slots
             (+ phi-inputs-at-90837-3.start 1)
             (- phi-inputs-at-90837-3.len 1))]
-        (if (opt-label-contains
-          (compiler-opt-global-shared-view fast-labels)
-          label)
+        (if (opt-label-contains fast-labels label)
           (opt-bce-mb-sink-check-blocks-from
             rest
             fast-labels
@@ -108638,9 +108373,7 @@
           (let
             [check-label : i64
               (opt-bce-mb-sink-check-label exit-label label gen)]
-            (if (opt-label-contains
-              (compiler-opt-global-shared-view emitted)
-              check-label)
+            (if (opt-label-contains emitted check-label)
               (opt-bce-mb-sink-check-blocks-from
                 rest
                 fast-labels
@@ -108716,7 +108449,7 @@
           (opt-bce-mb-sink-fresh-gen
             (compiler-opt-global-shared-view blocks)
             (compiler-opt-global-shared-view inputs)
-            (compiler-opt-global-shared-view fast-labels)
+            fast-labels
             label
             0)]
         ;; The check blocks land immediately before the exit block: behind
@@ -108727,10 +108460,10 @@
             label
             check-pos
             phi-var
-            (compiler-opt-global-shared-view fast-labels)
+            fast-labels
             (opt-bce-mb-sink-check-blocks-from
               (compiler-opt-global-shared-view inputs)
-              (compiler-opt-global-shared-view fast-labels)
+              fast-labels
               label
               clen
               (ir.CompilerIrBlockList.Nil)
@@ -108922,7 +108655,7 @@
       (opt-bce-mb-outside-uses
         (opt_i64_i64_map.with-capacity 64)
         (compiler-opt-global-shared-view blocks)
-        (compiler-opt-global-shared-view body-labels))]
+        body-labels)]
     (if (not
       (opt-bce-mb-defs-escape?
         (compiler-opt-global-shared-view body-blocks)
@@ -108941,7 +108674,7 @@
         (compiler-opt-global-shared-view pred-map)
         (compiler-opt-global-shared-view blocks)
         blocks
-        (compiler-opt-global-shared-view body-labels)
+        body-labels
         (compiler-opt-global-shared-view body-blocks)
         (opt-bce-mb-body-defs (compiler-opt-global-shared-view body-blocks))
         (compiler-opt-global-shared-view cell)
@@ -108956,7 +108689,7 @@
             [stub-blocks : ir.CompilerIrBlockList
               (opt-bce-mb-stub-blocks-from
                 (compiler-opt-global-shared-view wired-blocks)
-                (compiler-opt-global-shared-view stub-labels))]
+                stub-labels)]
             [clone-labels : OptLabelSet
               (opt-bce-mb-labels-union stub-labels body-labels)]
             [clone-blocks : ir.CompilerIrBlockList
@@ -108971,7 +108704,7 @@
               (opt-bce-mb-outside-uses
                 (opt_i64_i64_map.with-capacity 64)
                 (compiler-opt-global-shared-view wired-blocks)
-                (compiler-opt-global-shared-view clone-labels))]
+                clone-labels)]
             (if (not
               (opt-bce-mb-defs-escape?
                 (compiler-opt-global-shared-view clone-blocks)
@@ -108994,7 +108727,7 @@
                 pred-map
                 (compiler-opt-global-shared-view wired-blocks)
                 (compiler-opt-global-shared-view wired-blocks)
-                (compiler-opt-global-shared-view clone-labels)
+                clone-labels
                 clone-defs
                 (OptLabelSet.Nil))
                 [(OptBceMbMaybeLabels.No)
@@ -109003,19 +108736,14 @@
                     original
                     frame)]
                 [(OptBceMbMaybeLabels.Some phi-stubs)
-                  (if (=
-                    (opt-label-count
-                      (compiler-opt-global-shared-view phi-stubs))
-                    0)
+                  (if (= (opt-label-count phi-stubs) 0)
                     (opt-bce-trace-refuse-result
                       (opt-bce-reason-defs-escape)
                       original
                       frame)
                     (let
                       [wide-labels : OptLabelSet
-                        (opt-bce-mb-labels-union
-                          (compiler-opt-global-shared-view phi-stubs)
-                          clone-labels)]
+                        (opt-bce-mb-labels-union phi-stubs clone-labels)]
                       [wide-blocks : ir.CompilerIrBlockList
                         (opt-bce-mb-blocks-append
                           clone-blocks
@@ -109026,7 +108754,7 @@
                         (opt-bce-mb-outside-uses
                           (opt_i64_i64_map.with-capacity 64)
                           (compiler-opt-global-shared-view wired-blocks)
-                          (compiler-opt-global-shared-view wide-labels))]
+                          wide-labels)]
                       (if (opt-bce-mb-defs-escape?
                         (compiler-opt-global-shared-view wide-blocks)
                         wide-outside)
@@ -109111,7 +108839,7 @@
       (OptBceVersionScan.Scan blocks frame false (ir.compiler-ir-label-none))]
     [(OptNaturalLoopList.Cons loop rest)
       (if (opt-label-contains
-        (compiler-opt-global-shared-view rejected)
+        rejected
         (opt-natural-loop-header (compiler-opt-global-shared-view loop)))
         (opt-bce-mb-loops-scan
           descriptor
@@ -109261,7 +108989,7 @@
       (opt-bce-mb-scan-phase-nested? phase)
       (opt-bce-mb-scan-phase-regions-only? phase)
       (opt-bce-mb-scan-phase-free? phase)
-      (compiler-opt-global-shared-view rejected)
+      rejected
       frame)
       [(OptBceVersionScan.Scan next-blocks next-frame changed applied)
         (if changed
@@ -110636,11 +110364,7 @@
         ;; separately.
         (if (or
           (= header latch)
-          (not
-            (opt-bce-mb-has-nested-loop?
-              loops
-              header
-              (compiler-opt-global-shared-view body-labels)))
+          (not (opt-bce-mb-has-nested-loop? loops header body-labels))
           (<
             (opt-bce-mb-body-calls
               (compiler-opt-global-shared-view body-blocks)
@@ -110772,9 +110496,7 @@
       (let
         [header : i64
           (opt-natural-loop-header (compiler-opt-global-shared-view loop))]
-        (if (opt-label-contains
-          (compiler-opt-global-shared-view rejected)
-          header)
+        (if (opt-label-contains rejected header)
           (opt-bce-hoist-loops-scan
             blocks
             all-loops
@@ -110828,7 +110550,7 @@
           (opt-cfg-natural-loops-with-context
             blocks
             (compiler-opt-global-shared-view context))
-          (compiler-opt-global-shared-view rejected)
+          rejected
           frame)
           [(OptBceHoistScan.Scan next-blocks next-frame changed applied)
             (if (not changed)
@@ -110920,7 +110642,7 @@
             (compiler-opt-global-shared-view blocks)
             (compiler-opt-global-shared-view blocks)
             (opt-cfg-entry-label blocks)
-            (compiler-opt-global-shared-view rejected)
+            rejected
             frame)
             [(OptBceVersionScan.Scan next-blocks next-frame changed applied)
               (if changed
@@ -111044,7 +110766,7 @@
             (compiler-opt-global-shared-view blocks)
             loops
             (opt-cfg-entry-label blocks)
-            (compiler-opt-global-shared-view rejected)
+            rejected
             frame)
             [(OptBceVersionScan.Scan mb-blocks mb-frame mb-changed mb-applied)
               (if mb-changed
@@ -111518,23 +111240,23 @@
       (opt-unroll-mb-body-status (ir.compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-unroll-mb-all-fast-labels? [labels : OptLabelSet]) : bool
-  (match (compiler-opt-global-shared-view labels)
+  (match labels
     [(OptLabelSet.Nil) true]
     [(OptLabelSet.Dense _ _)
       (and
         (opt-label-has-marker?
-          (opt-label-ref (compiler-opt-global-shared-view labels) 0)
+          (opt-label-ref labels 0)
           (opt-label-marker-bce-fast))
         (opt-unroll-mb-all-fast-labels? (opt-label-tail labels)))]))
 
 (define (opt-unroll-mb-labels-fresh?
   [blocks : ir.CompilerIrBlockList]
   [labels : OptLabelSet]) : bool
-  (match (compiler-opt-global-shared-view labels)
+  (match labels
     [(OptLabelSet.Nil) true]
     [(OptLabelSet.Dense _ _)
       (let
-        [label : i64 (opt-label-ref (compiler-opt-global-shared-view labels) 0)]
+        [label : i64 (opt-label-ref labels 0)]
         (and
           (not
             (opt-cfg-block-exists?
@@ -111592,9 +111314,7 @@
                     (not (= else-label header))
                     (not (= then-label latch))
                     (not (= else-label latch))
-                    (opt-label-contains
-                      (compiler-opt-global-shared-view body-labels)
-                      then-label)
+                    (opt-label-contains body-labels then-label)
                     (opt-label-contains body-labels else-label)
                     (opt-unroll-mb-block-jumps-to?
                       (compiler-opt-global-shared-view blocks)
@@ -111783,7 +111503,7 @@
                     preheader)
                   (opt-unroll-mb-diamond?
                     (compiler-opt-global-shared-view blocks)
-                    (compiler-opt-global-shared-view body-labels)
+                    body-labels
                     header
                     latch)
                   ;; The 2x path pays an odd-trip guard and duplicates four
@@ -111806,15 +111526,14 @@
                     (compiler-opt-global-shared-view body-blocks)
                     iphi
                     inext)
-                  (opt-unroll-mb-all-fast-labels?
-                    (compiler-opt-global-shared-view body-labels))
+                  (opt-unroll-mb-all-fast-labels? body-labels)
                   (not
                     (opt-cfg-block-exists?
                       (compiler-opt-global-shared-view blocks)
                       (opt-unroll-mb-guard-label header)))
                   (opt-unroll-mb-labels-fresh?
                     (compiler-opt-global-shared-view blocks)
-                    (compiler-opt-global-shared-view body-labels))
+                    body-labels)
                   (opt-unroll-pred-retargetable? blocks preheader))
                   (OptUnrollMbMaybeShape.Some
                     (OptUnrollMbShape
@@ -111845,11 +111564,7 @@
             [body-blocks : ir.CompilerIrBlockList body.blocks]
             (if (or
               (= header entry-label)
-              (not
-                (=
-                  (opt-label-count
-                    (compiler-opt-global-shared-view body-labels))
-                  4)))
+              (not (= (opt-label-count body-labels) 4)))
               (OptUnrollMbMaybeShape.No)
               (match (opt-cfg-find-block
                 (compiler-opt-global-shared-view blocks)
@@ -111859,7 +111574,7 @@
                   (match (opt-bce-mb-latch-branch
                     latch-block
                     header
-                    (compiler-opt-global-shared-view body-labels))
+                    body-labels)
                     [(OptBceMbMaybeLatch.No) (OptUnrollMbMaybeShape.No)]
                     [(OptBceMbMaybeLatch.Some cond-var exit-label)
                       (let
@@ -111908,10 +111623,7 @@
             (- phi-inputs-at-92378-3.len 1))]
         (ir.compiler-ir-phi-input-seq-prepend
           (opt-unroll-subst-value (compiler-opt-global-shared-view remap) value)
-          (opt-unroll-mb-label
-            (compiler-opt-global-shared-view body-labels)
-            label
-            copy)
+          (opt-unroll-mb-label body-labels label copy)
           (opt-unroll-mb-clone-phi-inputs rest remap body-labels copy))))))
 
 (define (opt-unroll-mb-clone-header-phi
@@ -112029,10 +111741,7 @@
     [(ir.CompilerIrInstr.Branch cond then-label else-label)
       (ir.CompilerIrInstr.Branch
         (opt-unroll-subst-value remap cond)
-        (opt-unroll-mb-label
-          (compiler-opt-global-shared-view body-labels)
-          then-label
-          copy)
+        (opt-unroll-mb-label body-labels then-label copy)
         (opt-unroll-mb-label body-labels else-label copy))]
     [_ instr]))
 
@@ -112161,7 +111870,7 @@
                       (opt-unroll-mb-clone-instr
                         (compiler-opt-global-shared-view instr)
                         remap
-                        (compiler-opt-global-shared-view shape.body-labels)
+                        shape.body-labels
                         (compiler-opt-global-shared-view shape)
                         copy)))]
                 [shifted : i64 (array-ref shifted-vars next)]
@@ -112399,9 +112108,7 @@
                       shape.header
                       (opt-unroll-mb-label shape.body-labels shape.header 0)))
                   tail)]
-              [(opt-label-contains
-                  (compiler-opt-global-shared-view shape.body-labels)
-                  label)
+              [(opt-label-contains shape.body-labels label)
                 (ir.compiler-ir-block-cons block tail)]
               [else
                 (ir.compiler-ir-block-cons
@@ -112436,7 +112143,7 @@
       (opt-bce-mb-outside-uses
         (opt_i64_i64_map.with-capacity 64)
         (compiler-opt-global-shared-view blocks)
-        (compiler-opt-global-shared-view body-labels))]
+        body-labels)]
     (if (opt-bce-mb-defs-escape?
       (compiler-opt-global-shared-view body-blocks)
       outside)
@@ -117237,9 +116944,7 @@
     false
     (let
       [preds : OptLabelSet (opt-cfg-index-predecessors cfg target)]
-      (and
-        (= (opt-label-count (compiler-opt-global-shared-view preds)) 1)
-        (opt-label-contains preds source)))))
+      (and (= (opt-label-count preds) 1) (opt-label-contains preds source)))))
 
 (define (opt-successor-sink-target-all-uses?
   [frame : i64]
@@ -117283,12 +116988,11 @@
   [source : i64]
   [successors : OptLabelSet]
   [dst : i64]) : OptSuccessorSinkMaybeLabel
-  (match (compiler-opt-global-shared-view successors)
+  (match successors
     [(OptLabelSet.Nil) (OptSuccessorSinkMaybeLabel.No)]
     [(OptLabelSet.Dense _ _)
       (let
-        [target : i64
-          (opt-label-ref (compiler-opt-global-shared-view successors) 0)]
+        [target : i64 (opt-label-ref successors 0)]
         (if (opt-successor-sink-target-all-uses?
           frame
           (compiler-opt-global-shared-view cfg)
@@ -117946,7 +117650,7 @@
                             (compiler-opt-global-shared-view allowed-uses)
                             (compiler-opt-global-shared-view moves)
                             label
-                            (compiler-opt-global-shared-view successors)
+                            successors
                             dst)
                             [(OptSuccessorSinkMaybeLabel.Some target)
                               (match (opt-successor-sink-prepare-root
@@ -124383,8 +124087,8 @@
 ;; structural line between the two.
 (define (opt-bg-loop-exit-count [index : OptCfgIndex] [body : OptLoopBody]) : i64
   (let
-    [labels : OptLabelSet (compiler-opt-global-shared-view body.labels)]
-    [count : i64 (opt-label-count (compiler-opt-global-shared-view labels))]
+    [labels : OptLabelSet body.labels]
+    [count : i64 (opt-label-count labels)]
     [cursor : i64 0]
     [exits : i64 0]
     (begin
@@ -124393,9 +124097,8 @@
           [succs : OptLabelSet
             (opt-cfg-index-successors
               (compiler-opt-global-shared-view index)
-              (opt-label-ref (compiler-opt-global-shared-view labels) cursor))]
-          [scount : i64
-            (opt-label-count (compiler-opt-global-shared-view succs))]
+              (opt-label-ref labels cursor))]
+          [scount : i64 (opt-label-count succs)]
           [scursor : i64 0]
           (begin
             (while (< scursor scount)
@@ -124404,9 +124107,7 @@
                   (opt-loop-body-label-member?
                     (compiler-opt-global-shared-view body)
                     (compiler-opt-global-shared-view index)
-                    (opt-label-ref
-                      (compiler-opt-global-shared-view succs)
-                      scursor)))
+                    (opt-label-ref succs scursor)))
                   (set! exits (+ exits 1))
                   unit)
                 (set! scursor (+ scursor 1))))
@@ -124712,11 +124413,9 @@
         [(ir.CompilerIrBlock.Block label instrs)
           (if (or
             (= label pre)
-            (opt-label-contains (compiler-opt-global-shared-view taken) label)
-            (opt-label-contains
-              (compiler-opt-global-shared-view pre-used)
-              label)
-            (opt-label-contains (compiler-opt-global-shared-view taken) pre))
+            (opt-label-contains taken label)
+            (opt-label-contains pre-used label)
+            (opt-label-contains taken pre))
             state
             (match (opt-bg-plan-block
               blocks
@@ -133684,12 +133383,12 @@
   [index : OptCfgIndex]
   [source-id : i64]
   [succs : OptLabelSet]) : bool
-  (match (compiler-opt-global-shared-view succs)
+  (match succs
     [(OptLabelSet.Nil) true]
     [(OptLabelSet.Dense _ _)
       (match (opt-cfg-index-id
         (compiler-opt-global-shared-view index)
-        (opt-label-ref (compiler-opt-global-shared-view succs) 0))
+        (opt-label-ref succs 0))
         [(option_i64.Some target-id)
           (and
             (> target-id source-id)
@@ -135075,9 +134774,7 @@
   (if (>= index count)
     acc
     (opt-inline-loop-label-union-from
-      (opt-label-add
-        acc
-        (opt-label-ref (compiler-opt-global-shared-view other) index))
+      (opt-label-add acc (opt-label-ref other index))
       other
       (+ index 1)
       count)))
@@ -135092,11 +134789,7 @@
         [body : OptLabelSet (opt-natural-loop-body loop)]
         (opt-inline-loop-labels-add
           (deref rest)
-          (opt-inline-loop-label-union-from
-            acc
-            (compiler-opt-global-shared-view body)
-            0
-            (opt-label-count body))))]))
+          (opt-inline-loop-label-union-from acc body 0 (opt-label-count body))))]))
 
 (define (opt-inline-caller-facts-install!
   [index : OptFunctionIndex]
@@ -135943,7 +135636,7 @@
       (let
         [body : OptLabelSet
           (opt-natural-loop-body (compiler-opt-global-shared-view loop))]
-        [size : i64 (opt-label-count (compiler-opt-global-shared-view body))]
+        [size : i64 (opt-label-count body)]
         (if (and
           (opt-label-contains body label)
           (or (< best-header 0) (< size best-size)))
@@ -143039,7 +142732,7 @@
     [(ir.CompilerIrBlockList.Cons block rest)
       (match (opt-inline-rewrite-block-with-spans
         (compiler-opt-global-shared-view block)
-        (compiler-opt-global-shared-view phi-predecessors)
+        phi-predecessors
         (compiler-opt-global-shared-view index)
         (compiler-opt-global-shared-view census)
         func-name
@@ -150377,11 +150070,14 @@
   [mask : i64]) : i64
   (match names
     [(OptLabelSet.Nil) mask]
-    [(OptLabelSet.Dense integer-items integer-count)
+    [(OptLabelSet.Dense integer-items-handle integer-count)
       (let
+        [integer-items : (__tl_dyn-array i64)
+          (opt-label-items integer-items-handle)]
         [name : i64 (array-ref integer-items integer-count)]
         [rest : OptLabelSet
-          (opt-label-tail (OptLabelSet.Dense integer-items integer-count))]
+          (opt-label-tail
+            (OptLabelSet.Dense integer-items-handle integer-count))]
         (if (opt-global-mod-ref-any? mask)
           mask
           (opt-global-cell-call-writes-list
@@ -151789,9 +151485,7 @@
   [uses : opt_i64_i64_map.Map]
   [allowed : i64]
   [bad : (&mut bad opt_i64_i64_map.Map)]) : unit
-  (if (<=
-    (opt-label-count (compiler-opt-global-shared-view vars))
-    (opt_i64_i64_map.len (& uses)))
+  (if (<= (opt-label-count vars) (opt_i64_i64_map.len (& uses)))
     (opt-global-frozen-refuse-listed-vars levels vars uses allowed bad)
     (let
       [capacity : i64 (opt_i64_i64_map.capacity (& uses))]
@@ -151818,11 +151512,14 @@
   [bad : (&mut bad opt_i64_i64_map.Map)]) : unit
   (match vars
     [(OptLabelSet.Nil) unit]
-    [(OptLabelSet.Dense integer-items integer-count)
+    [(OptLabelSet.Dense integer-items-handle integer-count)
       (let
+        [integer-items : (__tl_dyn-array i64)
+          (opt-label-items integer-items-handle)]
         [var : i64 (array-ref integer-items integer-count)]
         [rest : OptLabelSet
-          (opt-label-tail (OptLabelSet.Dense integer-items integer-count))]
+          (opt-label-tail
+            (OptLabelSet.Dense integer-items-handle integer-count))]
         (begin
           (if (and
             (not (= var allowed))
@@ -151863,11 +151560,14 @@
   [bad : (&mut bad opt_i64_i64_map.Map)]) : unit
   (match names
     [(OptLabelSet.Nil) unit]
-    [(OptLabelSet.Dense integer-items integer-count)
+    [(OptLabelSet.Dense integer-items-handle integer-count)
       (let
+        [integer-items : (__tl_dyn-array i64)
+          (opt-label-items integer-items-handle)]
         [name : i64 (array-ref integer-items integer-count)]
         [rest : OptLabelSet
-          (opt-label-tail (OptLabelSet.Dense integer-items integer-count))]
+          (opt-label-tail
+            (OptLabelSet.Dense integer-items-handle integer-count))]
         (begin
           (if (opt_i64_i64_map.contains? (& cand) name)
             (opt_i64_i64_map.insert-ref! bad name 1)
@@ -152678,11 +152378,14 @@
   [bad : (&mut bad opt_i64_i64_map.Map)]) : unit
   (match vars
     [(OptLabelSet.Nil) unit]
-    [(OptLabelSet.Dense integer-items integer-count)
+    [(OptLabelSet.Dense integer-items-handle integer-count)
       (let
+        [integer-items : (__tl_dyn-array i64)
+          (opt-label-items integer-items-handle)]
         [var : i64 (array-ref integer-items integer-count)]
         [rest : OptLabelSet
-          (opt-label-tail (OptLabelSet.Dense integer-items integer-count))]
+          (opt-label-tail
+            (OptLabelSet.Dense integer-items-handle integer-count))]
         (begin
           (if (opt_i64_i64_map.contains? (& allocs) var)
             unit
@@ -152715,7 +152418,7 @@
             (begin
               (opt-global-frozen-writes-are-allocs
                 (compiler-opt-global-shared-view scan.writes.map)
-                (compiler-opt-global-shared-view scan.writes.vars)
+                scan.writes.vars
                 scan.allocs
                 bad)
               (opt-global-frozen-writer-uses-blocks
@@ -153007,11 +152710,14 @@
   [out : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
   (match names
     [(OptLabelSet.Nil) out]
-    [(OptLabelSet.Dense integer-items integer-count)
+    [(OptLabelSet.Dense integer-items-handle integer-count)
       (let
+        [integer-items : (__tl_dyn-array i64)
+          (opt-label-items integer-items-handle)]
         [id : i64 (array-ref integer-items integer-count)]
         [rest : OptLabelSet
-          (opt-label-tail (OptLabelSet.Dense integer-items integer-count))]
+          (opt-label-tail
+            (OptLabelSet.Dense integer-items-handle integer-count))]
         [next : opt_i64_i64_map.Map out]
         (begin
           ;; `seen` is what makes a missing initializer a refusal rather than a
@@ -153650,11 +153356,14 @@
   [index : opt_i64_i64_map.Map]) : unit
   (match vars
     [(OptLabelSet.Nil) unit]
-    [(OptLabelSet.Dense integer-items integer-count)
+    [(OptLabelSet.Dense integer-items-handle integer-count)
       (let
+        [integer-items : (__tl_dyn-array i64)
+          (opt-label-items integer-items-handle)]
         [var : i64 (array-ref integer-items integer-count)]
         [rest : OptLabelSet
-          (opt-label-tail (OptLabelSet.Dense integer-items integer-count))]
+          (opt-label-tail
+            (OptLabelSet.Dense integer-items-handle integer-count))]
         (begin
           (if (and
             (not (= var allowed))
@@ -153700,11 +153409,14 @@
   [index : opt_i64_i64_map.Map]) : unit
   (match names
     [(OptLabelSet.Nil) unit]
-    [(OptLabelSet.Dense integer-items integer-count)
+    [(OptLabelSet.Dense integer-items-handle integer-count)
       (let
+        [integer-items : (__tl_dyn-array i64)
+          (opt-label-items integer-items-handle)]
         [id : i64 (array-ref integer-items integer-count)]
         [rest : OptLabelSet
-          (opt-label-tail (OptLabelSet.Dense integer-items integer-count))]
+          (opt-label-tail
+            (OptLabelSet.Dense integer-items-handle integer-count))]
         (begin
           (opt-global-obj-escape-id!
             (compiler-opt-global-shared-view escaped)
@@ -155403,11 +155115,14 @@
 (define (opt-len-eq-mentions? [set : opt_i64_i64_map.Map] [names : OptLabelSet]) : bool
   (match names
     [(OptLabelSet.Nil) false]
-    [(OptLabelSet.Dense integer-items integer-count)
+    [(OptLabelSet.Dense integer-items-handle integer-count)
       (let
+        [integer-items : (__tl_dyn-array i64)
+          (opt-label-items integer-items-handle)]
         [name : i64 (array-ref integer-items integer-count)]
         [rest : OptLabelSet
-          (opt-label-tail (OptLabelSet.Dense integer-items integer-count))]
+          (opt-label-tail
+            (OptLabelSet.Dense integer-items-handle integer-count))]
         (if (opt_i64_i64_map.contains? (& set) name)
           true
           (opt-len-eq-mentions? set rest)))]))
@@ -155654,11 +155369,14 @@
   [names : OptLabelSet]) : unit
   (match names
     [(OptLabelSet.Nil) unit]
-    [(OptLabelSet.Dense integer-items integer-count)
+    [(OptLabelSet.Dense integer-items-handle integer-count)
       (let
+        [integer-items : (__tl_dyn-array i64)
+          (opt-label-items integer-items-handle)]
         [name : i64 (array-ref integer-items integer-count)]
         [rest : OptLabelSet
-          (opt-label-tail (OptLabelSet.Dense integer-items integer-count))]
+          (opt-label-tail
+            (OptLabelSet.Dense integer-items-handle integer-count))]
         (begin
           (if (opt_i64_i64_map.contains? (& ctx.cand) name)
             (opt_i64_i64_map.insert-ref! bad name 1)
@@ -157178,11 +156896,14 @@
   [acc : i64]) : i64
   (match names
     [(OptLabelSet.Nil) acc]
-    [(OptLabelSet.Dense integer-items integer-count)
+    [(OptLabelSet.Dense integer-items-handle integer-count)
       (let
+        [integer-items : (__tl_dyn-array i64)
+          (opt-label-items integer-items-handle)]
         [name : i64 (array-ref integer-items integer-count)]
         [rest : OptLabelSet
-          (opt-label-tail (OptLabelSet.Dense integer-items integer-count))]
+          (opt-label-tail
+            (OptLabelSet.Dense integer-items-handle integer-count))]
         (opt-len-eq-count-admitted
           (compiler-opt-global-shared-view writes)
           (compiler-opt-global-shared-view bad)
@@ -157204,11 +156925,14 @@
     [cursor : (__tl_dyn-array i64) cursor-input]
     (match names
       [(OptLabelSet.Nil) unit]
-      [(OptLabelSet.Dense integer-items integer-count)
+      [(OptLabelSet.Dense integer-items-handle integer-count)
         (let
+          [integer-items : (__tl_dyn-array i64)
+            (opt-label-items integer-items-handle)]
           [name : i64 (array-ref integer-items integer-count)]
           [rest : OptLabelSet
-            (opt-label-tail (OptLabelSet.Dense integer-items integer-count))]
+            (opt-label-tail
+              (OptLabelSet.Dense integer-items-handle integer-count))]
           (begin
             (if (and
               (not (opt_i64_i64_map.contains? (& bad) name))
@@ -157232,7 +156956,7 @@
       (opt-len-eq-count-admitted
         (compiler-opt-global-shared-view writes)
         (compiler-opt-global-shared-view bad)
-        (compiler-opt-global-shared-view names)
+        names
         0)]
     [members : (__tl_dyn-array i64)
       (__tl_make-array
@@ -157365,7 +157089,7 @@
                 (opt-cb-reset-fill!
                   (compiler-opt-global-shared-view ctx.writes)
                   (compiler-opt-global-shared-view bad)
-                  (compiler-opt-global-shared-view cand.names)
+                  cand.names
                   reset)
                 (opt-len-eq-assign ctx.writes bad cand.names capacity)))))))))
 
@@ -158387,7 +158111,7 @@
       (opt-len-eq-count-admitted
         (compiler-opt-global-shared-view writes)
         (compiler-opt-global-shared-view bad)
-        (compiler-opt-global-shared-view names)
+        names
         0)]
     [members : (__tl_dyn-array i64)
       (__tl_make-array
@@ -164278,7 +164002,7 @@
             (opt-cfg-index-successors
               (compiler-opt-global-shared-view index)
               (opt-cfg-index-label (compiler-opt-global-shared-view index) id))]
-          [n : i64 (opt-label-count (compiler-opt-global-shared-view succs))]
+          [n : i64 (opt-label-count succs)]
           [k : i64 0]
           (begin
             (while (< k n)
@@ -164286,7 +164010,7 @@
                 [succ : i64
                   (opt-cb-block-id
                     (compiler-opt-global-shared-view index)
-                    (opt-label-ref (compiler-opt-global-shared-view succs) k))]
+                    (opt-label-ref succs k))]
                 (begin
                   (if (and
                     (>= succ 0)
@@ -165841,11 +165565,14 @@
     [out : opt_i64_i64_map.Map out-input]
     (match refs
       [(OptLabelSet.Nil) out]
-      [(OptLabelSet.Dense integer-items integer-count)
+      [(OptLabelSet.Dense integer-items-handle integer-count)
         (let
+          [integer-items : (__tl_dyn-array i64)
+            (opt-label-items integer-items-handle)]
           [name : i64 (array-ref integer-items integer-count)]
           [rest : OptLabelSet
-            (opt-label-tail (OptLabelSet.Dense integer-items integer-count))]
+            (opt-label-tail
+              (OptLabelSet.Dense integer-items-handle integer-count))]
           [next : opt_i64_i64_map.Map out]
           (begin
             (opt_i64_i64_map.insert-ref! (&mut next) name 1)
@@ -166335,11 +166062,14 @@
   [refs : OptLabelSet]) : bool
   (match refs
     [(OptLabelSet.Nil) false]
-    [(OptLabelSet.Dense integer-items integer-count)
+    [(OptLabelSet.Dense integer-items-handle integer-count)
       (let
+        [integer-items : (__tl_dyn-array i64)
+          (opt-label-items integer-items-handle)]
         [name : i64 (array-ref integer-items integer-count)]
         [rest : OptLabelSet
-          (opt-label-tail (OptLabelSet.Dense integer-items integer-count))]
+          (opt-label-tail
+            (OptLabelSet.Dense integer-items-handle integer-count))]
         (if (opt-global-cell-single-ref?
           (compiler-opt-global-shared-view counts)
           name)
@@ -166403,11 +166133,14 @@
   [count : i64]) : OptGlobalCellPlan
   (match refs
     [(OptLabelSet.Nil) (OptGlobalCellPlan plan count)]
-    [(OptLabelSet.Dense integer-items integer-count)
+    [(OptLabelSet.Dense integer-items-handle integer-count)
       (let
+        [integer-items : (__tl_dyn-array i64)
+          (opt-label-items integer-items-handle)]
         [name : i64 (array-ref integer-items integer-count)]
         [rest : OptLabelSet
-          (opt-label-tail (OptLabelSet.Dense integer-items integer-count))]
+          (opt-label-tail
+            (OptLabelSet.Dense integer-items-handle integer-count))]
         (if (or
           (opt_i64_i64_map.contains? (& stores) name)
           (opt_i64_i64_map.contains? (& cell.addr-taken) name)
@@ -166489,11 +166222,14 @@
   [index : i64]) : i64
   (match refs
     [(OptLabelSet.Nil) index]
-    [(OptLabelSet.Dense integer-items integer-count)
+    [(OptLabelSet.Dense integer-items-handle integer-count)
       (let
+        [integer-items : (__tl_dyn-array i64)
+          (opt-label-items integer-items-handle)]
         [name : i64 (array-ref integer-items integer-count)]
         [rest : OptLabelSet
-          (opt-label-tail (OptLabelSet.Dense integer-items integer-count))]
+          (opt-label-tail
+            (OptLabelSet.Dense integer-items-handle integer-count))]
         (match (opt_i64_i64_map.get (& plan) name)
           [(opt_i64_i64_map.LookupMissing)
             (opt-global-cell-hoists-fill! plan cell rest hoists index)]
@@ -167125,12 +166861,12 @@
                             calls?
                             (opt-global-cell-any-single-ref?
                               scan.refs
-                              (compiler-opt-global-shared-view scan.ref-list)))
+                              scan.ref-list))
                             (opt-global-cell-loop-refs
                               (compiler-opt-global-shared-view blocks)
                               (opt_i64_i64_map.with-capacity 8))
                             (opt_i64_i64_map.with-capacity 1))
-                          (compiler-opt-global-shared-view scan.ref-list)
+                          scan.ref-list
                           (compiler-opt-global-shared-view frame-cell)
                           (opt_i64_i64_map.with-capacity 8)
                           0)]
@@ -169206,14 +168942,14 @@
   [body : OptLabelSet]
   [preds : OptLabelSet]
   [candidate : OptScratchResetMarkCandidate]) : OptScratchResetMarkCandidate
-  (match (compiler-opt-global-shared-view preds)
+  (match preds
     [(OptLabelSet.Nil) candidate]
     [(OptLabelSet.Dense _ _)
       (let
-        [pred : i64 (opt-label-ref (compiler-opt-global-shared-view preds) 0)]
+        [pred : i64 (opt-label-ref preds 0)]
         (opt-scratch-reset-mark-candidate-scan
-          (compiler-opt-global-shared-view reachable)
-          (compiler-opt-global-shared-view body)
+          reachable
+          body
           (opt-label-tail preds)
           (if (and
             (opt-label-contains reachable pred)
@@ -169226,13 +168962,13 @@
   [skip : i64]
   [preds : OptLabelSet]
   [candidate : OptScratchResetMarkCandidate]) : OptScratchResetMarkCandidate
-  (match (compiler-opt-global-shared-view preds)
+  (match preds
     [(OptLabelSet.Nil) candidate]
     [(OptLabelSet.Dense _ _)
       (let
-        [pred : i64 (opt-label-ref (compiler-opt-global-shared-view preds) 0)]
+        [pred : i64 (opt-label-ref preds 0)]
         (opt-scratch-reset-mark-candidate-scan-not-label
-          (compiler-opt-global-shared-view reachable)
+          reachable
           skip
           (opt-label-tail preds)
           (if (and (opt-label-contains reachable pred) (not (= pred skip)))
@@ -169384,15 +169120,14 @@
   [latch : i64]
   [mark-block : i64]
   [successors : OptLabelSet]) : bool
-  (match (compiler-opt-global-shared-view successors)
+  (match successors
     [(OptLabelSet.Nil) true]
     [(OptLabelSet.Dense _ _)
       (let
-        [succ : i64
-          (opt-label-ref (compiler-opt-global-shared-view successors) 0)]
+        [succ : i64 (opt-label-ref successors 0)]
         (and
           (or
-            (opt-label-contains (compiler-opt-global-shared-view body) succ)
+            (opt-label-contains body succ)
             (= label header)
             (= label latch)
             (= label mark-block))
@@ -169436,7 +169171,7 @@
       (and
         (opt-scratch-loop-block-exits-safe?
           (compiler-opt-global-shared-view index)
-          (compiler-opt-global-shared-view body)
+          body
           header
           latch
           mark-block
@@ -175971,18 +175706,22 @@
 ;; This is before SSA: the copied guard's definitions are renamed later.
 (define (opt-loop-call-only-pred? [preds : OptLabelSet] [label : i64]) : bool
   (match preds
-    [(OptLabelSet.Dense items len)
-      (and (= len 1) (= (array-ref items 1) label))]
+    [(OptLabelSet.Dense items-handle len)
+      (let
+        [items : (__tl_dyn-array i64) (opt-label-items items-handle)]
+        (and (= len 1) (= (array-ref items 1) label)))]
     [_ false]))
 
 (define (opt-loop-call-two-preds? [preds : OptLabelSet] [a : i64] [b : i64]) : bool
   (match preds
-    [(OptLabelSet.Dense items len)
-      (and
-        (= len 2)
-        (or
-          (and (= (array-ref items 1) a) (= (array-ref items 2) b))
-          (and (= (array-ref items 1) b) (= (array-ref items 2) a))))]
+    [(OptLabelSet.Dense items-handle len)
+      (let
+        [items : (__tl_dyn-array i64) (opt-label-items items-handle)]
+        (and
+          (= len 2)
+          (or
+            (and (= (array-ref items 1) a) (= (array-ref items 2) b))
+            (and (= (array-ref items 1) b) (= (array-ref items 2) a)))))]
     [_ false]))
 
 ;; A unit-stride counted loop that only adds the invariant result has a closed
@@ -177994,11 +177733,14 @@
     [out : opt_i64_i64_map.Map out-input]
     (match names
       [(OptLabelSet.Nil) out]
-      [(OptLabelSet.Dense integer-items integer-count)
+      [(OptLabelSet.Dense integer-items-handle integer-count)
         (let
+          [integer-items : (__tl_dyn-array i64)
+            (opt-label-items integer-items-handle)]
           [name : i64 (array-ref integer-items integer-count)]
           [rest : OptLabelSet
-            (opt-label-tail (OptLabelSet.Dense integer-items integer-count))]
+            (opt-label-tail
+              (OptLabelSet.Dense integer-items-handle integer-count))]
           (begin
             (if (opt-load-cell-candidate?
               (compiler-opt-global-shared-view cells)
@@ -178024,11 +177766,14 @@
     [counters : (__tl_dyn-array i64) counters-input]
     (match names
       [(OptLabelSet.Nil) unit]
-      [(OptLabelSet.Dense integer-items integer-count)
+      [(OptLabelSet.Dense integer-items-handle integer-count)
         (let
+          [integer-items : (__tl_dyn-array i64)
+            (opt-label-items integer-items-handle)]
           [name : i64 (array-ref integer-items integer-count)]
           [rest : OptLabelSet
-            (opt-label-tail (OptLabelSet.Dense integer-items integer-count))]
+            (opt-label-tail
+              (OptLabelSet.Dense integer-items-handle integer-count))]
           (begin
             (if (and
               (opt_i64_i64_map.contains? (& candidates) name)
@@ -183331,7 +183076,7 @@
             (compiler-opt-global-shared-view cells)
             (compiler-opt-global-shared-view promote)
             (compiler-opt-global-shared-view joins)
-            (compiler-opt-global-shared-view loop-safe)
+            loop-safe
             (compiler-opt-global-shared-view carry)
             (compiler-opt-global-shared-view exit-states)
             (compiler-opt-global-shared-view processed)
@@ -184122,24 +183867,16 @@
             (when (= index 3) (set! prefix items))
             (set! index (+ index 1))))
         (test.assert-i64-eq
-          (opt-label-count (compiler-opt-global-shared-view items))
+          (opt-label-count items)
           9
           "grows past capacities four and eight")
-        (test.assert-i64-eq
-          (opt-label-count (compiler-opt-global-shared-view prefix))
-          4
-          "retained prefix length")
+        (test.assert-i64-eq (opt-label-count prefix) 4 "retained prefix length")
         (let
-          [branch : OptLabelSet
-            (opt-label-cons 99 (compiler-opt-global-shared-view prefix))]
-          [tail : OptLabelSet
-            (opt-label-tail (compiler-opt-global-shared-view items))]
-          [tail-branch : OptLabelSet
-            (opt-label-cons (- 0 7) (compiler-opt-global-shared-view tail))]
-          [duplicate : OptLabelSet
-            (opt-label-cons 3 (compiler-opt-global-shared-view prefix))]
-          [sparse : OptLabelSet
-            (opt-label-cons 1000000000 (compiler-opt-global-shared-view branch))]
+          [branch : OptLabelSet (opt-label-cons 99 prefix)]
+          [tail : OptLabelSet (opt-label-tail items)]
+          [tail-branch : OptLabelSet (opt-label-cons (- 0 7) tail)]
+          [duplicate : OptLabelSet (opt-label-cons 3 prefix)]
+          [sparse : OptLabelSet (opt-label-cons 1000000000 branch)]
           (begin
             (test.assert-i64-eq
               (opt-label-ref branch 0)
@@ -184158,11 +183895,11 @@
               7
               "tail remains independent")
             (test.assert-i64-eq
-              (opt-label-count (compiler-opt-global-shared-view duplicate))
+              (opt-label-count duplicate)
               5
               "ordered insertion preserves duplicates")
             (test.assert-i64-eq
-              (opt-label-ref (compiler-opt-global-shared-view duplicate) 0)
+              (opt-label-ref duplicate 0)
               3
               "duplicate newest")
             (test.assert-i64-eq
@@ -184170,15 +183907,14 @@
               3
               "duplicate predecessor")
             (test.assert-i64-eq
-              (opt-label-count
-                (opt-label-add (compiler-opt-global-shared-view prefix) 3))
+              (opt-label-count (opt-label-add prefix 3))
               4
               "membership insertion still deduplicates")
             (set! index 0)
             (while (< index 9)
               (begin
                 (test.assert-i64-eq
-                  (opt-label-ref (compiler-opt-global-shared-view items) index)
+                  (opt-label-ref items index)
                   (- 8 index)
                   "original view retains newest-first order")
                 (set! index (+ index 1))))
@@ -184186,7 +183922,7 @@
             (while (< index 4)
               (begin
                 (test.assert-i64-eq
-                  (opt-label-ref (compiler-opt-global-shared-view prefix) index)
+                  (opt-label-ref prefix index)
                   (- 3 index)
                   "prefix not overwritten")
                 (set! index (+ index 1))))))))))

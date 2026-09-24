@@ -155180,6 +155180,25 @@
         counts
         (ir.compiler-ir-block-seq-to-list seq))]))
 
+(define (opt-const-global-mul-shift-count-params!
+  [counts : opt_i64_i64_map.Map]
+  [params : ir.CompilerIrParamSeq]) : unit
+  (let
+    [position : i64 0]
+    (while (< position params.len)
+      (begin
+        (match (ir.compiler-ir-param-seq-ref
+          (compiler-opt-global-shared-view params)
+          position)
+          [(ir.CompilerIrParam.Param _ _ var)
+            (opt_i64_i64_map.insert-ref!
+              (&mut counts)
+              var
+              (match (opt_i64_i64_map.get (& counts) var)
+                [(opt_i64_i64_map.LookupFound n) (+ n 1)]
+                [_ 1]))])
+        (set! position (+ position 1))))))
+
 (define (opt-const-global-mul-shift-blocks
   [constants : opt_i64_i64_map.Map]
   [copies : opt_i64_i64_map.Map]
@@ -155241,6 +155260,13 @@
           [copies : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 8)]
           [counts : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 64)]
           (begin
+            ;; A parameter is a definition too. When SSA construction fell
+            ;; back, `(set! x g)` on a parameter is `%x = mov @g` in place, the
+            ;; only definition the block scan sees, and a use of %x before it
+            ;; still reads the argument.
+            (opt-const-global-mul-shift-count-params!
+              (compiler-opt-global-shared-view counts)
+              (compiler-opt-global-shared-view params))
             (opt-const-global-mul-shift-scan!
               (compiler-opt-global-shared-view copies)
               (compiler-opt-global-shared-view counts)
@@ -155253,6 +155279,24 @@
               (opt-const-global-mul-shift-blocks constants copies counts blocks)
               function-abi)))])))
 
+;; The early rewrite substitutes every scalar operand position whose literal
+;; the round-1 local fold and the loop passes can both consume: BinOp operands
+;; (compare operands feeding branches included), UnOp sources, Cast/Bitcast
+;; sources, and Mov sources. Running at the start of the iteration -- before
+;; induction/bce_version -- a literal global bound constant-enables unroll,
+;; induction, and versioning downstream, none of which accept a global-ref
+;; operand (a hidden rip-relative load, neither a literal nor an invariant SSA
+;; value). Substituting Mov sources early is register-neutral: the following
+;; fold propagates the literal into its uses and DCEs the Move, so a bound used
+;; only in a compare still ends as an immediate operand. The older late pass
+;; below (`opt-const-global-move-rewrite-*`) kept comparison-bound Moves
+;; symbolic to avoid holding a constant in a register across a loop; that
+;; concern does not apply here because the fold removes the Move entirely. The
+;; late passes stay in place and simply become no-ops for the sites this pass
+;; already covered (they still catch globals materialized mid-iteration by
+;; other passes). Load/StorePtr/Gep and the vector arms keep the global's
+;; hidden-load form: their operand is an address or a descriptor pointer, not
+;; a scalar the fold can use.
 ;; A wide power-of-two global stays a Global operand here like every other
 ;; wide constant: its multiply becomes a shift only in the final pipeline slot
 ;; (opt-const-global-mul-shift-final), after every pass that reads

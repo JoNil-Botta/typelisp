@@ -112226,6 +112226,92 @@
           true]
         [_ false]))))
 
+;; A function SSA construction gave up on: `(set! x big)` on parameter %0 is
+;; `%0 = mov @wide_power` in place, AFTER `%4 = mul %1, %0` read the argument.
+;; %0 has two definitions -- the parameter and the Mov -- so neither product
+;; may treat it as the constant.
+(define (opt-wide-power-mul-shift-param-redefined?) : bool
+  (let
+    [func : compiler_ir_types.CompilerIrFunction
+      (compiler_ir_types.CompilerIrFunction.Function
+        (opt-test-symbol "wide_power_param")
+        (compiler_ir_types.compiler-ir-param-seq-prepend
+          (compiler_ir_types.CompilerIrParam.Param
+            "x"
+            (compiler_ast_types.AstType.I64)
+            0)
+          (compiler_ir_types.compiler-ir-param-seq-prepend
+            (compiler_ir_types.CompilerIrParam.Param
+              "y"
+              (compiler_ast_types.AstType.I64)
+              1)
+            (compiler_ir_types.compiler-ir-param-seq-empty)))
+        (compiler_ast_types.AstType.I64)
+        8
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "entry")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                4
+                (compiler_ir_types.CompilerIrBinOp.Mul)
+                (compiler_ir_types.CompilerIrValue.Var 1)
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrInstr.Mov
+                0
+                (compiler_ir_types.CompilerIrValue.Global
+                  (opt-test-symbol "wide_power"))
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                5
+                (compiler_ir_types.CompilerIrBinOp.Mul)
+                (compiler_ir_types.CompilerIrValue.Var 1)
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                6
+                (compiler_ir_types.CompilerIrBinOp.Add)
+                (compiler_ir_types.CompilerIrValue.Var 4)
+                (compiler_ir_types.CompilerIrValue.Var 5)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var 6)))))
+          (compiler_ir_types.CompilerIrBlockList.Nil))
+        compiler_ir_types.CompilerIrFunctionAbi.Ordinary)]
+    [out : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-const-global-mul-shift-final
+        (opt-wide-power-table 34)
+        func)]
+    [shifts : i64 0]
+    (begin
+      (match (compiler_optimize.opt-function-blocks out)
+        [(compiler_ir_types.CompilerIrBlockList.Cons block _)
+          (match (compiler_optimize.compiler-opt-global-shared-view block)
+            [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+              (let
+                [index : i64 0]
+                (while (<
+                  index
+                  (compiler_ir_types.compiler-ir-instr-seq-count
+                    (compiler_optimize.compiler-opt-global-shared-view instrs)))
+                  (begin
+                    (match (compiler_ir_types.compiler-ir-instr-seq-ref
+                      instrs
+                      index)
+                      [(compiler_ir_types.CompilerIrInstr.BinOp
+                          _
+                          (compiler_ir_types.CompilerIrBinOp.Shl _)
+                          _
+                          _
+                          _)
+                        (set! shifts (+ shifts 1))]
+                      [_ unit])
+                    (set! index (+ index 1)))))])]
+        [_ (set! shifts -1)])
+      (= shifts 0))))
+
 (define (opt-wide-power-mul-shift-both?) : bool
   (match (compiler_optimize.opt-const-global-mul-shift-instr
     (opt-wide-power-table 34)
@@ -112328,6 +112414,9 @@
       (test.assert-true
         (opt-wide-power-mul-shift-both?)
         "with wide powers on both sides the right one is the count")
+      (test.assert-true
+        (opt-wide-power-mul-shift-param-redefined?)
+        "a parameter redefined from the global is not a single-definition copy")
       (test.assert-true
         (opt-wide-power-mul-shift-kept?
           (compiler_ir_types.CompilerIrInstr.BinOp

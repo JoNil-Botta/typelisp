@@ -742,3 +742,7 @@ signed_rem_64_zero_opt2|tests/integration/signed_division_flags.tl|135|-|64 1 0 
 memcpy_short_runtime_opt0|tests/integration/memcpy_short_runtime.tl|42|-|--opt-level 0|stdlib/runtime.tl
 memcpy_short_runtime_opt1|tests/integration/memcpy_short_runtime.tl|42|-|--opt-level 1|stdlib/runtime.tl
 memcpy_short_runtime_opt2|tests/integration/memcpy_short_runtime.tl|42|-|--opt-level 2|stdlib/runtime.tl
+
+runtime_leaf_aliases_opt0|tests/integration/runtime_leaf_aliases.tl|42|-|-|-|opt-level:0+stage-stdlib
+runtime_leaf_aliases_opt1|tests/integration/runtime_leaf_aliases.tl|42|-|-|-|opt-level:1+stage-stdlib
+runtime_leaf_aliases_opt2|tests/integration/runtime_leaf_aliases.tl|42|-|-|-|opt-level:2+stage-stdlib

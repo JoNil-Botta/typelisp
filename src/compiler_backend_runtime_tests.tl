@@ -22,7 +22,8 @@
     false
     false
     false
-    false))
+    false
+    31))
 
 (define (compiler-backend-runtime-test-full-features) : runtime_common.CompilerBackendRuntimeFeatures
   (runtime_common.CompilerBackendRuntimeFeatures
@@ -34,7 +35,8 @@
     true
     true
     true
-    true))
+    true
+    31))
 
 (test
   compiler-backend-runtime-leaf-feature-subsets

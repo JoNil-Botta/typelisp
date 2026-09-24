@@ -10,7 +10,8 @@
   (startup-profile bool)
   (tlci-macro-entry bool)
   (arena-debug bool)
-  (backtrace bool))
+  (backtrace bool)
+  (leaf-mask i64))
 
 (defstruct CompilerX64ExecutableTemplateIdList
   (slots (__tl_dyn-array x64.CompilerX64ExecutableTemplateId))
@@ -23,7 +24,7 @@
     (ptr-read (ptr-offset (__tl_array-data ids.slots) index))))
 
 (define (compiler-x64-template-id-from-index [index : i64]) : x64.CompilerX64ExecutableTemplateId
-  (if (or (< index 0) (>= index 82))
+  (if (or (< index 0) (>= index 84))
     (io.panic "x64 executable template: id index is out of range")
     (unsafe
       (ptr-read
@@ -39,7 +40,7 @@
         0)]
     [index : i64 0]
     (begin
-      (while (< index 82)
+      (while (< index 84)
         (begin
           (compiler-x64-template-id-list-push!
             (&mut ids)
@@ -84,18 +85,34 @@
             (compiler-x64-template-id-list-push!
               (&mut ids)
               (x64.CompilerX64ExecutableTemplateId.LinuxRuntimeMemcpy))
-            (compiler-x64-template-id-list-push!
-              (&mut ids)
-              (x64.CompilerX64ExecutableTemplateId.LinuxRuntimeMemchr))
+            (when
+              (!= (bit-and features.leaf-mask 4) 0)
+              (compiler-x64-template-id-list-push!
+                (&mut ids)
+                (x64.CompilerX64ExecutableTemplateId.LinuxRuntimeCopyFwd)))
+            (when
+              (!= (bit-and features.leaf-mask 8) 0)
+              (compiler-x64-template-id-list-push!
+                (&mut ids)
+                (x64.CompilerX64ExecutableTemplateId.LinuxRuntimeCopy8Fwd)))
+            (when
+              (!= (bit-and features.leaf-mask 1) 0)
+              (compiler-x64-template-id-list-push!
+                (&mut ids)
+                (x64.CompilerX64ExecutableTemplateId.LinuxRuntimeMemchr)))
             (compiler-x64-template-id-list-push!
               (&mut ids)
               (x64.CompilerX64ExecutableTemplateId.LinuxRuntimeArrayZero))
-            (compiler-x64-template-id-list-push!
-              (&mut ids)
-              (x64.CompilerX64ExecutableTemplateId.LinuxRuntimeMemFill8))
-            (compiler-x64-template-id-list-push!
-              (&mut ids)
-              (x64.CompilerX64ExecutableTemplateId.LinuxRuntimeTlciImage))
+            (when
+              (!= (bit-and features.leaf-mask 16) 0)
+              (compiler-x64-template-id-list-push!
+                (&mut ids)
+                (x64.CompilerX64ExecutableTemplateId.LinuxRuntimeMemFill8)))
+            (when
+              (!= (bit-and features.leaf-mask 2) 0)
+              (compiler-x64-template-id-list-push!
+                (&mut ids)
+                (x64.CompilerX64ExecutableTemplateId.LinuxRuntimeTlciImage)))
             (when
               features.tlci-macro-entry
               (compiler-x64-template-id-list-push!

@@ -89145,7 +89145,122 @@
             (compiler-backend-runtime-tail-tlci-macro-entry? tail-plan)
             write-exit
             (compiler-backend-runtime-tail-startup-profile? tail-plan)
-            (compiler_ir_types.compiler-debug-info-enabled?)))])))
+            (compiler_ir_types.compiler-debug-info-enabled?)
+            31))])))
+
+;; These leaves have no incoming edges from the always-emitted runtime. Keep
+;; them for direct calls, address-taken symbols, and any referenced extern alias.
+;; Reuse the call and reference inventories already built for symbol emission.
+(define (compiler-backend-runtime-leaf-bit
+  [backend-state : CompilerBackendState]
+  [name : i64]) : i64
+  (let
+    [text : String (compiler-backend-symbol-text-state backend-state name)]
+    (cond
+      [(string.eq (compiler-backend-global-shared-view text) "tl_memchr") 1]
+      [(string.eq
+          (compiler-backend-global-shared-view text)
+          "tl_tlci_call_image_entry")
+        2]
+      [(string.eq (compiler-backend-global-shared-view text) "tl_mem_copy_fwd")
+        4]
+      [(string.eq (compiler-backend-global-shared-view text) "tl_mem_copy8_fwd")
+        8]
+      [(string.eq text "tl_mem_fill8") 16]
+      [else 0])))
+
+(define (compiler-backend-runtime-used-leaf-mask
+  [backend-state : CompilerBackendState]
+  [runtime-index : CompilerBackendRuntimeIndex]
+  [referenced : BackendSymbolSeq]
+  [externs : compiler_ir_types.CompilerIrExternSeq]) : i64
+  (let
+    [mask : i64 0]
+    [i : i64 0]
+    [capacity : i64 (backend_i64_i64_map.capacity (& runtime-index.calls))]
+    (begin
+      (while (< i capacity)
+        (begin
+          (match (backend_i64_i64_map.entry-at (& runtime-index.calls) i)
+            [(backend_i64_i64_map.Entry.EntrySome name _)
+              (set!
+                mask
+                (bit-or
+                  mask
+                  (compiler-backend-runtime-leaf-bit backend-state name)))]
+            [_ unit])
+          (set! i (+ i 1))))
+      (set! i 0)
+      (while (< i referenced.len)
+        (begin
+          (set!
+            mask
+            (bit-or
+              mask
+              (compiler-backend-runtime-leaf-bit
+                backend-state
+                (array-ref referenced.slots i))))
+          (set! i (+ i 1))))
+      (set! i 0)
+      (while (<
+        i
+        (compiler_ir_types.compiler-ir-extern-seq-count
+          (compiler-backend-global-shared-view externs)))
+        (begin
+          (match (compiler_ir_types.compiler-ir-extern-seq-ref
+            (compiler-backend-global-shared-view externs)
+            i)
+            [(compiler_ir_types.CompilerIrExtern.Extern
+                name
+                source
+                _
+                _
+                _
+                link
+                _
+                _)
+              (let
+                [bit : i64
+                  (compiler-backend-runtime-leaf-bit backend-state link)]
+                (when
+                  (and
+                    (!= bit 0)
+                    (= (bit-and mask bit) 0)
+                    (compiler-backend-extern-symbol-referenced?
+                      (compiler-backend-global-shared-view runtime-index)
+                      (compiler-backend-global-shared-view referenced)
+                      name
+                      source
+                      link))
+                  (set! mask (bit-or mask bit))))])
+          (set! i (+ i 1))))
+      mask)))
+
+(define (compiler-backend-runtime-features-for-emission
+  [target : CompilerBackendTarget]
+  [plan : CompilerBackendRuntimePlan]
+  [backend-state : CompilerBackendState]
+  [runtime-index : CompilerBackendRuntimeIndex]
+  [referenced : BackendSymbolSeq]
+  [externs : compiler_ir_types.CompilerIrExternSeq]
+  [emit-entry : bool]) : runtime_common.CompilerBackendRuntimeFeatures
+  (let
+    [features : runtime_common.CompilerBackendRuntimeFeatures
+      (compiler-backend-runtime-features plan)]
+    (begin
+      (match target
+        [(CompilerBackendTarget.Linux)
+          (when
+            emit-entry
+            (set!
+              features.leaf-mask
+              (compiler-backend-runtime-used-leaf-mask
+                backend-state
+                runtime-index
+                referenced
+                externs)))]
+        [_ unit])
+      features)))
 
 (define (compiler-backend-current-arena-load
   [target : CompilerBackendTarget]
@@ -89820,8 +89935,14 @@
       (compiler-backend-global-types
         (compiler-backend-global-shared-view globals))]
     [runtime-features : runtime_common.CompilerBackendRuntimeFeatures
-      (compiler-backend-runtime-features
-        (compiler-backend-global-shared-view plan))]
+      (compiler-backend-runtime-features-for-emission
+        (compiler-backend-global-shared-view target)
+        (compiler-backend-global-shared-view plan)
+        program-index.backend-state
+        (compiler-backend-global-shared-view runtime-index)
+        (compiler-backend-global-shared-view referenced-symbols)
+        (compiler-backend-global-shared-view externs)
+        emit-entry)]
     (begin
       (cfg
         compile-profile

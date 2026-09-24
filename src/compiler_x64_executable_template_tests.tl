@@ -78,7 +78,8 @@
         extra-features
         extra-features
         startup-profile
-        extra-features)]
+        extra-features
+        31)]
     [linux : String
       (runtime_linux.compiler-backend-runtime-functions (& features))]
     [windows : String
@@ -156,7 +157,7 @@
                     (set! events-valid false)])
                 (set! event-at (+ event-at 1))))
             (set! at (+ at 1)))))
-      (test.assert-i64-eq ids.len 82 "closed executable-template row count")
+      (test.assert-i64-eq ids.len 84 "closed executable-template row count")
       (test.assert-i64-eq
         (array-length ids.slots)
         96
@@ -167,11 +168,11 @@
         "reviewed ordered control/frame event count")
       (test.assert-i64-eq
         event-bytes
-        19072
+        19070
         "reviewed event-transcript byte count")
       (test.assert-i64-eq
         pinned-payloads
-        69
+        71
         "fixed assembly and opaque payloads are pinned")
       (test.assert-i64-eq
         unpinned-assembly
@@ -197,7 +198,8 @@
             false
             false
             false
-            false)]
+            false
+            31)]
         [full : x64_selection.CompilerX64TemplateFeatures
           (x64_selection.CompilerX64TemplateFeatures
             true
@@ -207,7 +209,8 @@
             true
             true
             true
-            true)]
+            true
+            31)]
         [linux-min : x64_selection.CompilerX64ExecutableTemplateIdList
           (x64_selection.compiler-x64-runtime-template-selection
             (x64.CompilerX64TemplateTarget.LinuxX64)
@@ -227,9 +230,9 @@
         (begin
           (test.assert-i64-eq
             linux-min.len
-            6
+            8
             "minimal Linux template selection")
-          (test.assert-i64-eq linux-full.len 13 "full Linux template selection")
+          (test.assert-i64-eq linux-full.len 15 "full Linux template selection")
           (test.assert-i64-eq
             windows-min.len
             8

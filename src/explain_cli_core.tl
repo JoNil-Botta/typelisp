@@ -460,6 +460,36 @@ See also:
     SPEC.md, \"(unsafe declaration)\"; tests/safety/unsafe_callable_value_launder_reject.tl.
 ")
 
+(define (diagnostic-explain-e0220) : String
+  "E0220: global written outside its module
+
+Description:
+    Every module can read another module's globals, but only the module that
+    declares a global may write it. Assigning to the global or to a field,
+    tuple element, array element or deref projection reached from it, using
+    replace! or array-take! on it, or taking &mut of it from another module
+    is rejected under every import spelling, even inside unsafe. Code that a
+    macro expands into a module is checked as that module's code.
+
+Minimal failing example:
+    ;; counter.tl
+    (define count : i64 0)
+    ;; main.tl
+    (import counter.count)
+    (define (main) : i64
+      (begin
+        (set! count 5)
+        count))
+
+Fix:
+    Call a function that the owning module defines to perform the write, such
+    as (define (set-count! [value : i64]) : unit (set! count value)) in
+    counter.tl. Reads and shared borrows of the global remain allowed.
+
+See also:
+    SPEC.md, \"Default visibility\"; tests/safety/foreign_global_selected_set_reject.tl.
+")
+
 (define (diagnostic-explain-ascii-fold-char [c : char]) : char
   (if (and (>= c 'A') (<= c 'Z'))
     (cast (+ (cast c : i64) 32) : char)
@@ -600,6 +630,10 @@ See also:
         code
         (cdiag.compiler-diagnostic-code-typecheck-unsafe-callable-effect))
       (DiagnosticExplainDetailed (diagnostic-explain-e0219))]
+    [(diagnostic-explain-ascii-case-eq
+        code
+        (cdiag.compiler-diagnostic-code-typecheck-foreign-global-write))
+      (DiagnosticExplainDetailed (diagnostic-explain-e0220))]
     [else DiagnosticExplainUnknown]))
 
 (define (diagnostic-explain-print-registry-row [index : i64]) : unit

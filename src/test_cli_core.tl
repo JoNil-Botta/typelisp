@@ -6064,15 +6064,13 @@
     [pools : ast.AstNodePoolContext
       (driver.compiler-driver-state-new-checked-lower-pools)]
     (begin
-      (set!
-        (array-ref compiler_load.compiler-load-default-session-state 0)
+      (compiler_load.compiler-load-default-session-state-set!
         (owned_view.compiler-owned-shared-view entry-load))
       (compiler_load.compiler-load-session-state-use!
         (owned_view.compiler-owned-shared-view entry-load))
       (compiler_load.compiler-load-session-cache-enable!)
       (compiler_load.compiler-load-session-program-cache-disable!)
-      (set!
-        (array-ref tc_core.tc-serial-job-state-cell 0)
+      (tc_core.tc-serial-job-state-set!
         (owned_view.compiler-owned-shared-view entry-job))
       (ast.ast-node-pool-context-install! pools)
       (TlTestEntry owner parent-load parent-default parent-job))))
@@ -6094,11 +6092,9 @@
           (tc_core.tc-job-state-retire-owned-storage!
             (tc_core.tc-serial-job-state))
           (driver.compiler-driver-state-destroy-uncommitted-pools! pools))))
-    (set!
-      (array-ref tc_core.tc-serial-job-state-cell 0)
+    (tc_core.tc-serial-job-state-set!
       (owned_view.compiler-owned-shared-view entry.parent-job))
-    (set!
-      (array-ref compiler_load.compiler-load-default-session-state 0)
+    (compiler_load.compiler-load-default-session-state-set!
       (owned_view.compiler-owned-shared-view entry.parent-default))
     (if (array-ref entry.parent-load.intern-state-ready 0)
       (compiler_load.compiler-load-session-state-use-with-intern-state!

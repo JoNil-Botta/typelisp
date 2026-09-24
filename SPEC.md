@@ -1653,6 +1653,8 @@ Reference types are lifetime-bearing:
   immutable reference aliases the same immutable referent and does not move or
   copy the referent.
 - Mutable references are exclusive, non-copying handles to the same referent.
+  A mutable borrow of a place rooted at a global that another module declares
+  is rejected; shared borrows of it remain valid (§4.4.2).
   The checker enforces many immutable borrows or one mutable borrow for
   tracked local, parameter, and global place paths. Tracked aggregate-place
   paths conflict only when they are the same path or one is an ancestor of the
@@ -3047,6 +3049,40 @@ namespace mismatch such as using a value-qualified name where a type is
 required, is still a source-located error; there is no separate
 private/exported check. An `(export ...)` form is not a recognized declaration.
 
+Visibility grants read access, not write authority. The module that declares
+a global owns every write to it. In any other module, a write-capable place
+operation whose place is rooted at that global is rejected once the root
+resolves to its declaration, however the name is spelled (alias-qualified,
+full canonical path, selected item with or without `as`, or `.*`), and even
+inside `unsafe`. The rule covers `set!` of the global or of any field, tuple
+element, array element, or `deref` projection reached from it (§5.10),
+`replace!` (§5.10.1), `array-take!`, and `&mut` borrows (§3.10), including one
+passed to a helper. The diagnostic names the global and its defining module.
+Reading the global and taking shared borrows remain allowed, and a local or
+parameter that shadows an imported name is an ordinary local place. A module
+that intends others to change its state exposes a function that performs the
+write. Raw-pointer operations inside `unsafe` keep their own rules.
+
+Macro expansion does not carry write authority: expanded code is checked as
+code of the module it expands into. A macro from module A expanded in module B
+cannot write A's globals directly, whether the write is part of its template
+or syntax the caller passed in, but it may call a function that A defines to
+perform the write. The same macro expanded inside A may write them.
+
+```lisp test=ignore name=module-global-write-authority reason="multi-file example"
+;; counter.tl
+(define count : i64 0)
+(define (bump!) : unit (set! count (+ count 1)))
+
+;; main.tl
+(import counter)
+(define (main) : i64
+  (begin
+    (counter.bump!)           ; ok: the owner performs the write
+    ;; (set! counter.count 5) ; error: only module `counter` may write `count`
+    counter.count))           ; ok: reading is allowed
+```
+
 ```lisp test=ignore name=module-default-visibility reason="module identity example"
 ;; geometry.tl, imported with `(import geometry)`.
 (defstruct Point
@@ -3954,7 +3990,8 @@ move-only values and as copies for copyable values:
   the same reset. The receiver must be an owned fixed-array storage place or a
   mutable reference to one, `T` must be `init`-eligible, and active or explicit
   cleanup ownership is rejected. The ordinary non-Copy global-source rule also
-  applies: resetting a global slot does not permit moving its old owner out.
+  applies: resetting a global slot does not permit moving its old owner out,
+  and a global that another module declares cannot be reset at all (§4.4.2).
 - `replace!` initialized places. `(replace! place replacement)` atomically with
   respect to source initialization transfers the old value to the expression
   result and installs the caller-supplied replacement. Copyable old values are
@@ -4369,6 +4406,8 @@ arena-owned storage escape the scoped region.
 - Function parameters: visible in the function body.
 - `let` bindings: visible in the `let` body only.
 - `set!` mutates storage bindings in scope (locals, parameters, and globals).
+  A global declared by another module is read-only there; only its defining
+  module writes it (§4.4.2).
 - Variables are looked up in order: local bindings → function parameters →
   globals.
 
@@ -4523,6 +4562,8 @@ guards.
 - The type of `expr` must match `var`'s type. Assignment is subject to the
   same move, borrow, and region/lifetime rules as other writes.
 - Returns `unit`.
+- A place rooted at a global that another module declares is rejected, even
+  inside `unsafe`: only the defining module writes its globals (§4.4.2).
 - Field mutation uses dotted `(set! place.field value)`. Tuple, array, and
   safe-indirection writes use `(set! (tuple-ref place index) value)`,
   `(set! (array-ref place index) value)`, and
@@ -4544,8 +4585,9 @@ guards.
   borrowed-Slice elements with literal/runtime indexes, and explicit `deref`
   projections through `Box` or `&mut`.
 - Shared references, temporaries/rvalues, raw pointers, moved fields, partially
-  moved whole roots, non-Copy globals, extern storage, and cleanup-owning or
-  active explicit-cleanup places reject. A selected initialized field may be
+  moved whole roots, non-Copy globals, globals that another module declares
+  (§4.4.2), extern storage, and cleanup-owning or active explicit-cleanup
+  places reject. A selected initialized field may be
   replaced while a disjoint sibling remains moved.
 - `replacement` has the place value type after expected-type, region, and
   lifetime coercion. The result has that same type and is the independent old

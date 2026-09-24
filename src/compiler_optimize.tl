@@ -145074,6 +145074,17 @@
 (define opt-inline-checked-literal-scan : (__tl_dyn-array i64)
   (__tl_make-array i64 3))
 
+;; Set the definition count, literal flag and value cells. Only this module
+;; writes them; tests isolate one scan by saving and restoring them here.
+(define (opt-inline-checked-literal-scan-set!
+  [definitions : i64]
+  [literal : i64]
+  [value : i64]) : unit
+  (begin
+    (set! (array-ref opt-inline-checked-literal-scan 0) definitions)
+    (set! (array-ref opt-inline-checked-literal-scan 1) literal)
+    (set! (array-ref opt-inline-checked-literal-scan 2) value)))
+
 (define (opt-inline-checked-literal-scan-instrs!
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]

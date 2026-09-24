@@ -689,7 +689,8 @@
 (define (compiler-lower-state-from-address [address : i64]) : CompilerLowerState
   (CompilerLowerState address))
 
-(define (compiler-lower-state-from-name-cache [cache : LowerNameCache]) : CompilerLowerState
+(define (compiler-lower-state-from-name-cache
+  [cache : (& cache LowerNameCache)]) : CompilerLowerState
   (compiler-lower-state-from-address cache.owner-address))
 
 (define (compiler-lower-state-new-with-intern-state-and-profile-state
@@ -1908,7 +1909,7 @@
     handoff.frontend-released))
 
 (define (compiler-lower-checked-pools-context
-  [handoff : CompilerLowerCheckedPoolsState]) : ast.AstNodePoolContext
+  [handoff : (& handoff CompilerLowerCheckedPoolsState)]) : ast.AstNodePoolContext
   (match handoff.context
     [(CompilerLowerCheckedPoolsContext.Context pools) pools]
     [(CompilerLowerCheckedPoolsContext.NoContext)
@@ -2039,8 +2040,7 @@
     (if handoff.committed
       (let
         [owned-source-pools : ast.AstNodePoolContext
-          (compiler-lower-checked-pools-context
-            (lower-global-shared-view handoff))]
+          (compiler-lower-checked-pools-context handoff)]
         [source-pools : ast.AstNodePoolContext owned-source-pools]
         [source-arena : i64 (ast.ast-node-pool-context-base-arena source-pools)]
         [expr-capacity : i64
@@ -2118,7 +2118,7 @@
 
 (define (lower-copy-string-into-pools
   [text : String]
-  [pools : ast.AstNodePoolContext]) : String
+  [pools : (& pools ast.AstNodePoolContext)]) : String
   (let
     [base-arena : arena.Arena
       (arena.Arena (ast.ast-node-pool-context-base-arena pools))]
@@ -2126,7 +2126,7 @@
 
 (define (lower-copy-paths-into-pools
   [paths : ast.AstDeclPathList]
-  [pools : ast.AstNodePoolContext]) : ast.AstDeclPathList
+  [pools : (& pools ast.AstNodePoolContext)]) : ast.AstDeclPathList
   (let
     [base-arena : arena.Arena
       (arena.Arena (ast.ast-node-pool-context-base-arena pools))]
@@ -2158,7 +2158,7 @@
 
 (define (lower-clear-macro-expanded-source-caches-into-pools!
   [job-state : tc_core.TcJobState]
-  [pools : ast.AstNodePoolContext]) : unit
+  [pools : (& pools ast.AstNodePoolContext)]) : unit
   (let
     [base-arena : arena.Arena
       (arena.Arena (ast.ast-node-pool-context-base-arena pools))]
@@ -2226,8 +2226,7 @@
                 dest-arena)))
           (let
             [committed-pools : ast.AstNodePoolContext
-              (compiler-lower-checked-pools-context
-                (lower-global-shared-view handoff))]
+              (compiler-lower-checked-pools-context handoff)]
             (ast.ast-node-pool-context-install! committed-pools))
           (ast.ast-node-pool-storage-arenas-destroy!
             old-expr-storage-arena
@@ -5107,7 +5106,7 @@
 
 (define (lower-module-name-cache-store-copy-prefix!
   [source : (__tl_dyn-array LowerNameCache)]
-  [destination : (__tl_dyn-array LowerNameCache)]
+  [destination : (&mut destination (__tl_dyn-array LowerNameCache))]
   [len : i64]) : unit
   (let
     [index : i64 0]
@@ -5128,7 +5127,7 @@
     (begin
       (lower-module-name-cache-store-copy-prefix!
         store.values
-        (owned_view.compiler-owned-shared-view next-values)
+        (&mut next-values)
         store.len)
       (LowerModuleNameCacheStore store.modules next-values store.len))))
 
@@ -5560,7 +5559,7 @@
       (lower-name-cache-lookup-symbol-id cache logical-id fallback))))
 
 (define (lower-name-cache-contains-local-id?
-  [cache : LowerNameCache]
+  [cache : (& cache LowerNameCache)]
   [source-id : i64]) : bool
   (if (< source-id 0)
     false
@@ -6419,7 +6418,7 @@
 
 (define (lower-name-env-add-import-alias-binding-base-cache-symbol-id
   [names : LowerNameEnv]
-  [base-cache : LowerNameCache]
+  [base-cache : (& base-cache LowerNameCache)]
   [dedup-base : bool]
   [alias : String]
   [alias-id : i64]
@@ -6430,8 +6429,7 @@
   [symbol-id : i64]) : LowerNameEnv
   (let
     [lower-state : CompilerLowerState
-      (compiler-lower-state-from-name-cache
-        (lower-global-shared-view base-cache))]
+      (compiler-lower-state-from-name-cache base-cache)]
     [source-id : i64
       (csym.compiler-symbol-module-key-id-by-id alias-id base-id)]
     (begin
@@ -6503,7 +6501,7 @@
 ;; throwaway module-key strings per compile. Presence is decided with the same
 ;; `>= 0` test the render helper itself uses on this API.
 (define (lower-name-cache-alias-symbol-id-or-derived
-  [base-cache : LowerNameCache]
+  [base-cache : (& base-cache LowerNameCache)]
   [logical-id : i64]
   [module : String]
   [source-name : String]
@@ -6522,7 +6520,7 @@
 
 (define (lower-name-env-add-import-alias-binding-base-cache-id
   [names : LowerNameEnv]
-  [base-cache : LowerNameCache]
+  [base-cache : (& base-cache LowerNameCache)]
   [dedup-base : bool]
   [alias : String]
   [alias-id : i64]
@@ -6534,7 +6532,7 @@
   [source-id : i64]) : LowerNameEnv
   (lower-name-env-add-import-alias-binding-base-cache-symbol-id
     names
-    (lower-global-shared-view base-cache)
+    base-cache
     dedup-base
     alias
     alias-id
@@ -6862,7 +6860,7 @@
         (lower-logical-symbol-id-direct? logical-id source-id)))))
 
 (define (lower-name-cache-ir-symbol
-  [names : LowerNameCache]
+  [names : (& names LowerNameCache)]
   [logical-id : i64]
   [source-id : i64]
   [display-name : String]) : i64
@@ -7668,7 +7666,8 @@
     (lower-entry-main-module-set! lower-state module)
     (compiler-lower-state-write! lower-state i64 entry-main-module-id module-id)))
 
-(define (lower-entry-main-logical-id [all-functions : lower_i64_i64_map.Map]) : i64
+(define (lower-entry-main-logical-id
+  [all-functions : (& all-functions lower_i64_i64_map.Map)]) : i64
   (if (lower_i64_i64_map.contains?
     (& all-functions)
     cbi.compiler-builtin-id-fix-main)
@@ -7739,7 +7738,7 @@
         source-id))))
 
 (define (lower-current-decl-logical-name-cache-id
-  [names : LowerNameCache]
+  [names : (& names LowerNameCache)]
   [module : String]
   [source-name : String]
   [source-id : i64]) : String
@@ -7949,7 +7948,7 @@
       (lower-name-env-from-decls-in-module
         lower-state
         (lower-global-shared-view decls)
-        (lower-global-shared-view paths)
+        paths
         (lower-global-shared-view entry-path)
         names
         ""
@@ -7977,7 +7976,7 @@
 (define (lower-name-env-from-decls-in-module
   [lower-state : CompilerLowerState]
   [decls : ast.AstDeclList]
-  [paths : ast.AstDeclPathList]
+  [paths : (& paths ast.AstDeclPathList)]
   [entry-path : String]
   [names : LowerNameEnv]
   [_module : String]
@@ -8174,7 +8173,7 @@
 (define (lower-name-env-add-clone-decls-in-module
   [lower-state : CompilerLowerState]
   [decls : ast.AstDeclList]
-  [paths : ast.AstDeclPathList]
+  [paths : (& paths ast.AstDeclPathList)]
   [entry-path : String]
   [names : LowerNameEnv]
   [roots : clone_support.CloneRootEntries]
@@ -8221,7 +8220,7 @@
 (define (lower-name-env-add-clone-decls
   [lower-state : CompilerLowerState]
   [decls : ast.AstDeclList]
-  [paths : ast.AstDeclPathList]
+  [paths : (& paths ast.AstDeclPathList)]
   [entry-path : String]
   [names : LowerNameEnv]
   [roots : clone_support.CloneRootEntries]
@@ -8458,7 +8457,7 @@
 
 (define (lower-name-env-add-decl-alias-in-module-cache
   [names : LowerNameEnv]
-  [base-cache : LowerNameCache]
+  [base-cache : (& base-cache LowerNameCache)]
   [dedup-base : bool]
   [alias : String]
   [alias-id : i64]
@@ -8470,8 +8469,7 @@
       (let
         [name-str : String
           (lower-name-id-text
-            (compiler-lower-state-from-name-cache
-              (lower-global-shared-view base-cache))
+            (compiler-lower-state-from-name-cache base-cache)
             name)]
         (lower-name-env-add-import-alias-binding-base-cache-id
           names
@@ -8489,8 +8487,7 @@
       (let
         [name-str : String
           (lower-name-id-text
-            (compiler-lower-state-from-name-cache
-              (lower-global-shared-view base-cache))
+            (compiler-lower-state-from-name-cache base-cache)
             name)]
         (lower-name-env-add-import-alias-binding-base-cache-id
           names
@@ -8508,8 +8505,7 @@
       (let
         [name-str : String
           (lower-name-id-text
-            (compiler-lower-state-from-name-cache
-              (lower-global-shared-view base-cache))
+            (compiler-lower-state-from-name-cache base-cache)
             name)]
         (lower-name-env-add-import-alias-binding-base-cache-id
           names
@@ -8527,13 +8523,12 @@
       (let
         [name-str : String
           (lower-name-id-text
-            (compiler-lower-state-from-name-cache
-              (lower-global-shared-view base-cache))
+            (compiler-lower-state-from-name-cache base-cache)
             name)]
         [logical-id : i64 (lower-module-name-key-id-by-id module-id name)]
         (lower-name-env-add-import-alias-binding-base-cache-symbol-id
           names
-          (lower-global-shared-view base-cache)
+          base-cache
           dedup-base
           alias
           alias-id
@@ -8555,8 +8550,7 @@
             [cleanup-name-id : i64 (ci.intern-syntax-id-value cleanup-name)]
             [cleanup-str : String
               (lower-name-id-text
-                (compiler-lower-state-from-name-cache
-                  (lower-global-shared-view base-cache))
+                (compiler-lower-state-from-name-cache base-cache)
                 cleanup-name-id)]
             (lower-name-env-add-import-alias-binding-base-cache-id
               names
@@ -8578,8 +8572,7 @@
             [cleanup-name-id : i64 (ci.intern-syntax-id-value cleanup-name)]
             [cleanup-str : String
               (lower-name-id-text
-                (compiler-lower-state-from-name-cache
-                  (lower-global-shared-view base-cache))
+                (compiler-lower-state-from-name-cache base-cache)
                 cleanup-name-id)]
             (lower-name-env-add-import-alias-binding-base-cache-id
               names
@@ -8601,8 +8594,7 @@
             [cleanup-name-id : i64 (ci.intern-syntax-id-value cleanup-name)]
             [cleanup-str : String
               (lower-name-id-text
-                (compiler-lower-state-from-name-cache
-                  (lower-global-shared-view base-cache))
+                (compiler-lower-state-from-name-cache base-cache)
                 cleanup-name-id)]
             (lower-name-env-add-import-alias-binding-base-cache-id
               names
@@ -8624,8 +8616,7 @@
             [cleanup-name-id : i64 (ci.intern-syntax-id-value cleanup-name)]
             [cleanup-str : String
               (lower-name-id-text
-                (compiler-lower-state-from-name-cache
-                  (lower-global-shared-view base-cache))
+                (compiler-lower-state-from-name-cache base-cache)
                 cleanup-name-id)]
             (lower-name-env-add-import-alias-binding-base-cache-id
               names
@@ -8655,8 +8646,8 @@
 
 (define (lower-name-env-add-module-aliases
   [lower-state : CompilerLowerState]
-  [decls : ast.AstDeclList]
-  [paths : ast.AstDeclPathList]
+  [decls : (& decls ast.AstDeclList)]
+  [paths : (& paths ast.AstDeclPathList)]
   [entry-path : String]
   [names : LowerNameEnv]
   [target-module-id : i64]
@@ -8667,10 +8658,7 @@
     [cur-names : LowerNameEnv names]
     [target-module : String (lower-name-id-text lower-state target-module-id)]
     [alias : String (lower-name-id-text lower-state alias-id)]
-    [_ensure : unit
-      (lower-module-decl-index-ensure!
-        lower-state
-        (lower-global-shared-view decls))]
+    [_ensure : unit (lower-module-decl-index-ensure! lower-state decls)]
     [slot : i64 (lower-module-decl-index-slot lower-state target-module-id)]
     [starts : (__tl_dyn-array i64)
       (compiler-lower-state-read
@@ -8798,7 +8786,7 @@
 
 (define (lower-module-decl-index-ensure!
   [lower-state : CompilerLowerState]
-  [decls : ast.AstDeclList]) : unit
+  [decls : (& decls ast.AstDeclList)]) : unit
   (if (and
     (compiler-lower-state-read lower-state bool module-decl-index-ready)
     (=
@@ -8946,7 +8934,7 @@
 
 (define (lower-name-env-add-module-aliases-cache
   [decls : ast.AstDeclList]
-  [base-cache : LowerNameCache]
+  [base-cache : (& base-cache LowerNameCache)]
   [dedup-base : bool]
   [names : LowerNameEnv]
   [target-module-id : i64]
@@ -8954,13 +8942,9 @@
   [_module-id : i64]) : LowerNameEnv
   (let
     [lower-state : CompilerLowerState
-      (compiler-lower-state-from-name-cache
-        (lower-global-shared-view base-cache))]
+      (compiler-lower-state-from-name-cache base-cache)]
     [cur-names : LowerNameEnv names]
-    [_ensure : unit
-      (lower-module-decl-index-ensure!
-        lower-state
-        (lower-global-shared-view decls))]
+    [_ensure : unit (lower-module-decl-index-ensure! lower-state decls)]
     [slot : i64 (lower-module-decl-index-slot lower-state target-module-id)]
     [starts : (__tl_dyn-array i64)
       (compiler-lower-state-read
@@ -9008,7 +8992,7 @@
                       cur-names
                       (lower-name-env-add-decl-alias-in-module-cache
                         cur-names
-                        (lower-global-shared-view base-cache)
+                        base-cache
                         dedup-base
                         (lower-global-shared-view alias)
                         alias-id
@@ -9054,7 +9038,7 @@
 
 (define (lower-name-env-add-selected-item-alias-cache
   [names : LowerNameEnv]
-  [base-cache : LowerNameCache]
+  [base-cache : (& base-cache LowerNameCache)]
   [importer-module-id : i64]
   [target-module-id : i64]
   [item-id : i64]
@@ -9072,8 +9056,7 @@
     (if (or (< logical-id 0) (< symbol-id 0))
       names
       (lower-name-env-add-import-alias-binding-symbol-id
-        (compiler-lower-state-from-name-cache
-          (lower-global-shared-view base-cache))
+        (compiler-lower-state-from-name-cache base-cache)
         names
         (lower-name-id-text
           (compiler-lower-state-from-name-cache base-cache)
@@ -9149,8 +9132,8 @@
                   cur-names
                   (lower-name-env-add-module-aliases
                     lower-state
-                    (lower-global-shared-view all-decls)
-                    (lower-global-shared-view all-paths)
+                    all-decls
+                    all-paths
                     (lower-global-shared-view entry-path)
                     cur-names
                     target-module
@@ -9188,19 +9171,15 @@
   [all-decls : ast.AstDeclList]
   [decls : ast.AstDeclList]
   [names : LowerNameEnv]
-  [base-cache : LowerNameCache]
+  [base-cache : (& base-cache LowerNameCache)]
   [dedup-base : bool]
   [target-current-module-id : i64]
   [_current-module-id : i64]) : LowerNameEnv
   (let
     [lower-state : CompilerLowerState
-      (compiler-lower-state-from-name-cache
-        (lower-global-shared-view base-cache))]
+      (compiler-lower-state-from-name-cache base-cache)]
     [cur-names : LowerNameEnv names]
-    [_ensure : unit
-      (lower-module-decl-index-ensure!
-        lower-state
-        (lower-global-shared-view decls))]
+    [_ensure : unit (lower-module-decl-index-ensure! lower-state decls)]
     [slot : i64
       (lower-module-decl-index-slot lower-state target-current-module-id)]
     [starts : (__tl_dyn-array i64)
@@ -9250,7 +9229,7 @@
                         cur-names
                         (lower-name-env-add-selected-item-alias-cache
                           cur-names
-                          (lower-global-shared-view base-cache)
+                          base-cache
                           target-current-module-id
                           target-module
                           item
@@ -9267,7 +9246,7 @@
                         cur-names
                         (lower-name-env-add-module-aliases-cache
                           (lower-global-shared-view all-decls)
-                          (lower-global-shared-view base-cache)
+                          base-cache
                           dedup-base
                           cur-names
                           target-module
@@ -9280,7 +9259,7 @@
 (define (lower-name-env-with-import-aliases-in-module-cache
   [decls : ast.AstDeclList]
   [names : LowerNameEnv]
-  [base-cache : LowerNameCache]
+  [base-cache : (& base-cache LowerNameCache)]
   [module-id : i64]) : LowerNameEnv
   ;; Build aliases into a fresh overlay so empty-alias duplicate checks do not
   ;; rescan the whole base env for every imported decl.
@@ -9294,7 +9273,7 @@
         (lower-global-shared-view decls)
         decls
         LowerNameEnv.Nil
-        (lower-global-shared-view base-cache)
+        base-cache
         dedup-base
         module-id
         cbi.compiler-builtin-id-fix-empty)]
@@ -9526,10 +9505,7 @@
     [cur-type-env : tc_core.TcTypeEnv type-env]
     [cur-local-type-env : tc_core.TcTypeEnv local-type-env]
     [cur-local-names : LowerNameEnv local-names]
-    [_ensure : unit
-      (lower-module-decl-index-ensure!
-        lower-state
-        (lower-global-shared-view decls))]
+    [_ensure : unit (lower-module-decl-index-ensure! lower-state decls)]
     [slot : i64 (lower-module-decl-index-slot lower-state target-module-id)]
     [starts : (__tl_dyn-array i64)
       (compiler-lower-state-read
@@ -9623,7 +9599,7 @@
             (lower-name-env-with-import-aliases-in-module-cache
               (lower-global-shared-view decls)
               (LowerNameEnv.Nil)
-              (lower-global-shared-view name-cache)
+              name-cache
               module-id)]
           (lower-module-local-envs-list
             top-env
@@ -9638,7 +9614,7 @@
 
 (define (lower-module-local-view-store-copy-prefix!
   [source : (__tl_dyn-array LowerModuleLocalView)]
-  [destination : (__tl_dyn-array LowerModuleLocalView)]
+  [destination : (&mut destination (__tl_dyn-array LowerModuleLocalView))]
   [len : i64]) : unit
   (let
     [index : i64 0]
@@ -9659,7 +9635,7 @@
     (begin
       (lower-module-local-view-store-copy-prefix!
         store.values
-        (owned_view.compiler-owned-shared-view next-values)
+        (&mut next-values)
         store.len)
       (LowerModuleLocalViewStore store.modules next-values store.len))))
 
@@ -9889,7 +9865,7 @@
 (define (lower-id-set-empty) : LowerIdSet
   (LowerIdSet (__tl_make-array i64 0) 0))
 
-(define (lower-id-set-contains? [items : LowerIdSet] [name : i64]) : bool
+(define (lower-id-set-contains? [items : (& items LowerIdSet)] [name : i64]) : bool
   (let
     [index : i64 items.len]
     [found : bool false]
@@ -9903,7 +9879,7 @@
       found)))
 
 (define (lower-id-set-insert [items : LowerIdSet] [name : i64]) : LowerIdSet
-  (if (lower-id-set-contains? (lower-global-shared-view items) name)
+  (if (lower-id-set-contains? items name)
     items
     (let
       [len : i64 items.len]
@@ -10626,10 +10602,11 @@
                 (=
                   (csym.compiler-symbol-handle-kind handle)
                   (csym.compiler-symbol-kind-function-define))
-                (lower-id-set-contains?
-                  (compiler-lower-function-state-inline-helper-stack
-                    function-state)
-                  handle))
+                (let
+                  [helper-stack
+                    (compiler-lower-function-state-inline-helper-stack
+                      function-state)]
+                  (lower-id-set-contains? helper-stack handle)))
               (begin
                 (compiler-lower-function-state-recursion-detected-set!
                   function-state
@@ -11971,7 +11948,7 @@
 (define (lower-function-set-from-decls-in-module
   [lower-state : CompilerLowerState]
   [decls : ast.AstDeclList]
-  [paths : ast.AstDeclPathList]
+  [paths : (& paths ast.AstDeclPathList)]
   [entry-path : String]
   [_module : String]
   [module-id : i64]
@@ -12036,7 +12013,7 @@
 (define (lower-function-set-from-decls
   [lower-state : CompilerLowerState]
   [decls : ast.AstDeclList]
-  [paths : ast.AstDeclPathList]
+  [paths : (& paths ast.AstDeclPathList)]
   [entry-path : String]) : lower_i64_i64_map.Map
   (lower-function-set-from-decls-in-module
     lower-state
@@ -12048,7 +12025,7 @@
     (lower_i64_i64_map.with-capacity 8192)))
 
 (define (lower-reach-add-logical
-  [all-functions : lower_i64_i64_map.Map]
+  [all-functions : (& all-functions lower_i64_i64_map.Map)]
   [state : LowerReachState]
   [logical-id : i64]) : LowerReachState
   (match (lower_i64_i64_map.get (& all-functions) logical-id)
@@ -12162,7 +12139,7 @@
       0)))
 
 (define (lower-reach-add-runtime-prelude-string-helper-id
-  [all-functions : lower_i64_i64_map.Map]
+  [all-functions : (& all-functions lower_i64_i64_map.Map)]
   [state : LowerReachState]
   [source-id : i64]) : LowerReachState
   (let
@@ -12175,15 +12152,15 @@
     (if (< helper-id 0)
       state
       (lower-reach-add-logical
-        (lower-global-shared-view all-functions)
+        all-functions
         (lower-reach-add-logical all-functions state helper-id)
         (csym.compiler-symbol-module-key-id-by-id
           cbi.compiler-builtin-id-runtime-module
           helper-id)))))
 
 (define (lower-reach-add-string-snapshot-runtime
-  [all-functions : lower_i64_i64_map.Map]
-  [names : LowerNameCache]
+  [all-functions : (& all-functions lower_i64_i64_map.Map)]
+  [names : (& names LowerNameCache)]
   [state : LowerReachState]) : LowerReachState
   ;; Clone-out/capture snapshot lowering copies owned String buffers through
   ;; the fixed `tl_substring` ABI helper, so keep its TypeLisp runtime body
@@ -12198,8 +12175,8 @@
     cbi.compiler-builtin-id-tl-substring))
 
 (define (lower-reach-add-runtime-prelude-string-helper-resolved-id
-  [all-functions : lower_i64_i64_map.Map]
-  [names : LowerNameCache]
+  [all-functions : (& all-functions lower_i64_i64_map.Map)]
+  [names : (& names LowerNameCache)]
   [state : LowerReachState]
   [source-id : i64]) : LowerReachState
   (let
@@ -12222,9 +12199,9 @@
             module-helper-id
             module-helper-id)]
         (lower-reach-add-logical
-          (lower-global-shared-view all-functions)
+          all-functions
           (lower-reach-add-logical
-            (lower-global-shared-view all-functions)
+            all-functions
             (lower-reach-add-runtime-prelude-string-helper-id
               all-functions
               state
@@ -12236,18 +12213,18 @@
 ;; reachability has already completed. Root their TypeLisp runtime exports from
 ;; the source call so pruning cannot leave the generated call unresolved.
 (define (lower-reach-add-string-concat-runtime
-  [all-functions : lower_i64_i64_map.Map]
-  [names : LowerNameCache]
+  [all-functions : (& all-functions lower_i64_i64_map.Map)]
+  [names : (& names LowerNameCache)]
   [state : LowerReachState]) : LowerReachState
   (lower-reach-add-runtime-prelude-string-helper-resolved-id
-    (lower-global-shared-view all-functions)
-    (lower-global-shared-view names)
+    all-functions
+    names
     (lower-reach-add-runtime-prelude-string-helper-resolved-id
-      (lower-global-shared-view all-functions)
-      (lower-global-shared-view names)
+      all-functions
+      names
       (lower-reach-add-runtime-prelude-string-helper-resolved-id
-        (lower-global-shared-view all-functions)
-        (lower-global-shared-view names)
+        all-functions
+        names
         (lower-reach-add-runtime-prelude-string-helper-resolved-id
           all-functions
           names
@@ -12274,7 +12251,7 @@
       (= raw-id cbi.compiler-builtin-id-string-concat))))
 
 (define (lower-reach-stdlib-string-concat-logical-id?
-  [names : LowerNameCache]
+  [names : (& names LowerNameCache)]
   [logical-id : i64]) : bool
   ;; Alias spellings are no longer present once the reach worklist reaches the
   ;; public wrapper. Compare its resolved logical identity instead, so a
@@ -12299,7 +12276,7 @@
         (lower-name-cache-resolve-logical-id (& names) concat-id concat-id)))))
 
 (define (lower-reach-public-string-concat-source-id?
-  [names : LowerNameCache]
+  [names : (& names LowerNameCache)]
   [source-id : i64]) : bool
   ;; Resolve aliases before deciding whether this source call can be fused. The
   ;; generated runtime calls need reachability roots only for a nested public
@@ -12353,7 +12330,7 @@
         [(tc_core.TcMaybeString.No) false]))))
 
 (define (lower-reach-float-to-bits-literal-arg?
-  [pools : ast.AstNodePoolContext]
+  [pools : (& pools ast.AstNodePoolContext)]
   [expr : ast.AstExpr]) : bool
   (match (ast.ast-expr-unspan-with-pools pools expr)
     [(ast.AstExpr.Literal lit)
@@ -12381,8 +12358,8 @@
     [_ false]))
 
 (define (lower-reach-string-concat-call?
-  [pools : ast.AstNodePoolContext]
-  [names : LowerNameCache]
+  [pools : (& pools ast.AstNodePoolContext)]
+  [names : (& names LowerNameCache)]
   [expr : ast.AstExpr]) : bool
   (match (ast.ast-expr-unspan-with-pools pools expr)
     [(ast.AstExpr.Call callee-box args)
@@ -12402,17 +12379,15 @@
     [_ false]))
 
 (define (lower-reach-public-string-concat-tree?
-  [pools : ast.AstNodePoolContext]
-  [names : LowerNameCache]
+  [pools : (& pools ast.AstNodePoolContext)]
+  [names : (& names LowerNameCache)]
   [callee : ast.AstExpr]
-  [args : ast.AstExprList]) : bool
+  [args : (& args ast.AstExprList)]) : bool
   (if (= args.len 2)
     (match (ast.ast-expr-unspan-with-pools pools callee)
       [(ast.AstExpr.Var name)
         (and
-          (lower-reach-public-string-concat-source-id?
-            (lower-global-shared-view names)
-            name)
+          (lower-reach-public-string-concat-source-id? names name)
           (let
             [left : ast.AstExpr
               (ast.ast-node-pool-context-expr-get
@@ -12423,10 +12398,7 @@
                 pools
                 (ast.ast-expr-list-get (& args) 1 0))]
             (or
-              (lower-reach-string-concat-call?
-                (lower-global-shared-view pools)
-                (lower-global-shared-view names)
-                left)
+              (lower-reach-string-concat-call? pools names left)
               (lower-reach-string-concat-call? pools names right))))]
       [_ false])
     false))
@@ -12438,8 +12410,8 @@
     (tc_core.macro-hygiene-global-source-name-id-or session name-id name-id)))
 
 (define (lower-reach-add-source-id
-  [all-functions : lower_i64_i64_map.Map]
-  [names : LowerNameCache]
+  [all-functions : (& all-functions lower_i64_i64_map.Map)]
+  [names : (& names LowerNameCache)]
   [state : LowerReachState]
   [source-id : i64]) : LowerReachState
   (let
@@ -12461,21 +12433,21 @@
         hygiene-logical-id
         (lower-name-cache-resolve-logical-id (& names) mapped-source-id -1))]
     (lower-reach-add-runtime-prelude-string-helper-resolved-id
-      (lower-global-shared-view all-functions)
-      (lower-global-shared-view names)
+      all-functions
+      names
       (lower-reach-add-stdlib-string-public-helper-id
-        (lower-global-shared-view all-functions)
+        all-functions
         names
         (lower-reach-add-runtime-prelude-string-helper-id
-          (lower-global-shared-view all-functions)
+          all-functions
           (lower-reach-add-logical all-functions state logical-id)
           source-id)
         source-id)
       source-id)))
 
 (define (lower-reach-add-stdlib-string-public-helper-id
-  [all-functions : lower_i64_i64_map.Map]
-  [names : LowerNameCache]
+  [all-functions : (& all-functions lower_i64_i64_map.Map)]
+  [names : (& names LowerNameCache)]
   [state : LowerReachState]
   [source-id : i64]) : LowerReachState
   (let
@@ -12580,16 +12552,16 @@
         (+ index 1)))))
 
 (define (lower-reach-expr-list
-  [pools : ast.AstNodePoolContext]
-  [all-functions : lower_i64_i64_map.Map]
+  [pools : (& pools ast.AstNodePoolContext)]
+  [all-functions : (& all-functions lower_i64_i64_map.Map)]
   [names : LowerNameCache]
   [state : LowerReachState]
   [exprs : ast.AstExprList]) : LowerReachState
   (lower-reach-expr-list-at pools all-functions names state (& exprs) 0))
 
 (define (lower-reach-expr-list-at
-  [pools : ast.AstNodePoolContext]
-  [all-functions : lower_i64_i64_map.Map]
+  [pools : (& pools ast.AstNodePoolContext)]
+  [all-functions : (& all-functions lower_i64_i64_map.Map)]
   [names : LowerNameCache]
   [state : LowerReachState]
   [exprs : (& exprs ast.AstExprList)]
@@ -12600,24 +12572,24 @@
       [expr-id : i64 (ast.ast-expr-list-get exprs index 0)]
       [expr : ast.AstExpr (ast.ast-node-pool-context-expr-get pools expr-id)]
       (lower-reach-expr-list-at
-        (lower-global-shared-view pools)
-        (lower-global-shared-view all-functions)
+        pools
+        all-functions
         (lower-global-shared-view names)
         (lower-reach-expr pools all-functions names state expr)
         exprs
         (+ index 1)))))
 
 (define (lower-reach-let-bindings
-  [pools : ast.AstNodePoolContext]
-  [all-functions : lower_i64_i64_map.Map]
+  [pools : (& pools ast.AstNodePoolContext)]
+  [all-functions : (& all-functions lower_i64_i64_map.Map)]
   [names : LowerNameCache]
   [state : LowerReachState]
   [bindings : ast.AstLetBindingList]) : LowerReachState
   (lower-reach-let-bindings-at pools all-functions names state (& bindings) 0))
 
 (define (lower-reach-let-bindings-at
-  [pools : ast.AstNodePoolContext]
-  [all-functions : lower_i64_i64_map.Map]
+  [pools : (& pools ast.AstNodePoolContext)]
+  [all-functions : (& all-functions lower_i64_i64_map.Map)]
   [names : LowerNameCache]
   [state : LowerReachState]
   [bindings : (& bindings ast.AstLetBindingList)]
@@ -12633,24 +12605,24 @@
           [value : ast.AstExpr
             (ast.ast-node-pool-context-expr-get pools value-box)]
           (lower-reach-let-bindings-at
-            (lower-global-shared-view pools)
-            (lower-global-shared-view all-functions)
+            pools
+            all-functions
             (lower-global-shared-view names)
             (lower-reach-expr pools all-functions names state value)
             bindings
             (+ index 1)))])))
 
 (define (lower-reach-match-arms
-  [pools : ast.AstNodePoolContext]
-  [all-functions : lower_i64_i64_map.Map]
+  [pools : (& pools ast.AstNodePoolContext)]
+  [all-functions : (& all-functions lower_i64_i64_map.Map)]
   [names : LowerNameCache]
   [state : LowerReachState]
   [arms : ast.AstMatchArmList]) : LowerReachState
   (lower-reach-match-arms-at pools all-functions names state (& arms) 0))
 
 (define (lower-reach-match-arms-at
-  [pools : ast.AstNodePoolContext]
-  [all-functions : lower_i64_i64_map.Map]
+  [pools : (& pools ast.AstNodePoolContext)]
+  [all-functions : (& all-functions lower_i64_i64_map.Map)]
   [names : LowerNameCache]
   [state : LowerReachState]
   [arms : (& arms ast.AstMatchArmList)]
@@ -12667,16 +12639,16 @@
               (lower-reach-state-owner (lower-global-shared-view state))
               pattern)
             (lower-reach-match-arms-at
-              (lower-global-shared-view pools)
-              (lower-global-shared-view all-functions)
+              pools
+              all-functions
               (lower-global-shared-view names)
               (lower-reach-expr pools all-functions names state body)
               arms
               (+ index 1))))])))
 
 (define (lower-reach-resource-bindings
-  [pools : ast.AstNodePoolContext]
-  [all-functions : lower_i64_i64_map.Map]
+  [pools : (& pools ast.AstNodePoolContext)]
+  [all-functions : (& all-functions lower_i64_i64_map.Map)]
   [names : LowerNameCache]
   [state : LowerReachState]
   [bindings : ast.AstResourceBindingList]) : LowerReachState
@@ -12689,8 +12661,8 @@
     0))
 
 (define (lower-reach-resource-bindings-at
-  [pools : ast.AstNodePoolContext]
-  [all-functions : lower_i64_i64_map.Map]
+  [pools : (& pools ast.AstNodePoolContext)]
+  [all-functions : (& all-functions lower_i64_i64_map.Map)]
   [names : LowerNameCache]
   [state : LowerReachState]
   [bindings : (& bindings ast.AstResourceBindingList)]
@@ -12708,12 +12680,12 @@
           [cleanup : ast.AstExpr
             (ast.ast-node-pool-context-expr-get pools cleanup-box)]
           (lower-reach-resource-bindings-at
-            (lower-global-shared-view pools)
-            (lower-global-shared-view all-functions)
+            pools
+            all-functions
             (lower-global-shared-view names)
             (lower-reach-expr
-              (lower-global-shared-view pools)
-              (lower-global-shared-view all-functions)
+              pools
+              all-functions
               (lower-global-shared-view names)
               (lower-reach-expr pools all-functions names state acquire)
               cleanup)
@@ -12985,7 +12957,7 @@
 
 (define (lower-clone-handoff-source-conflict-in-module
   [lower-state : CompilerLowerState]
-  [source-decls : ast.AstDeclList]
+  [source-decls : (& source-decls ast.AstDeclList)]
   [roots : clone_support.CloneRootEntries]
   [module-id : i64]) : i64
   ;; Index cursor rather than `ast-decl-list-step`; the first non-negative root
@@ -13024,7 +12996,7 @@
 
 (define (lower-clone-handoff-source-conflict
   [lower-state : CompilerLowerState]
-  [source-decls : ast.AstDeclList]
+  [source-decls : (& source-decls ast.AstDeclList)]
   [roots : clone_support.CloneRootEntries]) : i64
   (lower-clone-handoff-source-conflict-in-module
     lower-state
@@ -13220,7 +13192,7 @@
               handoff-roots)
             (lower-clone-handoff-source-conflict
               lower-state
-              (lower-global-shared-view source-decls)
+              source-decls
               handoff-roots))]
         (if (>= conflict 0)
           (ResultLowerCloneAugment.Err
@@ -13286,12 +13258,12 @@
             (ResultLowerCheckedContext.Err message)]))]))
 
 (define (lower-reach-call-callee
-  [pools : ast.AstNodePoolContext]
-  [all-functions : lower_i64_i64_map.Map]
+  [pools : (& pools ast.AstNodePoolContext)]
+  [all-functions : (& all-functions lower_i64_i64_map.Map)]
   [names : LowerNameCache]
   [state : LowerReachState]
   [callee : ast.AstExpr]
-  [args : ast.AstExprList]) : LowerReachState
+  [args : (& args ast.AstExprList)]) : LowerReachState
   (match (ast.ast-expr-unspan-with-pools
     pools
     (lower-global-shared-view callee))
@@ -13301,7 +13273,7 @@
       (if (and
         (= args.len 1)
         (lower-reach-float-to-bits-literal-arg?
-          (lower-global-shared-view pools)
+          pools
           (ast.ast-node-pool-context-expr-get
             pools
             (ast.ast-expr-list-get (& args) 0 0)))
@@ -13313,8 +13285,8 @@
     [_ (lower-reach-expr pools all-functions names state callee)]))
 
 (define (lower-reach-expr
-  [pools : ast.AstNodePoolContext]
-  [all-functions : lower_i64_i64_map.Map]
+  [pools : (& pools ast.AstNodePoolContext)]
+  [all-functions : (& all-functions lower_i64_i64_map.Map)]
   [names : LowerNameCache]
   [state : LowerReachState]
   [expr : ast.AstExpr]) : LowerReachState
@@ -13326,7 +13298,7 @@
         (lower-reach-expr pools all-functions names state inner))]
     [(ast.AstExpr.MacroExpansion inner-box _ _)
       (lower-reach-expr
-        (lower-global-shared-view pools)
+        pools
         all-functions
         names
         state
@@ -13339,8 +13311,8 @@
         [lhs : ast.AstExpr (ast.ast-node-pool-context-expr-get pools lhs-box)]
         [rhs : ast.AstExpr (ast.ast-node-pool-context-expr-get pools rhs-box)]
         (lower-reach-expr
-          (lower-global-shared-view pools)
-          (lower-global-shared-view all-functions)
+          pools
+          all-functions
           (lower-global-shared-view names)
           (lower-reach-expr pools all-functions names state lhs)
           rhs))]
@@ -13355,12 +13327,12 @@
           (ast.ast-node-pool-context-expr-get pools callee-box)]
         [callee-state : LowerReachState
           (lower-reach-call-callee
-            (lower-global-shared-view pools)
-            (lower-global-shared-view all-functions)
+            pools
+            all-functions
             (lower-global-shared-view names)
             state
             (lower-global-shared-view callee)
-            (lower-global-shared-view args))]
+            args)]
         [concat-state : LowerReachState
           (match (ast.ast-expr-unspan-with-pools
             pools
@@ -13371,13 +13343,13 @@
                   (lower-name-cache-structural-session (& names))
                   name)
                 (lower-reach-public-string-concat-tree?
-                  (lower-global-shared-view pools)
-                  (lower-global-shared-view names)
+                  pools
+                  names
                   (lower-global-shared-view callee)
-                  (lower-global-shared-view args)))
+                  args))
                 (lower-reach-add-string-concat-runtime
-                  (lower-global-shared-view all-functions)
-                  (lower-global-shared-view names)
+                  all-functions
+                  names
                   callee-state)
                 callee-state)]
             [_ callee-state])]
@@ -13388,8 +13360,8 @@
                 (lower-name-cache-structural-session (& names))
                 name)
                 (lower-reach-add-string-snapshot-runtime
-                  (lower-global-shared-view all-functions)
-                  (lower-global-shared-view names)
+                  all-functions
+                  names
                   concat-state)
                 concat-state)]
             [_ concat-state])]
@@ -13402,12 +13374,12 @@
         [else-expr : ast.AstExpr
           (ast.ast-node-pool-context-expr-get pools else-expr-box)]
         (lower-reach-expr
-          (lower-global-shared-view pools)
-          (lower-global-shared-view all-functions)
+          pools
+          all-functions
           (lower-global-shared-view names)
           (lower-reach-expr
-            (lower-global-shared-view pools)
-            (lower-global-shared-view all-functions)
+            pools
+            all-functions
             (lower-global-shared-view names)
             (lower-reach-expr pools all-functions names state cond)
             then-expr)
@@ -13419,8 +13391,8 @@
             [body : ast.AstExpr
               (ast.ast-node-pool-context-expr-get pools body-box)]
             (lower-reach-expr
-              (lower-global-shared-view pools)
-              (lower-global-shared-view all-functions)
+              pools
+              all-functions
               (lower-global-shared-view names)
               (lower-reach-let-bindings
                 pools
@@ -13437,7 +13409,7 @@
               (ast.ast-node-pool-context-expr-get pools body-box)]
             (lower-reach-expr
               pools
-              (lower-global-shared-view all-functions)
+              all-functions
               (lower-global-shared-view names)
               (lower-reach-add-string-snapshot-runtime
                 all-functions
@@ -13470,8 +13442,8 @@
         [index : ast.AstExpr
           (ast.ast-node-pool-context-expr-get pools index-box)]
         (lower-reach-expr
-          (lower-global-shared-view pools)
-          (lower-global-shared-view all-functions)
+          pools
+          all-functions
           (lower-global-shared-view names)
           (lower-reach-expr pools all-functions names state array)
           index))]
@@ -13482,8 +13454,8 @@
         [replacement : ast.AstExpr
           (ast.ast-node-pool-context-expr-get pools replacement-box)]
         (lower-reach-expr
-          (lower-global-shared-view pools)
-          (lower-global-shared-view all-functions)
+          pools
+          all-functions
           (lower-global-shared-view names)
           (lower-reach-expr pools all-functions names state place)
           replacement))]
@@ -13496,12 +13468,12 @@
         [value : ast.AstExpr
           (ast.ast-node-pool-context-expr-get pools value-box)]
         (lower-reach-expr
-          (lower-global-shared-view pools)
-          (lower-global-shared-view all-functions)
+          pools
+          all-functions
           (lower-global-shared-view names)
           (lower-reach-expr
-            (lower-global-shared-view pools)
-            (lower-global-shared-view all-functions)
+            pools
+            all-functions
             (lower-global-shared-view names)
             (lower-reach-expr pools all-functions names state array)
             index)
@@ -13514,12 +13486,12 @@
         [index : ast.AstExpr
           (ast.ast-node-pool-context-expr-get pools index-box)]
         (lower-reach-expr
-          (lower-global-shared-view pools)
-          (lower-global-shared-view all-functions)
+          pools
+          all-functions
           (lower-global-shared-view names)
           (lower-reach-expr
-            (lower-global-shared-view pools)
-            (lower-global-shared-view all-functions)
+            pools
+            all-functions
             (lower-global-shared-view names)
             (lower-reach-expr pools all-functions names state array)
             live)
@@ -13531,8 +13503,8 @@
         [index : ast.AstExpr
           (ast.ast-node-pool-context-expr-get pools index-box)]
         (lower-reach-expr
-          (lower-global-shared-view pools)
-          (lower-global-shared-view all-functions)
+          pools
+          all-functions
           (lower-global-shared-view names)
           (lower-reach-expr pools all-functions names state array)
           index))]
@@ -13543,8 +13515,8 @@
         [value : ast.AstExpr
           (ast.ast-node-pool-context-expr-get pools value-box)]
         (lower-reach-expr
-          (lower-global-shared-view pools)
-          (lower-global-shared-view all-functions)
+          pools
+          all-functions
           (lower-global-shared-view names)
           (lower-reach-expr pools all-functions names state array)
           value))]
@@ -13554,8 +13526,8 @@
         [index : ast.AstExpr
           (ast.ast-node-pool-context-expr-get pools index-box)]
         (lower-reach-expr
-          (lower-global-shared-view pools)
-          (lower-global-shared-view all-functions)
+          pools
+          all-functions
           (lower-global-shared-view names)
           (lower-reach-expr pools all-functions names state text)
           index))]
@@ -13564,18 +13536,18 @@
         [cond : ast.AstExpr (ast.ast-node-pool-context-expr-get pools cond-box)]
         [body : ast.AstExpr (ast.ast-node-pool-context-expr-get pools body-box)]
         (lower-reach-expr
-          (lower-global-shared-view pools)
-          (lower-global-shared-view all-functions)
+          pools
+          all-functions
           (lower-global-shared-view names)
           (lower-reach-expr pools all-functions names state cond)
           body))]
     [(ast.AstExpr.ForOwnedState payload)
       (lower-reach-expr
-        (lower-global-shared-view pools)
-        (lower-global-shared-view all-functions)
+        pools
+        all-functions
         (lower-global-shared-view names)
         (lower-reach-expr
-          (lower-global-shared-view pools)
+          pools
           all-functions
           names
           state
@@ -13589,12 +13561,12 @@
       (let
         [expected-type : i64 (ast.ast-for-owned-step-expected-type (& payload))]
         (lower-reach-expr
-          (lower-global-shared-view pools)
-          (lower-global-shared-view all-functions)
+          pools
+          all-functions
           (lower-global-shared-view names)
           (if (>= expected-type 0)
             (lower-reach-expr
-              (lower-global-shared-view pools)
+              pools
               all-functions
               names
               state
@@ -13634,8 +13606,8 @@
             [value : ast.AstExpr
               (ast.ast-node-pool-context-expr-get pools value-box)]
             (lower-reach-match-arms
-              (lower-global-shared-view pools)
-              (lower-global-shared-view all-functions)
+              pools
+              all-functions
               (lower-global-shared-view names)
               (lower-reach-expr pools all-functions names state value)
               arms))])]
@@ -13650,12 +13622,12 @@
             [body : ast.AstExpr
               (ast.ast-node-pool-context-expr-get pools body-box)]
             (lower-reach-expr
-              (lower-global-shared-view pools)
-              (lower-global-shared-view all-functions)
+              pools
+              all-functions
               (lower-global-shared-view names)
               (lower-reach-expr
-                (lower-global-shared-view pools)
-                (lower-global-shared-view all-functions)
+                pools
+                all-functions
                 (lower-global-shared-view names)
                 (lower-reach-expr pools all-functions names state source)
                 init)
@@ -13680,16 +13652,16 @@
             [reduce-expr : ast.AstExpr
               (ast.ast-node-pool-context-expr-get pools reduce-expr-box)]
             (lower-reach-expr
-              (lower-global-shared-view pools)
-              (lower-global-shared-view all-functions)
+              pools
+              all-functions
               (lower-global-shared-view names)
               (lower-reach-expr
-                (lower-global-shared-view pools)
-                (lower-global-shared-view all-functions)
+                pools
+                all-functions
                 (lower-global-shared-view names)
                 (lower-reach-expr
-                  (lower-global-shared-view pools)
-                  (lower-global-shared-view all-functions)
+                  pools
+                  all-functions
                   (lower-global-shared-view names)
                   (lower-reach-expr pools all-functions names state source)
                   init)
@@ -13720,20 +13692,20 @@
             [body : ast.AstExpr
               (ast.ast-node-pool-context-expr-get pools body-box)]
             (lower-reach-expr
-              (lower-global-shared-view pools)
-              (lower-global-shared-view all-functions)
+              pools
+              all-functions
               (lower-global-shared-view names)
               (lower-reach-expr
-                (lower-global-shared-view pools)
-                (lower-global-shared-view all-functions)
+                pools
+                all-functions
                 (lower-global-shared-view names)
                 (lower-reach-expr
-                  (lower-global-shared-view pools)
-                  (lower-global-shared-view all-functions)
+                  pools
+                  all-functions
                   (lower-global-shared-view names)
                   (lower-reach-expr
-                    (lower-global-shared-view pools)
-                    (lower-global-shared-view all-functions)
+                    pools
+                    all-functions
                     (lower-global-shared-view names)
                     (lower-reach-expr pools all-functions names state start)
                     end)
@@ -13764,20 +13736,20 @@
             [body : ast.AstExpr
               (ast.ast-node-pool-context-expr-get pools body-box)]
             (lower-reach-expr
-              (lower-global-shared-view pools)
-              (lower-global-shared-view all-functions)
+              pools
+              all-functions
               (lower-global-shared-view names)
               (lower-reach-expr
-                (lower-global-shared-view pools)
-                (lower-global-shared-view all-functions)
+                pools
+                all-functions
                 (lower-global-shared-view names)
                 (lower-reach-expr
-                  (lower-global-shared-view pools)
-                  (lower-global-shared-view all-functions)
+                  pools
+                  all-functions
                   (lower-global-shared-view names)
                   (lower-reach-expr
-                    (lower-global-shared-view pools)
-                    (lower-global-shared-view all-functions)
+                    pools
+                    all-functions
                     (lower-global-shared-view names)
                     (lower-reach-expr pools all-functions names state start)
                     end)
@@ -13790,8 +13762,8 @@
           (ast.ast-node-pool-context-expr-get pools value-box)]
         [lane : ast.AstExpr (ast.ast-node-pool-context-expr-get pools lane-box)]
         (lower-reach-expr
-          (lower-global-shared-view pools)
-          (lower-global-shared-view all-functions)
+          pools
+          all-functions
           (lower-global-shared-view names)
           (lower-reach-expr pools all-functions names state value)
           lane))]
@@ -13801,8 +13773,8 @@
           (ast.ast-node-pool-context-expr-get pools value-box)]
         [lane : ast.AstExpr (ast.ast-node-pool-context-expr-get pools lane-box)]
         (lower-reach-expr
-          (lower-global-shared-view pools)
-          (lower-global-shared-view all-functions)
+          pools
+          all-functions
           (lower-global-shared-view names)
           (lower-reach-expr pools all-functions names state value)
           lane))]
@@ -13818,8 +13790,8 @@
         [value : ast.AstExpr
           (ast.ast-node-pool-context-expr-get pools value-box)]
         (lower-reach-expr
-          (lower-global-shared-view pools)
-          (lower-global-shared-view all-functions)
+          pools
+          all-functions
           (lower-global-shared-view names)
           (lower-reach-expr pools all-functions names state receiver)
           value))]
@@ -13830,12 +13802,12 @@
         [scratch : ast.AstExpr
           (ast.ast-node-pool-context-expr-get pools scratch-box)]
         (lower-reach-expr-list
-          (lower-global-shared-view pools)
-          (lower-global-shared-view all-functions)
+          pools
+          all-functions
           (lower-global-shared-view names)
           (lower-reach-expr
             pools
-            (lower-global-shared-view all-functions)
+            all-functions
             (lower-global-shared-view names)
             (lower-reach-add-string-snapshot-runtime all-functions names state)
             scratch)
@@ -13843,7 +13815,7 @@
     [(ast.AstExpr.WithScratch exprs)
       (lower-reach-expr-list
         pools
-        (lower-global-shared-view all-functions)
+        all-functions
         (lower-global-shared-view names)
         (lower-reach-add-string-snapshot-runtime all-functions names state)
         exprs)]
@@ -13852,8 +13824,8 @@
         [arena : ast.AstExpr
           (ast.ast-node-pool-context-expr-get pools arena-box)]
         (lower-reach-expr-list
-          (lower-global-shared-view pools)
-          (lower-global-shared-view all-functions)
+          pools
+          all-functions
           (lower-global-shared-view names)
           (lower-reach-expr pools all-functions names state arena)
           exprs))]
@@ -13861,8 +13833,8 @@
       (match (__tl-box-place wr-box)
         [(ast.AstWithResource.WithResource bindings body)
           (lower-reach-expr-list
-            (lower-global-shared-view pools)
-            (lower-global-shared-view all-functions)
+            pools
+            all-functions
             (lower-global-shared-view names)
             (lower-reach-resource-bindings
               pools
@@ -13893,8 +13865,8 @@
         [value : ast.AstExpr
           (ast.ast-node-pool-context-expr-get pools value-box)]
         (lower-reach-expr
-          (lower-global-shared-view pools)
-          (lower-global-shared-view all-functions)
+          pools
+          all-functions
           (lower-global-shared-view names)
           (lower-reach-expr pools all-functions names state inner)
           value))]
@@ -13952,8 +13924,8 @@
         [value : ast.AstExpr
           (ast.ast-node-pool-context-expr-get pools value-box)]
         (lower-reach-expr
-          (lower-global-shared-view pools)
-          (lower-global-shared-view all-functions)
+          pools
+          all-functions
           (lower-global-shared-view names)
           (lower-reach-expr pools all-functions names state ptr)
           value))]
@@ -13963,8 +13935,8 @@
         [offset : ast.AstExpr
           (ast.ast-node-pool-context-expr-get pools offset-box)]
         (lower-reach-expr
-          (lower-global-shared-view pools)
-          (lower-global-shared-view all-functions)
+          pools
+          all-functions
           (lower-global-shared-view names)
           (lower-reach-expr pools all-functions names state ptr)
           offset))]
@@ -13991,8 +13963,8 @@
         [ptr : ast.AstExpr (ast.ast-node-pool-context-expr-get pools ptr-box)]
         [len : ast.AstExpr (ast.ast-node-pool-context-expr-get pools len-box)]
         (lower-reach-expr
-          (lower-global-shared-view pools)
-          (lower-global-shared-view all-functions)
+          pools
+          all-functions
           (lower-global-shared-view names)
           (lower-reach-expr pools all-functions names state ptr)
           len))]
@@ -14013,8 +13985,8 @@
         [subleaf : ast.AstExpr
           (ast.ast-node-pool-context-expr-get pools subleaf-box)]
         (lower-reach-expr
-          (lower-global-shared-view pools)
-          (lower-global-shared-view all-functions)
+          pools
+          all-functions
           (lower-global-shared-view names)
           (lower-reach-expr pools all-functions names state leaf)
           subleaf))]
@@ -14024,8 +13996,8 @@
         [subleaf : ast.AstExpr
           (ast.ast-node-pool-context-expr-get pools subleaf-box)]
         (lower-reach-expr
-          (lower-global-shared-view pools)
-          (lower-global-shared-view all-functions)
+          pools
+          all-functions
           (lower-global-shared-view names)
           (lower-reach-expr pools all-functions names state leaf)
           subleaf))]
@@ -14035,8 +14007,8 @@
         [subleaf : ast.AstExpr
           (ast.ast-node-pool-context-expr-get pools subleaf-box)]
         (lower-reach-expr
-          (lower-global-shared-view pools)
-          (lower-global-shared-view all-functions)
+          pools
+          all-functions
           (lower-global-shared-view names)
           (lower-reach-expr pools all-functions names state leaf)
           subleaf))]
@@ -14046,8 +14018,8 @@
         [subleaf : ast.AstExpr
           (ast.ast-node-pool-context-expr-get pools subleaf-box)]
         (lower-reach-expr
-          (lower-global-shared-view pools)
-          (lower-global-shared-view all-functions)
+          pools
+          all-functions
           (lower-global-shared-view names)
           (lower-reach-expr pools all-functions names state leaf)
           subleaf))]
@@ -14060,8 +14032,8 @@
       (lower-reach-expr-list pools all-functions names state args)]))
 
 (define (lower-reach-global-decl
-  [pools : ast.AstNodePoolContext]
-  [all-functions : lower_i64_i64_map.Map]
+  [pools : (& pools ast.AstNodePoolContext)]
+  [all-functions : (& all-functions lower_i64_i64_map.Map)]
   [names : LowerNameCache]
   [state : LowerReachState]
   [decl : ast.AstDecl]) : LowerReachState
@@ -14078,8 +14050,8 @@
     [_ state]))
 
 (define (lower-reach-global-decls
-  [pools : ast.AstNodePoolContext]
-  [all-functions : lower_i64_i64_map.Map]
+  [pools : (& pools ast.AstNodePoolContext)]
+  [all-functions : (& all-functions lower_i64_i64_map.Map)]
   [names : LowerNameCache]
   [state : LowerReachState]
   [decls : ast.AstDeclList]
@@ -14127,8 +14099,8 @@
               [expr : ast.AstExpr
                 (ast.ast-node-pool-context-expr-get pools expr-box)]
               (lower-reach-global-decls
-                (lower-global-shared-view pools)
-                (lower-global-shared-view all-functions)
+                pools
+                all-functions
                 names
                 (lower-reach-expr pools all-functions decl-names state expr)
                 rest
@@ -14149,8 +14121,8 @@
             (let
               [inner : ast.AstDecl (deref inner-box)]
               (lower-reach-global-decls
-                (lower-global-shared-view pools)
-                (lower-global-shared-view all-functions)
+                pools
+                all-functions
                 names
                 (lower-reach-global-decl
                   pools
@@ -14174,12 +14146,12 @@
               module-id)]))]))
 
 (define (lower-reach-struct-field-cleanup-roots
-  [all-functions : lower_i64_i64_map.Map]
+  [all-functions : (& all-functions lower_i64_i64_map.Map)]
   [entry-path : String]
   [decl-path : String]
   [module : String]
   [module-id : i64]
-  [names : LowerNameCache]
+  [names : (& names LowerNameCache)]
   [state : LowerReachState]
   [fields : ast.AstFieldDefList]) : LowerReachState
   (lower-reach-struct-field-cleanup-roots-at
@@ -14194,12 +14166,12 @@
     0))
 
 (define (lower-reach-struct-field-cleanup-roots-at
-  [all-functions : lower_i64_i64_map.Map]
+  [all-functions : (& all-functions lower_i64_i64_map.Map)]
   [entry-path : String]
   [decl-path : String]
   [module : String]
   [module-id : i64]
-  [names : LowerNameCache]
+  [names : (& names LowerNameCache)]
   [state : LowerReachState]
   [fields : (& fields ast.AstFieldDefList)]
   [index : i64]) : LowerReachState
@@ -14229,10 +14201,7 @@
                           cleanup-name-id)
                         -1)
                       (lower-module-name-key-id-by-id module-id cleanup-name-id))]
-                  (lower-reach-add-logical
-                    (lower-global-shared-view all-functions)
-                    state
-                    logical-id))]
+                  (lower-reach-add-logical all-functions state logical-id))]
               [_ state])])]
       (lower-reach-struct-field-cleanup-roots-at
         all-functions
@@ -14246,12 +14215,12 @@
         (+ index 1)))))
 
 (define (lower-reach-enum-payload-cleanup-roots
-  [all-functions : lower_i64_i64_map.Map]
+  [all-functions : (& all-functions lower_i64_i64_map.Map)]
   [entry-path : String]
   [decl-path : String]
   [module : String]
   [module-id : i64]
-  [names : LowerNameCache]
+  [names : (& names LowerNameCache)]
   [state : LowerReachState]
   [variants : ast.AstVariantDefList]) : LowerReachState
   (lower-reach-enum-payload-cleanup-roots-at
@@ -14267,12 +14236,12 @@
     0))
 
 (define (lower-reach-enum-payload-cleanup-roots-at
-  [all-functions : lower_i64_i64_map.Map]
+  [all-functions : (& all-functions lower_i64_i64_map.Map)]
   [entry-path : String]
   [decl-path : String]
   [module : String]
   [module-id : i64]
-  [names : LowerNameCache]
+  [names : (& names LowerNameCache)]
   [state : LowerReachState]
   [variants : (& variants ast.AstVariantDefList)]
   [variant-index : i64]
@@ -14322,10 +14291,7 @@
                         (lower-module-name-key-id-by-id
                           module-id
                           cleanup-name-id))]
-                    (lower-reach-add-logical
-                      (lower-global-shared-view all-functions)
-                      state
-                      logical-id))]
+                    (lower-reach-add-logical all-functions state logical-id))]
                 [_ state])]
             (lower-reach-enum-payload-cleanup-roots-at
               all-functions
@@ -14340,7 +14306,7 @@
               (+ payload-index 1))))])))
 
 (define (lower-reach-cleanup-metadata-roots-in-module
-  [all-functions : lower_i64_i64_map.Map]
+  [all-functions : (& all-functions lower_i64_i64_map.Map)]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]
   [entry-path : String]
@@ -14379,54 +14345,54 @@
             [(ast.AstDecl.DefStruct decl-meta _ _ cleanup fields)
               (if (ast.ast-struct-cleanup? cleanup)
                 (lower-reach-struct-field-cleanup-roots
-                  (lower-global-shared-view all-functions)
+                  all-functions
                   (lower-global-shared-view entry-path)
                   decl-path
                   logical-module
                   logical-module-id
-                  (lower-global-shared-view names)
+                  names
                   state
                   fields)
                 state)]
             [(ast.AstDecl.DefStructLifetimes decl-meta _ _ _ cleanup fields)
               (if (ast.ast-struct-cleanup? cleanup)
                 (lower-reach-struct-field-cleanup-roots
-                  (lower-global-shared-view all-functions)
+                  all-functions
                   (lower-global-shared-view entry-path)
                   decl-path
                   logical-module
                   logical-module-id
-                  (lower-global-shared-view names)
+                  names
                   state
                   fields)
                 state)]
             [(ast.AstDecl.DefEnum decl-meta _ cleanup variants)
               (if (ast.ast-enum-cleanup? cleanup)
                 (lower-reach-enum-payload-cleanup-roots
-                  (lower-global-shared-view all-functions)
+                  all-functions
                   (lower-global-shared-view entry-path)
                   decl-path
                   logical-module
                   logical-module-id
-                  (lower-global-shared-view names)
+                  names
                   state
                   variants)
                 state)]
             [(ast.AstDecl.DefEnumLifetimes decl-meta _ _ cleanup variants)
               (if (ast.ast-enum-cleanup? cleanup)
                 (lower-reach-enum-payload-cleanup-roots
-                  (lower-global-shared-view all-functions)
+                  all-functions
                   (lower-global-shared-view entry-path)
                   decl-path
                   logical-module
                   logical-module-id
-                  (lower-global-shared-view names)
+                  names
                   state
                   variants)
                 state)]
             [(ast.AstDecl.Module next-module)
               (lower-reach-cleanup-metadata-roots-in-module
-                (lower-global-shared-view all-functions)
+                all-functions
                 (lower-global-shared-view rest)
                 (lower-global-shared-view rest-paths)
                 (lower-global-shared-view entry-path)
@@ -14463,7 +14429,7 @@
 ;; Was O(modules x global-names): a fresh full cache was rebuilt per module.
 (define (lower-function-body-name-cache-for-module
   [decls : ast.AstDeclList]
-  [_paths : ast.AstDeclPathList]
+  [_paths : (& _paths ast.AstDeclPathList)]
   [_entry-path : String]
   [_base-names : LowerNameEnv]
   [base-cache : LowerNameCache]
@@ -14471,8 +14437,7 @@
   [module-id : i64]) : LowerNameCache
   (let
     [lower-state : CompilerLowerState
-      (compiler-lower-state-from-name-cache
-        (lower-global-shared-view base-cache))]
+      (compiler-lower-state-from-name-cache base-cache)]
     (if (string.eq module "")
       base-cache
       (match (lower-active-module-name-cache-lookup lower-state module-id)
@@ -14538,7 +14503,7 @@
       (LowerFunctionBodyIndex ids bodies (+ next 1)))))
 
 (define (lower-function-body-index-find
-  [index : LowerFunctionBodyIndex]
+  [index : (& index LowerFunctionBodyIndex)]
   [target : i64]) : LowerMaybeFunctionBody
   (match (lower_i64_i64_map.get (& index.ids) target)
     [(lower_i64_i64_map.LookupFound body-index)
@@ -14547,14 +14512,14 @@
 
 (define (lower-function-body-index-from-decls-in-module
   [lower-state : CompilerLowerState]
-  [pools : ast.AstNodePoolContext]
+  [pools : (& pools ast.AstNodePoolContext)]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]
   [entry-path : String]
   [module : String]
   [module-id : i64]
   [all-decls : ast.AstDeclList]
-  [all-paths : ast.AstDeclPathList]
+  [all-paths : (& all-paths ast.AstDeclPathList)]
   [base-names : LowerNameEnv]
   [base-name-cache : LowerNameCache]
   [module-name-cache : LowerNameCache]
@@ -14601,7 +14566,7 @@
                 (lower-global-shared-view next-module-str)
                 next-module
                 (lower-global-shared-view all-decls)
-                (lower-global-shared-view all-paths)
+                all-paths
                 (lower-global-shared-view base-names)
                 (lower-global-shared-view base-name-cache)
                 (lower-function-body-name-cache-for-module
@@ -14667,7 +14632,7 @@
 
 (define (lower-function-body-index-from-decls
   [lower-state : CompilerLowerState]
-  [pools : ast.AstNodePoolContext]
+  [pools : (& pools ast.AstNodePoolContext)]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]
   [entry-path : String]
@@ -14698,8 +14663,8 @@
         (lower-function-body-index-empty count)))))
 
 (define (lower-reach-process
-  [pools : ast.AstNodePoolContext]
-  [all-functions : lower_i64_i64_map.Map]
+  [pools : (& pools ast.AstNodePoolContext)]
+  [all-functions : (& all-functions lower_i64_i64_map.Map)]
   [names : LowerNameCache]
   [body-index : LowerFunctionBodyIndex]
   [state : LowerReachState]) : LowerReachState
@@ -14716,9 +14681,7 @@
                 reachable
                 (LowerIdSet worklist.slots top)
                 lower-state)]
-            (match (lower-function-body-index-find
-              (lower-global-shared-view body-index)
-              name)
+            (match (lower-function-body-index-find body-index name)
               [(LowerMaybeFunctionBody.Some body body-names body-path-owner-id)
                 (begin
                   (let
@@ -14738,8 +14701,8 @@
                         reach-active-runtime-paths
                         runtime-paths)))
                   (lower-reach-process
-                    (lower-global-shared-view pools)
-                    (lower-global-shared-view all-functions)
+                    pools
+                    all-functions
                     names
                     body-index
                     (lower-reach-expr
@@ -14782,7 +14745,7 @@
 
 (define (lower-dispatch-variant-logical-id
   [module-id : i64]
-  [names : LowerNameCache]
+  [names : (& names LowerNameCache)]
   [variant-name : i64]) : i64
   (let
     [source-id : i64
@@ -14796,7 +14759,7 @@
   [variants : (& variants ast.AstDispatchVariantList)]
   [index : i64]
   [module-id : i64]
-  [names : LowerNameCache]
+  [names : (& names LowerNameCache)]
   [out : lower_i64_i64_map.Map]) : lower_i64_i64_map.Map
   (if (>= index variants.len)
     out
@@ -14809,7 +14772,7 @@
           variants
           (+ index 1)
           module-id
-          (lower-global-shared-view names)
+          names
           (let
             [next-out : lower_i64_i64_map.Map out]
             (begin
@@ -14822,14 +14785,14 @@
 (define (lower-dispatch-variant-set-add-list
   [variants : ast.AstDispatchVariantList]
   [module-id : i64]
-  [names : LowerNameCache]
+  [names : (& names LowerNameCache)]
   [out : lower_i64_i64_map.Map]) : lower_i64_i64_map.Map
   (lower-dispatch-variant-set-add-list-from (& variants) 0 module-id names out))
 
 (define (lower-dispatch-variant-set-add-decl
   [decl : ast.AstDecl]
   [module-id : i64]
-  [names : LowerNameCache]
+  [names : (& names LowerNameCache)]
   [out : lower_i64_i64_map.Map]) : lower_i64_i64_map.Map
   (match decl
     [(ast.AstDecl.DefDispatch decl-meta _ variants)
@@ -14842,9 +14805,9 @@
 
 (define (lower-dispatch-variant-set-from-decls-in-module
   [decls : ast.AstDeclList]
-  [paths : ast.AstDeclPathList]
+  [paths : (& paths ast.AstDeclPathList)]
   [entry-path : String]
-  [names : LowerNameCache]
+  [names : (& names LowerNameCache)]
   [out : lower_i64_i64_map.Map]) : lower_i64_i64_map.Map
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
@@ -14865,8 +14828,7 @@
               (lower-global-shared-view entry-path))]
           [logical-module-id : i64
             (lower-decl-owner-module-id
-              (compiler-lower-state-from-name-cache
-                (lower-global-shared-view names))
+              (compiler-lower-state-from-name-cache names)
               (& paths)
               index
               (lower-global-shared-view entry-path)
@@ -14882,16 +14844,16 @@
                   (lower-dispatch-variant-set-add-decl
                     decl
                     logical-module-id
-                    (lower-global-shared-view names)
+                    names
                     cur-out))])
             (set! index (+ index 1)))))
       cur-out)))
 
 (define (lower-dispatch-variant-set-from-decls
   [decls : ast.AstDeclList]
-  [paths : ast.AstDeclPathList]
+  [paths : (& paths ast.AstDeclPathList)]
   [entry-path : String]
-  [names : LowerNameCache]) : lower_i64_i64_map.Map
+  [names : (& names LowerNameCache)]) : lower_i64_i64_map.Map
   (lower-dispatch-variant-set-from-decls-in-module
     decls
     paths
@@ -14900,9 +14862,9 @@
     (lower_i64_i64_map.with-capacity 1024)))
 
 (define (lower-reach-add-dispatch-variant-list-from
-  [all-functions : lower_i64_i64_map.Map]
+  [all-functions : (& all-functions lower_i64_i64_map.Map)]
   [module-id : i64]
-  [names : LowerNameCache]
+  [names : (& names LowerNameCache)]
   [variants : (& variants ast.AstDispatchVariantList)]
   [index : i64]
   [state : LowerReachState]) : LowerReachState
@@ -14914,9 +14876,9 @@
       (ast.ast-dispatch-variant-fallback))
       [(ast.AstDispatchVariant.Variant _ variant-name)
         (lower-reach-add-dispatch-variant-list-from
-          (lower-global-shared-view all-functions)
+          all-functions
           module-id
-          (lower-global-shared-view names)
+          names
           variants
           (+ index 1)
           (lower-reach-add-logical
@@ -14925,9 +14887,9 @@
             (lower-dispatch-variant-logical-id module-id names variant-name)))])))
 
 (define (lower-reach-add-dispatch-variant-list
-  [all-functions : lower_i64_i64_map.Map]
+  [all-functions : (& all-functions lower_i64_i64_map.Map)]
   [module-id : i64]
-  [names : LowerNameCache]
+  [names : (& names LowerNameCache)]
   [variants : ast.AstDispatchVariantList]
   [state : LowerReachState]) : LowerReachState
   (lower-reach-add-dispatch-variant-list-from
@@ -14939,9 +14901,9 @@
     state))
 
 (define (lower-reach-add-dispatch-variant-decl
-  [all-functions : lower_i64_i64_map.Map]
+  [all-functions : (& all-functions lower_i64_i64_map.Map)]
   [module-id : i64]
-  [names : LowerNameCache]
+  [names : (& names LowerNameCache)]
   [decl : ast.AstDecl]
   [state : LowerReachState]) : LowerReachState
   (match decl
@@ -14964,10 +14926,10 @@
     [_ state]))
 
 (define (lower-reach-add-dispatch-variant-roots-in-module
-  [all-functions : lower_i64_i64_map.Map]
+  [all-functions : (& all-functions lower_i64_i64_map.Map)]
   [decls : ast.AstDeclList]
   [module-id : i64]
-  [names : LowerNameCache]
+  [names : (& names LowerNameCache)]
   [state : LowerReachState]) : LowerReachState
   (match (ast.ast-decl-list-step decls)
     [(ast.AstDeclListStep.Nil) state]
@@ -14984,10 +14946,10 @@
               state)]
           [_
             (lower-reach-add-dispatch-variant-roots-in-module
-              (lower-global-shared-view all-functions)
+              all-functions
               rest
               module-id
-              (lower-global-shared-view names)
+              names
               (lower-reach-add-dispatch-variant-decl
                 all-functions
                 module-id
@@ -14996,9 +14958,9 @@
                 state))]))]))
 
 (define (lower-reach-add-dispatch-variant-roots
-  [all-functions : lower_i64_i64_map.Map]
+  [all-functions : (& all-functions lower_i64_i64_map.Map)]
   [decls : ast.AstDeclList]
-  [names : LowerNameCache]
+  [names : (& names LowerNameCache)]
   [state : LowerReachState]) : LowerReachState
   (lower-reach-add-dispatch-variant-roots-in-module
     all-functions
@@ -15010,8 +14972,8 @@
 ;; `reachable` is keyed by dense `all-functions` slot; resolve a logical ID's
 ;; slot through the same map the reach walk used and test membership by i64.
 (define (lower-reach-slot-set-contains-id?
-  [all-functions : lower_i64_i64_map.Map]
-  [reachable : lower_i64_i64_map.Map]
+  [all-functions : (& all-functions lower_i64_i64_map.Map)]
+  [reachable : (& reachable lower_i64_i64_map.Map)]
   [logical-id : i64]) : bool
   (match (lower_i64_i64_map.get (& all-functions) logical-id)
     [(lower_i64_i64_map.LookupMissing) false]
@@ -15019,9 +14981,9 @@
       (lower_i64_i64_map.contains? (& reachable) slot)]))
 
 (define (lower-function-kept-by-reach-or-dispatch?
-  [all-functions : lower_i64_i64_map.Map]
-  [reachable : lower_i64_i64_map.Map]
-  [dispatch-variants : lower_i64_i64_map.Map]
+  [all-functions : (& all-functions lower_i64_i64_map.Map)]
+  [reachable : (& reachable lower_i64_i64_map.Map)]
+  [dispatch-variants : (& dispatch-variants lower_i64_i64_map.Map)]
   [logical-id : i64]) : bool
   (or
     (lower-reach-slot-set-contains-id? all-functions reachable logical-id)
@@ -15118,7 +15080,7 @@
 
 (define (lower-used-type-name-contains?
   [session : cis.InternStructuralSessionHandle]
-  [used : lower_i64_i64_map.Map]
+  [used : (& used lower_i64_i64_map.Map)]
   [_module : String]
   [name : i64]) : bool
   (if (lower_i64_i64_map.contains? (& used) name)
@@ -15143,20 +15105,20 @@
 
 (define (lower-used-types-add-type-id
   [session : cis.InternStructuralSessionHandle]
-  [pools : ast.AstNodePoolContext]
+  [pools : (& pools ast.AstNodePoolContext)]
   [used : lower_i64_i64_map.Map]
   [module : String]
   [ty-id : i64]) : lower_i64_i64_map.Map
   (lower-used-types-add-type
     session
-    (lower-global-shared-view pools)
+    pools
     used
     module
     (ast.ast-node-pool-context-type-get (& pools) ty-id)))
 
 (define (lower-used-types-add-type-list
   [session : cis.InternStructuralSessionHandle]
-  [pools : ast.AstNodePoolContext]
+  [pools : (& pools ast.AstNodePoolContext)]
   [used : lower_i64_i64_map.Map]
   [module : String]
   [types : ast.AstTypeList]) : lower_i64_i64_map.Map
@@ -15164,7 +15126,7 @@
 
 (define (lower-used-types-add-type-list-at
   [session : cis.InternStructuralSessionHandle]
-  [pools : ast.AstNodePoolContext]
+  [pools : (& pools ast.AstNodePoolContext)]
   [used : lower_i64_i64_map.Map]
   [module : String]
   [types : (& types ast.AstTypeList)]
@@ -15173,7 +15135,7 @@
     used
     (lower-used-types-add-type-list-at
       session
-      (lower-global-shared-view pools)
+      pools
       (lower-used-types-add-type-id
         session
         pools
@@ -15186,7 +15148,7 @@
 
 (define (lower-used-types-add-type
   [session : cis.InternStructuralSessionHandle]
-  [pools : ast.AstNodePoolContext]
+  [pools : (& pools ast.AstNodePoolContext)]
   [used : lower_i64_i64_map.Map]
   [module : String]
   [ty : ast.AstType]) : lower_i64_i64_map.Map
@@ -15194,7 +15156,7 @@
     [(ast.AstType.Func args ret)
       (lower-used-types-add-type-id
         session
-        (lower-global-shared-view pools)
+        pools
         (lower-used-types-add-type-list
           session
           pools
@@ -15243,7 +15205,7 @@
 
 (define (lower-used-types-add-maybe-type
   [session : cis.InternStructuralSessionHandle]
-  [pools : ast.AstNodePoolContext]
+  [pools : (& pools ast.AstNodePoolContext)]
   [used : lower_i64_i64_map.Map]
   [module : String]
   [maybe-ty : ast.AstMaybeType]) : lower_i64_i64_map.Map
@@ -15262,7 +15224,7 @@
 
 (define (lower-used-types-add-param-list-at
   [session : cis.InternStructuralSessionHandle]
-  [pools : ast.AstNodePoolContext]
+  [pools : (& pools ast.AstNodePoolContext)]
   [used : lower_i64_i64_map.Map]
   [module : String]
   [params : (& params ast.AstParamList)]
@@ -15273,7 +15235,7 @@
       [(ast.AstParam.Param _ ty _)
         (lower-used-types-add-param-list-at
           session
-          (lower-global-shared-view pools)
+          pools
           (lower-used-types-add-type
             session
             pools
@@ -15286,7 +15248,7 @@
 
 (define (lower-used-types-add-macro-param-list
   [session : cis.InternStructuralSessionHandle]
-  [pools : ast.AstNodePoolContext]
+  [pools : (& pools ast.AstNodePoolContext)]
   [used : lower_i64_i64_map.Map]
   [module : String]
   [params : ast.AstMacroParamList]) : lower_i64_i64_map.Map
@@ -15300,7 +15262,7 @@
 
 (define (lower-used-types-add-macro-param-list-at
   [session : cis.InternStructuralSessionHandle]
-  [pools : ast.AstNodePoolContext]
+  [pools : (& pools ast.AstNodePoolContext)]
   [used : lower_i64_i64_map.Map]
   [module : String]
   [params : (& params ast.AstMacroParamList)]
@@ -15314,7 +15276,7 @@
       [(ast.AstMacroParam.Param _ ty _ _)
         (lower-used-types-add-macro-param-list-at
           session
-          (lower-global-shared-view pools)
+          pools
           (lower-used-types-add-type
             session
             pools
@@ -15370,7 +15332,7 @@
 
 (define (lower-used-types-add-pattern
   [session : cis.InternStructuralSessionHandle]
-  [pools : ast.AstNodePoolContext]
+  [pools : (& pools ast.AstNodePoolContext)]
   [used : lower_i64_i64_map.Map]
   [module : String]
   [pattern : ast.AstPattern]) : lower_i64_i64_map.Map
@@ -15417,7 +15379,7 @@
 
 (define (lower-used-types-add-pattern-list
   [session : cis.InternStructuralSessionHandle]
-  [pools : ast.AstNodePoolContext]
+  [pools : (& pools ast.AstNodePoolContext)]
   [used : lower_i64_i64_map.Map]
   [module : String]
   [patterns : ast.AstPatternList]) : lower_i64_i64_map.Map
@@ -15431,7 +15393,7 @@
 
 (define (lower-used-types-add-pattern-list-at
   [session : cis.InternStructuralSessionHandle]
-  [pools : ast.AstNodePoolContext]
+  [pools : (& pools ast.AstNodePoolContext)]
   [used : lower_i64_i64_map.Map]
   [module : String]
   [patterns : (& patterns ast.AstPatternList)]
@@ -15440,7 +15402,7 @@
     used
     (lower-used-types-add-pattern-list-at
       session
-      (lower-global-shared-view pools)
+      pools
       (lower-used-types-add-pattern
         session
         pools
@@ -15613,7 +15575,7 @@
         (lower-global-shared-view pools)
         (lower-used-types-add-expr-id
           session
-          pools
+          (lower-global-shared-view pools)
           used
           (lower-global-shared-view module)
           callee-box)
@@ -15658,10 +15620,10 @@
             (lower-global-shared-view pools)
             (lower-used-types-add-maybe-type
               session
-              (lower-global-shared-view pools)
+              pools
               (lower-used-types-add-param-list
                 session
-                pools
+                (lower-global-shared-view pools)
                 used
                 (lower-global-shared-view module)
                 params)
@@ -15683,7 +15645,7 @@
         (lower-global-shared-view pools)
         (lower-used-types-add-type
           session
-          (lower-global-shared-view pools)
+          pools
           used
           (lower-global-shared-view module)
           (ast.ast-node-pool-context-type-get pools ty-id))
@@ -15695,7 +15657,7 @@
         (lower-global-shared-view pools)
         (lower-used-types-add-type
           session
-          (lower-global-shared-view pools)
+          pools
           used
           (lower-global-shared-view module)
           (ast.ast-node-pool-context-type-get pools ty-id))
@@ -15847,7 +15809,7 @@
         (lower-global-shared-view pools)
         (lower-used-types-add-type
           session
-          (lower-global-shared-view pools)
+          pools
           used
           (lower-global-shared-view module)
           (ast.ast-node-pool-context-type-get pools ty-id))
@@ -15859,7 +15821,7 @@
         (lower-global-shared-view pools)
         (lower-used-types-add-type
           session
-          (lower-global-shared-view pools)
+          pools
           used
           (lower-global-shared-view module)
           (ast.ast-node-pool-context-type-get pools ty-id))
@@ -15971,7 +15933,7 @@
                     (lower-global-shared-view pools)
                     (lower-used-types-add-type
                       session
-                      (lower-global-shared-view pools)
+                      pools
                       (lower-used-types-add-type
                         session
                         pools
@@ -16019,7 +15981,7 @@
                     (lower-global-shared-view pools)
                     (lower-used-types-add-type
                       session
-                      (lower-global-shared-view pools)
+                      pools
                       (lower-used-types-add-type
                         session
                         pools
@@ -16139,17 +16101,17 @@
     [(ast.AstExpr.TypeLiteral ty-id)
       (lower-used-types-add-type
         session
-        (lower-global-shared-view pools)
+        pools
         used
         module
         (ast.ast-node-pool-context-type-get pools ty-id))]
     [(ast.AstExpr.Init maybe-ty-id)
-      (lower-used-types-add-maybe-type
-        session
-        (lower-global-shared-view pools)
-        used
-        module
-        (ast.ast-maybe-type-from-id-with-pools pools maybe-ty-id))]
+      (let
+        [maybe-ty
+          (ast.ast-maybe-type-from-id-with-pools
+            (lower-global-shared-view pools)
+            maybe-ty-id)]
+        (lower-used-types-add-maybe-type session pools used module maybe-ty))]
     [(ast.AstExpr.Comptime inner-box)
       (lower-used-types-add-expr-id session pools used module inner-box)]
     [(ast.AstExpr.Quote _) used]
@@ -16169,7 +16131,7 @@
     [(ast.AstExpr.PtrNull ty-id)
       (lower-used-types-add-type
         session
-        (lower-global-shared-view pools)
+        pools
         used
         module
         (ast.ast-node-pool-context-type-get pools ty-id))]
@@ -16209,7 +16171,7 @@
         (lower-global-shared-view pools)
         (lower-used-types-add-type
           session
-          (lower-global-shared-view pools)
+          pools
           used
           (lower-global-shared-view module)
           (ast.ast-node-pool-context-type-get pools ty-id))
@@ -16223,7 +16185,7 @@
         (lower-global-shared-view pools)
         (lower-used-types-add-type
           session
-          (lower-global-shared-view pools)
+          pools
           used
           (lower-global-shared-view module)
           (ast.ast-node-pool-context-type-get pools ty-id))
@@ -16306,7 +16268,7 @@
 
 (define (lower-used-types-add-field-list
   [session : cis.InternStructuralSessionHandle]
-  [pools : ast.AstNodePoolContext]
+  [pools : (& pools ast.AstNodePoolContext)]
   [used : lower_i64_i64_map.Map]
   [module : String]
   [fields : ast.AstFieldDefList]) : lower_i64_i64_map.Map
@@ -16314,7 +16276,7 @@
 
 (define (lower-used-types-add-field-list-at
   [session : cis.InternStructuralSessionHandle]
-  [pools : ast.AstNodePoolContext]
+  [pools : (& pools ast.AstNodePoolContext)]
   [used : lower_i64_i64_map.Map]
   [module : String]
   [fields : (& fields ast.AstFieldDefList)]
@@ -16328,7 +16290,7 @@
       [(ast.AstFieldDef.Def _ ty _)
         (lower-used-types-add-field-list-at
           session
-          (lower-global-shared-view pools)
+          pools
           (lower-used-types-add-type
             session
             pools
@@ -16341,7 +16303,7 @@
 
 (define (lower-used-types-add-variant-list
   [session : cis.InternStructuralSessionHandle]
-  [pools : ast.AstNodePoolContext]
+  [pools : (& pools ast.AstNodePoolContext)]
   [used : lower_i64_i64_map.Map]
   [module : String]
   [variants : ast.AstVariantDefList]) : lower_i64_i64_map.Map
@@ -16355,7 +16317,7 @@
 
 (define (lower-used-types-add-variant-list-at
   [session : cis.InternStructuralSessionHandle]
-  [pools : ast.AstNodePoolContext]
+  [pools : (& pools ast.AstNodePoolContext)]
   [used : lower_i64_i64_map.Map]
   [module : String]
   [variants : (& variants ast.AstVariantDefList)]
@@ -16369,7 +16331,7 @@
       [(ast.AstVariantDef.Def _ fields _)
         (lower-used-types-add-variant-list-at
           session
-          (lower-global-shared-view pools)
+          pools
           (lower-used-types-add-type-list
             session
             pools
@@ -16392,7 +16354,7 @@
 (define (lower-type-decl-used?
   [session : cis.InternStructuralSessionHandle]
   [module : String]
-  [used-types : lower_i64_i64_map.Map]
+  [used-types : (& used-types lower_i64_i64_map.Map)]
   [decl : ast.AstDecl]) : bool
   ;; Empty is the fast-path marker for "all type declaration paths are already
   ;; reachable"; precise DCE starts from lower-used-types-precise-empty instead.
@@ -16423,10 +16385,10 @@
     [(ast.AstDecl.DefFn decl-meta _ params ret _ _)
       (lower-used-types-add-type
         session
-        (lower-global-shared-view pools)
+        pools
         (lower-used-types-add-param-list
           session
-          pools
+          (lower-global-shared-view pools)
           used
           (lower-global-shared-view module)
           params)
@@ -16435,7 +16397,7 @@
     [(ast.AstDecl.DefMacro decl-meta _ params ret _)
       (lower-used-types-add-type
         session
-        (lower-global-shared-view pools)
+        pools
         (lower-used-types-add-macro-param-list
           session
           pools
@@ -16488,9 +16450,9 @@
   [decl-path : String]
   [module : String]
   [module-id : i64]
-  [all-functions : lower_i64_i64_map.Map]
-  [reachable : lower_i64_i64_map.Map]
-  [dispatch-variants : lower_i64_i64_map.Map]
+  [all-functions : (& all-functions lower_i64_i64_map.Map)]
+  [reachable : (& reachable lower_i64_i64_map.Map)]
+  [dispatch-variants : (& dispatch-variants lower_i64_i64_map.Map)]
   [decl : ast.AstDecl]) : bool
   (if (lower-decl-is-clone-helper? (lower-global-shared-view decl))
     ;; The clone handoff emits exactly the clone$<T> closure reachable code
@@ -16513,7 +16475,7 @@
 
 (define (lower-used-types-add-type-decl-name
   [session : cis.InternStructuralSessionHandle]
-  [pools : ast.AstNodePoolContext]
+  [pools : (& pools ast.AstNodePoolContext)]
   [used : lower_i64_i64_map.Map]
   [module : String]
   [decl : ast.AstDecl]) : lower_i64_i64_map.Map
@@ -16537,7 +16499,7 @@
 
 (define (lower-used-types-path-seed-in-module
   [session : cis.InternStructuralSessionHandle]
-  [pools : ast.AstNodePoolContext]
+  [pools : (& pools ast.AstNodePoolContext)]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]
   [entry-path : String]
@@ -16579,7 +16541,7 @@
                 (lower_i64_i64_map.contains? (& reachable-paths) path-owner-id)]
               (lower-used-types-path-seed-in-module
                 session
-                (lower-global-shared-view pools)
+                pools
                 rest
                 rest-paths
                 entry-path
@@ -16604,9 +16566,9 @@
   [entry-path : String]
   [module : String]
   [module-id : i64]
-  [all-functions : lower_i64_i64_map.Map]
-  [reachable : lower_i64_i64_map.Map]
-  [dispatch-variants : lower_i64_i64_map.Map]
+  [all-functions : (& all-functions lower_i64_i64_map.Map)]
+  [reachable : (& reachable lower_i64_i64_map.Map)]
+  [dispatch-variants : (& dispatch-variants lower_i64_i64_map.Map)]
   [used : lower_i64_i64_map.Map]) : lower_i64_i64_map.Map
   (match (ast.ast-decl-list-step decls)
     [(ast.AstDeclListStep.Nil) used]
@@ -16646,9 +16608,9 @@
               (lower-global-shared-view entry-path)
               (lower-global-shared-view module)
               module-id
-              (lower-global-shared-view all-functions)
-              (lower-global-shared-view reachable)
-              (lower-global-shared-view dispatch-variants)
+              all-functions
+              reachable
+              dispatch-variants
               (if (lower-runtime-decl-kept-by-reach-or-dispatch?
                 lower-state
                 entry-path
@@ -16669,7 +16631,7 @@
 
 (define (lower-used-types-add-stdlib-arena-support-deps
   [session : cis.InternStructuralSessionHandle]
-  [_pools : ast.AstNodePoolContext]
+  [_pools : (& _pools ast.AstNodePoolContext)]
   [used : lower_i64_i64_map.Map]
   [module : String]
   [name : i64]) : lower_i64_i64_map.Map
@@ -16687,7 +16649,7 @@
 
 (define (lower-used-types-add-type-decl-deps
   [session : cis.InternStructuralSessionHandle]
-  [pools : ast.AstNodePoolContext]
+  [pools : (& pools ast.AstNodePoolContext)]
   [used : lower_i64_i64_map.Map]
   [module : String]
   [decl : ast.AstDecl]) : lower_i64_i64_map.Map
@@ -16699,7 +16661,7 @@
     [(ast.AstDecl.DefStruct decl-meta name _ _ fields)
       (lower-used-types-add-field-list
         session
-        (lower-global-shared-view pools)
+        pools
         (lower-used-types-add-stdlib-arena-support-deps
           session
           pools
@@ -16721,8 +16683,8 @@
 
 (define (lower-used-types-add-type-decl-deps-in-module
   [session : cis.InternStructuralSessionHandle]
-  [pools : ast.AstNodePoolContext]
-  [decls : ast.AstDeclList]
+  [pools : (& pools ast.AstNodePoolContext)]
+  [decls : (& decls ast.AstDeclList)]
   [module : String]
   [used : lower_i64_i64_map.Map]) : lower_i64_i64_map.Map
   ;; Index cursor rather than `ast-decl-list-step`. The predicates and the
@@ -16758,7 +16720,7 @@
                   (lower-type-decl-used?
                     session
                     (lower-global-shared-view current-module)
-                    (lower-global-shared-view current-used)
+                    current-used
                     (lower-global-array-element-shared-view
                       decl-slots
                       (+ decl-offset index)))))
@@ -16766,7 +16728,7 @@
                   current-used
                   (lower-used-types-add-type-decl-deps
                     session
-                    (lower-global-shared-view pools)
+                    pools
                     current-used
                     (lower-global-shared-view current-module)
                     (lower-global-array-element-shared-view
@@ -16778,8 +16740,8 @@
 
 (define (lower-used-types-expand-fixed
   [session : cis.InternStructuralSessionHandle]
-  [pools : ast.AstNodePoolContext]
-  [decls : ast.AstDeclList]
+  [pools : (& pools ast.AstNodePoolContext)]
+  [decls : (& decls ast.AstDeclList)]
   [used : lower_i64_i64_map.Map]) : lower_i64_i64_map.Map
   (let
     [current : lower_i64_i64_map.Map used]
@@ -16792,8 +16754,8 @@
           [next : lower_i64_i64_map.Map
             (lower-used-types-add-type-decl-deps-in-module
               session
-              (lower-global-shared-view pools)
-              (lower-global-shared-view decls)
+              pools
+              decls
               ""
               (lower-global-shared-view current))]
           (begin
@@ -16976,10 +16938,10 @@
   [decl-path : String]
   [module : String]
   [module-id : i64]
-  [all-functions : lower_i64_i64_map.Map]
-  [reachable : lower_i64_i64_map.Map]
-  [dispatch-variants : lower_i64_i64_map.Map]
-  [used-types : lower_i64_i64_map.Map]
+  [all-functions : (& all-functions lower_i64_i64_map.Map)]
+  [reachable : (& reachable lower_i64_i64_map.Map)]
+  [dispatch-variants : (& dispatch-variants lower_i64_i64_map.Map)]
+  [used-types : (& used-types lower_i64_i64_map.Map)]
   [decl : ast.AstDecl]) : bool
   (if (lower-type-decl? (lower-global-shared-view decl))
     (or
@@ -17053,10 +17015,10 @@
                     source-module-id
                     logical-module-id)
                   logical-module-id
-                  (lower-global-shared-view all-functions)
-                  (lower-global-shared-view reachable)
-                  (lower-global-shared-view dispatch-variants)
-                  (lower-global-shared-view used-types)
+                  all-functions
+                  reachable
+                  dispatch-variants
+                  used-types
                   (lower-global-shared-view decl))])]
           (begin
             (if kept
@@ -17099,7 +17061,7 @@
       (LowerDeclKeepPlan keep count))))
 
 (define (lower-decl-required-by-clone-roots?
-  [roots : clone_support.CloneNameSet]
+  [roots : (& roots clone_support.CloneNameSet)]
   [module-id : i64]
   [decl : ast.AstDecl]) : bool
   (match decl
@@ -17138,7 +17100,7 @@
                 (ast.ast-decl-list-get (& decls) index (ast.ast-decl-fallback))]
               (begin
                 (if (lower-decl-required-by-clone-roots?
-                  (lower-global-shared-view roots)
+                  roots
                   module-id
                   (lower-global-shared-view decl))
                   (set! (array-ref keep index) 1)
@@ -17152,7 +17114,7 @@
 
 (define (lower-decl-keep-plan-copy-into-pools
   [plan : LowerDeclKeepPlan]
-  [pools : ast.AstNodePoolContext]) : LowerDeclKeepPlan
+  [pools : (& pools ast.AstNodePoolContext)]) : LowerDeclKeepPlan
   (let
     [base-arena : arena.Arena
       (arena.Arena (ast.ast-node-pool-context-base-arena pools))]
@@ -17171,7 +17133,7 @@
           (LowerDeclKeepPlan keep count))))))
 
 (define (lower-decl-keep-plan-apply
-  [plan : LowerDeclKeepPlan]
+  [plan : (& plan LowerDeclKeepPlan)]
   [program : ast.AstProgram]) : ast.AstProgram
   ;; Source declarations retain their indices through clone augmentation;
   ;; generated clone helpers are appended and all are part of the exact root
@@ -17237,8 +17199,8 @@
   (Occupied LowerReachState))
 
 (define (lower-reach-add-clone-root-helpers
-  [all-functions : lower_i64_i64_map.Map]
-  [names : LowerNameCache]
+  [all-functions : (& all-functions lower_i64_i64_map.Map)]
+  [names : (& names LowerNameCache)]
   [roots : clone_support.CloneRootEntries]
   [state : LowerReachState]) : LowerReachState
   (let
@@ -17253,8 +17215,8 @@
               cell
               (LowerReachStateCell.Occupied
                 (lower-reach-add-source-id
-                  (lower-global-shared-view all-functions)
-                  (lower-global-shared-view names)
+                  all-functions
+                  names
                   current
                   (clone_support.clone-root-entries-helper-id-at-or
                     roots
@@ -17274,7 +17236,7 @@
   [decl-path : String]
   [module : String]
   [module-id : i64]
-  [all-functions : lower_i64_i64_map.Map]
+  [all-functions : (& all-functions lower_i64_i64_map.Map)]
   [state : LowerReachState]
   [decl : ast.AstDecl]) : LowerReachState
   (match decl
@@ -17289,10 +17251,7 @@
                 module-id
                 (ci.intern-id-value symbol))
                 state
-                (lower-reach-add-logical
-                  (lower-global-shared-view all-functions)
-                  state
-                  logical-name-id))]
+                (lower-reach-add-logical all-functions state logical-name-id))]
             [(ast.AstFnExport.No) state])]
         (match (ast.ast-fn-metadata-spmd-callable metadata)
           [(ast.AstSpmdCallable.No) export-state]
@@ -17326,7 +17285,7 @@
   [entry-path : String]
   [module : String]
   [module-id : i64]
-  [all-functions : lower_i64_i64_map.Map]
+  [all-functions : (& all-functions lower_i64_i64_map.Map)]
   [state : LowerReachState]) : LowerReachState
   (match (ast.ast-decl-list-step decls)
     [(ast.AstDeclListStep.Nil) state]
@@ -17360,7 +17319,7 @@
               (lower-global-shared-view entry-path)
               (lower-global-shared-view module)
               module-id
-              (lower-global-shared-view all-functions)
+              all-functions
               (lower-reach-add-export-root-decl
                 entry-path
                 decl-path
@@ -17415,12 +17374,12 @@
               (lower-function-set-from-decls
                 lower-state
                 (lower-global-shared-view decls)
-                (lower-global-shared-view paths)
+                paths
                 (lower-global-shared-view entry-path))]
             [body-index : LowerFunctionBodyIndex
               (lower-function-body-index-from-decls
                 lower-state
-                (lower-global-shared-view pools)
+                pools
                 (lower-global-shared-view decls)
                 (lower-global-shared-view paths)
                 (lower-global-shared-view entry-path)
@@ -17431,12 +17390,10 @@
             [dispatch-variants : lower_i64_i64_map.Map
               (lower-dispatch-variant-set-from-decls
                 (lower-global-shared-view decls)
-                (lower-global-shared-view paths)
+                paths
                 (lower-global-shared-view entry-path)
-                (lower-global-shared-view name-cache))]
-            [main-id : i64
-              (lower-entry-main-logical-id
-                (lower-global-shared-view all-functions))]
+                name-cache)]
+            [main-id : i64 (lower-entry-main-logical-id all-functions)]
             [result : LowerPrunedProgramWithPlan
               (if (>= main-id 0)
                 (begin
@@ -17453,7 +17410,7 @@
                   (let
                     [main-state : LowerReachState
                       (lower-reach-add-logical
-                        (lower-global-shared-view all-functions)
+                        all-functions
                         (LowerReachState.State
                           (lower_i64_i64_map.with-capacity 8192)
                           (lower-id-set-empty)
@@ -17466,11 +17423,11 @@
                         (lower-global-shared-view entry-path)
                         ""
                         cbi.compiler-builtin-id-fix-empty
-                        (lower-global-shared-view all-functions)
+                        all-functions
                         main-state)]
                     [cleanup-state : LowerReachState
                       (lower-reach-cleanup-metadata-roots-in-module
-                        (lower-global-shared-view all-functions)
+                        all-functions
                         (lower-global-shared-view decls)
                         (lower-global-shared-view paths)
                         (lower-global-shared-view entry-path)
@@ -17480,20 +17437,20 @@
                         export-state)]
                     [clone-state : LowerReachState
                       (lower-reach-add-clone-root-helpers
-                        (lower-global-shared-view all-functions)
-                        (lower-global-shared-view name-cache)
+                        all-functions
+                        name-cache
                         clone-roots
                         cleanup-state)]
                     [dispatch-state : LowerReachState
                       (lower-reach-add-dispatch-variant-roots
-                        (lower-global-shared-view all-functions)
+                        all-functions
                         (lower-global-shared-view decls)
-                        (lower-global-shared-view name-cache)
+                        name-cache
                         clone-state)]
                     [global-state : LowerReachState
                       (lower-reach-global-decls
-                        (lower-global-shared-view pools)
-                        (lower-global-shared-view all-functions)
+                        pools
+                        all-functions
                         (lower-global-shared-view name-cache)
                         dispatch-state
                         (lower-global-shared-view decls)
@@ -17502,8 +17459,8 @@
                         cbi.compiler-builtin-id-fix-empty)]
                     [reached-state : LowerReachState
                       (lower-reach-process
-                        (lower-global-shared-view pools)
-                        (lower-global-shared-view all-functions)
+                        pools
+                        all-functions
                         name-cache
                         body-index
                         global-state)]
@@ -17524,7 +17481,7 @@
                             (lower-used-types-path-seed-in-module
                               (compiler-lower-state-structural-session
                                 lower-state)
-                              (lower-global-shared-view pools)
+                              pools
                               (lower-global-shared-view decls)
                               (lower-global-shared-view paths)
                               (lower-global-shared-view entry-path)
@@ -17542,22 +17499,21 @@
                                   (lower-used-types-expand-fixed
                                     (compiler-lower-state-structural-session
                                       lower-state)
-                                    (lower-global-shared-view pools)
-                                    (lower-global-shared-view decls)
+                                    pools
+                                    decls
                                     (lower-used-types-from-kept-decls-in-module
                                       (compiler-lower-state-structural-session
                                         lower-state)
                                       lower-state
-                                      pools
+                                      (lower-global-shared-view pools)
                                       (lower-global-shared-view decls)
                                       (lower-global-shared-view paths)
                                       (lower-global-shared-view entry-path)
                                       ""
                                       cbi.compiler-builtin-id-fix-empty
-                                      (lower-global-shared-view all-functions)
-                                      (lower-global-shared-view reachable)
-                                      (lower-global-shared-view
-                                        dispatch-variants)
+                                      all-functions
+                                      reachable
+                                      dispatch-variants
                                       reachable-path-type-names)))])]
                           (begin
                             ;; Materialize the pruned program back in the persistent
@@ -17635,7 +17591,9 @@
     [(LowerState.State data) (__tl-project-field (__tl-box-place data) names)]))
 
 (define (lower-state-owner [state : LowerState]) : CompilerLowerState
-  (compiler-lower-state-from-name-cache (lower-state-names state)))
+  (let
+    [names (lower-state-names state)]
+    (compiler-lower-state-from-name-cache names)))
 
 (define (lower-state-current-source-path-id [state : LowerState]) : i64
   (compiler-lower-state-read
@@ -18154,8 +18112,9 @@
           (__tl-project-field (__tl-box-place data) next-lambda)]
         [intern-state : ci.InternCompatState
           (compiler-lower-state-interns
-            (compiler-lower-state-from-name-cache
-              (lower-box-field-shared-view data names)))]
+            (let
+              [name-cache (lower-box-field-shared-view data names)]
+              (compiler-lower-state-from-name-cache name-cache)))]
         [components : i64
           (ci.intern-compat-state-composite-pair-id
             (&mut intern-state)
@@ -18696,7 +18655,7 @@
   [intern-state : ci.InternCompatState]
   [enum-name-id : i64]
   [enum-name : String]
-  [variants : ast.AstVariantDefList]
+  [variants : (& variants ast.AstVariantDefList)]
   [tag : i64]
   [globals : (&mut globals ir.CompilerIrGlobalBuilder)]) : unit
   (if (>= tag variants.len)
@@ -19877,7 +19836,7 @@
   [acc : ir.CompilerIrValue]
   [acc-ty : ast.AstType]
   [values : ir.CompilerIrValueSeq]
-  [fields : ast.AstFieldDefList]
+  [fields : (& fields ast.AstFieldDefList)]
   [layout : tc_core.TcInlineAggregateLayout]
   [word-index : i64]) : ResultLowerExpr
   (lower-pack-inline-struct-word-at
@@ -19977,7 +19936,7 @@
     (ir.CompilerIrValue.I64 0)
     (ast.AstType.I64)
     (lower-global-shared-view values)
-    (lower-global-shared-view fields)
+    fields
     (lower-global-shared-view layout)
     0)
     [(ResultLowerExpr.Ok (LowerExpr.Expr s0 raw-word0 raw-ty0))
@@ -20548,9 +20507,7 @@
               (ResultLowerExpr.Ok
                 (LowerExpr.Expr loaded loaded-value scalar-ty))])]
         [(LowerCAbiAggregate.Register slots _)
-          (if (=
-            (lower-c-abi-slot-list-count (lower-global-shared-view slots))
-            1)
+          (if (= (lower-c-abi-slot-list-count slots) 1)
             (match (lower-c-abi-slot-list-ref slots 0)
               [(LowerCAbiSlot.Slot scalar-ty offset)
                 (match (lower-load-at-offset
@@ -20937,7 +20894,7 @@
   [ctx : tc_core.TcContext]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
-  [exprs : ast.AstExprList]) : ast.AstExprList
+  [exprs : (& exprs ast.AstExprList)]) : ast.AstExprList
   (let
     [pending : ast.AstExprList (ast.ast-expr-list-with-capacity 16)]
     [out : ast.AstExprList (ast.ast-expr-list-with-capacity 16)]
@@ -21431,7 +21388,7 @@
   [name : i64]
   [lifetimes : ast.AstLifetimeList]
   [stack : LowerIdSet]) : bool
-  (if (lower-id-set-contains? (lower-global-shared-view stack) name)
+  (if (lower-id-set-contains? stack name)
     true
     (match (tc_core.tc-lifetime-subst-from-nominal-args-id
       (lower-global-shared-view ctx)
@@ -21455,7 +21412,7 @@
   [name : i64]
   [lifetimes : ast.AstLifetimeList]
   [stack : LowerIdSet]) : bool
-  (if (lower-id-set-contains? (lower-global-shared-view stack) name)
+  (if (lower-id-set-contains? stack name)
     true
     (match (tc_core.tc-lifetime-subst-from-nominal-args-id
       (lower-global-shared-view ctx)
@@ -24319,7 +24276,7 @@
 
 (define (lower-pattern-list-refutable-for-types?
   [ctx : tc_core.TcContext]
-  [patterns : ast.AstPatternList]
+  [patterns : (& patterns ast.AstPatternList)]
   [types : ast.AstTypeList]) : bool
   (lower-pattern-list-refutable-for-types-at? ctx (& patterns) 0 types))
 
@@ -24910,7 +24867,7 @@
         [(tc_core.ResultTcType.Err message) (tc_core.ResultTcType.Err message)])]))
 
 (define (lower-capture-list-contains-name?
-  [captures : LowerCaptureList]
+  [captures : (& captures LowerCaptureList)]
   [name-id : i64]) : bool
   (let
     [items : (__tl_dyn-array LowerCapture) captures.items]
@@ -25638,9 +25595,7 @@
       (let
         [name : String (tc_core.tc-env-key-name-text name-id)]
         (if (or
-          (lower-capture-list-contains-name?
-            (lower-global-shared-view captures)
-            name-id)
+          (lower-capture-list-contains-name? captures name-id)
           (not
             (tc_core.tc-expr-uses-free-name?
               expr-bases
@@ -25946,7 +25901,7 @@
   (if (or
     (lower-param-list-contains-unsupported-reference?
       (lower-global-shared-view ctx)
-      (lower-global-shared-view params))
+      params)
     (not
       (lower-supported-reference-type?
         (lower-global-shared-view ctx)
@@ -25954,14 +25909,12 @@
     (ResultLowerFunction.Err
       (box (lower-diagnostic (lower-reference-support-message))))
     (let
-      [param-count : i64 (lower-param-count (lower-global-shared-view params))]
+      [param-count : i64 (lower-param-count params)]
       [ret-ty : ast.AstType
         (tc_core.tc-type-without-regions
           (tc_core.tc-resolve-type (lower-global-shared-view ctx) ret))]
       [global-init? : bool
-        (lower-global-init-function-symbol?
-          (lower-global-shared-view names)
-          logical-name)]
+        (lower-global-init-function-symbol? names logical-name)]
       [ret-class : LowerCAbiAggregate
         (lower-internal-return-class-for-symbol
           (lower-global-shared-view ctx)
@@ -25991,7 +25944,7 @@
       [structural-params? : bool
         (lower-internal-param-list-contains-structural?
           (lower-global-shared-view ctx)
-          (lower-global-shared-view params))]
+          params)]
       [sret-var : i64
         (if structural-sret?
           1
@@ -26008,8 +25961,7 @@
               (lower-global-shared-view ret-ty))])]
       [function-spans : ir.CompilerSourceSpans
         (lower-record-function-span
-          (compiler-lower-state-from-name-cache
-            (lower-global-shared-view names))
+          (compiler-lower-state-from-name-cache names)
           spans
           (ir.compiler-ir-symbol-typed-id logical-name)
           (lower-global-shared-view body))]
@@ -26070,7 +26022,7 @@
                   (lower-bind-internal-params
                     (lower-global-shared-view ctx)
                     mode
-                    (lower-global-shared-view params)
+                    params
                     source-start
                     captured-state
                     initial-env
@@ -26078,10 +26030,7 @@
                     (lower-global-shared-view body))
                   (ResultLowerEnv.Ok
                     captured-state
-                    (lower-bind-params
-                      (lower-global-shared-view params)
-                      source-start
-                      initial-env)
+                    (lower-bind-params params source-start initial-env)
                     type-env))
                   [(ResultLowerEnv.Ok bound-state bound-env bound-type-env)
                     (match (lower-tail-expr
@@ -27807,7 +27756,7 @@
 
 (define (lower-float-bitcast-literal-call?
   [ctx : tc_core.TcContext]
-  [args : ast.AstExprList]
+  [args : (& args ast.AstExprList)]
   [result-ty : ast.AstType]) : bool
   (if (= args.len 1)
     (match (lower-float-bitcast-literal-value
@@ -28994,7 +28943,7 @@
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
-  [args : ast.AstExprList]
+  [args : (& args ast.AstExprList)]
   [types : ast.AstTypeList]) : ResultLowerCallArgs
   (lower-call-args-as-at
     ctx
@@ -29139,7 +29088,7 @@
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
-  [args : ast.AstExprList]
+  [args : (& args ast.AstExprList)]
   [types : ast.AstTypeList]) : ResultLowerArgs
   (lower-args-as-at ctx state env type-env (& args) (& types) 0))
 
@@ -29218,7 +29167,7 @@
 ;; borrowed Slice formals need it for the closed call-local unsize path.
 (define (lower-call-type-list-needs-call-aware-args?
   [ctx : tc_core.TcContext]
-  [types : ast.AstTypeList]) : bool
+  [types : (& types ast.AstTypeList)]) : bool
   (lower-call-type-list-needs-call-aware-args-at? ctx (& types) 0))
 
 (define (lower-call-type-list-needs-call-aware-args-at?
@@ -29249,11 +29198,11 @@
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
-  [args : ast.AstExprList]
+  [args : (& args ast.AstExprList)]
   [types : ast.AstTypeList]) : ResultLowerCallArgs
   (if (lower-call-type-list-needs-call-aware-args?
     (lower-global-shared-view ctx)
-    (lower-global-shared-view types))
+    types)
     (lower-call-args-as ctx state env type-env args types)
     (match (lower-args-as ctx state env type-env args types)
       [(ResultLowerArgs.Ok args-state values)
@@ -31041,7 +30990,7 @@
   [type-cache : LowerTypeCache]
   [function-state : CompilerLowerFunctionState]
   [scrutinee : ast.AstExpr]
-  [arms : ast.AstMatchArmList]) : tc_core.ResultTcType
+  [arms : (& arms ast.AstMatchArmList)]) : tc_core.ResultTcType
   (match (lower-expr-result-type-fast
     (lower-global-shared-view ctx)
     env
@@ -31130,7 +31079,7 @@
   [type-env : tc_core.TcTypeEnv]
   [type-cache : LowerTypeCache]
   [function-state : CompilerLowerFunctionState]
-  [bindings : ast.AstLetBindingList]) : tc_core.ResultTcEnv
+  [bindings : (& bindings ast.AstLetBindingList)]) : tc_core.ResultTcEnv
   (lower-let-bindings-type-env-fast-at
     ctx
     env
@@ -31637,7 +31586,7 @@
               type-env
               (lower-global-shared-view type-cache)
               function-state
-              (lower-global-shared-view bindings))
+              bindings)
               [(tc_core.ResultTcEnv.Ok body-type-env)
                 (lower-expr-result-type-fast
                   ctx
@@ -32334,7 +32283,7 @@
               (lower-state-type-cache (lower-global-shared-view state))
               (lower-state-function-state (lower-global-shared-view state))
               (lower-global-shared-view scrutinee)
-              (lower-global-shared-view arms))
+              arms)
               [(tc_core.ResultTcType.Ok expr-ty)
                 (lower-match ctx state env type-env scrutinee arms expr-ty)]
               [(tc_core.ResultTcType.Err _)
@@ -36672,7 +36621,7 @@
         (lower-global-shared-view ctx)
         env
         type-env
-        (lower-global-shared-view args))]
+        args)]
     ;; A single public stdlib wrapper call already has compact, stable codegen.
     ;; Keep it on the ordinary direct-call path; only a nested public tree needs
     ;; the fused runtime batches. Legacy intrinsics have always used the runtime
@@ -36754,12 +36703,12 @@
 
 (define (lower-c-abi-inline-fields-integer-only?
   [ctx : tc_core.TcContext]
-  [fields : tc_core.TcInlineFieldLayoutList]) : bool
+  [fields : (& fields tc_core.TcInlineFieldLayoutList)]) : bool
   (lower-c-abi-inline-fields-integer-only-at? ctx fields 0))
 
 (define (lower-c-abi-inline-fields-integer-only-at?
   [ctx : tc_core.TcContext]
-  [fields : tc_core.TcInlineFieldLayoutList]
+  [fields : (& fields tc_core.TcInlineFieldLayoutList)]
   [index : i64]) : bool
   (if (>= index (tc_core.tc-inline-field-layout-list-count fields))
     true
@@ -36799,12 +36748,12 @@
 
 (define (lower-c-abi-inline-fields-win64-register?
   [ctx : tc_core.TcContext]
-  [fields : tc_core.TcInlineFieldLayoutList]) : bool
+  [fields : (& fields tc_core.TcInlineFieldLayoutList)]) : bool
   (lower-c-abi-inline-fields-win64-register-at? ctx fields 0))
 
 (define (lower-c-abi-inline-fields-win64-register-at?
   [ctx : tc_core.TcContext]
-  [fields : tc_core.TcInlineFieldLayoutList]
+  [fields : (& fields tc_core.TcInlineFieldLayoutList)]
   [index : i64]) : bool
   (if (>= index (tc_core.tc-inline-field-layout-list-count fields))
     true
@@ -36818,7 +36767,7 @@
 (define (lower-c-abi-register-aggregate-fields-ok?
   [ctx : tc_core.TcContext]
   [mode : CompilerLowerMode]
-  [fields : tc_core.TcInlineFieldLayoutList]) : bool
+  [fields : (& fields tc_core.TcInlineFieldLayoutList)]) : bool
   (if (lower-mode-windows-c-abi? mode)
     (lower-c-abi-inline-fields-win64-register? ctx fields)
     (lower-c-abi-inline-fields-integer-only? ctx fields)))
@@ -37132,7 +37081,7 @@
           (lower-c-abi-integer-scalar-type slot-size)
           slot-offset)])))
 
-(define (lower-c-abi-slot-list-count [slots : LowerCAbiSlotList]) : i64
+(define (lower-c-abi-slot-list-count [slots : (& slots LowerCAbiSlotList)]) : i64
   slots.count)
 
 (define (lower-c-abi-slot-list-ref [slots : LowerCAbiSlotList] [index : i64]) : LowerCAbiSlot
@@ -37234,7 +37183,7 @@
         (lower-c-abi-register-aggregate-fields-ok?
           (lower-global-shared-view ctx)
           mode
-          (lower-global-shared-view fields)))
+          fields))
       (LowerCAbiAggregate.Integer (lower-c-abi-integer-scalar-type size) size)]
     [else
       (lower-c-abi-sysv-register-aggregate-from-slots
@@ -37825,7 +37774,7 @@
 
 (define (lower-internal-structural-resolved-type-list?
   [ctx : tc_core.TcContext]
-  [types : ast.AstTypeList]) : bool
+  [types : (& types ast.AstTypeList)]) : bool
   (lower-internal-structural-resolved-type-list-at? ctx (& types) 0))
 
 (define (lower-internal-structural-resolved-type-list-at?
@@ -37874,7 +37823,7 @@
       (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty)))))
 
 (define (lower-internal-group-mask-from-slots [slots : LowerCAbiSlotList]) : i64
-  (if (= (lower-c-abi-slot-list-count (lower-global-shared-view slots)) 2)
+  (if (= (lower-c-abi-slot-list-count slots) 2)
     (let
       [first : LowerCAbiSlot
         (lower-c-abi-slot-list-ref (lower-global-shared-view slots) 0)]
@@ -37907,7 +37856,7 @@
   (match classification
     [(LowerCAbiAggregate.Integer scalar-ty _) scalar-ty]
     [(LowerCAbiAggregate.Register slots _)
-      (if (= (lower-c-abi-slot-list-count (lower-global-shared-view slots)) 1)
+      (if (= (lower-c-abi-slot-list-count slots) 1)
         (match (lower-c-abi-slot-list-ref slots 0)
           [(LowerCAbiSlot.Slot scalar-ty _) scalar-ty])
         (let
@@ -38228,7 +38177,7 @@
   [arg-ty : ast.AstType]
   [slots : LowerCAbiSlotList]
   [index : i64]) : ResultLowerArgs
-  (if (>= index (lower-c-abi-slot-list-count (lower-global-shared-view slots)))
+  (if (>= index (lower-c-abi-slot-list-count slots))
     (ResultLowerArgs.Ok state (ir.compiler-ir-value-seq-empty))
     (match (lower-c-abi-slot-list-ref (lower-global-shared-view slots) index)
       [(LowerCAbiSlot.Slot scalar-ty offset)
@@ -38293,7 +38242,7 @@
 
 (define (lower-c-abi-ir-return-slots [slots : LowerCAbiSlotList]) : ir.CompilerIrCAbiReturnSlotSeq
   (let
-    [count : i64 (lower-c-abi-slot-list-count (lower-global-shared-view slots))]
+    [count : i64 (lower-c-abi-slot-list-count slots)]
     [out : (__tl_dyn-array ir.CompilerIrCAbiReturnSlot)
       (__tl_make-array ir.CompilerIrCAbiReturnSlot count)]
     (begin
@@ -38357,8 +38306,7 @@
                 result-ty))]))]
     [(LowerCAbiAggregate.Register slots size)
       (let
-        [slot-count : i64
-          (lower-c-abi-slot-list-count (lower-global-shared-view slots))]
+        [slot-count : i64 (lower-c-abi-slot-list-count slots)]
         (cond
           [(= slot-count 1)
             (match (lower-c-abi-slot-list-ref slots 0)
@@ -38508,8 +38456,7 @@
                   origin))])]
         [(LowerCAbiAggregate.Register slots size)
           (let
-            [slot-count : i64
-              (lower-c-abi-slot-list-count (lower-global-shared-view slots))]
+            [slot-count : i64 (lower-c-abi-slot-list-count slots)]
             (cond
               [(= slot-count 1)
                 (match (lower-c-abi-slot-list-ref
@@ -38690,8 +38637,7 @@
               origin))])]
     [(LowerCAbiAggregate.Register slots size)
       (let
-        [slot-count : i64
-          (lower-c-abi-slot-list-count (lower-global-shared-view slots))]
+        [slot-count : i64 (lower-c-abi-slot-list-count slots)]
         (cond
           [(= slot-count 1)
             (match (lower-c-abi-slot-list-ref
@@ -38955,7 +38901,7 @@
         [(LowerExpr.Expr loaded loaded-value _)
           (ResultLowerArgs.Ok loaded (ir.compiler-ir-value-seq1 loaded-value))])]
     [(LowerCAbiAggregate.Register slots _)
-      (if (= (lower-c-abi-slot-list-count (lower-global-shared-view slots)) 1)
+      (if (= (lower-c-abi-slot-list-count slots) 1)
         (match (lower-c-abi-slot-list-ref slots 0)
           [(LowerCAbiSlot.Slot scalar-ty offset)
             (match (lower-load-at-offset state value offset scalar-ty)
@@ -39071,7 +39017,7 @@
   [origin : ast.AstExpr]) : ResultLowerArgs
   (if (lower-internal-structural-resolved-type-list?
     (lower-global-shared-view ctx)
-    (lower-global-shared-view types))
+    types)
     (lower-internal-call-args-at ctx mode state values (& types) 0 origin)
     (ResultLowerArgs.Ok state values)))
 
@@ -39143,9 +39089,7 @@
         size
         (lower-global-shared-view result-ty))
         [(LowerExpr.Expr storage-state storage _)
-          (if (=
-            (lower-c-abi-slot-list-count (lower-global-shared-view slots))
-            1)
+          (if (= (lower-c-abi-slot-list-count slots) 1)
             (match (lower-c-abi-slot-list-ref slots 0)
               [(LowerCAbiSlot.Slot scalar-ty offset)
                 (ResultLowerExpr.Ok
@@ -41550,8 +41494,8 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [index : String]
-  [args : ast.AstExprList]
-  [params : ast.AstParamList]
+  [args : (& args ast.AstExprList)]
+  [params : (& params ast.AstParamList)]
   [values : ir.CompilerIrValueSeq]) : ir.CompilerIrSpmdCallArgSeq
   (let
     [builder : ir.CompilerIrSpmdCallArgBuilder
@@ -41639,7 +41583,7 @@
   [canonical-name : ci.InternId]
   [fn-ty : ast.AstType]
   [callables : ast.AstImportedSpmdCallableList]
-  [args : ast.AstExprList]
+  [args : (& args ast.AstExprList)]
   [result-ty : ast.AstType]
   [origin : ast.AstExpr]) : LowerMaybeSpmdCall
   (match fn-ty
@@ -41661,7 +41605,7 @@
             type-env
             (lower-global-shared-view index)
             (lower-masked-vector-empty-lane-locals)
-            (lower-global-shared-view args))
+            args)
           0)
           (LowerMaybeSpmdCall.No)
           (match (lower-call-args-as-needed
@@ -41669,7 +41613,7 @@
             state
             env
             type-env
-            (lower-global-shared-view args)
+            args
             (tc_core.tc-param-type-list
               (lower-global-shared-view ctx)
               (lower-global-shared-view params)))
@@ -41684,8 +41628,8 @@
                     env
                     type-env
                     (lower-global-shared-view index)
-                    (lower-global-shared-view args)
-                    (lower-global-shared-view params)
+                    args
+                    params
                     values)]
                 [args-code : String
                   (lower-imported-spmd-call-args-code
@@ -41767,7 +41711,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [func : ast.AstExpr]
-  [args : ast.AstExprList]
+  [args : (& args ast.AstExprList)]
   [result-ty : ast.AstType]
   [origin : ast.AstExpr]) : LowerMaybeSpmdCall
   (match (compiler-lower-function-state-scalar-call-context
@@ -41798,14 +41742,14 @@
                     type-env
                     (lower-global-shared-view index)
                     (lower-masked-vector-empty-lane-locals)
-                    (lower-global-shared-view args))
+                    args)
                   0))
                 (match (lower-call-args-as-needed
                   (lower-global-shared-view ctx)
                   state
                   env
                   type-env
-                  (lower-global-shared-view args)
+                  args
                   (tc_core.tc-param-type-list
                     (lower-global-shared-view ctx)
                     (lower-global-shared-view params)))
@@ -41821,8 +41765,8 @@
                               env
                               type-env
                               (lower-global-shared-view index)
-                              (lower-global-shared-view args)
-                              (lower-global-shared-view params)
+                              args
+                              params
                               values)]
                           [helper-function-state : CompilerLowerFunctionState
                             (compiler-lower-function-state-new-with-stack
@@ -41857,7 +41801,7 @@
                             result-varying
                             body
                             (ir.CompilerIrSpmdBackend.Scalar)
-                            (lower-global-shared-view call-args)
+                            call-args
                             1
                             ""
                             -1
@@ -42285,7 +42229,7 @@
                         [(and
                             (lower-float-bitcast-literal-call?
                               (lower-global-shared-view ctx)
-                              (lower-global-shared-view args)
+                              args
                               (lower-global-shared-view result-ty))
                             (lower-float-to-bits-public-target?
                               (lower-global-shared-view name)))
@@ -42461,7 +42405,7 @@
                             env
                             type-env
                             func
-                            (lower-global-shared-view args)
+                            args
                             (lower-global-shared-view result-ty)
                             (lower-global-shared-view origin))
                             [(LowerMaybeSpmdCall.Some lowered)
@@ -50601,7 +50545,7 @@
           (set! index (+ index 1))))
       out)))
 
-(define (lower-array-var-set-max-offset [set : LowerArrayVarSet]) : i64
+(define (lower-array-var-set-max-offset [set : (& set LowerArrayVarSet)]) : i64
   (let
     [offsets : (__tl_dyn-array i64) set.offsets]
     [count : i64 set.count]
@@ -50871,7 +50815,7 @@
   (lower_i64_i64_map.with-capacity 16))
 
 (define (lower-masked-vector-lane-locals-from-set
-  [items : LowerIdSet]
+  [items : (& items LowerIdSet)]
   [lanes : i64]) : lower_i64_i64_map.Map
   (let
     [out : lower_i64_i64_map.Map (lower-masked-vector-empty-lane-locals)]
@@ -50931,7 +50875,7 @@
 (define (lower-spmd-numeric-let-type-env
   [ctx : tc_core.TcContext]
   [type-env : tc_core.TcTypeEnv]
-  [bindings : ast.AstLetBindingList]) : tc_core.TcTypeEnv
+  [bindings : (& bindings ast.AstLetBindingList)]) : tc_core.TcTypeEnv
   (lower-spmd-numeric-let-type-env-at ctx type-env (& bindings) 0))
 
 (define (lower-masked-vector-expr-list-lanes-with-locals
@@ -51000,7 +50944,7 @@
   [type-env : tc_core.TcTypeEnv]
   [index : String]
   [lane-locals : lower_i64_i64_map.Map]
-  [bindings : ast.AstLetBindingList]) : lower_i64_i64_map.Map
+  [bindings : (& bindings ast.AstLetBindingList)]) : lower_i64_i64_map.Map
   (lower-masked-vector-let-bindings-locals-at
     ctx
     function-state
@@ -51264,7 +51208,7 @@
   [type-env : tc_core.TcTypeEnv]
   [index : String]
   [lane-locals : lower_i64_i64_map.Map]
-  [args : ast.AstExprList]) : i64
+  [args : (& args ast.AstExprList)]) : i64
   (lower-spmd-call-args-lanes-at
     ctx
     function-state
@@ -51320,7 +51264,7 @@
   [index : String]
   [caller-locals : lower_i64_i64_map.Map]
   [params : ast.AstParamList]
-  [args : ast.AstExprList]) : lower_i64_i64_map.Map
+  [args : (& args ast.AstExprList)]) : lower_i64_i64_map.Map
   (lower-spmd-helper-param-locals-at
     ctx
     function-state
@@ -51425,7 +51369,7 @@
   [index : String]
   [lane-locals : lower_i64_i64_map.Map]
   [func : ast.AstExpr]
-  [args : ast.AstExprList]
+  [args : (& args ast.AstExprList)]
   [canonical-name : ci.InternId]
   [fn-ty : ast.AstType]
   [callables : ast.AstImportedSpmdCallableList]) : i64
@@ -51447,7 +51391,7 @@
             type-env
             (lower-global-shared-view index)
             (lower-global-shared-view lane-locals)
-            (lower-global-shared-view args))]
+            args)]
         [backend : ir.CompilerIrSpmdBackend
           (cond
             [(lower-mode-avx512? mode) (ir.CompilerIrSpmdBackend.Avx512)]
@@ -51515,7 +51459,7 @@
   [index : String]
   [lane-locals : lower_i64_i64_map.Map]
   [func : ast.AstExpr]
-  [args : ast.AstExprList]) : i64
+  [args : (& args ast.AstExprList)]) : i64
   (let
     [pools : ast.AstNodePoolContext
       (tc_core.tc-context-pools (lower-global-shared-view ctx))]
@@ -51545,7 +51489,7 @@
                         type-env
                         (lower-global-shared-view index)
                         (lower-global-shared-view lane-locals)
-                        (lower-global-shared-view args))]
+                        args)]
                     (if (< arg-lanes 0)
                       -1
                       (let
@@ -51776,12 +51720,12 @@
                 type-env
                 (lower-global-shared-view index)
                 (lower-global-shared-view lane-locals)
-                (lower-global-shared-view bindings))]
+                bindings)]
             [body-type-env : tc_core.TcTypeEnv
               (lower-spmd-numeric-let-type-env
                 (lower-global-shared-view ctx)
                 type-env
-                (lower-global-shared-view bindings))]
+                bindings)]
             (lower-masked-vector-lanes-merge
               (lower-masked-vector-let-bindings-lanes-with-locals
                 (lower-global-shared-view ctx)
@@ -52124,7 +52068,7 @@
                 type-env
                 (lower-global-shared-view index)
                 (lower-global-shared-view lane-locals)
-                (lower-global-shared-view bindings))]
+                bindings)]
             (or
               (lower-masked-vector-let-bindings-have-varying-if-with-locals?
                 (lower-global-shared-view ctx)
@@ -52551,7 +52495,7 @@
                 type-env
                 (lower-global-shared-view index)
                 (lower-global-shared-view lane-locals)
-                (lower-global-shared-view bindings))]
+                bindings)]
             (or
               (lower-masked-vector-let-bindings-have-varying-while-with-locals?
                 (lower-global-shared-view ctx)
@@ -52915,7 +52859,7 @@
               type-env
               (lower-global-shared-view index)
               (lower-global-shared-view lane-locals)
-              (lower-global-shared-view bindings))
+              bindings)
             (lower-masked-vector-body-has-varying-match-with-locals?
               (lower-global-shared-view ctx)
               function-state
@@ -53136,7 +53080,7 @@
   [type-env : tc_core.TcTypeEnv]
   [index : String]
   [lane-locals : lower_i64_i64_map.Map]
-  [bindings : ast.AstLetBindingList]) : bool
+  [bindings : (& bindings ast.AstLetBindingList)]) : bool
   (lower-masked-vector-let-bindings-have-varying-match-with-locals-at?
     ctx
     function-state
@@ -53318,7 +53262,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [index : String]
-  [enum-locals : LowerIdSet]
+  [enum-locals : (& enum-locals LowerIdSet)]
   [expr : ast.AstExpr]) : bool
   (match expr
     [(ast.AstExpr.Spanned inner-box _)
@@ -53396,7 +53340,7 @@
               env
               type-env
               (lower-global-shared-view index)
-              (lower-global-shared-view enum-locals)
+              enum-locals
               init)
               (lower-id-set-insert enum-locals name)
               enum-locals)]
@@ -53475,7 +53419,7 @@
               type-env
               (lower-global-shared-view index)
               (lower-global-shared-view enum-locals)
-              (lower-global-shared-view bindings))
+              bindings)
             (lower-masked-vector-body-has-varying-enum-match-with-locals?
               (lower-global-shared-view ctx)
               env
@@ -53526,7 +53470,7 @@
                 env
                 type-env
                 (lower-global-shared-view index)
-                (lower-global-shared-view enum-locals)
+                enum-locals
                 (lower-global-shared-view scrutinee))
               (lower-masked-vector-body-has-varying-enum-match-with-locals?
                 (lower-global-shared-view ctx)
@@ -53658,7 +53602,7 @@
   [type-env : tc_core.TcTypeEnv]
   [index : String]
   [enum-locals : LowerIdSet]
-  [bindings : ast.AstLetBindingList]) : bool
+  [bindings : (& bindings ast.AstLetBindingList)]) : bool
   (lower-masked-vector-let-bindings-have-varying-enum-match-with-locals-at?
     ctx
     env
@@ -53692,7 +53636,7 @@
               env
               type-env
               (lower-global-shared-view index)
-              (lower-global-shared-view enum-locals)
+              enum-locals
               (lower-global-shared-view init))
               (lower-id-set-insert (lower-global-shared-view enum-locals) name)
               enum-locals)]
@@ -55381,9 +55325,10 @@
     [(ResultLowerSpmdInlineHelper.Ok helper)
       (match helper
         [(LowerSpmdInlineHelper.Some name _ _ body)
-          (if (lower-id-set-contains?
-            (compiler-lower-function-state-inline-helper-stack function-state)
-            name)
+          (if (let
+            [helper-stack
+              (compiler-lower-function-state-inline-helper-stack function-state)]
+            (lower-id-set-contains? helper-stack name))
             false
             (let
               [previous : LowerIdSet
@@ -55531,7 +55476,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [numeric-context : spmd_numeric.CompilerSpmdNumericContext]
-  [bindings : ast.AstLetBindingList]) : LowerMaybeSpmdNumericFailure
+  [bindings : (& bindings ast.AstLetBindingList)]) : LowerMaybeSpmdNumericFailure
   (lower-spmd-numeric-failure-in-let-bindings-at
     ctx
     function-state
@@ -55800,7 +55745,7 @@
             env
             type-env
             numeric-context
-            (lower-global-shared-view bindings))
+            bindings)
             [(LowerMaybeSpmdNumericFailure.Some found decision)
               (LowerMaybeSpmdNumericFailure.Some found decision)]
             [(LowerMaybeSpmdNumericFailure.No)
@@ -55829,10 +55774,11 @@
           [(ResultLowerSpmdInlineHelper.Ok helper)
             (match helper
               [(LowerSpmdInlineHelper.Some name params _ body)
-                (if (lower-id-set-contains?
-                  (compiler-lower-function-state-inline-helper-stack
-                    function-state)
-                  name)
+                (if (let
+                  [helper-stack
+                    (compiler-lower-function-state-inline-helper-stack
+                      function-state)]
+                  (lower-id-set-contains? helper-stack name))
                   (lower-spmd-numeric-failure-in-expr-list
                     ctx
                     function-state
@@ -58180,7 +58126,7 @@
 (define (lower-vector-loop-limit
   [state : LowerState]
   [end-value : ir.CompilerIrValue]
-  [arrays : LowerArrayVarSet]
+  [arrays : (& arrays LowerArrayVarSet)]
   [lanes : i64]) : LowerExpr
   (match (lower-state-alloc-var state)
     [(LowerAlloc.Alloc alloc-state end-var)
@@ -59676,7 +59622,7 @@
                   (match (lower-vector-loop-limit
                     (lower-global-shared-view s)
                     (lower-global-shared-view end-value)
-                    (lower-global-shared-view arrays)
+                    arrays
                     lanes)
                     [(LowerExpr.Expr next-s value _)
                       (begin
@@ -60333,7 +60279,7 @@
 
 (define (lower-vector-map-preheader-cache-array-data
   [state : LowerState]
-  [arrays : LowerArrayVarSet]
+  [arrays : (& arrays LowerArrayVarSet)]
   [cache : LowerVectorMapValueCache]) : LowerVectorMapCachedEmit
   (let
     [s : LowerState state]
@@ -60379,7 +60325,7 @@
 
 (define (lower-vector-map-preheader-cache-stores
   [state : LowerState]
-  [arrays : LowerArrayVarSet]
+  [arrays : (& arrays LowerArrayVarSet)]
   [stores : LowerVectorMapStoreList]
   [lanes : i64]
   [elem-ty : ast.AstType]) : LowerVectorMapCachedEmit
@@ -61856,8 +61802,7 @@
   [arrays : LowerArrayVarSet]) : LowerExpr
   (let
     [s : LowerState state]
-    [max-offset : i64
-      (lower-array-var-set-max-offset (lower-global-shared-view arrays))]
+    [max-offset : i64 (lower-array-var-set-max-offset arrays)]
     [ok : ir.CompilerIrValue ir.CompilerIrValue.Unit]
     [within : ir.CompilerIrValue ir.CompilerIrValue.Unit]
     (begin
@@ -62343,7 +62288,7 @@
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
-  [lane-locals : LowerIdSet]
+  [lane-locals : (& lane-locals LowerIdSet)]
   [index : String]
   [index-var : i64]
   [expr : ast.AstExpr]) : ResultLowerMaskedEnumSource
@@ -62470,7 +62415,7 @@
   [index-var : i64]
   [active-mask : ir.CompilerIrMaybeValue]
   [lanes : i64]
-  [bindings : ast.AstLetBindingList]) : ResultLowerEnv
+  [bindings : (& bindings ast.AstLetBindingList)]) : ResultLowerEnv
   (lower-avx512-masked-let-bindings-at
     ctx
     state
@@ -62517,7 +62462,7 @@
                 (lower-global-shared-view state)
                 env
                 type-env
-                (lower-global-shared-view lane-locals)
+                lane-locals
                 (lower-global-shared-view index)
                 index-var
                 (lower-global-shared-view init))
@@ -64688,7 +64633,7 @@
     state
     env
     type-env
-    (lower-global-shared-view lane-locals)
+    lane-locals
     (lower-global-shared-view index)
     index-var
     scrutinee)
@@ -65200,8 +65145,8 @@
   [index-var : i64]
   [active-mask : ir.CompilerIrMaybeValue]
   [lanes : i64]
-  [params : ast.AstParamList]
-  [args : ast.AstExprList]) : ResultLowerSpmdCallArgs
+  [params : (& params ast.AstParamList)]
+  [args : (& args ast.AstExprList)]) : ResultLowerSpmdCallArgs
   (let
     [builder : ir.CompilerIrSpmdCallArgBuilder
       (ir.compiler-ir-spmd-call-arg-builder-with-capacity
@@ -65344,20 +65289,20 @@
                   (ResultLowerSpmdCallArgs.Err message)])))])]))
 
 (define (lower-spmd-call-lane-locals
-  [params : ast.AstParamList]
-  [args : ir.CompilerIrSpmdCallArgSeq]) : LowerIdSet
+  [params : (& params ast.AstParamList)]
+  [args : (& args ir.CompilerIrSpmdCallArgSeq)]) : LowerIdSet
   (lower-spmd-call-lane-locals-at (& params) args 0 (lower-id-set-empty)))
 
 (define (lower-spmd-call-lane-locals-at
   [params : (& params ast.AstParamList)]
-  [args : ir.CompilerIrSpmdCallArgSeq]
+  [args : (& args ir.CompilerIrSpmdCallArgSeq)]
   [index : i64]
   [out : LowerIdSet]) : LowerIdSet
   (lower-spmd-call-lane-locals-seq-at params args index out))
 
 (define (lower-spmd-call-lane-locals-seq-at
   [params : (& params ast.AstParamList)]
-  [args : ir.CompilerIrSpmdCallArgSeq]
+  [args : (& args ir.CompilerIrSpmdCallArgSeq)]
   [index : i64]
   [out : LowerIdSet]) : LowerIdSet
   (if (or (>= index (ast.ast-param-list-len params)) (>= index args.len))
@@ -65438,8 +65383,7 @@
   (if (>= index count)
     ""
     (str_cat.str-cat
-      (lower-imported-spmd-call-arg-code
-        (lower-spmd-call-arg-at (lower-global-shared-view args) index))
+      (lower-imported-spmd-call-arg-code (lower-spmd-call-arg-at args index))
       (lower-imported-spmd-call-args-code-at args (+ index 1) count))))
 
 (define (lower-imported-spmd-call-args-code
@@ -65806,7 +65750,7 @@
 (define (lower-imported-spmd-index-param
   [ctx : tc_core.TcContext]
   [index-name : String]
-  [args : ast.AstExprList]) : i64
+  [args : (& args ast.AstExprList)]) : i64
   (lower-imported-spmd-index-param-at ctx index-name (& args) 0))
 
 (define (lower-spmd-ast-param-class-code [class : ast.AstSpmdParamClass]) : String
@@ -66046,7 +65990,7 @@
   [result-ty : ast.AstType]
   [backend : ir.CompilerIrSpmdBackend]
   [lanes : i64]
-  [classes : ast.AstSpmdParamClassList]
+  [classes : (& classes ast.AstSpmdParamClassList)]
   [result : ast.AstSpmdResultClass]
   [index-param : i64]) : i64
   (let
@@ -66160,12 +66104,12 @@
   (ci.intern-compat-state-composite-left-id-unchecked intern-state record))
 
 (define (lower-spmd-package-structural-linker-symbol
-  [intern-state : ci.InternCompatState]
+  [intern-state : (& intern-state ci.InternCompatState)]
   [record : i64]) : i64
   (ci.intern-compat-state-composite-middle-id-unchecked intern-state record))
 
 (define (lower-spmd-package-structural-registration-key
-  [intern-state : ci.InternCompatState]
+  [intern-state : (& intern-state ci.InternCompatState)]
   [record : i64]) : i64
   (ci.intern-compat-state-composite-left-id-unchecked
     intern-state
@@ -66383,10 +66327,7 @@
         specialization.lanes
         0)]
     [env : sym_i64_env.SymI64Env
-      (lower-bind-params
-        (lower-global-shared-view params)
-        1
-        (sym_i64_env.sym-i64-empty))]
+      (lower-bind-params params 1 (sym_i64_env.sym-i64-empty))]
     [type-env : tc_core.TcTypeEnv
       (tc_core.tc-bind-return-type
         (tc_core.tc-bind-params
@@ -66406,11 +66347,11 @@
         env
         type-env
         index-name
-        (lower-masked-vector-lane-locals-from-set
-          (lower-spmd-call-lane-locals
-            (lower-global-shared-view params)
-            call-args)
-          specialization.lanes)
+        (let
+          [lane-locals (lower-spmd-call-lane-locals params call-args)]
+          (lower-masked-vector-lane-locals-from-set
+            lane-locals
+            specialization.lanes))
         body)]
     (cond
       [(not (lower-spmd-package-lane-width-supported? specialization.lanes))
@@ -66529,7 +66470,7 @@
       components)))
 
 (define (lower-spmd-call-arg-at
-  [args : ir.CompilerIrSpmdCallArgSeq]
+  [args : (& args ir.CompilerIrSpmdCallArgSeq)]
   [index : i64]) : ir.CompilerIrSpmdCallArg
   (if (and (>= index 0) (< index args.len))
     (array-ref args.slots index)
@@ -66542,7 +66483,7 @@
   [lower-state : CompilerLowerState]
   [ctx : tc_core.TcContext]
   [params : ast.AstParamList]
-  [args : ir.CompilerIrSpmdCallArgSeq]
+  [args : (& args ir.CompilerIrSpmdCallArgSeq)]
   [mode : CompilerLowerMode]
   [idx : i64]) : ir.CompilerIrParamSeq
   (let
@@ -66565,7 +66506,7 @@
   [lower-state : CompilerLowerState]
   [ctx : tc_core.TcContext]
   [params : (& params ast.AstParamList)]
-  [args : ir.CompilerIrSpmdCallArgSeq]
+  [args : (& args ir.CompilerIrSpmdCallArgSeq)]
   [mode : CompilerLowerMode]
   [index : i64]
   [idx : i64]
@@ -66574,7 +66515,7 @@
     unit
     (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
       [(ast.AstParam.Param name ty _)
-        (match (lower-spmd-call-arg-at (lower-global-shared-view args) index)
+        (match (lower-spmd-call-arg-at args index)
           [(ir.CompilerIrSpmdCallArg.Arg class _ _)
             (begin
               (ir.compiler-ir-param-builder-push!
@@ -66665,8 +66606,8 @@
 (define (lower-spmd-helper-index-param
   [ctx : tc_core.TcContext]
   [index-name : String]
-  [params : ast.AstParamList]
-  [args : ast.AstExprList]) : String
+  [params : (& params ast.AstParamList)]
+  [args : (& args ast.AstExprList)]) : String
   (lower-spmd-helper-index-param-at ctx index-name (& params) (& args) 0))
 
 (define (lower-spmd-call-args-append
@@ -66686,7 +66627,7 @@
   [backend : ir.CompilerIrSpmdBackend]
   [lanes : i64]
   [physical-params : ir.CompilerIrParamSeq]
-  [call-args : ir.CompilerIrSpmdCallArgSeq]
+  [call-args : (& call-args ir.CompilerIrSpmdCallArgSeq)]
   [index : ir.CompilerIrSpmdPrivateIndex]
   [ret-ty : ast.AstType]
   [result-varying : bool]) : ir.CompilerIrSpmdPrivateAbi
@@ -66715,9 +66656,7 @@
                     [(and appended (= ordinal (- physical-params.len 1)))
                       (ir.CompilerIrSpmdPrivateParamRole.IndexBase)]
                     [else
-                      (match (lower-spmd-call-arg-at
-                        (lower-global-shared-view call-args)
-                        (- ordinal 1))
+                      (match (lower-spmd-call-arg-at call-args (- ordinal 1))
                         [(ir.CompilerIrSpmdCallArg.Arg class _ source-ty)
                           (ir.CompilerIrSpmdPrivateParamRole.Source
                             (- ordinal 1)
@@ -66782,7 +66721,7 @@
   [result-varying : bool]
   [body : ast.AstExpr]
   [backend : ir.CompilerIrSpmdBackend]
-  [call-args : ir.CompilerIrSpmdCallArgSeq]
+  [call-args : (& call-args ir.CompilerIrSpmdCallArgSeq)]
   [lanes : i64]
   [helper-index : String]
   [helper-index-source-param : i64]
@@ -66790,8 +66729,7 @@
   [names : LowerNameCache]
   [mode : CompilerLowerMode]) : ResultLowerFunction
   (let
-    [source-param-count : i64
-      (+ 1 (lower-param-count (lower-global-shared-view params)))]
+    [source-param-count : i64 (+ 1 (lower-param-count params))]
     [param-count : i64
       (if (or
         (= (string.string-length helper-index) 0)
@@ -66803,7 +66741,7 @@
         (tc_core.tc-resolve-type (lower-global-shared-view ctx) ret))]
     [function-spans : ir.CompilerSourceSpans
       (lower-record-function-span
-        (compiler-lower-state-from-name-cache (lower-global-shared-view names))
+        (compiler-lower-state-from-name-cache names)
         spans
         (ir.compiler-ir-symbol-typed-id hidden-name)
         (lower-global-shared-view body))]
@@ -66826,10 +66764,7 @@
         1
         param-count)]
     [env : sym_i64_env.SymI64Env
-      (lower-bind-params
-        (lower-global-shared-view params)
-        1
-        (sym_i64_env.sym-i64-empty))]
+      (lower-bind-params params 1 (sym_i64_env.sym-i64-empty))]
     [type-env : tc_core.TcTypeEnv
       (tc_core.tc-bind-return-type
         (tc_core.tc-bind-params
@@ -66842,9 +66777,7 @@
       state
       env
       type-env
-      (lower-spmd-call-lane-locals
-        (lower-global-shared-view params)
-        (lower-global-shared-view call-args))
+      (lower-spmd-call-lane-locals params call-args)
       (lower-global-shared-view helper-index)
       (if (= (string.string-length helper-index) 0)
         (- 0 1)
@@ -66912,7 +66845,7 @@
                         (compiler-lower-state-from-name-cache names)
                         ctx
                         params
-                        (lower-global-shared-view call-args)
+                        call-args
                         mode
                         1)]
                     (if (or
@@ -66966,19 +66899,18 @@
   [ret : ast.AstType]
   [result-varying : bool]
   [body : ast.AstExpr]
-  [call-args : ir.CompilerIrSpmdCallArgSeq]
+  [call-args : (& call-args ir.CompilerIrSpmdCallArgSeq)]
   [spans : ir.CompilerSourceSpans]
   [names : LowerNameCache]
   [mode : CompilerLowerMode]) : ResultLowerFunction
   (let
-    [param-count : i64
-      (+ 1 (lower-param-count (lower-global-shared-view params)))]
+    [param-count : i64 (+ 1 (lower-param-count params))]
     [ret-ty : ast.AstType
       (tc_core.tc-type-without-regions
         (tc_core.tc-resolve-type (lower-global-shared-view ctx) ret))]
     [function-spans : ir.CompilerSourceSpans
       (lower-record-function-span
-        (compiler-lower-state-from-name-cache (lower-global-shared-view names))
+        (compiler-lower-state-from-name-cache names)
         spans
         (ir.compiler-ir-symbol-typed-id hidden-name)
         (lower-global-shared-view body))]
@@ -67001,10 +66933,7 @@
         1
         param-count)]
     [env : sym_i64_env.SymI64Env
-      (lower-bind-params
-        (lower-global-shared-view params)
-        1
-        (sym_i64_env.sym-i64-empty))]
+      (lower-bind-params params 1 (sym_i64_env.sym-i64-empty))]
     [type-env : tc_core.TcTypeEnv
       (tc_core.tc-bind-return-type
         (tc_core.tc-bind-params
@@ -67064,7 +66993,7 @@
   [result-varying : bool]
   [body : ast.AstExpr]
   [backend : ir.CompilerIrSpmdBackend]
-  [call-args : ir.CompilerIrSpmdCallArgSeq]
+  [call-args : (& call-args ir.CompilerIrSpmdCallArgSeq)]
   [lanes : i64]
   [helper-index : String]
   [helper-index-source-param : i64]
@@ -67143,7 +67072,7 @@
   [mode : CompilerLowerMode]) : ResultLowerFunction
   (let
     [lower-state : CompilerLowerState
-      (compiler-lower-state-from-name-cache (lower-global-shared-view names))]
+      (compiler-lower-state-from-name-cache names)]
     [package-name : String (compiler-lower-state-spmd-package-name lower-state)]
     [validation-error : String
       (lower-spmd-package-specialization-validation-error
@@ -67183,21 +67112,21 @@
             resolved-ret
             backend
             lanes
-            (lower-global-shared-view classes)
+            classes
             specialization.result
             index-param)]
         [intern-state : ci.InternCompatState
           (compiler-lower-state-interns lower-state)]
         [hidden-name : i64
           (lower-spmd-package-structural-linker-symbol
-            (lower-global-shared-view intern-state)
+            intern-state
             structural-symbol)]
         [registration : LowerSpmdPackageSymbolRegistration
           (lower-spmd-package-symbol-register
             lower-state
             hidden-name
             (lower-spmd-package-structural-registration-key
-              (lower-global-shared-view intern-state)
+              intern-state
               structural-symbol)
             (lower-spmd-package-structural-identity
               intern-state
@@ -67257,7 +67186,7 @@
   (let
     [function-state : CompilerLowerFunctionState
       (compiler-lower-function-state-new-with-stack
-        (compiler-lower-state-from-name-cache (lower-global-shared-view names))
+        (compiler-lower-state-from-name-cache names)
         (lower-id-set-insert
           (lower-spmd-inline-empty-helper-stack)
           canonical-handle))]
@@ -67363,7 +67292,7 @@
   (let
     [package-name : String
       (compiler-lower-state-spmd-package-name
-        (compiler-lower-state-from-name-cache (lower-global-shared-view names)))]
+        (compiler-lower-state-from-name-cache names))]
     (match callable
       [(ast.AstSpmdCallable.No)
         (ResultLowerFunction.Ok (ir.compiler-ir-function-seq-empty) spans)]
@@ -67579,10 +67508,8 @@
                 env
                 type-env
                 (lower-global-shared-view index)
-                (lower-masked-vector-lane-locals-from-set
-                  (lower-global-shared-view lane-locals)
-                  lanes)
-                (lower-global-shared-view args))]
+                (lower-masked-vector-lane-locals-from-set lane-locals lanes)
+                args)]
             (if (= arg-lanes 0)
               (lower-avx512-uniform-spmd-call
                 ctx
@@ -67604,8 +67531,8 @@
                 index-var
                 (lower-global-shared-view active-mask)
                 lanes
-                (lower-global-shared-view params)
-                (lower-global-shared-view args))
+                params
+                args)
                 [(ResultLowerSpmdCallArgs.Err message)
                   (ResultLowerExpr.Err message)]
                 [(ResultLowerSpmdCallArgs.Ok args-state call-args any-varying)
@@ -67722,10 +67649,8 @@
                     env
                     type-env
                     (lower-global-shared-view index)
-                    (lower-masked-vector-lane-locals-from-set
-                      (lower-global-shared-view lane-locals)
-                      lanes)
-                    (lower-global-shared-view args))]
+                    (lower-masked-vector-lane-locals-from-set lane-locals lanes)
+                    args)]
                 (if (= arg-lanes 0)
                   (lower-avx512-uniform-spmd-call
                     ctx
@@ -67747,8 +67672,8 @@
                     index-var
                     (lower-global-shared-view active-mask)
                     lanes
-                    (lower-global-shared-view params)
-                    (lower-global-shared-view args))
+                    params
+                    args)
                     [(ResultLowerSpmdCallArgs.Ok
                         args-state
                         call-args
@@ -67767,8 +67692,8 @@
                                 (lower-spmd-helper-index-param
                                   (lower-global-shared-view ctx)
                                   (lower-global-shared-view index)
-                                  (lower-global-shared-view params)
-                                  (lower-global-shared-view args))]
+                                  params
+                                  args)]
                               [abi-call-args : ir.CompilerIrSpmdCallArgSeq
                                 (if (= (string.string-length helper-index) 0)
                                   call-args
@@ -67827,7 +67752,7 @@
                                 result-varying
                                 body
                                 backend
-                                (lower-global-shared-view abi-call-args)
+                                abi-call-args
                                 lanes
                                 helper-index
                                 -1
@@ -68085,7 +68010,7 @@
               index-var
               (lower-global-shared-view active-mask)
               lanes
-              (lower-global-shared-view bindings))
+              bindings)
               [(ResultLowerEnv.Ok bound-state bound-env bound-type-env)
                 (lower-avx512-masked-expr
                   ctx
@@ -68475,7 +68400,7 @@
 
 (define (lower-masked-preheader-cache-array-data
   [state : LowerState]
-  [arrays : LowerArrayVarSet]) : LowerState
+  [arrays : (& arrays LowerArrayVarSet)]) : LowerState
   (let
     [s : LowerState state]
     [array-index : i64 0]
@@ -68636,7 +68561,7 @@
               (match (lower-vector-loop-limit
                 (lower-global-shared-view s)
                 (lower-global-shared-view end-value)
-                (lower-global-shared-view arrays)
+                arrays
                 lanes)
                 [(LowerExpr.Expr next-s value _)
                   (begin
@@ -68653,11 +68578,7 @@
               (lower-masked-preheader-cache-set!
                 (lower-global-shared-view s)
                 preheader-cache)
-              (set!
-                s
-                (lower-masked-preheader-cache-array-data
-                  s
-                  (lower-global-shared-view arrays)))
+              (set! s (lower-masked-preheader-cache-array-data s arrays))
               (set!
                 s
                 (lower-state-finish-block
@@ -69097,7 +69018,7 @@
               (match (lower-vector-loop-limit
                 (lower-global-shared-view s)
                 (lower-global-shared-view end-value)
-                (lower-global-shared-view arrays)
+                arrays
                 lanes)
                 [(LowerExpr.Expr next-s value _)
                   (begin
@@ -69113,7 +69034,7 @@
                     (set! vector-start-ok value))])
               (match (lower-vector-map-preheader-cache-stores
                 (lower-global-shared-view s)
-                (lower-global-shared-view arrays)
+                arrays
                 stores
                 lanes
                 elem-ty)
@@ -71673,7 +71594,7 @@
                 ;; require a trailing catch-all instead.
                 (if (lower-pattern-list-refutable-for-types?
                   (lower-global-shared-view ctx)
-                  (lower-global-shared-view args)
+                  args
                   (lower-global-shared-view resolved-fields))
                   (ResultLowerExpr.Err
                     (box
@@ -71865,7 +71786,7 @@
 
 (define (lower-enum-match-next-label-base
   [total-enum-switch? : bool]
-  [rest : ast.AstMatchArmList]) : String
+  [rest : (& rest ast.AstMatchArmList)]) : String
   ;; Preserve the old diagnostic spellings without consulting them for
   ;; semantics. The explicit proof is threaded only through this match's
   ;; outer compare chain and cannot leak into a nested arm body.
@@ -71944,7 +71865,7 @@
                             body-label-state
                             (lower-enum-match-next-label-base
                               next-total-enum-switch?
-                              (lower-global-shared-view rest)))
+                              rest))
                             [(LowerLabel.Label next-label-state next-label)
                               (let
                                 [body-start : LowerState
@@ -72332,7 +72253,9 @@
             env
             type-env
             args
-            (tc_core.tc-resolve-type-list ctx (deref param-types)))]
+            (tc_core.tc-resolve-type-list
+              ctx
+              (lower-box-shared-view param-types)))]
         [_ (lower-args ctx state env type-env args)])]
     [(tc_core.ResultTcType.Err _) (lower-args ctx state env type-env args)]))
 
@@ -72342,7 +72265,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [func-ty : ast.AstType]
-  [args : ast.AstExprList]
+  [args : (& args ast.AstExprList)]
   [ret-ty : ast.AstType]
   [sret-var : i64]) : bool
   (if (lower-tail-call-inline-aggregate-risk?
@@ -72389,7 +72312,7 @@
         env
         type-env
         func-ty
-        (lower-global-shared-view args)
+        args
         (lower-global-shared-view ret-ty)
         sret-var)
         (match (lower-expr
@@ -72942,7 +72865,7 @@
 (define (lower-rvo-args-cannot-alias-sret?
   [ctx : tc_core.TcContext]
   [type-env : tc_core.TcTypeEnv]
-  [args : ast.AstExprList]) : bool
+  [args : (& args ast.AstExprList)]) : bool
   (lower-rvo-args-cannot-alias-sret-at? ctx type-env (& args) 0))
 
 (define (lower-rvo-args-cannot-alias-sret-at?
@@ -73045,7 +72968,7 @@
       (lower-rvo-args-cannot-alias-sret?
         (lower-global-shared-view ctx)
         type-env
-        (lower-global-shared-view args))))
+        args)))
     (LowerMaybeDirectStore.No)
     (match (lower-lookup-type-id
       (lower-global-shared-view ctx)
@@ -73430,7 +73353,7 @@
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
-  [exprs : ast.AstExprList]) : bool
+  [exprs : (& exprs ast.AstExprList)]) : bool
   (lower-expr-list-contains-unsafe-inline-aggregate-at?
     ctx
     state
@@ -73490,7 +73413,7 @@
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
-  [args : ast.AstExprList]
+  [args : (& args ast.AstExprList)]
   [ret-ty : ast.AstType]
   [sret-var : i64]) : bool
   (or
@@ -73587,7 +73510,7 @@
                   (lower-global-shared-view state)
                   env
                   type-env
-                  (lower-global-shared-view args)
+                  args
                   (lower-global-shared-view ret-ty)
                   sret-var))
               (lower-tail-call-direct-supported?
@@ -74372,7 +74295,7 @@
             handle-name-id)
           (if (lower-pattern-list-refutable-for-types?
             (lower-global-shared-view ctx)
-            (lower-global-shared-view args)
+            args
             (lower-global-shared-view resolved-fields))
             (ResultLowerState.Err
               (box
@@ -74533,7 +74456,7 @@
                       body-label-state
                       (lower-enum-match-next-label-base
                         next-total-enum-switch?
-                        (lower-global-shared-view rest)))
+                        rest))
                       [(LowerLabel.Label next-label-state next-label)
                         (let
                           [body-start : LowerState
@@ -74881,12 +74804,12 @@
               expr))])]
     [_ (lower-return-expr ctx state env type-env expr ret-ty sret-var)]))
 
-(define (lower-param-count [params : ast.AstParamList]) : i64
+(define (lower-param-count [params : (& params ast.AstParamList)]) : i64
   (ast.ast-param-list-len (& params)))
 
 (define (lower-internal-param-list-contains-structural?
   [ctx : tc_core.TcContext]
-  [params : ast.AstParamList]) : bool
+  [params : (& params ast.AstParamList)]) : bool
   (lower-internal-param-list-contains-structural-at? ctx (& params) 0))
 
 (define (lower-internal-param-list-contains-structural-at?
@@ -74905,7 +74828,7 @@
             (+ index 1)))])))
 
 (define (lower-bind-params
-  [params : ast.AstParamList]
+  [params : (& params ast.AstParamList)]
   [idx : i64]
   [env : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (lower-bind-params-at (& params) 0 idx env))
@@ -75070,9 +74993,7 @@
         size
         (lower-global-shared-view source-ty))
         [(LowerExpr.Expr storage-state storage _)
-          (if (=
-            (lower-c-abi-slot-list-count (lower-global-shared-view slots))
-            1)
+          (if (= (lower-c-abi-slot-list-count slots) 1)
             (match (lower-c-abi-slot-list-ref slots 0)
               [(LowerCAbiSlot.Slot scalar-ty offset)
                 (ResultLowerExpr.Ok
@@ -75162,7 +75083,7 @@
 (define (lower-bind-internal-params
   [ctx : tc_core.TcContext]
   [mode : CompilerLowerMode]
-  [params : ast.AstParamList]
+  [params : (& params ast.AstParamList)]
   [source-start : i64]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
@@ -75255,7 +75176,7 @@
 
 (define (lower-param-list-contains-unsupported-reference?
   [ctx : tc_core.TcContext]
-  [params : ast.AstParamList]) : bool
+  [params : (& params ast.AstParamList)]) : bool
   (lower-param-list-contains-unsupported-reference-at? ctx (& params) 0))
 
 (define (lower-param-list-contains-unsupported-reference-at?
@@ -75291,7 +75212,7 @@
 ;; site), so it must return stable arena storage -- never a caller stack sret
 ;; slot. Keep these on the arena return path.
 (define (lower-global-init-function-symbol?
-  [names : LowerNameCache]
+  [names : (& names LowerNameCache)]
   [symbol : i64]) : bool
   (let
     [intern-state : ci.InternCompatState
@@ -75317,7 +75238,7 @@
   (if (or
     (lower-param-list-contains-unsupported-reference?
       (lower-global-shared-view ctx)
-      (lower-global-shared-view params))
+      params)
     (not
       (lower-supported-reference-type?
         (lower-global-shared-view ctx)
@@ -75325,14 +75246,12 @@
     (ResultLowerFunction.Err
       (box (lower-diagnostic (lower-reference-support-message))))
     (let
-      [param-count : i64 (lower-param-count (lower-global-shared-view params))]
+      [param-count : i64 (lower-param-count params)]
       [ret-ty : ast.AstType
         (tc_core.tc-type-without-regions
           (tc_core.tc-resolve-type (lower-global-shared-view ctx) ret))]
       [global-init? : bool
-        (lower-global-init-function-symbol?
-          (lower-global-shared-view names)
-          logical-name)]
+        (lower-global-init-function-symbol? names logical-name)]
       [ret-class : LowerCAbiAggregate
         (lower-internal-return-class-for-symbol
           (lower-global-shared-view ctx)
@@ -75362,7 +75281,7 @@
       [structural-params? : bool
         (lower-internal-param-list-contains-structural?
           (lower-global-shared-view ctx)
-          (lower-global-shared-view params))]
+          params)]
       [sret-var : i64
         (if structural-sret?
           0
@@ -75386,8 +75305,7 @@
           (lower-global-shared-view ret-ty))]
       [function-spans : ir.CompilerSourceSpans
         (lower-record-function-span
-          (compiler-lower-state-from-name-cache
-            (lower-global-shared-view names))
+          (compiler-lower-state-from-name-cache names)
           spans
           (ir.compiler-ir-symbol-typed-id logical-name)
           (lower-global-shared-view body))]
@@ -75436,7 +75354,7 @@
                 (lower-bind-internal-params
                   (lower-global-shared-view ctx)
                   mode
-                  (lower-global-shared-view params)
+                  params
                   source-start
                   state
                   initial-env
@@ -75444,10 +75362,7 @@
                   (lower-global-shared-view body))
                 (ResultLowerEnv.Ok
                   state
-                  (lower-bind-params
-                    (lower-global-shared-view params)
-                    source-start
-                    initial-env)
+                  (lower-bind-params params source-start initial-env)
                   type-env))
                 [(ResultLowerEnv.Ok bound-state bound-env bound-type-env)
                   (match (lower-tail-expr
@@ -75832,8 +75747,7 @@
         [mark : i64 (arena.tl_region_mark)]
         [function-state : CompilerLowerFunctionState
           (compiler-lower-function-state-new
-            (compiler-lower-state-from-name-cache
-              (lower-global-shared-view names)))]
+            (compiler-lower-state-from-name-cache names))]
         (match (lower-function
           ctx
           top-env
@@ -76147,7 +76061,7 @@
   [mode : CompilerLowerMode]) : ResultLowerFunction
   (let
     [lower-state : CompilerLowerState
-      (compiler-lower-state-from-name-cache (lower-global-shared-view names))]
+      (compiler-lower-state-from-name-cache names)]
     [pools : ast.AstNodePoolContext
       (tc_core.tc-context-pools (lower-global-shared-view ctx))]
     [value-name-id : i64 (lower-struct-cleanup-param-id lower-state)]
@@ -76275,7 +76189,7 @@
   [lower-state : CompilerLowerState]
   [pools : ast.AstNodePoolContext]
   [ctx : tc_core.TcContext]
-  [payloads : ast.AstTypeList]
+  [payloads : (& payloads ast.AstTypeList)]
   [cleanups : ast.AstVariantPayloadCleanupList]) : parser.ResultAstExprList
   (lower-enum-cleanup-payload-exprs-at
     lower-state
@@ -76362,7 +76276,7 @@
         lower-state
         (lower-global-shared-view pools)
         (lower-global-shared-view ctx)
-        (lower-global-shared-view payloads)
+        payloads
         cleanups)
         [(parser.ResultAstExprList.Ok exprs)
           (parser.ResultAstMatchArm.Ok
@@ -76438,7 +76352,7 @@
   [mode : CompilerLowerMode]) : ResultLowerFunction
   (let
     [lower-state : CompilerLowerState
-      (compiler-lower-state-from-name-cache (lower-global-shared-view names))]
+      (compiler-lower-state-from-name-cache names)]
     [pools : ast.AstNodePoolContext
       (tc_core.tc-context-pools (lower-global-shared-view ctx))]
     [value-name-id : i64 (lower-struct-cleanup-param-id lower-state)]
@@ -76458,14 +76372,14 @@
             (ast.ast-param-list-new))
           (ast.AstType.Unit)
           (let
-            [hoisted-1
+            [match-id
               (ast.ast-expr-match-with-pools
                 (lower-global-shared-view pools)
                 (ast.ast-node-pool-context-expr-push
                   (lower-global-shared-view pools)
                   (ast.AstExpr.Var value-name-id))
                 arms)]
-            (ast.ast-node-pool-context-expr-get pools hoisted-1))
+            (ast.ast-node-pool-context-expr-get pools match-id))
           spans
           names
           mode)]
@@ -76512,7 +76426,7 @@
   (cond [(= tag 1) "unit"] [(= tag 2) "u"] [(= tag 3) "v"] [else ""]))
 
 (define (lower-spmd-package-arg-classes-render
-  [intern-state : ci.InternCompatState]
+  [intern-state : (& intern-state ci.InternCompatState)]
   [components : i64]) : String
   (if (= components 0)
     ""
@@ -76532,7 +76446,7 @@
           "u"
           "v")
         (lower-spmd-package-arg-classes-render
-          (lower-global-shared-view intern-state)
+          intern-state
           (ci.intern-compat-state-composite-right-id-unchecked
             (& intern-state)
             components)))
@@ -76611,7 +76525,7 @@
               intern-state
               backend-components)
             (lower-spmd-package-arg-classes-render
-              (lower-global-shared-view intern-state)
+              intern-state
               (ci.intern-compat-state-composite-left-id-unchecked
                 intern-state
                 call-components))
@@ -76847,7 +76761,7 @@
   [variant-name : i64]) : i64
   (let
     [lower-state : CompilerLowerState
-      (compiler-lower-state-from-name-cache (lower-global-shared-view names))]
+      (compiler-lower-state-from-name-cache names)]
     [intern-state : ci.InternCompatState
       (compiler-lower-state-interns lower-state)]
     [variant-logical-name : String
@@ -76856,10 +76770,7 @@
         (lower-global-shared-view names)
         variant-name)]
     [variant-logical-id : i64
-      (lower-dispatch-variant-logical-id
-        module-id
-        (lower-global-shared-view names)
-        variant-name)]
+      (lower-dispatch-variant-logical-id module-id names variant-name)]
     [variant-symbol : i64
       (lower-name-cache-ir-symbol
         names
@@ -76918,7 +76829,7 @@
           (ast.ast-type-list-get types index (ast.ast-type-id-fallback))))
       (lower-dispatch-type-list-without-regions-at ctx types (+ index 1)))))
 
-(define (lower-dispatch-param-type-count [types : ast.AstTypeList]) : i64
+(define (lower-dispatch-param-type-count [types : (& types ast.AstTypeList)]) : i64
   (ast.ast-type-list-len (& types)))
 
 (define (lower-dispatch-physical-param-list
@@ -77034,7 +76945,7 @@
             wanted))])))
 
 (define (lower-dispatch-find-internal-name
-  [variants : ast.AstDispatchVariantList]
+  [variants : (& variants ast.AstDispatchVariantList)]
   [module-id : i64]
   [names : LowerNameCache]
   [dispatch-symbol : i64]
@@ -77423,9 +77334,7 @@
           (if leading-sret?
             1
             0)]
-        [source-count : i64
-          (lower-dispatch-param-type-count
-            (lower-global-shared-view clean-param-types))]
+        [source-count : i64 (lower-dispatch-param-type-count clean-param-types)]
         [param-count : i64 (+ source-start source-count)]
         [physical-ret-ty : ast.AstType
           (lower-internal-return-physical-type
@@ -77437,14 +77346,14 @@
             (lower-dispatch-physical-param-values param-count 0))]
         [maybe-avx2 : LowerMaybeIrSymbol
           (lower-dispatch-find-internal-name
-            (lower-global-shared-view variants)
+            variants
             module-id
             (lower-global-shared-view names)
             logical-name
             (ast.AstDispatchIsa.Avx2))]
         [maybe-avx512 : LowerMaybeIrSymbol
           (lower-dispatch-find-internal-name
-            (lower-global-shared-view variants)
+            variants
             module-id
             (lower-global-shared-view names)
             logical-name
@@ -77681,7 +77590,7 @@
   [top-env : tc_core.TcTypeEnv]
   [type-cache : LowerTypeCache]
   [dispatch-symbol : i64]
-  [variants : ast.AstDispatchVariantList]
+  [variants : (& variants ast.AstDispatchVariantList)]
   [module-id : i64]
   [spans : ir.CompilerSourceSpans]
   [names : LowerNameCache]
@@ -77722,7 +77631,7 @@
       (tc_core.tc-context-with-module-id ctx module module-id)]
     [logical-name : String
       (lower-current-decl-logical-name-cache-id
-        (lower-global-shared-view name-cache)
+        name-cache
         logical-module
         name
         name-id)]
@@ -77730,15 +77639,10 @@
     [logical-id : i64
       (lower-name-cache-lookup-logical-id (& name-cache) key-id key-id)]
     [logical-symbol : i64
-      (lower-name-cache-ir-symbol
-        (lower-global-shared-view name-cache)
-        logical-id
-        name-id
-        logical-name)]
+      (lower-name-cache-ir-symbol name-cache logical-id name-id logical-name)]
     [intern-state : ci.InternCompatState
       (compiler-lower-state-interns
-        (compiler-lower-state-from-name-cache
-          (lower-global-shared-view name-cache)))]
+        (compiler-lower-state-from-name-cache name-cache))]
     [cache-id : i64
       (ci.intern-compat-state-generated-role-symbol-id
         (&mut intern-state)
@@ -77758,7 +77662,7 @@
             local-top-env
             type-cache
             logical-symbol
-            (lower-global-shared-view variants)
+            variants
             module-id
             spans
             (lower-global-shared-view name-cache)
@@ -77818,7 +77722,7 @@
 (define (lower-rvo-early-return-functions-from-decls-in-module
   [lower-state : CompilerLowerState]
   [ctx : tc_core.TcContext]
-  [decls : ast.AstDeclList]
+  [decls : (& decls ast.AstDeclList)]
   [names : LowerNameEnv]
   [_ : String]
   [module-id : i64]
@@ -77877,7 +77781,7 @@
 (define (lower-rvo-early-return-functions-from-decls
   [lower-state : CompilerLowerState]
   [ctx : tc_core.TcContext]
-  [decls : ast.AstDeclList]
+  [decls : (& decls ast.AstDeclList)]
   [names : LowerNameEnv]) : lower_i64_i64_map.Map
   (lower-rvo-early-return-functions-from-decls-in-module
     lower-state
@@ -77919,9 +77823,9 @@
       [dispatch-variants : lower_i64_i64_map.Map
         (lower-dispatch-variant-set-from-decls
           (lower-global-shared-view decls)
-          (lower-global-shared-view paths)
+          paths
           (lower-global-shared-view entry-path)
-          (lower-global-shared-view dispatch-name-cache))]
+          dispatch-name-cache)]
       (begin
         ;; Build the shared global name/type caches once; per-module caches
         ;; are small overlays that fall through to them. The initial cur caches are
@@ -77945,7 +77849,7 @@
           (lower-rvo-early-return-functions-from-decls
             lower-state
             (lower-global-shared-view ctx)
-            (lower-global-shared-view decls)
+            decls
             (lower-global-shared-view names)))
         (lower-decls-in-module
           ctx
@@ -78034,8 +77938,7 @@
   [module-id : i64]) : ResultLowerDecls
   (let
     [lower-state : CompilerLowerState
-      (compiler-lower-state-from-name-cache
-        (lower-global-shared-view name-cache))]
+      (compiler-lower-state-from-name-cache name-cache)]
     [cur-decls : ast.AstDeclList decls]
     [cur-paths : ast.AstDeclPathList paths]
     [cur-local-top-env : tc_core.TcTypeEnv local-top-env]
@@ -78141,7 +78044,7 @@
                             (tc_core.tc-type-without-regions ty)]
                           [global-name : String
                             (lower-current-decl-logical-name-cache-id
-                              (lower-global-shared-view decl-name-cache)
+                              decl-name-cache
                               logical-module
                               (lower-name-id-text lower-state name)
                               name)]
@@ -78156,7 +78059,7 @@
                               global-key-id)]
                           [global-symbol : i64
                             (lower-name-cache-ir-symbol
-                              (lower-global-shared-view decl-name-cache)
+                              decl-name-cache
                               global-id
                               name
                               global-name)]
@@ -78241,7 +78144,7 @@
                         ty)]
                     [logical-name : String
                       (lower-current-decl-logical-name-cache-id
-                        (lower-global-shared-view decl-name-cache)
+                        decl-name-cache
                         logical-module
                         (lower-name-id-text lower-state name)
                         name)]
@@ -78314,7 +78217,7 @@
                       (if (= logical-id cbi.compiler-builtin-id-fix-main)
                         "main"
                         (lower-current-decl-logical-name-cache-id
-                          (lower-global-shared-view decl-name-cache)
+                          decl-name-cache
                           logical-module
                           (lower-name-id-text lower-state name)
                           name))]
@@ -78534,14 +78437,14 @@
                                 logical-module-id
                                 cleanup-name-id)]
                             (lower-name-cache-ir-symbol
-                              (lower-global-shared-view decl-name-cache)
+                              decl-name-cache
                               (lower-name-cache-lookup-logical-id
                                 (& decl-name-cache)
                                 key-id
                                 key-id)
                               cleanup-name-id
                               (lower-current-decl-logical-name-cache-id
-                                (lower-global-shared-view decl-name-cache)
+                                decl-name-cache
                                 (lower-global-shared-view logical-module)
                                 (lower-name-id-text lower-state cleanup-name-id)
                                 cleanup-name-id)))])]
@@ -78564,11 +78467,11 @@
                               logical-module-id
                               name))
                           (lower-current-decl-logical-name-cache-id
-                            (lower-global-shared-view decl-name-cache)
+                            decl-name-cache
                             logical-module
                             (lower-name-id-text lower-state name)
                             name)
-                          (lower-global-shared-view variants)
+                          variants
                           0
                           (&mut cur-globals)))
                       (match (lower-enum-cleanup-decl
@@ -78619,14 +78522,14 @@
                                 logical-module-id
                                 cleanup-name-id)]
                             (lower-name-cache-ir-symbol
-                              (lower-global-shared-view decl-name-cache)
+                              decl-name-cache
                               (lower-name-cache-lookup-logical-id
                                 (& decl-name-cache)
                                 key-id
                                 key-id)
                               cleanup-name-id
                               (lower-current-decl-logical-name-cache-id
-                                (lower-global-shared-view decl-name-cache)
+                                decl-name-cache
                                 (lower-global-shared-view logical-module)
                                 (lower-name-id-text lower-state cleanup-name-id)
                                 cleanup-name-id)))])]
@@ -78649,11 +78552,11 @@
                               logical-module-id
                               name))
                           (lower-current-decl-logical-name-cache-id
-                            (lower-global-shared-view decl-name-cache)
+                            decl-name-cache
                             logical-module
                             (lower-name-id-text lower-state name)
                             name)
-                          (lower-global-shared-view variants)
+                          variants
                           0
                           (&mut cur-globals)))
                       (match (lower-enum-cleanup-decl
@@ -78699,14 +78602,14 @@
                                 logical-module-id
                                 cleanup-name-id)]
                             (lower-name-cache-ir-symbol
-                              (lower-global-shared-view decl-name-cache)
+                              decl-name-cache
                               (lower-name-cache-lookup-logical-id
                                 (& decl-name-cache)
                                 key-id
                                 key-id)
                               cleanup-name-id
                               (lower-current-decl-logical-name-cache-id
-                                (lower-global-shared-view decl-name-cache)
+                                decl-name-cache
                                 logical-module
                                 (lower-name-id-text lower-state cleanup-name-id)
                                 cleanup-name-id)))])]
@@ -78762,14 +78665,14 @@
                                 logical-module-id
                                 cleanup-name-id)]
                             (lower-name-cache-ir-symbol
-                              (lower-global-shared-view decl-name-cache)
+                              decl-name-cache
                               (lower-name-cache-lookup-logical-id
                                 (& decl-name-cache)
                                 key-id
                                 key-id)
                               cleanup-name-id
                               (lower-current-decl-logical-name-cache-id
-                                (lower-global-shared-view decl-name-cache)
+                                decl-name-cache
                                 logical-module
                                 (lower-name-id-text lower-state cleanup-name-id)
                                 cleanup-name-id)))])]
@@ -79089,7 +78992,7 @@
                     (lower-name-env-add-clone-decls
                       lower-state
                       decls
-                      (lower-global-shared-view paths)
+                      paths
                       (lower-global-shared-view entry-path)
                       base-names
                       all-clone-roots
@@ -79131,7 +79034,7 @@
                     (let
                       [pruned-program : ast.AstProgram
                         (lower-decl-keep-plan-apply
-                          (lower-global-shared-view checked-keep-plan)
+                          checked-keep-plan
                           checked-program)]
                       (begin
                         (cfg
@@ -79510,25 +79413,25 @@
                           (if detach-source?
                             (lower-copy-string-into-pools
                               entry-path
-                              (lower-global-shared-view source-pools))
+                              source-pools)
                             entry-path)]
                         [source-cache-scope : String
                           (if detach-source?
                             (lower-copy-string-into-pools
                               cache-scope
-                              (lower-global-shared-view source-pools))
+                              source-pools)
                             cache-scope)]
                         [source-paths : ast.AstDeclPathList
                           (if detach-source?
                             (lower-copy-paths-into-pools
                               specialized-paths
-                              (lower-global-shared-view source-pools))
+                              source-pools)
                             specialized-paths)]
                         [source-keep-plan : LowerDeclKeepPlan
                           (if detach-source?
                             (lower-decl-keep-plan-copy-into-pools
                               reach-keep-plan
-                              (lower-global-shared-view source-pools))
+                              source-pools)
                             reach-keep-plan)]
                         [escaped-names : LowerNameEnv
                           (if (and detach-source? needs-specialization)
@@ -79541,7 +79444,7 @@
                           (if detach-source?
                             (lower-clear-macro-expanded-source-caches-into-pools!
                               job-state
-                              (lower-global-shared-view source-pools))
+                              source-pools)
                             unit)]
                         [_commit-dest : unit
                           (lower-checked-dest-pools-commit!
@@ -79757,28 +79660,22 @@
                     [(ast.AstProgramCompaction _ out-pools) out-pools])]
                 [macro-entry-path : String
                   (if detach-before-macro?
-                    (lower-copy-string-into-pools
-                      entry-path
-                      (lower-global-shared-view macro-pools))
+                    (lower-copy-string-into-pools entry-path macro-pools)
                     entry-path)]
                 [macro-cache-scope : String
                   (if detach-before-macro?
-                    (lower-copy-string-into-pools
-                      cache-scope
-                      (lower-global-shared-view macro-pools))
+                    (lower-copy-string-into-pools cache-scope macro-pools)
                     cache-scope)]
                 [macro-paths : ast.AstDeclPathList
                   (if detach-before-macro?
-                    (lower-copy-paths-into-pools
-                      generated-paths
-                      (lower-global-shared-view macro-pools))
+                    (lower-copy-paths-into-pools generated-paths macro-pools)
                     generated-paths)]
                 [_clear-source-derived-caches : unit
                   (if detach-before-macro?
                     (begin
                       (lower-clear-macro-expanded-source-caches-into-pools!
                         job-state
-                        (lower-global-shared-view macro-pools))
+                        macro-pools)
                       (load.compiler-load-session-state-program-cache-clear!
                         (lower-global-shared-view load-state))
                       (load.compiler-load-session-state-runtime-prelude-cache-clear!
@@ -79900,19 +79797,19 @@
                                 (if detach-load-pools?
                                   (lower-copy-string-into-pools
                                     macro-entry-path
-                                    (lower-global-shared-view detached-pools))
+                                    detached-pools)
                                   macro-entry-path)]
                               [detached-cache-scope : String
                                 (if detach-load-pools?
                                   (lower-copy-string-into-pools
                                     macro-cache-scope
-                                    (lower-global-shared-view detached-pools))
+                                    detached-pools)
                                   macro-cache-scope)]
                               [detached-paths : ast.AstDeclPathList
                                 (if detach-load-pools?
                                   (lower-copy-paths-into-pools
                                     expanded-paths
-                                    (lower-global-shared-view detached-pools))
+                                    detached-pools)
                                   (if retain-macro-source?
                                     macro-paths
                                     expanded-paths))]
@@ -79920,7 +79817,7 @@
                                 (if checked-detach?
                                   (lower-clear-macro-expanded-source-caches-into-pools!
                                     job-state
-                                    (lower-global-shared-view detached-pools))
+                                    detached-pools)
                                   unit)]
                               [_commit-detached-pools : unit
                                 (cond
@@ -80183,36 +80080,36 @@
     false))
 
 (define (lower-source-node-has-import-call?
-  [pools : ast.AstNodePoolContext]
+  [pools : (& pools ast.AstNodePoolContext)]
   [id : i64]) : bool
   (lower-source-expr-has-import-call?
-    (lower-global-shared-view pools)
+    pools
     (ast.ast-node-pool-context-expr-get pools id)))
 
 (define (lower-source-expr-list-has-import-call?
-  [pools : ast.AstNodePoolContext]
+  [pools : (& pools ast.AstNodePoolContext)]
   [exprs : ast.AstExprList]) : bool
   (lower-source-expr-list-has-import-call-at? pools (& exprs) 0))
 
 (define (lower-source-expr-list-has-import-call-at?
-  [pools : ast.AstNodePoolContext]
+  [pools : (& pools ast.AstNodePoolContext)]
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]) : bool
   (if (>= index exprs.len)
     false
     (or
       (lower-source-node-has-import-call?
-        (lower-global-shared-view pools)
+        pools
         (ast.ast-expr-list-get exprs index 0))
       (lower-source-expr-list-has-import-call-at? pools exprs (+ index 1)))))
 
 (define (lower-source-let-bindings-have-import-call?
-  [pools : ast.AstNodePoolContext]
+  [pools : (& pools ast.AstNodePoolContext)]
   [bindings : ast.AstLetBindingList]) : bool
   (lower-source-let-bindings-have-import-call-at? pools (& bindings) 0))
 
 (define (lower-source-let-bindings-have-import-call-at?
-  [pools : ast.AstNodePoolContext]
+  [pools : (& pools ast.AstNodePoolContext)]
   [bindings : (& bindings ast.AstLetBindingList)]
   [binding-index : i64]) : bool
   (if (>= binding-index (ast.ast-let-binding-list-len bindings))
@@ -80223,21 +80120,19 @@
         binding-index
         (ast.ast-let-binding-fallback))
         [(ast.AstLetBinding.Binding _ _ init-box)
-          (lower-source-node-has-import-call?
-            (lower-global-shared-view pools)
-            init-box)])
+          (lower-source-node-has-import-call? pools init-box)])
       (lower-source-let-bindings-have-import-call-at?
         pools
         bindings
         (+ binding-index 1)))))
 
 (define (lower-source-match-arms-have-import-call?
-  [pools : ast.AstNodePoolContext]
+  [pools : (& pools ast.AstNodePoolContext)]
   [arms : ast.AstMatchArmList]) : bool
   (lower-source-match-arms-have-import-call-at? pools (& arms) 0))
 
 (define (lower-source-match-arms-have-import-call-at?
-  [pools : ast.AstNodePoolContext]
+  [pools : (& pools ast.AstNodePoolContext)]
   [arms : (& arms ast.AstMatchArmList)]
   [index : i64]) : bool
   (if (>= index arms.len)
@@ -80245,18 +80140,16 @@
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm _ body-box)
         (or
-          (lower-source-node-has-import-call?
-            (lower-global-shared-view pools)
-            body-box)
+          (lower-source-node-has-import-call? pools body-box)
           (lower-source-match-arms-have-import-call-at? pools arms (+ index 1)))])))
 
 (define (lower-source-resource-bindings-have-import-call?
-  [pools : ast.AstNodePoolContext]
+  [pools : (& pools ast.AstNodePoolContext)]
   [bindings : ast.AstResourceBindingList]) : bool
   (lower-source-resource-bindings-have-import-call-at? pools (& bindings) 0))
 
 (define (lower-source-resource-bindings-have-import-call-at?
-  [pools : ast.AstNodePoolContext]
+  [pools : (& pools ast.AstNodePoolContext)]
   [bindings : (& bindings ast.AstResourceBindingList)]
   [binding-index : i64]) : bool
   (if (>= binding-index (ast.ast-resource-binding-list-len bindings))
@@ -80268,19 +80161,15 @@
         (ast.ast-resource-binding-fallback))
         [(ast.AstResourceBinding.Binding _ acquire-box cleanup-box _)
           (or
-            (lower-source-node-has-import-call?
-              (lower-global-shared-view pools)
-              acquire-box)
-            (lower-source-node-has-import-call?
-              (lower-global-shared-view pools)
-              cleanup-box))])
+            (lower-source-node-has-import-call? pools acquire-box)
+            (lower-source-node-has-import-call? pools cleanup-box))])
       (lower-source-resource-bindings-have-import-call-at?
         pools
         bindings
         (+ binding-index 1)))))
 
 (define (lower-source-call-head-import?
-  [pools : ast.AstNodePoolContext]
+  [pools : (& pools ast.AstNodePoolContext)]
   [func-box : i64]) : bool
   (match (ast.ast-expr-unspan-with-pools
     pools
@@ -80289,46 +80178,34 @@
     [_ false]))
 
 (define (lower-source-expr-has-import-call?
-  [pools : ast.AstNodePoolContext]
+  [pools : (& pools ast.AstNodePoolContext)]
   [expr : ast.AstExpr]) : bool
   (match expr
     [(ast.AstExpr.Spanned inner-box _)
       (lower-source-node-has-import-call? pools inner-box)]
     [(ast.AstExpr.Call func-box args)
       (or
-        (lower-source-call-head-import?
-          (lower-global-shared-view pools)
-          func-box)
-        (lower-source-node-has-import-call?
-          (lower-global-shared-view pools)
-          func-box)
+        (lower-source-call-head-import? pools func-box)
+        (lower-source-node-has-import-call? pools func-box)
         (lower-source-expr-list-has-import-call? pools args))]
     [(ast.AstExpr.BracketClause items)
       (lower-source-expr-list-has-import-call? pools items)]
     [(ast.AstExpr.Binary _ left-box right-box)
       (or
-        (lower-source-node-has-import-call?
-          (lower-global-shared-view pools)
-          left-box)
+        (lower-source-node-has-import-call? pools left-box)
         (lower-source-node-has-import-call? pools right-box))]
     [(ast.AstExpr.Unary _ inner-box)
       (lower-source-node-has-import-call? pools inner-box)]
     [(ast.AstExpr.If cond-box then-box else-box)
       (or
-        (lower-source-node-has-import-call?
-          (lower-global-shared-view pools)
-          cond-box)
-        (lower-source-node-has-import-call?
-          (lower-global-shared-view pools)
-          then-box)
+        (lower-source-node-has-import-call? pools cond-box)
+        (lower-source-node-has-import-call? pools then-box)
         (lower-source-node-has-import-call? pools else-box))]
     [(ast.AstExpr.Let let-box)
       (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-box)
           (or
-            (lower-source-let-bindings-have-import-call?
-              (lower-global-shared-view pools)
-              bindings)
+            (lower-source-let-bindings-have-import-call? pools bindings)
             (lower-source-node-has-import-call? pools body-box))])]
     [(ast.AstExpr.SpmdCompact compact-box)
       (match (__tl-box-place compact-box)
@@ -80343,18 +80220,10 @@
             keep-box
             body-box)
           (or
-            (lower-source-node-has-import-call?
-              (lower-global-shared-view pools)
-              start-box)
-            (lower-source-node-has-import-call?
-              (lower-global-shared-view pools)
-              end-box)
-            (lower-source-node-has-import-call?
-              (lower-global-shared-view pools)
-              init-box)
-            (lower-source-node-has-import-call?
-              (lower-global-shared-view pools)
-              keep-box)
+            (lower-source-node-has-import-call? pools start-box)
+            (lower-source-node-has-import-call? pools end-box)
+            (lower-source-node-has-import-call? pools init-box)
+            (lower-source-node-has-import-call? pools keep-box)
             (lower-source-node-has-import-call? pools body-box))])]
     [(ast.AstExpr.Lambda lambda-box)
       (match (__tl-box-place lambda-box)
@@ -80364,9 +80233,7 @@
       (lower-source-expr-list-has-import-call? pools exprs)]
     [(ast.AstExpr.TupleRef tuple-box index-box)
       (or
-        (lower-source-node-has-import-call?
-          (lower-global-shared-view pools)
-          tuple-box)
+        (lower-source-node-has-import-call? pools tuple-box)
         (lower-source-node-has-import-call? pools index-box))]
     [(ast.AstExpr.Array exprs)
       (lower-source-expr-list-has-import-call? pools exprs)]
@@ -80378,36 +80245,24 @@
       (lower-source-node-has-import-call? pools len-box)]
     [(ast.AstExpr.ArrayRef array-box index-box)
       (or
-        (lower-source-node-has-import-call?
-          (lower-global-shared-view pools)
-          array-box)
+        (lower-source-node-has-import-call? pools array-box)
         (lower-source-node-has-import-call? pools index-box))]
     [(ast.AstExpr.ArraySet array-box index-box value-box)
       (or
-        (lower-source-node-has-import-call?
-          (lower-global-shared-view pools)
-          array-box)
-        (lower-source-node-has-import-call?
-          (lower-global-shared-view pools)
-          index-box)
+        (lower-source-node-has-import-call? pools array-box)
+        (lower-source-node-has-import-call? pools index-box)
         (lower-source-node-has-import-call? pools value-box))]
     [(ast.AstExpr.ArrayPush array-box value-box)
       (or
-        (lower-source-node-has-import-call?
-          (lower-global-shared-view pools)
-          array-box)
+        (lower-source-node-has-import-call? pools array-box)
         (lower-source-node-has-import-call? pools value-box))]
     [(ast.AstExpr.StringRef string-box index-box)
       (or
-        (lower-source-node-has-import-call?
-          (lower-global-shared-view pools)
-          string-box)
+        (lower-source-node-has-import-call? pools string-box)
         (lower-source-node-has-import-call? pools index-box))]
     [(ast.AstExpr.While cond-box body-box)
       (or
-        (lower-source-node-has-import-call?
-          (lower-global-shared-view pools)
-          cond-box)
+        (lower-source-node-has-import-call? pools cond-box)
         (lower-source-node-has-import-call? pools body-box))]
     [(ast.AstExpr.Begin exprs)
       (lower-source-expr-list-has-import-call? pools exprs)]
@@ -80425,34 +80280,22 @@
       (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrutinee-box arms)
           (or
-            (lower-source-node-has-import-call?
-              (lower-global-shared-view pools)
-              scrutinee-box)
+            (lower-source-node-has-import-call? pools scrutinee-box)
             (lower-source-match-arms-have-import-call? pools arms))])]
     [(ast.AstExpr.Foreach foreach-box)
       (match (__tl-box-place foreach-box)
         [(ast.AstForeach.Foreach _ _ start-box end-box body-box)
           (or
-            (lower-source-node-has-import-call?
-              (lower-global-shared-view pools)
-              start-box)
-            (lower-source-node-has-import-call?
-              (lower-global-shared-view pools)
-              end-box)
+            (lower-source-node-has-import-call? pools start-box)
+            (lower-source-node-has-import-call? pools end-box)
             (lower-source-node-has-import-call? pools body-box))])]
     [(ast.AstExpr.SpmdReduce reduce-box)
       (match (__tl-box-place reduce-box)
         [(ast.AstSpmdReduce.Reduce _ _ _ start-box end-box init-box value-box)
           (or
-            (lower-source-node-has-import-call?
-              (lower-global-shared-view pools)
-              start-box)
-            (lower-source-node-has-import-call?
-              (lower-global-shared-view pools)
-              end-box)
-            (lower-source-node-has-import-call?
-              (lower-global-shared-view pools)
-              init-box)
+            (lower-source-node-has-import-call? pools start-box)
+            (lower-source-node-has-import-call? pools end-box)
+            (lower-source-node-has-import-call? pools init-box)
             (lower-source-node-has-import-call? pools value-box))])]
     [(ast.AstExpr.SpmdScan scan-box)
       (match (__tl-box-place scan-box)
@@ -80468,62 +80311,42 @@
             body-box
             _)
           (or
-            (lower-source-node-has-import-call?
-              (lower-global-shared-view pools)
-              start-box)
-            (lower-source-node-has-import-call?
-              (lower-global-shared-view pools)
-              end-box)
-            (lower-source-node-has-import-call?
-              (lower-global-shared-view pools)
-              init-box)
-            (lower-source-node-has-import-call?
-              (lower-global-shared-view pools)
-              value-box)
+            (lower-source-node-has-import-call? pools start-box)
+            (lower-source-node-has-import-call? pools end-box)
+            (lower-source-node-has-import-call? pools init-box)
+            (lower-source-node-has-import-call? pools value-box)
             (lower-source-node-has-import-call? pools body-box))])]
     [(ast.AstExpr.SpmdBroadcast value-box lane-box)
       (or
-        (lower-source-node-has-import-call?
-          (lower-global-shared-view pools)
-          value-box)
+        (lower-source-node-has-import-call? pools value-box)
         (lower-source-node-has-import-call? pools lane-box))]
     [(ast.AstExpr.SpmdShuffle value-box lane-box)
       (or
-        (lower-source-node-has-import-call?
-          (lower-global-shared-view pools)
-          value-box)
+        (lower-source-node-has-import-call? pools value-box)
         (lower-source-node-has-import-call? pools lane-box))]
     [(ast.AstExpr.StructGet target-box _)
       (lower-source-node-has-import-call? pools target-box)]
     [(ast.AstExpr.StructSet target-box _ value-box)
       (or
-        (lower-source-node-has-import-call?
-          (lower-global-shared-view pools)
-          target-box)
+        (lower-source-node-has-import-call? pools target-box)
         (lower-source-node-has-import-call? pools value-box))]
     [(ast.AstExpr.WithRegion _ exprs)
       (lower-source-expr-list-has-import-call? pools exprs)]
     [(ast.AstExpr.WithEscape escape-box exprs)
       (or
-        (lower-source-node-has-import-call?
-          (lower-global-shared-view pools)
-          escape-box)
+        (lower-source-node-has-import-call? pools escape-box)
         (lower-source-expr-list-has-import-call? pools exprs))]
     [(ast.AstExpr.WithScratch exprs)
       (lower-source-expr-list-has-import-call? pools exprs)]
     [(ast.AstExpr.InArena arena-box exprs)
       (or
-        (lower-source-node-has-import-call?
-          (lower-global-shared-view pools)
-          arena-box)
+        (lower-source-node-has-import-call? pools arena-box)
         (lower-source-expr-list-has-import-call? pools exprs))]
     [(ast.AstExpr.WithResource resource-box)
       (match (__tl-box-place resource-box)
         [(ast.AstWithResource.WithResource bindings body)
           (or
-            (lower-source-resource-bindings-have-import-call?
-              (lower-global-shared-view pools)
-              bindings)
+            (lower-source-resource-bindings-have-import-call? pools bindings)
             (lower-source-expr-list-has-import-call? pools body))])]
     [(ast.AstExpr.Box inner-box)
       (lower-source-node-has-import-call? pools inner-box)]
@@ -80533,9 +80356,7 @@
       (lower-source-node-has-import-call? pools inner-box)]
     [(ast.AstExpr.BoxSet inner-box value-box)
       (or
-        (lower-source-node-has-import-call?
-          (lower-global-shared-view pools)
-          inner-box)
+        (lower-source-node-has-import-call? pools inner-box)
         (lower-source-node-has-import-call? pools value-box))]
     [(ast.AstExpr.Comptime inner-box)
       (lower-source-node-has-import-call? pools inner-box)]
@@ -80557,15 +80378,11 @@
       (lower-source-node-has-import-call? pools inner-box)]
     [(ast.AstExpr.PtrWrite pointer-box value-box)
       (or
-        (lower-source-node-has-import-call?
-          (lower-global-shared-view pools)
-          pointer-box)
+        (lower-source-node-has-import-call? pools pointer-box)
         (lower-source-node-has-import-call? pools value-box))]
     [(ast.AstExpr.PtrOffset pointer-box offset-box)
       (or
-        (lower-source-node-has-import-call?
-          (lower-global-shared-view pools)
-          pointer-box)
+        (lower-source-node-has-import-call? pools pointer-box)
         (lower-source-node-has-import-call? pools offset-box))]
     [(ast.AstExpr.PtrCast inner-box _)
       (lower-source-node-has-import-call? pools inner-box)]
@@ -80577,35 +80394,25 @@
       (lower-source-node-has-import-call? pools inner-box)]
     [(ast.AstExpr.StringFromBytes data-box len-box)
       (or
-        (lower-source-node-has-import-call?
-          (lower-global-shared-view pools)
-          data-box)
+        (lower-source-node-has-import-call? pools data-box)
         (lower-source-node-has-import-call? pools len-box))]
     [(ast.AstExpr.ArrayData inner-box)
       (lower-source-node-has-import-call? pools inner-box)]
     [(ast.AstExpr.CpuIdEax left-box right-box)
       (or
-        (lower-source-node-has-import-call?
-          (lower-global-shared-view pools)
-          left-box)
+        (lower-source-node-has-import-call? pools left-box)
         (lower-source-node-has-import-call? pools right-box))]
     [(ast.AstExpr.CpuIdEbx left-box right-box)
       (or
-        (lower-source-node-has-import-call?
-          (lower-global-shared-view pools)
-          left-box)
+        (lower-source-node-has-import-call? pools left-box)
         (lower-source-node-has-import-call? pools right-box))]
     [(ast.AstExpr.CpuIdEcx left-box right-box)
       (or
-        (lower-source-node-has-import-call?
-          (lower-global-shared-view pools)
-          left-box)
+        (lower-source-node-has-import-call? pools left-box)
         (lower-source-node-has-import-call? pools right-box))]
     [(ast.AstExpr.CpuIdEdx left-box right-box)
       (or
-        (lower-source-node-has-import-call?
-          (lower-global-shared-view pools)
-          left-box)
+        (lower-source-node-has-import-call? pools left-box)
         (lower-source-node-has-import-call? pools right-box))]
     [(ast.AstExpr.Xgetbv inner-box)
       (lower-source-node-has-import-call? pools inner-box)]
@@ -80614,7 +80421,7 @@
     [_ false]))
 
 (define (lower-source-decl-needs-loader?
-  [pools : ast.AstNodePoolContext]
+  [pools : (& pools ast.AstNodePoolContext)]
   [decl : ast.AstDecl]
   [all-decls : ast.AstDeclList]) : bool
   (match decl
@@ -80637,7 +80444,7 @@
     [(ast.AstDeclListStep.Cons decl rest)
       (or
         (lower-source-decl-needs-loader?
-          (lower-global-shared-view pools)
+          pools
           decl
           (lower-global-shared-view all-decls))
         (lower-source-decls-need-loader? pools rest all-decls))]))

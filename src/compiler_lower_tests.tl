@@ -17857,9 +17857,7 @@
         (lower-capture-list-count
           (owned_view.compiler-owned-shared-view captures))
         2)
-      (compiler_lower.lower-capture-list-contains-name?
-        (owned_view.compiler-owned-shared-view captures)
-        102)
+      (compiler_lower.lower-capture-list-contains-name? captures 102)
       (lower-capture-list-storage-entry?
         (owned_view.compiler-owned-shared-view captures)
         0
@@ -17877,10 +17875,7 @@
         201
         301)
       (lower-cleanup-stack-entry? cleanups 1 202 302)
-      (=
-        (compiler_lower.lower-c-abi-slot-list-count
-          (compiler_lower.lower-global-shared-view slots))
-        2)
+      (= (compiler_lower.lower-c-abi-slot-list-count slots) 2)
       (match (compiler_lower.lower-c-abi-slot-list-ref
         (compiler_lower.lower-global-shared-view slots)
         0)
@@ -18189,93 +18184,98 @@
                         "memo-b")]
                     (begin
                       (compiler_lower.compiler-lower-state-reset! owner-a)
-                      (and
-                        (= idle-a 0)
-                        (= idle-b 0)
-                        (> retained-a 0)
-                        (= still-idle-b 0)
-                        (> retained-b 0)
-                        (not (= owner-a.address owner-b.address))
-                        (not (= function-a.address function-a-nested.address))
-                        (not (= function-a.address function-b.address))
-                        (=
-                          (compiler_lower.compiler-lower-function-state-rtf-generation
-                            function-a)
-                          (compiler_lower.compiler-lower-function-state-rtf-generation
-                            function-b))
-                        (not
+                      (let
+                        [stack-a : compiler_lower.LowerIdSet
+                          (compiler_lower.compiler-lower-function-state-inline-helper-stack
+                            function-a)]
+                        [stack-b : compiler_lower.LowerIdSet
+                          (compiler_lower.compiler-lower-function-state-inline-helper-stack
+                            function-b)]
+                        [stack-a-nested : compiler_lower.LowerIdSet
+                          (compiler_lower.compiler-lower-function-state-inline-helper-stack
+                            function-a-nested)]
+                        (and
+                          (= idle-a 0)
+                          (= idle-b 0)
+                          (> retained-a 0)
+                          (= still-idle-b 0)
+                          (> retained-b 0)
+                          (not (= owner-a.address owner-b.address))
+                          (not (= function-a.address function-a-nested.address))
+                          (not (= function-a.address function-b.address))
                           (=
                             (compiler_lower.compiler-lower-function-state-rtf-generation
                               function-a)
                             (compiler_lower.compiler-lower-function-state-rtf-generation
-                              function-a-nested)))
-                        (compiler_lower.lower-id-set-contains?
-                          (compiler_lower.compiler-lower-function-state-inline-helper-stack
+                              function-b))
+                          (not
+                            (=
+                              (compiler_lower.compiler-lower-function-state-rtf-generation
+                                function-a)
+                              (compiler_lower.compiler-lower-function-state-rtf-generation
+                                function-a-nested)))
+                          (compiler_lower.lower-id-set-contains? stack-a 4242)
+                          (not
+                            (compiler_lower.lower-id-set-contains?
+                              stack-a-nested
+                              4242))
+                          (not
+                            (compiler_lower.lower-id-set-contains? stack-b 4242))
+                          (compiler_lower.compiler-lower-function-state-recursion-detected?
                             function-a)
-                          4242)
-                        (not
-                          (compiler_lower.lower-id-set-contains?
-                            (compiler_lower.compiler-lower-function-state-inline-helper-stack
-                              function-a-nested)
-                            4242))
-                        (not
-                          (compiler_lower.lower-id-set-contains?
-                            (compiler_lower.compiler-lower-function-state-inline-helper-stack
-                              function-b)
-                            4242))
-                        (compiler_lower.compiler-lower-function-state-recursion-detected?
-                          function-a)
-                        (not
-                          (compiler_lower.compiler-lower-function-state-recursion-detected?
-                            function-a-nested))
-                        (not
-                          (compiler_lower.compiler-lower-function-state-recursion-detected?
-                            function-b))
-                        (match (compiler_lower.compiler-lower-function-state-scalar-call-context
-                          function-a)
-                          [(compiler_lower.LowerSpmdScalarCallContext.Some lane)
-                            (string.eq lane "lane-a")]
-                          [_ false])
-                        (match (compiler_lower.compiler-lower-function-state-scalar-call-context
-                          function-b)
-                          [(compiler_lower.LowerSpmdScalarCallContext.No) true]
-                          [_ false])
-                        (= temp-a-0 temp-a-nested-0)
-                        (= temp-a-0 temp-b-0)
-                        (not (= temp-a-0 temp-a-1))
-                        owners-hit
-                        nested-hit
-                        outer-evicted
-                        b-still-hit
-                        (match registered-a
-                          [(compiler_lower.LowerSpmdPackageSymbolRegistration.New)
-                            true]
-                          [_ false])
-                        (match registered-b
-                          [(compiler_lower.LowerSpmdPackageSymbolRegistration.New)
-                            true]
-                          [_ false])
-                        (match repeated-b
-                          [(compiler_lower.LowerSpmdPackageSymbolRegistration.Existing)
-                            true]
-                          [_ false])
-                        (string.eq
-                          (compiler_lower.compiler-lower-state-spmd-package-name
-                            owner-a)
-                          "")
-                        (string.eq
-                          (compiler_lower.compiler-lower-state-spmd-package-name
-                            owner-b)
-                          "package-b")
-                        (match (compiler_lower.lower-spmd-package-symbol-register
-                          owner-b
-                          symbol
-                          symbol
-                          identity-b)
-                          [(compiler_lower.LowerSpmdPackageSymbolRegistration.Existing)
-                            true]
-                          [_ false])
-                        (compiler_lower.compiler-lower-state-reset? owner-a)))))))))))))
+                          (not
+                            (compiler_lower.compiler-lower-function-state-recursion-detected?
+                              function-a-nested))
+                          (not
+                            (compiler_lower.compiler-lower-function-state-recursion-detected?
+                              function-b))
+                          (match (compiler_lower.compiler-lower-function-state-scalar-call-context
+                            function-a)
+                            [(compiler_lower.LowerSpmdScalarCallContext.Some
+                                lane)
+                              (string.eq lane "lane-a")]
+                            [_ false])
+                          (match (compiler_lower.compiler-lower-function-state-scalar-call-context
+                            function-b)
+                            [(compiler_lower.LowerSpmdScalarCallContext.No)
+                              true]
+                            [_ false])
+                          (= temp-a-0 temp-a-nested-0)
+                          (= temp-a-0 temp-b-0)
+                          (not (= temp-a-0 temp-a-1))
+                          owners-hit
+                          nested-hit
+                          outer-evicted
+                          b-still-hit
+                          (match registered-a
+                            [(compiler_lower.LowerSpmdPackageSymbolRegistration.New)
+                              true]
+                            [_ false])
+                          (match registered-b
+                            [(compiler_lower.LowerSpmdPackageSymbolRegistration.New)
+                              true]
+                            [_ false])
+                          (match repeated-b
+                            [(compiler_lower.LowerSpmdPackageSymbolRegistration.Existing)
+                              true]
+                            [_ false])
+                          (string.eq
+                            (compiler_lower.compiler-lower-state-spmd-package-name
+                              owner-a)
+                            "")
+                          (string.eq
+                            (compiler_lower.compiler-lower-state-spmd-package-name
+                              owner-b)
+                            "package-b")
+                          (match (compiler_lower.lower-spmd-package-symbol-register
+                            owner-b
+                            symbol
+                            symbol
+                            identity-b)
+                            [(compiler_lower.LowerSpmdPackageSymbolRegistration.Existing)
+                              true]
+                            [_ false])
+                          (compiler_lower.compiler-lower-state-reset? owner-a))))))))))))))
 
 (define (compiler-lower-spmd-structural-profile-ok?) : bool
   (let
@@ -18306,7 +18306,7 @@
         (compiler_ast_types.AstType.I64)
         (compiler_ir_types.CompilerIrSpmdBackend.Avx512)
         8
-        (owned_view.compiler-owned-shared-view classes)
+        classes
         (compiler_ast_types.AstSpmdResultClass.Varying)
         0)]
     [repeat : i64
@@ -18319,7 +18319,7 @@
         (compiler_ast_types.AstType.I64)
         (compiler_ir_types.CompilerIrSpmdBackend.Avx512)
         8
-        (owned_view.compiler-owned-shared-view classes)
+        classes
         (compiler_ast_types.AstSpmdResultClass.Varying)
         0)]
     [expected : String
@@ -18348,7 +18348,7 @@
             (ci.intern-compat-state-str
               (owned_view.compiler-owned-shared-view intern-state)
               (compiler_lower.lower-spmd-package-structural-linker-symbol
-                (owned_view.compiler-owned-shared-view intern-state)
+                intern-state
                 first)))
           0))]
     (begin
@@ -18364,23 +18364,23 @@
             repeat))
         (=
           (compiler_lower.lower-spmd-package-structural-linker-symbol
-            (owned_view.compiler-owned-shared-view intern-state)
+            intern-state
             first)
           (compiler_lower.lower-spmd-package-structural-linker-symbol
-            (owned_view.compiler-owned-shared-view intern-state)
+            intern-state
             repeat))
         (=
           (compiler_lower.lower-spmd-package-structural-registration-key
-            (owned_view.compiler-owned-shared-view intern-state)
+            intern-state
             first)
           (compiler_lower.lower-spmd-package-structural-registration-key
-            (owned_view.compiler-owned-shared-view intern-state)
+            intern-state
             repeat))
         (string.eq
           (ci.intern-compat-state-str
             (owned_view.compiler-owned-shared-view intern-state)
             (compiler_lower.lower-spmd-package-structural-linker-symbol
-              (owned_view.compiler-owned-shared-view intern-state)
+              intern-state
               first))
           expected)
         (=
@@ -19107,10 +19107,7 @@
             [(compiler_lower.LowerCAbiAggregate.Register slots size)
               (and
                 (= size 1)
-                (=
-                  (compiler_lower.lower-c-abi-slot-list-count
-                    (compiler_lower.lower-global-shared-view slots))
-                  1)
+                (= (compiler_lower.lower-c-abi-slot-list-count slots) 1)
                 (match (compiler_lower.lower-c-abi-slot-list-ref
                   (compiler_lower.lower-global-shared-view slots)
                   0)
@@ -19143,10 +19140,7 @@
             [(compiler_lower.LowerCAbiAggregate.Register slots size)
               (and
                 (= size 16)
-                (=
-                  (compiler_lower.lower-c-abi-slot-list-count
-                    (compiler_lower.lower-global-shared-view slots))
-                  2)
+                (= (compiler_lower.lower-c-abi-slot-list-count slots) 2)
                 (match (compiler_lower.lower-c-abi-slot-list-ref
                   (compiler_lower.lower-global-shared-view slots)
                   0)
@@ -19169,10 +19163,7 @@
             [(compiler_lower.LowerCAbiAggregate.Register slots size)
               (and
                 (= size 8)
-                (=
-                  (compiler_lower.lower-c-abi-slot-list-count
-                    (compiler_lower.lower-global-shared-view slots))
-                  1)
+                (= (compiler_lower.lower-c-abi-slot-list-count slots) 1)
                 (match (compiler_lower.lower-c-abi-slot-list-ref
                   (compiler_lower.lower-global-shared-view slots)
                   0)
@@ -19188,10 +19179,7 @@
             [(compiler_lower.LowerCAbiAggregate.Register slots size)
               (and
                 (= size 16)
-                (=
-                  (compiler_lower.lower-c-abi-slot-list-count
-                    (compiler_lower.lower-global-shared-view slots))
-                  2)
+                (= (compiler_lower.lower-c-abi-slot-list-count slots) 2)
                 (match (compiler_lower.lower-c-abi-slot-list-ref
                   (compiler_lower.lower-global-shared-view slots)
                   0)
@@ -19249,10 +19237,7 @@
             [(compiler_lower.LowerCAbiAggregate.Register slots size)
               (and
                 (= size 16)
-                (=
-                  (compiler_lower.lower-c-abi-slot-list-count
-                    (compiler_lower.lower-global-shared-view slots))
-                  2)
+                (= (compiler_lower.lower-c-abi-slot-list-count slots) 2)
                 (match (compiler_lower.lower-c-abi-slot-list-ref
                   (compiler_lower.lower-global-shared-view slots)
                   0)

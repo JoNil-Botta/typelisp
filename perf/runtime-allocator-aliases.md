@@ -50,6 +50,15 @@ Backend smoke tests run source through constant propagation and register
 allocation on Linux and Windows. They check native/C aliases, rounded sizes,
 unsupported sizes, other symbols, and non-pointer results. The integration
 fixture keeps six register-group values and an earlier allocation live across
-native and C aliases. It tests an ordinary arena, forces the next 24-byte
-allocation to grow the arena, verifies that growth occurred, and tests an atomic
-arena. Both native manifests run the fixture at opt0, opt1 and opt2.
+native and C aliases. It tests an ordinary arena and an atomic arena. For the
+ordinary arena it fills the segment to sixteen bytes below the inline path's
+limit, so the next 24-byte allocation must fall back to the runtime. Each
+platform's growth is then checked separately:
+
+- **Linux:** the limit is the usable end, and the fallback chains a new segment.
+- **Windows:** the limit is the committed end. The fallback first commits more of
+  the same reservation, and the fixture checks that the committed end advanced
+  within the root segment. It then fills the reservation itself, so the next
+  inline allocation must chain a new segment.
+
+Both native manifests run the fixture at opt0, opt1 and opt2.

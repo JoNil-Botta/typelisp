@@ -100,9 +100,28 @@
     [rr : i64 (run-ref seed)]
     (= ra rr)))
 
-(define (arena-word [owner : arena.Arena] [offset : i64]) : i64
+(define (word-at [address : i64]) : i64
   (unsafe
-    (ptr-read (int->ptr (+ (arena.raw-handle owner) offset) : (Ptr i64)))))
+    (ptr-read (int->ptr address : (Ptr i64)))))
+
+(define (arena-word [owner : arena.Arena] [offset : i64]) : i64
+  (word-at (+ (arena.raw-handle owner) offset)))
+
+(define (current-segment [owner : arena.Arena]) : i64
+  (arena-word owner 56))
+
+(define (in-root-segment? [owner : arena.Arena]) : bool
+  (= (current-segment owner) (arena.raw-handle owner)))
+
+;; Leave sixteen bytes below the segment word at `limit-offset`, so the next
+;; 24-byte allocation cannot stay on the inline path.
+(define (fill-below [owner : arena.Arena] [limit-offset : i64]) : unit
+  (let
+    [segment : i64 (current-segment owner)]
+    [limit : i64 (word-at (+ segment limit-offset))]
+    [cursor : i64 (word-at (+ segment 16))]
+    [_filler : (MutPtr u8) (reserve-large (- (- limit cursor) 16))]
+    unit))
 
 (define (main) : i64
   (let
@@ -114,15 +133,26 @@
         owner
         (begin
           (set! ok (and (check) ok))
-          ;; Leave sixteen bytes in this segment, forcing the next 24-byte
-          ;; allocation through the slow path. End differs by platform.
-          (let
-            [end : i64 (arena-word owner (cfg windows 64 24))]
-            [cursor : i64 (arena-word owner 16)]
-            (reserve-large (- (- end cursor) 16)))
-          (set! ok (and (= (arena-word owner 56) (arena.raw-handle owner)) ok))
-          (set! ok (and (check) ok))
-          (set! ok (and (!= (arena-word owner 56) (arena.raw-handle owner)) ok))))
+          ;; The inline path compares against the usable end on Linux (offset
+          ;; 24) and the committed end on Windows (offset 64). Linux chains a
+          ;; new segment there. Windows first commits more of the same
+          ;; reservation, and chains a new segment only at its reserved end
+          ;; (offset 24).
+          (fill-below owner (cfg windows 64 24))
+          (set! ok (and (in-root-segment? owner) ok))
+          (cfg
+            windows
+            (let
+              [committed : i64 (arena-word owner 64)]
+              (begin
+                (set! ok (and (check) ok))
+                (set! ok (and (in-root-segment? owner) ok))
+                (set! ok (and (> (arena-word owner 64) committed) ok))
+                (fill-below owner 24)
+                (set! ok (and (in-root-segment? owner) ok))
+                (set! ok (and (check) ok))))
+            (set! ok (and (check) ok)))
+          (set! ok (and (not (in-root-segment? owner)) ok))))
       (in-arena shared (set! ok (and (check) ok)))
       (arena.destroy-safe! owner)
       (arena.destroy-safe! shared)

@@ -91628,14 +91628,16 @@
   [ty : compiler_ast_types.AstType]
   [program-index : CompilerBackendProgramIndex]) : object_target.CompilerBackendObjectTargetParts
   (let
-    [op-bytes : String
-      (if (match (compiler-backend-global-shared-view rhs)
+    [zero-test? : bool
+      (match (compiler-backend-global-shared-view rhs)
         [(compiler_ir_types.CompilerIrValue.I64 value)
           (and
             (= value 0)
             (compiler-backend-compare-uses-zero-test?
               (compiler-backend-global-shared-view op)))]
-        [_ false])
+        [_ false])]
+    [op-bytes : String
+      (if zero-test?
         (compiler-backend-object-zero-compare-bytes
           (compiler-backend-global-shared-view op))
         (compiler-backend-object-binop-bytes
@@ -91655,15 +91657,18 @@
         (compiler-backend-global-shared-view rhs)
         (compiler-backend-global-shared-view ty)
         (compiler-backend-global-shared-view program-index))
+      ;; The zero test reads only %rax, so it skips loading the zero.
       (compiler-backend-object-store-reg-to-var
         (compiler-backend-object-add-nonempty-bytes
           (compiler-backend-object-load-value-to-reg
-            (compiler-backend-object-load-value-to-reg
+            (if zero-test?
               parts
-              (compiler-backend-global-shared-view site)
-              (compiler-backend-global-shared-view rhs)
-              "%r8"
-              (compiler-backend-global-shared-view program-index))
+              (compiler-backend-object-load-value-to-reg
+                parts
+                (compiler-backend-global-shared-view site)
+                (compiler-backend-global-shared-view rhs)
+                "%r8"
+                (compiler-backend-global-shared-view program-index)))
             (compiler-backend-global-shared-view site)
             lhs
             "%rax"
@@ -92065,6 +92070,32 @@
           copies
           (+ index 1))])))
 
+(define (compiler-backend-object-emit-phi-copies-staged
+  [parts : object_target.CompilerBackendObjectTargetParts]
+  [site : String]
+  [copies : CompilerBackendPhiCopySeq]
+  [count : i64]
+  [program-index : CompilerBackendProgramIndex]) : object_target.CompilerBackendObjectTargetParts
+  (compiler-backend-object-add-nonempty-bytes
+    (compiler-backend-object-emit-phi-copies-store
+      (compiler-backend-object-emit-phi-copies-stage
+        (compiler-backend-object-add-nonempty-bytes
+          parts
+          (compiler-backend-object-sub-rsp-bytes (* count 8)))
+        site
+        (compiler-backend-global-shared-view copies)
+        0
+        program-index)
+      (compiler-backend-global-shared-view copies)
+      0)
+    (compiler-backend-object-add-rsp-bytes (* count 8))))
+
+;; Several copies on one edge are a parallel move: every source is staged on
+;; the stack before any destination is written, so no copy reads a slot an
+;; earlier copy already overwrote. A lone copy has no other copy to clobber, so
+;; it moves its value straight into the destination slot. That is 14 bytes
+;; instead of 32 at a pair of stack-slot displacements, and it is the common
+;; edge: the native TLCI entries have one on nearly every if-merge.
 (define (compiler-backend-object-emit-phi-copies
   [parts : object_target.CompilerBackendObjectTargetParts]
   [site : String]
@@ -92074,21 +92105,37 @@
     [count : i64
       (compiler-backend-object-phi-copy-list-count
         (compiler-backend-global-shared-view copies))]
-    (if (= count 0)
-      parts
-      (compiler-backend-object-add-nonempty-bytes
-        (compiler-backend-object-emit-phi-copies-store
-          (compiler-backend-object-emit-phi-copies-stage
-            (compiler-backend-object-add-nonempty-bytes
-              parts
-              (compiler-backend-object-sub-rsp-bytes (* count 8)))
-            site
-            (compiler-backend-global-shared-view copies)
-            0
-            program-index)
-          (compiler-backend-global-shared-view copies)
-          0)
-        (compiler-backend-object-add-rsp-bytes (* count 8))))))
+    (cond
+      [(= count 0) parts]
+      [(= count 1)
+        (match (compiler-backend-phi-copy-seq-rev-ref copies 0)
+          [(CompilerBackendPhiCopy.Copy dst source ty)
+            (match source
+              [(CompilerBackendPhiSource.Value value)
+                (compiler-backend-object-store-reg-to-var
+                  (compiler-backend-object-load-value-to-reg-with-type
+                    parts
+                    (compiler-backend-global-shared-view site)
+                    value
+                    ty
+                    "%rax"
+                    (compiler-backend-global-shared-view program-index))
+                  dst
+                  "%rax")]
+              [(CompilerBackendPhiSource.Temp _)
+                (compiler-backend-object-emit-phi-copies-staged
+                  parts
+                  site
+                  copies
+                  count
+                  program-index)])])]
+      [else
+        (compiler-backend-object-emit-phi-copies-staged
+          parts
+          site
+          copies
+          count
+          program-index)])))
 
 (define (compiler-backend-object-instr
   [type-segment-bases : i64]

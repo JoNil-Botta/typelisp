@@ -156991,6 +156991,11 @@
             allowed
             bad)))]))
 
+;; Every `Global` this instruction mentions in a position that is NOT an
+;; allowed one. The existing whole-instruction global walk
+;; (opt-global-cell-scan-instr) is total over the IR instruction set, so a new
+;; form cannot slip a `Global` operand past this; the four forms with an allowed
+;; position are the ones handled here instead.
 (define (opt-global-frozen-escaped-refs
   [scan : OptGlobalCellScan]
   [instr : ir.CompilerIrInstr]) : OptGlobalCellScan

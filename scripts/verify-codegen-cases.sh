@@ -42,8 +42,8 @@ set -eu
 # Expectations are evaluated in order against the current subject:
 #
 #   in asm | stdout | stderr        whole assembly, or the last step's output
-#   in fn LABEL                     LABEL: up to the next .globl or .size
-#   in fn-globl LABEL               LABEL: up to the next .globl
+#   in fn LABEL                     LABEL: up to the next column-0 .globl or a .size
+#   in fn-globl LABEL               LABEL: up to the next (indented or not) .globl
 #   in file PATH                    a repository file
 #   narrow WINDOW[:ARG]             replace the subject by an analyzer window
 #                                   (scripts/codegen-cases-analyzers.awk); an empty
@@ -502,8 +502,9 @@ a_in() {
             CV_SUBJECT="$CV_DIR/subject.$CV_N"
             if [ -z "$CV_ASM" ] || ! awk -v label="$_ai_arg:" -v kind="$_ai_kind" '
                 $0 == label { in_fn = 1; print; next }
-                in_fn && /^[[:space:]]*\.globl[[:space:]]/ { exit 0 }
+                in_fn && kind == "fn" && /^\.globl[[:space:]]/ { exit 0 }
                 in_fn && kind == "fn" && /^[[:space:]]*\.size[[:space:]]/ { exit 0 }
+                in_fn && kind == "fn-globl" && /^[[:space:]]*\.globl[[:space:]]/ { exit 0 }
                 in_fn { print }
                 END { if (!in_fn) exit 2 }
             ' "$CV_ASM" > "$CV_SUBJECT"; then

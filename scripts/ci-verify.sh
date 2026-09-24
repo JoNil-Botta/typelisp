@@ -843,7 +843,7 @@ if [ "$HOST_OS" = linux ]; then
     run_with_compiler "$STAGE2_BIN" stage2-git-sha-1-fixed-round-wipe-asm-shape-gate scripts/verify-codegen-cases.sh --only 'sha1-*' tests/codegen/crypto-sha.cases
     run_with_compiler "$STAGE2_BIN" stage2-sha-256-fixed-round-wipe-asm-shape-gate scripts/verify-codegen-cases.sh --only 'sha256-*' tests/codegen/crypto-sha.cases
     run_with_compiler "$STAGE2_BIN" stage2-sha-512-wipe-asm-shape-gate scripts/verify-codegen-cases.sh --only 'sha512-*' tests/codegen/crypto-sha.cases
-    run_with_compiler "$STAGE2_BIN" stage2-by-value-aggregate-abi-shape-gate scripts/verify-by-value-aggregate-abi.sh
+    run_with_compiler "$STAGE2_BIN" stage2-by-value-aggregate-abi-shape-gate scripts/verify-codegen-cases.sh tests/codegen/by-value-aggregate-abi.cases
 fi
 run_with_compiler "$STAGE2_BIN" stage2-examples scripts/verify-examples.sh
 # The self-test builds the Linux wall-clock runner with the compiler it is given.

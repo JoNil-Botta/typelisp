@@ -784,3 +784,6 @@ factored_addresses_opt2|tests/integration/factored_addresses.tl|0|257269108\n|-|
 inline_alloc_alias_opt0|tests/integration/inline_alloc_alias.tl|42|-|-|-|opt-level:0+stage-stdlib
 inline_alloc_alias_opt1|tests/integration/inline_alloc_alias.tl|42|-|-|-|opt-level:1+stage-stdlib
 inline_alloc_alias_opt2|tests/integration/inline_alloc_alias.tl|42|-|-|-|opt-level:2+stage-stdlib
+runtime_leaf_aliases_opt0|tests/integration/runtime_leaf_aliases.tl|42|-|-|-|opt-level:0+stage-stdlib
+runtime_leaf_aliases_opt1|tests/integration/runtime_leaf_aliases.tl|42|-|-|-|opt-level:1+stage-stdlib
+runtime_leaf_aliases_opt2|tests/integration/runtime_leaf_aliases.tl|42|-|-|-|opt-level:2+stage-stdlib

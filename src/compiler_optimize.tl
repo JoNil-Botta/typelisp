@@ -82798,40 +82798,6 @@
         (compiler-opt-global-shared-view seed-facts))
       block)))
 
-(define (optimize-block-hs
-  [profile-state : profile_state.CompilerProfileMetrics]
-  [pools : ast.AstNodePoolContext]
-  [type-segment-bases : i64]
-  [hs : OptLoadHeaderSet]
-  [scan-work : (__tl_dyn-array i64)]
-  [block : ir.CompilerIrBlock]) : ir.CompilerIrBlock
-  (if (opt-block-scan-skippable?
-    (compiler-opt-global-shared-view scan-work)
-    (compiler-opt-global-shared-view block))
-    block
-    (optimize-block-hs-full
-      (profile_state.compiler-profile-state-shared-view profile-state)
-      pools
-      type-segment-bases
-      hs
-      (opt-load-kinds-empty)
-      (opt-load-kinds-empty)
-      (opt-alias-empty)
-      block)))
-
-(define (optimize-block
-  [pools : ast.AstNodePoolContext]
-  [type-segment-bases : i64]
-  [block : ir.CompilerIrBlock]) : ir.CompilerIrBlock
-  (optimize-block-hs
-    (profile_state.compiler-profile-state-metrics
-      (profile_state.compiler-profile-state-new))
-    pools
-    type-segment-bases
-    (opt-load-header-set-empty)
-    (__tl_make-array i64 0)
-    block))
-
 (define (optimize-block-entry-facts
   [block : ir.CompilerIrBlock]
   [entry-label : i64]
@@ -82841,45 +82807,6 @@
       (if (= label entry-label)
         seed-facts
         (opt-alias-empty))]))
-
-(define (optimize-block-seq-hs
-  [profile-state : profile_state.CompilerProfileMetrics]
-  [pools : ast.AstNodePoolContext]
-  [type-segment-bases : i64]
-  [hs : OptLoadHeaderSet]
-  [entry-label : i64]
-  [seed-facts : OptAliasFacts]
-  [scan-work : (__tl_dyn-array i64)]
-  [blocks : ir.CompilerIrBlockSeq]) : ir.CompilerIrBlockList
-  (let
-    [count : i64
-      (ir.compiler-ir-block-seq-count (compiler-opt-global-shared-view blocks))]
-    [slots : (__tl_dyn-array ir.CompilerIrBlock)
-      (__tl_make-array ir.CompilerIrBlock count)]
-    [index : i64 0]
-    (begin
-      (while (< index count)
-        (let
-          [block : ir.CompilerIrBlock
-            (ir.compiler-ir-block-seq-ref
-              (compiler-opt-global-shared-view blocks)
-              index)]
-          (begin
-            (set!
-              (array-ref slots index)
-              (optimize-block-hs-with-kinds
-                (profile_state.compiler-profile-state-shared-view profile-state)
-                (compiler-opt-global-shared-view pools)
-                type-segment-bases
-                (compiler-opt-global-shared-view hs)
-                (opt-load-kinds-empty)
-                (opt-load-kinds-empty)
-                entry-label
-                (compiler-opt-global-shared-view seed-facts)
-                (compiler-opt-global-shared-view scan-work)
-                block))
-            (set! index (+ index 1)))))
-      (ir.CompilerIrBlockList.Array (ir.CompilerIrBlockSeq slots count)))))
 
 ;; Both block containers share ONE dense workspace per pass, so the walker takes
 ;; the workspace and the generation its first block should use instead of
@@ -82997,50 +82924,6 @@
         scan-work
         work
         generation
-        seq)]))
-
-(define (optimize-block-list-hs
-  [profile-state : profile_state.CompilerProfileMetrics]
-  [pools : ast.AstNodePoolContext]
-  [type-segment-bases : i64]
-  [hs : OptLoadHeaderSet]
-  [entry-label : i64]
-  [seed-facts : OptAliasFacts]
-  [scan-work : (__tl_dyn-array i64)]
-  [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) (ir.CompilerIrBlockList.Nil)]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (ir.compiler-ir-block-cons
-        (optimize-block-hs-with-kinds
-          (compiler-opt-global-shared-view profile-state)
-          (compiler-opt-global-shared-view pools)
-          type-segment-bases
-          (compiler-opt-global-shared-view hs)
-          (opt-load-kinds-empty)
-          (opt-load-kinds-empty)
-          entry-label
-          (compiler-opt-global-shared-view seed-facts)
-          (compiler-opt-global-shared-view scan-work)
-          block)
-        (optimize-block-list-hs
-          (profile_state.compiler-profile-state-shared-view profile-state)
-          pools
-          type-segment-bases
-          hs
-          entry-label
-          seed-facts
-          scan-work
-          (compiler-opt-box-shared-view rest)))]
-    [(ir.CompilerIrBlockList.Array seq)
-      (optimize-block-seq-hs
-        (profile_state.compiler-profile-state-shared-view profile-state)
-        pools
-        type-segment-bases
-        hs
-        entry-label
-        seed-facts
-        scan-work
         seq)]))
 
 (define (optimize-block-list-has-work?
@@ -83165,21 +83048,6 @@
     params
     blocks)
     [(OptBlockListPassResult.Result next _) next]))
-
-(define (optimize-block-list
-  [pools : ast.AstNodePoolContext]
-  [type-segment-bases : i64]
-  [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
-  (optimize-block-list-hs
-    (profile_state.compiler-profile-state-metrics
-      (profile_state.compiler-profile-state-new))
-    pools
-    type-segment-bases
-    (opt-load-header-set-empty)
-    (ir.compiler-ir-label "entry")
-    (opt-alias-empty)
-    (__tl_make-array i64 0)
-    blocks))
 
 ;; Whole-function transforms keep a pathological-CFG work cap. Loop transforms
 ;; do not use this value: every loop pass applies its own natural-loop-local

@@ -232,6 +232,49 @@
     (match (opt.opt-thread-const-branch-final-pass type-segment-bases converted)
       [(opt.OptFunctionPassResult.Result next _) next])))
 
+;; The block-local pipeline (fold, CSE, load-CSE, DSE, copy, bounds) on one
+;; block with no header-typed handles, load kinds, alias seeds or scan scratch:
+;; the context-free form of the per-block step optimize-block-list-for-function
+;; runs.
+(define (opt-test-optimize-block
+  [pools : ast.AstNodePoolContext]
+  [type-segment-bases : i64]
+  [block : ir.CompilerIrBlock]) : ir.CompilerIrBlock
+  (opt.optimize-block-hs-with-kinds
+    (profile_state.compiler-profile-state-metrics
+      (profile_state.compiler-profile-state-new))
+    pools
+    type-segment-bases
+    (opt.opt-load-header-set-empty)
+    (opt.opt-load-kinds-empty)
+    (opt.opt-load-kinds-empty)
+    (ir.compiler-ir-label "entry")
+    (opt.opt-alias-empty)
+    (__tl_make-array i64 0)
+    block))
+
+(define (opt-test-optimize-block-list
+  [pools : ast.AstNodePoolContext]
+  [type-segment-bases : i64]
+  [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) ir.CompilerIrBlockList.Nil]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (ir.compiler-ir-block-cons
+        (opt-test-optimize-block
+          (opt.compiler-opt-global-shared-view pools)
+          type-segment-bases
+          block)
+        (opt-test-optimize-block-list
+          pools
+          type-segment-bases
+          (ir.compiler-ir-box-shared-view rest)))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-test-optimize-block-list
+        pools
+        type-segment-bases
+        (ir.compiler-ir-block-seq-to-list seq))]))
+
 ;; A call-site stand-in for the span-carrying clone walks: with an empty span
 ;; table no location is found for it, so the clones carry no spans.
 (define (opt-test-inline-no-span-call) : ir.CompilerIrInstr
@@ -15917,7 +15960,7 @@
           (opt-bounds-dce-instrs))
         (opt-bounds-dce-instrs))]
     [cross : ir.CompilerIrBlockList
-      (opt.optimize-block-list
+      (opt-test-optimize-block-list
         (ast.ast-node-pool-reader-context-current)
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-bounds-cross-blocks))]
@@ -72358,9 +72401,9 @@
         (opt.compiler-opt-global-shared-view params)))
     instrs))
 
-;; Drive the fused block-local load/copy traversal used by optimize-block. This
-;; also exercises the native-Slice Word facts that intentionally do not belong
-;; to the standalone load-CSE helper above.
+;; Drive the fused block-local load/copy traversal used by
+;; opt-test-optimize-block. This also exercises the native-Slice Word facts that
+;; intentionally do not belong to the standalone load-CSE helper above.
 (define (opt-load-copy-run-with-params
   [params : ir.CompilerIrParamSeq]
   [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
@@ -72786,7 +72829,7 @@
     [call-blocked : ir.CompilerIrInstrSeq
       (opt-dead-store-run-with-array-param (opt-dead-store-call-blocked-instrs))]
     [pipeline : ir.CompilerIrBlock
-      (opt.optimize-block
+      (opt-test-optimize-block
         (ast.ast-node-pool-reader-context-current)
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.CompilerIrBlock.Block
@@ -75320,13 +75363,14 @@
     [vector-data-pointer : ir.CompilerIrInstrSeq
       (opt-load-cse-run (opt-load-cse-vector-data-pointer-instrs))]
     [pipeline : ir.CompilerIrBlock
-      (opt.optimize-block
+      (opt-test-optimize-block
         (ast.ast-node-pool-reader-context-current)
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.CompilerIrBlock.Block
           (ir.compiler-ir-label "entry")
           (opt-load-cse-positive-instrs)))]
-    ;; Self-test inspection of optimize-block output, not a hot pass path.
+    ;; Self-test inspection of opt-test-optimize-block output, not a hot pass
+    ;; path.
     [pipeline-instrs : ir.CompilerIrInstrSeq
       (match pipeline
         [(ir.CompilerIrBlock.Block _ instrs) instrs])]

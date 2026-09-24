@@ -46,6 +46,9 @@ target/
 /tests/scratch/*
 !/tests/scratch/.gitkeep
 
+# Fixtures the gates generate (tests/integration/wide_struct_literal_decls.awk).
+/tests/integration/wide_struct_literal_decls.tl
+
 # Downloaded stage0 compiler cache (scripts/fetch-stage0.sh).
 /tools/stage0/
 

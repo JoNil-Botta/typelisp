@@ -3486,6 +3486,10 @@ if [ "$BACKEND_CMP_MEM_FOLD_PARITY_ONLY" -eq 1 ]; then
     exit 0
 fi
 
+# The #7921 wide-struct declarations are generated, not committed.
+awk -f "$ROOT/tests/integration/wide_struct_literal_decls.awk" > "$WORKDIR/wide_struct_literal_decls.tl"
+mv "$WORKDIR/wide_struct_literal_decls.tl" "$ROOT/tests/integration/wide_struct_literal_decls.tl"
+
 ci_timing_run manifest validate validate_manifest
 if [ "$VALIDATE_MANIFEST_ONLY" -eq 1 ]; then
     echo "integration manifest validation passed for $HOST_OS"

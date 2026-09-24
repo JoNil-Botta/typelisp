@@ -706,6 +706,9 @@ generated_import_global_initializers_opt2|tests/integration/generated_import_glo
 nested_flag_loops|tests/integration/nested_flag_loops.tl|42|309\n-206\n-203\n-206\n0\n-201\n|-|stdlib/io.tl stdlib/string.tl
 nested_flag_loops_opt0|tests/integration/nested_flag_loops.tl|42|309\n-206\n-203\n-206\n0\n-201\n|-|stdlib/io.tl stdlib/string.tl|opt-level:0+stage-stdlib
 nested_flag_loops_opt2|tests/integration/nested_flag_loops.tl|42|309\n-206\n-203\n-206\n0\n-201\n|-|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib
+lagged_phi_across_call|tests/integration/lagged_phi_across_call.tl|42|997\n1\n101\n|3|stdlib/io.tl stdlib/string.tl
+lagged_phi_across_call_opt0|tests/integration/lagged_phi_across_call.tl|42|997\n1\n101\n|3|stdlib/io.tl stdlib/string.tl|opt-level:0+stage-stdlib
+lagged_phi_across_call_opt2|tests/integration/lagged_phi_across_call.tl|42|997\n1\n101\n|3|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib
 
 pure_call_join_opt0|tests/integration/pure_call_join.tl|42|-|13|stdlib/io.tl stdlib/string.tl|opt-level:0+stage-stdlib
 pure_call_join_opt1|tests/integration/pure_call_join.tl|42|-|13|stdlib/io.tl stdlib/string.tl|opt-level:1+stage-stdlib

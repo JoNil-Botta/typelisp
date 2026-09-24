@@ -2282,11 +2282,14 @@
         (owned_view.compiler-owned-shared-view expected))
       (not (cobj.compiler-object-instr-list-contains-bytes? disabled expected)))))
 
-;; Let-bound if-merge whose phi destination differs from both inputs: the
-;; object emitter must stage the edge values and copy them into the phi
-;; destination slot before jumping to the merge (refs #5596; the tlci native
-;; image path reads garbage otherwise). The call results keep the phi inputs
-;; opaque so the merge is not folded away.
+;; Let-bound if-merges whose phi destination differs from both inputs: the
+;; object emitter must copy each edge value into the phi destination slot
+;; before jumping to the merge (refs #5596; the tlci native image path reads
+;; garbage otherwise). The call results keep the phi inputs opaque so the merge
+;; is not folded away. The inner merge's two edges each carry one copy, which
+;; moves straight into the destination slot: no stack staging, and the
+;; instruction before each jump into the merge is a lone `mov %rax, disp(%rbp)`.
+;; The outer `if` is in tail position, so its arms return directly.
 (define (compiler-backend-object-phi-edge-copy-source) : String
   "(extern (f [a : i64] [b : i64] [c : i64] [d : i64] [e : i64] [g : i64]) : i64 (:symbol \"f\"))
 (define (chain [x : i64]) : i64
@@ -2297,6 +2300,56 @@
 (define (main) : i64
   (chain 0))")
 
+;; `mov %rax, disp(%rbp)` and nothing else: REX.W 89 /r with a disp8 or disp32
+;; frame slot.
+(define (compiler-backend-object-rbp-store-chunk? [chunk : String]) : bool
+  (let
+    [len : i64 (string.string-length chunk)]
+    (or
+      (and
+        (= len 4)
+        (string.eq
+          (string.substring (& chunk) 0 3)
+          (object_target.compiler-backend-object-bytes-from-hex "488945")))
+      (and
+        (= len 7)
+        (string.eq
+          (string.substring (& chunk) 0 3)
+          (object_target.compiler-backend-object-bytes-from-hex "488985"))))))
+
+;; The number of jumps into an if-merge, or -1 when one of them does not follow
+;; a lone frame-slot store.
+(define (compiler-backend-object-merge-edge-stores
+  [instrs : cobj.CompilerObjectX64InstrList]) : i64
+  (let
+    [count : i64
+      (cobj.compiler-object-instr-list-count
+        (owned_view.compiler-owned-shared-view instrs))]
+    [index : i64 0]
+    [previous-store? : bool false]
+    [edges : i64 0]
+    (begin
+      (while (and (>= edges 0) (< index count))
+        (begin
+          (match (cobj.compiler-object-instr-list-ref
+            (owned_view.compiler-owned-shared-view instrs)
+            index)
+            [(cobj.CompilerObjectX64Instr.Bytes value)
+              (set!
+                previous-store?
+                (compiler-backend-object-rbp-store-chunk? value))]
+            [(cobj.CompilerObjectX64Instr.Jump symbol)
+              (begin
+                (if (cobj.compiler-object-string-contains? symbol "if_merge" 0)
+                  (if previous-store?
+                    (set! edges (+ edges 1))
+                    (set! edges -1))
+                  unit)
+                (set! previous-store? false))]
+            [_ (set! previous-store? false)])
+          (set! index (+ index 1))))
+      edges)))
+
 (define (compiler-backend-object-phi-edge-copy-ok?) : bool
   (match (compiler_backend.compiler-backend-emit-source-object-image-for-target
     (compiler-backend-object-phi-edge-copy-source)
@@ -2306,18 +2359,15 @@
         [sections : cobj.CompilerObjectSectionList
           (owned_view.compiler-owned-shared-view image.sections)]
         (and
-          (cobj.compiler-object-section-contains-bytes?
-            (owned_view.compiler-owned-shared-view sections)
-            (object_target.compiler-backend-object-bytes-from-hex "4883ec08"))
-          (cobj.compiler-object-section-contains-bytes?
-            (owned_view.compiler-owned-shared-view sections)
-            (object_target.compiler-backend-object-bytes-from-hex "4889442400"))
-          (cobj.compiler-object-section-contains-bytes?
-            (owned_view.compiler-owned-shared-view sections)
-            (object_target.compiler-backend-object-bytes-from-hex "488b442400"))
-          (cobj.compiler-object-section-contains-bytes?
+          (not
+            (cobj.compiler-object-section-contains-bytes?
+              (owned_view.compiler-owned-shared-view sections)
+              (object_target.compiler-backend-object-bytes-from-hex "4883ec08")))
+          (match (cobj.compiler-object-section-list-find
             sections
-            (object_target.compiler-backend-object-bytes-from-hex "4883c408"))))]
+            (cobj.CompilerObjectSectionKind.Text))
+            [(cobj.CompilerObjectSection.Section _ _ instrs)
+              (= (compiler-backend-object-merge-edge-stores instrs) 2)])))]
     [(compiler_backend.ResultCompilerBackendObject.Err _) false]))
 
 (define (compiler-backend-pic-source) : String

@@ -54,8 +54,7 @@
     [(tc_core.ResultCompilerTypecheck.Err diagnostics)
       (let
         [diag : diagnostic.CompilerDiagnostic
-          (diagnostic.compiler-diagnostic-list-first
-            (diagnostic.compiler-diagnostic-list-box-shared-view diagnostics))]
+          (diagnostic.compiler-diagnostic-list-first (deref diagnostics))]
         [labels : diagnostic.CompilerDiagnosticLabelList
           (diagnostic.compiler-diagnostic-secondary-spans diag)]
         (and
@@ -218,9 +217,7 @@
         [(tc_core.ResultCompilerTypecheck.Err diagnostics)
           (let
             [diag : diagnostic.CompilerDiagnostic
-              (diagnostic.compiler-diagnostic-list-first
-                (diagnostic.compiler-diagnostic-list-box-shared-view
-                  diagnostics))]
+              (diagnostic.compiler-diagnostic-list-first (deref diagnostics))]
             [labels : diagnostic.CompilerDiagnosticLabelList
               (diagnostic.compiler-diagnostic-secondary-spans diag)]
             [ok : bool
@@ -309,9 +306,9 @@
       (let
         [generated-ok : bool
           (macro-diagnostic-loaded-shape?
-            (load.compiler-load-global-shared-view generated-entry)
+            generated-entry
             (load.compiler-load-global-shared-view roots)
-            (load.compiler-load-global-shared-view provider)
+            provider
             3
             14
             2
@@ -327,7 +324,7 @@
               (macro-diagnostic-loaded-shape?
                 (load.compiler-load-global-shared-view caller-entry)
                 (load.compiler-load-global-shared-view roots)
-                (load.compiler-load-global-shared-view caller-entry)
+                caller-entry
                 2
                 37
                 2
@@ -343,7 +340,7 @@
                   (macro-diagnostic-loaded-shape?
                     (load.compiler-load-global-shared-view binding-entry)
                     (load.compiler-load-global-shared-view roots)
-                    (load.compiler-load-global-shared-view binding-entry)
+                    binding-entry
                     2
                     44
                     2
@@ -359,8 +356,8 @@
                     [native-ok : bool
                       (macro-diagnostic-loaded-shape?
                         (load.compiler-load-global-shared-view native-entry)
-                        (load.compiler-load-global-shared-view roots)
-                        (load.compiler-load-global-shared-view native-entry)
+                        roots
+                        native-entry
                         3
                         44
                         3

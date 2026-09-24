@@ -106,31 +106,26 @@
 
 (define (main) : i64
   (let
-    [home : arena.Arena (arena.current)]
     [owner : arena.Arena (arena.make)]
     [shared : arena.Arena (arena.make-atomic)]
     [ok : bool (check)]
     (begin
-      (unsafe
-        (arena.set! owner))
-      (set! ok (and (check) ok))
-      ;; Leave sixteen bytes in this segment, forcing the next 24-byte alias
-      ;; allocation through the slow path. The end field differs by platform.
-      (let
-        [end : i64 (arena-word owner (cfg windows 64 24))]
-        [cursor : i64 (arena-word owner 16)]
-        (reserve-large (- (- end cursor) 16)))
-      (set! ok (and (= (arena-word owner 56) (arena.raw-handle owner)) ok))
-      (set! ok (and (check) ok))
-      (set! ok (and (!= (arena-word owner 56) (arena.raw-handle owner)) ok))
-      (unsafe
-        (arena.set! shared))
-      (set! ok (and (check) ok))
-      (unsafe
+      (in-arena
+        owner
         (begin
-          (arena.set! home)
-          (arena.destroy owner)
-          (arena.destroy shared)))
+          (set! ok (and (check) ok))
+          ;; Leave sixteen bytes in this segment, forcing the next 24-byte
+          ;; allocation through the slow path. End differs by platform.
+          (let
+            [end : i64 (arena-word owner (cfg windows 64 24))]
+            [cursor : i64 (arena-word owner 16)]
+            (reserve-large (- (- end cursor) 16)))
+          (set! ok (and (= (arena-word owner 56) (arena.raw-handle owner)) ok))
+          (set! ok (and (check) ok))
+          (set! ok (and (!= (arena-word owner 56) (arena.raw-handle owner)) ok))))
+      (in-arena shared (set! ok (and (check) ok)))
+      (arena.destroy-safe! owner)
+      (arena.destroy-safe! shared)
       (if ok
         42
         1))))

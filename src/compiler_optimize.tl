@@ -23915,61 +23915,6 @@
         header
         body-labels))))
 
-;; `remaining` starts as the very block list `doms`'s index was built from, and
-;; `opt-cfg-index-build` numbers blocks in this walk order, so `source-id` is the
-;; walk position. The range guard replaces the old missing-label arm: an id past
-;; the indexed block count is exactly the case a label lookup would have missed.
-;; Edges come from that same index's successor CSR row instead of re-deriving the
-;; block's successor label set from its instruction stream -- see the row-order
-;; note on `opt-cfg-natural-loop-edges-csr`; this walk consumes the row exactly
-;; as the Array walk below does.
-(define (opt-cfg-natural-loop-blocks
-  [all-blocks : ir.CompilerIrBlockList]
-  [remaining : ir.CompilerIrBlockList]
-  [pred-map : OptPredMap]
-  [reachable : OptLabelSet]
-  [doms : OptDomInfo]
-  [source-id : i64]) : OptNaturalLoopList
-  (match remaining
-    [(ir.CompilerIrBlockList.Nil) (OptNaturalLoopList.Nil)]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match (compiler-opt-global-shared-view block)
-        [(ir.CompilerIrBlock.Block label _)
-          (let
-            [tail : OptNaturalLoopList
-              (opt-cfg-natural-loop-blocks
-                (compiler-opt-global-shared-view all-blocks)
-                (compiler-opt-box-shared-view rest)
-                (compiler-opt-global-shared-view pred-map)
-                (compiler-opt-global-shared-view reachable)
-                (compiler-opt-global-shared-view doms)
-                (+ source-id 1))]
-            [index : OptCfgIndex doms.index]
-            [reachable-ids : (__tl_dyn-array bool) index.reachable]
-            (if (and
-              (< source-id (array-length reachable-ids))
-              (array-ref reachable-ids source-id))
-              (opt-cfg-natural-loop-edges-csr
-                (compiler-opt-global-shared-view all-blocks)
-                (compiler-opt-global-shared-view index)
-                pred-map
-                reachable
-                (compiler-opt-global-shared-view doms)
-                source-id
-                label
-                (array-ref index.succs.offsets source-id)
-                (array-ref index.succs.offsets (+ source-id 1))
-                tail)
-              tail))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (opt-cfg-natural-loop-blocks
-        all-blocks
-        (ir.compiler-ir-block-seq-to-list seq)
-        pred-map
-        reachable
-        doms
-        source-id)]))
-
 ;; Back-edge scan for one block, reading its successors from the context's CSR
 ;; index instead of recomputing the block's successor set from its instruction
 ;; stream. The CSR row holds exactly the deduplicated
@@ -24085,14 +24030,26 @@
         (compiler-opt-global-shared-view context.reachable)
         (compiler-opt-global-shared-view context.doms)
         (OptNaturalLoopList.Nil))]
+    ;; A cons list scans as the array it spells: the scan emits the same loops
+    ;; in the same order either way, and each loop's body blocks are then read
+    ;; off the array by id instead of by walking the list to its last member.
     [_
-      (opt-cfg-natural-loop-blocks
-        (compiler-opt-global-shared-view blocks)
-        (compiler-opt-global-shared-view blocks)
-        context.pred-map
-        context.reachable
-        context.doms
-        0)]))
+      (let
+        [seq : ir.CompilerIrBlockSeq
+          (ir.compiler-ir-block-seq-from-list
+            (compiler-opt-global-shared-view blocks))]
+        (opt-cfg-natural-loop-block-seq-csr
+          (ir.CompilerIrBlockList.Array (compiler-opt-global-shared-view seq))
+          (compiler-opt-global-shared-view seq)
+          (-
+            (ir.compiler-ir-block-seq-count
+              (compiler-opt-global-shared-view seq))
+            1)
+          (compiler-opt-global-shared-view context)
+          (compiler-opt-global-shared-view context.pred-map)
+          (compiler-opt-global-shared-view context.reachable)
+          (compiler-opt-global-shared-view context.doms)
+          (OptNaturalLoopList.Nil)))]))
 
 (define (opt-cfg-natural-loops [blocks : ir.CompilerIrBlockList]) : OptNaturalLoopList
   (opt-cfg-natural-loops-with-context

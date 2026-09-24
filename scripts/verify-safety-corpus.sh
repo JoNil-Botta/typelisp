@@ -218,6 +218,11 @@ build_case_program() {
     if [ "$HOST_OS" = windows ]; then
         case_source="$case_dir/$(basename "$source")"
         cp "$source" "$case_source"
+        # The copy no longer sits beside the fixture's sibling modules (e.g.
+        # `foreign_global_dep.tl`), which Linux resolves by compiling the source
+        # in place. Name the fixture's own directory as the last root so those
+        # imports resolve here too without shadowing stdlib or compiler modules.
+        source_dir=$(CDPATH= cd -- "$(dirname -- "$source")" && pwd)
         asm="$case_dir/$case_name.s"
         obj="$case_dir/$case_name.obj"
         program="$case_dir/$case_name.exe"
@@ -228,6 +233,7 @@ build_case_program() {
             --stdlib-root "$ROOT/stdlib" \
             --stdlib-root "$ROOT/src" \
             --stdlib-root "$ROOT/tests/integration" \
+            --stdlib-root "$source_dir" \
             -o "$asm"
         if [ "$code" -ne 0 ]; then
             show_stream_if_nonempty stdout "$build_out"

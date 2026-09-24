@@ -105,12 +105,12 @@ FILENAME == catalog {
     }
     # A row may pin its own optimization level with an `opt-level:N+` prefix;
     # the runner leaves such a row out of the batched pre-pass and compiles it
-    # standalone at that level. Everything after the prefix is the extra field
-    # every other row spells.
+    # standalone at that level. Everything after the prefix (possibly nothing)
+    # is the extra field every other row spells.
     if (extra ~ /^opt-level:/) {
         opt_level_spec = extra
         sub(/^opt-level:/, "", opt_level_spec)
-        if (opt_level_spec !~ /^[012]\+.+/) {
+        if (opt_level_spec !~ /^[012]\+/) {
             fail("manifest line " FNR " has invalid opt-level prefix for " name ": " extra)
         }
         sub(/^[012]\+/, "", opt_level_spec)

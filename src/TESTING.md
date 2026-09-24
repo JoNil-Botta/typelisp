@@ -1250,12 +1250,15 @@ runner to preserve native Windows exit codes. Use this layer for behavior that
 only shows up after execution: exit status, stdout/stderr, diagnostic rendering,
 deterministic file output, and import-aware driver behavior.
 
-The integration manifests live in `tests/integration/native-linux.manifest` and
-`tests/integration/native-windows.manifest`. When a program or smoke driver
-needs another imported module, add the dependency to the owning manifest row so
-the CI runner exercises the same import graph reviewers see locally. The
-same script also owns host-specific backend/compiler-driver fixture checks that
-are too low-level for a manifest row.
+The integration manifest `tests/integration/native.manifest` serves both hosts:
+each row names the hosts it runs on and the opt levels it runs at (the batched
+default level and/or standalone `--opt-level` compiles), and
+`scripts/expand-integration-manifest.awk` expands one host's rows. When a
+program or smoke driver needs another imported module, add the dependency to
+the owning manifest row so the CI runner exercises the same import graph
+reviewers see locally. The same script also owns host-specific
+backend/compiler-driver fixture checks that are too low-level for a manifest
+row.
 
 The `c_function_pointer_flow` row uses a native C provider from
 `benchmarks/c_function_pointer_flow/baseline.c` to exercise typed code addresses

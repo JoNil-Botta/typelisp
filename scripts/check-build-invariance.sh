@@ -274,14 +274,15 @@ write_corpus() {
     {
         printf '%s\n' "selfhost_main_opt1|src/main.tl|1"
         printf '%s\n' "selfhost_main_opt2|src/main.tl|2"
-        awk -F'|' '
-            /^[[:space:]]*#/ { next }
-            NF < 2 { next }
-            $1 == "" || $2 == "" { next }
-            {
-                print "integration_" $1 "|" $2 "|2"
-            }
-        ' tests/integration/native-linux.manifest
+        awk -v host=linux -f scripts/expand-integration-manifest.awk \
+            tests/integration/native.manifest |
+            awk -F'|' '
+                NF < 2 { next }
+                $1 == "" || $2 == "" { next }
+                {
+                    print "integration_" $1 "|" $2 "|2"
+                }
+            '
     } > "$corpus_file"
 }
 

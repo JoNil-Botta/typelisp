@@ -34,8 +34,7 @@ Status values:
 Primary coverage owners referenced below:
 
 - `integration`: `tests/integration/*.tl` through
-  `tests/integration/native-linux.manifest`,
-  `tests/integration/native-windows.manifest`, and
+  `tests/integration/native.manifest` and
   `scripts/verify-integration.sh`.
 - `safety`: `tests/safety/manifest.txt` and
   `scripts/verify-safety-corpus.sh`.

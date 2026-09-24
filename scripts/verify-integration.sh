@@ -216,12 +216,14 @@ if [ "$SELF_TEST_WITHOUT_COMPILER" -eq 0 ]; then
     fi
 fi
 
-MANIFEST="$ROOT/tests/integration/native-$HOST_OS.manifest"
+MANIFEST="$ROOT/tests/integration/native.manifest"
 WORKDIR="$ROOT/target/integration-verify/$HOST_OS"
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
+# This host's rows of the shared manifest, one per name and opt level.
 NORMALIZED_MANIFEST="$WORKDIR/manifest.normalized"
-tr -d '\r' < "$MANIFEST" > "$NORMALIZED_MANIFEST"
+awk -v host="$HOST_OS" -f "$ROOT/scripts/expand-integration-manifest.awk" "$MANIFEST" \
+    > "$NORMALIZED_MANIFEST"
 
 # Batch chunks compile in a bounded pool (scripts/lib-bounded-pool.sh):
 # TYPELISP_INTEGRATION_WORKERS compiler processes at once (1-3, default 2), each
@@ -845,49 +847,6 @@ compile_windows_c_deps() {
     done
 }
 
-# Integration cases that are not Windows-applicable in this manifest
-# (kept covered on Linux via native-linux.manifest):
-#   arena_poison_stale_array_trap  the poison-on-reclaim trap cannot fire on
-#                             Windows: poison mode retains reset segments but
-#                             does not overwrite or guard their pages, so the
-#                             stale access does not fault (Linux asserts 139)
-#   c_abi_sysv_*              Linux System V C ABI fixtures
-#   syscall_arg_alias         raw Linux syscall (rejected on the Windows target)
-#   dead_frame_store          raw Linux syscall (getpid) fixture (rejected on the Windows target)
-windows_integration_non_applicable_cases() {
-    cat <<'EOF'
-arena_poison_stale_array_trap
-c_abi_sysv_register_aggregate_args
-c_abi_sysv_memory_aggregate
-c_abi_sysv_memory_tail
-c_abi_sysv_enum_aggregate
-c_abi_sysv_tag_only_enum
-c_abi_sysv_two_register_return
-syscall_arg_alias
-dead_frame_store
-EOF
-}
-
-# Integration cases that are Windows-only in this manifest
-# (kept covered on Windows via native-windows.manifest):
-#   c_abi_win64_sret_return  Win64 hidden-sret aggregate return ABI
-#   c_abi_win64_enum_*       Win64 enum aggregate C ABI fixtures
-#   c_abi_win64_small_*      Win64 small aggregate register ABI
-#   c_abi_win64_nested_*     Win64 nested aggregate C ABI fixtures
-#   windows_allocation_abort  Win32 VirtualAlloc provenance reporter transcript
-#   windows_nt_create_file_boundary  rooted NtCreateFile and reparse refusal
-linux_integration_non_applicable_cases() {
-    cat <<'EOF'
-c_abi_win64_sret_return
-c_abi_win64_aggregate_args
-c_abi_win64_enum_aggregate
-c_abi_win64_small_aggregate_float_mixed
-c_abi_win64_nested_aggregate
-windows_allocation_abort
-windows_nt_create_file_boundary
-EOF
-}
-
 # Linux rooted-filesystem fixtures are owned by verify-fs-rooted-linux.sh.
 # That gate supplies the descriptor-relative test root, fault hooks, and the
 # native assembler/linker flow that these fixtures require; on Windows the
@@ -1062,13 +1021,18 @@ validate_manifest() {
     awk -v root="$ROOT" -v catalog="$_catalog" -v known_out="$_known" \
         -f "$ROOT/scripts/validate-integration-manifest.awk" \
         "$_catalog" "$NORMALIZED_MANIFEST"
+    # The other host's rows are validated too and cover their own sources.
+    _other_host=windows
+    [ "$HOST_OS" = linux ] || _other_host=linux
+    awk -v host="$_other_host" -f "$ROOT/scripts/expand-integration-manifest.awk" \
+        "$MANIFEST" > "$WORKDIR/manifest.$_other_host"
+    awk -v root="$ROOT" -v catalog="$_catalog" -v known_out="$_known.$_other_host" \
+        -f "$ROOT/scripts/validate-integration-manifest.awk" \
+        "$_catalog" "$WORKDIR/manifest.$_other_host"
+    cat "$_known.$_other_host" >> "$_known"
 
     if [ "$HOST_OS" = windows ]; then
         validate_windows_manifest_assembly_requirements
-        windows_integration_non_applicable_cases >> "$_known"
-    fi
-    if [ "$HOST_OS" = linux ]; then
-        linux_integration_non_applicable_cases >> "$_known"
     fi
     fs_rooted_linux_gate_cases >> "$_known"
     process_runtime_linux_gate_cases >> "$_known"
@@ -2304,252 +2268,7 @@ run_linux_fatal_backtrace_fixture() {
 }
 
 run_linux_backend_fixtures() {
-    run_linux_program_fixture \
-        u64-float-casts-opt0 \
-        tests/integration/u64_float_casts.tl \
-        0 \
-        0
-    run_linux_program_fixture \
-        u64-float-casts-opt1 \
-        tests/integration/u64_float_casts.tl \
-        0 \
-        1
-    run_linux_program_fixture \
-        u64-float-casts-opt2 \
-        tests/integration/u64_float_casts.tl \
-        0 \
-        2
-    # RMW-2: the load/op/store triple over one memory location folds to a single
-    # memory-operand ALU instruction. The rewrite is a backend text peephole
-    # that runs at every optimization level, so the opt0 and opt1 rows are the
-    # parity reference for the opt2 answer: all three must print the same
-    # numbers, and a fold that got the address, operand order or operand width
-    # wrong would move them (each counter is read back out of its cell).
-    run_linux_program_fixture \
-        rmw-mem-operand-fold-opt0 \
-        tests/integration/rmw_mem_operand_fold.tl \
-        42 \
-        0 \
-        '8 -24\n7 1024 0\n24 108\n36 24\n6 3\n' \
-        '8 3'
-    run_linux_program_fixture \
-        rmw-mem-operand-fold-opt1 \
-        tests/integration/rmw_mem_operand_fold.tl \
-        42 \
-        1 \
-        '8 -24\n7 1024 0\n24 108\n36 24\n6 3\n' \
-        '8 3'
-    run_linux_program_fixture \
-        rmw-mem-operand-fold-opt2 \
-        tests/integration/rmw_mem_operand_fold.tl \
-        42 \
-        2 \
-        '8 -24\n7 1024 0\n24 108\n36 24\n6 3\n' \
-        '8 3'
     run_linux_fatal_backtrace_fixture
-    # The opt0 row guards the lowerer's two-phase evaluate-before-write
-    # contract. The opt2 row runs the same destination/argument aliases through
-    # ctor_fwd and the complete optimizer pipeline (refs #6930).
-    run_linux_program_fixture \
-        constructor-alias-two-phase-opt0 \
-        tests/integration/constructor_alias_two_phase.tl \
-        42 \
-        0
-    run_linux_program_fixture \
-        constructor-alias-two-phase-opt2 \
-        tests/integration/constructor_alias_two_phase.tl \
-        42 \
-        2
-    run_linux_program_fixture \
-        regalloc-loop-split-evicted-region-var-opt2 \
-        tests/integration/regalloc_loop_split_evicted_region_var.tl \
-        42 \
-        2
-    run_linux_program_fixture \
-        phi-forward-scavenge-live-through-opt2 \
-        tests/integration/phi_forward_scavenge_live_through.tl \
-        42 \
-        2
-    run_linux_program_fixture \
-        inline-alloc-scavenge-live-through-opt2 \
-        tests/integration/inline_alloc_scavenge_live_through.tl \
-        42 \
-        2
-    # The multiblock inliner only runs at opt2, so the manifest's opt0/opt1
-    # rows cannot exercise the call-carrying clone path at all; this row is
-    # where the cloned call actually happens (refs #6307, #6288).
-    run_linux_program_fixture \
-        inline-multiblock-call-carrying-clone-opt2 \
-        tests/integration/inline_multiblock_call_carrying_clone.tl \
-        42 \
-        2
-    # The GAP9 gep-fold ordinal table and the multiblock inliner both only
-    # run at opt2, so this row is the only place the store-pair peephole's
-    # absorbed gep meets a cloned call-carrying body (refs #6307).
-    run_linux_program_fixture \
-        gep-fold-ordinal-store-pair-clone-opt2 \
-        tests/integration/gep_fold_ordinal_store_pair_clone.tl \
-        42 \
-        2
-    # I3-1: sole-call absorption. `sc-classify` (acyclic, five parameters, one
-    # straight-line site) is absorbed into `sc-driver` at opt2 and at no other
-    # level, because the multiblock inliner runs only at opt2; `sc-scan-run`
-    # (loop-carrying) and `sc-fold-step` (acyclic but called from inside the
-    # driver's loop) are the tier's two structural refusals and keep their calls
-    # at every level. The opt0 and opt1 rows are the parity reference for the
-    # opt2 answer.
-    run_linux_program_fixture \
-        inline-sole-call-absorb-opt0 \
-        tests/integration/inline_sole_call_absorb.tl \
-        42 \
-        0 \
-        '339292\n' \
-        '64 3'
-    run_linux_program_fixture \
-        inline-sole-call-absorb-opt1 \
-        tests/integration/inline_sole_call_absorb.tl \
-        42 \
-        1 \
-        '339292\n' \
-        '64 3'
-    run_linux_program_fixture \
-        inline-sole-call-absorb-opt2 \
-        tests/integration/inline_sole_call_absorb.tl \
-        42 \
-        2 \
-        '339292\n' \
-        '64 3'
-    # The abort-carrying callee on its PASSING path: `sca-probe` owns a bounds
-    # check and is absorbed at opt2, so the opt2 row is the one where the check
-    # that fires belongs to the merged `main`. Its failing path is the manifest
-    # row `inline_sole_call_abort`, because this runner requires empty stderr.
-    run_linux_program_fixture \
-        inline-sole-call-abort-pass-opt0 \
-        tests/integration/inline_sole_call_abort.tl \
-        42 \
-        0 \
-        '53\n' \
-        '8 3'
-    run_linux_program_fixture \
-        inline-sole-call-abort-pass-opt2 \
-        tests/integration/inline_sole_call_abort.tl \
-        42 \
-        2 \
-        '53\n' \
-        '8 3'
-    # IT-2: the two-loop hash whose tail guard re-derives the slice descriptor
-    # on the bypass edge around the first loop, at every level -- the PRE and
-    # the CSE that completes it run only at opt2, so the opt0 and opt1 rows are
-    # the parity reference the opt2 row is checked against. The rows below are
-    # the same corpus with the container REBOUND between the two loops: the
-    # write refuses the CSE and both guards survive. Its OOB span is a manifest
-    # row (`guard_dedup_mutated_slice_abort`) rather than a row here, because
-    # this runner's assertion requires an EMPTY stderr and an abort writes its
-    # location to it.
-    run_linux_program_fixture \
-        guard-dedup-bypass-descriptor-opt0 \
-        tests/integration/guard_dedup_bypass_descriptor.tl \
-        42 \
-        0 \
-        '-5915004525821994045\n' \
-        24
-    run_linux_program_fixture \
-        guard-dedup-bypass-descriptor-opt1 \
-        tests/integration/guard_dedup_bypass_descriptor.tl \
-        42 \
-        1 \
-        '-5915004525821994045\n' \
-        24
-    run_linux_program_fixture \
-        guard-dedup-bypass-descriptor-opt2 \
-        tests/integration/guard_dedup_bypass_descriptor.tl \
-        42 \
-        2 \
-        '-5915004525821994045\n' \
-        24
-    run_linux_program_fixture \
-        guard-dedup-mutated-slice-opt0 \
-        tests/integration/guard_dedup_mutated_slice.tl \
-        42 \
-        0 \
-        '172085089044\n' \
-        '20 0'
-    run_linux_program_fixture \
-        guard-dedup-mutated-slice-opt1 \
-        tests/integration/guard_dedup_mutated_slice.tl \
-        42 \
-        1 \
-        '172085089044\n' \
-        '20 0'
-    run_linux_program_fixture \
-        guard-dedup-mutated-slice-opt2 \
-        tests/integration/guard_dedup_mutated_slice.tl \
-        42 \
-        2 \
-        '172085089044\n' \
-        '20 0'
-    # IAG-1: the inline shape at every level, so a fold or copy that is only
-    # reachable at one optimization level cannot regress unnoticed.
-    run_linux_program_fixture \
-        inline-aggregate-global-opt0 \
-        tests/integration/inline_aggregate_global.tl \
-        42 \
-        0 \
-        '98\n'
-    run_linux_program_fixture \
-        inline-aggregate-global-opt1 \
-        tests/integration/inline_aggregate_global.tl \
-        42 \
-        1 \
-        '98\n'
-    run_linux_program_fixture \
-        inline-aggregate-global-opt2 \
-        tests/integration/inline_aggregate_global.tl \
-        42 \
-        2 \
-        '98\n'
-    # IAG-1: preserve the pre-IAG behavior of the deliberately invalidated
-    # borrow at every optimization level. Current main materializes the borrow
-    # before the rebind at opt0/1 and after inlining the rebind at opt2, so the
-    # established baseline is 4/4/9 rather than one value at all three levels.
-    run_linux_program_fixture \
-        inline-aggregate-global-escape-opt0 \
-        tests/integration/inline_aggregate_global_escape.tl \
-        42 \
-        0 \
-        '4\n'
-    run_linux_program_fixture \
-        inline-aggregate-global-escape-opt1 \
-        tests/integration/inline_aggregate_global_escape.tl \
-        42 \
-        1 \
-        '4\n'
-    run_linux_program_fixture \
-        inline-aggregate-global-escape-opt2 \
-        tests/integration/inline_aggregate_global_escape.tl \
-        42 \
-        2 \
-        '9\n'
-    run_linux_program_fixture \
-        integer-literal-boundary-matrix-opt0 \
-        tests/integration/integer_literal_boundary_matrix.tl \
-        42 \
-        0
-    run_linux_program_fixture \
-        integer-literal-boundary-matrix-opt2 \
-        tests/integration/integer_literal_boundary_matrix.tl \
-        42 \
-        2
-    run_linux_program_fixture \
-        f32-mandelbrot-loop-opt0 \
-        tests/integration/opt2_f32_mandelbrot_loop.tl \
-        42 \
-        0
-    run_linux_program_fixture \
-        f32-mandelbrot-loop-opt2 \
-        tests/integration/opt2_f32_mandelbrot_loop.tl \
-        42 \
-        2
 
     _runtime_dir="$WORKDIR/backend-runtime"
     mkdir -p "$_runtime_dir"
@@ -2873,77 +2592,7 @@ run_windows_fatal_backtrace_fixture() {
 }
 
 run_windows_backend_fixtures() {
-    run_windows_program_fixture \
-        u64-float-casts-opt0 \
-        tests/integration/u64_float_casts.tl \
-        0 \
-        0
-    run_windows_program_fixture \
-        u64-float-casts-opt1 \
-        tests/integration/u64_float_casts.tl \
-        0 \
-        1
-    run_windows_program_fixture \
-        u64-float-casts-opt2 \
-        tests/integration/u64_float_casts.tl \
-        0 \
-        2
     run_windows_fatal_backtrace_fixture
-    run_windows_program_fixture \
-        constructor-alias-two-phase-opt0 \
-        tests/integration/constructor_alias_two_phase.tl \
-        42 \
-        0
-    run_windows_program_fixture \
-        constructor-alias-two-phase-opt2 \
-        tests/integration/constructor_alias_two_phase.tl \
-        42 \
-        2
-    run_windows_program_fixture \
-        regalloc-loop-split-evicted-region-var-opt2 \
-        tests/integration/regalloc_loop_split_evicted_region_var.tl \
-        42 \
-        2
-    run_windows_program_fixture \
-        phi-forward-scavenge-live-through-opt2 \
-        tests/integration/phi_forward_scavenge_live_through.tl \
-        42 \
-        2
-    run_windows_program_fixture \
-        inline-alloc-scavenge-live-through-opt2 \
-        tests/integration/inline_alloc_scavenge_live_through.tl \
-        42 \
-        2
-    run_windows_program_fixture \
-        inline-multiblock-call-carrying-clone-opt2 \
-        tests/integration/inline_multiblock_call_carrying_clone.tl \
-        42 \
-        2
-    run_windows_program_fixture \
-        gep-fold-ordinal-store-pair-clone-opt2 \
-        tests/integration/gep_fold_ordinal_store_pair_clone.tl \
-        42 \
-        2
-    run_windows_program_fixture \
-        integer-literal-boundary-matrix-opt0 \
-        tests/integration/integer_literal_boundary_matrix.tl \
-        42 \
-        0
-    run_windows_program_fixture \
-        integer-literal-boundary-matrix-opt2 \
-        tests/integration/integer_literal_boundary_matrix.tl \
-        42 \
-        2
-    run_windows_program_fixture \
-        f32-mandelbrot-loop-opt0 \
-        tests/integration/opt2_f32_mandelbrot_loop.tl \
-        42 \
-        0
-    run_windows_program_fixture \
-        f32-mandelbrot-loop-opt2 \
-        tests/integration/opt2_f32_mandelbrot_loop.tl \
-        42 \
-        2
 
     _runtime_dir="$WORKDIR/windows-backend-runtime"
     mkdir -p "$_runtime_dir"

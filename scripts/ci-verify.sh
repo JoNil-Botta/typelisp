@@ -666,7 +666,7 @@ run_with_compiler "$STAGE2_BIN" tlci-native-boundary-manifest scripts/verify-tlc
 if [ "$HOST_OS" = linux ]; then
     OPT2_REFERENCE_PATH_FILE="$ROOT/target/ci-verify-opt2-reference.path"
     OPT2_REFERENCE_METADATA_FILE="$ROOT/target/ci-verify-opt2-reference.meta"
-    CI_ARTIFACT_INVARIANCE_SOURCES='src,stdlib,tests/integration/native-linux.manifest,scripts/check-build-invariance.sh,scripts/lib-build-invariance-batch.sh,scripts/lib-bounded-pool.sh'
+    CI_ARTIFACT_INVARIANCE_SOURCES='src,stdlib,tests/integration/native.manifest,scripts/expand-integration-manifest.awk,scripts/check-build-invariance.sh,scripts/lib-build-invariance-batch.sh,scripts/lib-bounded-pool.sh'
     CI_ARTIFACT_INVARIANCE_ARGV='compile src/main.tl -o {output} --target linux-x86_64 --cfg host-defaults --backend-mode scalar --opt-level 1 --stdlib-root stdlib --stdlib-root src'
     if ci_gate_selected stage2-opt1-opt2-build-invariance; then
         rm -f "$OPT2_REFERENCE_PATH_FILE" "$OPT2_REFERENCE_METADATA_FILE"

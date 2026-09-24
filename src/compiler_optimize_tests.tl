@@ -4881,6 +4881,143 @@
         17]
       [else 42])))
 
+;; Reuse the branch/copy/escape fixtures with the runtime String descriptor
+;; type. Only the allocation type changes; its complete use graph stays intact.
+(define (opt-agsplit-string-instr [instr : compiler_ir_types.CompilerIrInstr]) : compiler_ir_types.CompilerIrInstr
+  (match (compiler_optimize.compiler-opt-global-shared-view instr)
+    [(compiler_ir_types.CompilerIrInstr.Call dst name args ty)
+      (compiler_ir_types.CompilerIrInstr.Call
+        dst
+        name
+        args
+        (if (= name cbi.compiler-builtin-id-tl-alloc)
+          (compiler_ast_types.AstType.String)
+          ty))]
+    [_ instr]))
+
+(define (opt-agsplit-string-blocks
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlockList
+  (let
+    [out : compiler_ir_types.CompilerIrBlockBuilder
+      (compiler_ir_types.compiler-ir-block-builder-new)]
+    [count : i64
+      (compiler_ir_types.compiler-ir-block-list-count
+        (compiler_optimize.compiler-opt-global-shared-view blocks))]
+    [i : i64 0]
+    (begin
+      (while (< i count)
+        (begin
+          (match (opt-cmp-dup-block-at
+            (compiler_optimize.compiler-opt-global-shared-view blocks)
+            i)
+            [(compiler_ir_types.CompilerIrBlock.Block label instrs)
+              (let
+                [b : compiler_ir_types.CompilerIrInstrBuilder
+                  (compiler_ir_types.compiler-ir-instr-builder-new)]
+                [j : i64 0]
+                (begin
+                  (while (< j instrs.len)
+                    (begin
+                      (compiler_ir_types.compiler-ir-instr-builder-push!
+                        (&mut b)
+                        (opt-agsplit-string-instr
+                          (compiler_ir_types.compiler-ir-instr-seq-ref
+                            (compiler_optimize.compiler-opt-global-shared-view
+                              instrs)
+                            j)))
+                      (set! j (+ j 1))))
+                  (compiler_ir_types.compiler-ir-block-builder-push!
+                    (&mut out)
+                    (compiler_ir_types.CompilerIrBlock.Block
+                      label
+                      (compiler_ir_types.compiler-ir-instr-builder-to-seq b)))))])
+          (set! i (+ i 1))))
+      (compiler_ir_types.compiler-ir-block-builder-to-list out))))
+
+(test
+  local-string-descriptor-splitting
+  (let
+    [mode : i64 0]
+    (while (< mode 8)
+      (let
+        [blocks : compiler_ir_types.CompilerIrBlockList
+          (opt-agsplit-string-blocks
+            (cond
+              [(= mode 0) (opt-agsplit-join-blocks)]
+              [(= mode 1) (opt-agsplit-copy-blocks)]
+              [(= mode 2) (opt-agsplit-call-arg-blocks)]
+              [(= mode 3) (opt-agsplit-escape-call-blocks)]
+              [(= mode 4) (opt-agsplit-subword-blocks)]
+              [(= mode 5) (opt-agsplit-dynamic-gep-blocks)]
+              [(= mode 6) (opt-agsplit-partial-copy-blocks)]
+              [else (opt-agsplit-stored-pointer-blocks)]))]
+        [out : compiler_ir_types.CompilerIrFunction
+          (opt-agsplit-split blocks 12)]
+        (begin
+          (test.assert-i64-eq
+            (opt-agsplit-count-function out (opt-agsplit-kind-tl-alloc) 0)
+            (if (< mode 2)
+              0
+              1)
+            "split private String words, retain escaped or incompatible storage")
+          (set! mode (+ mode 1))))))
+  (test.assert-i64-eq
+    (opt-agsplit-count-function
+      (opt-agsplit-optimized
+        (opt-agsplit-string-blocks (opt-agsplit-copy-blocks))
+        12)
+      (opt-agsplit-kind-return-literal)
+      11)
+    1
+    "descriptor copying preserves its length through the whole pipeline")
+  (test.assert-i64-eq
+    (opt-agsplit-count-function
+      (opt-agsplit-split
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-agsplit-block
+            "entry"
+            (opt-test-instrs
+              (opt-agsplit-string-instr (opt-agsplit-alloc 1 16))
+              (opt-agsplit-gep 2 1 8)
+              (opt-agsplit-store-literal 2 11)
+              (opt-agsplit-load 3 2)
+              (compiler_ir_types.CompilerIrInstr.OwnRoot
+                4
+                (compiler_ir_types.CompilerIrValue.Var 1)
+                (compiler_ast_types.AstType.String))
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var 3)))))
+          compiler_ir_types.CompilerIrBlockList.Nil)
+        6)
+      (opt-agsplit-kind-tl-alloc)
+      0)
+    1
+    "an ownership edge retains the String descriptor")
+  (let
+    [mode : i64 0]
+    (while (< mode 3)
+      (begin
+        (test.assert-true
+          (match (compiler_optimize.opt-aggregate-split-direct-alloc
+            (compiler_ir_types.CompilerIrInstr.Call
+              1
+              (if (= mode 0)
+                (opt-test-symbol "foreign-alloc")
+                cbi.compiler-builtin-id-tl-alloc)
+              (compiler_ir_types.CompilerIrCallArgs.One
+                (compiler_ir_types.CompilerIrValue.I64
+                  (if (= mode 0)
+                    16
+                    (if (= mode 1)
+                      8
+                      24))))
+              (compiler_ast_types.AstType.String)))
+            [(compiler_optimize.OptMaybeAggregateAlloc.No) true]
+            [_ false])
+          "only the exact 16-byte runtime String descriptor is admitted")
+        (set! mode (+ mode 1))))))
+
 (define (compiler-optimize-aggregate-sroa-self-test) : i64
   (let
     [positive-result : compiler_optimize.OptFunctionPassResult

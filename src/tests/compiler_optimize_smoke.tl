@@ -4476,10 +4476,6 @@
       (compiler_optimize_tests.compiler-optimize-aggregate-promote-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-aggregate-sroa-self-test"
-      (compiler_optimize_tests.compiler-optimize-aggregate-sroa-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-aggregate-split-self-test"
       (compiler_optimize_tests.compiler-optimize-aggregate-split-self-test)
       42)

@@ -414,22 +414,6 @@
   (Ok opt_aggregate_pointer_vec.Vec opt_aggregate_access_vec.Vec)
   (Reject))
 
-;; Aggregate field-load SROA supporting types.
-(defenum OptAggregateLocation
-  (No)
-  (Some i64 i64))
-
-(defenum OptAggregateStoredValue
-  (No)
-  (Some ir.CompilerIrValue ast.AstType))
-
-(defenum OptAggregateFieldFacts
-  (Nil)
-  (Cons i64 i64 ir.CompilerIrValue ast.AstType (Box OptAggregateFieldFacts)))
-
-(defenum OptAggregateSroaResult
-  (Result OptAggregateFieldFacts ir.CompilerIrInstr))
-
 (defenum OptAggregatePromoteSlot
   (Slot i64 i64))
 
@@ -5942,414 +5926,13 @@
                 function-abi))])
         func)]))
 
-;; --- aggregate field-load scalar replacement (SROA) --------------------------
-;; Replaces loads of fields from non-escaping aggregate allocations with the
-;; scalar value last stored to that field. Runs after stack promotion so it
-;; handles aggregates that promotion left in memory.
-(define (opt-aggregate-scalar-replace-type? [ty : ast.AstType]) : bool
-  (if (opt-int-or-char-type? (compiler-opt-global-shared-view ty))
-    true
-    (match ty
-      [(ast.AstType.Bool) true]
-      [(ast.AstType.Unit) true]
-      [_ false])))
-
-(define (opt-aggregate-candidate-location
-  [candidate : OptAggregateAllocCandidate]
-  [value : ir.CompilerIrValue]) : OptAggregateLocation
-  (match candidate
-    [(OptAggregateAllocCandidate.Candidate base _ _ ptrs _)
-      (match (opt-aggregate-value-offset base ptrs value)
-        [(option_i64.Some offset) (OptAggregateLocation.Some base offset)]
-        [(option_i64.None) (OptAggregateLocation.No)])]))
-
-(define (opt-aggregate-location-for-value-from
-  [candidates : opt_aggregate_candidate_vec.Vec]
-  [value : ir.CompilerIrValue]
-  [index : i64]) : OptAggregateLocation
-  (if (>= index (opt_aggregate_candidate_vec.len (& candidates)))
-    (OptAggregateLocation.No)
-    (match (opt-aggregate-candidate-location
-      (compiler-opt-borrowed-array-element-shared-view
-        (opt_aggregate_candidate_vec.slots (& candidates))
-        index)
-      (compiler-opt-global-shared-view value))
-      [(OptAggregateLocation.Some base offset)
-        (OptAggregateLocation.Some base offset)]
-      [(OptAggregateLocation.No)
-        (opt-aggregate-location-for-value-from candidates value (+ index 1))])))
-
-(define (opt-aggregate-location-for-value
-  [candidates : opt_aggregate_candidate_vec.Vec]
-  [value : ir.CompilerIrValue]) : OptAggregateLocation
-  (opt-aggregate-location-for-value-from candidates value 0))
-
-(define (opt-aggregate-value-is-candidate-pointer?
-  [candidates : opt_aggregate_candidate_vec.Vec]
-  [value : ir.CompilerIrValue]) : bool
-  (match (opt-aggregate-location-for-value candidates value)
-    [(OptAggregateLocation.Some _ _) true]
-    [(OptAggregateLocation.No) false]))
-
-(define (opt-aggregate-field-facts-unbind
-  [facts : OptAggregateFieldFacts]
-  [base : i64]
-  [offset : i64]) : OptAggregateFieldFacts
-  (match facts
-    [(OptAggregateFieldFacts.Nil) (OptAggregateFieldFacts.Nil)]
-    [(OptAggregateFieldFacts.Cons fact-base fact-offset value ty rest)
-      (let
-        [rest2 : OptAggregateFieldFacts
-          (opt-aggregate-field-facts-unbind (deref rest) base offset)]
-        (if (and (= fact-base base) (= fact-offset offset))
-          rest2
-          (OptAggregateFieldFacts.Cons
-            fact-base
-            fact-offset
-            value
-            ty
-            (box rest2))))]))
-
-(define (opt-aggregate-field-facts-unbind-base
-  [facts : OptAggregateFieldFacts]
-  [base : i64]) : OptAggregateFieldFacts
-  (match facts
-    [(OptAggregateFieldFacts.Nil) (OptAggregateFieldFacts.Nil)]
-    [(OptAggregateFieldFacts.Cons fact-base fact-offset value ty rest)
-      (let
-        [rest2 : OptAggregateFieldFacts
-          (opt-aggregate-field-facts-unbind-base (deref rest) base)]
-        (if (= fact-base base)
-          rest2
-          (OptAggregateFieldFacts.Cons
-            fact-base
-            fact-offset
-            value
-            ty
-            (box rest2))))]))
-
-(define (opt-aggregate-field-facts-bind
-  [facts : OptAggregateFieldFacts]
-  [base : i64]
-  [offset : i64]
-  [value : ir.CompilerIrValue]
-  [ty : ast.AstType]) : OptAggregateFieldFacts
-  (OptAggregateFieldFacts.Cons
-    base
-    offset
-    value
-    ty
-    (box (opt-aggregate-field-facts-unbind facts base offset))))
-
-(define (opt-aggregate-field-facts-lookup
-  [type-segment-bases : i64]
-  [facts : OptAggregateFieldFacts]
-  [base : i64]
-  [offset : i64]
-  [ty : ast.AstType]) : OptAggregateStoredValue
-  (match facts
-    [(OptAggregateFieldFacts.Nil) (OptAggregateStoredValue.No)]
-    [(OptAggregateFieldFacts.Cons fact-base fact-offset value fact-ty rest)
-      (if (and
-        (= fact-base base)
-        (= fact-offset offset)
-        (opt-type-eq
-          type-segment-bases
-          (compiler-opt-global-shared-view fact-ty)
-          (compiler-opt-global-shared-view ty)))
-        (OptAggregateStoredValue.Some value fact-ty)
-        (opt-aggregate-field-facts-lookup
-          type-segment-bases
-          (deref rest)
-          base
-          offset
-          ty))]))
-
-(define (opt-aggregate-field-facts-invalidate-var
-  [facts : OptAggregateFieldFacts]
-  [var : i64]) : OptAggregateFieldFacts
-  (match facts
-    [(OptAggregateFieldFacts.Nil) (OptAggregateFieldFacts.Nil)]
-    [(OptAggregateFieldFacts.Cons base offset value ty rest)
-      (let
-        [rest2 : OptAggregateFieldFacts
-          (opt-aggregate-field-facts-invalidate-var (deref rest) var)]
-        (if (or
-          (= base var)
-          (opt-value-is-var? (compiler-opt-global-shared-view value) var))
-          rest2
-          (OptAggregateFieldFacts.Cons base offset value ty (box rest2))))]))
-
-(define (opt-aggregate-sroa-invalidate-def
-  [facts : OptAggregateFieldFacts]
-  [instr : ir.CompilerIrInstr]) : OptAggregateFieldFacts
-  (match instr
-    [(ir.CompilerIrInstr.Mov dst _ _)
-      (opt-aggregate-field-facts-invalidate-var facts dst)]
-    [(ir.CompilerIrInstr.Alloc dst _)
-      (opt-aggregate-field-facts-invalidate-var facts dst)]
-    [(ir.CompilerIrInstr.AddrOf dst _)
-      (opt-aggregate-field-facts-invalidate-var facts dst)]
-    [(ir.CompilerIrInstr.Gep dst _ _ _)
-      (opt-aggregate-field-facts-invalidate-var facts dst)]
-    [(ir.CompilerIrInstr.Load dst _ _)
-      (opt-aggregate-field-facts-invalidate-var facts dst)]
-    [(ir.CompilerIrInstr.Cast dst _ _ _)
-      (opt-aggregate-field-facts-invalidate-var facts dst)]
-    [(ir.CompilerIrInstr.Bitcast dst _ _ _)
-      (opt-aggregate-field-facts-invalidate-var facts dst)]
-    [(ir.CompilerIrInstr.BinOp dst _ _ _ _)
-      (opt-aggregate-field-facts-invalidate-var facts dst)]
-    [(ir.CompilerIrInstr.UnOp dst _ _ _)
-      (opt-aggregate-field-facts-invalidate-var facts dst)]
-    [(ir.CompilerIrInstr.LaneId dst _ _)
-      (opt-aggregate-field-facts-invalidate-var facts dst)]
-    [(ir.CompilerIrInstr.Splat dst _ _ _)
-      (opt-aggregate-field-facts-invalidate-var facts dst)]
-    [(ir.CompilerIrInstr.VectorBinOp payload-box)
-      (let
-        [dst (deref payload-box).dst]
-        (opt-aggregate-field-facts-invalidate-var facts dst))]
-    [(ir.CompilerIrInstr.VectorPrefix payload-box)
-      (let
-        [dst (deref payload-box).dst]
-        (opt-aggregate-field-facts-invalidate-var facts dst))]
-    [(ir.CompilerIrInstr.VectorReduce dst _ _ _ _)
-      (opt-aggregate-field-facts-invalidate-var facts dst)]
-    [(ir.CompilerIrInstr.VectorCompare payload-box)
-      (let
-        [dst (deref payload-box).dst]
-        (opt-aggregate-field-facts-invalidate-var facts dst))]
-    [(ir.CompilerIrInstr.MaskBinOp dst _ _ _ _)
-      (opt-aggregate-field-facts-invalidate-var facts dst)]
-    [(ir.CompilerIrInstr.MaskNot dst _ _)
-      (opt-aggregate-field-facts-invalidate-var facts dst)]
-    [(ir.CompilerIrInstr.MaskReduce dst _ _ _)
-      (opt-aggregate-field-facts-invalidate-var facts dst)]
-    [(ir.CompilerIrInstr.Select payload-box)
-      (let
-        [dst (deref payload-box).dst]
-        (opt-aggregate-field-facts-invalidate-var facts dst))]
-    [(ir.CompilerIrInstr.VectorLoad dst _ _ _ _)
-      (opt-aggregate-field-facts-invalidate-var facts dst)]
-    [(ir.CompilerIrInstr.PredicatedLoad payload-box)
-      (let
-        [dst (deref payload-box).dst]
-        (opt-aggregate-field-facts-invalidate-var facts dst))]
-    [(ir.CompilerIrInstr.GatherLoad payload-box)
-      (let
-        [dst (deref payload-box).dst]
-        (opt-aggregate-field-facts-invalidate-var facts dst))]
-    [(ir.CompilerIrInstr.VectorShuffle payload-box)
-      (let
-        [dst (deref payload-box).dst]
-        (opt-aggregate-field-facts-invalidate-var facts dst))]
-    [(ir.CompilerIrInstr.TailMask dst _ _ _)
-      (opt-aggregate-field-facts-invalidate-var facts dst)]
-    [(ir.CompilerIrInstr.EntryArgc dst)
-      (opt-aggregate-field-facts-invalidate-var facts dst)]
-    [(ir.CompilerIrInstr.EntryArgv dst)
-      (opt-aggregate-field-facts-invalidate-var facts dst)]
-    [(ir.CompilerIrInstr.EntryEnvp dst)
-      (opt-aggregate-field-facts-invalidate-var facts dst)]
-    [(ir.CompilerIrInstr.CpuId dst _ _ _)
-      (opt-aggregate-field-facts-invalidate-var facts dst)]
-    [(ir.CompilerIrInstr.Xgetbv dst _)
-      (opt-aggregate-field-facts-invalidate-var facts dst)]
-    [(ir.CompilerIrInstr.Syscall dst _)
-      (opt-aggregate-field-facts-invalidate-var facts dst)]
-    [(ir.CompilerIrInstr.Call dst _ _ _)
-      (opt-aggregate-field-facts-invalidate-var facts dst)]
-    [(ir.CompilerIrInstr.CallIndirect dst _ _ _)
-      (opt-aggregate-field-facts-invalidate-var facts dst)]
-    [(ir.CompilerIrInstr.CallIndirectC dst _ _ _)
-      (opt-aggregate-field-facts-invalidate-var facts dst)]
-    [(ir.CompilerIrInstr.Phi dst _ _)
-      (opt-aggregate-field-facts-invalidate-var facts dst)]
-    [_ facts]))
-
-(define (opt-aggregate-sroa-store
-  [candidates : opt_aggregate_candidate_vec.Vec]
-  [facts : OptAggregateFieldFacts]
-  [ptr : ir.CompilerIrValue]
-  [value : ir.CompilerIrValue]
-  [ty : ast.AstType]
-  [instr : ir.CompilerIrInstr]) : OptAggregateSroaResult
-  (match (opt-aggregate-location-for-value
-    (compiler-opt-global-shared-view candidates)
-    ptr)
-    [(OptAggregateLocation.Some base offset)
-      (if (and
-        (opt-aggregate-scalar-replace-type?
-          (compiler-opt-global-shared-view ty))
-        (opt-copy-safe-source? (compiler-opt-global-shared-view value))
-        (not
-          (opt-aggregate-value-is-candidate-pointer?
-            candidates
-            (compiler-opt-global-shared-view value))))
-        (OptAggregateSroaResult.Result
-          (opt-aggregate-field-facts-bind facts base offset value ty)
-          instr)
-        (OptAggregateSroaResult.Result
-          (opt-aggregate-field-facts-unbind-base facts base)
-          instr))]
-    [(OptAggregateLocation.No)
-      (OptAggregateSroaResult.Result (OptAggregateFieldFacts.Nil) instr)]))
-
-(define (opt-aggregate-sroa-load
-  [type-segment-bases : i64]
-  [candidates : opt_aggregate_candidate_vec.Vec]
-  [facts : OptAggregateFieldFacts]
-  [dst : i64]
-  [src : ir.CompilerIrValue]
-  [ty : ast.AstType]
-  [instr : ir.CompilerIrInstr]) : OptAggregateSroaResult
-  (let
-    [next-facts : OptAggregateFieldFacts
-      (opt-aggregate-field-facts-invalidate-var
-        (compiler-opt-global-shared-view facts)
-        dst)]
-    (match (opt-aggregate-location-for-value candidates src)
-      [(OptAggregateLocation.Some base offset)
-        (match (opt-aggregate-field-facts-lookup
-          type-segment-bases
-          facts
-          base
-          offset
-          (compiler-opt-global-shared-view ty))
-          [(OptAggregateStoredValue.Some value _)
-            (OptAggregateSroaResult.Result
-              next-facts
-              (ir.CompilerIrInstr.Mov dst value ty))]
-          [(OptAggregateStoredValue.No)
-            (OptAggregateSroaResult.Result next-facts instr)])]
-      [(OptAggregateLocation.No)
-        (OptAggregateSroaResult.Result next-facts instr)])))
-
-(define (opt-aggregate-sroa-instr
-  [type-segment-bases : i64]
-  [candidates : opt_aggregate_candidate_vec.Vec]
-  [facts : OptAggregateFieldFacts]
-  [instr : ir.CompilerIrInstr]) : OptAggregateSroaResult
-  (match (compiler-opt-global-shared-view instr)
-    [(ir.CompilerIrInstr.StorePtr ptr value ty)
-      (opt-aggregate-sroa-store candidates facts ptr value ty instr)]
-    [(ir.CompilerIrInstr.StoreOwned ptr value ty)
-      (opt-aggregate-sroa-store candidates facts ptr value ty instr)]
-    [(ir.CompilerIrInstr.Load dst src ty)
-      (opt-aggregate-sroa-load
-        type-segment-bases
-        candidates
-        facts
-        dst
-        src
-        ty
-        instr)]
-    [_
-      (let
-        [def-facts : OptAggregateFieldFacts
-          (opt-aggregate-sroa-invalidate-def
-            facts
-            (compiler-opt-global-shared-view instr))]
-        (if (ir.compiler-ir-effect-invalidates-cse?
-          (ir.compiler-ir-instr-effect (compiler-opt-global-shared-view instr)))
-          (OptAggregateSroaResult.Result (OptAggregateFieldFacts.Nil) instr)
-          (OptAggregateSroaResult.Result def-facts instr)))]))
-
-(define (opt-aggregate-sroa-instr-seq
-  [type-segment-bases : i64]
-  [candidates : opt_aggregate_candidate_vec.Vec]
-  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
-  (let
-    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
-    [slots : (__tl_dyn-array ir.CompilerIrInstr)
-      (__tl_make-array ir.CompilerIrInstr count)]
-    [index : i64 0]
-    [facts : OptAggregateFieldFacts (OptAggregateFieldFacts.Nil)]
-    (begin
-      (while (< index count)
-        (match (opt-aggregate-sroa-instr
-          type-segment-bases
-          (compiler-opt-global-shared-view candidates)
-          (compiler-opt-global-shared-view facts)
-          (ir.compiler-ir-instr-seq-ref instrs index))
-          [(OptAggregateSroaResult.Result next-facts next-instr)
-            (begin
-              (set! (array-ref slots index) next-instr)
-              (set! facts next-facts)
-              (set! index (+ index 1)))]))
-      (ir.CompilerIrInstrSeq slots count))))
-
-(define (opt-aggregate-sroa-block
-  [type-segment-bases : i64]
-  [candidates : opt_aggregate_candidate_vec.Vec]
-  [block : ir.CompilerIrBlock]) : ir.CompilerIrBlock
-  (match block
-    [(ir.CompilerIrBlock.Block label instrs)
-      (ir.CompilerIrBlock.Block
-        label
-        (opt-aggregate-sroa-instr-seq type-segment-bases candidates instrs))]))
-
-(define (opt-aggregate-sroa-blocks
-  [type-segment-bases : i64]
-  [candidates : opt_aggregate_candidate_vec.Vec]
-  [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) (ir.CompilerIrBlockList.Nil)]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (ir.compiler-ir-block-cons
-        (opt-aggregate-sroa-block
-          type-segment-bases
-          (compiler-opt-global-shared-view candidates)
-          block)
-        (opt-aggregate-sroa-blocks type-segment-bases candidates (deref rest)))]
-    [(ir.CompilerIrBlockList.Array seq)
-      (opt-aggregate-sroa-blocks
-        type-segment-bases
-        candidates
-        (ir.compiler-ir-block-seq-to-list seq))]))
-
-(define (opt-aggregate-sroa-function-pass
-  [type-segment-bases : i64]
-  [func : ir.CompilerIrFunction]) : OptFunctionPassResult
-  (match (compiler-opt-global-shared-view func)
-    [(ir.CompilerIrFunction.Function
-        name
-        params
-        ret-ty
-        frame
-        blocks
-        function-abi)
-      (let
-        [candidates : opt_aggregate_candidate_vec.Vec
-          (opt-aggregate-allocation-candidates-function
-            type-segment-bases
-            (compiler-opt-global-shared-view func))]
-        (if (= (opt_aggregate_candidate_vec.len (& candidates)) 0)
-          (OptFunctionPassResult.Result func false)
-          (OptFunctionPassResult.Result
-            (ir.CompilerIrFunction.Function
-              name
-              params
-              ret-ty
-              frame
-              (opt-aggregate-sroa-blocks type-segment-bases candidates blocks)
-              function-abi)
-            true)))]))
-
-(define (opt-aggregate-sroa-function
-  [type-segment-bases : i64]
-  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
-  (match (opt-aggregate-sroa-function-pass type-segment-bases func)
-    [(OptFunctionPassResult.Result next _) next]))
-
 ;; --- aggregate word split (aggregate_split) ---------------------------------
 ;;
-;; SROA-2. The `sroa` pass above forwards a field load from the last DOMINATING
-;; store, so a field whose value is decided by a JOIN -- an enum tag stored once
-;; per match arm, or a whole-aggregate `copy_bytes` on one edge against a
-;; literal store on the other -- stays in memory and every later reader reloads
-;; it. This pass removes the storage instead of forwarding through it: a
+;; SROA-2. Forwarding a field load from the last DOMINATING store leaves a
+;; field whose value is decided by a JOIN -- an enum tag stored once per match
+;; arm, or a whole-aggregate `copy_bytes` on one edge against a literal store on
+;; the other -- in memory, and every later reader reloads it. This pass removes
+;; the storage instead of forwarding through it: a
 ;; fixed-size aggregate allocation that is local to the function and whose every
 ;; use is a whole-word access at a literal offset becomes one ordinary register
 ;; var per 8-byte word, and the `ssa` pass below builds the phis the joins need.
@@ -123217,16 +122800,17 @@
                 promote-frame
                 promote-blocks
                 function-abi)
-              ;; Aggregate field-load SROA runs on the post-promotion
-              ;; blocks/frame (it leaves the frame unchanged), so the slots stay
-              ;; consistent with the later global-GVN pass below.
               (let
-                [_t-sroa : i64 (cfg compile-profile (profile.now-ms) 0)]
-                [sroa : ir.CompilerIrFunction
+                [_t-split : i64 (cfg compile-profile (profile.now-ms) 0)]
+                ;; SROA-2: the word split runs on the post-promotion blocks and
+                ;; before rotation/`ssa`, so the scalar mem2reg below builds the
+                ;; phis the per-arm word stores need. It mints word vars, so
+                ;; every pass underneath reads ITS frame, not the promoted one.
+                [split : ir.CompilerIrFunction
                   (compiler-opt-debug-observe-function
                     type-segment-bases
-                    "sroa"
-                    (opt-aggregate-sroa-function
+                    "aggregate_split"
+                    (opt-aggregate-split-function
                       type-segment-bases
                       (ir.CompilerIrFunction.Function
                         name
@@ -123235,22 +122819,6 @@
                         promote-frame
                         promote-blocks
                         function-abi)))]
-                [_p-sroa : unit
-                  (compiler-opt-profile-pass-note
-                    summaries.profile-state
-                    "sroa"
-                    name
-                    _t-sroa)]
-                [_t-split : i64 (cfg compile-profile (profile.now-ms) 0)]
-                ;; SROA-2: the word split runs on the post-SROA blocks and
-                ;; before rotation/`ssa`, so the scalar mem2reg below builds the
-                ;; phis the per-arm word stores need. It mints word vars, so
-                ;; every pass underneath reads ITS frame, not the promoted one.
-                [split : ir.CompilerIrFunction
-                  (compiler-opt-debug-observe-function
-                    type-segment-bases
-                    "aggregate_split"
-                    (opt-aggregate-split-function type-segment-bases sroa))]
                 [_p-split : unit
                   (compiler-opt-profile-pass-note
                     summaries.profile-state
@@ -123263,13 +122831,13 @@
                       _
                       _
                       promoted-frame
-                      sroa-blocks
+                      split-blocks
                       function-abi)
                     (let
                       [run-heavy? : bool
                         (<=
                           (ir.compiler-ir-block-list-count
-                            (compiler-opt-global-shared-view sroa-blocks))
+                            (compiler-opt-global-shared-view split-blocks))
                           (opt-heavy-pass-block-limit))]
                       ;; Dominator and natural-loop analyses use the integer CFG
                       ;; index. Their admission decisions are loop-local, so an
@@ -123285,7 +122853,7 @@
                             (compiler-opt-global-shared-view params)
                             (compiler-opt-global-shared-view ret-ty)
                             promoted-frame
-                            (compiler-opt-global-shared-view sroa-blocks)
+                            (compiler-opt-global-shared-view split-blocks)
                             (compiler-opt-global-shared-view function-abi)))]
                       ;; Literal-edge normalization is speculative: keep it
                       ;; only if the exact mutable SIMD rewrite succeeds.
@@ -123297,7 +122865,7 @@
                             (compiler-opt-global-shared-view params)
                             (compiler-opt-global-shared-view ret-ty)
                             promoted-frame
-                            sroa-blocks
+                            split-blocks
                             (compiler-opt-global-shared-view function-abi)))]
                       [simd-rotated : ir.CompilerIrFunction
                         (ir.CompilerIrFunction.Function

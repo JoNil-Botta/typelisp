@@ -663,7 +663,7 @@
           (compiler_ir_types.CompilerIrValue.Bool true)))]
     [nil-mapped : compiler_ir_types.CompilerIrCallArgs
       (compiler_ir_types.compiler-ir-call-args-map
-        compiler_ir_types.CompilerIrCallArgs.Nil
+        (compiler_ir_types.CompilerIrCallArgs.Nil)
         compiler-ir-smoke-map-value
         10)]
     [one-mapped : compiler_ir_types.CompilerIrCallArgs
@@ -698,7 +698,7 @@
     [_visited : unit
       (begin
         (compiler_ir_types.compiler-ir-call-args-visit
-          compiler_ir_types.CompilerIrCallArgs.Nil
+          (compiler_ir_types.CompilerIrCallArgs.Nil)
           compiler-ir-smoke-record-value!
           (compiler_ir_types.compiler-ir-global-shared-view seen))
         (compiler_ir_types.compiler-ir-call-args-visit

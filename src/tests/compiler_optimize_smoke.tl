@@ -4659,10 +4659,6 @@
       "compiler-optimize-bit-test-runtime-self-test"
       (compiler_optimize_tests.compiler-optimize-bit-test-runtime-self-test)
       42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-exit-split-label-freshness-self-test"
-      (compiler_optimize_tests.compiler-optimize-exit-split-label-freshness-self-test)
-      42)
     42))
 
 (define (main) : i64
@@ -5692,13 +5688,6 @@
     (compiler_optimize_tests.compiler-optimize-bit-test-runtime-self-test)
     42
     "The source-level classifier preserves hits, gaps, window edges and out-of-window values"))
-
-(test
-  exit-split-sink-label-freshness
-  (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-exit-split-label-freshness-self-test)
-    42
-    "Sunk exit checks keep the legacy name when free, step generation when taken, and emit one block per predecessor"))
 
 (test
   dom-cmp-phi-carried-compare

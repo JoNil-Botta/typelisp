@@ -759,106 +759,90 @@
 (test
   string-borrowed-str-gate
   (let
-    [fail : (-> unit)
-      (lambda () : unit
-        (begin
-          (/ 1 0)
-          unit))]
     [input : String "borrowed"]
     [view : (& input str) (& input)]
-    (if (= (__tl_string_length view) (__tl_string_length input))
-      unit
-      (fail))))
+    (test.assert-true
+      (= (__tl_string_length view) (__tl_string_length input))
+      "string-borrowed-str-gate: (= (__tl_string_length view) (__tl_string_length input))")))
 
 (test
   string-scoped-arena-allocation-policy
-  (let
-    [fail : (-> unit)
-      (lambda () : unit
-        (begin
-          (/ 1 0)
-          unit))]
-    (with-arena
-      outer
-      (let
-        [s : String "  outer  "]
-        [outer-trimmed : String (stdlib.string.trim (& s))]
-        [outer-slice : String (stdlib.string.substring (& s) 2 5)]
-        [outer-suffix : String "-append"]
-        [outer-appended : String
-          (stdlib.string.append (& outer-trimmed) (& outer-suffix))]
-        [outer-number : String (stdlib.string.int->string 12345)]
-        [outer-expected : String "outer"]
-        [outer-appended-expected : String "outer-append"]
-        [outer-number-expected : String "12345"]
-        (begin
-          (if (stdlib.string.eq (& outer-trimmed) (& outer-expected))
-            unit
-            (fail))
-          (if (stdlib.string.eq (& outer-slice) (& outer-expected))
-            unit
-            (fail))
-          (if (stdlib.string.eq (& outer-appended) (& outer-appended-expected))
-            unit
-            (fail))
-          (if (stdlib.string.eq (& outer-number) (& outer-number-expected))
-            unit
-            (fail))
-          (with-arena
-            inner
-            (let
-              [inner-replaced : String
-                (stdlib.string.replace "alpha" "ph" "ren")]
-              [inner-slice : String (stdlib.string.slice "alphabet" 2 3)]
-              [inner-appended : String (stdlib.string.append "inner" "-append")]
-              [inner-concat : String (stdlib.string.concat "inner" "-concat")]
-              [inner-number : String (stdlib.string.int->string -6789)]
-              [inner-borrowed : String
-                (stdlib.string.append (& inner-slice) (& inner-replaced))]
-              [inner-replaced-expected : String "alrena"]
-              [inner-slice-expected : String "pha"]
-              [inner-appended-expected : String "inner-append"]
-              [inner-concat-expected : String "inner-concat"]
-              [inner-number-expected : String "-6789"]
-              [inner-borrowed-expected : String "phaalrena"]
-              (begin
-                (if (stdlib.string.eq
+  (with-arena
+    outer
+    (let
+      [s : String "  outer  "]
+      [outer-trimmed : String (stdlib.string.trim (& s))]
+      [outer-slice : String (stdlib.string.substring (& s) 2 5)]
+      [outer-suffix : String "-append"]
+      [outer-appended : String
+        (stdlib.string.append (& outer-trimmed) (& outer-suffix))]
+      [outer-number : String (stdlib.string.int->string 12345)]
+      [outer-expected : String "outer"]
+      [outer-appended-expected : String "outer-append"]
+      [outer-number-expected : String "12345"]
+      (begin
+        (test.assert-true
+          (stdlib.string.eq (& outer-trimmed) (& outer-expected))
+          "string-scoped-arena-allocation-policy: (eq (& outer-trimmed) (& outer-expected))")
+        (test.assert-true
+          (stdlib.string.eq (& outer-slice) (& outer-expected))
+          "string-scoped-arena-allocation-policy: (eq (& outer-slice) (& outer-expected))")
+        (test.assert-true
+          (stdlib.string.eq (& outer-appended) (& outer-appended-expected))
+          "string-scoped-arena-allocation-policy: (eq (& outer-appended) (& outer-appended-expected))")
+        (test.assert-true
+          (stdlib.string.eq (& outer-number) (& outer-number-expected))
+          "string-scoped-arena-allocation-policy: (eq (& outer-number) (& outer-number-expected))")
+        (with-arena
+          inner
+          (let
+            [inner-replaced : String (stdlib.string.replace "alpha" "ph" "ren")]
+            [inner-slice : String (stdlib.string.slice "alphabet" 2 3)]
+            [inner-appended : String (stdlib.string.append "inner" "-append")]
+            [inner-concat : String (stdlib.string.concat "inner" "-concat")]
+            [inner-number : String (stdlib.string.int->string -6789)]
+            [inner-borrowed : String
+              (stdlib.string.append (& inner-slice) (& inner-replaced))]
+            [inner-replaced-expected : String "alrena"]
+            [inner-slice-expected : String "pha"]
+            [inner-appended-expected : String "inner-append"]
+            [inner-concat-expected : String "inner-concat"]
+            [inner-number-expected : String "-6789"]
+            [inner-borrowed-expected : String "phaalrena"]
+            (begin
+              (test.assert-true
+                (stdlib.string.eq
                   (& inner-replaced)
                   (& inner-replaced-expected))
-                  unit
-                  (fail))
-                (if (stdlib.string.eq (& inner-slice) (& inner-slice-expected))
-                  unit
-                  (fail))
-                (if (stdlib.string.eq
+                "string-scoped-arena-allocation-policy: (eq (& inner-replaced) (& inner-replaced-expected))")
+              (test.assert-true
+                (stdlib.string.eq (& inner-slice) (& inner-slice-expected))
+                "string-scoped-arena-allocation-policy: (eq (& inner-slice) (& inner-slice-expected))")
+              (test.assert-true
+                (stdlib.string.eq
                   (& inner-appended)
                   (& inner-appended-expected))
-                  unit
-                  (fail))
-                (if (stdlib.string.eq
-                  (& inner-concat)
-                  (& inner-concat-expected))
-                  unit
-                  (fail))
-                (if (stdlib.string.eq
-                  (& inner-number)
-                  (& inner-number-expected))
-                  unit
-                  (fail))
-                (if (stdlib.string.eq
+                "string-scoped-arena-allocation-policy: (eq (& inner-appended) (& inner-appended-expected))")
+              (test.assert-true
+                (stdlib.string.eq (& inner-concat) (& inner-concat-expected))
+                "string-scoped-arena-allocation-policy: (eq (& inner-concat) (& inner-concat-expected))")
+              (test.assert-true
+                (stdlib.string.eq (& inner-number) (& inner-number-expected))
+                "string-scoped-arena-allocation-policy: (eq (& inner-number) (& inner-number-expected))")
+              (test.assert-true
+                (stdlib.string.eq
                   (& inner-borrowed)
                   (& inner-borrowed-expected))
-                  unit
-                  (fail))
-                (if (= (__tl_string_length outer-trimmed) 5)
-                  unit
-                  (fail))
-                (if (= (__tl_string_length outer-appended) 12)
-                  unit
-                  (fail))
-                (if (= (__tl_string_length outer-number) 5)
-                  unit
-                  (fail))))))))))
+                "string-scoped-arena-allocation-policy: (eq (& inner-borrowed) (& inner-borrowed-expected))")
+              (test.assert-true
+                (= (__tl_string_length outer-trimmed) 5)
+                "string-scoped-arena-allocation-policy: (= (__tl_string_length outer-trimmed) 5)")
+              (test.assert-true
+                (= (__tl_string_length outer-appended) 12)
+                "string-scoped-arena-allocation-policy: (= (__tl_string_length outer-appended) 12)")
+              (test.assert-true
+                (= (__tl_string_length outer-number) 5)
+                "string-scoped-arena-allocation-policy: (= (__tl_string_length outer-number) 5)"))))))))
 
 ;; Inline test coverage.
 (cfg test (import stdlib.test))

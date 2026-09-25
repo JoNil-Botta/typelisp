@@ -25,7 +25,7 @@
 ;; take the check instead). The named bodies hide behind a never-taken
 ;; self-recursion so the leaf inliner leaves them for the gate to read.
 ;;
-;; The gate is check_global_len_fold in scripts/verify-asm-shape-gates.sh; it
+;; The gate is case global-len-fold in tests/codegen/asm-shape.cases; it
 ;; FAILS on the pre-BE-3 compiler, which loads the length into a register.
 (define glf-items : (__tl_dyn-array i64)
   (__tl_make-array i64 1))

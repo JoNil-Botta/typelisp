@@ -15,17 +15,10 @@ case "$(uname -s)" in
         ;;
 esac
 
-if [ -n "${TYPELISP_BIN:-}" ]; then
-    COMPILER=$TYPELISP_BIN
-else
-    . "$ROOT/scripts/lib-stage0.sh"
-    COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
-fi
-
-case "$COMPILER" in
-    /*) ;;
-    *) COMPILER="$ROOT/$COMPILER" ;;
-esac
+GATE_FAIL_PREFIX='FAIL: '
+. "$ROOT/scripts/lib-gate.sh"
+gate_compiler
+gate_compiler_absolute
 
 [ -x "$COMPILER" ] || {
     echo "process runtime compiler is not executable: $COMPILER" >&2
@@ -43,11 +36,6 @@ command -v ld >/dev/null 2>&1 || {
 WORKDIR="$ROOT/target/process-runtime-linux-verify"
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
-
-fail() {
-    echo "FAIL: $*" >&2
-    exit 1
-}
 
 SOURCE="$ROOT/tests/integration/process_runtime_linux_failures.tl"
 for MODE in faults concurrency; do

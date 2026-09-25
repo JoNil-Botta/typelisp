@@ -127,13 +127,8 @@ that program performed 12 scans.
 The backend smoke checks AVX2 i64 min/max with both ordinary and explicit
 planned scratch homes. It checks the scalar destination and forbids writes to
 the source's XMM/YMM family; checking only the reduction result missed #7821.
-The scratch-vreg smoke keeps the source live through a second reduction and
-through a coalesced phi home. It checks the mask role against source, destination
-and sibling homes on SysV and Win64. A full allocatable-XMM-pressure fixture
-requires the mask's full-width save/restore, and call-adjacent spill fixtures
-require independent reloads without overwriting the retained stack source.
-The source and call fixtures run in both normal and modeled-scratch modes.
-Preserve both the source-ownership and signed-comparison checks when changing
+Call-adjacent spill fixtures require independent reloads without overwriting
+the retained stack source. Preserve both the source-ownership and signed-comparison checks when changing
 horizontal reduction emission.
 
 ## Borrowed macro surface searches
@@ -358,8 +353,7 @@ The package follows the standard layout: `typelisp build` resolves the default
 `tlci_core.tl`, `tlci_pages.tl`, and `tlci_loader.tl` (staged tlci feature
 modules with dedicated smokes, #2651/#2671/#2657), plus
 `compiler_backend_tests.tl`, `compiler_driver_smoke_tests.tl`, and
-`compiler_lower_package_tests.tl` (main-less native smoke helpers). These carry
-`decision` rows in the compile manifest.
+`compiler_lower_package_tests.tl` (main-less native smoke helpers).
 
 ### Inline tests
 
@@ -436,7 +430,10 @@ Compile/symbol smoke coverage is driven by
 [`../scripts/verify-selfhost-compile-manifest.sh`](../scripts/verify-selfhost-compile-manifest.sh).
 The runner compiles each manifest case with an already-built TypeLisp compiler,
 rejects generated `# TODO` assembly, applies the case's `main:` label policy,
-and checks representative symbol/literal markers in the emitted assembly.
+and checks the case's codegen markers (calls that must survive, runtime
+helpers, symbols that must not be emitted) in the emitted assembly. Label
+existence alone is not a marker: a compile case already fails when the module
+does not compile, and command behaviour belongs to the CLI gates.
 `_tl_foo` and `call _tl_foo` markers are logical symbol
 markers, so both expectation modes accept direct labels such as `_tl_foo` and
 emitted module/path-qualified labels such as `_tl_calc_foo` without changing the
@@ -447,11 +444,8 @@ symbol markers also accept compact selfhost symbol metadata. The default
 Use `requires-stage0-mode|<reason>` only for a case that must remain seed-only
 for a named blocker such as the current #1437 stage1->stage2 resource limit.
 
-Every top-level `src/*.tl` file must appear as a manifest `case` or a
-`decision` line. This makes new modules and smoke drivers fail CI until they
-have an explicit compile-coverage decision. Staged cases cover integration
-drivers whose imports need temporary sibling names, such as the text buffer and
-symbol-table drivers.
+Staged cases cover integration drivers whose imports need temporary sibling
+names, such as the symbol-table driver.
 
 The runner compiles the manifest as `compile --batch` chunks: 16 entries per
 chunk on Linux, a deliberate cross-entry retention stress, and one per chunk on
@@ -1043,20 +1037,11 @@ The verify-*/check-* scripts fetch the published stage0 when `TYPELISP_BIN` is
 unset (via `scripts/lib-stage0.sh`); CI always passes `TYPELISP_BIN`
 explicitly.
 
-Writing a gate is not enough; it has to be invoked. `check-gate-reachability.sh`
-runs before the bootstrap and enforces that. It walks
-`scripts/<name>.(sh|ps1|awk)` references transitively from the
-`.github/workflows` files and requires every top-level `check-*` and `verify-*`
-script to be reached. Documentation is never a root, so a gate that only this
-file or `scripts/README.md` mentions still counts as unreferenced — that is how
-two ISPC correctness gates went unexecuted for months (#5690). A gate that is
-intentionally unwired goes in `scripts/optional-gate-allowlist.tsv` as
-`scripts/<name>.sh<TAB><reason>`; the sweep rejects a reason-less row, a
-duplicate row, an entry that is not a gate, and an entry whose gate has since
-become reachable. Optional local tools keep a `benchmark-`, `measure-`, or
-`analyze-` name, which the sweep does not require to be reachable. Because the
-sweep reads reachable scripts as text, that gate deliberately names no other
-gate's path anywhere in its own body, and checks itself for that.
+Writing a gate is not enough; it has to be invoked. A required gate is a row
+of `scripts/ci-gates.tsv`, and `ci-verify.sh` rejects a row whose command names
+a missing script or function. A script that no row, workflow or other gate runs
+is an optional local tool; give it a `benchmark-`, `measure-`, or `analyze-`
+name.
 
 `scripts/check-bootstrap-fixpoint.sh` is host-sensitive. Linux uses the existing
 `as` plus `ld` path and compares Linux `stage2.s` with `stage3.s`. Git
@@ -1084,7 +1069,7 @@ every current macro identity. Trusted embedded-stdlib native routing is the
 default on both hosts; the bootstrap embedded-provenance parity compile proves
 the staged disk-source and embedded-source paths converge.
 
-CI's isolated scratch-vreg bootstrap also enables the deterministic same-commit
+CI's isolated TLCI mutation bootstrap enables the deterministic same-commit
 mutation witness. It copies `src/` and `stdlib/` below that bootstrap's target
 workdir, changes only the zero-body sentinel in the already-native
 `stdlib.core_macros/when` transformer, and builds every generation from that
@@ -1235,8 +1220,8 @@ For new selfhost tests:
   generated test harness is enough.
 - Add a `*_smoke.tl` driver when the module should be executable through the
   compiler boundary.
-- Add compile/symbol smoke coverage to `src/compile_manifest.txt` for new
-  top-level selfhost modules or smoke drivers, or add an explicit `decision`.
+- Add a `src/compile_manifest.txt` case when a new top-level module must
+  compile on its own or pins a codegen marker.
 - Add public command, package, docs, LSP, REPL, formatter, or platform cases to
   `scripts/verify-public-tools.sh` or the narrower verification script that
   owns that layer.
@@ -1251,12 +1236,15 @@ runner to preserve native Windows exit codes. Use this layer for behavior that
 only shows up after execution: exit status, stdout/stderr, diagnostic rendering,
 deterministic file output, and import-aware driver behavior.
 
-The integration manifests live in `tests/integration/native-linux.manifest` and
-`tests/integration/native-windows.manifest`. When a program or smoke driver
-needs another imported module, add the dependency to the owning manifest row so
-the CI runner exercises the same import graph reviewers see locally. The
-same script also owns host-specific backend/compiler-driver fixture checks that
-are too low-level for a manifest row.
+The integration manifest `tests/integration/native.manifest` serves both hosts:
+each row names the hosts it runs on and the opt levels it runs at (the batched
+default level and/or standalone `--opt-level` compiles), and
+`scripts/expand-integration-manifest.awk` expands one host's rows. When a
+program or smoke driver needs another imported module, add the dependency to
+the owning manifest row so the CI runner exercises the same import graph
+reviewers see locally. The same script also owns host-specific
+backend/compiler-driver fixture checks that are too low-level for a manifest
+row.
 
 The `c_function_pointer_flow` row uses a native C provider from
 `benchmarks/c_function_pointer_flow/baseline.c` to exercise typed code addresses
@@ -1311,14 +1299,25 @@ tools\stage0\typelisp.exe run src\compiler_parse_core.tl --stdlib-root stdlib --
 tools\stage0\typelisp.exe run src\compiler_backend_tests.tl --stdlib-root stdlib --stdlib-root src
 ```
 
-### Assembly shape gates
+### Codegen case files
 
-`scripts/verify-asm-shape-gates.sh` owns Linux opt2 assembly-shape assertions
-for performance-sensitive regalloc/backend fixtures. Use this layer when a
-native integration fixture can still return the right exit code while silently
-falling back to slow codegen. The script compiles each fixture with the selected
-CI compiler, extracts the intended function body, and checks for the fast shape
-and the absence of known slow markers.
+`tests/codegen/*.cases` hold the table-driven compile/run/assembly-shape
+checks, run by `scripts/verify-codegen-cases.sh` (the format is documented in
+its header). A case names a source, the targets, opt levels and backend modes
+it runs under, and an action (compile, build, link and run, `typelisp run` or
+`check`); its rows then assert on the exit status, stdout/stderr, the whole
+assembly or one function body: fixed text, regular expressions, match counts,
+and named analyzers from `scripts/codegen-cases-analyzers.awk` for shapes a
+grep cannot express (backward branches, prologue pushes, unrolled groups).
+Everything is evaluated with sh/grep/awk, never with the compiler under test.
+Each CI gate runs one file, or one case of it with `--only`.
+
+Use this layer when a native integration fixture can still return the right
+exit code while silently falling back to slow codegen: `asm-shape.cases` pins
+the opt2 regalloc/backend/optimizer shapes of the integration fixtures,
+`crypto-sha.cases` the hash cores' wipe loops, `by-value-aggregate-abi.cases`
+the internal aggregate ABI, `math.cases` freestanding stdlib math, and
+`ispc.cases` the ISPC comparison corpus contracts.
 
 ### Selfhost native generated programs
 
@@ -1436,9 +1435,10 @@ compiler, including public tools, inline tests, doctests and native integration.
 The previous bootstrap generation is retained for the cross-mode differential.
 
 Configured and mutation proofs retain their independent builds: the separate
-scratch-vreg/TLCI mutation bootstrap must converge and prove its changed macro
-runs through the embedded native route. Other specialized producer roles and
-validated handoffs are inventoried below. Both hosts must run every applicable
+TLCI mutation bootstrap must converge and prove its changed macro
+runs through the embedded native route. Other producers hand their compilers
+and references to later gates through path files under `target/` (see
+`scripts/README.md`). Both hosts must run every applicable
 gate. Linux-only obligations include build invariance, instruction counts and
 Linux runtime boundaries; Windows executes its native link/run gates. A missing
 compiler capability or required tool fails verification, rather than selecting
@@ -1462,52 +1462,8 @@ text. Local runs remain uninstrumented unless the same environment variable is
 set. A successful flow ends with exactly one
 `CI verification / all / complete-verification` row measured from timing
 initialization through the last required gate; duplicate writes fail closed.
-The scheduled collector accepts only successful workflows with both host
-artifacts, then derives one `all-hosts` critical path (the larger host value)
-and one summed verification runner-time value. Pre-#6882 artifacts without the
-new total remain usable for older gate baselines, but cannot be mistaken for a
-fast complete-verification sample.
-
-Compiler-producing gates and same-run consumers are owned by
-[`../scripts/ci-compiler-artifacts.tsv`](../scripts/ci-compiler-artifacts.tsv).
-The ledger records the producer identity class, host/target, cfg and opt/profile
-shape, source set, output kind, and why each near-match must remain an
-independent proof. Reusable groups have exactly one producer and one or more
-consumers. `scripts/verify-ci-compiler-artifacts.sh` rejects malformed or
-orphaned groups and exercises the fail-closed handoff metadata against empty,
-corrupt, stale, cross-host, wrong-target, wrong-cfg, wrong-opt/profile, and
-digest-mismatched artifacts. Required CI additionally uploads a stable
-schema-2 `ci-compiler-artifacts-<host>` trace. Its explicit `produce` and
-`consume` records carry the ledger record ID, producer/compiler identity and
-digest, normalized invocation, source-set digest, output kind, and output
-digest for every validated handoff. The final CI gate rejects missing,
-duplicate, wrong-role, wrong-host, or unowned records and requires every member
-of a reuse group to have the same provenance key and output digest.
-
-Published handoff `.path` files use the same literal `{root}/...` representation
-as metadata and digest manifests for checkout-owned outputs. Consumers resolve
-that prefix against their checkout before validating the unchanged metadata,
-producer, source set, output digest and run token. A path file must contain
-exactly one newline-terminated path. Relative producer and output arguments
-resolve against the declared checkout, independently of the caller's working
-directory. Existing absolute paths remain supported; external outputs do not
-become portable. Consumers use the absolute
-`CI_COMPILER_ARTIFACT_PATH` returned by successful validation, rather than
-executing the path-file text. The relocation tests move binary and manifest
-bundles between roots containing spaces, make the old root unavailable, and
-reject changed inputs, payloads, run tokens and malformed path files. This
-same-run portability does not authorize cross-run cache reuse or replace the
-complete coverage aggregate required by #7766.
-
-The current exact reuse groups are the converged bootstrap compiler, the
-selfhost compile-manifest assembly set, the canonical embedded-stdlib TLCI
-image bundle, Linux build-invariance's opt1 reference assembly, the
-compile-profile compiler, and the single selfhost CLI shared inside the Linux
-native-link gate. Standalone verifier invocations keep their local build
-fallbacks. Any new required-flow command that produces `src/main.tl`, an
-embedded compiler image, or a reusable compiler reference must add a ledger
-row and either publish validated metadata or state the independent assertion
-that makes reuse unsound.
+The artifacts are evidence for performance work; no wall-clock budget or trend
+check reads them in CI.
 
 Within each Linux build-invariance chunk, identical compile-input paths at the
 same optimization level share one fresh output from that chunk's compiler.
@@ -1523,9 +1479,8 @@ both compilers' standalone sentinels remain mandatory. The 64-entry limit counts
 logical cases, including aliases. Run `scripts/verify-build-invariance-batch.sh`
 for the planner, boundary, ownership and fresh-output failure checks.
 
-The four selfhost compiles whose wall time `scripts/check-ci-timing-budgets.sh`
-budgets run alone, before anything else, so concurrency never enters those
-rows. Every other chunk of both producers and the backend-tests build are jobs
+The four selfhost compiles run alone, before anything else, so concurrency
+never enters their timing rows. Every other chunk of both producers and the backend-tests build are jobs
 of one worker pool (`TYPELISP_BUILD_INVARIANCE_WORKERS`, 1-3, default 2; 1
 reproduces the serial order). Each pooled job runs through
 `scripts/run-memory-bounded.sh` with swap disabled and a 600 s timeout: 8192 MiB
@@ -1551,42 +1506,14 @@ need real symbolic links, which Git Bash on the Windows runner cannot create.
 
 `verify-tlci-native-route-stress.sh` additionally appends successful or failed
 `native-compile` and `source-compile` rows with their real process statuses, plus
-successful `native-main-backend` and `source-main-backend` aggregates. Together
-with the frontend semantic component rows, these are selected for scheduled
-analysis by `scripts/ci-timing-trend-policy.tsv`; arbitrary detail rows remain
-out of the report.
+successful `native-main-backend` and `source-main-backend` aggregates.
 
-The scheduled analyzer keeps its conservative 1.5x default for ordinary
-top-level gates. Reviewed policy rows apply a 1.15x factor plus an absolute
-delta and baseline-duration floor to the complete totals, long stable gates,
-and selected detail series. All series still require three recent and 20
-preceding unique successful heads and must exceed the baseline nearest-rank P95.
-Wall-clock findings only create, update, or close the report issue; they never
-fail required pull-request CI. The policy checker rejects malformed, duplicate,
-unknown-kind, overlapping, denylisted, over-1.5x, or unexplained rows. Every
-threshold row must carry an inline issue/PR reference and project evidence URL,
-while the existing hard-cap checker continues to reject a denylisted top-level
-gate without a required-CI cap. Run all offline policy, aggregation, dispersion,
-duplicate-head, incomplete-history, selected-phase, and 15-20% regression
-fixtures with `scripts/analyze-ci-timing-trends.sh --self-test`.
-
-The Linux timing-budget gate requires exactly one successful
-`TypeLisp source lint / all / gate` row and caps it at 85,000 ms. The cap keeps
-roughly 18% headroom above the larger of two hosted by-value ownership
-migration measurements accepted by #6215 while #6891 tracks throughput
-recovery. This avoids ordinary runner noise without allowing another material
-regression. The budget consumes the row already recorded by `ci-verify.sh`; it
-does not run the compiler or change the lint corpus and its 32-file batches. To
-diagnose a lint regression locally with the same gate and a chosen compiler,
+To diagnose a lint slowdown locally with the same gate and a chosen compiler,
 time:
 
 ```sh
 time env TYPELISP_BIN="$tl" scripts/check-tl-lint.sh
 ```
-
-When a local or downloaded CI timing artifact is available, replay the exact
-budget validation with
-`scripts/check-ci-timing-budgets.sh target/ci-timing/linux.tsv`.
 
 For a selfhost compiler change, a typical local check (after
 `scripts/fetch-stage0.sh`, with `tl=target/stage0/typelisp[.exe]`) is:
@@ -1609,9 +1536,7 @@ The package-lock CLI fixtures wait for exact staging/commit observations with a
 a publication/exit race. Readiness does not replace the final child exit-status,
 lock-content, conflict-diagnostic or stage-cleanup assertions. Premature exit and
 timeout print the captured child logs; a staging-directory observation error
-fails immediately with those same diagnostics. `sh scripts/test-package-lock-wait.sh`
-exercises both publication races, unsuccessful writers and the unchanged timeout;
-it is a required gate on Linux and Windows. Refs #7828.
+fails immediately with those same diagnostics. Refs #7828.
 
 `scripts/check-tl-lint.sh` checks each selected tracked TypeLisp source unit
 once, in batches of at most 32 files by default, and fails CI on any finding.
@@ -1619,9 +1544,7 @@ Batches split at `src/` boundaries: all files receive the normal, redundant-name
 and supported name-case rules; only tracked compiler/tooling sources receive
 `--deprecated-string-concat` in that same invocation. The concat rejection
 probe remains independent. `TYPELISP_LINT_BATCH_SIZE` must be a positive integer.
-`sh scripts/test-tl-lint-gate.sh` checks exact file/rule coverage, batch bounds,
-legacy capability paths and failure propagation on both CI hosts. Plain
-`typelisp lint <file.tl>` remains warn-only for reviewable cleanup slices.
+Plain `typelisp lint <file.tl>` remains warn-only for reviewable cleanup slices.
 
 Run the tests that match the layer you touched. On non-Linux platforms, scripts
 that require native `as`/`ld` either no-op by design or should be run through a

@@ -3574,16 +3574,14 @@
         (state-capture-from-globals! (&mut builtins-b))
         (ci.intern-compat-state-capture-from-globals! (&mut intern-b))
         (unless (not (= arena-a arena-b)) (return false))
-        (ci.intern-compat-state-install!
-          (ci.intern-global-shared-view intern-a))
+        (ci.intern-compat-state-install! intern-a)
         (state-install! (& builtins-a))
         (unless
           (and
             (= compiler-builtin-id-arena-module arena-a)
             (compiler-builtin-arena-identities-current-ok?))
           (return false))
-        (ci.intern-compat-state-install!
-          (ci.intern-global-shared-view intern-b))
+        (ci.intern-compat-state-install! intern-b)
         (state-install! (& builtins-b))
         (and
           (= compiler-builtin-id-arena-module arena-b)

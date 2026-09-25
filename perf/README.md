@@ -140,80 +140,20 @@ compiler. The complete gate (generator build, 12 validated programs and 27
 Cachegrind runs) takes about one minute.
 
 This is the compiler-scaling half of #7773. It does not replace the
-self-compile row, the wall-clock budgets below or the memory checks: it bounds
-how cost grows, not how large it is on the compiler's own sources.
+self-compile row or the memory checks: it bounds how cost grows, not how large
+it is on the compiler's own sources.
 
-## CI wall-clock compile budgets
+## CI timing artifacts
 
-Linux pull-request CI also gates the four selfhost compile rows already
-recorded by `scripts/check-build-invariance.sh` in
-`target/ci-timing/linux.tsv`. The gate adds no compiler invocations. It applies
-generous absolute caps to catch uniform slowdowns and a scale-independent ratio
-to catch disproportionate opt2 work:
-
-| build-invariance row | cap |
-| --- | ---: |
-| `opt2-built:selfhost_main_opt1` | 25,000 ms |
-| `opt1-built:selfhost_main_opt1` | 45,000 ms |
-| `opt2-built:selfhost_main_opt2` | 70,000 ms |
-| `opt1-built:selfhost_main_opt2` | 130,000 ms |
-
-The opt2 workload caps retain about 17% headroom above the level expected of
-the current GitHub-hosted runner class (about 57,000 ms and 111,000 ms for the
-two rows: five main-like runs measured 53,820-55,280 ms and 105,300-107,530 ms
-there, plus the 3% same-host residue of #7696). A same-host main/branch
-comparison and the deterministic instruction-count ratchet distinguish accepted
-runner throughput from compiler work before these caps move; #7696's own
-compiler work was measured that way, attributed to one builder, and fixed
-before its residue was accepted.
-
-The `opt2-built:selfhost_main_opt2` /
-`opt1-built:selfhost_main_opt1` ratio must be at most 2.5. The checker fails
-closed on missing, duplicate, malformed, or unsuccessful rows:
-
-```sh
-scripts/check-ci-timing-budgets.sh target/ci-timing/linux.tsv
-scripts/check-ci-timing-budgets.sh --self-test
-```
-
-Use `scripts/benchmark-compile-cli.sh` for phase-level local investigation when
-the wall-clock gate fails. There is intentionally no retry path; the headroom,
-absolute caps, and ratio provide flake resistance without masking regressions.
-
-## Scheduled CI timing trends
-
-The daily and manually dispatched `CI Timing Trends` workflow consumes the
-existing `ci-timing-Linux` and `ci-timing-Windows` artifacts from successful
-pull-request CI runs. It does not invoke the compiler or add work to PR CI.
-Runs are considered newest-first, deduplicated by head SHA, and accepted only
-as complete Linux/Windows artifact pairs. Stable gate-total rows
-(`case_or_chunk=all`, `phase=gate`, `exit=0`) are analyzed separately for each
-host and gate.
-
-By default, the median of the newest 3 unique heads is compared with the
-median of the preceding 20. A sustained regression is reported only when the
-recent median is greater than 1.5 times the baseline median. The
-hard-budgeted `stage2 opt1/opt2 build-invariance` gate is explicitly excluded
-to avoid duplicate alerts. Windows, gate names, run links, medians, ratios,
-and the newest-first series are retained in deterministic Markdown. Missing
-per-gate history is reported without fabricating a baseline.
-
-One marked issue titled `CI timing sustained regression alert` is created,
-updated, or reopened while regressions exist. A recovered series receives a
-recovery comment and the issue is closed. Regression detection itself exits
-successfully; collection, API, artifact, or schema failures fail the scheduled
-job visibly but cannot block pull requests.
-
-Recent window, baseline window, factor, scan limit, and the newline-separated
-gate denylist are configurable through `CI_TIMING_TREND_RECENT`,
-`CI_TIMING_TREND_BASELINE`, `CI_TIMING_TREND_FACTOR`,
-`CI_TIMING_TREND_RUN_LIMIT`, and `CI_TIMING_TREND_DENYLIST`. Analyze a
-normalized history offline or run the synthetic suite with:
-
-```sh
-scripts/analyze-ci-timing-trends.sh --offline history.tsv report.md
-scripts/analyze-ci-timing-trends.sh --self-test
-```
+Pull-request CI uploads one `ci-timing-Linux` and one `ci-timing-Windows`
+artifact per run (`target/ci-timing/<host>.tsv`, written by `ci-verify.sh` when
+`TYPELISP_CI_TIMING=1`). They record every gate's wall time and finer rows such
+as the four build-invariance selfhost compiles
+(`opt1-built:selfhost_main_opt1`, `opt2-built:selfhost_main_opt2`, ...). They
+are evidence for performance work; CI applies no wall-clock budget to them.
+Exact instruction counts guard performance instead. Use
+`scripts/benchmark-compile-cli.sh` for phase-level local investigation of a
+compile-time change.
 
 TypeLisp deliberately does not auto-vectorize ordinary loops. Explicit SPMD
 (`foreach`, `spmd-reduce`, and `spmd-scan`) is the data-parallel model.
@@ -279,6 +219,15 @@ instruction-count baseline` gate row to the `ci-timing-Linux` artifact without
 repeating the compiler bootstrap. Heavy improvements and regressions therefore
 block the PR that introduces them; accept intentional changes by committing an
 explicit `perf/insn-exec-heavy-baseline.tsv` refresh.
+
+## Optimizer pass-firing census
+
+`scripts/measure-pass-firing.sh <compiler>` compiles the benchmarks, examples,
+integration and inline tests, the `tools/` programs and `src/main.tl` at
+`--opt-level 2` and counts, per optimizer pass slot and program, the functions
+the slot changed (`firing.tsv`); `summary.tsv` marks slots that change code only
+in benchmark programs. The script header describes its exact (IR dump diff) and
+counts (trace-only) methods and their limits.
 
 ## Compile-profile optimizer escape capture
 

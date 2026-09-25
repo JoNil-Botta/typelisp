@@ -1,3 +1,5 @@
+(cfg test (import stdlib.test))
+
 ;# First-class arena helper API.
 ;#
 ;# Provides explicit arena handles for advanced allocation control. Prefer
@@ -259,11 +261,6 @@
 (test
   arena-first-class-api
   (let
-    [fail : (-> unit)
-      (lambda () : unit
-        (begin
-          (/ 1 0)
-          unit))]
     [home : Arena (current)]
     [scratch : Arena (make)]
     (begin
@@ -273,9 +270,9 @@
         [scratch-current : Arena (current)]
         [scratch-mark : ArenaMark (mark)]
         (begin
-          (if (eq? scratch-current scratch)
-            unit
-            (fail))
+          (test.assert-true
+            (eq? scratch-current scratch)
+            "arena-first-class-api: (eq? scratch-current scratch)")
           (unsafe
             (begin
               (rewind scratch-mark)

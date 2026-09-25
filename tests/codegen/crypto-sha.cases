@@ -1,0 +1,276 @@
+# SHA-1 (Git), SHA-256 and SHA-512 keep their fixed public round loops and
+# their volatile wipe loops at every opt level, and the cores stay free of FFI,
+# runtime and extern dependencies. Runtime vectors prove semantics; these rows
+# pin the compiled shape. One gate per hash: --only 'sha1-*', 'sha256-*',
+# 'sha512-*'.
+#
+# A wipe loop is: its word-count bound, a volatile indirect zero store
+# (movl for 32-bit words, movq for 64-bit ones) and a backward branch. The
+# public wipe-state!/wipe-digest! helpers may inline into the fixture's main;
+# then main must carry every inlined loop, bound and store on its own, so two
+# checks can never pass on the same loop.
+
+args --stdlib-root {{root}}/stdlib --stdlib-root {{root}}/src
+
+file sha1.tl
+(import stdlib.byte_buf)
+(import stdlib.crypto_sha1_git)
+
+(define (main) : i64
+  (let
+    [text : String "abc"]
+    [state : crypto_sha1_git.GitSha1State (crypto_sha1_git.new)]
+    (match
+      (crypto_sha1_git.update!
+        (&mut state)
+        (byte_buf.str-as-bytes (& text)))
+      [(crypto_sha1_git.GitSha1UpdateErr _) 1]
+      [(crypto_sha1_git.GitSha1UpdateOk)
+        (match (crypto_sha1_git.finalize! (&mut state))
+          [(crypto_sha1_git.GitSha1FinalizeErr _) 1]
+          [(crypto_sha1_git.GitSha1FinalizeOk digest)
+            (begin
+              (crypto_sha1_git.wipe-state! (&mut state))
+              (crypto_sha1_git.wipe-digest! (&mut digest))
+              (if (and (not state.open)
+                       (= (cast
+                            (crypto_sha1_git.digest-byte (& digest) 0)
+                            : i64)
+                          0))
+                42
+                1))])])))
+end-file
+
+file sha256.tl
+(import stdlib.byte_buf)
+(import stdlib.crypto_sha256)
+
+(define (main) : i64
+  (let
+    [text : String "abc"]
+    [state : crypto_sha256.Sha256State (crypto_sha256.new)]
+    (match
+      (crypto_sha256.update!
+        (&mut state)
+        (byte_buf.str-as-bytes (& text)))
+      [(crypto_sha256.Sha256UpdateErr _) 1]
+      [(crypto_sha256.Sha256UpdateOk)
+        (match (crypto_sha256.finalize! (&mut state))
+          [(crypto_sha256.Sha256FinalizeErr _) 1]
+          [(crypto_sha256.Sha256FinalizeOk digest)
+            (begin
+              (crypto_sha256.wipe-state! (&mut state))
+              (crypto_sha256.wipe-digest! (&mut digest))
+              (if (and state.finalized
+                       (= (cast
+                            (crypto_sha256.digest-byte (& digest) 0)
+                            : i64)
+                          0))
+                42
+                1))])])))
+end-file
+
+file sha512.tl
+(import stdlib.byte_buf)
+(import stdlib.crypto_sha512)
+
+(define (main) : i64
+  (let
+    [text : String "abc"]
+    [state : crypto_sha512.Sha512State (crypto_sha512.new)]
+    (match
+      (crypto_sha512.update!
+        (&mut state)
+        (byte_buf.str-as-bytes (& text)))
+      [(crypto_sha512.Sha512UpdateErr _) 1]
+      [(crypto_sha512.Sha512UpdateOk)
+        (match (crypto_sha512.finalize! (&mut state))
+          [(crypto_sha512.Sha512FinalizeErr _) 1]
+          [(crypto_sha512.Sha512FinalizeOk digest)
+            (begin
+              (crypto_sha512.wipe-state! (&mut state))
+              (crypto_sha512.wipe-digest! (&mut digest))
+              (if (and state.finalized
+                       (= (cast
+                            (crypto_sha512.digest-byte (& digest) 0)
+                            : i64)
+                          0))
+                42
+                1))])])))
+end-file
+
+# ------------------------------------------------------------------ SHA-1
+
+case sha1-core-deps
+do none
+in file stdlib/crypto_sha1_git.tl
+narrow tl-code
+not-match \(extern|\(import[[:space:]]+stdlib\.(ffi|runtime)
+
+case sha1-shape
+source {{work}}/sha1.tl
+opt 0 1 2
+in fn _tl_stdlib_crypto_sha1_git_stdlib_crypto_sha1_git_wipe_schedule_pointer_bang
+contains $80
+match ^[[:space:]]+movl %[a-z0-9]+, \(%[a-z0-9]+\)$
+metric backward-branches >= 1
+in fn _tl_stdlib_crypto_sha1_git_stdlib_crypto_sha1_git_compress_bang
+contains $80
+metric backward-branches >= 3
+match ^[[:space:]]+(call|jmp) _tl_stdlib_crypto_sha1_git_stdlib_crypto_sha1_git_wipe_schedule_pointer_bang$
+if-fn _tl_stdlib_crypto_sha1_git_stdlib_crypto_sha1_git_wipe_state_bang
+  in fn _tl_stdlib_crypto_sha1_git_stdlib_crypto_sha1_git_wipe_state_bang
+else
+  in fn main
+end-if
+contains $5
+contains $8
+match ^[[:space:]]+movl %[a-z0-9]+, \(%[a-z0-9]+\)$
+match ^[[:space:]]+movq %[a-z0-9]+, \(%[a-z0-9]+\)$
+if-fn _tl_stdlib_crypto_sha1_git_stdlib_crypto_sha1_git_wipe_digest_bang
+  in fn _tl_stdlib_crypto_sha1_git_stdlib_crypto_sha1_git_wipe_digest_bang
+  contains $5
+  match ^[[:space:]]+movl %[a-z0-9]+, \(%[a-z0-9]+\)$
+  metric backward-branches >= 1
+else
+  in fn main
+  contains $5
+  match ^[[:space:]]+movl %[a-z0-9]+, \(%[a-z0-9]+\)$
+end-if
+
+case sha1-opt2-repeatable
+source {{work}}/sha1.tl
+repeatable
+assemble
+
+# ------------------------------------------------------------------ SHA-256
+
+case sha256-core-deps
+do none
+in file stdlib/crypto_sha256.tl
+narrow tl-code
+not-match \(extern|\(import[[:space:]]+stdlib\.(ffi|runtime)
+
+case sha256-shape
+source {{work}}/sha256.tl
+opt 0 1 2
+in fn _tl_stdlib_crypto_sha256_stdlib_crypto_sha256_wipe_schedule_pointer_bang
+contains $64
+match ^[[:space:]]+movl %[a-z0-9]+, \(%[a-z0-9]+\)$
+metric backward-branches >= 1
+in fn _tl_stdlib_crypto_sha256_stdlib_crypto_sha256_compress_bang
+contains $64
+metric backward-branches >= 3
+match ^[[:space:]]+(call|jmp) _tl_stdlib_crypto_sha256_stdlib_crypto_sha256_wipe_schedule_pointer_bang$
+if-fn _tl_stdlib_crypto_sha256_stdlib_crypto_sha256_wipe_state_bang
+  in fn _tl_stdlib_crypto_sha256_stdlib_crypto_sha256_wipe_state_bang
+  contains $8
+  match ^[[:space:]]+movl %[a-z0-9]+, \(%[a-z0-9]+\)$
+  metric backward-branches >= 2
+  contains $16
+  match ^[[:space:]]+movq %[a-z0-9]+, \(%[a-z0-9]+\)$
+  if-fn _tl_stdlib_crypto_sha256_stdlib_crypto_sha256_wipe_digest_bang
+    in fn _tl_stdlib_crypto_sha256_stdlib_crypto_sha256_wipe_digest_bang
+    contains $8
+    match ^[[:space:]]+movl %[a-z0-9]+, \(%[a-z0-9]+\)$
+    metric backward-branches >= 1
+  else
+    # the digest wipe inlined into main: one loop, one eight-word bound
+    in fn main
+    contains $8
+    match ^[[:space:]]+movl %[a-z0-9]+, \(%[a-z0-9]+\)$
+    metric backward-branches >= 1
+    count >= 1 ^[[:space:]]+cmpq \$8,
+    count >= 1 ^[[:space:]]+movl %[a-z0-9]+, \(%[a-z0-9]+\)$
+  end-if
+else
+  # the state wipe inlined into main: its partial-block bound and scalar stores
+  in fn main
+  contains $16
+  match ^[[:space:]]+movq %[a-z0-9]+, \(%[a-z0-9]+\)$
+  if-fn _tl_stdlib_crypto_sha256_stdlib_crypto_sha256_wipe_digest_bang
+    in fn _tl_stdlib_crypto_sha256_stdlib_crypto_sha256_wipe_digest_bang
+    contains $8
+    match ^[[:space:]]+movl %[a-z0-9]+, \(%[a-z0-9]+\)$
+    metric backward-branches >= 1
+    # main carries the state wipe's two loops and one eight-word bound
+    in fn main
+    contains $8
+    match ^[[:space:]]+movl %[a-z0-9]+, \(%[a-z0-9]+\)$
+    metric backward-branches >= 2
+    count >= 1 ^[[:space:]]+cmpq \$8,
+    count >= 2 ^[[:space:]]+movl %[a-z0-9]+, \(%[a-z0-9]+\)$
+  else
+    # main carries all three loops and both eight-word bounds
+    in fn main
+    contains $8
+    match ^[[:space:]]+movl %[a-z0-9]+, \(%[a-z0-9]+\)$
+    metric backward-branches >= 3
+    count >= 2 ^[[:space:]]+cmpq \$8,
+    count >= 3 ^[[:space:]]+movl %[a-z0-9]+, \(%[a-z0-9]+\)$
+  end-if
+end-if
+
+case sha256-opt2-repeatable
+source {{work}}/sha256.tl
+repeatable
+assemble
+
+# ------------------------------------------------------------------ SHA-512
+
+case sha512-shape
+source {{work}}/sha512.tl
+opt 0 1 2
+in fn _tl_stdlib_crypto_sha512_stdlib_crypto_sha512_wipe_schedule_pointer_bang
+contains $80
+match ^[[:space:]]+movq %[a-z0-9]+, \(%[a-z0-9]+\)$
+metric backward-branches >= 1
+in fn _tl_stdlib_crypto_sha512_stdlib_crypto_sha512_compress_bang
+match ^[[:space:]]+(call|jmp) _tl_stdlib_crypto_sha512_stdlib_crypto_sha512_wipe_schedule_pointer_bang$
+if-fn _tl_stdlib_crypto_sha512_stdlib_crypto_sha512_wipe_state_bang
+  in fn _tl_stdlib_crypto_sha512_stdlib_crypto_sha512_wipe_state_bang
+  contains $8
+  match ^[[:space:]]+movq %[a-z0-9]+, \(%[a-z0-9]+\)$
+  metric backward-branches >= 2
+  contains $16
+  if-fn _tl_stdlib_crypto_sha512_stdlib_crypto_sha512_wipe_digest_bang
+    in fn _tl_stdlib_crypto_sha512_stdlib_crypto_sha512_wipe_digest_bang
+    contains $8
+    match ^[[:space:]]+movq %[a-z0-9]+, \(%[a-z0-9]+\)$
+    metric backward-branches >= 1
+  else
+    in fn main
+    contains $8
+    match ^[[:space:]]+movq %[a-z0-9]+, \(%[a-z0-9]+\)$
+    metric backward-branches >= 1
+    count >= 1 ^[[:space:]]+cmpq \$8,
+    count >= 1 ^[[:space:]]+movq %[a-z0-9]+, \(%[a-z0-9]+\)$
+  end-if
+else
+  in fn main
+  contains $16
+  if-fn _tl_stdlib_crypto_sha512_stdlib_crypto_sha512_wipe_digest_bang
+    in fn _tl_stdlib_crypto_sha512_stdlib_crypto_sha512_wipe_digest_bang
+    contains $8
+    match ^[[:space:]]+movq %[a-z0-9]+, \(%[a-z0-9]+\)$
+    metric backward-branches >= 1
+    in fn main
+    contains $8
+    match ^[[:space:]]+movq %[a-z0-9]+, \(%[a-z0-9]+\)$
+    metric backward-branches >= 2
+    count >= 1 ^[[:space:]]+cmpq \$8,
+    count >= 2 ^[[:space:]]+movq %[a-z0-9]+, \(%[a-z0-9]+\)$
+  else
+    in fn main
+    contains $8
+    match ^[[:space:]]+movq %[a-z0-9]+, \(%[a-z0-9]+\)$
+    metric backward-branches >= 3
+    count >= 2 ^[[:space:]]+cmpq \$8,
+    count >= 3 ^[[:space:]]+movq %[a-z0-9]+, \(%[a-z0-9]+\)$
+  end-if
+end-if
+
+case sha512-opt2-repeatable
+source {{work}}/sha512.tl
+repeatable
+assemble

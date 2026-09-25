@@ -408,11 +408,7 @@
   [callee-node : i64]
   [args : ast.AstExprList]) : i64
   (let
-    [node : i64
-      (ast.ast-expr-call-with-pools
-        (ast.ast-place-shared-view pools)
-        callee-node
-        args)]
+    [node : i64 (ast.ast-expr-call-with-pools pools callee-node args)]
     (begin
       (ctfe-result-macro-provenance-note-call-head-with-pools!
         state
@@ -830,28 +826,19 @@
     [(CompilerCtfeValue.Type ty) (CompilerCtfeValue.Type (clone ty))]
     [(CompilerCtfeValue.Expr node ty) (CompilerCtfeValue.Expr node (clone ty))]
     [(CompilerCtfeValue.CapturedExpr node ty pools)
-      (CompilerCtfeValue.CapturedExpr
-        node
-        (clone ty)
-        (ast.ast-node-pool-context-shared-view (& pools)))]
+      (CompilerCtfeValue.CapturedExpr node (clone ty) pools)]
     [(CompilerCtfeValue.ExprList items)
       (CompilerCtfeValue.ExprList (clone items))]
     [(CompilerCtfeValue.CapturedExprList items pools)
-      (CompilerCtfeValue.CapturedExprList
-        (clone items)
-        (ast.ast-node-pool-context-shared-view (& pools)))]
+      (CompilerCtfeValue.CapturedExprList (clone items) pools)]
     [(CompilerCtfeValue.ExprClause clause)
       (CompilerCtfeValue.ExprClause (clone clause))]
     [(CompilerCtfeValue.CapturedExprClause clause pools)
-      (CompilerCtfeValue.CapturedExprClause
-        (clone clause)
-        (ast.ast-node-pool-context-shared-view (& pools)))]
+      (CompilerCtfeValue.CapturedExprClause (clone clause) pools)]
     [(CompilerCtfeValue.ExprClauseList clauses)
       (CompilerCtfeValue.ExprClauseList (clone clauses))]
     [(CompilerCtfeValue.CapturedExprClauseList clauses pools)
-      (CompilerCtfeValue.CapturedExprClauseList
-        (clone clauses)
-        (ast.ast-node-pool-context-shared-view (& pools)))]
+      (CompilerCtfeValue.CapturedExprClauseList (clone clauses) pools)]
     [(CompilerCtfeValue.ExprBindingClause binding)
       (CompilerCtfeValue.ExprBindingClause (clone binding))]
     [(CompilerCtfeValue.ExprBindingClauseList bindings)
@@ -1162,7 +1149,7 @@
           (ast.ast-expr-spanned-with-pools
             pools
             (ast.ast-node-pool-context-expr-push
-              (ast.ast-place-shared-view pools)
+              pools
               (ast.AstExpr.MacroExpansion
                 inner
                 (ci.intern-composite-pair-id -1 path-id)
@@ -1187,9 +1174,7 @@
   [ty : ast.AstType]) : ast.AstType
   (let
     [inner : ast.AstType
-      (ctfe-caller-origin-expr-type-inner-with-pools
-        (ast.ast-place-shared-view pools)
-        ty)]
+      (ctfe-caller-origin-expr-type-inner-with-pools pools ty)]
     (match (clone inner)
       [(ast.AstType.Region name captured)
         (if (= name (ctfe-captured-expr-type-id))
@@ -1220,13 +1205,13 @@
 (define (ctfe-value-syntax-pools [value : CompilerCtfeValue]) : CtfeMaybeSyntaxPools
   (match value
     [(CompilerCtfeValue.CapturedExpr _ _ pools)
-      (CtfeMaybeSyntaxPools.Some (ast.ast-place-shared-view pools))]
+      (CtfeMaybeSyntaxPools.Some pools)]
     [(CompilerCtfeValue.CapturedExprList _ pools)
-      (CtfeMaybeSyntaxPools.Some (ast.ast-place-shared-view pools))]
+      (CtfeMaybeSyntaxPools.Some pools)]
     [(CompilerCtfeValue.CapturedExprClause _ pools)
-      (CtfeMaybeSyntaxPools.Some (ast.ast-place-shared-view pools))]
+      (CtfeMaybeSyntaxPools.Some pools)]
     [(CompilerCtfeValue.CapturedExprClauseList _ pools)
-      (CtfeMaybeSyntaxPools.Some (ast.ast-place-shared-view pools))]
+      (CtfeMaybeSyntaxPools.Some pools)]
     [_ (CtfeMaybeSyntaxPools.None)]))
 
 ;; Native transformer callbacks build syntax in an explicitly selected host
@@ -1351,12 +1336,40 @@
   (reflections CtfeReflectInfoList)
   (source-names ci.InternSourceNameSessionHandle))
 
+;; The binding arena and the metadata are boxed and shared by every snapshot of
+;; an environment; the environment keeps the two box pointers as addresses, so
+;; it is a Copy handle with the layout it had when it held the boxes.
 (defstruct CtfeEnv
-  (arena-store (Box CtfeEnvArena))
+  (arena-store u64)
   (head i64)
   (syntax-pools CtfeMaybeSyntaxPools)
-  (metadata (Box CtfeEnvMetadata))
+  (metadata u64)
   (macro-state CompilerCtfeMacroState))
+
+(define (ctfe-env-arena-box-new [store : CtfeEnvArena]) : u64
+  (let
+    [boxed : (Box CtfeEnvArena) (box store)]
+    (unsafe
+      (ptr-read (ptr-cast (ptr-addr-of boxed) : (Ptr u64))))))
+
+(define (ctfe-env-metadata-box-new [metadata : CtfeEnvMetadata]) : u64
+  (let
+    [boxed : (Box CtfeEnvMetadata) (box metadata)]
+    (unsafe
+      (ptr-read (ptr-cast (ptr-addr-of boxed) : (Ptr u64))))))
+
+;; The shared arena box itself, for in-place updates through `__tl-box-place`.
+(define (ctfe-env-arena-box [address : u64]) : (Box CtfeEnvArena)
+  (unsafe
+    (ptr-read (ptr-cast (ptr-addr-of address) : (Ptr (Box CtfeEnvArena))))))
+
+(define (ctfe-env-arena-read [address : u64]) : CtfeEnvArena
+  (unsafe
+    (ptr-read (int->ptr address : (Ptr CtfeEnvArena)))))
+
+(define (ctfe-env-metadata-read [address : u64]) : CtfeEnvMetadata
+  (unsafe
+    (ptr-read (int->ptr address : (Ptr CtfeEnvMetadata)))))
 
 (defstruct CtfeEnvRef
   (:lifetimes env)
@@ -1386,10 +1399,11 @@
     (cfg compile-profile (ctfe-env-profile-note-arena-root!) unit)
     (compiler-ctfe-macro-state-bind-source-names! macro-state source-names)
     (CtfeEnv
-      (box (ctfe-env-arena-new))
+      (ctfe-env-arena-box-new (ctfe-env-arena-new))
       -1
       (CtfeMaybeSyntaxPools.None)
-      (box (CtfeEnvMetadata pools layouts reflections source-names))
+      (ctfe-env-metadata-box-new
+        (CtfeEnvMetadata pools layouts reflections source-names))
       macro-state)))
 
 (define (ctfe-env-empty-with-pools-and-source-names-and-macro-state
@@ -1551,14 +1565,6 @@
     (unsafe
       (ptr-read (ptr-offset (__tl_array-data segment) offset)))))
 
-(define (ctfe-env-arena-box-shared-view [value : (Box CtfeEnvArena)]) : CtfeEnvArena
-  (let
-    [address : i64
-      (unsafe
-        (ptr-read (ptr-cast (ptr-addr-of value) : (Ptr i64))))]
-    (unsafe
-      (ptr-read (int->ptr (cast address : u64) : (Ptr CtfeEnvArena))))))
-
 (define (ctfe-env-arena-push!
   [store : (&mut store CtfeEnvArena)]
   [binding : CtfeEnvBinding]) : i64
@@ -1577,7 +1583,7 @@
   [ty : ast.AstType]
   [mutable-local : bool]) : CtfeEnv
   (let
-    [store : (Box CtfeEnvArena) env.arena-store]
+    [store : (Box CtfeEnvArena) (ctfe-env-arena-box env.arena-store)]
     [syntax-pools
       : CtfeMaybeSyntaxPools
       ;; Provenance inspection must not clone a syntax value: cloning its pool
@@ -1592,7 +1598,7 @@
         (CtfeEnvBinding name-id value ty env.head mutable-local))]
     (begin
       (cfg compile-profile (ctfe-env-profile-note-binding-append!) unit)
-      (CtfeEnv store index syntax-pools env.metadata env.macro-state))))
+      (CtfeEnv env.arena-store index syntax-pools env.metadata env.macro-state))))
 
 (define (ctfe-env-extend-id
   [env : CtfeEnv]
@@ -1707,8 +1713,7 @@
   (let
     [n : i64 items.len]
     [slots : (__tl_dyn-array CtfeLayoutInfo) items.slots]
-    [index : ctfe_key_map.Map
-      (owned_view.compiler-owned-shared-view items.index)]
+    [index : ctfe_key_map.Map items.index]
     (begin
       (set! (array-ref slots n) value)
       (ctfe_key_map.insert-ref! (&mut index) name-id n)
@@ -1798,8 +1803,7 @@
   (let
     [n : i64 items.len]
     [slots : (__tl_dyn-array CtfeReflectInfo) items.slots]
-    [index : ctfe_key_map.Map
-      (owned_view.compiler-owned-shared-view items.index)]
+    [index : ctfe_key_map.Map items.index]
     (begin
       (set! (array-ref slots n) value)
       (ctfe_key_map.insert-ref! (&mut index) key-id n)
@@ -1861,26 +1865,16 @@
     (unsafe
       (ptr-read (int->ptr address : (Ptr CtfeEnv))))))
 
-(define (ctfe-env-metadata-box-shared-view [value : (Box CtfeEnvMetadata)]) : CtfeEnvMetadata
-  (let
-    [address : i64
-      (unsafe
-        (ptr-read (ptr-cast (ptr-addr-of value) : (Ptr i64))))]
-    (unsafe
-      (ptr-read (int->ptr (cast address : u64) : (Ptr CtfeEnvMetadata))))))
-
 (define (ctfe-env-layouts [env : (& env CtfeEnv)]) : CtfeLayoutInfoList
   (let
     [view : CtfeEnv (ctfe-env-shared-view env)]
-    [metadata : CtfeEnvMetadata
-      (ctfe-env-metadata-box-shared-view view.metadata)]
+    [metadata : CtfeEnvMetadata (ctfe-env-metadata-read view.metadata)]
     metadata.layouts))
 
 (define (ctfe-env-reflections [env : (& env CtfeEnv)]) : CtfeReflectInfoList
   (let
     [view : CtfeEnv (ctfe-env-shared-view env)]
-    [metadata : CtfeEnvMetadata
-      (ctfe-env-metadata-box-shared-view view.metadata)]
+    [metadata : CtfeEnvMetadata (ctfe-env-metadata-read view.metadata)]
     metadata.reflections))
 
 ;; Pool contexts are mutable state cells, not owned values. Keep this accessor
@@ -1945,8 +1939,7 @@
 (define (ctfe-env-source-names [env : (& env CtfeEnv)]) : ci.InternSourceNameSessionHandle
   (let
     [view : CtfeEnv (ctfe-env-shared-view env)]
-    [metadata : CtfeEnvMetadata
-      (ctfe-env-metadata-box-shared-view view.metadata)]
+    [metadata : CtfeEnvMetadata (ctfe-env-metadata-read view.metadata)]
     metadata.source-names))
 
 (define (ctfe-env-structural-session [env : (& env CtfeEnv)]) : cis.InternStructuralSessionHandle
@@ -2081,14 +2074,13 @@
 
 (define (ctfe-env-rebase-pools [env : CtfeEnv] [pools : ast.AstNodePoolContext]) : CtfeEnv
   (let
-    [env-view : CtfeEnv (ctfe-env-shared-view (& env))]
-    [metadata : CtfeEnvMetadata
-      (ctfe-env-metadata-box-shared-view env-view.metadata)]
+    [env-view : CtfeEnv env]
+    [metadata : CtfeEnvMetadata (ctfe-env-metadata-read env-view.metadata)]
     (CtfeEnv
       env.arena-store
       env.head
       env.syntax-pools
-      (box
+      (ctfe-env-metadata-box-new
         (CtfeEnvMetadata
           pools
           metadata.layouts
@@ -2105,14 +2097,13 @@
   [env : CtfeEnv]
   [pools : ast.AstNodePoolContext]) : CtfeEnv
   (let
-    [env-view : CtfeEnv (ctfe-env-shared-view (& env))]
-    [metadata : CtfeEnvMetadata
-      (ctfe-env-metadata-box-shared-view env-view.metadata)]
+    [env-view : CtfeEnv env]
+    [metadata : CtfeEnvMetadata (ctfe-env-metadata-read env-view.metadata)]
     (CtfeEnv
       env.arena-store
       env.head
-      (CtfeMaybeSyntaxPools.Some (ast.ast-place-shared-view pools))
-      (box
+      (CtfeMaybeSyntaxPools.Some pools)
+      (ctfe-env-metadata-box-new
         (CtfeEnvMetadata
           pools
           metadata.layouts
@@ -2156,7 +2147,7 @@
 (define (ctfe-env-lookup-id-from [env : (& env CtfeEnv)] [name-id : i64]) : CtfeMaybeValue
   (let
     [view : CtfeEnv (ctfe-env-shared-view env)]
-    [store : CtfeEnvArena (ctfe-env-arena-box-shared-view view.arena-store)]
+    [store : CtfeEnvArena (ctfe-env-arena-read view.arena-store)]
     [index : i64 env.head]
     [searching? : bool true]
     [result : CtfeMaybeValue (CtfeMaybeValue.None)]
@@ -2181,7 +2172,7 @@
 (define (ctfe-env-lookup-type-id-from [env : (& env CtfeEnv)] [name-id : i64]) : ast.AstMaybeType
   (let
     [view : CtfeEnv (ctfe-env-shared-view env)]
-    [store : CtfeEnvArena (ctfe-env-arena-box-shared-view view.arena-store)]
+    [store : CtfeEnvArena (ctfe-env-arena-read view.arena-store)]
     [index : i64 env.head]
     [searching? : bool true]
     [result : ast.AstMaybeType (ast.AstMaybeType.No)]
@@ -2210,7 +2201,7 @@
   [name-id : i64]
   [value : CompilerCtfeValue]) : bool
   (let
-    [store : (Box CtfeEnvArena) env.arena-store]
+    [store : (Box CtfeEnvArena) (ctfe-env-arena-box env.arena-store)]
     [index : i64 env.head]
     [searching? : bool true]
     [updated? : bool false]
@@ -2877,7 +2868,7 @@
   (match program
     [(ast.AstProgram.Program decls-box)
       (let
-        [decls : ast.AstDeclList (ast.ast-decl-list-box-shared-view decls-box)]
+        [decls : ast.AstDeclList (deref decls-box)]
         [capacity : i64 (ctfe-metadata-decl-capacity (clone decls))]
         (begin
           (ctfe-build-seen-reset!)
@@ -3516,7 +3507,7 @@
                 (CompilerCtfeValue.Bool
                   (and
                     (ctfe-expr-eq-in-env
-                      (ctfe-env-shared-view (& env))
+                      env
                       (ctfe-ast-get env a)
                       (ctfe-ast-get env b))
                     (ctfe-type-eq-in-env env a-ty b-ty)))
@@ -3527,7 +3518,7 @@
                   (not
                     (and
                       (ctfe-expr-eq-in-env
-                        (ctfe-env-shared-view (& env))
+                        env
                         (ctfe-ast-get env a)
                         (ctfe-ast-get env b))
                       (ctfe-type-eq-in-env env a-ty b-ty))))
@@ -3994,9 +3985,9 @@
       (ast.ast-type-list-push
         out
         (ast.ast-node-pool-context-type-push
-          (ast.ast-place-shared-view pools)
+          pools
           (ctfe-reflect-resolve-type-with-pools
-            (ast.ast-place-shared-view pools)
+            pools
             infos
             (ast.ast-node-pool-context-type-get
               pools
@@ -4015,55 +4006,49 @@
   (match (clone ty)
     [(ast.AstType.Func args ret)
       (ast.ast-ty-func-with-pools
-        (ast.ast-place-shared-view pools)
-        (ctfe-reflect-resolve-type-list-with-pools
-          (ast.ast-place-shared-view pools)
-          infos
-          (ast.ast-type-list-box-shared-view args))
+        pools
+        (ctfe-reflect-resolve-type-list-with-pools pools infos (deref args))
         (ctfe-reflect-resolve-type-with-pools
-          (ast.ast-place-shared-view pools)
+          pools
           infos
           (ast.ast-node-pool-context-type-get pools ret)))]
     [(ast.AstType.Tuple elems)
       (ast.ast-ty-tuple
-        (ctfe-reflect-resolve-type-list-with-pools
-          pools
-          infos
-          (ast.ast-type-list-box-shared-view elems)))]
+        (ctfe-reflect-resolve-type-list-with-pools pools infos (deref elems)))]
     [(ast.AstType.Array elem len)
       (ast.ast-ty-array-with-pools
-        (ast.ast-place-shared-view pools)
+        pools
         (ctfe-reflect-resolve-type-with-pools
-          (ast.ast-place-shared-view pools)
+          pools
           infos
           (ast.ast-node-pool-context-type-get pools elem))
         len)]
     [(ast.AstType.DynArray elem)
       (ast.ast-ty-dyn-array-with-pools
-        (ast.ast-place-shared-view pools)
+        pools
         (ctfe-reflect-resolve-type-with-pools
-          (ast.ast-place-shared-view pools)
+          pools
           infos
           (ast.ast-node-pool-context-type-get pools elem)))]
     [(ast.AstType.Slice elem)
       (ast.ast-ty-slice-with-pools
-        (ast.ast-place-shared-view pools)
+        pools
         (ctfe-reflect-resolve-type-with-pools
-          (ast.ast-place-shared-view pools)
+          pools
           infos
           (ast.ast-node-pool-context-type-get pools elem)))]
     [(ast.AstType.Box elem)
       (ast.ast-ty-box-with-pools
-        (ast.ast-place-shared-view pools)
+        pools
         (ctfe-reflect-resolve-type-with-pools
-          (ast.ast-place-shared-view pools)
+          pools
           infos
           (ast.ast-node-pool-context-type-get pools elem)))]
     [(ast.AstType.CFunc signature mode)
       (let
         [resolved : ast.AstType
           (ctfe-reflect-resolve-type-with-pools
-            (ast.ast-place-shared-view pools)
+            pools
             infos
             (ast.ast-node-pool-context-type-get pools signature))]
         (ast.AstType.CFunc
@@ -4071,40 +4056,40 @@
           mode))]
     [(ast.AstType.Ptr elem)
       (ast.ast-ty-ptr-with-pools
-        (ast.ast-place-shared-view pools)
+        pools
         (ctfe-reflect-resolve-type-with-pools
-          (ast.ast-place-shared-view pools)
+          pools
           infos
           (ast.ast-node-pool-context-type-get pools elem)))]
     [(ast.AstType.MutPtr elem)
       (ast.ast-ty-mut-ptr-with-pools
-        (ast.ast-place-shared-view pools)
+        pools
         (ctfe-reflect-resolve-type-with-pools
-          (ast.ast-place-shared-view pools)
+          pools
           infos
           (ast.ast-node-pool-context-type-get pools elem)))]
     [(ast.AstType.Ref region inner)
       (ast.ast-ty-ref-with-pools
-        (ast.ast-place-shared-view pools)
+        pools
         region
         (ctfe-reflect-resolve-type-with-pools
-          (ast.ast-place-shared-view pools)
+          pools
           infos
           (ast.ast-node-pool-context-type-get pools inner)))]
     [(ast.AstType.MutRef region inner)
       (ast.ast-ty-mut-ref-with-pools
-        (ast.ast-place-shared-view pools)
+        pools
         region
         (ctfe-reflect-resolve-type-with-pools
-          (ast.ast-place-shared-view pools)
+          pools
           infos
           (ast.ast-node-pool-context-type-get pools inner)))]
     [(ast.AstType.Region region inner)
       (ast.ast-ty-region-with-pools
-        (ast.ast-place-shared-view pools)
+        pools
         region
         (ctfe-reflect-resolve-type-with-pools
-          (ast.ast-place-shared-view pools)
+          pools
           infos
           (ast.ast-node-pool-context-type-get pools inner)))]
     [(ast.AstType.Struct name)
@@ -4156,7 +4141,7 @@
     [(ast.AstType.VarArgs name _) (ctfe-reflect-info-lookup-name-id infos name)]
     [(ast.AstType.Region _ inner)
       (ctfe-reflect-info-for-type-with-pools
-        (ast.ast-place-shared-view pools)
+        pools
         infos
         (ast.ast-node-pool-context-type-get pools inner))]
     [_ (CtfeMaybeReflectInfo.None)]))
@@ -4181,7 +4166,7 @@
     "nil"
     (str_cat.str-cat
       (ctfe-type-key-with-reflections-and-pools
-        (ast.ast-place-shared-view pools)
+        pools
         infos
         (ast.ast-node-pool-context-type-get
           pools
@@ -4226,10 +4211,7 @@
   [pools : ast.AstNodePoolContext]
   [infos : (& infos CtfeReflectInfoList)]
   [ty : ast.AstType]) : String
-  (match (ctfe-reflect-resolve-type-with-pools
-    (ast.ast-place-shared-view pools)
-    infos
-    ty)
+  (match (ctfe-reflect-resolve-type-with-pools pools infos ty)
     [(ast.AstType.I64) "i64"]
     [(ast.AstType.I32) "i32"]
     [(ast.AstType.I16) "i16"]
@@ -4252,13 +4234,10 @@
     [(ast.AstType.Func args ret)
       (str_cat.str-cat
         "fn_"
-        (ctfe-type-list-key-with-pools
-          (ast.ast-place-shared-view pools)
-          infos
-          (ast.ast-type-list-box-shared-view args))
+        (ctfe-type-list-key-with-pools pools infos (deref args))
         "_to_"
         (ctfe-type-key-with-reflections-and-pools
-          (ast.ast-place-shared-view pools)
+          pools
           infos
           (ast.ast-node-pool-context-type-get pools ret)))]
     [(ast.AstType.CFunc signature mode)
@@ -4267,21 +4246,18 @@
         (ast.ast-c-function-mode-name mode)
         "_"
         (ctfe-type-key-with-reflections-and-pools
-          (ast.ast-place-shared-view pools)
+          pools
           infos
           (ast.ast-node-pool-context-type-get pools signature)))]
     [(ast.AstType.Tuple elems)
       (str_cat.str-cat
         "tuple_"
-        (ctfe-type-list-key-with-pools
-          pools
-          infos
-          (ast.ast-type-list-box-shared-view elems)))]
+        (ctfe-type-list-key-with-pools pools infos (deref elems)))]
     [(ast.AstType.Array elem count)
       (str_cat.str-cat
         "array_"
         (ctfe-type-key-with-reflections-and-pools
-          (ast.ast-place-shared-view pools)
+          pools
           infos
           (ast.ast-node-pool-context-type-get pools elem))
         "_"
@@ -4290,35 +4266,35 @@
       (str_cat.str-cat
         "dynarray_"
         (ctfe-type-key-with-reflections-and-pools
-          (ast.ast-place-shared-view pools)
+          pools
           infos
           (ast.ast-node-pool-context-type-get pools elem)))]
     [(ast.AstType.Slice elem)
       (str_cat.str-cat
         "slice_"
         (ctfe-type-key-with-reflections-and-pools
-          (ast.ast-place-shared-view pools)
+          pools
           infos
           (ast.ast-node-pool-context-type-get pools elem)))]
     [(ast.AstType.Box elem)
       (str_cat.str-cat
         "box_"
         (ctfe-type-key-with-reflections-and-pools
-          (ast.ast-place-shared-view pools)
+          pools
           infos
           (ast.ast-node-pool-context-type-get pools elem)))]
     [(ast.AstType.Ptr elem)
       (str_cat.str-cat
         "ptr_"
         (ctfe-type-key-with-reflections-and-pools
-          (ast.ast-place-shared-view pools)
+          pools
           infos
           (ast.ast-node-pool-context-type-get pools elem)))]
     [(ast.AstType.MutPtr elem)
       (str_cat.str-cat
         "mutptr_"
         (ctfe-type-key-with-reflections-and-pools
-          (ast.ast-place-shared-view pools)
+          pools
           infos
           (ast.ast-node-pool-context-type-get pools elem)))]
     [(ast.AstType.Ref region inner)
@@ -4327,7 +4303,7 @@
         (ci.intern-str region)
         "_"
         (ctfe-type-key-with-reflections-and-pools
-          (ast.ast-place-shared-view pools)
+          pools
           infos
           (ast.ast-node-pool-context-type-get pools inner)))]
     [(ast.AstType.MutRef region inner)
@@ -4336,7 +4312,7 @@
         (ci.intern-str region)
         "_"
         (ctfe-type-key-with-reflections-and-pools
-          (ast.ast-place-shared-view pools)
+          pools
           infos
           (ast.ast-node-pool-context-type-get pools inner)))]
     [(ast.AstType.Region region inner)
@@ -4345,7 +4321,7 @@
         (ci.intern-str region)
         "_"
         (ctfe-type-key-with-reflections-and-pools
-          (ast.ast-place-shared-view pools)
+          pools
           infos
           (ast.ast-node-pool-context-type-get pools inner)))]
     [(ast.AstType.Enum name)
@@ -4355,8 +4331,7 @@
         "enumargs_"
         (ast.ast-nominal-name-id-display name)
         "_"
-        (ctfe-lifetime-list-key
-          (ast.ast-lifetime-list-box-shared-view lifetimes)))]
+        (ctfe-lifetime-list-key (deref lifetimes)))]
     [(ast.AstType.Struct name)
       (str_cat.str-cat "struct_" (ast.ast-nominal-name-id-display name))]
     [(ast.AstType.StructArgs name lifetimes)
@@ -4364,16 +4339,14 @@
         "structargs_"
         (ast.ast-nominal-name-id-display name)
         "_"
-        (ctfe-lifetime-list-key
-          (ast.ast-lifetime-list-box-shared-view lifetimes)))]
+        (ctfe-lifetime-list-key (deref lifetimes)))]
     [(ast.AstType.Var name) (str_cat.str-cat "var_" (ci.intern-str name))]
     [(ast.AstType.VarArgs name lifetimes)
       (str_cat.str-cat
         "varargs_"
         (ci.intern-str name)
         "_"
-        (ctfe-lifetime-list-key
-          (ast.ast-lifetime-list-box-shared-view lifetimes)))]))
+        (ctfe-lifetime-list-key (deref lifetimes)))]))
 
 (define (ctfe-type-key-with-reflections
   [infos : CtfeReflectInfoList]
@@ -4641,7 +4614,7 @@
       (ResultCtfeTypeLookup.Err "index out of range")
       (ResultCtfeTypeLookup.Ok
         (ctfe-reflect-resolve-type-with-pools
-          (ast.ast-place-shared-view pools)
+          pools
           infos
           (ast.ast-node-pool-context-type-get
             pools
@@ -4736,15 +4709,9 @@
     [pools : ast.AstNodePoolContext (ctfe-env-pools env)]
     [infos : CtfeReflectInfoList (ctfe-env-reflections env)]
     [resolved : ast.AstType
-      (ctfe-reflect-resolve-type-with-pools
-        (ast.ast-place-shared-view pools)
-        infos
-        ty)]
+      (ctfe-reflect-resolve-type-with-pools pools infos ty)]
     [kind : String
-      (ctfe-type-kind-with-reflections-and-pools
-        (ast.ast-place-shared-view pools)
-        infos
-        (clone resolved))]
+      (ctfe-type-kind-with-reflections-and-pools pools infos (clone resolved))]
     (match (clone resolved)
       [(ast.AstType.Array elem count)
         (if (ctfe-pattern-variant-name? variant "Array")
@@ -4779,8 +4746,7 @@
           (ctfe-match-pattern-list
             args
             (ctfe-value-list2
-              (CompilerCtfeValue.TypeInfoList
-                (ast.ast-type-list-box-shared-view params))
+              (CompilerCtfeValue.TypeInfoList (deref params))
               (CompilerCtfeValue.TypeInfoBox
                 (ast.ast-node-pool-context-type-get pools ret)))
             env)
@@ -4789,9 +4755,7 @@
         (if (ctfe-pattern-variant-name? variant "Tuple")
           (ctfe-match-pattern-list
             args
-            (ctfe-value-list1
-              (CompilerCtfeValue.TypeInfoList
-                (ast.ast-type-list-box-shared-view elems)))
+            (ctfe-value-list1 (CompilerCtfeValue.TypeInfoList (deref elems)))
             env)
           (CtfePatternMatch.No))]
       [(ast.AstType.Struct _)
@@ -5007,7 +4971,7 @@
       (let
         [elem-size : i64
           (ctfe-type-size-with-pools
-            (ast.ast-place-shared-view pools)
+            pools
             layouts
             (ast.ast-node-pool-context-type-get pools elem))]
         (if (< elem-size 0)
@@ -5029,7 +4993,7 @@
         8)]
     [(ast.AstType.Region _ inner)
       (ctfe-type-size-with-pools
-        (ast.ast-place-shared-view pools)
+        pools
         layouts
         (ast.ast-node-pool-context-type-get pools inner))]
     ;; An enum occupies its 8-byte tag plus max-aligned payload storage inline,
@@ -5103,7 +5067,7 @@
     [(ast.AstType.Tuple _) 8]
     [(ast.AstType.Array elem _)
       (ctfe-type-align-with-pools
-        (ast.ast-place-shared-view pools)
+        pools
         layouts
         (ast.ast-node-pool-context-type-get pools elem))]
     [(ast.AstType.DynArray _) 8]
@@ -5115,7 +5079,7 @@
     [(ast.AstType.MutRef _ _) 8]
     [(ast.AstType.Region _ inner)
       (ctfe-type-align-with-pools
-        (ast.ast-place-shared-view pools)
+        pools
         layouts
         (ast.ast-node-pool-context-type-get pools inner))]
     [(ast.AstType.Enum _) 8]
@@ -5223,7 +5187,7 @@
     [(ast.AstType.Var name) (ctfe-layout-info-lookup-name-id layouts name)]
     [(ast.AstType.Region _ inner)
       (ctfe-layout-info-for-type-with-pools
-        (ast.ast-place-shared-view pools)
+        pools
         layouts
         (ast.ast-node-pool-context-type-get pools inner))]
     [_ (CtfeMaybeLayoutInfo.None)]))
@@ -5569,8 +5533,7 @@
                   [(ast.AstType.Tuple elems)
                     (ResultCtfe.Ok
                       (CompilerCtfeValue.I64
-                        (ctfe-type-list-count
-                          (ast.ast-type-list-box-shared-view elems)))
+                        (ctfe-type-list-count (deref elems)))
                       arg-fuel)]
                   [_
                     (ResultCtfe.Err
@@ -5583,8 +5546,7 @@
                   [(ast.AstType.Func params _)
                     (ResultCtfe.Ok
                       (CompilerCtfeValue.I64
-                        (ctfe-type-list-count
-                          (ast.ast-type-list-box-shared-view params)))
+                        (ctfe-type-list-count (deref params)))
                       arg-fuel)]
                   [_
                     (ResultCtfe.Err
@@ -5931,7 +5893,7 @@
               (match ty
                 [(ast.AstType.Func params _)
                   (match (ctfe-type-list-ref-with-pools
-                    (ast.ast-type-list-box-shared-view params)
+                    (deref params)
                     (ctfe-env-pools env)
                     (ctfe-env-reflections env)
                     index-arg-value.value)
@@ -5980,7 +5942,7 @@
     (match (ctfe-reflect-resolve-type-with-pools (ctfe-env-pools env) infos ty)
       [(ast.AstType.Tuple elems)
         (match (ctfe-type-list-ref-with-pools
-          (ast.ast-type-list-box-shared-view elems)
+          (deref elems)
           (ctfe-env-pools env)
           infos
           index)
@@ -7014,7 +6976,7 @@
             expr
             env
             module-fuel
-            (owned_view.compiler-owned-shared-view query-name))
+            query-name)
             [(ResultCtfeStringArg.Ok name name-id name-fuel)
               (match (ctfe-module-value-type-id-for-state
                 (ctfe-env-macro-state env)
@@ -7120,11 +7082,10 @@
       (match (owned_view.compiler-owned-shared-view value-type)
         [(ast.AstType.Region _ inner) (ctfe-ty-get env inner)]
         [_ value-type])]
-    (match (owned_view.compiler-owned-shared-view signature)
+    (match signature
       [(ast.AstType.Func params ret)
         (let
-          [param-list : ast.AstTypeList
-            (ast.ast-type-list-box-shared-view params)]
+          [param-list : ast.AstTypeList (deref params)]
           (if (=
             (ctfe-type-list-count
               (owned_view.compiler-owned-shared-view param-list))
@@ -7757,13 +7718,11 @@
         (ctfe-materialize-generated-name-id "__tl_shared_call_value")]
       [bindings : ast.AstLetBindingList (ast.ast-let-binding-list-new)]
       [local-node : i64
-        (ast.ast-node-pool-context-expr-push
-          (ast.ast-node-pool-context-shared-view (& pools))
-          (ast.AstExpr.Var value-name))]
+        (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Var value-name))]
       [call-node : i64
         (ctfe-ast-expr-call-with-provenance
           state
-          (ast.ast-node-pool-context-shared-view (& pools))
+          pools
           callee-node
           (ast.ast-expr-cons local-node (ast.ast-expr-list-new)))]
       (begin
@@ -7972,9 +7931,7 @@
             [(CompilerCtfeValue.CapturedExpr _ ty pools)
               (let
                 [actual-ty : ast.AstType
-                  (ctfe-captured-expr-type-inner-with-pools
-                    (ast.ast-place-shared-view pools)
-                    ty)]
+                  (ctfe-captured-expr-type-inner-with-pools pools ty)]
                 (if (ctfe-untyped-expr-type? actual-ty)
                   (ResultCtfe.Err
                     (box
@@ -8143,7 +8100,7 @@
                       [pools : ast.AstNodePoolContext (ctfe-env-pools env)]
                       [init-node : i64
                         (ctfe-caller-origin-expr-node-with-pools
-                          (ast.ast-place-shared-view pools)
+                          pools
                           (ctfe-expr-binding-clause-init clause)
                           (clone produced))]
                       [init-ty : ast.AstType
@@ -8488,8 +8445,8 @@
         (>
           (ast.ast-node-pool-context-type-len right)
           (ast.ast-node-pool-context-type-len left))))
-      (ast.ast-place-shared-view right)
-      (ast.ast-place-shared-view left))))
+      right
+      left)))
 
 (define (ctfe-eval-expr-if-call-captured
   [args : ast.AstExprList]
@@ -8528,14 +8485,13 @@
                                     [build-pools : ast.AstNodePoolContext
                                       (ctfe-newest-syntax-pools
                                         (ctfe-newest-syntax-pools
-                                          (ast.ast-place-shared-view pools)
-                                          (ast.ast-place-shared-view then-pools))
-                                        (ast.ast-place-shared-view else-pools))]
+                                          pools
+                                          then-pools)
+                                        else-pools)]
                                     (ResultCtfe.Ok
                                       (CompilerCtfeValue.CapturedExpr
                                         (ast.ast-expr-if-with-pools
-                                          (ast.ast-place-shared-view
-                                            build-pools)
+                                          build-pools
                                           cond-node
                                           then-node
                                           else-node)
@@ -8673,11 +8629,7 @@
           (begin
             (set!
               current-out
-              (ast.ast-expr-if-with-pools
-                (ast.ast-place-shared-view pools)
-                cond-node
-                then-node
-                else-node))
+              (ast.ast-expr-if-with-pools pools cond-node then-node else-node))
             (set! current-index (- current-index 1))
             (set! remaining-fuel (- remaining-fuel 1)))))
       (if (>= current-index 0)
@@ -8765,13 +8717,11 @@
                 (let
                   [build-pools : ast.AstNodePoolContext
                     (ctfe-newest-syntax-pools
-                      (ctfe-newest-syntax-pools
-                        (ast.ast-place-shared-view pools)
-                        (ast.ast-place-shared-view when-true-pools))
-                      (ast.ast-place-shared-view when-false-pools))]
+                      (ctfe-newest-syntax-pools pools when-true-pools)
+                      when-false-pools)]
                   (ctfe-eval-expr-list-fold-if-captured-at
                     (clone items)
-                    (ast.ast-place-shared-view build-pools)
+                    build-pools
                     (- (ctfe-expr-list-length items) 1)
                     when-true-node
                     when-false-node
@@ -8785,7 +8735,7 @@
                     fuel
                     (and
                       (ctfe-hygiene-inert-literal-node?
-                        (ast.ast-place-shared-view build-pools)
+                        build-pools
                         when-true-node)
                       (ctfe-hygiene-inert-literal-node?
                         build-pools
@@ -8925,7 +8875,7 @@
         [result-node : i64 (ctfe-expr-clause-second clause)]
         (ctfe-eval-expr-clause-list-fold-if-captured-at
           items
-          (ast.ast-place-shared-view pools)
+          pools
           (- index 1)
           (if (ctfe-expr-else-with-pools? pools test-node)
             else-not-final-node
@@ -9015,7 +8965,7 @@
                         (ctfe-expr-clause-second final-clause)]
                       (ctfe-eval-expr-clause-list-fold-if-captured-at
                         items
-                        (ast.ast-place-shared-view pools)
+                        pools
                         (- n 2)
                         (if (ctfe-expr-else-with-pools? pools final-test)
                           final-result
@@ -9025,9 +8975,7 @@
                         env
                         (- fuel 1)
                         (and
-                          (ctfe-hygiene-inert-literal-node?
-                            (ast.ast-place-shared-view pools)
-                            missing-node)
+                          (ctfe-hygiene-inert-literal-node? pools missing-node)
                           (ctfe-hygiene-inert-literal-node?
                             pools
                             else-not-final-node)))))))]
@@ -9640,13 +9588,7 @@
           5
           6))]
     (if (= (ctfe-expr-arg-count args) expected-count)
-      (match (ctfe-eval-syntax-expr-args
-        args
-        0
-        expr
-        (ctfe-env-shared-view (& env))
-        fuel
-        builder-name)
+      (match (ctfe-eval-syntax-expr-args args 0 expr env fuel builder-name)
         [(ResultCtfeQuoteExprList.Ok nodes next-fuel)
           (let
             [pools : ast.AstNodePoolContext
@@ -9798,11 +9740,11 @@
                             "__tl_shared_scope_value")]
                         [owner-node : i64
                           (ast.ast-node-pool-context-expr-push
-                            (ast.ast-node-pool-context-shared-view (& pools))
+                            pools
                             (ast.AstExpr.Var owner-name))]
                         [borrow-node : i64
                           (ast.ast-expr-borrow-with-pools
-                            (ast.ast-node-pool-context-shared-view (& pools))
+                            pools
                             false
                             ast.AstBorrowLifetime.Inferred
                             (if direct?
@@ -9820,8 +9762,7 @@
                           (let
                             [borrow-body : i64
                               (ast.ast-expr-let-with-pools
-                                (ast.ast-node-pool-context-shared-view
-                                  (& pools))
+                                pools
                                 borrow-bindings
                                 body-node)]
                             (if direct?
@@ -9845,8 +9786,7 @@
                                     (ctfe-syntax-expr-value
                                       env
                                       (ast.ast-expr-let-with-pools
-                                        (ast.ast-node-pool-context-shared-view
-                                          (& pools))
+                                        pools
                                         owner-bindings
                                         borrow-body)
                                       (ctfe-untyped-expr-type))
@@ -9906,11 +9846,9 @@
       (ast.ast-expr-list-push
         (&mut out)
         (ast.ast-node-pool-context-expr-push
-          (ast.ast-place-shared-view pools)
+          pools
           (ast.AstExpr.Literal (ast.AstLiteral.Unit))))
-      (ast.ast-node-pool-context-expr-push
-        (ast.ast-place-shared-view pools)
-        (ast.AstExpr.Begin out)))))
+      (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Begin out)))))
 
 (define (ctfe-eval-expr-begin-unit-call
   [args : ast.AstExprList]
@@ -9926,9 +9864,7 @@
             [(CompilerCtfeValue.CapturedExprList items pools)
               (ResultCtfe.Ok
                 (CompilerCtfeValue.CapturedExpr
-                  (ctfe-expr-begin-unit-node
-                    items
-                    (ast.ast-place-shared-view pools))
+                  (ctfe-expr-begin-unit-node items pools)
                   ;; Preserve the captured pool owner in the returned value.
                   (ast.AstType.Unit)
                   pools)
@@ -9939,9 +9875,7 @@
                   (ctfe-env-syntax-pool-context-live env)]
                 (ResultCtfe.Ok
                   (CompilerCtfeValue.CapturedExpr
-                    (ctfe-expr-begin-unit-node
-                      items
-                      (ast.ast-place-shared-view pools))
+                    (ctfe-expr-begin-unit-node items pools)
                     (ast.AstType.Unit)
                     pools)
                   next-fuel))]
@@ -10426,7 +10360,7 @@
               [lookup-id : i64 raw-id]
               [call-name : String
                 (if (= call-id lookup-id)
-                  (owned_view.compiler-owned-shared-view lookup-name)
+                  lookup-name
                   (ci.intern-str call-id))]
               [string-helper-candidate : bool
                 (ctfe-string-helper-candidate-name-id?
@@ -10434,12 +10368,8 @@
                   lookup-id)]
               (cond
                 [(or
-                    (string.eq
-                      (owned_view.compiler-owned-shared-view call-name)
-                      "expr-for-owned-state")
-                    (string.eq
-                      (owned_view.compiler-owned-shared-view lookup-name)
-                      "expr-for-owned-state"))
+                    (string.eq call-name "expr-for-owned-state")
+                    (string.eq lookup-name "expr-for-owned-state"))
                   (ctfe-eval-expr-for-owned-call
                     0
                     "expr-for-owned-state"
@@ -10448,12 +10378,8 @@
                     env
                     fuel)]
                 [(or
-                    (string.eq
-                      (owned_view.compiler-owned-shared-view call-name)
-                      "expr-for-owned-step")
-                    (string.eq
-                      (owned_view.compiler-owned-shared-view lookup-name)
-                      "expr-for-owned-step"))
+                    (string.eq call-name "expr-for-owned-step")
+                    (string.eq lookup-name "expr-for-owned-step"))
                   (ctfe-eval-expr-for-owned-call
                     1
                     "expr-for-owned-step"
@@ -10462,12 +10388,8 @@
                     env
                     fuel)]
                 [(or
-                    (string.eq
-                      (owned_view.compiler-owned-shared-view call-name)
-                      "expr-for-owned-step-typed")
-                    (string.eq
-                      (owned_view.compiler-owned-shared-view lookup-name)
-                      "expr-for-owned-step-typed"))
+                    (string.eq call-name "expr-for-owned-step-typed")
+                    (string.eq lookup-name "expr-for-owned-step-typed"))
                   (ctfe-eval-expr-for-owned-call
                     2
                     "expr-for-owned-step-typed"
@@ -10476,17 +10398,12 @@
                     env
                     fuel)]
                 [(ctfe-builtin-size-align-id? lookup-id)
-                  (ctfe-eval-size-align-query
-                    (owned_view.compiler-owned-shared-view lookup-name)
-                    args
-                    expr
-                    env
-                    fuel)]
+                  (ctfe-eval-size-align-query lookup-name args expr env fuel)]
                 [(ctfe-builtin-offset-of-id? lookup-id)
                   (ctfe-eval-offset-query args expr env fuel)]
                 [(ctfe-builtin-reflection-id? call-id)
                   (ctfe-eval-reflection-query
-                    (owned_view.compiler-owned-shared-view call-name)
+                    call-name
                     call-id
                     args
                     expr
@@ -10497,92 +10414,67 @@
                     (ctfe-string-eq-helper-name-id?
                       (owned_view.compiler-owned-shared-view lookup-name)
                       lookup-id))
-                  (ctfe-eval-string-eq-call
-                    (owned_view.compiler-owned-shared-view lookup-name)
-                    args
-                    expr
-                    env
-                    fuel)]
+                  (ctfe-eval-string-eq-call lookup-name args expr env fuel)]
                 [(ctfe-builtin-string-build-id? call-id)
-                  (ctfe-eval-string-append-call
-                    (owned_view.compiler-owned-shared-view call-name)
-                    args
-                    expr
-                    env
-                    fuel)]
+                  (ctfe-eval-string-append-call call-name args expr env fuel)]
                 [(and
                     string-helper-candidate
                     (ctfe-string-length-helper-name-id?
                       (owned_view.compiler-owned-shared-view lookup-name)
                       lookup-id))
-                  (ctfe-eval-string-length-call
-                    (owned_view.compiler-owned-shared-view lookup-name)
-                    args
-                    expr
-                    env
-                    fuel)]
+                  (ctfe-eval-string-length-call lookup-name args expr env fuel)]
                 [(and
                     string-helper-candidate
                     (ctfe-string-ref-helper-name-id?
                       (owned_view.compiler-owned-shared-view lookup-name)
                       lookup-id))
-                  (ctfe-eval-string-ref-call
-                    (owned_view.compiler-owned-shared-view lookup-name)
-                    args
-                    expr
-                    env
-                    fuel)]
+                  (ctfe-eval-string-ref-call lookup-name args expr env fuel)]
                 [(and
                     string-helper-candidate
                     (ctfe-string-to-int-helper-name-id?
                       (owned_view.compiler-owned-shared-view lookup-name)
                       lookup-id))
-                  (ctfe-eval-string-to-int-call
-                    (owned_view.compiler-owned-shared-view lookup-name)
-                    args
-                    expr
-                    env
-                    fuel)]
+                  (ctfe-eval-string-to-int-call lookup-name args expr env fuel)]
                 [(ctfe-builtin-int-to-string-id? call-id)
                   (ctfe-eval-int-to-string-call args expr env fuel)]
                 [(ctfe-builtin-sequence-length-id? call-id)
                   (ctfe-eval-comptime-sequence-length-call
-                    (owned_view.compiler-owned-shared-view call-name)
+                    call-name
                     args
                     expr
                     env
                     fuel)]
                 [(ctfe-builtin-sequence-nth-id? call-id)
                   (ctfe-eval-comptime-sequence-nth-call
-                    (owned_view.compiler-owned-shared-view call-name)
+                    call-name
                     args
                     expr
                     env
                     fuel)]
                 [(ctfe-builtin-expr-binding-clause-inspector-id? call-id)
                   (ctfe-eval-expr-binding-clause-inspector-call
-                    (owned_view.compiler-owned-shared-view call-name)
+                    call-name
                     args
                     expr
                     env
                     fuel)]
                 [(ctfe-builtin-direct-inspector-id? call-id)
                   (ctfe-eval-comptime-direct-inspector-call
-                    (owned_view.compiler-owned-shared-view call-name)
+                    call-name
                     args
                     expr
                     env
                     fuel)]
                 [(ctfe-builtin-expr-clause-list-inspector-id? call-id)
                   (ctfe-eval-expr-clause-list-inspector-call
-                    (owned_view.compiler-owned-shared-view call-name)
+                    call-name
                     args
                     expr
                     env
                     fuel)]
                 [(ctfe-builtin-expr-binding-clause-list-inspector-id? call-id)
                   (ctfe-eval-expr-binding-clause-list-inspector-call
-                    (owned_view.compiler-owned-shared-view call-name)
+                    call-name
                     args
                     expr
                     env
@@ -10592,12 +10484,7 @@
                 [(cbi.compiler-builtin-typecheck-float-sqrt-id? lookup-id)
                   (ctfe-float-sqrt-unsupported expr)]
                 [else
-                  (ctfe-unsupported-call
-                    expr
-                    raw-name
-                    raw-id
-                    (owned_view.compiler-owned-shared-view call-name)
-                    call-id)]))]))]
+                  (ctfe-unsupported-call expr raw-name raw-id call-name call-id)]))]))]
     [_ (ctfe-unsupported-form expr)]))
 
 ;; Shared "unsupported compile-time form" diagnostic for ordinary calls.
@@ -10848,7 +10735,7 @@
               (ResultCtfe.Ok
                 (CompilerCtfeValue.Expr
                   (ctfe-caller-origin-expr-node-with-pools
-                    (ast.ast-place-shared-view pools)
+                    pools
                     (ctfe-expr-binding-clause-init clause)
                     (clone produced))
                   (ctfe-caller-origin-expr-type-inner-with-pools pools produced))
@@ -11213,21 +11100,13 @@
         ;; the value just stored.
         (match (owned_view.compiler-owned-shared-view value)
           [(CompilerCtfeValue.CapturedExpr _ _ pools)
-            (ctfe-env-adopt-captured-pools!
-              (& env)
-              (ast.ast-place-shared-view pools))]
+            (ctfe-env-adopt-captured-pools! (& env) pools)]
           [(CompilerCtfeValue.CapturedExprList _ pools)
-            (ctfe-env-adopt-captured-pools!
-              (& env)
-              (ast.ast-place-shared-view pools))]
+            (ctfe-env-adopt-captured-pools! (& env) pools)]
           [(CompilerCtfeValue.CapturedExprClause _ pools)
-            (ctfe-env-adopt-captured-pools!
-              (& env)
-              (ast.ast-place-shared-view pools))]
+            (ctfe-env-adopt-captured-pools! (& env) pools)]
           [(CompilerCtfeValue.CapturedExprClauseList _ pools)
-            (ctfe-env-adopt-captured-pools!
-              (& env)
-              (ast.ast-place-shared-view pools))]
+            (ctfe-env-adopt-captured-pools! (& env) pools)]
           [_ unit])
         (if (ctfe-env-set-local-id! env name-id value)
           (ResultCtfe.Ok (CompilerCtfeValue.Unit) rhs-fuel)
@@ -11303,15 +11182,12 @@
                 (+ index 1)
                 body
                 (ctfe-env-extend-local-typed-id
-                  (ctfe-env-shared-view (& env))
+                  env
                   name
                   (ctfe-value-owned-copy (& value))
                   (ctfe-binding-type
                     maybe-ty
-                    (ctfe-cast-source-type
-                      value-expr
-                      value
-                      (ctfe-env-shared-view (& env)))
+                    (ctfe-cast-source-type value-expr value env)
                     env))
                 value-fuel)]
             [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))])))
@@ -11566,7 +11442,7 @@
     [(ast.AstPattern.Var name maybe-ty)
       (CtfePatternMatch.Matched
         (ctfe-env-extend-typed-id
-          (ctfe-env-shared-view (& env))
+          env
           name
           value
           (ctfe-binding-type maybe-ty value-ty env)))]
@@ -11579,8 +11455,7 @@
         (CtfePatternMatch.No))]
     [(ast.AstPattern.Variant variant args-box)
       (let
-        [args : ast.AstPatternList
-          (ast.ast-pattern-list-box-shared-view args-box)]
+        [args : ast.AstPatternList (deref args-box)]
         (match value
           [(CompilerCtfeValue.Expr node ty)
             (ctfe-match-expr-variant variant args node ty env)]
@@ -11621,7 +11496,7 @@
                   (CompilerCtfeValue.CapturedExpr
                     (ctfe-expr-clause-first clause)
                     (ctfe-untyped-expr-type)
-                    (clone pools))
+                    (ast.ast-node-pool-context-clone pools))
                   (CompilerCtfeValue.CapturedExpr
                     (ctfe-expr-clause-second clause)
                     (ctfe-untyped-expr-type)
@@ -11658,7 +11533,7 @@
           pattern
           (ctfe-value-owned-copy (& value))
           (clone value-ty)
-          (ctfe-env-shared-view (& env)))
+          env)
           [(CtfePatternMatch.Matched arm-env)
             (compiler-ctfe-eval (ctfe-ast-get env body-box) arm-env fuel)]
           [(CtfePatternMatch.No)
@@ -11681,7 +11556,7 @@
     [(ResultCtfe.Ok value scrutinee-fuel)
       (ctfe-eval-match-arms
         (ctfe-value-owned-copy (& value))
-        (ctfe-cast-source-type scrutinee value (ctfe-env-shared-view (& env)))
+        (ctfe-cast-source-type scrutinee value env)
         arms
         origin
         env
@@ -11740,11 +11615,9 @@
     [owner-address : u64 (ctfe-env-pools-address env)]
     [syntax-address : u64 (ctfe-env-syntax-pool-context-address-live env)]
     [captured-expr-cell-address : u64
-      (unsafe
-        (ptr->int (__tl_array-data captured.expr-pool)))]
+      (ast.ast-pool-cell-data captured.expr-pool)]
     [captured-type-cell-address : u64
-      (unsafe
-        (ptr->int (__tl_array-data captured.type-pool)))]
+      (ast.ast-pool-cell-data captured.type-pool)]
     (begin
       (ast.ast-node-pool-context-adopt-newer-cells!
         (ctfe-pool-context-cell-address-at owner-address 0)
@@ -11773,7 +11646,7 @@
                 [active-pools : ast.AstNodePoolContext
                   (ast.ast-node-pool-context-active-live)]
                 (if (ctfe-node-pools-share-storage?
-                  (ast.ast-place-shared-view active-pools)
+                  active-pools
                   (ctfe-env-pools env))
                   (ctfe-env-adopt-captured-pools! env active-pools)
                   unit))
@@ -11785,9 +11658,7 @@
             (ast.AstType.Expr)
             next-fuel)]
         [(CompilerCtfeValue.CapturedExpr node ty pools)
-          (if (ctfe-node-pools-share-storage?
-            (ast.ast-place-shared-view pools)
-            (ctfe-env-pools env))
+          (if (ctfe-node-pools-share-storage? pools (ctfe-env-pools env))
             (begin
               (ctfe-env-adopt-captured-pools! env pools)
               (ResultCtfeQuoteExpr.Ok node ty next-fuel))
@@ -11809,9 +11680,7 @@
         [(CompilerCtfeValue.ExprList exprs)
           (ResultCtfeQuoteExprList.Ok exprs next-fuel)]
         [(CompilerCtfeValue.CapturedExprList exprs pools)
-          (if (ctfe-node-pools-share-storage?
-            (ast.ast-place-shared-view pools)
-            (ctfe-env-pools env))
+          (if (ctfe-node-pools-share-storage? pools (ctfe-env-pools env))
             (begin
               (ctfe-env-adopt-captured-pools! env pools)
               (ResultCtfeQuoteExprList.Ok exprs next-fuel))
@@ -11965,10 +11834,7 @@
     [(ast.AstType.Func args ret)
       (ctfe-type-syntax-call-id
         (ctfe-builtin-ref 176)
-        (ctfe-func-type-to-expr-list
-          (ast.ast-type-list-box-shared-view args)
-          (ctfe-ty-get env ret)
-          env)
+        (ctfe-func-type-to-expr-list (deref args) (ctfe-ty-get env ret) env)
         env)]
     [(ast.AstType.CFunc signature mode)
       (ctfe-type-syntax-call-id
@@ -11984,9 +11850,7 @@
     [(ast.AstType.Tuple elems)
       (ctfe-type-syntax-call-id
         (ctfe-builtin-ref 175)
-        (ctfe-type-list-to-expr-list
-          (ast.ast-type-list-box-shared-view elems)
-          env)
+        (ctfe-type-list-to-expr-list (deref elems) env)
         env)]
     [(ast.AstType.Array elem count)
       (ctfe-type-syntax-call-id
@@ -12069,7 +11933,7 @@
       (ctfe-resolved-nominal-type-to-expr
         (ctfe-internal-resolved-enum-type-marker-id)
         name
-        (ast.ast-lifetime-list-box-shared-view lifetimes)
+        (deref lifetimes)
         env)]
     [(ast.AstType.Struct name)
       (ctfe-resolved-nominal-type-to-expr
@@ -12081,15 +11945,13 @@
       (ctfe-resolved-nominal-type-to-expr
         (ctfe-internal-resolved-struct-type-marker-id)
         name
-        (ast.ast-lifetime-list-box-shared-view lifetimes)
+        (deref lifetimes)
         env)]
     [(ast.AstType.Var name) (ctfe-type-syntax-name-id name env)]
     [(ast.AstType.VarArgs name lifetimes)
       (ctfe-type-syntax-call-id
         name
-        (ctfe-lifetime-list-to-expr-list
-          (ast.ast-lifetime-list-box-shared-view lifetimes)
-          env)
+        (ctfe-lifetime-list-to-expr-list (deref lifetimes) env)
         env)]))
 
 (define (ctfe-type-expr-error [origin : ast.AstExpr]) : ResultCtfeQuoteType
@@ -12115,17 +11977,13 @@
     (let
       [head-expr : ast.AstExpr
         (ctfe-ast-get env (ast.ast-expr-list-get exprs index 0))]
-      (match (ctfe-expr-to-type
-        head-expr
-        (clone origin)
-        (ctfe-env-shared-view (& env))
-        fuel)
+      (match (ctfe-expr-to-type head-expr (clone origin) env fuel)
         [(ResultCtfeQuoteType.Ok head-ty head-fuel)
           (match (ctfe-expr-list-to-type-list-at
             exprs
             (+ index 1)
             origin
-            (ctfe-env-shared-view (& env))
+            env
             head-fuel)
             [(ResultCtfeQuoteTypeList.Ok tail tail-fuel)
               (ResultCtfeQuoteTypeList.Ok
@@ -12145,11 +12003,7 @@
     (let
       [elem-expr : ast.AstExpr
         (ctfe-ast-get env (ast.ast-expr-list-get (& args) 0 0))]
-      (match (ctfe-expr-to-type
-        elem-expr
-        (clone origin)
-        (ctfe-env-shared-view (& env))
-        fuel)
+      (match (ctfe-expr-to-type elem-expr (clone origin) env fuel)
         [(ResultCtfeQuoteType.Ok elem-ty next-fuel)
           (ResultCtfeQuoteType.Ok
             (cond
@@ -12179,11 +12033,7 @@
     (let
       [elem-expr : ast.AstExpr
         (ctfe-ast-get env (ast.ast-expr-list-get (& args) 0 0))]
-      (match (ctfe-expr-to-type
-        elem-expr
-        (clone origin)
-        (ctfe-env-shared-view (& env))
-        fuel)
+      (match (ctfe-expr-to-type elem-expr (clone origin) env fuel)
         [(ResultCtfeQuoteType.Ok elem-ty elem-fuel)
           (if (= args.len 1)
             (ResultCtfeQuoteType.Ok
@@ -12223,11 +12073,7 @@
       [head-expr : ast.AstExpr
         (ctfe-ast-get env (ast.ast-expr-list-get args index 0))]
       (if (= (+ index 1) args.len)
-        (match (ctfe-expr-to-type
-          head-expr
-          origin
-          (ctfe-env-shared-view (& env))
-          fuel)
+        (match (ctfe-expr-to-type head-expr origin env fuel)
           [(ResultCtfeQuoteType.Ok ret-ty next-fuel)
             (ResultCtfeQuoteType.Ok
               (ast.ast-ty-func-with-pools
@@ -12236,17 +12082,13 @@
                 ret-ty)
               next-fuel)]
           [(ResultCtfeQuoteType.Err diag) (ResultCtfeQuoteType.Err diag)])
-        (match (ctfe-expr-to-type
-          head-expr
-          (clone origin)
-          (ctfe-env-shared-view (& env))
-          fuel)
+        (match (ctfe-expr-to-type head-expr (clone origin) env fuel)
           [(ResultCtfeQuoteType.Ok arg-ty arg-fuel)
             (match (ctfe-expr-func-type-at
               args
               (+ index 1)
               (clone origin)
-              (ctfe-env-shared-view (& env))
+              env
               arg-fuel)
               [(ResultCtfeQuoteType.Ok tail-fn next-fuel)
                 (match tail-fn
@@ -12257,7 +12099,7 @@
                         (ast.ast-type-cons-with-pools
                           (ctfe-env-pools env)
                           arg-ty
-                          (ast.ast-type-list-box-shared-view tail-args))
+                          (deref tail-args))
                         (ctfe-ty-get env ret))
                       next-fuel)]
                   [_ (ctfe-type-expr-error origin)])]
@@ -12289,11 +12131,7 @@
         (ctfe-ast-get env (ast.ast-expr-list-get (& args) 1 0))]
       (match (ctfe-lifetime-syntax-name (ctfe-expr-unspan env region-expr))
         [(CtfeMaybeLifetimeSyntaxName.Some region)
-          (match (ctfe-expr-to-type
-            inner-expr
-            origin
-            (ctfe-env-shared-view (& env))
-            fuel)
+          (match (ctfe-expr-to-type inner-expr origin env fuel)
             [(ResultCtfeQuoteType.Ok inner-ty next-fuel)
               (ResultCtfeQuoteType.Ok
                 (if mutable
@@ -12323,11 +12161,7 @@
         (ctfe-ast-get env (ast.ast-expr-list-get (& args) 1 0))]
       (match (ctfe-lifetime-syntax-name (ctfe-expr-unspan env region-expr))
         [(CtfeMaybeLifetimeSyntaxName.Some region)
-          (match (ctfe-expr-to-type
-            inner-expr
-            origin
-            (ctfe-env-shared-view (& env))
-            fuel)
+          (match (ctfe-expr-to-type inner-expr origin env fuel)
             [(ResultCtfeQuoteType.Ok inner-ty next-fuel)
               (ResultCtfeQuoteType.Ok
                 (ast.ast-ty-region-with-pools
@@ -12429,7 +12263,7 @@
         (match (ctfe-expr-to-type
           (ctfe-ast-get env (ast.ast-expr-list-get (& args) 1 0))
           (clone origin)
-          (ctfe-env-shared-view (& env))
+          env
           fuel)
           [(ResultCtfeQuoteType.Err diag) (ResultCtfeQuoteType.Err diag)]
           [(ResultCtfeQuoteType.Ok shape next-fuel)
@@ -12601,11 +12435,7 @@
   [fuel : i64]) : ResultCtfeQuoteType
   (match (clone ty)
     [(ast.AstType.Func args ret)
-      (match (ctfe-quote-type-list
-        (ast.ast-type-list-box-shared-view args)
-        env
-        (clone origin)
-        fuel)
+      (match (ctfe-quote-type-list (deref args) env (clone origin) fuel)
         [(ResultCtfeQuoteTypeList.Ok quoted-args args-fuel)
           (match (ctfe-quote-type (ctfe-ty-get env ret) env origin args-fuel)
             [(ResultCtfeQuoteType.Ok quoted-ret ret-fuel)
@@ -12618,11 +12448,7 @@
             [(ResultCtfeQuoteType.Err diag) (ResultCtfeQuoteType.Err diag)])]
         [(ResultCtfeQuoteTypeList.Err diag) (ResultCtfeQuoteType.Err diag)])]
     [(ast.AstType.Tuple elems)
-      (match (ctfe-quote-type-list
-        (ast.ast-type-list-box-shared-view elems)
-        env
-        origin
-        fuel)
+      (match (ctfe-quote-type-list (deref elems) env origin fuel)
         [(ResultCtfeQuoteTypeList.Ok quoted next-fuel)
           (ResultCtfeQuoteType.Ok (ast.ast-ty-tuple quoted) next-fuel)]
         [(ResultCtfeQuoteTypeList.Err diag) (ResultCtfeQuoteType.Err diag)])]
@@ -12700,11 +12526,7 @@
         [(ResultCtfeQuoteType.Err diag) (ResultCtfeQuoteType.Err diag)])]
     [(ast.AstType.VarArgs name lifetimes)
       (if (= name cbi.compiler-builtin-id-fix-unquote)
-        (ctfe-quote-type-unquote
-          (ast.ast-lifetime-list-box-shared-view lifetimes)
-          env
-          origin
-          fuel)
+        (ctfe-quote-type-unquote (deref lifetimes) env origin fuel)
         (ResultCtfeQuoteType.Ok ty fuel))]
     [(ast.AstType.Var name) (ctfe-quote-type-var name env fuel)]
     [_ (ResultCtfeQuoteType.Ok ty fuel)]))
@@ -12867,21 +12689,18 @@
       (ast.AstPattern.Var (ctfe-quote-name-id env name) maybe-ty)]
     [(ast.AstPattern.Tuple patterns-box)
       (let
-        [patterns : ast.AstPatternList
-          (ast.ast-pattern-list-box-shared-view patterns-box)]
+        [patterns : ast.AstPatternList (deref patterns-box)]
         (ast.ast-pat-tuple (ctfe-quote-pattern-list patterns env)))]
     [(ast.AstPattern.Array patterns-box)
       (let
-        [patterns : ast.AstPatternList
-          (ast.ast-pattern-list-box-shared-view patterns-box)]
+        [patterns : ast.AstPatternList (deref patterns-box)]
         (ast.ast-pat-array (ctfe-quote-pattern-list patterns env)))]
     [(ast.AstPattern.Wildcard) ast.AstPattern.Wildcard]
     [(ast.AstPattern.Binding name)
       (ast.AstPattern.Binding (ctfe-quote-name-id env name))]
     [(ast.AstPattern.Variant name args-box)
       (let
-        [args : ast.AstPatternList
-          (ast.ast-pattern-list-box-shared-view args-box)]
+        [args : ast.AstPatternList (deref args-box)]
         (ast.ast-pat-variant-id name (ctfe-quote-pattern-list args env)))]
     [(ast.AstPattern.Literal lit) (ast.AstPattern.Literal lit)]))
 
@@ -14439,9 +14258,7 @@
     [quote-env : CtfeEnv
       (match (ctfe-env-syntax-pools-live env)
         [(CtfeMaybeSyntaxPools.Some pools)
-          (ctfe-env-rebase-syntax-pools
-            (ctfe-env-shared-view env)
-            (ast.ast-place-shared-view pools))]
+          (ctfe-env-rebase-syntax-pools (ctfe-env-shared-view env) pools)]
         [(CtfeMaybeSyntaxPools.None) (ctfe-env-shared-view env)])]
     (match (ctfe-quote-expr template (& quote-env) fuel quasiquote)
       [(ResultCtfeQuoteExpr.Ok node ty next-fuel)
@@ -14550,7 +14367,7 @@
     true
     (and
       (ctfe-param-eq-in-env
-        (ctfe-env-shared-view (& env))
+        env
         (ast.ast-param-list-get a index (ast.ast-param-fallback))
         (ast.ast-param-list-get b index (ast.ast-param-fallback)))
       (ctfe-param-list-eq-in-env-at env a b len (+ index 1)))))
@@ -14567,25 +14384,17 @@
         [_ false])]
     [(ast.AstPattern.Tuple a-items-box)
       (let
-        [a-items : ast.AstPatternList
-          (ast.ast-pattern-list-box-shared-view a-items-box)]
+        [a-items : ast.AstPatternList (deref a-items-box)]
         (match b
           [(ast.AstPattern.Tuple b-items-box)
-            (ctfe-pattern-list-eq-in-env
-              env
-              a-items
-              (ast.ast-pattern-list-box-shared-view b-items-box))]
+            (ctfe-pattern-list-eq-in-env env a-items (deref b-items-box))]
           [_ false]))]
     [(ast.AstPattern.Array a-items-box)
       (let
-        [a-items : ast.AstPatternList
-          (ast.ast-pattern-list-box-shared-view a-items-box)]
+        [a-items : ast.AstPatternList (deref a-items-box)]
         (match b
           [(ast.AstPattern.Array b-items-box)
-            (ctfe-pattern-list-eq-in-env
-              env
-              a-items
-              (ast.ast-pattern-list-box-shared-view b-items-box))]
+            (ctfe-pattern-list-eq-in-env env a-items (deref b-items-box))]
           [_ false]))]
     [(ast.AstPattern.Wildcard)
       (match b
@@ -14597,16 +14406,12 @@
         [_ false])]
     [(ast.AstPattern.Variant a-name a-items-box)
       (let
-        [a-items : ast.AstPatternList
-          (ast.ast-pattern-list-box-shared-view a-items-box)]
+        [a-items : ast.AstPatternList (deref a-items-box)]
         (match b
           [(ast.AstPattern.Variant b-name b-items-box)
             (and
               (= a-name b-name)
-              (ctfe-pattern-list-eq-in-env
-                env
-                a-items
-                (ast.ast-pattern-list-box-shared-view b-items-box)))]
+              (ctfe-pattern-list-eq-in-env env a-items (deref b-items-box)))]
           [_ false]))]
     [(ast.AstPattern.Literal a-lit)
       (match b
@@ -14629,7 +14434,7 @@
     true
     (and
       (ctfe-pattern-eq-in-env
-        (ctfe-env-shared-view (& env))
+        env
         (ast.ast-pattern-list-get a index (ast.ast-pattern-fallback))
         (ast.ast-pattern-list-get b index (ast.ast-pattern-fallback)))
       (ctfe-pattern-list-eq-in-env-at env a b (+ index 1)))))
@@ -14671,7 +14476,7 @@
     true
     (and
       (ctfe-let-binding-eq-in-env
-        (ctfe-env-shared-view (& env))
+        env
         (ast.ast-let-binding-list-get a index (ast.ast-let-binding-fallback))
         (ast.ast-let-binding-list-get b index (ast.ast-let-binding-fallback)))
       (ctfe-let-binding-list-eq-in-env-at env a b (+ index 1)))))
@@ -14701,10 +14506,7 @@
               (and
                 (= a-name b-name)
                 (= a-move-aware? b-move-aware?)
-                (ctfe-expr-eq-in-env
-                  (ctfe-env-shared-view (& env))
-                  a-init
-                  b-init)
+                (ctfe-expr-eq-in-env env a-init b-init)
                 (ctfe-expr-eq-in-env env a-cleanup b-cleanup)))]
           [_ false]))]))
 
@@ -14727,7 +14529,7 @@
     true
     (and
       (ctfe-resource-binding-eq-in-env
-        (ctfe-env-shared-view (& env))
+        env
         (ast.ast-resource-binding-list-get
           a
           index
@@ -14751,10 +14553,7 @@
             (let
               [b-body : ast.AstExpr (ctfe-ast-get env b-body-box)]
               (and
-                (ctfe-pattern-eq-in-env
-                  (ctfe-env-shared-view (& env))
-                  a-pattern
-                  b-pattern)
+                (ctfe-pattern-eq-in-env env a-pattern b-pattern)
                 (ctfe-expr-eq-in-env env a-body b-body)))]
           [_ false]))]))
 
@@ -14773,7 +14572,7 @@
     true
     (and
       (ctfe-match-arm-eq-in-env
-        (ctfe-env-shared-view (& env))
+        env
         (ast.ast-match-arm-list-get a index (ast.ast-match-arm-fallback))
         (ast.ast-match-arm-list-get b index (ast.ast-match-arm-fallback)))
       (ctfe-match-arm-list-eq-in-env-at env a b (+ index 1)))))
@@ -14826,7 +14625,7 @@
               [b-r : ast.AstExpr (ctfe-ast-get env b-r-box)]
               (and
                 (ctfe-binop-eq a-op b-op)
-                (ctfe-expr-eq-in-env (ctfe-env-shared-view (& env)) a-l b-l)
+                (ctfe-expr-eq-in-env env a-l b-l)
                 (ctfe-expr-eq-in-env env a-r b-r)))]
           [_ false]))]
     [(ast.AstExpr.Unary a-op a-in-box)
@@ -14850,8 +14649,8 @@
               [b-t : ast.AstExpr (ctfe-ast-get env b-t-box)]
               [b-e : ast.AstExpr (ctfe-ast-get env b-e-box)]
               (and
-                (ctfe-expr-eq-in-env (ctfe-env-shared-view (& env)) a-c b-c)
-                (ctfe-expr-eq-in-env (ctfe-env-shared-view (& env)) a-t b-t)
+                (ctfe-expr-eq-in-env env a-c b-c)
+                (ctfe-expr-eq-in-env env a-t b-t)
                 (ctfe-expr-eq-in-env env a-e b-e)))]
           [_ false]))]
     [(ast.AstExpr.Let a-let-box)
@@ -14867,7 +14666,7 @@
                       [b-body : ast.AstExpr (ctfe-ast-get env b-body-box)]
                       (and
                         (ctfe-let-binding-list-eq-in-env
-                          (ctfe-env-shared-view (& env))
+                          env
                           a-bindings
                           b-bindings)
                         (ctfe-expr-eq-in-env env a-body b-body)))])]
@@ -14884,10 +14683,7 @@
                     (let
                       [b-body : ast.AstExpr (ctfe-ast-get env b-body-box)]
                       (and
-                        (ctfe-param-list-eq-in-env
-                          (ctfe-env-shared-view (& env))
-                          a-params
-                          b-params)
+                        (ctfe-param-list-eq-in-env env a-params b-params)
                         (ctfe-maybe-type-eq-in-env env a-ret b-ret)
                         (ctfe-expr-eq-in-env env a-body b-body)))])]
               [_ false]))])]
@@ -14899,7 +14695,7 @@
             (let
               [b-fun : ast.AstExpr (ctfe-ast-get env b-fun-box)]
               (and
-                (ctfe-expr-eq-in-env (ctfe-env-shared-view (& env)) a-fun b-fun)
+                (ctfe-expr-eq-in-env env a-fun b-fun)
                 (ctfe-expr-list-eq-in-env env a-args b-args)))]
           [_ false]))]
     [(ast.AstExpr.BracketClause a-items)
@@ -14971,10 +14767,7 @@
               [b-target : ast.AstExpr (ctfe-ast-get env b-target-box)]
               [b-index : ast.AstExpr (ctfe-ast-get env b-index-box)]
               (and
-                (ctfe-expr-eq-in-env
-                  (ctfe-env-shared-view (& env))
-                  a-target
-                  b-target)
+                (ctfe-expr-eq-in-env env a-target b-target)
                 (ctfe-expr-eq-in-env env a-index b-index)))]
           [_ false]))]
     [(ast.AstExpr.ArraySet a-target-box a-index-box a-value-box)
@@ -14989,14 +14782,8 @@
               [b-index : ast.AstExpr (ctfe-ast-get env b-index-box)]
               [b-value : ast.AstExpr (ctfe-ast-get env b-value-box)]
               (and
-                (ctfe-expr-eq-in-env
-                  (ctfe-env-shared-view (& env))
-                  a-target
-                  b-target)
-                (ctfe-expr-eq-in-env
-                  (ctfe-env-shared-view (& env))
-                  a-index
-                  b-index)
+                (ctfe-expr-eq-in-env env a-target b-target)
+                (ctfe-expr-eq-in-env env a-index b-index)
                 (ctfe-expr-eq-in-env env a-value b-value)))]
           [_ false]))]
     [(ast.AstExpr.ArrayTake a-target-box a-live-box a-index-box)
@@ -15011,14 +14798,8 @@
               [b-live : ast.AstExpr (ctfe-ast-get env b-live-box)]
               [b-index : ast.AstExpr (ctfe-ast-get env b-index-box)]
               (and
-                (ctfe-expr-eq-in-env
-                  (ctfe-env-shared-view (& env))
-                  a-target
-                  b-target)
-                (ctfe-expr-eq-in-env
-                  (ctfe-env-shared-view (& env))
-                  a-live
-                  b-live)
+                (ctfe-expr-eq-in-env env a-target b-target)
+                (ctfe-expr-eq-in-env env a-live b-live)
                 (ctfe-expr-eq-in-env env a-index b-index)))]
           [_ false]))]
     [(ast.AstExpr.FixedArrayTake a-target-box a-index-box)
@@ -15031,10 +14812,7 @@
               [b-target : ast.AstExpr (ctfe-ast-get env b-target-box)]
               [b-index : ast.AstExpr (ctfe-ast-get env b-index-box)]
               (and
-                (ctfe-expr-eq-in-env
-                  (ctfe-env-shared-view (& env))
-                  a-target
-                  b-target)
+                (ctfe-expr-eq-in-env env a-target b-target)
                 (ctfe-expr-eq-in-env env a-index b-index)))]
           [_ false]))]
     [(ast.AstExpr.Replace a-place-box a-replacement-box)
@@ -15044,12 +14822,9 @@
         (match b
           [(ast.AstExpr.Replace b-place-box b-replacement-box)
             (and
+              (ctfe-expr-eq-in-env env a-place (ctfe-ast-get env b-place-box))
               (ctfe-expr-eq-in-env
-                (ctfe-env-shared-view (& env))
-                a-place
-                (ctfe-ast-get env b-place-box))
-              (ctfe-expr-eq-in-env
-                (ctfe-env-shared-view (& env))
+                env
                 a-replacement
                 (ctfe-ast-get env b-replacement-box)))]
           [_ false]))]
@@ -15063,10 +14838,7 @@
               [b-target : ast.AstExpr (ctfe-ast-get env b-target-box)]
               [b-value : ast.AstExpr (ctfe-ast-get env b-value-box)]
               (and
-                (ctfe-expr-eq-in-env
-                  (ctfe-env-shared-view (& env))
-                  a-target
-                  b-target)
+                (ctfe-expr-eq-in-env env a-target b-target)
                 (ctfe-expr-eq-in-env env a-value b-value)))]
           [_ false]))]
     [(ast.AstExpr.StringRef a-target-box a-index-box)
@@ -15079,10 +14851,7 @@
               [b-target : ast.AstExpr (ctfe-ast-get env b-target-box)]
               [b-index : ast.AstExpr (ctfe-ast-get env b-index-box)]
               (and
-                (ctfe-expr-eq-in-env
-                  (ctfe-env-shared-view (& env))
-                  a-target
-                  b-target)
+                (ctfe-expr-eq-in-env env a-target b-target)
                 (ctfe-expr-eq-in-env env a-index b-index)))]
           [_ false]))]
     [(ast.AstExpr.While a-cond-box a-body-box)
@@ -15095,10 +14864,7 @@
               [b-cond : ast.AstExpr (ctfe-ast-get env b-cond-box)]
               [b-body : ast.AstExpr (ctfe-ast-get env b-body-box)]
               (and
-                (ctfe-expr-eq-in-env
-                  (ctfe-env-shared-view (& env))
-                  a-cond
-                  b-cond)
+                (ctfe-expr-eq-in-env env a-cond b-cond)
                 (ctfe-expr-eq-in-env env a-body b-body)))]
           [_ false]))]
     [(ast.AstExpr.Begin a-exprs)
@@ -15128,10 +14894,7 @@
             (let
               [b-inner : ast.AstExpr (ctfe-ast-get env b-inner-box)]
               (and
-                (ctfe-expr-eq-in-env
-                  (ctfe-env-shared-view (& env))
-                  a-inner
-                  b-inner)
+                (ctfe-expr-eq-in-env env a-inner b-inner)
                 (ctfe-type-eq-in-env
                   env
                   (ctfe-ty-get env a-ty-id)
@@ -15145,10 +14908,7 @@
             (let
               [b-inner : ast.AstExpr (ctfe-ast-get env b-inner-box)]
               (and
-                (ctfe-expr-eq-in-env
-                  (ctfe-env-shared-view (& env))
-                  a-inner
-                  b-inner)
+                (ctfe-expr-eq-in-env env a-inner b-inner)
                 (ctfe-type-eq-in-env
                   env
                   (ctfe-ty-get env a-ty-id)
@@ -15182,10 +14942,7 @@
                     (let
                       [b-scrut : ast.AstExpr (ctfe-ast-get env b-scrut-box)]
                       (and
-                        (ctfe-expr-eq-in-env
-                          (ctfe-env-shared-view (& env))
-                          a-scrut
-                          b-scrut)
+                        (ctfe-expr-eq-in-env env a-scrut b-scrut)
                         (ctfe-match-arm-list-eq-in-env env a-arms b-arms)))])]
               [_ false]))])]
     [(ast.AstExpr.Foreach a-fe-box)
@@ -15211,14 +14968,8 @@
                       (and
                         (= a-name b-name)
                         (ctfe-type-eq-in-env env a-ty b-ty)
-                        (ctfe-expr-eq-in-env
-                          (ctfe-env-shared-view (& env))
-                          a-start
-                          b-start)
-                        (ctfe-expr-eq-in-env
-                          (ctfe-env-shared-view (& env))
-                          a-end
-                          b-end)
+                        (ctfe-expr-eq-in-env env a-start b-start)
+                        (ctfe-expr-eq-in-env env a-end b-end)
                         (ctfe-expr-eq-in-env env a-body b-body)))])]
               [_ false]))])]
     [(ast.AstExpr.SpmdReduce a-reduce-box)
@@ -15256,18 +15007,9 @@
                         (ctfe-reduce-op-eq a-op b-op)
                         (= a-name b-name)
                         (ctfe-type-eq-in-env env a-ty b-ty)
-                        (ctfe-expr-eq-in-env
-                          (ctfe-env-shared-view (& env))
-                          a-start
-                          b-start)
-                        (ctfe-expr-eq-in-env
-                          (ctfe-env-shared-view (& env))
-                          a-end
-                          b-end)
-                        (ctfe-expr-eq-in-env
-                          (ctfe-env-shared-view (& env))
-                          a-init
-                          b-init)
+                        (ctfe-expr-eq-in-env env a-start b-start)
+                        (ctfe-expr-eq-in-env env a-end b-end)
+                        (ctfe-expr-eq-in-env env a-init b-init)
                         (ctfe-expr-eq-in-env env a-value b-value)))])]
               [_ false]))])]
     [(ast.AstExpr.SpmdScan scan-box)
@@ -15313,24 +15055,12 @@
                         (ctfe-reduce-op-eq a-op b-op)
                         (= a-index b-index)
                         (ctfe-type-eq-in-env env a-index-ty b-index-ty)
-                        (ctfe-expr-eq-in-env
-                          (ctfe-env-shared-view (& env))
-                          a-start
-                          b-start)
-                        (ctfe-expr-eq-in-env
-                          (ctfe-env-shared-view (& env))
-                          a-end
-                          b-end)
+                        (ctfe-expr-eq-in-env env a-start b-start)
+                        (ctfe-expr-eq-in-env env a-end b-end)
                         (= a-prefix b-prefix)
                         (ctfe-type-eq-in-env env a-prefix-ty b-prefix-ty)
-                        (ctfe-expr-eq-in-env
-                          (ctfe-env-shared-view (& env))
-                          a-init
-                          b-init)
-                        (ctfe-expr-eq-in-env
-                          (ctfe-env-shared-view (& env))
-                          a-value
-                          b-value)
+                        (ctfe-expr-eq-in-env env a-init b-init)
+                        (ctfe-expr-eq-in-env env a-value b-value)
                         (ctfe-expr-eq-in-env env a-body b-body)))])]
               [_ false]))])]
     [(ast.AstExpr.SpmdCompact compact-box)
@@ -15373,24 +15103,12 @@
                       (and
                         (= a-index b-index)
                         (ctfe-type-eq-in-env env a-index-ty b-index-ty)
-                        (ctfe-expr-eq-in-env
-                          (ctfe-env-shared-view (& env))
-                          a-start
-                          b-start)
-                        (ctfe-expr-eq-in-env
-                          (ctfe-env-shared-view (& env))
-                          a-end
-                          b-end)
+                        (ctfe-expr-eq-in-env env a-start b-start)
+                        (ctfe-expr-eq-in-env env a-end b-end)
                         (= a-slot b-slot)
                         (ctfe-type-eq-in-env env a-slot-ty b-slot-ty)
-                        (ctfe-expr-eq-in-env
-                          (ctfe-env-shared-view (& env))
-                          a-init
-                          b-init)
-                        (ctfe-expr-eq-in-env
-                          (ctfe-env-shared-view (& env))
-                          a-keep
-                          b-keep)
+                        (ctfe-expr-eq-in-env env a-init b-init)
+                        (ctfe-expr-eq-in-env env a-keep b-keep)
                         (ctfe-expr-eq-in-env env a-body b-body)))])]
               [_ false]))])]
     [(ast.AstExpr.SpmdBroadcast a-value-box a-lane-box)
@@ -15403,10 +15121,7 @@
               [b-value : ast.AstExpr (ctfe-ast-get env b-value-box)]
               [b-lane : ast.AstExpr (ctfe-ast-get env b-lane-box)]
               (and
-                (ctfe-expr-eq-in-env
-                  (ctfe-env-shared-view (& env))
-                  a-value
-                  b-value)
+                (ctfe-expr-eq-in-env env a-value b-value)
                 (ctfe-expr-eq-in-env env a-lane b-lane)))]
           [_ false]))]
     [(ast.AstExpr.SpmdShuffle a-value-box a-lane-box)
@@ -15419,10 +15134,7 @@
               [b-value : ast.AstExpr (ctfe-ast-get env b-value-box)]
               [b-lane : ast.AstExpr (ctfe-ast-get env b-lane-box)]
               (and
-                (ctfe-expr-eq-in-env
-                  (ctfe-env-shared-view (& env))
-                  a-value
-                  b-value)
+                (ctfe-expr-eq-in-env env a-value b-value)
                 (ctfe-expr-eq-in-env env a-lane b-lane)))]
           [_ false]))]
     [(ast.AstExpr.SpmdProgramIndex)
@@ -15455,10 +15167,7 @@
               [b-value : ast.AstExpr (ctfe-ast-get env b-value-box)]
               (and
                 (= a-field b-field)
-                (ctfe-expr-eq-in-env
-                  (ctfe-env-shared-view (& env))
-                  a-inner
-                  b-inner)
+                (ctfe-expr-eq-in-env env a-inner b-inner)
                 (ctfe-expr-eq-in-env env a-value b-value)))]
           [_ false]))]
     [(ast.AstExpr.WithRegion a-name a-body)
@@ -15474,10 +15183,7 @@
             (let
               [b-escape : ast.AstExpr (ctfe-ast-get env b-escape-box)]
               (and
-                (ctfe-expr-eq-in-env
-                  (ctfe-env-shared-view (& env))
-                  a-escape
-                  b-escape)
+                (ctfe-expr-eq-in-env env a-escape b-escape)
                 (ctfe-expr-list-eq-in-env env a-body b-body)))]
           [_ false]))]
     [(ast.AstExpr.WithScratch a-body)
@@ -15493,10 +15199,7 @@
             (let
               [b-arena : ast.AstExpr (ctfe-ast-get env b-arena-box)]
               (and
-                (ctfe-expr-eq-in-env
-                  (ctfe-env-shared-view (& env))
-                  a-arena
-                  b-arena)
+                (ctfe-expr-eq-in-env env a-arena b-arena)
                 (ctfe-expr-list-eq-in-env env a-body b-body)))]
           [_ false]))]
     [(ast.AstExpr.WithResource a-wr-box)
@@ -15508,7 +15211,7 @@
                 [(ast.AstWithResource.WithResource b-bindings b-body)
                   (and
                     (ctfe-resource-binding-list-eq-in-env
-                      (ctfe-env-shared-view (& env))
+                      env
                       a-bindings
                       b-bindings)
                     (ctfe-expr-list-eq-in-env env a-body b-body))])]
@@ -15541,7 +15244,7 @@
               [b-ptr : ast.AstExpr (ctfe-ast-get env b-ptr-box)]
               [b-value : ast.AstExpr (ctfe-ast-get env b-value-box)]
               (and
-                (ctfe-expr-eq-in-env (ctfe-env-shared-view (& env)) a-ptr b-ptr)
+                (ctfe-expr-eq-in-env env a-ptr b-ptr)
                 (ctfe-expr-eq-in-env env a-value b-value)))]
           [_ false]))]
     [(ast.AstExpr.PtrOffset a-ptr-box a-offset-box)
@@ -15554,7 +15257,7 @@
               [b-ptr : ast.AstExpr (ctfe-ast-get env b-ptr-box)]
               [b-offset : ast.AstExpr (ctfe-ast-get env b-offset-box)]
               (and
-                (ctfe-expr-eq-in-env (ctfe-env-shared-view (& env)) a-ptr b-ptr)
+                (ctfe-expr-eq-in-env env a-ptr b-ptr)
                 (ctfe-expr-eq-in-env env a-offset b-offset)))]
           [_ false]))]
     [(ast.AstExpr.PtrCast a-ptr-box a-ty-id)
@@ -15565,7 +15268,7 @@
             (let
               [b-ptr : ast.AstExpr (ctfe-ast-get env b-ptr-box)]
               (and
-                (ctfe-expr-eq-in-env (ctfe-env-shared-view (& env)) a-ptr b-ptr)
+                (ctfe-expr-eq-in-env env a-ptr b-ptr)
                 (ctfe-type-eq-in-env
                   env
                   (ctfe-ty-get env a-ty-id)
@@ -15588,10 +15291,7 @@
             (let
               [b-value : ast.AstExpr (ctfe-ast-get env b-value-box)]
               (and
-                (ctfe-expr-eq-in-env
-                  (ctfe-env-shared-view (& env))
-                  a-value
-                  b-value)
+                (ctfe-expr-eq-in-env env a-value b-value)
                 (ctfe-type-eq-in-env
                   env
                   (ctfe-ty-get env a-ty-id)
@@ -15634,10 +15334,7 @@
               [b-inner : ast.AstExpr (ctfe-ast-get env b-inner-box)]
               [b-value : ast.AstExpr (ctfe-ast-get env b-value-box)]
               (and
-                (ctfe-expr-eq-in-env
-                  (ctfe-env-shared-view (& env))
-                  a-inner
-                  b-inner)
+                (ctfe-expr-eq-in-env env a-inner b-inner)
                 (ctfe-expr-eq-in-env env a-value b-value)))]
           [_ false]))]
     [(ast.AstExpr.TypeLiteral a-ty-id)
@@ -15763,7 +15460,7 @@
               [b-ptr : ast.AstExpr (ctfe-ast-get env b-ptr-box)]
               [b-len : ast.AstExpr (ctfe-ast-get env b-len-box)]
               (and
-                (ctfe-expr-eq-in-env (ctfe-env-shared-view (& env)) a-ptr b-ptr)
+                (ctfe-expr-eq-in-env env a-ptr b-ptr)
                 (ctfe-expr-eq-in-env env a-len b-len)))]
           [_ false]))]
     [(ast.AstExpr.ArrayData a-inner-box)
@@ -15801,10 +15498,7 @@
               [b-leaf : ast.AstExpr (ctfe-ast-get env b-leaf-box)]
               [b-subleaf : ast.AstExpr (ctfe-ast-get env b-subleaf-box)]
               (and
-                (ctfe-expr-eq-in-env
-                  (ctfe-env-shared-view (& env))
-                  a-leaf
-                  b-leaf)
+                (ctfe-expr-eq-in-env env a-leaf b-leaf)
                 (ctfe-expr-eq-in-env env a-subleaf b-subleaf)))]
           [_ false]))]
     [(ast.AstExpr.CpuIdEbx a-leaf-box a-subleaf-box)
@@ -15817,10 +15511,7 @@
               [b-leaf : ast.AstExpr (ctfe-ast-get env b-leaf-box)]
               [b-subleaf : ast.AstExpr (ctfe-ast-get env b-subleaf-box)]
               (and
-                (ctfe-expr-eq-in-env
-                  (ctfe-env-shared-view (& env))
-                  a-leaf
-                  b-leaf)
+                (ctfe-expr-eq-in-env env a-leaf b-leaf)
                 (ctfe-expr-eq-in-env env a-subleaf b-subleaf)))]
           [_ false]))]
     [(ast.AstExpr.CpuIdEcx a-leaf-box a-subleaf-box)
@@ -15833,10 +15524,7 @@
               [b-leaf : ast.AstExpr (ctfe-ast-get env b-leaf-box)]
               [b-subleaf : ast.AstExpr (ctfe-ast-get env b-subleaf-box)]
               (and
-                (ctfe-expr-eq-in-env
-                  (ctfe-env-shared-view (& env))
-                  a-leaf
-                  b-leaf)
+                (ctfe-expr-eq-in-env env a-leaf b-leaf)
                 (ctfe-expr-eq-in-env env a-subleaf b-subleaf)))]
           [_ false]))]
     [(ast.AstExpr.CpuIdEdx a-leaf-box a-subleaf-box)
@@ -15849,10 +15537,7 @@
               [b-leaf : ast.AstExpr (ctfe-ast-get env b-leaf-box)]
               [b-subleaf : ast.AstExpr (ctfe-ast-get env b-subleaf-box)]
               (and
-                (ctfe-expr-eq-in-env
-                  (ctfe-env-shared-view (& env))
-                  a-leaf
-                  b-leaf)
+                (ctfe-expr-eq-in-env env a-leaf b-leaf)
                 (ctfe-expr-eq-in-env env a-subleaf b-subleaf)))]
           [_ false]))]
     [(ast.AstExpr.Xgetbv a-index-box)
@@ -15880,7 +15565,7 @@
   [a : ast.AstExpr]
   [b : ast.AstExpr]) : bool
   (ctfe-expr-eq-inner-in-env
-    (ctfe-env-shared-view (& env))
+    env
     (ctfe-expr-unspan env a)
     (ctfe-expr-unspan env b)))
 
@@ -15901,7 +15586,7 @@
     true
     (and
       (ctfe-expr-eq-in-env
-        (ctfe-env-shared-view (& env))
+        env
         (ctfe-ast-get env (ast.ast-expr-list-get a index 0))
         (ctfe-ast-get env (ast.ast-expr-list-get b index 0)))
       (ctfe-expr-list-eq-at-in-env env a b (+ index 1)))))
@@ -15916,7 +15601,7 @@
     [a-second : ast.AstExpr (ctfe-ast-get env (ctfe-expr-clause-second a))]
     [b-second : ast.AstExpr (ctfe-ast-get env (ctfe-expr-clause-second b))]
     (and
-      (ctfe-expr-eq-in-env (ctfe-env-shared-view (& env)) a-first b-first)
+      (ctfe-expr-eq-in-env env a-first b-first)
       (ctfe-expr-eq-in-env env a-second b-second))))
 
 (define (ctfe-expr-clause-list-eq-in-env
@@ -15936,7 +15621,7 @@
     true
     (and
       (ctfe-expr-clause-eq-in-env
-        (ctfe-env-shared-view (& env))
+        env
         (ast.ast-expr-clause-list-get a index (ast.ast-expr-clause-fallback))
         (ast.ast-expr-clause-list-get b index (ast.ast-expr-clause-fallback)))
       (ctfe-expr-clause-list-eq-at-in-env env a b (+ index 1)))))
@@ -15953,7 +15638,7 @@
     (and
       (ci.intern-syntax-id-eq? a.name b.name)
       (= a.has-type b.has-type)
-      (ctfe-expr-eq-in-env (ctfe-env-shared-view (& env)) a-ty b-ty)
+      (ctfe-expr-eq-in-env env a-ty b-ty)
       (ctfe-expr-eq-in-env env a-init b-init))))
 
 (define (ctfe-expr-binding-clause-list-eq-in-env
@@ -15973,7 +15658,7 @@
     true
     (and
       (ctfe-expr-binding-clause-eq-in-env
-        (ctfe-env-shared-view (& env))
+        env
         (ast.ast-expr-binding-clause-list-get
           a
           index
@@ -16156,7 +15841,7 @@
       (ast.ast-expr-list-push
         out
         (ctfe-expr-clause-as-bracket-expr-in-env
-          (ctfe-env-shared-view (& env))
+          env
           (ast.ast-expr-clause-list-get
             lst
             index
@@ -16250,7 +15935,7 @@
       (ast.ast-expr-list-push
         out
         (ctfe-expr-binding-clause-as-bracket-expr-in-env
-          (ctfe-env-shared-view (& env))
+          env
           (ast.ast-expr-binding-clause-list-get
             lst
             index
@@ -16476,10 +16161,7 @@
       (match b
         [(ast.AstType.Func b-args b-ret)
           (and
-            (ctfe-type-list-eq-in-env
-              env
-              (ast.ast-type-list-box-shared-view a-args)
-              (ast.ast-type-list-box-shared-view b-args))
+            (ctfe-type-list-eq-in-env env (deref a-args) (deref b-args))
             (ctfe-type-eq-in-env
               env
               (ctfe-ty-get env a-ret)
@@ -16498,10 +16180,7 @@
     [(ast.AstType.Tuple a-elems)
       (match b
         [(ast.AstType.Tuple b-elems)
-          (ctfe-type-list-eq-in-env
-            env
-            (ast.ast-type-list-box-shared-view a-elems)
-            (ast.ast-type-list-box-shared-view b-elems))]
+          (ctfe-type-list-eq-in-env env (deref a-elems) (deref b-elems))]
         [_ false])]
     [(ast.AstType.Array a-elem a-count)
       (match b
@@ -16592,9 +16271,7 @@
         [(ast.AstType.EnumArgs b-name b-lifetimes)
           (and
             (= a-name b-name)
-            (ctfe-lifetime-list-eq
-              (ast.ast-lifetime-list-box-shared-view a-lifetimes)
-              (ast.ast-lifetime-list-box-shared-view b-lifetimes)))]
+            (ctfe-lifetime-list-eq (deref a-lifetimes) (deref b-lifetimes)))]
         [_ false])]
     [(ast.AstType.Struct a-name)
       (match b
@@ -16605,9 +16282,7 @@
         [(ast.AstType.StructArgs b-name b-lifetimes)
           (and
             (= a-name b-name)
-            (ctfe-lifetime-list-eq
-              (ast.ast-lifetime-list-box-shared-view a-lifetimes)
-              (ast.ast-lifetime-list-box-shared-view b-lifetimes)))]
+            (ctfe-lifetime-list-eq (deref a-lifetimes) (deref b-lifetimes)))]
         [_ false])]
     [(ast.AstType.Var a-name)
       (match b
@@ -16618,9 +16293,7 @@
         [(ast.AstType.VarArgs b-name b-lifetimes)
           (and
             (= a-name b-name)
-            (ctfe-lifetime-list-eq
-              (ast.ast-lifetime-list-box-shared-view a-lifetimes)
-              (ast.ast-lifetime-list-box-shared-view b-lifetimes)))]
+            (ctfe-lifetime-list-eq (deref a-lifetimes) (deref b-lifetimes)))]
         [_ false])]))
 
 (define (ctfe-type-list-eq [a : ast.AstTypeList] [b : ast.AstTypeList]) : bool
@@ -16784,7 +16457,7 @@
       (match (ctfe-expr-to-type
         (ctfe-ast-get env source-call)
         (clone origin)
-        (ctfe-env-shared-view (& env))
+        env
         (ctfe-fuel-limit))
         [(ResultCtfeQuoteType.Ok actual _)
           (ctfe-type-eq-in-env
@@ -17755,14 +17428,8 @@
     [pools : ast.AstNodePoolContext (ctfe-env-pools env)]
     [infos : CtfeReflectInfoList (ctfe-env-reflections env)]
     [resolved : ast.AstType
-      (ctfe-reflect-resolve-type-with-pools
-        (ast.ast-place-shared-view pools)
-        infos
-        (clone ty))]
-    [arg : i64
-      (ast.ast-expr-type-literal-with-pools
-        (ast.ast-place-shared-view pools)
-        ty)]
+      (ctfe-reflect-resolve-type-with-pools pools infos (clone ty))]
+    [arg : i64 (ast.ast-expr-type-literal-with-pools pools ty)]
     [call : i64 (compiler-ctfe-call1-in-env env (ctfe-builtin-ref 289) arg)]
     [origin : ast.AstExpr (ctfe-ast-get env call)]
     (match (compiler-ctfe-eval (clone origin) env (ctfe-fuel-limit))
@@ -17811,13 +17478,9 @@
         ;; Self-test scratch pool: never installed, owned by the caller arena.
         (arena.tl_arena_current))]
     [foreign-ty : ast.AstType
-      (ast.ast-ty-box-with-pools
-        (ast.ast-place-shared-view foreign-pools)
-        (ast.AstType.I64))]
+      (ast.ast-ty-box-with-pools foreign-pools (ast.AstType.I64))]
     [foreign-node : i64
-      (ast.ast-expr-type-literal-with-pools
-        (ast.ast-place-shared-view foreign-pools)
-        foreign-ty)]
+      (ast.ast-expr-type-literal-with-pools foreign-pools foreign-ty)]
     [items : ast.AstExprList
       (ast.ast-expr-cons foreign-node (ast.ast-expr-list-new))]
     [items-name : i64 (ctfe-materialize-generated-name-id "foreign-type-items")]
@@ -17825,9 +17488,7 @@
       (ctfe-env-extend-id
         base-env
         items-name
-        (CompilerCtfeValue.CapturedExprList
-          items
-          (ast.ast-place-shared-view foreign-pools)))]
+        (CompilerCtfeValue.CapturedExprList items foreign-pools))]
     [items-expr : i64 (ctfe-ast-push env (ast.AstExpr.Var items-name))]
     [zero-expr : i64
       (ctfe-ast-push env (ast.AstExpr.Literal (ast.ast-lit-int 0)))]
@@ -17840,10 +17501,7 @@
     [type-expr-call : i64
       (compiler-ctfe-call1-in-env env (ctfe-builtin-ref 289) nth-call)]
     (and
-      (not
-        (ctfe-node-pools-share-storage?
-          base-pools
-          (ast.ast-place-shared-view foreign-pools)))
+      (not (ctfe-node-pools-share-storage? base-pools foreign-pools))
       (match (compiler-ctfe-eval
         (ctfe-ast-get env type-expr-call)
         env
@@ -17852,9 +17510,7 @@
           (match value
             [(CompilerCtfeValue.CapturedExpr node (ast.AstType.Expr) owner)
               (and
-                (ctfe-node-pools-share-storage?
-                  (ast.ast-place-shared-view owner)
-                  (ast.ast-place-shared-view foreign-pools))
+                (ctfe-node-pools-share-storage? owner foreign-pools)
                 (match (ast.ast-node-pool-context-expr-get (& owner) node)
                   [(ast.AstExpr.TypeLiteral ty-id)
                     (match (ast.ast-node-pool-context-type-get (& owner) ty-id)
@@ -17902,17 +17558,17 @@
       (ast.ast-lifetime-cons region (ast.ast-lifetime-list-new))]
     [pair : ast.AstTypeList
       (ast.ast-type-cons-with-pools
-        (ast.ast-place-shared-view pools)
+        pools
         (ast.AstType.I64)
         (ast.ast-type-cons-with-pools
-          (ast.ast-place-shared-view pools)
+          pools
           (ast.AstType.Bool)
           (ast.ast-type-list-new)))]
     [unit-expr : i64
       (ctfe-ast-push env (ast.AstExpr.Literal (ast.AstLiteral.Unit)))]
     [empty-call : i64
       (ast.ast-expr-call-with-pools
-        (ast.ast-place-shared-view pools)
+        pools
         (ctfe-ast-push env (ast.AstExpr.Var (ctfe-builtin-ref 289)))
         (ast.ast-expr-list-new))]
     [two-call : i64
@@ -17943,62 +17599,37 @@
       (compiler-ctfe-type-expr-roundtrip-one? env (ast.AstType.ExprList))
       (compiler-ctfe-type-expr-roundtrip-one?
         env
-        (ast.ast-ty-func-with-pools
-          (ast.ast-place-shared-view pools)
-          (clone pair)
-          (ast.AstType.String)))
+        (ast.ast-ty-func-with-pools pools (clone pair) (ast.AstType.String)))
       (compiler-ctfe-type-expr-roundtrip-one?
         env
         (ast.AstType.Tuple (box pair)))
       (compiler-ctfe-type-expr-roundtrip-one?
         env
-        (ast.ast-ty-array-with-pools
-          (ast.ast-place-shared-view pools)
-          (ast.AstType.Char)
-          17))
+        (ast.ast-ty-array-with-pools pools (ast.AstType.Char) 17))
       (compiler-ctfe-type-expr-roundtrip-one?
         env
-        (ast.ast-ty-dyn-array-with-pools
-          (ast.ast-place-shared-view pools)
-          (ast.AstType.U8)))
+        (ast.ast-ty-dyn-array-with-pools pools (ast.AstType.U8)))
       (compiler-ctfe-type-expr-roundtrip-one?
         env
-        (ast.ast-ty-slice-with-pools
-          (ast.ast-place-shared-view pools)
-          (ast.AstType.U16)))
+        (ast.ast-ty-slice-with-pools pools (ast.AstType.U16)))
       (compiler-ctfe-type-expr-roundtrip-one?
         env
-        (ast.ast-ty-box-with-pools
-          (ast.ast-place-shared-view pools)
-          (ast.AstType.String)))
+        (ast.ast-ty-box-with-pools pools (ast.AstType.String)))
       (compiler-ctfe-type-expr-roundtrip-one?
         env
-        (ast.ast-ty-ptr-with-pools
-          (ast.ast-place-shared-view pools)
-          (ast.AstType.I32)))
+        (ast.ast-ty-ptr-with-pools pools (ast.AstType.I32)))
       (compiler-ctfe-type-expr-roundtrip-one?
         env
-        (ast.ast-ty-mut-ptr-with-pools
-          (ast.ast-place-shared-view pools)
-          (ast.AstType.I16)))
+        (ast.ast-ty-mut-ptr-with-pools pools (ast.AstType.I16)))
       (compiler-ctfe-type-expr-roundtrip-one?
         env
-        (ast.ast-ty-region-with-pools
-          (ast.ast-place-shared-view pools)
-          region
-          (ast.AstType.Bool)))
+        (ast.ast-ty-region-with-pools pools region (ast.AstType.Bool)))
       (compiler-ctfe-type-expr-roundtrip-one?
         env
-        (ast.ast-ty-ref-with-pools
-          (ast.ast-place-shared-view pools)
-          region
-          (ast.AstType.Str)))
+        (ast.ast-ty-ref-with-pools pools region (ast.AstType.Str)))
       (compiler-ctfe-type-expr-roundtrip-one?
         env
-        (ast.ast-ty-mut-ref-with-pools
-          (ast.ast-place-shared-view pools)
-          region
-          (ast.AstType.I64)))
+        (ast.ast-ty-mut-ref-with-pools pools region (ast.AstType.I64)))
       (compiler-ctfe-type-expr-roundtrip-one?
         env
         (ast.AstType.Struct cbi.compiler-builtin-id-fix-Point))
@@ -18247,7 +17878,7 @@
     fields-value
     0
     (ast.AstExpr.Literal (ast.AstLiteral.Unit))
-    (ctfe-env-shared-view (& env))
+    env
     (ctfe-fuel-limit))
     [(ResultCtfe.Ok field-value _)
       (match field-value
@@ -18265,7 +17896,7 @@
     variants-value
     1
     (ast.AstExpr.Literal (ast.AstLiteral.Unit))
-    (ctfe-env-shared-view (& env))
+    env
     (ctfe-fuel-limit))
     [(ResultCtfe.Ok variant-value _)
       (match variant-value
@@ -18334,9 +17965,7 @@
     (let
       [installed : ast.AstNodePoolContext
         (ast.ast-node-pool-context-new-with-capacities 4 8)]
-      [_install : unit
-        (ast.ast-node-pool-compat-context-use!
-          (ast.ast-node-pool-context-shared-view (& installed)))]
+      [_install : unit (ast.ast-node-pool-compat-context-use! installed)]
       [snapshot : ast.AstNodePoolContext
         (ast.ast-node-pool-context-capture-active)]
       [installed-cursor : i64 (ast.ast-node-pool-context-type-len installed)]
@@ -18346,11 +17975,9 @@
         (ctfe-materialize-generated-name-id "ctfe-pool-type-info-box")]
       [sentinel-id : i64
         (ast.ast-node-pool-context-type-push
-          (ast.ast-node-pool-context-shared-view (& snapshot))
+          snapshot
           (ast.AstType.Var sentinel-name))]
-      [env : CtfeEnv
-        (ctfe-env-empty-with-pools
-          (ast.ast-node-pool-context-shared-view (& snapshot)))]
+      [env : CtfeEnv (ctfe-env-empty-with-pools snapshot)]
       [bound : CtfeEnv
         (ctfe-env-extend-id
           env
@@ -18487,7 +18114,7 @@
                     (ast.ast-pat-binding-id cbi.compiler-builtin-id-fix-len)
                     (ast.ast-pattern-list-new)))
                 (clone ty)
-                (ctfe-env-shared-view (& env)))
+                env)
                 [(CtfePatternMatch.Matched matched)
                   (if (and
                     (compiler-ctfe-env-i64-eq?
@@ -18518,7 +18145,7 @@
                   (ast.ast-pat-binding-id elem-id)
                   (ast.ast-pattern-list-new))
                 ty
-                (ctfe-env-shared-view (& env)))
+                env)
                 [(CtfePatternMatch.Matched matched)
                   (if (compiler-ctfe-env-type-info-box-builtin-kind?
                     matched
@@ -18544,7 +18171,7 @@
                   (ast.ast-pat-binding-id cbi.compiler-builtin-id-fix-items)
                   (ast.ast-pattern-list-new))
                 ty
-                (ctfe-env-shared-view (& env)))
+                env)
                 [(CtfePatternMatch.Matched matched)
                   (if (compiler-ctfe-env-type-info-box-builtin-kind?
                     matched
@@ -18612,7 +18239,7 @@
                   (ast.ast-pat-binding-id cbi.compiler-builtin-id-fix-items)
                   (ast.ast-pattern-list-new))
                 ty
-                (ctfe-env-shared-view (& env)))
+                env)
                 [(CtfePatternMatch.Matched matched)
                   (if (compiler-ctfe-env-type-info-list-ref-builtin-kind?
                     matched
@@ -18641,7 +18268,7 @@
                     (ast.ast-pat-binding-id ret-id)
                     (ast.ast-pattern-list-new)))
                 ty
-                (ctfe-env-shared-view (& env)))
+                env)
                 [(CtfePatternMatch.Matched matched)
                   (if (and
                     (compiler-ctfe-env-type-info-list-ref-builtin-kind?
@@ -18675,7 +18302,7 @@
                     (ast.ast-pat-binding-id fields-id)
                     (ast.ast-pattern-list-new)))
                 (clone ty)
-                (ctfe-env-shared-view (& env)))
+                env)
                 [(CtfePatternMatch.Matched matched)
                   (if (and
                     (compiler-ctfe-env-string-eq?
@@ -18710,7 +18337,7 @@
                     (ast.ast-pat-binding-id variants-id)
                     (ast.ast-pattern-list-new)))
                 (clone ty)
-                (ctfe-env-shared-view (& env)))
+                env)
                 [(CtfePatternMatch.Matched matched)
                   (if (and
                     (compiler-ctfe-env-string-eq?
@@ -19177,7 +18804,7 @@
     [clause : ast.AstExprClause (ast.AstExprClause true-lit false-lit)]
     [clause-env : CtfeEnv
       (ctfe-env-extend-id
-        (ctfe-env-shared-view (& env))
+        env
         cbi.compiler-builtin-id-fix-arm
         (CompilerCtfeValue.ExprClause clause))]
     [clause-var : i64
@@ -19355,7 +18982,7 @@
       (ctfe-ast-push env (ast.AstExpr.Var cbi.compiler-builtin-id-fix-target))]
     [set-env : CtfeEnv
       (ctfe-env-extend-id
-        (ctfe-env-shared-view (& env))
+        env
         cbi.compiler-builtin-id-fix-target
         (CompilerCtfeValue.Expr field-place (ast.AstType.Expr)))]
     [qq-set : i64
@@ -19438,17 +19065,14 @@
     [expected : ast.AstType
       (ast.ast-ty-tuple
         (ast.ast-type-cons-with-pools
-          (ast.ast-node-pool-context-shared-view (& pools))
+          pools
           (ast.ast-ty-ref-with-pools
-            (ast.ast-node-pool-context-shared-view (& pools))
+            pools
             owner-region
             (ast.AstType.Var owner-name))
           (ast.ast-type-cons-with-pools
-            (ast.ast-node-pool-context-shared-view (& pools))
-            (ast.ast-ty-ref-with-pools
-              (ast.ast-node-pool-context-shared-view (& pools))
-              text-region
-              (ast.AstType.Str))
+            pools
+            (ast.ast-ty-ref-with-pools pools text-region (ast.AstType.Str))
             (ast.ast-type-list-new))))]
     [env : CtfeEnv
       (ctfe-env-extend-id
@@ -19462,7 +19086,7 @@
     [body : i64 (ctfe-ast-push env (ast.AstExpr.Var param-name))]
     [lambda-node : i64
       (ast.ast-expr-lambda-with-pools
-        (ast.ast-node-pool-context-shared-view (& pools))
+        pools
         (ast.ast-param-cons
           (ast.AstParam.Param param-name (clone type-unquote) false)
           (ast.ast-param-list-new))
@@ -19517,17 +19141,14 @@
     [parameter-type : ast.AstType
       (ast.ast-ty-tuple
         (ast.ast-type-cons-with-pools
-          (ast.ast-node-pool-context-shared-view (& pools))
+          pools
           (ast.ast-ty-ref-with-pools
-            (ast.ast-node-pool-context-shared-view (& pools))
+            pools
             owner-region
             (ast.AstType.Var owner-name))
           (ast.ast-type-cons-with-pools
-            (ast.ast-node-pool-context-shared-view (& pools))
-            (ast.ast-ty-ref-with-pools
-              (ast.ast-node-pool-context-shared-view (& pools))
-              text-region
-              (ast.AstType.Str))
+            pools
+            (ast.ast-ty-ref-with-pools pools text-region (ast.AstType.Str))
             (ast.ast-type-list-new))))]
     [env : CtfeEnv
       (ctfe-env-extend-id
@@ -19633,14 +19254,9 @@
         (ctfe-env-extend-id
           base-env
           expr-name
-          (CompilerCtfeValue.CapturedExpr
-            value-node
-            (ast.AstType.Bool)
-            (ast.ast-place-shared-view pools)))
+          (CompilerCtfeValue.CapturedExpr value-node (ast.AstType.Bool) pools))
         list-name
-        (CompilerCtfeValue.CapturedExprList
-          values
-          (ast.ast-place-shared-view pools)))]
+        (CompilerCtfeValue.CapturedExprList values pools))]
     [expr-var : ast.AstExpr (ast.AstExpr.Var expr-name)]
     [list-var : ast.AstExpr (ast.AstExpr.Var list-name)]
     [foreign-pools : ast.AstNodePoolContext
@@ -19650,13 +19266,8 @@
         ;; Self-test scratch pool: never installed, owned by the caller arena.
         (arena.tl_arena_current))]
     (and
-      (ctfe-node-pools-share-storage?
-        (ast.ast-place-shared-view pools)
-        (ast.ast-place-shared-view pools))
-      (not
-        (ctfe-node-pools-share-storage?
-          (ast.ast-place-shared-view pools)
-          foreign-pools))
+      (ctfe-node-pools-share-storage? pools pools)
+      (not (ctfe-node-pools-share-storage? pools foreign-pools))
       (match (ctfe-eval-unquote-expr
         (clone expr-var)
         expr-var
@@ -19832,31 +19443,15 @@
     [i-id : i64 (ctfe-materialize-generated-name-id "i")]
     [i-var : i64 (ctfe-ast-push env (ast.AstExpr.Var i-id))]
     [loop-cond : i64
-      (ast.ast-expr-binary-with-pools
-        (ast.ast-place-shared-view pools)
-        (ast.AstBinOp.Lt)
-        i-var
-        three)]
+      (ast.ast-expr-binary-with-pools pools (ast.AstBinOp.Lt) i-var three)]
     [increment : i64
-      (ast.ast-expr-binary-with-pools
-        (ast.ast-place-shared-view pools)
-        (ast.AstBinOp.Add)
-        i-var
-        one)]
-    [set-i : i64
-      (ast.ast-expr-set-id-with-pools
-        (ast.ast-place-shared-view pools)
-        i-id
-        increment)]
+      (ast.ast-expr-binary-with-pools pools (ast.AstBinOp.Add) i-var one)]
+    [set-i : i64 (ast.ast-expr-set-id-with-pools pools i-id increment)]
     [loop-body : i64
       (ctfe-ast-push
         env
         (ast.AstExpr.Begin (ast.ast-expr-cons set-i (ast.ast-expr-list-new))))]
-    [loop : i64
-      (ast.ast-expr-while-with-pools
-        (ast.ast-place-shared-view pools)
-        loop-cond
-        loop-body)]
+    [loop : i64 (ast.ast-expr-while-with-pools pools loop-cond loop-body)]
     [loop-result : i64 (ctfe-ast-push env (ast.AstExpr.Var i-id))]
     [loop-body-result : i64
       (ctfe-ast-push
@@ -19873,21 +19468,11 @@
           zero)
         (ast.ast-let-binding-list-new))]
     [loop-let : i64
-      (ast.ast-expr-let-with-pools
-        (ast.ast-place-shared-view pools)
-        loop-bindings
-        loop-body-result)]
+      (ast.ast-expr-let-with-pools pools loop-bindings loop-body-result)]
     [outer-id : i64 (ctfe-materialize-generated-name-id "outer")]
     [immutable-env : CtfeEnv
-      (ctfe-env-extend-id
-        (ctfe-env-shared-view (& env))
-        outer-id
-        (CompilerCtfeValue.I64 0))]
-    [immutable-set : i64
-      (ast.ast-expr-set-id-with-pools
-        (ast.ast-place-shared-view pools)
-        outer-id
-        one)]
+      (ctfe-env-extend-id env outer-id (CompilerCtfeValue.I64 0))]
+    [immutable-set : i64 (ast.ast-expr-set-id-with-pools pools outer-id one)]
     [true-lit : i64
       (ctfe-ast-push env (ast.AstExpr.Literal (ast.AstLiteral.Bool true)))]
     [unit-lit : i64
@@ -19943,21 +19528,15 @@
     [right-id : i64 (ctfe-materialize-generated-name-id "arena-right")]
     [shared : CtfeEnv
       (ctfe-env-extend-typed-id
-        (ctfe-env-shared-view (& base))
+        base
         shared-id
         (CompilerCtfeValue.I64 1)
         (ast.AstType.I64))]
     [left : CtfeEnv
-      (ctfe-env-extend-id
-        (ctfe-env-shared-view (& shared))
-        left-id
-        (CompilerCtfeValue.I64 2))]
+      (ctfe-env-extend-id shared left-id (CompilerCtfeValue.I64 2))]
     [right : CtfeEnv
-      (ctfe-env-extend-id
-        (ctfe-env-shared-view (& shared))
-        right-id
-        (CompilerCtfeValue.I64 3))]
-    [grown : CtfeEnv (ctfe-env-shared-view (& right))]
+      (ctfe-env-extend-id shared right-id (CompilerCtfeValue.I64 3))]
+    [grown : CtfeEnv right]
     [index : i64 0]
     (begin
       ;; Exceed the initial capacity after both branches exist.
@@ -19997,37 +19576,25 @@
         (CompilerCtfeValue.I64 1)
         (ast.AstType.I64))]
     [descendant : CtfeEnv
-      (ctfe-env-extend-id
-        (ctfe-env-shared-view (& local))
-        other-id
-        (CompilerCtfeValue.I64 9))]
+      (ctfe-env-extend-id local other-id (CompilerCtfeValue.I64 9))]
     [updated-through-descendant? : bool
-      (ctfe-env-set-local-id!
-        (ctfe-env-shared-view (& descendant))
-        name-id
-        (CompilerCtfeValue.I64 2))]
+      (ctfe-env-set-local-id! descendant name-id (CompilerCtfeValue.I64 2))]
     [immutable-shadow : CtfeEnv
-      (ctfe-env-extend-id
-        (ctfe-env-shared-view (& descendant))
-        name-id
-        (CompilerCtfeValue.I64 3))]
+      (ctfe-env-extend-id descendant name-id (CompilerCtfeValue.I64 3))]
     [immutable-stopped? : bool
       (not
         (ctfe-env-set-local-id!
-          (ctfe-env-shared-view (& immutable-shadow))
+          immutable-shadow
           name-id
           (CompilerCtfeValue.I64 4)))]
     [local-shadow : CtfeEnv
       (ctfe-env-extend-local-typed-id
-        (ctfe-env-shared-view (& descendant))
+        descendant
         name-id
         (CompilerCtfeValue.I64 5)
         (ast.AstType.I64))]
     [local-shadow-updated? : bool
-      (ctfe-env-set-local-id!
-        (ctfe-env-shared-view (& local-shadow))
-        name-id
-        (CompilerCtfeValue.I64 6))]
+      (ctfe-env-set-local-id! local-shadow name-id (CompilerCtfeValue.I64 6))]
     (and
       updated-through-descendant?
       immutable-stopped?
@@ -20073,55 +19640,43 @@
       (ctfe-env-with-metadata-and-pools-and-source-names
         layouts
         (ctfe-env-reflections reflection-env)
-        (ast.ast-place-shared-view definition-pools)
+        definition-pools
         source-names)]
     [binding-id : i64 (ctfe-materialize-generated-name-id "arena-rebase")]
     [bound : CtfeEnv
       (ctfe-env-extend-id base binding-id (CompilerCtfeValue.I64 7))]
-    [rebased : CtfeEnv
-      (ctfe-env-rebase-pools
-        (ctfe-env-shared-view (& bound))
-        (ast.ast-place-shared-view rebased-pools))]
+    [rebased : CtfeEnv (ctfe-env-rebase-pools bound rebased-pools)]
     [captured-node : i64
       (ast.ast-node-pool-context-expr-push
-        (ast.ast-place-shared-view syntax-pools)
+        syntax-pools
         (ast.AstExpr.Literal (ast.AstLiteral.Bool true)))]
     [captured : CtfeEnv
       (ctfe-env-extend-id
-        (ctfe-env-shared-view (& bound))
+        bound
         (+ binding-id 1)
         (CompilerCtfeValue.CapturedExpr
           captured-node
           (ast.AstType.Bool)
-          (ast.ast-place-shared-view syntax-pools)))]
+          syntax-pools))]
     [captured-child : CtfeEnv
-      (ctfe-env-extend-id
-        (ctfe-env-shared-view (& captured))
-        (+ binding-id 2)
-        (CompilerCtfeValue.I64 8))]
+      (ctfe-env-extend-id captured (+ binding-id 2) (CompilerCtfeValue.I64 8))]
     [captured-rebased : CtfeEnv
-      (ctfe-env-rebase-pools
-        (ctfe-env-shared-view (& captured-child))
-        (ast.ast-place-shared-view rebased-pools))]
+      (ctfe-env-rebase-pools captured-child rebased-pools)]
     [rebased-reflections : CtfeReflectInfoList (ctfe-env-reflections rebased)]
     (and
       (compiler-ctfe-env-i64-value-ok? rebased binding-id 7)
-      (ctfe-node-pools-share-storage?
-        (ctfe-env-pools bound)
-        (ast.ast-place-shared-view definition-pools))
-      (ctfe-node-pools-share-storage?
-        (ctfe-env-pools rebased)
-        (ast.ast-place-shared-view rebased-pools))
+      (ctfe-node-pools-share-storage? (ctfe-env-pools bound) definition-pools)
+      (ctfe-node-pools-share-storage? (ctfe-env-pools rebased) rebased-pools)
       (not
         (ctfe-node-pools-share-storage?
           (ctfe-env-pools bound)
           (ctfe-env-pools rebased)))
       (ctfe-node-pools-share-storage?
         (ctfe-env-syntax-pool-context captured)
-        (ast.ast-place-shared-view syntax-pools))
+        syntax-pools)
       (ctfe-node-pools-share-storage?
         (ctfe-env-syntax-pool-context captured-child)
-        (ast.ast-place-shared-view syntax-pools))
+        syntax-pools)
       (ctfe-node-pools-share-storage?
         (ctfe-env-syntax-pool-context captured-rebased)
         syntax-pools)
@@ -20231,11 +19786,15 @@
           cbi.compiler-builtin-id-fix-len
           expr)
         (compiler-ctfe-structural-field-ok?
-          (CompilerCtfeValue.CapturedExprList (clone exprs) (clone pools))
+          (CompilerCtfeValue.CapturedExprList
+            (clone exprs)
+            (ast.ast-node-pool-context-clone pools))
           cbi.compiler-builtin-id-fix-items
           expr)
         (compiler-ctfe-structural-field-ok?
-          (CompilerCtfeValue.CapturedExprList (clone exprs) (clone pools))
+          (CompilerCtfeValue.CapturedExprList
+            (clone exprs)
+            (ast.ast-node-pool-context-clone pools))
           cbi.compiler-builtin-id-fix-len
           expr)
         (compiler-ctfe-structural-field-ok?
@@ -20247,11 +19806,15 @@
           cbi.compiler-builtin-id-fix-second
           expr)
         (compiler-ctfe-structural-field-ok?
-          (CompilerCtfeValue.CapturedExprClause (clone clause) (clone pools))
+          (CompilerCtfeValue.CapturedExprClause
+            (clone clause)
+            (ast.ast-node-pool-context-clone pools))
           cbi.compiler-builtin-id-fix-first
           expr)
         (compiler-ctfe-structural-field-ok?
-          (CompilerCtfeValue.CapturedExprClause (clone clause) (clone pools))
+          (CompilerCtfeValue.CapturedExprClause
+            (clone clause)
+            (ast.ast-node-pool-context-clone pools))
           cbi.compiler-builtin-id-fix-second
           expr)
         (compiler-ctfe-structural-field-ok?
@@ -20265,13 +19828,13 @@
         (compiler-ctfe-structural-field-ok?
           (CompilerCtfeValue.CapturedExprClauseList
             (clone clauses)
-            (clone pools))
+            (ast.ast-node-pool-context-clone pools))
           cbi.compiler-builtin-id-fix-items
           expr)
         (compiler-ctfe-structural-field-ok?
           (CompilerCtfeValue.CapturedExprClauseList
             (clone clauses)
-            (clone pools))
+            (ast.ast-node-pool-context-clone pools))
           cbi.compiler-builtin-id-fix-len
           expr)
         (compiler-ctfe-structural-field-ok?

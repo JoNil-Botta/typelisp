@@ -32,10 +32,7 @@ if [ ! -x "$COMPILER" ]; then
     exit 1
 fi
 
-fail() {
-    echo "$*" >&2
-    exit 1
-}
+. "$ROOT/scripts/lib-gate.sh"
 
 to_unix_path() {
     if command -v cygpath >/dev/null 2>&1; then

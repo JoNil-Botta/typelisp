@@ -28,7 +28,7 @@
 ;;   non-negative and the guard against it merges. No dominating comparison in
 ;;   this function proves anything about `rm-len`.
 ;;
-;; scripts/verify-asm-shape-gates.sh pins those shapes; the exit code below pins
+;; tests/codegen/asm-shape.cases pins those shapes; the exit code below pins
 ;; the semantics, including that both out-of-range directions still answer -1 --
 ;; a merge that lost the lower bound would accept a negative index.
 (define rm-text : String

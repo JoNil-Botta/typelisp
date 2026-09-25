@@ -84,10 +84,8 @@ NEW_IMAGE="$TRANSITION/rebuild_fixture.new.tlci"
 SOURCE_CHANGED_CONSUMER_ASM="$TRANSITION/rebuild_consumer.source-changed.s"
 TRANSITION_EVIDENCE="$TRANSITION/evidence.txt"
 
-fail() {
-    echo "[package-native-tlci] $*" >&2
-    exit 1
-}
+GATE_FAIL_PREFIX='[package-native-tlci] '
+. "$ROOT/scripts/lib-gate.sh"
 
 # Windows package emission may profile package lowering and side-assembly
 # regeneration as separate jobs. Validate the first job that exercised a route;

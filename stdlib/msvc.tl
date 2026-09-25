@@ -241,13 +241,6 @@
                     right-segment.next)))))))
       greater)))
 
-;: Return true when `left` is a newer dotted numeric version than `right`.
-(define (version-greater? [left : (& left str)] [right : (& right str)]) : bool
-  (let
-    [left-text : String (string.copy left)]
-    [right-text : String (string.copy right)]
-    (version-greater-owned? left-text right-text)))
-
 ;: Return true when `path` exists, mapping probe errors to false.
 (define (path-exists? [path : (& path str)]) : bool
   (match (io.try-file-exists? path)
@@ -359,35 +352,13 @@
     head
     (str_cat.str-cat head (env.path-list-separator) tail)))
 
-;: Join `head` before an optional PATH-style suffix.
-(define (path-list-prepend [head : (& head str)] [tail : (& tail str)]) : String
-  (let
-    [head-text : String (string.copy head)]
-    [tail-text : String (string.copy tail)]
-    (path-list-prepend-owned head-text tail-text)))
-
 ;: Join two owned required PATH-style entries.
 (define (path-list-join2-owned [a : String] [b : String]) : String
   (str_cat.str-cat a (env.path-list-separator) b))
 
-;: Join two required PATH-style entries.
-(define (path-list-join2 [a : (& a str)] [b : (& b str)]) : String
-  (let
-    [a-text : String (string.copy a)]
-    [b-text : String (string.copy b)]
-    (path-list-join2-owned a-text b-text)))
-
 ;: Join three owned required PATH-style entries.
 (define (path-list-join3-owned [a : String] [b : String] [c : String]) : String
   (path-list-join2-owned (path-list-join2-owned a b) c))
-
-;: Join three required PATH-style entries.
-(define (path-list-join3 [a : (& a str)] [b : (& b str)] [c : (& c str)]) : String
-  (let
-    [a-text : String (string.copy a)]
-    [b-text : String (string.copy b)]
-    [c-text : String (string.copy c)]
-    (path-list-join3-owned a-text b-text c-text)))
 
 ;: Join four owned required PATH-style entries.
 (define (path-list-join4-owned
@@ -397,19 +368,6 @@
   [d : String]) : String
   (path-list-join2-owned (path-list-join3-owned a b c) d))
 
-;: Join four required PATH-style entries.
-(define (path-list-join4
-  [a : (& a str)]
-  [b : (& b str)]
-  [c : (& c str)]
-  [d : (& d str)]) : String
-  (let
-    [a-text : String (string.copy a)]
-    [b-text : String (string.copy b)]
-    [c-text : String (string.copy c)]
-    [d-text : String (string.copy d)]
-    (path-list-join4-owned a-text b-text c-text d-text)))
-
 ;: Join an optional inherited path list after required entries.
 (define (path-list-join3-with-tail-owned
   [a : String]
@@ -417,37 +375,6 @@
   [c : String]
   [tail : String]) : String
   (path-list-prepend-owned (path-list-join3-owned a b c) tail))
-
-;: Join an optional inherited path list after required entries.
-(define (path-list-join3-with-tail
-  [a : (& a str)]
-  [b : (& b str)]
-  [c : (& c str)]
-  [tail : (& tail str)]) : String
-  (let
-    [a-text : String (string.copy a)]
-    [b-text : String (string.copy b)]
-    [c-text : String (string.copy c)]
-    [tail-text : String (string.copy tail)]
-    (path-list-join3-with-tail-owned a-text b-text c-text tail-text)))
-
-;: Join an optional inherited path list after two required entries.
-(define (path-list-join2-with-tail-owned
-  [a : String]
-  [b : String]
-  [tail : String]) : String
-  (path-list-prepend-owned (path-list-join2-owned a b) tail))
-
-;: Join an optional inherited path list after two required entries.
-(define (path-list-join2-with-tail
-  [a : (& a str)]
-  [b : (& b str)]
-  [tail : (& tail str)]) : String
-  (let
-    [a-text : String (string.copy a)]
-    [b-text : String (string.copy b)]
-    [tail-text : String (string.copy tail)]
-    (path-list-join2-with-tail-owned a-text b-text tail-text)))
 
 ;: Join an optional inherited path list after four required entries.
 (define (path-list-join4-with-tail-owned
@@ -457,21 +384,6 @@
   [d : String]
   [tail : String]) : String
   (path-list-prepend-owned (path-list-join4-owned a b c d) tail))
-
-;: Join an optional inherited path list after four required entries.
-(define (path-list-join4-with-tail
-  [a : (& a str)]
-  [b : (& b str)]
-  [c : (& c str)]
-  [d : (& d str)]
-  [tail : (& tail str)]) : String
-  (let
-    [a-text : String (string.copy a)]
-    [b-text : String (string.copy b)]
-    [c-text : String (string.copy c)]
-    [d-text : String (string.copy d)]
-    [tail-text : String (string.copy tail)]
-    (path-list-join4-with-tail-owned a-text b-text c-text d-text tail-text)))
 
 ;: Build a configured tool result once the executable path is known.
 (define (configured-result [executable : String]) : ResultMsvcTool
@@ -957,23 +869,6 @@
           unit))
       toolset-root)))
 
-;: Inline test assertion for fake toolset scanning.
-(define (test-assert-toolset-scan [parent : String]) : unit
-  (let
-    [old-root : String
-      (test-make-toolset-version (msvc-shared-view parent) "14.10.0" true)]
-    [new-root : String
-      (test-make-toolset-version (msvc-shared-view parent) "14.20.0" true)]
-    [_ignored-root : String
-      (test-make-toolset-version (msvc-shared-view parent) "14.99.0" false)]
-    (match (find-toolset-in-parent (msvc-shared-view parent) "link.exe")
-      [(MsvcSomeToolset toolset)
-        (begin
-          (test-assert-string-eq toolset.version "14.20.0")
-          (test-assert-string-eq toolset.root (msvc-shared-view new-root))
-          (test-assert (not (string.eq old-root new-root))))]
-      [(MsvcNoToolset) (test-fail)])))
-
 ;: Inline test helper to create fake SDK directory roots.
 (define (test-mkdir-sdk-version-roots [sdk-root : String] [version : String]) : unit
   (let
@@ -1040,16 +935,6 @@
   (let
     [items : svec.Vec (toolset-parent-candidates)]
     (test-assert-i64-eq (svec.len (& items)) 8)))
-
-;: Inline test: scan a minimal fake toolset parent directory.
-(define (test-toolset-scan-main) : unit
-  (let
-    [prefix : String "typelisp msvc vector scan"]
-    [root : String (test-expect-ok-string (fs.try-create-temp-dir (& prefix)))]
-    [toolset-parent : String (path-join root "ToolsMSVC")]
-    (begin
-      (test-mkdir (msvc-shared-view toolset-parent))
-      (test-assert-toolset-scan toolset-parent))))
 
 ;: Inline test fixture: create fake toolset versions without scanning them.
 (define (test-toolset-fixture-main) : unit
@@ -1185,10 +1070,3 @@
     (begin
       (test-mkdir (msvc-shared-view sdk-root))
       (test-assert-sdk-scan sdk-root))))
-
-;: Inline test entry point for the MSVC discovery API.
-(define (test-api-main) : unit
-  (begin
-    (test-candidates-main)
-    (test-toolset-scan-main)
-    (test-sdk-scan-main)))

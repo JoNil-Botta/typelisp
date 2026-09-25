@@ -42,19 +42,9 @@ case "$(uname -s)" in
         ;;
 esac
 
-if [ -n "${TYPELISP_BIN:-}" ]; then
-    COMPILER=$TYPELISP_BIN
-else
-    # Local-development fallback: fetch the published
-    # self-hosted stage0 (CI always passes a compiler via TYPELISP_BIN).
-    . "$ROOT/scripts/lib-stage0.sh"
-    COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
-fi
-
-if [ ! -x "$COMPILER" ]; then
-    echo "typelisp compiler is not executable: $COMPILER" >&2
-    exit 1
-fi
+. "$ROOT/scripts/lib-gate.sh"
+gate_compiler
+gate_require_compiler
 
 # Windows uses the host-default native toolchain (clang/lld-link); Linux uses
 # the default GNU pipeline.
@@ -133,7 +123,7 @@ mkdir -p "$WORKDIR"
 
 # SPMD corpus: each program's exit code is computed by a SIMD-lowered `foreach`
 # or `spmd-reduce`, so a wrong SIMD result (especially in the tail) changes it.
-# Keep this list in sync with tests/spmd/README.md.
+# Each program documents its shape and result in its header comment.
 spmd_corpus() {
     cat <<'EOF'
 tests/spmd/tail_i64_add.tl

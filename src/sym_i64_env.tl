@@ -196,11 +196,11 @@
 ;; shared view or clone of the handle, this owns independent backing storage.
 (define (sym-i64-copy [source : SymI64Env]) : SymI64Env
   (let
-    [cursor : SymI64Env (sym-i64-shared-view (& source))]
+    [cursor : SymI64Env source]
     [count : i64 0]
     (begin
       (while (>= cursor.head 0)
-        (match (sym-i64-view (sym-i64-shared-view (& cursor)))
+        (match (sym-i64-view cursor)
           [(SymI64ViewNil) unit]
           [(SymI64ViewBind _ _ rest)
             (begin
@@ -214,7 +214,7 @@
         (begin
           (set! cursor source)
           (while (< index count)
-            (match (sym-i64-view (sym-i64-shared-view (& cursor)))
+            (match (sym-i64-view cursor)
               [(SymI64ViewNil) unit]
               [(SymI64ViewBind key value rest)
                 (begin

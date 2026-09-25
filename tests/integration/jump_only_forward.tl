@@ -10,7 +10,7 @@
 ;; emits nothing but `jmp M` names M instead. The blocks themselves are still
 ;; emitted, so every label, span and switch-table entry stays valid.
 ;;
-;; The gate (scripts/verify-asm-shape-gates.sh check_jump_only_forward) asserts
+;; The gate (tests/codegen/asm-shape.cases case jump-only-forward) asserts
 ;; the property directly over every compiled body here: no branch may target a
 ;; label whose block is a lone `jmp`. It FAILS on the forward probe before the
 ;; forwarding table exists (3 such branches on linux-x86_64).

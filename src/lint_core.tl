@@ -21,10 +21,6 @@
 (import token)
 (import lex as lexer)
 
-(defmacro (global-shared-view [place : Expr]) : Expr
-  `(unsafe
-    (ptr-read (ptr-addr-of ,place))))
-
 ;: A rule either supplies an ordinary shared diagnostic fix or records why its
 ;: suggestion is not safe to apply automatically. A finding without a proved
 ;: edit is never silently promoted to machine-applicable.
@@ -748,7 +744,7 @@
   (lint-findings-with-capacity 4))
 
 (define (lint-findings-copy-range
-  [dst : (__tl_dyn-array LintFinding)]
+  [dst : (&mut dst (__tl_dyn-array LintFinding))]
   [src : (__tl_dyn-array LintFinding)]
   [index : i64]
   [count : i64]) : unit
@@ -769,11 +765,7 @@
           (lint-findings-capacity (owned_view.compiler-owned-shared-view items))
           2))]
     (begin
-      (lint-findings-copy-range
-        (owned_view.compiler-owned-shared-view bigger)
-        (lint-findings-slots items)
-        0
-        n)
+      (lint-findings-copy-range (&mut bigger) (lint-findings-slots items) 0 n)
       (LintFindings bigger n))))
 
 ;: Append `finding` to the discoveries, growing the backing array as needed.
@@ -811,7 +803,7 @@
 ;: `if`, otherwise 1 + the ladder length of its else-branch. Spans are
 ;: transparent.
 (define (lint-ladder-length [expr : ast.AstExpr]) : i64
-  (match (owned_view.compiler-owned-shared-view expr)
+  (match expr
     [(ast.AstExpr.Spanned inner-box _)
       (let
         [inner : ast.AstExpr (ast.ast-node-get inner-box)]
@@ -1478,7 +1470,7 @@
                 (str_cat.str-cat out "-"))]
             [lower : String (lint-name-case-lower-char-string c)]
             (lint-name-case-lower-suggestion-from
-              (owned_view.compiler-owned-shared-view name)
+              name
               (+ index 1)
               end
               (str_cat.str-cat prefix lower)
@@ -1564,7 +1556,7 @@
                 (lint-name-case-upper-char-string c)
                 (string.substring name index 1))]
             (lint-name-case-upper-camel-suggestion-from
-              (owned_view.compiler-owned-shared-view name)
+              name
               (+ index 1)
               (str_cat.str-cat out piece)
               false))]
@@ -1718,14 +1710,13 @@
 
 (define (lint-add-redundant-divergence-padding
   [head-id : i64]
-  [rest : ast.AstExprList]
+  [rest : (& rest ast.AstExprList)]
   [acc : LintFindings]) : LintFindings
   (let
     [head : ast.AstExpr (ast.ast-node-get head-id)]
     (if (= rest.len 0)
       acc
-      (if (lint-diverging-call-expr?
-        (owned_view.compiler-owned-shared-view head))
+      (if (lint-diverging-call-expr? head)
         (lint-findings-add
           (lint-redundant-divergence-padding-finding
             (lint-no-effect-span-id head-id))
@@ -2026,7 +2017,9 @@
         (string.eq (lint-and-or-func-op func) op))]
     [_ false]))
 
-(define (lint-and-or-args-have-kind? [op : String] [args : ast.AstExprList]) : bool
+(define (lint-and-or-args-have-kind?
+  [op : String]
+  [args : (& args ast.AstExprList)]) : bool
   (lint-and-or-args-have-kind-at? op (& args) 0))
 
 (define (lint-and-or-args-have-kind-at?
@@ -2045,7 +2038,7 @@
         (lint-and-or-args-have-kind-at? op args (+ index 1))))))
 
 (define (lint-str-cat-call? [expr : ast.AstExpr]) : bool
-  (match (owned_view.compiler-owned-shared-view expr)
+  (match expr
     [(ast.AstExpr.Spanned inner-box _)
       (let
         [inner : ast.AstExpr (ast.ast-node-get inner-box)]
@@ -2056,7 +2049,7 @@
         (lint-str-cat-func? func))]
     [_ false]))
 
-(define (lint-str-cat-args-have-nested? [args : ast.AstExprList]) : bool
+(define (lint-str-cat-args-have-nested? [args : (& args ast.AstExprList)]) : bool
   (lint-str-cat-args-have-nested-at? (& args) 0))
 
 (define (lint-str-cat-args-have-nested-at?
@@ -2089,7 +2082,7 @@
 
 (define (lint-cascading-and-or-flat-args-render
   [op : String]
-  [args : ast.AstExprList]) : String
+  [args : (& args ast.AstExprList)]) : String
   (lint-cascading-and-or-flat-args-render-at op (& args) 0))
 
 (define (lint-cascading-and-or-flat-args-render-at
@@ -2125,7 +2118,7 @@
 
 (define (lint-cascading-and-or-flat-arg-count-list
   [op : String]
-  [args : ast.AstExprList]) : i64
+  [args : (& args ast.AstExprList)]) : i64
   (lint-cascading-and-or-flat-arg-count-list-at op (& args) 0))
 
 (define (lint-cascading-and-or-flat-arg-count-list-at
@@ -2146,7 +2139,7 @@
 (define (lint-cascading-and-or-flat-call
   [callee : String]
   [op : String]
-  [args : ast.AstExprList]) : String
+  [args : (& args ast.AstExprList)]) : String
   (lint-parenthesized-call-render
     callee
     (lint-cascading-and-or-flat-args-render op args)))
@@ -2154,7 +2147,7 @@
 (define (lint-cascading-and-or-finding
   [op : String]
   [callee : String]
-  [args : ast.AstExprList]
+  [args : (& args ast.AstExprList)]
   [span : ast.AstSourceSpan]) : LintFinding
   (LintFinding
     (str_cat.str-cat
@@ -2164,7 +2157,7 @@
       (lint-cascading-and-or-flat-call
         callee
         (owned_view.compiler-owned-shared-view op)
-        (owned_view.compiler-owned-shared-view args)))
+        args))
     (lint-rule-cascading-and-or-id)
     (lint-cascading-and-or-flat-arg-count-list op args)
     span
@@ -2325,10 +2318,7 @@
   [name : i64]
   [alias : String]
   [module-name : String]) : bool
-  (lint-name-uses-import?
-    (ci.intern-str name)
-    (owned_view.compiler-owned-shared-view alias)
-    (owned_view.compiler-owned-shared-view module-name)))
+  (lint-name-uses-import? (ci.intern-str name) alias module-name))
 
 (define (lint-maybe-type-uses-import?
   [maybe-ty : ast.AstMaybeType]
@@ -2336,11 +2326,7 @@
   [module-name : String]) : bool
   (match maybe-ty
     [(ast.AstMaybeType.No) false]
-    [(ast.AstMaybeType.Some ty)
-      (lint-type-uses-import?
-        ty
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]))
+    [(ast.AstMaybeType.Some ty) (lint-type-uses-import? ty alias module-name)]))
 
 (define (lint-type-list-uses-import?
   [types : ast.AstTypeList]
@@ -2367,10 +2353,7 @@
   [ty : i64]
   [alias : String]
   [module-name : String]) : bool
-  (lint-type-uses-import?
-    (ast.ty-node-get ty)
-    (owned_view.compiler-owned-shared-view alias)
-    (owned_view.compiler-owned-shared-view module-name)))
+  (lint-type-uses-import? (ast.ty-node-get ty) alias module-name))
 
 (define (lint-type-uses-import?
   [ty : ast.AstType]
@@ -2398,96 +2381,42 @@
     [(ast.AstType.ExprList) false]
     [(ast.AstType.Func args ret)
       (if (lint-type-list-uses-import?
-        (owned_view.compiler-owned-box-shared-view args)
+        (deref args)
         (owned_view.compiler-owned-shared-view alias)
         (owned_view.compiler-owned-shared-view module-name))
         true
-        (lint-type-id-uses-import?
-          ret
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+        (lint-type-id-uses-import? ret alias module-name))]
     [(ast.AstType.CFunc signature _)
       (lint-type-id-uses-import? signature alias module-name)]
     [(ast.AstType.Tuple items)
-      (lint-type-list-uses-import?
-        (owned_view.compiler-owned-box-shared-view items)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+      (lint-type-list-uses-import? (deref items) alias module-name)]
     [(ast.AstType.Array elem _)
-      (lint-type-id-uses-import?
-        elem
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+      (lint-type-id-uses-import? elem alias module-name)]
     [(ast.AstType.DynArray elem)
-      (lint-type-id-uses-import?
-        elem
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+      (lint-type-id-uses-import? elem alias module-name)]
     [(ast.AstType.Slice elem)
-      (lint-type-id-uses-import?
-        elem
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
-    [(ast.AstType.Box elem)
-      (lint-type-id-uses-import?
-        elem
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+      (lint-type-id-uses-import? elem alias module-name)]
+    [(ast.AstType.Box elem) (lint-type-id-uses-import? elem alias module-name)]
     [(ast.AstType.Region _ inner)
-      (lint-type-id-uses-import?
-        inner
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+      (lint-type-id-uses-import? inner alias module-name)]
     [(ast.AstType.Ref _ inner)
-      (lint-type-id-uses-import?
-        inner
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+      (lint-type-id-uses-import? inner alias module-name)]
     [(ast.AstType.MutRef _ inner)
-      (lint-type-id-uses-import?
-        inner
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
-    [(ast.AstType.Enum name)
-      (lint-name-id-uses-import?
-        name
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+      (lint-type-id-uses-import? inner alias module-name)]
+    [(ast.AstType.Enum name) (lint-name-id-uses-import? name alias module-name)]
     [(ast.AstType.EnumArgs name _)
-      (lint-name-id-uses-import?
-        name
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+      (lint-name-id-uses-import? name alias module-name)]
     [(ast.AstType.Struct name)
-      (lint-name-id-uses-import?
-        name
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+      (lint-name-id-uses-import? name alias module-name)]
     [(ast.AstType.StructArgs name _)
-      (lint-name-id-uses-import?
-        name
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
-    [(ast.AstType.Var name)
-      (lint-name-id-uses-import?
-        name
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+      (lint-name-id-uses-import? name alias module-name)]
+    [(ast.AstType.Var name) (lint-name-id-uses-import? name alias module-name)]
     [(ast.AstType.VarArgs name _)
-      (lint-name-id-uses-import?
-        name
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+      (lint-name-id-uses-import? name alias module-name)]
     [(ast.AstType.Ptr inner)
-      (lint-type-id-uses-import?
-        inner
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+      (lint-type-id-uses-import? inner alias module-name)]
     [(ast.AstType.MutPtr inner)
-      (lint-type-id-uses-import?
-        inner
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]))
+      (lint-type-id-uses-import? inner alias module-name)]))
 
 (define (lint-param-list-uses-import?
   [params : ast.AstParamList]
@@ -2566,20 +2495,11 @@
   [module-name : String]) : bool
   (match pattern
     [(ast.AstPattern.Var _ maybe-ty)
-      (lint-maybe-type-uses-import?
-        maybe-ty
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+      (lint-maybe-type-uses-import? maybe-ty alias module-name)]
     [(ast.AstPattern.Tuple items)
-      (lint-pattern-list-uses-import?
-        (owned_view.compiler-owned-box-shared-view items)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+      (lint-pattern-list-uses-import? (deref items) alias module-name)]
     [(ast.AstPattern.Array items)
-      (lint-pattern-list-uses-import?
-        (owned_view.compiler-owned-box-shared-view items)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+      (lint-pattern-list-uses-import? (deref items) alias module-name)]
     [(ast.AstPattern.Wildcard) false]
     [(ast.AstPattern.Binding _) false]
     [(ast.AstPattern.Variant name items)
@@ -2588,10 +2508,7 @@
         (owned_view.compiler-owned-shared-view alias)
         (owned_view.compiler-owned-shared-view module-name))
         true
-        (lint-pattern-list-uses-import?
-          (owned_view.compiler-owned-box-shared-view items)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+        (lint-pattern-list-uses-import? (deref items) alias module-name))]
     [(ast.AstPattern.Literal _) false]))
 
 (define (lint-unused-unsafe-candidate-sentinel?
@@ -2608,7 +2525,8 @@
     (string.eq alias "__tl_lint_requires_enclosing_unsafe")
     (string.eq module-name "")))
 
-(define (lint-expr-list-requires-enclosing-unsafe? [exprs : ast.AstExprList]) : bool
+(define (lint-expr-list-requires-enclosing-unsafe?
+  [exprs : (& exprs ast.AstExprList)]) : bool
   (__tl-project-field
     (lint-unsafe-scan-expr-list
       exprs
@@ -2739,46 +2657,27 @@
   [module-name : String]) : bool
   (match expr
     [(ast.AstExpr.Spanned inner-box _)
-      (lint-expr-uses-import?
-        (ast.ast-node-get inner-box)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+      (lint-expr-uses-import? (ast.ast-node-get inner-box) alias module-name)]
     [(ast.AstExpr.MacroExpansion inner-box _ _)
-      (lint-expr-uses-import?
-        (ast.ast-node-get inner-box)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+      (lint-expr-uses-import? (ast.ast-node-get inner-box) alias module-name)]
     [(ast.AstExpr.Literal _) false]
-    [(ast.AstExpr.Var name)
-      (lint-name-id-uses-import?
-        name
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+    [(ast.AstExpr.Var name) (lint-name-id-uses-import? name alias module-name)]
     [(ast.AstExpr.Binary _ left right)
       (if (lint-expr-uses-import?
         (ast.ast-node-get left)
         (owned_view.compiler-owned-shared-view alias)
         (owned_view.compiler-owned-shared-view module-name))
         true
-        (lint-expr-uses-import?
-          (ast.ast-node-get right)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+        (lint-expr-uses-import? (ast.ast-node-get right) alias module-name))]
     [(ast.AstExpr.Unary _ inner)
-      (lint-expr-uses-import?
-        (ast.ast-node-get inner)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+      (lint-expr-uses-import? (ast.ast-node-get inner) alias module-name)]
     [(ast.AstExpr.Call func args)
       (if (lint-expr-uses-import?
         (ast.ast-node-get func)
         (owned_view.compiler-owned-shared-view alias)
         (owned_view.compiler-owned-shared-view module-name))
         true
-        (lint-expr-list-uses-import?
-          args
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+        (lint-expr-list-uses-import? args alias module-name))]
     [(ast.AstExpr.If cond then-branch else-branch)
       (if (lint-expr-uses-import?
         (ast.ast-node-get cond)
@@ -2792,8 +2691,8 @@
           true
           (lint-expr-uses-import?
             (ast.ast-node-get else-branch)
-            (owned_view.compiler-owned-shared-view alias)
-            (owned_view.compiler-owned-shared-view module-name))))]
+            alias
+            module-name)))]
     [(ast.AstExpr.Let let-box)
       (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body)
@@ -2802,10 +2701,7 @@
             (owned_view.compiler-owned-shared-view alias)
             (owned_view.compiler-owned-shared-view module-name))
             true
-            (lint-expr-uses-import?
-              (ast.ast-node-get body)
-              (owned_view.compiler-owned-shared-view alias)
-              (owned_view.compiler-owned-shared-view module-name)))])]
+            (lint-expr-uses-import? (ast.ast-node-get body) alias module-name))])]
     [(ast.AstExpr.Lambda lambda-box)
       (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda params ret body)
@@ -2819,60 +2715,36 @@
               (owned_view.compiler-owned-shared-view alias)
               (owned_view.compiler-owned-shared-view module-name))
               true
-              (lint-expr-uses-import?
-                (ast.ast-node-get body)
-                (owned_view.compiler-owned-shared-view alias)
-                (owned_view.compiler-owned-shared-view module-name))))])]
+              (lint-expr-uses-import? (ast.ast-node-get body) alias module-name)))])]
     [(ast.AstExpr.Tuple exprs)
-      (lint-expr-list-uses-import?
-        exprs
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+      (lint-expr-list-uses-import? exprs alias module-name)]
     [(ast.AstExpr.TupleRef tuple _)
-      (lint-expr-uses-import?
-        (ast.ast-node-get tuple)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+      (lint-expr-uses-import? (ast.ast-node-get tuple) alias module-name)]
     [(ast.AstExpr.Array exprs)
-      (lint-expr-list-uses-import?
-        exprs
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+      (lint-expr-list-uses-import? exprs alias module-name)]
     [(ast.AstExpr.DynArray exprs)
-      (lint-expr-list-uses-import?
-        exprs
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+      (lint-expr-list-uses-import? exprs alias module-name)]
     [(ast.AstExpr.FixedMakeArray elem-id len)
       (if (lint-type-uses-import?
         (ast.ty-node-get elem-id)
         (owned_view.compiler-owned-shared-view alias)
         (owned_view.compiler-owned-shared-view module-name))
         true
-        (lint-expr-uses-import?
-          (ast.ast-node-get len)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+        (lint-expr-uses-import? (ast.ast-node-get len) alias module-name))]
     [(ast.AstExpr.MakeArray elem-id len)
       (if (lint-type-uses-import?
         (ast.ty-node-get elem-id)
         (owned_view.compiler-owned-shared-view alias)
         (owned_view.compiler-owned-shared-view module-name))
         true
-        (lint-expr-uses-import?
-          (ast.ast-node-get len)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+        (lint-expr-uses-import? (ast.ast-node-get len) alias module-name))]
     [(ast.AstExpr.ArrayRef array index)
       (if (lint-expr-uses-import?
         (ast.ast-node-get array)
         (owned_view.compiler-owned-shared-view alias)
         (owned_view.compiler-owned-shared-view module-name))
         true
-        (lint-expr-uses-import?
-          (ast.ast-node-get index)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+        (lint-expr-uses-import? (ast.ast-node-get index) alias module-name))]
     [(ast.AstExpr.ArraySet array index value)
       (if (lint-expr-uses-import?
         (ast.ast-node-get array)
@@ -2884,10 +2756,7 @@
           (owned_view.compiler-owned-shared-view alias)
           (owned_view.compiler-owned-shared-view module-name))
           true
-          (lint-expr-uses-import?
-            (ast.ast-node-get value)
-            (owned_view.compiler-owned-shared-view alias)
-            (owned_view.compiler-owned-shared-view module-name))))]
+          (lint-expr-uses-import? (ast.ast-node-get value) alias module-name)))]
     [(ast.AstExpr.ArrayTake array live index)
       (if (lint-expr-uses-import?
         (ast.ast-node-get array)
@@ -2899,20 +2768,14 @@
           (owned_view.compiler-owned-shared-view alias)
           (owned_view.compiler-owned-shared-view module-name))
           true
-          (lint-expr-uses-import?
-            (ast.ast-node-get index)
-            (owned_view.compiler-owned-shared-view alias)
-            (owned_view.compiler-owned-shared-view module-name))))]
+          (lint-expr-uses-import? (ast.ast-node-get index) alias module-name)))]
     [(ast.AstExpr.FixedArrayTake array index)
       (if (lint-expr-uses-import?
         (ast.ast-node-get array)
         (owned_view.compiler-owned-shared-view alias)
         (owned_view.compiler-owned-shared-view module-name))
         true
-        (lint-expr-uses-import?
-          (ast.ast-node-get index)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+        (lint-expr-uses-import? (ast.ast-node-get index) alias module-name))]
     [(ast.AstExpr.Replace place replacement)
       (if (lint-expr-uses-import?
         (ast.ast-node-get place)
@@ -2921,38 +2784,29 @@
         true
         (lint-expr-uses-import?
           (ast.ast-node-get replacement)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+          alias
+          module-name))]
     [(ast.AstExpr.ArrayPush array value)
       (if (lint-expr-uses-import?
         (ast.ast-node-get array)
         (owned_view.compiler-owned-shared-view alias)
         (owned_view.compiler-owned-shared-view module-name))
         true
-        (lint-expr-uses-import?
-          (ast.ast-node-get value)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+        (lint-expr-uses-import? (ast.ast-node-get value) alias module-name))]
     [(ast.AstExpr.StringRef text index)
       (if (lint-expr-uses-import?
         (ast.ast-node-get text)
         (owned_view.compiler-owned-shared-view alias)
         (owned_view.compiler-owned-shared-view module-name))
         true
-        (lint-expr-uses-import?
-          (ast.ast-node-get index)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+        (lint-expr-uses-import? (ast.ast-node-get index) alias module-name))]
     [(ast.AstExpr.While cond body)
       (if (lint-expr-uses-import?
         (ast.ast-node-get cond)
         (owned_view.compiler-owned-shared-view alias)
         (owned_view.compiler-owned-shared-view module-name))
         true
-        (lint-expr-uses-import?
-          (ast.ast-node-get body)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+        (lint-expr-uses-import? (ast.ast-node-get body) alias module-name))]
     [(ast.AstExpr.ForOwnedState payload)
       (if (lint-expr-uses-import?
         (ast.ast-node-get (ast.ast-for-owned-state-source (& payload)))
@@ -2961,8 +2815,8 @@
         true
         (lint-expr-uses-import?
           (ast.ast-node-get (ast.ast-for-owned-state-body (& payload)))
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+          alias
+          module-name))]
     [(ast.AstExpr.ForOwnedStep payload)
       (let
         [expected-type : i64 (ast.ast-for-owned-step-expected-type (& payload))]
@@ -2975,13 +2829,10 @@
           true
           (lint-expr-uses-import?
             (ast.ast-node-get (ast.ast-for-owned-step-body (& payload)))
-            (owned_view.compiler-owned-shared-view alias)
-            (owned_view.compiler-owned-shared-view module-name))))]
+            alias
+            module-name)))]
     [(ast.AstExpr.Begin exprs)
-      (lint-expr-list-uses-import?
-        exprs
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+      (lint-expr-list-uses-import? exprs alias module-name)]
     [(ast.AstExpr.Unsafe exprs)
       (cond
         [(lint-requires-enclosing-unsafe-sentinel?
@@ -2991,53 +2842,33 @@
         [(lint-unused-unsafe-candidate-sentinel?
             (owned_view.compiler-owned-shared-view alias)
             (owned_view.compiler-owned-shared-view module-name))
-          (if (lint-expr-list-requires-enclosing-unsafe?
-            (owned_view.compiler-owned-shared-view exprs))
-            (lint-expr-list-uses-import?
-              (owned_view.compiler-owned-shared-view exprs)
-              (owned_view.compiler-owned-shared-view alias)
-              (owned_view.compiler-owned-shared-view module-name))
+          (if (lint-expr-list-requires-enclosing-unsafe? exprs)
+            (lint-expr-list-uses-import? exprs alias module-name)
             true)]
-        [else
-          (lint-expr-list-uses-import?
-            (owned_view.compiler-owned-shared-view exprs)
-            (owned_view.compiler-owned-shared-view alias)
-            (owned_view.compiler-owned-shared-view module-name))])]
+        [else (lint-expr-list-uses-import? exprs alias module-name)])]
     [(ast.AstExpr.Set target value)
       (if (lint-name-id-uses-import?
         target
         (owned_view.compiler-owned-shared-view alias)
         (owned_view.compiler-owned-shared-view module-name))
         true
-        (lint-expr-uses-import?
-          (ast.ast-node-get value)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+        (lint-expr-uses-import? (ast.ast-node-get value) alias module-name))]
     [(ast.AstExpr.Ann inner ty-id)
       (if (lint-expr-uses-import?
         (ast.ast-node-get inner)
         (owned_view.compiler-owned-shared-view alias)
         (owned_view.compiler-owned-shared-view module-name))
         true
-        (lint-type-uses-import?
-          (ast.ty-node-get ty-id)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+        (lint-type-uses-import? (ast.ty-node-get ty-id) alias module-name))]
     [(ast.AstExpr.Cast inner ty-id)
       (if (lint-expr-uses-import?
         (ast.ast-node-get inner)
         (owned_view.compiler-owned-shared-view alias)
         (owned_view.compiler-owned-shared-view module-name))
         true
-        (lint-type-uses-import?
-          (ast.ty-node-get ty-id)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+        (lint-type-uses-import? (ast.ty-node-get ty-id) alias module-name))]
     [(ast.AstExpr.Borrow _ _ place)
-      (lint-expr-uses-import?
-        (ast.ast-node-get place)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+      (lint-expr-uses-import? (ast.ast-node-get place) alias module-name)]
     [(ast.AstExpr.Match match-box)
       (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrutinee arms)
@@ -3046,10 +2877,7 @@
             (owned_view.compiler-owned-shared-view alias)
             (owned_view.compiler-owned-shared-view module-name))
             true
-            (lint-match-arms-use-import?
-              arms
-              (owned_view.compiler-owned-shared-view alias)
-              (owned_view.compiler-owned-shared-view module-name)))])]
+            (lint-match-arms-use-import? arms alias module-name))])]
     [(ast.AstExpr.Foreach fe-box)
       (match (__tl-box-place fe-box)
         [(ast.AstForeach.Foreach _ index-ty start end body)
@@ -3070,10 +2898,7 @@
                 (owned_view.compiler-owned-shared-view module-name))
               true]
             [else
-              (lint-expr-uses-import?
-                (ast.ast-node-get body)
-                (owned_view.compiler-owned-shared-view alias)
-                (owned_view.compiler-owned-shared-view module-name))])])]
+              (lint-expr-uses-import? (ast.ast-node-get body) alias module-name)])])]
     [(ast.AstExpr.SpmdReduce reduce-box)
       (match (__tl-box-place reduce-box)
         [(ast.AstSpmdReduce.Reduce _ _ index-ty start end init value)
@@ -3101,8 +2926,8 @@
             [else
               (lint-expr-uses-import?
                 (ast.ast-node-get value)
-                (owned_view.compiler-owned-shared-view alias)
-                (owned_view.compiler-owned-shared-view module-name))])])]
+                alias
+                module-name)])])]
     [(ast.AstExpr.SpmdScan scan-box)
       (match (__tl-box-place scan-box)
         [(ast.AstSpmdScan.Scan
@@ -3148,10 +2973,7 @@
                 (owned_view.compiler-owned-shared-view module-name))
               true]
             [else
-              (lint-expr-uses-import?
-                (ast.ast-node-get body)
-                (owned_view.compiler-owned-shared-view alias)
-                (owned_view.compiler-owned-shared-view module-name))])])]
+              (lint-expr-uses-import? (ast.ast-node-get body) alias module-name)])])]
     [(ast.AstExpr.SpmdCompact compact-box)
       (match (__tl-box-place compact-box)
         [(ast.AstSpmdCompact.Compact
@@ -3196,75 +3018,48 @@
                 (owned_view.compiler-owned-shared-view module-name))
               true]
             [else
-              (lint-expr-uses-import?
-                (ast.ast-node-get body)
-                (owned_view.compiler-owned-shared-view alias)
-                (owned_view.compiler-owned-shared-view module-name))])])]
+              (lint-expr-uses-import? (ast.ast-node-get body) alias module-name)])])]
     [(ast.AstExpr.SpmdBroadcast value lane)
       (if (lint-expr-uses-import?
         (ast.ast-node-get value)
         (owned_view.compiler-owned-shared-view alias)
         (owned_view.compiler-owned-shared-view module-name))
         true
-        (lint-expr-uses-import?
-          (ast.ast-node-get lane)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+        (lint-expr-uses-import? (ast.ast-node-get lane) alias module-name))]
     [(ast.AstExpr.SpmdShuffle value lane)
       (if (lint-expr-uses-import?
         (ast.ast-node-get value)
         (owned_view.compiler-owned-shared-view alias)
         (owned_view.compiler-owned-shared-view module-name))
         true
-        (lint-expr-uses-import?
-          (ast.ast-node-get lane)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+        (lint-expr-uses-import? (ast.ast-node-get lane) alias module-name))]
     [(ast.AstExpr.StructGet receiver _)
-      (lint-expr-uses-import?
-        (ast.ast-node-get receiver)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+      (lint-expr-uses-import? (ast.ast-node-get receiver) alias module-name)]
     [(ast.AstExpr.StructSet receiver _ value)
       (if (lint-expr-uses-import?
         (ast.ast-node-get receiver)
         (owned_view.compiler-owned-shared-view alias)
         (owned_view.compiler-owned-shared-view module-name))
         true
-        (lint-expr-uses-import?
-          (ast.ast-node-get value)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+        (lint-expr-uses-import? (ast.ast-node-get value) alias module-name))]
     [(ast.AstExpr.WithRegion _ body)
-      (lint-expr-list-uses-import?
-        body
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+      (lint-expr-list-uses-import? body alias module-name)]
     [(ast.AstExpr.WithEscape scratch body)
       (if (lint-expr-uses-import?
         (ast.ast-node-get scratch)
         (owned_view.compiler-owned-shared-view alias)
         (owned_view.compiler-owned-shared-view module-name))
         true
-        (lint-expr-list-uses-import?
-          body
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+        (lint-expr-list-uses-import? body alias module-name))]
     [(ast.AstExpr.WithScratch body)
-      (lint-expr-list-uses-import?
-        body
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+      (lint-expr-list-uses-import? body alias module-name)]
     [(ast.AstExpr.InArena arena body)
       (if (lint-expr-uses-import?
         (ast.ast-node-get arena)
         (owned_view.compiler-owned-shared-view alias)
         (owned_view.compiler-owned-shared-view module-name))
         true
-        (lint-expr-list-uses-import?
-          body
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+        (lint-expr-list-uses-import? body alias module-name))]
     [(ast.AstExpr.WithResource wr-box)
       (match (__tl-box-place wr-box)
         [(ast.AstWithResource.WithResource bindings body)
@@ -3273,115 +3068,61 @@
             (owned_view.compiler-owned-shared-view alias)
             (owned_view.compiler-owned-shared-view module-name))
             true
-            (lint-expr-list-uses-import?
-              body
-              (owned_view.compiler-owned-shared-view alias)
-              (owned_view.compiler-owned-shared-view module-name)))])]
+            (lint-expr-list-uses-import? body alias module-name))])]
     [(ast.AstExpr.Box inner)
-      (lint-expr-uses-import?
-        (ast.ast-node-get inner)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+      (lint-expr-uses-import? (ast.ast-node-get inner) alias module-name)]
     [(ast.AstExpr.BoxGet inner)
-      (lint-expr-uses-import?
-        (ast.ast-node-get inner)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+      (lint-expr-uses-import? (ast.ast-node-get inner) alias module-name)]
     [(ast.AstExpr.BoxTake inner)
-      (lint-expr-uses-import?
-        (ast.ast-node-get inner)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+      (lint-expr-uses-import? (ast.ast-node-get inner) alias module-name)]
     [(ast.AstExpr.BoxSet inner value)
       (if (lint-expr-uses-import?
         (ast.ast-node-get inner)
         (owned_view.compiler-owned-shared-view alias)
         (owned_view.compiler-owned-shared-view module-name))
         true
-        (lint-expr-uses-import?
-          (ast.ast-node-get value)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+        (lint-expr-uses-import? (ast.ast-node-get value) alias module-name))]
     [(ast.AstExpr.TypeLiteral ty-id)
-      (lint-type-uses-import?
-        (ast.ty-node-get ty-id)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+      (lint-type-uses-import? (ast.ty-node-get ty-id) alias module-name)]
     [(ast.AstExpr.Init maybe-ty-id)
       (lint-maybe-type-uses-import?
         (ast.ast-maybe-type-from-id maybe-ty-id)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        alias
+        module-name)]
     [(ast.AstExpr.Comptime inner)
-      (lint-expr-uses-import?
-        (ast.ast-node-get inner)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+      (lint-expr-uses-import? (ast.ast-node-get inner) alias module-name)]
     [(ast.AstExpr.Quote inner)
-      (lint-expr-uses-import?
-        (ast.ast-node-get inner)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+      (lint-expr-uses-import? (ast.ast-node-get inner) alias module-name)]
     [(ast.AstExpr.Quasiquote inner)
-      (lint-expr-uses-import?
-        (ast.ast-node-get inner)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+      (lint-expr-uses-import? (ast.ast-node-get inner) alias module-name)]
     [(ast.AstExpr.Unquote inner)
-      (lint-expr-uses-import?
-        (ast.ast-node-get inner)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+      (lint-expr-uses-import? (ast.ast-node-get inner) alias module-name)]
     [(ast.AstExpr.UnquoteSplicing inner)
-      (lint-expr-uses-import?
-        (ast.ast-node-get inner)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+      (lint-expr-uses-import? (ast.ast-node-get inner) alias module-name)]
     [(ast.AstExpr.BracketClause items)
-      (lint-expr-list-uses-import?
-        items
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+      (lint-expr-list-uses-import? items alias module-name)]
     [(ast.AstExpr.Try inner)
-      (lint-expr-uses-import?
-        (ast.ast-node-get inner)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+      (lint-expr-uses-import? (ast.ast-node-get inner) alias module-name)]
     [(ast.AstExpr.Return inner)
-      (lint-expr-uses-import?
-        (ast.ast-node-get inner)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+      (lint-expr-uses-import? (ast.ast-node-get inner) alias module-name)]
     [(ast.AstExpr.Break) false]
     [(ast.AstExpr.Continue) false]
     [(ast.AstExpr.PtrNull ty-id)
-      (lint-type-uses-import?
-        (ast.ty-node-get ty-id)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+      (lint-type-uses-import? (ast.ty-node-get ty-id) alias module-name)]
     [(ast.AstExpr.PtrNullCheck inner)
-      (lint-expr-uses-import?
-        (ast.ast-node-get inner)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+      (lint-expr-uses-import? (ast.ast-node-get inner) alias module-name)]
     [(ast.AstExpr.PtrAddrOf place)
       (if (lint-requires-enclosing-unsafe-sentinel?
         (owned_view.compiler-owned-shared-view alias)
         (owned_view.compiler-owned-shared-view module-name))
         true
-        (lint-expr-uses-import?
-          (ast.ast-node-get place)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+        (lint-expr-uses-import? (ast.ast-node-get place) alias module-name))]
     [(ast.AstExpr.PtrRead ptr)
       (if (lint-requires-enclosing-unsafe-sentinel?
         (owned_view.compiler-owned-shared-view alias)
         (owned_view.compiler-owned-shared-view module-name))
         true
-        (lint-expr-uses-import?
-          (ast.ast-node-get ptr)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+        (lint-expr-uses-import? (ast.ast-node-get ptr) alias module-name))]
     [(ast.AstExpr.PtrWrite ptr value)
       (if (lint-requires-enclosing-unsafe-sentinel?
         (owned_view.compiler-owned-shared-view alias)
@@ -3392,10 +3133,7 @@
           (owned_view.compiler-owned-shared-view alias)
           (owned_view.compiler-owned-shared-view module-name))
           true
-          (lint-expr-uses-import?
-            (ast.ast-node-get value)
-            (owned_view.compiler-owned-shared-view alias)
-            (owned_view.compiler-owned-shared-view module-name))))]
+          (lint-expr-uses-import? (ast.ast-node-get value) alias module-name)))]
     [(ast.AstExpr.PtrOffset ptr offset)
       (if (lint-requires-enclosing-unsafe-sentinel?
         (owned_view.compiler-owned-shared-view alias)
@@ -3406,10 +3144,7 @@
           (owned_view.compiler-owned-shared-view alias)
           (owned_view.compiler-owned-shared-view module-name))
           true
-          (lint-expr-uses-import?
-            (ast.ast-node-get offset)
-            (owned_view.compiler-owned-shared-view alias)
-            (owned_view.compiler-owned-shared-view module-name))))]
+          (lint-expr-uses-import? (ast.ast-node-get offset) alias module-name)))]
     [(ast.AstExpr.PtrCast ptr ty-id)
       (if (lint-requires-enclosing-unsafe-sentinel?
         (owned_view.compiler-owned-shared-view alias)
@@ -3420,19 +3155,13 @@
           (owned_view.compiler-owned-shared-view alias)
           (owned_view.compiler-owned-shared-view module-name))
           true
-          (lint-type-uses-import?
-            (ast.ty-node-get ty-id)
-            (owned_view.compiler-owned-shared-view alias)
-            (owned_view.compiler-owned-shared-view module-name))))]
+          (lint-type-uses-import? (ast.ty-node-get ty-id) alias module-name)))]
     [(ast.AstExpr.PtrToInt ptr)
       (if (lint-requires-enclosing-unsafe-sentinel?
         (owned_view.compiler-owned-shared-view alias)
         (owned_view.compiler-owned-shared-view module-name))
         true
-        (lint-expr-uses-import?
-          (ast.ast-node-get ptr)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+        (lint-expr-uses-import? (ast.ast-node-get ptr) alias module-name))]
     [(ast.AstExpr.IntToPtr value ty-id)
       (if (lint-requires-enclosing-unsafe-sentinel?
         (owned_view.compiler-owned-shared-view alias)
@@ -3443,19 +3172,13 @@
           (owned_view.compiler-owned-shared-view alias)
           (owned_view.compiler-owned-shared-view module-name))
           true
-          (lint-type-uses-import?
-            (ast.ty-node-get ty-id)
-            (owned_view.compiler-owned-shared-view alias)
-            (owned_view.compiler-owned-shared-view module-name))))]
+          (lint-type-uses-import? (ast.ty-node-get ty-id) alias module-name)))]
     [(ast.AstExpr.StringData inner)
       (if (lint-requires-enclosing-unsafe-sentinel?
         (owned_view.compiler-owned-shared-view alias)
         (owned_view.compiler-owned-shared-view module-name))
         true
-        (lint-expr-uses-import?
-          (ast.ast-node-get inner)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+        (lint-expr-uses-import? (ast.ast-node-get inner) alias module-name))]
     [(ast.AstExpr.StringFromBytes ptr len)
       (if (lint-requires-enclosing-unsafe-sentinel?
         (owned_view.compiler-owned-shared-view alias)
@@ -3466,19 +3189,13 @@
           (owned_view.compiler-owned-shared-view alias)
           (owned_view.compiler-owned-shared-view module-name))
           true
-          (lint-expr-uses-import?
-            (ast.ast-node-get len)
-            (owned_view.compiler-owned-shared-view alias)
-            (owned_view.compiler-owned-shared-view module-name))))]
+          (lint-expr-uses-import? (ast.ast-node-get len) alias module-name)))]
     [(ast.AstExpr.ArrayData inner)
       (if (lint-requires-enclosing-unsafe-sentinel?
         (owned_view.compiler-owned-shared-view alias)
         (owned_view.compiler-owned-shared-view module-name))
         true
-        (lint-expr-uses-import?
-          (ast.ast-node-get inner)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+        (lint-expr-uses-import? (ast.ast-node-get inner) alias module-name))]
     [(ast.AstExpr.BinaryData _) false]
     [(ast.AstExpr.SpmdProgramIndex) false]
     [(ast.AstExpr.SpmdProgramCount) false]
@@ -3491,54 +3208,36 @@
         (owned_view.compiler-owned-shared-view alias)
         (owned_view.compiler-owned-shared-view module-name))
         true
-        (lint-expr-uses-import?
-          (ast.ast-node-get subleaf)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+        (lint-expr-uses-import? (ast.ast-node-get subleaf) alias module-name))]
     [(ast.AstExpr.CpuIdEbx leaf subleaf)
       (if (lint-expr-uses-import?
         (ast.ast-node-get leaf)
         (owned_view.compiler-owned-shared-view alias)
         (owned_view.compiler-owned-shared-view module-name))
         true
-        (lint-expr-uses-import?
-          (ast.ast-node-get subleaf)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+        (lint-expr-uses-import? (ast.ast-node-get subleaf) alias module-name))]
     [(ast.AstExpr.CpuIdEcx leaf subleaf)
       (if (lint-expr-uses-import?
         (ast.ast-node-get leaf)
         (owned_view.compiler-owned-shared-view alias)
         (owned_view.compiler-owned-shared-view module-name))
         true
-        (lint-expr-uses-import?
-          (ast.ast-node-get subleaf)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+        (lint-expr-uses-import? (ast.ast-node-get subleaf) alias module-name))]
     [(ast.AstExpr.CpuIdEdx leaf subleaf)
       (if (lint-expr-uses-import?
         (ast.ast-node-get leaf)
         (owned_view.compiler-owned-shared-view alias)
         (owned_view.compiler-owned-shared-view module-name))
         true
-        (lint-expr-uses-import?
-          (ast.ast-node-get subleaf)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+        (lint-expr-uses-import? (ast.ast-node-get subleaf) alias module-name))]
     [(ast.AstExpr.Xgetbv index)
-      (lint-expr-uses-import?
-        (ast.ast-node-get index)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+      (lint-expr-uses-import? (ast.ast-node-get index) alias module-name)]
     [(ast.AstExpr.Syscall args)
       (if (lint-requires-enclosing-unsafe-sentinel?
         (owned_view.compiler-owned-shared-view alias)
         (owned_view.compiler-owned-shared-view module-name))
         true
-        (lint-expr-list-uses-import?
-          args
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]))
+        (lint-expr-list-uses-import? args alias module-name))]))
 
 (define (lint-extern-abi-uses-import?
   [abi : ast.AstExternAbi]
@@ -3548,10 +3247,7 @@
     [(ast.AstExternAbi.C) false]
     [(ast.AstExternAbi.CVarargsOpen) false]
     [(ast.AstExternAbi.CVarargsTyped tail-ty)
-      (lint-type-uses-import?
-        tail-ty
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]))
+      (lint-type-uses-import? tail-ty alias module-name)]))
 
 (define (lint-extern-metadata-uses-import?
   [meta : ast.AstExternMetadata]
@@ -3559,10 +3255,7 @@
   [module-name : String]) : bool
   (match meta
     [(ast.AstExternMetadata.Metadata abi _ _ _ _)
-      (lint-extern-abi-uses-import?
-        abi
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]))
+      (lint-extern-abi-uses-import? abi alias module-name)]))
 
 (define (lint-field-cleanup-uses-import?
   [cleanup : ast.AstFieldCleanup]
@@ -3573,8 +3266,8 @@
     [(ast.AstFieldCleanup.Fn name)
       (lint-name-id-uses-import?
         (ci.intern-syntax-id-value name)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        alias
+        module-name)]
     [(ast.AstFieldCleanup.Owned) false]))
 
 (define (lint-field-def-list-uses-import?
@@ -3620,8 +3313,8 @@
     [(ast.AstStructCleanup.Fn name)
       (lint-name-id-uses-import?
         (ci.intern-syntax-id-value name)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]))
+        alias
+        module-name)]))
 
 (define (lint-enum-cleanup-uses-import?
   [cleanup : ast.AstEnumCleanup]
@@ -3632,8 +3325,8 @@
     [(ast.AstEnumCleanup.Fn name)
       (lint-name-id-uses-import?
         (ci.intern-syntax-id-value name)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]))
+        alias
+        module-name)]))
 
 (define (lint-variant-payload-cleanup-uses-import?
   [cleanup : ast.AstVariantPayloadCleanup]
@@ -3644,8 +3337,8 @@
     [(ast.AstVariantPayloadCleanup.Fn name)
       (lint-name-id-uses-import?
         (ci.intern-syntax-id-value name)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        alias
+        module-name)]
     [(ast.AstVariantPayloadCleanup.Owned) false]))
 
 (define (lint-variant-payload-cleanup-list-uses-import?
@@ -3733,8 +3426,8 @@
           (lint-dispatch-variant-list-uses-import-from?
             variants
             (+ index 1)
-            (owned_view.compiler-owned-shared-view alias)
-            (owned_view.compiler-owned-shared-view module-name)))])))
+            alias
+            module-name))])))
 
 (define (lint-dispatch-variant-list-uses-import?
   [variants : ast.AstDispatchVariantList]
@@ -3743,8 +3436,8 @@
   (lint-dispatch-variant-list-uses-import-from?
     (& variants)
     0
-    (owned_view.compiler-owned-shared-view alias)
-    (owned_view.compiler-owned-shared-view module-name)))
+    alias
+    module-name))
 
 (define (lint-generated-decl-meta-uses-import?
   [meta : ast.AstGeneratedDeclMeta]
@@ -3753,32 +3446,26 @@
   (match meta
     [(ast.AstGeneratedDeclMeta.No) false]
     [(ast.AstGeneratedDeclMeta.Some _ _ args _)
-      (lint-expr-list-uses-import?
-        args
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]))
+      (lint-expr-list-uses-import? args alias module-name)]))
 
 (define (lint-decl-uses-import-inner?
   [decl : ast.AstDecl]
   [alias : String]
   [module-name : String]) : bool
-  (match (owned_view.compiler-owned-shared-view decl)
+  (match decl
     [(ast.AstDecl.Module _) false]
     [(ast.AstDecl.ModuleBody _ body)
       (lint-decl-list-uses-import?
         (ast.ast-decl-list-box-shared-view body)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        alias
+        module-name)]
     [(ast.AstDecl.Def decl-meta _ maybe-ty body)
       (if (lint-maybe-type-uses-import?
         maybe-ty
         (owned_view.compiler-owned-shared-view alias)
         (owned_view.compiler-owned-shared-view module-name))
         true
-        (lint-expr-uses-import?
-          (ast.ast-node-get body)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+        (lint-expr-uses-import? (ast.ast-node-get body) alias module-name))]
     [(ast.AstDecl.DefFn decl-meta _ params ret body _)
       (if (lint-param-list-uses-import?
         params
@@ -3790,10 +3477,7 @@
           (owned_view.compiler-owned-shared-view alias)
           (owned_view.compiler-owned-shared-view module-name))
           true
-          (lint-expr-uses-import?
-            (ast.ast-node-get body)
-            (owned_view.compiler-owned-shared-view alias)
-            (owned_view.compiler-owned-shared-view module-name))))]
+          (lint-expr-uses-import? (ast.ast-node-get body) alias module-name)))]
     [(ast.AstDecl.DefMacro decl-meta _ params ret body)
       (if (lint-macro-param-list-uses-import?
         params
@@ -3805,67 +3489,46 @@
           (owned_view.compiler-owned-shared-view alias)
           (owned_view.compiler-owned-shared-view module-name))
           true
-          (lint-expr-uses-import?
-            (ast.ast-node-get body)
-            (owned_view.compiler-owned-shared-view alias)
-            (owned_view.compiler-owned-shared-view module-name))))]
+          (lint-expr-uses-import? (ast.ast-node-get body) alias module-name)))]
     [(ast.AstDecl.Extern decl-meta _ _ meta ty)
       (if (lint-extern-metadata-uses-import?
         (ast.ast-extern-metadata-box-shared-view meta)
         (owned_view.compiler-owned-shared-view alias)
         (owned_view.compiler-owned-shared-view module-name))
         true
-        (lint-type-uses-import?
-          ty
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+        (lint-type-uses-import? ty alias module-name))]
     [(ast.AstDecl.DefEnum decl-meta _ cleanup variants)
       (if (lint-enum-cleanup-uses-import?
         cleanup
         (owned_view.compiler-owned-shared-view alias)
         (owned_view.compiler-owned-shared-view module-name))
         true
-        (lint-variant-def-list-uses-import?
-          variants
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+        (lint-variant-def-list-uses-import? variants alias module-name))]
     [(ast.AstDecl.DefEnumLifetimes decl-meta _ _ cleanup variants)
       (if (lint-enum-cleanup-uses-import?
         cleanup
         (owned_view.compiler-owned-shared-view alias)
         (owned_view.compiler-owned-shared-view module-name))
         true
-        (lint-variant-def-list-uses-import?
-          variants
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+        (lint-variant-def-list-uses-import? variants alias module-name))]
     [(ast.AstDecl.DefStruct decl-meta _ _ cleanup fields)
       (if (lint-struct-cleanup-uses-import?
         cleanup
         (owned_view.compiler-owned-shared-view alias)
         (owned_view.compiler-owned-shared-view module-name))
         true
-        (lint-field-def-list-uses-import?
-          fields
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+        (lint-field-def-list-uses-import? fields alias module-name))]
     [(ast.AstDecl.DefStructLifetimes decl-meta _ _ _ cleanup fields)
       (if (lint-struct-cleanup-uses-import?
         cleanup
         (owned_view.compiler-owned-shared-view alias)
         (owned_view.compiler-owned-shared-view module-name))
         true
-        (lint-field-def-list-uses-import?
-          fields
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+        (lint-field-def-list-uses-import? fields alias module-name))]
     [(ast.AstDecl.Import
         decl-meta
         (ast.AstImportSpec.Spec (ast.AstImportKind.Macro call-expr _) _ _ _ _))
-      (lint-expr-uses-import?
-        (ast.ast-node-get call-expr)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+      (lint-expr-uses-import? (ast.ast-node-get call-expr) alias module-name)]
     [(ast.AstDecl.Import
         decl-meta
         (ast.AstImportSpec.Spec
@@ -3874,30 +3537,21 @@
           _
           _
           _))
-      (lint-expr-uses-import?
-        (ast.ast-node-get call-expr)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+      (lint-expr-uses-import? (ast.ast-node-get call-expr) alias module-name)]
     [(ast.AstDecl.Import decl-meta _) false]
     [(ast.AstDecl.IncludeStr _ _) false]
     [(ast.AstDecl.IncludeStrComptime _ _) false]
     [(ast.AstDecl.IncludeStrLzss _ _) false]
     [(ast.AstDecl.IncludeBin _ _) false]
     [(ast.AstDecl.DefDispatch decl-meta _ variants)
-      (lint-dispatch-variant-list-uses-import?
-        variants
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+      (lint-dispatch-variant-list-uses-import? variants alias module-name)]
     [(ast.AstDecl.Test _ body _ _)
-      (lint-expr-uses-import?
-        (ast.ast-node-get body)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+      (lint-expr-uses-import? (ast.ast-node-get body) alias module-name)]
     [(ast.AstDecl.Unsafe inner)
       (lint-decl-uses-import?
         (ast.ast-decl-box-shared-view inner)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]))
+        alias
+        module-name)]))
 
 (define (lint-decl-uses-import?
   [decl : ast.AstDecl]
@@ -3908,10 +3562,7 @@
     (owned_view.compiler-owned-shared-view alias)
     (owned_view.compiler-owned-shared-view module-name))
     true
-    (lint-decl-uses-import-inner?
-      decl
-      (owned_view.compiler-owned-shared-view alias)
-      (owned_view.compiler-owned-shared-view module-name))))
+    (lint-decl-uses-import-inner? decl alias module-name)))
 
 (define (lint-decl-list-uses-import?
   [decls : ast.AstDeclList]
@@ -3927,10 +3578,7 @@
           (owned_view.compiler-owned-shared-view alias)
           (owned_view.compiler-owned-shared-view module-name))
           true
-          (lint-decl-list-uses-import?
-            rest
-            (owned_view.compiler-owned-shared-view alias)
-            (owned_view.compiler-owned-shared-view module-name))))]))
+          (lint-decl-list-uses-import? rest alias module-name)))]))
 
 (define (lint-program-has-unused-unsafe-candidate? [program : ast.AstProgram]) : bool
   (lint-unsafe-program-has-candidate? program))
@@ -4421,7 +4069,7 @@
   (let
     [acc : LintFindings
       (lint-redundant-import-alias-add-if-needed
-        (owned_view.compiler-owned-shared-view source)
+        source
         (owned_view.compiler-owned-shared-view spec)
         acc)]
     (match spec
@@ -4445,7 +4093,7 @@
                         (lint-stdlib-string-module-name?
                           (ci.intern-str module-name))
                         (lint-decl-list-has-stdlib-string-bare-use?
-                          (owned_view.compiler-owned-shared-view all-decls)
+                          all-decls
                           current-module-id)))
                       acc
                       (lint-findings-add
@@ -4526,7 +4174,7 @@
   (LintNameSet (__tl_make-array String 0) 0))
 
 (define (lint-name-set-contains-from?
-  [items : LintNameSet]
+  [items : (& items LintNameSet)]
   [name : String]
   [index : i64]) : bool
   (if (>= index items.len)
@@ -4535,12 +4183,14 @@
       true
       (lint-name-set-contains-from? items name (+ index 1)))))
 
-(define (lint-name-set-contains? [items : LintNameSet] [name : String]) : bool
+(define (lint-name-set-contains?
+  [items : (& items LintNameSet)]
+  [name : String]) : bool
   (lint-name-set-contains-from? items name 0))
 
 (define (lint-name-set-add [items : LintNameSet] [name : String]) : LintNameSet
   (if (lint-name-set-contains?
-    (owned_view.compiler-owned-shared-view items)
+    items
     (owned_view.compiler-owned-shared-view name))
     items
     (let
@@ -4564,7 +4214,7 @@
         (set! (array-ref slots n) name)
         (LintNameSet slots (+ n 1))))))
 
-(define (lint-name-set-count [items : LintNameSet]) : i64
+(define (lint-name-set-count [items : (& items LintNameSet)]) : i64
   items.len)
 
 (define (lint-name-set-get [items : LintNameSet] [index : i64]) : String
@@ -4671,32 +4321,23 @@
   (match pattern
     [(ast.AstPattern.Var name _) (lint-unsafe-scope-add-id scope name)]
     [(ast.AstPattern.Tuple items)
-      (lint-unsafe-pattern-list-add-bindings
-        (owned_view.compiler-owned-box-shared-view items)
-        scope
-        0)]
+      (lint-unsafe-pattern-list-add-bindings (deref items) scope 0)]
     [(ast.AstPattern.Array items)
-      (lint-unsafe-pattern-list-add-bindings
-        (owned_view.compiler-owned-box-shared-view items)
-        scope
-        0)]
+      (lint-unsafe-pattern-list-add-bindings (deref items) scope 0)]
     [(ast.AstPattern.Wildcard) scope]
     [(ast.AstPattern.Binding name) (lint-unsafe-scope-add-id scope name)]
     [(ast.AstPattern.Variant _ items)
-      (lint-unsafe-pattern-list-add-bindings
-        (owned_view.compiler-owned-box-shared-view items)
-        scope
-        0)]
+      (lint-unsafe-pattern-list-add-bindings (deref items) scope 0)]
     [(ast.AstPattern.Literal _) scope]))
 
 (define (lint-unsafe-pattern-list-add-bindings
-  [patterns : ast.AstPatternList]
+  [patterns : (& patterns ast.AstPatternList)]
   [scope : LintUnsafeScope]
   [index : i64]) : LintUnsafeScope
   (if (>= index patterns.len)
     scope
     (lint-unsafe-pattern-list-add-bindings
-      (owned_view.compiler-owned-shared-view patterns)
+      patterns
       (lint-unsafe-pattern-add-bindings
         (ast.ast-pattern-list-get patterns index (ast.ast-pattern-fallback))
         scope)
@@ -4704,7 +4345,7 @@
 
 (define (lint-unsafe-scope-name-unshadowed?
   [name-id : i64]
-  [scope : LintUnsafeScope]) : bool
+  [scope : (& scope LintUnsafeScope)]) : bool
   (and
     (not scope.ambiguous)
     (not (lint-name-set-contains? scope.shadowed (ci.intern-str name-id)))))
@@ -4716,7 +4357,7 @@
 
 (define (lint-stdlib-string-bare-call-unshadowed?
   [name-id : i64]
-  [scope : LintUnsafeScope]) : bool
+  [scope : (& scope LintUnsafeScope)]) : bool
   (and
     (lint-unsafe-scope-name-unshadowed? name-id scope)
     (cbi.compiler-builtin-typecheck-stdlib-string-bare-helper-id? name-id)))
@@ -4742,7 +4383,7 @@
     (lint-unsafe-scan-two-nodes second third scope)))
 
 (define (lint-unsafe-scan-expr-list
-  [exprs : ast.AstExprList]
+  [exprs : (& exprs ast.AstExprList)]
   [scope : LintUnsafeScope]) : LintUnsafeScan
   (lint-unsafe-scan-expr-list-at (& exprs) scope 0))
 
@@ -4849,9 +4490,7 @@
           [(ast.AstExpr.Var name)
             (let
               [with-string-use : LintUnsafeScan
-                (if (lint-stdlib-string-bare-call-unshadowed?
-                  name
-                  (owned_view.compiler-owned-shared-view scope))
+                (if (lint-stdlib-string-bare-call-unshadowed? name scope)
                   (lint-unsafe-scan-note-stdlib-string-bare-use children)
                   children)]
               (if (lint-unsafe-call-unshadowed? name scope)
@@ -5075,7 +4714,7 @@
       (lint-unsafe-scan-require (lint-unsafe-scan-expr-list args scope))]))
 
 (define (lint-unsafe-decl-add-global [decl : ast.AstDecl] [names : LintNameSet]) : LintNameSet
-  (match (owned_view.compiler-owned-shared-view decl)
+  (match decl
     [(ast.AstDecl.Module name) (lint-name-set-add names (ci.intern-str name))]
     [(ast.AstDecl.ModuleBody name _)
       (lint-name-set-add names (ci.intern-str name))]
@@ -5109,9 +4748,7 @@
     [(ast.AstDecl.Test name _ _ _)
       (lint-name-set-add names (ci.intern-str name))]
     [(ast.AstDecl.Unsafe inner)
-      (lint-unsafe-decl-add-global
-        (owned_view.compiler-owned-box-shared-view inner)
-        names)]))
+      (lint-unsafe-decl-add-global (deref inner) names)]))
 
 (define (lint-unsafe-decl-list-globals
   [decls : ast.AstDeclList]
@@ -5156,8 +4793,7 @@
     (match decl
       [(ast.AstDecl.Module _) (lint-unsafe-scan-empty)]
       [(ast.AstDecl.ModuleBody _ body)
-        (lint-unsafe-scan-decl-list
-          (owned_view.compiler-owned-box-shared-view body))]
+        (lint-unsafe-scan-decl-list (deref body))]
       [(ast.AstDecl.Def _ _ _ body) (lint-unsafe-scan-node body body-scope)]
       [(ast.AstDecl.DefFn _ _ params _ body _)
         (lint-unsafe-scan-node
@@ -5187,10 +4823,7 @@
       [(ast.AstDecl.IncludeBin _ _) (lint-unsafe-scan-empty)]
       [(ast.AstDecl.DefDispatch _ _ _) (lint-unsafe-scan-empty)]
       [(ast.AstDecl.Test _ body _ _) (lint-unsafe-scan-node body body-scope)]
-      [(ast.AstDecl.Unsafe inner)
-        (lint-unsafe-scan-decl
-          (owned_view.compiler-owned-box-shared-view inner)
-          scope)])))
+      [(ast.AstDecl.Unsafe inner) (lint-unsafe-scan-decl (deref inner) scope)])))
 
 (define (lint-unsafe-scan-decls-with-scope
   [decls : ast.AstDeclList]
@@ -5218,10 +4851,7 @@
 (define (lint-unsafe-program-has-candidate? [program : ast.AstProgram]) : bool
   (match program
     [(ast.AstProgram.Program decls)
-      (__tl-project-field
-        (lint-unsafe-scan-decl-list
-          (owned_view.compiler-owned-box-shared-view decls))
-        candidate)]))
+      (__tl-project-field (lint-unsafe-scan-decl-list (deref decls)) candidate)]))
 
 (define (lint-stdlib-string-decl-list-globals-at
   [decls : ast.AstDeclList]
@@ -5393,7 +5023,7 @@
   (LintCopyOnUpdateLocalList (__tl_make-array LintCopyOnUpdateLocal 0) 0))
 
 (define (lint-copy-on-update-local-index
-  [locals : LintCopyOnUpdateLocalList]
+  [locals : (& locals LintCopyOnUpdateLocalList)]
   [name : String]
   [index : i64]) : i64
   (if (>= index locals.len)
@@ -5408,11 +5038,7 @@
   [locals : LintCopyOnUpdateLocalList]
   [name : String]) : LintCopyOnUpdateLocalList
   (let
-    [found : i64
-      (lint-copy-on-update-local-index
-        (owned_view.compiler-owned-shared-view locals)
-        name
-        0)]
+    [found : i64 (lint-copy-on-update-local-index locals name 0)]
     (if (< found 0)
       locals
       (let
@@ -5458,14 +5084,10 @@
           (LintCopyOnUpdateLocalList slots (+ n 1)))))))
 
 (define (lint-copy-on-update-local-type
-  [locals : LintCopyOnUpdateLocalList]
+  [locals : (& locals LintCopyOnUpdateLocalList)]
   [name : String]) : String
   (let
-    [found : i64
-      (lint-copy-on-update-local-index
-        (owned_view.compiler-owned-shared-view locals)
-        name
-        0)]
+    [found : i64 (lint-copy-on-update-local-index locals name 0)]
     (if (< found 0)
       ""
       (__tl-project-field (array-ref locals.slots found) type-name))))
@@ -5564,9 +5186,7 @@
   [args : (& args ast.AstExprList)]
   [index : i64]
   [target-name : String]) : LintCopyOnUpdateArgCheck
-  (if (>=
-    index
-    (lint-name-set-count (owned_view.compiler-owned-shared-view fields)))
+  (if (>= index (lint-name-set-count fields))
     (if (= index args.len)
       (LintCopyOnUpdateArgCheck true 0 0 "")
       (lint-copy-on-update-arg-check-invalid))
@@ -5631,7 +5251,7 @@
     [target-name : String (ci.intern-str target)]
     [type-name : String
       (lint-copy-on-update-local-type
-        (owned_view.compiler-owned-shared-view state.locals)
+        state.locals
         (owned_view.compiler-owned-shared-view target-name))]
     (if (or
       (string.eq type-name "")
@@ -5644,7 +5264,7 @@
             target
             (ast.ast-node-get inner)
             span
-            (owned_view.compiler-owned-shared-view state))]
+            state)]
         [(ast.AstExpr.Ann inner _)
           (lint-copy-on-update-add-set-if-needed
             target
@@ -5679,7 +5299,7 @@
                       (= checked.changed 1)
                       (>= checked.copied 1))
                       (lint-copy-on-update-add-finding
-                        (owned_view.compiler-owned-shared-view state)
+                        state
                         target-name
                         checked.changed-field
                         span)
@@ -5699,9 +5319,7 @@
             (owned_view.compiler-owned-shared-view state.shapes)
             (ast.ty-node-get ty-id))]
         (if (string.eq annotated "")
-          (lint-copy-on-update-init-type-name
-            (owned_view.compiler-owned-shared-view state)
-            (ast.ast-node-get inner))
+          (lint-copy-on-update-init-type-name state (ast.ast-node-get inner))
           annotated))]
     [(ast.AstExpr.Cast inner ty-id)
       (let
@@ -5710,9 +5328,7 @@
             (owned_view.compiler-owned-shared-view state.shapes)
             (ast.ty-node-get ty-id))]
         (if (string.eq casted "")
-          (lint-copy-on-update-init-type-name
-            (owned_view.compiler-owned-shared-view state)
-            (ast.ast-node-get inner))
+          (lint-copy-on-update-init-type-name state (ast.ast-node-get inner))
           casted))]
     [(ast.AstExpr.Call callee _)
       (let
@@ -5737,9 +5353,7 @@
         (owned_view.compiler-owned-shared-view state.shapes)
         maybe-ty)]
     (if (string.eq annotated "")
-      (lint-copy-on-update-init-type-name
-        (owned_view.compiler-owned-shared-view state)
-        (ast.ast-node-get init))
+      (lint-copy-on-update-init-type-name state (ast.ast-node-get init))
       annotated)))
 
 (define (lint-copy-on-update-expr-list
@@ -5901,8 +5515,7 @@
       (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda params _ body)
           (let
-            [outer-locals : LintCopyOnUpdateLocalList
-              (owned_view.compiler-owned-shared-view state.locals)]
+            [outer-locals : LintCopyOnUpdateLocalList state.locals]
             [with-params : LintCopyOnUpdateState
               (lint-copy-on-update-state-with
                 (owned_view.compiler-owned-shared-view state)
@@ -6021,8 +5634,8 @@
               (lint-copy-on-update-expr (ast.ast-node-get body) with-local span)]
             (lint-copy-on-update-state-with
               (owned_view.compiler-owned-shared-view with-body)
-              (owned_view.compiler-owned-shared-view outer-locals)
-              (owned_view.compiler-owned-shared-view with-body.findings)))])]
+              outer-locals
+              with-body.findings))])]
     [(ast.AstExpr.StructGet receiver _)
       (lint-copy-on-update-expr (ast.ast-node-get receiver) state span)]
     [(ast.AstExpr.StructSet receiver _ value)
@@ -6136,9 +5749,7 @@
     [(ast.AstDecl.DefStructLifetimes decl-meta name _ _ _ fields)
       (lint-copy-on-update-add-struct name fields shapes)]
     [(ast.AstDecl.Unsafe inner)
-      (lint-copy-on-update-collect-structs-in-decl
-        (owned_view.compiler-owned-box-shared-view inner)
-        shapes)]
+      (lint-copy-on-update-collect-structs-in-decl (deref inner) shapes)]
     [_ shapes]))
 
 (define (lint-copy-on-update-collect-structs
@@ -6155,15 +5766,12 @@
   [decl : ast.AstDecl]
   [shapes : LintCopyOnUpdateStructList]
   [acc : LintFindings]) : LintFindings
-  (match (owned_view.compiler-owned-shared-view decl)
+  (match decl
     [(ast.AstDecl.Def decl-meta _ _ body)
       (__tl-project-field
         (lint-copy-on-update-expr
           (ast.ast-node-get body)
-          (LintCopyOnUpdateState
-            (owned_view.compiler-owned-shared-view shapes)
-            (lint-copy-on-update-locals-empty)
-            acc)
+          (LintCopyOnUpdateState shapes (lint-copy-on-update-locals-empty) acc)
           (lint-no-span))
         findings)]
     [(ast.AstDecl.DefFn decl-meta _ params _ body _)
@@ -6174,7 +5782,7 @@
             (owned_view.compiler-owned-shared-view shapes)
             (lint-copy-on-update-param-locals
               params
-              (owned_view.compiler-owned-shared-view shapes)
+              shapes
               (lint-copy-on-update-locals-empty))
             acc)
           (lint-no-span))
@@ -6187,7 +5795,7 @@
             (owned_view.compiler-owned-shared-view shapes)
             (lint-copy-on-update-macro-param-locals
               params
-              (owned_view.compiler-owned-shared-view shapes)
+              shapes
               (lint-copy-on-update-locals-empty))
             acc)
           (lint-no-span))
@@ -6196,16 +5804,13 @@
       (__tl-project-field
         (lint-copy-on-update-expr
           (ast.ast-node-get body)
-          (LintCopyOnUpdateState
-            (owned_view.compiler-owned-shared-view shapes)
-            (lint-copy-on-update-locals-empty)
-            acc)
+          (LintCopyOnUpdateState shapes (lint-copy-on-update-locals-empty) acc)
           (lint-no-span))
         findings)]
     [(ast.AstDecl.Unsafe inner)
       (lint-copy-on-update-structs-in-decl
         (ast.ast-decl-box-shared-view inner)
-        (owned_view.compiler-owned-shared-view shapes)
+        shapes
         acc)]
     [_ acc]))
 
@@ -6219,10 +5824,7 @@
       (lint-copy-on-update-structs-in-decl-list
         rest
         (owned_view.compiler-owned-shared-view shapes)
-        (lint-copy-on-update-structs-in-decl
-          decl
-          (owned_view.compiler-owned-shared-view shapes)
-          acc))]))
+        (lint-copy-on-update-structs-in-decl decl shapes acc))]))
 
 (defstruct LintSingleElementArrayCandidate
   (name String)
@@ -6258,7 +5860,7 @@
     0))
 
 (define (lint-single-element-array-candidate-index
-  [items : LintSingleElementArrayCandidateList]
+  [items : (& items LintSingleElementArrayCandidateList)]
   [name : String]
   [index : i64]) : i64
   (if (>= index items.len)
@@ -6268,7 +5870,7 @@
       (lint-single-element-array-candidate-index items name (+ index 1)))))
 
 (define (lint-single-element-array-candidate-tracked?
-  [items : LintSingleElementArrayCandidateList]
+  [items : (& items LintSingleElementArrayCandidateList)]
   [name : String]) : bool
   (>= (lint-single-element-array-candidate-index items name 0) 0))
 
@@ -6276,11 +5878,7 @@
   [items : LintSingleElementArrayCandidateList]
   [name : String]) : LintSingleElementArrayCandidateList
   (let
-    [found : i64
-      (lint-single-element-array-candidate-index
-        (owned_view.compiler-owned-shared-view items)
-        name
-        0)]
+    [found : i64 (lint-single-element-array-candidate-index items name 0)]
     (if (< found 0)
       items
       (let
@@ -6345,11 +5943,7 @@
   [items : LintSingleElementArrayCandidateList]
   [name : String]) : LintSingleElementArrayCandidateList
   (let
-    [found : i64
-      (lint-single-element-array-candidate-index
-        (owned_view.compiler-owned-shared-view items)
-        name
-        0)]
+    [found : i64 (lint-single-element-array-candidate-index items name 0)]
     (if (< found 0)
       items
       (let
@@ -6366,11 +5960,7 @@
   [items : LintSingleElementArrayCandidateList]
   [name : String]) : LintSingleElementArrayCandidateList
   (let
-    [found : i64
-      (lint-single-element-array-candidate-index
-        (owned_view.compiler-owned-shared-view items)
-        name
-        0)]
+    [found : i64 (lint-single-element-array-candidate-index items name 0)]
     (if (< found 0)
       items
       (let
@@ -6401,11 +5991,9 @@
   [state : LintSingleElementArrayState]
   [name : String]) : LintSingleElementArrayState
   (if (lint-single-element-array-candidate-tracked?
-    (owned_view.compiler-owned-shared-view state.candidates)
+    state.candidates
     (owned_view.compiler-owned-shared-view name))
-    (lint-single-element-array-note-escape
-      (owned_view.compiler-owned-shared-view state)
-      name)
+    (lint-single-element-array-note-escape state name)
     state))
 
 (define (lint-single-element-array-scalar-type? [ty : ast.AstType]) : bool
@@ -6468,7 +6056,8 @@
         (= (ast.ast-lit-int-value lit) value))]
     [_ false]))
 
-(define (lint-single-element-array-expr-list-count [exprs : ast.AstExprList]) : i64
+(define (lint-single-element-array-expr-list-count
+  [exprs : (& exprs ast.AstExprList)]) : i64
   exprs.len)
 
 (define (lint-single-element-array-callee-name [expr : ast.AstExpr]) : String
@@ -6495,7 +6084,7 @@
   (or (string.eq name "array-set!") (string.eq name "__tl_array-set!")))
 
 (define (lint-single-element-array-args-second-int?
-  [args : ast.AstExprList]
+  [args : (& args ast.AstExprList)]
   [value : i64]) : bool
   (if (> args.len 1)
     (lint-single-element-array-int-literal?
@@ -6503,7 +6092,8 @@
       value)
     false))
 
-(define (lint-single-element-array-first-arg-name [args : ast.AstExprList]) : String
+(define (lint-single-element-array-first-arg-name
+  [args : (& args ast.AstExprList)]) : String
   (if (> args.len 0)
     (lint-single-element-array-var-name
       (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0)))
@@ -6731,50 +6321,32 @@
   [args : ast.AstExprList]
   [state : LintSingleElementArrayState]) : LintSingleElementArrayState
   (let
-    [name : String
-      (lint-single-element-array-first-arg-name
-        (owned_view.compiler-owned-shared-view args))]
+    [name : String (lint-single-element-array-first-arg-name args)]
     (if (and
-      (=
-        (lint-single-element-array-expr-list-count
-          (owned_view.compiler-owned-shared-view args))
-        2)
+      (= (lint-single-element-array-expr-list-count args) 2)
       (lint-single-element-array-candidate-tracked?
-        (owned_view.compiler-owned-shared-view state.candidates)
+        state.candidates
         (owned_view.compiler-owned-shared-view name))
-      (lint-single-element-array-args-second-int?
-        (owned_view.compiler-owned-shared-view args)
-        0))
+      (lint-single-element-array-args-second-int? args 0))
       (lint-single-element-array-expr-list-after-two
         args
-        (lint-single-element-array-note-use
-          (owned_view.compiler-owned-shared-view state)
-          name))
+        (lint-single-element-array-note-use state name))
       (lint-single-element-array-expr-list args state))))
 
 (define (lint-single-element-array-call-set
   [args : ast.AstExprList]
   [state : LintSingleElementArrayState]) : LintSingleElementArrayState
   (let
-    [name : String
-      (lint-single-element-array-first-arg-name
-        (owned_view.compiler-owned-shared-view args))]
+    [name : String (lint-single-element-array-first-arg-name args)]
     (if (and
-      (=
-        (lint-single-element-array-expr-list-count
-          (owned_view.compiler-owned-shared-view args))
-        3)
+      (= (lint-single-element-array-expr-list-count args) 3)
       (lint-single-element-array-candidate-tracked?
-        (owned_view.compiler-owned-shared-view state.candidates)
+        state.candidates
         (owned_view.compiler-owned-shared-view name))
-      (lint-single-element-array-args-second-int?
-        (owned_view.compiler-owned-shared-view args)
-        0))
+      (lint-single-element-array-args-second-int? args 0))
       (lint-single-element-array-expr-list-after-two
         args
-        (lint-single-element-array-note-use
-          (owned_view.compiler-owned-shared-view state)
-          name))
+        (lint-single-element-array-note-use state name))
       (lint-single-element-array-expr-list args state))))
 
 (define (lint-prefer-dynamic-array-literal-int-value [expr : ast.AstExpr]) : i64
@@ -6794,7 +6366,7 @@
 
 (define (lint-prefer-dynamic-array-literal-allocation-length
   [expr : ast.AstExpr]) : i64
-  (match (owned_view.compiler-owned-shared-view expr)
+  (match expr
     [(ast.AstExpr.Spanned inner _)
       (lint-prefer-dynamic-array-literal-allocation-length
         (ast.ast-node-get inner))]
@@ -6807,10 +6379,7 @@
       (if (and
         (lint-single-element-array-make-array-callee?
           (lint-single-element-array-callee-name (ast.ast-node-get func)))
-        (=
-          (lint-single-element-array-expr-list-count
-            (owned_view.compiler-owned-shared-view args))
-          2))
+        (= (lint-single-element-array-expr-list-count args) 2))
         (lint-prefer-dynamic-array-literal-int-value
           (ast.ast-node-get (ast.ast-expr-list-get (& args) 1 0)))
         -1)]
@@ -6819,7 +6388,7 @@
 (define (lint-prefer-dynamic-array-literal-var?
   [expr : ast.AstExpr]
   [name : String]) : bool
-  (match (owned_view.compiler-owned-shared-view expr)
+  (match expr
     [(ast.AstExpr.Spanned inner _)
       (lint-prefer-dynamic-array-literal-var? (ast.ast-node-get inner) name)]
     [(ast.AstExpr.Ann inner _)
@@ -6867,8 +6436,7 @@
             name
             (lint-no-span))
           (lint-findings-empty)))]
-    [items : LintSingleElementArrayCandidateList
-      (owned_view.compiler-owned-shared-view result.candidates)]
+    [items : LintSingleElementArrayCandidateList result.candidates]
     [top : i64 (- items.len 1)]
     (if (< top 0)
       false
@@ -6888,7 +6456,7 @@
     [(ast.AstExpr.Spanned inner _)
       (lint-prefer-dynamic-array-literal-set-at?
         (ast.ast-node-get inner)
-        (owned_view.compiler-owned-shared-view name)
+        name
         index)]
     [(ast.AstExpr.Ann inner _)
       (lint-prefer-dynamic-array-literal-set-at?
@@ -6911,17 +6479,9 @@
       (and
         (lint-prefer-dynamic-array-literal-set-callee?
           (lint-single-element-array-callee-name (ast.ast-node-get func)))
-        (=
-          (lint-single-element-array-expr-list-count
-            (owned_view.compiler-owned-shared-view args))
-          3)
-        (string.eq
-          (lint-single-element-array-first-arg-name
-            (owned_view.compiler-owned-shared-view args))
-          name)
-        (lint-single-element-array-args-second-int?
-          (owned_view.compiler-owned-shared-view args)
-          index)
+        (= (lint-single-element-array-expr-list-count args) 3)
+        (string.eq (lint-single-element-array-first-arg-name args) name)
+        (lint-single-element-array-args-second-int? args index)
         (not
           (lint-prefer-dynamic-array-literal-value-uses-name?
             (ast.ast-node-get (ast.ast-expr-list-get (& args) 2 0))
@@ -6951,17 +6511,9 @@
       (and
         (lint-prefer-dynamic-array-literal-set-callee?
           (lint-single-element-array-callee-name (ast.ast-node-get func)))
-        (=
-          (lint-single-element-array-expr-list-count
-            (owned_view.compiler-owned-shared-view args))
-          3)
-        (string.eq
-          (lint-single-element-array-first-arg-name
-            (owned_view.compiler-owned-shared-view args))
-          name)
-        (lint-single-element-array-args-second-int?
-          (owned_view.compiler-owned-shared-view args)
-          0)
+        (= (lint-single-element-array-expr-list-count args) 3)
+        (string.eq (lint-single-element-array-first-arg-name args) name)
+        (lint-single-element-array-args-second-int? args 0)
         (lint-prefer-dynamic-array-literal-bare-var?
           (ast.ast-node-get (ast.ast-expr-list-get (& args) 2 0))))]
     [_ false]))
@@ -6974,15 +6526,15 @@
   (if (>= index length)
     (lint-prefer-dynamic-array-literal-final-value?
       (ast.ast-node-get (ast.ast-expr-list-get (& exprs) index 0))
-      (owned_view.compiler-owned-shared-view name))
+      name)
     (and
       (lint-prefer-dynamic-array-literal-set-at?
         (ast.ast-node-get (ast.ast-expr-list-get (& exprs) index 0))
         (owned_view.compiler-owned-shared-view name)
         index)
       (lint-prefer-dynamic-array-literal-write-sequence?
-        (owned_view.compiler-owned-shared-view exprs)
-        (owned_view.compiler-owned-shared-view name)
+        exprs
+        name
         length
         (+ index 1)))))
 
@@ -7003,31 +6555,24 @@
         length)]
     [(ast.AstExpr.Begin exprs)
       (and
-        (=
-          (lint-single-element-array-expr-list-count
-            (owned_view.compiler-owned-shared-view exprs))
-          (+ length 1))
+        (= (lint-single-element-array-expr-list-count exprs) (+ length 1))
         (not
           (and
             (= length 2)
             (lint-prefer-dynamic-array-literal-first-write-bare-var?
               (ast.ast-node-get (ast.ast-expr-list-get (& exprs) 0 0))
               (owned_view.compiler-owned-shared-view name))))
-        (lint-prefer-dynamic-array-literal-write-sequence?
-          (owned_view.compiler-owned-shared-view exprs)
-          name
-          length
-          0))]
+        (lint-prefer-dynamic-array-literal-write-sequence? exprs name length 0))]
     [_ false]))
 
 (define (lint-prefer-dynamic-array-literals-in-let-bindings
-  [bindings : ast.AstLetBindingList]
+  [bindings : (& bindings ast.AstLetBindingList)]
   [body : ast.AstExpr]
   [state : LintSingleElementArrayState]) : LintSingleElementArrayState
   (lint-prefer-dynamic-array-literals-in-let-bindings-at
     (& bindings)
     body
-    (owned_view.compiler-owned-shared-view state)
+    state
     0))
 
 (define (lint-prefer-dynamic-array-literals-in-let-bindings-at
@@ -7061,10 +6606,10 @@
                 (owned_view.compiler-owned-shared-view state)
                 (lint-findings-add
                   (lint-prefer-dynamic-array-literal-finding
-                    (owned_view.compiler-owned-shared-view name)
+                    name
                     (lint-no-effect-span-id init))
-                  (owned_view.compiler-owned-shared-view state.findings)))
-              (owned_view.compiler-owned-shared-view state))]
+                  state.findings))
+              state)]
           (lint-prefer-dynamic-array-literals-in-let-bindings-at
             bindings
             body
@@ -7113,7 +6658,7 @@
           (let
             [with-dynamic-array-literals : LintSingleElementArrayState
               (lint-prefer-dynamic-array-literals-in-let-bindings
-                (owned_view.compiler-owned-shared-view bindings)
+                bindings
                 (ast.ast-node-get body)
                 state)]
             (lint-single-element-array-expr
@@ -7143,12 +6688,10 @@
           (lint-single-element-array-var-name (ast.ast-node-get array))]
         (if (and
           (lint-single-element-array-candidate-tracked?
-            (owned_view.compiler-owned-shared-view state.candidates)
+            state.candidates
             (owned_view.compiler-owned-shared-view name))
           (lint-single-element-array-int-literal? (ast.ast-node-get index) 0))
-          (lint-single-element-array-note-use
-            (owned_view.compiler-owned-shared-view state)
-            name)
+          (lint-single-element-array-note-use state name)
           (lint-single-element-array-expr
             (ast.ast-node-get index)
             (lint-single-element-array-expr (ast.ast-node-get array) state))))]
@@ -7158,7 +6701,7 @@
           (lint-single-element-array-var-name (ast.ast-node-get array))]
         (if (and
           (lint-single-element-array-candidate-tracked?
-            (owned_view.compiler-owned-shared-view state.candidates)
+            state.candidates
             (owned_view.compiler-owned-shared-view name))
           (lint-single-element-array-int-literal? (ast.ast-node-get index) 0))
           (lint-single-element-array-expr
@@ -7175,7 +6718,7 @@
           (lint-single-element-array-var-name (ast.ast-node-get array))]
         (if (and
           (lint-single-element-array-candidate-tracked?
-            (owned_view.compiler-owned-shared-view state.candidates)
+            state.candidates
             (owned_view.compiler-owned-shared-view name))
           (lint-single-element-array-int-literal? (ast.ast-node-get index) 0))
           (lint-single-element-array-expr
@@ -7192,12 +6735,10 @@
           (lint-single-element-array-var-name (ast.ast-node-get array))]
         (if (and
           (lint-single-element-array-candidate-tracked?
-            (owned_view.compiler-owned-shared-view state.candidates)
+            state.candidates
             (owned_view.compiler-owned-shared-view name))
           (lint-single-element-array-int-literal? (ast.ast-node-get index) 0))
-          (lint-single-element-array-note-use
-            (owned_view.compiler-owned-shared-view state)
-            name)
+          (lint-single-element-array-note-use state name)
           (lint-single-element-array-expr
             (ast.ast-node-get index)
             (lint-single-element-array-expr (ast.ast-node-get array) state))))]
@@ -7418,7 +6959,7 @@
 (define (lint-single-element-array-cells-in-decl
   [decl : ast.AstDecl]
   [acc : LintFindings]) : LintFindings
-  (match (owned_view.compiler-owned-shared-view decl)
+  (match decl
     [(ast.AstDecl.Def decl-meta _ _ body)
       (lint-single-element-array-finalize-state
         (lint-single-element-array-expr
@@ -7465,7 +7006,7 @@
   (LintPendingAssignmentList (__tl_make-array LintPendingAssignment 0) 0))
 
 (define (lint-pending-assignment-index
-  [items : LintPendingAssignmentList]
+  [items : (& items LintPendingAssignmentList)]
   [name : String]
   [index : i64]) : i64
   (if (>= index items.len)
@@ -7478,11 +7019,7 @@
   [items : LintPendingAssignmentList]
   [name : String]) : LintMaybePendingAssignment
   (let
-    [found : i64
-      (lint-pending-assignment-index
-        (owned_view.compiler-owned-shared-view items)
-        name
-        0)]
+    [found : i64 (lint-pending-assignment-index items name 0)]
     (if (< found 0)
       LintMaybePendingAssignment.No
       (LintMaybePendingAssignment.Some
@@ -7492,11 +7029,7 @@
   [items : LintPendingAssignmentList]
   [name : String]) : LintPendingAssignmentList
   (let
-    [found : i64
-      (lint-pending-assignment-index
-        (owned_view.compiler-owned-shared-view items)
-        name
-        0)]
+    [found : i64 (lint-pending-assignment-index items name 0)]
     (if (< found 0)
       items
       (let
@@ -8058,7 +7591,7 @@
           [text : String (ci.intern-str name)]
           [binding-base : LintUnusedAssignmentState
             (if (lint-name-set-contains?
-              (owned_view.compiler-owned-shared-view after-init.locals)
+              after-init.locals
               (owned_view.compiler-owned-shared-view text))
               (lint-unused-assignment-state-with
                 (owned_view.compiler-owned-shared-view after-init)
@@ -8186,10 +7719,7 @@
           (lint-no-span))
         findings)]
     [(ast.AstDecl.Unsafe inner)
-      (lint-unused-assignments-in-decl
-        (ast.ast-decl-box-shared-view
-          (owned_view.compiler-owned-shared-view inner))
-        acc)]
+      (lint-unused-assignments-in-decl (ast.ast-decl-box-shared-view inner) acc)]
     [_ acc]))
 
 (define (lint-unused-assignments-in-decl-list
@@ -8313,7 +7843,7 @@
 ;; Highest index of `bindings` naming `name`, or -1. Counting down keeps the
 ;; innermost-first order of the old cons walk.
 (define (lint-unused-variable-binding-index
-  [bindings : LintUnusedVariableBindingList]
+  [bindings : (& bindings LintUnusedVariableBindingList)]
   [name : String]
   [index : i64]) : i64
   (if (< index 0)
@@ -8327,12 +7857,7 @@
 (define (lint-unused-unsafe-binding-list-contains?
   [bindings : LintUnusedVariableBindingList]
   [name : String]) : bool
-  (>=
-    (lint-unused-variable-binding-index
-      (owned_view.compiler-owned-shared-view bindings)
-      name
-      (- bindings.len 1))
-    0))
+  (>= (lint-unused-variable-binding-index bindings name (- bindings.len 1)) 0))
 
 (define (lint-unused-unsafe-frame-list-contains-at?
   [frames : LintUnusedVariableFrameList]
@@ -8379,7 +7904,7 @@
 
 (define (lint-unused-unsafe-unknown-root-at?
   [name : String]
-  [roots : LintUnusedUnsafeUnknownRoots]
+  [roots : (& roots LintUnusedUnsafeUnknownRoots)]
   [index : i64]) : bool
   (if (>= index roots.len)
     false
@@ -8389,7 +7914,7 @@
 
 (define (lint-unused-unsafe-unknown-root?
   [name : String]
-  [roots : LintUnusedUnsafeUnknownRoots]) : bool
+  [roots : (& roots LintUnusedUnsafeUnknownRoots)]) : bool
   (lint-unused-unsafe-unknown-root-at? name roots 0))
 
 (define (lint-unused-unsafe-exact-name-lookup-from
@@ -8440,9 +7965,7 @@
         (owned_view.compiler-owned-shared-view root))
       (and
         qualified
-        (lint-unused-unsafe-unknown-root?
-          root
-          (global-shared-view lint-unused-unsafe-unknown-roots))))
+        (lint-unused-unsafe-unknown-root? root lint-unused-unsafe-unknown-roots)))
       (LintUnusedUnsafeExactLookup.Unknown)
       (lint-unused-unsafe-exact-name-lookup-from name facts false false 0))))
 
@@ -8452,7 +7975,8 @@
   (match (lint-unused-unsafe-exact-name-lookup
     (owned_view.compiler-owned-shared-view state)
     (owned_view.compiler-owned-shared-view name)
-    (global-shared-view lint-unused-unsafe-exact-names))
+    (unsafe
+      (ptr-read (ptr-addr-of lint-unused-unsafe-exact-names))))
     [(LintUnusedUnsafeExactLookup.Unknown)
       (let
         [root : String
@@ -8676,10 +8200,7 @@
         cursor
         limit)]
     (LintNameCaseLocalScan
-      (lint-unused-variable-add-local-name-case
-        (owned_view.compiler-owned-shared-view state)
-        name
-        found.span)
+      (lint-unused-variable-add-local-name-case state name found.span)
       found.next-index)))
 
 (define (lint-unused-variable-scan-form-local-name
@@ -8697,7 +8218,7 @@
         (owned_view.compiler-owned-shared-view state.source)
         span)]
     (if (or (< start 0) (< limit 0))
-      (LintNameCaseLocalScan (owned_view.compiler-owned-shared-view state) 0)
+      (LintNameCaseLocalScan state 0)
       (lint-unused-variable-scan-local-name
         state
         name
@@ -8790,19 +8311,9 @@
         findings
         true)]
     [(ast.AstPattern.Tuple items)
-      (lint-name-case-pattern-list
-        (owned_view.compiler-owned-box-shared-view items)
-        source
-        cursor
-        limit
-        findings)]
+      (lint-name-case-pattern-list (deref items) source cursor limit findings)]
     [(ast.AstPattern.Array items)
-      (lint-name-case-pattern-list
-        (owned_view.compiler-owned-box-shared-view items)
-        source
-        cursor
-        limit
-        findings)]
+      (lint-name-case-pattern-list (deref items) source cursor limit findings)]
     [(ast.AstPattern.Variant name items)
       (let
         [variant : LintNameCasePatternScan
@@ -8814,7 +8325,7 @@
             findings
             false)]
         (lint-name-case-pattern-list
-          (owned_view.compiler-owned-box-shared-view items)
+          (deref items)
           source
           variant.next-index
           limit
@@ -9117,14 +8628,10 @@
         2)]
     [(ast.AstDecl.ModuleBody _ body)
       (lint-name-case-in-decl-list
-        (ast.ast-decl-list-box-shared-view
-          (owned_view.compiler-owned-shared-view body))
+        (ast.ast-decl-list-box-shared-view body)
         state)]
     [(ast.AstDecl.Unsafe inner)
-      (lint-name-case-in-decl
-        (ast.ast-decl-box-shared-view
-          (owned_view.compiler-owned-shared-view inner))
-        state)]
+      (lint-name-case-in-decl (ast.ast-decl-box-shared-view inner) state)]
     [_ state]))
 
 (define (lint-name-case-in-decl-list
@@ -9236,7 +8743,8 @@
     [(ast.AstExpr.Var name) (ci.intern-str name)]
     [_ ""]))
 
-(define (lint-redundant-function-name-generated-head [args : ast.AstExprList]) : String
+(define (lint-redundant-function-name-generated-head
+  [args : (& args ast.AstExprList)]) : String
   (if (= args.len 0)
     ""
     (match (ast.ast-expr-unspan
@@ -9245,7 +8753,8 @@
         (lint-redundant-function-name-callee (ast.ast-node-get fn-head))]
       [_ ""])))
 
-(define (lint-redundant-function-name-literal-module [args : ast.AstExprList]) : String
+(define (lint-redundant-function-name-literal-module
+  [args : (& args ast.AstExprList)]) : String
   (if (= args.len 0)
     ""
     (match (ast.ast-expr-unspan
@@ -9254,7 +8763,7 @@
       [_ ""])))
 
 (define (lint-redundant-function-name-quoted-expr-list
-  [exprs : ast.AstExprList]
+  [exprs : (& exprs ast.AstExprList)]
   [state : LintRedundantFunctionNameState]) : LintRedundantFunctionNameState
   (lint-redundant-function-name-quoted-expr-list-at (& exprs) 0 state))
 
@@ -9298,8 +8807,7 @@
     [(string.eq callee "module")
       (let
         [module-name : String
-          (lint-redundant-function-name-literal-module
-            (owned_view.compiler-owned-shared-view args))]
+          (lint-redundant-function-name-literal-module args)]
         (if (string.eq module-name "")
           (lint-redundant-function-name-quoted-expr-list args state)
           (lint-redundant-function-name-quoted-expr-list
@@ -9307,7 +8815,7 @@
             (lint-redundant-function-name-state-with-module state module-name))))]
     [(or (string.eq callee "define") (string.eq callee "defmacro"))
       (lint-redundant-function-name-quoted-expr-list
-        (owned_view.compiler-owned-shared-view args)
+        args
         (lint-redundant-function-name-add
           state
           (lint-redundant-function-name-generated-head args)
@@ -9468,9 +8976,7 @@
           (ci.intern-qualified-base name)
           (lint-no-effect-span-id body)))]
     [(ast.AstDecl.Unsafe inner)
-      (lint-redundant-function-name-decl
-        (owned_view.compiler-owned-box-shared-view inner)
-        state)]
+      (lint-redundant-function-name-decl (deref inner) state)]
     [_ state]))
 
 (define (lint-redundant-function-names-in-decl-list-state
@@ -9501,8 +9007,7 @@
     [(ast.AstProgram.Program decls-box)
       (lint-redundant-function-names-in-decl-list
         source
-        (ast.ast-decl-list-box-shared-view
-          (owned_view.compiler-owned-shared-view decls-box))
+        (ast.ast-decl-list-box-shared-view decls-box)
         acc)]))
 
 (define (lint-unused-variable-binding
@@ -9655,10 +9160,7 @@
   [name : String]) : LintUnusedVariableMarkBindingsResult
   (let
     [found : i64
-      (lint-unused-variable-binding-index
-        (owned_view.compiler-owned-shared-view bindings)
-        name
-        (- bindings.len 1))]
+      (lint-unused-variable-binding-index bindings name (- bindings.len 1))]
     (if (< found 0)
       (LintUnusedVariableMarkBindingsResult bindings false)
       (begin
@@ -9817,7 +9319,7 @@
       (owned_view.compiler-owned-shared-view state.frames)]
     [top : i64 (- frames.len 1)]
     (if (< top 0)
-      (owned_view.compiler-owned-shared-view state)
+      state
       (lint-unused-variable-state-with
         (owned_view.compiler-owned-shared-view state)
         (LintUnusedVariableFrameList
@@ -9832,7 +9334,7 @@
           state.findings)))))
 
 (define (lint-unused-variable-param-bindings
-  [params : ast.AstParamList]
+  [params : (& params ast.AstParamList)]
   [source : String]
   [cursor : i64]
   [fallback : ast.AstSourceSpan]
@@ -9898,7 +9400,7 @@
               (+ index 1))))])))
 
 (define (lint-unused-variable-macro-param-bindings
-  [params : ast.AstMacroParamList]
+  [params : (& params ast.AstMacroParamList)]
   [source : String]
   [cursor : i64]
   [fallback : ast.AstSourceSpan]
@@ -10032,15 +9534,13 @@
       (lint-unused-variable-type
         (ast.ty-node-get ret)
         (lint-unused-variable-type-list
-          (ast.ast-type-list-box-shared-view
-            (owned_view.compiler-owned-shared-view args))
+          (ast.ast-type-list-box-shared-view args)
           state))]
     [(ast.AstType.CFunc signature _)
       (lint-unused-variable-type (ast.ty-node-get signature) state)]
     [(ast.AstType.Tuple items)
       (lint-unused-variable-type-list
-        (ast.ast-type-list-box-shared-view
-          (owned_view.compiler-owned-shared-view items))
+        (ast.ast-type-list-box-shared-view items)
         state)]
     [(ast.AstType.Array elem _)
       (lint-unused-variable-type (ast.ty-node-get elem) state)]
@@ -10056,19 +9556,16 @@
       (lint-unused-variable-type-lifetime name inner state)]
     [(ast.AstType.EnumArgs _ lifetimes)
       (lint-unused-variable-lifetime-list
-        (ast.ast-lifetime-list-box-shared-view
-          (owned_view.compiler-owned-shared-view lifetimes))
+        (ast.ast-lifetime-list-box-shared-view lifetimes)
         state)]
     [(ast.AstType.StructArgs _ lifetimes)
       (lint-unused-variable-lifetime-list
-        (ast.ast-lifetime-list-box-shared-view
-          (owned_view.compiler-owned-shared-view lifetimes))
+        (ast.ast-lifetime-list-box-shared-view lifetimes)
         state)]
     [(ast.AstType.Var name) (lint-unused-variable-read-id state name)]
     [(ast.AstType.VarArgs name lifetimes)
       (lint-unused-variable-lifetime-list
-        (ast.ast-lifetime-list-box-shared-view
-          (owned_view.compiler-owned-shared-view lifetimes))
+        (ast.ast-lifetime-list-box-shared-view lifetimes)
         (lint-unused-variable-read-id state name))]
     [(ast.AstType.Ptr elem)
       (lint-unused-variable-type (ast.ty-node-get elem) state)]
@@ -10621,7 +10118,7 @@
           start))]
     [with-frame : LintUnusedVariableState
       (lint-unused-variable-push-frame
-        (owned_view.compiler-owned-shared-view state)
+        state
         (lint-unused-variable-bindings-empty))]
     [with-bindings : LintUnusedVariableState
       (lint-unused-variable-let-bindings bindings with-frame cursor)]
@@ -10708,7 +10205,7 @@
         span)]
     (lint-unused-variable-match-arms-at
       (& arms)
-      (owned_view.compiler-owned-shared-view state)
+      state
       (if (< start 0)
         0
         start)
@@ -10761,14 +10258,9 @@
               with-case-findings
               (lint-unused-variable-bindings-empty))]
           [with-pattern : LintUnusedVariableState
-            (lint-unused-variable-pattern-bindings
-              (owned_view.compiler-owned-shared-view pattern)
-              with-frame)]
+            (lint-unused-variable-pattern-bindings pattern with-frame)]
           [with-body : LintUnusedVariableState
-            (lint-unused-variable-expr
-              (owned_view.compiler-owned-shared-view body-expr)
-              with-pattern
-              body-span)]
+            (lint-unused-variable-expr body-expr with-pattern body-span)]
           [body-end : i64 (lint-source-span-end-index state.source body-span)]
           (lint-unused-variable-match-arms-at
             arms
@@ -10795,14 +10287,14 @@
         (+ start (string.string-length "(lambda")))]
     [built : LintUnusedVariableBindingBuild
       (lint-unused-variable-param-bindings
-        (owned_view.compiler-owned-shared-view params)
+        params
         (owned_view.compiler-owned-shared-view state.source)
         cursor
         span
         true)]
     [with-cases : LintUnusedVariableState
       (lint-unused-variable-add-binding-name-cases
-        (owned_view.compiler-owned-shared-view state)
+        state
         (owned_view.compiler-owned-shared-view built.bindings))]
     [with-frame : LintUnusedVariableState
       (lint-unused-variable-push-frame with-cases built.bindings)]
@@ -10822,7 +10314,7 @@
   (let
     [with-frame : LintUnusedVariableState
       (lint-unused-variable-push-frame
-        (owned_view.compiler-owned-shared-view state)
+        state
         (lint-unused-variable-binding-push
           (lint-unused-variable-bindings-empty)
           (lint-unused-variable-binding (ci.intern-str name) span false false)))]
@@ -10863,7 +10355,7 @@
   (let
     [with-index : LintUnusedVariableState
       (lint-unused-variable-push-frame
-        (owned_view.compiler-owned-shared-view state)
+        state
         (lint-unused-variable-binding-push
           (lint-unused-variable-bindings-empty)
           (lint-unused-variable-binding (ci.intern-str index) span false false)))]
@@ -10871,7 +10363,7 @@
       (lint-unused-variable-expr keep with-index span)]
     [with-slot : LintUnusedVariableState
       (lint-unused-variable-push-frame
-        (owned_view.compiler-owned-shared-view with-keep)
+        with-keep
         (lint-unused-variable-binding-push
           (lint-unused-variable-bindings-empty)
           (lint-unused-variable-binding (ci.intern-str slot) span false false)))]
@@ -10883,7 +10375,7 @@
   [expr : ast.AstExpr]
   [state : LintUnusedVariableState]
   [span : ast.AstSourceSpan]) : LintUnusedVariableState
-  (match (owned_view.compiler-owned-shared-view expr)
+  (match expr
     [(ast.AstExpr.Spanned inner-box inner-span)
       (lint-unused-variable-expr (ast.ast-node-get inner-box) state inner-span)]
     [(ast.AstExpr.MacroExpansion inner-box _ _)
@@ -11041,8 +10533,7 @@
       (begin
         (lint-unused-unsafe-block-push!
           span
-          (lint-expr-list-requires-enclosing-unsafe?
-            (owned_view.compiler-owned-shared-view exprs)))
+          (lint-expr-list-requires-enclosing-unsafe? exprs))
         (lint-unused-unsafe-finish-state
           (lint-unused-variable-expr-list exprs state)))]
     [(ast.AstExpr.Set _ value)
@@ -11078,13 +10569,11 @@
             [scanned : LintNameCaseLocalScan
               (if state.name-case
                 (lint-unused-variable-scan-form-local-name
-                  (owned_view.compiler-owned-shared-view state)
+                  state
                   (ci.intern-str index)
                   span
                   "(foreach")
-                (LintNameCaseLocalScan
-                  (owned_view.compiler-owned-shared-view state)
-                  0))]
+                (LintNameCaseLocalScan state 0))]
             (lint-unused-variable-index-scope
               index
               (ast.ast-node-get body)
@@ -11105,13 +10594,11 @@
             [scanned : LintNameCaseLocalScan
               (if state.name-case
                 (lint-unused-variable-scan-form-local-name
-                  (owned_view.compiler-owned-shared-view state)
+                  state
                   (ci.intern-str index)
                   span
                   "(spmd-reduce")
-                (LintNameCaseLocalScan
-                  (owned_view.compiler-owned-shared-view state)
-                  0))]
+                (LintNameCaseLocalScan state 0))]
             (lint-unused-variable-index-scope
               index
               (ast.ast-node-get value)
@@ -11164,8 +10651,7 @@
                     (ci.intern-str prefix)
                     index-scan.next-index
                     (if (< limit 0)
-                      (string.string-length
-                        (owned_view.compiler-owned-shared-view state.source))
+                      (string.string-length state.source)
                       limit)))
                 (LintNameCaseLocalScan index-scan.state 0))]
             [base-state : LintUnusedVariableState
@@ -11230,8 +10716,7 @@
                     (ci.intern-str slot)
                     index-scan.next-index
                     (if (< limit 0)
-                      (string.string-length
-                        (owned_view.compiler-owned-shared-view state.source))
+                      (string.string-length state.source)
                       limit)))
                 (LintNameCaseLocalScan index-scan.state 0))]
             [base-state : LintUnusedVariableState
@@ -11458,12 +10943,12 @@
     [cursor : i64
       (lint-unused-variable-decl-param-cursor
         (owned_view.compiler-owned-shared-view source)
-        (owned_view.compiler-owned-shared-view prefix)
+        prefix
         (ci.intern-str name)
         body-span)]
     [built : LintUnusedVariableBindingBuild
       (lint-unused-variable-param-bindings
-        (owned_view.compiler-owned-shared-view params)
+        params
         (owned_view.compiler-owned-shared-view source)
         cursor
         body-span
@@ -11480,9 +10965,7 @@
         base-state
         (owned_view.compiler-owned-shared-view built.bindings))]
     [state : LintUnusedVariableState
-      (lint-unused-variable-push-frame
-        with-cases
-        (owned_view.compiler-owned-shared-view built.bindings))]
+      (lint-unused-variable-push-frame with-cases built.bindings)]
     [with-param-types : LintUnusedVariableState
       (lint-unused-variable-type
         ret
@@ -11509,12 +10992,12 @@
     [cursor : i64
       (lint-unused-variable-decl-param-cursor
         (owned_view.compiler-owned-shared-view source)
-        (owned_view.compiler-owned-shared-view prefix)
+        prefix
         (ci.intern-str name)
         body-span)]
     [built : LintUnusedVariableBindingBuild
       (lint-unused-variable-macro-param-bindings
-        (owned_view.compiler-owned-shared-view params)
+        params
         (owned_view.compiler-owned-shared-view source)
         cursor
         body-span
@@ -11531,9 +11014,7 @@
         base-state
         (owned_view.compiler-owned-shared-view built.bindings))]
     [state : LintUnusedVariableState
-      (lint-unused-variable-push-frame
-        with-cases
-        (owned_view.compiler-owned-shared-view built.bindings))]
+      (lint-unused-variable-push-frame with-cases built.bindings)]
     [with-param-types : LintUnusedVariableState
       (lint-unused-variable-type
         ret
@@ -11629,7 +11110,7 @@
     [(ast.AstDeclListStep.Cons decl rest)
       (lint-unused-variables-in-decl-list
         (owned_view.compiler-owned-shared-view source)
-        (owned_view.compiler-owned-shared-view rest)
+        rest
         (lint-unused-variables-in-decl source decl acc name-case report-unused)
         name-case
         report-unused)]))
@@ -11713,7 +11194,7 @@
         (owned_view.compiler-owned-shared-view expr)
         threshold
         acc)]
-    (if (lint-no-effect-pure-expr? (owned_view.compiler-owned-shared-view expr))
+    (if (lint-no-effect-pure-expr? expr)
       (lint-findings-add
         (lint-no-effect-finding (lint-no-effect-span-id expr-id))
         walked)
@@ -11746,13 +11227,13 @@
       [_ (lint-walk-discarded-nonsequence-expr expr-id threshold acc)])))
 
 (define (lint-walk-value-sequence-expr-list
-  [exprs : ast.AstExprList]
+  [exprs : (& exprs ast.AstExprList)]
   [threshold : i64]
   [acc : LintFindings]) : LintFindings
   (lint-walk-value-sequence-expr-list-after-terminal exprs threshold acc false))
 
 (define (lint-walk-value-sequence-expr-list-after-terminal
-  [exprs : ast.AstExprList]
+  [exprs : (& exprs ast.AstExprList)]
   [threshold : i64]
   [acc : LintFindings]
   [after-terminal : bool]) : LintFindings
@@ -11782,10 +11263,7 @@
           acc)
         (let
           [with-padding : LintFindings
-            (lint-add-redundant-divergence-padding
-              head-id
-              (owned_view.compiler-owned-shared-view rest)
-              acc)]
+            (lint-add-redundant-divergence-padding head-id rest acc)]
           [walked : LintFindings
             (if (= rest.len 0)
               (lint-walk-expr
@@ -11801,16 +11279,16 @@
             (+ index 1)))))))
 
 (define (lint-walk-tail-sequence-expr-list
-  [exprs : ast.AstExprList]
+  [exprs : (& exprs ast.AstExprList)]
   [threshold : i64]
   [acc : LintFindings]) : LintFindings
   (lint-walk-tail-sequence-expr-list-after-terminal exprs threshold acc false))
 
-(define (lint-expr-list-single? [exprs : ast.AstExprList]) : bool
+(define (lint-expr-list-single? [exprs : (& exprs ast.AstExprList)]) : bool
   (= exprs.len 1))
 
 (define (lint-add-single-begin
-  [exprs : ast.AstExprList]
+  [exprs : (& exprs ast.AstExprList)]
   [span : ast.AstSourceSpan]
   [acc : LintFindings]) : LintFindings
   (if (lint-expr-list-single? exprs)
@@ -11818,7 +11296,7 @@
     acc))
 
 (define (lint-walk-tail-sequence-expr-list-after-terminal
-  [exprs : ast.AstExprList]
+  [exprs : (& exprs ast.AstExprList)]
   [threshold : i64]
   [acc : LintFindings]
   [after-terminal : bool]) : LintFindings
@@ -11848,10 +11326,7 @@
           acc)
         (let
           [with-padding : LintFindings
-            (lint-add-redundant-divergence-padding
-              head-id
-              (owned_view.compiler-owned-shared-view rest)
-              acc)]
+            (lint-add-redundant-divergence-padding head-id rest acc)]
           [walked : LintFindings
             (if (= rest.len 0)
               (lint-walk-tail-expr
@@ -11909,7 +11384,7 @@
           (lint-let-bindings-contain-name-at? bindings name (+ index 1)))])))
 
 (define (lint-let-bindings-shadow-outer?
-  [outer : ast.AstLetBindingList]
+  [outer : (& outer ast.AstLetBindingList)]
   [inner : ast.AstLetBindingList]) : bool
   (lint-let-bindings-shadow-outer-at? (& outer) (& inner) 0))
 
@@ -11938,7 +11413,7 @@
     [_ false]))
 
 (define (lint-nested-let-shadows?
-  [outer : ast.AstLetBindingList]
+  [outer : (& outer ast.AstLetBindingList)]
   [body : ast.AstExpr]) : bool
   (match body
     [(ast.AstExpr.Spanned inner-box _)
@@ -11963,7 +11438,7 @@
         (lint-nested-let-body? (owned_view.compiler-owned-shared-view body))
         (not
           (lint-nested-let-shadows?
-            (owned_view.compiler-owned-shared-view bindings)
+            bindings
             (owned_view.compiler-owned-shared-view body))))
         (lint-findings-add (lint-nested-let-finding span) acc)
         acc)]
@@ -11984,7 +11459,7 @@
         (lint-nested-let-body? (owned_view.compiler-owned-shared-view body))
         (not
           (lint-nested-let-shadows?
-            (owned_view.compiler-owned-shared-view bindings)
+            bindings
             (owned_view.compiler-owned-shared-view body))))
         (lint-findings-add (lint-nested-let-finding span) acc)
         acc)]
@@ -12270,10 +11745,7 @@
           acc)
         (let
           [with-padding : LintFindings
-            (lint-add-redundant-divergence-padding
-              head-id
-              (owned_view.compiler-owned-shared-view rest)
-              acc)]
+            (lint-add-redundant-divergence-padding head-id rest acc)]
           [walked : LintFindings
             (if (= rest.len 0)
               (lint-walk-tail-expr
@@ -12352,7 +11824,7 @@
               (lint-walk-call func args span threshold acc))]
           [(ast.AstExpr.Begin exprs)
             (lint-walk-tail-sequence-expr-list
-              (owned_view.compiler-owned-shared-view exprs)
+              exprs
               threshold
               (lint-add-single-begin exprs span acc))]
           [_ (lint-walk-tail-expr inner threshold acc)]))]
@@ -12383,7 +11855,7 @@
             (lint-walk-tail-expr body threshold acc))])]
     [(ast.AstExpr.Begin exprs)
       (lint-walk-tail-sequence-expr-list
-        (owned_view.compiler-owned-shared-view exprs)
+        exprs
         threshold
         (lint-add-single-begin exprs (lint-no-span) acc))]
     [(ast.AstExpr.Unsafe exprs) (lint-walk-tail-expr-list exprs threshold acc)]
@@ -12459,7 +11931,7 @@
 
 (define (lint-walk-and-or-skip-args
   [op : String]
-  [args : ast.AstExprList]
+  [args : (& args ast.AstExprList)]
   [threshold : i64]
   [acc : LintFindings]) : LintFindings
   (lint-walk-and-or-skip-args-at op (& args) threshold acc 0))
@@ -12544,18 +12016,15 @@
       (not (string.eq op ""))
       (lint-and-or-args-have-kind?
         (owned_view.compiler-owned-shared-view op)
-        (owned_view.compiler-owned-shared-view args)))
+        args))
       (lint-walk-and-or-skip-args
         (owned_view.compiler-owned-shared-view op)
-        (owned_view.compiler-owned-shared-view args)
+        args
         threshold
         (lint-findings-add
           (lint-cascading-and-or-finding op (lint-expr-render func) args span)
           callee-findings))
-      (if (and
-        (lint-str-cat-func? func)
-        (lint-str-cat-args-have-nested?
-          (owned_view.compiler-owned-shared-view args)))
+      (if (and (lint-str-cat-func? func) (lint-str-cat-args-have-nested? args))
         (lint-walk-expr-list
           args
           threshold
@@ -12601,7 +12070,7 @@
               (lint-walk-call func args span threshold acc))]
           [(ast.AstExpr.Begin exprs)
             (lint-walk-value-sequence-expr-list
-              (owned_view.compiler-owned-shared-view exprs)
+              exprs
               threshold
               (lint-add-single-begin exprs span acc))]
           [_ (lint-walk-expr inner threshold acc)]))]
@@ -12734,7 +12203,7 @@
             acc)))]
     [(ast.AstExpr.Begin exprs)
       (lint-walk-value-sequence-expr-list
-        (owned_view.compiler-owned-shared-view exprs)
+        exprs
         threshold
         (lint-add-single-begin exprs (lint-no-span) acc))]
     [(ast.AstExpr.Unsafe exprs)
@@ -13134,7 +12603,7 @@
           (if name-case
             (lint-name-case-in-decls
               (owned_view.compiler-owned-shared-view source)
-              (owned_view.compiler-owned-shared-view decls)
+              decls
               with-locals)
             with-locals)]
         (if deprecated-string-concat

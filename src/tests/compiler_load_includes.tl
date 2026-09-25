@@ -5,7 +5,6 @@
 (import compiler_ctfe as ctfe)
 (import compiler_diagnostic as diag)
 (import compiler_embedded_stdlib as embedded)
-(import compiler_owned_view as view)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as cat)
 (import stdlib.test)
@@ -92,8 +91,7 @@
   (match result
     [(load.ResultCompilerLoadInclude.Err boxed)
       (let
-        [diagnostic : diag.CompilerDiagnostic
-          (diag.compiler-diagnostic-box-shared-view boxed)]
+        [diagnostic : diag.CompilerDiagnostic (deref boxed)]
         (and
           (string.eq
             (diag.compiler-diagnostic-path (& diagnostic))
@@ -122,7 +120,7 @@
             "include_bin_payload.bin"
             cbi.compiler-builtin-id-fix-x
             (load.compiler-load-string-vec-one "stdlib")
-            (view.compiler-owned-shared-view pools))]
+            pools)]
         (begin
           (test.assert-true
             (include-matches? kind (& pools) result (string.copy contents))
@@ -139,7 +137,7 @@
                 "__missing_include__.bin"
                 cbi.compiler-builtin-id-fix-x
                 (load.compiler-load-string-vec-one "stdlib")
-                (view.compiler-owned-shared-view pools))
+                pools)
               (cat.str-cat
                 "compiler-load: cannot read "
                 (match kind
@@ -155,7 +153,7 @@
                 "pkg:__missing_include__/payload.bin"
                 cbi.compiler-builtin-id-fix-x
                 (load.compiler-load-string-vec-one "stdlib")
-                (view.compiler-owned-shared-view pools))
+                pools)
               "compiler-load: unknown package alias '__missing_include__': pkg:__missing_include__/payload.bin")
             "ordinary resolver errors survive include dispatch")
           (let
@@ -215,7 +213,7 @@
                         "stdlib/option.tl"
                         (cfg linux "stdlib\\option.tl" "stdlib/option.tl")
                         cbi.compiler-builtin-id-fix-x
-                        (view.compiler-owned-shared-view pools))
+                        pools)
                       (string.copy contents))
                     "embedded fallback retains every materialization kind")
                   (set! index (+ index 1)))))

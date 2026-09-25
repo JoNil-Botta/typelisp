@@ -225,10 +225,8 @@ if [ "$SELF_TEST" -eq 0 ] && [ "$MEASURE_BENCHMARKS" -eq 0 ] && [ "$MEASURE_SELF
     exit 2
 fi
 
-fail() {
-    echo "[ir-count] $*" >&2
-    exit 1
-}
+GATE_FAIL_PREFIX='[ir-count] '
+. "$ROOT/scripts/lib-gate.sh"
 
 case "$(uname -s)" in
     Linux*) ;;

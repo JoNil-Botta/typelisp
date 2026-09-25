@@ -55,10 +55,8 @@ mkdir -p \
     "$RIGHT_PKG/src" \
     "$SHARED_PKG/src"
 
-fail() {
-    echo "[package-metadata-tlci] $*" >&2
-    exit 1
-}
+GATE_FAIL_PREFIX='[package-metadata-tlci] '
+. "$ROOT/scripts/lib-gate.sh"
 
 assert_contains() {
     grep -F -- "$2" "$1" >/dev/null ||

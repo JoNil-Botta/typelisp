@@ -102,10 +102,10 @@ or artifact digest—rather than requiring unrelated machine code to be
 byte-identical.
 
 The corpus deliberately reuses binaries and observations left by integration,
-TLCI, SPMD, and Windows COFF gates. Each row names its producer's ledger gate
-ID, and the gate ledger requires the cross-mode gate to need exactly those
-gates on the rows' hosts, so `scripts/ci-verify.sh --gates
-stage2-cross-mode-semantic-abi-differential` runs them first. Its only fresh
+TLCI, SPMD, and Windows COFF gates. Each row names its producer's gate ID,
+and the cross-mode gate's row in `scripts/ci-gates.tsv` needs those gates, so
+`scripts/ci-verify.sh --gates stage2-cross-mode-semantic-abi-differential`
+runs them first. Its only fresh
 compiles are one compact fixture with the previous and successor compiler
 binaries already built by the same bootstrap. Host and ISA exclusions are written to
 `target/cross-mode-differential/applicability.tsv`; an absent prerequisite for
@@ -168,17 +168,14 @@ the deterministic `TYPELISP_WINDOWS_LIB` contract documented in
 
 The required top-level host inventories can be inspected without running tests
 or fetching a compiler: `sh scripts/ci-verify.sh --list-gates linux` (or
-`windows`). The same validated [`ci-gates.tsv`](../scripts/ci-gates.tsv) owns
-full-run order, labels and each gate's `needs` (the earlier gates whose
-artifacts it consumes, checked against the runner and the artifact inventory).
-Missing, duplicate, wrong-host or failed obligations prevent verification
-success. Internal corpus and artifact proofs remain
-required; listing does not execute or certify them.
+`windows`). [`ci-gates.tsv`](../scripts/ci-gates.tsv) is the gate table: one
+row per gate, in run order, with its hosts, label, `needs` (the earlier gates
+whose outputs it uses), compiler and command. A failed gate stops the run.
 `sh scripts/ci-verify.sh --gates <id>[,<id>...]` reproduces one gate locally:
 it runs the named gates plus every gate their `needs` reach, in order, and ends
 with a partial result rather than verification success (add `--list-gates linux`
 before `--gates` to print that closure without running it). See the
-[gate ledger contract](../scripts/README.md#core-development-loop).
+[gate table](../scripts/README.md#core-development-loop).
 
 ## Documentation site
 

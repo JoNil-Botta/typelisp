@@ -59,7 +59,7 @@
     [(string.eq name "backend")
       (begin
         (cbi.compiler-builtin-initialize-for-parse!)
-        (compiler_backend_tests.compiler-backend-configured-self-test))]
+        (compiler_backend_tests.compiler-backend-self-test))]
     [(string.eq name "backend-object-target")
       (object_target_tests.compiler-backend-object-target-tests-main)]
     [(string.eq name "x64-template-registry")

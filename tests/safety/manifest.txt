@@ -851,8 +851,8 @@ generated_cfg_missing_decls_import_reject|check-fail|tests/safety/generated_cfg_
 # (#7921) resolve through their own declaration, never a later one's members:
 # each probe is the ordinary type error for its own i64 member, at widths
 # 1001-2500 with and without a later declaration. wide_aggregates.tl generates
-# the wide declarations; wide_struct_literal_decls.tl writes the issue's
-# reproducer out by hand. The well-typed twins run as the wide_struct_members,
+# the wide declarations; wide_struct_literal_decls.awk writes the issue's
+# reproducer out in full. The well-typed twins run as the wide_struct_members,
 # wide_enum_variants and wide_struct_literal native rows.
 wide_struct_1001_next_reject|check-fail|tests/safety/wide_struct_1001_next_reject.tl|-|if condition must be bool: expected bool, found i64
 wide_struct_1002_next_reject|check-fail|tests/safety/wide_struct_1002_next_reject.tl|-|if condition must be bool: expected bool, found i64

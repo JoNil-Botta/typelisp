@@ -17,7 +17,7 @@
   (Err tokens.FormatSourceError))
 
 (define (format-rules-node-colon? [node : cst.FormatCst]) : bool
-  (match (owned_view.compiler-owned-shared-view node)
+  (match node
     [(cst.FormatCst.Atom tok)
       (= (tokens.format-token-tag tok) (tokens.fmt-tag-colon))]
     [_ false]))
@@ -38,8 +38,7 @@
 (define (format-rules-node-colon-list? [node : cst.FormatCst]) : bool
   (match node
     [(cst.FormatCst.List items)
-      (match (cst.fmt-cst-list-step
-        (owned_view.compiler-owned-box-shared-view items))
+      (match (cst.fmt-cst-list-step (deref items))
         [(cst.FormatCstListStep.Item head _) (format-rules-node-colon? head)]
         [_ false])]
     [_ false]))
@@ -47,8 +46,7 @@
 (define (format-rules-node-spmd-callable? [node : cst.FormatCst]) : bool
   (match node
     [(cst.FormatCst.List items)
-      (match (cst.fmt-cst-list-step
-        (owned_view.compiler-owned-box-shared-view items))
+      (match (cst.fmt-cst-list-step (deref items))
         [(cst.FormatCstListStep.Item colon rest)
           (and
             (format-rules-node-colon? colon)
@@ -77,7 +75,7 @@
     [_ ""]))
 
 (define (format-rules-top-form-family-list [items : cst.FormatCstList]) : String
-  (match (cst.fmt-cst-list-step (owned_view.compiler-owned-shared-view items))
+  (match (cst.fmt-cst-list-step items)
     [(cst.FormatCstListStep.Item head rest)
       (let
         [head-name : String (format-rules-node-symbol-name head)]
@@ -96,8 +94,7 @@
 (define (format-rules-top-form-family [node : cst.FormatCst]) : String
   (match node
     [(cst.FormatCst.List items)
-      (format-rules-top-form-family-list
-        (owned_view.compiler-owned-box-shared-view items))]
+      (format-rules-top-form-family-list (deref items))]
     [_ ""]))
 
 (define (format-rules-adjacent-top-forms?
@@ -123,10 +120,10 @@
 (define (format-rules-bracket-binding-items?
   [items : cst.FormatCstList]
   [seen : bool]) : bool
-  (match (cst.fmt-cst-list-step (owned_view.compiler-owned-shared-view items))
+  (match (cst.fmt-cst-list-step items)
     [(cst.FormatCstListStep.Empty) seen]
     [(cst.FormatCstListStep.Item node rest)
-      (match (owned_view.compiler-owned-shared-view node)
+      (match node
         [(cst.FormatCst.Comment _)
           (format-rules-bracket-binding-items? rest seen)]
         [(cst.FormatCst.BracketList _)
@@ -150,9 +147,7 @@
             [_
               (if (format-rules-bracket-binding-list?
                 (owned_view.compiler-owned-box-shared-view bindings))
-                (format-rules-list-append
-                  (owned_view.compiler-owned-box-shared-view bindings)
-                  tail)
+                (format-rules-list-append (deref bindings) tail)
                 rest)])]
         [_ rest])]
     [_ rest]))
@@ -240,7 +235,7 @@
       (format-rules-layout-text text emit width indent col flat limit buf)]
     [(cst.FormatCst.Prefix tok child)
       (format-rules-layout-cst
-        (owned_view.compiler-owned-box-shared-view child)
+        (deref child)
         emit
         width
         indent
@@ -268,7 +263,7 @@
           width
           indent
           (format-rules-layout-cst
-            (owned_view.compiler-owned-box-shared-view child)
+            (deref child)
             emit
             width
             indent
@@ -284,7 +279,7 @@
         buf)]
     [(cst.FormatCst.List items)
       (format-rules-layout-list
-        (owned_view.compiler-owned-box-shared-view items)
+        (deref items)
         emit
         width
         indent
@@ -295,7 +290,7 @@
     [(cst.FormatCst.BracketList items)
       (format-rules-layout-delimited
         "["
-        (owned_view.compiler-owned-box-shared-view items)
+        (deref items)
         "]"
         emit
         width
@@ -306,7 +301,7 @@
         buf)]
     [(cst.FormatCst.Forms items)
       (format-rules-layout-forms
-        (owned_view.compiler-owned-box-shared-view items)
+        (deref items)
         emit
         width
         indent
@@ -692,7 +687,7 @@
                   (set!
                     out
                     (format-rules-layout-cst
-                      (owned_view.compiler-owned-shared-view node)
+                      node
                       emit
                       width
                       indent
@@ -707,7 +702,7 @@
                   (set!
                     out
                     (format-rules-layout-colon-pair
-                      (owned_view.compiler-owned-shared-view node)
+                      node
                       (owned_view.compiler-owned-shared-view next)
                       emit
                       width
@@ -734,10 +729,7 @@
                   flat
                   limit
                   buf))
-              (set!
-                prev-comment
-                (format-rules-node-comment?
-                  (owned_view.compiler-owned-shared-view node)))
+              (set! prev-comment (format-rules-node-comment? node))
               (set! last-comment prev-comment)
               (set! index (+ index 1))))))
       (if last-comment
@@ -872,7 +864,7 @@
           buf)]
       (format-rules-layout-delimited-inner
         open
-        (owned_view.compiler-owned-shared-view items)
+        items
         close
         true
         width
@@ -1426,7 +1418,7 @@
   (match (owned_view.compiler-owned-shared-view node)
     [(cst.FormatCst.BracketList items)
       (format-rules-layout-let-item-list
-        (owned_view.compiler-owned-box-shared-view items)
+        (deref items)
         emit
         width
         indent
@@ -1476,10 +1468,7 @@
                 flat
                 limit
                 buf))
-            (set!
-              last-comment
-              (format-rules-node-comment?
-                (owned_view.compiler-owned-shared-view node)))
+            (set! last-comment (format-rules-node-comment? node))
             (set! index (+ index 1)))))
       (if last-comment
         (format-rules-layout-hard-line emit width indent out flat limit buf)
@@ -1743,7 +1732,7 @@
                   (owned_view.compiler-owned-shared-view body))
                   (format-rules-layout-first-or-line-form
                     "define"
-                    (owned_view.compiler-owned-shared-view rest)
+                    rest
                     emit
                     width
                     indent
@@ -1767,7 +1756,7 @@
               [_
                 (format-rules-layout-first-or-line-form
                   "define"
-                  (owned_view.compiler-owned-shared-view rest)
+                  rest
                   emit
                   width
                   indent
@@ -1787,7 +1776,7 @@
                           (owned_view.compiler-owned-shared-view body))
                           (format-rules-layout-first-or-line-form
                             "define"
-                            (owned_view.compiler-owned-shared-view rest)
+                            rest
                             emit
                             width
                             indent
@@ -1811,7 +1800,7 @@
                       [_
                         (format-rules-layout-first-or-line-form
                           "define"
-                          (owned_view.compiler-owned-shared-view rest)
+                          rest
                           emit
                           width
                           indent
@@ -1821,7 +1810,7 @@
                           buf)])
                     (format-rules-layout-first-or-line-form
                       "define"
-                      (owned_view.compiler-owned-shared-view rest)
+                      rest
                       emit
                       width
                       indent
@@ -1832,7 +1821,7 @@
                 [_
                   (format-rules-layout-first-or-line-form
                     "define"
-                    (owned_view.compiler-owned-shared-view rest)
+                    rest
                     emit
                     width
                     indent
@@ -1853,7 +1842,7 @@
         [_
           (format-rules-layout-first-or-line-form
             "define"
-            (owned_view.compiler-owned-shared-view rest)
+            rest
             emit
             width
             indent
@@ -1864,7 +1853,7 @@
     [_
       (format-rules-layout-first-or-line-form
         "define"
-        (owned_view.compiler-owned-shared-view rest)
+        rest
         emit
         width
         indent
@@ -1894,7 +1883,7 @@
                   (owned_view.compiler-owned-shared-view body))
                   (format-rules-layout-first-or-line-form
                     "defmacro"
-                    (owned_view.compiler-owned-shared-view rest)
+                    rest
                     emit
                     width
                     indent
@@ -1918,7 +1907,7 @@
               [_
                 (format-rules-layout-first-or-line-form
                   "defmacro"
-                  (owned_view.compiler-owned-shared-view rest)
+                  rest
                   emit
                   width
                   indent
@@ -1928,7 +1917,7 @@
                   buf)])
             (format-rules-layout-first-or-line-form
               "defmacro"
-              (owned_view.compiler-owned-shared-view rest)
+              rest
               emit
               width
               indent
@@ -1939,7 +1928,7 @@
         [_
           (format-rules-layout-first-or-line-form
             "defmacro"
-            (owned_view.compiler-owned-shared-view rest)
+            rest
             emit
             width
             indent
@@ -1950,7 +1939,7 @@
     [_
       (format-rules-layout-first-or-line-form
         "defmacro"
-        (owned_view.compiler-owned-shared-view rest)
+        rest
         emit
         width
         indent
@@ -1980,7 +1969,7 @@
                   (owned_view.compiler-owned-shared-view body))
                   (format-rules-layout-first-or-line-form
                     "lambda"
-                    (owned_view.compiler-owned-shared-view rest)
+                    rest
                     emit
                     width
                     indent
@@ -2004,7 +1993,7 @@
               [_
                 (format-rules-layout-first-or-line-form
                   "lambda"
-                  (owned_view.compiler-owned-shared-view rest)
+                  rest
                   emit
                   width
                   indent
@@ -2014,7 +2003,7 @@
                   buf)])
             (format-rules-layout-first-or-line-form
               "lambda"
-              (owned_view.compiler-owned-shared-view rest)
+              rest
               emit
               width
               indent
@@ -2025,7 +2014,7 @@
         [_
           (format-rules-layout-first-or-line-form
             "lambda"
-            (owned_view.compiler-owned-shared-view rest)
+            rest
             emit
             width
             indent
@@ -2036,7 +2025,7 @@
     [_
       (format-rules-layout-first-or-line-form
         "lambda"
-        (owned_view.compiler-owned-shared-view rest)
+        rest
         emit
         width
         indent
@@ -2191,7 +2180,7 @@
       [else
         (format-rules-layout-delimited
           "("
-          (owned_view.compiler-owned-shared-view items)
+          items
           ")"
           emit
           width
@@ -2288,7 +2277,7 @@
         (owned_view.compiler-owned-shared-view head))
         (format-rules-layout-colon-list
           rest
-          (owned_view.compiler-owned-shared-view items)
+          items
           emit
           width
           indent
@@ -2538,12 +2527,7 @@
     (begin
       (match (owned_view.compiler-owned-shared-view node)
         [(cst.FormatCst.Forms items)
-          (format-rules-render-forms-into
-            (owned_view.compiler-owned-box-shared-view items)
-            width
-            0
-            0
-            (&mut buf))]
+          (format-rules-render-forms-into (deref items) width 0 0 (&mut buf))]
         [_ (format-rules-render-node-fragment-into node width 0 0 (&mut buf))])
       (fmt_buf.fmt-render-buf-string buf))))
 

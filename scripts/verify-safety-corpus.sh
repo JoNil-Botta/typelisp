@@ -21,24 +21,11 @@ case "$(uname -s)" in
         ;;
 esac
 
-if [ -n "${TYPELISP_BIN:-}" ]; then
-    COMPILER=$TYPELISP_BIN
-else
-    # Local-development fallback: fetch the published
-    # self-hosted stage0 (CI always passes a compiler via TYPELISP_BIN).
-    . "$ROOT/scripts/lib-stage0.sh"
-    COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
-fi
-
-case "$COMPILER" in
-    /* | [A-Za-z]:[/\\]*) ;;
-    *) COMPILER="$ROOT/$COMPILER" ;;
-esac
-
-if [ ! -x "$COMPILER" ]; then
-    echo "typelisp compiler is not executable: $COMPILER" >&2
-    exit 1
-fi
+GATE_FAIL_PREFIX='FAIL: '
+. "$ROOT/scripts/lib-gate.sh"
+gate_compiler
+gate_compiler_absolute
+gate_require_compiler
 
 if [ "$HOST_OS" = linux ]; then
     command -v as >/dev/null 2>&1 || {
@@ -71,6 +58,9 @@ rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 NORMALIZED_MANIFEST="$WORKDIR/manifest.normalized"
 tr -d '\r' < "$MANIFEST" > "$NORMALIZED_MANIFEST"
+# wide_struct_literal_reject imports the generated #7921 declarations.
+awk -f tests/integration/wide_struct_literal_decls.awk > "$WORKDIR/wide_struct_literal_decls.tl"
+mv "$WORKDIR/wide_struct_literal_decls.tl" tests/integration/wide_struct_literal_decls.tl
 
 BUILD_TARGET=linux-x86_64
 CHECK_BIN="$WORKDIR/selfhost-check"
@@ -80,11 +70,6 @@ if [ "$HOST_OS" = windows ]; then
     CHECK_BIN="$WORKDIR/selfhost-check.exe"
     TARGET_CFG_ARGS="--cfg windows --cfg target-windows --cfg os-windows"
 fi
-
-fail() {
-    echo "FAIL: $*" >&2
-    exit 1
-}
 
 assert_contains() {
     file=$1

@@ -330,19 +330,9 @@ inline_test_self_test_chunks() {
 inline_test_self_test_chunks
 [ "$SELF_TEST_ONLY" -eq 0 ] || exit 0
 
-if [ -n "${TYPELISP_BIN:-}" ]; then
-    COMPILER=$TYPELISP_BIN
-else
-    # Local-development fallback: fetch the published
-    # self-hosted stage0 (CI always passes a compiler via TYPELISP_BIN).
-    . "$ROOT/scripts/lib-stage0.sh"
-    COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
-fi
-
-if [ ! -x "$COMPILER" ]; then
-    echo "typelisp compiler is not executable: $COMPILER" >&2
-    exit 1
-fi
+. "$ROOT/scripts/lib-gate.sh"
+gate_compiler
+gate_require_compiler
 
 WORKDIR="$ROOT/target/inline-test-verify"
 rm -rf "$WORKDIR"
@@ -386,10 +376,9 @@ discovered_file_count=$(wc -l < "$DISCOVERED" | tr -d ' ')
 # regression fails deterministically without asking an uncapped runner to OOM.
 #
 # RLIMIT_AS is unsuitable here: the runtime reserves large virtual mappings,
-# so `ulimit -v` can fail while RSS remains below 200 MiB. Prefer a cgroup-v2
-# MemoryMax over the complete process tree. On Linux hosts without a usable
-# user systemd manager, the helper falls back to a process-group aggregate-RSS
-# watchdog with the same 1 GiB threshold.
+# so `ulimit -v` can fail while RSS remains below 200 MiB. The helper applies a
+# cgroup-v2 MemoryMax over the complete process tree and needs a usable user
+# systemd manager.
 if [ "$HOST_OS" = linux ]; then
     profile_summary_stdout="$WORKDIR/profile-summary.stdout"
     profile_summary_stderr="$WORKDIR/profile-summary.stderr"

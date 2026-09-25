@@ -11,7 +11,7 @@
 ;; `benchmarks/opt_crc32` shape, which was 495,577,856 instructions before the
 ;; fix and 325,169,904 after.
 ;;
-;; scripts/verify-asm-shape-gates.sh asserts `__bce_fast__unroll_body` in
+;; tests/codegen/asm-shape.cases asserts `__bce_fast__unroll_body` in
 ;; `mask-sum`. The literal-mask twin below is the control: both must unroll, so
 ;; a regression that loses the global-mask path shows up as an asymmetry rather
 ;; than as a silently slower binary.

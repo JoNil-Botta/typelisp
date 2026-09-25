@@ -10,9 +10,12 @@
 #   - tests/safety/*.tl and tests/diagnostics/**/*.tl (`check`, exit code and
 #     output compared);
 #   - the compiler itself: <base-tree>/src/main.tl (unless --no-self).
-# Each compiler resolves the stdlib from its own tree: the base compiler from
-# <base-tree>/stdlib and the head compiler from this checkout's stdlib. Exit code,
-# stdout, stderr and emitted assembly must match byte for byte.
+# Each compiler resolves the stdlib from its own tree: the base compiler runs in
+# <base-tree> with its stdlib, and the head compiler runs in a copy of the same
+# corpus paired with this checkout's stdlib (a compiler prefers the stdlib of the
+# tree it runs in, so both sides need their own tree). Exit code, stdout, stderr
+# and emitted assembly must match byte for byte after the tree prefix is
+# normalized.
 #
 # Default mode is linux-x86_64 --opt-level 2, plus avx2/avx512 for tests/spmd.
 # --full adds opt levels 0 and 1, the windows-x86_64 target, and the scalar
@@ -42,9 +45,10 @@ if [ "${1:-}" = "--job" ]; then
             > "$dest/$key.out" 2> "$dest/$key.err" || rc=$?
     fi
     echo "$rc" > "$dest/$key.rc"
-    # Normalize the per-side output directory the compiler echoes back.
-    for stream in out err; do
-        sed "s|$outdir/|<OUT>/|g" "$dest/$key.$stream" > "$dest/$key.$stream.n"
+    # Normalize the per-side output directory and source tree the compiler echoes back.
+    for stream in out err s; do
+        [ -e "$dest/$key.$stream" ] || continue
+        sed -e "s|$outdir/|<OUT>/|g" -e "s|$tree/|<TREE>/|g" "$dest/$key.$stream" > "$dest/$key.$stream.n"
         mv "$dest/$key.$stream.n" "$dest/$key.$stream"
     done
     exit 0
@@ -86,14 +90,26 @@ if [ "$FULL" -eq 1 ]; then
     targets="linux-x86_64 windows-x86_64" opts="0 1 2" spmd_modes="scalar avx2 avx512"
 fi
 
+# The head side compiles the same corpus from its own tree so that it resolves
+# this checkout's stdlib rather than the base tree's.
+HEAD_TREE="$OUT/head-tree"
+mkdir -p "$HEAD_TREE/benchmarks"
+(cd "$BASE_TREE" && cp -a examples tests typelisp.pkg "$HEAD_TREE/")
+for b in "$BASE_TREE"/benchmarks/*/; do
+    [ -e "$b/bench.tl" ] || continue
+    mkdir -p "$HEAD_TREE/benchmarks/$(basename "$b")"
+    cp -a "$b"/*.tl "$HEAD_TREE/benchmarks/$(basename "$b")/"
+done
+cp -a "$ROOT/stdlib" "$HEAD_TREE/stdlib"
+
 JOBLIST="$OUT/jobs.txt"
 : > "$JOBLIST"
 emit() { # side verb target opt mode files
     side=$1 verb=$2 target=$3 opt=$4 mode=$5
     shift 5
-    if [ "$side" = base ]; then c=$BASE s=$BASE_TREE/stdlib; else c=$HEAD s=$ROOT/stdlib; fi
+    if [ "$side" = base ]; then c=$BASE side_tree=$BASE_TREE; else c=$HEAD side_tree=$HEAD_TREE; fi
     for f in $*; do
-        printf '%s\n' "--job $c $s $BASE_TREE $OUT/$side $verb $target $opt $mode $f" >> "$JOBLIST"
+        printf '%s\n' "--job $c stdlib $side_tree $OUT/$side $verb $target $opt $mode $f" >> "$JOBLIST"
     done
 }
 for side in base head; do

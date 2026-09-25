@@ -64,7 +64,7 @@
           (compiler_ast_types.AstType.Expr)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
         (compiler_ast_types.ast-place-shared-view pools)
-        (compiler_ast_types.ast-place-shared-view operands)
+        operands
         1
         8
         comptime-host-smoke-cookie
@@ -162,8 +162,8 @@
         (array-ref operands 0)
         (compiler_ctfe.CompilerCtfeValue.Type (compiler_ast_types.AstType.I64)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (compiler_ast_types.ast-place-shared-view pools)
-        (compiler_ast_types.ast-place-shared-view operands)
+        pools
+        operands
         1
         8
         comptime-host-smoke-cookie
@@ -242,7 +242,7 @@
       (compiler_ast_types.ast-type-list-push
         (&mut payloads)
         (compiler_ast_types.ast-node-pool-context-type-push
-          (compiler_ast_types.ast-place-shared-view pools)
+          pools
           (compiler_ast_types.AstType.Bool)))
       (set!
         variants
@@ -372,8 +372,8 @@
         (begin
           (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
           (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-            (compiler_ast_types.ast-place-shared-view pools)
-            (compiler_ast_types.ast-place-shared-view operands)
+            pools
+            operands
             0
             8
             comptime-host-smoke-cookie
@@ -418,8 +418,7 @@
     [(compiler_ctfe.CompilerCtfeValue.Type
         (compiler_ast_types.AstType.Tuple elems-box))
       (let
-        [elems : compiler_ast_types.AstTypeList
-          (compiler_ast_types.ast-type-list-box-shared-view elems-box)]
+        [elems : compiler_ast_types.AstTypeList (deref elems-box)]
         (and
           (= (compiler_ast_types.ast-type-list-len (& elems)) 2)
           (match (compiler_ast_types.ast-node-pool-context-type-get
@@ -484,8 +483,8 @@
         (begin
           (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
           (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-            (compiler_ast_types.ast-place-shared-view pools)
-            (compiler_ast_types.ast-place-shared-view operands)
+            pools
+            operands
             0
             8
             comptime-host-smoke-cookie
@@ -522,8 +521,7 @@
     [(compiler_ctfe.CompilerCtfeValue.Type
         (compiler_ast_types.AstType.VarArgs name lifetimes-box))
       (let
-        [lifetimes : compiler_ast_types.AstLifetimeList
-          (compiler_ast_types.ast-lifetime-list-box-shared-view lifetimes-box)]
+        [lifetimes : compiler_ast_types.AstLifetimeList (deref lifetimes-box)]
         (and
           (= name (ci.intern expected-name))
           (=
@@ -605,8 +603,8 @@
             (begin
               (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
               (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-                (compiler_ast_types.ast-place-shared-view pools)
-                (compiler_ast_types.ast-place-shared-view operands)
+                pools
+                operands
                 0
                 8
                 comptime-host-smoke-cookie
@@ -730,8 +728,8 @@
         (begin
           (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
           (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-            (compiler_ast_types.ast-place-shared-view pools)
-            (compiler_ast_types.ast-place-shared-view operands)
+            pools
+            operands
             3
             8
             comptime-host-smoke-cookie
@@ -845,8 +843,8 @@
         (begin
           (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
           (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-            (compiler_ast_types.ast-place-shared-view pools)
-            (compiler_ast_types.ast-place-shared-view operands)
+            pools
+            operands
             3
             16
             comptime-host-smoke-cookie
@@ -1137,8 +1135,8 @@
                 (begin
                   (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
                   (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-                    (compiler_ast_types.ast-place-shared-view pools)
-                    (compiler_ast_types.ast-place-shared-view operands)
+                    pools
+                    operands
                     4
                     8
                     comptime-host-smoke-cookie
@@ -1213,8 +1211,8 @@
         (begin
           (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
           (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-            (compiler_ast_types.ast-place-shared-view pools)
-            (compiler_ast_types.ast-place-shared-view operands)
+            pools
+            operands
             1
             8
             comptime-host-smoke-cookie
@@ -1253,8 +1251,8 @@
     (begin
       (set! (array-ref operands 0) (compiler_ctfe.CompilerCtfeValue.Bool true))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (compiler_ast_types.ast-place-shared-view pools)
-        (compiler_ast_types.ast-place-shared-view operands)
+        pools
+        operands
         1
         128
         comptime-host-smoke-cookie
@@ -1296,7 +1294,7 @@
         pools
         result-node)
         [(compiler_ast_types.AstExpr.Let let-box)
-          (match (compiler_ast_types.ast-let-box-shared-view let-box)
+          (match (deref let-box)
             [(compiler_ast_types.AstLet.Let bindings actual-body)
               (and
                 (= actual-body body-node)
@@ -1365,7 +1363,7 @@
           (compiler_ast_types.AstType.Expr)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
         (compiler_ast_types.ast-place-shared-view pools)
-        (compiler_ast_types.ast-place-shared-view operands)
+        operands
         3
         16
         comptime-host-smoke-cookie
@@ -1509,7 +1507,7 @@
           (compiler_ctfe.ctfe-untyped-expr-type)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
         (compiler_ast_types.ast-place-shared-view pools)
-        (compiler_ast_types.ast-place-shared-view operands)
+        operands
         3
         16
         comptime-host-smoke-cookie
@@ -1725,8 +1723,8 @@
             (begin
               (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
               (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-                (compiler_ast_types.ast-place-shared-view pools)
-                (compiler_ast_types.ast-place-shared-view operands)
+                pools
+                operands
                 5
                 16
                 comptime-host-smoke-cookie
@@ -1783,7 +1781,7 @@
     [(compiler_ctfe.CompilerCtfeValue.Expr node _)
       (match (compiler_ast_types.ast-node-pool-context-expr-get pools node)
         [(compiler_ast_types.AstExpr.Match match-box)
-          (match (compiler_ast_types.ast-match-box-shared-view match-box)
+          (match (deref match-box)
             [(compiler_ast_types.AstMatch.Match actual arms)
               (and
                 (= actual scrutinee)
@@ -1796,8 +1794,7 @@
                         [(compiler_ast_types.AstPattern.Variant name args-box)
                           (let
                             [args : compiler_ast_types.AstPatternList
-                              (compiler_ast_types.ast-pattern-list-box-shared-view
-                                args-box)]
+                              (deref args-box)]
                             (and
                               (string.eq
                                 (comptime-host-smoke-syntax-name-text name)
@@ -1877,7 +1874,7 @@
           (compiler_ast_types.AstType.Bool)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
         (compiler_ast_types.ast-place-shared-view pools)
-        (compiler_ast_types.ast-place-shared-view operands)
+        operands
         5
         64
         comptime-host-smoke-cookie
@@ -2197,8 +2194,8 @@
     [prefix : String "p"]
     (begin
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (compiler_ast_types.ast-place-shared-view pools)
-        (compiler_ast_types.ast-place-shared-view operands)
+        pools
+        operands
         0
         1
         comptime-host-smoke-cookie
@@ -2245,8 +2242,8 @@
         (compiler_ctfe.CompilerCtfeValue.ExprList items))
       (compiler_ctfe.ctfe-result-hygiene-free-reset!)
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (compiler_ast_types.ast-place-shared-view pools)
-        (compiler_ast_types.ast-place-shared-view operands)
+        pools
+        operands
         1
         8
         comptime-host-smoke-cookie
@@ -2316,8 +2313,8 @@
         (compiler_ctfe.CompilerCtfeValue.ExprClauseList clauses))
       (compiler_ctfe.ctfe-result-hygiene-free-reset!)
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (compiler_ast_types.ast-place-shared-view pools)
-        (compiler_ast_types.ast-place-shared-view operands)
+        pools
+        operands
         1
         8
         comptime-host-smoke-cookie
@@ -2368,8 +2365,8 @@
       (compiler_ctfe.ctfe-visible-macro-name-add! macro-name-id)
       (compiler_ctfe.ctfe-result-macro-provenance-reset!)
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (compiler_ast_types.ast-place-shared-view pools)
-        (compiler_ast_types.ast-place-shared-view operands)
+        pools
+        operands
         0
         8
         comptime-host-smoke-cookie
@@ -2412,8 +2409,8 @@
     (begin
       (set! (array-ref operands 0) (compiler_ctfe.CompilerCtfeValue.Bool true))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (compiler_ast_types.ast-place-shared-view pools)
-        (compiler_ast_types.ast-place-shared-view operands)
+        pools
+        operands
         1
         8
         comptime-host-smoke-cookie
@@ -2499,8 +2496,8 @@
         (begin
           (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
           (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-            (compiler_ast_types.ast-place-shared-view pools)
-            (compiler_ast_types.ast-place-shared-view operands)
+            pools
+            operands
             0
             1
             comptime-host-smoke-cookie
@@ -2540,8 +2537,8 @@
     (begin
       (set! (array-ref operands 0) (compiler_ctfe.CompilerCtfeValue.Bool true))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (compiler_ast_types.ast-place-shared-view pools)
-        (compiler_ast_types.ast-place-shared-view operands)
+        pools
+        operands
         1
         8
         comptime-host-smoke-cookie

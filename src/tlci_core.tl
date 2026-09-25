@@ -80,8 +80,7 @@
   [items : TlciSpmdSpecializations]
   [item : TlciSpmdSpecialization]) : TlciSpmdSpecializations
   (let
-    [next : TlciSpmdSpecializations
-      (owned_view.compiler-owned-shared-view items)]
+    [next : TlciSpmdSpecializations items]
     (begin
       (tlci_specialization_vec.push-ref! (&mut next.items) item)
       next)))
@@ -115,7 +114,7 @@
   [items : TlciSpmdCallables]
   [item : TlciSpmdCallable]) : TlciSpmdCallables
   (let
-    [next : TlciSpmdCallables (owned_view.compiler-owned-shared-view items)]
+    [next : TlciSpmdCallables items]
     (begin
       (tlci_callable_vec.push-ref! (&mut next.items) item)
       next)))

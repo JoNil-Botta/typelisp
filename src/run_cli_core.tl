@@ -159,8 +159,7 @@
                   target
                   mode
                   (let
-                    [next-roots : cli_svec.Vec
-                      (owned_view.compiler-owned-shared-view stdlib-roots)]
+                    [next-roots : cli_svec.Vec stdlib-roots]
                     (begin
                       (cli_svec.push-ref! (&mut next-roots) value)
                       next-roots))

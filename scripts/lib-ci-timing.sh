@@ -41,11 +41,6 @@ ci_timing_set_now_ms() {
     return 1
 }
 
-ci_timing_now_ms() {
-    ci_timing_set_now_ms
-    printf '%s\n' "$CI_TIMING_NOW_MS"
-}
-
 ci_timing_init() {
     _ci_timing_file=$1
     _ci_timing_host=$2
@@ -56,7 +51,7 @@ ci_timing_init() {
     if ! ci_timing_enabled; then
         return 0
     fi
-    ci_timing_now_ms >/dev/null
+    ci_timing_set_now_ms
     mkdir -p "$(dirname -- "$TYPELISP_CI_TIMING_FILE")"
     printf 'gate\tcase_or_chunk\tphase\telapsed_ms\texit\thost\n' \
         > "$TYPELISP_CI_TIMING_FILE"

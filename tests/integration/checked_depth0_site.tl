@@ -17,7 +17,7 @@
 ;; re-plan of the merged body, decides.
 ;;
 ;; The exit code proves the values either way; the shape is pinned in
-;; scripts/verify-asm-shape-gates.sh.
+;; tests/codegen/asm-shape.cases.
 (define (hash-words
   [data : (& d (__tl_dyn-array i64))]
   [start : i64]

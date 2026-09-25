@@ -336,9 +336,7 @@
           (clean-remove-source-artifact
             (owned_view.compiler-owned-shared-view source)
             dry-run
-            (build_run.source-tool-replace-extension
-              (owned_view.compiler-owned-shared-view source)
-              ".exe"))))
+            (build_run.source-tool-replace-extension source ".exe"))))
       status)))
 
 (define (clean-package-name-safe? [name : String]) : bool
@@ -418,9 +416,7 @@
         1)]
     [(build_cli_core.ResultBuildManifest.Ok manifest)
       (let
-        [manifest-dir : String
-          (load.compiler-load-dirname
-            (owned_view.compiler-owned-shared-view manifest-path))]
+        [manifest-dir : String (load.compiler-load-dirname manifest-path)]
         [name : String manifest.name]
         [status : i64 0]
         (if (not
@@ -533,9 +529,7 @@
                   (owned_view.compiler-owned-shared-view manifest-dir)
                   (owned_view.compiler-owned-shared-view name)
                   dry-run
-                  (build_cli_core.build-package-output-dir
-                    (owned_view.compiler-owned-shared-view manifest-dir)
-                    (owned_view.compiler-owned-shared-view name)))))
+                  (build_cli_core.build-package-output-dir manifest-dir name))))
             status)))]))
 
 (define (clean-package
@@ -594,14 +588,12 @@
         (if (clean-experiments-artifact-safe?
           manifest-path
           (owned_view.compiler-owned-shared-view path))
-          (clean-remove-tree
-            dry-run
-            (owned_view.compiler-owned-shared-view path))
+          (clean-remove-tree dry-run path)
           (begin
             (io.print-error
               (str_cat.str-cat
                 "clean: refusing unsafe experiment artifact path "
-                (owned_view.compiler-owned-shared-view path)
+                path
                 ""))
             1)))]))
 

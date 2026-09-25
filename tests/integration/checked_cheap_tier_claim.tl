@@ -23,7 +23,7 @@
 ;; as they are when the measured tier claims nothing.
 ;;
 ;; The exit code proves the values either way; the shape is pinned in
-;; scripts/verify-asm-shape-gates.sh.
+;; tests/codegen/asm-shape.cases.
 (define (mix [a : i64] [b : i64]) : i64
   (bit-xor (+ (* a 3) b) (* b 5)))
 

@@ -92,10 +92,8 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 
-fail() {
-    echo "[ispc-spmd] $*" >&2
-    exit 1
-}
+GATE_FAIL_PREFIX='[ispc-spmd] '
+. "$ROOT/scripts/lib-gate.sh"
 
 csv_contains() {
     case ",$1," in
@@ -316,7 +314,7 @@ write_comparison() {
 }
 
 run_correctness_command() {
-    sh "$1"
+    sh "$@"
 }
 
 discover_ispc() {
@@ -469,12 +467,12 @@ fi
 
 if [ "$SKIP_CORRECTNESS" -eq 0 ]; then
     cut -f 2 "$ROWS" | awk '!seen[$0]++' | while IFS= read -r _case; do
-        _script_case=$(printf '%s' "$_case" | tr '_' '-')
-        _verify="$ROOT/scripts/verify-ispc-$_script_case.sh"
-        [ -f "$_verify" ] || fail "$_case: missing correctness script $_verify"
+        grep -q "^case $_case-" "$ROOT/tests/codegen/ispc.cases" ||
+            fail "$_case: no correctness cases in tests/codegen/ispc.cases"
         echo "[ispc-spmd] correctness $_case"
         if ! PATH="$CORRECTNESS_PATH" TYPELISP_BIN="$COMPILER" ISPC_BIN="$ISPC" \
-            run_correctness_command "$_verify" \
+            run_correctness_command "$ROOT/scripts/verify-codegen-cases.sh" \
+            --only "$_case-*" "$ROOT/tests/codegen/ispc.cases" \
             > "$WORKDIR/raw/$_case.correctness.stdout" \
             2> "$WORKDIR/raw/$_case.correctness.stderr"; then
             sed 's/^/  /' "$WORKDIR/raw/$_case.correctness.stderr" >&2 || true

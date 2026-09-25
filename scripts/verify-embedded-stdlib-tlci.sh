@@ -100,12 +100,8 @@ fi
 
 run_native_identity_self_test
 
-if [ -n "${TYPELISP_BIN:-}" ]; then
-    COMPILER=$TYPELISP_BIN
-else
-    . "$ROOT/scripts/lib-stage0.sh"
-    COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
-fi
+. "$ROOT/scripts/lib-gate.sh"
+gate_compiler
 
 case "$(uname -s)" in
     MINGW* | MSYS* | CYGWIN*) HOST_TARGET=windows ;;

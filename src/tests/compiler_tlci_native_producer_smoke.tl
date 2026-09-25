@@ -132,7 +132,7 @@
   [names : (&mut names producer_test_svec.Vec)]
   [captures
     : (&mut captures compiler_tlci_native_producer.TlciNativeMacroCaptures)]) : unit
-  (match (owned_view.compiler-owned-shared-view decl)
+  (match decl
     [(ast.AstDecl.DefMacro _ name params ret body)
       (let
         [identity : String
@@ -152,14 +152,10 @@
                 ret)
               body))))]
     [(ast.AstDecl.Unsafe inner)
-      (producer-test-collect-decl!
-        (owned_view.compiler-owned-box-shared-view inner)
-        module
-        names
-        captures)]
+      (producer-test-collect-decl! (deref inner) module names captures)]
     [(ast.AstDecl.ModuleBody nested body)
       (producer-test-collect-decls!
-        (owned_view.compiler-owned-box-shared-view body)
+        (deref body)
         (ci.intern-str nested)
         names
         captures)]
@@ -208,11 +204,7 @@
     [(parse_core.ResultAstProgram.Ok program)
       (match program
         [(ast.AstProgram.Program decls)
-          (producer-test-collect-decls!
-            (owned_view.compiler-owned-box-shared-view decls)
-            ""
-            names
-            captures)])]))
+          (producer-test-collect-decls! (deref decls) "" names captures)])]))
 
 (define (producer-test-template-result-ok?
   [pools : ast.AstNodePoolContext]
@@ -366,8 +358,8 @@
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     (begin
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        pools
+        operands
         count
         64
         producer-test-cookie
@@ -409,8 +401,8 @@
         (begin
           (set! (array-ref operands 0) operand)
           (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-            (owned_view.compiler-owned-shared-view pools)
-            (owned_view.compiler-owned-shared-view operands)
+            pools
+            operands
             1
             64
             producer-test-cookie
@@ -489,8 +481,8 @@
         (array-ref operands 1)
         (compiler_ctfe.CompilerCtfeValue.Expr string-node (ast.AstType.Expr)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        pools
+        operands
         2
         64
         producer-test-cookie
@@ -651,7 +643,7 @@
     [(compiler_ctfe.CompilerCtfeValue.Expr node _)
       (match (producer-test-expr-get (& pools) node)
         [(ast.AstExpr.Match match-box)
-          (match (owned_view.compiler-owned-box-shared-view match-box)
+          (match (deref match-box)
             [(ast.AstMatch.Match _ arms)
               (and
                 (= arms.len 2)
@@ -814,11 +806,10 @@
       (when (>= count 3) (ast.ast-expr-list-push (&mut items) third))
       (set!
         (array-ref operands 0)
-        (compiler_ctfe.CompilerCtfeValue.ExprList
-          (owned_view.compiler-owned-shared-view items)))
+        (compiler_ctfe.CompilerCtfeValue.ExprList items))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
         (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        operands
         1
         64
         producer-test-cookie
@@ -959,7 +950,7 @@
         (compiler_ctfe.CompilerCtfeValue.ExprList items))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
         (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        operands
         1
         64
         producer-test-cookie
@@ -1069,7 +1060,7 @@
         (compiler_ctfe.CompilerCtfeValue.Expr piece (ast.AstType.Expr)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
         (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        operands
         (if (= check 2)
           1
           2)
@@ -1229,7 +1220,7 @@
         (compiler_ctfe.CompilerCtfeValue.Expr idx (ast.AstType.Expr)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
         (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        operands
         3
         64
         producer-test-cookie
@@ -1315,7 +1306,7 @@
         (compiler_ctfe.CompilerCtfeValue.Expr idx (ast.AstType.Expr)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
         (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        operands
         2
         64
         producer-test-cookie
@@ -1350,7 +1341,7 @@
     [(compiler_ctfe.CompilerCtfeValue.Expr node _)
       (match (producer-test-expr-get (& pools) node)
         [(ast.AstExpr.Match match-box)
-          (match (owned_view.compiler-owned-box-shared-view match-box)
+          (match (deref match-box)
             [(ast.AstMatch.Match _ arms)
               (and
                 (= arms.len 2)
@@ -1418,7 +1409,7 @@
         (compiler_ctfe.CompilerCtfeValue.Expr literal (ast.AstType.Expr)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
         (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        operands
         1
         64
         producer-test-cookie
@@ -1507,7 +1498,7 @@
             (begin
               (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
                 (owned_view.compiler-owned-shared-view pools)
-                (owned_view.compiler-owned-shared-view operands)
+                operands
                 1
                 64
                 producer-test-cookie
@@ -1556,7 +1547,7 @@
           module-id))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
         (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        operands
         1
         64
         producer-test-cookie
@@ -1604,7 +1595,7 @@
       (compiler_ctfe.ctfe-module-macro-export-add-id! module-id hook-id)
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
         (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        operands
         1
         64
         producer-test-cookie
@@ -1653,8 +1644,8 @@
           (ci.intern (owned_view.compiler-owned-shared-view module))))
       (compiler_ctfe.ctfe-module-macro-export-reset!)
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        pools
+        operands
         1
         64
         producer-test-cookie
@@ -1701,7 +1692,7 @@
         (compiler_ctfe.CompilerCtfeValue.Expr operand (ast.AstType.I64)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
         (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        operands
         1
         64
         producer-test-cookie
@@ -1753,7 +1744,7 @@
           (owned_view.compiler-owned-shared-view box-ty)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
         (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        operands
         1
         64
         producer-test-cookie
@@ -1850,7 +1841,7 @@
           (owned_view.compiler-owned-shared-view lambda-ty)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
         (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        operands
         1
         64
         producer-test-cookie
@@ -1881,7 +1872,7 @@
   (match actual
     [(ast.AstType.Tuple elems-box)
       (let
-        [elems : ast.AstTypeList (ast.ast-type-list-box-shared-view elems-box)]
+        [elems : ast.AstTypeList (deref elems-box)]
         (and
           (= (ast.ast-type-list-len (& elems)) 2)
           (match (ast.ast-node-pool-context-type-get
@@ -1991,7 +1982,7 @@
             lambda-ty)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
         (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        operands
         1
         64
         producer-test-cookie
@@ -2035,7 +2026,7 @@
           (owned_view.compiler-owned-shared-view box-ty)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
         (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        operands
         1
         64
         producer-test-cookie
@@ -2098,7 +2089,7 @@
         (compiler_ctfe.CompilerCtfeValue.Expr operand (ast.AstType.Expr)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
         (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        operands
         1
         64
         producer-test-cookie
@@ -2162,8 +2153,8 @@
     (begin
       (set! (array-ref operands 0) (producer-test-expr-operand argument))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        pools
+        operands
         1
         64
         producer-test-cookie
@@ -2206,7 +2197,7 @@
         (compiler_ctfe.CompilerCtfeValue.Expr operand (ast.AstType.Expr)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
         (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        operands
         1
         64
         producer-test-cookie
@@ -2260,7 +2251,7 @@
         (compiler_ctfe.CompilerCtfeValue.Expr operand (ast.AstType.Expr)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
         (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        operands
         2
         64
         producer-test-cookie
@@ -2322,7 +2313,7 @@
         (compiler_ctfe.CompilerCtfeValue.Expr operand (ast.AstType.Expr)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
         (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        operands
         2
         64
         producer-test-cookie
@@ -2357,7 +2348,7 @@
     (begin
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
         (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        operands
         0
         64
         producer-test-cookie
@@ -2429,7 +2420,7 @@
         (compiler_ctfe.CompilerCtfeValue.Expr operand (ast.AstType.Expr)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
         (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        operands
         2
         64
         producer-test-cookie
@@ -2550,8 +2541,7 @@
       (match ty
         [(ast.AstType.VarArgs name lifetimes-box)
           (let
-            [lifetimes : ast.AstLifetimeList
-              (owned_view.compiler-owned-box-shared-view lifetimes-box)]
+            [lifetimes : ast.AstLifetimeList (deref lifetimes-box)]
             (and
               (= name (ci.intern expected-name))
               (= (ast.ast-lifetime-list-len (& lifetimes)) expected-count)
@@ -2577,7 +2567,7 @@
     [(compiler_ctfe.CompilerCtfeValue.Expr node _)
       (match (producer-test-expr-get (& pools) node)
         [(ast.AstExpr.Let let-box)
-          (match (owned_view.compiler-owned-box-shared-view let-box)
+          (match (deref let-box)
             [(ast.AstLet.Let bindings _)
               (and
                 (= (ast.ast-let-binding-list-len (& bindings)) 8)
@@ -2650,7 +2640,7 @@
       (set! (array-ref operands 0) (producer-test-expr-operand "value"))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
         (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        operands
         1
         64
         producer-test-cookie
@@ -2724,7 +2714,7 @@
         (compiler_ctfe.CompilerCtfeValue.Expr operand (ast.AstType.F64)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
         (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        operands
         1
         64
         producer-test-cookie
@@ -2767,7 +2757,7 @@
         (compiler_ctfe.CompilerCtfeValue.Expr operand (ast.AstType.Expr)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
         (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        operands
         2
         64
         producer-test-cookie
@@ -2869,8 +2859,8 @@
             [(= mode 1) (ast.AstType.Enum canonical-id)]
             [else (ast.AstType.I64)])))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        pools
+        operands
         (if (= mode 3)
           0
           1)
@@ -2933,8 +2923,8 @@
         (array-ref operands 0)
         (compiler_ctfe.CompilerCtfeValue.Type (ast.AstType.Struct canonical-id)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        pools
+        operands
         1
         64
         producer-test-cookie
@@ -3006,8 +2996,8 @@
               suffix-id)]
           (begin
             (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-              (owned_view.compiler-owned-shared-view pools)
-              (owned_view.compiler-owned-shared-view operands)
+              pools
+              operands
               0
               64
               producer-test-cookie
@@ -3085,7 +3075,7 @@
         (compiler_ctfe.CompilerCtfeValue.ExprList items))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
         (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        operands
         1
         64
         producer-test-cookie
@@ -3146,7 +3136,7 @@
         (compiler_ctfe.CompilerCtfeValue.ExprList items))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
         (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        operands
         2
         64
         producer-test-cookie
@@ -3231,7 +3221,7 @@
           (owned_view.compiler-owned-shared-view items)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
         (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        operands
         1
         64
         producer-test-cookie
@@ -3282,7 +3272,7 @@
         (compiler_ctfe.CompilerCtfeValue.Expr second (ast.AstType.Expr)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
         (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        operands
         2
         64
         producer-test-cookie
@@ -3322,7 +3312,7 @@
         (compiler_ctfe.CompilerCtfeValue.Expr value (ast.AstType.Expr)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
         (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        operands
         1
         64
         producer-test-cookie
@@ -3417,7 +3407,7 @@
           (compiler_ctfe.CompilerCtfeValue.Expr value (ast.AstType.Expr))))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
         (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        operands
         3
         64
         producer-test-cookie
@@ -3501,7 +3491,7 @@
         (compiler_ctfe.CompilerCtfeValue.Expr value (ast.AstType.Expr)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
         (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        operands
         2
         64
         producer-test-cookie
@@ -3621,7 +3611,7 @@
           [(ast.AstProgram.Program decls)
             (begin
               (producer-test-collect-decls!
-                (owned_view.compiler-owned-box-shared-view decls)
+                (deref decls)
                 "stdlib.str_cat_runtime"
                 (&mut names)
                 (&mut captures))
@@ -3643,7 +3633,7 @@
                   "producer-test"
                   (cfg windows true false)
                   (tlci.tlci-empty-bytes)
-                  (owned_view.compiler-owned-shared-view name-array)
+                  name-array
                   (& captures))
                   [(compiler_tlci_native_producer.ResultProducerBytes.Err _)
                     false]
@@ -3783,7 +3773,7 @@
               1)
             (=
               (producer-test-string-count
-                (owned_view.compiler-owned-shared-view full-report)
+                full-report
                 "package.multi/multi\twalked\ttemplate-node:begin\n")
               1)
             (producer-test-bytes-eq? default-bytes (& full-bytes))
@@ -3851,7 +3841,7 @@
           [(ast.AstProgram.Program decls)
             (begin
               (producer-test-collect-decls!
-                (owned_view.compiler-owned-box-shared-view decls)
+                (deref decls)
                 ""
                 (&mut names)
                 (&mut captures))
@@ -3901,8 +3891,8 @@
             items
             (owned_view.compiler-owned-shared-view pools))))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        pools
+        operands
         1
         64
         producer-test-cookie
@@ -3988,7 +3978,7 @@
           (compiler_ctfe.CompilerCtfeValue.Bool false)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
         (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        operands
         1
         64
         producer-test-cookie
@@ -4057,8 +4047,8 @@
           (ast.AstType.Expr)
           (owned_view.compiler-owned-shared-view pools)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        pools
+        operands
         1
         64
         producer-test-cookie
@@ -4200,7 +4190,7 @@
           (ast.AstType.Expr)
           (owned_view.compiler-owned-shared-view pools)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open-with-macro-state!
-        (owned_view.compiler-owned-shared-view pools)
+        pools
         (& operands)
         1
         64
@@ -4339,7 +4329,7 @@
           (owned_view.compiler-owned-shared-view pools)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
         (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        operands
         1
         256
         producer-test-cookie
@@ -4409,7 +4399,7 @@
               [else (ast.AstType.String)]))))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
         (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        operands
         1
         128
         producer-test-cookie
@@ -4508,7 +4498,7 @@
           [(ast.AstProgram.Program decls)
             (begin
               (producer-test-collect-decls!
-                (owned_view.compiler-owned-box-shared-view decls)
+                (deref decls)
                 ""
                 (&mut names)
                 (&mut captures))
@@ -4929,7 +4919,7 @@
         (compiler_ctfe.CompilerCtfeValue.Expr operand (ast.AstType.Expr)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
         (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        operands
         1
         64
         producer-test-cookie
@@ -4972,7 +4962,7 @@
           [(ast.AstProgram.Program decls)
             (begin
               (producer-test-collect-decls!
-                (owned_view.compiler-owned-box-shared-view decls)
+                (deref decls)
                 ""
                 (&mut names)
                 (&mut captures))
@@ -4994,7 +4984,7 @@
                   "producer-test"
                   (cfg windows true false)
                   (tlci.tlci-empty-bytes)
-                  (owned_view.compiler-owned-shared-view name-array)
+                  name-array
                   (& captures))
                   [(compiler_tlci_native_producer.ResultProducerBytes.Err _)
                     false]

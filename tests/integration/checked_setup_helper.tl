@@ -19,7 +19,7 @@
 ;; builder by cost, and under the allocator's own estimator (INL-15) with the
 ;; site's three literal setup arguments priced as the fold they are (INL-18)
 ;; it keeps it, exactly as the smoke self-tests of this shape record.
-;; `scripts/verify-asm-shape-gates.sh` pins that the builder is absorbed at
+;; `tests/codegen/asm-shape.cases` pins that the builder is absorbed at
 ;; this site and that its cold second reference still calls it; a fixture
 ;; whose exit code alone was checked could not tell the two apart, because
 ;; either shape is CORRECT.

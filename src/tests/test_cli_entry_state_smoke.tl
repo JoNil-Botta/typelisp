@@ -42,9 +42,7 @@
     [interns : ci.InternCompatState (ci.intern-compat-state-new)]
     [table-id : i64 (ci.intern-compat-state-table-id (& interns))]
     [_bind : unit
-      (load.compiler-load-session-state-use-with-intern-state!
-        (owned_view.compiler-owned-shared-view parent)
-        interns)]
+      (load.compiler-load-session-state-use-with-intern-state! parent interns)]
     [selectors-ok : bool (entry-selectors-restored? -7)]
     [restored : load.CompilerLoadSessionState
       (load.compiler-load-serial-test-session-state)]

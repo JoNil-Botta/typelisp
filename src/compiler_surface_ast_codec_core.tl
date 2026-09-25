@@ -454,16 +454,12 @@
       [(ast.AstType.Func args ret)
         (begin
           (surface-ast-write-i64! out 19)
-          (surface-ast-write-type-list!
-            out
-            (ast.ast-type-list-box-shared-view args))
+          (surface-ast-write-type-list! out (deref args))
           (surface-ast-write-i64! out ret))]
       [(ast.AstType.Tuple items)
         (begin
           (surface-ast-write-i64! out 20)
-          (surface-ast-write-type-list!
-            out
-            (ast.ast-type-list-box-shared-view items)))]
+          (surface-ast-write-type-list! out (deref items)))]
       [(ast.AstType.Array elem count)
         (begin
           (surface-ast-write-i64! out 21)
@@ -500,10 +496,7 @@
         (begin
           (surface-ast-write-i64! out 28)
           (surface-ast-write-name! out context name)
-          (surface-ast-write-lifetime-list!
-            out
-            context
-            (ast.ast-lifetime-list-box-shared-view lifetimes)))]
+          (surface-ast-write-lifetime-list! out context (deref lifetimes)))]
       [(ast.AstType.Struct name)
         (begin
           (surface-ast-write-i64! out 29)
@@ -512,10 +505,7 @@
         (begin
           (surface-ast-write-i64! out 30)
           (surface-ast-write-name! out context name)
-          (surface-ast-write-lifetime-list!
-            out
-            context
-            (ast.ast-lifetime-list-box-shared-view lifetimes)))]
+          (surface-ast-write-lifetime-list! out context (deref lifetimes)))]
       [(ast.AstType.Var name)
         (begin
           (surface-ast-write-i64! out 31)
@@ -524,10 +514,7 @@
         (begin
           (surface-ast-write-i64! out 32)
           (surface-ast-write-name! out context name)
-          (surface-ast-write-lifetime-list!
-            out
-            context
-            (ast.ast-lifetime-list-box-shared-view lifetimes)))]
+          (surface-ast-write-lifetime-list! out context (deref lifetimes)))]
       [(ast.AstType.CFunc signature mode)
         (begin
           (surface-ast-write-i64! out 38)

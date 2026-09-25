@@ -2777,15 +2777,13 @@
   (let
     [pools : ast.AstNodePoolContext
       (tc-context-shared-field ctx pools ast.AstNodePoolContext)]
-    (unsafe
-      (ptr->int (__tl_array-data (__tl-project-field pools expr-pool))))))
+    (ast.ast-pool-cell-data pools.expr-pool)))
 
 (define (tc-context-type-cell-address-live [ctx : TcContext]) : u64
   (let
     [pools : ast.AstNodePoolContext
       (tc-context-shared-field ctx pools ast.AstNodePoolContext)]
-    (unsafe
-      (ptr->int (__tl_array-data (__tl-project-field pools type-pool))))))
+    (ast.ast-pool-cell-data pools.type-pool)))
 
 (define (tc-context-expr-push-cell-addresses
   [expr-cell-address : u64]

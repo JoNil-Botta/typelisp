@@ -59,11 +59,10 @@ also use native contracts outside the ordinary C signature subset.
 Vector reduction sources are read-only IR operands. AVX2 four-lane signed
 `i64` min/max needs an accumulator, a lane sibling and a comparison-mask
 scratch family: its second comparison must not write through the source's XMM
-alias. `compiler-reg-vector-reduce-mask-scratch?` owns this shape distinction;
-`VectorReduceMask` is ordinal 2 in the modeled scratch plan. Emission consumes
-planned homes through the shared preservation-aware scratch selector, so an
-occupied home receives the same save/restore contract as other scratch roles.
-AVX-512 native min/max and the other reduction shapes retain two scratch roles.
+alias. `compiler-reg-vector-reduce-mask-scratch?` owns this shape distinction,
+and emission takes the mask from the scavenger as a third XMM scratch that
+excludes the source, accumulator and sibling. AVX-512 native min/max and the
+other reduction shapes use two scratch registers.
 
 Every `CompilerIrFunction` states its calling convention as a
 `CompilerIrFunctionAbi`: `Ordinary`, or `SpmdPrivate` for a generated
@@ -513,16 +512,16 @@ Generated code is compared with `clang -O2` using paired cases under
 tracked with deterministic executed-instruction baselines under
 [`../perf/`](../perf), avoiding wall-clock noise in required CI gates.
 
-Required verification has one top-level metadata authority,
-[`scripts/ci-gates.tsv`](../scripts/ci-gates.tsv), consumed by full execution,
-dependency-closed selection (`ci-verify.sh --gates`) and host inventory listing.
-The runner binds stable IDs to commands, scopes each produced compiler to the
-gate that names it, and rejects incomplete or failed execution before reporting
-success; a selection that is not the whole inventory is only a partial result.
-Nested compiler, corpus and artifact-provenance invariants stay in their
-existing owners; a metadata row alone does not establish them. See the
-[ledger boundary](../scripts/README.md#core-development-loop) before changing CI
-structure or introducing independent scheduling.
+Required verification is one table,
+[`scripts/ci-gates.tsv`](../scripts/ci-gates.tsv): each row is a gate's stable
+ID, hosts, label, needs, compiler and command. `ci-verify.sh` runs the rows in
+order for full execution, runs a dependency-closed selection for
+`ci-verify.sh --gates`, and lists a host's inventory without running it. Each
+gate sees only the compiler its row names, and a selection that is not the
+whole inventory is only a partial result. Nested compiler and corpus
+invariants stay in the gate scripts; a row alone does not establish them. See
+the [gate table](../scripts/README.md#core-development-loop) before changing
+CI structure.
 
 ## CLI
 

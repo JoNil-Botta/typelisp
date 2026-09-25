@@ -87,7 +87,6 @@ benchmarks/arith_loop/baseline.c
 scripts/check-gitignore.sh
 scripts/fetch-stage0.ps1
 perf/insn-exec-baseline.tsv
-tests/golden/selfhost_compiler_driver_import.s
 tests/tlci/corpus/SHA256SUMS
 tests/tlci/corpus/malformed-bad-magic.tlci
 tests/integration/include_bin_payload.bin

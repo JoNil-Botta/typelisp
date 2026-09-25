@@ -255,8 +255,7 @@
                 (str_cat.str-cat "fmt: unknown flag " current))]
             [else
               (let
-                [out : fmt_svec.Vec
-                  (owned_view.compiler-owned-shared-view paths)]
+                [out : fmt_svec.Vec paths]
                 (begin
                   (fmt_svec.push-ref! (&mut out) current)
                   (fmt-parse-args
@@ -772,9 +771,7 @@
       80)
       [(format_rules.ResultFormatString.Ok formatted)
         (if check
-          (if (string.eq
-            (owned_view.compiler-owned-shared-view source)
-            formatted)
+          (if (string.eq source formatted)
             0
             (begin
               (io.print-error
@@ -782,14 +779,9 @@
                   "fmt: would reformat "
                   (owned_view.compiler-owned-shared-view path)
                   "\n"
-                  (fmt-unified-diff
-                    (owned_view.compiler-owned-shared-view path)
-                    (owned_view.compiler-owned-shared-view source)
-                    formatted)))
+                  (fmt-unified-diff path source formatted)))
               1))
-          (if (string.eq
-            (owned_view.compiler-owned-shared-view source)
-            formatted)
+          (if (string.eq source formatted)
             0
             (fmt-write-formatted-file path formatted)))]
       [(format_rules.ResultFormatString.Err err)

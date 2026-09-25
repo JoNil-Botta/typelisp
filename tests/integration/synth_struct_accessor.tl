@@ -24,7 +24,7 @@
 ;; the tag-derived term and all three payload words of each entry, so a splice
 ;; that lost a storage word, mis-rebased the `addr_of`, or dropped the copy
 ;; into the caller's buffer cannot produce it. The shape is pinned in
-;; scripts/verify-asm-shape-gates.sh, and the abort twin
+;; tests/codegen/asm-shape.cases, and the abort twin
 ;; (synth_struct_accessor_abort.tl) proves the spliced struct-building body
 ;; keeps its own bounds check, its own abort site and its own exit status at
 ;; the manifest's build level.

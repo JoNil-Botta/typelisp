@@ -2,7 +2,7 @@
 (import compiler_owned_view as owned_view)
 
 ;; FORCING TEST for T2-4 (SS-P5 / VG-P-B), pinned by
-;; scripts/verify-asm-shape-gates.sh:check_select_flags_lea. Two rules:
+;; tests/codegen/asm-shape.cases case select-flags-lea. Two rules:
 ;;
 ;;   sfl-*-scan  -- a scalar Select whose mask is the comparison IMMEDIATELY in
 ;;                  front of it and is read nowhere else. The comparison's own

@@ -18,10 +18,6 @@
 (import read as reader)
 (import package_cache_core)
 
-(defmacro (package-lock-global-shared-view [place : Expr]) : Expr
-  `(unsafe
-    (ptr-read (ptr-addr-of ,place))))
-
 (defstruct PackageLockEntry
   (alias String)
   (url String)
@@ -94,7 +90,8 @@
   "v1")
 
 (define (package-lock-version-shared-view) : String
-  (package-lock-global-shared-view package-lock-version))
+  (unsafe
+    (ptr-read (ptr-addr-of package-lock-version))))
 
 (define (package-lock-char-code-at [text : String] [idx : i64]) : i64
   (cast (string.string-ref text idx) : i64))
@@ -225,8 +222,7 @@
   [entries : package_lock_entry_vec.Vec]
   [entry : PackageLockEntry]) : ResultPackageLockEntryList
   (let
-    [next : package_lock_entry_vec.Vec
-      (package-lock-global-shared-view entries)]
+    [next : package_lock_entry_vec.Vec entries]
     [index : i64
       (package-lock-entry-list-insert-position
         (& next)

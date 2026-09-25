@@ -1406,6 +1406,68 @@
   (LinuxAvx512)
   (WindowsAvx512))
 
+;; CompilerLowerMode is the product of two independent axes: the C ABI the
+;; program is lowered for (none, SysV Linux, Win64) and the SPMD vector width.
+;; Lowering reads the mode only through these projections.
+(defenum LowerModeAbi
+  (None)
+  (Linux)
+  (Windows))
+
+(defenum LowerModeSimd
+  (Scalar)
+  (Avx2)
+  (Avx512))
+
+(define (lower-mode-abi [mode : CompilerLowerMode]) : LowerModeAbi
+  (match mode
+    [(CompilerLowerMode.Scalar) (LowerModeAbi.None)]
+    [(CompilerLowerMode.Avx2) (LowerModeAbi.None)]
+    [(CompilerLowerMode.Avx512) (LowerModeAbi.None)]
+    [(CompilerLowerMode.LinuxScalar) (LowerModeAbi.Linux)]
+    [(CompilerLowerMode.LinuxAvx2) (LowerModeAbi.Linux)]
+    [(CompilerLowerMode.LinuxAvx512) (LowerModeAbi.Linux)]
+    [(CompilerLowerMode.WindowsScalar) (LowerModeAbi.Windows)]
+    [(CompilerLowerMode.WindowsAvx2) (LowerModeAbi.Windows)]
+    [(CompilerLowerMode.WindowsAvx512) (LowerModeAbi.Windows)]))
+
+(define (lower-mode-simd [mode : CompilerLowerMode]) : LowerModeSimd
+  (match mode
+    [(CompilerLowerMode.Scalar) (LowerModeSimd.Scalar)]
+    [(CompilerLowerMode.LinuxScalar) (LowerModeSimd.Scalar)]
+    [(CompilerLowerMode.WindowsScalar) (LowerModeSimd.Scalar)]
+    [(CompilerLowerMode.Avx2) (LowerModeSimd.Avx2)]
+    [(CompilerLowerMode.LinuxAvx2) (LowerModeSimd.Avx2)]
+    [(CompilerLowerMode.WindowsAvx2) (LowerModeSimd.Avx2)]
+    [(CompilerLowerMode.Avx512) (LowerModeSimd.Avx512)]
+    [(CompilerLowerMode.LinuxAvx512) (LowerModeSimd.Avx512)]
+    [(CompilerLowerMode.WindowsAvx512) (LowerModeSimd.Avx512)]))
+
+(define (lower-mode-of [abi : LowerModeAbi] [simd : LowerModeSimd]) : CompilerLowerMode
+  (match abi
+    [(LowerModeAbi.None)
+      (match simd
+        [(LowerModeSimd.Scalar) (CompilerLowerMode.Scalar)]
+        [(LowerModeSimd.Avx2) (CompilerLowerMode.Avx2)]
+        [(LowerModeSimd.Avx512) (CompilerLowerMode.Avx512)])]
+    [(LowerModeAbi.Linux)
+      (match simd
+        [(LowerModeSimd.Scalar) (CompilerLowerMode.LinuxScalar)]
+        [(LowerModeSimd.Avx2) (CompilerLowerMode.LinuxAvx2)]
+        [(LowerModeSimd.Avx512) (CompilerLowerMode.LinuxAvx512)])]
+    [(LowerModeAbi.Windows)
+      (match simd
+        [(LowerModeSimd.Scalar) (CompilerLowerMode.WindowsScalar)]
+        [(LowerModeSimd.Avx2) (CompilerLowerMode.WindowsAvx2)]
+        [(LowerModeSimd.Avx512) (CompilerLowerMode.WindowsAvx512)])]))
+
+;; Width in bytes of one SPMD vector register: 0 in scalar mode.
+(define (lower-simd-vector-bytes [mode : CompilerLowerMode]) : i64
+  (match (lower-mode-simd mode)
+    [(LowerModeSimd.Scalar) 0]
+    [(LowerModeSimd.Avx2) 32]
+    [(LowerModeSimd.Avx512) 64]))
+
 (defstruct LowerMaskedLoadCacheData
   (array-vars (__tl_dyn-array i64))
   (offsets (__tl_dyn-array i64))
@@ -50027,27 +50089,18 @@
       [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])))
 
 (define (lower-mode-simd? [mode : CompilerLowerMode]) : bool
-  (match mode
-    [(CompilerLowerMode.Avx2) true]
-    [(CompilerLowerMode.LinuxAvx2) true]
-    [(CompilerLowerMode.WindowsAvx2) true]
-    [(CompilerLowerMode.Avx512) true]
-    [(CompilerLowerMode.LinuxAvx512) true]
-    [(CompilerLowerMode.WindowsAvx512) true]
-    [_ false]))
+  (match (lower-mode-simd mode)
+    [(LowerModeSimd.Scalar) false]
+    [_ true]))
 
 (define (lower-mode-avx2? [mode : CompilerLowerMode]) : bool
-  (match mode
-    [(CompilerLowerMode.Avx2) true]
-    [(CompilerLowerMode.LinuxAvx2) true]
-    [(CompilerLowerMode.WindowsAvx2) true]
+  (match (lower-mode-simd mode)
+    [(LowerModeSimd.Avx2) true]
     [_ false]))
 
 (define (lower-mode-avx512? [mode : CompilerLowerMode]) : bool
-  (match mode
-    [(CompilerLowerMode.Avx512) true]
-    [(CompilerLowerMode.LinuxAvx512) true]
-    [(CompilerLowerMode.WindowsAvx512) true]
+  (match (lower-mode-simd mode)
+    [(LowerModeSimd.Avx512) true]
     [_ false]))
 
 (define (lower-spmd-numeric-backend [mode : CompilerLowerMode]) : spmd_numeric.CompilerSpmdNumericBackend
@@ -50067,17 +50120,13 @@
   "lower: SPMD foreach does not match a SIMD lowering pattern for this backend mode; use scalar or a contiguous map/zip body with supported array and uniform operands")
 
 (define (lower-mode-linux-c-abi? [mode : CompilerLowerMode]) : bool
-  (match mode
-    [(CompilerLowerMode.LinuxScalar) true]
-    [(CompilerLowerMode.LinuxAvx2) true]
-    [(CompilerLowerMode.LinuxAvx512) true]
+  (match (lower-mode-abi mode)
+    [(LowerModeAbi.Linux) true]
     [_ false]))
 
 (define (lower-mode-windows-c-abi? [mode : CompilerLowerMode]) : bool
-  (match mode
-    [(CompilerLowerMode.WindowsScalar) true]
-    [(CompilerLowerMode.WindowsAvx2) true]
-    [(CompilerLowerMode.WindowsAvx512) true]
+  (match (lower-mode-abi mode)
+    [(LowerModeAbi.Windows) true]
     [_ false]))
 
 (define (lower-mode-c-abi? [mode : CompilerLowerMode]) : bool
@@ -50094,95 +50143,30 @@
     [_ false]))
 
 (define (lower-avx512-bool-lanes [mode : CompilerLowerMode]) : i64
-  (if (lower-mode-avx512? mode)
-    64
-    (if (lower-mode-avx2? mode)
-      32
-      0)))
+  (lower-simd-vector-bytes mode))
 
+;; Lanes of one vector register for element type `ty`: the register width over
+;; the element size, 0 in scalar mode or for a non-numeric element.
 (define (lower-simd-lanes-for-elem
   [mode : CompilerLowerMode]
   [ty : ast.AstType]) : i64
-  (match mode
-    [(CompilerLowerMode.Avx2)
-      (match (tc_core.tc-type-without-regions ty)
-        [(ast.AstType.I64) 4]
-        [(ast.AstType.U64) 4]
-        [(ast.AstType.F64) 4]
-        [(ast.AstType.F32) 8]
-        [(ast.AstType.I32) 8]
-        [(ast.AstType.U32) 8]
-        [(ast.AstType.I16) 16]
-        [(ast.AstType.U16) 16]
-        [(ast.AstType.I8) 32]
-        [(ast.AstType.U8) 32]
-        [_ 0])]
-    [(CompilerLowerMode.LinuxAvx2)
-      (match (tc_core.tc-type-without-regions ty)
-        [(ast.AstType.I64) 4]
-        [(ast.AstType.U64) 4]
-        [(ast.AstType.F64) 4]
-        [(ast.AstType.F32) 8]
-        [(ast.AstType.I32) 8]
-        [(ast.AstType.U32) 8]
-        [(ast.AstType.I16) 16]
-        [(ast.AstType.U16) 16]
-        [(ast.AstType.I8) 32]
-        [(ast.AstType.U8) 32]
-        [_ 0])]
-    [(CompilerLowerMode.WindowsAvx2)
-      (match (tc_core.tc-type-without-regions ty)
-        [(ast.AstType.I64) 4]
-        [(ast.AstType.U64) 4]
-        [(ast.AstType.F64) 4]
-        [(ast.AstType.F32) 8]
-        [(ast.AstType.I32) 8]
-        [(ast.AstType.U32) 8]
-        [(ast.AstType.I16) 16]
-        [(ast.AstType.U16) 16]
-        [(ast.AstType.I8) 32]
-        [(ast.AstType.U8) 32]
-        [_ 0])]
-    [(CompilerLowerMode.Avx512)
+  (let
+    [elem-bytes : i64
       (match (tc_core.tc-type-without-regions ty)
         [(ast.AstType.I64) 8]
         [(ast.AstType.U64) 8]
         [(ast.AstType.F64) 8]
-        [(ast.AstType.F32) 16]
-        [(ast.AstType.I32) 16]
-        [(ast.AstType.U32) 16]
-        [(ast.AstType.I16) 32]
-        [(ast.AstType.U16) 32]
-        [(ast.AstType.I8) 64]
-        [(ast.AstType.U8) 64]
+        [(ast.AstType.F32) 4]
+        [(ast.AstType.I32) 4]
+        [(ast.AstType.U32) 4]
+        [(ast.AstType.I16) 2]
+        [(ast.AstType.U16) 2]
+        [(ast.AstType.I8) 1]
+        [(ast.AstType.U8) 1]
         [_ 0])]
-    [(CompilerLowerMode.LinuxAvx512)
-      (match (tc_core.tc-type-without-regions ty)
-        [(ast.AstType.I64) 8]
-        [(ast.AstType.U64) 8]
-        [(ast.AstType.F64) 8]
-        [(ast.AstType.F32) 16]
-        [(ast.AstType.I32) 16]
-        [(ast.AstType.U32) 16]
-        [(ast.AstType.I16) 32]
-        [(ast.AstType.U16) 32]
-        [(ast.AstType.I8) 64]
-        [(ast.AstType.U8) 64]
-        [_ 0])]
-    [(CompilerLowerMode.WindowsAvx512)
-      (match (tc_core.tc-type-without-regions ty)
-        [(ast.AstType.I64) 8]
-        [(ast.AstType.U64) 8]
-        [(ast.AstType.F64) 8]
-        [(ast.AstType.F32) 16]
-        [(ast.AstType.I32) 16]
-        [(ast.AstType.U32) 16]
-        [(ast.AstType.I16) 32]
-        [(ast.AstType.U16) 32]
-        [(ast.AstType.I8) 64]
-        [(ast.AstType.U8) 64]
-        [_ 0])]
-    [_ 0]))
+    (if (= elem-bytes 0)
+      0
+      (/ (lower-simd-vector-bytes mode) elem-bytes))))
 
 (define (lower-expr-is-var?
   [ctx : tc_core.TcContext]
@@ -54195,25 +54179,15 @@
         env
         type-env
         (lower-global-shared-view body))]
-    (if (or
-      (and
-        (lower-mode-avx512? mode)
-        (or
-          varying-if
-          varying-while
-          varying-match
-          varying-enum-match
-          bool-array-lane
-          out-of-line-call))
-      (and
-        (lower-mode-avx2? mode)
-        (or
-          varying-if
-          varying-while
-          varying-match
-          varying-enum-match
-          bool-array-lane
-          out-of-line-call)))
+    (if (and
+      (lower-mode-simd? mode)
+      (or
+        varying-if
+        varying-while
+        varying-match
+        varying-enum-match
+        bool-array-lane
+        out-of-line-call))
       (let
         [lanes : i64
           (lower-masked-vector-expr-lanes
@@ -76496,25 +76470,12 @@
 (define (lower-dispatch-lower-mode
   [isa : ast.AstDispatchIsa]
   [mode : CompilerLowerMode]) : CompilerLowerMode
-  (match isa
-    [(ast.AstDispatchIsa.Scalar)
-      (if (lower-mode-windows-c-abi? mode)
-        (CompilerLowerMode.WindowsScalar)
-        (if (lower-mode-linux-c-abi? mode)
-          (CompilerLowerMode.LinuxScalar)
-          (CompilerLowerMode.Scalar)))]
-    [(ast.AstDispatchIsa.Avx2)
-      (if (lower-mode-windows-c-abi? mode)
-        (CompilerLowerMode.WindowsAvx2)
-        (if (lower-mode-linux-c-abi? mode)
-          (CompilerLowerMode.LinuxAvx2)
-          (CompilerLowerMode.Avx2)))]
-    [(ast.AstDispatchIsa.Avx512)
-      (if (lower-mode-windows-c-abi? mode)
-        (CompilerLowerMode.WindowsAvx512)
-        (if (lower-mode-linux-c-abi? mode)
-          (CompilerLowerMode.LinuxAvx512)
-          (CompilerLowerMode.Avx512)))]))
+  (lower-mode-of
+    (lower-mode-abi mode)
+    (match isa
+      [(ast.AstDispatchIsa.Scalar) (LowerModeSimd.Scalar)]
+      [(ast.AstDispatchIsa.Avx2) (LowerModeSimd.Avx2)]
+      [(ast.AstDispatchIsa.Avx512) (LowerModeSimd.Avx512)])))
 
 (define (lower-dispatch-type-list-without-regions
   [ctx : tc_core.TcContext]

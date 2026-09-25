@@ -13,6 +13,7 @@
 (import compiler_intern as ci)
 (import compiler_intern_state as cis)
 (import compiler_surface_binary as binary)
+(import stdlib.byte_le)
 
 (defmacro (surface-identity-shared-view [place : Expr]) : Expr
   `(unsafe
@@ -626,7 +627,7 @@
         -1)
       (begin
         (set! (array-ref reader.offset 0) (+ offset 8))
-        (binary.surface-binary-read-u64 reader.bytes offset)))))
+        (byte_le.read-u64 reader.bytes offset)))))
 
 (define (surface-identity-reader-string!
   [reader : (& reader SurfaceIdentityReader)]) : String
@@ -845,9 +846,7 @@
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [text : String]) : unit
     (begin
-      (binary.surface-binary-push-u64!
-        out
-        (binary.surface-binary-string-length text))
+      (byte_le.push-u64! out (binary.surface-binary-string-length text))
       (binary.surface-binary-push-string! out text))))
 
 (cfg
@@ -945,17 +944,11 @@
           (byte_buf_core.byte-buf-builder-new)]
         [index : i64 0]
         (begin
-          (binary.surface-binary-push-u64! (&mut out) surface-identity-magic)
-          (binary.surface-binary-push-u64!
-            (&mut out)
-            surface-identity-schema-version)
-          (binary.surface-binary-push-u64!
-            (&mut out)
-            (array-length key.modules))
-          (binary.surface-binary-push-u64!
-            (&mut out)
-            (array-length source-names))
-          (binary.surface-binary-push-u64! (&mut out) (array-length generated))
+          (byte_le.push-u64! (&mut out) surface-identity-magic)
+          (byte_le.push-u64! (&mut out) surface-identity-schema-version)
+          (byte_le.push-u64! (&mut out) (array-length key.modules))
+          (byte_le.push-u64! (&mut out) (array-length source-names))
+          (byte_le.push-u64! (&mut out) (array-length generated))
           (surface-identity-push-string! (&mut out) key.package-name)
           (surface-identity-push-string! (&mut out) key.source-hash)
           (surface-identity-push-string! (&mut out) key.compiler-build)
@@ -991,10 +984,10 @@
                       surface-identity-generated-dotted
                       0)))]
               (begin
-                (binary.surface-binary-push-u64! (&mut out) flags)
-                (binary.surface-binary-push-u64! (&mut out) record.ref0)
-                (binary.surface-binary-push-u64! (&mut out) record.ref1)
-                (binary.surface-binary-push-u64! (&mut out) record.ref2)
+                (byte_le.push-u64! (&mut out) flags)
+                (byte_le.push-u64! (&mut out) record.ref0)
+                (byte_le.push-u64! (&mut out) record.ref1)
+                (byte_le.push-u64! (&mut out) record.ref2)
                 (surface-identity-push-string! (&mut out) record.name)
                 (set! index (+ index 1)))))
           (ResultSurfaceIdentityBytes.Ok

@@ -4,6 +4,7 @@
 ;; expression/type references are dense image-pool indices, and every compiler
 ;; nominal is repacked through compiler_surface_identity. No arena address,
 ;; pointer, Box address, or producer-generation intern id is serialized.
+(import stdlib.byte_le)
 (import stdlib.string)
 (import compiler_ast_types as ast)
 (import compiler_intern_state as cis)
@@ -104,7 +105,7 @@
   (define (surface-ast-write-i64!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [value : i64]) : unit
-    (binary.surface-binary-push-u64! out value)))
+    (byte_le.push-u64! out value)))
 
 (cfg
   (any
@@ -233,7 +234,7 @@
         0)
       (begin
         (set! (array-ref reader.offset 0) (+ offset 8))
-        (binary.surface-binary-read-u64 bytes offset)))))
+        (byte_le.read-u64 bytes offset)))))
 
 (define (surface-ast-read-bool! [reader : (& reader SurfaceAstReader)]) : bool
   (let

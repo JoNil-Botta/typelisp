@@ -4,6 +4,7 @@
 ;; is represented here by three canonical Huffman alphabets: literal-or-match,
 ;; match distance, and match length. Code lengths are stored explicitly so the
 ;; decoder owns no fixed model and repeated encoder runs are byte-identical.
+(import stdlib.byte_le)
 (import stdlib.string)
 (import compiler_owned_view as owned_view)
 
@@ -80,24 +81,6 @@
           (set! index (+ index 1))))
       matches)))
 
-;; Caller proves eight bytes are present and byte seven has its high bit clear.
-(define (compiler-embedded-stdlib-tlci-codec-read-i64-le
-  [payload : (& payload (__tl_dyn-array u8))]
-  [start : i64]) : i64
-  (let
-    [index : i64 0]
-    [value : i64 0]
-    (begin
-      (while (< index 8)
-        (begin
-          (set!
-            value
-            (bit-or
-              value
-              (shl (cast (array-ref payload (+ start index)) : i64) (* index 8))))
-          (set! index (+ index 1))))
-      value)))
-
 (define (compiler-embedded-stdlib-tlci-codec-table-bytes) : i64
   (+
     (compiler-embedded-stdlib-tlci-codec-main-symbols)
@@ -133,12 +116,8 @@
           "embedded stdlib tlci envelope: bit length overflows i64")]
       [else
         (let
-          [raw-len : i64
-            (compiler-embedded-stdlib-tlci-codec-read-i64-le payload prefix-len)]
-          [bit-len : i64
-            (compiler-embedded-stdlib-tlci-codec-read-i64-le
-              payload
-              (+ prefix-len 8))]
+          [raw-len : i64 (byte_le.read-u64 payload prefix-len)]
+          [bit-len : i64 (byte_le.read-u64 payload (+ prefix-len 8))]
           [bit-bytes : i64
             (+
               (/ bit-len 8)

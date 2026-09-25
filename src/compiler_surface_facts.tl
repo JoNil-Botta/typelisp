@@ -1,6 +1,6 @@
 ;; compiler_surface_facts.tl - relocatable checked-prefix facts shared by
 ;; package surface producers and consumers.
-(import compiler_surface_binary as binary)
+(import stdlib.byte_le)
 (import compiler_surface_identity as surface_identity)
 (import compiler_intern_state as cis)
 (cfg
@@ -882,20 +882,14 @@
         [index : i64 0]
         [ok : bool true]
         (begin
-          (binary.surface-binary-push-u64!
-            (&mut out)
-            surface-typecheck-facts-magic)
-          (binary.surface-binary-push-u64!
-            (&mut out)
-            surface-typecheck-facts-schema-version)
-          (binary.surface-binary-push-u64!
-            (&mut out)
-            facts.macro-prefix-decl-count)
-          (binary.surface-binary-push-u64! (&mut out) facts.prefix-decl-count)
-          (binary.surface-binary-push-u64! (&mut out) facts.summary-values)
-          (binary.surface-binary-push-u64! (&mut out) facts.summary-functions)
-          (binary.surface-binary-push-u64! (&mut out) facts.summary-externs)
-          (binary.surface-binary-push-u64! (&mut out) (array-length decl-keys))
+          (byte_le.push-u64! (&mut out) surface-typecheck-facts-magic)
+          (byte_le.push-u64! (&mut out) surface-typecheck-facts-schema-version)
+          (byte_le.push-u64! (&mut out) facts.macro-prefix-decl-count)
+          (byte_le.push-u64! (&mut out) facts.prefix-decl-count)
+          (byte_le.push-u64! (&mut out) facts.summary-values)
+          (byte_le.push-u64! (&mut out) facts.summary-functions)
+          (byte_le.push-u64! (&mut out) facts.summary-externs)
+          (byte_le.push-u64! (&mut out) (array-length decl-keys))
           (while (and ok (< index (array-length decl-keys)))
             (let
               [decl-key : i64
@@ -913,11 +907,9 @@
               (if (or (< decl-key 0) (< root-key 0))
                 (set! ok false)
                 (begin
-                  (binary.surface-binary-push-u64! (&mut out) decl-key)
-                  (binary.surface-binary-push-u64! (&mut out) root-key)
-                  (binary.surface-binary-push-u64!
-                    (&mut out)
-                    (array-ref call-indices index))
+                  (byte_le.push-u64! (&mut out) decl-key)
+                  (byte_le.push-u64! (&mut out) root-key)
+                  (byte_le.push-u64! (&mut out) (array-ref call-indices index))
                   (set! index (+ index 1))))))
           (if ok
             (ResultSurfaceTypecheckFactBytes.Ok
@@ -959,7 +951,7 @@
         -1)
       (begin
         (set! (array-ref reader.offset 0) (+ offset 8))
-        (binary.surface-binary-read-u64 reader.bytes offset)))))
+        (byte_le.read-u64 reader.bytes offset)))))
 
 (define (surface-typecheck-facts-portable-id-valid?
   [id : i64]

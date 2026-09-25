@@ -9,6 +9,7 @@
 (import compiler_owned_view as owned_view)
 (import stdlib.byte_buf)
 (import stdlib.byte_buf_core)
+(import stdlib.byte_le)
 (import stdlib.crypto_sha256 as sha256)
 (import stdlib.string)
 
@@ -424,8 +425,8 @@
   [child : (& child CompilerIncrementalChildIdentity)]) : unit
   (begin
     (binary.compiler-incremental-binary-push-string! out (& child.domain))
-    (binary.compiler-incremental-binary-push-u32! out child.schema)
-    (binary.compiler-incremental-binary-push-u64! out child.material-length)
+    (byte_le.push-u32! out child.schema)
+    (byte_le.push-u64! out child.material-length)
     (compiler-incremental-push-digest! out (& child.fingerprint))))
 
 (define (compiler-incremental-push-content!
@@ -433,8 +434,8 @@
   [content : (& content CompilerIncrementalContentIdentity)]) : unit
   (begin
     (binary.compiler-incremental-binary-push-string! out (& content.domain))
-    (binary.compiler-incremental-binary-push-u32! out content.schema)
-    (binary.compiler-incremental-binary-push-u64! out content.exact-length)
+    (byte_le.push-u32! out content.schema)
+    (byte_le.push-u64! out content.exact-length)
     (compiler-incremental-push-digest! out (& content.fingerprint))))
 
 (define (compiler-incremental-digest-array
@@ -489,10 +490,8 @@
             (binary.compiler-incremental-binary-push-string!
               (&mut out)
               (& domain))
-            (binary.compiler-incremental-binary-push-u32! (&mut out) 1)
-            (binary.compiler-incremental-binary-push-u64!
-              (&mut out)
-              (array-length bytes))
+            (byte_le.push-u32! (&mut out) 1)
+            (byte_le.push-u64! (&mut out) (array-length bytes))
             (binary.compiler-incremental-binary-push-array! (&mut out) bytes)
             (let
               [material : (__tl_dyn-array u8)
@@ -804,7 +803,7 @@
     [out : byte_buf_core.ByteBufBuilder
       (byte_buf_core.byte-buf-builder-with-capacity (+ 4 payload-size))]
     (begin
-      (binary.compiler-incremental-binary-push-u32! (&mut out) payload-size)
+      (byte_le.push-u32! (&mut out) payload-size)
       (binary.compiler-incremental-binary-push-string!
         (&mut out)
         (& field.name))
@@ -860,7 +859,7 @@
             (byte_buf_core.byte-buf-builder-new)]
           [record-index : i64 0]
           (begin
-            (binary.compiler-incremental-binary-push-u32!
+            (byte_le.push-u32!
               (&mut out)
               (incremental_config_vec.len (& fields)))
             (while (< record-index (incremental_config_vec.len (& fields)))
@@ -920,9 +919,7 @@
           [ordinal : i64 -1]
           (begin
             (binary.compiler-incremental-binary-push-u8! (&mut out) tag)
-            (binary.compiler-incremental-binary-push-u32!
-              (&mut out)
-              payload-size)
+            (byte_le.push-u32! (&mut out) payload-size)
             (match (owned_view.compiler-owned-reference-shared-view input)
               [(CompilerIncrementalInput.SourceContent path content)
                 (begin
@@ -997,9 +994,7 @@
                   (binary.compiler-incremental-binary-push-string!
                     (&mut out)
                     (& config.backend))
-                  (binary.compiler-incremental-binary-push-u32!
-                    (&mut out)
-                    config.opt-level)
+                  (byte_le.push-u32! (&mut out) config.opt-level)
                   (binary.compiler-incremental-binary-push-u8!
                     (&mut out)
                     (if config.debug?
@@ -1052,9 +1047,7 @@
                   (binary.compiler-incremental-binary-push-string!
                     (&mut out)
                     (& sequence))
-                  (binary.compiler-incremental-binary-push-u64!
-                    (&mut out)
-                    ordinal)
+                  (byte_le.push-u64! (&mut out) ordinal)
                   (compiler-incremental-push-child! (&mut out) (& child)))])
             (ResultCompilerIncrementalEncodedRecord.Ok
               (CompilerIncrementalEncodedRecord
@@ -1282,14 +1275,14 @@
                   (binary.compiler-incremental-binary-push-string!
                     (&mut out)
                     (& compiler-incremental-identity-domain))
-                  (binary.compiler-incremental-binary-push-u32!
+                  (byte_le.push-u32!
                     (&mut out)
                     compiler-incremental-identity-schema)
                   (compiler-incremental-push-query-kind!
                     (&mut out)
                     (& query.kind))
                   (compiler-incremental-push-child! (&mut out) (& build))
-                  (binary.compiler-incremental-binary-push-u32!
+                  (byte_le.push-u32!
                     (&mut out)
                     (incremental_record_vec.len (& records)))
                   (while (<

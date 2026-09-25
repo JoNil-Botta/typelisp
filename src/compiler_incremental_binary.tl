@@ -6,6 +6,7 @@
 ;; portable text/path validation.  It deliberately does not import compiler
 ;; state, filesystem access, or cache storage.
 (import stdlib.byte_buf_core)
+(import stdlib.byte_le)
 (import stdlib.string)
 
 (defstruct CompilerIncrementalBinaryReader
@@ -123,36 +124,6 @@
   [value : i64]) : unit
   (byte_buf_core.byte-buf-builder-push out (cast value : u8)))
 
-(define (compiler-incremental-binary-push-u32!
-  [out : (&mut out byte_buf_core.ByteBufBuilder)]
-  [value : i64]) : unit
-  (let
-    [bits : u64 (cast value : u64)]
-    [index : i64 0]
-    (while (< index 4)
-      (begin
-        (byte_buf_core.byte-buf-builder-push
-          out
-          (cast
-            (bit-and (shr bits (cast (* index 8) : u64)) (cast 255 : u64))
-            : u8))
-        (set! index (+ index 1))))))
-
-(define (compiler-incremental-binary-push-u64!
-  [out : (&mut out byte_buf_core.ByteBufBuilder)]
-  [value : i64]) : unit
-  (let
-    [bits : u64 (cast value : u64)]
-    [index : i64 0]
-    (while (< index 8)
-      (begin
-        (byte_buf_core.byte-buf-builder-push
-          out
-          (cast
-            (bit-and (shr bits (cast (* index 8) : u64)) (cast 255 : u64))
-            : u8))
-        (set! index (+ index 1))))))
-
 (define (compiler-incremental-binary-push-string!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [text : (& text str)]) : unit
@@ -160,7 +131,7 @@
     [length : i64 (string.string-length text)]
     [index : i64 0]
     (begin
-      (compiler-incremental-binary-push-u32! out length)
+      (byte_le.push-u32! out length)
       (while (< index length)
         (begin
           (byte_buf_core.byte-buf-builder-push

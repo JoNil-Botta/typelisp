@@ -5,6 +5,7 @@
 (import compiler_incremental_identity)
 (import compiler_owned_view as owned_view)
 (import stdlib.byte_buf_core)
+(import stdlib.byte_le)
 (import stdlib.crypto_sha256 as sha256)
 (import stdlib.string)
 (import stdlib.vector)
@@ -599,10 +600,8 @@
             (binary.compiler-incremental-binary-push-string!
               (&mut out)
               (& sequence))
-            (binary.compiler-incremental-binary-push-u64! (&mut out) ordinal)
-            (binary.compiler-incremental-binary-push-u32!
-              (&mut out)
-              (array-length child.transcript))
+            (byte_le.push-u64! (&mut out) ordinal)
+            (byte_le.push-u32! (&mut out) (array-length child.transcript))
             (binary.compiler-incremental-binary-push-array!
               (&mut out)
               (& child.transcript)))])
@@ -945,16 +944,14 @@
             (binary.compiler-incremental-binary-push-string!
               (&mut out)
               (& compiler-incremental-trace-domain))
-            (binary.compiler-incremental-binary-push-u32!
-              (&mut out)
-              compiler-incremental-trace-schema)
-            (binary.compiler-incremental-binary-push-u32!
+            (byte_le.push-u32! (&mut out) compiler-incremental-trace-schema)
+            (byte_le.push-u32!
               (&mut out)
               (array-length builder.parent.transcript))
             (binary.compiler-incremental-binary-push-array!
               (&mut out)
               (& builder.parent.transcript))
-            (binary.compiler-incremental-binary-push-u32! (&mut out) count)
+            (byte_le.push-u32! (&mut out) count)
             (set! index 0)
             (set! last "")
             (while (< index (trace_record_vec.len (& records)))

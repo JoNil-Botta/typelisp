@@ -4,6 +4,7 @@
 ;; images, and this module also assembles the focused dispatch proof used by
 ;; the loader smoke.
 (import stdlib.byte_buf_core)
+(import stdlib.byte_le)
 (import stdlib.comptime)
 (import stdlib.io)
 (import stdlib.string)
@@ -1107,32 +1108,17 @@
   [value : i64]) : unit
   (byte_buf_core.byte-buf-builder-push out (tlci-byte value)))
 
+;; Container integers are little-endian u64 fields (stdlib.byte_le).
 (define (tlci-push-u64!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [value : i64]) : unit
-  (begin
-    (tlci-push-u8! out value)
-    (tlci-push-u8! out (shr value 8))
-    (tlci-push-u8! out (shr value 16))
-    (tlci-push-u8! out (shr value 24))
-    (tlci-push-u8! out (shr value 32))
-    (tlci-push-u8! out (shr value 40))
-    (tlci-push-u8! out (shr value 48))
-    (tlci-push-u8! out (shr value 56))))
+  (byte_le.push-u64! out value))
 
 (define (tlci-set-u64!
   [out : (&mut out (__tl_dyn-array u8))]
   [offset : i64]
   [value : i64]) : unit
-  (begin
-    (set! (array-ref out offset) (tlci-byte value))
-    (set! (array-ref out (+ offset 1)) (tlci-byte (shr value 8)))
-    (set! (array-ref out (+ offset 2)) (tlci-byte (shr value 16)))
-    (set! (array-ref out (+ offset 3)) (tlci-byte (shr value 24)))
-    (set! (array-ref out (+ offset 4)) (tlci-byte (shr value 32)))
-    (set! (array-ref out (+ offset 5)) (tlci-byte (shr value 40)))
-    (set! (array-ref out (+ offset 6)) (tlci-byte (shr value 48)))
-    (set! (array-ref out (+ offset 7)) (tlci-byte (shr value 56)))))
+  (byte_le.set-u64! out offset value))
 
 (define (tlci-put-string!
   [bytes : (&mut bytes (__tl_dyn-array u8))]
@@ -1362,21 +1348,7 @@
   (cast (array-ref bytes offset) : i64))
 
 (define (tlci-read-u64 [bytes : (& bytes (__tl_dyn-array u8))] [offset : i64]) : i64
-  (+
-    (tlci-byte-at bytes offset)
-    (+
-      (shl (tlci-byte-at bytes (+ offset 1)) 8)
-      (+
-        (shl (tlci-byte-at bytes (+ offset 2)) 16)
-        (+
-          (shl (tlci-byte-at bytes (+ offset 3)) 24)
-          (+
-            (shl (tlci-byte-at bytes (+ offset 4)) 32)
-            (+
-              (shl (tlci-byte-at bytes (+ offset 5)) 40)
-              (+
-                (shl (tlci-byte-at bytes (+ offset 6)) 48)
-                (shl (tlci-byte-at bytes (+ offset 7)) 56)))))))))
+  (byte_le.read-u64 bytes offset))
 
 (define (tlci-push-zeroes!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]

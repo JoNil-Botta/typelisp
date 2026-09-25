@@ -103,95 +103,6 @@ if ! cmp -s "$GVN_EXPECTED_NORMALIZED" "$GVN_ACTUAL_NORMALIZED"; then
     exit 1
 fi
 
-# Explicit ownership capability: a checked move into a fresh aggregate field
-# is visible as StoreOwned/LoadOwned, the load starts in the loop and LICM
-# moves it into the preheader, while an explicit shallow representation view
-# in an otherwise identical fresh holder remains an ordinary Load. The proof
-# capability forms are lowered back to ordinary IR before the backend.
-OWNED_SOURCE="$ROOT/tests/golden/optimizer_owned_handle_licm.tl"
-OWNED_AFTER="$WORKDIR/optimizer_owned_handle.after-owned.ir"
-OWNED_LICM="$WORKDIR/optimizer_owned_handle.after-licm.ir"
-OWNED_FINAL="$WORKDIR/optimizer_owned_handle.final.ir"
-
-"$COMPILER" compile "$OWNED_SOURCE" \
-    --dump-ir after-owned_handles \
-    --verify-ir \
-    --opt-level 2 \
-    -o "$OWNED_AFTER" \
-    --stdlib-root "$ROOT/stdlib" \
-    --stdlib-root "$ROOT/src" \
-    >"$WORKDIR/owned.stdout" 2>"$WORKDIR/owned.stderr"
-
-"$COMPILER" compile "$OWNED_SOURCE" \
-    --dump-ir after-licm \
-    --verify-ir \
-    --opt-level 2 \
-    -o "$OWNED_LICM" \
-    --stdlib-root "$ROOT/stdlib" \
-    --stdlib-root "$ROOT/src" \
-    >"$WORKDIR/owned_licm.stdout" 2>"$WORKDIR/owned_licm.stderr"
-
-"$COMPILER" compile "$OWNED_SOURCE" \
-    --dump-ir \
-    --verify-ir \
-    --opt-level 2 \
-    -o "$OWNED_FINAL" \
-    --stdlib-root "$ROOT/stdlib" \
-    --stdlib-root "$ROOT/src" \
-    >"$WORKDIR/owned_final.stdout" 2>"$WORKDIR/owned_final.stderr"
-
-grep -F "store_owned" "$OWNED_AFTER" >/dev/null
-if ! awk '
-    /^function @.*owned-ir-positive/ { inside = 1; next }
-    inside && /^}/ { exit !(header > 0 && owned > header) }
-    inside && /while_header.*:$/ && header == 0 { header = NR }
-    inside && /load_owned/ { owned = NR }
-    END { if (!inside) exit 1 }
-' "$OWNED_AFTER"; then
-    echo "owning-handle capability was not explicit inside the positive loop" >&2
-    exit 1
-fi
-
-if ! awk '
-    /^function @.*owned-ir-positive/ { inside = 1; next }
-    inside && /^}/ { exit !(owned > 0 && header > owned) }
-    inside && /load_owned/ { owned = NR }
-    inside && /while_header.*:$/ && header == 0 { header = NR }
-    END { if (!inside) exit 1 }
-' "$OWNED_LICM"; then
-    echo "LICM did not hoist the proven owning-handle load" >&2
-    exit 1
-fi
-
-if ! awk '
-    /^function @.*owned-ir-shallow-negative/ { inside = 1; next }
-    inside && /^}/ { exit (owned != 0) }
-    inside && /load_owned/ { owned++ }
-    END { if (!inside) exit 1 }
-' "$OWNED_AFTER"; then
-    echo "explicit shallow view incorrectly gained an ownership capability" >&2
-    exit 1
-fi
-
-if grep -E "(own_root|store_owned|load_owned)" "$OWNED_FINAL" >/dev/null; then
-    echo "owning-handle capability instruction survived final IR" >&2
-    exit 1
-fi
-
-if "$COMPILER" run "$OWNED_SOURCE" \
-    --opt-level 2 \
-    --stdlib-root "$ROOT/stdlib" \
-    --stdlib-root "$ROOT/src" \
-    >"$WORKDIR/owned_run.stdout" 2>"$WORKDIR/owned_run.stderr"; then
-    OWNED_STATUS=0
-else
-    OWNED_STATUS=$?
-fi
-if [ "$OWNED_STATUS" -ne 49 ]; then
-    echo "owning-handle runtime witness returned $OWNED_STATUS, expected 49" >&2
-    exit 1
-fi
-
 "$COMPILER" compile "$SOURCE" \
     --dump-ir \
     --verify-ir \
@@ -255,19 +166,20 @@ if [ -n "$LATE_MISSING" ]; then
     exit 1
 fi
 
-# The post-prune literal rewrite runs after the ordinary function pipeline.
-# Its trace and dump must expose that later boundary, including unchanged IR.
+# The post-prune total-switch rewrite runs after the ordinary function
+# pipeline. Its trace and dump must expose that later boundary, including
+# unchanged IR.
 "$COMPILER" compile "$SOURCE" \
-    --dump-ir after-uniform_phi \
+    --dump-ir after-total_switch \
     --trace-passes \
     --verify-ir \
     --opt-level 2 \
-    -o "$WORKDIR/optimizer_fold.after-uniform_phi.ir" \
+    -o "$WORKDIR/optimizer_fold.after-total_switch.ir" \
     --stdlib-root "$ROOT/stdlib" \
     --stdlib-root "$ROOT/src" \
-    >"$WORKDIR/uniform-phi.stdout" 2>"$WORKDIR/uniform-phi.stderr"
-grep -F "optimizer-pass|main|uniform_phi|blocks=" "$WORKDIR/uniform-phi.stderr" >/dev/null
-grep -F "after uniform_phi @main" "$WORKDIR/optimizer_fold.after-uniform_phi.ir" >/dev/null
+    >"$WORKDIR/total-switch.stdout" 2>"$WORKDIR/total-switch.stderr"
+grep -F "optimizer-pass|main|total_switch|blocks=" "$WORKDIR/total-switch.stderr" >/dev/null
+grep -F "after total_switch @main" "$WORKDIR/optimizer_fold.after-total_switch.ir" >/dev/null
 
 "$COMPILER" compile "$SOURCE" \
     --verify-ir \

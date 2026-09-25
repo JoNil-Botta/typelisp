@@ -1,0 +1,90 @@
+# SPMD programs whose result observes the backend gang width, so their exit
+# codes intentionally differ between scalar, AVX2 and AVX-512 (unlike the
+# same-exit corpus of scripts/verify-spmd-simd.sh). Run by
+# scripts/verify-codegen-cases.sh: gate stage2-spmd-broadcast runs
+# --only 'broadcast-*', gate stage2-spmd-lane-identity --only 'lane-identity-*'.
+# A mode the host cannot execute still compiles; its run rows are skipped.
+
+do link-run
+target -
+opt -
+
+# `spmd-broadcast` of lane 0 / lane 1 (#2883). Scalar has one lane, so a lane-1
+# broadcast is an ordinary bounds trap there.
+case broadcast-lane0-i64
+source tests/spmd/broadcast_lane0_i64.tl
+mode scalar avx2 avx512
+exit scalar=105 avx2=86 avx512=62
+in stderr
+empty
+
+case broadcast-lane1-i64-scalar
+source tests/spmd/broadcast_lane1_i64.tl
+mode scalar
+exit nonzero
+in stderr
+contains array index out of bounds
+
+case broadcast-lane1-i64
+source tests/spmd/broadcast_lane1_i64.tl
+mode avx2 avx512
+exit avx2=32 avx512=16
+in stderr
+empty
+
+case broadcast-lane0-u64
+source tests/spmd/broadcast_lane0_u64.tl
+mode scalar avx2 avx512
+exit scalar=105 avx2=86 avx512=62
+in stderr
+empty
+
+case broadcast-lane1-u64-scalar
+source tests/spmd/broadcast_lane1_u64.tl
+mode scalar
+exit nonzero
+in stderr
+contains array index out of bounds
+
+case broadcast-lane1-u64
+source tests/spmd/broadcast_lane1_u64.tl
+mode avx2 avx512
+exit avx2=32 avx512=16
+in stderr
+empty
+
+case broadcast-lane0-u32
+source tests/spmd/broadcast_lane0_u32.tl
+mode scalar avx2 avx512
+exit scalar=105 avx2=62 avx512=14
+in stderr
+empty
+
+case broadcast-lane1-u32-scalar
+source tests/spmd/broadcast_lane1_u32.tl
+mode scalar
+exit nonzero
+in stderr
+contains array index out of bounds
+
+case broadcast-lane1-u32
+source tests/spmd/broadcast_lane1_u32.tl
+mode avx2 avx512
+exit avx2=16 avx512=16
+in stderr
+empty
+
+# `(program-index)` / `(program-count)` observe the gang identity (#2761).
+case lane-identity-i64
+source tests/spmd/lane_identity_i64.tl
+mode scalar avx2 avx512
+exit scalar=130 avx2=26 avx512=54
+in stderr
+empty
+
+case lane-identity-reduce-i64
+source tests/spmd/lane_identity_reduce_i64.tl
+mode scalar avx2 avx512
+exit scalar=13 avx2=70 avx512=142
+in stderr
+empty

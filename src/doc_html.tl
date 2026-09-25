@@ -303,16 +303,12 @@
               (begin
                 (byte_buf.byte-buf-builder-append-string
                   (&mut out)
-                  (doc-html-escape-one
-                    (owned_view.compiler-owned-shared-view source)
-                    i))
+                  (doc-html-escape-one source i))
                 (set! i (+ i 1)))))
           (begin
             (byte_buf.byte-buf-builder-append-string
               (&mut out)
-              (doc-html-escape-one
-                (owned_view.compiler-owned-shared-view source)
-                i))
+              (doc-html-escape-one source i))
             (set! i (+ i 1)))))
       (byte_buf.byte-buf-builder-append-string (&mut out) "</span>")
       (byte_buf.byte-buf-builder-finish-string (& out)))))
@@ -498,14 +494,12 @@
 (define (doc-html-highlight-typelisp [source : String]) : String
   (let
     [i : i64 0]
-    [n : i64
-      (string.string-length (owned_view.compiler-owned-shared-view source))]
+    [n : i64 (string.string-length source)]
     [out : byte_buf.ByteBufBuilder (byte_buf.byte-buf-builder-with-capacity n)]
     (begin
       (while (< i n)
         (let
-          [c : char
-            (string.string-ref (owned_view.compiler-owned-shared-view source) i)]
+          [c : char (string.string-ref source i)]
           (cond
             [(= c ';')
               (let
@@ -513,25 +507,13 @@
                   (doc-html-syntax-line-end
                     (owned_view.compiler-owned-shared-view source)
                     i)]
-                [line : String
-                  (string.substring
-                    (owned_view.compiler-owned-shared-view source)
-                    i
-                    (- end i))]
+                [line : String (string.substring source i (- end i))]
                 [class-name : String
                   (if (and
                     (< (+ i 1) n)
                     (or
-                      (=
-                        (string.string-ref
-                          (owned_view.compiler-owned-shared-view source)
-                          (+ i 1))
-                        '#')
-                      (=
-                        (string.string-ref
-                          (owned_view.compiler-owned-shared-view source)
-                          (+ i 1))
-                        ':')))
+                      (= (string.string-ref source (+ i 1)) '#')
+                      (= (string.string-ref source (+ i 1)) ':')))
                     "tl-syn-doc-comment"
                     "tl-syn-comment")]
                 (begin
@@ -590,10 +572,7 @@
                     (&mut out)
                     (doc-html-syntax-span
                       "tl-syn-number"
-                      (string.substring
-                        (owned_view.compiler-owned-shared-view source)
-                        i
-                        (- end i))))
+                      (string.substring source i (- end i))))
                   (set! i end)))]
             [(doc-html-syntax-token-start? c)
               (let
@@ -601,11 +580,7 @@
                   (doc-html-syntax-token-end
                     (owned_view.compiler-owned-shared-view source)
                     i)]
-                [token : String
-                  (string.substring
-                    (owned_view.compiler-owned-shared-view source)
-                    i
-                    (- end i))]
+                [token : String (string.substring source i (- end i))]
                 [class-name : String
                   (doc-html-syntax-token-class
                     (owned_view.compiler-owned-shared-view source)
@@ -622,9 +597,7 @@
               (begin
                 (byte_buf.byte-buf-builder-append-string
                   (&mut out)
-                  (doc-html-escape-one
-                    (owned_view.compiler-owned-shared-view source)
-                    i))
+                  (doc-html-escape-one source i))
                 (set! i (+ i 1)))])))
       (byte_buf.byte-buf-builder-finish-string (& out)))))
 
@@ -634,7 +607,7 @@
   [source : String]) : String
   (str_cat.str-cat
     "<pre><code class=\"language-"
-    (doc-html-escape (owned_view.compiler-owned-shared-view language))
+    (doc-html-escape language)
     "\""
     (doc-html-code-block-meta-attr meta)
     ">"
@@ -653,7 +626,7 @@
     [anchor : String (doc_render.doc-render-item-anchor path item)]
     (str_cat.str-cat
       "<li><a href=\"#"
-      (owned_view.compiler-owned-shared-view anchor)
+      anchor
       "\"><code>"
       (doc-html-escape name)
       "</code></a></li>\n")))
@@ -715,7 +688,7 @@
       (doc_extract.doc-item-name (owned_view.compiler-owned-shared-view item))]
     [anchor : String
       (doc_render.doc-render-item-anchor
-        (owned_view.compiler-owned-shared-view path)
+        path
         (owned_view.compiler-owned-shared-view item))]
     [kind : String
       (doc_extract.doc-kind-name
@@ -726,7 +699,7 @@
       "\"></a>\n<section class=\"tl-doc-item\" data-doc-identity=\""
       (owned_view.compiler-owned-shared-view anchor)
       "\">\n<h3><a href=\"#"
-      (owned_view.compiler-owned-shared-view anchor)
+      anchor
       "\">"
       (doc-html-escape name)
       "</a></h3>\n<dl class=\"tl-doc-meta\"><dt>Kind</dt><dd>"
@@ -783,10 +756,7 @@
       (owned_view.compiler-owned-shared-view items))
     0)
     "<p class=\"tl-doc-empty\">No documented declarations.</p>\n"
-    (doc-html-item-list
-      path
-      source-url
-      (owned_view.compiler-owned-shared-view items))))
+    (doc-html-item-list path source-url items)))
 
 (define (doc-html-json-escape-one [text : (& text str)] [idx : i64]) : String
   (let
@@ -870,7 +840,7 @@
       (doc_extract.doc-kind-name
         (doc_extract.doc-item-kind (owned_view.compiler-owned-shared-view item)))
       (doc_extract.doc-item-name (owned_view.compiler-owned-shared-view item))
-      (owned_view.compiler-owned-shared-view path)
+      path
       (str_cat.str-cat page "#" identity)
       (doc_extract.doc-item-signature
         (owned_view.compiler-owned-shared-view item))
@@ -904,9 +874,7 @@
     [path : String
       (doc_render.doc-module-path
         (owned_view.compiler-owned-shared-view module))]
-    [docs : doc_extract.DocExtraction
-      (doc_render.doc-module-docs
-        (owned_view.compiler-owned-shared-view module))]
+    [docs : doc_extract.DocExtraction (doc_render.doc-module-docs module)]
     [items : doc_item_vec.Vec
       (doc_extract.doc-extraction-items
         (owned_view.compiler-owned-shared-view docs))]
@@ -915,16 +883,14 @@
         (owned_view.compiler-owned-shared-view items))]
     (str_cat.str-cat
       (doc-html-search-record
-        (doc_render.doc-render-anchor
-          (owned_view.compiler-owned-shared-view path))
+        (doc_render.doc-render-anchor path)
         "module"
         (owned_view.compiler-owned-shared-view path)
         (owned_view.compiler-owned-shared-view path)
         (str_cat.str-cat
           (owned_view.compiler-owned-shared-view page)
           "#"
-          (doc_render.doc-render-anchor
-            (owned_view.compiler-owned-shared-view path)))
+          (doc_render.doc-render-anchor path))
         ""
         (doc_extract.doc-extraction-module-doc docs)
         1)
@@ -941,7 +907,7 @@
       "<li><a href=\"#"
       anchor
       "\">"
-      (doc-html-escape (owned_view.compiler-owned-shared-view path))
+      (doc-html-escape path)
       "</a></li>\n")))
 
 (define (doc-html-module-nav-entries-from
@@ -985,18 +951,16 @@
       (doc_render.doc-module-docs
         (owned_view.compiler-owned-shared-view module))]
     [anchor : String
-      (doc_render.doc-render-anchor
-        (doc_render.doc-module-path
-          (owned_view.compiler-owned-shared-view module)))]
+      (doc_render.doc-render-anchor (doc_render.doc-module-path module))]
     (str_cat.str-cat
       "<section class=\"tl-doc-module\" data-module-identity=\""
       (doc-html-escape path)
       "\" id=\""
       (owned_view.compiler-owned-shared-view anchor)
       "\">\n<h2><a href=\"#"
-      (owned_view.compiler-owned-shared-view anchor)
+      anchor
       "\">"
-      (doc-html-escape (owned_view.compiler-owned-shared-view path))
+      (doc-html-escape path)
       "</a></h2>\n<p class=\"tl-doc-source\">"
       (if (= (string.string-length source-url) 0)
         (str_cat.str-cat "<code>" (doc-html-escape path) "</code>")
@@ -1016,11 +980,7 @@
         (owned_view.compiler-owned-shared-view path)
         (doc_extract.doc-extraction-items
           (owned_view.compiler-owned-shared-view docs)))
-      (doc-html-items
-        path
-        (owned_view.compiler-owned-shared-view source-url)
-        (doc_extract.doc-extraction-items
-          (owned_view.compiler-owned-shared-view docs)))
+      (doc-html-items path source-url (doc_extract.doc-extraction-items docs))
       "</section>\n")))
 
 (define (doc-html-module-section [module : doc_render.DocModule]) : String
@@ -1037,17 +997,13 @@
         (doc_render.doc-module-list-ref
           (owned_view.compiler-owned-shared-view modules)
           index))
-      (doc-html-module-sections-from
-        (owned_view.compiler-owned-shared-view modules)
-        (+ index 1)
-        count))))
+      (doc-html-module-sections-from modules (+ index 1) count))))
 
 (define (doc-html-module-sections [modules : doc_module_vec.Vec]) : String
   (doc-html-module-sections-from
     (owned_view.compiler-owned-shared-view modules)
     0
-    (doc_render.doc-module-list-count
-      (owned_view.compiler-owned-shared-view modules))))
+    (doc_render.doc-module-list-count modules)))
 
 (define (doc-html-render-module-page
   [path : String]

@@ -1,0 +1,87 @@
+# Internal Tuple/Array by-value ABI shapes (gate
+# stage2-by-value-aggregate-abi-shape-gate). Deliberately opt0: optimisation
+# can remove the small fixture helpers whose physical parameter/return
+# boundaries are under test. Function bodies run to the next .globl
+# (`fn-globl`) so a later helper cannot satisfy a row for the selected one.
+
+source tests/integration/by_value_aggregate_abi.tl
+opt 0
+args --stdlib-root {{root}}/stdlib
+
+case linux
+target linux-x86_64
+assemble
+not-empty
+# A GPR source is never legal for movsd/movss/movups; checked over the whole
+# file so a malformed instruction in any emitted global cannot slip through.
+not-match ^[[:space:]]+mov(s[sd]|ss|ups|dqa|dqu)[[:space:]]+%r[a-z0-9]+,[[:space:]]*%xmm[0-9]+$
+# Tuple (i64, i64): two INTEGER eightbytes use rdi/rsi and return in rax/rdx;
+# no floating-bank instruction.
+in fn-globl _tl_by_value_aggregate_abi_abi_indirect_roundtrip
+match ^[[:space:]]+movq[[:space:]]+%rdi,
+match ^[[:space:]]+movq[[:space:]]+%rsi,
+match ^[[:space:]]+movq[[:space:]]+[^,]+,[[:space:]]*%rax$
+match ^[[:space:]]+movq[[:space:]]+[^,]+,[[:space:]]*%rdx$
+not-match %xmm
+# Tuple (i64, f64): INTEGER/SSE banks are independent, returning rax/xmm0.
+in fn-globl _tl_by_value_aggregate_abi_abi_mixed_tuple_roundtrip
+match ^[[:space:]]+movq[[:space:]]+%rdi,
+match ^[[:space:]]+movsd[[:space:]]+%xmm0,
+match ^[[:space:]]+movq[[:space:]]+[^,]+,[[:space:]]*%rax$
+match ^[[:space:]]+movsd[[:space:]]+[^,]+,[[:space:]]*%xmm0$
+# Five scalar arguments fill rdi/rsi/rdx/rcx/r8; the Tuple's two eightbytes
+# then roll back as a unit into consecutive stack slots 0 and 8.
+in fn-globl main
+narrow call-args:_tl_by_value_aggregate_abi_abi_pressure
+match ^[[:space:]]+movq[[:space:]]+[^,]+,[[:space:]]*%rdi$
+match ^[[:space:]]+movq[[:space:]]+[^,]+,[[:space:]]*%rsi$
+match ^[[:space:]]+movq[[:space:]]+[^,]+,[[:space:]]*%rdx$
+match ^[[:space:]]+movq[[:space:]]+[^,]+,[[:space:]]*%rcx$
+match ^[[:space:]]+movq[[:space:]]+[^,]+,[[:space:]]*%r8$
+match ^[[:space:]]+movq[[:space:]]+%r[a-z0-9]+,[[:space:]]*0\(%rsp\)$
+match ^[[:space:]]+movq[[:space:]]+%r[a-z0-9]+,[[:space:]]*8\(%rsp\)$
+# The >16-byte SysV array: sret in rdi, the parameter in the incoming stack
+# area (a positive rsp offset, not pinned), one correlated 24-byte copy.
+in fn-globl _tl_by_value_aggregate_abi_abi_memory_array_roundtrip
+match ^[[:space:]]+movq[[:space:]]+%rdi,
+match ^[[:space:]]+(leaq|movq)[[:space:]]+[1-9][0-9]*\(%rsp\)
+count = 1 ^[[:space:]]+movups[[:space:]]+\([^)]*\),[[:space:]]*%xmm[0-9]+$
+count = 1 ^[[:space:]]+movups[[:space:]]+%xmm[0-9]+,[[:space:]]*\([^)]*\)$
+metric copy24-sequences = 1
+match ^[[:space:]]+movq[[:space:]]+[^,]+,[[:space:]]*%rax$
+not-match ^[[:space:]]+call[[:space:]].*(clone|memcpy)
+
+case windows
+target windows-x86_64
+not-empty
+not-match ^[[:space:]]+mov(s[sd]|ss|ups|dqa|dqu)[[:space:]]+%r[a-z0-9]+,[[:space:]]*%xmm[0-9]+$
+# Win64 memory array: caller sret in rcx, a private byref temporary in rdx.
+in fn-globl _tl_by_value_aggregate_abi_abi_memory_array_roundtrip
+match ^[[:space:]]+movq[[:space:]]+%rcx,
+match ^[[:space:]]+movq[[:space:]]+%rdx,
+count = 1 ^[[:space:]]+movups[[:space:]]+\([^)]*\),[[:space:]]*%xmm[0-9]+$
+count = 1 ^[[:space:]]+movups[[:space:]]+%xmm[0-9]+,[[:space:]]*\([^)]*\)$
+metric copy24-sequences = 1
+match ^[[:space:]]+movq[[:space:]]+[^,]+,[[:space:]]*%rax$
+not-match ^[[:space:]]+call[[:space:]].*(clone|memcpy)
+# Win64 8-byte arrays use integer value transport in rcx and rax.
+in fn-globl _tl_by_value_aggregate_abi_abi_array_u8_8
+match ^[[:space:]]+movq[[:space:]]+%rcx,
+match ^[[:space:]]+movq[[:space:]]+[^,]+,[[:space:]]*%rax$
+# Win64 16-byte arrays: sret rcx, byref temporary rdx, one 16-byte copy.
+in fn-globl _tl_by_value_aggregate_abi_abi_array_u8_16
+match ^[[:space:]]+movq[[:space:]]+%rcx,
+match ^[[:space:]]+movq[[:space:]]+%rdx,
+count = 1 ^[[:space:]]+movups[[:space:]]+\([^)]*\),[[:space:]]*%xmm[0-9]+$
+count = 1 ^[[:space:]]+movups[[:space:]]+%xmm[0-9]+,[[:space:]]*\([^)]*\)$
+match ^[[:space:]]+movq[[:space:]]+[^,]+,[[:space:]]*%rax$
+# Three bytes are not a Win64 register return size: sret rcx, byref rdx, and
+# exactly a two-byte word plus the remaining byte.
+in fn-globl _tl_by_value_aggregate_abi_abi_array_u8_3
+match ^[[:space:]]+movq[[:space:]]+%rcx,
+match ^[[:space:]]+movq[[:space:]]+%rdx,
+count = 1 ^[[:space:]]+movzwq[[:space:]]+\([^)]*\),[[:space:]]*%r[a-z0-9]+$
+count = 1 ^[[:space:]]+movw[[:space:]]+%r[a-z0-9]+w,[[:space:]]*\([^)]*\)$
+count = 1 ^[[:space:]]+movzbq[[:space:]]+2\(%r[a-z0-9]+\),[[:space:]]*%r[a-z0-9]+$
+count = 1 ^[[:space:]]+movb[[:space:]]+%r[a-z0-9]+b,[[:space:]]*2\(%r[a-z0-9]+\)$
+match ^[[:space:]]+movq[[:space:]]+[^,]+,[[:space:]]*%rax$

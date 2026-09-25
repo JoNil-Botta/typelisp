@@ -47,11 +47,11 @@ stage2-opt1-opt2-build-invariance	linux	stage2 opt1/opt2 build-invariance	bootst
 stage2-opt2-built-cli-compile-cross-fixpoint-regression	all	stage2 opt2-built CLI compile + cross-fixpoint regression	bootstrap-fixpoint,stage2-opt1-opt2-build-invariance@linux	stage2	gate_opt2_cli_regression
 stage2-spmd-runtime-dispatch	all	stage2 SPMD runtime dispatch	bootstrap-fixpoint	stage2	scripts/verify-spmd-runtime-dispatch.sh
 stage2-spmd-package-calls	all	stage2 SPMD package calls	bootstrap-fixpoint	stage2	scripts/verify-spmd-package-calls.sh
-ispc-perfbench-loads-corpus-contract	all	ISPC perfbench loads corpus contract	bootstrap-fixpoint	stage2	scripts/verify-ispc-perfbench-loads.sh
-ispc-perfbench-stores-corpus-contract	all	ISPC perfbench stores corpus contract	bootstrap-fixpoint	stage2	scripts/verify-ispc-perfbench-stores.sh
-ispc-perfbench-gathers-corpus-contract	all	ISPC perfbench gathers corpus contract	bootstrap-fixpoint	stage2	scripts/verify-ispc-perfbench-gathers.sh
-ispc-mandelbrot-corpus-contract	all	ISPC Mandelbrot corpus contract	bootstrap-fixpoint	stage2	scripts/verify-ispc-mandelbrot.sh
-ispc-point-transform-corpus-contract	all	ISPC point-transform corpus contract	bootstrap-fixpoint	stage2	scripts/verify-ispc-point-transform.sh
+ispc-perfbench-loads-corpus-contract	all	ISPC perfbench loads corpus contract	bootstrap-fixpoint	stage2	scripts/verify-codegen-cases.sh --only 'perfbench_loads-*' tests/codegen/ispc.cases
+ispc-perfbench-stores-corpus-contract	all	ISPC perfbench stores corpus contract	bootstrap-fixpoint	stage2	scripts/verify-codegen-cases.sh --only 'perfbench_stores-*' tests/codegen/ispc.cases
+ispc-perfbench-gathers-corpus-contract	all	ISPC perfbench gathers corpus contract	bootstrap-fixpoint	stage2	scripts/verify-codegen-cases.sh --only 'perfbench_gathers-*' tests/codegen/ispc.cases
+ispc-mandelbrot-corpus-contract	all	ISPC Mandelbrot corpus contract	bootstrap-fixpoint	stage2	scripts/verify-codegen-cases.sh --only 'mandelbrot-*' tests/codegen/ispc.cases
+ispc-point-transform-corpus-contract	all	ISPC point-transform corpus contract	bootstrap-fixpoint	stage2	scripts/verify-codegen-cases.sh --only 'point_transform-*' tests/codegen/ispc.cases
 stage2-repository-doctests	all	stage2 repository doctests	bootstrap-fixpoint	stage2	scripts/verify-doc-tests.sh
 stage2-inline-typelisp-tests	all	stage2 inline TypeLisp tests	bootstrap-fixpoint	stage2	scripts/verify-inline-tests.sh
 stage2-prelude-macro-mutation-guard	all	stage2 prelude macro mutation guard	bootstrap-fixpoint	stage2	scripts/verify-prelude-mutation.sh
@@ -63,10 +63,10 @@ package-native-tlci-dependency-macros	all	package native TLCI dependency macros	
 package-dependency-tlci-frontend-surfaces	all	package dependency TLCI frontend surfaces	bootstrap-fixpoint,stage2-compile-profile-verifier	profile	scripts/verify-package-surface-tlci.sh
 stage2-compile-startup-profile-verifier	all	stage2 compile-startup-profile verifier	bootstrap-fixpoint	stage2	scripts/verify-compile-startup-profile.sh
 stage2-allocation-profile-verifier	all	stage2 allocation-profile verifier	bootstrap-fixpoint	stage2	scripts/verify-allocation-profile.sh
-stage2-math-exp-codegen-verifier	all	stage2 math exp codegen verifier	bootstrap-fixpoint	stage2	scripts/verify-math-exp-codegen.sh
-stage2-math-log-codegen-verifier	all	stage2 math log codegen verifier	bootstrap-fixpoint	stage2	scripts/verify-math-log-codegen.sh
-stage2-math-pow-codegen-verifier	all	stage2 math pow codegen verifier	bootstrap-fixpoint	stage2	scripts/verify-math-pow-codegen.sh
-stage2-math-trig-codegen-verifier	all	stage2 math trig codegen verifier	bootstrap-fixpoint	stage2	scripts/verify-math-trig-codegen.sh
+stage2-math-exp-codegen-verifier	all	stage2 math exp codegen verifier	bootstrap-fixpoint	stage2	scripts/verify-codegen-cases.sh --only exp tests/codegen/math.cases
+stage2-math-log-codegen-verifier	all	stage2 math log codegen verifier	bootstrap-fixpoint	stage2	scripts/verify-codegen-cases.sh --only log tests/codegen/math.cases
+stage2-math-pow-codegen-verifier	all	stage2 math pow codegen verifier	bootstrap-fixpoint	stage2	scripts/verify-codegen-cases.sh --only pow tests/codegen/math.cases
+stage2-math-trig-codegen-verifier	all	stage2 math trig codegen verifier	bootstrap-fixpoint	stage2	scripts/verify-codegen-cases.sh --only trig tests/codegen/math.cases
 stage2-codegen-target-parity	all	stage2 codegen target parity	bootstrap-fixpoint	stage2	scripts/check-codegen-target-parity.sh
 stage2-backend-target-assembly-parity	all	stage2 backend target assembly parity	bootstrap-fixpoint	stage2	scripts/check-backend-target-asm-parity.sh
 stage2-windows-coff-batch-plan	all	stage2 Windows COFF batch plan	bootstrap-fixpoint	stage2	scripts/verify-compile-batch-windows-coff.sh
@@ -82,12 +82,12 @@ integration-compile-failure-diagnostics	all	integration compile-failure diagnost
 integration-signal-notice-capture	linux	integration signal notice capture	-	-	scripts/verify-integration.sh --self-test-signal-notice-capture
 windows-integration-linker-queue-self-test	windows	Windows integration linker queue self-test	-	-	powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/windows-integration-linker-self-test.ps1
 stage2-native-integration-corpus	all	stage2 native integration corpus	bootstrap-fixpoint	stage2	scripts/verify-integration.sh
-stage2-must-use-metadata-and-abi-codegen	all	stage2 must-use metadata and ABI/codegen	bootstrap-fixpoint	stage2	scripts/verify-must-use-abi.sh
-stage2-regalloc-backend-asm-shape-gates	linux	stage2 regalloc/backend asm shape gates	bootstrap-fixpoint	stage2	scripts/verify-asm-shape-gates.sh
-stage2-git-sha-1-fixed-round-wipe-asm-shape-gate	linux	stage2 Git SHA-1 fixed-round/wipe asm shape gate	bootstrap-fixpoint	stage2	scripts/verify-crypto-sha1-git-shape.sh
-stage2-sha-256-fixed-round-wipe-asm-shape-gate	linux	stage2 SHA-256 fixed-round/wipe asm shape gate	bootstrap-fixpoint	stage2	scripts/verify-crypto-sha256-shape.sh
-stage2-sha-512-wipe-asm-shape-gate	linux	stage2 SHA-512 wipe asm shape gate	bootstrap-fixpoint	stage2	scripts/verify-crypto-sha512-shape.sh
-stage2-by-value-aggregate-abi-shape-gate	linux	stage2 by-value aggregate ABI shape gate	bootstrap-fixpoint	stage2	scripts/verify-by-value-aggregate-abi.sh
+stage2-must-use-metadata-and-abi-codegen	all	stage2 must-use metadata and ABI/codegen	bootstrap-fixpoint	stage2	scripts/verify-codegen-cases.sh tests/codegen/must-use-abi.cases
+stage2-regalloc-backend-asm-shape-gates	linux	stage2 regalloc/backend asm shape gates	bootstrap-fixpoint	stage2	scripts/verify-codegen-cases.sh tests/codegen/asm-shape.cases
+stage2-git-sha-1-fixed-round-wipe-asm-shape-gate	linux	stage2 Git SHA-1 fixed-round/wipe asm shape gate	bootstrap-fixpoint	stage2	scripts/verify-codegen-cases.sh --only 'sha1-*' tests/codegen/crypto-sha.cases
+stage2-sha-256-fixed-round-wipe-asm-shape-gate	linux	stage2 SHA-256 fixed-round/wipe asm shape gate	bootstrap-fixpoint	stage2	scripts/verify-codegen-cases.sh --only 'sha256-*' tests/codegen/crypto-sha.cases
+stage2-sha-512-wipe-asm-shape-gate	linux	stage2 SHA-512 wipe asm shape gate	bootstrap-fixpoint	stage2	scripts/verify-codegen-cases.sh --only 'sha512-*' tests/codegen/crypto-sha.cases
+stage2-by-value-aggregate-abi-shape-gate	linux	stage2 by-value aggregate ABI shape gate	bootstrap-fixpoint	stage2	scripts/verify-codegen-cases.sh tests/codegen/by-value-aggregate-abi.cases
 stage2-examples	all	stage2 examples	bootstrap-fixpoint	stage2	scripts/verify-examples.sh
 benchmark-wall-clock-harness-self-tests	all	benchmark wall-clock harness self-tests	bootstrap-fixpoint	stage2	scripts/bench.sh --self-test
 stage2-benchmark-comparison-correctness	all	stage2 benchmark comparison correctness	bootstrap-fixpoint	stage2	gate_benchmark_correctness
@@ -97,8 +97,8 @@ stage2-stdlib-modules-and-fixtures	all	stage2 stdlib modules and fixtures	bootst
 stage2-stdlib-selfhost-verifier	all	stage2 stdlib selfhost verifier	bootstrap-fixpoint	stage2	scripts/verify-stdlib-selfhost.sh
 stage2-spmd-simd-comparison	all	stage2 SPMD SIMD comparison	bootstrap-fixpoint	stage2	scripts/verify-spmd-simd.sh
 stage2-cross-mode-semantic-abi-differential	all	stage2 cross-mode semantic/ABI differential	bootstrap-fixpoint,stage2-compile-profile-verifier,stage2-windows-coff-batch-plan@windows,stage2-native-integration-corpus,stage2-spmd-simd-comparison	stage2	env TYPELISP_CROSS_MODE_PREVIOUS_COMPILER="$STAGE1_BIN" scripts/verify-cross-mode-differential.sh
-stage2-spmd-lane-identity	all	stage2 SPMD lane identity	bootstrap-fixpoint	stage2	scripts/verify-spmd-lane-identity.sh
-stage2-spmd-broadcast	all	stage2 SPMD broadcast	bootstrap-fixpoint	stage2	scripts/verify-spmd-broadcast.sh
+stage2-spmd-lane-identity	all	stage2 SPMD lane identity	bootstrap-fixpoint	stage2	scripts/verify-codegen-cases.sh --only 'lane-identity-*' tests/spmd/gang-width.cases
+stage2-spmd-broadcast	all	stage2 SPMD broadcast	bootstrap-fixpoint	stage2	scripts/verify-codegen-cases.sh --only 'broadcast-*' tests/spmd/gang-width.cases
 stage2-docs-pages-build-path	all	stage2 docs Pages build path	bootstrap-fixpoint	stage2	env DOC_SITE_OUT="$ROOT/target/ci-verify-docs-pages-site" scripts/verify-doc-site.sh
 stage2-cli-host-action-smoke	linux	stage2 CLI host-action smoke	bootstrap-fixpoint	stage2	scripts/check-stage1-wrapper.sh
 stage2-stdlib-documentation	linux	stage2 stdlib documentation	bootstrap-fixpoint	stage2	scripts/verify-stdlib-docs.sh

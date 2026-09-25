@@ -23,7 +23,7 @@
 ;; into a multi-use load, which retires the fold (and so must retire the tie).
 ;;
 ;; A wrong tie is still CORRECT code, only slower, so the exit code cannot catch
-;; it; scripts/verify-asm-shape-gates.sh asserts the shape over the bounds-check-
+;; it; tests/codegen/asm-shape.cases asserts the shape over the bounds-check-
 ;; eliminated fast body. The two call sites keep `fold-words` out of line.
 (define (fold-words
   [a : (& a (__tl_dyn-array i64))]

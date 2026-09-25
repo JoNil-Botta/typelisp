@@ -1,9 +1,7 @@
 ;; The negative twin of ck_local_len_eq: the same body fed a malformed cursor.
-;; With `bump` = 1 the last cursor is `n`, out of range for every twin array.
-;; CK-1 retires only the SECOND check of each pair, so the run must still stop
-;; at the FIRST -- the `xs` read -- with byte-identical site and message to the
-;; base compiler's. Trap parity is by construction: the same index aborts at
-;; the same first site.
+;; With `bump` = 1 the last cursor is `n`, out of range for every twin array,
+;; so the run must stop at the FIRST check -- the `xs` read -- with the same
+;; site and message at every optimization level.
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.vector)

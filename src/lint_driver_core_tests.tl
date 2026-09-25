@@ -778,17 +778,15 @@ end
       index)
       [(lint_core.LintMaybeFinding.Some finding)
         (selfhost-lint-findings-rule-count-from
-          (owned_view.compiler-owned-shared-view findings)
+          findings
           (owned_view.compiler-owned-shared-view rule-id)
           (+ index 1)
-          (if (string.eq
-            finding.rule-id
-            (owned_view.compiler-owned-shared-view rule-id))
+          (if (string.eq finding.rule-id rule-id)
             (+ count 1)
             count))]
       [(lint_core.LintMaybeFinding.No)
         (selfhost-lint-findings-rule-count-from
-          (owned_view.compiler-owned-shared-view findings)
+          findings
           rule-id
           (+ index 1)
           count)])))
@@ -820,10 +818,7 @@ end
       (let
         [fspan : ast.AstSourceSpan finding.span]
         (and
-          (=
-            (lint_core.lint-findings-count
-              (owned_view.compiler-owned-shared-view findings))
-            1)
+          (= (lint_core.lint-findings-count findings) 1)
           (> (ast.ast-source-span-start-line fspan) 0)
           (string.eq finding.rule-id (lint_core.lint-rule-unused-import-id))))]
     [(lint_core.LintMaybeFinding.No) false]))
@@ -1234,12 +1229,10 @@ end
         (owned_view.compiler-owned-shared-view test-dir)
         "second_imported_smoke.tl")]
     (begin
-      (compiler_load.compiler-load-test-mkdir
-        (owned_view.compiler-owned-shared-view root))
+      (compiler_load.compiler-load-test-mkdir root)
       (compiler_load.compiler-load-test-mkdir
         (owned_view.compiler-owned-shared-view src-dir))
-      (compiler_load.compiler-load-test-mkdir
-        (owned_view.compiler-owned-shared-view test-dir))
+      (compiler_load.compiler-load-test-mkdir test-dir)
       (selfhost-lint-write-text
         (owned_view.compiler-owned-shared-view manifest-path)
         "(package
@@ -1290,8 +1283,7 @@ end
                     source-set.manifest.kind)]
                 [core-count : i64
                   (lint_driver_core.selfhost-lint-package-dead-count-for-source
-                    (compiler_load.compiler-load-normalize-path
-                      (owned_view.compiler-owned-shared-view core-path))
+                    (compiler_load.compiler-load-normalize-path core-path)
                     (byte_buf.to-string (io.read-file core-path))
                     dead-decls)]
                 (and
@@ -1328,7 +1320,7 @@ end
     [lib-count-a : i64
       (lint_driver_core.selfhost-lint-package-dead-count-for-source
         "pkg/a.tl"
-        (owned_view.compiler-owned-shared-view source-a)
+        source-a
         (owned_view.compiler-owned-shared-view lib-decls))]
     [lib-count-b : i64
       (lint_driver_core.selfhost-lint-package-dead-count-for-source
@@ -1713,9 +1705,7 @@ end
   [findings : lint_core.LintFindings]
   [depth : i64]
   [message : String]) : bool
-  (match (lint_core.lint-findings-get
-    (owned_view.compiler-owned-shared-view findings)
-    0)
+  (match (lint_core.lint-findings-get findings 0)
     [(lint_core.LintMaybeFinding.Some finding)
       (let
         [fspan : ast.AstSourceSpan finding.span]
@@ -1728,9 +1718,7 @@ end
 
 (define (selfhost-lint-nested-let-finding-ok?
   [findings : lint_core.LintFindings]) : bool
-  (match (lint_core.lint-findings-get
-    (owned_view.compiler-owned-shared-view findings)
-    0)
+  (match (lint_core.lint-findings-get findings 0)
     [(lint_core.LintMaybeFinding.Some finding)
       (let
         [fspan : ast.AstSourceSpan finding.span]
@@ -1741,9 +1729,7 @@ end
 
 (define (selfhost-lint-return-path-finding-ok?
   [findings : lint_core.LintFindings]) : bool
-  (match (lint_core.lint-findings-get
-    (owned_view.compiler-owned-shared-view findings)
-    0)
+  (match (lint_core.lint-findings-get findings 0)
     [(lint_core.LintMaybeFinding.Some finding)
       (let
         [fspan : ast.AstSourceSpan finding.span]
@@ -1754,9 +1740,7 @@ end
     [(lint_core.LintMaybeFinding.No) false]))
 
 (define (selfhost-lint-unit-if-finding-ok? [findings : lint_core.LintFindings]) : bool
-  (match (lint_core.lint-findings-get
-    (owned_view.compiler-owned-shared-view findings)
-    0)
+  (match (lint_core.lint-findings-get findings 0)
     [(lint_core.LintMaybeFinding.Some finding)
       (let
         [fspan : ast.AstSourceSpan finding.span]
@@ -1769,9 +1753,7 @@ end
 (define (selfhost-lint-cascading-and-or-finding-ok?
   [findings : lint_core.LintFindings]
   [message : String]) : bool
-  (match (lint_core.lint-findings-get
-    (owned_view.compiler-owned-shared-view findings)
-    0)
+  (match (lint_core.lint-findings-get findings 0)
     [(lint_core.LintMaybeFinding.Some finding)
       (let
         [fspan : ast.AstSourceSpan finding.span]
@@ -1789,10 +1771,7 @@ end
     0)
     [(lint_core.LintMaybeFinding.Some finding)
       (and
-        (=
-          (lint_core.lint-findings-count
-            (owned_view.compiler-owned-shared-view findings))
-          5)
+        (= (lint_core.lint-findings-count findings) 5)
         (string.eq
           finding.rule-id
           (lint_core.lint-rule-transitional-core-macro-qualifier-id))
@@ -1911,12 +1890,7 @@ end
             1))
         16]
       [(not (selfhost-lint-unit-if-finding-ok? unit-set-reported)) 17]
-      [(not
-          (=
-            (lint_core.lint-findings-count
-              (owned_view.compiler-owned-shared-view two-reported))
-            2))
-        18]
+      [(not (= (lint_core.lint-findings-count two-reported) 2)) 18]
       [(not
           (=
             (lint_core.lint-findings-count

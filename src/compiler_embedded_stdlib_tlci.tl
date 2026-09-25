@@ -717,10 +717,7 @@
         (begin
           (set!
             (array-ref bigger index)
-            (array-ref
-              (compiler-comptime-host-global-shared-view
-                compiler-comptime-host-stack)
-              index))
+            (array-ref compiler-comptime-host-stack index))
           (set! index (+ index 1))))
       (set! compiler-comptime-host-stack bigger))))
 
@@ -1510,8 +1507,7 @@
                   infos
                   ty)
                   [(ast.AstType.Tuple elems)
-                    (ctfe_support.ctfe-type-list-count
-                      (owned_view.compiler-owned-box-shared-view elems))]
+                    (ctfe_support.ctfe-type-list-count (deref elems))]
                   [_ -3])])]
           (if (< count 0)
             -3
@@ -1601,7 +1597,7 @@
                 ty)
                 [(ast.AstType.Tuple elems)
                   (match (ctfe_support.ctfe-type-list-ref-with-pools
-                    (owned_view.compiler-owned-box-shared-view elems)
+                    (deref elems)
                     pools
                     infos
                     first-index)
@@ -6942,8 +6938,7 @@
               (set!
                 compiler-comptime-host-stack-len
                 (- compiler-comptime-host-stack-len 1))
-              (ctfe_support.ctfe-type-list-count
-                (owned_view.compiler-owned-box-shared-view params)))]
+              (ctfe_support.ctfe-type-list-count (deref params)))]
           [_ -3])))))
 
 (define (compiler-comptime-host-callback-function-return-type

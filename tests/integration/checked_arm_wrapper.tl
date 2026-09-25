@@ -31,7 +31,7 @@
 ;; band can claim either before the measured tier is asked.
 ;;
 ;; The exit code proves the values; the shape is pinned in
-;; scripts/verify-asm-shape-gates.sh, and the abort twin
+;; tests/codegen/asm-shape.cases, and the abort twin
 ;; (checked_arm_wrapper_abort.tl) proves the body spliced at an arm site keeps
 ;; its own abort site.
 (define aw-empty : i64

@@ -12,7 +12,7 @@
 ;; The two probes pin both directions of the rule. Never-taken self-recursion
 ;; blocks inlining so the named bodies survive for the gate to inspect; tailrec
 ;; lowering may turn that recursion into a loop before the backend runs
-;; (scripts/verify-asm-shape-gates.sh check_fallthrough_jmp_chain; the
+;; (tests/codegen/asm-shape.cases case fallthrough-jmp-chain; the
 ;; drop-probe assertion FAILS before the peephole).
 ;;
 ;; DROP: then-only conditional in a loop. The then arm carries a

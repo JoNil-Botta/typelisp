@@ -3861,9 +3861,7 @@
   (let
     [index : i64 (- (bit-and key (intern-structural-key-index-mask)) 1)]
     [table : InternStructuralTable
-      (intern-array-shared-view
-        (intern-global-shared-view intern-structural-table-cell)
-        0)]
+      (intern-array-shared-view intern-structural-table-cell 0)]
     [existing : InternSlotId (array-ref table.generated-symbol-handles index)]
     (if (not (intern-id-slot-empty? existing))
       (begin
@@ -3890,9 +3888,7 @@
           (set!
             (array-ref
               (__tl-project-field
-                (array-ref
-                  (intern-global-shared-view intern-structural-table-cell)
-                  0)
+                (array-ref intern-structural-table-cell 0)
                 generated-symbol-handles)
               index)
             (intern-id-slot-encode id))
@@ -3921,10 +3917,7 @@
     (not (intern-generated-id-active? id)))
     (tl_oob_abort)
     (let
-      [cached : String
-        (intern-array-shared-view
-          (intern-global-shared-view intern-pool-slots)
-          id)]
+      [cached : String (intern-array-shared-view intern-pool-slots id)]
       (if (> (intern-private-string-length cached) 0)
         cached
         (let

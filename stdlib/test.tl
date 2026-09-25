@@ -114,6 +114,26 @@
       (str_cat.str-cat "\"" (string.copy expected) "\"")
       message)))
 
+;: Assert that two owned `String` values compare equal.
+;:
+;: Owned-operand form of `assert-string-eq`, with the same failure text. It
+;: renders the failure itself rather than calling the borrowed form, so adding
+;: it leaves the existing assertions' code unchanged.
+(define (assert-owned-string-eq
+  [actual : String]
+  [expected : String]
+  [message : String]) : unit
+  (if (string.eq (& actual) (& expected))
+    unit
+    (runtime.runtime-test-assertion-failure!
+      (str_cat.str-cat
+        message
+        ": expected \""
+        expected
+        "\", found \""
+        actual
+        "\""))))
+
 (test
   test-assert-success
   (let
@@ -127,4 +147,5 @@
       (assert-i32-eq (cast 7 : i32) (cast 7 : i32) "i32 equality should pass")
       (assert-f64-eq 1.5 1.5 "f64 equality should pass")
       (assert-char-eq 'A' 'A' "char equality should pass")
-      (assert-string-eq (& actual) (& expected) "string equality should pass"))))
+      (assert-string-eq (& actual) (& expected) "string equality should pass")
+      (assert-owned-string-eq "ok" "ok" "owned string equality should pass"))))

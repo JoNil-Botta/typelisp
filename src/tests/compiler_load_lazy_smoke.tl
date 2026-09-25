@@ -466,9 +466,7 @@
     source
     (cfg.compiler-cfg-empty))
     [(ResultAstProgramDiagnostic.Ok (ast.AstProgram.Program decls))
-      (compiler_load.compiler-load-structural-member-demand
-        (ast.ast-decl-list-box-shared-view decls)
-        alias)]
+      (compiler_load.compiler-load-structural-member-demand (deref decls) alias)]
     [(ResultAstProgramDiagnostic.Err _) (CompilerLoadStructuralFullDemand)]))
 
 (define (structural-member-demand-no-use-ok?) : bool
@@ -559,7 +557,7 @@
     (cfg.compiler-cfg-empty))
     [(ResultAstProgramDiagnostic.Ok (ast.AstProgram.Program decls))
       (match (compiler_load.compiler-load-structural-member-demand
-        (ast.ast-decl-list-box-shared-view decls)
+        (deref decls)
         cbi.compiler-builtin-id-fix-subject)
         [(CompilerLoadStructuralFullDemand) true]
         [_ false])]
@@ -601,7 +599,7 @@
             (compiler_load.compiler-load-session-state-shared-view (& state-a))
             true
             (ast.AstMaybeImportAlias.Some alias)
-            (ast.ast-decl-list-box-shared-view decls)
+            (deref decls)
             pools)]
         [observed-a : compiler_load.CompilerLoadLazyQualifiedObserverResult
           (compiler_load.compiler-load-session-state-lazy-qualified-observer-end-pair!

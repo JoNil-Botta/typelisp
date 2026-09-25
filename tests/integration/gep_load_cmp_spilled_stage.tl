@@ -43,7 +43,7 @@
 ;; so each shape stays in its own frame. `main` runs the two over the same data
 ;; and returns 42 only when they agree on every case, so a fold that dropped,
 ;; reordered or mis-addressed a load fails the runtime test as well as the
-;; assembly-shape gate in scripts/verify-asm-shape-gates.sh.
+;; assembly-shape gate in tests/codegen/asm-shape.cases.
 (define (changed?
   [a : (& a (__tl_dyn-array i64))]
   [b : (&mut b (__tl_dyn-array i64))]

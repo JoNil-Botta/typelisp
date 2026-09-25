@@ -137,22 +137,11 @@
   (match node
     [(FormatCst.Atom _) 1]
     [(FormatCst.Comment _) 1]
-    [(FormatCst.Prefix _ child)
-      (+ 1 (fmt-cst-count (owned_view.compiler-owned-box-shared-view child)))]
-    [(FormatCst.Projection child _)
-      (+ 1 (fmt-cst-count (owned_view.compiler-owned-box-shared-view child)))]
-    [(FormatCst.List items)
-      (+
-        1
-        (fmt-cst-list-total (owned_view.compiler-owned-box-shared-view items)))]
-    [(FormatCst.BracketList items)
-      (+
-        1
-        (fmt-cst-list-total (owned_view.compiler-owned-box-shared-view items)))]
-    [(FormatCst.Forms items)
-      (+
-        1
-        (fmt-cst-list-total (owned_view.compiler-owned-box-shared-view items)))]))
+    [(FormatCst.Prefix _ child) (+ 1 (fmt-cst-count (deref child)))]
+    [(FormatCst.Projection child _) (+ 1 (fmt-cst-count (deref child)))]
+    [(FormatCst.List items) (+ 1 (fmt-cst-list-total (deref items)))]
+    [(FormatCst.BracketList items) (+ 1 (fmt-cst-list-total (deref items)))]
+    [(FormatCst.Forms items) (+ 1 (fmt-cst-list-total (deref items)))]))
 
 (define (fmt-cst-list-total [items : FormatCstList]) : i64
   (match (fmt-cst-list-step items)
@@ -164,19 +153,11 @@
   (match node
     [(FormatCst.Atom _) 0]
     [(FormatCst.Comment _) 1]
-    [(FormatCst.Prefix _ child)
-      (fmt-cst-comment-count (owned_view.compiler-owned-box-shared-view child))]
-    [(FormatCst.Projection child _)
-      (fmt-cst-comment-count (owned_view.compiler-owned-box-shared-view child))]
-    [(FormatCst.List items)
-      (fmt-cst-list-comment-count
-        (owned_view.compiler-owned-box-shared-view items))]
-    [(FormatCst.BracketList items)
-      (fmt-cst-list-comment-count
-        (owned_view.compiler-owned-box-shared-view items))]
-    [(FormatCst.Forms items)
-      (fmt-cst-list-comment-count
-        (owned_view.compiler-owned-box-shared-view items))]))
+    [(FormatCst.Prefix _ child) (fmt-cst-comment-count (deref child))]
+    [(FormatCst.Projection child _) (fmt-cst-comment-count (deref child))]
+    [(FormatCst.List items) (fmt-cst-list-comment-count (deref items))]
+    [(FormatCst.BracketList items) (fmt-cst-list-comment-count (deref items))]
+    [(FormatCst.Forms items) (fmt-cst-list-comment-count (deref items))]))
 
 (define (fmt-cst-list-comment-count [items : FormatCstList]) : i64
   (match (fmt-cst-list-step items)
@@ -188,21 +169,12 @@
   (match node
     [(FormatCst.Atom _) 0]
     [(FormatCst.Comment _) 0]
-    [(FormatCst.Prefix _ child)
-      (fmt-cst-bracket-count (owned_view.compiler-owned-box-shared-view child))]
-    [(FormatCst.Projection child _)
-      (fmt-cst-bracket-count (owned_view.compiler-owned-box-shared-view child))]
-    [(FormatCst.List items)
-      (fmt-cst-list-bracket-count
-        (owned_view.compiler-owned-box-shared-view items))]
+    [(FormatCst.Prefix _ child) (fmt-cst-bracket-count (deref child))]
+    [(FormatCst.Projection child _) (fmt-cst-bracket-count (deref child))]
+    [(FormatCst.List items) (fmt-cst-list-bracket-count (deref items))]
     [(FormatCst.BracketList items)
-      (+
-        1
-        (fmt-cst-list-bracket-count
-          (owned_view.compiler-owned-box-shared-view items)))]
-    [(FormatCst.Forms items)
-      (fmt-cst-list-bracket-count
-        (owned_view.compiler-owned-box-shared-view items))]))
+      (+ 1 (fmt-cst-list-bracket-count (deref items)))]
+    [(FormatCst.Forms items) (fmt-cst-list-bracket-count (deref items))]))
 
 (define (fmt-cst-list-bracket-count [items : FormatCstList]) : i64
   (match (fmt-cst-list-step items)
@@ -478,7 +450,7 @@
     (and
       (= (fmt-cst-comment-count (owned_view.compiler-owned-shared-view tree)) 1)
       (> (fmt-cst-bracket-count (owned_view.compiler-owned-shared-view tree)) 0)
-      (> (fmt-cst-count (owned_view.compiler-owned-shared-view tree)) 8))))
+      (> (fmt-cst-count tree) 8))))
 
 (define (format-cst-prefixed-int-ok?) : bool
   (let
@@ -514,10 +486,7 @@
             2))
         "-0b101010")
       (=
-        (tokens.format-token-tag
-          (tokens.format-token-at
-            (owned_view.compiler-owned-shared-view stream)
-            4))
+        (tokens.format-token-tag (tokens.format-token-at stream 4))
         (tokens.fmt-tag-end)))))
 
 (define (format-cst-apostrophe-char-ok?) : bool
@@ -530,10 +499,7 @@
           (tokens.fmt-tag-char))
         3)
       (=
-        (tokens.format-token-tag
-          (tokens.format-token-at
-            (owned_view.compiler-owned-shared-view stream)
-            3))
+        (tokens.format-token-tag (tokens.format-token-at stream 3))
         (tokens.fmt-tag-end)))))
 
 (define (format-cst-error-location-ok?) : bool
@@ -546,8 +512,7 @@
             (owned_view.compiler-owned-shared-view err))
           "format cst: unexpected closing delimiter")
         (tokens.format-source-span-eq?
-          (tokens.format-source-error-span
-            (owned_view.compiler-owned-shared-view err))
+          (tokens.format-source-error-span err)
           2
           3
           2
@@ -559,15 +524,13 @@
       [(ResultFormatCst.Ok _) false]
       [(ResultFormatCst.Err err)
         (string.eq
-          (tokens.format-source-error-message
-            (owned_view.compiler-owned-shared-view err))
+          (tokens.format-source-error-message err)
           "format lexer: unexpected character")])
     (match (parse-format-source-result "#\\space'")
       [(ResultFormatCst.Ok _) false]
       [(ResultFormatCst.Err err)
         (string.eq
-          (tokens.format-source-error-message
-            (owned_view.compiler-owned-shared-view err))
+          (tokens.format-source-error-message err)
           "format lexer: unexpected character")])))
 
 (define (format-cst-dense-storage-ok?) : bool
@@ -575,15 +538,10 @@
     [(FormatCst.Forms forms)
       (and
         (= (fmt-list-count (owned_view.compiler-owned-box-shared-view forms)) 1)
-        (match (fmt-cst-list-step
-          (owned_view.compiler-owned-box-shared-view forms))
+        (match (fmt-cst-list-step (deref forms))
           [(FormatCstListStep.Item node _)
             (match node
-              [(FormatCst.List items)
-                (=
-                  (fmt-list-count
-                    (owned_view.compiler-owned-box-shared-view items))
-                  3)]
+              [(FormatCst.List items) (= (fmt-list-count (deref items)) 3)]
               [_ false])]
           [_ false]))]
     [_ false]))
@@ -607,17 +565,9 @@
           (fmt-cst-comment-count (owned_view.compiler-owned-shared-view tree))
           1)
         (return 3))
+      (unless (> (fmt-cst-bracket-count tree) 4) (return 4))
       (unless
-        (>
-          (fmt-cst-bracket-count (owned_view.compiler-owned-shared-view tree))
-          4)
-        (return 4))
-      (unless
-        (=
-          (tokens.format-token-tag-count
-            (owned_view.compiler-owned-shared-view stream)
-            (tokens.fmt-tag-char))
-          1)
+        (= (tokens.format-token-tag-count stream (tokens.fmt-tag-char)) 1)
         (return 5))
       (unless (format-cst-boxed-nested-ok?) (return 6))
       (unless (format-cst-prefixed-int-ok?) (return 7))

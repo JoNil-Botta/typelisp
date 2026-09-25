@@ -728,12 +728,7 @@
             (let
               [newcap : i64 (* cap 2)]
               (begin
-                (set!
-                  tokens
-                  (fmt-grow-token-array
-                    (owned_view.compiler-owned-shared-view tokens)
-                    count
-                    newcap))
+                (set! tokens (fmt-grow-token-array tokens count newcap))
                 (set! starts (fmt-grow-i64-array starts count newcap))
                 (set! cap newcap)))
             unit)
@@ -942,11 +937,7 @@
                         (owned_view.compiler-owned-shared-view starts)
                         count
                         i
-                        (FormatToken.Int
-                          (string.substring
-                            (owned_view.compiler-owned-shared-view src)
-                            i
-                            (- end i))))
+                        (FormatToken.Int (string.substring src i (- end i))))
                       (set! count (+ count 1))
                       (set! i end))]
                   [(result_fmt_i64.Err err)
@@ -972,11 +963,7 @@
                       (owned_view.compiler-owned-shared-view starts)
                       count
                       i
-                      (FormatToken.Symbol
-                        (string.substring
-                          (owned_view.compiler-owned-shared-view src)
-                          i
-                          (- end i))))
+                      (FormatToken.Symbol (string.substring src i (- end i))))
                     (set! count (+ count 1))
                     (set! i end)))]
               [else
@@ -985,25 +972,15 @@
                   (return
                     (ResultFormatTokenStream.Err
                       (fmt-source-error-at
-                        (owned_view.compiler-owned-shared-view src)
+                        src
                         i
                         "format lexer: unexpected character"))))]))))
       (if (>= count cap)
         (let
           [newcap : i64 (* cap 2)]
           (begin
-            (set!
-              tokens
-              (fmt-grow-token-array
-                (owned_view.compiler-owned-shared-view tokens)
-                count
-                newcap))
-            (set!
-              starts
-              (fmt-grow-i64-array
-                (owned_view.compiler-owned-shared-view starts)
-                count
-                newcap))
+            (set! tokens (fmt-grow-token-array tokens count newcap))
+            (set! starts (fmt-grow-i64-array starts count newcap))
             (set! cap newcap)))
         unit)
       (fmt-store-token
@@ -1013,11 +990,7 @@
         n
         (FormatToken.End))
       (ResultFormatTokenStream.Ok
-        (FormatTokenStream
-          src
-          (owned_view.compiler-owned-shared-view tokens)
-          starts
-          (+ count 1))))))
+        (FormatTokenStream src tokens starts (+ count 1))))))
 
 (define (format-lex-result [src : String]) : ResultFormatTokenStream
   (format-lex-mode-result src false))

@@ -157,7 +157,7 @@
         (lsp_frame_core.lsp-position 3 6))]
     [name : String
       (lsp_frame_core.lsp-structural-move-name-with-decls
-        (owned_view.compiler-owned-shared-view params)
+        params
         (owned_view.compiler-owned-shared-view text)
         (owned_view.compiler-owned-shared-view decls))]
     (match (lsp_frame_core.lsp-replace-form-at-position-with-decls

@@ -170,17 +170,11 @@
       [(ast.AstPattern.Tuple items)
         (begin
           (codec.surface-ast-write-i64! out 1)
-          (surface-ast-write-pattern-list!
-            out
-            context
-            (ast.ast-pattern-list-box-shared-view items)))]
+          (surface-ast-write-pattern-list! out context (deref items)))]
       [(ast.AstPattern.Array items)
         (begin
           (codec.surface-ast-write-i64! out 6)
-          (surface-ast-write-pattern-list!
-            out
-            context
-            (ast.ast-pattern-list-box-shared-view items)))]
+          (surface-ast-write-pattern-list! out context (deref items)))]
       [(ast.AstPattern.Wildcard) (codec.surface-ast-write-i64! out 2)]
       [(ast.AstPattern.Binding name)
         (begin
@@ -190,10 +184,7 @@
         (begin
           (codec.surface-ast-write-i64! out 4)
           (codec.surface-ast-write-name! out context name)
-          (surface-ast-write-pattern-list!
-            out
-            context
-            (ast.ast-pattern-list-box-shared-view items)))]
+          (surface-ast-write-pattern-list! out context (deref items)))]
       [(ast.AstPattern.Literal literal)
         (begin
           (codec.surface-ast-write-i64! out 5)
@@ -416,14 +407,14 @@
           (codec.surface-ast-write-i64! out then-expr)
           (codec.surface-ast-write-i64! out else-expr))]
       [(ast.AstExpr.Let payload)
-        (match (ast.ast-let-box-shared-view payload)
+        (match (deref payload)
           [(ast.AstLet.Let bindings body)
             (begin
               (codec.surface-ast-write-i64! out 7)
               (surface-ast-write-let-binding-list! out context bindings)
               (codec.surface-ast-write-i64! out body))])]
       [(ast.AstExpr.Lambda payload)
-        (match (ast.ast-lambda-box-shared-view payload)
+        (match (deref payload)
           [(ast.AstLambda.Lambda params ret body)
             (begin
               (codec.surface-ast-write-i64! out 8)
@@ -532,14 +523,14 @@
             (ast.ast-borrow-lifetime-from-id lifetime-id))
           (codec.surface-ast-write-i64! out inner))]
       [(ast.AstExpr.Match payload)
-        (match (ast.ast-match-box-shared-view payload)
+        (match (deref payload)
           [(ast.AstMatch.Match scrutinee arms)
             (begin
               (codec.surface-ast-write-i64! out 26)
               (codec.surface-ast-write-i64! out scrutinee)
               (surface-ast-write-match-arm-list! out context arms))])]
       [(ast.AstExpr.Foreach payload)
-        (match (ast.ast-foreach-box-shared-view payload)
+        (match (deref payload)
           [(ast.AstForeach.Foreach name index-ty start end body)
             (begin
               (codec.surface-ast-write-i64! out 27)
@@ -549,7 +540,7 @@
               (codec.surface-ast-write-i64! out end)
               (codec.surface-ast-write-i64! out body))])]
       [(ast.AstExpr.SpmdReduce payload)
-        (match (ast.ast-spmd-reduce-box-shared-view payload)
+        (match (deref payload)
           [(ast.AstSpmdReduce.Reduce op index index-ty start end init value)
             (begin
               (codec.surface-ast-write-i64! out 28)
@@ -561,7 +552,7 @@
               (codec.surface-ast-write-i64! out init)
               (codec.surface-ast-write-i64! out value))])]
       [(ast.AstExpr.SpmdScan payload)
-        (match (ast.ast-spmd-scan-box-shared-view payload)
+        (match (deref payload)
           [(ast.AstSpmdScan.Scan
               op
               index
@@ -586,7 +577,7 @@
               (codec.surface-ast-write-i64! out value)
               (codec.surface-ast-write-i64! out body))])]
       [(ast.AstExpr.SpmdCompact payload)
-        (match (ast.ast-spmd-compact-box-shared-view payload)
+        (match (deref payload)
           [(ast.AstSpmdCompact.Compact
               index
               index-ty
@@ -662,7 +653,7 @@
           (codec.surface-ast-write-i64! out arena)
           (surface-ast-write-expr-list! out body))]
       [(ast.AstExpr.WithResource payload)
-        (match (ast.ast-with-resource-box-shared-view payload)
+        (match (deref payload)
           [(ast.AstWithResource.WithResource bindings body)
             (begin
               (codec.surface-ast-write-i64! out 40)

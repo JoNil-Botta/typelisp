@@ -32,7 +32,7 @@
 ;; taken at one caller while another caller of it kept the site out of line.
 ;;
 ;; The exit code proves the values; the shape is pinned in
-;; scripts/verify-asm-shape-gates.sh, and the abort twin
+;; tests/codegen/asm-shape.cases, and the abort twin
 ;; (checked_post_multi_call_abort.tl) proves the body spliced at a
 ;; post-dominating site keeps its own abort site.
 (define pm-empty : i64

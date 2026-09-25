@@ -10,7 +10,7 @@
 ;; The runtime check guards reconstruction: an off-by-one in the rewritten end
 ;; address either drops the last element (wrong product) or walks past the
 ;; array (OOB abort or garbage opcode) -- either way not 42.
-;; scripts/verify-asm-shape-gates.sh additionally pins the asm shape: the
+;; tests/codegen/asm-shape.cases additionally pins the asm shape: the
 ;; retired counter is the only `add $1` the loop would emit, because `acc`
 ;; folds by register add/multiply.
 (defenum Step

@@ -30,22 +30,21 @@ values and allow at most two ULPs relative to the scalar binary32 operation
 sequence, accounting only for legal ISPC FMA contraction. Both output arrays
 retain an out-of-range sentinel.
 
-Run required TypeLisp and scalar-C correctness, optional real ISPC comparisons,
-and kernel-only assembly metrics with:
+Run required TypeLisp and scalar-C correctness (including at most four
+bounds-abort sites in the TypeLisp kernel) and optional real ISPC comparisons
+with:
 
 ```sh
-scripts/verify-ispc-point-transform.sh
-ISPC_BIN=/path/to/ispc scripts/verify-ispc-point-transform.sh
+scripts/verify-codegen-cases.sh --only 'point_transform-*' tests/codegen/ispc.cases
+ISPC_BIN=/path/to/ispc scripts/verify-codegen-cases.sh --only 'point_transform-*' tests/codegen/ispc.cases
 ISPC_POINT_TRANSFORM_AVX512=1 ISPC_BIN=/path/to/ispc \
-  scripts/verify-ispc-point-transform.sh
+  scripts/verify-codegen-cases.sh --only 'point_transform-*' tests/codegen/ispc.cases
 ```
 
-Raw assembly and compiler logs plus `static.tsv` are written under
-`target/ispc-point-transform-verify/`. The report records assembly hashes and
-bytes, instruction/branch/call counts, packed-f32 and FMA shape, distinct
-register classes, and conservative stack/spill candidates. It is report-only;
-shared ratios, tool fingerprints, and optional retired-instruction summaries
-remain owned by #4968.
+Kernel-only assembly metrics (hashes, instruction/branch/call counts,
+packed-f32 and FMA shape, register classes, stack/spill candidates), shared
+ratios, tool fingerprints and optional retired-instruction summaries are owned
+by `scripts/measure-ispc-spmd.sh` (#4968).
 
 The initial pre-fusion Linux x86-64 run with the official v1.31.0 binary
 recorded 442 TypeLisp versus 63 ISPC AVX2 kernel instructions, 15 versus 12

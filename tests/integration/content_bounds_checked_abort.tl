@@ -1,16 +1,9 @@
 ;; The negative twin of content_bounds_checked: the SAME three shapes fed a
 ;; corpus whose source values run one past the family's length. With `bump` = 1
 ;; the largest value `ab-src` holds is `n`, which is out of range for `ab-keys`,
-;; and the `keys[v]` store -- the very check CB-3 READS to admit the store into
-;; `ab-single` -- is the one that fires, on the first iteration, before anything
-;; is written.
-;;
-;; CB-3 changes nothing about that run: it retires no store-side check. Clause
-;; (a) admits only the value 0, clause (b) reads a check that is still emitted,
-;; and clause (c) reads a fact whose own store-side checks are still emitted. So
-;; the abort site, the message and the exit status must be byte-identical to the
-;; base compiler's at every optimization level. The load-side checks CB-3 does
-;; retire could not have been the ones to fire: the program stops at the
+;; and the `keys[v]` store check is the one that fires, on the first iteration,
+;; before anything is written. The abort site, the message and the exit status
+;; must be the same at every optimization level: the program stops at the
 ;; store-side check before a single element is written.
 (import stdlib.io)
 (import stdlib.string)
@@ -58,7 +51,7 @@
       count)))
 
 ;; Clause (b). `slot` is assigned once outside the loop and once inside it, so
-;; it has more than one definition and CB-1 refuses it; the `keys[slot]` check
+;; it has more than one definition; the `keys[slot]` check
 ;; earlier in the same straight-line run governs the store, and nothing
 ;; reassigns `slot` between the two.
 (define (ab-many-fill
@@ -81,8 +74,8 @@
           (set! i (+ i 1))))
       count)))
 
-;; Clause (c). Nothing checks the stored value here: it is admitted only
-;; because `ab-single` already carries a content fact for this family.
+;; Clause (c). Nothing checks the stored value here: it is loaded out of
+;; `ab-single`, whose elements are all in range for this family.
 (define (ab-copy-fill
   [copy-vec : (&mut copy i64vec.Vec)]
   [single-vec : (& single i64vec.Vec)]

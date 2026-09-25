@@ -48,8 +48,7 @@
 # count	duplicates	all	rows	20
 # child-corpus	public-lsp-corpus	all	tests/public-tools/lsp	*.in.json	-	72
 # child-corpus	public-repl-corpus	windows	tests/public-tools/repl	*.in	*.linux.in	14
-# child-corpus	public-repl-corpus	linux	tests/public-tools/repl	*.in	-	21
-# child-corpus	public-repl-corpus	linux	tests/public-tools/selfhost-repl	*.linux.in	-	17
+# child-corpus	public-repl-corpus	linux	tests/public-tools/repl	*.in	-	37
 # Register annotated source files with: # source<TAB>repository/relative/path.sh
 schema	case_id	gate	source	kind	host	compiler	argv	fixture	stdin	cwd	process	environment	expected_status	stdout	stderr	effects	canonical_owner	duplicate_reason
 # example	1	public-help	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage3/run_cmd	typelisp --help	-	none	repository	one-process	none	0	usage	ignore	none	public-help	-

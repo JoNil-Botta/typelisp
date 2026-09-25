@@ -116,7 +116,7 @@ stdlib_run_fixture_binary() {
 gate_compiler
 gate_require_compiler
 
-TYPELISP_BIN="$COMPILER" scripts/verify-for-source-macro.sh
+TYPELISP_BIN="$COMPILER" scripts/verify-codegen-cases.sh tests/codegen/for-source-macro.cases
 
 # The generated `(hashmap K V)` modules are the only supported scalar hashmap
 # surface. Keep the removed flat family spellings from returning in source,

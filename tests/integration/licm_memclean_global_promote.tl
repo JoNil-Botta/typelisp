@@ -30,7 +30,7 @@
 ;;                                 recomputes it with the cell read spelled out.
 ;;
 ;; `main` returns 42 only if every loop matches its twin; the asm shapes are
-;; asserted by scripts/verify-asm-shape-gates.sh (check_licm_memclean_promote).
+;; asserted by tests/codegen/asm-shape.cases (case licm-memclean-promote).
 ;;
 ;; Two things force the shapes to survive to the asm. Each scan opens with a
 ;; never-taken self-recursion, which blocks the leaf inliner and TCO so the

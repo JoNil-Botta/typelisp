@@ -1,0 +1,153 @@
+# Freestanding stdlib math stays allocation- and libm-free and assembles for
+# both targets. One case per gate (stage2-math-{exp,log,pow,trig}-codegen-verifier).
+
+target linux-x86_64 windows-x86_64
+args --stdlib-root {{root}}/stdlib --stdlib-root {{root}}/src
+assemble
+
+file exp_codegen.tl
+(import stdlib.math)
+
+(define exp-input64 : f64 1.25)
+(define exp-input32 : f32 1.25)
+
+(define (exp-probe64 [value : f64])
+  (:export-symbol "tl_test_math_exp_f64") : f64
+  (math.f64-exp value))
+
+(define (exp-probe32 [value : f32])
+  (:export-symbol "tl_test_math_exp_f32") : f32
+  (math.f32-exp value))
+
+(define (main) : i64
+  (let
+    [sum : f64
+      (+
+        (exp-probe64 exp-input64)
+        (cast (exp-probe32 exp-input32) : f64))]
+    (if (> sum 0.0)
+      0
+      1)))
+end-file
+
+file log_codegen.tl
+(import stdlib.math)
+
+(define log-input64 : f64 1.25)
+(define log-input32 : f32 1.25)
+
+(define (log-probe64 [value : f64])
+  (:export-symbol "tl_test_math_log_f64") : f64
+  (math.f64-log value))
+
+(define (log-probe32 [value : f32])
+  (:export-symbol "tl_test_math_log_f32") : f32
+  (math.f32-log value))
+
+(define (main) : i64
+  (let
+    [sum : f64
+      (+
+        (log-probe64 log-input64)
+        (cast (log-probe32 log-input32) : f64))]
+    (if (> sum 0.0)
+      0
+      1)))
+end-file
+
+file pow_codegen.tl
+(import stdlib.math)
+
+(define pow-base64 : f64 1.25)
+(define pow-exponent64 : f64 2.5)
+(define pow-base32 : f32 1.25)
+(define pow-exponent32 : f32 2.5)
+
+(define (pow-probe64 [base : f64] [exponent : f64])
+  (:export-symbol "tl_test_math_pow_f64") : f64
+  (math.f64-pow base exponent))
+
+(define (pow-probe32 [base : f32] [exponent : f32])
+  (:export-symbol "tl_test_math_pow_f32") : f32
+  (math.f32-pow base exponent))
+
+(define (main) : i64
+  (let
+    [sum : f64
+      (+
+        (pow-probe64 pow-base64 pow-exponent64)
+        (cast (pow-probe32 pow-base32 pow-exponent32) : f64))]
+    (if (> sum 0.0)
+      0
+      1)))
+end-file
+
+file trig_codegen.tl
+(import stdlib.math)
+
+(define trig-input64 : f64 1.25)
+(define trig-input32 : f32 1.25)
+
+(define (main) : i64
+  (let
+    [sum : f64
+      (+
+        (math.f64-sin trig-input64)
+        (math.f64-cos trig-input64)
+        (math.f64-tan trig-input64)
+        (cast (math.f32-sin trig-input32) : f64)
+        (cast (math.f32-cos trig-input32) : f64)
+        (cast (math.f32-tan trig-input32) : f64))]
+    (if (> sum 0.0)
+      0
+      1)))
+end-file
+
+case exp
+source {{work}}/exp_codegen.tl
+contains tl_test_math_exp_f64
+contains tl_test_math_exp_f32
+contains math_exp_f64_table_entry
+# no startup or runtime allocation, no external exp, no x87/FMA instructions
+not-match global_init.*math_exp|call[[:space:]]+.*tl_alloc
+not-match-i ^[[:space:]]*\.(extern|globl?)[[:space:]]+_?expf?([[:space:]]|$)
+not-match-i ^[[:space:]]*(f2xm1|fscale|v?fmadd[a-z0-9]*|v?fmsub[a-z0-9]*|v?fnmadd[a-z0-9]*|v?fnmsub[a-z0-9]*)[[:space:]]
+
+case log
+source {{work}}/log_codegen.tl
+contains tl_test_math_log_f64
+contains tl_test_math_log_f32
+contains math_log_f64_table_entry
+not-match global_init.*math_log|call[[:space:]]+.*tl_alloc
+not-match-i ^[[:space:]]*\.(extern|globl?)[[:space:]]+_?logf?([[:space:]]|$)
+not-match-i ^[[:space:]]*(fyl2x|fyl2xp1|fldln2|v?fmadd[a-z0-9]*|v?fmsub[a-z0-9]*|v?fnmadd[a-z0-9]*|v?fnmsub[a-z0-9]*)[[:space:]]
+
+case pow
+source {{work}}/pow_codegen.tl
+contains tl_test_math_pow_f64
+contains tl_test_math_pow_f32
+contains math_pow_f64_table_entry
+contains math_powf_table_entry
+not-match global_init.*math_pow|call[[:space:]]+.*tl_alloc
+not-match-i ^[[:space:]]*\.(extern|globl?)[[:space:]]+_?powf?([[:space:]]|$)
+not-match-i ^[[:space:]]*(fyl2x|fyl2xp1|f2xm1|fscale|v?fmadd[a-z0-9]*|v?fmsub[a-z0-9]*|v?fnmadd[a-z0-9]*|v?fnmsub[a-z0-9]*)[[:space:]]
+
+case trig
+source {{work}}/trig_codegen.tl
+# The public wrappers inline into main at opt2, so every trig KERNEL must be
+# both defined and reached (a call or a tail jump) on each target.
+match ^_?tl_.*math_trig_kernel_sin_f64:
+match (call|jmp)[[:space:]]+_?tl_.*math_trig_kernel_sin_f64([[:space:]]|$)
+match ^_?tl_.*math_trig_kernel_cos_f64:
+match (call|jmp)[[:space:]]+_?tl_.*math_trig_kernel_cos_f64([[:space:]]|$)
+match ^_?tl_.*math_trig_kernel_tan_f64:
+match (call|jmp)[[:space:]]+_?tl_.*math_trig_kernel_tan_f64([[:space:]]|$)
+match ^_?tl_.*math_trig_kernel_sin_f32:
+match (call|jmp)[[:space:]]+_?tl_.*math_trig_kernel_sin_f32([[:space:]]|$)
+match ^_?tl_.*math_trig_kernel_cos_f32:
+match (call|jmp)[[:space:]]+_?tl_.*math_trig_kernel_cos_f32([[:space:]]|$)
+match ^_?tl_.*math_trig_kernel_tan_f32:
+match (call|jmp)[[:space:]]+_?tl_.*math_trig_kernel_tan_f32([[:space:]]|$)
+not-match global_init.*math_trig|call[[:space:]]+.*tl_alloc
+not-match-i ^[[:space:]]*\.(extern|globl?)[[:space:]]+_?(sin|cos|tan)f?([[:space:]]|$)
+not-match-i ^[[:space:]]*(fsin|fcos|fptan|fsincos|v?fmadd[a-z0-9]*|v?fmsub[a-z0-9]*|v?fnmadd[a-z0-9]*|v?fnmsub[a-z0-9]*)[[:space:]]

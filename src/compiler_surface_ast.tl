@@ -603,9 +603,7 @@
       [(ast.AstFnMetadata.SpmdCallable items)
         (begin
           (codec.surface-ast-write-i64! out 2)
-          (surface-ast-write-spmd-specialization-list!
-            out
-            (owned_view.compiler-owned-box-shared-view items)))])))
+          (surface-ast-write-spmd-specialization-list! out (deref items)))])))
 
 (define (surface-ast-read-fn-metadata!
   [reader : (& reader codec.SurfaceAstReader)]) : ast.AstFnMetadata
@@ -768,7 +766,7 @@
           (surface-ast-write-imported-spmd-callable-list!
             out
             context
-            (owned_view.compiler-owned-box-shared-view callables)))])))
+            (deref callables)))])))
 
 (define (surface-ast-read-imported-spmd-metadata!
   [reader : (& reader codec.SurfaceAstReader)]) : ast.AstImportedSpmdMetadata
@@ -1101,9 +1099,7 @@
           (codec.surface-ast-write-string! out path)
           (surface-ast-write-maybe-module-name! out context module-name)
           (surface-ast-write-maybe-import-alias! out context alias)
-          (codec.surface-ast-write-span!
-            out
-            (owned_view.compiler-owned-box-shared-view span)))])))
+          (codec.surface-ast-write-span! out (deref span)))])))
 
 (define (surface-ast-read-import-spec!
   [reader : (& reader codec.SurfaceAstReader)]) : ast.AstImportSpec
@@ -1183,7 +1179,7 @@
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [_context : (&mut context codec.SurfaceAstWriteContext)]
     [meta : ast.AstDeclMeta]) : unit
-    (match (owned_view.compiler-owned-box-shared-view meta.value)
+    (match (deref meta.value)
       [(ast.AstDeclMetaValue.Runtime markers)
         (begin
           (codec.surface-ast-write-i64! out 0)
@@ -1413,7 +1409,7 @@
   (define (surface-ast-write-test-metadata!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [metadata : ast.AstTestMetadata]) : unit
-    (match (owned_view.compiler-owned-box-shared-view metadata.value)
+    (match (deref metadata.value)
       [(ast.AstTestMetadataValue.None) (codec.surface-ast-write-i64! out 0)]
       [(ast.AstTestMetadataValue.Metadata ignore-reason slow)
         (begin
@@ -1496,10 +1492,7 @@
         (begin
           (codec.surface-ast-write-i64! out 1)
           (codec.surface-ast-write-name! out context name)
-          (surface-ast-write-decl-list!
-            out
-            context
-            (owned_view.compiler-owned-box-shared-view body)))]
+          (surface-ast-write-decl-list! out context (deref body)))]
       [(ast.AstDecl.Def meta name maybe-ty value)
         (begin
           (codec.surface-ast-write-i64! out 2)
@@ -1530,10 +1523,7 @@
           (surface-ast-write-decl-meta! out context meta)
           (codec.surface-ast-write-name! out context name)
           (surface-ast-write-extern-kind! out kind)
-          (surface-ast-write-extern-metadata!
-            out
-            context
-            (ast.ast-extern-metadata-box-shared-view metadata))
+          (surface-ast-write-extern-metadata! out context (deref metadata))
           (codec.surface-ast-write-type! out context ty))]
       [(ast.AstDecl.DefEnum meta name cleanup variants)
         (begin
@@ -1608,10 +1598,7 @@
       [(ast.AstDecl.Unsafe inner)
         (begin
           (codec.surface-ast-write-i64! out 17)
-          (surface-ast-write-decl!
-            out
-            context
-            (ast.ast-decl-box-shared-view inner)))])))
+          (surface-ast-write-decl! out context (deref inner)))])))
 
 (cfg
   (any
@@ -1921,10 +1908,7 @@
             (set! index (+ index 1))))
         (match program
           [(ast.AstProgram.Program decls)
-            (surface-ast-write-decl-list!
-              out
-              context
-              (ast.ast-decl-list-box-shared-view decls))])
+            (surface-ast-write-decl-list! out context (deref decls))])
         (surface-ast-write-paths! out context paths)
         (surface-ast-write-modules! out context modules)
         (surface-ast-write-seen! out context seen)))))
@@ -2113,23 +2097,23 @@
     [source-count : i64]
     [identity-count : i64]) : ResultSurfaceAstBytes
     (match (surface-ast-encode
-      (owned_view.compiler-owned-shared-view structural-session)
+      structural-session
       (owned_view.compiler-owned-shared-view decls)
       (owned_view.compiler-owned-shared-view paths)
       (owned_view.compiler-owned-shared-view modules)
-      (owned_view.compiler-owned-shared-view seen)
+      seen
       (owned_view.compiler-owned-shared-view source-pools)
       source-count
       identity-count)
       [(ResultSurfaceAstBytes.Err message) (ResultSurfaceAstBytes.Err message)]
       [(ResultSurfaceAstBytes.Ok first)
         (match (surface-ast-encode
-          (owned_view.compiler-owned-shared-view structural-session)
-          (owned_view.compiler-owned-shared-view decls)
-          (owned_view.compiler-owned-shared-view paths)
-          (owned_view.compiler-owned-shared-view modules)
-          (owned_view.compiler-owned-shared-view seen)
-          (owned_view.compiler-owned-shared-view source-pools)
+          structural-session
+          decls
+          paths
+          modules
+          seen
+          source-pools
           source-count
           identity-count)
           [(ResultSurfaceAstBytes.Err message)
@@ -2208,7 +2192,7 @@
           (begin
             (match (ast.ast-node-pool-context-expr-get pools id)
               [(ast.AstExpr.SpmdCompact compact-box)
-                (match (ast.ast-spmd-compact-box-shared-view compact-box)
+                (match (deref compact-box)
                   [(ast.AstSpmdCompact.Compact
                       index
                       (ast.AstType.I64)
@@ -2257,8 +2241,7 @@
           (match (ast.ast-node-pool-context-type-get pools signature)
             [(ast.AstType.Func args result)
               (let
-                [items : ast.AstTypeList
-                  (ast.ast-type-list-box-shared-view args)]
+                [items : ast.AstTypeList (deref args)]
                 (and
                   (= (ast.ast-type-list-len (& items)) 1)
                   (match (ast.ast-node-pool-context-type-get
@@ -2540,7 +2523,7 @@
                 paths
                 modules
                 seen
-                (owned_view.compiler-owned-shared-view source-pools)
+                source-pools
                 source-count
                 identity-count)
                 [(ResultSurfaceAstBytes.Err _) false]
@@ -2551,7 +2534,7 @@
                       [_unrelated : i64 (ci.intern "unrelated")]
                       (match (surface_identity.surface-identity-hydrate
                         identity-bytes
-                        (owned_view.compiler-owned-shared-view key))
+                        key)
                         [(surface_identity.ResultSurfaceIdentityHydration.Err _)
                           false]
                         [(surface_identity.ResultSurfaceIdentityHydration.KeyMismatch
@@ -2580,8 +2563,7 @@
                                 (and
                                   (=
                                     (ast.ast-node-pool-context-expr-len
-                                      (owned_view.compiler-owned-shared-view
-                                        hydration.pools))
+                                      hydration.pools)
                                     11)
                                   (ast.ast-node-pool-context-expr-span-oracle-ok?
                                     hydration.pools)

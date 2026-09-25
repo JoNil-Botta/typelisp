@@ -49,7 +49,7 @@
       program
       paths
       stdlib-roots
-      (owned_view.compiler-owned-shared-view cfgs)
+      cfgs
       cache-scope
       pools
       intern-state)))
@@ -75,7 +75,7 @@
     program
     paths
     stdlib-roots
-    (owned_view.compiler-owned-shared-view cfgs)
+    cfgs
     cache-scope
     pools
     (ci.intern-compat-state-capture-active)))
@@ -95,7 +95,7 @@
     program
     paths
     stdlib-roots
-    (owned_view.compiler-owned-shared-view cfgs)
+    cfgs
     cache-scope
     pools))
 
@@ -113,7 +113,7 @@
     program
     paths
     stdlib-roots
-    (owned_view.compiler-owned-shared-view cfgs)
+    cfgs
     cache-scope
     pools))
 
@@ -127,7 +127,7 @@
     program
     paths
     stdlib-roots
-    (owned_view.compiler-owned-shared-view cfgs)
+    cfgs
     cache-scope
     (ast.ast-node-pool-context-capture-active)))
 
@@ -154,8 +154,7 @@
   [pools : ast.AstNodePoolContext]
   [intern-state : ci.InternCompatState]) : ResultCompilerDocExpand
   (let
-    [intern-state : ci.InternCompatState
-      (owned_view.compiler-owned-shared-view intern-state)]
+    [intern-state : ci.InternCompatState intern-state]
     (begin
       (tc_core.tc-spmd-inline-helper-stack-reset-for-job! job-state)
       (tc_core.tc-macro-call-site-state-reset!
@@ -179,25 +178,23 @@
           (match generated-result
             [(spec.ResultGenProgramWithPaths.Ok generated generated-paths)
               (match (tc_core.macro-expand-then-build-envs-with-load-state-and-job-state-and-intern-state
-                (owned_view.compiler-owned-shared-view load-state)
+                load-state
                 job-state
                 generated
                 generated-paths
                 (owned_view.compiler-owned-shared-view pools)
-                (owned_view.compiler-owned-shared-view stdlib-roots)
+                stdlib-roots
                 (typecheck-compiler-source-language-cfgs)
                 (owned_view.compiler-owned-shared-view intern-state))
                 [(tc_core.ResultMacroExpand.Ok expanded expanded-paths)
                   (begin
-                    (ast.ast-node-pool-context-capture-active!
-                      (owned_view.compiler-owned-shared-view pools))
+                    (ast.ast-node-pool-context-capture-active! pools)
                     (ci.intern-compat-state-capture-from-globals!
                       (&mut intern-state))
                     (ResultCompilerDocExpand.Ok expanded expanded-paths))]
                 [(tc_core.ResultMacroExpand.Err diag)
                   (begin
-                    (ast.ast-node-pool-context-capture-active!
-                      (owned_view.compiler-owned-shared-view pools))
+                    (ast.ast-node-pool-context-capture-active! pools)
                     (ci.intern-compat-state-capture-from-globals!
                       (&mut intern-state))
                     (ResultCompilerDocExpand.Err diag))])]
@@ -231,8 +228,7 @@
           compiler-typecheck-pipeline-runs
           (+ compiler-typecheck-pipeline-runs 1))
         unit)]
-    [intern-state : ci.InternCompatState
-      (owned_view.compiler-owned-shared-view intern-state)]
+    [intern-state : ci.InternCompatState intern-state]
     (begin
       (tc_core.tc-spmd-inline-helper-stack-reset-for-job! job-state)
       (tc_core.tc-macro-call-site-state-reset!
@@ -267,7 +263,7 @@
                       generated-paths
                       (owned_view.compiler-owned-shared-view pools)
                       (owned_view.compiler-owned-shared-view stdlib-roots)
-                      (owned_view.compiler-owned-shared-view cfgs)
+                      cfgs
                       (owned_view.compiler-owned-shared-view intern-state))]
                   (begin
                     (ast.ast-node-pool-context-capture-active!
@@ -330,13 +326,11 @@
                                             (let
                                               [specialized-result : spec.ResultSpecProgramWithPaths
                                                 (spec.compiler-specialize-program-with-paths-and-pools-and-intern-state
-                                                  (owned_view.compiler-owned-shared-view
-                                                    normalized)
+                                                  normalized
                                                   (owned_view.compiler-owned-shared-view
                                                     normalized-paths)
                                                   (tc_core.tc-decl-path-list-last
-                                                    (owned_view.compiler-owned-shared-view
-                                                      normalized-paths)
+                                                    normalized-paths
                                                     "")
                                                   (owned_view.compiler-owned-shared-view
                                                     pools)
@@ -431,7 +425,7 @@
     program
     paths
     stdlib-roots
-    (owned_view.compiler-owned-shared-view cfgs)
+    cfgs
     cache-scope
     pools
     (ci.intern-compat-state-capture-active)))
@@ -452,7 +446,7 @@
     program
     paths
     stdlib-roots
-    (owned_view.compiler-owned-shared-view cfgs)
+    cfgs
     cache-scope
     pools))
 
@@ -469,7 +463,7 @@
     program
     paths
     stdlib-roots
-    (owned_view.compiler-owned-shared-view cfgs)
+    cfgs
     cache-scope
     pools))
 
@@ -483,7 +477,7 @@
     program
     paths
     stdlib-roots
-    (owned_view.compiler-owned-shared-view cfgs)
+    cfgs
     cache-scope
     (ast.ast-node-pool-context-capture-active)))
 
@@ -512,7 +506,7 @@
     (match (load.compiler-load-core-macro-prelude-with-roots-cfg
       (sym_i64_env.sym-i64-empty)
       (owned_view.compiler-owned-shared-view stdlib-roots)
-      (owned_view.compiler-owned-shared-view cfgs))
+      cfgs)
       [(load.ResultCompilerLoadWithPaths.Ok
           prelude-decls
           prelude-paths
@@ -557,8 +551,7 @@
     [(ast.AstDecl.Import decl-meta (ast.AstImportSpec.Spec kind path _ _ _))
       (typecheck-compiler-source-stdlib-import-kind? kind path)]
     [(ast.AstDecl.Unsafe inner-box)
-      (typecheck-compiler-source-decl-has-stdlib-import?
-        (owned_view.compiler-owned-box-shared-view inner-box))]
+      (typecheck-compiler-source-decl-has-stdlib-import? (deref inner-box))]
     [_ false]))
 
 (define (typecheck-compiler-source-decls-have-stdlib-import?
@@ -574,8 +567,7 @@
   [program : ast.AstProgram]) : bool
   (match program
     [(ast.AstProgram.Program decls-box)
-      (typecheck-compiler-source-decls-have-stdlib-import?
-        (owned_view.compiler-owned-box-shared-view decls-box))]))
+      (typecheck-compiler-source-decls-have-stdlib-import? (deref decls-box))]))
 
 (define (typecheck-compiler-repl-expr
   [decls : ast.AstDeclList]
@@ -600,22 +592,19 @@
                     cbi.compiler-builtin-id-fix-empty
                     (ast.ast-node-pool-context-capture-active))]
                 (match (tc_core.tc-program-source-types-policy-ok
-                  (owned_view.compiler-owned-shared-view ctx)
+                  ctx
                   (owned_view.compiler-owned-shared-view program)
                   (ast.ast-decl-path-list-new))
                   [(tc_core.ResultTcSourcePolicyDiagnostic.Ok)
                     (match (tc_core.tc-source-expr-policy-ok
-                      (owned_view.compiler-owned-shared-view ctx)
-                      (tc_core.tc-context-expr-bases
-                        (owned_view.compiler-owned-shared-view ctx))
+                      ctx
+                      (tc_core.tc-context-expr-bases ctx)
                       (owned_view.compiler-owned-shared-view expr))
                       [(tc_core.ResultTcUnit.Ok)
-                        (match (tc_core.tc-build-top-env
-                          (owned_view.compiler-owned-shared-view ctx)
-                          program)
+                        (match (tc_core.tc-build-top-env ctx program)
                           [(tc_core.ResultTcEnv.Ok top-env)
                             (match (tc_core.tc-check-decls
-                              (owned_view.compiler-owned-shared-view ctx)
+                              ctx
                               top-env
                               decls
                               (tc_core.CompilerTypecheckSummary 0 0 0))
@@ -658,8 +647,7 @@
           ;; see loaded stdlib macro definitions and alias markers.
           (if (typecheck-compiler-source-program-has-stdlib-import?
             (owned_view.compiler-owned-shared-view program))
-            (match (typecheck-compiler-source-load
-              (owned_view.compiler-owned-shared-view src))
+            (match (typecheck-compiler-source-load src)
               [(load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
                 (typecheck-compiler-program-with-paths
                   (ast.ast-program decls)

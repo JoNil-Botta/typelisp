@@ -165456,7 +165456,8 @@
           (if (> allocs 0)
             (io.print-error
               (compiler-opt-scratch-region-report-line
-                (compiler-opt-scratch-region-report-status blocker)
+                (compiler-opt-scratch-region-report-status
+                  (compiler-opt-global-shared-view blocker))
                 scope
                 function
                 label

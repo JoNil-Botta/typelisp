@@ -74330,11 +74330,6 @@
   (One TcMovedPathFact)
   (Dense (Box TcMovedPathFactStoreData) i64 i64))
 
-;; A by-value read may not extract an owner-bearing tail from its Box. These
-;; recursive, read-only walkers use a shallow view while the box stays live.
-(defmacro (tc-moved-path-facts-box-shared-view [value : Expr]) : Expr
-  `(tc-global-shared-view ,value))
-
 (defenum TcMovedPathFactsRemove
   (Missing)
   (Removed TcMovedPathFacts))

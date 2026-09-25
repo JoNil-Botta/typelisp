@@ -2889,14 +2889,11 @@
     [(ir.CompilerIrInstr.Pack _ _ _) (OptInstrResult.Result env instr)]
     [(ir.CompilerIrInstr.Word _ _ _ _) (OptInstrResult.Result env instr)]
     [_
-      (let
-        [dst : i64
-          (ir.compiler-ir-instr-dst (compiler-opt-global-shared-view instr))]
-        (OptInstrResult.Result
-          (if (< dst 0)
-            env
-            (opt-const-unbind env dst))
-          instr))]))
+      (OptInstrResult.Result
+        (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
+          [(option_i64.Some dst) (opt-const-unbind env dst)]
+          [(option_i64.None) env])
+        instr)]))
 
 (define (opt-strength-instr [env : OptConstEnv] [instr : ir.CompilerIrInstr]) : OptInstrResult
   (match (compiler-opt-global-shared-view instr)
@@ -2962,14 +2959,11 @@
     [(ir.CompilerIrInstr.Pack _ _ _) (OptInstrResult.Result env instr)]
     [(ir.CompilerIrInstr.Word _ _ _ _) (OptInstrResult.Result env instr)]
     [_
-      (let
-        [dst : i64
-          (ir.compiler-ir-instr-dst (compiler-opt-global-shared-view instr))]
-        (OptInstrResult.Result
-          (if (< dst 0)
-            env
-            (opt-const-unbind env dst))
-          instr))]))
+      (OptInstrResult.Result
+        (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
+          [(option_i64.Some dst) (opt-const-unbind env dst)]
+          [(option_i64.None) env])
+        instr)]))
 
 ;; --- dead-code elimination ---------------------------------------------------
 ;;
@@ -8383,12 +8377,10 @@
     ;; Other defining instructions (register-group ops included) invalidate
     ;; their dst and keep the instruction; the rest clear the table.
     [_
-      (let
-        [dst : i64
-          (ir.compiler-ir-instr-dst (compiler-opt-global-shared-view instr))]
-        (if (< dst 0)
-          (OptCseResult.Result (OptExprTable.Nil) instr)
-          (OptCseResult.Result (opt-expr-invalidate-var table dst) instr)))]))
+      (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
+        [(option_i64.Some dst)
+          (OptCseResult.Result (opt-expr-invalidate-var table dst) instr)]
+        [(option_i64.None) (OptCseResult.Result (OptExprTable.Nil) instr)])]))
 
 ;; --- block-local copy propagation -------------------------------------------
 ;;
@@ -8989,12 +8981,9 @@
     [(ir.CompilerIrInstr.StoreOwned _ _ _) (OptCopyEnv.Nil)]
     [(ir.CompilerIrInstr.CopyBytes _ _ _) (OptCopyEnv.Nil)]
     [_
-      (let
-        [dst : i64
-          (ir.compiler-ir-instr-dst (compiler-opt-global-shared-view instr))]
-        (if (< dst 0)
-          env
-          (opt-copy-invalidate-var env dst)))]))
+      (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
+        [(option_i64.Some dst) (opt-copy-invalidate-var env dst)]
+        [(option_i64.None) env])]))
 
 (defenum OptCopyResult
   (Result OptCopyEnv ir.CompilerIrInstr))
@@ -9332,11 +9321,9 @@
     [(ir.CompilerIrInstr.Phi _ _ _) (OptBoundsFacts.Nil)]
     [(ir.CompilerIrInstr.BoundsCheck _ _ _) facts]
     [_
-      (let
-        [dst : i64 (ir.compiler-ir-instr-dst instr)]
-        (if (< dst 0)
-          (OptBoundsFacts.Nil)
-          (opt-bounds-invalidate-var facts dst)))]))
+      (match (opt-instr-def-var instr)
+        [(option_i64.Some dst) (opt-bounds-invalidate-var facts dst)]
+        [(option_i64.None) (OptBoundsFacts.Nil)])]))
 
 (defenum OptBoundsSeqState
   (Plain OptBoundsFacts OptBoundsCastEnv)
@@ -49327,11 +49314,10 @@
     ;; Unknown, a branch on a Word-extracted enum tag marked NO successor
     ;; executable and SCCP folded match arms away at -O2.
     [_
-      (let
-        [dst : i64 (ir.compiler-ir-instr-dst instr)]
-        (if (< dst 0)
-          state
-          (opt-sccp-state-bind state dst (OptSccpValue.Overdefined))))]))
+      (match (opt-instr-def-var instr)
+        [(option_i64.Some dst)
+          (opt-sccp-state-bind state dst (OptSccpValue.Overdefined))]
+        [(option_i64.None) state])]))
 
 (define (opt-sccp-process-instr-seq-from
   [type-segment-bases : i64]
@@ -65750,11 +65736,9 @@
 (define (opt-loop-bce-state-invalidate-dst
   [state : OptLoopBceState]
   [instr : ir.CompilerIrInstr]) : OptLoopBceState
-  (let
-    [dst : i64 (ir.compiler-ir-instr-dst instr)]
-    (if (< dst 0)
-      state
-      (opt-loop-bce-state-invalidate-def state dst))))
+  (match (opt-instr-def-var instr)
+    [(option_i64.Some dst) (opt-loop-bce-state-invalidate-def state dst)]
+    [(option_i64.None) state]))
 
 (define (opt-loop-bce-state-clobber
   [state : OptLoopBceState]
@@ -141732,12 +141716,11 @@
       [(ir.CompilerIrInstr.CallIndirect _ _ _ _) (OptRemapSpanKey.NoKey)]
       [(ir.CompilerIrInstr.CallIndirectC _ _ _ _) (OptRemapSpanKey.NoKey)]
       [_
-        (let
-          [dst : i64 (ir.compiler-ir-instr-dst instr)]
-          (if (< dst 0)
-            (OptRemapSpanKey.NoKey)
+        (match (opt-instr-def-var instr)
+          [(option_i64.Some dst)
             (OptRemapSpanKey.SomeKey
-              (ir.CompilerSourceSpansInstrKey.Value function dst))))])
+              (ir.CompilerSourceSpansInstrKey.Value function dst))]
+          [(option_i64.None) (OptRemapSpanKey.NoKey)])])
     (OptRemapSpanKey.NoKey)))
 
 (define (opt-remap-spans-instr

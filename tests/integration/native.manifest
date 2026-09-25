@@ -50,13 +50,13 @@ guard_sink_store_across_guard|all|-|tests/integration/guard_sink_store_across_gu
 swb_frontier_line_eq|all|-|tests/integration/swb_frontier_line_eq.tl|34|6\n2\n34\n|-|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|-
 arg_global_len_eq_split|all|-|tests/integration/arg_global_len_eq_split.tl|134|-|8|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: $SRC:32:64: array index out of bounds: index=7 length=7\n
 content_bounds_csr|all|-|tests/integration/content_bounds_csr.tl|42|26\n|8|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|-
-content_bounds_abort|all|-|tests/integration/content_bounds_abort.tl|134|-|8 1|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: $SRC:40:57: array index out of bounds: index=8 length=8\n
+content_bounds_abort|all|-|tests/integration/content_bounds_abort.tl|134|-|8 1|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: $SRC:39:57: array index out of bounds: index=8 length=8\n
 content_bounds_induction|all|-|tests/integration/content_bounds_induction.tl|42|71\n|8|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|-
-content_bounds_induction_abort|all|-|tests/integration/content_bounds_induction_abort.tl|134|-|8 1|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: $SRC:38:29: array index out of bounds: index=8 length=8\n
+content_bounds_induction_abort|all|-|tests/integration/content_bounds_induction_abort.tl|134|-|8 1|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: $SRC:35:29: array index out of bounds: index=8 length=8\n
 content_bounds_checked|all|-|tests/integration/content_bounds_checked.tl|42|32\n|8|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|-
-content_bounds_checked_abort|all|-|tests/integration/content_bounds_checked_abort.tl|134|-|8 1|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: $SRC:55:35: array index out of bounds: index=8 length=8\n
+content_bounds_checked_abort|all|-|tests/integration/content_bounds_checked_abort.tl|134|-|8 1|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: $SRC:48:35: array index out of bounds: index=8 length=8\n
 ck_local_len_eq|all|-|tests/integration/ck_local_len_eq.tl|42|272\n|8 0|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|-
-ck_local_len_eq_abort|all|-|tests/integration/ck_local_len_eq_abort.tl|134|-|8 1|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: $SRC:32:63: array index out of bounds: index=8 length=8\n
+ck_local_len_eq_abort|all|-|tests/integration/ck_local_len_eq_abort.tl|134|-|8 1|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: $SRC:30:63: array index out of bounds: index=8 length=8\n
 # IT-2 bypass-edge guard dedup (PRE + CSE) runs only at opt2; opt0/opt1 are the
 # parity reference.
 guard_dedup_bypass_descriptor|all|-|tests/integration/guard_dedup_bypass_descriptor.tl|42|-5915004525821994045\n|24|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|-

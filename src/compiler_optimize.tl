@@ -13804,816 +13804,17 @@
     [(ast.AstType.String) true]
     [_ false]))
 
-;; Copy propagation may rewrite the base of the defining Gep before it reaches
-;; the capability-bearing load. Follow only literal SSA Mov aliases here: a Mov
-;; is an inspectable identity edge, whereas type/shape, calls, phis, loads, and
-;; casts are deliberately not accepted as evidence.
-(define (opt-verify-owned-mov-base
+(define (opt-verify-instr-uses
   [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
   [doms : (& doms OptDomInfo)]
-  [var : i64]
-  [fuel : i64]) : i64
-  (if (<= fuel 0)
-    var
-    (match (opt-var-def-lookup defs var)
-      [(OptMaybeVarDef.No) var]
-      [(OptMaybeVarDef.Some def)
-        (match def
-          [(OptVarDef.Def _ block-id pos)
-            (if (<= pos 0)
-              var
-              (match (opt-cfg-index-block doms.index block-id)
-                [(OptMaybeBlock.No) var]
-                [(OptMaybeBlock.Some block)
-                  (match block
-                    [(ir.CompilerIrBlock.Block _ instrs)
-                      (if (>= (- pos 1) (ir.compiler-ir-instr-seq-count instrs))
-                        var
-                        (match (ir.compiler-ir-instr-seq-ref instrs (- pos 1))
-                          [(ir.CompilerIrInstr.Mov
-                              mov-dst
-                              (ir.CompilerIrValue.Var src)
-                              _)
-                            (if (= mov-dst var)
-                              (opt-verify-owned-mov-base
-                                defs
-                                doms
-                                src
-                                (- fuel 1))
-                              var)]
-                          [_ var]))])]))])])))
-
-(defenum OptVerifyOwnedPath
-  (No)
-  (Some i64 i64))
-
-(define (opt-owned-handle-type-same? [a : ast.AstType] [b : ast.AstType]) : bool
-  (match a
-    [(ast.AstType.String)
-      (match b
-        [(ast.AstType.String) true]
-        [_ false])]
-    [(ast.AstType.DynArray a-elem)
-      (match b
-        [(ast.AstType.DynArray b-elem) (= a-elem b-elem)]
-        [_ false])]
-    [_ false]))
-
-(define (opt-verify-owned-phi-root-from
-  [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
-  [doms : (& doms OptDomInfo)]
-  [return-alias : (& return-alias opt_i64_i64_map.Map)]
-  [inputs : ir.CompilerIrPhiInputSeq]
-  [index : i64]
-  [fuel : i64]
-  [found : i64]) : i64
-  (if (>= index inputs.len)
-    found
-    (let
-      [input : ir.CompilerIrPhiInput
-        (ir.compiler-ir-phi-input-seq-ref
-          (compiler-opt-global-shared-view inputs)
-          index)]
-      (match input.value
-        [(ir.CompilerIrValue.Var incoming)
-          (let
-            [root : i64
-              (opt-verify-owned-fresh-root
-                defs
-                doms
-                return-alias
-                incoming
-                (- fuel 1))]
-            (if (or (= root 0) (and (> found 0) (not (= found root))))
-              0
-              (opt-verify-owned-phi-root-from
-                defs
-                doms
-                return-alias
-                inputs
-                (+ index 1)
-                fuel
-                root)))]
-        [_ 0]))))
-
-(define (opt-verify-owned-fresh-phi-instrs
-  [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
-  [doms : (& doms OptDomInfo)]
-  [return-alias : (& return-alias opt_i64_i64_map.Map)]
-  [instrs : ir.CompilerIrInstrSeq]
-  [var : i64]
-  [index : i64]
-  [fuel : i64]) : i64
-  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-    0
-    (match (ir.compiler-ir-instr-seq-ref instrs index)
-      [(ir.CompilerIrInstr.Phi dst inputs _)
-        (if (= dst var)
-          (opt-verify-owned-phi-root-from
-            defs
-            doms
-            return-alias
-            inputs
-            0
-            (- fuel 1)
-            0)
-          (opt-verify-owned-fresh-phi-instrs
-            defs
-            doms
-            return-alias
-            instrs
-            var
-            (+ index 1)
-            fuel))]
-      [_ 0])))
-
-;; An OwnRoot emitted for an internal by-value parameter is a proof marker, not
-;; a value replacement: the parameter remains the value used by the lowered
-;; body while the marker's fresh SSA id names its ownership tree. Keep the
-;; relation inspectable by finding that exact marker in the entry block.
-(define (opt-verify-owned-param-marker-instrs
-  [instrs : ir.CompilerIrInstrSeq]
-  [var : i64]
-  [index : i64]) : i64
-  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-    0
-    (match (ir.compiler-ir-instr-seq-ref instrs index)
-      [(ir.CompilerIrInstr.OwnRoot marker (ir.CompilerIrValue.Var source) _)
-        (if (= source var)
-          (+ marker 1)
-          (opt-verify-owned-param-marker-instrs instrs var (+ index 1)))]
-      [_ (opt-verify-owned-param-marker-instrs instrs var (+ index 1))])))
-
-(define (opt-verify-owned-param-marker [doms : (& doms OptDomInfo)] [var : i64]) : i64
-  (match (opt-cfg-index-block doms.index 0)
-    [(OptMaybeBlock.No) 0]
-    [(OptMaybeBlock.Some block)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (opt-verify-owned-param-marker-instrs instrs var 0)])]))
-
-(define (opt-verify-owned-entry-phi-def?
-  [doms : (& doms OptDomInfo)]
-  [var : i64]) : bool
-  (match (opt-cfg-index-block doms.index 0)
-    [(OptMaybeBlock.No) false]
-    [(OptMaybeBlock.Some block)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (let
-            [index : i64 0]
-            [found : bool false]
-            (begin
-              (while (and
-                (not found)
-                (< index (ir.compiler-ir-instr-seq-count instrs)))
-                (match (ir.compiler-ir-instr-seq-ref instrs index)
-                  [(ir.CompilerIrInstr.Phi dst _ _)
-                    (begin
-                      (set! found (= dst var))
-                      (set! index (+ index 1)))]
-                  [_ (set! index (ir.compiler-ir-instr-seq-count instrs))]))
-              found))])]))
-
-(define (opt-verify-owned-param-var?
-  [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
-  [doms : (& doms OptDomInfo)]
-  [var : i64]) : bool
-  (match (opt-var-def-lookup defs var)
-    [(OptMaybeVarDef.No) false]
-    [(OptMaybeVarDef.Some def)
-      (match def
-        [(OptVarDef.Def _ block-id pos)
-          (and
-            (= block-id 0)
-            (= pos 0)
-            (not (opt-verify-owned-entry-phi-def? doms var)))])]))
-
-;; Return the one-based id of an explicitly fresh ownership tree. The accepted
-;; edges are allocation, the checked internal owner boundary, identity SSA
-;; transport, and a capability-bearing load whose witness is itself proved.
-(define (opt-verify-owned-fresh-root
-  [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
-  [doms : (& doms OptDomInfo)]
-  [return-alias : (& return-alias opt_i64_i64_map.Map)]
-  [var : i64]
-  [fuel : i64]) : i64
-  (if (<= fuel 0)
-    0
-    (match (opt-var-def-lookup defs var)
-      [(OptMaybeVarDef.No) 0]
-      [(OptMaybeVarDef.Some def)
-        (match def
-          [(OptVarDef.Def _ block-id pos)
-            (match (opt-cfg-index-block doms.index block-id)
-              [(OptMaybeBlock.No) 0]
-              [(OptMaybeBlock.Some block)
-                (match block
-                  [(ir.CompilerIrBlock.Block _ instrs)
-                    (if (= pos 0)
-                      (let
-                        [phi-root : i64
-                          (opt-verify-owned-fresh-phi-instrs
-                            defs
-                            doms
-                            return-alias
-                            instrs
-                            var
-                            0
-                            fuel)]
-                        (if (> phi-root 0)
-                          phi-root
-                          (opt-verify-owned-param-marker doms var)))
-                      (if (>= (- pos 1) (ir.compiler-ir-instr-seq-count instrs))
-                        0
-                        (match (ir.compiler-ir-instr-seq-ref instrs (- pos 1))
-                          [(ir.CompilerIrInstr.Alloc dst _)
-                            (if (= dst var)
-                              (+ dst 1)
-                              0)]
-                          [(ir.CompilerIrInstr.OwnRoot dst _ _)
-                            (if (= dst var)
-                              (+ dst 1)
-                              0)]
-                          [(ir.CompilerIrInstr.Call dst name args _)
-                            (if (not (= dst var))
-                              0
-                              (if (ir.compiler-ir-symbol-eq?
-                                name
-                                cbi.compiler-builtin-id-tl-alloc)
-                                (+ dst 1)
-                                (match (opt_i64_i64_map.get
-                                  return-alias
-                                  (ir.compiler-ir-symbol-id name))
-                                  [(opt_i64_i64_map.LookupFound encoded)
-                                    (if (= encoded 0)
-                                      (+ dst 1)
-                                      (match (opt-call-memory-arg-at
-                                        args
-                                        (- encoded 1))
-                                        [(ir.CompilerIrMaybeValue.Some
-                                            (ir.CompilerIrValue.Var arg))
-                                          (opt-verify-owned-fresh-root
-                                            defs
-                                            doms
-                                            return-alias
-                                            arg
-                                            (- fuel 1))]
-                                        [_ 0]))]
-                                  [(opt_i64_i64_map.LookupMissing) 0])))]
-                          [(ir.CompilerIrInstr.AddrOf dst src)
-                            (if (= dst var)
-                              (opt-verify-owned-fresh-root
-                                defs
-                                doms
-                                return-alias
-                                src
-                                (- fuel 1))
-                              0)]
-                          [(ir.CompilerIrInstr.Mov
-                              dst
-                              (ir.CompilerIrValue.Var src)
-                              _)
-                            (if (= dst var)
-                              (opt-verify-owned-fresh-root
-                                defs
-                                doms
-                                return-alias
-                                src
-                                (- fuel 1))
-                              0)]
-                          [(ir.CompilerIrInstr.Phi dst inputs _)
-                            (if (= dst var)
-                              (opt-verify-owned-phi-root-from
-                                defs
-                                doms
-                                return-alias
-                                inputs
-                                0
-                                (- fuel 1)
-                                0)
-                              0)]
-                          [(ir.CompilerIrInstr.Cast
-                              dst
-                              (ir.CompilerIrValue.Var src)
-                              _
-                              _)
-                            (if (= dst var)
-                              (opt-verify-owned-fresh-root
-                                defs
-                                doms
-                                return-alias
-                                src
-                                (- fuel 1))
-                              0)]
-                          [(ir.CompilerIrInstr.Bitcast
-                              dst
-                              (ir.CompilerIrValue.Var src)
-                              _
-                              _)
-                            (if (= dst var)
-                              (opt-verify-owned-fresh-root
-                                defs
-                                doms
-                                return-alias
-                                src
-                                (- fuel 1))
-                              0)]
-                          [(ir.CompilerIrInstr.LoadOwned dst _ owner _)
-                            (if (= dst var)
-                              (opt-verify-owned-fresh-root
-                                defs
-                                doms
-                                return-alias
-                                owner
-                                (- fuel 1))
-                              0)]
-                          [_ 0])))])])])])))
-
-;; Only lowering's byte-offset Gep spelling is a checked field path. This
-;; intentionally avoids recovering ownership from aggregate type/layout shape.
-(define (opt-verify-owned-path
-  [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
-  [doms : (& doms OptDomInfo)]
-  [return-alias : (& return-alias opt_i64_i64_map.Map)]
-  [var : i64]
-  [fuel : i64]) : OptVerifyOwnedPath
-  (if (<= fuel 0)
-    (OptVerifyOwnedPath.No)
-    (match (opt-var-def-lookup defs var)
-      [(OptMaybeVarDef.No) (OptVerifyOwnedPath.No)]
-      [(OptMaybeVarDef.Some def)
-        (match def
-          [(OptVarDef.Def _ block-id pos)
-            (if (<= pos 0)
-              (OptVerifyOwnedPath.No)
-              (match (opt-cfg-index-block doms.index block-id)
-                [(OptMaybeBlock.No) (OptVerifyOwnedPath.No)]
-                [(OptMaybeBlock.Some block)
-                  (match block
-                    [(ir.CompilerIrBlock.Block _ instrs)
-                      (if (>= (- pos 1) (ir.compiler-ir-instr-seq-count instrs))
-                        (OptVerifyOwnedPath.No)
-                        (match (ir.compiler-ir-instr-seq-ref instrs (- pos 1))
-                          [(ir.CompilerIrInstr.Gep
-                              dst
-                              (ir.CompilerIrValue.Var base)
-                              (ir.CompilerIrValue.I64 offset)
-                              (ast.AstType.U8))
-                            (if (= dst var)
-                              (match (opt-verify-owned-path
-                                defs
-                                doms
-                                return-alias
-                                base
-                                (- fuel 1))
-                                [(OptVerifyOwnedPath.Some root prior)
-                                  (OptVerifyOwnedPath.Some
-                                    root
-                                    (+ prior offset))]
-                                [(OptVerifyOwnedPath.No)
-                                  (let
-                                    [root : i64
-                                      (opt-verify-owned-fresh-root
-                                        defs
-                                        doms
-                                        return-alias
-                                        base
-                                        (- fuel 1))]
-                                    (if (> root 0)
-                                      (OptVerifyOwnedPath.Some root offset)
-                                      (OptVerifyOwnedPath.No)))])
-                              (OptVerifyOwnedPath.No))]
-                          [(ir.CompilerIrInstr.Mov
-                              dst
-                              (ir.CompilerIrValue.Var src)
-                              _)
-                            (if (= dst var)
-                              (opt-verify-owned-path
-                                defs
-                                doms
-                                return-alias
-                                src
-                                (- fuel 1))
-                              (OptVerifyOwnedPath.No))]
-                          [_ (OptVerifyOwnedPath.No)]))])]))])])))
-
-(define (opt-verify-cfg-reaches-id-from?
-  [index : (& index OptCfgIndex)]
-  [seen : (&mut seen (__tl_dyn-array bool))]
-  [current : i64]
-  [wanted : i64]) : bool
-  (if (array-ref seen current)
-    false
-    (let
-      [edge : i64 (array-ref index.succs.offsets current)]
-      [end : i64 (array-ref index.succs.offsets (+ current 1))]
-      [found : bool false]
-      (begin
-        (set! (array-ref seen current) true)
-        (while (and (not found) (< edge end))
-          (let
-            [next : i64 (array-ref index.succs.edges edge)]
-            (begin
-              (set!
-                found
-                (or
-                  (= next wanted)
-                  (opt-verify-cfg-reaches-id-from? index seen next wanted)))
-              (set! edge (+ edge 1)))))
-        found))))
-
-(define (opt-verify-cfg-reaches-id?
-  [index : (& index OptCfgIndex)]
-  [from : i64]
-  [to : i64]) : bool
-  (let
-    [seen : (__tl_dyn-array bool)
-      (__tl_make-array bool (opt-cfg-index-block-count index))]
-    (if (= from to)
-      true
-      (opt-verify-cfg-reaches-id-from? index (&mut seen) from to))))
-
-(define (opt-verify-cfg-id-cyclic? [index : (& index OptCfgIndex)] [id : i64]) : bool
-  (let
-    [seen : (__tl_dyn-array bool)
-      (__tl_make-array bool (opt-cfg-index-block-count index))]
-    (opt-verify-cfg-reaches-id-from? index (&mut seen) id id)))
-
-;; Whether one instruction point can execute before another, including a trip
-;; around a backedge when both points are in the same block. This is the piece
-;; a linear block scan cannot express: an invalidation textually after a load
-;; still precedes the next dynamic execution of that load.
-(define (opt-verify-owned-point-reaches?
-  [index : (& index OptCfgIndex)]
-  [source-block : i64]
-  [source-pos : i64]
-  [target-block : i64]
-  [target-pos : i64]) : bool
-  (if (= source-block target-block)
-    (if (< source-pos target-pos)
-      true
-      (opt-verify-cfg-id-cyclic? index source-block))
-    (opt-verify-cfg-reaches-id? index source-block target-block)))
-
-(define (opt-verify-owned-pointer-root
-  [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
-  [doms : (& doms OptDomInfo)]
-  [return-alias : (& return-alias opt_i64_i64_map.Map)]
-  [value : ir.CompilerIrValue]
-  [fuel : i64]) : i64
-  (if (<= fuel 0)
-    0
-    (match value
-      [(ir.CompilerIrValue.Var var)
-        (match (opt-verify-owned-path defs doms return-alias var fuel)
-          [(OptVerifyOwnedPath.Some root _) root]
-          [(OptVerifyOwnedPath.No)
-            (opt-verify-owned-fresh-root defs doms return-alias var fuel)])]
-      [_ 0])))
-
-(define (opt-verify-owned-clobber-instr?
-  [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
-  [doms : (& doms OptDomInfo)]
-  [return-alias : (& return-alias opt_i64_i64_map.Map)]
-  [wanted-root : i64]
-  [instr : ir.CompilerIrInstr]) : bool
-  (match instr
-    [(ir.CompilerIrInstr.StorePtr ptr _ _)
-      (let
-        [root : i64
-          (opt-verify-owned-pointer-root defs doms return-alias ptr 64)]
-        (or (= root 0) (= root wanted-root)))]
-    [(ir.CompilerIrInstr.StoreOwned ptr _ _)
-      (let
-        [root : i64
-          (opt-verify-owned-pointer-root defs doms return-alias ptr 64)]
-        (or (= root 0) (= root wanted-root)))]
-    [(ir.CompilerIrInstr.CopyBytes dst _ _)
-      (let
-        [root : i64
-          (opt-verify-owned-pointer-root defs doms return-alias dst 64)]
-        (or (= root 0) (= root wanted-root)))]
-    [(ir.CompilerIrInstr.Call _ name _ _)
-      (not (ir.compiler-ir-symbol-eq? name cbi.compiler-builtin-id-tl-alloc))]
-    [(ir.CompilerIrInstr.CallIndirect _ _ _ _) true]
-    [(ir.CompilerIrInstr.CallIndirectC _ _ _ _) true]
-    [(ir.CompilerIrInstr.CallCAbiStoreResult _) true]
-    [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult _) true]
-    [(ir.CompilerIrInstr.SpmdCall _) true]
-    [(ir.CompilerIrInstr.Syscall _ _) true]
-    [(ir.CompilerIrInstr.TailCall _ _ _) true]
-    [(ir.CompilerIrInstr.TailCallIndirect _ _ _) true]
-    [(ir.CompilerIrInstr.VectorStore _) true]
-    [(ir.CompilerIrInstr.PredicatedStore _) true]
-    [_ false]))
-
-(define (opt-verify-owned-clobber-instrs-from?
-  [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
-  [doms : (& doms OptDomInfo)]
-  [return-alias : (& return-alias opt_i64_i64_map.Map)]
-  [wanted-root : i64]
-  [store-block : i64]
-  [store-pos : i64]
-  [use-block : i64]
-  [use-pos : i64]
-  [block-id : i64]
-  [instrs : ir.CompilerIrInstrSeq]
-  [index : i64]) : bool
-  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-    false
-    (let
-      [pos : i64 (+ index 1)]
-      [between? : bool
-        (and
-          (not (and (= block-id store-block) (= pos store-pos)))
-          (opt-verify-owned-point-reaches?
-            (__tl-project-field doms index)
-            store-block
-            store-pos
-            block-id
-            pos)
-          (opt-verify-owned-point-reaches?
-            (__tl-project-field doms index)
-            block-id
-            pos
-            use-block
-            use-pos))]
-      (or
-        (and
-          between?
-          (opt-verify-owned-clobber-instr?
-            defs
-            doms
-            return-alias
-            wanted-root
-            (ir.compiler-ir-instr-seq-ref instrs index)))
-        (opt-verify-owned-clobber-instrs-from?
-          defs
-          doms
-          return-alias
-          wanted-root
-          store-block
-          store-pos
-          use-block
-          use-pos
-          block-id
-          instrs
-          (+ index 1))))))
-
-(define (opt-verify-owned-clobber-blocks-from?
-  [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
-  [doms : (& doms OptDomInfo)]
-  [return-alias : (& return-alias opt_i64_i64_map.Map)]
-  [wanted-root : i64]
-  [store-block : i64]
-  [store-pos : i64]
-  [use-block : i64]
-  [use-pos : i64]
-  [block-id : i64]) : bool
-  (if (>= block-id (opt-cfg-index-block-count (__tl-project-field doms index)))
-    false
-    (match (let
-      [index-arg (__tl-project-field doms index)]
-      (opt-cfg-index-block index-arg block-id))
-      [(OptMaybeBlock.No)
-        (opt-verify-owned-clobber-blocks-from?
-          defs
-          doms
-          return-alias
-          wanted-root
-          store-block
-          store-pos
-          use-block
-          use-pos
-          (+ block-id 1))]
-      [(OptMaybeBlock.Some block)
-        (match block
-          [(ir.CompilerIrBlock.Block _ instrs)
-            (or
-              (opt-verify-owned-clobber-instrs-from?
-                defs
-                doms
-                return-alias
-                wanted-root
-                store-block
-                store-pos
-                use-block
-                use-pos
-                block-id
-                instrs
-                0)
-              (opt-verify-owned-clobber-blocks-from?
-                defs
-                doms
-                return-alias
-                wanted-root
-                store-block
-                store-pos
-                use-block
-                use-pos
-                (+ block-id 1)))])])))
-
-(define (opt-verify-owned-transfer-instr?
-  [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
-  [doms : (& doms OptDomInfo)]
-  [return-alias : (& return-alias opt_i64_i64_map.Map)]
-  [wanted-root : i64]
-  [wanted-offset : i64]
-  [owner : i64]
-  [ty : ast.AstType]
-  [store-block : i64]
-  [store-pos : i64]
-  [use-block : i64]
-  [use-pos : i64]
-  [instr : ir.CompilerIrInstr]) : bool
-  (and
-    (opt-dom-info-dominates-id? doms store-block use-block)
-    (or (not (= store-block use-block)) (< store-pos use-pos))
-    (match instr
-      [(ir.CompilerIrInstr.StoreOwned
-          (ir.CompilerIrValue.Var ptr)
-          (ir.CompilerIrValue.Var witness)
-          store-ty)
-        (and
-          (opt-owned-handle-type-same? ty store-ty)
-          (=
-            (opt-verify-owned-mov-base defs doms witness 64)
-            (opt-verify-owned-mov-base defs doms owner 64))
-          (> (opt-verify-owned-fresh-root defs doms return-alias owner 64) 0)
-          (match (opt-verify-owned-path defs doms return-alias ptr 64)
-            [(OptVerifyOwnedPath.Some root offset)
-              (and (= root wanted-root) (= offset wanted-offset))]
-            [(OptVerifyOwnedPath.No) false])
-          (not
-            (opt-verify-owned-clobber-blocks-from?
-              defs
-              doms
-              return-alias
-              wanted-root
-              store-block
-              store-pos
-              use-block
-              use-pos
-              0)))]
-      [_ false])))
-
-(define (opt-verify-owned-transfer-instrs-from?
-  [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
-  [doms : (& doms OptDomInfo)]
-  [return-alias : (& return-alias opt_i64_i64_map.Map)]
-  [wanted-root : i64]
-  [wanted-offset : i64]
-  [owner : i64]
-  [ty : ast.AstType]
-  [store-block : i64]
-  [instrs : ir.CompilerIrInstrSeq]
-  [index : i64]
-  [use-block : i64]
-  [use-pos : i64]) : bool
-  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-    false
-    (or
-      (opt-verify-owned-transfer-instr?
-        defs
-        doms
-        return-alias
-        wanted-root
-        wanted-offset
-        owner
-        (compiler-opt-global-shared-view ty)
-        store-block
-        (+ index 1)
-        use-block
-        use-pos
-        (ir.compiler-ir-instr-seq-ref instrs index))
-      (opt-verify-owned-transfer-instrs-from?
-        defs
-        doms
-        return-alias
-        wanted-root
-        wanted-offset
-        owner
-        ty
-        store-block
-        instrs
-        (+ index 1)
-        use-block
-        use-pos))))
-
-(define (opt-verify-owned-transfer-blocks-from?
-  [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
-  [doms : (& doms OptDomInfo)]
-  [return-alias : (& return-alias opt_i64_i64_map.Map)]
-  [wanted-root : i64]
-  [wanted-offset : i64]
-  [owner : i64]
-  [ty : ast.AstType]
-  [block-id : i64]
-  [use-block : i64]
-  [use-pos : i64]) : bool
-  (if (>= block-id (opt-cfg-index-block-count doms.index))
-    false
-    (match (opt-cfg-index-block doms.index block-id)
-      [(OptMaybeBlock.No) false]
-      [(OptMaybeBlock.Some block)
-        (match block
-          [(ir.CompilerIrBlock.Block _ instrs)
-            (or
-              (opt-verify-owned-transfer-instrs-from?
-                defs
-                doms
-                return-alias
-                wanted-root
-                wanted-offset
-                owner
-                (compiler-opt-global-shared-view ty)
-                block-id
-                instrs
-                0
-                use-block
-                use-pos)
-              (opt-verify-owned-transfer-blocks-from?
-                defs
-                doms
-                return-alias
-                wanted-root
-                wanted-offset
-                owner
-                ty
-                (+ block-id 1)
-                use-block
-                use-pos))])])))
-
-(define (opt-verify-owned-load-transfer
-  [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
-  [doms : (& doms OptDomInfo)]
-  [return-alias : (& return-alias opt_i64_i64_map.Map)]
-  [src : ir.CompilerIrValue]
-  [owner : i64]
-  [ty : ast.AstType]
-  [use-block : i64]
-  [use-pos : i64]) : ResultCompilerOptimizeVerify
-  (if (not (opt-owned-handle-type? (compiler-opt-global-shared-view ty)))
-    (ResultCompilerOptimizeVerify.Err
-      "optimizer verify: load_owned requires DynArray or String")
-    (match src
-      [(ir.CompilerIrValue.Var ptr)
-        (match (opt-verify-owned-path defs doms return-alias ptr 64)
-          [(OptVerifyOwnedPath.No)
-            (ResultCompilerOptimizeVerify.Err
-              "optimizer verify: load_owned address is not a checked fresh field")]
-          [(OptVerifyOwnedPath.Some root offset)
-            (if (opt-verify-owned-transfer-blocks-from?
-              defs
-              doms
-              return-alias
-              root
-              offset
-              owner
-              ty
-              0
-              use-block
-              use-pos)
-              (ResultCompilerOptimizeVerify.Ok)
-              (ResultCompilerOptimizeVerify.Err
-                "optimizer verify: load_owned has no matching checked transfer"))])]
-      [_
-        (ResultCompilerOptimizeVerify.Err
-          "optimizer verify: load_owned address must be a field var")])))
-
-(define (opt-verify-instr-uses-with-return-alias
-  [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
-  [doms : (& doms OptDomInfo)]
-  [return-alias : (& return-alias opt_i64_i64_map.Map)]
   [block-id : i64]
   [pos : i64]
   [instr : ir.CompilerIrInstr]) : ResultCompilerOptimizeVerify
   (match (compiler-opt-global-shared-view instr)
     [(ir.CompilerIrInstr.Mov _ src _)
       (opt-verify-value-use defs doms src block-id pos)]
-    [(ir.CompilerIrInstr.OwnRoot dst src ty)
-      (if (not (opt-owned-handle-type? ty))
-        (ResultCompilerOptimizeVerify.Err
-          "optimizer verify: own_root requires DynArray or String")
-        (match src
-          [(ir.CompilerIrValue.Var source)
-            (if (and
-              (= block-id 0)
-              (not (= dst source))
-              (opt-verify-owned-param-var? defs doms source)
-              (= (opt-verify-owned-param-marker doms source) (+ dst 1)))
-              (opt-verify-value-use
-                defs
-                doms
-                (ir.CompilerIrValue.Var source)
-                block-id
-                pos)
-              (ResultCompilerOptimizeVerify.Err
-                "optimizer verify: own_root is not a unique entry parameter proof"))]
-          [_
-            (ResultCompilerOptimizeVerify.Err
-              "optimizer verify: own_root source must be a parameter var")]))]
+    [(ir.CompilerIrInstr.OwnRoot _ src _)
+      (opt-verify-value-use defs doms src block-id pos)]
     [(ir.CompilerIrInstr.AddrOf _ src)
       (opt-verify-var-use defs doms src block-id pos)]
     [(ir.CompilerIrInstr.Gep _ base offset _)
@@ -14624,21 +13825,8 @@
       (opt-verify-value-use defs doms src block-id pos)]
     [(ir.CompilerIrInstr.LoadOwned _ src owner _)
       (opt-verify-two
-        (opt-verify-two
-          (opt-verify-value-use defs doms src block-id pos)
-          (opt-verify-var-use defs doms owner block-id pos))
-        (match instr
-          [(ir.CompilerIrInstr.LoadOwned _ checked-src checked-owner ty)
-            (opt-verify-owned-load-transfer
-              defs
-              doms
-              return-alias
-              checked-src
-              checked-owner
-              ty
-              block-id
-              pos)]
-          [_ (ResultCompilerOptimizeVerify.Ok)]))]
+        (opt-verify-value-use defs doms src block-id pos)
+        (opt-verify-var-use defs doms owner block-id pos))]
     [(ir.CompilerIrInstr.StorePtr ptr value _)
       (opt-verify-two
         (opt-verify-value-use defs doms ptr block-id pos)
@@ -14881,26 +14069,9 @@
     [(ir.CompilerIrInstr.TotalEnumSwitch index _ _ _ _)
       (opt-verify-value-use defs doms index block-id pos)]))
 
-(define (opt-verify-instr-uses
-  [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
-  [doms : (& doms OptDomInfo)]
-  [block-id : i64]
-  [pos : i64]
-  [instr : ir.CompilerIrInstr]) : ResultCompilerOptimizeVerify
-  (let
-    [empty : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 1)]
-    (opt-verify-instr-uses-with-return-alias
-      defs
-      doms
-      (& empty)
-      block-id
-      pos
-      instr)))
-
 (define (opt-verify-instr-seq-uses-from
   [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
   [doms : (& doms OptDomInfo)]
-  [return-alias : (& return-alias opt_i64_i64_map.Map)]
   [block-id : i64]
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]
@@ -14912,10 +14083,9 @@
     (begin
       (while (< i count)
         (begin
-          (match (opt-verify-instr-uses-with-return-alias
+          (match (opt-verify-instr-uses
             defs
             doms
-            (& return-alias)
             block-id
             p
             (ir.compiler-ir-instr-seq-ref instrs i))
@@ -15118,7 +14288,6 @@
 (define (opt-verify-block-uses
   [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
   [doms : (& doms OptDomInfo)]
-  [return-alias : (& return-alias opt_i64_i64_map.Map)]
   [blocks : ir.CompilerIrBlockList]
   [block-id : i64]) : ResultCompilerOptimizeVerify
   (match blocks
@@ -15126,28 +14295,15 @@
     [(ir.CompilerIrBlockList.Cons block rest)
       (match block
         [(ir.CompilerIrBlock.Block _ instrs)
-          (match (opt-verify-instr-seq-uses-from
-            defs
-            doms
-            return-alias
-            block-id
-            instrs
-            0
-            1)
+          (match (opt-verify-instr-seq-uses-from defs doms block-id instrs 0 1)
             [(ResultCompilerOptimizeVerify.Ok)
-              (opt-verify-block-uses
-                defs
-                doms
-                return-alias
-                (deref rest)
-                (+ block-id 1))]
+              (opt-verify-block-uses defs doms (deref rest) (+ block-id 1))]
             [(ResultCompilerOptimizeVerify.Err message)
               (ResultCompilerOptimizeVerify.Err message)])])]
     [(ir.CompilerIrBlockList.Array seq)
       (opt-verify-block-uses
         defs
         doms
-        return-alias
         (ir.compiler-ir-block-seq-to-list seq)
         block-id)]))
 
@@ -15219,8 +14375,7 @@
 
 (define (opt-verify-function-body-with-context
   [func : ir.CompilerIrFunction]
-  [context : (& context OptCfgContext)]
-  [return-alias : (& return-alias opt_i64_i64_map.Map)]) : ResultCompilerOptimizeVerify
+  [context : (& context OptCfgContext)]) : ResultCompilerOptimizeVerify
   (match func
     [(ir.CompilerIrFunction.Function _ params _ vars blocks _)
       (match (opt-var-defs-index-checked
@@ -15238,7 +14393,7 @@
               pred-map
               (compiler-opt-global-shared-view blocks))
               [(ResultCompilerOptimizeVerify.Ok)
-                (opt-verify-block-uses defs doms return-alias blocks 0)]
+                (opt-verify-block-uses defs doms blocks 0)]
               [(ResultCompilerOptimizeVerify.Err message)
                 (ResultCompilerOptimizeVerify.Err message)]))])]))
 
@@ -15277,25 +14432,14 @@
           "optimizer verify: unknown successor label")]
       [else (ResultCompilerOptimizeVerify.Ok)])))
 
-(define (opt-verify-function-with-context-and-return-alias
-  [func : ir.CompilerIrFunction]
-  [context : (& context OptCfgContext)]
-  [return-alias : (& return-alias opt_i64_i64_map.Map)]) : ResultCompilerOptimizeVerify
-  (match (opt-verify-structure context)
-    [(ResultCompilerOptimizeVerify.Ok)
-      (opt-verify-function-body-with-context func context return-alias)]
-    [(ResultCompilerOptimizeVerify.Err message)
-      (ResultCompilerOptimizeVerify.Err message)]))
-
 (define (opt-verify-function-with-context
   [func : ir.CompilerIrFunction]
   [context : (& context OptCfgContext)]) : ResultCompilerOptimizeVerify
-  (let
-    [return-alias (opt_i64_i64_map.with-capacity 1)]
-    (opt-verify-function-with-context-and-return-alias
-      func
-      context
-      return-alias)))
+  (match (opt-verify-structure context)
+    [(ResultCompilerOptimizeVerify.Ok)
+      (opt-verify-function-body-with-context func context)]
+    [(ResultCompilerOptimizeVerify.Err message)
+      (ResultCompilerOptimizeVerify.Err message)]))
 
 ;; Pipeline-level verification consolidation: the opt2 pipeline verifies the
 ;; SSA function once per iteration before the loop-pass cluster and threads
@@ -25343,11 +24487,7 @@
   ;; LICM-PART: WHICH globals it may take a handle out for -- every eligible
   ;; one when the whole set fits the budget, the most-referenced ones that do
   ;; when it does not (opt-licm-global-header-admit).
-  (header-admit opt_i64_i64_map.Map)
-  ;; Whether explicit ownership capabilities may take descriptor chains out
-  ;; of THIS loop. Soundness is carried by LoadOwned; this is only its measured
-  ;; register-pressure gate.
-  (owned-hoist? bool))
+  (header-admit opt_i64_i64_map.Map))
 
 (define (opt-licm-global-facts
   [clean? : bool]
@@ -25356,8 +24496,7 @@
   [frozen-hoist? : bool]
   [obj-mask : i64]
   [header-hoist? : bool]
-  [header-admit : opt_i64_i64_map.Map]
-  [owned-hoist? : bool]) : OptLicmGlobalFacts
+  [header-admit : opt_i64_i64_map.Map]) : OptLicmGlobalFacts
   (let
     [mod-ref : OptGlobalModRef cells.mod-ref]
     [obj : OptGlobalObjModRef cells.obj-mod-ref]
@@ -25370,8 +24509,7 @@
       obj.index
       obj-mask
       header-hoist?
-      header-admit
-      owned-hoist?)))
+      header-admit)))
 
 ;; LICM-PART: is `name` one of the globals this loop takes a handle out for?
 (define (opt-licm-global-header-admitted?
@@ -26130,155 +25268,6 @@
               out
               (+ position 1)))]))))
 
-;; A zero-valued return summary means every ordinary return carries an
-;; explicitly fresh owning tree. Positive values remain argument aliases
-;; (`index + 1`). Fresh summaries are discovered as a least fixed point so a
-;; direct chain of internal calls can transport the proof without treating a
-;; recursive cycle as evidence for itself.
-(define (opt-licm-return-fresh-instr
-  [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
-  [doms : (& doms OptDomInfo)]
-  [return-alias : (& return-alias opt_i64_i64_map.Map)]
-  [found : i64]
-  [instr : ir.CompilerIrInstr]) : i64
-  (if (= found -1)
-    -1
-    (match instr
-      [(ir.CompilerIrInstr.Return maybe-value)
-        (match maybe-value
-          [(ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var var))
-            (if (>
-              (opt-verify-owned-fresh-root defs doms return-alias var 128)
-              0)
-              0
-              -1)]
-          [_ -1])]
-      [(ir.CompilerIrInstr.TailCall _ _ _) -1]
-      [(ir.CompilerIrInstr.TailCallIndirect _ _ _) -1]
-      [_ found])))
-
-(define (opt-licm-return-fresh-instrs-from
-  [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
-  [doms : (& doms OptDomInfo)]
-  [return-alias : (& return-alias opt_i64_i64_map.Map)]
-  [instrs : ir.CompilerIrInstrSeq]
-  [position : i64]
-  [found : i64]) : i64
-  (if (>= position (ir.compiler-ir-instr-seq-count instrs))
-    found
-    (opt-licm-return-fresh-instrs-from
-      defs
-      doms
-      return-alias
-      (compiler-opt-global-shared-view instrs)
-      (+ position 1)
-      (opt-licm-return-fresh-instr
-        defs
-        doms
-        return-alias
-        found
-        (ir.compiler-ir-instr-seq-ref instrs position)))))
-
-(define (opt-licm-return-fresh-blocks
-  [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
-  [doms : (& doms OptDomInfo)]
-  [return-alias : (& return-alias opt_i64_i64_map.Map)]
-  [blocks : ir.CompilerIrBlockList]
-  [found : i64]) : i64
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) found]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (opt-licm-return-fresh-blocks
-            defs
-            doms
-            return-alias
-            (deref rest)
-            (opt-licm-return-fresh-instrs-from
-              defs
-              doms
-              return-alias
-              instrs
-              0
-              found))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (opt-licm-return-fresh-blocks
-        defs
-        doms
-        return-alias
-        (ir.compiler-ir-block-seq-to-list seq)
-        found)]))
-
-(define (opt-licm-return-fresh-function?
-  [return-alias : (& return-alias opt_i64_i64_map.Map)]
-  [func : ir.CompilerIrFunction]) : bool
-  (match func
-    [(ir.CompilerIrFunction.Function _ params ret-ty frame blocks _)
-      (if (not (opt-owned-handle-type? ret-ty))
-        false
-        (match (opt-var-defs-index-checked
-          params
-          frame
-          (compiler-opt-global-shared-view blocks))
-          [(OptVarDefsIndex.Duplicate) false]
-          [(OptVarDefsIndex.Index defs)
-            (let
-              [context : OptCfgContext
-                (opt-cfg-context-build (compiler-opt-global-shared-view blocks))]
-              (and
-                (opt-verify-ok? (opt-verify-structure context))
-                (=
-                  (opt-licm-return-fresh-blocks
-                    defs
-                    context.doms
-                    return-alias
-                    blocks
-                    -2)
-                  0)))]))]))
-
-(define (opt-licm-return-fresh-add-functions-from!
-  [functions : (& functions ir.CompilerIrFunctionSeq)]
-  [out : (&mut out opt_i64_i64_map.Map)]
-  [position : i64]
-  [added : i64]) : i64
-  (if (>= position functions.len)
-    added
-    (let
-      [func : ir.CompilerIrFunction
-        (compiler-opt-global-array-element-shared-view functions.slots position)]
-      (match (compiler-opt-global-shared-view func)
-        [(ir.CompilerIrFunction.Function name _ _ _ _ _)
-          (let
-            [name-id : i64 (ir.compiler-ir-symbol-id name)]
-            [next-added : i64
-              (match (opt_i64_i64_map.get (& out) name-id)
-                [(opt_i64_i64_map.LookupFound _) added]
-                [(opt_i64_i64_map.LookupMissing)
-                  (if (opt-licm-return-fresh-function? (& out) func)
-                    (begin
-                      (opt_i64_i64_map.insert-ref! out name-id 0)
-                      (+ added 1))
-                    added)])]
-            (opt-licm-return-fresh-add-functions-from!
-              functions
-              out
-              (+ position 1)
-              next-added))]))))
-
-(define (opt-licm-return-fresh-fixpoint!
-  [functions : (& functions ir.CompilerIrFunctionSeq)]
-  [out : (&mut out opt_i64_i64_map.Map)]
-  [rounds-left : i64]) : unit
-  (if (<= rounds-left 0)
-    unit
-    (let
-      [added : i64
-        (opt-licm-return-fresh-add-functions-from! functions out 0 0)]
-      (if (= added 0)
-        unit
-        (opt-licm-return-fresh-fixpoint! functions out (- rounds-left 1))))))
-
 (define (opt-licm-return-alias-map
   [functions : (& functions ir.CompilerIrFunctionSeq)]
   [capacity : i64]) : opt_i64_i64_map.Map
@@ -26286,7 +25275,6 @@
     [out : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity capacity)]
     (begin
       (opt-licm-return-alias-add-functions-from functions (&mut out) 0)
-      (opt-licm-return-fresh-fixpoint! functions (&mut out) functions.len)
       out)))
 
 ;; The argument a direct call returns unchanged, if the table proves it does.
@@ -26302,15 +25290,6 @@
         (opt-call-memory-arg-at args (- encoded 1))
         (ir.CompilerIrMaybeValue.No))]
     [(opt_i64_i64_map.LookupMissing) (ir.CompilerIrMaybeValue.No)]))
-
-(define (opt-licm-root-env-return-fresh?
-  [env : (& env OptLicmRootEnv)]
-  [name : i64]) : bool
-  (match (opt_i64_i64_map.get
-    (& env.return-alias)
-    (ir.compiler-ir-symbol-id name))
-    [(opt_i64_i64_map.LookupFound encoded) (= encoded 0)]
-    [(opt_i64_i64_map.LookupMissing) false]))
 
 (define (opt-licm-root-env-update-instr!
   [env : (&mut env OptLicmRootEnv)]
@@ -26352,17 +25331,15 @@
     [(ir.CompilerIrInstr.Call dst name args _)
       (if (ir.compiler-ir-symbol-eq? name cbi.compiler-builtin-id-tl-alloc)
         (opt-licm-root-env-bind! env dst (OptLicmRoot.Fresh dst))
-        (if (opt-licm-root-env-return-fresh? (& env) name)
-          (opt-licm-root-env-bind! env dst (OptLicmRoot.Fresh dst))
-          ;; A callee that returns one of its arguments returns that object, so
-          ;; the result inherits the argument's root -- most often the caller's
-          ;; own sret buffer, whose root is the `Alloc` two instructions up.
-          ;; Binding a fresh id here instead would be unsound: the result and the
-          ;; argument would then read as two disjoint objects.
-          (match (opt-licm-root-env-return-alias-value env name args)
-            [(ir.CompilerIrMaybeValue.Some value)
-              (opt-licm-root-env-copy! env dst value)]
-            [(ir.CompilerIrMaybeValue.No) (opt-licm-root-env-remove! env dst)])))]
+        ;; A callee that returns one of its arguments returns that object, so
+        ;; the result inherits the argument's root -- most often the caller's
+        ;; own sret buffer, whose root is the `Alloc` two instructions up.
+        ;; Binding a fresh id here instead would be unsound: the result and the
+        ;; argument would then read as two disjoint objects.
+        (match (opt-licm-root-env-return-alias-value env name args)
+          [(ir.CompilerIrMaybeValue.Some value)
+            (opt-licm-root-env-copy! env dst value)]
+          [(ir.CompilerIrMaybeValue.No) (opt-licm-root-env-remove! env dst)]))]
     [_ unit]))
 
 (define (opt-licm-array-header-type?
@@ -27977,697 +26954,14 @@
       blocks
       first)))
 
-;; Checked ownership transfers for the short LICM capability window. Paths use
-;; frame-indexed word arrays: the previous persistent association list rebuilt
-;; its whole prefix at every SSA definition, which made a long straight-line
-;; function allocate quadratically even when almost every definition had no
-;; path fact. Zero in `roots` means absent; real roots are already one-based.
-;; Fields remain sparse: only a rooted owning-handle StoreOwned establishes a
-;; field fact. A shallow/raw/foreign value has no Fresh root and therefore
-;; invalidates rather than manufactures a capability, even inside a fresh
-;; wrapper object.
-(defstruct OptOwnedPathEnv
-  (roots (__tl_dyn-array i64))
-  (offsets (__tl_dyn-array i64)))
-
-(defenum OptOwnedFieldEnv
-  (Nil)
-  (Cons i64 i64 ast.AstType i64 (Box OptOwnedFieldEnv)))
-
-(defstruct OptOwnedLoadState
-  (paths OptOwnedPathEnv)
-  (fields OptOwnedFieldEnv)
-  (roots OptLicmRootEnv))
-
-(defenum OptOwnedMaybePath
-  (No)
-  (Some i64 i64))
-
-(defenum OptOwnedMaybeWitness
-  (No)
-  (Some i64))
-
-(defenum OptOwnedLoadStep
-  (Step OptOwnedLoadState ir.CompilerIrInstr))
-
-(defenum OptOwnedInstrsStep
-  (Step OptOwnedLoadState ir.CompilerIrInstrSeq))
-
-(defenum OptOwnedBlocksStep
-  (Step OptOwnedLoadState ir.CompilerIrBlockList))
-
-(define (opt-owned-path-env-with-frame [frame : i64]) : OptOwnedPathEnv
-  (OptOwnedPathEnv (__tl_make-array i64 frame) (__tl_make-array i64 frame)))
-
-(define (opt-owned-path-var-valid?
-  [paths : (& paths OptOwnedPathEnv)]
-  [var : i64]) : bool
-  (and (>= var 0) (< var (array-length paths.roots))))
-
-(define (opt-owned-path-remove [paths : OptOwnedPathEnv] [var : i64]) : OptOwnedPathEnv
-  (begin
-    (if (opt-owned-path-var-valid? (& paths) var)
-      (begin
-        (set! (array-ref paths.roots var) 0)
-        (set! (array-ref paths.offsets var) 0))
-      unit)
-    paths))
-
-(define (opt-owned-path-lookup [paths : (& paths OptOwnedPathEnv)] [var : i64]) : OptOwnedMaybePath
-  (if (not (opt-owned-path-var-valid? (& paths) var))
-    (OptOwnedMaybePath.No)
-    (let
-      [root : i64 (array-ref paths.roots var)]
-      (if (> root 0)
-        (OptOwnedMaybePath.Some root (array-ref paths.offsets var))
-        (OptOwnedMaybePath.No)))))
-
-(define (opt-owned-path-bind
-  [paths : OptOwnedPathEnv]
-  [var : i64]
-  [root : i64]
-  [offset : i64]) : OptOwnedPathEnv
-  (begin
-    (if (opt-owned-path-var-valid? (& paths) var)
-      (begin
-        (set! (array-ref paths.roots var) root)
-        (set! (array-ref paths.offsets var) offset))
-      unit)
-    paths))
-
-(define (opt-owned-field-remove
-  [type-segment-bases : i64]
-  [fields : OptOwnedFieldEnv]
-  [root : i64]
-  [offset : i64]
-  [ty : ast.AstType]) : OptOwnedFieldEnv
-  (match fields
-    [(OptOwnedFieldEnv.Nil) (OptOwnedFieldEnv.Nil)]
-    [(OptOwnedFieldEnv.Cons current-root current-offset current-ty witness rest)
-      (let
-        [tail : OptOwnedFieldEnv
-          (opt-owned-field-remove
-            type-segment-bases
-            (deref rest)
-            root
-            offset
-            (compiler-opt-global-shared-view ty))]
-        (if (and
-          (= current-root root)
-          (= current-offset offset)
-          (opt-type-eq
-            type-segment-bases
-            (compiler-opt-global-shared-view current-ty)
-            ty))
-          tail
-          (OptOwnedFieldEnv.Cons
-            current-root
-            current-offset
-            current-ty
-            witness
-            (box tail))))]))
-
-(define (opt-owned-field-lookup
-  [type-segment-bases : i64]
-  [fields : OptOwnedFieldEnv]
-  [root : i64]
-  [offset : i64]
-  [ty : ast.AstType]) : OptOwnedMaybeWitness
-  (match fields
-    [(OptOwnedFieldEnv.Nil) (OptOwnedMaybeWitness.No)]
-    [(OptOwnedFieldEnv.Cons current-root current-offset current-ty witness rest)
-      (if (and
-        (= current-root root)
-        (= current-offset offset)
-        (opt-type-eq
-          type-segment-bases
-          current-ty
-          (compiler-opt-global-shared-view ty)))
-        (OptOwnedMaybeWitness.Some witness)
-        (opt-owned-field-lookup type-segment-bases (deref rest) root offset ty))]))
-
-(define (opt-owned-field-bind
-  [type-segment-bases : i64]
-  [fields : OptOwnedFieldEnv]
-  [root : i64]
-  [offset : i64]
-  [ty : ast.AstType]
-  [witness : i64]) : OptOwnedFieldEnv
-  (let
-    [rest : OptOwnedFieldEnv
-      (opt-owned-field-remove
-        type-segment-bases
-        fields
-        root
-        offset
-        (compiler-opt-global-shared-view ty))]
-    (OptOwnedFieldEnv.Cons root offset ty witness (box rest))))
-
-(define (opt-owned-fresh-key [roots : (& roots OptLicmRootEnv)] [var : i64]) : i64
-  (match (opt-licm-root-env-lookup roots var)
-    [(OptLicmRoot.Fresh root) (+ root 1)]
-    [_ 0]))
-
-(define (opt-owned-load-step
-  [type-segment-bases : i64]
-  [state : OptOwnedLoadState]
-  [instr : ir.CompilerIrInstr]) : OptOwnedLoadStep
-  (let
-    [paths : OptOwnedPathEnv
-      (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
-        [(option_i64.Some dst) (opt-owned-path-remove state.paths dst)]
-        [(option_i64.None) state.paths])]
-    [fields : OptOwnedFieldEnv state.fields]
-    [roots : OptLicmRootEnv state.roots]
-    ;; Zero means no rewrite; SSA ids are stored one-based here so `%0` can be
-    ;; the checked witness without needing an owning optional payload.
-    [witness-key : i64 0]
-    (begin
-      (match (compiler-opt-global-shared-view instr)
-        [(ir.CompilerIrInstr.Gep
-            dst
-            (ir.CompilerIrValue.Var base)
-            (ir.CompilerIrValue.I64 k)
-            ty)
-          (let
-            [width : i64 (opt-load-loc-type-size type-segment-bases ty)]
-            [delta : i64 (* k width)]
-            (if (> width 0)
-              (match (opt-owned-path-lookup paths base)
-                [(OptOwnedMaybePath.Some root offset)
-                  (set!
-                    paths
-                    (opt-owned-path-bind paths dst root (+ offset delta)))]
-                [(OptOwnedMaybePath.No)
-                  (let
-                    [root : i64 (opt-owned-fresh-key (& roots) base)]
-                    (if (> root 0)
-                      (set! paths (opt-owned-path-bind paths dst root delta))
-                      unit))])
-              unit))]
-        [(ir.CompilerIrInstr.Mov dst (ir.CompilerIrValue.Var src) _)
-          (match (opt-owned-path-lookup paths src)
-            [(OptOwnedMaybePath.Some root offset)
-              (set! paths (opt-owned-path-bind paths dst root offset))]
-            [(OptOwnedMaybePath.No) unit])]
-        [(ir.CompilerIrInstr.StoreOwned (ir.CompilerIrValue.Var ptr) value ty)
-          (match (opt-owned-path-lookup paths ptr)
-            [(OptOwnedMaybePath.Some root offset)
-              (begin
-                (set!
-                  fields
-                  (opt-owned-field-remove
-                    type-segment-bases
-                    fields
-                    root
-                    offset
-                    (compiler-opt-global-shared-view ty)))
-                (if (opt-owned-handle-type?
-                  (compiler-opt-global-shared-view ty))
-                  (match value
-                    [(ir.CompilerIrValue.Var witness)
-                      (if (> (opt-owned-fresh-key (& roots) witness) 0)
-                        (set!
-                          fields
-                          (opt-owned-field-bind
-                            type-segment-bases
-                            fields
-                            root
-                            offset
-                            ty
-                            witness))
-                        unit)]
-                    [_ unit])
-                  unit))]
-            ;; An unclassified write could reach an escaped object. Forget all
-            ;; checked transfers rather than guessing disjointness.
-            [(OptOwnedMaybePath.No) (set! fields (OptOwnedFieldEnv.Nil))])]
-        [(ir.CompilerIrInstr.StorePtr (ir.CompilerIrValue.Var ptr) _ ty)
-          (match (opt-owned-path-lookup paths ptr)
-            [(OptOwnedMaybePath.Some root offset)
-              (set!
-                fields
-                (opt-owned-field-remove
-                  type-segment-bases
-                  fields
-                  root
-                  offset
-                  ty))]
-            [(OptOwnedMaybePath.No) (set! fields (OptOwnedFieldEnv.Nil))])]
-        [(ir.CompilerIrInstr.StorePtr _ _ _)
-          (set! fields (OptOwnedFieldEnv.Nil))]
-        [(ir.CompilerIrInstr.StoreOwned _ _ _)
-          (set! fields (OptOwnedFieldEnv.Nil))]
-        [(ir.CompilerIrInstr.Load dst (ir.CompilerIrValue.Var ptr) ty)
-          (if (opt-owned-handle-type? (compiler-opt-global-shared-view ty))
-            (match (opt-owned-path-lookup paths ptr)
-              [(OptOwnedMaybePath.Some root offset)
-                (match (opt-owned-field-lookup
-                  type-segment-bases
-                  (compiler-opt-global-shared-view fields)
-                  root
-                  offset
-                  ty)
-                  [(OptOwnedMaybeWitness.Some witness)
-                    (set! witness-key (+ witness 1))]
-                  [(OptOwnedMaybeWitness.No) unit])]
-              [(OptOwnedMaybePath.No) unit])
-            unit)]
-        [(ir.CompilerIrInstr.Call _ _ _ _) (set! fields (OptOwnedFieldEnv.Nil))]
-        [(ir.CompilerIrInstr.CallIndirect _ _ _ _)
-          (set! fields (OptOwnedFieldEnv.Nil))]
-        [(ir.CompilerIrInstr.CallIndirectC _ _ _ _)
-          (set! fields (OptOwnedFieldEnv.Nil))]
-        [(ir.CompilerIrInstr.CopyBytes _ _ _)
-          (set! fields (OptOwnedFieldEnv.Nil))]
-        [_ unit])
-      (let
-        [out : ir.CompilerIrInstr
-          (if (> witness-key 0)
-            (match (compiler-opt-global-shared-view instr)
-              [(ir.CompilerIrInstr.Load dst src ty)
-                (ir.CompilerIrInstr.LoadOwned dst src (- witness-key 1) ty)]
-              [_ instr])
-            instr)]
-        (begin
-          (opt-licm-root-env-update-instr!
-            (&mut roots)
-            (compiler-opt-global-shared-view out))
-          (OptOwnedLoadStep.Step (OptOwnedLoadState paths fields roots) out))))))
-
-(define (opt-owned-load-promote-instrs-from!
-  [type-segment-bases : i64]
-  [state : OptOwnedLoadState]
-  [instrs : ir.CompilerIrInstrSeq]
-  [builder : (&mut builder ir.CompilerIrInstrBuilder)]
-  [index : i64]
-  [count : i64]) : OptOwnedLoadState
-  (if (>= index count)
-    state
-    (let
-      [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
-      (match (opt-owned-load-step type-segment-bases state instr)
-        [(OptOwnedLoadStep.Step stepped rewritten)
-          (begin
-            (ir.compiler-ir-instr-builder-push! builder rewritten)
-            (opt-owned-load-promote-instrs-from!
-              type-segment-bases
-              stepped
-              instrs
-              builder
-              (+ index 1)
-              count))]))))
-
-(define (opt-owned-load-promote-instrs
-  [type-segment-bases : i64]
-  [state : OptOwnedLoadState]
-  [instrs : ir.CompilerIrInstrSeq]) : OptOwnedInstrsStep
+;; The lowerer emits a checked move into an owned aggregate place as
+;; `store_owned`. Everything below LICM, and the backend, reads it as the
+;; ordinary `store_ptr` it is.
+(define (opt-store-owned-erase-instrs [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
   (let
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [builder : ir.CompilerIrInstrBuilder
       (ir.compiler-ir-instr-builder-with-capacity count)]
-    [next : OptOwnedLoadState
-      (opt-owned-load-promote-instrs-from!
-        type-segment-bases
-        state
-        instrs
-        (&mut builder)
-        0
-        count)]
-    (OptOwnedInstrsStep.Step next (ir.compiler-ir-instr-builder-to-seq builder))))
-
-(define (opt-owned-load-promote-blocks
-  [type-segment-bases : i64]
-  [state : OptOwnedLoadState]
-  [blocks : ir.CompilerIrBlockList]) : OptOwnedBlocksStep
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil)
-      (OptOwnedBlocksStep.Step state (ir.CompilerIrBlockList.Nil))]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block label instrs)
-          (match (opt-owned-load-promote-instrs type-segment-bases state instrs)
-            [(OptOwnedInstrsStep.Step after-instrs rewritten)
-              (match (opt-owned-load-promote-blocks
-                type-segment-bases
-                after-instrs
-                (deref rest))
-                [(OptOwnedBlocksStep.Step after-rest rewritten-rest)
-                  (OptOwnedBlocksStep.Step
-                    after-rest
-                    (ir.CompilerIrBlockList.Cons
-                      (ir.CompilerIrBlock.Block label rewritten)
-                      (box rewritten-rest)))])])])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (opt-owned-load-promote-blocks
-        type-segment-bases
-        state
-        (ir.compiler-ir-block-seq-to-list seq))]))
-
-;; The producer scan above is deliberately cheap and block-linear. Validate
-;; each promoted capability against the full CFG before LICM sees it, demoting
-;; only the stale claim. In particular, a call/store textually after a load on
-;; a loop backedge lies before the next dynamic execution of that same load.
-(define (opt-owned-load-sanitize-instr
-  [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
-  [doms : (& doms OptDomInfo)]
-  [return-alias : (& return-alias opt_i64_i64_map.Map)]
-  [block-id : i64]
-  [pos : i64]
-  [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
-  (match (compiler-opt-global-shared-view instr)
-    [(ir.CompilerIrInstr.LoadOwned dst src owner ty)
-      (if (opt-verify-ok?
-        (opt-verify-owned-load-transfer
-          defs
-          doms
-          return-alias
-          (compiler-opt-global-shared-view src)
-          owner
-          (compiler-opt-global-shared-view ty)
-          block-id
-          pos))
-        instr
-        (ir.CompilerIrInstr.Load dst src ty))]
-    [_ instr]))
-
-(define (opt-owned-load-sanitize-instrs
-  [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
-  [doms : (& doms OptDomInfo)]
-  [return-alias : (& return-alias opt_i64_i64_map.Map)]
-  [block-id : i64]
-  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
-  (let
-    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
-    [builder : ir.CompilerIrInstrBuilder
-      (ir.compiler-ir-instr-builder-with-capacity count)]
-    [index : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (ir.compiler-ir-instr-builder-push!
-            (&mut builder)
-            (opt-owned-load-sanitize-instr
-              defs
-              doms
-              return-alias
-              block-id
-              (+ index 1)
-              (ir.compiler-ir-instr-seq-ref instrs index)))
-          (set! index (+ index 1))))
-      (ir.compiler-ir-instr-builder-to-seq builder))))
-
-(define (opt-owned-load-sanitize-blocks
-  [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
-  [doms : (& doms OptDomInfo)]
-  [return-alias : (& return-alias opt_i64_i64_map.Map)]
-  [blocks : ir.CompilerIrBlockList]
-  [block-id : i64]) : ir.CompilerIrBlockList
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) (ir.CompilerIrBlockList.Nil)]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block label instrs)
-          (ir.CompilerIrBlockList.Cons
-            (ir.CompilerIrBlock.Block
-              label
-              (opt-owned-load-sanitize-instrs
-                defs
-                doms
-                return-alias
-                block-id
-                instrs))
-            (box
-              (opt-owned-load-sanitize-blocks
-                defs
-                doms
-                return-alias
-                (deref rest)
-                (+ block-id 1))))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (opt-owned-load-sanitize-blocks
-        defs
-        doms
-        return-alias
-        (ir.compiler-ir-block-seq-to-list seq)
-        block-id)]))
-
-(define (opt-owned-load-sanitize-function
-  [return-alias : opt_i64_i64_map.Map]
-  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
-  (match (compiler-opt-global-shared-view func)
-    [(ir.CompilerIrFunction.Function name params ret frame blocks function-abi)
-      (let
-        [context : OptCfgContext
-          (opt-cfg-context-build (compiler-opt-global-shared-view blocks))]
-        (match (opt-var-defs-index-checked
-          (compiler-opt-global-shared-view params)
-          frame
-          (compiler-opt-global-shared-view blocks))
-          [(OptVarDefsIndex.Duplicate) func]
-          [(OptVarDefsIndex.Index defs)
-            (ir.CompilerIrFunction.Function
-              name
-              params
-              ret
-              frame
-              (opt-owned-load-sanitize-blocks
-                defs
-                context.doms
-                (& return-alias)
-                blocks
-                0)
-              function-abi)]))]))
-
-(define (opt-owned-param-leading-phis
-  [instrs : ir.CompilerIrInstrSeq]
-  [index : i64]) : i64
-  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-    index
-    (match (ir.compiler-ir-instr-seq-ref instrs index)
-      [(ir.CompilerIrInstr.Phi _ _ _)
-        (opt-owned-param-leading-phis instrs (+ index 1))]
-      [_ index])))
-
-(define (opt-owned-param-marker-count
-  [params : ir.CompilerIrParamSeq]
-  [mask : i64]) : i64
-  (let
-    [position : i64 0]
-    [count : i64 0]
-    (begin
-      (while (and (< position params.len) (< position (opt-owned-param-limit)))
-        (begin
-          (if (opt-owned-param-mask-has? mask position)
-            (match (ir.compiler-ir-param-seq-ref
-              (compiler-opt-global-shared-view params)
-              position)
-              [(ir.CompilerIrParam.Param _ ty _)
-                (if (opt-owned-handle-type? ty)
-                  (set! count (+ count 1))
-                  unit)])
-            unit)
-          (set! position (+ position 1))))
-      count)))
-
-(define (opt-owned-param-append-markers!
-  [params : ir.CompilerIrParamSeq]
-  [mask : i64]
-  [frame : i64]
-  [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : i64
-  (let
-    [position : i64 0]
-    [count : i64 0]
-    (begin
-      (while (and (< position params.len) (< position (opt-owned-param-limit)))
-        (begin
-          (if (opt-owned-param-mask-has? mask position)
-            (match (ir.compiler-ir-param-seq-ref
-              (compiler-opt-global-shared-view params)
-              position)
-              [(ir.CompilerIrParam.Param _ ty var)
-                (if (opt-owned-handle-type?
-                  (compiler-opt-global-shared-view ty))
-                  (begin
-                    (ir.compiler-ir-instr-builder-push!
-                      builder
-                      (ir.CompilerIrInstr.OwnRoot
-                        (+ frame count)
-                        (ir.CompilerIrValue.Var var)
-                        ty))
-                    (set! count (+ count 1)))
-                  unit)])
-            unit)
-          (set! position (+ position 1))))
-      count)))
-
-(define (opt-owned-param-mark-first-block
-  [params : ir.CompilerIrParamSeq]
-  [mask : i64]
-  [frame : i64]
-  [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) (ir.CompilerIrBlockList.Nil)]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block label instrs)
-          (let
-            [count : i64
-              (opt-owned-param-marker-count
-                (compiler-opt-global-shared-view params)
-                mask)]
-            [leading : i64
-              (opt-owned-param-leading-phis
-                (compiler-opt-global-shared-view instrs)
-                0)]
-            [builder : ir.CompilerIrInstrBuilder
-              (ir.compiler-ir-instr-builder-with-capacity
-                (+ (ir.compiler-ir-instr-seq-count instrs) count))]
-            (begin
-              (ir.compiler-ir-instr-builder-append-seq-range!
-                (&mut builder)
-                (compiler-opt-global-shared-view instrs)
-                0
-                leading)
-              (opt-owned-param-append-markers! params mask frame (&mut builder))
-              (ir.compiler-ir-instr-builder-append-seq-range!
-                (&mut builder)
-                (compiler-opt-global-shared-view instrs)
-                leading
-                (ir.compiler-ir-instr-seq-count instrs))
-              (ir.CompilerIrBlockList.Cons
-                (ir.CompilerIrBlock.Block
-                  label
-                  (ir.compiler-ir-instr-builder-to-seq builder))
-                rest)))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (opt-owned-param-mark-first-block
-        params
-        mask
-        frame
-        (ir.compiler-ir-block-seq-to-list seq))]))
-
-(define (opt-owned-param-mark-function
-  [owned-params : opt_i64_i64_map.Map]
-  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
-  (match (compiler-opt-global-shared-view func)
-    [(ir.CompilerIrFunction.Function name params ret frame blocks function-abi)
-      (let
-        [mask : i64 (opt-owned-param-mask (& owned-params) name)]
-        [count : i64
-          (opt-owned-param-marker-count
-            (compiler-opt-global-shared-view params)
-            mask)]
-        (if (= count 0)
-          func
-          (let
-            [marked : ir.CompilerIrBlockList
-              (opt-owned-param-mark-first-block
-                (compiler-opt-global-shared-view params)
-                mask
-                frame
-                blocks)]
-            (ir.CompilerIrFunction.Function
-              name
-              params
-              ret
-              (+ frame count)
-              marked
-              function-abi))))]))
-
-(define (opt-owned-load-promote-function-unsanitized
-  [type-segment-bases : i64]
-  [return-alias : opt_i64_i64_map.Map]
-  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
-  (match func
-    [(ir.CompilerIrFunction.Function name params ret frame blocks function-abi)
-      (let
-        [types : OptSsaVarTypes
-          (opt-licm-type-env-from-function
-            (compiler-opt-global-shared-view params)
-            (compiler-opt-global-shared-view blocks))]
-        [provenance : OptLicmStoreState
-          (opt-licm-provenance-state-from-function
-            type-segment-bases
-            (compiler-opt-global-shared-view params)
-            types
-            return-alias
-            (opt_i64_i64_map.with-capacity 1)
-            (compiler-opt-global-shared-view blocks))]
-        [initial : OptOwnedLoadState
-          (OptOwnedLoadState
-            (opt-owned-path-env-with-frame frame)
-            (OptOwnedFieldEnv.Nil)
-            provenance.roots)]
-        (match (opt-owned-load-promote-blocks type-segment-bases initial blocks)
-          [(OptOwnedBlocksStep.Step _ rewritten)
-            (ir.CompilerIrFunction.Function
-              name
-              params
-              ret
-              frame
-              rewritten
-              function-abi)]))]))
-
-(define (opt-owned-load-promote-function
-  [type-segment-bases : i64]
-  [return-alias : opt_i64_i64_map.Map]
-  [owned-params : opt_i64_i64_map.Map]
-  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
-  (let
-    [marked : ir.CompilerIrFunction
-      (opt-owned-param-mark-function owned-params func)]
-    (opt-owned-load-sanitize-function
-      (compiler-opt-global-shared-view return-alias)
-      (opt-owned-load-promote-function-unsanitized
-        type-segment-bases
-        return-alias
-        marked))))
-
-;; Ownership capabilities have exactly one consumer: LICM. Avoid materialising,
-;; validating, and then erasing a complete extra IR generation for an acyclic
-;; function. This matters for generated straight-line bodies, where the old
-;; unconditional window copied tens of thousands of instructions during every
-;; optimizer round even though LICM had no loop to inspect.
-(define (opt-owned-load-loop-window-needed?
-  [blocks : ir.CompilerIrBlockList]
-  [context : OptCfgContext]) : bool
-  (match (opt-cfg-natural-loops-with-context blocks context)
-    [(OptNaturalLoopList.Nil) false]
-    [(OptNaturalLoopList.Cons _ _) true]))
-
-(define (opt-owned-load-erase-instr [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
-  (match (compiler-opt-global-shared-view instr)
-    [(ir.CompilerIrInstr.LoadOwned dst src _ ty)
-      (ir.CompilerIrInstr.Load dst src ty)]
-    [(ir.CompilerIrInstr.OwnRoot dst src ty)
-      (ir.CompilerIrInstr.Mov dst src ty)]
-    [(ir.CompilerIrInstr.StoreOwned ptr value ty)
-      (ir.CompilerIrInstr.StorePtr ptr value ty)]
-    [_ instr]))
-
-(define (opt-owned-load-erased-count-instrs [instrs : ir.CompilerIrInstrSeq]) : i64
-  (let
-    [index : i64 0]
-    [count : i64 0]
-    (begin
-      (while (< index (ir.compiler-ir-instr-seq-count instrs))
-        (begin
-          (match (ir.compiler-ir-instr-seq-ref instrs index)
-            [(ir.CompilerIrInstr.OwnRoot _ _ _) (set! count (+ count 1))]
-            [_ unit])
-          (set! index (+ index 1))))
-      count)))
-
-(define (opt-owned-load-erase-instrs [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
-  (let
-    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
-    [builder : ir.CompilerIrInstrBuilder
-      (ir.compiler-ir-instr-builder-with-capacity
-        (-
-          count
-          (opt-owned-load-erased-count-instrs
-            (compiler-opt-global-shared-view instrs))))]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -28675,42 +26969,16 @@
           (let
             [instr : ir.CompilerIrInstr
               (ir.compiler-ir-instr-seq-ref instrs index)]
-            (match (compiler-opt-global-shared-view instr)
-              [(ir.CompilerIrInstr.OwnRoot _ _ _) unit]
-              [_
-                (ir.compiler-ir-instr-builder-push!
-                  (&mut builder)
-                  (opt-owned-load-erase-instr instr))]))
+            (ir.compiler-ir-instr-builder-push!
+              (&mut builder)
+              (match (compiler-opt-global-shared-view instr)
+                [(ir.CompilerIrInstr.StoreOwned ptr value ty)
+                  (ir.CompilerIrInstr.StorePtr ptr value ty)]
+                [_ instr])))
           (set! index (+ index 1))))
       (ir.compiler-ir-instr-builder-to-seq builder))))
 
-(define (opt-owned-load-marker-count-instrs [instrs : ir.CompilerIrInstrSeq]) : i64
-  (let
-    [index : i64 0]
-    [count : i64 0]
-    (begin
-      (while (< index (ir.compiler-ir-instr-seq-count instrs))
-        (begin
-          (match (ir.compiler-ir-instr-seq-ref instrs index)
-            [(ir.CompilerIrInstr.OwnRoot _ _ _) (set! count (+ count 1))]
-            [_ unit])
-          (set! index (+ index 1))))
-      count)))
-
-(define (opt-owned-load-marker-count-blocks [blocks : ir.CompilerIrBlockList]) : i64
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) 0]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (+
-            (opt-owned-load-marker-count-instrs instrs)
-            (opt-owned-load-marker-count-blocks (deref rest)))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (opt-owned-load-marker-count-blocks
-        (ir.compiler-ir-block-seq-to-list seq))]))
-
-(define (opt-owned-load-erase-blocks [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
+(define (opt-store-owned-erase-blocks [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
   (match blocks
     [(ir.CompilerIrBlockList.Nil) (ir.CompilerIrBlockList.Nil)]
     [(ir.CompilerIrBlockList.Cons block rest)
@@ -28719,23 +26987,20 @@
           (ir.CompilerIrBlockList.Cons
             (ir.CompilerIrBlock.Block
               label
-              (opt-owned-load-erase-instrs instrs))
-            (box (opt-owned-load-erase-blocks (deref rest))))])]
+              (opt-store-owned-erase-instrs instrs))
+            (box (opt-store-owned-erase-blocks (deref rest))))])]
     [(ir.CompilerIrBlockList.Array seq)
-      (opt-owned-load-erase-blocks (ir.compiler-ir-block-seq-to-list seq))]))
+      (opt-store-owned-erase-blocks (ir.compiler-ir-block-seq-to-list seq))]))
 
-(define (opt-owned-load-erase-function [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+(define (opt-store-owned-erase-function [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (match func
     [(ir.CompilerIrFunction.Function name params ret frame blocks function-abi)
       (ir.CompilerIrFunction.Function
         name
         params
         ret
-        (-
-          frame
-          (opt-owned-load-marker-count-blocks
-            (compiler-opt-global-shared-view blocks)))
-        (opt-owned-load-erase-blocks blocks)
+        frame
+        (opt-store-owned-erase-blocks blocks)
         function-abi)]))
 
 (define (opt-licm-store-summary-blocks
@@ -30214,33 +28479,6 @@
             ;; read. The load behind this address asks the question in the Load
             ;; arm below, where the type is the one actually read.
             false)))]
-    [(ir.CompilerIrInstr.LoadOwned dst src _ ty)
-      ;; The capability makes the memory motion sound, but it does not make a
-      ;; descriptor handle cheap to keep live across a call. Such a handle
-      ;; occupies the callee-saved GP file and normally unlocks its data and
-      ;; length too. `owned-hoist?` prices that whole three-word chain against
-      ;; the loop's live-ins, including call-spanning loops; soundness still
-      ;; comes solely from the explicit owner witness and verifier.
-      (and
-        globals.owned-hoist?
-        (opt-licm-candidate?
-          type-segment-bases
-          loop-defs
-          hoisted
-          sources
-          types
-          store-summary
-          legacy-store-summary
-          ptrs
-          roots
-          store-roots
-          any-call?
-          licm-mode
-          descriptor-header-hoist?
-          globals
-          hot-uses
-          deref-site
-          (ir.CompilerIrInstr.Load dst src ty)))]
     [(ir.CompilerIrInstr.Load dst src load-ty)
       (and
         (opt-gvn-stable-var? sources dst)
@@ -31970,81 +30208,6 @@
         unit)
       admitted?)))
 
-;; One capability-bearing handle normally unlocks the descriptor's data and
-;; length loads too, so price the full three-word chain instead of only the
-;; LoadOwned result. The twelve-word budget is the established descriptor-chain
-;; boundary: it admits compact loops while keeping a hot accumulator and its
-;; loop-control values in the GP register file.
-(define (opt-licm-owned-chain-words) : i64
-  3)
-
-(define (opt-licm-owned-live-in-budget) : i64
-  (opt-licm-frozen-chain-live-in-budget))
-
-(define (opt-licm-owned-count-instrs
-  [instrs : ir.CompilerIrInstrSeq]
-  [index : i64]
-  [count : i64]) : i64
-  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-    count
-    (opt-licm-owned-count-instrs
-      (compiler-opt-global-shared-view instrs)
-      (+ index 1)
-      (+
-        count
-        (match (ir.compiler-ir-instr-seq-ref instrs index)
-          [(ir.CompilerIrInstr.LoadOwned _ _ _ _) 1]
-          [_ 0])))))
-
-(define (opt-licm-owned-count-blocks
-  [blocks : ir.CompilerIrBlockList]
-  [count : i64]) : i64
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) count]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (opt-licm-owned-count-blocks
-            (deref rest)
-            (opt-licm-owned-count-instrs instrs 0 count))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (opt-licm-owned-count-blocks (ir.compiler-ir-block-seq-to-list seq) count)]))
-
-(define (opt-licm-owned-hoist?
-  [header : i64]
-  [side-exit-kind : i64]
-  [count : i64]
-  [live-in : i64]) : bool
-  (let
-    [cost : i64 (+ live-in (* count (opt-licm-owned-chain-words)))]
-    [admitted? : bool
-      (and
-        (not (= side-exit-kind 1))
-        (> count 0)
-        (<= cost (opt-licm-owned-live-in-budget)))]
-    (begin
-      (if (and
-        (> count 0)
-        compiler-opt-debug-trace-passes
-        (not compiler-opt-debug-suppressed?))
-        (io.print-error
-          (str_cat.str-cat
-            "optimizer-owned-licm|"
-            (ir.compiler-ir-label-text header)
-            "|live-in="
-            (string.int->string live-in)
-            "|chains="
-            (string.int->string count)
-            "|cost="
-            (string.int->string cost)
-            "|budget="
-            (string.int->string (opt-licm-owned-live-in-budget))
-            (if admitted?
-              "|admitted\n"
-              "|refused\n")))
-        unit)
-      admitted?)))
-
 ;; --- ALIAS-2: LICM refusal tracing ---------------------------------------------
 ;;
 ;; Every clause below is a verdict about ONE loop-invariant CANDIDATE, and until
@@ -32972,16 +31135,6 @@
         [loop-live-in : i64
           (opt-unroll-mb-live-in-count
             (compiler-opt-global-shared-view body-blocks))]
-        [owned-count : i64
-          (opt-licm-owned-count-blocks
-            (compiler-opt-global-shared-view body-blocks)
-            0)]
-        [owned-hoist? : bool
-          (opt-licm-owned-hoist?
-            (opt-natural-loop-header (compiler-opt-global-shared-view loop))
-            side-exit-kind
-            owned-count
-            loop-live-in)]
         [header-count : i64
           (opt-licm-global-header-count
             global-cells
@@ -33022,8 +31175,7 @@
               side-exit-kind
               (opt_i64_i64_map.len (& header-admit))
               loop-live-in)
-            header-admit
-            owned-hoist?)]
+            header-admit)]
         [globals-promote-clean? : bool
           (and
             globals-clean-relaxed?
@@ -72566,11 +70718,6 @@
   ;; program from the same reachable-function list as the call summaries and
   ;; consumed in the same per-function level-2 pass.
   (return-alias opt_i64_i64_map.Map)
-  ;; Checked internal by-value owner boundaries: function symbol id -> bitset
-  ;; of parameter positions whose every reachable entry receives a distinct
-  ;; explicit Fresh root. The owned_handles pass materializes these as
-  ;; inspectable OwnRoot markers; an empty map keeps lower levels unchanged.
-  (owned-params opt_i64_i64_map.Map)
   ;; Whole-program table of never-written literal-i64 globals, mapping
   ;; global name -> constant value. Carried alongside the BCE summaries (rather
   ;; than threaded as a separate parameter) because both are built once per
@@ -72629,7 +70776,6 @@
   (OptLoopBceSummaries
     false
     (profile_state.compiler-profile-state-new)
-    (opt_i64_i64_map.with-capacity 8)
     (opt_i64_i64_map.with-capacity 8)
     (opt_i64_i64_map.with-capacity 8)
     (opt_i64_i64_map.with-capacity 8)
@@ -123587,47 +121733,12 @@
                           "dead_phi"
                           name
                           _t-dead-phi)]
-                      ;; Materialize checked owning-handle loads only for the
-                      ;; narrow LICM window. General folding/GVN never sees the
-                      ;; capability, and the observer makes the complete proof
-                      ;; (`own_root`, `store_owned`, `load_owned`) inspectable.
-                      [owned-loop-window? : bool
-                        (opt-owned-load-loop-window-needed?
-                          (opt-function-blocks
-                            (compiler-opt-global-shared-view dead-phi))
-                          (compiler-opt-global-shared-view dead-phi-context))]
-                      [owned-dead-phi : ir.CompilerIrFunction
-                        (compiler-opt-debug-observe-function
-                          type-segment-bases
-                          "owned_handles"
-                          (if owned-loop-window?
-                            (opt-owned-load-promote-function
-                              type-segment-bases
-                              (compiler-opt-global-shared-view
-                                summaries.return-alias)
-                              summaries.owned-params
-                              dead-phi)
-                            dead-phi))]
-                      [_owned-refresh : unit
-                        (opt-cfg-index-refresh-blocks!
-                          (compiler-opt-global-shared-view
-                            (__tl-project-field dead-phi-context index))
-                          (opt-function-blocks
-                            (compiler-opt-global-shared-view owned-dead-phi)))]
-                      [owned-verified? : bool
-                        (if owned-loop-window?
-                          (opt-verify-ok?
-                            (opt-verify-function-with-context-and-return-alias
-                              (compiler-opt-global-shared-view owned-dead-phi)
-                              dead-phi-context
-                              summaries.return-alias))
-                          loop-cluster-verified?)]
                       [_t-licm : i64 (cfg compile-profile (profile.now-ms) 0)]
                       [licm-result : OptFunctionCtxResult
                         (opt-licm-function-with-context-result-and-direct-call-clean
                           type-segment-bases
                           dead-phi-context
-                          owned-verified?
+                          loop-cluster-verified?
                           (compiler-opt-global-shared-view
                             summaries.direct-call-clean)
                           (compiler-opt-global-shared-view
@@ -123635,7 +121746,7 @@
                           (compiler-opt-global-shared-view
                             summaries.global-cell)
                           false
-                          owned-dead-phi)]
+                          dead-phi)]
                       [licm-owned : ir.CompilerIrFunction
                         (compiler-opt-debug-observe-function
                           type-segment-bases
@@ -123645,12 +121756,11 @@
                       [licm-context : OptCfgContext
                         (match licm-result
                           [(OptFunctionCtxResult.Result _ ctx) ctx])]
-                      ;; Erase the explicit capability forms immediately after
-                      ;; their sole consumer. The backend receives ordinary
-                      ;; moves, stores, and loads, so evidence vars cannot
-                      ;; survive register-home reuse or a generation reset.
+                      ;; The lowerer's checked moves into owned places arrive as
+                      ;; `store_owned`; everything below LICM reads them as the
+                      ;; ordinary `store_ptr` they are.
                       [licm : ir.CompilerIrFunction
-                        (opt-owned-load-erase-function licm-owned)]
+                        (opt-store-owned-erase-function licm-owned)]
                       [_licm-erased-refresh : unit
                         (opt-cfg-index-refresh-blocks!
                           (compiler-opt-global-shared-view
@@ -146037,7 +144147,6 @@
       argc-return
       return-alias
       (opt_i64_i64_map.with-capacity 1)
-      (opt_i64_i64_map.with-capacity 1)
       (opt-global-cell-summary-empty)
       (ir.compiler-ir-representation-index-empty)
       (opt_i64_i64_map.with-capacity 1)
@@ -146054,26 +144163,7 @@
     summaries.call-memory
     summaries.argc-return
     summaries.return-alias
-    summaries.owned-params
     const-divisors
-    summaries.global-cell
-    summaries.representations
-    summaries.const-lengths
-    summaries.init-functions))
-
-(define (opt-loop-bce-summaries-set-owned-params
-  [summaries : OptLoopBceSummaries]
-  [owned-params : opt_i64_i64_map.Map]) : OptLoopBceSummaries
-  (OptLoopBceSummaries
-    summaries.enabled
-    summaries.profile-state
-    summaries.length-clean
-    summaries.direct-call-clean
-    summaries.call-memory
-    summaries.argc-return
-    summaries.return-alias
-    owned-params
-    summaries.const-divisors
     summaries.global-cell
     summaries.representations
     summaries.const-lengths
@@ -146090,7 +144180,6 @@
     summaries.call-memory
     summaries.argc-return
     summaries.return-alias
-    summaries.owned-params
     summaries.const-divisors
     global-cell
     summaries.representations
@@ -146108,7 +144197,6 @@
     summaries.call-memory
     summaries.argc-return
     summaries.return-alias
-    summaries.owned-params
     summaries.const-divisors
     summaries.global-cell
     summaries.representations
@@ -146126,7 +144214,6 @@
     summaries.call-memory
     summaries.argc-return
     summaries.return-alias
-    summaries.owned-params
     summaries.const-divisors
     summaries.global-cell
     representations
@@ -146144,7 +144231,6 @@
     summaries.call-memory
     summaries.argc-return
     summaries.return-alias
-    summaries.owned-params
     summaries.const-divisors
     summaries.global-cell
     summaries.representations
@@ -146166,7 +144252,7 @@
   (let
     [capacity : i64
       (opt-function-index-capacity (opt-function-seq-count reachable-functions))]
-    [base-unowned : OptLoopBceSummaries
+    [base : OptLoopBceSummaries
       (opt-loop-bce-summaries-set-const-divisors
         (if (<=
           (opt-function-seq-count reachable-functions)
@@ -146182,22 +144268,6 @@
           (opt-const-divisors-build
             (compiler-opt-global-shared-view globals)
             reachable-functions)
-          (opt_i64_i64_map.with-capacity 1)))]
-    [base : OptLoopBceSummaries
-      (opt-loop-bce-summaries-set-owned-params
-        (compiler-opt-global-shared-view base-unowned)
-        (if (and
-          (>= level 2)
-          (<=
-            (opt-function-seq-count reachable-functions)
-            (opt-loop-bce-summary-function-limit)))
-          (opt-owned-param-map
-            type-segment-bases
-            (compiler-opt-global-shared-view globals)
-            (compiler-opt-global-shared-view externs)
-            reachable-functions
-            base-unowned.return-alias
-            capacity)
           (opt_i64_i64_map.with-capacity 1)))]
     ;; CL-1 reads the program before the attach chain below moves it.
     [lengths : OptConstLengths
@@ -157711,544 +155781,6 @@
       functions
       cell.len-eq
       capacity)))
-
-;; --- checked internal by-value owner boundaries ----------------------------
-;;
-;; A DynArray/String parameter is semantically owned, but the IR type alone is
-;; not proof: compiler migration code can deliberately form an unsafe shallow
-;; representation view. Establish the boundary only when the whole reachable
-;; program accounts for every activation and every direct call passes a value
-;; with an already explicit Fresh root. Address-taken functions, entry/runtime
-;; roots, provided externs, global initializers, C-ABI/SPMD entries, missing
-;; arguments, and mixed roots all fail closed. The result is materialized as an
-;; `own_root` marker in the callee immediately before the LICM window.
-(define (opt-owned-param-limit) : i64
-  (opt-call-memory-param-limit))
-
-(define (opt-owned-param-bit [position : i64]) : i64
-  (if (and (>= position 0) (< position (opt-owned-param-limit)))
-    (shl 1 position)
-    0))
-
-(define (opt-owned-param-mask-has? [mask : i64] [position : i64]) : bool
-  (let
-    [bit : i64 (opt-owned-param-bit position)]
-    (and (> bit 0) (not (= (bit-and mask bit) 0)))))
-
-(define (opt-owned-param-candidate-mask [params : ir.CompilerIrParamSeq]) : i64
-  (let
-    [position : i64 0]
-    [mask : i64 0]
-    (begin
-      (while (and (< position params.len) (< position (opt-owned-param-limit)))
-        (begin
-          (match (ir.compiler-ir-param-seq-ref
-            (compiler-opt-global-shared-view params)
-            position)
-            [(ir.CompilerIrParam.Param _ ty _)
-              (if (opt-owned-handle-type? ty)
-                (set! mask (bit-or mask (opt-owned-param-bit position)))
-                unit)])
-          (set! position (+ position 1))))
-      mask)))
-
-(define (opt-owned-param-candidates
-  [functions : (& functions ir.CompilerIrFunctionSeq)]
-  [capacity : i64]) : opt_i64_i64_map.Map
-  (let
-    [out : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity capacity)]
-    [index : i64 0]
-    (begin
-      (while (< index functions.len)
-        (begin
-          (match (compiler-opt-global-array-element-shared-view
-            functions.slots
-            index)
-            [(ir.CompilerIrFunction.Function name params _ _ _ _)
-              (let
-                [mask : i64 (opt-owned-param-candidate-mask params)]
-                (if (> mask 0)
-                  (opt_i64_i64_map.insert-ref!
-                    (&mut out)
-                    (ir.compiler-ir-symbol-id name)
-                    mask)
-                  unit))])
-          (set! index (+ index 1))))
-      out)))
-
-(define (opt-owned-param-mask
-  [owned : (& owned opt_i64_i64_map.Map)]
-  [name : i64]) : i64
-  (match (opt_i64_i64_map.get owned (ir.compiler-ir-symbol-id name))
-    [(opt_i64_i64_map.LookupFound mask) mask]
-    [(opt_i64_i64_map.LookupMissing) 0]))
-
-(define (opt-owned-param-seed-roots!
-  [owned : (& owned opt_i64_i64_map.Map)]
-  [name : i64]
-  [params : ir.CompilerIrParamSeq]
-  [roots : (&mut roots OptLicmRootEnv)]) : unit
-  (let
-    [mask : i64 (opt-owned-param-mask owned name)]
-    [position : i64 0]
-    (while (and (< position params.len) (< position (opt-owned-param-limit)))
-      (begin
-        (if (opt-owned-param-mask-has? mask position)
-          (match (ir.compiler-ir-param-seq-ref
-            (compiler-opt-global-shared-view params)
-            position)
-            [(ir.CompilerIrParam.Param _ ty var)
-              (if (opt-owned-handle-type? ty)
-                (opt-licm-root-env-bind! roots var (OptLicmRoot.Fresh var))
-                unit)])
-          unit)
-        (set! position (+ position 1))))))
-
-(define (opt-owned-param-root-update-instr!
-  [sources : (& sources OptValueSources)]
-  [roots : (&mut roots OptLicmRootEnv)]
-  [instr : ir.CompilerIrInstr]) : unit
-  (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
-    [(option_i64.None) unit]
-    [(option_i64.Some dst)
-      ;; A reused lowered var is not SSA provenance. More importantly, this
-      ;; match is an allow-list: an ordinary/raw Load always reaches the final
-      ;; arm and clears its destination, even if its address is rooted in a
-      ;; fresh object. Ownership follows moves, never representation reads.
-      (if (not (opt-gvn-stable-var? sources dst))
-        (opt-licm-root-env-remove! roots dst)
-        (match instr
-          [(ir.CompilerIrInstr.Alloc _ _)
-            (opt-licm-root-env-bind! roots dst (OptLicmRoot.Fresh dst))]
-          [(ir.CompilerIrInstr.OwnRoot _ _ _)
-            (opt-licm-root-env-bind! roots dst (OptLicmRoot.Fresh dst))]
-          [(ir.CompilerIrInstr.Gep _ base _ _)
-            (opt-licm-root-env-copy! roots dst base)]
-          [(ir.CompilerIrInstr.Mov _ src _)
-            (opt-licm-root-env-copy! roots dst src)]
-          [(ir.CompilerIrInstr.Cast _ src _ _)
-            (opt-licm-root-env-copy! roots dst src)]
-          [(ir.CompilerIrInstr.Bitcast _ src _ _)
-            (opt-licm-root-env-copy! roots dst src)]
-          [(ir.CompilerIrInstr.Phi _ inputs _)
-            (match (opt-licm-phi-root roots inputs (OptMaybeLicmRoot.No))
-              [(OptMaybeLicmRoot.No) (opt-licm-root-env-remove! roots dst)]
-              [(OptMaybeLicmRoot.Some root)
-                (opt-licm-root-env-bind! roots dst root)])]
-          [(ir.CompilerIrInstr.LoadOwned _ _ owner _)
-            (opt-licm-root-env-copy! roots dst (ir.CompilerIrValue.Var owner))]
-          [(ir.CompilerIrInstr.Call _ name args _)
-            (if (ir.compiler-ir-symbol-eq?
-              name
-              cbi.compiler-builtin-id-tl-alloc)
-              (opt-licm-root-env-bind! roots dst (OptLicmRoot.Fresh dst))
-              (if (opt-licm-root-env-return-fresh? roots name)
-                (opt-licm-root-env-bind! roots dst (OptLicmRoot.Fresh dst))
-                (match (opt-licm-root-env-return-alias-value roots name args)
-                  [(ir.CompilerIrMaybeValue.Some value)
-                    (opt-licm-root-env-copy! roots dst value)]
-                  [(ir.CompilerIrMaybeValue.No)
-                    (opt-licm-root-env-remove! roots dst)])))]
-          [_ (opt-licm-root-env-remove! roots dst)]))]))
-
-(define (opt-owned-param-root-scan-instrs!
-  [sources : (& sources OptValueSources)]
-  [roots : (&mut roots OptLicmRootEnv)]
-  [instrs : ir.CompilerIrInstrSeq]
-  [index : i64]) : unit
-  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-    unit
-    (begin
-      (opt-owned-param-root-update-instr!
-        sources
-        roots
-        (ir.compiler-ir-instr-seq-ref instrs index))
-      (opt-owned-param-root-scan-instrs! sources roots instrs (+ index 1)))))
-
-(define (opt-owned-param-root-scan-blocks!
-  [sources : (& sources OptValueSources)]
-  [roots : (&mut roots OptLicmRootEnv)]
-  [blocks : ir.CompilerIrBlockList]) : unit
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) unit]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (begin
-        (match block
-          [(ir.CompilerIrBlock.Block _ instrs)
-            (opt-owned-param-root-scan-instrs! sources roots instrs 0)])
-        (opt-owned-param-root-scan-blocks! sources roots (deref rest)))]
-    [(ir.CompilerIrBlockList.Array seq)
-      (opt-owned-param-root-scan-blocks!
-        sources
-        roots
-        (ir.compiler-ir-block-seq-to-list seq))]))
-
-(define (opt-owned-param-roots
-  [type-segment-bases : i64]
-  [return-alias : opt_i64_i64_map.Map]
-  [owned : (& owned opt_i64_i64_map.Map)]
-  [func : ir.CompilerIrFunction]) : OptLicmRootEnv
-  (match func
-    [(ir.CompilerIrFunction.Function name params _ _ blocks _)
-      (let
-        [sources : OptValueSources
-          (opt-call-memory-sources
-            (compiler-opt-global-shared-view params)
-            (compiler-opt-global-shared-view blocks))]
-        [roots : OptLicmRootEnv
-          (opt-licm-root-env-with-capacity 17 return-alias)]
-        [_refs : unit
-          (opt-licm-root-env-seed-params!
-            type-segment-bases
-            (&mut roots)
-            (compiler-opt-global-shared-view params))]
-        [_owned : unit
-          (opt-owned-param-seed-roots! (& owned) name params (&mut roots))]
-        (begin
-          ;; Two rounds resolve same-root Phis and definitions listed after
-          ;; their uses, while the single-source table keeps both rounds from
-          ;; turning mutable lowered vars into provenance.
-          (opt-owned-param-root-scan-blocks!
-            sources
-            (&mut roots)
-            (compiler-opt-global-shared-view blocks))
-          (opt-owned-param-root-scan-blocks! sources (&mut roots) blocks)
-          roots))]))
-
-(define (opt-owned-param-arg-root
-  [roots : (& roots OptLicmRootEnv)]
-  [args : ir.CompilerIrCallArgs]
-  [position : i64]) : i64
-  (match (opt-call-memory-arg-at args position)
-    [(ir.CompilerIrMaybeValue.Some value)
-      (match (opt-licm-root-of-value roots value)
-        [(OptLicmRoot.Fresh root) root]
-        [_ (- 0 1)])]
-    [(ir.CompilerIrMaybeValue.No) (- 0 1)]))
-
-(define (opt-owned-param-arg-root-unique?
-  [roots : (& roots OptLicmRootEnv)]
-  [args : ir.CompilerIrCallArgs]
-  [candidates : i64]
-  [position : i64]
-  [root : i64]
-  [other : i64]) : bool
-  (if (>= other (opt-owned-param-limit))
-    true
-    (if (and
-      (not (= other position))
-      (opt-owned-param-mask-has? candidates other)
-      (=
-        (opt-owned-param-arg-root
-          roots
-          (compiler-opt-global-shared-view args)
-          other)
-        root))
-      false
-      (opt-owned-param-arg-root-unique?
-        roots
-        args
-        candidates
-        position
-        root
-        (+ other 1)))))
-
-(define (opt-owned-param-site-mask-from
-  [roots : (& roots OptLicmRootEnv)]
-  [args : ir.CompilerIrCallArgs]
-  [candidates : i64]
-  [position : i64]
-  [mask : i64]) : i64
-  (if (>= position (opt-owned-param-limit))
-    mask
-    (if (not (opt-owned-param-mask-has? candidates position))
-      (opt-owned-param-site-mask-from roots args candidates (+ position 1) mask)
-      (let
-        [root : i64
-          (opt-owned-param-arg-root
-            roots
-            (compiler-opt-global-shared-view args)
-            position)]
-        (opt-owned-param-site-mask-from
-          roots
-          (compiler-opt-global-shared-view args)
-          candidates
-          (+ position 1)
-          (if (and
-            (>= root 0)
-            (opt-owned-param-arg-root-unique?
-              roots
-              args
-              candidates
-              position
-              root
-              0))
-            (bit-or mask (opt-owned-param-bit position))
-            mask))))))
-
-(define (opt-owned-param-site-mask
-  [roots : (& roots OptLicmRootEnv)]
-  [args : ir.CompilerIrCallArgs]
-  [candidates : i64]) : i64
-  (opt-owned-param-site-mask-from roots args candidates 0 0))
-
-(defstruct OptOwnedParamCallScan
-  (valid opt_i64_i64_map.Map)
-  (seen opt_i64_i64_map.Map))
-
-(define (opt-owned-param-scan-direct!
-  [candidates : (& candidates opt_i64_i64_map.Map)]
-  [roots : (& roots OptLicmRootEnv)]
-  [scan : (&mut scan OptOwnedParamCallScan)]
-  [callee : i64]
-  [args : ir.CompilerIrCallArgs]) : unit
-  (let
-    [name : i64 (ir.compiler-ir-symbol-id callee)]
-    (match (opt_i64_i64_map.get candidates name)
-      [(opt_i64_i64_map.LookupMissing) unit]
-      [(opt_i64_i64_map.LookupFound candidate-mask)
-        (let
-          [valid : i64
-            (match (opt_i64_i64_map.get (& scan.valid) name)
-              [(opt_i64_i64_map.LookupFound mask) mask]
-              [(opt_i64_i64_map.LookupMissing) 0])]
-          [seen : i64
-            (match (opt_i64_i64_map.get (& scan.seen) name)
-              [(opt_i64_i64_map.LookupFound mask) mask]
-              [(opt_i64_i64_map.LookupMissing) 0])]
-          [site : i64 (opt-owned-param-site-mask roots args candidate-mask)]
-          (begin
-            (opt_i64_i64_map.insert-ref!
-              (&mut scan.valid)
-              name
-              (bit-and valid site))
-            (opt_i64_i64_map.insert-ref!
-              (&mut scan.seen)
-              name
-              (bit-or seen candidate-mask))))])))
-
-(define (opt-owned-param-scan-instrs!
-  [candidates : (& candidates opt_i64_i64_map.Map)]
-  [roots : (& roots OptLicmRootEnv)]
-  [scan : (&mut scan OptOwnedParamCallScan)]
-  [instrs : ir.CompilerIrInstrSeq]
-  [index : i64]) : unit
-  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-    unit
-    (begin
-      (match (ir.compiler-ir-instr-seq-ref instrs index)
-        [(ir.CompilerIrInstr.Call _ name args _)
-          (opt-owned-param-scan-direct! candidates roots scan name args)]
-        [(ir.CompilerIrInstr.TailCall name args _)
-          (opt-owned-param-scan-direct! candidates roots scan name args)]
-        [_ unit])
-      (opt-owned-param-scan-instrs! candidates roots scan instrs (+ index 1)))))
-
-(define (opt-owned-param-scan-blocks!
-  [candidates : (& candidates opt_i64_i64_map.Map)]
-  [roots : (& roots OptLicmRootEnv)]
-  [scan : (&mut scan OptOwnedParamCallScan)]
-  [blocks : ir.CompilerIrBlockList]) : unit
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) unit]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (begin
-            (opt-owned-param-scan-instrs! candidates roots scan instrs 0)
-            (opt-owned-param-scan-blocks! candidates roots scan (deref rest)))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (opt-owned-param-scan-blocks!
-        candidates
-        roots
-        scan
-        (ir.compiler-ir-block-seq-to-list seq))]))
-
-(define (opt-owned-param-call-scan
-  [type-segment-bases : i64]
-  [functions : (& functions ir.CompilerIrFunctionSeq)]
-  [return-alias : opt_i64_i64_map.Map]
-  [candidates : (& candidates opt_i64_i64_map.Map)]
-  [owned : (& owned opt_i64_i64_map.Map)]
-  [capacity : i64]) : OptOwnedParamCallScan
-  (let
-    [scan : OptOwnedParamCallScan
-      (OptOwnedParamCallScan
-        (opt_i64_i64_map.with-capacity capacity)
-        (opt_i64_i64_map.with-capacity capacity))]
-    [index : i64 0]
-    (begin
-      ;; Start each candidate as valid; every observed site intersects it.
-      (while (< index functions.len)
-        (begin
-          (match (compiler-opt-global-array-element-shared-view
-            functions.slots
-            index)
-            [(ir.CompilerIrFunction.Function name _ _ _ _ _)
-              (let
-                [id : i64 (ir.compiler-ir-symbol-id name)]
-                (match (opt_i64_i64_map.get (& candidates) id)
-                  [(opt_i64_i64_map.LookupFound mask)
-                    (opt_i64_i64_map.insert-ref! (&mut scan.valid) id mask)]
-                  [(opt_i64_i64_map.LookupMissing) unit]))])
-          (set! index (+ index 1))))
-      (set! index 0)
-      (while (< index functions.len)
-        (begin
-          (let
-            [func : ir.CompilerIrFunction
-              (compiler-opt-global-array-element-shared-view
-                functions.slots
-                index)]
-            [roots : OptLicmRootEnv
-              (opt-owned-param-roots
-                type-segment-bases
-                (compiler-opt-global-shared-view return-alias)
-                owned
-                (compiler-opt-global-shared-view func))]
-            (match func
-              [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-                (opt-owned-param-scan-blocks!
-                  (& candidates)
-                  (& roots)
-                  (&mut scan)
-                  blocks)]))
-          (set! index (+ index 1))))
-      scan)))
-
-(define (opt-owned-param-opaque
-  [globals : ir.CompilerIrGlobalSeq]
-  [externs : ir.CompilerIrExternSeq]
-  [functions : (& functions ir.CompilerIrFunctionSeq)]
-  [capacity : i64]) : opt_i64_i64_map.Map
-  (let
-    [seeded : OptArgGlobalScan
-      (opt-arg-global-seed-globals
-        (opt-arg-global-seed-externs
-          (opt-arg-global-seed-functions
-            (OptArgGlobalScan
-              (opt_i64_i64_map.with-capacity capacity)
-              (opt_i64_i64_map.with-capacity capacity)
-              (opt_i64_i64_map.with-capacity 1))
-            functions
-            0)
-          externs
-          0)
-        globals
-        0)]
-    ;; Leave arity empty so this reuse of the exhaustive function-address walk
-    ;; does not build the unrelated per-call global-argument table.
-    [scanned : OptArgGlobalScan
-      (opt-arg-global-scan-functions
-        (OptArgGlobalScan
-          seeded.opaque
-          (opt_i64_i64_map.with-capacity 1)
-          (opt_i64_i64_map.with-capacity 1))
-        functions)]
-    scanned.opaque))
-
-(define (opt-owned-param-emit-round!
-  [functions : (& functions ir.CompilerIrFunctionSeq)]
-  [opaque : (& opaque opt_i64_i64_map.Map)]
-  [scan : (& scan OptOwnedParamCallScan)]
-  [out : (&mut out opt_i64_i64_map.Map)]) : i64
-  (let
-    [index : i64 0]
-    [added : i64 0]
-    (begin
-      (while (< index functions.len)
-        (begin
-          (match (compiler-opt-global-array-element-shared-view
-            functions.slots
-            index)
-            [(ir.CompilerIrFunction.Function name _ _ _ _ _)
-              (let
-                [id : i64 (ir.compiler-ir-symbol-id name)]
-                [valid : i64
-                  (match (opt_i64_i64_map.get (& scan.valid) id)
-                    [(opt_i64_i64_map.LookupFound mask) mask]
-                    [(opt_i64_i64_map.LookupMissing) 0])]
-                [seen : i64
-                  (match (opt_i64_i64_map.get (& scan.seen) id)
-                    [(opt_i64_i64_map.LookupFound mask) mask]
-                    [(opt_i64_i64_map.LookupMissing) 0])]
-                [eligible : i64
-                  (if (opt_i64_i64_map.contains? opaque id)
-                    0
-                    (bit-and valid seen))]
-                [old : i64
-                  (match (opt_i64_i64_map.get (& out) id)
-                    [(opt_i64_i64_map.LookupFound mask) mask]
-                    [(opt_i64_i64_map.LookupMissing) 0])]
-                [next : i64 (bit-or old eligible)]
-                (if (= next old)
-                  unit
-                  (begin
-                    (opt_i64_i64_map.insert-ref! out id next)
-                    (set! added (+ added 1)))))])
-          (set! index (+ index 1))))
-      added)))
-
-(define (opt-owned-param-fixpoint!
-  [type-segment-bases : i64]
-  [functions : (& functions ir.CompilerIrFunctionSeq)]
-  [return-alias : opt_i64_i64_map.Map]
-  [candidates : (& candidates opt_i64_i64_map.Map)]
-  [opaque : opt_i64_i64_map.Map]
-  [out : (&mut out opt_i64_i64_map.Map)]
-  [capacity : i64]
-  [rounds-left : i64]) : unit
-  (if (<= rounds-left 0)
-    unit
-    (let
-      [owned-view : opt_i64_i64_map.Map
-        (owned_view.compiler-owned-reference-shared-view out)]
-      [scan : OptOwnedParamCallScan
-        (opt-owned-param-call-scan
-          type-segment-bases
-          functions
-          (compiler-opt-global-shared-view return-alias)
-          candidates
-          owned-view
-          capacity)]
-      [added : i64
-        (opt-owned-param-emit-round! functions (& opaque) (& scan) out)]
-      (if (= added 0)
-        unit
-        (opt-owned-param-fixpoint!
-          type-segment-bases
-          functions
-          return-alias
-          candidates
-          opaque
-          out
-          capacity
-          (- rounds-left 1))))))
-
-(define (opt-owned-param-map
-  [type-segment-bases : i64]
-  [globals : ir.CompilerIrGlobalSeq]
-  [externs : ir.CompilerIrExternSeq]
-  [functions : (& functions ir.CompilerIrFunctionSeq)]
-  [return-alias : opt_i64_i64_map.Map]
-  [capacity : i64]) : opt_i64_i64_map.Map
-  (let
-    [candidates : opt_i64_i64_map.Map
-      (opt-owned-param-candidates functions capacity)]
-    [opaque : opt_i64_i64_map.Map
-      (opt-owned-param-opaque globals externs functions capacity)]
-    [out : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity capacity)]
-    (begin
-      (opt-owned-param-fixpoint!
-        type-segment-bases
-        functions
-        return-alias
-        candidates
-        opaque
-        (&mut out)
-        capacity
-        functions.len)
-      out)))
 
 ;; IAG-2's storage-write table rides the same summary and is attached from the
 ;; same place, and for the same reason: the set of functions whose activations

@@ -2703,8 +2703,8 @@
   [col : i64]) : json.Json
   (let
     [offset : i64
-      (lsp-offset-at-byte-position
-        (owned_view.compiler-owned-shared-view text)
+      (source_text.source-text-offset-at-byte-position
+        text
         (lsp-zero-based line)
         (lsp-zero-based col))]
     [lc : LspLineCol (lsp-line-col-at-offset text offset)]
@@ -2873,8 +2873,8 @@
   (let
     [n : i64 (string.string-length text)]
     [start : i64
-      (lsp-offset-at-byte-position
-        (owned_view.compiler-owned-shared-view text)
+      (source_text.source-text-offset-at-byte-position
+        text
         (lsp-zero-based line)
         (lsp-zero-based col))]
     [end : i64
@@ -2884,7 +2884,8 @@
     (begin
       (while (and
         (< end n)
-        (lsp-utf8-continuation-byte? (string.string-ref text end)))
+        (source_text.source-text-utf8-continuation-byte?
+          (string.string-ref text end)))
         (set! end (+ end 1)))
       (lsp-json-object2
         "start"
@@ -4647,17 +4648,6 @@
     (= c '.')
     (= c '%')))
 
-(define (lsp-ws? [c : char]) : bool
-  (or (= c ' ') (= c '\t') (= c '\n') (= c '\r')))
-
-(define (lsp-skip-space [text : String] [i : i64] [n : i64]) : i64
-  (let
-    [j : i64 i]
-    (begin
-      (while (and (< j n) (lsp-ws? (string.string-ref text j)))
-        (set! j (+ j 1)))
-      j)))
-
 (define (lsp-scan-ident [text : String] [i : i64] [n : i64]) : i64
   (let
     [j : i64 i]
@@ -4665,55 +4655,6 @@
       (while (and (< j n) (lsp-ident-char? (string.string-ref text j)))
         (set! j (+ j 1)))
       j)))
-
-(define (lsp-skip-line [text : String] [i : i64] [n : i64]) : i64
-  (let
-    [j : i64 i]
-    (begin
-      (while (and (< j n) (not (= (string.string-ref text j) '\n')))
-        (set! j (+ j 1)))
-      (if (< j n)
-        (+ j 1)
-        j))))
-
-(define (lsp-skip-string [text : String] [i : i64] [n : i64]) : i64
-  (let
-    [j : i64 (+ i 1)]
-    [done : bool false]
-    (begin
-      (while (and (< j n) (not done))
-        (let
-          [c : char (string.string-ref text j)]
-          (if (= c '\\')
-            (set! j (+ j 2))
-            (if (= c '"')
-              (begin
-                (set! done true)
-                (set! j (+ j 1)))
-              (set! j (+ j 1))))))
-      j)))
-
-(define (lsp-apostrophe-char-escape? [c : char]) : bool
-  (or (= c 'n') (= c 't') (= c 'r') (= c '0') (= c '\\') (= c '\'')))
-
-(define (lsp-skip-apostrophe-char-literal [text : String] [i : i64] [n : i64]) : i64
-  (if (< (+ i 1) n)
-    (let
-      [payload : char (string.string-ref text (+ i 1))]
-      (cond
-        [(= payload '\\')
-          (if (and
-            (< (+ i 3) n)
-            (lsp-apostrophe-char-escape? (string.string-ref text (+ i 2)))
-            (= (string.string-ref text (+ i 3)) '\''))
-            (+ i 4)
-            (+ i 1))]
-        [(or (= payload '\'') (= payload '\n') (= payload '\r')) (+ i 1)]
-        [else
-          (if (and (< (+ i 2) n) (= (string.string-ref text (+ i 2)) '\''))
-            (+ i 3)
-            (+ i 1))]))
-    (+ i 1)))
 
 ;; Maximal identifier token covering `off`, or "" when `off` is not on one.
 (define (lsp-symbol-at-offset [text : String] [off : i64]) : String
@@ -4770,18 +4711,10 @@
         (string.substring s (+ k 1) (- n (+ k 1)))
         s))))
 
-;; A UTF-8 continuation byte contributes no additional UTF-16 code units.
-(define (lsp-utf8-continuation-byte? [c : char]) : bool
-  (= (bit-and (cast c : i64) 192) 128))
-
 ;; Negotiated LSP character units contributed by one UTF-8 byte. In UTF-16,
 ;; a four-byte lead spans a surrogate pair and continuation bytes add nothing.
 (define (lsp-position-units-for-byte [c : char]) : i64
-  (if lsp-position-encoding-utf8
-    1
-    (let
-      [b : i64 (cast c : i64)]
-      (cond [(lsp-utf8-continuation-byte? c) 0] [(>= b 240) 2] [else 1]))))
+  (source_text.source-text-column-units c (not lsp-position-encoding-utf8)))
 
 (define (lsp-string-position-units [text : String]) : i64
   (let
@@ -4799,33 +4732,6 @@
 
 (define (lsp-using-utf16-positions?) : bool
   (not lsp-position-encoding-utf8))
-
-;; Byte offset of a byte-counted 0-based (line, column), clamped to the line.
-;; Compiler, reader, and AST spans use this convention internally.
-(define (lsp-offset-at-byte-position
-  [text : String]
-  [line0 : i64]
-  [char0 : i64]) : i64
-  (let
-    [n : i64 (string.string-length text)]
-    [i : i64 0]
-    [ln : i64 0]
-    [col : i64 0]
-    (begin
-      (while (and (< i n) (< ln line0))
-        (begin
-          (if (= (string.string-ref text i) '\n')
-            (set! ln (+ ln 1))
-            unit)
-          (set! i (+ i 1))))
-      (while (and
-        (< i n)
-        (< col char0)
-        (not (= (string.string-ref text i) '\n')))
-        (begin
-          (set! i (+ i 1))
-          (set! col (+ col 1))))
-      i)))
 
 ;; Byte offset of a negotiated 0-based LSP position, clamped to the line.
 (define (lsp-offset-at-position [text : String] [line0 : i64] [char0 : i64]) : i64
@@ -4848,7 +4754,8 @@
           (< col char0)
           (and
             (lsp-using-utf16-positions?)
-            (lsp-utf8-continuation-byte? (string.string-ref text i)))))
+            (source_text.source-text-utf8-continuation-byte?
+              (string.string-ref text i)))))
         (begin
           (set!
             col
@@ -4902,7 +4809,8 @@
                 (if (lsp-using-utf16-positions?)
                   (while (and
                     (< i n)
-                    (lsp-utf8-continuation-byte? (string.string-ref text i)))
+                    (source_text.source-text-utf8-continuation-byte?
+                      (string.string-ref text i)))
                     (set! i (+ i 1)))
                   unit)
                 (LspOffsetLookup.Found i)))))))))
@@ -4931,7 +4839,7 @@
 
 (define (lsp-call-token-delimiter? [c : char]) : bool
   (or
-    (lsp-ws? c)
+    (source_text.source-text-space? c)
     (= c '(')
     (= c ')')
     (= c '[')
@@ -5275,23 +5183,15 @@
             (let
               [c : char (string.string-ref text i)]
               (cond
-                [(lsp-ws? c)
+                [(source_text.source-text-space? c)
                   (begin
                     (lsp-call-frames-separate-top! (&mut frames))
-                    (set!
-                      i
-                      (lsp-skip-space
-                        (owned_view.compiler-owned-shared-view text)
-                        i
-                        limit)))]
+                    (set! i (source_text.source-text-skip-space text i limit)))]
                 [(= c ';')
                   (let
                     [past : i64
                       (lsp-call-clamp
-                        (lsp-skip-line
-                          (owned_view.compiler-owned-shared-view text)
-                          i
-                          limit)
+                        (source_text.source-text-skip-line text i limit)
                         limit)]
                     (begin
                       (lsp-call-frames-separate-top! (&mut frames))
@@ -5305,10 +5205,7 @@
                 [(= c '"')
                   (let
                     [raw-past : i64
-                      (lsp-skip-string
-                        (owned_view.compiler-owned-shared-view text)
-                        i
-                        limit)]
+                      (source_text.source-text-skip-string text i limit)]
                     [past : i64 (lsp-call-clamp raw-past limit)]
                     [complete : bool
                       (and
@@ -5325,10 +5222,7 @@
                   (let
                     [past : i64
                       (lsp-call-clamp
-                        (lsp-skip-apostrophe-char-literal
-                          (owned_view.compiler-owned-shared-view text)
-                          i
-                          limit)
+                        (source_text.source-text-skip-char-literal text i limit)
                         limit)]
                     (if (> past (+ i 1))
                       (begin
@@ -6177,40 +6071,19 @@
 ;; 1-based negotiated LSP line/column of a byte offset.
 (define (lsp-line-col-at-offset [text : String] [off : i64]) : LspLineCol
   (let
-    [n : i64 (string.string-length text)]
-    [i : i64 0]
-    [line : i64 1]
-    [col : i64 1]
-    (begin
-      (while (and (< i n) (< i off))
-        (begin
-          (if (= (string.string-ref text i) '\n')
-            (begin
-              (set! line (+ line 1))
-              (set! col 1))
-            (set!
-              col
-              (+ col (lsp-position-units-for-byte (string.string-ref text i)))))
-          (set! i (+ i 1))))
-      (LspLineCol line col))))
+    [position : source_text.SourceTextLineCol
+      (source_text.source-text-line-col-at-offset
+        text
+        off
+        (lsp-using-utf16-positions?))]
+    (LspLineCol position.line position.col)))
 
 ;; 1-based byte-counted line/column of a byte offset.
 (define (lsp-byte-line-col-at-offset [text : String] [off : i64]) : LspLineCol
   (let
-    [n : i64 (string.string-length text)]
-    [i : i64 0]
-    [line : i64 1]
-    [col : i64 1]
-    (begin
-      (while (and (< i n) (< i off))
-        (begin
-          (if (= (string.string-ref text i) '\n')
-            (begin
-              (set! line (+ line 1))
-              (set! col 1))
-            (set! col (+ col 1)))
-          (set! i (+ i 1))))
-      (LspLineCol line col))))
+    [position : source_text.SourceTextLineCol
+      (source_text.source-text-line-col-at-offset text off false)]
+    (LspLineCol position.line position.col)))
 
 (define (lsp-line-col-cache-at-offset!
   [cache : (&mut cache LspLineColCache)]
@@ -6264,8 +6137,7 @@
 ;; otherwise -1.
 (define (lsp-def-name-offset-at [text : String] [i : i64] [n : i64]) : i64
   (let
-    [after-open : i64
-      (lsp-skip-space (owned_view.compiler-owned-shared-view text) (+ i 1) n)]
+    [after-open : i64 (source_text.source-text-skip-space text (+ i 1) n)]
     [kw-end : i64
       (lsp-scan-ident (owned_view.compiler-owned-shared-view text) after-open n)]
     (if (<= kw-end after-open)
@@ -6274,17 +6146,10 @@
         [kw : String (string.substring text after-open (- kw-end after-open))]
         (if (lsp-def-keyword? kw)
           (let
-            [after-kw : i64
-              (lsp-skip-space
-                (owned_view.compiler-owned-shared-view text)
-                kw-end
-                n)]
+            [after-kw : i64 (source_text.source-text-skip-space text kw-end n)]
             [name-start : i64
               (if (and (< after-kw n) (= (string.string-ref text after-kw) '('))
-                (lsp-skip-space
-                  (owned_view.compiler-owned-shared-view text)
-                  (+ after-kw 1)
-                  n)
+                (source_text.source-text-skip-space text (+ after-kw 1) n)
                 after-kw)]
             (if (< name-start n)
               (if (lsp-ident-char? (string.string-ref text name-start))
@@ -6361,10 +6226,7 @@
           [(= c '"')
             (let
               [str-end : i64
-                (lsp-skip-string
-                  (owned_view.compiler-owned-shared-view text)
-                  operand-start
-                  n)]
+                (source_text.source-text-skip-string text operand-start n)]
               [content-start : i64 (+ operand-start 1)]
               [content-end : i64 (- str-end 1)]
               [spec : String
@@ -6423,31 +6285,14 @@
         (let
           [c : char (string.string-ref text i)]
           (cond
-            [(= c ';')
-              (set!
-                i
-                (lsp-skip-line (owned_view.compiler-owned-shared-view text) i n))]
+            [(= c ';') (set! i (source_text.source-text-skip-line text i n))]
             [(= c '\'')
-              (set!
-                i
-                (lsp-skip-apostrophe-char-literal
-                  (owned_view.compiler-owned-shared-view text)
-                  i
-                  n))]
-            [(= c '"')
-              (set!
-                i
-                (lsp-skip-string
-                  (owned_view.compiler-owned-shared-view text)
-                  i
-                  n))]
+              (set! i (source_text.source-text-skip-char-literal text i n))]
+            [(= c '"') (set! i (source_text.source-text-skip-string text i n))]
             [(= c '(')
               (let
                 [kw-start : i64
-                  (lsp-skip-space
-                    (owned_view.compiler-owned-shared-view text)
-                    (+ i 1)
-                    n)]
+                  (source_text.source-text-skip-space text (+ i 1) n)]
                 [kw-end : i64
                   (lsp-scan-ident
                     (owned_view.compiler-owned-shared-view text)
@@ -6460,10 +6305,7 @@
                     "import"))
                   (let
                     [operand-start : i64
-                      (lsp-skip-space
-                        (owned_view.compiler-owned-shared-view text)
-                        kw-end
-                        n)]
+                      (source_text.source-text-skip-space text kw-end n)]
                     (match (lsp-resolve-import-target-at
                       (owned_view.compiler-owned-shared-view text)
                       (owned_view.compiler-owned-shared-view path)
@@ -7726,7 +7568,9 @@
     [start : i64 -1]
     [depth : i64 0]
     (begin
-      (while (and (> end 0) (lsp-ws? (string.string-ref type-text (- end 1))))
+      (while (and
+        (> end 0)
+        (source_text.source-text-space? (string.string-ref type-text (- end 1))))
         (set! end (- end 1)))
       (if (and (> end 0) (= (string.string-ref type-text (- end 1)) ')'))
         (let
@@ -7751,7 +7595,9 @@
           (begin
             (while (and
               (> cursor 0)
-              (not (lsp-ws? (string.string-ref type-text (- cursor 1))))
+              (not
+                (source_text.source-text-space?
+                  (string.string-ref type-text (- cursor 1))))
               (not (= (string.string-ref type-text (- cursor 1)) '(')))
               (set! cursor (- cursor 1)))
             (set! start cursor))))
@@ -7775,7 +7621,9 @@
           (begin
             (while (and
               (< head-end n)
-              (not (lsp-ws? (string.string-ref type-text head-end)))
+              (not
+                (source_text.source-text-space?
+                  (string.string-ref type-text head-end)))
               (not (= (string.string-ref type-text head-end) ')')))
               (set! head-end (+ head-end 1)))
             (let
@@ -8631,7 +8479,9 @@
   (let
     [p : i64 (- off 1)]
     (begin
-      (while (and (>= p 0) (lsp-ws? (string.string-ref text p)))
+      (while (and
+        (>= p 0)
+        (source_text.source-text-space? (string.string-ref text p)))
         (set! p (- p 1)))
       (if (< p 0)
         false
@@ -8640,7 +8490,9 @@
           (begin
             (while (and (>= p 0) (lsp-ident-char? (string.string-ref text p)))
               (set! p (- p 1)))
-            (while (and (>= p 0) (lsp-ws? (string.string-ref text p)))
+            (while (and
+              (>= p 0)
+              (source_text.source-text-space? (string.string-ref text p)))
               (set! p (- p 1)))
             (and (>= p 0) (= (string.string-ref text p) '['))))))))
 
@@ -8648,7 +8500,9 @@
   (let
     [p : i64 (- off 1)]
     (begin
-      (while (and (>= p 0) (lsp-ws? (string.string-ref text p)))
+      (while (and
+        (>= p 0)
+        (source_text.source-text-space? (string.string-ref text p)))
         (set! p (- p 1)))
       (if (< p 0)
         false
@@ -8670,8 +8524,8 @@
   [ty : String]) : json.Json
   (let
     [offset : i64
-      (lsp-offset-at-byte-position
-        (owned_view.compiler-owned-shared-view text)
+      (source_text.source-text-offset-at-byte-position
+        text
         (lsp-zero-based line)
         (lsp-zero-based col))]
     [lc : LspLineCol (lsp-line-col-at-offset text offset)]
@@ -8701,8 +8555,8 @@
           [col1 : i64 (tc.tc-inlay-hint-col-at-for-state inlay-state i)]
           [line0 : i64 (- line1 1)]
           [off : i64
-            (lsp-offset-at-byte-position
-              (owned_view.compiler-owned-shared-view text)
+            (source_text.source-text-offset-at-byte-position
+              text
               line0
               (- col1 1))]
           (begin
@@ -8896,24 +8750,10 @@
         (let
           [c : char (string.string-ref text j)]
           (cond
-            [(= c ';')
-              (set!
-                j
-                (lsp-skip-line (owned_view.compiler-owned-shared-view text) j n))]
+            [(= c ';') (set! j (source_text.source-text-skip-line text j n))]
             [(= c '\'')
-              (set!
-                j
-                (lsp-skip-apostrophe-char-literal
-                  (owned_view.compiler-owned-shared-view text)
-                  j
-                  n))]
-            [(= c '"')
-              (set!
-                j
-                (lsp-skip-string
-                  (owned_view.compiler-owned-shared-view text)
-                  j
-                  n))]
+              (set! j (source_text.source-text-skip-char-literal text j n))]
+            [(= c '"') (set! j (source_text.source-text-skip-string text j n))]
             [(= c '(')
               (begin
                 (set! depth (+ depth 1))
@@ -8942,13 +8782,9 @@
     (begin
       (while (not done)
         (begin
-          (set!
-            i
-            (lsp-skip-space (owned_view.compiler-owned-shared-view text) i n))
+          (set! i (source_text.source-text-skip-space text i n))
           (if (and (< i n) (= (string.string-ref text i) ';'))
-            (set!
-              i
-              (lsp-skip-line (owned_view.compiler-owned-shared-view text) i n))
+            (set! i (source_text.source-text-skip-line text i n))
             (set! done true))))
       (< i n))))
 
@@ -9201,25 +9037,23 @@
       ; skip keyword (define / defmacro)
       (set! i (lsp-scan-ident (owned_view.compiler-owned-shared-view text) i n))
       ; skip whitespace
-      (set! i (lsp-skip-space (owned_view.compiler-owned-shared-view text) i n))
+      (set! i (source_text.source-text-skip-space text i n))
       ; skip param list '(...)'
       (set!
         i
         (lsp-skip-paren-group (owned_view.compiler-owned-shared-view text) i n))
       ; skip whitespace
-      (set! i (lsp-skip-space (owned_view.compiler-owned-shared-view text) i n))
+      (set! i (source_text.source-text-skip-space text i n))
       ; if type annotation ': type', skip it
       (if (and (< i n) (= (string.string-ref text i) ':'))
         (begin
           (set! i (+ i 1))
           ; skip ':'
-          (set!
-            i
-            (lsp-skip-space (owned_view.compiler-owned-shared-view text) i n))
+          (set! i (source_text.source-text-skip-space text i n))
           (set!
             i
             (lsp-scan-type (owned_view.compiler-owned-shared-view text) i n))
-          (set! i (lsp-skip-space text i n)))
+          (set! i (source_text.source-text-skip-space text i n)))
         unit)
       i)))
 
@@ -9235,31 +9069,14 @@
         (let
           [c : char (string.string-ref text i)]
           (cond
-            [(= c ';')
-              (set!
-                i
-                (lsp-skip-line (owned_view.compiler-owned-shared-view text) i n))]
+            [(= c ';') (set! i (source_text.source-text-skip-line text i n))]
             [(= c '\'')
-              (set!
-                i
-                (lsp-skip-apostrophe-char-literal
-                  (owned_view.compiler-owned-shared-view text)
-                  i
-                  n))]
-            [(= c '"')
-              (set!
-                i
-                (lsp-skip-string
-                  (owned_view.compiler-owned-shared-view text)
-                  i
-                  n))]
+              (set! i (source_text.source-text-skip-char-literal text i n))]
+            [(= c '"') (set! i (source_text.source-text-skip-string text i n))]
             [(= c '[')
               (let
                 [name-start : i64
-                  (lsp-skip-space
-                    (owned_view.compiler-owned-shared-view text)
-                    (+ i 1)
-                    n)]
+                  (source_text.source-text-skip-space text (+ i 1) n)]
                 [name-end : i64
                   (lsp-scan-ident
                     (owned_view.compiler-owned-shared-view text)
@@ -9274,17 +9091,14 @@
                       sym))
                     (let
                       [after : i64
-                        (lsp-skip-space
-                          (owned_view.compiler-owned-shared-view text)
-                          name-end
-                          n)]
+                        (source_text.source-text-skip-space text name-end n)]
                       (if (and
                         (< after n)
                         (= (string.string-ref text after) ':'))
                         (let
                           [ty-start : i64
-                            (lsp-skip-space
-                              (owned_view.compiler-owned-shared-view text)
+                            (source_text.source-text-skip-space
+                              text
                               (+ after 1)
                               n)]
                           [ty-end : i64
@@ -9673,31 +9487,14 @@
         (let
           [c : char (string.string-ref text i)]
           (cond
-            [(= c ';')
-              (set!
-                i
-                (lsp-skip-line (owned_view.compiler-owned-shared-view text) i n))]
+            [(= c ';') (set! i (source_text.source-text-skip-line text i n))]
             [(= c '\'')
-              (set!
-                i
-                (lsp-skip-apostrophe-char-literal
-                  (owned_view.compiler-owned-shared-view text)
-                  i
-                  n))]
-            [(= c '"')
-              (set!
-                i
-                (lsp-skip-string
-                  (owned_view.compiler-owned-shared-view text)
-                  i
-                  n))]
+              (set! i (source_text.source-text-skip-char-literal text i n))]
+            [(= c '"') (set! i (source_text.source-text-skip-string text i n))]
             [(= c '(')
               (let
                 [kw-start : i64
-                  (lsp-skip-space
-                    (owned_view.compiler-owned-shared-view text)
-                    (+ i 1)
-                    n)]
+                  (source_text.source-text-skip-space text (+ i 1) n)]
                 [kw-end : i64
                   (lsp-scan-ident
                     (owned_view.compiler-owned-shared-view text)
@@ -9710,10 +9507,7 @@
                     "import"))
                   (let
                     [operand-start : i64
-                      (lsp-skip-space
-                        (owned_view.compiler-owned-shared-view text)
-                        kw-end
-                        n)]
+                      (source_text.source-text-skip-space text kw-end n)]
                     (match (lsp-resolve-import-target-at
                       (owned_view.compiler-owned-shared-view text)
                       (owned_view.compiler-owned-shared-view path)
@@ -9778,8 +9572,7 @@
 
 (define (lsp-decl-kind-at [text : String] [i : i64] [n : i64]) : String
   (let
-    [after-open : i64
-      (lsp-skip-space (owned_view.compiler-owned-shared-view text) (+ i 1) n)]
+    [after-open : i64 (source_text.source-text-skip-space text (+ i 1) n)]
     [kw-end : i64
       (lsp-scan-ident (owned_view.compiler-owned-shared-view text) after-open n)]
     (if (<= kw-end after-open)
@@ -9802,16 +9595,14 @@
 ;; distinguishes function-head and value declarations.
 (define (lsp-decl-symbol-kind-at [text : String] [i : i64] [n : i64]) : i64
   (let
-    [after-open : i64
-      (lsp-skip-space (owned_view.compiler-owned-shared-view text) (+ i 1) n)]
+    [after-open : i64 (source_text.source-text-skip-space text (+ i 1) n)]
     [kw-end : i64
       (lsp-scan-ident (owned_view.compiler-owned-shared-view text) after-open n)]
     (if (<= kw-end after-open)
       13
       (let
         [kw : String (string.substring text after-open (- kw-end after-open))]
-        [after-kw : i64
-          (lsp-skip-space (owned_view.compiler-owned-shared-view text) kw-end n)]
+        [after-kw : i64 (source_text.source-text-skip-space text kw-end n)]
         [function-head : bool
           (and (< after-kw n) (= (string.string-ref text after-kw) '('))]
         (cond
@@ -9836,24 +9627,10 @@
         (let
           [c : char (string.string-ref text i)]
           (cond
-            [(= c ';')
-              (set!
-                i
-                (lsp-skip-line (owned_view.compiler-owned-shared-view text) i n))]
+            [(= c ';') (set! i (source_text.source-text-skip-line text i n))]
             [(= c '\'')
-              (set!
-                i
-                (lsp-skip-apostrophe-char-literal
-                  (owned_view.compiler-owned-shared-view text)
-                  i
-                  n))]
-            [(= c '"')
-              (set!
-                i
-                (lsp-skip-string
-                  (owned_view.compiler-owned-shared-view text)
-                  i
-                  n))]
+              (set! i (source_text.source-text-skip-char-literal text i n))]
+            [(= c '"') (set! i (source_text.source-text-skip-string text i n))]
             [(= c '(')
               (begin
                 (set! depth (+ depth 1))
@@ -9936,33 +9713,17 @@
           [c : char (string.string-ref text index)]
           (cond
             [(= c ';')
-              (set!
-                index
-                (lsp-skip-line
-                  (owned_view.compiler-owned-shared-view text)
-                  index
-                  n))]
+              (set! index (source_text.source-text-skip-line text index n))]
             [(= c '\'')
               (set!
                 index
-                (lsp-skip-apostrophe-char-literal
-                  (owned_view.compiler-owned-shared-view text)
-                  index
-                  n))]
+                (source_text.source-text-skip-char-literal text index n))]
             [(= c '"')
-              (set!
-                index
-                (lsp-skip-string
-                  (owned_view.compiler-owned-shared-view text)
-                  index
-                  n))]
+              (set! index (source_text.source-text-skip-string text index n))]
             [(= c '(')
               (let
                 [after-open : i64
-                  (lsp-skip-space
-                    (owned_view.compiler-owned-shared-view text)
-                    (+ index 1)
-                    n)]
+                  (source_text.source-text-skip-space text (+ index 1) n)]
                 [keyword-end : i64
                   (lsp-scan-ident
                     (owned_view.compiler-owned-shared-view text)
@@ -9979,10 +9740,7 @@
                   (if (and (= depth 0) (string.eq keyword "module"))
                     (let
                       [name-start : i64
-                        (lsp-skip-space
-                          (owned_view.compiler-owned-shared-view text)
-                          keyword-end
-                          n)]
+                        (source_text.source-text-skip-space text keyword-end n)]
                       [name-end : i64
                         (lsp-scan-ident
                           (owned_view.compiler-owned-shared-view text)
@@ -14734,8 +14492,8 @@
               (- hint-col col1))]
           [dist : i64 (+ (* d-line 1000) d-col)]
           [off : i64
-            (lsp-offset-at-byte-position
-              (owned_view.compiler-owned-shared-view text)
+            (source_text.source-text-offset-at-byte-position
+              text
               (- hint-line 1)
               (- hint-col 1))]
           [belongs-to-document : bool
@@ -14874,20 +14632,20 @@
 
 (define (lsp-quoted-datum-end [text : String] [start : i64] [limit : i64]) : i64
   (let
-    [datum-start : i64
-      (lsp-skip-space (owned_view.compiler-owned-shared-view text) start limit)]
+    [datum-start : i64 (source_text.source-text-skip-space text start limit)]
     (if (>= datum-start limit)
       limit
       (let
         [first : char (string.string-ref text datum-start)]
         (cond
           [(= first '(') (lsp-skip-paren-group text datum-start limit)]
-          [(= first '"') (lsp-skip-string text datum-start limit)]
+          [(= first '"')
+            (source_text.source-text-skip-string text datum-start limit)]
           [(= first '\'')
             (let
               [past : i64
-                (lsp-skip-apostrophe-char-literal
-                  (owned_view.compiler-owned-shared-view text)
+                (source_text.source-text-skip-char-literal
+                  text
                   datum-start
                   limit)]
               (if (> past (+ datum-start 1))
@@ -14920,40 +14678,28 @@
         (let
           [current : char (string.string-ref text cursor)]
           (cond
-            [(lsp-ws? current)
+            [(source_text.source-text-space? current)
               (set!
                 cursor
-                (lsp-skip-space
-                  (owned_view.compiler-owned-shared-view text)
-                  cursor
-                  limit))]
+                (source_text.source-text-skip-space text cursor limit))]
             [(= current ';')
               (set!
                 cursor
-                (lsp-skip-line
-                  (owned_view.compiler-owned-shared-view text)
-                  cursor
-                  limit))]
+                (source_text.source-text-skip-line text cursor limit))]
             [(= current '"')
               (set!
                 cursor
-                (lsp-skip-string
-                  (owned_view.compiler-owned-shared-view text)
-                  cursor
-                  limit))]
+                (source_text.source-text-skip-string text cursor limit))]
             [(= current '\'')
               (let
                 [past : i64
-                  (lsp-skip-apostrophe-char-literal
-                    (owned_view.compiler-owned-shared-view text)
-                    cursor
-                    limit)]
+                  (source_text.source-text-skip-char-literal text cursor limit)]
                 (if (> past (+ cursor 1))
                   (set! cursor past)
                   (let
                     [datum-start : i64
-                      (lsp-skip-space
-                        (owned_view.compiler-owned-shared-view text)
+                      (source_text.source-text-skip-space
+                        text
                         (+ cursor 1)
                         limit)]
                     [datum-end : i64
@@ -14967,10 +14713,7 @@
             [(= current '`')
               (let
                 [datum-start : i64
-                  (lsp-skip-space
-                    (owned_view.compiler-owned-shared-view text)
-                    (+ cursor 1)
-                    limit)]
+                  (source_text.source-text-skip-space text (+ cursor 1) limit)]
                 [datum-end : i64
                   (lsp-quoted-datum-end
                     (owned_view.compiler-owned-shared-view text)
@@ -14990,10 +14733,7 @@
                       2
                       1))]
                 [datum-start : i64
-                  (lsp-skip-space
-                    (owned_view.compiler-owned-shared-view text)
-                    prefix-end
-                    limit)]
+                  (source_text.source-text-skip-space text prefix-end limit)]
                 [datum-end : i64
                   (lsp-quoted-datum-end
                     (owned_view.compiler-owned-shared-view text)
@@ -15016,8 +14756,8 @@
                     cursor
                     limit)]
                 [head-start : i64
-                  (lsp-skip-space
-                    (owned_view.compiler-owned-shared-view text)
+                  (source_text.source-text-skip-space
+                    text
                     (+ cursor 1)
                     form-end)]
                 [head-end : i64
@@ -15091,27 +14831,11 @@
           (let
             [c : char (string.string-ref text i)]
             (cond
-              [(= c ';')
-                (set!
-                  i
-                  (lsp-skip-line
-                    (owned_view.compiler-owned-shared-view text)
-                    i
-                    n))]
+              [(= c ';') (set! i (source_text.source-text-skip-line text i n))]
               [(= c '"')
-                (set!
-                  i
-                  (lsp-skip-string
-                    (owned_view.compiler-owned-shared-view text)
-                    i
-                    n))]
+                (set! i (source_text.source-text-skip-string text i n))]
               [(= c '\'')
-                (set!
-                  i
-                  (lsp-skip-apostrophe-char-literal
-                    (owned_view.compiler-owned-shared-view text)
-                    i
-                    n))]
+                (set! i (source_text.source-text-skip-char-literal text i n))]
               [(lsp-ident-char? c)
                 (let
                   [end : i64
@@ -15417,7 +15141,7 @@
               (set! cursor.code false))
             (begin
               (set! cursor.col (+ cursor.col (lsp-position-units-for-byte c)))
-              (if (lsp-ws? c)
+              (if (source_text.source-text-space? c)
                 unit
                 (set! cursor.code true))))
           (set! i (+ i 1)))))))
@@ -15497,10 +15221,7 @@
                 [line : i64 cursor.line]
                 [past : i64
                   (lsp-fold-clamp
-                    (lsp-skip-line
-                      (owned_view.compiler-owned-shared-view text)
-                      i
-                      n)
+                    (source_text.source-text-skip-line text i n)
                     n)]
                 [eol : i64
                   (if (and
@@ -15536,10 +15257,7 @@
               (let
                 [past : i64
                   (lsp-fold-clamp
-                    (lsp-skip-string
-                      (owned_view.compiler-owned-shared-view text)
-                      i
-                      n)
+                    (source_text.source-text-skip-string text i n)
                     n)]
                 (begin
                   (lsp-fold-cursor-advance!
@@ -15553,10 +15271,7 @@
               (let
                 [past : i64
                   (lsp-fold-clamp
-                    (lsp-skip-apostrophe-char-literal
-                      (owned_view.compiler-owned-shared-view text)
-                      i
-                      n)
+                    (source_text.source-text-skip-char-literal text i n)
                     n)]
                 (begin
                   (lsp-fold-cursor-advance!
@@ -15616,7 +15331,7 @@
             [else
               (begin
                 (set! cursor.col (+ cursor.col (lsp-position-units-for-byte c)))
-                (if (lsp-ws? c)
+                (if (source_text.source-text-space? c)
                   unit
                   (set! cursor.code true))
                 (set! i (+ i 1)))])))
@@ -17501,8 +17216,8 @@
                         (- entry.form-start-line 1)
                         (- entry.form-start-col 1))]
                     [after-kw : i64
-                      (lsp-skip-space
-                        (owned_view.compiler-owned-shared-view text)
+                      (source_text.source-text-skip-space
+                        text
                         (+ form-start-off 1)
                         n2)]
                     [kw-end : i64
@@ -17511,10 +17226,7 @@
                         after-kw
                         n2)]
                     [after-kw2 : i64
-                      (lsp-skip-space
-                        (owned_view.compiler-owned-shared-view text)
-                        kw-end
-                        n2)]
+                      (source_text.source-text-skip-space text kw-end n2)]
                     (if (and
                       (< after-kw2 n2)
                       (= (string.string-ref text after-kw2) '('))
@@ -17608,8 +17320,8 @@
                           (- entry.form-start-line 1)
                           (- entry.form-start-col 1))]
                       [after-kw : i64
-                        (lsp-skip-space
-                          (owned_view.compiler-owned-shared-view text)
+                        (source_text.source-text-skip-space
+                          text
                           (+ form-start-off 1)
                           n2)]
                       [kw-end : i64
@@ -17618,10 +17330,7 @@
                           after-kw
                           n2)]
                       [after-kw2 : i64
-                        (lsp-skip-space
-                          (owned_view.compiler-owned-shared-view text)
-                          kw-end
-                          n2)]
+                        (source_text.source-text-skip-space text kw-end n2)]
                       (if (and
                         (< after-kw2 n2)
                         (= (string.string-ref text after-kw2) '('))
@@ -18332,10 +18041,7 @@
       ""
       (let
         [head-start : i64
-          (lsp-skip-space
-            (owned_view.compiler-owned-shared-view text)
-            (+ start 1)
-            limit)]
+          (source_text.source-text-skip-space text (+ start 1) limit)]
         [head-end : i64 0]
         (begin
           (set!
@@ -18386,26 +18092,11 @@
           [c : char (string.string-ref text i)]
           (cond
             [(= c ';')
-              (set!
-                i
-                (lsp-skip-line
-                  (owned_view.compiler-owned-shared-view text)
-                  i
-                  limit))]
+              (set! i (source_text.source-text-skip-line text i limit))]
             [(= c '\'')
-              (set!
-                i
-                (lsp-skip-apostrophe-char-literal
-                  (owned_view.compiler-owned-shared-view text)
-                  i
-                  limit))]
+              (set! i (source_text.source-text-skip-char-literal text i limit))]
             [(= c '"')
-              (set!
-                i
-                (lsp-skip-string
-                  (owned_view.compiler-owned-shared-view text)
-                  i
-                  limit))]
+              (set! i (source_text.source-text-skip-string text i limit))]
             [(= c '(')
               (let
                 [head : String
@@ -18522,17 +18213,13 @@
 
 (define (lsp-generic-form-body-start [text : String] [start : i64] [end : i64]) : i64
   (let
-    [head-start : i64
-      (lsp-skip-space
-        (owned_view.compiler-owned-shared-view text)
-        (+ start 1)
-        end)]
+    [head-start : i64 (source_text.source-text-skip-space text (+ start 1) end)]
     [head-end : i64
       (lsp-scan-ident
         (owned_view.compiler-owned-shared-view text)
         head-start
         end)]
-    (lsp-skip-space text head-end end)))
+    (source_text.source-text-skip-space text head-end end)))
 
 (define (lsp-replace-body-by-path-with-decls
   [text : String]
@@ -18805,7 +18492,7 @@
         (LspDocumentHandleResult.Continue docs))]))
 
 (define (lsp-is-whitespace [c : char]) : bool
-  (lsp-ws? c))
+  (source_text.source-text-space? c))
 
 ;; Helper: Extract function name from a define or defmacro form.
 (define (lsp-extract-define-name [text : String]) : String
@@ -18814,8 +18501,7 @@
     (begin
       (when (= n 0) (return ""))
       (let
-        [open : i64
-          (lsp-skip-space (owned_view.compiler-owned-shared-view text) 0 n)]
+        [open : i64 (source_text.source-text-skip-space text 0 n)]
         (begin
           (when
             (or
@@ -18824,10 +18510,7 @@
             (return ""))
           (let
             [kw-start : i64
-              (lsp-skip-space
-                (owned_view.compiler-owned-shared-view text)
-                (+ open 1)
-                n)]
+              (source_text.source-text-skip-space text (+ open 1) n)]
             [kw-end : i64 0]
             [kw : String ""]
             (begin
@@ -18844,10 +18527,7 @@
                 (return ""))
               (let
                 [name-start : i64
-                  (lsp-skip-space
-                    (owned_view.compiler-owned-shared-view text)
-                    kw-end
-                    n)]
+                  (source_text.source-text-skip-space text kw-end n)]
                 (begin
                   (when (>= name-start n) (return ""))
                   (if (=
@@ -18855,8 +18535,8 @@
                     (string.string-ref "(" 0))
                     (set!
                       name-start
-                      (lsp-skip-space
-                        (owned_view.compiler-owned-shared-view text)
+                      (source_text.source-text-skip-space
+                        text
                         (+ name-start 1)
                         n))
                     unit)

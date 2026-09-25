@@ -26,6 +26,7 @@
 (import lint_policy_core as lint_policy)
 (import package_source_core)
 (import stdlib.string)
+(import source_text_core as source_text)
 (import sym_i64_env)
 
 ;; Parsed lint CLI config: input paths, stdlib roots, whether `--check`
@@ -275,9 +276,6 @@
     (- (lint_core.lint-findings-count items) 1)
     0))
 
-(define (selfhost-lint-space? [c : char]) : bool
-  (or (= c ' ') (= c '\t') (= c '\n') (= c '\r')))
-
 (define (selfhost-lint-form-delim? [source : String] [idx : i64]) : bool
   (let
     [source-len : i64 (string.string-length source)]
@@ -285,7 +283,7 @@
       true
       (let
         [c : char (string.string-ref source idx)]
-        (or (selfhost-lint-space? c) (= c ')'))))))
+        (or (source_text.source-text-space? c) (= c ')'))))))
 
 (define (selfhost-lint-line-start-index [source : String] [target-line : i64]) : i64
   (let
@@ -314,61 +312,6 @@
       (ast.ast-source-span-start-line span))
     (- (ast.ast-source-span-start-col span) 1)))
 
-(define (selfhost-lint-skip-line [source : String] [idx : i64] [n : i64]) : i64
-  (let
-    [j : i64 idx]
-    (begin
-      (while (and (< j n) (not (= (string.string-ref source j) '\n')))
-        (set! j (+ j 1)))
-      (if (< j n)
-        (+ j 1)
-        j))))
-
-(define (selfhost-lint-skip-string [source : String] [idx : i64] [n : i64]) : i64
-  (let
-    [j : i64 (+ idx 1)]
-    [done : bool false]
-    (begin
-      (while (and (< j n) (not done))
-        (let
-          [c : char (string.string-ref source j)]
-          (if (= c '\\')
-            (set! j (+ j 2))
-            (if (= c '"')
-              (begin
-                (set! done true)
-                (set! j (+ j 1)))
-              (set! j (+ j 1))))))
-      j)))
-
-(define (selfhost-lint-apostrophe-char-escape? [c : char]) : bool
-  (or (= c 'n') (= c 't') (= c 'r') (= c '0') (= c '\\') (= c '\'')))
-
-(define (selfhost-lint-skip-apostrophe-char-literal
-  [source : String]
-  [idx : i64]
-  [n : i64]) : i64
-  (if (< (+ idx 1) n)
-    (let
-      [payload : char (string.string-ref source (+ idx 1))]
-      (cond
-        [(= payload '\\')
-          (if (and
-            (< (+ idx 3) n)
-            (selfhost-lint-apostrophe-char-escape?
-              (string.string-ref source (+ idx 2)))
-            (= (string.string-ref source (+ idx 3)) '\''))
-            (+ idx 4)
-            (+ idx 1))]
-        [(or (= payload '\'') (= payload '\n') (= payload '\r')) (+ idx 1)]
-        [else
-          (if (and
-            (< (+ idx 2) n)
-            (= (string.string-ref source (+ idx 2)) '\''))
-            (+ idx 3)
-            (+ idx 1))]))
-    (+ idx 1)))
-
 (define (selfhost-lint-skip-ws-comments [source : String] [idx : i64] [n : i64]) : i64
   (let
     [j : i64 idx]
@@ -378,20 +321,14 @@
         (let
           [c : char (string.string-ref source j)]
           (cond
-            [(selfhost-lint-space? c) (set! j (+ j 1))]
-            [(= c ';')
-              (set!
-                j
-                (selfhost-lint-skip-line
-                  (owned_view.compiler-owned-shared-view source)
-                  j
-                  n))]
+            [(source_text.source-text-space? c) (set! j (+ j 1))]
+            [(= c ';') (set! j (source_text.source-text-skip-line source j n))]
             [else (set! done true)])))
       j)))
 
 (define (selfhost-lint-source-form-delim? [c : char]) : bool
   (or
-    (selfhost-lint-space? c)
+    (source_text.source-text-space? c)
     (= c '(')
     (= c ')')
     (= c '[')
@@ -421,27 +358,11 @@
         (let
           [c : char (string.string-ref source j)]
           (cond
-            [(= c ';')
-              (set!
-                j
-                (selfhost-lint-skip-line
-                  (owned_view.compiler-owned-shared-view source)
-                  j
-                  n))]
+            [(= c ';') (set! j (source_text.source-text-skip-line source j n))]
             [(= c '"')
-              (set!
-                j
-                (selfhost-lint-skip-string
-                  (owned_view.compiler-owned-shared-view source)
-                  j
-                  n))]
+              (set! j (source_text.source-text-skip-string source j n))]
             [(= c '\'')
-              (set!
-                j
-                (selfhost-lint-skip-apostrophe-char-literal
-                  (owned_view.compiler-owned-shared-view source)
-                  j
-                  n))]
+              (set! j (source_text.source-text-skip-char-literal source j n))]
             [(or (= c '(') (= c '['))
               (begin
                 (set! depth (+ depth 1))
@@ -470,8 +391,8 @@
         (cond
           [(or (= c '(') (= c '['))
             (selfhost-lint-skip-source-group source j n)]
-          [(= c '"') (selfhost-lint-skip-string source j n)]
-          [(= c '\'') (selfhost-lint-skip-apostrophe-char-literal source j n)]
+          [(= c '"') (source_text.source-text-skip-string source j n)]
+          [(= c '\'') (source_text.source-text-skip-char-literal source j n)]
           [else (selfhost-lint-skip-atom source j n)])))))
 
 (define (selfhost-lint-begin-source-form-count

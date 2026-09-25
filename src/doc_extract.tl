@@ -205,33 +205,6 @@
           (set! keep false)))
       i)))
 
-(define (doc-apostrophe-char-escape? [c : char]) : bool
-  (or (= c 'n') (= c 't') (= c 'r') (= c '0') (= c '\\') (= c '\'')))
-
-(define (doc-scan-apostrophe-char-literal-end
-  [src : String]
-  [start : i64]
-  [n : i64]) : i64
-  (if (< (+ start 1) n)
-    (let
-      [payload : char (string.string-ref src (+ start 1))]
-      (cond
-        [(= payload '\\')
-          (if (and
-            (< (+ start 3) n)
-            (doc-apostrophe-char-escape? (string.string-ref src (+ start 2)))
-            (= (string.string-ref src (+ start 3)) '\''))
-            (+ start 4)
-            (+ start 1))]
-        [(or (= payload '\'') (= payload '\n') (= payload '\r')) (+ start 1)]
-        [else
-          (if (and
-            (< (+ start 2) n)
-            (= (string.string-ref src (+ start 2)) '\''))
-            (+ start 3)
-            (+ start 1))]))
-    (+ start 1)))
-
 (define (doc-scan-form-end [src : String] [start : i64] [n : i64]) : i64
   (let
     [i : i64 start]
@@ -255,12 +228,7 @@
                     i
                     n))]
               [(= c '\'')
-                (set!
-                  i
-                  (doc-scan-apostrophe-char-literal-end
-                    (owned_view.compiler-owned-shared-view src)
-                    i
-                    n))]
+                (set! i (source_text.source-text-skip-char-literal src i n))]
               [(or (= c '(') (= c '['))
                 (begin
                   (set! depth (+ depth 1))

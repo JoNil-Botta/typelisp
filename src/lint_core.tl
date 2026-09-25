@@ -7451,51 +7451,13 @@
   (__tl_make-array i64 0))
 
 (define (lint-source-line-index-build! [source : String]) : unit
-  (let
-    [source-len : i64 (string.string-length source)]
-    [index : i64 0]
-    [line-count : i64 1]
-    (begin
-      (while (< index source-len)
-        (begin
-          (if (= (string.string-ref source index) '\n')
-            (set! line-count (+ line-count 1))
-            unit)
-          (set! index (+ index 1))))
-      (let
-        [starts : (__tl_dyn-array i64) (__tl_make-array i64 line-count)]
-        [source-index : i64 0]
-        [line-index : i64 1]
-        (begin
-          (set! (array-ref starts 0) 0)
-          (while (< source-index source-len)
-            (begin
-              (if (= (string.string-ref source source-index) '\n')
-                (begin
-                  (set! (array-ref starts line-index) (+ source-index 1))
-                  (set! line-index (+ line-index 1)))
-                unit)
-              (set! source-index (+ source-index 1))))
-          (set! lint-source-line-starts starts))))))
+  (set! lint-source-line-starts (source_text.source-text-line-starts source)))
 
 (define (lint-source-line-start [line : i64]) : i64
-  (if (or (<= line 0) (> line (array-length lint-source-line-starts)))
-    (- 0 1)
-    (array-ref lint-source-line-starts (- line 1))))
+  (source_text.source-text-line-start (& lint-source-line-starts) line))
 
 (define (lint-source-index-line-index [target : i64]) : i64
-  (let
-    [low : i64 0]
-    [high : i64 (array-length lint-source-line-starts)]
-    (begin
-      (while (< low high)
-        (let
-          [mid : i64 (/ (+ low high) 2)]
-          [start : i64 (array-ref lint-source-line-starts mid)]
-          (if (<= start target)
-            (set! low (+ mid 1))
-            (set! high mid))))
-      (- low 1))))
+  (source_text.source-text-line-index (& lint-source-line-starts) target))
 
 (defstruct LintUnusedVariableBinding
   (name String)

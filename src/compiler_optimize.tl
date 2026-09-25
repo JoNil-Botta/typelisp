@@ -3000,13 +3000,47 @@
     [(ir.CompilerIrValue.Var id) (opt-used-add set id)]
     [_ set]))
 
-(define (opt-collect-use-into!
+;; What a use scan records in a map for each use: the var it reads, the
+;; global whose address it takes, or one more occurrence of the global it
+;; names. The scans share one expansion of compiler-ir-instr-visit-uses.
+(defenum OptUseNote
+  (Var)
+  (GlobalAddr)
+  (GlobalCount))
+
+(define (opt-note-use!
+  [note : OptUseNote]
   [set : (&mut set opt_i64_i64_map.Map)]
   [_role : ir.CompilerIrOperandRole]
   [value : ir.CompilerIrValue]) : unit
-  (match value
-    [(ir.CompilerIrValue.Var id) (opt_i64_i64_map.insert-ref! set id 1)]
-    [_ unit]))
+  (match note
+    [(OptUseNote.Var)
+      (match value
+        [(ir.CompilerIrValue.Var id) (opt_i64_i64_map.insert-ref! set id 1)]
+        [_ unit])]
+    [(OptUseNote.GlobalAddr)
+      (match value
+        [(ir.CompilerIrValue.GlobalAddr name)
+          (opt_i64_i64_map.insert-ref! set (ir.compiler-ir-symbol-id name) 1)]
+        [_ unit])]
+    [(OptUseNote.GlobalCount)
+      (match value
+        [(ir.CompilerIrValue.Global name)
+          (let
+            [id : i64 (ir.compiler-ir-symbol-id name)]
+            [seen : i64 (opt-cl-map-count set id)]
+            (opt_i64_i64_map.insert-ref! set id (+ seen 1)))]
+        [_ unit])]))
+
+(define (opt-note-uses!
+  [note : OptUseNote]
+  [set : (&mut set opt_i64_i64_map.Map)]
+  [instr : ir.CompilerIrInstr]) : unit
+  (ir.compiler-ir-instr-visit-uses
+    instr
+    opt-note-use!
+    (compiler-opt-global-shared-view note)
+    set))
 
 (define (opt-collect-instr-uses
   [set : opt_i64_i64_map.Map]
@@ -3021,10 +3055,7 @@
       (let
         [out : opt_i64_i64_map.Map set]
         (begin
-          (ir.compiler-ir-instr-visit-uses
-            instr
-            opt-collect-use-into!
-            (&mut out))
+          (opt-note-uses! (OptUseNote.Var) (&mut out) instr)
           out))]))
 
 (define (opt-collect-instr-seq-uses-from
@@ -3164,11 +3195,46 @@
     [(ir.CompilerIrValue.Var id) (opt-used-array-add items id)]
     [_ unit]))
 
-(define (opt-collect-use-array
-  [items : (__tl_dyn-array i64)]
+;; What a use scan does to a per-var array for each in-range var it reads:
+;; count the use, retire one (DCE deleted the reader; a count never drops below
+;; zero), or stamp the var with a generation. The scans share one expansion of
+;; compiler-ir-instr-visit-uses.
+(defenum OptUseMark
+  (Count)
+  (Uncount)
+  (Stamp i64))
+
+(define (opt-mark-use!
+  [mark : OptUseMark]
+  [items : (&mut items (__tl_dyn-array i64))]
   [_role : ir.CompilerIrOperandRole]
   [value : ir.CompilerIrValue]) : unit
-  (opt-collect-value-uses-array items value))
+  (match value
+    [(ir.CompilerIrValue.Var id)
+      (if (or (< id 0) (>= id (array-length items)))
+        unit
+        (let
+          [current : i64 (array-ref items id)]
+          (set!
+            (array-ref items id)
+            (match mark
+              [(OptUseMark.Count) (+ current 1)]
+              [(OptUseMark.Uncount)
+                (if (> current 0)
+                  (- current 1)
+                  current)]
+              [(OptUseMark.Stamp generation) generation]))))]
+    [_ unit]))
+
+(define (opt-mark-uses!
+  [mark : OptUseMark]
+  [items : (&mut items (__tl_dyn-array i64))]
+  [instr : ir.CompilerIrInstr]) : unit
+  (ir.compiler-ir-instr-visit-uses
+    instr
+    opt-mark-use!
+    (compiler-opt-global-shared-view mark)
+    items))
 
 (define (opt-collect-phi-uses-array
   [items : (__tl_dyn-array i64)]
@@ -3205,11 +3271,7 @@
           (compiler-opt-global-shared-view items)
           src)
         (opt-used-array-add items owner))]
-    [_
-      (ir.compiler-ir-instr-visit-uses
-        instr
-        opt-collect-use-array
-        (compiler-opt-global-shared-view items))]))
+    [_ (opt-mark-uses! (OptUseMark.Count) (&mut items) instr)]))
 
 (define (opt-uncount-value-uses-array
   [items : (&mut items (__tl_dyn-array i64))]
@@ -3217,12 +3279,6 @@
   (match value
     [(ir.CompilerIrValue.Var id) (opt-used-array-dec items id)]
     [_ unit]))
-
-(define (opt-uncount-use-array
-  [items : (&mut items (__tl_dyn-array i64))]
-  [_role : ir.CompilerIrOperandRole]
-  [value : ir.CompilerIrValue]) : unit
-  (opt-uncount-value-uses-array items value))
 
 ;; Decrement the operand use counts an instruction contributed. Called when DCE
 ;; deletes that instruction (one opt-instr-dead-array? accepted) so a single
@@ -3236,7 +3292,7 @@
       (begin
         (opt-uncount-value-uses-array items src)
         (opt-used-array-dec items owner))]
-    [_ (ir.compiler-ir-instr-visit-uses instr opt-uncount-use-array items)]))
+    [_ (opt-mark-uses! (OptUseMark.Uncount) items instr)]))
 
 (define (opt-collect-instr-seq-uses-array
   [items : (__tl_dyn-array i64)]
@@ -8129,26 +8185,76 @@
     opt-copy-resolve-spmd-value
     (compiler-opt-global-shared-view env)))
 
-;; Vector and mask values are private aggregates. Only propagate var-to-var
-;; identities through them: scalar literals recorded by the general copy
-;; environment are not valid SIMD constants.
-(define (opt-copy-resolve-use
-  [env : OptCopyEnv]
-  [role : ir.CompilerIrOperandRole]
-  [value : ir.CompilerIrValue]) : ir.CompilerIrValue
-  (match role
-    [(ir.CompilerIrOperandRole.Vector) (opt-copy-resolve-mask env value)]
-    [(ir.CompilerIrOperandRole.Mask) (opt-copy-resolve-mask env value)]
-    [_ (opt-copy-resolve env value)]))
+;; The operand rewrite of one pass, for opt-rewrite-operands: copy propagation
+;; (local or global, and its vector-only form for the SIMD payloads whose scalar
+;; operands keep their vars), the SCCP constant rewrite, the global-cell
+;; substitution, and SSA renaming (with the def's new var, or -1 to keep it).
+;; The passes share one expansion of compiler-ir-instr-map.
+(defenum OptOperandRewrite
+  (Copy OptCopyEnv)
+  (CopyVector OptCopyEnv)
+  (GlobalCopy OptGlobalCopyFactTable OptDomInfo i64 i64)
+  (GlobalCopyVector OptGlobalCopyFactTable OptDomInfo i64 i64)
+  (Sccp OptSccpEnv)
+  (GlobalCell opt_i64_i64_map.Map)
+  (SsaRename OptSsaRenameEnv i64))
 
-(define (opt-copy-resolve-vector-use
-  [env : OptCopyEnv]
+(define (opt-vector-role? [role : ir.CompilerIrOperandRole]) : bool
+  (match role
+    [(ir.CompilerIrOperandRole.Vector) true]
+    [(ir.CompilerIrOperandRole.Mask) true]
+    [_ false]))
+
+;; Vector and mask values are private aggregates. Copy propagation only
+;; forwards var-to-var identities into them: scalar literals recorded by the
+;; copy environments are not valid SIMD constants. The global resolver's mask
+;; form keeps the same instruction-position and dominance checks as scalar
+;; copy propagation, which lets the second sweep forward the Movs produced by
+;; vector CSE.
+(define (opt-operand-rewrite-use
+  [rewrite : OptOperandRewrite]
   [role : ir.CompilerIrOperandRole]
   [value : ir.CompilerIrValue]) : ir.CompilerIrValue
-  (match role
-    [(ir.CompilerIrOperandRole.Vector) (opt-copy-resolve-mask env value)]
-    [(ir.CompilerIrOperandRole.Mask) (opt-copy-resolve-mask env value)]
-    [_ value]))
+  (match rewrite
+    [(OptOperandRewrite.Copy env)
+      (if (opt-vector-role? role)
+        (opt-copy-resolve-mask env value)
+        (opt-copy-resolve env value))]
+    [(OptOperandRewrite.CopyVector env)
+      (if (opt-vector-role? role)
+        (opt-copy-resolve-mask env value)
+        value)]
+    [(OptOperandRewrite.GlobalCopy facts doms block-id pos)
+      (if (opt-vector-role? role)
+        (opt-global-copy-resolve-mask facts doms block-id pos value)
+        (opt-global-copy-resolve facts doms block-id pos value))]
+    [(OptOperandRewrite.GlobalCopyVector facts doms block-id pos)
+      (if (opt-vector-role? role)
+        (opt-global-copy-resolve-mask facts doms block-id pos value)
+        value)]
+    [(OptOperandRewrite.Sccp env) (opt-sccp-rewrite-value env value)]
+    [(OptOperandRewrite.GlobalCell plan)
+      (opt-global-cell-subst-value plan value)]
+    [(OptOperandRewrite.SsaRename env _) (opt-ssa-rewrite-value env value)]))
+
+(define (opt-operand-rewrite-def [rewrite : OptOperandRewrite] [dst : i64]) : i64
+  (match rewrite
+    [(OptOperandRewrite.SsaRename _ next-var)
+      (if (< next-var 0)
+        dst
+        next-var)]
+    [_ dst]))
+
+(define (opt-rewrite-operands
+  [rewrite : OptOperandRewrite]
+  [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
+  (ir.compiler-ir-instr-map
+    instr
+    opt-operand-rewrite-use
+    opt-operand-rewrite-def
+    _
+    _
+    (compiler-opt-global-shared-view rewrite)))
 
 ;; Rewrite the value-use operands of an instruction through the copy env. Phi
 ;; inputs and the raw var id of `CompilerIrInstr.AddrOf` are intentionally not rewritten.
@@ -8160,25 +8266,13 @@
     ;; The scalar operands of these SIMD forms keep their vars, and a shuffle,
     ;; a gather and a tail mask keep all of theirs.
     [(ir.CompilerIrInstr.VectorPrefix _)
-      (ir.compiler-ir-instr-map-uses
-        instr
-        opt-copy-resolve-vector-use
-        (compiler-opt-global-shared-view env))]
+      (opt-rewrite-operands (OptOperandRewrite.CopyVector env) instr)]
     [(ir.CompilerIrInstr.VectorStore _)
-      (ir.compiler-ir-instr-map-uses
-        instr
-        opt-copy-resolve-vector-use
-        (compiler-opt-global-shared-view env))]
+      (opt-rewrite-operands (OptOperandRewrite.CopyVector env) instr)]
     [(ir.CompilerIrInstr.PredicatedStore _)
-      (ir.compiler-ir-instr-map-uses
-        instr
-        opt-copy-resolve-vector-use
-        (compiler-opt-global-shared-view env))]
+      (opt-rewrite-operands (OptOperandRewrite.CopyVector env) instr)]
     [(ir.CompilerIrInstr.PredicatedLoad _)
-      (ir.compiler-ir-instr-map-uses
-        instr
-        opt-copy-resolve-vector-use
-        (compiler-opt-global-shared-view env))]
+      (opt-rewrite-operands (OptOperandRewrite.CopyVector env) instr)]
     [(ir.CompilerIrInstr.VectorLoad _ _ _ _ _) instr]
     [(ir.CompilerIrInstr.GatherLoad _) instr]
     [(ir.CompilerIrInstr.VectorShuffle _) instr]
@@ -8198,11 +8292,7 @@
               [(ir.CompilerIrMaybeValue.No)
                 (ir.CompilerIrInstr.Word dst resolved-src index ty)])]
           [_ (ir.CompilerIrInstr.Word dst resolved-src index ty)]))]
-    [_
-      (ir.compiler-ir-instr-map-uses
-        instr
-        opt-copy-resolve-use
-        (compiler-opt-global-shared-view env))]))
+    [_ (opt-rewrite-operands (OptOperandRewrite.Copy env) instr)]))
 
 ;; Update the copy env after an instruction. A `Mov dst src` (with `src` already
 ;; substituted) records a copy when `src` is a safe, non-self source. Every other
@@ -13328,29 +13418,16 @@
     opt-ssa-rewrite-spmd-value
     (compiler-opt-global-shared-view env)))
 
-(define (opt-ssa-rewrite-use
-  [env : OptSsaRenameEnv]
-  [_next-var : i64]
-  [_role : ir.CompilerIrOperandRole]
-  [value : ir.CompilerIrValue]) : ir.CompilerIrValue
-  (opt-ssa-rewrite-value env value))
-
-(define (opt-ssa-renamed-def
-  [_env : OptSsaRenameEnv]
-  [next-var : i64]
-  [_dst : i64]) : i64
-  next-var)
-
 (define (opt-ssa-rename-uses
   [env : OptSsaRenameEnv]
   [next-var : i64]
   [instr : ir.CompilerIrInstr]) : OptSsaInstrResult
   (OptSsaInstrResult.Result
-    (ir.compiler-ir-instr-map-uses
-      instr
-      opt-ssa-rewrite-use
-      (compiler-opt-global-shared-view env)
-      next-var)
+    (opt-rewrite-operands
+      (OptOperandRewrite.SsaRename
+        (compiler-opt-global-shared-view env)
+        (- 0 1))
+      instr)
     env
     next-var))
 
@@ -13365,14 +13442,11 @@
   (if (opt-ssa-candidate? facts dst)
     (let
       [out : ir.CompilerIrInstr
-        (ir.compiler-ir-instr-map
-          instr
-          opt-ssa-rewrite-use
-          opt-ssa-renamed-def
-          _
-          _
-          (compiler-opt-global-shared-view env)
-          next-var)]
+        (opt-rewrite-operands
+          (OptOperandRewrite.SsaRename
+            (compiler-opt-global-shared-view env)
+            next-var)
+          instr)]
       (OptSsaInstrResult.Result
         out
         (opt-ssa-env-bind env dst next-var)
@@ -15255,39 +15329,6 @@
     original
     resolved))
 
-;; SIMD payloads may only receive var-to-var identities. The global resolver's
-;; mask form rejects scalar literals while retaining the same
-;; instruction-position and dominance checks as scalar copy propagation. This
-;; lets the second sweep forward the Movs produced by vector CSE without
-;; confusing scalar values with private vector/mask aggregates.
-(define (opt-global-copy-resolve-use
-  [facts : OptGlobalCopyFactTable]
-  [doms : OptDomInfo]
-  [use-block-id : i64]
-  [use-pos : i64]
-  [role : ir.CompilerIrOperandRole]
-  [value : ir.CompilerIrValue]) : ir.CompilerIrValue
-  (match role
-    [(ir.CompilerIrOperandRole.Vector)
-      (opt-global-copy-resolve-mask facts doms use-block-id use-pos value)]
-    [(ir.CompilerIrOperandRole.Mask)
-      (opt-global-copy-resolve-mask facts doms use-block-id use-pos value)]
-    [_ (opt-global-copy-resolve facts doms use-block-id use-pos value)]))
-
-(define (opt-global-copy-resolve-vector-use
-  [facts : OptGlobalCopyFactTable]
-  [doms : OptDomInfo]
-  [use-block-id : i64]
-  [use-pos : i64]
-  [role : ir.CompilerIrOperandRole]
-  [value : ir.CompilerIrValue]) : ir.CompilerIrValue
-  (match role
-    [(ir.CompilerIrOperandRole.Vector)
-      (opt-global-copy-resolve-mask facts doms use-block-id use-pos value)]
-    [(ir.CompilerIrOperandRole.Mask)
-      (opt-global-copy-resolve-mask facts doms use-block-id use-pos value)]
-    [_ value]))
-
 ;; A phi input is read on its named predecessor edge. Resolve a copy using the
 ;; predecessor as the use block and a position after its final instruction.
 ;; This folds latch-local copies such as `%next = mov %step` directly into a
@@ -15349,37 +15390,21 @@
     ;; The scalar operands of these SIMD forms keep their vars, and a shuffle,
     ;; a gather and a tail mask keep all of theirs.
     [(ir.CompilerIrInstr.VectorPrefix _)
-      (ir.compiler-ir-instr-map-uses
-        instr
-        opt-global-copy-resolve-vector-use
-        (compiler-opt-global-shared-view facts)
-        (compiler-opt-global-shared-view doms)
-        block-id
-        pos)]
+      (opt-rewrite-operands
+        (OptOperandRewrite.GlobalCopyVector facts doms block-id pos)
+        instr)]
     [(ir.CompilerIrInstr.VectorStore _)
-      (ir.compiler-ir-instr-map-uses
-        instr
-        opt-global-copy-resolve-vector-use
-        (compiler-opt-global-shared-view facts)
-        (compiler-opt-global-shared-view doms)
-        block-id
-        pos)]
+      (opt-rewrite-operands
+        (OptOperandRewrite.GlobalCopyVector facts doms block-id pos)
+        instr)]
     [(ir.CompilerIrInstr.PredicatedStore _)
-      (ir.compiler-ir-instr-map-uses
-        instr
-        opt-global-copy-resolve-vector-use
-        (compiler-opt-global-shared-view facts)
-        (compiler-opt-global-shared-view doms)
-        block-id
-        pos)]
+      (opt-rewrite-operands
+        (OptOperandRewrite.GlobalCopyVector facts doms block-id pos)
+        instr)]
     [(ir.CompilerIrInstr.PredicatedLoad _)
-      (ir.compiler-ir-instr-map-uses
-        instr
-        opt-global-copy-resolve-vector-use
-        (compiler-opt-global-shared-view facts)
-        (compiler-opt-global-shared-view doms)
-        block-id
-        pos)]
+      (opt-rewrite-operands
+        (OptOperandRewrite.GlobalCopyVector facts doms block-id pos)
+        instr)]
     [(ir.CompilerIrInstr.VectorLoad _ _ _ _ _) instr]
     [(ir.CompilerIrInstr.GatherLoad _) instr]
     [(ir.CompilerIrInstr.VectorShuffle _) instr]
@@ -15428,13 +15453,9 @@
             [(ir.CompilerIrMaybeValue.No) instr])]
         [_ instr])]
     [_
-      (ir.compiler-ir-instr-map-uses
-        instr
-        opt-global-copy-resolve-use
-        (compiler-opt-global-shared-view facts)
-        (compiler-opt-global-shared-view doms)
-        block-id
-        pos)]))
+      (opt-rewrite-operands
+        (OptOperandRewrite.GlobalCopy facts doms block-id pos)
+        instr)]))
 
 ;; 1:1 rewrite: the output has exactly the input's length, so it is built
 ;; straight into a right-sized dense array instead of a cons spine that
@@ -48830,12 +48851,6 @@
         env
         (ir.compiler-ir-block-seq-to-list seq))]))
 
-(define (opt-sccp-rewrite-use
-  [env : OptSccpEnv]
-  [_role : ir.CompilerIrOperandRole]
-  [value : ir.CompilerIrValue]) : ir.CompilerIrValue
-  (opt-sccp-rewrite-value env value))
-
 (define (opt-sccp-rewrite-spmd-value
   [env : OptSccpEnv]
   [_class : ir.CompilerIrSpmdValueClass]
@@ -48871,37 +48886,33 @@
         (compiler-opt-global-shared-view env)
         dst
         (compiler-opt-global-shared-view ty)
-        (ir.compiler-ir-instr-map-uses
-          instr
-          opt-sccp-rewrite-use
-          (compiler-opt-global-shared-view env)))]
+        (opt-rewrite-operands
+          (OptOperandRewrite.Sccp (compiler-opt-global-shared-view env))
+          instr))]
     [(ir.CompilerIrInstr.Cast dst _ _ to-ty)
       (opt-sccp-rewrite-scalar-def
         (compiler-opt-global-shared-view env)
         dst
         (compiler-opt-global-shared-view to-ty)
-        (ir.compiler-ir-instr-map-uses
-          instr
-          opt-sccp-rewrite-use
-          (compiler-opt-global-shared-view env)))]
+        (opt-rewrite-operands
+          (OptOperandRewrite.Sccp (compiler-opt-global-shared-view env))
+          instr))]
     [(ir.CompilerIrInstr.UnOp dst _ _ ty)
       (opt-sccp-rewrite-scalar-def
         (compiler-opt-global-shared-view env)
         dst
         (compiler-opt-global-shared-view ty)
-        (ir.compiler-ir-instr-map-uses
-          instr
-          opt-sccp-rewrite-use
-          (compiler-opt-global-shared-view env)))]
+        (opt-rewrite-operands
+          (OptOperandRewrite.Sccp (compiler-opt-global-shared-view env))
+          instr))]
     [(ir.CompilerIrInstr.Phi dst _ ty)
       (opt-sccp-rewrite-scalar-def
         (compiler-opt-global-shared-view env)
         dst
         (compiler-opt-global-shared-view ty)
-        (ir.compiler-ir-instr-map-uses
-          instr
-          opt-sccp-rewrite-use
-          (compiler-opt-global-shared-view env)))]
+        (opt-rewrite-operands
+          (OptOperandRewrite.Sccp (compiler-opt-global-shared-view env))
+          instr))]
     [(ir.CompilerIrInstr.BinOp dst op lhs rhs ty)
       ;; sccp substitutes Const lattice values into operands, but a wide
       ;; (non-imm32) literal in the LEFT operand of a BinOp is never encodable,
@@ -48967,11 +48978,7 @@
               rewritten-cond
               true-label
               false-label)]))]
-    [_
-      (ir.compiler-ir-instr-map-uses
-        instr
-        opt-sccp-rewrite-use
-        (compiler-opt-global-shared-view env))]))
+    [_ (opt-rewrite-operands (OptOperandRewrite.Sccp env) instr)]))
 
 ;; Constant propagation can decide a bounds check outright. Only the in-range
 ;; case is dropped: an out-of-range literal keeps its check so the trap still
@@ -66900,13 +66907,6 @@
     [(ir.CompilerIrValue.Var id) (opt-scan-stamp items generation id)]
     [_ unit]))
 
-(define (opt-scan-note-use
-  [items : (__tl_dyn-array i64)]
-  [generation : i64]
-  [_role : ir.CompilerIrOperandRole]
-  [value : ir.CompilerIrValue]) : unit
-  (opt-scan-note-value-uses items generation value))
-
 ;; Mark every var the instruction mentions in a position fold/strength can
 ;; resolve or copy propagation can rewrite; phi inputs and AddrOf sources are
 ;; never rewritten, so they note nothing.
@@ -66916,6 +66916,7 @@
   [instr : ir.CompilerIrInstr]) : unit
   (match (compiler-opt-global-shared-view instr)
     [(ir.CompilerIrInstr.Phi _ _ _) unit]
+    [(ir.CompilerIrInstr.OwnRoot _ _ _) unit]
     [(ir.CompilerIrInstr.LoadOwned _ src owner _)
       (begin
         (opt-scan-note-value-uses
@@ -66926,12 +66927,7 @@
           items
           generation
           (ir.CompilerIrValue.Var owner)))]
-    [_
-      (ir.compiler-ir-instr-visit-uses
-        instr
-        opt-scan-note-use
-        (compiler-opt-global-shared-view items)
-        generation)]))
+    [_ (opt-mark-uses! (OptUseMark.Stamp generation) (&mut items) instr)]))
 
 ;; Blocks longer than this always take the full path (rare, and usually full
 ;; of real work); the cap also bounds the duplicate-key nested loop.
@@ -130895,15 +130891,7 @@
 ;; a new IR instruction fails to compile until its operands are classified
 ;; there -- a new operand position can never silently escape the address-taken
 ;; check.
-(define (opt-const-globals-disq-use!
-  [disq : (&mut disq opt_i64_i64_map.Map)]
-  [_role : ir.CompilerIrOperandRole]
-  [value : ir.CompilerIrValue]) : unit
-  (match value
-    [(ir.CompilerIrValue.GlobalAddr name)
-      (opt_i64_i64_map.insert-ref! disq (ir.compiler-ir-symbol-id name) 1)]
-    [_ unit]))
-
+;;
 ;; Disqualify a global on a direct store to it OR on any `CompilerIrValue.GlobalAddr`
 ;; operand. Like opt-reach-instr it skips Pack words; `CompilerIrInstr.Store`
 ;; also records its target name, and call/tail targets (function names, never
@@ -130923,11 +130911,7 @@
         [_ unit])
       (match (compiler-opt-global-shared-view instr)
         [(ir.CompilerIrInstr.Pack _ _ _) unit]
-        [_
-          (ir.compiler-ir-instr-visit-uses
-            instr
-            opt-const-globals-disq-use!
-            (&mut out))])
+        [_ (opt-note-uses! (OptUseNote.GlobalAddr) (&mut out) instr)])
       out)))
 
 (define (opt-const-globals-disq-seq-from
@@ -131156,30 +131140,18 @@
     [(opt_i64_i64_map.LookupFound n) n]
     [(opt_i64_i64_map.LookupMissing) 0]))
 
-(define (opt-cl-map-bump [map : opt_i64_i64_map.Map] [id : i64]) : opt_i64_i64_map.Map
-  (let
-    [out : opt_i64_i64_map.Map map]
-    [seen : i64 (opt-cl-map-count (& out) id)]
-    (begin
-      (opt_i64_i64_map.insert-ref! (&mut out) id (+ seen 1))
-      out)))
-
-(define (opt-cl-count-use
-  [_role : ir.CompilerIrOperandRole]
-  [counts : opt_i64_i64_map.Map]
-  [value : ir.CompilerIrValue]) : opt_i64_i64_map.Map
-  (match value
-    [(ir.CompilerIrValue.Global name)
-      (opt-cl-map-bump counts (ir.compiler-ir-symbol-id name))]
-    [_ counts]))
-
 ;; Like opt-reach-instr, this skips Pack words.
 (define (opt-cl-count-instr
   [counts : opt_i64_i64_map.Map]
   [instr : ir.CompilerIrInstr]) : opt_i64_i64_map.Map
   (match (compiler-opt-global-shared-view instr)
     [(ir.CompilerIrInstr.Pack _ _ _) counts]
-    [_ (ir.compiler-ir-instr-fold-uses instr counts opt-cl-count-use)]))
+    [_
+      (let
+        [out : opt_i64_i64_map.Map counts]
+        (begin
+          (opt-note-uses! (OptUseNote.GlobalCount) (&mut out) instr)
+          out))]))
 
 (define (opt-cl-blocks-to-list [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
   (match (compiler-opt-global-shared-view blocks)
@@ -137304,6 +137276,11 @@
 ;; Calls come from the total opt-instr-target and operands from the total IR
 ;; operand API, so a new IR instruction cannot let a function address or a
 ;; direct activation silently escape the scan.
+(define (opt-arg-global-scan-uses
+  [scan : OptArgGlobalScan]
+  [instr : ir.CompilerIrInstr]) : OptArgGlobalScan
+  (ir.compiler-ir-instr-fold-uses instr scan opt-arg-global-scan-use))
+
 (define (opt-arg-global-scan-instr
   [scan : OptArgGlobalScan]
   [instr : ir.CompilerIrInstr]) : OptArgGlobalScan
@@ -137317,11 +137294,10 @@
     ;; positionally this refuses the callee outright. Missing an activation is
     ;; the one thing the proof cannot survive.
     [(OptInstrTarget.NamedCall name)
-      (ir.compiler-ir-instr-fold-uses
-        instr
+      (opt-arg-global-scan-uses
         (opt-arg-global-scan-opaque scan (ir.compiler-ir-symbol-id name))
-        opt-arg-global-scan-use)]
-    [_ (ir.compiler-ir-instr-fold-uses instr scan opt-arg-global-scan-use)]))
+        instr)]
+    [_ (opt-arg-global-scan-uses scan instr)]))
 
 (define (opt-arg-global-scan-seq-from
   [scan : OptArgGlobalScan]
@@ -140386,9 +140362,8 @@
                       hoists-local
                       (+ index 1))))])]))]))
 
-(define (opt-global-cell-subst-use
+(define (opt-global-cell-subst-value
   [plan : opt_i64_i64_map.Map]
-  [_role : ir.CompilerIrOperandRole]
   [v : ir.CompilerIrValue]) : ir.CompilerIrValue
   (match (compiler-opt-global-shared-view v)
     [(ir.CompilerIrValue.Global name)
@@ -140410,17 +140385,10 @@
     [(ir.CompilerIrInstr.Mov _ _ _)
       (if entry?
         instr
-        (ir.compiler-ir-instr-map-uses
-          instr
-          opt-global-cell-subst-use
-          (compiler-opt-global-shared-view plan)))]
+        (opt-rewrite-operands (OptOperandRewrite.GlobalCell plan) instr))]
     [(ir.CompilerIrInstr.LoadOwned _ _ _ _) instr]
     [(ir.CompilerIrInstr.Pack _ _ _) instr]
-    [_
-      (ir.compiler-ir-instr-map-uses
-        instr
-        opt-global-cell-subst-use
-        (compiler-opt-global-shared-view plan))]))
+    [_ (opt-rewrite-operands (OptOperandRewrite.GlobalCell plan) instr)]))
 
 (define (opt-global-cell-rewrite-seq
   [plan : opt_i64_i64_map.Map]

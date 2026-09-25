@@ -161,7 +161,7 @@
   [args : (&mut args CliArgs)]
   [prefix : (& prefix str)]) : unit
   (let
-    [message : String (string.concat prefix (& args.arg))]
+    [message : String (string.concat3-borrowed prefix (& args.arg) "")]
     (cli-args-fail! args message)))
 
 ;; Stop before the next argument, leaving the rest of argv to the caller.

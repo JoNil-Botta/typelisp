@@ -4,7 +4,6 @@
 ;; helpers. Package runs reuse the package build path, then execute the emitted
 ;; binary artifact. `--direct` remains accepted as a compatibility no-op.
 (import compiler_owned_view as owned_view)
-(import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.process)
 (import stdlib.vector)

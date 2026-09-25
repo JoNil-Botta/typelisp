@@ -760,7 +760,7 @@
 (define (compiler-live-scratch-step-ids!
   [words : (&mut words (__tl_dyn-array i64))]
   [active-count : i64]
-  [ids : (__tl_dyn-array i64)]
+  [ids : (& ids (__tl_dyn-array i64))]
   [id-count : i64]
   [def-var : i64]) : i64
   (let
@@ -2918,7 +2918,7 @@
   block.instr-after)
 
 (define (compiler-live-instr-set-vec-nth
-  [sets : CompilerLiveInstrSetVec]
+  [sets : (& sets CompilerLiveInstrSetVec)]
   [index : i64]) : CompilerLiveI64Set
   (let
     [items : (__tl_dyn-array CompilerLiveI64Set) sets.items]
@@ -2932,9 +2932,9 @@
   [index : i64]) : CompilerLiveI64Set
   (match (compiler-live-function-find-block liveness label)
     [(CompilerLiveMaybeBlock.Some block)
-      (compiler-live-instr-set-vec-nth
-        (compiler-live-block-instr-after block)
-        index)]
+      (let
+        [block-instr-after (compiler-live-block-instr-after block)]
+        (compiler-live-instr-set-vec-nth block-instr-after index))]
     [(CompilerLiveMaybeBlock.No) (compiler-live-set-empty)]))
 
 ;; Dense-array path for liveness analysis.

@@ -365,12 +365,7 @@
         step-uses
         step-defs)]
     [id-count : i64
-      (live.compiler-live-scratch-step-ids!
-        (&mut id-words)
-        id-active
-        (live.compiler-live-shared-view ids)
-        2
-        1)]
+      (live.compiler-live-scratch-step-ids! (&mut id-words) id-active ids 2 1)]
     [step-ok : bool
       (and
         (= set-count id-count)

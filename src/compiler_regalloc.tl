@@ -23062,7 +23062,7 @@
                                       last
                                       i
                                       (live.compiler-live-instr-set-vec-nth
-                                        (compiler-reg-global-shared-view after)
+                                        after
                                         i)
                                       def-var
                                       vars
@@ -23407,9 +23407,7 @@
                 (compiler-reg-clobber-instr-kind? type-segment-bases instr 0))
                 (let
                   [live-after : live.CompilerLiveI64Set
-                    (live.compiler-live-instr-set-vec-nth
-                      (compiler-reg-global-shared-view after)
-                      index)]
+                    (live.compiler-live-instr-set-vec-nth after index)]
                   [j : i64 0]
                   (while (< j selected-count)
                     (begin
@@ -23612,9 +23610,7 @@
                 (let
                   [carried : i64
                     (compiler-reg-call-hole-flow-carried-mask
-                      (live.compiler-live-instr-set-vec-nth
-                        (compiler-reg-global-shared-view after)
-                        index)
+                      (live.compiler-live-instr-set-vec-nth after index)
                       selected
                       selected-count
                       full
@@ -23953,9 +23949,7 @@
                         0))
                       (let
                         [live-after : live.CompilerLiveI64Set
-                          (live.compiler-live-instr-set-vec-nth
-                            (compiler-reg-global-shared-view after)
-                            index)]
+                          (live.compiler-live-instr-set-vec-nth after index)]
                         [j : i64 0]
                         (begin
                           (while (< j selected-count)

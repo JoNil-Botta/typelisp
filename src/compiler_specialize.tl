@@ -163,8 +163,7 @@
           expr-segment-bases
           (__tl_make-array intern-state)
           records
-          (profile_state.compiler-profile-state-metrics
-            (owned_view.compiler-owned-shared-view _state)))
+          (profile_state.compiler-profile-state-metrics _state))
         (SpecOwnerContext
           (__tl_make-array pools)
           expr-segment-bases
@@ -349,7 +348,7 @@
     (any compile-profile test)
     (if _created?
       (profile_state.compiler-profile-metrics-add!
-        (owned_view.compiler-owned-shared-view _metrics)
+        _metrics
         spec-profile-structural-key-created-metric
         1)
       (profile_state.compiler-profile-metrics-add!
@@ -456,11 +455,8 @@
         (spec-profile-note-name-render
           (profile_state.compiler-profile-state-shared-view left-metrics)
           true)
-        (spec-profile-note-name-render
-          (profile_state.compiler-profile-state-shared-view right-metrics)
-          false)
-        (spec-profile-note-generated-text-materialized
-          (profile_state.compiler-profile-state-shared-view left-metrics))
+        (spec-profile-note-name-render right-metrics false)
+        (spec-profile-note-generated-text-materialized left-metrics)
         (spec-profile-reset!
           (profile_state.compiler-profile-state-shared-view right))
         (test.assert-i64-eq
@@ -489,8 +485,7 @@
           0
           "left job does not inherit right render cache misses")
         (test.assert-i64-eq
-          (spec-profile-generated-text-materialized-value
-            (profile_state.compiler-profile-state-shared-view left))
+          (spec-profile-generated-text-materialized-value left)
           1
           "left job retains generated text materialization")
         (test.assert-i64-eq
@@ -499,8 +494,7 @@
           0
           "right reset is isolated from left")
         (test.assert-i64-eq
-          (spec-profile-name-render-calls-value
-            (profile_state.compiler-profile-state-shared-view right))
+          (spec-profile-name-render-calls-value right)
           0
           "right render counters reset independently")))))
 
@@ -818,7 +812,7 @@
 (define (spec-decl-maybe-span-with-owner
   [owner : (& owner SpecOwnerContext)]
   [decl : ast.AstDecl]) : SpecMaybeSourceSpan
-  (match (ast.ast-place-shared-view decl)
+  (match decl
     [(ast.AstDecl.Def decl-meta _ _ body)
       (spec-expr-maybe-span-with-owner owner (spec-owner-expr-get owner body))]
     [(ast.AstDecl.DefFn decl-meta _ _ _ body _)
@@ -1145,8 +1139,7 @@
             (begin
               (set! (array-ref values slot) (SpecMaybeTemplate.Some template))
               (let
-                [next-index : spec_id_i64_map.Map
-                  (spec-place-shared-view index)]
+                [next-index : spec_id_i64_map.Map index]
                 (begin
                   (spec_id_i64_map.insert-ref! (&mut next-index) name slot)
                   (spec-template-index-build
@@ -1203,8 +1196,8 @@
     (match (spec_id_i64_map.get (& data.index) name-id)
       [(spec_id_i64_map.LookupFound slot)
         (spec-template-env-new
-          (spec-place-shared-view data.index)
-          (spec-place-shared-view data.values)
+          data.index
+          data.values
           data.shadow-state
           (spec-template-shadow-state-append
             data.shadow-state
@@ -3034,8 +3027,7 @@
     (=
       (ast.ast-test-metadata-slow? (owned_view.compiler-owned-shared-view a))
       (ast.ast-test-metadata-slow? (owned_view.compiler-owned-shared-view b)))
-    (match (ast.ast-test-metadata-ignore-reason
-      (owned_view.compiler-owned-shared-view a))
+    (match (ast.ast-test-metadata-ignore-reason a)
       [(ast.AstTestIgnoreReason.No)
         (match (ast.ast-test-metadata-ignore-reason b)
           [(ast.AstTestIgnoreReason.No) true]
@@ -3777,7 +3769,7 @@
               module
               (spec-place-shared-view generator)
               (spec-place-shared-view item)
-              (spec-place-shared-view arg-key))]
+              arg-key)]
           (ResultGenDecl.Ok
             (gen-single-decl-list
               (ast.ast-decl-comptime-decl-with-meta
@@ -3798,7 +3790,7 @@
                 module
                 (spec-place-shared-view generator)
                 (spec-place-shared-view item)
-                (spec-place-shared-view arg-key))]
+                arg-key)]
             (ResultGenDecl.Err
               (box
                 (spec-generated-context-diagnostic-with-owner
@@ -3850,7 +3842,7 @@
             (spec-generated-origin-diagnostic-with-owner
               owner
               (gen-decl-runtime-template decl)
-              (spec-place-shared-view args)
+              args
               "generated-decl: generated payload must declare a visible item")
             generator
             item
@@ -3861,23 +3853,23 @@
           (spec_ci.intern-compat-state-str
             (spec-owner-intern-state owner)
             actual-id)]
-        (if (not (string.eq (spec-place-shared-view item) actual-name))
+        (if (not (string.eq item actual-name))
           (ResultGenDecl.Err
             (box
               (spec-generated-context-diagnostic-with-owner
                 owner
                 (spec-generated-origin-diagnostic-with-owner
                   owner
-                  (gen-decl-runtime-template (ast.ast-place-shared-view decl))
-                  (spec-place-shared-view args)
+                  (gen-decl-runtime-template decl)
+                  args
                   (str_cat.str-cat
                     "generated-decl: metadata item "
                     (spec-place-shared-view item)
                     " does not match payload "
                     actual-name))
-                (spec-place-shared-view generator)
-                (spec-place-shared-view item)
-                (spec-place-shared-view meta-key))))
+                generator
+                item
+                meta-key)))
           (match (gen-metadata-arg-key-with-owner
             owner
             (spec-place-shared-view meta-key)
@@ -4238,13 +4230,13 @@
     [intern-state : spec_ci.InternCompatState
       (spec_ci.intern-compat-state-capture-active)]
     (begin
-      (ast.ast-node-pool-context-install! (ast.ast-place-shared-view pools))
+      (ast.ast-node-pool-context-install! pools)
       (spec_ci.intern-compat-state-install!
         (spec_ci.intern-global-shared-view intern-state))
       (let
         [owner : SpecOwnerContext
           (spec-owner-context-new
-            (ast.ast-place-shared-view pools)
+            pools
             (spec_ci.intern-global-shared-view intern-state))]
         [result : ResultGenProgram
           (gen-normalize-program-with-pools-and-intern-state program owner)]
@@ -4264,13 +4256,13 @@
     [intern-state : spec_ci.InternCompatState
       (spec_ci.intern-compat-state-capture-active)]
     (begin
-      (ast.ast-node-pool-context-install! (ast.ast-place-shared-view pools))
+      (ast.ast-node-pool-context-install! pools)
       (spec_ci.intern-compat-state-install!
         (spec_ci.intern-global-shared-view intern-state))
       (let
         [owner : SpecOwnerContext
           (spec-owner-context-new
-            (ast.ast-place-shared-view pools)
+            pools
             (spec_ci.intern-global-shared-view intern-state))]
         [result : ResultGenProgramWithPaths
           (gen-normalize-program-with-paths-and-pools-and-intern-state
@@ -4286,10 +4278,7 @@
 (define (gen-normalize-program [program : ast.AstProgram]) : ResultGenProgram
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
-    [result : ResultGenProgram
-      (gen-normalize-program-with-pools
-        program
-        (ast.ast-place-shared-view pools))]
+    [result : ResultGenProgram (gen-normalize-program-with-pools program pools)]
     (begin
       (ast.ast-node-pool-context-install! pools)
       result)))
@@ -4993,11 +4982,9 @@
     [intern-state : spec_ci.InternCompatState
       (spec_ci.intern-compat-state-capture-active)]
     [owner : SpecOwnerContext
-      (spec-owner-context-new
-        (ast.ast-place-shared-view pools)
-        (spec-place-shared-view intern-state))]
+      (spec-owner-context-new pools (spec-place-shared-view intern-state))]
     (begin
-      (ast.ast-node-pool-context-install! (ast.ast-place-shared-view pools))
+      (ast.ast-node-pool-context-install! pools)
       (spec_ci.intern-compat-state-install!
         (spec-place-shared-view intern-state))
       (let
@@ -5248,7 +5235,7 @@
     (let
       [head : ast.AstExpr
         (spec-state-expr-get state (ast.ast-expr-list-get exprs index 0))]
-      (match (spec-rewrite-expr head templates (spec-place-shared-view state))
+      (match (spec-rewrite-expr head templates state)
         [(ResultSpecExpr.Ok rewritten-head head-state)
           (begin
             (ast.ast-expr-list-push out rewritten-head)
@@ -5547,7 +5534,7 @@
                 values
                 (+ at 1))
                 [(ResultSpecBuild.Ok runtime value-subs type-subs)
-                  (if (spec-type-kind? (ast.ast-place-shared-view ty))
+                  (if (spec-type-kind? ty)
                     (match value
                       [(ctfe.CompilerCtfeValue.Type actual-ty)
                         (ResultSpecBuild.Ok
@@ -7142,10 +7129,7 @@
                       (set! state cleanup-state)
                       (set! scope (spec-template-env-shadow-name scope name))
                       (set! index (+ index 1)))])])]))
-      (match (spec-rewrite-expr-list
-        body
-        (& scope)
-        (spec-place-shared-view state))
+      (match (spec-rewrite-expr-list body (& scope) state)
         [(ResultSpecExprList.Err diag) (ResultSpecExpr.Err diag)]
         [(ResultSpecExprList.Ok next-body body-state)
           (ResultSpecExpr.Ok
@@ -8572,10 +8556,10 @@
       (spec_ci.intern-compat-state-capture-active)]
     [owner : SpecOwnerContext
       (spec-owner-context-new
-        (ast.ast-place-shared-view pools)
+        pools
         (spec_ci.intern-global-shared-view intern-state))]
     (begin
-      (ast.ast-node-pool-context-install! (ast.ast-place-shared-view pools))
+      (ast.ast-node-pool-context-install! pools)
       (spec_ci.intern-compat-state-install!
         (spec_ci.intern-global-shared-view intern-state))
       (let
@@ -9922,10 +9906,7 @@
     [(ast.AstDecl.Def decl-meta name ty value-box)
       (let
         [value : ast.AstExpr (spec-state-expr-get state value-box)]
-        (match (spec-rewrite-expr
-          value
-          templates
-          (spec-place-shared-view state))
+        (match (spec-rewrite-expr value templates state)
           [(ResultSpecExpr.Ok rewritten state2)
             (ResultSpecDecl.Ok
               (SpecMaybeDecl.Some (ast.ast-decl-def-id name ty rewritten))
@@ -9955,11 +9936,7 @@
     [(ast.AstDecl.Unsafe inner-box)
       (let
         [inner : ast.AstDecl (ast.ast-decl-box-shared-view inner-box)]
-        (match (spec-rewrite-decl-with-owner
-          owner
-          inner
-          templates
-          (spec-place-shared-view state))
+        (match (spec-rewrite-decl-with-owner owner inner templates state)
           [(ResultSpecDecl.Ok maybe state2)
             (match maybe
               [(SpecMaybeDecl.Some rewritten)
@@ -9972,7 +9949,7 @@
     [(ast.AstDecl.DefMacro decl-meta name params ret body-box)
       (let
         [body : ast.AstExpr (spec-state-expr-get state body-box)]
-        (match (spec-rewrite-expr body templates (spec-place-shared-view state))
+        (match (spec-rewrite-expr body templates state)
           [(ResultSpecExpr.Ok rewritten state2)
             (ResultSpecDecl.Ok
               (SpecMaybeDecl.Some
@@ -10157,10 +10134,7 @@
   [pools : ast.AstNodePoolContext]
   [intern-state : spec_ci.InternCompatState]) : ResultSpecProgram
   (let
-    [owner : SpecOwnerContext
-      (spec-owner-context-new
-        (ast.ast-place-shared-view pools)
-        (spec_ci.intern-global-shared-view intern-state))]
+    [owner : SpecOwnerContext (spec-owner-context-new pools intern-state)]
     (match (gen-normalize-program-with-pools-and-intern-state program owner)
       [(ResultGenProgram.Ok normalized)
         (match (ast.ast-place-shared-view normalized)
@@ -10211,9 +10185,9 @@
   (let
     [owner : SpecOwnerContext
       (spec-owner-context-new-with-profile-state
-        (ast.ast-place-shared-view pools)
-        (spec_ci.intern-global-shared-view intern-state)
-        (owned_view.compiler-owned-shared-view profile-state))]
+        pools
+        intern-state
+        profile-state)]
     (match (gen-normalize-program-with-paths-and-pools-and-intern-state
       program
       paths
@@ -10294,14 +10268,14 @@
     [intern-state : spec_ci.InternCompatState
       (spec_ci.intern-compat-state-capture-active)]
     (begin
-      (ast.ast-node-pool-context-install! (ast.ast-place-shared-view pools))
+      (ast.ast-node-pool-context-install! pools)
       (spec_ci.intern-compat-state-install!
         (spec_ci.intern-global-shared-view intern-state))
       (let
         [result : ResultSpecProgram
           (compiler-specialize-program-with-pools-and-intern-state
             program
-            (ast.ast-place-shared-view pools)
+            pools
             (spec_ci.intern-global-shared-view intern-state))]
         (begin
           (ast.ast-node-pool-context-install! previous-pools)
@@ -10319,7 +10293,7 @@
     [intern-state : spec_ci.InternCompatState
       (spec_ci.intern-compat-state-capture-active)]
     (begin
-      (ast.ast-node-pool-context-install! (ast.ast-place-shared-view pools))
+      (ast.ast-node-pool-context-install! pools)
       (spec_ci.intern-compat-state-install!
         (spec_ci.intern-global-shared-view intern-state))
       (let
@@ -10328,7 +10302,7 @@
             program
             paths
             fallback-path
-            (ast.ast-place-shared-view pools)
+            pools
             (spec_ci.intern-global-shared-view intern-state))]
         (begin
           (ast.ast-node-pool-context-install! previous-pools)
@@ -10339,9 +10313,7 @@
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [result : ResultSpecProgram
-      (compiler-specialize-program-with-pools
-        program
-        (ast.ast-place-shared-view pools))]
+      (compiler-specialize-program-with-pools program pools)]
     (begin
       (ast.ast-node-pool-context-install! pools)
       result)))
@@ -10357,7 +10329,7 @@
         program
         paths
         fallback-path
-        (ast.ast-place-shared-view pools))]
+        pools)]
     (begin
       (ast.ast-node-pool-context-install! pools)
       result)))
@@ -10576,9 +10548,7 @@
         base
         (owned_view.compiler-owned-shared-view bindings))]
     [param-then-binding : SpecTemplateEnv
-      (spec-template-env-shadow-let-binding-names
-        param-both
-        (owned_view.compiler-owned-shared-view bindings))]
+      (spec-template-env-shadow-let-binding-names param-both bindings)]
     [unrelated : SpecTemplateEnv
       (spec-template-env-shadow-name base cbi.compiler-builtin-id-fix-flag)]
     [wide : SpecTemplateEnv (spec-template-env-from-list items)]
@@ -10740,14 +10710,9 @@
     [pools : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new-with-capacities 8 8)]
     [intern-state : spec_ci.InternCompatState (spec_ci.intern-compat-state-new)]
-    [owner : SpecOwnerContext
-      (spec-owner-context-new
-        (ast.ast-place-shared-view pools)
-        (spec_ci.intern-global-shared-view intern-state))]
+    [owner : SpecOwnerContext (spec-owner-context-new pools intern-state)]
     [slice-i64 : ast.AstType
-      (ast.ast-ty-slice-with-pools
-        (ast.ast-place-shared-view pools)
-        ast.AstType.I64)]
+      (ast.ast-ty-slice-with-pools pools ast.AstType.I64)]
     [slice-t : ast.AstType
       (ast.ast-ty-slice-with-pools
         pools
@@ -10824,22 +10789,13 @@
     [intern-b : spec_ci.InternCompatState (spec_ci.intern-compat-state-new)]
     [owner-a : SpecOwnerContext
       (spec-owner-context-new
-        (ast.ast-place-shared-view pools-a)
+        pools-a
         (spec_ci.intern-global-shared-view intern-a))]
-    [owner-b : SpecOwnerContext
-      (spec-owner-context-new
-        (ast.ast-place-shared-view pools-b)
-        (spec_ci.intern-global-shared-view intern-b))]
+    [owner-b : SpecOwnerContext (spec-owner-context-new pools-b intern-b)]
     [array-a : ast.AstType
-      (ast.ast-ty-array-with-pools
-        (ast.ast-place-shared-view pools-a)
-        (ast.AstType.I64)
-        7)]
+      (ast.ast-ty-array-with-pools pools-a (ast.AstType.I64) 7)]
     [array-b : ast.AstType
-      (ast.ast-ty-array-with-pools
-        (ast.ast-place-shared-view pools-b)
-        (ast.AstType.I64)
-        7)]
+      (ast.ast-ty-array-with-pools pools-b (ast.AstType.I64) 7)]
     [nested-a : ast.AstType (ast.ast-ty-ptr-with-pools pools-a array-a)]
     [nested-b : ast.AstType (ast.ast-ty-ptr-with-pools pools-b array-b)]
     [values-a : SpecValueList
@@ -11553,10 +11509,7 @@
     [pools : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new-with-capacities 8 8)]
     [intern-state : spec_ci.InternCompatState (spec_ci.intern-compat-state-new)]
-    [owner : SpecOwnerContext
-      (spec-owner-context-new
-        (ast.ast-place-shared-view pools)
-        (spec_ci.intern-global-shared-view intern-state))]
+    [owner : SpecOwnerContext (spec-owner-context-new pools intern-state)]
     [name-id : i64 (spec-materialize-generated-name-id "RegistryBox")]
     [decl : ast.AstDecl
       (ast.ast-decl-def-struct-id
@@ -11669,7 +11622,7 @@
     [intern-state : spec_ci.InternCompatState (spec_ci.intern-compat-state-new)]
     [owner : SpecOwnerContext
       (spec-owner-context-new
-        (ast.ast-place-shared-view pools)
+        pools
         (spec_ci.intern-global-shared-view intern-state))]
     [handles : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [index : i64 0]

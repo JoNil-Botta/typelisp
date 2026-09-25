@@ -802,7 +802,7 @@
   (compiler-driver-state-replace-owned-pool-arena-if-uncached! state 1 1))
 
 (define (compiler-driver-state-reset-owned-intern-arena-if-uncached!
-  [state : (& state CompilerDriverState)]) : unit
+  [state : CompilerDriverState]) : unit
   (if (or
     (not (compiler-driver-state-has-owned-pool-arena? state))
     (compiler-driver-state-session-cache-enabled? state))
@@ -1131,7 +1131,8 @@
       (owned_view.compiler-owned-shared-view state))
     (compiler-driver-state-reset-owned-pool-arena-if-uncached!
       (owned_view.compiler-owned-shared-view state))
-    (compiler-driver-state-reset-owned-intern-arena-if-uncached! state)
+    (compiler-driver-state-reset-owned-intern-arena-if-uncached!
+      (owned_view.compiler-owned-shared-view state))
     (let
       [pools : compiler_ast_types.AstNodePoolContext
         (compiler-driver-state-pool-context
@@ -1176,7 +1177,8 @@
       (owned_view.compiler-owned-shared-view state))
     (compiler-driver-state-release-owned-pool-arena-if-uncached!
       (owned_view.compiler-owned-shared-view state))
-    (compiler-driver-state-reset-owned-intern-arena-if-uncached! state)
+    (compiler-driver-state-reset-owned-intern-arena-if-uncached!
+      (owned_view.compiler-owned-shared-view state))
     (let
       [pools : compiler_ast_types.AstNodePoolContext
         (compiler-driver-state-pool-context
@@ -1221,7 +1223,8 @@
           (owned_view.compiler-owned-shared-view state))
         ordinal
         "owned-pool-release")
-      (compiler-driver-state-reset-owned-intern-arena-if-uncached! state)
+      (compiler-driver-state-reset-owned-intern-arena-if-uncached!
+        (owned_view.compiler-owned-shared-view state))
       (let
         [pools : compiler_ast_types.AstNodePoolContext
           (compiler-driver-state-pool-context

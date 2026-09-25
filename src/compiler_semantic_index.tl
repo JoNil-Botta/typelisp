@@ -746,7 +746,7 @@
       -1)))
 
 (define (compiler-semantic-module-index-ensure!
-  [state : (& state CompilerSemanticWalkState)]
+  [state : CompilerSemanticWalkState]
   [module-id : i64]) : i64
   (let
     [module-len : i64
@@ -797,7 +797,7 @@
       -1)))
 
 (define (compiler-semantic-module-event-push!
-  [state : (& state CompilerSemanticWalkState)]
+  [state : CompilerSemanticWalkState]
   [path-index : i64]
   [byte-offset : i64]
   [module-index : i64]) : unit
@@ -927,7 +927,7 @@
             path-len))))))
 
 (define (compiler-semantic-scope-region-add!
-  [state : (& state CompilerSemanticWalkState)]
+  [state : CompilerSemanticWalkState]
   [parent : CompilerSemanticBindingSnapshot]
   [child : CompilerSemanticBindingSnapshot]
   [start-byte : i64]
@@ -1721,7 +1721,7 @@
             index))))))
 
 (define (compiler-semantic-source-anchor-set!
-  [state : (& state CompilerSemanticWalkState)]
+  [state : CompilerSemanticWalkState]
   [offset : i64]
   [line : i64]
   [col : i64]) : unit
@@ -4387,7 +4387,7 @@
                         init-start)]
                     (begin
                       (compiler-semantic-scope-region-add!
-                        state
+                        (owned_view.compiler-owned-shared-view state)
                         next-scope
                         bound.scope
                         (compiler-semantic-expr-visibility-end-offset
@@ -4660,7 +4660,7 @@
       ;; state is a nested body-only extension, so its exit restores the
       ;; index before the enclosing index region restores the outer scope.
       (compiler-semantic-scope-region-add!
-        state
+        (owned_view.compiler-owned-shared-view state)
         scope
         index-bound.scope
         (compiler-semantic-expr-start-offset
@@ -5480,7 +5480,7 @@
                               init
                               bound.next-search))]
                         (compiler-semantic-scope-region-add!
-                          state
+                          (owned_view.compiler-owned-shared-view state)
                           next-scope
                           bound.scope
                           visible-start
@@ -8018,7 +8018,7 @@
                     (set!
                       walk-state.module-index
                       (compiler-semantic-module-index-ensure!
-                        walk-state
+                        (owned_view.compiler-owned-shared-view walk-state)
                         module-id))
                     unit)
                   (if path-changed
@@ -8049,7 +8049,11 @@
                       index))
                   (compiler-semantic-origin-cursors-reset!
                     (owned_view.compiler-owned-shared-view walk-state))
-                  (compiler-semantic-source-anchor-set! walk-state 0 1 1)
+                  (compiler-semantic-source-anchor-set!
+                    (owned_view.compiler-owned-shared-view walk-state)
+                    0
+                    1
+                    1)
                   ;; Imports and module markers have no semantic definition row,
                   ;; but their checked path owner still changes the module that
                   ;; a cursor at that form observes.
@@ -8077,7 +8081,8 @@
                                   form-search-start))]
                             (begin
                               (compiler-semantic-module-event-push!
-                                walk-state
+                                (owned_view.compiler-owned-shared-view
+                                  walk-state)
                                 walk-state.path-index
                                 form-start
                                 walk-state.module-index)
@@ -8236,14 +8241,14 @@
                             [(CompilerSemanticMaybeOrigin.None) unit])
                           (if (>= span.start-byte 0)
                             (compiler-semantic-source-anchor-set!
-                              walk-state
+                              (owned_view.compiler-owned-shared-view walk-state)
                               span.start-byte
                               (ast.ast-source-span-start-line span.source)
                               (ast.ast-source-span-start-col span.source))
                             unit)
                           (set! walk-state.form-start form-start)
                           (compiler-semantic-module-event-push!
-                            walk-state
+                            (owned_view.compiler-owned-shared-view walk-state)
                             walk-state.path-index
                             form-start
                             walk-state.module-index)

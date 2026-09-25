@@ -1592,7 +1592,7 @@
         (set! index (+ index 1))))))
 
 (define (compiler-load-dependency-surface-reset-use!
-  [state : (& state CompilerLoadSessionState)]) : unit
+  [state : CompilerLoadSessionState]) : unit
   (let
     [surface-state : CompilerLoadDependencySurfaceState
       state.dependency-surfaces]
@@ -1873,7 +1873,8 @@
     [configuration : String
       (compiler-load-dependency-surface-configuration cfgs)]
     (begin
-      (compiler-load-dependency-surface-reset-use! state)
+      (compiler-load-dependency-surface-reset-use!
+        (owned_view.compiler-owned-shared-view state))
       (if (or
         (compiler-load-stdlib-root-configured? stdlib-roots)
         (= (string.string-length configuration) 0)
@@ -2542,7 +2543,7 @@
 ;; table another job installed; standalone adapters retain the historical
 ;; active-table fallback until they bind an owner.
 (define (compiler-load-session-state-intern
-  [state : (& state CompilerLoadSessionState)]
+  [state : CompilerLoadSessionState]
   [name : String]) : i64
   (if (array-ref state.intern-state-ready 0)
     (let
@@ -2727,7 +2728,7 @@
   (let
     [id : i64
       (compiler-load-session-state-intern
-        state
+        (owned_view.compiler-owned-shared-view state)
         (compiler-load-canonical-module-id-from-path path))]
     ;; The map head belongs to this session. Its nodes outlive load-scoped
     ;; scratch arenas and remain valid until the next session intern reset.
@@ -2781,7 +2782,10 @@
   [suffix : String]
   [disk-path : String]) : unit
   (let
-    [key : i64 (compiler-load-session-state-intern state (string.copy suffix))]
+    [key : i64
+      (compiler-load-session-state-intern
+        (owned_view.compiler-owned-shared-view state)
+        (string.copy suffix))]
     [cache : sym_i64_env.SymI64Env
       (compiler-load-session-state-embedded-equivalence-cache-shared-view
         (owned_view.compiler-owned-shared-view state))]

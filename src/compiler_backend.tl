@@ -54814,393 +54814,32 @@
             (set! (array-ref counts var) (+ (array-ref counts var) 1))
             unit))))))
 
-(define (compiler-backend-count-value-use
+(define (compiler-backend-count-use
   [counts : (__tl_dyn-array i64)]
+  [_role : compiler_ir_types.CompilerIrOperandRole]
   [value : compiler_ir_types.CompilerIrValue]) : unit
   (match value
     [(compiler_ir_types.CompilerIrValue.Var id)
       (compiler-backend-use-count-inc counts id)]
     [_ unit]))
 
-(define (compiler-backend-count-value-seq-uses
-  [counts : (__tl_dyn-array i64)]
-  [values : compiler_ir_types.CompilerIrValueSeq]) : unit
-  (compiler_ir_types.compiler-ir-value-seq-visit
-    values
-    compiler-backend-count-value-use
-    (compiler-backend-global-shared-view counts)))
-
-(define (compiler-backend-count-call-args-uses
-  [counts : (__tl_dyn-array i64)]
-  [args : compiler_ir_types.CompilerIrCallArgs]) : unit
-  (compiler_ir_types.compiler-ir-call-args-visit
-    args
-    compiler-backend-count-value-use
-    (compiler-backend-global-shared-view counts)))
-
-(define (compiler-backend-count-spmd-value-use
-  [counts : (__tl_dyn-array i64)]
-  [_class : compiler_ir_types.CompilerIrSpmdValueClass]
-  [value : compiler_ir_types.CompilerIrValue]) : unit
-  (compiler-backend-count-value-use counts value))
-
-(define (compiler-backend-count-spmd-call-args-uses
-  [counts : (__tl_dyn-array i64)]
-  [args : compiler_ir_types.CompilerIrSpmdCallArgSeq]) : unit
-  (compiler_ir_types.compiler-ir-spmd-call-args-visit
-    args
-    compiler-backend-count-spmd-value-use
-    (compiler-backend-global-shared-view counts)))
-
-(define (compiler-backend-count-phi-input-uses
-  [counts : (__tl_dyn-array i64)]
-  [inputs : compiler_ir_types.CompilerIrPhiInputSeq]) : unit
-  (let
-    [phi-inputs-at-55279-3 : compiler_ir_types.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-55279-3.len 0)
-      unit
-      (let
-        [phi-input-at-55279-3 : compiler_ir_types.CompilerIrPhiInput
-          (compiler_ir_types.compiler-ir-phi-input-seq-ref
-            (compiler_ir_types.compiler-ir-global-shared-view
-              phi-inputs-at-55279-3)
-            0)]
-        [value : compiler_ir_types.CompilerIrValue phi-input-at-55279-3.value]
-        [rest : compiler_ir_types.CompilerIrPhiInputSeq
-          (compiler_ir_types.CompilerIrPhiInputSeq
-            phi-inputs-at-55279-3.slots
-            (+ phi-inputs-at-55279-3.start 1)
-            (- phi-inputs-at-55279-3.len 1))]
-        (begin
-          (compiler-backend-count-value-use
-            (compiler-backend-global-shared-view counts)
-            value)
-          (compiler-backend-count-phi-input-uses counts rest))))))
-
+;; Every use counts, Pack words included, so the single-use fusion peepholes
+;; cannot elide the home store of a var a Pack/Word still reads (-O2 copy-prop
+;; substitutes vars directly into Pack/Word operands); so does AddrOf's storage
+;; var. LoadOwned's owner is optimizer-only evidence, not a machine operand:
+;; counting it after register allocation could confuse a reused physical-home id
+;; with a real backend use (and therefore with that home's unrelated width).
 (define (compiler-backend-count-instr-uses
   [counts : (__tl_dyn-array i64)]
   [instr : compiler_ir_types.CompilerIrInstr]) : unit
-  (match instr
-    [(compiler_ir_types.CompilerIrInstr.Mov _ src _)
-      (compiler-backend-count-value-use counts src)]
-    [(compiler_ir_types.CompilerIrInstr.OwnRoot _ src _)
-      (compiler-backend-count-value-use counts src)]
+  (match (compiler-backend-global-shared-view instr)
     [(compiler_ir_types.CompilerIrInstr.AddrOf _ src)
       (compiler-backend-use-count-inc counts src)]
-    [(compiler_ir_types.CompilerIrInstr.Gep _ base offset _)
-      (begin
-        (compiler-backend-count-value-use
-          (compiler-backend-global-shared-view counts)
-          base)
-        (compiler-backend-count-value-use counts offset))]
-    [(compiler_ir_types.CompilerIrInstr.Load _ src _)
-      (compiler-backend-count-value-use counts src)]
-    ;; Ownership is optimizer-only evidence, not a machine operand. Counting
-    ;; it after register allocation can confuse a reused physical-home id with
-    ;; a real backend use (and therefore with that home's unrelated width).
-    [(compiler_ir_types.CompilerIrInstr.LoadOwned _ src _ _)
-      (compiler-backend-count-value-use counts src)]
-    [(compiler_ir_types.CompilerIrInstr.StorePtr dst src _)
-      (begin
-        (compiler-backend-count-value-use
-          (compiler-backend-global-shared-view counts)
-          dst)
-        (compiler-backend-count-value-use counts src))]
-    [(compiler_ir_types.CompilerIrInstr.StoreOwned dst src _)
-      (begin
-        (compiler-backend-count-value-use
-          (compiler-backend-global-shared-view counts)
-          dst)
-        (compiler-backend-count-value-use counts src))]
-    [(compiler_ir_types.CompilerIrInstr.CopyBytes dst src _)
-      (begin
-        (compiler-backend-count-value-use
-          (compiler-backend-global-shared-view counts)
-          dst)
-        (compiler-backend-count-value-use counts src))]
-    [(compiler_ir_types.CompilerIrInstr.BoundsCheck index length _)
-      (begin
-        (compiler-backend-count-value-use
-          (compiler-backend-global-shared-view counts)
-          index)
-        (compiler-backend-count-value-use counts length))]
-    [(compiler_ir_types.CompilerIrInstr.Cast _ src _ _)
-      (compiler-backend-count-value-use counts src)]
-    [(compiler_ir_types.CompilerIrInstr.Bitcast _ src _ _)
-      (compiler-backend-count-value-use counts src)]
-    [(compiler_ir_types.CompilerIrInstr.BinOp _ _ lhs rhs _)
-      (begin
-        (compiler-backend-count-value-use
-          (compiler-backend-global-shared-view counts)
-          lhs)
-        (compiler-backend-count-value-use counts rhs))]
-    [(compiler_ir_types.CompilerIrInstr.UnOp _ _ src _)
-      (compiler-backend-count-value-use counts src)]
-    [(compiler_ir_types.CompilerIrInstr.Splat _ value _ _)
-      (compiler-backend-count-value-use counts value)]
-    [(compiler_ir_types.CompilerIrInstr.VectorBinOp payload-box)
-      (let
-        [lhs (compiler-backend-box-field-shared-view payload-box lhs)]
-        [rhs (compiler-backend-box-field-shared-view payload-box rhs)]
-        (begin
-          (compiler-backend-count-value-use
-            (compiler-backend-global-shared-view counts)
-            lhs)
-          (compiler-backend-count-value-use counts rhs)))]
-    [(compiler_ir_types.CompilerIrInstr.VectorPrefix payload-box)
-      (let
-        [src (compiler-backend-box-field-shared-view payload-box src)]
-        [carry (compiler-backend-box-field-shared-view payload-box carry)]
-        (begin
-          (compiler-backend-count-value-use
-            (compiler-backend-global-shared-view counts)
-            src)
-          (compiler-backend-count-value-use counts carry)))]
-    [(compiler_ir_types.CompilerIrInstr.VectorReduce _ _ src _ _)
-      (compiler-backend-count-value-use counts src)]
-    [(compiler_ir_types.CompilerIrInstr.VectorCompare payload-box)
-      (let
-        [lhs (compiler-backend-box-field-shared-view payload-box lhs)]
-        [rhs (compiler-backend-box-field-shared-view payload-box rhs)]
-        (begin
-          (compiler-backend-count-value-use
-            (compiler-backend-global-shared-view counts)
-            lhs)
-          (compiler-backend-count-value-use counts rhs)))]
-    [(compiler_ir_types.CompilerIrInstr.MaskBinOp _ _ lhs rhs _)
-      (begin
-        (compiler-backend-count-value-use
-          (compiler-backend-global-shared-view counts)
-          lhs)
-        (compiler-backend-count-value-use counts rhs))]
-    [(compiler_ir_types.CompilerIrInstr.MaskNot _ src _)
-      (compiler-backend-count-value-use counts src)]
-    [(compiler_ir_types.CompilerIrInstr.MaskReduce _ _ src _)
-      (compiler-backend-count-value-use counts src)]
-    [(compiler_ir_types.CompilerIrInstr.Select payload-box)
-      (let
-        [mask (compiler-backend-box-field-shared-view payload-box mask)]
-        [on-true (compiler-backend-box-field-shared-view payload-box on-true)]
-        [on-false (compiler-backend-box-field-shared-view payload-box on-false)]
-        (begin
-          (compiler-backend-count-value-use
-            (compiler-backend-global-shared-view counts)
-            mask)
-          (compiler-backend-count-value-use
-            (compiler-backend-global-shared-view counts)
-            on-true)
-          (compiler-backend-count-value-use counts on-false)))]
-    [(compiler_ir_types.CompilerIrInstr.VectorLoad _ base index _ _)
-      (begin
-        (compiler-backend-count-value-use
-          (compiler-backend-global-shared-view counts)
-          base)
-        (compiler-backend-count-value-use counts index))]
-    [(compiler_ir_types.CompilerIrInstr.VectorStore payload-box)
-      (let
-        [base (compiler-backend-box-field-shared-view payload-box base)]
-        [index (compiler-backend-box-field-shared-view payload-box index)]
-        [value (compiler-backend-box-field-shared-view payload-box value)]
-        (begin
-          (compiler-backend-count-value-use
-            (compiler-backend-global-shared-view counts)
-            base)
-          (compiler-backend-count-value-use
-            (compiler-backend-global-shared-view counts)
-            index)
-          (compiler-backend-count-value-use counts value)))]
-    [(compiler_ir_types.CompilerIrInstr.PredicatedStore payload-box)
-      (let
-        [base (compiler-backend-box-field-shared-view payload-box base)]
-        [index (compiler-backend-box-field-shared-view payload-box index)]
-        [value (compiler-backend-box-field-shared-view payload-box value)]
-        [mask (compiler-backend-box-field-shared-view payload-box mask)]
-        (begin
-          (compiler-backend-count-value-use
-            (compiler-backend-global-shared-view counts)
-            base)
-          (compiler-backend-count-value-use
-            (compiler-backend-global-shared-view counts)
-            index)
-          (compiler-backend-count-value-use
-            (compiler-backend-global-shared-view counts)
-            value)
-          (compiler-backend-count-value-use counts mask)))]
-    [(compiler_ir_types.CompilerIrInstr.PredicatedLoad payload-box)
-      (let
-        [base (compiler-backend-box-field-shared-view payload-box base)]
-        [index (compiler-backend-box-field-shared-view payload-box index)]
-        [mask (compiler-backend-box-field-shared-view payload-box mask)]
-        (begin
-          (compiler-backend-count-value-use
-            (compiler-backend-global-shared-view counts)
-            base)
-          (compiler-backend-count-value-use
-            (compiler-backend-global-shared-view counts)
-            index)
-          (compiler-backend-count-value-use counts mask)))]
-    [(compiler_ir_types.CompilerIrInstr.GatherLoad payload-box)
-      (let
-        [base (compiler-backend-box-field-shared-view payload-box base)]
-        [index-base
-          (compiler-backend-box-field-shared-view payload-box index-base)]
-        [index (compiler-backend-box-field-shared-view payload-box index)]
-        (begin
-          (compiler-backend-count-value-use
-            (compiler-backend-global-shared-view counts)
-            base)
-          (compiler-backend-count-value-use
-            (compiler-backend-global-shared-view counts)
-            index-base)
-          (compiler-backend-count-value-use counts index)))]
-    [(compiler_ir_types.CompilerIrInstr.VectorShuffle payload-box)
-      (let
-        [source (compiler-backend-box-field-shared-view payload-box source)]
-        [selector-low
-          (compiler-backend-box-field-shared-view payload-box selector-low)]
-        [selector-high
-          (compiler-backend-box-field-shared-view payload-box selector-high)]
-        [active-lanes
-          (compiler-backend-box-field-shared-view payload-box active-lanes)]
-        (begin
-          (compiler-backend-count-value-use
-            (compiler-backend-global-shared-view counts)
-            source)
-          (compiler-backend-count-value-use
-            (compiler-backend-global-shared-view counts)
-            selector-low)
-          (match selector-high
-            [(compiler_ir_types.CompilerIrMaybeValue.Some value)
-              (compiler-backend-count-value-use
-                (compiler-backend-global-shared-view counts)
-                value)]
-            [(compiler_ir_types.CompilerIrMaybeValue.No) unit])
-          (compiler-backend-count-value-use counts active-lanes)))]
-    [(compiler_ir_types.CompilerIrInstr.TailMask _ index length _)
-      (begin
-        (compiler-backend-count-value-use
-          (compiler-backend-global-shared-view counts)
-          index)
-        (compiler-backend-count-value-use
-          (compiler-backend-global-shared-view counts)
-          length))]
-    [(compiler_ir_types.CompilerIrInstr.EntryArgc _) unit]
-    [(compiler_ir_types.CompilerIrInstr.EntryArgv _) unit]
-    [(compiler_ir_types.CompilerIrInstr.EntryEnvp _) unit]
-    [(compiler_ir_types.CompilerIrInstr.CpuId _ leaf subleaf _)
-      (begin
-        (compiler-backend-count-value-use
-          (compiler-backend-global-shared-view counts)
-          leaf)
-        (compiler-backend-count-value-use
-          (compiler-backend-global-shared-view counts)
-          subleaf))]
-    [(compiler_ir_types.CompilerIrInstr.Xgetbv _ index)
-      (compiler-backend-count-value-use
-        (compiler-backend-global-shared-view counts)
-        index)]
-    [(compiler_ir_types.CompilerIrInstr.Syscall _ args)
-      (compiler-backend-count-call-args-uses counts args)]
-    [(compiler_ir_types.CompilerIrInstr.Call _ _ args _)
-      (compiler-backend-count-call-args-uses counts args)]
-    [(compiler_ir_types.CompilerIrInstr.CallIndirect _ callee args _)
-      (begin
-        (compiler-backend-count-value-use
-          (compiler-backend-global-shared-view counts)
-          callee)
-        (compiler-backend-count-call-args-uses
-          (compiler-backend-global-shared-view counts)
-          args))]
-    [(compiler_ir_types.CompilerIrInstr.CallIndirectC _ callee args _)
-      (begin
-        (compiler-backend-count-value-use
-          (compiler-backend-global-shared-view counts)
-          callee)
-        (compiler-backend-count-call-args-uses
-          (compiler-backend-global-shared-view counts)
-          args))]
-    [(compiler_ir_types.CompilerIrInstr.CallCAbiStoreResult payload-box)
-      (let
-        [base (compiler-backend-box-field-shared-view payload-box base)]
-        [args (compiler-backend-box-field-shared-view payload-box args)]
-        (begin
-          (compiler-backend-count-value-use
-            (compiler-backend-global-shared-view counts)
-            base)
-          (compiler-backend-count-call-args-uses counts args)))]
-    [(compiler_ir_types.CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
-      (let
-        [base (compiler-backend-box-field-shared-view payload-box base)]
-        [callee (compiler-backend-box-field-shared-view payload-box callee)]
-        [args (compiler-backend-box-field-shared-view payload-box args)]
-        (begin
-          (compiler-backend-count-value-use
-            (compiler-backend-global-shared-view counts)
-            base)
-          (compiler-backend-count-value-use
-            (compiler-backend-global-shared-view counts)
-            callee)
-          (compiler-backend-count-call-args-uses
-            (compiler-backend-global-shared-view counts)
-            args)))]
-    [(compiler_ir_types.CompilerIrInstr.SpmdCall payload-box)
-      (let
-        [active-mask
-          (compiler-backend-box-field-shared-view payload-box active-mask)]
-        [args (compiler-backend-box-field-shared-view payload-box args)]
-        (begin
-          (compiler-backend-count-value-use
-            (compiler-backend-global-shared-view counts)
-            active-mask)
-          (compiler-backend-count-spmd-call-args-uses
-            (compiler-backend-global-shared-view counts)
-            args)))]
-    [(compiler_ir_types.CompilerIrInstr.TailCall _ args _)
-      (compiler-backend-count-call-args-uses
-        (compiler-backend-global-shared-view counts)
-        args)]
-    [(compiler_ir_types.CompilerIrInstr.TailCallIndirect callee args _)
-      (begin
-        (compiler-backend-count-value-use
-          (compiler-backend-global-shared-view counts)
-          callee)
-        (compiler-backend-count-call-args-uses
-          (compiler-backend-global-shared-view counts)
-          args))]
-    [(compiler_ir_types.CompilerIrInstr.Store _ value _)
-      (compiler-backend-count-value-use
-        (compiler-backend-global-shared-view counts)
-        value)]
-    [(compiler_ir_types.CompilerIrInstr.Branch cond _ _)
-      (compiler-backend-count-value-use counts cond)]
-    [(compiler_ir_types.CompilerIrInstr.TotalEnumBranch cond _ _)
-      (compiler-backend-count-value-use counts cond)]
-    [(compiler_ir_types.CompilerIrInstr.Return maybe)
-      (match maybe
-        [(compiler_ir_types.CompilerIrMaybeValue.No) unit]
-        [(compiler_ir_types.CompilerIrMaybeValue.Some value)
-          (compiler-backend-count-value-use counts value)])]
-    [(compiler_ir_types.CompilerIrInstr.Phi _ inputs _)
-      (compiler-backend-count-phi-input-uses counts inputs)]
-    ;; Register-group instrs: count their operand uses so the
-    ;; single-use fusion peepholes cannot elide the home store of a var a
-    ;; Pack/Word still reads (-O2 copy-prop substitutes vars directly into
-    ;; Pack/Word operands).
-    [(compiler_ir_types.CompilerIrInstr.Pack _ words _)
-      (compiler-backend-count-value-seq-uses counts words)]
-    [(compiler_ir_types.CompilerIrInstr.Word _ src _ _)
-      (compiler-backend-count-value-use counts src)]
-    ;; Operand-free IR instructions intentionally add no value uses.
-    [(compiler_ir_types.CompilerIrInstr.Alloc _ _) unit]
-    [(compiler_ir_types.CompilerIrInstr.LaneId _ _ _) unit]
-    [(compiler_ir_types.CompilerIrInstr.EntryArgc _) unit]
-    [(compiler_ir_types.CompilerIrInstr.EntryArgv _) unit]
-    [(compiler_ir_types.CompilerIrInstr.EntryEnvp _) unit]
-    [(compiler_ir_types.CompilerIrInstr.Jump _) unit]
-    [(compiler_ir_types.CompilerIrInstr.Switch index _ _ _)
-      (compiler-backend-count-value-use counts index)]
-    [(compiler_ir_types.CompilerIrInstr.TotalEnumSwitch index _ _ _ _)
-      (compiler-backend-count-value-use counts index)]))
+    [_
+      (compiler_ir_types.compiler-ir-instr-visit-uses
+        instr
+        compiler-backend-count-use
+        (compiler-backend-global-shared-view counts))]))
 
 (define (compiler-backend-count-instr-seq-uses
   [counts : (__tl_dyn-array i64)]
@@ -75579,50 +75218,26 @@
 ;; -1: defines no variable. -2: defines one this pass cannot name.
 (define (compiler-backend-placement-instr-dst
   [instr : compiler_ir_types.CompilerIrInstr]) : i64
-  (match instr
-    [(compiler_ir_types.CompilerIrInstr.Mov dst _ _) dst]
-    [(compiler_ir_types.CompilerIrInstr.Alloc dst _) dst]
-    [(compiler_ir_types.CompilerIrInstr.AddrOf dst _) dst]
-    [(compiler_ir_types.CompilerIrInstr.Gep dst _ _ _) dst]
-    [(compiler_ir_types.CompilerIrInstr.Load dst _ _) dst]
-    [(compiler_ir_types.CompilerIrInstr.LoadOwned dst _ _ _) dst]
-    [(compiler_ir_types.CompilerIrInstr.Cast dst _ _ _) dst]
-    [(compiler_ir_types.CompilerIrInstr.Bitcast dst _ _ _) dst]
-    [(compiler_ir_types.CompilerIrInstr.BinOp dst _ _ _ _) dst]
-    [(compiler_ir_types.CompilerIrInstr.UnOp dst _ _ _) dst]
-    [(compiler_ir_types.CompilerIrInstr.LaneId dst _ _) dst]
-    [(compiler_ir_types.CompilerIrInstr.Splat dst _ _ _) dst]
-    [(compiler_ir_types.CompilerIrInstr.VectorReduce dst _ _ _ _) dst]
-    [(compiler_ir_types.CompilerIrInstr.MaskBinOp dst _ _ _ _) dst]
-    [(compiler_ir_types.CompilerIrInstr.MaskNot dst _ _) dst]
-    [(compiler_ir_types.CompilerIrInstr.MaskReduce dst _ _ _) dst]
-    [(compiler_ir_types.CompilerIrInstr.VectorLoad dst _ _ _ _) dst]
-    [(compiler_ir_types.CompilerIrInstr.TailMask dst _ _ _) dst]
-    [(compiler_ir_types.CompilerIrInstr.EntryArgc dst) dst]
-    [(compiler_ir_types.CompilerIrInstr.EntryArgv dst) dst]
-    [(compiler_ir_types.CompilerIrInstr.EntryEnvp dst) dst]
-    [(compiler_ir_types.CompilerIrInstr.CpuId dst _ _ _) dst]
-    [(compiler_ir_types.CompilerIrInstr.Xgetbv dst _) dst]
-    [(compiler_ir_types.CompilerIrInstr.Syscall dst _) dst]
-    [(compiler_ir_types.CompilerIrInstr.Call dst _ _ _) dst]
-    [(compiler_ir_types.CompilerIrInstr.CallIndirect dst _ _ _) dst]
-    [(compiler_ir_types.CompilerIrInstr.CallIndirectC dst _ _ _) dst]
-    [(compiler_ir_types.CompilerIrInstr.TailCall dst _ _) dst]
-    [(compiler_ir_types.CompilerIrInstr.Store dst _ _) dst]
-    [(compiler_ir_types.CompilerIrInstr.Phi dst _ _) dst]
-    [(compiler_ir_types.CompilerIrInstr.Pack dst _ _) dst]
-    [(compiler_ir_types.CompilerIrInstr.Word dst _ _ _) dst]
-    [(compiler_ir_types.CompilerIrInstr.StorePtr _ _ _) (- 0 1)]
-    [(compiler_ir_types.CompilerIrInstr.CopyBytes _ _ _) (- 0 1)]
-    [(compiler_ir_types.CompilerIrInstr.BoundsCheck _ _ _) (- 0 1)]
-    [(compiler_ir_types.CompilerIrInstr.Jump _) (- 0 1)]
-    [(compiler_ir_types.CompilerIrInstr.Branch _ _ _) (- 0 1)]
-    [(compiler_ir_types.CompilerIrInstr.TotalEnumBranch _ _ _) (- 0 1)]
-    [(compiler_ir_types.CompilerIrInstr.Return _) (- 0 1)]
-    [(compiler_ir_types.CompilerIrInstr.TailCallIndirect _ _ _) (- 0 1)]
-    [(compiler_ir_types.CompilerIrInstr.Switch _ _ _ _) (- 0 1)]
-    [(compiler_ir_types.CompilerIrInstr.TotalEnumSwitch _ _ _ _ _) (- 0 1)]
-    [_ (- 0 2)]))
+  (match (compiler-backend-global-shared-view instr)
+    ;; A TailCall's callee and a Store's global are symbol ids; this pass reads
+    ;; them as destinations.
+    [(compiler_ir_types.CompilerIrInstr.TailCall name _ _) name]
+    [(compiler_ir_types.CompilerIrInstr.Store name _ _) name]
+    [(compiler_ir_types.CompilerIrInstr.OwnRoot _ _ _) (- 0 2)]
+    [(compiler_ir_types.CompilerIrInstr.StoreOwned _ _ _) (- 0 2)]
+    [(compiler_ir_types.CompilerIrInstr.VectorBinOp _) (- 0 2)]
+    [(compiler_ir_types.CompilerIrInstr.VectorPrefix _) (- 0 2)]
+    [(compiler_ir_types.CompilerIrInstr.VectorCompare _) (- 0 2)]
+    [(compiler_ir_types.CompilerIrInstr.Select _) (- 0 2)]
+    [(compiler_ir_types.CompilerIrInstr.VectorStore _) (- 0 2)]
+    [(compiler_ir_types.CompilerIrInstr.PredicatedStore _) (- 0 2)]
+    [(compiler_ir_types.CompilerIrInstr.PredicatedLoad _) (- 0 2)]
+    [(compiler_ir_types.CompilerIrInstr.GatherLoad _) (- 0 2)]
+    [(compiler_ir_types.CompilerIrInstr.VectorShuffle _) (- 0 2)]
+    [(compiler_ir_types.CompilerIrInstr.CallCAbiStoreResult _) (- 0 2)]
+    [(compiler_ir_types.CompilerIrInstr.CallIndirectCAbiStoreResult _) (- 0 2)]
+    [(compiler_ir_types.CompilerIrInstr.SpmdCall _) (- 0 2)]
+    [_ (compiler_ir_types.compiler-ir-instr-dst instr)]))
 
 ;; Assign every destination this pass can name a function-local dense slot.
 ;; Raw variables used to index the stamp arrays directly, which made an
@@ -81843,123 +81458,29 @@
       (compiler-backend-program-collections-add-bytes collections text)]
     [_ collections]))
 
-(define (compiler-backend-collect-maybe-value-collections
+(define (compiler-backend-collect-use-collections
+  [_role : compiler_ir_types.CompilerIrOperandRole]
   [collections : CompilerBackendProgramCollections]
-  [value : compiler_ir_types.CompilerIrMaybeValue]) : CompilerBackendProgramCollections
-  (match value
-    [(compiler_ir_types.CompilerIrMaybeValue.No) collections]
-    [(compiler_ir_types.CompilerIrMaybeValue.Some inner)
-      (compiler-backend-collect-value-collections collections inner)]))
+  [value : compiler_ir_types.CompilerIrValue]) : CompilerBackendProgramCollections
+  (compiler-backend-collect-value-collections collections value))
 
-(define (compiler-backend-collect-value-seq-collections-from
+;; Every use of `instr`, in operand order.
+(define (compiler-backend-collect-uses-collections
   [collections : CompilerBackendProgramCollections]
-  [values : compiler_ir_types.CompilerIrValueSeq]
-  [index : i64]) : CompilerBackendProgramCollections
-  (if (>= index values.len)
+  [instr : compiler_ir_types.CompilerIrInstr]) : CompilerBackendProgramCollections
+  (compiler_ir_types.compiler-ir-instr-fold-uses
+    instr
     collections
-    (compiler-backend-collect-value-seq-collections-from
-      (compiler-backend-collect-value-collections
-        collections
-        (compiler_ir_types.compiler-ir-value-seq-ref
-          (compiler-backend-global-shared-view values)
-          index))
-      values
-      (+ index 1))))
-
-(define (compiler-backend-collect-value-seq-collections
-  [collections : CompilerBackendProgramCollections]
-  [values : compiler_ir_types.CompilerIrValueSeq]) : CompilerBackendProgramCollections
-  (compiler-backend-collect-value-seq-collections-from collections values 0))
-
-(define (compiler-backend-collect-call-args-array-collections
-  [collections : CompilerBackendProgramCollections]
-  [values : (__tl_dyn-array compiler_ir_types.CompilerIrValue)]
-  [index : i64]) : CompilerBackendProgramCollections
-  (if (>= index (array-length values))
-    collections
-    (compiler-backend-collect-call-args-array-collections
-      (compiler-backend-collect-value-collections
-        collections
-        (compiler-backend-global-array-element-shared-view values index))
-      values
-      (+ index 1))))
-
-(define (compiler-backend-collect-call-args-collections
-  [collections : CompilerBackendProgramCollections]
-  [args : compiler_ir_types.CompilerIrCallArgs]) : CompilerBackendProgramCollections
-  (match args
-    [(compiler_ir_types.CompilerIrCallArgs.Nil) collections]
-    [(compiler_ir_types.CompilerIrCallArgs.One value)
-      (compiler-backend-collect-value-collections collections value)]
-    [(compiler_ir_types.CompilerIrCallArgs.Two a b)
-      (compiler-backend-collect-value-collections
-        (compiler-backend-collect-value-collections collections a)
-        b)]
-    [(compiler_ir_types.CompilerIrCallArgs.Array values)
-      (compiler-backend-collect-call-args-array-collections
-        collections
-        values
-        0)]
-    [(compiler_ir_types.CompilerIrCallArgs.Sret values _)
-      (compiler-backend-collect-call-args-array-collections
-        collections
-        values
-        0)]))
-
-(define (compiler-backend-collect-spmd-call-args-collections
-  [collections : CompilerBackendProgramCollections]
-  [args : compiler_ir_types.CompilerIrSpmdCallArgSeq]) : CompilerBackendProgramCollections
-  (let
-    [out : CompilerBackendProgramCollections collections]
-    [i : i64 0]
-    (begin
-      (while (< i args.len)
-        (begin
-          (match (array-ref args.slots i)
-            [(compiler_ir_types.CompilerIrSpmdCallArg.Arg _ value _)
-              (set! out (compiler-backend-collect-value-collections out value))])
-          (set! i (+ i 1))))
-      out)))
-
-(define (compiler-backend-collect-phi-collections
-  [collections : CompilerBackendProgramCollections]
-  [inputs : compiler_ir_types.CompilerIrPhiInputSeq]) : CompilerBackendProgramCollections
-  (let
-    [phi-inputs-at-80548-3 : compiler_ir_types.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-80548-3.len 0)
-      collections
-      (let
-        [phi-input-at-80548-3 : compiler_ir_types.CompilerIrPhiInput
-          (compiler_ir_types.compiler-ir-phi-input-seq-ref
-            (compiler_ir_types.compiler-ir-global-shared-view
-              phi-inputs-at-80548-3)
-            0)]
-        [value : compiler_ir_types.CompilerIrValue phi-input-at-80548-3.value]
-        [rest : compiler_ir_types.CompilerIrPhiInputSeq
-          (compiler_ir_types.CompilerIrPhiInputSeq
-            phi-inputs-at-80548-3.slots
-            (+ phi-inputs-at-80548-3.start 1)
-            (- phi-inputs-at-80548-3.len 1))]
-        (compiler-backend-collect-phi-collections
-          (compiler-backend-collect-value-collections collections value)
-          rest)))))
+    compiler-backend-collect-use-collections))
 
 (define (compiler-backend-collect-instr-collections
   [collections : CompilerBackendProgramCollections]
   [instr : compiler_ir_types.CompilerIrInstr]) : CompilerBackendProgramCollections
-  (match instr
-    [(compiler_ir_types.CompilerIrInstr.Mov _ src _)
-      (compiler-backend-collect-value-collections collections src)]
-    [(compiler_ir_types.CompilerIrInstr.OwnRoot _ src _)
-      (compiler-backend-collect-value-collections collections src)]
-    [(compiler_ir_types.CompilerIrInstr.BinOp _ _ lhs rhs _)
-      (compiler-backend-collect-value-collections
-        (compiler-backend-collect-value-collections collections lhs)
-        rhs)]
-    [(compiler_ir_types.CompilerIrInstr.UnOp _ op src ty)
+  (match (compiler-backend-global-shared-view instr)
+    [(compiler_ir_types.CompilerIrInstr.UnOp _ op _ ty)
       (let
         [with-src : CompilerBackendProgramCollections
-          (compiler-backend-collect-value-collections collections src)]
+          (compiler-backend-collect-uses-collections collections instr)]
         (match op
           [(compiler_ir_types.CompilerIrUnOp.Neg)
             (if (compiler-backend-f64-type?
@@ -81969,74 +81490,54 @@
                 (compiler-backend-program-collections-mark-f32-neg with-src)
                 with-src))]
           [_ with-src]))]
-    [(compiler_ir_types.CompilerIrInstr.Call _ name args _)
+    [(compiler_ir_types.CompilerIrInstr.Call _ name _ _)
       ;; IAG-1: one direct call-graph edge.
       (begin
         (compiler-backend-iag-note-callee!
           (compiler-backend-global-shared-view collections.iag)
           name)
-        (compiler-backend-collect-call-args-collections collections args))]
-    [(compiler_ir_types.CompilerIrInstr.CallIndirect _ func args _)
+        (compiler-backend-collect-uses-collections collections instr))]
+    [(compiler_ir_types.CompilerIrInstr.CallIndirect _ _ _ _)
       ;; IAG-1: a call through a value; this function's callee set is not
       ;; enumerable, so it can reach any rebind.
       (begin
         (compiler-backend-iag-note-indirect!
           (compiler-backend-global-shared-view collections.iag))
-        (compiler-backend-collect-call-args-collections
-          (compiler-backend-collect-value-collections collections func)
-          args))]
-    [(compiler_ir_types.CompilerIrInstr.CallIndirectC _ func args _)
+        (compiler-backend-collect-uses-collections collections instr))]
+    [(compiler_ir_types.CompilerIrInstr.CallIndirectC _ _ _ _)
       (begin
         (compiler-backend-iag-note-indirect!
           (compiler-backend-global-shared-view collections.iag))
-        (compiler-backend-collect-call-args-collections
-          (compiler-backend-collect-value-collections collections func)
-          args))]
+        (compiler-backend-collect-uses-collections collections instr))]
     [(compiler_ir_types.CompilerIrInstr.CallCAbiStoreResult payload-box)
-      (let
-        [base (compiler-backend-box-field-shared-view payload-box base)]
-        [args (compiler-backend-box-field-shared-view payload-box args)]
-        [name (compiler-backend-box-field-shared-view payload-box name)]
-        (begin
-          (compiler-backend-iag-note-callee!
-            (compiler-backend-global-shared-view collections.iag)
-            name)
-          (compiler-backend-collect-call-args-collections
-            (compiler-backend-collect-value-collections collections base)
-            args)))]
-    [(compiler_ir_types.CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
-      (let
-        [base (compiler-backend-box-field-shared-view payload-box base)]
-        [func (compiler-backend-box-field-shared-view payload-box callee)]
-        [args (compiler-backend-box-field-shared-view payload-box args)]
-        (begin
-          (compiler-backend-iag-note-indirect!
-            (compiler-backend-global-shared-view collections.iag))
-          (compiler-backend-collect-call-args-collections
-            (compiler-backend-collect-value-collections
-              (compiler-backend-collect-value-collections collections base)
-              func)
-            args)))]
+      (begin
+        (compiler-backend-iag-note-callee!
+          (compiler-backend-global-shared-view collections.iag)
+          (compiler-backend-box-field-shared-view payload-box name))
+        (compiler-backend-collect-uses-collections collections instr))]
+    [(compiler_ir_types.CompilerIrInstr.CallIndirectCAbiStoreResult _)
+      (begin
+        (compiler-backend-iag-note-indirect!
+          (compiler-backend-global-shared-view collections.iag))
+        (compiler-backend-collect-uses-collections collections instr))]
     [(compiler_ir_types.CompilerIrInstr.SpmdCall payload-box)
-      (let
-        [active-mask
-          (compiler-backend-box-field-shared-view payload-box active-mask)]
-        [args (compiler-backend-box-field-shared-view payload-box args)]
-        [callee (compiler-backend-box-field-shared-view payload-box callee)]
-        (begin
-          (compiler-backend-iag-note-callee!
-            (compiler-backend-global-shared-view collections.iag)
-            callee)
-          (compiler-backend-collect-spmd-call-args-collections
-            (compiler-backend-collect-value-collections collections active-mask)
-            args)))]
-    [(compiler_ir_types.CompilerIrInstr.TailCall name args _)
+      (begin
+        (compiler-backend-iag-note-callee!
+          (compiler-backend-global-shared-view collections.iag)
+          (compiler-backend-box-field-shared-view payload-box callee))
+        (compiler-backend-collect-uses-collections collections instr))]
+    [(compiler_ir_types.CompilerIrInstr.TailCall name _ _)
       (begin
         (compiler-backend-iag-note-callee!
           (compiler-backend-global-shared-view collections.iag)
           name)
-        (compiler-backend-collect-call-args-collections collections args))]
-    [(compiler_ir_types.CompilerIrInstr.Store name value _)
+        (compiler-backend-collect-uses-collections collections instr))]
+    [(compiler_ir_types.CompilerIrInstr.TailCallIndirect _ _ _)
+      (begin
+        (compiler-backend-iag-note-indirect!
+          (compiler-backend-global-shared-view collections.iag))
+        (compiler-backend-collect-uses-collections collections instr))]
+    [(compiler_ir_types.CompilerIrInstr.Store name _ _)
       ;; W3(c): the lowering of `(set! g ...)`, the one direct cell writer.
       ;; IAG-1 keys its R(g) on the same instruction.
       (begin
@@ -82045,43 +81546,11 @@
         (compiler-backend-iag-note-write!
           (compiler-backend-global-shared-view collections.iag)
           name)
-        (compiler-backend-collect-value-collections collections value))]
-    [(compiler_ir_types.CompilerIrInstr.Branch cond _ _)
-      (compiler-backend-collect-value-collections collections cond)]
-    [(compiler_ir_types.CompilerIrInstr.TotalEnumBranch cond _ _)
-      (compiler-backend-collect-value-collections collections cond)]
-    [(compiler_ir_types.CompilerIrInstr.Return maybe)
-      (compiler-backend-collect-maybe-value-collections collections maybe)]
-    [(compiler_ir_types.CompilerIrInstr.Phi _ inputs _)
-      (compiler-backend-collect-phi-collections collections inputs)]
-    [(compiler_ir_types.CompilerIrInstr.Gep _ base offset _)
-      (compiler-backend-collect-value-collections
-        (compiler-backend-collect-value-collections collections base)
-        offset)]
-    [(compiler_ir_types.CompilerIrInstr.Load _ src _)
-      (compiler-backend-collect-value-collections collections src)]
-    [(compiler_ir_types.CompilerIrInstr.LoadOwned _ src _ _)
-      (compiler-backend-collect-value-collections collections src)]
-    [(compiler_ir_types.CompilerIrInstr.StorePtr dst src _)
-      (compiler-backend-collect-value-collections
-        (compiler-backend-collect-value-collections collections dst)
-        src)]
-    [(compiler_ir_types.CompilerIrInstr.StoreOwned dst src _)
-      (compiler-backend-collect-value-collections
-        (compiler-backend-collect-value-collections collections dst)
-        src)]
-    [(compiler_ir_types.CompilerIrInstr.CopyBytes dst src _)
-      (compiler-backend-collect-value-collections
-        (compiler-backend-collect-value-collections collections dst)
-        src)]
-    [(compiler_ir_types.CompilerIrInstr.BoundsCheck index length _)
-      (compiler-backend-collect-value-collections
-        (compiler-backend-collect-value-collections collections index)
-        length)]
-    [(compiler_ir_types.CompilerIrInstr.Cast _ src from-ty to-ty)
+        (compiler-backend-collect-uses-collections collections instr))]
+    [(compiler_ir_types.CompilerIrInstr.Cast _ _ from-ty to-ty)
       (let
         [with-source : CompilerBackendProgramCollections
-          (compiler-backend-collect-value-collections collections src)]
+          (compiler-backend-collect-uses-collections collections instr)]
         (match to-ty
           [(compiler_ast_types.AstType.U64)
             (if (compiler-backend-float-type?
@@ -82092,166 +81561,30 @@
                 (compiler-backend-float-to-u64-threshold-bits from-ty))
               with-source)]
           [_ with-source]))]
-    [(compiler_ir_types.CompilerIrInstr.Bitcast _ src _ _)
-      (compiler-backend-collect-value-collections collections src)]
-    [(compiler_ir_types.CompilerIrInstr.Splat _ value _ _)
-      (compiler-backend-collect-value-collections collections value)]
-    [(compiler_ir_types.CompilerIrInstr.VectorBinOp payload-box)
-      (let
-        [lhs (compiler-backend-box-field-shared-view payload-box lhs)]
-        [rhs (compiler-backend-box-field-shared-view payload-box rhs)]
-        (compiler-backend-collect-value-collections
-          (compiler-backend-collect-value-collections collections lhs)
-          rhs))]
-    [(compiler_ir_types.CompilerIrInstr.VectorPrefix payload-box)
-      (let
-        [src (compiler-backend-box-field-shared-view payload-box src)]
-        [carry (compiler-backend-box-field-shared-view payload-box carry)]
-        (compiler-backend-collect-value-collections
-          (compiler-backend-collect-value-collections collections src)
-          carry))]
-    [(compiler_ir_types.CompilerIrInstr.VectorReduce _ _ src _ _)
-      (compiler-backend-collect-value-collections collections src)]
-    [(compiler_ir_types.CompilerIrInstr.VectorCompare payload-box)
-      (let
-        [lhs (compiler-backend-box-field-shared-view payload-box lhs)]
-        [rhs (compiler-backend-box-field-shared-view payload-box rhs)]
-        (compiler-backend-collect-value-collections
-          (compiler-backend-collect-value-collections collections lhs)
-          rhs))]
-    [(compiler_ir_types.CompilerIrInstr.MaskBinOp _ _ lhs rhs _)
-      (compiler-backend-collect-value-collections
-        (compiler-backend-collect-value-collections collections lhs)
-        rhs)]
-    [(compiler_ir_types.CompilerIrInstr.MaskNot _ src _)
-      (compiler-backend-collect-value-collections collections src)]
-    [(compiler_ir_types.CompilerIrInstr.MaskReduce _ _ src _)
-      (compiler-backend-collect-value-collections collections src)]
-    [(compiler_ir_types.CompilerIrInstr.Select payload-box)
-      (let
-        [mask (compiler-backend-box-field-shared-view payload-box mask)]
-        [on-true (compiler-backend-box-field-shared-view payload-box on-true)]
-        [on-false (compiler-backend-box-field-shared-view payload-box on-false)]
-        (compiler-backend-collect-value-collections
-          (compiler-backend-collect-value-collections
-            (compiler-backend-collect-value-collections collections mask)
-            on-true)
-          on-false))]
-    [(compiler_ir_types.CompilerIrInstr.VectorLoad _ base index _ _)
-      (compiler-backend-collect-value-collections
-        (compiler-backend-collect-value-collections collections base)
-        index)]
-    [(compiler_ir_types.CompilerIrInstr.VectorStore payload-box)
-      (let
-        [base (compiler-backend-box-field-shared-view payload-box base)]
-        [index (compiler-backend-box-field-shared-view payload-box index)]
-        [value (compiler-backend-box-field-shared-view payload-box value)]
-        (compiler-backend-collect-value-collections
-          (compiler-backend-collect-value-collections
-            (compiler-backend-collect-value-collections collections base)
-            index)
-          value))]
-    [(compiler_ir_types.CompilerIrInstr.PredicatedStore payload-box)
-      (let
-        [base (compiler-backend-box-field-shared-view payload-box base)]
-        [index (compiler-backend-box-field-shared-view payload-box index)]
-        [value (compiler-backend-box-field-shared-view payload-box value)]
-        [mask (compiler-backend-box-field-shared-view payload-box mask)]
-        (compiler-backend-collect-value-collections
-          (compiler-backend-collect-value-collections
-            (compiler-backend-collect-value-collections
-              (compiler-backend-collect-value-collections collections base)
-              index)
-            value)
-          mask))]
-    [(compiler_ir_types.CompilerIrInstr.PredicatedLoad payload-box)
-      (let
-        [base (compiler-backend-box-field-shared-view payload-box base)]
-        [index (compiler-backend-box-field-shared-view payload-box index)]
-        [mask (compiler-backend-box-field-shared-view payload-box mask)]
-        (compiler-backend-collect-value-collections
-          (compiler-backend-collect-value-collections
-            (compiler-backend-collect-value-collections collections base)
-            index)
-          mask))]
     [(compiler_ir_types.CompilerIrInstr.GatherLoad payload-box)
       (let
-        [base (compiler-backend-box-field-shared-view payload-box base)]
-        [index-base
-          (compiler-backend-box-field-shared-view payload-box index-base)]
-        [index (compiler-backend-box-field-shared-view payload-box index)]
         [lane-offset
           (compiler-backend-box-field-shared-view payload-box lane-offset)]
         [lanes (compiler-backend-box-field-shared-view payload-box lanes)]
         [elem-ty (compiler-backend-box-field-shared-view payload-box ty)]
         [values : CompilerBackendProgramCollections
-          (compiler-backend-collect-value-collections
-            (compiler-backend-collect-value-collections
-              (compiler-backend-collect-value-collections collections base)
-              index-base)
-            index)]
+          (compiler-backend-collect-uses-collections collections instr)]
         (if lane-offset
           (compiler-backend-collect-lane-offset-gather-collections
             values
             lanes
             elem-ty)
           values))]
-    [(compiler_ir_types.CompilerIrInstr.VectorShuffle payload-box)
-      (let
-        [source (compiler-backend-box-field-shared-view payload-box source)]
-        [selector-low
-          (compiler-backend-box-field-shared-view payload-box selector-low)]
-        [selector-high
-          (compiler-backend-box-field-shared-view payload-box selector-high)]
-        [active-lanes
-          (compiler-backend-box-field-shared-view payload-box active-lanes)]
-        (compiler-backend-collect-value-collections
-          (compiler-backend-collect-maybe-value-collections
-            (compiler-backend-collect-value-collections
-              (compiler-backend-collect-value-collections collections source)
-              selector-low)
-            selector-high)
-          active-lanes))]
-    [(compiler_ir_types.CompilerIrInstr.TailMask _ index length lanes)
+    [(compiler_ir_types.CompilerIrInstr.TailMask _ _ _ lanes)
       (let
         [values : CompilerBackendProgramCollections
-          (compiler-backend-collect-value-collections
-            (compiler-backend-collect-value-collections collections index)
-            length)]
+          (compiler-backend-collect-uses-collections collections instr)]
         (if (= lanes 4)
           (compiler-backend-program-collections-mark-avx2-i64-lane-id values)
           values))]
-    [(compiler_ir_types.CompilerIrInstr.CpuId _ leaf subleaf _)
-      (compiler-backend-collect-value-collections
-        (compiler-backend-collect-value-collections collections leaf)
-        subleaf)]
-    [(compiler_ir_types.CompilerIrInstr.Xgetbv _ index)
-      (compiler-backend-collect-value-collections collections index)]
-    [(compiler_ir_types.CompilerIrInstr.Syscall _ args)
-      (compiler-backend-collect-call-args-collections collections args)]
-    [(compiler_ir_types.CompilerIrInstr.Pack _ words _)
-      (compiler-backend-collect-value-seq-collections collections words)]
-    [(compiler_ir_types.CompilerIrInstr.Word _ src _ _)
-      (compiler-backend-collect-value-collections collections src)]
-    [(compiler_ir_types.CompilerIrInstr.TailCallIndirect func args _)
-      (begin
-        (compiler-backend-iag-note-indirect!
-          (compiler-backend-global-shared-view collections.iag))
-        (compiler-backend-collect-call-args-collections
-          (compiler-backend-collect-value-collections collections func)
-          args))]
-    [(compiler_ir_types.CompilerIrInstr.Alloc _ _) collections]
-    [(compiler_ir_types.CompilerIrInstr.AddrOf _ _) collections]
     [(compiler_ir_types.CompilerIrInstr.LaneId _ lanes elem-ty)
       (compiler-backend-collect-lane-id-collections collections lanes elem-ty)]
-    [(compiler_ir_types.CompilerIrInstr.EntryArgc _) collections]
-    [(compiler_ir_types.CompilerIrInstr.EntryArgv _) collections]
-    [(compiler_ir_types.CompilerIrInstr.EntryEnvp _) collections]
-    [(compiler_ir_types.CompilerIrInstr.Jump _) collections]
-    [(compiler_ir_types.CompilerIrInstr.Switch index _ _ _)
-      (compiler-backend-collect-value-collections collections index)]
-    [(compiler_ir_types.CompilerIrInstr.TotalEnumSwitch index _ _ _ _)
-      (compiler-backend-collect-value-collections collections index)]))
+    [_ (compiler-backend-collect-uses-collections collections instr)]))
 
 (define (compiler-backend-collect-instr-seq-collections
   [collections : CompilerBackendProgramCollections]

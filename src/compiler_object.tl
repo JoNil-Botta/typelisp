@@ -220,7 +220,7 @@
     0))
 
 (define (compiler-object-data-record-builder-copy-range!
-  [dst : (__tl_dyn-array CompilerObjectDataRecord)]
+  [dst : (&mut dst (__tl_dyn-array CompilerObjectDataRecord))]
   [src : (__tl_dyn-array CompilerObjectDataRecord)]
   [count : i64]) : unit
   (let
@@ -231,7 +231,7 @@
         (set! index (+ index 1))))))
 
 (define (compiler-object-instr-builder-copy-range!
-  [dst : (__tl_dyn-array CompilerObjectX64Instr)]
+  [dst : (&mut dst (__tl_dyn-array CompilerObjectX64Instr))]
   [src : (__tl_dyn-array CompilerObjectX64Instr)]
   [count : i64]) : unit
   (let
@@ -242,7 +242,7 @@
         (set! index (+ index 1))))))
 
 (define (compiler-object-symbol-builder-copy-range!
-  [dst : (__tl_dyn-array CompilerObjectSymbol)]
+  [dst : (&mut dst (__tl_dyn-array CompilerObjectSymbol))]
   [src : (__tl_dyn-array CompilerObjectSymbol)]
   [count : i64]) : unit
   (let
@@ -253,7 +253,7 @@
         (set! index (+ index 1))))))
 
 (define (compiler-object-relocation-builder-copy-range!
-  [dst : (__tl_dyn-array CompilerObjectRelocation)]
+  [dst : (&mut dst (__tl_dyn-array CompilerObjectRelocation))]
   [src : (__tl_dyn-array CompilerObjectRelocation)]
   [count : i64]) : unit
   (let
@@ -264,7 +264,7 @@
         (set! index (+ index 1))))))
 
 (define (compiler-object-section-builder-copy-range!
-  [dst : (__tl_dyn-array CompilerObjectSection)]
+  [dst : (&mut dst (__tl_dyn-array CompilerObjectSection))]
   [src : (__tl_dyn-array CompilerObjectSection)]
   [count : i64]) : unit
   (let
@@ -283,7 +283,7 @@
       (__tl_make-array CompilerObjectDataRecord (* (array-length slots) 2))]
     (begin
       (compiler-object-data-record-builder-copy-range!
-        (owned_view.compiler-owned-shared-view bigger)
+        (&mut bigger)
         slots
         count)
       (CompilerObjectDataRecordBuilder bigger count))))
@@ -296,10 +296,7 @@
     [bigger : (__tl_dyn-array CompilerObjectX64Instr)
       (__tl_make-array CompilerObjectX64Instr (* (array-length slots) 2))]
     (begin
-      (compiler-object-instr-builder-copy-range!
-        (owned_view.compiler-owned-shared-view bigger)
-        slots
-        count)
+      (compiler-object-instr-builder-copy-range! (&mut bigger) slots count)
       (CompilerObjectX64InstrBuilder bigger count))))
 
 (define (compiler-object-symbol-builder-grow
@@ -310,10 +307,7 @@
     [bigger : (__tl_dyn-array CompilerObjectSymbol)
       (__tl_make-array CompilerObjectSymbol (* (array-length slots) 2))]
     (begin
-      (compiler-object-symbol-builder-copy-range!
-        (owned_view.compiler-owned-shared-view bigger)
-        slots
-        count)
+      (compiler-object-symbol-builder-copy-range! (&mut bigger) slots count)
       (CompilerObjectSymbolBuilder bigger count))))
 
 (define (compiler-object-relocation-builder-grow
@@ -324,10 +318,7 @@
     [bigger : (__tl_dyn-array CompilerObjectRelocation)
       (__tl_make-array CompilerObjectRelocation (* (array-length slots) 2))]
     (begin
-      (compiler-object-relocation-builder-copy-range!
-        (owned_view.compiler-owned-shared-view bigger)
-        slots
-        count)
+      (compiler-object-relocation-builder-copy-range! (&mut bigger) slots count)
       (CompilerObjectRelocationBuilder bigger count))))
 
 (define (compiler-object-section-builder-grow
@@ -338,10 +329,7 @@
     [bigger : (__tl_dyn-array CompilerObjectSection)
       (__tl_make-array CompilerObjectSection (* (array-length slots) 2))]
     (begin
-      (compiler-object-section-builder-copy-range!
-        (owned_view.compiler-owned-shared-view bigger)
-        slots
-        count)
+      (compiler-object-section-builder-copy-range! (&mut bigger) slots count)
       (CompilerObjectSectionBuilder bigger count))))
 
 (define (compiler-object-data-record-builder-push
@@ -436,7 +424,7 @@
 
 (define (compiler-object-symbol-builder-contains?
   [builder : CompilerObjectSymbolBuilder]
-  [name : String]
+  [name : (& name str)]
   [binding : CompilerObjectSymbolBinding]
   [kind : CompilerObjectSymbolKind]) : bool
   (let
@@ -586,7 +574,7 @@
   (array-ref symbols.slots index))
 
 (define (compiler-object-relocation-list-count
-  [relocs : CompilerObjectRelocationList]) : i64
+  [relocs : (& relocs CompilerObjectRelocationList)]) : i64
   relocs.len)
 
 (define (compiler-object-relocation-list-ref
@@ -612,7 +600,7 @@
   (array-ref instrs.slots index))
 
 (define (compiler-object-section-list-count
-  [sections : CompilerObjectSectionList]) : i64
+  [sections : (& sections CompilerObjectSectionList)]) : i64
   sections.len)
 
 (define (compiler-object-section-list-ref
@@ -627,9 +615,7 @@
   [sections : CompilerObjectSectionList]
   [kind : CompilerObjectSectionKind]) : CompilerObjectSection
   (let
-    [count : i64
-      (compiler-object-section-list-count
-        (owned_view.compiler-owned-shared-view sections))]
+    [count : i64 (compiler-object-section-list-count sections)]
     [index : i64 0]
     [result : CompilerObjectSection
       (CompilerObjectSection.Section
@@ -701,9 +687,7 @@
   [kind : CompilerObjectRelocationKind]
   [target : String]) : bool
   (let
-    [count : i64
-      (compiler-object-relocation-list-count
-        (owned_view.compiler-owned-shared-view relocs))]
+    [count : i64 (compiler-object-relocation-list-count relocs)]
     [index : i64 0]
     [found : bool false]
     (begin
@@ -975,8 +959,8 @@
       (compiler-object-instr-list-contains-call? instrs target)]))
 
 (define (compiler-object-string-prefix-at?
-  [haystack : String]
-  [needle : String]
+  [haystack : (& haystack str)]
+  [needle : (& needle str)]
   [start : i64]
   [index : i64]) : bool
   (cond
@@ -990,23 +974,18 @@
 
 (define (compiler-object-string-contains?
   [haystack : String]
-  [needle : String]
+  [needle : (& needle str)]
   [start : i64]) : bool
   (cond
     [(= (string.string-length needle) 0) true]
     [(> (+ start (string.string-length needle)) (string.string-length haystack))
       false]
-    [(compiler-object-string-prefix-at?
-        (owned_view.compiler-owned-shared-view haystack)
-        (owned_view.compiler-owned-shared-view needle)
-        start
-        0)
-      true]
+    [(compiler-object-string-prefix-at? haystack needle start 0) true]
     [else (compiler-object-string-contains? haystack needle (+ start 1))]))
 
 (define (compiler-object-instr-list-contains-bytes?
   [instrs : CompilerObjectX64InstrList]
-  [bytes : String]) : bool
+  [bytes : (& bytes str)]) : bool
   (let
     [count : i64
       (compiler-object-instr-list-count
@@ -1019,17 +998,11 @@
           (owned_view.compiler-owned-shared-view instrs)
           index)
           [(CompilerObjectX64Instr.Bytes value)
-            (if (compiler-object-string-contains?
-              value
-              (owned_view.compiler-owned-shared-view bytes)
-              0)
+            (if (compiler-object-string-contains? value bytes 0)
               (set! found true)
               (set! index (+ index 1)))]
           [(CompilerObjectX64Instr.Raw value)
-            (if (compiler-object-string-contains?
-              value
-              (owned_view.compiler-owned-shared-view bytes)
-              0)
+            (if (compiler-object-string-contains? value bytes 0)
               (set! found true)
               (set! index (+ index 1)))]
           [_ (set! index (+ index 1))]))

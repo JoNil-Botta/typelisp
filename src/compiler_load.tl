@@ -4449,7 +4449,7 @@
           (ast.AstExpr.Call
             (ast.ast-node-pool-context-expr-push
               pools
-              (ast.AstExpr.Var (cbi.compiler-builtin-ctfe-ref 29)))
+              (ast.AstExpr.Var (cbi.compiler-builtin-ctfe "expr-string")))
             args))))))
 
 (define (compiler-load-include-bin-def-with-pools
@@ -7101,43 +7101,21 @@
     summary
     locals))
 
-(define (compiler-load-session-state-lazy-type-list-demand-at?
-  [state : CompilerLoadSessionState]
-  [types : (& types ast.AstTypeList)]
-  [alias : i64]
-  [summary : (& summary CompilerLoadSurfaceSummary)]
-  [locals : sym_i64_env.SymI64Env]
-  [index : i64]) : CompilerLoadLazyAliasDemand
-  (if (>= index (ast.ast-type-list-len types))
-    (compiler-load-lazy-alias-demand-none)
-    (compiler-load-lazy-alias-demand-merge
-      (compiler-load-session-state-lazy-type-id-demand
-        (owned_view.compiler-owned-shared-view state)
-        (ast.ast-type-list-get types index (ast.ast-type-id-fallback))
-        alias
-        summary
-        locals)
-      (compiler-load-session-state-lazy-type-list-demand-at?
-        state
-        types
-        alias
-        summary
-        locals
-        (+ index 1)))))
-
 (define (compiler-load-session-state-lazy-type-list-demand
   [state : CompilerLoadSessionState]
   [types : ast.AstTypeList]
   [alias : i64]
   [summary : (& summary CompilerLoadSurfaceSummary)]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
-  (compiler-load-session-state-lazy-type-list-demand-at?
-    state
-    (& types)
+  (ast.ast-type-id-list-fold
+    types
+    compiler-load-lazy-alias-demand-merge
+    (compiler-load-lazy-alias-demand-none)
+    compiler-load-lazy-type-id-demand-hook
+    (owned_view.compiler-owned-shared-view state)
     alias
     summary
-    locals
-    0))
+    locals))
 
 (define (compiler-load-session-state-lazy-type-demand
   [state : CompilerLoadSessionState]
@@ -7145,77 +7123,7 @@
   [alias : i64]
   [summary : (& summary CompilerLoadSurfaceSummary)]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
-  (match ty
-    [(ast.AstType.Func args ret)
-      (compiler-load-lazy-alias-demand-merge
-        (compiler-load-session-state-lazy-type-list-demand
-          (owned_view.compiler-owned-shared-view state)
-          (deref args)
-          alias
-          summary
-          locals)
-        (compiler-load-session-state-lazy-type-id-demand
-          state
-          ret
-          alias
-          summary
-          locals))]
-    [(ast.AstType.Tuple items)
-      (compiler-load-session-state-lazy-type-list-demand
-        state
-        (deref items)
-        alias
-        summary
-        locals)]
-    [(ast.AstType.Array elem _)
-      (compiler-load-session-state-lazy-type-id-demand
-        state
-        elem
-        alias
-        summary
-        locals)]
-    [(ast.AstType.DynArray elem)
-      (compiler-load-session-state-lazy-type-id-demand
-        state
-        elem
-        alias
-        summary
-        locals)]
-    [(ast.AstType.Slice elem)
-      (compiler-load-session-state-lazy-type-id-demand
-        state
-        elem
-        alias
-        summary
-        locals)]
-    [(ast.AstType.Box elem)
-      (compiler-load-session-state-lazy-type-id-demand
-        state
-        elem
-        alias
-        summary
-        locals)]
-    [(ast.AstType.Region _ inner)
-      (compiler-load-session-state-lazy-type-id-demand
-        state
-        inner
-        alias
-        summary
-        locals)]
-    [(ast.AstType.Ref _ inner)
-      (compiler-load-session-state-lazy-type-id-demand
-        state
-        inner
-        alias
-        summary
-        locals)]
-    [(ast.AstType.MutRef _ inner)
-      (compiler-load-session-state-lazy-type-id-demand
-        state
-        inner
-        alias
-        summary
-        locals)]
+  (match (owned_view.compiler-owned-shared-view ty)
     [(ast.AstType.Enum name)
       (compiler-load-session-state-lazy-name-demand
         state
@@ -7258,21 +7166,18 @@
         alias
         summary
         locals)]
-    [(ast.AstType.Ptr inner)
-      (compiler-load-session-state-lazy-type-id-demand
-        state
-        inner
+    ;; A C-function type's signature is not an alias use.
+    [(ast.AstType.CFunc _ _) (compiler-load-lazy-alias-demand-none)]
+    [_
+      (ast.ast-type-fold-children
+        ty
+        compiler-load-lazy-alias-demand-merge
+        (compiler-load-lazy-alias-demand-none)
+        compiler-load-lazy-type-id-demand-hook
+        (owned_view.compiler-owned-shared-view state)
         alias
         summary
-        locals)]
-    [(ast.AstType.MutPtr inner)
-      (compiler-load-session-state-lazy-type-id-demand
-        state
-        inner
-        alias
-        summary
-        locals)]
-    [_ (compiler-load-lazy-alias-demand-none)]))
+        locals)]))
 
 (define (compiler-load-session-state-lazy-maybe-type-demand
   [state : CompilerLoadSessionState]
@@ -7677,43 +7582,21 @@
     locals
     0))
 
-(define (compiler-load-session-state-lazy-expr-list-demand-at?
-  [state : CompilerLoadSessionState]
-  [exprs : (& exprs ast.AstExprList)]
-  [alias : i64]
-  [summary : (& summary CompilerLoadSurfaceSummary)]
-  [locals : sym_i64_env.SymI64Env]
-  [index : i64]) : CompilerLoadLazyAliasDemand
-  (if (>= index (ast.ast-expr-list-len exprs))
-    (compiler-load-lazy-alias-demand-none)
-    (compiler-load-lazy-alias-demand-merge
-      (compiler-load-session-state-lazy-expr-demand
-        (owned_view.compiler-owned-shared-view state)
-        (ast.ast-node-get (ast.ast-expr-list-get exprs index 0))
-        alias
-        summary
-        locals)
-      (compiler-load-session-state-lazy-expr-list-demand-at?
-        state
-        exprs
-        alias
-        summary
-        locals
-        (+ index 1)))))
-
 (define (compiler-load-session-state-lazy-expr-list-demand
   [state : CompilerLoadSessionState]
   [exprs : ast.AstExprList]
   [alias : i64]
   [summary : (& summary CompilerLoadSurfaceSummary)]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
-  (compiler-load-session-state-lazy-expr-list-demand-at?
-    state
-    (& exprs)
+  (ast.ast-expr-list-fold
+    exprs
+    compiler-load-lazy-alias-demand-merge
+    (compiler-load-lazy-alias-demand-none)
+    compiler-load-lazy-expr-demand-hook
+    (owned_view.compiler-owned-shared-view state)
     alias
     summary
-    locals
-    0))
+    locals))
 
 (define (compiler-load-session-state-lazy-let-bindings-demand-at?
   [state : CompilerLoadSessionState]
@@ -7739,7 +7622,7 @@
           (compiler-load-lazy-alias-demand-merge
             (compiler-load-session-state-lazy-expr-demand
               (owned_view.compiler-owned-shared-view state)
-              (ast.ast-node-get init)
+              init
               alias
               summary
               locals)
@@ -7802,7 +7685,7 @@
           (compiler-load-lazy-alias-demand-merge
             (compiler-load-session-state-lazy-expr-demand
               (owned_view.compiler-owned-shared-view state)
-              (ast.ast-node-get body)
+              body
               alias
               summary
               (compiler-load-session-state-lazy-pattern-locals
@@ -7831,21 +7714,68 @@
     locals
     0))
 
+;; AstExpr child schema hooks take the walk's contexts first and the child last.
+(defmacro (compiler-load-lazy-expr-demand-hook
+  [state : Expr]
+  [alias : Expr]
+  [summary : Expr]
+  [locals : Expr]
+  [node-id : Expr]) : Expr
+  `(compiler-load-session-state-lazy-expr-demand
+    ,state
+    ,node-id
+    ,alias
+    ,summary
+    ,locals))
+
+(defmacro (compiler-load-lazy-type-id-demand-hook
+  [state : Expr]
+  [alias : Expr]
+  [summary : Expr]
+  [locals : Expr]
+  [type-id : Expr]) : Expr
+  `(compiler-load-session-state-lazy-type-id-demand
+    ,state
+    ,type-id
+    ,alias
+    ,summary
+    ,locals))
+
+(defmacro (compiler-load-lazy-type-demand-hook
+  [state : Expr]
+  [alias : Expr]
+  [summary : Expr]
+  [locals : Expr]
+  [ty : Expr]) : Expr
+  `(compiler-load-session-state-lazy-type-demand
+    ,state
+    ,ty
+    ,alias
+    ,summary
+    ,locals))
+
+(defmacro (compiler-load-lazy-pattern-demand-hook
+  [state : Expr]
+  [alias : Expr]
+  [summary : Expr]
+  [locals : Expr]
+  [pattern : Expr]) : Expr
+  `(compiler-load-session-state-lazy-pattern-demand
+    ,state
+    ,pattern
+    ,alias
+    ,summary
+    ,locals))
+
 (define (compiler-load-session-state-lazy-expr-demand
   [state : CompilerLoadSessionState]
-  [expr : ast.AstExpr]
+  [node-id : i64]
   [alias : i64]
   [summary : (& summary CompilerLoadSurfaceSummary)]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
-  (match expr
-    [(ast.AstExpr.Spanned inner _)
-      (compiler-load-session-state-lazy-expr-demand
-        state
-        (ast.ast-node-get inner)
-        alias
-        summary
-        locals)]
-    [(ast.AstExpr.Literal _) (compiler-load-lazy-alias-demand-none)]
+  ;; Names, binders and quoted syntax are resolved here; the other ordinary
+  ;; forms merge their children's demand through the AstExpr child schema.
+  (match (ast.ast-node-get node-id)
     [(ast.AstExpr.Var name)
       (compiler-load-session-state-lazy-name-demand
         state
@@ -7853,62 +7783,6 @@
         alias
         summary
         locals)]
-    [(ast.AstExpr.Binary _ left right)
-      (compiler-load-lazy-alias-demand-merge
-        (compiler-load-session-state-lazy-expr-demand
-          (owned_view.compiler-owned-shared-view state)
-          (ast.ast-node-get left)
-          alias
-          summary
-          locals)
-        (compiler-load-session-state-lazy-expr-demand
-          state
-          (ast.ast-node-get right)
-          alias
-          summary
-          locals))]
-    [(ast.AstExpr.Unary _ inner)
-      (compiler-load-session-state-lazy-expr-demand
-        state
-        (ast.ast-node-get inner)
-        alias
-        summary
-        locals)]
-    [(ast.AstExpr.Call func args)
-      (compiler-load-lazy-alias-demand-merge
-        (compiler-load-session-state-lazy-expr-demand
-          (owned_view.compiler-owned-shared-view state)
-          (ast.ast-node-get func)
-          alias
-          summary
-          locals)
-        (compiler-load-session-state-lazy-expr-list-demand
-          state
-          args
-          alias
-          summary
-          locals))]
-    [(ast.AstExpr.If condition then-branch else-branch)
-      (compiler-load-lazy-alias-demand-merge
-        (compiler-load-session-state-lazy-expr-demand
-          (owned_view.compiler-owned-shared-view state)
-          (ast.ast-node-get condition)
-          alias
-          summary
-          locals)
-        (compiler-load-lazy-alias-demand-merge
-          (compiler-load-session-state-lazy-expr-demand
-            (owned_view.compiler-owned-shared-view state)
-            (ast.ast-node-get then-branch)
-            alias
-            summary
-            locals)
-          (compiler-load-session-state-lazy-expr-demand
-            state
-            (ast.ast-node-get else-branch)
-            alias
-            summary
-            locals)))]
     [(ast.AstExpr.Let let-box)
       (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body)
@@ -7922,7 +7796,7 @@
               0)
             (compiler-load-session-state-lazy-expr-demand
               (owned_view.compiler-owned-shared-view state)
-              (ast.ast-node-get body)
+              body
               alias
               summary
               (compiler-load-session-state-lazy-let-bindings-locals-at
@@ -7949,174 +7823,13 @@
                 locals)
               (compiler-load-session-state-lazy-expr-demand
                 (owned_view.compiler-owned-shared-view state)
-                (ast.ast-node-get body)
+                body
                 alias
                 summary
                 (compiler-load-session-state-lazy-param-list-locals
                   state
                   params
                   locals))))])]
-    [(ast.AstExpr.Tuple exprs)
-      (compiler-load-session-state-lazy-expr-list-demand
-        state
-        exprs
-        alias
-        summary
-        locals)]
-    [(ast.AstExpr.TupleRef tuple _)
-      (compiler-load-session-state-lazy-expr-demand
-        state
-        (ast.ast-node-get tuple)
-        alias
-        summary
-        locals)]
-    [(ast.AstExpr.Array exprs)
-      (compiler-load-session-state-lazy-expr-list-demand
-        state
-        exprs
-        alias
-        summary
-        locals)]
-    [(ast.AstExpr.DynArray exprs)
-      (compiler-load-session-state-lazy-expr-list-demand
-        state
-        exprs
-        alias
-        summary
-        locals)]
-    [(ast.AstExpr.FixedMakeArray elem-id length)
-      (compiler-load-lazy-alias-demand-merge
-        (compiler-load-session-state-lazy-type-demand
-          (owned_view.compiler-owned-shared-view state)
-          (ast.ty-node-get elem-id)
-          alias
-          summary
-          locals)
-        (compiler-load-session-state-lazy-expr-demand
-          state
-          (ast.ast-node-get length)
-          alias
-          summary
-          locals))]
-    [(ast.AstExpr.MakeArray elem-id length)
-      (compiler-load-lazy-alias-demand-merge
-        (compiler-load-session-state-lazy-type-demand
-          (owned_view.compiler-owned-shared-view state)
-          (ast.ty-node-get elem-id)
-          alias
-          summary
-          locals)
-        (compiler-load-session-state-lazy-expr-demand
-          state
-          (ast.ast-node-get length)
-          alias
-          summary
-          locals))]
-    [(ast.AstExpr.ArrayRef items index)
-      (compiler-load-lazy-alias-demand-merge
-        (compiler-load-session-state-lazy-expr-demand
-          (owned_view.compiler-owned-shared-view state)
-          (ast.ast-node-get items)
-          alias
-          summary
-          locals)
-        (compiler-load-session-state-lazy-expr-demand
-          state
-          (ast.ast-node-get index)
-          alias
-          summary
-          locals))]
-    [(ast.AstExpr.ArraySet items index value)
-      (compiler-load-lazy-alias-demand-merge
-        (compiler-load-session-state-lazy-expr-demand
-          (owned_view.compiler-owned-shared-view state)
-          (ast.ast-node-get items)
-          alias
-          summary
-          locals)
-        (compiler-load-lazy-alias-demand-merge
-          (compiler-load-session-state-lazy-expr-demand
-            (owned_view.compiler-owned-shared-view state)
-            (ast.ast-node-get index)
-            alias
-            summary
-            locals)
-          (compiler-load-session-state-lazy-expr-demand
-            state
-            (ast.ast-node-get value)
-            alias
-            summary
-            locals)))]
-    [(ast.AstExpr.Replace place replacement)
-      (compiler-load-lazy-alias-demand-merge
-        (compiler-load-session-state-lazy-expr-demand
-          (owned_view.compiler-owned-shared-view state)
-          (ast.ast-node-get place)
-          alias
-          summary
-          locals)
-        (compiler-load-session-state-lazy-expr-demand
-          state
-          (ast.ast-node-get replacement)
-          alias
-          summary
-          locals))]
-    [(ast.AstExpr.ArrayPush items value)
-      (compiler-load-lazy-alias-demand-merge
-        (compiler-load-session-state-lazy-expr-demand
-          (owned_view.compiler-owned-shared-view state)
-          (ast.ast-node-get items)
-          alias
-          summary
-          locals)
-        (compiler-load-session-state-lazy-expr-demand
-          state
-          (ast.ast-node-get value)
-          alias
-          summary
-          locals))]
-    [(ast.AstExpr.StringRef text index)
-      (compiler-load-lazy-alias-demand-merge
-        (compiler-load-session-state-lazy-expr-demand
-          (owned_view.compiler-owned-shared-view state)
-          (ast.ast-node-get text)
-          alias
-          summary
-          locals)
-        (compiler-load-session-state-lazy-expr-demand
-          state
-          (ast.ast-node-get index)
-          alias
-          summary
-          locals))]
-    [(ast.AstExpr.While condition body)
-      (compiler-load-lazy-alias-demand-merge
-        (compiler-load-session-state-lazy-expr-demand
-          (owned_view.compiler-owned-shared-view state)
-          (ast.ast-node-get condition)
-          alias
-          summary
-          locals)
-        (compiler-load-session-state-lazy-expr-demand
-          state
-          (ast.ast-node-get body)
-          alias
-          summary
-          locals))]
-    [(ast.AstExpr.Begin exprs)
-      (compiler-load-session-state-lazy-expr-list-demand
-        state
-        exprs
-        alias
-        summary
-        locals)]
-    [(ast.AstExpr.Unsafe exprs)
-      (compiler-load-session-state-lazy-expr-list-demand
-        state
-        exprs
-        alias
-        summary
-        locals)]
     [(ast.AstExpr.Set target value)
       (compiler-load-lazy-alias-demand-merge
         (compiler-load-session-state-lazy-name-demand
@@ -8127,52 +7840,17 @@
           locals)
         (compiler-load-session-state-lazy-expr-demand
           state
-          (ast.ast-node-get value)
+          value
           alias
           summary
           locals))]
-    [(ast.AstExpr.Ann inner ty-id)
-      (compiler-load-lazy-alias-demand-merge
-        (compiler-load-session-state-lazy-expr-demand
-          (owned_view.compiler-owned-shared-view state)
-          (ast.ast-node-get inner)
-          alias
-          summary
-          locals)
-        (compiler-load-session-state-lazy-type-demand
-          state
-          (ast.ty-node-get ty-id)
-          alias
-          summary
-          locals))]
-    [(ast.AstExpr.Cast inner ty-id)
-      (compiler-load-lazy-alias-demand-merge
-        (compiler-load-session-state-lazy-expr-demand
-          (owned_view.compiler-owned-shared-view state)
-          (ast.ast-node-get inner)
-          alias
-          summary
-          locals)
-        (compiler-load-session-state-lazy-type-demand
-          state
-          (ast.ty-node-get ty-id)
-          alias
-          summary
-          locals))]
-    [(ast.AstExpr.Borrow _ _ place)
-      (compiler-load-session-state-lazy-expr-demand
-        state
-        (ast.ast-node-get place)
-        alias
-        summary
-        locals)]
     [(ast.AstExpr.Match match-box)
       (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrutinee arms)
           (compiler-load-lazy-alias-demand-merge
             (compiler-load-session-state-lazy-expr-demand
               (owned_view.compiler-owned-shared-view state)
-              (ast.ast-node-get scrutinee)
+              scrutinee
               alias
               summary
               locals)
@@ -8195,20 +7873,20 @@
             (compiler-load-lazy-alias-demand-merge
               (compiler-load-session-state-lazy-expr-demand
                 (owned_view.compiler-owned-shared-view state)
-                (ast.ast-node-get start)
+                start
                 alias
                 summary
                 locals)
               (compiler-load-lazy-alias-demand-merge
                 (compiler-load-session-state-lazy-expr-demand
                   (owned_view.compiler-owned-shared-view state)
-                  (ast.ast-node-get end)
+                  end
                   alias
                   summary
                   locals)
                 (compiler-load-session-state-lazy-expr-demand
                   (owned_view.compiler-owned-shared-view state)
-                  (ast.ast-node-get body)
+                  body
                   alias
                   summary
                   (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
@@ -8231,27 +7909,27 @@
             (compiler-load-lazy-alias-demand-merge
               (compiler-load-session-state-lazy-expr-demand
                 (owned_view.compiler-owned-shared-view state)
-                (ast.ast-node-get start)
+                start
                 alias
                 summary
                 locals)
               (compiler-load-lazy-alias-demand-merge
                 (compiler-load-session-state-lazy-expr-demand
                   (owned_view.compiler-owned-shared-view state)
-                  (ast.ast-node-get end)
+                  end
                   alias
                   summary
                   locals)
                 (compiler-load-lazy-alias-demand-merge
                   (compiler-load-session-state-lazy-expr-demand
                     (owned_view.compiler-owned-shared-view state)
-                    (ast.ast-node-get init)
+                    init
                     alias
                     summary
                     locals)
                   (compiler-load-session-state-lazy-expr-demand
                     (owned_view.compiler-owned-shared-view state)
-                    (ast.ast-node-get value)
+                    value
                     alias
                     summary
                     (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
@@ -8291,34 +7969,34 @@
               (compiler-load-lazy-alias-demand-merge
                 (compiler-load-session-state-lazy-expr-demand
                   (owned_view.compiler-owned-shared-view state)
-                  (ast.ast-node-get start)
+                  start
                   alias
                   summary
                   locals)
                 (compiler-load-lazy-alias-demand-merge
                   (compiler-load-session-state-lazy-expr-demand
                     (owned_view.compiler-owned-shared-view state)
-                    (ast.ast-node-get end)
+                    end
                     alias
                     summary
                     locals)
                   (compiler-load-lazy-alias-demand-merge
                     (compiler-load-session-state-lazy-expr-demand
                       (owned_view.compiler-owned-shared-view state)
-                      (ast.ast-node-get init)
+                      init
                       alias
                       summary
                       locals)
                     (compiler-load-lazy-alias-demand-merge
                       (compiler-load-session-state-lazy-expr-demand
                         (owned_view.compiler-owned-shared-view state)
-                        (ast.ast-node-get value)
+                        value
                         alias
                         summary
                         value-locals)
                       (compiler-load-session-state-lazy-expr-demand
                         state
-                        (ast.ast-node-get body)
+                        body
                         alias
                         summary
                         body-locals)))))))])]
@@ -8368,176 +8046,43 @@
                 (compiler-load-lazy-alias-demand-merge
                   (compiler-load-session-state-lazy-expr-demand
                     (owned_view.compiler-owned-shared-view state)
-                    (ast.ast-node-get start)
+                    start
                     alias
                     summary
                     locals)
                   (compiler-load-lazy-alias-demand-merge
                     (compiler-load-session-state-lazy-expr-demand
                       (owned_view.compiler-owned-shared-view state)
-                      (ast.ast-node-get end)
+                      end
                       alias
                       summary
                       locals)
                     (compiler-load-lazy-alias-demand-merge
                       (compiler-load-session-state-lazy-expr-demand
                         (owned_view.compiler-owned-shared-view state)
-                        (ast.ast-node-get init)
+                        init
                         alias
                         summary
                         locals)
                       (compiler-load-lazy-alias-demand-merge
                         (compiler-load-session-state-lazy-expr-demand
                           (owned_view.compiler-owned-shared-view state)
-                          (ast.ast-node-get keep)
+                          keep
                           alias
                           summary
                           keep-locals)
                         (compiler-load-session-state-lazy-expr-demand
                           state
-                          (ast.ast-node-get body)
+                          body
                           alias
                           summary
                           body-locals))))))))])]
-    [(ast.AstExpr.SpmdBroadcast value lane)
-      (compiler-load-lazy-alias-demand-merge
-        (compiler-load-session-state-lazy-expr-demand
-          (owned_view.compiler-owned-shared-view state)
-          (ast.ast-node-get value)
-          alias
-          summary
-          locals)
-        (compiler-load-session-state-lazy-expr-demand
-          state
-          (ast.ast-node-get lane)
-          alias
-          summary
-          locals))]
-    [(ast.AstExpr.SpmdShuffle value lane)
-      (compiler-load-lazy-alias-demand-merge
-        (compiler-load-session-state-lazy-expr-demand
-          (owned_view.compiler-owned-shared-view state)
-          (ast.ast-node-get value)
-          alias
-          summary
-          locals)
-        (compiler-load-session-state-lazy-expr-demand
-          state
-          (ast.ast-node-get lane)
-          alias
-          summary
-          locals))]
-    [(ast.AstExpr.StructGet receiver _)
-      (compiler-load-session-state-lazy-expr-demand
-        state
-        (ast.ast-node-get receiver)
-        alias
-        summary
-        locals)]
-    [(ast.AstExpr.StructSet receiver _ value)
-      (compiler-load-lazy-alias-demand-merge
-        (compiler-load-session-state-lazy-expr-demand
-          (owned_view.compiler-owned-shared-view state)
-          (ast.ast-node-get receiver)
-          alias
-          summary
-          locals)
-        (compiler-load-session-state-lazy-expr-demand
-          state
-          (ast.ast-node-get value)
-          alias
-          summary
-          locals))]
-    [(ast.AstExpr.WithEscape scratch body)
-      (compiler-load-lazy-alias-demand-merge
-        (compiler-load-session-state-lazy-expr-demand
-          (owned_view.compiler-owned-shared-view state)
-          (ast.ast-node-get scratch)
-          alias
-          summary
-          locals)
-        (compiler-load-session-state-lazy-expr-list-demand
-          state
-          body
-          alias
-          summary
-          locals))]
-    [(ast.AstExpr.WithScratch body)
-      (compiler-load-session-state-lazy-expr-list-demand
-        state
-        body
-        alias
-        summary
-        locals)]
-    [(ast.AstExpr.InArena arena body)
-      (compiler-load-lazy-alias-demand-merge
-        (compiler-load-session-state-lazy-expr-demand
-          (owned_view.compiler-owned-shared-view state)
-          (ast.ast-node-get arena)
-          alias
-          summary
-          locals)
-        (compiler-load-session-state-lazy-expr-list-demand
-          state
-          body
-          alias
-          summary
-          locals))]
-    [(ast.AstExpr.Box inner)
-      (compiler-load-session-state-lazy-expr-demand
-        state
-        (ast.ast-node-get inner)
-        alias
-        summary
-        locals)]
-    [(ast.AstExpr.BoxGet inner)
-      (compiler-load-session-state-lazy-expr-demand
-        state
-        (ast.ast-node-get inner)
-        alias
-        summary
-        locals)]
-    [(ast.AstExpr.BoxTake inner)
-      (compiler-load-session-state-lazy-expr-demand
-        state
-        (ast.ast-node-get inner)
-        alias
-        summary
-        locals)]
-    [(ast.AstExpr.BoxSet inner value)
-      (compiler-load-lazy-alias-demand-merge
-        (compiler-load-session-state-lazy-expr-demand
-          (owned_view.compiler-owned-shared-view state)
-          (ast.ast-node-get inner)
-          alias
-          summary
-          locals)
-        (compiler-load-session-state-lazy-expr-demand
-          state
-          (ast.ast-node-get value)
-          alias
-          summary
-          locals))]
-    [(ast.AstExpr.TypeLiteral ty-id)
-      (compiler-load-session-state-lazy-type-demand
-        state
-        (ast.ty-node-get ty-id)
-        alias
-        summary
-        locals)]
-    [(ast.AstExpr.Init maybe-ty-id)
-      (compiler-load-session-state-lazy-maybe-type-demand
-        state
-        (ast.ast-maybe-type-from-id maybe-ty-id)
-        alias
-        summary
-        locals)]
     [(ast.AstExpr.Comptime inner)
       (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
         state)
         (compiler-load-session-state-lazy-expr-demand
           state
-          (ast.ast-node-get inner)
+          inner
           alias
           summary
           locals)
@@ -8547,7 +8092,7 @@
         state)
         (compiler-load-session-state-lazy-expr-demand
           state
-          (ast.ast-node-get inner)
+          inner
           alias
           summary
           locals)
@@ -8557,7 +8102,7 @@
         state)
         (compiler-load-session-state-lazy-expr-demand
           state
-          (ast.ast-node-get inner)
+          inner
           alias
           summary
           locals)
@@ -8567,7 +8112,7 @@
         state)
         (compiler-load-session-state-lazy-expr-demand
           state
-          (ast.ast-node-get inner)
+          inner
           alias
           summary
           locals)
@@ -8577,49 +8122,51 @@
         state)
         (compiler-load-session-state-lazy-expr-demand
           state
-          (ast.ast-node-get inner)
+          inner
           alias
           summary
           locals)
         (compiler-load-lazy-alias-demand-unknown))]
-    [(ast.AstExpr.Try inner)
-      (compiler-load-session-state-lazy-expr-demand
-        state
-        (ast.ast-node-get inner)
-        alias
-        summary
-        locals)]
-    [(ast.AstExpr.Return inner)
-      (compiler-load-session-state-lazy-expr-demand
-        state
-        (ast.ast-node-get inner)
-        alias
-        summary
-        locals)]
-    [(ast.AstExpr.Break) (compiler-load-lazy-alias-demand-none)]
-    [(ast.AstExpr.Continue) (compiler-load-lazy-alias-demand-none)]
-    [(ast.AstExpr.PtrNull ty-id)
-      (compiler-load-session-state-lazy-type-demand
-        state
-        (ast.ty-node-get ty-id)
-        alias
-        summary
-        locals)]
-    [(ast.AstExpr.PtrNullCheck inner)
-      (compiler-load-session-state-lazy-expr-demand
-        state
-        (ast.ast-node-get inner)
-        alias
-        summary
-        locals)]
-    [(ast.AstExpr.BinaryData _) (compiler-load-lazy-alias-demand-none)]
-    [(ast.AstExpr.SpmdProgramIndex) (compiler-load-lazy-alias-demand-none)]
-    [(ast.AstExpr.SpmdProgramCount) (compiler-load-lazy-alias-demand-none)]
-    [(ast.AstExpr.ProgramArgc) (compiler-load-lazy-alias-demand-none)]
-    [(ast.AstExpr.ProgramArgv) (compiler-load-lazy-alias-demand-none)]
-    [(ast.AstExpr.ProgramEnvp) (compiler-load-lazy-alias-demand-none)]
     ;; Macro-generated and uncommon AST shapes are an explicit eager fence.
-    [_ (compiler-load-lazy-alias-demand-unknown)]))
+    [(ast.AstExpr.MacroExpansion _ _ _)
+      (compiler-load-lazy-alias-demand-unknown)]
+    [(ast.AstExpr.ArrayTake _ _ _) (compiler-load-lazy-alias-demand-unknown)]
+    [(ast.AstExpr.FixedArrayTake _ _) (compiler-load-lazy-alias-demand-unknown)]
+    [(ast.AstExpr.WithRegion _ _) (compiler-load-lazy-alias-demand-unknown)]
+    [(ast.AstExpr.WithResource _) (compiler-load-lazy-alias-demand-unknown)]
+    [(ast.AstExpr.BracketClause _) (compiler-load-lazy-alias-demand-unknown)]
+    [(ast.AstExpr.PtrAddrOf _) (compiler-load-lazy-alias-demand-unknown)]
+    [(ast.AstExpr.PtrRead _) (compiler-load-lazy-alias-demand-unknown)]
+    [(ast.AstExpr.PtrWrite _ _) (compiler-load-lazy-alias-demand-unknown)]
+    [(ast.AstExpr.PtrOffset _ _) (compiler-load-lazy-alias-demand-unknown)]
+    [(ast.AstExpr.PtrCast _ _) (compiler-load-lazy-alias-demand-unknown)]
+    [(ast.AstExpr.PtrToInt _) (compiler-load-lazy-alias-demand-unknown)]
+    [(ast.AstExpr.IntToPtr _ _) (compiler-load-lazy-alias-demand-unknown)]
+    [(ast.AstExpr.StringData _) (compiler-load-lazy-alias-demand-unknown)]
+    [(ast.AstExpr.StringFromBytes _ _)
+      (compiler-load-lazy-alias-demand-unknown)]
+    [(ast.AstExpr.ArrayData _) (compiler-load-lazy-alias-demand-unknown)]
+    [(ast.AstExpr.CpuIdEax _ _) (compiler-load-lazy-alias-demand-unknown)]
+    [(ast.AstExpr.CpuIdEbx _ _) (compiler-load-lazy-alias-demand-unknown)]
+    [(ast.AstExpr.CpuIdEcx _ _) (compiler-load-lazy-alias-demand-unknown)]
+    [(ast.AstExpr.CpuIdEdx _ _) (compiler-load-lazy-alias-demand-unknown)]
+    [(ast.AstExpr.Xgetbv _) (compiler-load-lazy-alias-demand-unknown)]
+    [(ast.AstExpr.Syscall _) (compiler-load-lazy-alias-demand-unknown)]
+    [(ast.AstExpr.ForOwnedState _) (compiler-load-lazy-alias-demand-unknown)]
+    [(ast.AstExpr.ForOwnedStep _) (compiler-load-lazy-alias-demand-unknown)]
+    [_
+      (ast.ast-expr-fold-children
+        (ast.ast-node-get node-id)
+        compiler-load-lazy-alias-demand-merge
+        (compiler-load-lazy-alias-demand-none)
+        compiler-load-lazy-expr-demand-hook
+        compiler-load-lazy-type-id-demand-hook
+        compiler-load-lazy-type-demand-hook
+        compiler-load-lazy-pattern-demand-hook
+        (owned_view.compiler-owned-shared-view state)
+        alias
+        summary
+        locals)]))
 
 (define (compiler-load-session-state-lazy-module-macro-demand
   [state : CompilerLoadSessionState]
@@ -8787,7 +8334,7 @@
           locals)
         (compiler-load-session-state-lazy-expr-demand
           state
-          (ast.ast-node-get body)
+          body
           alias
           summary
           locals))]
@@ -8808,7 +8355,7 @@
             locals)
           (compiler-load-session-state-lazy-expr-demand
             (owned_view.compiler-owned-shared-view state)
-            (ast.ast-node-get body)
+            body
             alias
             summary
             (compiler-load-session-state-lazy-param-list-locals
@@ -8834,7 +8381,7 @@
               locals)
             (compiler-load-session-state-lazy-expr-demand
               (owned_view.compiler-owned-shared-view state)
-              (ast.ast-node-get body)
+              body
               alias
               summary
               (compiler-load-session-state-lazy-macro-param-list-locals
@@ -8909,7 +8456,7 @@
     [(ast.AstDecl.Test _ body _ _)
       (compiler-load-session-state-lazy-expr-demand
         state
-        (ast.ast-node-get body)
+        body
         alias
         summary
         locals)]

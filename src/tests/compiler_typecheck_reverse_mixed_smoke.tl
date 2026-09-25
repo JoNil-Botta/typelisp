@@ -72,7 +72,7 @@
     [(ast.AstProgram.Program decls-box)
       (let
         [decls : ast.AstDeclList (ast.ast-decl-list-box-shared-view decls-box)]
-        (match (ast.ast-decl-list-ref (ast.ast-place-shared-view decls) 1)
+        (match (ast.ast-decl-list-ref decls 1)
           [(ast.AstDecl.Import
               _
               (ast.AstImportSpec.Spec
@@ -102,7 +102,7 @@
                   (tc-reverse-mixed-parsed-module-id program)]
                 [ctx : compiler_typecheck_core.TcContext
                   (compiler_typecheck_core.tc-context-new
-                    (compiler_typecheck_core.tc-global-shared-view program)
+                    program
                     symbols
                     registries
                     ""
@@ -126,7 +126,7 @@
                 [lifetime-id : i64 (ci.intern "out")]
                 [type-module-ctx : compiler_typecheck_core.TcContext
                   (compiler_typecheck_core.tc-context-with-type-module-id
-                    (compiler_typecheck_core.tc-global-shared-view ctx)
+                    ctx
                     module-id)]
                 [type-env : compiler_typecheck_core.TcTypeEnv
                   (compiler_typecheck_core.tc-default-env)]
@@ -147,21 +147,21 @@
                     "ReverseMixedOther.Missing")]
                 (and
                   (compiler_typecheck_core.tc-nominal-name-id-canonical-eq?
-                    (compiler_typecheck_core.tc-global-shared-view ctx)
+                    ctx
                     flat-id
                     qualified-id)
                   (compiler_typecheck_core.tc-nominal-name-id-canonical-eq?
-                    (compiler_typecheck_core.tc-global-shared-view ctx)
+                    ctx
                     qualified-id
                     flat-id)
                   (not
                     (compiler_typecheck_core.tc-nominal-name-id-canonical-eq?
-                      (compiler_typecheck_core.tc-global-shared-view ctx)
+                      ctx
                       flat-id
                       other-qualified-id))
                   (match (compiler_typecheck_core.tc-match-inferred-type-for-expected
-                    (compiler_typecheck_core.tc-global-shared-view ctx)
-                    (compiler_typecheck_core.tc-global-shared-view type-env)
+                    ctx
+                    type-env
                     (compiler_typecheck_core.tc-global-shared-view actual)
                     (compiler_typecheck_core.tc-global-shared-view expected))
                     [(compiler_typecheck_core.TcInferredTypeMatch.Compatible _)
@@ -169,27 +169,26 @@
                     [(compiler_typecheck_core.TcInferredTypeMatch.Mismatch _)
                       false])
                   (match (compiler_typecheck_core.tc-match-inferred-type-for-expected
-                    (compiler_typecheck_core.tc-global-shared-view ctx)
-                    (compiler_typecheck_core.tc-global-shared-view type-env)
-                    (compiler_typecheck_core.tc-global-shared-view expected)
+                    ctx
+                    type-env
+                    expected
                     (compiler_typecheck_core.tc-global-shared-view actual))
                     [(compiler_typecheck_core.TcInferredTypeMatch.Compatible _)
                       true]
                     [(compiler_typecheck_core.TcInferredTypeMatch.Mismatch _)
                       false])
                   (match (compiler_typecheck_core.tc-match-inferred-type-for-expected
-                    (compiler_typecheck_core.tc-global-shared-view ctx)
-                    (compiler_typecheck_core.tc-global-shared-view type-env)
-                    (compiler_typecheck_core.tc-global-shared-view actual)
-                    (compiler_typecheck_core.tc-global-shared-view different))
+                    ctx
+                    type-env
+                    actual
+                    different)
                     [(compiler_typecheck_core.TcInferredTypeMatch.Compatible _)
                       false]
                     [(compiler_typecheck_core.TcInferredTypeMatch.Mismatch _)
                       true])
                   (match (compiler_typecheck_core.tc-match-inferred-type-for-expected
-                    (compiler_typecheck_core.tc-global-shared-view
-                      type-module-ctx)
-                    (compiler_typecheck_core.tc-global-shared-view type-env)
+                    type-module-ctx
+                    type-env
                     (compiler_typecheck_core.tc-global-shared-view actual-ref)
                     (compiler_typecheck_core.tc-global-shared-view expected-ref))
                     [(compiler_typecheck_core.TcInferredTypeMatch.Compatible _)
@@ -197,9 +196,8 @@
                     [(compiler_typecheck_core.TcInferredTypeMatch.Mismatch _)
                       false])
                   (match (compiler_typecheck_core.tc-match-inferred-type-for-expected
-                    (compiler_typecheck_core.tc-global-shared-view
-                      type-module-ctx)
-                    (compiler_typecheck_core.tc-global-shared-view type-env)
+                    type-module-ctx
+                    type-env
                     (compiler_typecheck_core.tc-global-shared-view actual-ref)
                     (compiler_typecheck_core.tc-global-shared-view
                       different-ref))
@@ -208,62 +206,58 @@
                     [(compiler_typecheck_core.TcInferredTypeMatch.Mismatch _)
                       true])
                   (match (compiler_typecheck_core.tc-infer-lifetime-subst-from-mixed-source-type
-                    (compiler_typecheck_core.tc-global-shared-view
-                      type-module-ctx)
-                    (compiler_typecheck_core.tc-global-shared-view type-env)
+                    type-module-ctx
+                    type-env
                     (ast.ast-lifetime-list-new)
                     compiler_typecheck_core.TcLifetimeSubst.Nil
                     (compiler_typecheck_core.tc-global-shared-view actual-ref)
-                    (compiler_typecheck_core.tc-global-shared-view expected-ref))
+                    expected-ref)
                     [(compiler_typecheck_core.ResultTcLifetimeSubst.Ok _) true]
                     [(compiler_typecheck_core.ResultTcLifetimeSubst.Err _)
                       false])
                   (match (compiler_typecheck_core.tc-infer-lifetime-subst-from-mixed-source-type
-                    (compiler_typecheck_core.tc-global-shared-view
-                      type-module-ctx)
-                    (compiler_typecheck_core.tc-global-shared-view type-env)
+                    type-module-ctx
+                    type-env
                     (ast.ast-lifetime-list-new)
                     compiler_typecheck_core.TcLifetimeSubst.Nil
-                    (compiler_typecheck_core.tc-global-shared-view actual-ref)
-                    (compiler_typecheck_core.tc-global-shared-view
-                      different-ref))
+                    actual-ref
+                    different-ref)
                     [(compiler_typecheck_core.ResultTcLifetimeSubst.Ok _) false]
                     [(compiler_typecheck_core.ResultTcLifetimeSubst.Err _) true])
                   (match (compiler_typecheck_core.tc-enum-qualified-variant-lookup-key-id
-                    (compiler_typecheck_core.tc-global-shared-view ctx)
+                    ctx
                     other-constructor-id
-                    (compiler_typecheck_core.tc-context-module-id
-                      (compiler_typecheck_core.tc-global-shared-view ctx)))
+                    (compiler_typecheck_core.tc-context-module-id ctx))
                     [(option_i64.Some _) false]
                     [(option_i64.None) true])
                   (match (compiler_typecheck_core.tc-enum-qualified-variant-lookup-handle
-                    (compiler_typecheck_core.tc-global-shared-view ctx)
+                    ctx
                     other-constructor-id)
                     [(option_i64.Some _) false]
                     [(option_i64.None) true])
                   (match (compiler_typecheck_core.tc-enum-qualified-variant-constructor-handle
-                    (compiler_typecheck_core.tc-global-shared-view ctx)
+                    ctx
                     other-constructor-id)
                     [(option_i64.Some _) true]
                     [(option_i64.None) false])
                   (match (compiler_typecheck_core.tc-source-lookup-error-or-variant-constructor
-                    (compiler_typecheck_core.tc-global-shared-view ctx)
+                    ctx
                     other-constructor-id
                     "missing constructor")
                     [(compiler_typecheck_core.ResultTcType.Ok _) true]
                     [(compiler_typecheck_core.ResultTcType.Err _) false])
                   (match (compiler_typecheck_core.tc-enum-qualified-variant-lookup-handle
-                    (compiler_typecheck_core.tc-global-shared-view ctx)
+                    ctx
                     missing-constructor-id)
                     [(option_i64.Some _) false]
                     [(option_i64.None) true])
                   (match (compiler_typecheck_core.tc-enum-qualified-variant-constructor-handle
-                    (compiler_typecheck_core.tc-global-shared-view ctx)
+                    ctx
                     missing-constructor-id)
                     [(option_i64.Some _) false]
                     [(option_i64.None) true])
                   (match (compiler_typecheck_core.tc-source-lookup-error-or-variant-constructor
-                    (compiler_typecheck_core.tc-global-shared-view ctx)
+                    ctx
                     missing-constructor-id
                     "missing constructor")
                     [(compiler_typecheck_core.ResultTcType.Ok _) false]

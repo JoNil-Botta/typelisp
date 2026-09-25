@@ -54,7 +54,7 @@
 (import sym_i64_env)
 
 ;; The package-build parser's result. `Source` only records that a source-file
-;; argument was seen: `build` sends source files to `build-cli-parse-options`,
+;; argument was seen: `build` sends source files to `build-cli-config-from`,
 ;; and `run` rejects a source that follows run options.
 (defenum BuildConfig
   (Source)
@@ -491,705 +491,294 @@
       (ResultBuildTarget.Ok (backend.CompilerBackendTarget.Windows))
       (ResultBuildTarget.Err (build-unknown-target value)))))
 
-(define (build-parse-opt-level [value : String]) : i64
-  (cond
-    [(string.eq value "0") 0]
-    [(string.eq value "1") 1]
-    [(string.eq value "2") 2]
-    [else -1]))
+;; Options a package build accepts.
+(define (build-package-cli-options) : String
+  "--stdlib-root <dir> --target <target> --opt-level <0|1|2>
+   --debug|-g|--backtrace -o <exe> --manifest-path <file> --backend-mode <mode>
+   --profile <dev|release> --release --locked --update-lock")
 
-(define (build-parse-common-option
-  [kind : cli_option.CliCommonOptionKind]
-  [value : String]
-  [next-idx : i64]
-  [count : i64]
-  [has-source : bool]
-  [has-output : bool]
-  [manifest : String]
-  [has-manifest : bool]
-  [target : String]
-  [has-target : bool]
-  [mode : String]
-  [profile : BuildProfile]
-  [has-profile : bool]
-  [opt-level : i64]
-  [has-opt-level : bool]
-  [lock-policy : BuildPackageLockPolicy]
-  [stdlib-roots : cli_svec.Vec]) : ResultBuildConfig
-  (match kind
-    [(cli_option.CliCommonOptionKind.StdlibRoot)
-      (build-parse-options
-        next-idx
-        count
-        has-source
-        has-output
-        manifest
-        has-manifest
-        target
-        has-target
-        mode
-        profile
-        has-profile
-        opt-level
-        has-opt-level
-        lock-policy
-        (let
-          [next-roots : cli_svec.Vec stdlib-roots]
-          (begin
-            (cli_svec.push-ref! (&mut next-roots) value)
-            next-roots)))]
-    [(cli_option.CliCommonOptionKind.Target)
-      (match (build-parse-target (owned_view.compiler-owned-shared-view value))
-        [(ResultBuildTarget.Ok _)
-          (build-parse-options
-            next-idx
-            count
-            has-source
-            has-output
-            manifest
-            has-manifest
-            value
-            true
-            mode
-            profile
-            has-profile
-            opt-level
-            has-opt-level
-            lock-policy
-            stdlib-roots)]
-        [(ResultBuildTarget.Err _)
-          (ResultBuildConfig.Err (build-unknown-target value))])]
-    [(cli_option.CliCommonOptionKind.OptLevel)
-      (if has-opt-level
-        (ResultBuildConfig.Err "build: --opt-level was provided more than once")
-        (let
-          [parsed : i64
-            (build-parse-opt-level
-              (owned_view.compiler-owned-shared-view value))]
-          (if (< parsed 0)
-            (ResultBuildConfig.Err (build-unknown-opt-level value))
-            (build-parse-options
-              next-idx
-              count
-              has-source
-              has-output
+(define (build-config-from [idx : i64] [count : i64]) : ResultBuildConfig
+  (let
+    [args : cli_option.CliArgs
+      (cli_option.cli-args "build" (build-package-cli-options) idx count)]
+    [has-source : bool false]
+    [has-output : bool false]
+    [manifest : String ""]
+    [has-manifest : bool false]
+    [target : String (build_run_core.source-tool-default-target-name)]
+    [has-target : bool false]
+    [mode : String "scalar"]
+    [profile : BuildProfile (build-default-profile)]
+    [has-profile : bool false]
+    [opt-level : i64 (build-package-default-opt-level)]
+    [has-opt-level : bool false]
+    [lock-policy : BuildPackageLockPolicy (BuildPackageLockPolicy.Default)]
+    [stdlib-roots : cli_svec.Vec (cli_svec.new)]
+    (begin
+      (while (cli_option.cli-args-next! (&mut args))
+        (cond
+          [(string.eq args.name "--stdlib-root")
+            (cli_svec.push-ref!
+              (&mut stdlib-roots)
+              (cli_option.cli-args-value (& args)))]
+          [(string.eq args.name "--target")
+            (let
+              [value : String (cli_option.cli-args-value (& args))]
+              (match (build-parse-target (string.copy (& value)))
+                [(ResultBuildTarget.Ok _)
+                  (begin
+                    (set! target value)
+                    (set! has-target true))]
+                [(ResultBuildTarget.Err _)
+                  (cli_option.cli-args-fail!
+                    (&mut args)
+                    (build-unknown-target value))]))]
+          [(string.eq args.name "--opt-level")
+            (let
+              [value : String (cli_option.cli-args-value (& args))]
+              [level : i64 (cli_option.cli-option-opt-level (& value))]
+              (cond
+                [has-opt-level
+                  (cli_option.cli-args-fail!
+                    (&mut args)
+                    "build: --opt-level was provided more than once")]
+                [(< level 0)
+                  (cli_option.cli-args-fail!
+                    (&mut args)
+                    (build-unknown-opt-level value))]
+                [else
+                  (begin
+                    (set! opt-level level)
+                    (set! has-opt-level true))]))]
+          [(string.eq args.name "--debug")
+            (ir.compiler-debug-info-set-enabled! true)]
+          [(string.eq args.name "-o")
+            (if has-output
+              (cli_option.cli-args-fail!
+                (&mut args)
+                "build: -o was provided more than once")
+              (set! has-output true))]
+          [(string.eq args.name "--manifest-path")
+            (if has-manifest
+              (cli_option.cli-args-fail!
+                (&mut args)
+                "build: --manifest-path was provided more than once")
+              (begin
+                (set! manifest (cli_option.cli-args-value (& args)))
+                (set! has-manifest true)))]
+          [(string.eq args.name "--backend-mode")
+            (let
+              [value : String (cli_option.cli-args-value (& args))]
+              (match (build_run_core.source-tool-backend-mode
+                "build"
+                (string.copy (& value)))
+                [(build_run_core.ResultSourceToolBackendMode.Ok _)
+                  (set! mode value)]
+                [(build_run_core.ResultSourceToolBackendMode.Err _)
+                  (cli_option.cli-args-fail!
+                    (&mut args)
+                    (build-unknown-mode value))]))]
+          [(and
+              has-profile
+              (or
+                (string.eq args.name "--profile")
+                (string.eq args.name "--release")))
+            (cli_option.cli-args-fail!
+              (&mut args)
+              "build: profile was provided more than once")]
+          [(string.eq args.name "--profile")
+            (match (build-parse-profile (cli_option.cli-args-value (& args)))
+              [(ResultBuildProfile.Err message)
+                (cli_option.cli-args-fail! (&mut args) message)]
+              [(ResultBuildProfile.Ok parsed-profile)
+                (begin
+                  (set! profile parsed-profile)
+                  (set! has-profile true))])]
+          [(string.eq args.name "--release")
+            (begin
+              (set! profile (BuildProfile.Release))
+              (set! has-profile true))]
+          [(or
+              (string.eq args.name "--locked")
+              (string.eq args.name "--update-lock"))
+            (if (build-package-lock-policy-provided? lock-policy)
+              (cli_option.cli-args-fail!
+                (&mut args)
+                (build-package-lock-policy-option-error))
+              (set!
+                lock-policy
+                (if (string.eq args.name "--locked")
+                  (BuildPackageLockPolicy.Locked)
+                  (BuildPackageLockPolicy.Update))))]
+          [(cli_option.cli-flag? args.arg)
+            (cli_option.cli-args-fail-arg! (&mut args) "build: unknown flag ")]
+          [has-source
+            (cli_option.cli-args-fail!
+              (&mut args)
+              "build: accepts only one source file")]
+          [else (set! has-source true)]))
+      (cond
+        [args.failed (ResultBuildConfig.Err args.error)]
+        [(and has-source has-manifest)
+          (ResultBuildConfig.Err
+            "build: cannot combine a source file with --manifest-path")]
+        [has-source (ResultBuildConfig.Ok (BuildConfig.Source))]
+        [has-output
+          (ResultBuildConfig.Err "build: -o requires a source file argument")]
+        [else
+          (ResultBuildConfig.Ok
+            (BuildConfig.Package
               manifest
               has-manifest
               target
               has-target
               mode
               profile
-              has-profile
-              parsed
-              true
+              has-opt-level
+              (if has-opt-level
+                opt-level
+                (build-profile-default-opt-level profile))
               lock-policy
-              stdlib-roots))))]
-    [(cli_option.CliCommonOptionKind.Cfg)
-      (ResultBuildConfig.Err "build: internal unsupported common option")]))
+              stdlib-roots))]))))
 
-(define (build-parse-options
-  [idx : i64]
-  [count : i64]
-  [has-source : bool]
-  [has-output : bool]
-  [manifest : String]
-  [has-manifest : bool]
-  [target : String]
-  [has-target : bool]
-  [mode : String]
-  [profile : BuildProfile]
-  [has-profile : bool]
-  [opt-level : i64]
-  [has-opt-level : bool]
-  [lock-policy : BuildPackageLockPolicy]
-  [stdlib-roots : cli_svec.Vec]) : ResultBuildConfig
-  (if (>= idx count)
-    (if has-source
-      (begin
-        (when
-          has-manifest
-          (return
-            (ResultBuildConfig.Err
-              "build: cannot combine a source file with --manifest-path")))
-        (ResultBuildConfig.Ok (BuildConfig.Source)))
-      (begin
-        (when
-          has-output
-          (return
-            (ResultBuildConfig.Err "build: -o requires a source file argument")))
-        (ResultBuildConfig.Ok
-          (BuildConfig.Package
-            manifest
-            has-manifest
-            target
-            has-target
-            mode
-            profile
-            has-opt-level
-            (if has-opt-level
-              opt-level
-              (build-profile-default-opt-level profile))
-            lock-policy
-            stdlib-roots))))
-    (let
-      [current : String (io.arg idx)]
-      (match (cli_option.cli-common-option-parse
-        (owned_view.compiler-owned-shared-view current)
+;; Parse the private `--package-worker` / `--package-doctest-worker` protocol.
+(define (build-package-worker-config-from [idx : i64] [count : i64]) : ResultBuildPackageWorkerConfig
+  (let
+    [args : cli_option.CliArgs
+      (cli_option.cli-args
+        "build"
+        "--stdlib-root <dir> --target <target> --opt-level <0|1|2>
+         --debug|-g|--backtrace --manifest-path <file> --backend-mode <mode>
+         --profile <dev|release> --release --locked --update-lock --resolved-dep"
         idx
-        count
-        cli_option.cli-common-option-build)
-        [(cli_option.CliCommonOption.Missing kind)
-          (ResultBuildConfig.Err
-            (cli_option.cli-common-option-missing-message "build" kind))]
-        [(cli_option.CliCommonOption.Value kind value next-idx)
-          (build-parse-common-option
-            kind
-            value
-            next-idx
-            count
-            has-source
-            has-output
-            manifest
-            has-manifest
-            target
-            has-target
-            mode
-            profile
-            has-profile
-            opt-level
-            has-opt-level
-            lock-policy
-            stdlib-roots)]
-        [(cli_option.CliCommonOption.NotCommon)
-          (cond
-            [(or
-                (string.eq current "--debug")
-                (string.eq current "-g")
-                (string.eq current "--backtrace"))
-              (begin
-                (ir.compiler-debug-info-set-enabled! true)
-                (build-parse-options
-                  (+ idx 1)
-                  count
-                  has-source
-                  has-output
-                  manifest
-                  has-manifest
-                  target
-                  has-target
-                  mode
-                  profile
-                  has-profile
-                  opt-level
-                  has-opt-level
-                  lock-policy
-                  stdlib-roots))]
-            [(string.eq current "-o")
-              (if (>= (+ idx 1) count)
-                (ResultBuildConfig.Err "build: -o requires a value")
-                (if has-output
-                  (ResultBuildConfig.Err
-                    "build: -o was provided more than once")
-                  (build-parse-options
-                    (+ idx 2)
-                    count
-                    has-source
-                    true
-                    manifest
-                    has-manifest
-                    target
-                    has-target
-                    mode
-                    profile
-                    has-profile
-                    opt-level
+        count)]
+    [manifest-path : String ""]
+    [has-manifest : bool false]
+    [target : backend.CompilerBackendTarget
+      (build_run_core.source-tool-default-target)]
+    [mode : backend.CompilerBackendMode (backend.CompilerBackendMode.Scalar)]
+    [profile : BuildProfile (build-default-profile)]
+    [opt-level : i64 (build-package-default-opt-level)]
+    [has-opt-level : bool false]
+    [lock-policy : BuildPackageLockPolicy (BuildPackageLockPolicy.Default)]
+    [stdlib-roots : cli_svec.Vec (cli_svec.new)]
+    [resolved-deps : load.CompilerPkgDepList (load.compiler-pkg-dep-list-empty)]
+    (begin
+      (while (cli_option.cli-args-next! (&mut args))
+        (cond
+          [(string.eq args.name "--stdlib-root")
+            (cli_svec.push-ref!
+              (&mut stdlib-roots)
+              (cli_option.cli-args-value (& args)))]
+          [(string.eq args.name "--target")
+            (let
+              [value : String (cli_option.cli-args-value (& args))]
+              (match (build_run_core.source-tool-target (string.copy (& value)))
+                [(build_run_core.ResultSourceToolTarget.Ok parsed-target)
+                  (set! target parsed-target)]
+                [(build_run_core.ResultSourceToolTarget.Err _)
+                  (cli_option.cli-args-fail!
+                    (&mut args)
+                    (build-cli-unknown-target value))]))]
+          [(string.eq args.name "--opt-level")
+            (let
+              [value : String (cli_option.cli-args-value (& args))]
+              [level : i64 (cli_option.cli-option-opt-level (& value))]
+              (if (< level 0)
+                (cli_option.cli-args-fail!
+                  (&mut args)
+                  (build-unknown-opt-level value))
+                (begin
+                  (set! opt-level level)
+                  (set! has-opt-level true))))]
+          [(string.eq args.name "--debug")
+            (ir.compiler-debug-info-set-enabled! true)]
+          [(string.eq args.name "--manifest-path")
+            (begin
+              (set! manifest-path (cli_option.cli-args-value (& args)))
+              (set! has-manifest true))]
+          [(string.eq args.name "--backend-mode")
+            (match (build_run_core.source-tool-backend-mode
+              "build"
+              (cli_option.cli-args-value (& args)))
+              [(build_run_core.ResultSourceToolBackendMode.Ok parsed-mode)
+                (set! mode parsed-mode)]
+              [(build_run_core.ResultSourceToolBackendMode.Err message)
+                (cli_option.cli-args-fail! (&mut args) message)])]
+          ;; A profile also selects its default opt level unless --opt-level
+          ;; already chose one.
+          [(string.eq args.name "--profile")
+            (match (build-parse-profile (cli_option.cli-args-value (& args)))
+              [(ResultBuildProfile.Err message)
+                (cli_option.cli-args-fail! (&mut args) message)]
+              [(ResultBuildProfile.Ok parsed-profile)
+                (begin
+                  (unless
                     has-opt-level
-                    lock-policy
-                    stdlib-roots)))]
-            [(string.eq current "--manifest-path")
-              (if (>= (+ idx 1) count)
-                (ResultBuildConfig.Err
-                  "build: --manifest-path requires a value")
-                (if has-manifest
-                  (ResultBuildConfig.Err
-                    "build: --manifest-path was provided more than once")
-                  (build-parse-options
-                    (+ idx 2)
-                    count
-                    has-source
-                    has-output
-                    (io.arg (+ idx 1))
-                    true
-                    target
-                    has-target
-                    mode
-                    profile
-                    has-profile
-                    opt-level
-                    has-opt-level
-                    lock-policy
-                    stdlib-roots)))]
-            [(string.eq current "--backend-mode")
-              (if (>= (+ idx 1) count)
-                (ResultBuildConfig.Err "build: --backend-mode requires a value")
-                (let
-                  [value : String (io.arg (+ idx 1))]
-                  (match (build_run_core.source-tool-backend-mode
-                    "build"
-                    (owned_view.compiler-owned-shared-view value))
-                    [(build_run_core.ResultSourceToolBackendMode.Ok _)
-                      (build-parse-options
-                        (+ idx 2)
-                        count
-                        has-source
-                        has-output
-                        manifest
-                        has-manifest
-                        target
-                        has-target
-                        value
-                        profile
-                        has-profile
-                        opt-level
-                        has-opt-level
-                        lock-policy
-                        stdlib-roots)]
-                    [(build_run_core.ResultSourceToolBackendMode.Err _)
-                      (ResultBuildConfig.Err (build-unknown-mode value))])))]
-            [(string.eq current "--profile")
-              (if (>= (+ idx 1) count)
-                (ResultBuildConfig.Err "build: --profile requires a value")
-                (if has-profile
-                  (ResultBuildConfig.Err
-                    "build: profile was provided more than once")
-                  (match (build-parse-profile (io.arg (+ idx 1)))
-                    [(ResultBuildProfile.Err message)
-                      (ResultBuildConfig.Err message)]
-                    [(ResultBuildProfile.Ok parsed-profile)
-                      (build-parse-options
-                        (+ idx 2)
-                        count
-                        has-source
-                        has-output
-                        manifest
-                        has-manifest
-                        target
-                        has-target
-                        mode
-                        parsed-profile
-                        true
-                        opt-level
-                        has-opt-level
-                        lock-policy
-                        stdlib-roots)])))]
-            [(string.eq current "--release")
-              (if has-profile
-                (ResultBuildConfig.Err
-                  "build: profile was provided more than once")
-                (build-parse-options
-                  (+ idx 1)
-                  count
-                  has-source
-                  has-output
-                  manifest
-                  has-manifest
-                  target
-                  has-target
-                  mode
-                  (BuildProfile.Release)
-                  true
-                  opt-level
-                  has-opt-level
-                  lock-policy
-                  stdlib-roots))]
-            [(string.eq current "--locked")
-              (if (build-package-lock-policy-provided? lock-policy)
-                (ResultBuildConfig.Err (build-package-lock-policy-option-error))
-                (build-parse-options
-                  (+ idx 1)
-                  count
-                  has-source
-                  has-output
-                  manifest
-                  has-manifest
-                  target
-                  has-target
-                  mode
-                  profile
-                  has-profile
-                  opt-level
-                  has-opt-level
-                  (BuildPackageLockPolicy.Locked)
-                  stdlib-roots))]
-            [(string.eq current "--update-lock")
-              (if (build-package-lock-policy-provided? lock-policy)
-                (ResultBuildConfig.Err (build-package-lock-policy-option-error))
-                (build-parse-options
-                  (+ idx 1)
-                  count
-                  has-source
-                  has-output
-                  manifest
-                  has-manifest
-                  target
-                  has-target
-                  mode
-                  profile
-                  has-profile
-                  opt-level
-                  has-opt-level
-                  (BuildPackageLockPolicy.Update)
-                  stdlib-roots))]
-            [(build_run_core.source-tool-flag?
-                (owned_view.compiler-owned-shared-view current))
-              (ResultBuildConfig.Err
-                (str_cat.str-cat "build: unknown flag " current))]
-            [else
-              (if has-source
-                (ResultBuildConfig.Err "build: accepts only one source file")
-                (build-parse-options
-                  (+ idx 1)
-                  count
-                  true
-                  has-output
-                  manifest
-                  has-manifest
-                  target
-                  has-target
-                  mode
-                  profile
-                  has-profile
-                  opt-level
-                  has-opt-level
-                  lock-policy
-                  stdlib-roots))])]))))
-
-(define (build-config-from [idx : i64] [count : i64]) : ResultBuildConfig
-  (build-parse-options
-    idx
-    count
-    false
-    false
-    ""
-    false
-    (build_run_core.source-tool-default-target-name)
-    false
-    "scalar"
-    (build-default-profile)
-    false
-    (build-package-default-opt-level)
-    false
-    (BuildPackageLockPolicy.Default)
-    (cli_svec.new)))
-
-(define (build-package-worker-parse-common-option
-  [kind : cli_option.CliCommonOptionKind]
-  [value : String]
-  [next-idx : i64]
-  [count : i64]
-  [manifest-path : String]
-  [has-manifest : bool]
-  [target : backend.CompilerBackendTarget]
-  [mode : backend.CompilerBackendMode]
-  [profile : BuildProfile]
-  [opt-level : i64]
-  [has-opt-level : bool]
-  [lock-policy : BuildPackageLockPolicy]
-  [stdlib-roots : cli_svec.Vec]
-  [resolved-deps : load.CompilerPkgDepList]) : ResultBuildPackageWorkerConfig
-  (match kind
-    [(cli_option.CliCommonOptionKind.StdlibRoot)
-      (build-package-worker-parse-options
-        next-idx
-        count
-        manifest-path
-        has-manifest
-        target
-        mode
-        profile
-        opt-level
-        has-opt-level
-        lock-policy
-        (let
-          [next-roots : cli_svec.Vec stdlib-roots]
-          (begin
-            (cli_svec.push-ref! (&mut next-roots) value)
-            next-roots))
-        resolved-deps)]
-    [(cli_option.CliCommonOptionKind.Target)
-      (match (build_run_core.source-tool-target
-        (owned_view.compiler-owned-shared-view value))
-        [(build_run_core.ResultSourceToolTarget.Ok parsed-target)
-          (build-package-worker-parse-options
-            next-idx
-            count
-            manifest-path
-            has-manifest
-            parsed-target
-            mode
-            profile
-            opt-level
-            has-opt-level
-            lock-policy
-            stdlib-roots
-            resolved-deps)]
-        [(build_run_core.ResultSourceToolTarget.Err _)
-          (ResultBuildPackageWorkerConfig.Err (build-cli-unknown-target value))])]
-    [(cli_option.CliCommonOptionKind.OptLevel)
-      (if (build_run_core.source-tool-opt-level-valid?
-        (owned_view.compiler-owned-shared-view value))
-        (build-package-worker-parse-options
-          next-idx
-          count
-          manifest-path
-          has-manifest
-          target
-          mode
-          profile
-          (string.>int value)
-          true
-          lock-policy
-          stdlib-roots
-          resolved-deps)
-        (ResultBuildPackageWorkerConfig.Err (build-unknown-opt-level value)))]
-    [(cli_option.CliCommonOptionKind.Cfg)
-      (ResultBuildPackageWorkerConfig.Err
-        "build: internal unsupported common option")]))
-
-(define (build-package-worker-parse-options
-  [idx : i64]
-  [count : i64]
-  [manifest-path : String]
-  [has-manifest : bool]
-  [target : backend.CompilerBackendTarget]
-  [mode : backend.CompilerBackendMode]
-  [profile : BuildProfile]
-  [opt-level : i64]
-  [has-opt-level : bool]
-  [lock-policy : BuildPackageLockPolicy]
-  [stdlib-roots : cli_svec.Vec]
-  [resolved-deps : load.CompilerPkgDepList]) : ResultBuildPackageWorkerConfig
-  (if (>= idx count)
-    (if has-manifest
-      (ResultBuildPackageWorkerConfig.Ok
-        (BuildPackageWorkerConfig
-          manifest-path
-          has-manifest
-          target
-          mode
-          profile
-          opt-level
-          lock-policy
-          stdlib-roots
-          resolved-deps))
-      (ResultBuildPackageWorkerConfig.Err
-        "build: --package-worker requires --manifest-path"))
-    (let
-      [current : String (io.arg idx)]
-      (match (cli_option.cli-common-option-parse
-        (owned_view.compiler-owned-shared-view current)
-        idx
-        count
-        cli_option.cli-common-option-build)
-        [(cli_option.CliCommonOption.Missing kind)
-          (ResultBuildPackageWorkerConfig.Err
-            (cli_option.cli-common-option-missing-message "build" kind))]
-        [(cli_option.CliCommonOption.Value kind value next-idx)
-          (build-package-worker-parse-common-option
-            kind
-            value
-            next-idx
-            count
-            manifest-path
-            has-manifest
-            target
-            mode
-            profile
-            opt-level
-            has-opt-level
-            lock-policy
-            stdlib-roots
-            resolved-deps)]
-        [(cli_option.CliCommonOption.NotCommon)
-          (cond
-            [(or
-                (string.eq current "--debug")
-                (string.eq current "-g")
-                (string.eq current "--backtrace"))
-              (begin
-                (ir.compiler-debug-info-set-enabled! true)
-                (build-package-worker-parse-options
-                  (+ idx 1)
-                  count
-                  manifest-path
-                  has-manifest
-                  target
-                  mode
-                  profile
-                  opt-level
-                  has-opt-level
-                  lock-policy
-                  stdlib-roots
-                  resolved-deps))]
-            [(string.eq current "--manifest-path")
-              (if (>= (+ idx 1) count)
-                (ResultBuildPackageWorkerConfig.Err
-                  "build: --manifest-path requires a value")
-                (build-package-worker-parse-options
-                  (+ idx 2)
-                  count
-                  (io.arg (+ idx 1))
-                  true
-                  target
-                  mode
-                  profile
-                  opt-level
-                  has-opt-level
-                  lock-policy
-                  stdlib-roots
-                  resolved-deps))]
-            [(string.eq current "--backend-mode")
-              (if (>= (+ idx 1) count)
-                (ResultBuildPackageWorkerConfig.Err
-                  "build: --backend-mode requires a value")
-                (let
-                  [value : String (io.arg (+ idx 1))]
-                  (match (build_run_core.source-tool-backend-mode "build" value)
-                    [(build_run_core.ResultSourceToolBackendMode.Ok parsed-mode)
-                      (build-package-worker-parse-options
-                        (+ idx 2)
-                        count
-                        manifest-path
-                        has-manifest
-                        target
-                        parsed-mode
-                        profile
-                        opt-level
-                        has-opt-level
-                        lock-policy
-                        stdlib-roots
-                        resolved-deps)]
-                    [(build_run_core.ResultSourceToolBackendMode.Err message)
-                      (ResultBuildPackageWorkerConfig.Err message)])))]
-            [(string.eq current "--profile")
-              (if (>= (+ idx 1) count)
-                (ResultBuildPackageWorkerConfig.Err
-                  "build: --profile requires a value")
-                (match (build-parse-profile (io.arg (+ idx 1)))
-                  [(ResultBuildProfile.Err message)
-                    (ResultBuildPackageWorkerConfig.Err message)]
-                  [(ResultBuildProfile.Ok parsed-profile)
-                    (let
-                      [next-opt-level : i64
-                        (if has-opt-level
-                          opt-level
-                          (build-profile-default-opt-level parsed-profile))]
-                      (build-package-worker-parse-options
-                        (+ idx 2)
-                        count
-                        manifest-path
-                        has-manifest
-                        target
-                        mode
-                        parsed-profile
-                        next-opt-level
-                        has-opt-level
-                        lock-policy
-                        stdlib-roots
-                        resolved-deps))]))]
-            [(string.eq current "--release")
-              (build-package-worker-parse-options
-                (+ idx 1)
-                count
-                manifest-path
-                has-manifest
-                target
-                mode
-                (BuildProfile.Release)
-                (if has-opt-level
-                  opt-level
-                  (build-profile-default-opt-level (BuildProfile.Release)))
+                    (set!
+                      opt-level
+                      (build-profile-default-opt-level parsed-profile)))
+                  (set! profile parsed-profile))])]
+          [(string.eq args.name "--release")
+            (begin
+              (unless
                 has-opt-level
+                (set!
+                  opt-level
+                  (build-profile-default-opt-level (BuildProfile.Release))))
+              (set! profile (BuildProfile.Release)))]
+          [(or
+              (string.eq args.name "--locked")
+              (string.eq args.name "--update-lock"))
+            (if (build-package-lock-policy-provided? lock-policy)
+              (cli_option.cli-args-fail!
+                (&mut args)
+                (build-package-lock-policy-option-error))
+              (set!
                 lock-policy
-                stdlib-roots
-                resolved-deps)]
-            [(string.eq current "--locked")
-              (if (build-package-lock-policy-provided? lock-policy)
-                (ResultBuildPackageWorkerConfig.Err
-                  (build-package-lock-policy-option-error))
-                (build-package-worker-parse-options
-                  (+ idx 1)
-                  count
-                  manifest-path
-                  has-manifest
-                  target
-                  mode
-                  profile
-                  opt-level
-                  has-opt-level
+                (if (string.eq args.name "--locked")
                   (BuildPackageLockPolicy.Locked)
-                  stdlib-roots
-                  resolved-deps))]
-            [(string.eq current "--update-lock")
-              (if (build-package-lock-policy-provided? lock-policy)
-                (ResultBuildPackageWorkerConfig.Err
-                  (build-package-lock-policy-option-error))
-                (build-package-worker-parse-options
-                  (+ idx 1)
-                  count
-                  manifest-path
-                  has-manifest
-                  target
-                  mode
-                  profile
-                  opt-level
-                  has-opt-level
-                  (BuildPackageLockPolicy.Update)
-                  stdlib-roots
-                  resolved-deps))]
-            [(string.eq current "--resolved-dep")
-              (if (>= (+ idx 2) count)
-                (ResultBuildPackageWorkerConfig.Err
-                  "build: --resolved-dep requires alias and path")
-                (build-package-worker-parse-options
-                  (+ idx 3)
-                  count
-                  manifest-path
-                  has-manifest
-                  target
-                  mode
-                  profile
-                  opt-level
-                  has-opt-level
-                  lock-policy
-                  stdlib-roots
+                  (BuildPackageLockPolicy.Update))))]
+          ;; Takes an alias and a path, with its own missing-value wording.
+          [(string.eq args.name "--resolved-dep")
+            (if (>= (+ args.index 2) count)
+              (cli_option.cli-args-fail!
+                (&mut args)
+                "build: --resolved-dep requires alias and path")
+              (begin
+                (set!
+                  resolved-deps
                   (load.compiler-pkg-dep-list-push
                     resolved-deps
-                    (load.CompilerPkgDep (io.arg (+ idx 1)) (io.arg (+ idx 2))))))]
-            [(build_run_core.source-tool-flag?
-                (owned_view.compiler-owned-shared-view current))
-              (ResultBuildPackageWorkerConfig.Err
-                (str_cat.str-cat "build: unknown package worker flag " current))]
-            [else
-              (ResultBuildPackageWorkerConfig.Err
-                (str_cat.str-cat
-                  "build: unexpected package worker argument "
-                  current))])]))))
-
-(define (build-package-worker-config-from [idx : i64] [count : i64]) : ResultBuildPackageWorkerConfig
-  (build-package-worker-parse-options
-    idx
-    count
-    ""
-    false
-    (build_run_core.source-tool-default-target)
-    (backend.CompilerBackendMode.Scalar)
-    (build-default-profile)
-    (build-package-default-opt-level)
-    false
-    (BuildPackageLockPolicy.Default)
-    (cli_svec.new)
-    (load.compiler-pkg-dep-list-empty)))
+                    (load.CompilerPkgDep
+                      (cli_option.cli-args-value-at (& args) 1)
+                      (cli_option.cli-args-value-at (& args) 2))))
+                (set! args.next (+ args.index 3))))]
+          [(cli_option.cli-flag? args.arg)
+            (cli_option.cli-args-fail-arg!
+              (&mut args)
+              "build: unknown package worker flag ")]
+          [else
+            (cli_option.cli-args-fail-arg!
+              (&mut args)
+              "build: unexpected package worker argument ")]))
+      (cond
+        [args.failed (ResultBuildPackageWorkerConfig.Err args.error)]
+        [has-manifest
+          (ResultBuildPackageWorkerConfig.Ok
+            (BuildPackageWorkerConfig
+              manifest-path
+              has-manifest
+              target
+              mode
+              profile
+              opt-level
+              lock-policy
+              stdlib-roots
+              resolved-deps))]
+        [else
+          (ResultBuildPackageWorkerConfig.Err
+            "build: --package-worker requires --manifest-path")]))))
 
 (define (build-discover-manifest-up [prefix : String] [fuel : i64]) : load.CompilerLoadMaybePath
   (if (<= fuel 0)
@@ -8999,390 +8588,156 @@
 (define (build-cli-unknown-opt-level [value : String]) : String
   (str_cat.str-cat "build: unknown opt level " value "; expected 0, 1, or 2"))
 
-(defenum BuildCliOption
-  (Output)
-  (StdlibRoot)
-  (Target)
-  (BackendMode)
-  (OptLevel)
-  (Profile)
-  (Release)
-  (LinkLib)
-  (LinkSearch)
-  (LinkArg)
-  (ManifestPath)
-  (Locked)
-  (UpdateLock)
-  (Debug)
-  (Other))
+;; Native link options only source builds accept.
+(define (build-link-cli-options) : String
+  "--link-lib <name> --link-search <dir> --link-arg <arg>")
 
-(define (build-cli-option-rest6 [current : String]) : BuildCliOption
-  (cond
-    [(string.eq current "--link-arg") (BuildCliOption.LinkArg)]
-    [(string.eq current "--manifest-path") (BuildCliOption.ManifestPath)]
-    [(string.eq current "--locked") (BuildCliOption.Locked)]
-    [(string.eq current "--update-lock") (BuildCliOption.UpdateLock)]
-    [else (BuildCliOption.Other)]))
-
-(define (build-cli-option-rest5 [current : String]) : BuildCliOption
-  (if (string.eq current "--link-search")
-    (BuildCliOption.LinkSearch)
-    (build-cli-option-rest6 current)))
-
-(define (build-cli-option-rest4 [current : String]) : BuildCliOption
-  (if (string.eq current "--link-lib")
-    (BuildCliOption.LinkLib)
-    (build-cli-option-rest5 current)))
-
-(define (build-cli-option-rest3 [current : String]) : BuildCliOption
-  (if (string.eq current "--release")
-    (BuildCliOption.Release)
-    (build-cli-option-rest4 current)))
-
-(define (build-cli-option-rest-profile [current : String]) : BuildCliOption
-  (if (string.eq current "--profile")
-    (BuildCliOption.Profile)
-    (build-cli-option-rest3 current)))
-
-(define (build-cli-option-rest-opt [current : String]) : BuildCliOption
-  (if (string.eq current "--opt-level")
-    (BuildCliOption.OptLevel)
-    (build-cli-option-rest-profile current)))
-
-(define (build-cli-option-rest2 [current : String]) : BuildCliOption
-  (if (string.eq current "--backend-mode")
-    (BuildCliOption.BackendMode)
-    (build-cli-option-rest-opt current)))
-
-(define (build-cli-option-rest1 [current : String]) : BuildCliOption
-  (if (string.eq current "--target")
-    (BuildCliOption.Target)
-    (build-cli-option-rest2 current)))
-
-(define (build-cli-option-rest0 [current : String]) : BuildCliOption
-  (if (string.eq current "--stdlib-root")
-    (BuildCliOption.StdlibRoot)
-    (build-cli-option-rest1 current)))
-
-(define (build-cli-option [current : String]) : BuildCliOption
-  (cond
-    [(string.eq current "-o") (BuildCliOption.Output)]
-    [(or
-        (string.eq current "--debug")
-        (string.eq current "-g")
-        (string.eq current "--backtrace"))
-      (BuildCliOption.Debug)]
-    [else (build-cli-option-rest0 current)]))
-
+;; Whether the arguments name a source file: the first argument that is neither
+;; a build option, an option value, nor another flag.
 (define (build-args-have-source? [idx : i64] [count : i64]) : bool
-  (if (>= idx count)
-    false
-    (let
-      [current : String (io.arg idx)]
-      (match (build-cli-option (owned_view.compiler-owned-shared-view current))
-        [(BuildCliOption.Other)
-          (if (build_run_core.source-tool-flag? current)
-            (build-args-have-source? (+ idx 1) count)
-            true)]
-        [(BuildCliOption.Release) (build-args-have-source? (+ idx 1) count)]
-        [(BuildCliOption.Locked) (build-args-have-source? (+ idx 1) count)]
-        [(BuildCliOption.UpdateLock) (build-args-have-source? (+ idx 1) count)]
-        [(BuildCliOption.Debug) (build-args-have-source? (+ idx 1) count)]
-        [_ (build-args-have-source? (+ idx 2) count)]))))
-
-(define (build-cli-parse-common-option
-  [kind : cli_option.CliCommonOptionKind]
-  [value : String]
-  [next-idx : i64]
-  [count : i64]
-  [source : String]
-  [has-source : bool]
-  [output : String]
-  [has-output : bool]
-  [target : backend.CompilerBackendTarget]
-  [mode : backend.CompilerBackendMode]
-  [stdlib-roots : cli_svec.Vec]
-  [opt-level : i64]
-  [link-inputs : build_run_core.SourceToolLinkInputs]) : ResultBuildCliConfig
-  (match kind
-    [(cli_option.CliCommonOptionKind.StdlibRoot)
-      (build-cli-parse-options
-        next-idx
-        count
-        source
-        has-source
-        output
-        has-output
-        target
-        mode
+  (let
+    [specs : String
+      (str_cat.str-cat (build-package-cli-options) " " (build-link-cli-options))]
+    [i : i64 idx]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< i count))
         (let
-          [next-roots : cli_svec.Vec stdlib-roots]
-          (begin
-            (cli_svec.push-ref! (&mut next-roots) value)
-            next-roots))
-        opt-level
-        link-inputs)]
-    [(cli_option.CliCommonOptionKind.Target)
-      (match (build_run_core.source-tool-target
-        (owned_view.compiler-owned-shared-view value))
-        [(build_run_core.ResultSourceToolTarget.Ok parsed-target)
-          (build-cli-parse-options
-            next-idx
-            count
-            source
-            has-source
-            output
-            has-output
-            parsed-target
-            mode
-            stdlib-roots
-            opt-level
-            link-inputs)]
-        [(build_run_core.ResultSourceToolTarget.Err _)
-          (ResultBuildCliConfig.Err (build-cli-unknown-target value))])]
-    [(cli_option.CliCommonOptionKind.OptLevel)
-      (if (build_run_core.source-tool-opt-level-valid?
-        (owned_view.compiler-owned-shared-view value))
-        (build-cli-parse-options
-          next-idx
-          count
-          source
-          has-source
-          output
-          has-output
-          target
-          mode
-          stdlib-roots
-          (string.>int value)
-          link-inputs)
-        (ResultBuildCliConfig.Err (build-cli-unknown-opt-level value)))]
-    [(cli_option.CliCommonOptionKind.Cfg)
-      (ResultBuildCliConfig.Err "build: internal unsupported common option")]))
-
-(define (build-cli-parse-options
-  [idx : i64]
-  [count : i64]
-  [source : String]
-  [has-source : bool]
-  [output : String]
-  [has-output : bool]
-  [target : backend.CompilerBackendTarget]
-  [mode : backend.CompilerBackendMode]
-  [stdlib-roots : cli_svec.Vec]
-  [opt-level : i64]
-  [link-inputs : build_run_core.SourceToolLinkInputs]) : ResultBuildCliConfig
-  (if (>= idx count)
-    (if has-source
-      (ResultBuildCliConfig.Ok
-        (BuildCliConfig.Config
-          source
-          has-source
-          output
-          has-output
-          target
-          mode
-          stdlib-roots
-          opt-level
-          link-inputs))
-      (if has-output
-        (ResultBuildCliConfig.Err "build: -o requires a source file argument")
-        (ResultBuildCliConfig.Err "build: expected source path")))
-    (let
-      [current : String (io.arg idx)]
-      (match (cli_option.cli-common-option-parse
-        (owned_view.compiler-owned-shared-view current)
-        idx
-        count
-        cli_option.cli-common-option-build)
-        [(cli_option.CliCommonOption.Missing kind)
-          (ResultBuildCliConfig.Err
-            (cli_option.cli-common-option-missing-message "build" kind))]
-        [(cli_option.CliCommonOption.Value kind value next-idx)
-          (build-cli-parse-common-option
-            kind
-            value
-            next-idx
-            count
-            source
-            has-source
-            output
-            has-output
-            target
-            mode
-            stdlib-roots
-            opt-level
-            link-inputs)]
-        [(cli_option.CliCommonOption.NotCommon)
-          (match (build-cli-option
-            (owned_view.compiler-owned-shared-view current))
-            [(BuildCliOption.Debug)
-              (begin
-                (ir.compiler-debug-info-set-enabled! true)
-                (build-cli-parse-options
-                  (+ idx 1)
-                  count
-                  source
-                  has-source
-                  output
-                  has-output
-                  target
-                  mode
-                  stdlib-roots
-                  opt-level
-                  link-inputs))]
-            [(BuildCliOption.Output)
-              (if (>= (+ idx 1) count)
-                (ResultBuildCliConfig.Err "build: -o requires a value")
-                (if has-output
-                  (ResultBuildCliConfig.Err
-                    "build: -o was provided more than once")
-                  (build-cli-parse-options
-                    (+ idx 2)
-                    count
-                    source
-                    has-source
-                    (io.arg (+ idx 1))
-                    true
-                    target
-                    mode
-                    stdlib-roots
-                    opt-level
-                    link-inputs)))]
-            [(BuildCliOption.StdlibRoot)
-              (ResultBuildCliConfig.Err
-                "build: internal common option dispatch")]
-            [(BuildCliOption.Target)
-              (ResultBuildCliConfig.Err
-                "build: internal common option dispatch")]
-            [(BuildCliOption.OptLevel)
-              (ResultBuildCliConfig.Err
-                "build: internal common option dispatch")]
-            [(BuildCliOption.BackendMode)
-              (if (>= (+ idx 1) count)
-                (ResultBuildCliConfig.Err
-                  "build: --backend-mode requires a value")
-                (let
-                  [value : String (io.arg (+ idx 1))]
-                  (match (build_run_core.source-tool-backend-mode "build" value)
-                    [(build_run_core.ResultSourceToolBackendMode.Ok parsed-mode)
-                      (build-cli-parse-options
-                        (+ idx 2)
-                        count
-                        source
-                        has-source
-                        output
-                        has-output
-                        target
-                        parsed-mode
-                        stdlib-roots
-                        opt-level
-                        link-inputs)]
-                    [(build_run_core.ResultSourceToolBackendMode.Err message)
-                      (ResultBuildCliConfig.Err message)])))]
-            [(BuildCliOption.Profile)
-              (ResultBuildCliConfig.Err
-                "build: --profile is only valid for package builds")]
-            [(BuildCliOption.Release)
-              (ResultBuildCliConfig.Err
-                "build: --release is only valid for package builds")]
-            [(BuildCliOption.Locked)
-              (ResultBuildCliConfig.Err
-                "build: --locked is only valid for package builds")]
-            [(BuildCliOption.UpdateLock)
-              (ResultBuildCliConfig.Err
-                "build: --update-lock is only valid for package builds")]
-            [(BuildCliOption.LinkLib)
-              (if (>= (+ idx 1) count)
-                (ResultBuildCliConfig.Err "build: --link-lib requires a value")
-                (build-cli-parse-options
-                  (+ idx 2)
-                  count
-                  source
-                  has-source
-                  output
-                  has-output
-                  target
-                  mode
-                  stdlib-roots
-                  opt-level
-                  (build_run_core.source-tool-link-inputs-add-lib
-                    link-inputs
-                    (io.arg (+ idx 1)))))]
-            [(BuildCliOption.LinkSearch)
-              (if (>= (+ idx 1) count)
-                (ResultBuildCliConfig.Err
-                  "build: --link-search requires a value")
-                (build-cli-parse-options
-                  (+ idx 2)
-                  count
-                  source
-                  has-source
-                  output
-                  has-output
-                  target
-                  mode
-                  stdlib-roots
-                  opt-level
-                  (build_run_core.source-tool-link-inputs-add-search-dir
-                    link-inputs
-                    (io.arg (+ idx 1)))))]
-            [(BuildCliOption.LinkArg)
-              (if (>= (+ idx 1) count)
-                (ResultBuildCliConfig.Err "build: --link-arg requires a value")
-                (build-cli-parse-options
-                  (+ idx 2)
-                  count
-                  source
-                  has-source
-                  output
-                  has-output
-                  target
-                  mode
-                  stdlib-roots
-                  opt-level
-                  (build_run_core.source-tool-link-inputs-add-raw-arg
-                    link-inputs
-                    (io.arg (+ idx 1)))))]
-            [(BuildCliOption.ManifestPath)
-              (if (>= (+ idx 1) count)
-                (ResultBuildCliConfig.Err
-                  "build: --manifest-path requires a value")
-                (ResultBuildCliConfig.Err
-                  "build: cannot combine a source file with --manifest-path"))]
-            [(BuildCliOption.Other)
-              (if (build_run_core.source-tool-flag?
-                (owned_view.compiler-owned-shared-view current))
-                (ResultBuildCliConfig.Err
-                  (str_cat.str-cat "build: unknown flag " current))
-                (if has-source
-                  (ResultBuildCliConfig.Err
-                    "build: accepts only one source file")
-                  (build-cli-parse-options
-                    (+ idx 1)
-                    count
-                    current
-                    true
-                    output
-                    has-output
-                    target
-                    mode
-                    stdlib-roots
-                    opt-level
-                    link-inputs)))])]))))
+          [current : String (io.arg i)]
+          (match (cli_option.cli-option-lookup (& specs) (& current))
+            [(cli_option.CliOptionMatch.Found _ arity)
+              (set! i (+ i (+ arity 1)))]
+            [(cli_option.CliOptionMatch.None)
+              (if (cli_option.cli-flag? (& current))
+                (set! i (+ i 1))
+                (set! found true))])))
+      found)))
 
 (define (build-cli-config-from [idx : i64] [count : i64]) : ResultBuildCliConfig
-  (build-cli-parse-options
-    idx
-    count
-    ""
-    false
-    ""
-    false
-    (build_run_core.source-tool-default-target)
-    (backend.CompilerBackendMode.Scalar)
-    (cli_svec.new)
-    (opt.compiler-optimize-default-level)
-    (build_run_core.source-tool-link-inputs-empty)))
+  (let
+    [args : cli_option.CliArgs
+      (cli_option.cli-args
+        "build"
+        (str_cat.str-cat
+          "--stdlib-root <dir> --target <target> --opt-level <0|1|2>
+           --debug|-g|--backtrace -o <exe> --backend-mode <mode>
+           --manifest-path <file> --profile --release --locked --update-lock "
+          (build-link-cli-options))
+        idx
+        count)]
+    [source : String ""]
+    [has-source : bool false]
+    [output : String ""]
+    [has-output : bool false]
+    [target : backend.CompilerBackendTarget
+      (build_run_core.source-tool-default-target)]
+    [mode : backend.CompilerBackendMode (backend.CompilerBackendMode.Scalar)]
+    [stdlib-roots : cli_svec.Vec (cli_svec.new)]
+    [opt-level : i64 (opt.compiler-optimize-default-level)]
+    [link-inputs : build_run_core.SourceToolLinkInputs
+      (build_run_core.source-tool-link-inputs-empty)]
+    (begin
+      (while (cli_option.cli-args-next! (&mut args))
+        (cond
+          [(string.eq args.name "--stdlib-root")
+            (cli_svec.push-ref!
+              (&mut stdlib-roots)
+              (cli_option.cli-args-value (& args)))]
+          [(string.eq args.name "--target")
+            (let
+              [value : String (cli_option.cli-args-value (& args))]
+              (match (build_run_core.source-tool-target (string.copy (& value)))
+                [(build_run_core.ResultSourceToolTarget.Ok parsed-target)
+                  (set! target parsed-target)]
+                [(build_run_core.ResultSourceToolTarget.Err _)
+                  (cli_option.cli-args-fail!
+                    (&mut args)
+                    (build-cli-unknown-target value))]))]
+          [(string.eq args.name "--opt-level")
+            (let
+              [value : String (cli_option.cli-args-value (& args))]
+              [level : i64 (cli_option.cli-option-opt-level (& value))]
+              (if (< level 0)
+                (cli_option.cli-args-fail!
+                  (&mut args)
+                  (build-cli-unknown-opt-level value))
+                (set! opt-level level)))]
+          [(string.eq args.name "--debug")
+            (ir.compiler-debug-info-set-enabled! true)]
+          [(string.eq args.name "-o")
+            (if has-output
+              (cli_option.cli-args-fail!
+                (&mut args)
+                "build: -o was provided more than once")
+              (begin
+                (set! output (cli_option.cli-args-value (& args)))
+                (set! has-output true)))]
+          [(string.eq args.name "--backend-mode")
+            (match (build_run_core.source-tool-backend-mode
+              "build"
+              (cli_option.cli-args-value (& args)))
+              [(build_run_core.ResultSourceToolBackendMode.Ok parsed-mode)
+                (set! mode parsed-mode)]
+              [(build_run_core.ResultSourceToolBackendMode.Err message)
+                (cli_option.cli-args-fail! (&mut args) message)])]
+          [(string.eq args.name "--link-lib")
+            (set!
+              link-inputs
+              (build_run_core.source-tool-link-inputs-add-lib
+                link-inputs
+                (cli_option.cli-args-value (& args))))]
+          [(string.eq args.name "--link-search")
+            (set!
+              link-inputs
+              (build_run_core.source-tool-link-inputs-add-search-dir
+                link-inputs
+                (cli_option.cli-args-value (& args))))]
+          [(string.eq args.name "--link-arg")
+            (set!
+              link-inputs
+              (build_run_core.source-tool-link-inputs-add-raw-arg
+                link-inputs
+                (cli_option.cli-args-value (& args))))]
+          [(string.eq args.name "--manifest-path")
+            (cli_option.cli-args-fail!
+              (&mut args)
+              "build: cannot combine a source file with --manifest-path")]
+          ;; Package-only options.
+          [(> (string.string-length args.name) 0)
+            (let
+              [message : String
+                (string.concat3-borrowed
+                  "build: "
+                  (& args.name)
+                  " is only valid for package builds")]
+              (cli_option.cli-args-fail! (&mut args) message))]
+          [(cli_option.cli-flag? args.arg)
+            (cli_option.cli-args-fail-arg! (&mut args) "build: unknown flag ")]
+          [has-source
+            (cli_option.cli-args-fail!
+              (&mut args)
+              "build: accepts only one source file")]
+          [else
+            (begin
+              (set! source (string.copy (& args.arg)))
+              (set! has-source true))]))
+      (cond
+        [args.failed (ResultBuildCliConfig.Err args.error)]
+        [has-source
+          (ResultBuildCliConfig.Ok
+            (BuildCliConfig.Config
+              source
+              has-source
+              output
+              has-output
+              target
+              mode
+              stdlib-roots
+              opt-level
+              link-inputs))]
+        [has-output
+          (ResultBuildCliConfig.Err "build: -o requires a source file argument")]
+        [else (ResultBuildCliConfig.Err "build: expected source path")]))))
 
 ;; Build a source file directly. Manifest builds use the older package parser so
 ;; `typelisp build` can still discover `typelisp.pkg` from the working tree.

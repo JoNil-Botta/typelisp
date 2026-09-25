@@ -1268,10 +1268,25 @@ cat > "$WORKDIR/fmt-changed.tl" <<'EOF'
     x))
 EOF
 cp "$WORKDIR/fmt-changed.tl" "$WORKDIR/fmt-changed.expected"
-# cli-gate-case stage1-wrapper-fmt-check-changed wrapper run_expect_failure
-run_expect_failure fmt-check-changed "$COMPILER" fmt --check "$WORKDIR/fmt-changed.tl"
+# cli-gate-case stage1-wrapper-fmt-check-changed wrapper run_expect_failure_cwd
+run_expect_failure_cwd fmt-check-changed "$WORKDIR" "$COMPILER" fmt --check fmt-changed.tl
 assert_empty "$WORKDIR/fmt-check-changed.stdout"
-assert_contains "$WORKDIR/fmt-check-changed.stderr" "fmt: would reformat"
+# The canonical form has no final newline, so the old trailing empty line is
+# removed and the last formatted line is the final segment.
+cat > "$WORKDIR/fmt-check-changed.expected-stderr" <<'EOF'
+fmt: would reformat fmt-changed.tl
+--- a/fmt-changed.tl
++++ b/fmt-changed.tl
+@@ -1,4 +1,4 @@
+ (define (main) : i64
+-  (let ([x : i64 42])
+-    x))
+-
++  (let
++    [x : i64 42]
++    x))
+EOF
+check_file_exact "$WORKDIR/fmt-check-changed.stderr" "$WORKDIR/fmt-check-changed.expected-stderr"
 check_file_exact "$WORKDIR/fmt-changed.tl" "$WORKDIR/fmt-changed.expected"
 
 # cli-gate-case stage1-wrapper-fmt-missing wrapper run_expect_failure

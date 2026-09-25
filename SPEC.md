@@ -8650,7 +8650,11 @@ Source-file `build` and `run` accept `--link-lib <name>` (link a named
 native library), `--link-search <dir>` (linker search directory), and
 `--link-arg <arg>` (raw linker argument).
 
-`fmt --check` reports files that would change without writing them;
+`fmt --check` reports files that would change without writing them and
+prints each file's unified diff (three context lines) to stderr. The diff
+headers name `a/<path>` and `b/<path>`; a path containing a control byte,
+DEL, `"`, or `\` is written in Git's C-style quotes, for example
+`--- "a/dir\\x.tl"`.
 `lint --check` exits non-zero when lint findings are present. Without
 explicit files, `fmt` and `lint` default to the nearest `typelisp.pkg`
 upward, and package lint discovers sources from that manifest. Dead-code

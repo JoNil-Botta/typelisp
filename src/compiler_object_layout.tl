@@ -141,6 +141,7 @@
     [(cobj.CompilerObjectX64Instr.TailCall _) 5]
     [(cobj.CompilerObjectX64Instr.Jump _) 5]
     [(cobj.CompilerObjectX64Instr.Ja _) 6]
+    [(cobj.CompilerObjectX64Instr.Jcc _ _) 6]
     [(cobj.CompilerObjectX64Instr.Branch _ _) 14]
     [(cobj.CompilerObjectX64Instr.SubRspImm8 _) 4]
     [(cobj.CompilerObjectX64Instr.MovRcxRax) 3]
@@ -151,6 +152,28 @@
       (compiler-object-layout-string-length bytes)]
     ;; The rest are REX + opcode + ModRM rip-relative forms with a rel32.
     [_ 7]))
+
+;; Every instruction form encodes except a Jcc whose condition code is not
+;; 0-15, and Raw bytes in a format that takes none (`raw` false).
+(define (compiler-object-layout-instrs-encodable?
+  [instrs : cobj.CompilerObjectX64InstrList]
+  [raw : bool]) : bool
+  (let
+    [count : i64 (cobj.compiler-object-instr-list-count instrs)]
+    [index : i64 0]
+    [ok : bool true]
+    (begin
+      (while (and ok (< index count))
+        (begin
+          (set!
+            ok
+            (match (cobj.compiler-object-instr-list-ref instrs index)
+              [(cobj.CompilerObjectX64Instr.Jcc cc _)
+                (cobj.compiler-object-condition-code-valid? cc)]
+              [(cobj.CompilerObjectX64Instr.Raw _) raw]
+              [_ true]))
+          (set! index (+ index 1))))
+      ok)))
 
 ;; The rel32 fields of one text instruction and the symbols they target.
 ;; Each field is the instruction's last four bytes, except that Branch
@@ -176,6 +199,10 @@
         (cobj.CompilerObjectRelocationKind.Branch)
         target)]
     [(cobj.CompilerObjectX64Instr.Ja target)
+      (CompilerObjectLayoutFixup.One
+        (cobj.CompilerObjectRelocationKind.Branch)
+        target)]
+    [(cobj.CompilerObjectX64Instr.Jcc _ target)
       (CompilerObjectLayoutFixup.One
         (cobj.CompilerObjectRelocationKind.Branch)
         target)]
@@ -624,6 +651,11 @@
       (compiler-object-layout-push-rel32-instr! out "e9")]
     [(cobj.CompilerObjectX64Instr.Ja _)
       (compiler-object-layout-push-rel32-instr! out "0f87")]
+    [(cobj.CompilerObjectX64Instr.Jcc cc _)
+      (begin
+        (compiler-object-layout-push-u8! out 0x0f)
+        (compiler-object-layout-push-u8! out (+ 0x80 cc))
+        (compiler-object-layout-push-u32! out 0))]
     [(cobj.CompilerObjectX64Instr.Branch _ _)
       (begin
         (compiler-object-layout-push-rel32-instr! out "4885c00f85")

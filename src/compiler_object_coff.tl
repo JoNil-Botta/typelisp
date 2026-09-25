@@ -152,7 +152,7 @@
   [relocs : (& relocs cobj.CompilerObjectRelocationList)]) : bool
   (layout.compiler-object-layout-relocation-list-supported? relocs true))
 
-;; Raw text bytes are ELF-only; every other instruction form encodes.
+;; Raw text bytes are ELF-only.
 (define (compiler-object-coff-sections-supported?
   [sections : (& sections cobj.CompilerObjectSectionList)]) : bool
   (let
@@ -163,17 +163,9 @@
       (while (and ok (< index count))
         (match (cobj.compiler-object-section-list-ref sections index)
           [(cobj.CompilerObjectSection.Section _ _ instrs)
-            (let
-              [instr-count : i64 (cobj.compiler-object-instr-list-count instrs)]
-              [instr-index : i64 0]
-              (begin
-                (while (and ok (< instr-index instr-count))
-                  (match (cobj.compiler-object-instr-list-ref
-                    instrs
-                    instr-index)
-                    [(cobj.CompilerObjectX64Instr.Raw _) (set! ok false)]
-                    [_ (set! instr-index (+ instr-index 1))]))
-                (set! index (+ index 1))))]))
+            (if (layout.compiler-object-layout-instrs-encodable? instrs false)
+              (set! index (+ index 1))
+              (set! ok false))]))
       ok)))
 
 (define (compiler-object-coff-symbol-index-from

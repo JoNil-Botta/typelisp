@@ -77,8 +77,7 @@
   [relocs : (& relocs cobj.CompilerObjectRelocationList)]) : bool
   (layout.compiler-object-layout-relocation-list-supported? relocs false))
 
-;; Every instruction form encodes; only the Windows unwind and resource
-;; sections have no ELF counterpart.
+;; The Windows unwind and resource sections have no ELF counterpart.
 (define (compiler-object-elf-sections-supported?
   [sections : (& sections cobj.CompilerObjectSectionList)]) : bool
   (let
@@ -88,12 +87,17 @@
     (begin
       (while (and ok (< index count))
         (match (cobj.compiler-object-section-list-ref sections index)
-          [(cobj.CompilerObjectSection.Section kind _ _)
+          [(cobj.CompilerObjectSection.Section kind _ instrs)
             (match kind
               [(cobj.CompilerObjectSectionKind.Pdata) (set! ok false)]
               [(cobj.CompilerObjectSectionKind.Xdata) (set! ok false)]
               [(cobj.CompilerObjectSectionKind.Rsrc) (set! ok false)]
-              [_ (set! index (+ index 1))])]))
+              [_
+                (if (layout.compiler-object-layout-instrs-encodable?
+                  instrs
+                  true)
+                  (set! index (+ index 1))
+                  (set! ok false))])]))
       ok)))
 
 ;; build_run_core classifies its ELF fallback reasons with these checks.

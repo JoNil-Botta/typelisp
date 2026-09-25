@@ -117,6 +117,7 @@ object_instr	Call	object_call	src/compiler_backend_object_target_tests.tl	checke
 object_instr	TailCall	object_call	src/compiler_backend_object_target_tests.tl	checked
 object_instr	Jump	object_branch	src/compiler_backend_object_target_tests.tl	checked
 object_instr	Ja	object_branch	src/compiler_backend_object_target_tests.tl	checked
+object_instr	Jcc	object_branch	src/compiler_object_branch_tests.tl	checked
 object_instr	Branch	object_branch	src/compiler_backend_object_target_tests.tl	checked
 object_instr	LoadRip	object_rip_read	src/compiler_backend_object_target_tests.tl	checked
 object_instr	LoadRipAddress	object_rip_address	src/compiler_backend_object_target_tests.tl	checked

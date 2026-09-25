@@ -277,6 +277,7 @@
     [(cobj.CompilerObjectX64Instr.TailCall _) 5]
     [(cobj.CompilerObjectX64Instr.Jump _) 5]
     [(cobj.CompilerObjectX64Instr.Ja _) 6]
+    [(cobj.CompilerObjectX64Instr.Jcc _ _) 6]
     [(cobj.CompilerObjectX64Instr.Branch _ _) 14]
     [(cobj.CompilerObjectX64Instr.LoadRip _) 7]
     [(cobj.CompilerObjectX64Instr.LoadRipAddress _) 7]
@@ -304,6 +305,7 @@
     [(cobj.CompilerObjectX64Instr.TailCall _) 1]
     [(cobj.CompilerObjectX64Instr.Jump _) 1]
     [(cobj.CompilerObjectX64Instr.Ja _) 1]
+    [(cobj.CompilerObjectX64Instr.Jcc _ _) 1]
     [(cobj.CompilerObjectX64Instr.Branch _ _) 2]
     [(cobj.CompilerObjectX64Instr.LoadRip _) 1]
     [(cobj.CompilerObjectX64Instr.LoadRipAddress _) 1]
@@ -465,6 +467,10 @@
           [(cobj.CompilerObjectX64Instr.TailCall _) (set! index (+ index 1))]
           [(cobj.CompilerObjectX64Instr.Jump _) (set! index (+ index 1))]
           [(cobj.CompilerObjectX64Instr.Ja _) (set! index (+ index 1))]
+          [(cobj.CompilerObjectX64Instr.Jcc cc _)
+            (if (cobj.compiler-object-condition-code-valid? cc)
+              (set! index (+ index 1))
+              (set! ok false))]
           [(cobj.CompilerObjectX64Instr.Branch _ _) (set! index (+ index 1))]
           [(cobj.CompilerObjectX64Instr.LoadRip _) (set! index (+ index 1))]
           [(cobj.CompilerObjectX64Instr.LoadRipAddress _)
@@ -699,6 +705,14 @@
               (set! index (+ index 1))
               (set! ok false))]
           [(cobj.CompilerObjectX64Instr.Ja target)
+            (if (>=
+              (compiler-object-coff-symbol-index
+                (owned_view.compiler-owned-shared-view image)
+                target)
+              0)
+              (set! index (+ index 1))
+              (set! ok false))]
+          [(cobj.CompilerObjectX64Instr.Jcc _ target)
             (if (>=
               (compiler-object-coff-symbol-index
                 (owned_view.compiler-owned-shared-view image)
@@ -1351,6 +1365,11 @@
         (compiler-object-coff-push-u8! out 0x0f)
         (compiler-object-coff-push-u8! out 0x87)
         (compiler-object-coff-push-rel32-placeholder! out))]
+    [(cobj.CompilerObjectX64Instr.Jcc cc _)
+      (begin
+        (compiler-object-coff-push-u8! out 0x0f)
+        (compiler-object-coff-push-u8! out (+ 0x80 cc))
+        (compiler-object-coff-push-rel32-placeholder! out))]
     [(cobj.CompilerObjectX64Instr.Branch _ _)
       (begin
         (compiler-object-coff-push-u8! out 0x48)
@@ -1616,6 +1635,13 @@
                   (cobj.CompilerObjectRelocationKind.Branch)
                   target)]
               [(cobj.CompilerObjectX64Instr.Ja target)
+                (compiler-object-coff-render-relocation-record!
+                  out
+                  (owned_view.compiler-owned-shared-view image)
+                  (+ cur-offset 2)
+                  (cobj.CompilerObjectRelocationKind.Branch)
+                  target)]
+              [(cobj.CompilerObjectX64Instr.Jcc _ target)
                 (compiler-object-coff-render-relocation-record!
                   out
                   (owned_view.compiler-owned-shared-view image)

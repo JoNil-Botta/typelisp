@@ -427,6 +427,20 @@ closed [compiler-owned executable template registry](compiler-x64-executable-tem
 It records mutation-sensitive source identities and typed control/frame events
 for later native-code certification.
 
+Structured object branches reuse flags only from the immediately preceding
+integer comparison in the same IR block, when that comparison defines the
+branch operand. Its `setcc`, zero extension and frame store preserve flags;
+floating comparisons and intervening instructions invalidate this fact.
+Fallthrough uses the next block in emission order, including dense block
+sequences. The absent-next-block sentinel cannot match a branch target; an
+invalid target must remain an unresolved edge for the serializer to reject.
+Phi copies remain edge-specific: a conditional jump selects the
+false copies, and the true copies must jump past them before entering their
+successor. `Jcc` accepts only x86 condition codes 0–15. Its six-byte encoding
+places the rel32 field at byte 2; ELF, COFF and native TLCI relocation use that
+same site. The object branch tests check all conditions, forward/backward
+targets, invalid codes and unresolved symbols across these serializers.
+
 Expression node IDs belong to an AST pool. Literal analysis in
 `compiler_typecheck_core.tl` snapshots the context's expression owner for its
 read-only walk and shares the AST unspanner with other structural consumers. The

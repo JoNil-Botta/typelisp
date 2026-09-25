@@ -2288,8 +2288,10 @@
 ;; garbage otherwise). The call results keep the phi inputs opaque so the merge
 ;; is not folded away. The inner merge's two edges each carry one copy, which
 ;; moves straight into the destination slot: no stack staging, and the
-;; instruction before each jump into the merge is a lone `mov %rax, disp(%rbp)`.
-;; The outer `if` is in tail position, so its arms return directly.
+;; instruction before each edge into the merge is a lone `mov %rax, disp(%rbp)`.
+;; An edge is a jump to the merge, or the fall-through into its label when the
+;; merge is the next block. The outer `if` is in tail position, so its arms
+;; return directly.
 (define (compiler-backend-object-phi-edge-copy-source) : String
   "(extern (f [a : i64] [b : i64] [c : i64] [d : i64] [e : i64] [g : i64]) : i64 (:symbol \"f\"))
 (define (chain [x : i64]) : i64
@@ -2317,8 +2319,9 @@
           (string.substring (& chunk) 0 3)
           (object_target.compiler-backend-object-bytes-from-hex "488985"))))))
 
-;; The number of jumps into an if-merge, or -1 when one of them does not follow
-;; a lone frame-slot store.
+;; The number of edges into an if-merge -- jumps to it, and the fall-through
+;; into its label -- or -1 when a jump to it does not follow a lone frame-slot
+;; store.
 (define (compiler-backend-object-merge-edge-stores
   [instrs : cobj.CompilerObjectX64InstrList]) : i64
   (let
@@ -2344,6 +2347,14 @@
                   (if previous-store?
                     (set! edges (+ edges 1))
                     (set! edges -1))
+                  unit)
+                (set! previous-store? false))]
+            [(cobj.CompilerObjectX64Instr.Label symbol)
+              (begin
+                (if (and
+                  previous-store?
+                  (cobj.compiler-object-string-contains? symbol "if_merge" 0))
+                  (set! edges (+ edges 1))
                   unit)
                 (set! previous-store? false))]
             [_ (set! previous-store? false)])
@@ -2636,6 +2647,297 @@
                 "foreign_exact")))]
         [(elf.ResultCompilerObjectElf.Err _) false])]
     [(compiler_backend.ResultCompilerBackendObject.Err _) false]))
+
+;; A branch right after the compare that produced its condition jumps on the
+;; compare's flags, and the object walk emits blocks in order, so the arm that
+;; follows is reached by falling through. `(< x y)` with the then-arm next is a
+;; single `jge` to the else-arm: no reload and test of the stored result, no
+;; two-way `Branch`, and no jump to the label right after it.
+(define (compiler-backend-object-branch-flags-source
+  [op : String]
+  [zero? : bool]) : String
+  (str_cat.str-cat
+    "(extern (f [a : i64]) : i64 (:symbol \"f\"))\n"
+    "(define (pick [x : i64] [y : i64]) : i64\n  (if ("
+    op
+    " x "
+    (if zero?
+      "0"
+      "y")
+    ") (f x) (f y)))\n(define (main) : i64 (pick -1 2))"))
+
+(define (compiler-backend-object-branch-flags-shape-ok?
+  [instrs : cobj.CompilerObjectX64InstrList]
+  [expected-cc : i64]) : bool
+  (let
+    [count : i64
+      (cobj.compiler-object-instr-list-count
+        (owned_view.compiler-owned-shared-view instrs))]
+    [index : i64 0]
+    [jcc-count : i64 0]
+    [previous-store? : bool false]
+    [in-pick? : bool false]
+    [ok : bool true]
+    (begin
+      (while (and ok (< index count))
+        (let
+          [instr : cobj.CompilerObjectX64Instr
+            (cobj.compiler-object-instr-list-ref
+              (owned_view.compiler-owned-shared-view instrs)
+              index)]
+          (begin
+            (match (owned_view.compiler-owned-shared-view instr)
+              [(cobj.CompilerObjectX64Instr.Label label)
+                (cond
+                  [(string.eq label "_tl_pick") (set! in-pick? true)]
+                  [(or (string.eq label "main") (string.eq label "_tl_main"))
+                    (set! in-pick? false)]
+                  [else unit])]
+              [_ unit])
+            (if in-pick?
+              (match instr
+                [(cobj.CompilerObjectX64Instr.Bytes value)
+                  (set!
+                    previous-store?
+                    (compiler-backend-object-rbp-store-chunk? value))]
+                [(cobj.CompilerObjectX64Instr.Jcc cc _)
+                  (if (and (= cc expected-cc) previous-store?)
+                    (set! jcc-count (+ jcc-count 1))
+                    (set! ok false))]
+                [(cobj.CompilerObjectX64Instr.Branch _ _) (set! ok false)]
+                [(cobj.CompilerObjectX64Instr.Jump target)
+                  (if (< (+ index 1) count)
+                    (match (cobj.compiler-object-instr-list-ref
+                      (owned_view.compiler-owned-shared-view instrs)
+                      (+ index 1))
+                      [(cobj.CompilerObjectX64Instr.Label label)
+                        (if (string.eq label target)
+                          (set! ok false)
+                          unit)]
+                      [_ unit])
+                    unit)]
+                [_ unit])
+              unit)
+            (set! index (+ index 1)))))
+      (and ok (= jcc-count 1)))))
+
+(define (compiler-backend-object-branch-flags-ok?) : bool
+  (let
+    [ops : (__tl_dyn-array String) (__tl_make-array "=" "!=" "<" "<=" ">" ">=")]
+    [inverse-cc : (__tl_dyn-array i64) (__tl_make-array 5 4 13 15 14 12)]
+    [index : i64 0]
+    [ok : bool true]
+    (begin
+      (while (and ok (< index 24))
+        (begin
+          (set!
+            ok
+            (match (compiler_backend.compiler-backend-emit-source-object-image-for-target
+              (compiler-backend-object-branch-flags-source
+                (string.copy (array-ref ops (% index 6)))
+                (>= (% index 12) 6))
+              (if (< index 12)
+                (compiler_backend.CompilerBackendTarget.Linux)
+                (compiler_backend.CompilerBackendTarget.Windows)))
+              [(compiler_backend.ResultCompilerBackendObject.Ok image)
+                (match (cobj.compiler-object-section-list-find
+                  image.sections
+                  (cobj.CompilerObjectSectionKind.Text))
+                  [(cobj.CompilerObjectSection.Section _ _ instrs)
+                    (compiler-backend-object-branch-flags-shape-ok?
+                      instrs
+                      (array-ref inverse-cc (% index 6)))])]
+              [(compiler_backend.ResultCompilerBackendObject.Err _) false]))
+          (set! index (+ index 1))))
+      ok)))
+
+;; Flags are scoped to one adjacent integer producer, including when the same
+;; scratch state is reused at the start of another block.
+(define (compiler-backend-object-flags-isolation-ok?) : bool
+  (let
+    [program-index : compiler_backend.CompilerBackendProgramIndex
+      (compiler_backend.compiler-backend-program-index-build
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (compiler_ir_types.compiler-ir-function-seq-empty)
+        (compiler_ir_types.compiler-ir-extern-seq-empty))]
+    [case-index : i64 0]
+    [ok : bool true]
+    (begin
+      (while (and ok (< case-index 3))
+        (let
+          [instrs : compiler_ir_types.CompilerIrInstrSeq
+            (compiler-backend-test-instr-seq-prepend
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                7
+                (if (= case-index 2)
+                  (compiler_ir_types.CompilerIrBinOp.Add)
+                  (compiler_ir_types.CompilerIrBinOp.Lt))
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (compiler_ir_types.CompilerIrValue.Var 1)
+                (if (= case-index 1)
+                  (compiler_ast_types.AstType.F64)
+                  (compiler_ast_types.AstType.I64)))
+              (compiler-backend-test-instr-seq-prepend
+                (compiler_ir_types.CompilerIrInstr.Mov
+                  8
+                  (compiler_ir_types.CompilerIrValue.I64 0)
+                  (compiler_ast_types.AstType.I64))
+                (compiler_ir_types.compiler-ir-instr-seq-empty)))]
+          (begin
+            (compiler_backend.compiler-backend-object-note-flags!
+              (owned_view.compiler-owned-shared-view program-index)
+              (owned_view.compiler-owned-shared-view instrs)
+              1)
+            (set!
+              ok
+              (and
+                (=
+                  (compiler_backend.compiler-backend-object-branch-flags-cc
+                    (compiler_ir_types.CompilerIrValue.Var 7)
+                    (owned_view.compiler-owned-shared-view program-index))
+                  (if (= case-index 0)
+                    0xc
+                    -1))
+                (=
+                  (compiler_backend.compiler-backend-object-branch-flags-cc
+                    (compiler_ir_types.CompilerIrValue.Var 8)
+                    (owned_view.compiler-owned-shared-view program-index))
+                  -1)
+                (=
+                  (compiler_backend.compiler-backend-object-branch-flags-cc
+                    (compiler_ir_types.CompilerIrValue.I64 7)
+                    (owned_view.compiler-owned-shared-view program-index))
+                  -1)))
+            (compiler_backend.compiler-backend-object-note-flags!
+              (owned_view.compiler-owned-shared-view program-index)
+              (owned_view.compiler-owned-shared-view instrs)
+              2)
+            (set!
+              ok
+              (and
+                ok
+                (=
+                  (compiler_backend.compiler-backend-object-branch-flags-cc
+                    (compiler_ir_types.CompilerIrValue.Var 7)
+                    (owned_view.compiler-owned-shared-view program-index))
+                  -1)))
+            (compiler_backend.compiler-backend-object-note-flags!
+              (owned_view.compiler-owned-shared-view program-index)
+              (owned_view.compiler-owned-shared-view instrs)
+              1)
+            (compiler_backend.compiler-backend-object-note-flags!
+              (owned_view.compiler-owned-shared-view program-index)
+              instrs
+              0)
+            (set!
+              ok
+              (and
+                ok
+                (=
+                  (compiler_backend.compiler-backend-object-branch-flags-cc
+                    (compiler_ir_types.CompilerIrValue.Var 7)
+                    (owned_view.compiler-owned-shared-view program-index))
+                  -1)))
+            (set! case-index (+ case-index 1)))))
+      ok)))
+
+;; The absent-next-block sentinel must never erase an invalid target. Include
+;; a valid backward jump so rejecting every object is not a passing result.
+(define (compiler-backend-object-terminal-label-case-ok?
+  [case-index : i64]
+  [flags : bool]
+  [dense : bool]
+  [target : compiler_backend.CompilerBackendTarget]) : bool
+  (let
+    [entry : i64 (compiler_ir_types.compiler-ir-label "entry")]
+    [terminator : compiler_ir_types.CompilerIrInstr
+      (if (< case-index 2)
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (if (= case-index 0)
+            entry
+            -1))
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (if flags
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.CompilerIrValue.I64 1))
+          (if (= case-index 2)
+            -1
+            entry)
+          (if (= case-index 3)
+            -1
+            entry)))]
+    [tail : compiler_ir_types.CompilerIrInstrSeq
+      (compiler-backend-test-instr-seq-prepend
+        terminator
+        (compiler_ir_types.compiler-ir-instr-seq-empty))]
+    [instrs : compiler_ir_types.CompilerIrInstrSeq
+      (if flags
+        (compiler-backend-test-instr-seq-prepend
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            0
+            (compiler_ir_types.CompilerIrBinOp.Eq)
+            (compiler_ir_types.CompilerIrValue.I64 1)
+            (compiler_ir_types.CompilerIrValue.I64 1)
+            (compiler_ast_types.AstType.I64))
+          tail)
+        tail)]
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block entry instrs)
+        (compiler_ir_types.CompilerIrBlockList.Nil))]
+    [program : compiler_ir_types.CompilerIrProgram
+      (compiler_ir_types.CompilerIrProgram.Program
+        (compiler_ir_types.compiler-ir-global-seq-empty)
+        (compiler_ir_types.compiler-ir-function-seq-prepend
+          (compiler_ir_types.CompilerIrFunction.Function
+            (ci.intern "main")
+            (compiler_ir_types.compiler-ir-param-seq-empty)
+            (compiler_ast_types.AstType.I64)
+            1
+            (if dense
+              (compiler_ir_types.CompilerIrBlockList.Array
+                (compiler_ir_types.compiler-ir-block-seq-from-list blocks))
+              blocks)
+            (compiler_ir_types.CompilerIrFunctionAbi.Ordinary))
+          (compiler_ir_types.compiler-ir-function-seq-empty))
+        (compiler_ir_types.compiler-ir-extern-seq-empty))]
+    [renders : bool
+      (match (compiler_backend.compiler-backend-emit-program-object-image-target
+        program
+        target
+        (compiler_ir_types.compiler-source-spans-empty)
+        true)
+        [(compiler_backend.ResultCompilerBackendObject.Err _) false]
+        [(compiler_backend.ResultCompilerBackendObject.Ok image)
+          (match target
+            [(compiler_backend.CompilerBackendTarget.Linux)
+              (match (elf.compiler-object-elf-render image)
+                [(elf.ResultCompilerObjectElf.Err _) false]
+                [(elf.ResultCompilerObjectElf.Ok _) true])]
+            [(compiler_backend.CompilerBackendTarget.Windows)
+              (match (coff.compiler-object-coff-render image)
+                [(coff.ResultCompilerObjectCoff.Err _) false]
+                [(coff.ResultCompilerObjectCoff.Ok _) true])])])]
+    (= renders (= case-index 0))))
+
+(define (compiler-backend-object-terminal-labels-ok?) : bool
+  (let
+    [index : i64 0]
+    [ok : bool true]
+    (begin
+      (while (and ok (< index 32))
+        (begin
+          (set!
+            ok
+            (compiler-backend-object-terminal-label-case-ok?
+              (% index 4)
+              (= (% (/ index 4) 2) 1)
+              (= (% (/ index 8) 2) 1)
+              (if (< index 16)
+                (compiler_backend.CompilerBackendTarget.Linux)
+                (compiler_backend.CompilerBackendTarget.Windows))))
+          (set! index (+ index 1))))
+      ok)))
 
 (define (compiler-backend-windows-object-manifest-resource-ok?
   [image : cobj.CompilerObjectImage]) : bool
@@ -59730,6 +60032,9 @@ b_keep:
         (compiler-backend-object-image-shape-ok?)
         (compiler-backend-object-tlci-macro-entry-gate-ok?)
         (compiler-backend-object-phi-edge-copy-ok?)
+        (compiler-backend-object-branch-flags-ok?)
+        (compiler-backend-object-flags-isolation-ok?)
+        (compiler-backend-object-terminal-labels-ok?)
         (compiler-backend-coff-renders-real-text-ok?)
         (compiler-backend-windows-object-entry-unwind-ok?)
         (compiler-backend-windows-object-unit-main-zero-ok?)

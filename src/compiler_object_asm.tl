@@ -92,6 +92,26 @@
     (compiler-object-asm-append! out target)
     (compiler-object-asm-append! out suffix)))
 
+;; `    j<cc> ` for an x86 condition code.
+(define (compiler-object-asm-jcc-mnemonic [cc : i64]) : String
+  (cond
+    [(= cc 0x0) "    jo "]
+    [(= cc 0x1) "    jno "]
+    [(= cc 0x2) "    jb "]
+    [(= cc 0x3) "    jae "]
+    [(= cc 0x4) "    je "]
+    [(= cc 0x5) "    jne "]
+    [(= cc 0x6) "    jbe "]
+    [(= cc 0x7) "    ja "]
+    [(= cc 0x8) "    js "]
+    [(= cc 0x9) "    jns "]
+    [(= cc 0xa) "    jp "]
+    [(= cc 0xb) "    jnp "]
+    [(= cc 0xc) "    jl "]
+    [(= cc 0xd) "    jge "]
+    [(= cc 0xe) "    jle "]
+    [else "    jg "]))
+
 (define (compiler-object-asm-render-instr!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [instr : cobj.CompilerObjectX64Instr]) : bool
@@ -116,6 +136,16 @@
       (begin
         (compiler-object-asm-append-rip-instr! out "    ja " target "\n")
         true)]
+    [(cobj.CompilerObjectX64Instr.Jcc cc target)
+      (if (cobj.compiler-object-condition-code-valid? cc)
+        (begin
+          (compiler-object-asm-append-rip-instr!
+            out
+            (compiler-object-asm-jcc-mnemonic cc)
+            target
+            "\n")
+          true)
+        false)]
     [(cobj.CompilerObjectX64Instr.Branch true-target false-target)
       (begin
         (compiler-object-asm-append! out "    testq %rax, %rax\n    jne ")
@@ -393,7 +423,7 @@
         (ResultCompilerObjectAsm.Ok
           (byte_buf_core.byte-buf-builder-finish-string (& out)))
         (ResultCompilerObjectAsm.Err
-          "structured assembly rendering does not support raw instructions")))))
+          "structured assembly rendering requires supported instructions and condition codes")))))
 
 (cfg
   test

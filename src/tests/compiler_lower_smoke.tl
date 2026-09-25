@@ -102,7 +102,7 @@
                 0))
             (>
               (compiler_lower_tests.lower-test-function-store-ptr-count
-                (ir.compiler-ir-global-shared-view functions)
+                functions
                 "fill")
               0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
@@ -173,7 +173,7 @@
             ;; full and tail bodies. Child masks must remain predicated.
             (=
               (compiler_lower_tests.lower-test-function-predicated-store-count
-                (ir.compiler-ir-global-shared-view functions)
+                functions
                 "fill")
               5))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
@@ -235,7 +235,7 @@
               0)
             (=
               (compiler_lower_tests.lower-test-function-binop-op-count
-                (ir.compiler-ir-global-shared-view functions)
+                functions
                 "reduce_split_neg_rebind"
                 ir.CompilerIrBinOp.Mul)
               0))])]
@@ -617,7 +617,7 @@
                       "stdlib.arena/helper")]
                   [bare-count : i64
                     (compiler_lower_tests.lower-test-function-direct-call-count
-                      (ir.compiler-ir-global-shared-view functions)
+                      functions
                       "main"
                       "helper")]
                   (unless
@@ -673,7 +673,7 @@
       (ir.compiler-ir-global-shared-view functions)
       "runtime.tl::stdlib.runtime/substring")
     (compiler_lower_tests.lower-test-function-defined?
-      (ir.compiler-ir-global-shared-view functions)
+      functions
       "stdlib.runtime/substring")))
 
 (define (compiler-lower-smoke-stdlib-string-public-substring-defined?
@@ -683,7 +683,7 @@
       (ir.compiler-ir-global-shared-view functions)
       "stdlib/string.tl::stdlib.string/substring")
     (compiler_lower_tests.lower-test-function-defined?
-      (ir.compiler-ir-global-shared-view functions)
+      functions
       "string.tl::stdlib.string/substring")))
 
 (define (compiler-lower-smoke-stdlib-string-public-substring-reachable-ok?) : bool
@@ -702,7 +702,7 @@
                   (compiler-lower-smoke-stdlib-runtime-substring-defined?
                     (ir.compiler-ir-global-shared-view functions)))
                 (compiler-lower-smoke-stdlib-string-public-substring-defined?
-                  (ir.compiler-ir-global-shared-view functions)))])]
+                  functions))])]
         [(compiler_lower.ResultCompilerLower.Err _) false])]
     [(parser.ResultAstProgram.Err _) false]))
 

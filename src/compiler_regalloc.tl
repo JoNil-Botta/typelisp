@@ -1867,15 +1867,17 @@
             (compiler-reg-var-type-array-set! present types id ty)])
         (set! position (+ position 1))))))
 
+;; Every instruction's stated destination type (compiler-ir-instr-dst-type),
+;; and the byte-pointer address type of AddrOf and Gep. SEL-1: a scalar Select
+;; (`lanes` 0, the if-conversion result) is typed like the Mov/BinOp it
+;; replaced; untyped, it was not register-eligible and could not coalesce with
+;; the phi it feeds, so every if-converted loop carry was homed on the stack.
+;; Indirect-call results are not typed here.
 (define (compiler-reg-instr-def-type-array!
   [instr : ir.CompilerIrInstr]
   [present : (&mut present (__tl_dyn-array i64))]
   [types : (&mut types (__tl_dyn-array ast.AstType))]) : unit
-  (match instr
-    [(ir.CompilerIrInstr.Mov dst _ ty)
-      (compiler-reg-var-type-array-set! present types dst ty)]
-    [(ir.CompilerIrInstr.OwnRoot dst _ ty)
-      (compiler-reg-var-type-array-set! present types dst ty)]
+  (match (compiler-reg-global-shared-view instr)
     [(ir.CompilerIrInstr.AddrOf dst _)
       (compiler-reg-var-type-array-set!
         present
@@ -1888,58 +1890,18 @@
         types
         dst
         (compiler-reg-addr-of-result-type))]
-    [(ir.CompilerIrInstr.Load dst _ ty)
-      (compiler-reg-var-type-array-set! present types dst ty)]
-    [(ir.CompilerIrInstr.LoadOwned dst _ _ ty)
-      (compiler-reg-var-type-array-set! present types dst ty)]
-    [(ir.CompilerIrInstr.Cast dst _ _ to-ty)
-      (compiler-reg-var-type-array-set! present types dst to-ty)]
-    [(ir.CompilerIrInstr.Bitcast dst _ _ to-ty)
-      (compiler-reg-var-type-array-set! present types dst to-ty)]
-    [(ir.CompilerIrInstr.BinOp dst op _ _ ty)
-      (compiler-reg-var-type-array-set!
-        present
-        types
-        dst
-        (ir.compiler-ir-binop-result-type op ty))]
-    [(ir.CompilerIrInstr.UnOp dst _ _ ty)
-      (compiler-reg-var-type-array-set! present types dst ty)]
-    [(ir.CompilerIrInstr.VectorReduce dst _ _ _ elem-ty)
-      (compiler-reg-var-type-array-set! present types dst elem-ty)]
-    [(ir.CompilerIrInstr.MaskReduce dst _ _ _)
-      (compiler-reg-var-type-array-set! present types dst (ast.AstType.Bool))]
-    [(ir.CompilerIrInstr.Call dst _ _ ty)
-      (compiler-reg-var-type-array-set! present types dst ty)]
-    [(ir.CompilerIrInstr.SpmdCall payload-box)
-      (let
-        [result (compiler-reg-box-field-shared-view payload-box result)]
-        (match result
-          [(ir.CompilerIrSpmdCallResult.Unit) unit]
-          [(ir.CompilerIrSpmdCallResult.Value dst _ ty)
-            (compiler-reg-var-type-array-set! present types dst ty)]))]
-    [(ir.CompilerIrInstr.Phi dst _ ty)
-      (compiler-reg-var-type-array-set! present types dst ty)]
-    [(ir.CompilerIrInstr.Pack dst _ ty)
-      (compiler-reg-var-type-array-set! present types dst ty)]
-    [(ir.CompilerIrInstr.Word dst _ _ ty)
-      (compiler-reg-var-type-array-set! present types dst ty)]
-    ;; SEL-1. A SCALAR select (`lanes` 0, the if-conversion result) defines a
-    ;; plain typed value like the Mov/BinOp it replaced, and it was the one
-    ;; scalar def this table did not record. Without a type the value is not
-    ;; register-eligible and cannot coalesce with the phi it feeds, so every
-    ;; if-converted loop carry -- `running = max(running, end)` spelled as
-    ;; `cmov` -- was homed on the stack: `cmovg %rsi, %r12; movq %r12, -40(%rsp)`
-    ;; and `movq -40(%rsp), %r11` on the back edge, four instructions where the
-    ;; cmov alone would do. Vector selects keep their own (vector) tables.
-    [(ir.CompilerIrInstr.Select payload-box)
-      (let
-        [dst (compiler-reg-box-field-shared-view payload-box dst)]
-        [lanes (compiler-reg-box-field-shared-view payload-box lanes)]
-        [ty (compiler-reg-box-field-shared-view payload-box ty)]
-        (if (= lanes 0)
-          (compiler-reg-var-type-array-set! present types dst ty)
-          unit))]
-    [_ unit]))
+    [(ir.CompilerIrInstr.CallIndirect _ _ _ _) unit]
+    [(ir.CompilerIrInstr.CallIndirectC _ _ _ _) unit]
+    [_
+      (match (ir.compiler-ir-instr-dst-type
+        (compiler-reg-global-shared-view instr))
+        [(ast.AstMaybeType.No) unit]
+        [(ast.AstMaybeType.Some ty)
+          (compiler-reg-var-type-array-set!
+            present
+            types
+            (ir.compiler-ir-instr-dst instr)
+            ty)])]))
 
 (define (compiler-reg-instr-seq-types-array!
   [instrs : ir.CompilerIrInstrSeq]
@@ -11093,51 +11055,27 @@
         (compiler-reg-clobber-binop-shift? op rhs ty))]
     [_ (compiler-reg-backend-caller-clobber-instr? instr)]))
 
+;; Every instruction except allocation, bounds checks, CPU queries, calls,
+;; jumps and phis.
 (define (compiler-reg-backend-win64-extra-clobber-instr?
   [instr : ir.CompilerIrInstr]) : bool
   (match instr
-    [(ir.CompilerIrInstr.Mov _ _ _) true]
-    [(ir.CompilerIrInstr.AddrOf _ _) true]
-    [(ir.CompilerIrInstr.Gep _ _ _ _) true]
-    [(ir.CompilerIrInstr.Load _ _ _) true]
-    [(ir.CompilerIrInstr.LoadOwned _ _ _ _) true]
-    [(ir.CompilerIrInstr.StorePtr _ _ _) true]
-    [(ir.CompilerIrInstr.StoreOwned _ _ _) true]
-    [(ir.CompilerIrInstr.OwnRoot _ _ _) true]
-    [(ir.CompilerIrInstr.CopyBytes _ _ _) true]
-    [(ir.CompilerIrInstr.Cast _ _ _ _) true]
-    [(ir.CompilerIrInstr.Bitcast _ _ _ _) true]
-    [(ir.CompilerIrInstr.BinOp _ _ _ _ _) true]
-    [(ir.CompilerIrInstr.UnOp _ _ _ _) true]
-    [(ir.CompilerIrInstr.LaneId _ _ _) true]
-    [(ir.CompilerIrInstr.Splat _ _ _ _) true]
-    [(ir.CompilerIrInstr.VectorBinOp _) true]
-    [(ir.CompilerIrInstr.VectorPrefix _) true]
-    [(ir.CompilerIrInstr.VectorReduce _ _ _ _ _) true]
-    [(ir.CompilerIrInstr.VectorCompare _) true]
-    [(ir.CompilerIrInstr.MaskBinOp _ _ _ _ _) true]
-    [(ir.CompilerIrInstr.MaskNot _ _ _) true]
-    [(ir.CompilerIrInstr.MaskReduce _ _ _ _) true]
-    [(ir.CompilerIrInstr.Select _) true]
-    [(ir.CompilerIrInstr.VectorLoad _ _ _ _ _) true]
-    [(ir.CompilerIrInstr.VectorStore _) true]
-    [(ir.CompilerIrInstr.PredicatedStore _) true]
-    [(ir.CompilerIrInstr.PredicatedLoad _) true]
-    [(ir.CompilerIrInstr.GatherLoad _) true]
-    [(ir.CompilerIrInstr.VectorShuffle _) true]
-    [(ir.CompilerIrInstr.TailMask _ _ _ _) true]
-    [(ir.CompilerIrInstr.EntryArgc _) true]
-    [(ir.CompilerIrInstr.EntryArgv _) true]
-    [(ir.CompilerIrInstr.EntryEnvp _) true]
-    [(ir.CompilerIrInstr.Store _ _ _) true]
-    [(ir.CompilerIrInstr.Branch _ _ _) true]
-    [(ir.CompilerIrInstr.TotalEnumBranch _ _ _) true]
-    [(ir.CompilerIrInstr.Return _) true]
-    [(ir.CompilerIrInstr.Pack _ _ _) true]
-    [(ir.CompilerIrInstr.Word _ _ _ _) true]
-    [(ir.CompilerIrInstr.Switch _ _ _ _) true]
-    [(ir.CompilerIrInstr.TotalEnumSwitch _ _ _ _ _) true]
-    [_ false]))
+    [(ir.CompilerIrInstr.Alloc _ _) false]
+    [(ir.CompilerIrInstr.BoundsCheck _ _ _) false]
+    [(ir.CompilerIrInstr.CpuId _ _ _ _) false]
+    [(ir.CompilerIrInstr.Xgetbv _ _) false]
+    [(ir.CompilerIrInstr.Syscall _ _) false]
+    [(ir.CompilerIrInstr.Call _ _ _ _) false]
+    [(ir.CompilerIrInstr.CallIndirect _ _ _ _) false]
+    [(ir.CompilerIrInstr.CallIndirectC _ _ _ _) false]
+    [(ir.CompilerIrInstr.CallCAbiStoreResult _) false]
+    [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult _) false]
+    [(ir.CompilerIrInstr.SpmdCall _) false]
+    [(ir.CompilerIrInstr.TailCall _ _ _) false]
+    [(ir.CompilerIrInstr.TailCallIndirect _ _ _) false]
+    [(ir.CompilerIrInstr.Jump _) false]
+    [(ir.CompilerIrInstr.Phi _ _ _) false]
+    [_ true]))
 
 (define (compiler-reg-backend-caller-clobber-instr-for-abi?
   [target-abi : cabi.CompilerRegTargetAbi]
@@ -38619,15 +38557,6 @@
     (&mut invalid)
     (compiler-reg-color-value-root roots value)))
 
-(define (compiler-reg-color-invalidate-maybe-value!
-  [roots : (__tl_dyn-array i64)]
-  [invalid : (__tl_dyn-array bool)]
-  [value : ir.CompilerIrMaybeValue]) : unit
-  (match value
-    [(ir.CompilerIrMaybeValue.No) unit]
-    [(ir.CompilerIrMaybeValue.Some inner)
-      (compiler-reg-color-invalidate-value! roots invalid inner)]))
-
 (define (compiler-reg-color-invalidate-call-args!
   [roots : (__tl_dyn-array i64)]
   [invalid : (__tl_dyn-array bool)]
@@ -38656,22 +38585,6 @@
         (compiler-reg-global-shared-view roots)
         (compiler-reg-global-shared-view invalid))]))
 
-(define (compiler-reg-color-invalidate-spmd-call-args!
-  [roots : (__tl_dyn-array i64)]
-  [invalid : (__tl_dyn-array bool)]
-  [args : ir.CompilerIrSpmdCallArgSeq]) : unit
-  (let
-    [i : i64 0]
-    (while (< i args.len)
-      (begin
-        (match (array-ref args.slots i)
-          [(ir.CompilerIrSpmdCallArg.Arg _ value _)
-            (compiler-reg-color-invalidate-value!
-              (compiler-reg-global-shared-view roots)
-              (compiler-reg-global-shared-view invalid)
-              value)])
-        (set! i (+ i 1))))))
-
 (define (compiler-reg-color-invalidate-phi!
   [roots : (& roots (__tl_dyn-array i64))]
   [invalid : (__tl_dyn-array bool)]
@@ -38699,11 +38612,18 @@
             unit)
           (compiler-reg-color-invalidate-phi! roots invalid dst-root rest))))))
 
+(define (compiler-reg-color-invalidate-use!
+  [roots : (__tl_dyn-array i64)]
+  [invalid : (__tl_dyn-array bool)]
+  [_role : ir.CompilerIrOperandRole]
+  [value : ir.CompilerIrValue]) : unit
+  (compiler-reg-color-invalidate-value! roots invalid value))
+
 (define (compiler-reg-color-invalidate-instr!
   [instr : ir.CompilerIrInstr]
   [roots : (__tl_dyn-array i64)]
   [invalid : (__tl_dyn-array bool)]) : unit
-  (match instr
+  (match (compiler-reg-global-shared-view instr)
     [(ir.CompilerIrInstr.Mov dst value _)
       (let
         [root : i64 (compiler-reg-color-value-root roots value)]
@@ -38724,77 +38644,14 @@
             (not (= (array-ref roots dst) root))))
           (compiler-reg-color-invalidate-root! (&mut invalid) root)
           unit))]
-    [(ir.CompilerIrInstr.StorePtr dst src _)
+    [(ir.CompilerIrInstr.StorePtr _ src _)
       (compiler-reg-color-invalidate-value! roots invalid src)]
-    [(ir.CompilerIrInstr.StoreOwned dst src _)
+    [(ir.CompilerIrInstr.StoreOwned _ src _)
       (compiler-reg-color-invalidate-value! roots invalid src)]
-    [(ir.CompilerIrInstr.BoundsCheck index length _)
-      (begin
-        (compiler-reg-color-invalidate-value!
-          (compiler-reg-global-shared-view roots)
-          (compiler-reg-global-shared-view invalid)
-          index)
-        (compiler-reg-color-invalidate-value! roots invalid length))]
     [(ir.CompilerIrInstr.Cast _ src from-ty to-ty)
       (if (compiler-reg-color-structural-sret-cast? from-ty to-ty)
         unit
         (compiler-reg-color-invalidate-value! roots invalid src))]
-    [(ir.CompilerIrInstr.Bitcast _ src _ _)
-      (compiler-reg-color-invalidate-value! roots invalid src)]
-    [(ir.CompilerIrInstr.BinOp _ _ lhs rhs _)
-      (begin
-        (compiler-reg-color-invalidate-value!
-          (compiler-reg-global-shared-view roots)
-          (compiler-reg-global-shared-view invalid)
-          lhs)
-        (compiler-reg-color-invalidate-value! roots invalid rhs))]
-    [(ir.CompilerIrInstr.UnOp _ _ value _)
-      (compiler-reg-color-invalidate-value! roots invalid value)]
-    [(ir.CompilerIrInstr.Splat _ value _ _)
-      (compiler-reg-color-invalidate-value! roots invalid value)]
-    [(ir.CompilerIrInstr.VectorBinOp payload-box)
-      (let
-        [lhs (compiler-reg-box-field-shared-view payload-box lhs)]
-        [rhs (compiler-reg-box-field-shared-view payload-box rhs)]
-        (begin
-          (compiler-reg-color-invalidate-value!
-            (compiler-reg-global-shared-view roots)
-            (compiler-reg-global-shared-view invalid)
-            lhs)
-          (compiler-reg-color-invalidate-value! roots invalid rhs)))]
-    [(ir.CompilerIrInstr.VectorPrefix payload-box)
-      (let
-        [src (compiler-reg-box-field-shared-view payload-box src)]
-        [carry (compiler-reg-box-field-shared-view payload-box carry)]
-        (begin
-          (compiler-reg-color-invalidate-value!
-            (compiler-reg-global-shared-view roots)
-            (compiler-reg-global-shared-view invalid)
-            src)
-          (compiler-reg-color-invalidate-value! roots invalid carry)))]
-    [(ir.CompilerIrInstr.VectorReduce _ _ src _ _)
-      (compiler-reg-color-invalidate-value! roots invalid src)]
-    [(ir.CompilerIrInstr.VectorCompare payload-box)
-      (let
-        [lhs (compiler-reg-box-field-shared-view payload-box lhs)]
-        [rhs (compiler-reg-box-field-shared-view payload-box rhs)]
-        (begin
-          (compiler-reg-color-invalidate-value!
-            (compiler-reg-global-shared-view roots)
-            (compiler-reg-global-shared-view invalid)
-            lhs)
-          (compiler-reg-color-invalidate-value! roots invalid rhs)))]
-    [(ir.CompilerIrInstr.MaskBinOp _ _ lhs rhs _)
-      (begin
-        (compiler-reg-color-invalidate-value!
-          (compiler-reg-global-shared-view roots)
-          (compiler-reg-global-shared-view invalid)
-          lhs)
-        (compiler-reg-color-invalidate-value! roots invalid rhs))]
-    [(ir.CompilerIrInstr.MaskNot _ src _)
-      (compiler-reg-color-invalidate-value! roots invalid src)]
-    [(ir.CompilerIrInstr.MaskReduce _ _ src _)
-      (compiler-reg-color-invalidate-value! roots invalid src)]
     [(ir.CompilerIrInstr.Select payload-box)
       (let
         [dst (compiler-reg-box-field-shared-view payload-box dst)]
@@ -38818,120 +38675,6 @@
           (if (and (>= right 0) (not (= right dst-root)))
             (compiler-reg-color-invalidate-root! (&mut invalid) right)
             unit)))]
-    [(ir.CompilerIrInstr.VectorLoad _ base index _ _)
-      (begin
-        (compiler-reg-color-invalidate-value!
-          (compiler-reg-global-shared-view roots)
-          (compiler-reg-global-shared-view invalid)
-          base)
-        (compiler-reg-color-invalidate-value! roots invalid index))]
-    [(ir.CompilerIrInstr.VectorStore payload-box)
-      (let
-        [base (compiler-reg-box-field-shared-view payload-box base)]
-        [index (compiler-reg-box-field-shared-view payload-box index)]
-        [value (compiler-reg-box-field-shared-view payload-box value)]
-        (begin
-          (compiler-reg-color-invalidate-value!
-            (compiler-reg-global-shared-view roots)
-            (compiler-reg-global-shared-view invalid)
-            base)
-          (compiler-reg-color-invalidate-value!
-            (compiler-reg-global-shared-view roots)
-            (compiler-reg-global-shared-view invalid)
-            index)
-          (compiler-reg-color-invalidate-value! roots invalid value)))]
-    [(ir.CompilerIrInstr.PredicatedStore payload-box)
-      (let
-        [base (compiler-reg-box-field-shared-view payload-box base)]
-        [index (compiler-reg-box-field-shared-view payload-box index)]
-        [value (compiler-reg-box-field-shared-view payload-box value)]
-        [mask (compiler-reg-box-field-shared-view payload-box mask)]
-        (begin
-          (compiler-reg-color-invalidate-value!
-            (compiler-reg-global-shared-view roots)
-            (compiler-reg-global-shared-view invalid)
-            base)
-          (compiler-reg-color-invalidate-value!
-            (compiler-reg-global-shared-view roots)
-            (compiler-reg-global-shared-view invalid)
-            index)
-          (compiler-reg-color-invalidate-value!
-            (compiler-reg-global-shared-view roots)
-            (compiler-reg-global-shared-view invalid)
-            value)
-          (compiler-reg-color-invalidate-value! roots invalid mask)))]
-    [(ir.CompilerIrInstr.PredicatedLoad payload-box)
-      (let
-        [base (compiler-reg-box-field-shared-view payload-box base)]
-        [index (compiler-reg-box-field-shared-view payload-box index)]
-        [mask (compiler-reg-box-field-shared-view payload-box mask)]
-        (begin
-          (compiler-reg-color-invalidate-value!
-            (compiler-reg-global-shared-view roots)
-            (compiler-reg-global-shared-view invalid)
-            base)
-          (compiler-reg-color-invalidate-value!
-            (compiler-reg-global-shared-view roots)
-            (compiler-reg-global-shared-view invalid)
-            index)
-          (compiler-reg-color-invalidate-value! roots invalid mask)))]
-    [(ir.CompilerIrInstr.GatherLoad payload-box)
-      (let
-        [base (compiler-reg-box-field-shared-view payload-box base)]
-        [index-base (compiler-reg-box-field-shared-view payload-box index-base)]
-        [index (compiler-reg-box-field-shared-view payload-box index)]
-        (begin
-          (compiler-reg-color-invalidate-value!
-            (compiler-reg-global-shared-view roots)
-            (compiler-reg-global-shared-view invalid)
-            base)
-          (compiler-reg-color-invalidate-value!
-            (compiler-reg-global-shared-view roots)
-            (compiler-reg-global-shared-view invalid)
-            index-base)
-          (compiler-reg-color-invalidate-value! roots invalid index)))]
-    [(ir.CompilerIrInstr.VectorShuffle payload-box)
-      (let
-        [source (compiler-reg-box-field-shared-view payload-box source)]
-        [selector-low
-          (compiler-reg-box-field-shared-view payload-box selector-low)]
-        [selector-high
-          (compiler-reg-box-field-shared-view payload-box selector-high)]
-        [active-lanes
-          (compiler-reg-box-field-shared-view payload-box active-lanes)]
-        (begin
-          (compiler-reg-color-invalidate-value!
-            (compiler-reg-global-shared-view roots)
-            (compiler-reg-global-shared-view invalid)
-            source)
-          (compiler-reg-color-invalidate-value!
-            (compiler-reg-global-shared-view roots)
-            (compiler-reg-global-shared-view invalid)
-            selector-low)
-          (match selector-high
-            [(ir.CompilerIrMaybeValue.Some value)
-              (compiler-reg-color-invalidate-value!
-                (compiler-reg-global-shared-view roots)
-                (compiler-reg-global-shared-view invalid)
-                value)]
-            [(ir.CompilerIrMaybeValue.No) unit])
-          (compiler-reg-color-invalidate-value! roots invalid active-lanes)))]
-    [(ir.CompilerIrInstr.TailMask _ index length _)
-      (begin
-        (compiler-reg-color-invalidate-value!
-          (compiler-reg-global-shared-view roots)
-          (compiler-reg-global-shared-view invalid)
-          index)
-        (compiler-reg-color-invalidate-value! roots invalid length))]
-    [(ir.CompilerIrInstr.CpuId _ leaf subleaf _)
-      (begin
-        (compiler-reg-color-invalidate-value!
-          (compiler-reg-global-shared-view roots)
-          (compiler-reg-global-shared-view invalid)
-          leaf)
-        (compiler-reg-color-invalidate-value! roots invalid subleaf))]
-    [(ir.CompilerIrInstr.Xgetbv _ index)
-      (compiler-reg-color-invalidate-value! roots invalid index)]
     [(ir.CompilerIrInstr.Syscall _ args)
       (compiler-reg-color-invalidate-call-args! roots invalid args)]
     [(ir.CompilerIrInstr.Call _ name args _)
@@ -38977,27 +38720,8 @@
             (compiler-reg-global-shared-view invalid)
             callee)
           (compiler-reg-color-invalidate-call-args! roots invalid args)))]
-    [(ir.CompilerIrInstr.SpmdCall payload-box)
-      (let
-        [active-mask
-          (compiler-reg-box-field-shared-view payload-box active-mask)]
-        [args (compiler-reg-box-field-shared-view payload-box args)]
-        (begin
-          (compiler-reg-color-invalidate-value!
-            (compiler-reg-global-shared-view roots)
-            (compiler-reg-global-shared-view invalid)
-            active-mask)
-          (compiler-reg-color-invalidate-spmd-call-args! roots invalid args)))]
     [(ir.CompilerIrInstr.TailCall _ args _)
       (compiler-reg-color-invalidate-call-args! roots invalid args)]
-    [(ir.CompilerIrInstr.Store _ value _)
-      (compiler-reg-color-invalidate-value! roots invalid value)]
-    [(ir.CompilerIrInstr.Branch value _ _)
-      (compiler-reg-color-invalidate-value! roots invalid value)]
-    [(ir.CompilerIrInstr.TotalEnumBranch value _ _)
-      (compiler-reg-color-invalidate-value! roots invalid value)]
-    [(ir.CompilerIrInstr.Return value)
-      (compiler-reg-color-invalidate-maybe-value! roots invalid value)]
     [(ir.CompilerIrInstr.Phi dst inputs _)
       (compiler-reg-color-invalidate-phi!
         roots
@@ -39006,7 +38730,29 @@
           (array-ref roots dst)
           (- 0 1))
         inputs)]
-    [_ unit]))
+    ;; These read no operand that invalidates a colour.
+    [(ir.CompilerIrInstr.Alloc _ _) unit]
+    [(ir.CompilerIrInstr.AddrOf _ _) unit]
+    [(ir.CompilerIrInstr.OwnRoot _ _ _) unit]
+    [(ir.CompilerIrInstr.Load _ _ _) unit]
+    [(ir.CompilerIrInstr.LoadOwned _ _ _ _) unit]
+    [(ir.CompilerIrInstr.CopyBytes _ _ _) unit]
+    [(ir.CompilerIrInstr.LaneId _ _ _) unit]
+    [(ir.CompilerIrInstr.EntryArgc _) unit]
+    [(ir.CompilerIrInstr.EntryArgv _) unit]
+    [(ir.CompilerIrInstr.EntryEnvp _) unit]
+    [(ir.CompilerIrInstr.Jump _) unit]
+    [(ir.CompilerIrInstr.Pack _ _ _) unit]
+    [(ir.CompilerIrInstr.Word _ _ _ _) unit]
+    [(ir.CompilerIrInstr.TailCallIndirect _ _ _) unit]
+    [(ir.CompilerIrInstr.Switch _ _ _ _) unit]
+    [(ir.CompilerIrInstr.TotalEnumSwitch _ _ _ _ _) unit]
+    [_
+      (ir.compiler-ir-instr-visit-uses
+        instr
+        compiler-reg-color-invalidate-use!
+        (compiler-reg-global-shared-view roots)
+        (compiler-reg-global-shared-view invalid))]))
 
 (define (compiler-reg-color-invalidate-seq!
   [instrs : ir.CompilerIrInstrSeq]
@@ -41508,14 +41254,6 @@
       (ir.CompilerIrValue.Var (compiler-reg-remap-id remap id))]
     [_ value]))
 
-(define (compiler-reg-remap-value-seq
-  [remap : (__tl_dyn-array i64)]
-  [values : ir.CompilerIrValueSeq]) : ir.CompilerIrValueSeq
-  (ir.compiler-ir-value-seq-map
-    values
-    compiler-reg-remap-value
-    (compiler-reg-global-shared-view remap)))
-
 (define (compiler-reg-remap-params
   [remap : (__tl_dyn-array i64)]
   [params : ir.CompilerIrParamSeq]) : ir.CompilerIrParamSeq
@@ -41541,525 +41279,48 @@
           (set! position (+ position 1))))
       (ir.CompilerIrParamSeq slots params.len))))
 
-(define (compiler-reg-remap-call-args
+(define (compiler-reg-remap-use
   [remap : (__tl_dyn-array i64)]
-  [args : ir.CompilerIrCallArgs]) : ir.CompilerIrCallArgs
-  (ir.compiler-ir-call-args-map
-    args
-    compiler-reg-remap-value
-    (compiler-reg-global-shared-view remap)))
-
-(define (compiler-reg-remap-spmd-value
-  [remap : (__tl_dyn-array i64)]
-  [_class : ir.CompilerIrSpmdValueClass]
+  [_role : ir.CompilerIrOperandRole]
   [value : ir.CompilerIrValue]) : ir.CompilerIrValue
   (compiler-reg-remap-value remap value))
-
-(define (compiler-reg-remap-spmd-call-args
-  [remap : (__tl_dyn-array i64)]
-  [args : ir.CompilerIrSpmdCallArgSeq]) : ir.CompilerIrSpmdCallArgSeq
-  (ir.compiler-ir-spmd-call-args-map
-    args
-    compiler-reg-remap-spmd-value
-    (compiler-reg-global-shared-view remap)))
-
-(define (compiler-reg-remap-spmd-call-result
-  [remap : (__tl_dyn-array i64)]
-  [result : ir.CompilerIrSpmdCallResult]) : ir.CompilerIrSpmdCallResult
-  (match result
-    [(ir.CompilerIrSpmdCallResult.Unit) ir.CompilerIrSpmdCallResult.Unit]
-    [(ir.CompilerIrSpmdCallResult.Value dst class ty)
-      (ir.CompilerIrSpmdCallResult.Value
-        (compiler-reg-remap-id remap dst)
-        class
-        ty)]))
-
-(define (compiler-reg-remap-phi-inputs
-  [remap : (__tl_dyn-array i64)]
-  [inputs : ir.CompilerIrPhiInputSeq]) : ir.CompilerIrPhiInputSeq
-  (let
-    [phi-inputs-at-42248-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-42248-3.len 0)
-      (ir.compiler-ir-phi-input-seq-empty)
-      (let
-        [phi-input-at-42248-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-42248-3)
-            0)]
-        [value : ir.CompilerIrValue phi-input-at-42248-3.value]
-        [label : i64 phi-input-at-42248-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-42248-3.slots
-            (+ phi-inputs-at-42248-3.start 1)
-            (- phi-inputs-at-42248-3.len 1))]
-        (ir.compiler-ir-phi-input-seq-prepend
-          (compiler-reg-remap-value
-            (compiler-reg-global-shared-view remap)
-            value)
-          label
-          (compiler-reg-remap-phi-inputs remap rest))))))
-
-(define (compiler-reg-remap-maybe-value
-  [remap : (__tl_dyn-array i64)]
-  [value : ir.CompilerIrMaybeValue]) : ir.CompilerIrMaybeValue
-  (match value
-    [(ir.CompilerIrMaybeValue.No) ir.CompilerIrMaybeValue.No]
-    [(ir.CompilerIrMaybeValue.Some inner)
-      (ir.CompilerIrMaybeValue.Some (compiler-reg-remap-value remap inner))]))
 
 (define (compiler-reg-remap-instr
   [remap : (__tl_dyn-array i64)]
   [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
   (match (compiler-reg-global-shared-view instr)
-    [(ir.CompilerIrInstr.Mov dst value ty)
-      (ir.CompilerIrInstr.Mov
-        (compiler-reg-remap-id (compiler-reg-global-shared-view remap) dst)
-        (compiler-reg-remap-value remap value)
-        ty)]
+    ;; The ownership capabilities have served their purpose once optimization
+    ;; is complete. Erase them at the SSA-to-home boundary so a home id reused
+    ;; by register allocation can never be mistaken for the original owner
+    ;; identity.
     [(ir.CompilerIrInstr.OwnRoot dst value ty)
       (ir.CompilerIrInstr.Mov
         (compiler-reg-remap-id (compiler-reg-global-shared-view remap) dst)
         (compiler-reg-remap-value remap value)
         ty)]
-    [(ir.CompilerIrInstr.Alloc dst ty)
-      (ir.CompilerIrInstr.Alloc (compiler-reg-remap-id remap dst) ty)]
-    [(ir.CompilerIrInstr.AddrOf dst src)
-      (ir.CompilerIrInstr.AddrOf
-        (compiler-reg-remap-id (compiler-reg-global-shared-view remap) dst)
-        (compiler-reg-remap-id remap src))]
-    [(ir.CompilerIrInstr.Gep dst base offset ty)
-      (ir.CompilerIrInstr.Gep
-        (compiler-reg-remap-id (compiler-reg-global-shared-view remap) dst)
-        (compiler-reg-remap-value (compiler-reg-global-shared-view remap) base)
-        (compiler-reg-remap-value remap offset)
-        ty)]
-    [(ir.CompilerIrInstr.Load dst src ty)
-      (ir.CompilerIrInstr.Load
-        (compiler-reg-remap-id (compiler-reg-global-shared-view remap) dst)
-        (compiler-reg-remap-value remap src)
-        ty)]
     [(ir.CompilerIrInstr.LoadOwned dst src _ ty)
-      ;; The capability has served its purpose once optimization is complete.
-      ;; Erase it at the SSA-to-home boundary so a home id reused by register
-      ;; allocation can never be mistaken for the original owner identity.
       (ir.CompilerIrInstr.Load
         (compiler-reg-remap-id (compiler-reg-global-shared-view remap) dst)
         (compiler-reg-remap-value remap src)
-        ty)]
-    [(ir.CompilerIrInstr.StorePtr ptr value ty)
-      (ir.CompilerIrInstr.StorePtr
-        (compiler-reg-remap-value (compiler-reg-global-shared-view remap) ptr)
-        (compiler-reg-remap-value remap value)
         ty)]
     [(ir.CompilerIrInstr.StoreOwned ptr value ty)
       (ir.CompilerIrInstr.StorePtr
         (compiler-reg-remap-value (compiler-reg-global-shared-view remap) ptr)
         (compiler-reg-remap-value remap value)
         ty)]
-    [(ir.CompilerIrInstr.CopyBytes dst src size)
-      (ir.CompilerIrInstr.CopyBytes
-        (compiler-reg-remap-value (compiler-reg-global-shared-view remap) dst)
-        (compiler-reg-remap-value remap src)
-        size)]
-    [(ir.CompilerIrInstr.BoundsCheck index length ok-label)
-      (ir.CompilerIrInstr.BoundsCheck
-        (compiler-reg-remap-value (compiler-reg-global-shared-view remap) index)
-        (compiler-reg-remap-value remap length)
-        ok-label)]
-    [(ir.CompilerIrInstr.Cast dst src from-ty to-ty)
-      (ir.CompilerIrInstr.Cast
+    ;; AddrOf's storage var is remapped with its dst.
+    [(ir.CompilerIrInstr.AddrOf dst src)
+      (ir.CompilerIrInstr.AddrOf
         (compiler-reg-remap-id (compiler-reg-global-shared-view remap) dst)
-        (compiler-reg-remap-value remap src)
-        from-ty
-        to-ty)]
-    [(ir.CompilerIrInstr.Bitcast dst src from-ty to-ty)
-      (ir.CompilerIrInstr.Bitcast
-        (compiler-reg-remap-id (compiler-reg-global-shared-view remap) dst)
-        (compiler-reg-remap-value remap src)
-        from-ty
-        to-ty)]
-    [(ir.CompilerIrInstr.BinOp dst op lhs rhs ty)
-      (ir.CompilerIrInstr.BinOp
-        (compiler-reg-remap-id (compiler-reg-global-shared-view remap) dst)
-        op
-        (compiler-reg-remap-value (compiler-reg-global-shared-view remap) lhs)
-        (compiler-reg-remap-value remap rhs)
-        ty)]
-    [(ir.CompilerIrInstr.UnOp dst op value ty)
-      (ir.CompilerIrInstr.UnOp
-        (compiler-reg-remap-id (compiler-reg-global-shared-view remap) dst)
-        op
-        (compiler-reg-remap-value remap value)
-        ty)]
-    [(ir.CompilerIrInstr.LaneId dst lanes ty)
-      (ir.CompilerIrInstr.LaneId (compiler-reg-remap-id remap dst) lanes ty)]
-    [(ir.CompilerIrInstr.Splat dst value lanes ty)
-      (ir.CompilerIrInstr.Splat
-        (compiler-reg-remap-id (compiler-reg-global-shared-view remap) dst)
-        (compiler-reg-remap-value remap value)
-        lanes
-        ty)]
-    [(ir.CompilerIrInstr.VectorBinOp payload-box)
-      (let
-        [dst (compiler-reg-box-field-shared-view payload-box dst)]
-        [op (compiler-reg-box-field-shared-view payload-box op)]
-        [lhs (compiler-reg-box-field-shared-view payload-box lhs)]
-        [rhs (compiler-reg-box-field-shared-view payload-box rhs)]
-        [lanes (compiler-reg-box-field-shared-view payload-box lanes)]
-        [ty (compiler-reg-box-field-shared-view payload-box ty)]
-        (ir.ir-instr-vector-bin-op
-          (compiler-reg-remap-id (compiler-reg-global-shared-view remap) dst)
-          op
-          (compiler-reg-remap-value (compiler-reg-global-shared-view remap) lhs)
-          (compiler-reg-remap-value remap rhs)
-          lanes
-          ty))]
-    [(ir.CompilerIrInstr.VectorPrefix payload-box)
-      (let
-        [dst (compiler-reg-box-field-shared-view payload-box dst)]
-        [op (compiler-reg-box-field-shared-view payload-box op)]
-        [src (compiler-reg-box-field-shared-view payload-box src)]
-        [carry (compiler-reg-box-field-shared-view payload-box carry)]
-        [lanes (compiler-reg-box-field-shared-view payload-box lanes)]
-        [ty (compiler-reg-box-field-shared-view payload-box ty)]
-        (ir.ir-instr-vector-prefix
-          (compiler-reg-remap-id (compiler-reg-global-shared-view remap) dst)
-          op
-          (compiler-reg-remap-value (compiler-reg-global-shared-view remap) src)
-          (compiler-reg-remap-value remap carry)
-          lanes
-          ty))]
-    [(ir.CompilerIrInstr.VectorReduce dst op src lanes ty)
-      (ir.CompilerIrInstr.VectorReduce
-        (compiler-reg-remap-id (compiler-reg-global-shared-view remap) dst)
-        op
-        (compiler-reg-remap-value remap src)
-        lanes
-        ty)]
-    [(ir.CompilerIrInstr.VectorCompare payload-box)
-      (let
-        [dst (compiler-reg-box-field-shared-view payload-box dst)]
-        [op (compiler-reg-box-field-shared-view payload-box op)]
-        [lhs (compiler-reg-box-field-shared-view payload-box lhs)]
-        [rhs (compiler-reg-box-field-shared-view payload-box rhs)]
-        [lanes (compiler-reg-box-field-shared-view payload-box lanes)]
-        [ty (compiler-reg-box-field-shared-view payload-box ty)]
-        (ir.ir-instr-vector-compare
-          (compiler-reg-remap-id (compiler-reg-global-shared-view remap) dst)
-          op
-          (compiler-reg-remap-value (compiler-reg-global-shared-view remap) lhs)
-          (compiler-reg-remap-value remap rhs)
-          lanes
-          ty))]
-    [(ir.CompilerIrInstr.MaskBinOp dst op lhs rhs lanes)
-      (ir.CompilerIrInstr.MaskBinOp
-        (compiler-reg-remap-id (compiler-reg-global-shared-view remap) dst)
-        op
-        (compiler-reg-remap-value (compiler-reg-global-shared-view remap) lhs)
-        (compiler-reg-remap-value remap rhs)
-        lanes)]
-    [(ir.CompilerIrInstr.MaskNot dst src lanes)
-      (ir.CompilerIrInstr.MaskNot
-        (compiler-reg-remap-id (compiler-reg-global-shared-view remap) dst)
-        (compiler-reg-remap-value remap src)
-        lanes)]
-    [(ir.CompilerIrInstr.MaskReduce dst op src lanes)
-      (ir.CompilerIrInstr.MaskReduce
-        (compiler-reg-remap-id (compiler-reg-global-shared-view remap) dst)
-        op
-        (compiler-reg-remap-value remap src)
-        lanes)]
-    [(ir.CompilerIrInstr.Select payload-box)
-      (let
-        [dst (compiler-reg-box-field-shared-view payload-box dst)]
-        [mask (compiler-reg-box-field-shared-view payload-box mask)]
-        [true-value (compiler-reg-box-field-shared-view payload-box on-true)]
-        [false-value (compiler-reg-box-field-shared-view payload-box on-false)]
-        [lanes (compiler-reg-box-field-shared-view payload-box lanes)]
-        [ty (compiler-reg-box-field-shared-view payload-box ty)]
-        (ir.ir-instr-select
-          (compiler-reg-remap-id (compiler-reg-global-shared-view remap) dst)
-          (compiler-reg-remap-value
-            (compiler-reg-global-shared-view remap)
-            mask)
-          (compiler-reg-remap-value
-            (compiler-reg-global-shared-view remap)
-            true-value)
-          (compiler-reg-remap-value remap false-value)
-          lanes
-          ty))]
-    [(ir.CompilerIrInstr.VectorLoad dst base index lanes ty)
-      (ir.CompilerIrInstr.VectorLoad
-        (compiler-reg-remap-id (compiler-reg-global-shared-view remap) dst)
-        (compiler-reg-remap-value (compiler-reg-global-shared-view remap) base)
-        (compiler-reg-remap-value remap index)
-        lanes
-        ty)]
-    [(ir.CompilerIrInstr.VectorStore payload-box)
-      (let
-        [base (compiler-reg-box-field-shared-view payload-box base)]
-        [index (compiler-reg-box-field-shared-view payload-box index)]
-        [value (compiler-reg-box-field-shared-view payload-box value)]
-        [lanes (compiler-reg-box-field-shared-view payload-box lanes)]
-        [ty (compiler-reg-box-field-shared-view payload-box ty)]
-        (ir.ir-instr-vector-store
-          (compiler-reg-remap-value
-            (compiler-reg-global-shared-view remap)
-            base)
-          (compiler-reg-remap-value
-            (compiler-reg-global-shared-view remap)
-            index)
-          (compiler-reg-remap-value remap value)
-          lanes
-          ty))]
-    [(ir.CompilerIrInstr.PredicatedStore payload-box)
-      (let
-        [base (compiler-reg-box-field-shared-view payload-box base)]
-        [index (compiler-reg-box-field-shared-view payload-box index)]
-        [value (compiler-reg-box-field-shared-view payload-box value)]
-        [mask (compiler-reg-box-field-shared-view payload-box mask)]
-        [lanes (compiler-reg-box-field-shared-view payload-box lanes)]
-        [ty (compiler-reg-box-field-shared-view payload-box ty)]
-        (ir.ir-instr-predicated-store
-          (compiler-reg-remap-value
-            (compiler-reg-global-shared-view remap)
-            base)
-          (compiler-reg-remap-value
-            (compiler-reg-global-shared-view remap)
-            index)
-          (compiler-reg-remap-value
-            (compiler-reg-global-shared-view remap)
-            value)
-          (compiler-reg-remap-value remap mask)
-          lanes
-          ty))]
-    [(ir.CompilerIrInstr.PredicatedLoad payload-box)
-      (let
-        [dst (compiler-reg-box-field-shared-view payload-box dst)]
-        [base (compiler-reg-box-field-shared-view payload-box base)]
-        [index (compiler-reg-box-field-shared-view payload-box index)]
-        [mask (compiler-reg-box-field-shared-view payload-box mask)]
-        [lanes (compiler-reg-box-field-shared-view payload-box lanes)]
-        [ty (compiler-reg-box-field-shared-view payload-box ty)]
-        (ir.ir-instr-predicated-load
-          (compiler-reg-remap-id (compiler-reg-global-shared-view remap) dst)
-          (compiler-reg-remap-value
-            (compiler-reg-global-shared-view remap)
-            base)
-          (compiler-reg-remap-value
-            (compiler-reg-global-shared-view remap)
-            index)
-          (compiler-reg-remap-value remap mask)
-          lanes
-          ty))]
-    [(ir.CompilerIrInstr.GatherLoad payload-box)
-      (let
-        [dst (compiler-reg-box-field-shared-view payload-box dst)]
-        [base (compiler-reg-box-field-shared-view payload-box base)]
-        [index-base (compiler-reg-box-field-shared-view payload-box index-base)]
-        [index (compiler-reg-box-field-shared-view payload-box index)]
-        [lane-offset
-          (compiler-reg-box-field-shared-view payload-box lane-offset)]
-        [lanes (compiler-reg-box-field-shared-view payload-box lanes)]
-        [ty (compiler-reg-box-field-shared-view payload-box ty)]
-        (ir.ir-instr-gather-load
-          (compiler-reg-remap-id (compiler-reg-global-shared-view remap) dst)
-          (compiler-reg-remap-value
-            (compiler-reg-global-shared-view remap)
-            base)
-          (compiler-reg-remap-value
-            (compiler-reg-global-shared-view remap)
-            index-base)
-          (compiler-reg-remap-value remap index)
-          lane-offset
-          lanes
-          ty))]
-    [(ir.CompilerIrInstr.VectorShuffle payload-box)
-      (let
-        [dst (compiler-reg-box-field-shared-view payload-box dst)]
-        [source (compiler-reg-box-field-shared-view payload-box source)]
-        [selector-low
-          (compiler-reg-box-field-shared-view payload-box selector-low)]
-        [selector-high
-          (compiler-reg-box-field-shared-view payload-box selector-high)]
-        [active-lanes
-          (compiler-reg-box-field-shared-view payload-box active-lanes)]
-        [lanes (compiler-reg-box-field-shared-view payload-box lanes)]
-        [ty (compiler-reg-box-field-shared-view payload-box ty)]
-        (ir.ir-instr-vector-shuffle
-          (compiler-reg-remap-id (compiler-reg-global-shared-view remap) dst)
-          (compiler-reg-remap-value
-            (compiler-reg-global-shared-view remap)
-            source)
-          (compiler-reg-remap-value
-            (compiler-reg-global-shared-view remap)
-            selector-low)
-          (compiler-reg-remap-maybe-value
-            (compiler-reg-global-shared-view remap)
-            selector-high)
-          (compiler-reg-remap-value remap active-lanes)
-          lanes
-          ty))]
-    [(ir.CompilerIrInstr.TailMask dst index length lanes)
-      (ir.CompilerIrInstr.TailMask
-        (compiler-reg-remap-id (compiler-reg-global-shared-view remap) dst)
-        (compiler-reg-remap-value (compiler-reg-global-shared-view remap) index)
-        (compiler-reg-remap-value remap length)
-        lanes)]
-    [(ir.CompilerIrInstr.EntryArgc dst)
-      (ir.CompilerIrInstr.EntryArgc (compiler-reg-remap-id remap dst))]
-    [(ir.CompilerIrInstr.EntryArgv dst)
-      (ir.CompilerIrInstr.EntryArgv (compiler-reg-remap-id remap dst))]
-    [(ir.CompilerIrInstr.EntryEnvp dst)
-      (ir.CompilerIrInstr.EntryEnvp (compiler-reg-remap-id remap dst))]
-    [(ir.CompilerIrInstr.CpuId dst leaf subleaf reg-index)
-      (ir.CompilerIrInstr.CpuId
-        (compiler-reg-remap-id (compiler-reg-global-shared-view remap) dst)
-        (compiler-reg-remap-value (compiler-reg-global-shared-view remap) leaf)
-        (compiler-reg-remap-value remap subleaf)
-        reg-index)]
-    [(ir.CompilerIrInstr.Xgetbv dst index)
-      (ir.CompilerIrInstr.Xgetbv
-        (compiler-reg-remap-id (compiler-reg-global-shared-view remap) dst)
-        (compiler-reg-remap-value remap index))]
-    [(ir.CompilerIrInstr.Syscall dst args)
-      (ir.CompilerIrInstr.Syscall
-        (compiler-reg-remap-id (compiler-reg-global-shared-view remap) dst)
-        (compiler-reg-remap-call-args remap args))]
-    [(ir.CompilerIrInstr.Call dst name args ty)
-      (ir.CompilerIrInstr.Call
-        (compiler-reg-remap-id (compiler-reg-global-shared-view remap) dst)
-        name
-        (compiler-reg-remap-call-args remap args)
-        ty)]
-    [(ir.CompilerIrInstr.CallIndirect dst callee args ty)
-      (ir.CompilerIrInstr.CallIndirect
-        (compiler-reg-remap-id (compiler-reg-global-shared-view remap) dst)
-        (compiler-reg-remap-value
-          (compiler-reg-global-shared-view remap)
-          callee)
-        (compiler-reg-remap-call-args remap args)
-        ty)]
-    [(ir.CompilerIrInstr.CallIndirectC dst callee args ty)
-      (ir.CompilerIrInstr.CallIndirectC
-        (compiler-reg-remap-id (compiler-reg-global-shared-view remap) dst)
-        (compiler-reg-remap-value
-          (compiler-reg-global-shared-view remap)
-          callee)
-        (compiler-reg-remap-call-args remap args)
-        ty)]
-    [(ir.CompilerIrInstr.CallCAbiStoreResult payload-box)
-      (let
-        [base (compiler-reg-box-field-shared-view payload-box base)]
-        [name (compiler-reg-box-field-shared-view payload-box name)]
-        [args (compiler-reg-box-field-shared-view payload-box args)]
-        [slots (compiler-reg-box-field-shared-view payload-box slots)]
-        (ir.ir-instr-call-cabi-store-result
-          (compiler-reg-remap-value
-            (compiler-reg-global-shared-view remap)
-            base)
-          name
-          (compiler-reg-remap-call-args remap args)
-          slots))]
-    [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
-      (let
-        [base (compiler-reg-box-field-shared-view payload-box base)]
-        [callee (compiler-reg-box-field-shared-view payload-box callee)]
-        [args (compiler-reg-box-field-shared-view payload-box args)]
-        [slots (compiler-reg-box-field-shared-view payload-box slots)]
-        (ir.ir-instr-call-indirect-cabi-store-result
-          (compiler-reg-remap-value
-            (compiler-reg-global-shared-view remap)
-            base)
-          (compiler-reg-remap-value
-            (compiler-reg-global-shared-view remap)
-            callee)
-          (compiler-reg-remap-call-args remap args)
-          slots))]
-    [(ir.CompilerIrInstr.SpmdCall payload-box)
-      (let
-        [callee (compiler-reg-box-field-shared-view payload-box callee)]
-        [backend (compiler-reg-box-field-shared-view payload-box backend)]
-        [lanes (compiler-reg-box-field-shared-view payload-box lanes)]
-        [active-mask
-          (compiler-reg-box-field-shared-view payload-box active-mask)]
-        [args (compiler-reg-box-field-shared-view payload-box args)]
-        [result (compiler-reg-box-field-shared-view payload-box result)]
-        [origin (compiler-reg-box-field-shared-view payload-box origin)]
-        (ir.ir-instr-spmd-call-with-origin
-          callee
-          backend
-          lanes
-          (compiler-reg-remap-value
-            (compiler-reg-global-shared-view remap)
-            active-mask)
-          (compiler-reg-remap-spmd-call-args
-            (compiler-reg-global-shared-view remap)
-            args)
-          (compiler-reg-remap-spmd-call-result remap result)
-          (clone origin)))]
-    [(ir.CompilerIrInstr.TailCall name args ty)
-      (ir.CompilerIrInstr.TailCall
-        name
-        (compiler-reg-remap-call-args remap args)
-        ty)]
-    [(ir.CompilerIrInstr.TailCallIndirect callee args ty)
-      (ir.CompilerIrInstr.TailCallIndirect
-        (compiler-reg-remap-value
-          (compiler-reg-global-shared-view remap)
-          callee)
-        (compiler-reg-remap-call-args remap args)
-        ty)]
-    [(ir.CompilerIrInstr.Store name value ty)
-      (ir.CompilerIrInstr.Store name (compiler-reg-remap-value remap value) ty)]
-    [(ir.CompilerIrInstr.Jump _) instr]
-    [(ir.CompilerIrInstr.Branch cond true-label false-label)
-      (ir.CompilerIrInstr.Branch
-        (compiler-reg-remap-value remap cond)
-        true-label
-        false-label)]
-    [(ir.CompilerIrInstr.TotalEnumBranch cond true-label false-label)
-      (ir.CompilerIrInstr.TotalEnumBranch
-        (compiler-reg-remap-value remap cond)
-        true-label
-        false-label)]
-    [(ir.CompilerIrInstr.Return value)
-      (ir.CompilerIrInstr.Return (compiler-reg-remap-maybe-value remap value))]
-    [(ir.CompilerIrInstr.Phi dst inputs ty)
-      (ir.CompilerIrInstr.Phi
-        (compiler-reg-remap-id (compiler-reg-global-shared-view remap) dst)
-        (compiler-reg-remap-phi-inputs remap inputs)
-        ty)]
-    [(ir.CompilerIrInstr.Pack dst words ty)
-      (ir.CompilerIrInstr.Pack
-        (compiler-reg-remap-id (compiler-reg-global-shared-view remap) dst)
-        (compiler-reg-remap-value-seq remap words)
-        ty)]
-    [(ir.CompilerIrInstr.Word dst src index ty)
-      (ir.CompilerIrInstr.Word
-        (compiler-reg-remap-id (compiler-reg-global-shared-view remap) dst)
-        (compiler-reg-remap-value remap src)
-        index
-        ty)]
-    [(ir.CompilerIrInstr.Switch index base cases default-label)
-      (ir.CompilerIrInstr.Switch
-        (compiler-reg-remap-value remap index)
-        base
-        cases
-        default-label)]
-    [(ir.CompilerIrInstr.TotalEnumSwitch
-        index
-        base
-        cases
-        default-label
-        trap-label)
-      (ir.CompilerIrInstr.TotalEnumSwitch
-        (compiler-reg-remap-value remap index)
-        base
-        cases
-        default-label
-        trap-label)]))
+        (compiler-reg-remap-id remap src))]
+    [_
+      (ir.compiler-ir-instr-map
+        instr
+        compiler-reg-remap-use
+        compiler-reg-remap-id
+        _
+        _
+        (compiler-reg-global-shared-view remap))]))
 
 ;; A 1:1 var remap: the output is exactly as long as the input, so it is
 ;; written straight into a right-sized dense sequence instead of through a

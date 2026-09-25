@@ -1529,8 +1529,8 @@
     (= left.end-col right.end-col)))
 
 (define (compiler-diagnostic-secondary-present?
-  [diag : CompilerDiagnostic]
-  [span : CompilerDiagnosticSpan]
+  [diag : (& diag CompilerDiagnostic)]
+  [span : (& span CompilerDiagnosticSpan)]
   [label : CompilerDiagnosticMaybeString]) : bool
   (let
     [labels : CompilerDiagnosticLabelList
@@ -1560,8 +1560,8 @@
   [span : CompilerDiagnosticSpan]
   [label : CompilerDiagnosticMaybeString]) : CompilerDiagnostic
   (if (compiler-diagnostic-secondary-present?
-    (compiler-diagnostic-place-shared-view diag)
-    (compiler-diagnostic-place-shared-view span)
+    diag
+    span
     (compiler-diagnostic-place-shared-view label))
     diag
     (compiler-diagnostic-with-secondary diag span label)))
@@ -1774,7 +1774,8 @@
     (- col 1)
     0))
 
-(define (compiler-diagnostic-span-width [span : CompilerDiagnosticSpan]) : i64
+(define (compiler-diagnostic-span-width
+  [span : (& span CompilerDiagnosticSpan)]) : i64
   (if (=
     (compiler-diagnostic-span-start-line span)
     (compiler-diagnostic-span-end-line span))
@@ -1826,7 +1827,7 @@
             CompilerDiagnosticNoString))))))
 
 (define (compiler-diagnostic-render-header
-  [diag : CompilerDiagnostic]
+  [diag : (& diag CompilerDiagnostic)]
   [level : CompilerDiagnosticLevel]
   [code : CompilerDiagnosticMaybeString]) : String
   (let
@@ -1868,7 +1869,8 @@
   [span : CompilerDiagnosticSpan]) : String
   (compiler-diagnostic-render-span-location-with-fallback "" span))
 
-(define (compiler-diagnostic-render-location [diag : CompilerDiagnostic]) : String
+(define (compiler-diagnostic-render-location
+  [diag : (& diag CompilerDiagnostic)]) : String
   (let
     [span : CompilerDiagnosticSpan (compiler-diagnostic-primary-span diag)]
     (compiler-diagnostic-render-span-location span)))
@@ -1880,7 +1882,7 @@
     [CompilerDiagnosticNoString ""]))
 
 (define (compiler-diagnostic-render-source-snippet
-  [span : CompilerDiagnosticSpan]
+  [span : (& span CompilerDiagnosticSpan)]
   [source : (& source str)]
   [label-suffix : (& label-suffix str)]) : String
   (match (compiler-diagnostic-source-line
@@ -1935,7 +1937,7 @@
       (compiler-diagnostic-render-secondary-label-only label)]
     [snippet : String
       (compiler-diagnostic-render-source-snippet
-        (compiler-diagnostic-place-shared-view span)
+        span
         (& source)
         (& label-suffix))]
     (str_cat.str-cat
@@ -1993,7 +1995,7 @@
       (text_buf.render out))))
 
 (define (compiler-diagnostic-render-source-with-metadata
-  [diag : CompilerDiagnostic]
+  [diag : (& diag CompilerDiagnostic)]
   [source : String]
   [level : CompilerDiagnosticLevel]
   [code : CompilerDiagnosticMaybeString]
@@ -2003,12 +2005,8 @@
       (compiler-diagnostic-primary-span diag)]
     [empty-label : String ""]
     (str_cat.str-cat
-      (compiler-diagnostic-render-header
-        (compiler-diagnostic-place-shared-view diag)
-        level
-        code)
-      (compiler-diagnostic-render-location
-        (compiler-diagnostic-place-shared-view diag))
+      (compiler-diagnostic-render-header diag level code)
+      (compiler-diagnostic-render-location diag)
       "   |\n"
       (compiler-diagnostic-render-source-snippet
         primary-span
@@ -2016,7 +2014,7 @@
         (& empty-label))
       (compiler-diagnostic-render-secondary-spans
         (compiler-diagnostic-path diag)
-        (compiler-diagnostic-place-shared-view source)
+        source
         (compiler-diagnostic-secondary-spans diag))
       (compiler-diagnostic-render-help help)
       (compiler-diagnostic-render-source-notes (compiler-diagnostic-notes diag)))))
@@ -2025,7 +2023,7 @@
   [diag : CompilerDiagnostic]
   [source : String]) : String
   (compiler-diagnostic-render-source-with-metadata
-    (compiler-diagnostic-place-shared-view diag)
+    diag
     source
     (compiler-diagnostic-level diag)
     (compiler-diagnostic-code diag)

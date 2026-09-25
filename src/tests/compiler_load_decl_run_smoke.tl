@@ -21,8 +21,7 @@
 (import sym_i64_env)
 
 (define (compiler-load-decl-run-name-id [text : String]) : i64
-  (compiler_load.compiler-load-parse-context-name-id
-    (owned_view.compiler-owned-shared-view text)))
+  (compiler_load.compiler-load-parse-context-name-id text))
 
 (define (compiler-load-decl-run-def [name : String]) : ast.AstDecl
   (ast.ast-decl-def-id
@@ -158,8 +157,7 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match (sym_i64_env.sym-i64-view
-          (owned_view.compiler-owned-shared-view cursor))
+        (match (sym_i64_env.sym-i64-view cursor)
           [(sym_i64_env.SymI64ViewNil) (set! done true)]
           [(sym_i64_env.SymI64ViewBind key value rest)
             (begin
@@ -248,9 +246,7 @@
     (cbi.compiler-builtin-initialize-for-parse!)
     (let
       [got : String (compiler-load-decl-run-shape)]
-      (if (string.eq
-        (owned_view.compiler-owned-shared-view got)
-        (compiler-load-decl-run-expected-shape))
+      (if (string.eq got (compiler-load-decl-run-expected-shape))
         unit
         (io.panic
           (string.copy
@@ -339,9 +335,7 @@
     (cbi.compiler-builtin-initialize-for-parse!)
     (let
       [got : String (compiler-load-decl-run-origin-shape)]
-      (if (string.eq
-        (owned_view.compiler-owned-shared-view got)
-        (compiler-load-decl-run-expected-origin-shape))
+      (if (string.eq got (compiler-load-decl-run-expected-origin-shape))
         unit
         (io.panic
           (string.copy

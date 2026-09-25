@@ -2624,14 +2624,12 @@
 (define (tc-context-expr-cell-address-live [ctx : TcContext]) : u64
   (match ctx
     [(TcContext _ _ _ _ _ _ pools _ _)
-      (unsafe
-        (ptr->int (__tl_array-data (__tl-project-field pools expr-pool))))]))
+      (ast.ast-pool-cell-data (__tl-project-field pools expr-pool))]))
 
 (define (tc-context-type-cell-address-live [ctx : TcContext]) : u64
   (match ctx
     [(TcContext _ _ _ _ _ _ pools _ _)
-      (unsafe
-        (ptr->int (__tl_array-data (__tl-project-field pools type-pool))))]))
+      (ast.ast-pool-cell-data (__tl-project-field pools type-pool))]))
 
 (define (tc-context-expr-push-cell-addresses
   [expr-cell-address : u64]

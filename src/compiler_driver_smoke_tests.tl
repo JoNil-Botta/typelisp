@@ -107,8 +107,7 @@
       (match program
         [(compiler_ast_types.AstProgram.Program decls-box)
           (let
-            [decls : compiler_ast_types.AstDeclList
-              (owned_view.compiler-owned-box-shared-view decls-box)]
+            [decls : compiler_ast_types.AstDeclList (deref decls-box)]
             (match (compiler_ast_types.ast-decl-list-get
               (& decls)
               0
@@ -116,8 +115,7 @@
               [(compiler_ast_types.AstDecl.Extern _ _ _ metadata _)
                 (=
                   (compiler_ast_types.ast-extern-metadata-symbol-matches-source?
-                    (compiler_ast_types.ast-extern-metadata-box-shared-view
-                      metadata))
+                    (deref metadata))
                   want)]
               [_ false]))])]
     [(compiler_parse_core.ResultAstProgram.Err _) false]))
@@ -421,7 +419,7 @@
     [key : compiler_load.CompilerLoadPreludeCacheKey
       (compiler_load.compiler-load-runtime-prelude-cache-key
         (owned_view.compiler-owned-shared-view roots)
-        (owned_view.compiler-owned-shared-view cfgs))]
+        cfgs)]
     [home-handle : i64 (arena.tl_arena_current)]
     [caller : arena.Arena (arena.make)]
     [caller-handle : i64 (arena.raw-handle caller)]
@@ -430,8 +428,8 @@
         caller
         caller-handle
         (owned_view.compiler-owned-shared-view key)
-        (owned_view.compiler-owned-shared-view roots)
-        (owned_view.compiler-owned-shared-view cfgs))]
+        roots
+        cfgs)]
     [home-restored? : bool (= (arena.tl_arena_current) home-handle)]
     (begin
       (arena.destroy-safe! caller)
@@ -543,8 +541,7 @@
     [(compiler_driver_core.ResultCompilerDriver.Err diag _)
       (let
         [rendered : String
-          (compiler_diagnostic.compiler-diagnostic-render
-            (compiler_diagnostic.compiler-diagnostic-box-shared-view diag))]
+          (compiler_diagnostic.compiler-diagnostic-render (deref diag))]
         (and
           (compiler-driver-pic-smoke-contains?
             (& rendered)
@@ -718,14 +715,12 @@
             (compiler-driver-reader-context-smoke-fail
               (str_cat.str-cat
                 "state A backend failed: "
-                (compiler_diagnostic.compiler-diagnostic-render
-                  (compiler_diagnostic.compiler-diagnostic-box-shared-view diag))))]))]
+                (compiler_diagnostic.compiler-diagnostic-render (deref diag))))]))]
     [(compiler_backend.ResultCompilerBackend.Err diag)
       (compiler-driver-reader-context-smoke-fail
         (str_cat.str-cat
           "state B backend failed: "
-          (compiler_diagnostic.compiler-diagnostic-render
-            (compiler_diagnostic.compiler-diagnostic-box-shared-view diag))))]))
+          (compiler_diagnostic.compiler-diagnostic-render (deref diag))))]))
 
 (define (compiler-driver-reader-context-smoke-optimized-ok?
   [pools-a : compiler_ast_types.AstNodePoolContext]
@@ -740,7 +735,7 @@
   [type-segment-bases : i64]
   [base-arena : i64]) : bool
   (match (compiler_optimize.optimize-program-with-spans-and-pools-and-level
-    (owned_view.compiler-owned-shared-view pools-a)
+    pools-a
     program-a
     spans-a
     1)
@@ -755,7 +750,7 @@
         (compiler-driver-reader-context-smoke-fail
           "reader changed during state A optimization")
         (match (compiler_optimize.optimize-program-with-spans-and-pools-and-level
-          (owned_view.compiler-owned-shared-view pools-b)
+          pools-b
           program-b
           spans-b
           1)
@@ -856,14 +851,12 @@
           (compiler-driver-reader-context-smoke-fail
             (str_cat.str-cat
               "state B lower failed: "
-              (compiler_diagnostic.compiler-diagnostic-render
-                (compiler_diagnostic.compiler-diagnostic-box-shared-view diag))))])]
+              (compiler_diagnostic.compiler-diagnostic-render (deref diag))))])]
     [(compiler_driver_core.ResultCompilerDriverLowered.Err diag _)
       (compiler-driver-reader-context-smoke-fail
         (str_cat.str-cat
           "state A lower failed: "
-          (compiler_diagnostic.compiler-diagnostic-render
-            (compiler_diagnostic.compiler-diagnostic-box-shared-view diag))))]))
+          (compiler_diagnostic.compiler-diagnostic-render (deref diag))))]))
 
 (define (compiler-driver-reader-context-smoke-backend-state-idle?
   [state : compiler_driver_core.CompilerDriverState]) : bool
@@ -879,8 +872,7 @@
       (> (compiler_backend.compiler-backend-state-owner-arena backend-state) 0)
       (=
         (compiler_backend.compiler-backend-state-owner-arena backend-state)
-        (compiler_driver_core.compiler-driver-state-surface-arena
-          (owned_view.compiler-owned-shared-view state)))
+        (compiler_driver_core.compiler-driver-state-surface-arena state))
       (=
         (compiler_backend.compiler-backend-state-intern-table-id backend-state)
         (ci.intern-compat-state-table-id intern-state))
@@ -933,10 +925,8 @@
       (owned_view.compiler-owned-shared-view state-b))
     (not
       (=
-        (compiler_driver_core.compiler-driver-state-surface-arena
-          (owned_view.compiler-owned-shared-view state-a))
-        (compiler_driver_core.compiler-driver-state-surface-arena
-          (owned_view.compiler-owned-shared-view state-b))))))
+        (compiler_driver_core.compiler-driver-state-surface-arena state-a)
+        (compiler_driver_core.compiler-driver-state-surface-arena state-b)))))
 
 ;; Driver construction owns two nested allocation targets: retained
 ;; typecheck/lower/backend state in the surface arena, and checked-lowering
@@ -966,8 +956,7 @@
               (not (= surface-arena caller-handle))
               (=
                 (compiler_backend.compiler-backend-state-owner-arena
-                  (compiler_driver_core.compiler-driver-state-backend
-                    (owned_view.compiler-owned-shared-view state)))
+                  (compiler_driver_core.compiler-driver-state-backend state))
                 surface-arena))]
           [pools : compiler_ast_types.AstNodePoolContext
             (compiler_driver_core.compiler-driver-state-new-checked-lower-pools)]
@@ -1009,8 +998,7 @@
         (owned_view.compiler-owned-shared-view state))
       (compiler_driver_core.compiler-driver-state-install-interns!
         (owned_view.compiler-owned-shared-view state))
-      (compiler_driver_core.compiler-driver-state-reset-file-state!
-        (owned_view.compiler-owned-shared-view state))
+      (compiler_driver_core.compiler-driver-state-reset-file-state! state)
       unit)))
 
 (define (compiler-driver-reader-context-smoke-ok?) : bool
@@ -1044,7 +1032,7 @@
               roots-a
               mode
               (compiler_driver_core.compiler-driver-state-target-cfgs
-                (owned_view.compiler-owned-shared-view state-a)
+                state-a
                 target
                 (compiler_cfg_core.compiler-cfg-empty))
               true)]
@@ -1063,17 +1051,17 @@
               (let
                 [pools-b : compiler_ast_types.AstNodePoolContext
                   (compiler_ast_types.ast-node-pool-context-clone-types-only
-                    (owned_view.compiler-owned-shared-view pools-a))]
+                    pools-a)]
                 [program-b : compiler_ir_types.CompilerIrProgram
                   (compiler_ir_types.compiler-ir-clone-program-shell
-                    (owned_view.compiler-owned-shared-view pools-b)
+                    pools-b
                     program-a)]
                 [spans-b : compiler_ir_types.CompilerSourceSpans
                   (clone spans-a)]
                 (begin
                   (compiler_driver_core.compiler-driver-state-adopt-pools!
                     (owned_view.compiler-owned-shared-view state-b)
-                    (owned_view.compiler-owned-shared-view pools-b))
+                    pools-b)
                   (compiler-driver-reader-context-smoke-lowered-ok?
                     lowered-a
                     (compiler_driver_core.ResultCompilerDriverLowered.Ok
@@ -1085,14 +1073,12 @@
                       (compiler_driver_core.compiler-driver-state-backend
                         (owned_view.compiler-owned-shared-view state-b))
                       (compiler_driver_core.compiler-driver-state-typecheck
-                        (owned_view.compiler-owned-shared-view state-b))))))]
+                        state-b)))))]
             [(compiler_driver_core.ResultCompilerDriverLowered.Err diag _)
               (compiler-driver-reader-context-smoke-fail
                 (str_cat.str-cat
                   "state A lower failed: "
-                  (compiler_diagnostic.compiler-diagnostic-render
-                    (compiler_diagnostic.compiler-diagnostic-box-shared-view
-                      diag))))]))))))
+                  (compiler_diagnostic.compiler-diagnostic-render (deref diag))))]))))))
 
 ;; Reuse two real compile states with different target/custom cfg sets. Main's
 ;; source cfg selects names that exist only in the matching generated branch,
@@ -1125,9 +1111,7 @@
         [(compiler_driver_core.ResultCompilerDriverBuffer.Ok _ _) true]
         [(compiler_driver_core.ResultCompilerDriverBuffer.Err diagnostic _)
           (compiler-driver-reader-context-smoke-fail
-            (compiler_diagnostic.compiler-diagnostic-render
-              (compiler_diagnostic.compiler-diagnostic-box-shared-view
-                diagnostic)))]))))
+            (compiler_diagnostic.compiler-diagnostic-render (deref diagnostic)))]))))
 
 (define (compiler-driver-generated-cfg-isolation-ok?) : bool
   (let
@@ -1228,8 +1212,7 @@
         (owned_view.compiler-owned-shared-view state))
       (let
         [intern-state : ci.InternCompatState
-          (compiler_driver_core.compiler-driver-state-owned-interns
-            (owned_view.compiler-owned-shared-view state))]
+          (compiler_driver_core.compiler-driver-state-owned-interns state)]
         [importer : i64
           (ci.intern-compat-state-intern
             (&mut intern-state)
@@ -1303,8 +1286,7 @@
         (owned_view.compiler-owned-shared-view state-a))
       (compiler_driver_core.compiler-driver-state-install-interns!
         (owned_view.compiler-owned-shared-view state-a))
-      (compiler_driver_core.compiler-driver-state-reset-file-state!
-        (owned_view.compiler-owned-shared-view state-a))
+      (compiler_driver_core.compiler-driver-state-reset-file-state! state-a)
       (compiler_typecheck_core.tc-lazy-import-stub-record-for-job!
         job-a
         11
@@ -1317,8 +1299,7 @@
         (owned_view.compiler-owned-shared-view state-b))
       (compiler_driver_core.compiler-driver-state-install-interns!
         (owned_view.compiler-owned-shared-view state-b))
-      (compiler_driver_core.compiler-driver-state-reset-file-state!
-        (owned_view.compiler-owned-shared-view state-b))
+      (compiler_driver_core.compiler-driver-state-reset-file-state! state-b)
       (compiler_typecheck_core.tc-lazy-import-stub-record-for-job!
         job-b
         11
@@ -1375,8 +1356,7 @@
           (owned_view.compiler-owned-shared-view state-a)))]
     [cache-b : compiler_typecheck_core.TcSourceKeyCacheState
       (compiler_typecheck_core.tc-job-state-source-key-cache
-        (compiler_driver_core.compiler-driver-state-typecheck
-          (owned_view.compiler-owned-shared-view state-b)))]
+        (compiler_driver_core.compiler-driver-state-typecheck state-b))]
     [module-a : i64
       (ci.intern-compat-state-intern
         (&mut intern-a)
@@ -1404,8 +1384,7 @@
         module-b
         name-b
         72)
-      (compiler_driver_core.compiler-driver-state-reset-typecheck!
-        (owned_view.compiler-owned-shared-view state-a))
+      (compiler_driver_core.compiler-driver-state-reset-typecheck! state-a)
       (and
         (=
           (compiler_typecheck_core.tc-source-dotted-alias-key-cache-get-for-state
@@ -1461,8 +1440,7 @@
                     (owned_view.compiler-owned-shared-view lower-a))
                   0)
                 (=
-                  (compiler_lower.compiler-lower-arena-state-ir-arena
-                    (owned_view.compiler-owned-shared-view lower-a))
+                  (compiler_lower.compiler-lower-arena-state-ir-arena lower-a)
                   0)
                 (= compiler_lower.lower-scratch-arena 0)
                 (= compiler_lower.lower-ir-arena 0))]
@@ -1481,7 +1459,7 @@
                 (owned_view.compiler-owned-shared-view state-b))
               ;; Isolation: A's release must not zero or destroy B's arenas.
               (compiler_driver_core.compiler-driver-state-release-lower-arenas!
-                (owned_view.compiler-owned-shared-view state-a))
+                state-a)
               (let
                 [isolated-ok? : bool
                   (and
@@ -1499,7 +1477,7 @@
                 (begin
                   ;; B's own release still zeroes the selectors it owns.
                   (compiler_driver_core.compiler-driver-state-release-lower-arenas!
-                    (owned_view.compiler-owned-shared-view state-b))
+                    state-b)
                   (let
                     [b-released-ok? : bool
                       (and
@@ -1509,7 +1487,7 @@
                           0)
                         (=
                           (compiler_lower.compiler-lower-arena-state-ir-arena
-                            (owned_view.compiler-owned-shared-view lower-b))
+                            lower-b)
                           0)
                         (= compiler_lower.lower-scratch-arena 0)
                         (= compiler_lower.lower-ir-arena 0))]
@@ -1531,8 +1509,7 @@
     [state-b : compiler_driver_core.CompilerDriverState
       (compiler_driver_core.compiler-driver-state-new-for-compile)]
     [lower-a : compiler_lower.CompilerLowerState
-      (compiler_driver_core.compiler-driver-state-owned-lower-state
-        (owned_view.compiler-owned-shared-view state-a))]
+      (compiler_driver_core.compiler-driver-state-owned-lower-state state-a)]
     [lower-b : compiler_lower.CompilerLowerState
       (compiler_driver_core.compiler-driver-state-owned-lower-state
         (owned_view.compiler-owned-shared-view state-b))]
@@ -1561,8 +1538,7 @@
         (compiler-driver-reader-context-smoke-fail
           (str_cat.str-cat
             "lower state A failed: "
-            (compiler_diagnostic.compiler-diagnostic-render
-              (compiler_diagnostic.compiler-diagnostic-box-shared-view diag))))]
+            (compiler_diagnostic.compiler-diagnostic-render (deref diag))))]
       [(compiler_lower.ResultCompilerLower.Ok _ _)
         (let
           [a-before : compiler_lower.CompilerLowerStateObservation
@@ -1596,8 +1572,7 @@
                     (str_cat.str-cat
                       "lower state B reuse failed: "
                       (compiler_diagnostic.compiler-diagnostic-render
-                        (compiler_diagnostic.compiler-diagnostic-box-shared-view
-                          diag))))]
+                        (deref diag))))]
                 [(compiler_lower.ResultCompilerLower.Ok _ _)
                   (let
                     [a-after-b-reuse : compiler_lower.CompilerLowerStateObservation
@@ -1609,7 +1584,7 @@
                         "package-b-reuse")]
                     (begin
                       (compiler_driver_core.compiler-driver-state-reset-lower!
-                        (owned_view.compiler-owned-shared-view state-b))
+                        state-b)
                       (let
                         [a-after-b-final-reset : compiler_lower.CompilerLowerStateObservation
                           (compiler_lower.compiler-lower-state-observe lower-a)]
@@ -1783,8 +1758,7 @@
     [(compiler_driver_core.ResultCompilerDriverPic.Err diag _)
       (let
         [rendered : String
-          (compiler_diagnostic.compiler-diagnostic-render
-            (compiler_diagnostic.compiler-diagnostic-box-shared-view diag))]
+          (compiler_diagnostic.compiler-diagnostic-render (deref diag))]
         (compiler-driver-pic-smoke-contains?
           (& rendered)
           "backend: --pic supports only internal references"))]))
@@ -1935,7 +1909,7 @@
           [(compiler_driver_core.ResultCompilerDriver.Err diag carried)
             (let
               [fatal-diagnostic : compiler_diagnostic.CompilerDiagnostic
-                (compiler_diagnostic.compiler-diagnostic-box-shared-view diag)]
+                (deref diag)]
               (and
                 (string.eq
                   (compiler_diagnostic.compiler-diagnostic-message
@@ -1953,11 +1927,9 @@
         (owned_view.compiler-owned-shared-view state-a))
       (let
         [after-reset : compiler_diagnostic.CompilerAdvisoryList
-          (compiler_driver_core.compiler-driver-state-advisories
-            (owned_view.compiler-owned-shared-view state-a))]
+          (compiler_driver_core.compiler-driver-state-advisories state-a)]
         [still-b : compiler_diagnostic.CompilerAdvisoryList
-          (compiler_driver_core.compiler-driver-state-advisories
-            (owned_view.compiler-owned-shared-view state-b))]
+          (compiler_driver_core.compiler-driver-state-advisories state-b)]
         (and
           transport-ok?
           (=

@@ -3920,7 +3920,7 @@
     [(ast.AstExpr.ForOwnedState _) (ir.CompilerMaybeSourceSpan.No)]
     [(ast.AstExpr.ForOwnedStep _) (ir.CompilerMaybeSourceSpan.No)]
     [_
-      (ast.ast-expr-fold-children
+      (ast.ast-expr-children-fold
         expr
         lower-first-span
         (ir.CompilerMaybeSourceSpan.No)
@@ -15382,7 +15382,7 @@
       (let
         [next : lower_i64_i64_map.Map used]
         (begin
-          (ast.ast-expr-for-each-child
+          (ast.ast-expr-children-for-each
             (ast.ast-node-pool-context-expr-get pools expr-id)
             lower-used-types-child!
             lower-used-types-type-id-child!
@@ -70880,7 +70880,7 @@
     [(ast.AstExpr.ForOwnedStep _) true]
     [(ast.AstExpr.MacroExpansion _ _ _) true]
     [_
-      (ast.ast-expr-any-child?
+      (ast.ast-expr-children-any?
         (lower-context-expr-get (lower-global-shared-view ctx) id)
         lower-rvo-child-has-early-return?
         ast.ast-child-false
@@ -77370,7 +77370,7 @@
     [(ast.AstExpr.ForOwnedStep _) false]
     [(ast.AstExpr.MacroExpansion _ _ _) false]
     [_
-      (ast.ast-expr-any-child?
+      (ast.ast-expr-children-any?
         (ast.ast-node-pool-context-expr-get pools id)
         lower-source-node-has-import-call?
         ast.ast-child-false

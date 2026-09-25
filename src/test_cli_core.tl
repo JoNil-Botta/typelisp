@@ -1742,7 +1742,7 @@
   (let
     [next : tltest_name_map.Map names]
     (begin
-      (ast.ast-expr-for-each-child
+      (ast.ast-expr-children-for-each
         (ast.ast-node-get node-id)
         tltest-reach-mark-child!
         ast.ast-child-unit

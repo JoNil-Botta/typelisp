@@ -2476,7 +2476,7 @@
             (lint-requires-enclosing-unsafe-sentinel?
               (owned_view.compiler-owned-shared-view alias)
               (owned_view.compiler-owned-shared-view module-name)))
-          (ast.ast-expr-any-child?
+          (ast.ast-expr-children-any?
             expr
             lint-child-expr-uses-import?
             lint-child-type-id-uses-import?
@@ -3690,7 +3690,7 @@
 (define (lint-unsafe-scan-children
   [expr : ast.AstExpr]
   [scope : LintUnsafeScope]) : LintUnsafeScan
-  (ast.ast-expr-fold-children
+  (ast.ast-expr-children-fold
     expr
     lint-unsafe-scan-combine
     (lint-unsafe-scan-empty)
@@ -5733,7 +5733,7 @@
   (let
     [next : LintSingleElementArrayState state]
     (begin
-      (ast.ast-expr-for-each-child
+      (ast.ast-expr-children-for-each
         (ast.ast-node-get node-id)
         lint-single-element-array-child!
         ast.ast-child-unit
@@ -6075,7 +6075,7 @@
   (let
     [next : LintUnusedAssignmentState state]
     (begin
-      (ast.ast-expr-for-each-child
+      (ast.ast-expr-children-for-each
         expr
         lint-unused-assignment-child!
         ast.ast-child-unit
@@ -8337,7 +8337,7 @@
       (let
         [next : LintUnusedVariableState state]
         (begin
-          (ast.ast-expr-for-each-child
+          (ast.ast-expr-children-for-each
             (ast.ast-node-get node-id)
             lint-unused-variable-quasiquote-child!
             lint-unused-variable-quasiquote-type-id-child!
@@ -8684,7 +8684,7 @@
   (let
     [next : LintUnusedVariableState state]
     (begin
-      (ast.ast-expr-for-each-child
+      (ast.ast-expr-children-for-each
         (ast.ast-node-get node-id)
         lint-unused-variable-child!
         lint-unused-variable-type-id-child!
@@ -10236,7 +10236,7 @@
       (let
         [next : LintFindings acc]
         (begin
-          (ast.ast-expr-for-each-child
+          (ast.ast-expr-children-for-each
             expr
             lint-walk-child!
             ast.ast-child-unit

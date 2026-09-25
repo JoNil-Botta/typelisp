@@ -2177,7 +2177,7 @@
   (let
     [next : lint_svec.Vec refs]
     (begin
-      (ast.ast-expr-for-each-child
+      (ast.ast-expr-children-for-each
         expr
         selfhost-lint-dead-expr-child!
         selfhost-lint-dead-type-id-child!

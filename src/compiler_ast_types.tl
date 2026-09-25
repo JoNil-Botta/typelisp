@@ -7020,6 +7020,123 @@
     ,on-pattern
     ,@contexts))
 
+;; `ast-expr-children` lists the same children in the same order, and
+;; `ast-expr-children-fold`, `-for-each` and `-any?` walk that list with the
+;; schema's hook conventions. Every expansion of the schema macros is a
+;; full-variant match the compiler has to typecheck and compile again; a walker
+;; that is not hot pays one list per visited node instead.
+(defenum AstExprChild
+  (Expr i64)
+  (TypeId i64)
+  (Type AstType)
+  (Pattern AstPattern))
+
+(defstruct AstExprChildList
+  (slots (__tl_dyn-array AstExprChild))
+  (len i64))
+
+(define (ast-expr-child-fallback) : AstExprChild
+  (AstExprChild.Expr -1))
+
+(dense_list.compiler-dense-list-operations
+  AstExprChild
+  AstExprChildList
+  ast-expr-child-list
+  caller-provided-fallback
+  zero-capacity
+  compiler-dense-list-unused-shared-zero-storage
+  len)
+
+(defmacro (ast-expr-child-push-expr! [out : Expr] [child : Expr]) : Expr
+  `(ast-expr-child-list-push ,out (AstExprChild.Expr ,child)))
+
+(defmacro (ast-expr-child-push-type-id! [out : Expr] [child : Expr]) : Expr
+  `(ast-expr-child-list-push ,out (AstExprChild.TypeId ,child)))
+
+(defmacro (ast-expr-child-push-type! [out : Expr] [child : Expr]) : Expr
+  `(ast-expr-child-list-push ,out (AstExprChild.Type ,child)))
+
+(defmacro (ast-expr-child-push-pattern! [out : Expr] [child : Expr]) : Expr
+  `(ast-expr-child-list-push ,out (AstExprChild.Pattern ,child)))
+
+(define (ast-expr-children [expr : AstExpr]) : AstExprChildList
+  (let
+    [out : AstExprChildList (ast-expr-child-list-with-capacity 0)]
+    (begin
+      (ast-expr-for-each-child
+        expr
+        ast-expr-child-push-expr!
+        ast-expr-child-push-type-id!
+        ast-expr-child-push-type!
+        ast-expr-child-push-pattern!
+        (&mut out))
+      out)))
+
+(defmacro (ast-expr-children-fold
+  [expr : Expr]
+  [combine : Expr]
+  [seed : Expr]
+  [on-expr : Expr]
+  [on-type-id : Expr]
+  [on-type : Expr]
+  [on-pattern : Expr]
+  [contexts : Expr ...]) : Expr
+  `(let
+    [children (ast-expr-children ,expr)]
+    [acc ,seed]
+    [index : i64 0]
+    (begin
+      (while (< index (ast-expr-child-list-len (& children)))
+        (begin
+          (set!
+            acc
+            (,combine
+              acc
+              (match (ast-expr-child-list-get
+                (& children)
+                index
+                (ast-expr-child-fallback))
+                [(AstExprChild.Expr child) (,on-expr ,@contexts child)]
+                [(AstExprChild.TypeId child) (,on-type-id ,@contexts child)]
+                [(AstExprChild.Type child) (,on-type ,@contexts child)]
+                [(AstExprChild.Pattern child) (,on-pattern ,@contexts child)])))
+          (set! index (+ index 1))))
+      acc)))
+
+(defmacro (ast-expr-children-for-each
+  [expr : Expr]
+  [on-expr : Expr]
+  [on-type-id : Expr]
+  [on-type : Expr]
+  [on-pattern : Expr]
+  [contexts : Expr ...]) : unit
+  `(ast-expr-children-fold
+    ,expr
+    ast-fold-seq
+    unit
+    ,on-expr
+    ,on-type-id
+    ,on-type
+    ,on-pattern
+    ,@contexts))
+
+(defmacro (ast-expr-children-any?
+  [expr : Expr]
+  [on-expr : Expr]
+  [on-type-id : Expr]
+  [on-type : Expr]
+  [on-pattern : Expr]
+  [contexts : Expr ...]) : bool
+  `(ast-expr-children-fold
+    ,expr
+    ast-fold-or
+    false
+    ,on-expr
+    ,on-type-id
+    ,on-type
+    ,on-pattern
+    ,@contexts))
+
 ;; `ast-expr-map-children` rebuilds the node with every child replaced by its
 ;; hook's result, mapping children in payload order (so side effects of the
 ;; hooks, such as pushing new nodes, happen in that order). Negative for-owned

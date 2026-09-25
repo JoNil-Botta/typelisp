@@ -107,7 +107,7 @@
               (if (= mode 4)
                 0
                 2))
-            (view.compiler-owned-shared-view elem))))
+            elem)))
       (set!
         (array-ref slots 2)
         (ir.CompilerIrInstr.Mov 4 (ir.CompilerIrValue.Var 3) (ast.AstType.I64)))

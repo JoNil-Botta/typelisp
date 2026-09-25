@@ -6,10 +6,10 @@
 (import compiler_object as cobj)
 (cfg test (import stdlib.test))
 
-(define (compiler-object-coff-string-length [text : String]) : i64
+(define (compiler-object-coff-string-length [text : (& text str)]) : i64
   (__tl_string_length text))
 
-(define (compiler-object-coff-string-ref [text : String] [index : i64]) : char
+(define (compiler-object-coff-string-ref [text : (& text str)] [index : i64]) : char
   (__tl_string_ref text index))
 
 (defenum ResultCompilerObjectCoff
@@ -188,44 +188,32 @@
 
 (define (compiler-object-coff-push-string-bytes!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
-  [text : String]) : unit
+  [text : (& text str)]) : unit
   (let
     [i : i64 0]
-    [n : i64
-      (compiler-object-coff-string-length
-        (owned_view.compiler-owned-shared-view text))]
+    [n : i64 (compiler-object-coff-string-length text)]
     (begin
       (while (< i n)
         (begin
           (byte_buf_core.byte-buf-builder-push
             out
-            (cast
-              (compiler-object-coff-string-ref
-                (owned_view.compiler-owned-shared-view text)
-                i)
-              : u8))
+            (cast (compiler-object-coff-string-ref text i) : u8))
           (set! i (+ i 1))))
       unit)))
 
 (define (compiler-object-coff-push-name8!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
-  [name : String]) : unit
+  [name : (& name str)]) : unit
   (let
     [i : i64 0]
-    [n : i64
-      (compiler-object-coff-string-length
-        (owned_view.compiler-owned-shared-view name))]
+    [n : i64 (compiler-object-coff-string-length name)]
     (begin
       (while (< i 8)
         (begin
           (if (< i n)
             (byte_buf_core.byte-buf-builder-push
               out
-              (cast
-                (compiler-object-coff-string-ref
-                  (owned_view.compiler-owned-shared-view name)
-                  i)
-                : u8))
+              (cast (compiler-object-coff-string-ref name i) : u8))
             (compiler-object-coff-push-u8! out 0))
           (set! i (+ i 1))))
       unit)))
@@ -416,9 +404,7 @@
 (define (compiler-object-coff-relocation-list-supported?
   [relocs : cobj.CompilerObjectRelocationList]) : bool
   (let
-    [count : i64
-      (cobj.compiler-object-relocation-list-count
-        (owned_view.compiler-owned-shared-view relocs))]
+    [count : i64 (cobj.compiler-object-relocation-list-count relocs)]
     [index : i64 0]
     [ok : bool true]
     (begin
@@ -489,9 +475,7 @@
 (define (compiler-object-coff-sections-supported?
   [sections : cobj.CompilerObjectSectionList]) : bool
   (let
-    [count : i64
-      (cobj.compiler-object-section-list-count
-        (owned_view.compiler-owned-shared-view sections))]
+    [count : i64 (cobj.compiler-object-section-list-count sections)]
     [index : i64 0]
     [ok : bool true]
     (begin
@@ -624,9 +608,7 @@
   [image : cobj.CompilerObjectImage]
   [relocs : cobj.CompilerObjectRelocationList]) : bool
   (let
-    [count : i64
-      (cobj.compiler-object-relocation-list-count
-        (owned_view.compiler-owned-shared-view relocs))]
+    [count : i64 (cobj.compiler-object-relocation-list-count relocs)]
     [index : i64 0]
     [ok : bool true]
     (begin
@@ -820,9 +802,7 @@
     (owned_view.compiler-owned-shared-view image.sections)
     (cobj.CompilerObjectSectionKind.Text))
     [(cobj.CompilerObjectSection.Section _ _ instrs)
-      (compiler-object-coff-instr-targets-known?
-        (owned_view.compiler-owned-shared-view image)
-        instrs)]))
+      (compiler-object-coff-instr-targets-known? image instrs)]))
 
 (define (compiler-object-coff-text-instr-relocation-count
   [image : cobj.CompilerObjectImage]) : i64
@@ -838,8 +818,7 @@
     (compiler-object-coff-relocation-count
       (owned_view.compiler-owned-shared-view image.relocations)
       (cobj.CompilerObjectSectionKind.Text))
-    (compiler-object-coff-text-instr-relocation-count
-      (owned_view.compiler-owned-shared-view image))))
+    (compiler-object-coff-text-instr-relocation-count image)))
 
 (define (compiler-object-coff-image-supported?
   [image : cobj.CompilerObjectImage]) : bool
@@ -866,9 +845,7 @@
   [relocs : cobj.CompilerObjectRelocationList]
   [kind : cobj.CompilerObjectSectionKind]) : i64
   (let
-    [count : i64
-      (cobj.compiler-object-relocation-list-count
-        (owned_view.compiler-owned-shared-view relocs))]
+    [count : i64 (cobj.compiler-object-relocation-list-count relocs)]
     [index : i64 0]
     [total : i64 0]
     (begin
@@ -1108,9 +1085,7 @@
           (compiler-object-coff-section-relocation-physical-count
             (owned_view.compiler-owned-shared-view image)
             (cobj.CompilerObjectSectionKind.Xdata))]
-        [base : i64
-          (compiler-object-coff-relocation-base
-            (owned_view.compiler-owned-shared-view image))]
+        [base : i64 (compiler-object-coff-relocation-base image)]
         (match kind
           [(cobj.CompilerObjectSectionKind.Text) base]
           [(cobj.CompilerObjectSectionKind.Data)
@@ -1263,15 +1238,11 @@
           aligned))]
     [(cobj.CompilerObjectDataRecord.Bytes bytes)
       (begin
-        (compiler-object-coff-push-string-bytes!
-          out
-          (owned_view.compiler-owned-shared-view bytes))
+        (compiler-object-coff-push-string-bytes! out bytes)
         (+ offset (compiler-object-coff-string-length bytes)))]
     [(cobj.CompilerObjectDataRecord.String text)
       (begin
-        (compiler-object-coff-push-string-bytes!
-          out
-          (owned_view.compiler-owned-shared-view text))
+        (compiler-object-coff-push-string-bytes! out text)
         (compiler-object-coff-push-u8! out 0)
         (compiler-object-coff-data-record-end-offset
           (cobj.CompilerObjectDataRecord.String text)
@@ -1534,9 +1505,7 @@
     (compiler-object-coff-push-u32! out offset)
     (compiler-object-coff-push-u32!
       out
-      (compiler-object-coff-symbol-index
-        (owned_view.compiler-owned-shared-view image)
-        target))
+      (compiler-object-coff-symbol-index image target))
     (compiler-object-coff-push-u16!
       out
       (compiler-object-coff-relocation-type kind))))
@@ -1730,11 +1699,7 @@
     (owned_view.compiler-owned-shared-view image.sections)
     (cobj.CompilerObjectSectionKind.Text))
     [(cobj.CompilerObjectSection.Section _ _ instrs)
-      (compiler-object-coff-render-text-instr-relocations!
-        out
-        (owned_view.compiler-owned-shared-view image)
-        instrs
-        0)]))
+      (compiler-object-coff-render-text-instr-relocations! out image instrs 0)]))
 
 (define (compiler-object-coff-render-relocations-for-section!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
@@ -1742,9 +1707,7 @@
   [relocs : cobj.CompilerObjectRelocationList]
   [kind : cobj.CompilerObjectSectionKind]) : unit
   (let
-    [count : i64
-      (cobj.compiler-object-relocation-list-count
-        (owned_view.compiler-owned-shared-view relocs))]
+    [count : i64 (cobj.compiler-object-relocation-list-count relocs)]
     [index : i64 0]
     (begin
       (compiler-object-coff-render-relocation-overflow-sentinel!
@@ -1808,15 +1771,15 @@
     (compiler-object-coff-render-relocations-for-section!
       out
       (owned_view.compiler-owned-shared-view image)
-      (owned_view.compiler-owned-shared-view image.relocations)
+      image.relocations
       (cobj.CompilerObjectSectionKind.Rsrc))))
 
-(define (compiler-object-coff-symbol-name-long? [name : String]) : bool
+(define (compiler-object-coff-symbol-name-long? [name : (& name str)]) : bool
   (> (compiler-object-coff-string-length name) 8))
 
 (define (compiler-object-coff-symbol-string-offset-from
   [symbols : cobj.CompilerObjectSymbolList]
-  [name : String]
+  [name : (& name str)]
   [offset : i64]) : i64
   (let
     [count : i64
@@ -1832,8 +1795,7 @@
           (owned_view.compiler-owned-shared-view symbols)
           index)
           [(cobj.CompilerObjectSymbol.Symbol found _ _ _)
-            (if (compiler-object-coff-symbol-name-long?
-              (owned_view.compiler-owned-shared-view found))
+            (if (compiler-object-coff-symbol-name-long? found)
               (if (string.eq found name)
                 (begin
                   (set! result cur-offset)
@@ -1850,15 +1812,14 @@
 
 (define (compiler-object-coff-symbol-string-offset
   [image : cobj.CompilerObjectImage]
-  [name : String]) : i64
+  [name : (& name str)]) : i64
   (compiler-object-coff-symbol-string-offset-from image.symbols name 4))
 
 (define (compiler-object-coff-push-symbol-name!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [image : cobj.CompilerObjectImage]
-  [name : String]) : unit
-  (if (compiler-object-coff-symbol-name-long?
-    (owned_view.compiler-owned-shared-view name))
+  [name : (& name str)]) : unit
+  (if (compiler-object-coff-symbol-name-long? name)
     (begin
       (compiler-object-coff-push-u32! out 0)
       (compiler-object-coff-push-u32!
@@ -1909,7 +1870,7 @@
         (compiler-object-coff-push-symbol-name!
           out
           (owned_view.compiler-owned-shared-view image)
-          (owned_view.compiler-owned-shared-view name))
+          name)
         (compiler-object-coff-push-u32!
           out
           (compiler-object-coff-symbol-value image name section))
@@ -1961,8 +1922,7 @@
             (owned_view.compiler-owned-shared-view symbols)
             index)
             [(cobj.CompilerObjectSymbol.Symbol name _ _ _)
-              (if (compiler-object-coff-symbol-name-long?
-                (owned_view.compiler-owned-shared-view name))
+              (if (compiler-object-coff-symbol-name-long? name)
                 (set!
                   total
                   (+ total (+ (compiler-object-coff-string-length name) 1)))
@@ -1975,7 +1935,7 @@
   (compiler-object-coff-string-table-size-from symbols 4))
 
 (define (compiler-object-coff-layout-accumulator-ok?
-  [acc : CompilerObjectCoffLayoutAccumulator]) : bool
+  [acc : (& acc CompilerObjectCoffLayoutAccumulator)]) : bool
   (= (compiler-object-coff-string-length acc.error) 0))
 
 (define (compiler-object-coff-layout-section-error
@@ -2007,9 +1967,7 @@
   [image : cobj.CompilerObjectImage]
   [kind : cobj.CompilerObjectSectionKind]
   [max-output-size : i64]) : CompilerObjectCoffLayoutAccumulator
-  (if (not
-    (compiler-object-coff-layout-accumulator-ok?
-      (owned_view.compiler-owned-shared-view acc)))
+  (if (not (compiler-object-coff-layout-accumulator-ok? acc))
     acc
     (let
       [virtual-size : i64
@@ -2050,9 +2008,7 @@
   [kind : cobj.CompilerObjectSectionKind]
   [semantic-count : i64]
   [max-output-size : i64]) : CompilerObjectCoffLayoutAccumulator
-  (if (not
-    (compiler-object-coff-layout-accumulator-ok?
-      (owned_view.compiler-owned-shared-view acc)))
+  (if (not (compiler-object-coff-layout-accumulator-ok? acc))
     acc
     (cond
       [(< semantic-count 0)
@@ -2110,14 +2066,10 @@
   [acc : CompilerObjectCoffLayoutAccumulator]
   [symbols : cobj.CompilerObjectSymbolList]
   [max-output-size : i64]) : CompilerObjectCoffLayoutAccumulator
-  (if (not
-    (compiler-object-coff-layout-accumulator-ok?
-      (owned_view.compiler-owned-shared-view acc)))
+  (if (not (compiler-object-coff-layout-accumulator-ok? acc))
     acc
     (let
-      [count : i64
-        (cobj.compiler-object-symbol-list-count
-          (owned_view.compiler-owned-shared-view symbols))]
+      [count : i64 (cobj.compiler-object-symbol-list-count symbols)]
       (if (or
         (< count 0)
         (> count compiler-object-coff-max-u32)
@@ -2136,9 +2088,7 @@
   [acc : CompilerObjectCoffLayoutAccumulator]
   [symbols : cobj.CompilerObjectSymbolList]
   [max-output-size : i64]) : CompilerObjectCoffLayoutAccumulator
-  (if (not
-    (compiler-object-coff-layout-accumulator-ok?
-      (owned_view.compiler-owned-shared-view acc)))
+  (if (not (compiler-object-coff-layout-accumulator-ok? acc))
     acc
     (let
       [count : i64
@@ -2149,22 +2099,16 @@
       [error : String ""]
       (begin
         (while (and
-          (=
-            (compiler-object-coff-string-length
-              (owned_view.compiler-owned-shared-view error))
-            0)
+          (= (compiler-object-coff-string-length error) 0)
           (< index count))
           (begin
             (match (cobj.compiler-object-symbol-list-ref
               (owned_view.compiler-owned-shared-view symbols)
               index)
               [(cobj.CompilerObjectSymbol.Symbol name _ _ _)
-                (if (compiler-object-coff-symbol-name-long?
-                  (owned_view.compiler-owned-shared-view name))
+                (if (compiler-object-coff-symbol-name-long? name)
                   (let
-                    [name-size : i64
-                      (compiler-object-coff-string-length
-                        (owned_view.compiler-owned-shared-view name))]
+                    [name-size : i64 (compiler-object-coff-string-length name)]
                     (if (or
                       (> name-size (- compiler-object-coff-max-u32 1))
                       (>
@@ -2179,10 +2123,7 @@
                       (set! table-size (+ table-size (+ name-size 1)))))
                   unit)])
             (set! index (+ index 1))))
-        (if (>
-          (compiler-object-coff-string-length
-            (owned_view.compiler-owned-shared-view error))
-          0)
+        (if (> (compiler-object-coff-string-length error) 0)
           (CompilerObjectCoffLayoutAccumulator acc.offset error)
           (if (or
             (> acc.offset max-output-size)
@@ -2303,10 +2244,9 @@
       [strings : CompilerObjectCoffLayoutAccumulator
         (compiler-object-coff-check-string-table-layout
           symbols
-          (owned_view.compiler-owned-shared-view image.symbols)
+          image.symbols
           max-output-size)]
-      (if (compiler-object-coff-layout-accumulator-ok?
-        (owned_view.compiler-owned-shared-view strings))
+      (if (compiler-object-coff-layout-accumulator-ok? strings)
         (ResultCompilerObjectCoffLayout.Ok strings.offset)
         (ResultCompilerObjectCoffLayout.Err strings.error)))))
 
@@ -2325,8 +2265,7 @@
             (owned_view.compiler-owned-shared-view symbols)
             index)
             [(cobj.CompilerObjectSymbol.Symbol name _ _ _)
-              (if (compiler-object-coff-symbol-name-long?
-                (owned_view.compiler-owned-shared-view name))
+              (if (compiler-object-coff-symbol-name-long? name)
                 (begin
                   (compiler-object-coff-push-string-bytes! out name)
                   (compiler-object-coff-push-u8! out 0))
@@ -2375,9 +2314,7 @@
               (&mut out)
               (owned_view.compiler-owned-shared-view image)
               (owned_view.compiler-owned-shared-view image.symbols))
-            (compiler-object-coff-render-string-table!
-              (&mut out)
-              (owned_view.compiler-owned-shared-view image))
+            (compiler-object-coff-render-string-table! (&mut out) image)
             (ResultCompilerObjectCoff.Ok
               (compiler-object-coff-bytes-string (& out)))))]
       [(ResultCompilerObjectCoffLayout.Err message)
@@ -2387,11 +2324,7 @@
 
 (define (compiler-object-coff-u16-at [text : String] [offset : i64]) : i64
   (+
-    (cast
-      (compiler-object-coff-string-ref
-        (owned_view.compiler-owned-shared-view text)
-        offset)
-      : i64)
+    (cast (compiler-object-coff-string-ref text offset) : i64)
     (shl (cast (compiler-object-coff-string-ref text (+ offset 1)) : i64) 8)))
 
 (define (compiler-object-coff-u32-at [text : String] [offset : i64]) : i64
@@ -2413,16 +2346,12 @@
       (- (compiler-object-coff-section-number kind) 1))))
 
 (define (compiler-object-coff-prefix-at?
-  [text : String]
-  [needle : String]
+  [text : (& text str)]
+  [needle : (& needle str)]
   [start : i64]) : bool
   (let
-    [text-len : i64
-      (compiler-object-coff-string-length
-        (owned_view.compiler-owned-shared-view text))]
-    [needle-len : i64
-      (compiler-object-coff-string-length
-        (owned_view.compiler-owned-shared-view needle))]
+    [text-len : i64 (compiler-object-coff-string-length text)]
+    [needle-len : i64 (compiler-object-coff-string-length needle)]
     (if (> (+ start needle-len) text-len)
       false
       (let
@@ -2432,12 +2361,8 @@
           (while ok
             (if (< i needle-len)
               (if (=
-                (compiler-object-coff-string-ref
-                  (owned_view.compiler-owned-shared-view text)
-                  (+ start i))
-                (compiler-object-coff-string-ref
-                  (owned_view.compiler-owned-shared-view needle)
-                  i))
+                (compiler-object-coff-string-ref text (+ start i))
+                (compiler-object-coff-string-ref needle i))
                 (set! i (+ i 1))
                 (set! ok false))
               (set! ok false)))
@@ -2446,17 +2371,12 @@
 (define (compiler-object-coff-contains? [text : String] [needle : String]) : bool
   (let
     [i : i64 0]
-    [n : i64
-      (compiler-object-coff-string-length
-        (owned_view.compiler-owned-shared-view text))]
+    [n : i64 (compiler-object-coff-string-length text)]
     [found : bool false]
     (begin
       (while (and (not found) (< i n))
         (begin
-          (if (compiler-object-coff-prefix-at?
-            (owned_view.compiler-owned-shared-view text)
-            (owned_view.compiler-owned-shared-view needle)
-            i)
+          (if (compiler-object-coff-prefix-at? text needle i)
             (set! found true)
             unit)
           (set! i (+ i 1))))
@@ -2495,10 +2415,7 @@
       (and
         (= after-empty 1)
         (= after-interior-nul 5)
-        (=
-          (compiler-object-coff-string-length
-            (owned_view.compiler-owned-shared-view bytes))
-          5)
+        (= (compiler-object-coff-string-length bytes) 5)
         (=
           (compiler-object-coff-u8-at
             (owned_view.compiler-owned-shared-view bytes)
@@ -2519,11 +2436,7 @@
             (owned_view.compiler-owned-shared-view bytes)
             3)
           0x62)
-        (=
-          (compiler-object-coff-u8-at
-            (owned_view.compiler-owned-shared-view bytes)
-            4)
-          0)))))
+        (= (compiler-object-coff-u8-at bytes 4) 0)))))
 
 (cfg
   test
@@ -2608,7 +2521,7 @@
           (cobj.CompilerObjectSection.Section
             (cobj.CompilerObjectSectionKind.Bss)
             (cobj.compiler-object-data-record-builder-finish bss2)
-            (owned_view.compiler-owned-shared-view empty-instrs)))]
+            empty-instrs))]
       [symbols0 : cobj.CompilerObjectSymbolBuilder
         (cobj.compiler-object-symbol-builder-with-capacity 5)]
       [symbols1 : cobj.CompilerObjectSymbolBuilder
@@ -2711,9 +2624,7 @@
           (compiler-object-coff-contains?
             (owned_view.compiler-owned-shared-view obj)
             "foreign_exact")
-          (compiler-object-coff-contains?
-            (owned_view.compiler-owned-shared-view obj)
-            "long_rodata_label_name"))]
+          (compiler-object-coff-contains? obj "long_rodata_label_name"))]
       [(ResultCompilerObjectCoff.Err _) false])))
 
 (cfg
@@ -2966,8 +2877,8 @@
           sections3
           (cobj.CompilerObjectSection.Section
             (cobj.CompilerObjectSectionKind.Bss)
-            (owned_view.compiler-owned-shared-view empty-data)
-            (owned_view.compiler-owned-shared-view empty-instrs)))]
+            empty-data
+            empty-instrs))]
       (cobj.CompilerObjectImage
         (cobj.compiler-object-section-builder-finish sections4)
         (compiler-object-coff-text-smoke-symbols)
@@ -2993,11 +2904,7 @@
           (owned_view.compiler-owned-shared-view obj)
           (+ entry 4))
         symbol-index)
-      (=
-        (compiler-object-coff-u16-at
-          (owned_view.compiler-owned-shared-view obj)
-          (+ entry 8))
-        reloc-type))))
+      (= (compiler-object-coff-u16-at obj (+ entry 8)) reloc-type))))
 
 (cfg
   test
@@ -3080,11 +2987,7 @@
           (owned_view.compiler-owned-shared-view obj)
           (+ text-ptr 40))
         0x85)
-      (=
-        (compiler-object-coff-u8-at
-          (owned_view.compiler-owned-shared-view obj)
-          (+ text-ptr 45))
-        0xe9))))
+      (= (compiler-object-coff-u8-at obj (+ text-ptr 45)) 0xe9))))
 
 (cfg
   test
@@ -3159,13 +3062,11 @@
             "_tl_true")
           rel32)
         (compiler-object-coff-reloc-entry-ok?
-          (owned_view.compiler-owned-shared-view obj)
+          obj
           reloc-ptr
           7
           46
-          (compiler-object-coff-symbol-index
-            (owned_view.compiler-owned-shared-view image)
-            "_tl_false")
+          (compiler-object-coff-symbol-index image "_tl_false")
           rel32)))))
 
 (cfg
@@ -3203,10 +3104,7 @@
               (compiler-object-coff-text-smoke-bytes-ok?
                 (owned_view.compiler-owned-shared-view obj)
                 text-ptr)
-              (compiler-object-coff-text-smoke-relocs-ok?
-                (owned_view.compiler-owned-shared-view image)
-                (owned_view.compiler-owned-shared-view obj)
-                reloc-ptr)))]
+              (compiler-object-coff-text-smoke-relocs-ok? image obj reloc-ptr)))]
         [(ResultCompilerObjectCoff.Err _) false]))))
 
 (cfg
@@ -3259,8 +3157,8 @@
     (let
       [base : cobj.CompilerObjectImage (compiler-object-coff-smoke-image)]
       (cobj.CompilerObjectImage
-        (owned_view.compiler-owned-shared-view base.sections)
-        (owned_view.compiler-owned-shared-view base.symbols)
+        base.sections
+        base.symbols
         (compiler-object-coff-boundary-relocations data-count rodata-count)))))
 
 (cfg
@@ -3272,7 +3170,7 @@
       (=
         (bit-and
           (compiler-object-coff-u32-at
-            (owned_view.compiler-owned-shared-view obj)
+            obj
             (+ (compiler-object-coff-section-header-offset kind) 36))
           compiler-object-coff-section-lnk-nreloc-ovfl)
         0))))
@@ -3336,13 +3234,11 @@
                   "_tl_answer")
                 compiler-object-coff-reloc-amd64-addr64)
               (compiler-object-coff-reloc-entry-ok?
-                (owned_view.compiler-owned-shared-view obj)
+                obj
                 reloc-pointer
                 (- semantic-count 1)
                 8
-                (compiler-object-coff-symbol-index
-                  (owned_view.compiler-owned-shared-view image)
-                  "foreign_exact")
+                (compiler-object-coff-symbol-index image "foreign_exact")
                 compiler-object-coff-reloc-amd64-addr64)
               (=
                 symbol-pointer
@@ -3461,19 +3357,14 @@
                 rodata-pointer
                 rodata-count
                 0
-                (compiler-object-coff-symbol-index
-                  (owned_view.compiler-owned-shared-view image)
-                  "foreign_exact")
+                (compiler-object-coff-symbol-index image "foreign_exact")
                 compiler-object-coff-reloc-amd64-addr64)
               (=
                 symbol-pointer
                 (+
                   rodata-pointer
                   (* rodata-physical compiler-object-coff-relocation-size)))
-              (=
-                (compiler-object-coff-string-length
-                  (owned_view.compiler-owned-shared-view obj))
-                expected-size)))]
+              (= (compiler-object-coff-string-length obj) expected-size)))]
         [(ResultCompilerObjectCoff.Err _) false]))))
 
 (cfg
@@ -3502,13 +3393,13 @@
           499)]
       (and
         (compiler-object-coff-contains?
-          (owned_view.compiler-owned-shared-view negative.error)
+          negative.error
           "section .pdata relocation count -1")
         (compiler-object-coff-contains?
-          (owned_view.compiler-owned-shared-view sentinel-overflow.error)
+          sentinel-overflow.error
           "section .xdata relocation count 4294967295")
         (compiler-object-coff-contains?
-          (owned_view.compiler-owned-shared-view table-overflow.error)
+          table-overflow.error
           "section .rsrc relocation count 10")
         (= (compiler-object-coff-relocation-physical-count 0xfffe) 0xfffe)
         (= (compiler-object-coff-relocation-physical-count 0xffff) 0x10000)

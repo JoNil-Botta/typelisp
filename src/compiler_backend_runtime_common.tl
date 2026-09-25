@@ -189,10 +189,10 @@ tl_startup_profile_process_entry_tick:
     (str_cat.str-cat
       (str_cat.str-cat
         "    addq "
-        (owned_view.compiler-owned-shared-view payload-reg)
+        payload-reg
         ", tl_profile_alloc_total_bytes(%rip)\n    addq ")
       (str_cat.str-cat
-        (owned_view.compiler-owned-shared-view claim-reg)
+        claim-reg
         ", tl_profile_alloc_live_bytes(%rip)\n    movq tl_profile_alloc_live_bytes(%rip), "
         (owned_view.compiler-owned-shared-view scratch-reg)
         "\n")
@@ -203,7 +203,7 @@ tl_startup_profile_process_entry_tick:
         (owned_view.compiler-owned-shared-view done-label))
       (str_cat.str-cat
         "\n    movq "
-        (owned_view.compiler-owned-shared-view scratch-reg)
+        scratch-reg
         ", tl_profile_alloc_peak_bytes(%rip)\n"
         (str_cat.str-cat done-label ":\n" "" "")))
     ""))
@@ -223,7 +223,7 @@ tl_startup_profile_process_entry_tick:
       "), "
       (owned_view.compiler-owned-shared-view used-reg)
       "\n    subq "
-      (owned_view.compiler-owned-shared-view used-reg)
+      used-reg
       ", tl_profile_alloc_live_bytes(%rip)\n")
     ""))
 
@@ -347,7 +347,7 @@ tl_startup_profile_process_entry_tick:
     [atomic-body-d : String
       (str_cat.str-cat
         "\n    cmpq "
-        (owned_view.compiler-owned-shared-view usable-end-offset)
+        usable-end-offset
         "(%r9), "
         (owned_view.compiler-owned-shared-view next-reg)
         "\n    ja "
@@ -355,9 +355,9 @@ tl_startup_profile_process_entry_tick:
     [atomic-body-e : String
       (str_cat.str-cat
         "\n    lock cmpxchgq "
-        (owned_view.compiler-owned-shared-view next-reg)
+        next-reg
         ", 16(%r9)\n    jne "
-        (owned_view.compiler-owned-shared-view atomic-cas-label))]
+        atomic-cas-label)]
     [atomic-body : String
       (str_cat.str-cat
         atomic-body-a
@@ -368,18 +368,18 @@ tl_startup_profile_process_entry_tick:
         "\n")]
     [atomic-profile : String
       (compiler-backend-runtime-profile-alloc-account
-        (owned_view.compiler-owned-shared-view size-imm)
-        (owned_view.compiler-owned-shared-view atomic-profile-label)
+        size-imm
+        atomic-profile-label
         profile)]
     [slow-body : String
       (str_cat.str-cat
         "    ret
 "
-        (owned_view.compiler-owned-shared-view slow-label)
+        slow-label
         ":\n    movq $"
-        (owned_view.compiler-owned-shared-view size-text)
+        size-text
         ", "
-        (owned_view.compiler-owned-shared-view size-reg)
+        size-reg
         "\n    jmp tl_alloc\n")]
     (str_cat.str-cat
       prologue
@@ -446,11 +446,11 @@ tl_startup_profile_process_entry_tick:
       (owned_view.compiler-owned-shared-view next-reg)
       profile)
     (compiler-backend-runtime-fast-alloc-function
-      (owned_view.compiler-owned-shared-view current-arena-load)
-      (owned_view.compiler-owned-shared-view usable-end-offset)
+      current-arena-load
+      usable-end-offset
       64
-      (owned_view.compiler-owned-shared-view size-reg)
-      (owned_view.compiler-owned-shared-view next-reg)
+      size-reg
+      next-reg
       profile)))
 
 (define (compiler-backend-runtime-region-mark-functions

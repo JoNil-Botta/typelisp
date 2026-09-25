@@ -467,19 +467,25 @@
                     (owned_view.compiler-owned-shared-view bytes)
                     (+ offset 2)
                     target))]
-              [(cobj.CompilerObjectX64Instr.Jcc _ target)
-                (set!
-                  ok
-                  (compiler-tlci-native-patch-rel32!
-                    (owned_view.compiler-owned-shared-view import-names)
-                    (owned_view.compiler-owned-shared-view import-offsets)
-                    (owned_view.compiler-owned-shared-view import-count)
-                    (owned_view.compiler-owned-shared-view error)
-                    bases
-                    symbols
-                    (owned_view.compiler-owned-shared-view bytes)
-                    (+ offset 2)
-                    target))]
+              [(cobj.CompilerObjectX64Instr.Jcc cc target)
+                (if (cobj.compiler-object-condition-code-valid? cc)
+                  (set!
+                    ok
+                    (compiler-tlci-native-patch-rel32!
+                      (owned_view.compiler-owned-shared-view import-names)
+                      (owned_view.compiler-owned-shared-view import-offsets)
+                      (owned_view.compiler-owned-shared-view import-count)
+                      (owned_view.compiler-owned-shared-view error)
+                      bases
+                      symbols
+                      (owned_view.compiler-owned-shared-view bytes)
+                      (+ offset 2)
+                      target))
+                  (begin
+                    (compiler-tlci-native-fail!
+                      (owned_view.compiler-owned-shared-view error)
+                      "tlci native image: condition code must be between 0 and 15")
+                    (set! ok false)))]
               [(cobj.CompilerObjectX64Instr.Branch true-target false-target)
                 (begin
                   (set!

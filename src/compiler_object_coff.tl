@@ -467,7 +467,10 @@
           [(cobj.CompilerObjectX64Instr.TailCall _) (set! index (+ index 1))]
           [(cobj.CompilerObjectX64Instr.Jump _) (set! index (+ index 1))]
           [(cobj.CompilerObjectX64Instr.Ja _) (set! index (+ index 1))]
-          [(cobj.CompilerObjectX64Instr.Jcc _ _) (set! index (+ index 1))]
+          [(cobj.CompilerObjectX64Instr.Jcc cc _)
+            (if (cobj.compiler-object-condition-code-valid? cc)
+              (set! index (+ index 1))
+              (set! ok false))]
           [(cobj.CompilerObjectX64Instr.Branch _ _) (set! index (+ index 1))]
           [(cobj.CompilerObjectX64Instr.LoadRip _) (set! index (+ index 1))]
           [(cobj.CompilerObjectX64Instr.LoadRipAddress _)

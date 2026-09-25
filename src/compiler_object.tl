@@ -108,6 +108,9 @@
   (Bytes String)
   (Raw String))
 
+(define (compiler-object-condition-code-valid? [cc : i64]) : bool
+  (and (>= cc 0) (< cc 16)))
+
 (defstruct CompilerObjectX64InstrList
   (slots (__tl_dyn-array CompilerObjectX64Instr))
   (len i64))

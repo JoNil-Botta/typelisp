@@ -137,13 +137,15 @@
         (compiler-object-asm-append-rip-instr! out "    ja " target "\n")
         true)]
     [(cobj.CompilerObjectX64Instr.Jcc cc target)
-      (begin
-        (compiler-object-asm-append-rip-instr!
-          out
-          (compiler-object-asm-jcc-mnemonic cc)
-          target
-          "\n")
-        true)]
+      (if (cobj.compiler-object-condition-code-valid? cc)
+        (begin
+          (compiler-object-asm-append-rip-instr!
+            out
+            (compiler-object-asm-jcc-mnemonic cc)
+            target
+            "\n")
+          true)
+        false)]
     [(cobj.CompilerObjectX64Instr.Branch true-target false-target)
       (begin
         (compiler-object-asm-append! out "    testq %rax, %rax\n    jne ")
@@ -421,7 +423,7 @@
         (ResultCompilerObjectAsm.Ok
           (byte_buf_core.byte-buf-builder-finish-string (& out)))
         (ResultCompilerObjectAsm.Err
-          "structured assembly rendering does not support raw instructions")))))
+          "structured assembly rendering requires supported instructions and condition codes")))))
 
 (cfg
   test

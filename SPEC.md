@@ -710,6 +710,9 @@ x86_64 System V C ABI path uses the same synthetic enum view and classifies
 it with the shared System V aggregate classifier: register-class enum
 arguments/returns use the normal integer/SSE register slots, larger enum
 arguments are MEMORY-class stack copies, and larger enum returns use sret.
+On both targets an aggregate extern call never allocates: a hidden-reference
+argument copy, an sret result buffer, and a register-returned result that is
+kept in memory all live in the caller's frame.
 
 Supported targets use an x86_64 data model: fixed-width integer and floating
 types use their explicit sizes; `bool` and `char` are one byte; raw pointers

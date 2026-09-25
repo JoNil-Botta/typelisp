@@ -1064,6 +1064,9 @@
       (compiler_lower_tests.compiler-lower-c-abi-windows-byref-aggregate-temps-shape-ok?)
       (io.panic "lower: windows byref aggregate temporaries smoke mismatch"))
     (unless
+      (compiler_lower_tests.compiler-lower-c-abi-result-frame-storage-shape-ok?)
+      (io.panic "lower: C ABI aggregate result frame storage smoke mismatch"))
+    (unless
       (compiler_lower_tests.compiler-lower-c-abi-windows-small-float-aggregate-shape-ok?)
       (io.panic "lower: windows small float aggregate C ABI smoke mismatch"))
     (unless

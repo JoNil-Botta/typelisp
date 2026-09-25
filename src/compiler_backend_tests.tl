@@ -3726,13 +3726,17 @@
         (compiler_backend.compiler-backend-string-contains?
           (owned_view.compiler-owned-shared-view asm)
           "    call tl_cabi_color_make\n")
-        (or
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            (compiler-backend-alloc-generic-call-text 4 "%rdi"))
-          (compiler-backend-string-contains-alloc-size?
-            (owned_view.compiler-owned-shared-view asm)
-            8))
+        ;; `Color` comes back in EAX but TypeLisp keeps it in memory: a
+        ;; frame slot, not an arena allocation (#7990).
+        (and
+          (=
+            (compiler-backend-alloc-call-count
+              (owned_view.compiler-owned-shared-view asm))
+            0)
+          (not
+            (compiler-backend-string-contains-alloc-size?
+              (owned_view.compiler-owned-shared-view asm)
+              8)))
         (compiler_backend.compiler-backend-string-contains?
           (owned_view.compiler-owned-shared-view asm)
           (cfg scratch-vreg "    movq %rax, %rdi\n" "    movl %r8d, (%r10)\n"))
@@ -3775,13 +3779,17 @@
         (compiler_backend.compiler-backend-string-contains?
           (owned_view.compiler-owned-shared-view asm)
           "    call tl_cabi_color_make\n")
-        (or
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            (compiler-backend-alloc-generic-call-text 4 "%rcx"))
-          (compiler-backend-string-contains-alloc-size?
-            (owned_view.compiler-owned-shared-view asm)
-            8))
+        ;; `Color` comes back in EAX but TypeLisp keeps it in memory: a
+        ;; frame slot, not an arena allocation (#7990).
+        (and
+          (=
+            (compiler-backend-alloc-call-count
+              (owned_view.compiler-owned-shared-view asm))
+            0)
+          (not
+            (compiler-backend-string-contains-alloc-size?
+              (owned_view.compiler-owned-shared-view asm)
+              8)))
         (compiler_backend.compiler-backend-string-contains?
           (owned_view.compiler-owned-shared-view asm)
           (cfg scratch-vreg "    movl %r9d, (%rax)\n" "    movl %r8d, (%r10)\n"))
@@ -3840,17 +3848,18 @@
       (if (= (wide-score via-ptr) 52) 42 2)
       1)))")
 
-;; The Win64 sret aggregate-RETURN path: returning a
-;; 9-16B register-group from a C function reserves a caller sret buffer (passed
-;; as a scalar-pointer hidden first arg) and materializes the result back into
-;; the 2-word register group (see lower-c-abi-finish-call-result). Assert the
 (define (compiler-backend-register-indirect-call? [asm : String]) : bool
   (compiler_backend.compiler-backend-string-contains?
     (owned_view.compiler-owned-shared-view asm)
     "    call *%"))
 
-;; sret codegen IS emitted -- both the direct call and the indirect register
-;; call site -- and that nothing is rejected as unsupported.
+;; The Win64 sret aggregate-RETURN path: returning a 9-16B register-group from
+;; a C function reserves a caller sret buffer in the frame (passed as a
+;; scalar-pointer hidden first arg; #7990) and materializes the result back
+;; into the 2-word register group (see lower-c-abi-finish-call-result). Assert
+;; the sret codegen IS emitted -- both the direct call and the indirect
+;; register call site -- that neither buffer allocates, and that nothing is
+;; rejected as unsupported.
 (define (compiler-backend-c-abi-sret-aggregate-windows-ok?) : bool
   (match (compiler_backend.compiler-backend-emit-source-for-target
     (compiler-backend-c-abi-sret-aggregate-source)
@@ -3877,7 +3886,15 @@
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
             (compiler-backend-todo-marker)))
-        true)]
+        (and
+          (=
+            (compiler-backend-alloc-call-count
+              (owned_view.compiler-owned-shared-view asm))
+            0)
+          (not
+            (compiler-backend-string-contains-alloc-size?
+              (owned_view.compiler-owned-shared-view asm)
+              16))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-c-abi-byref-aggregate-arg-source) : String
@@ -4023,16 +4040,17 @@
           (compiler-backend-register-indirect-call?
             (owned_view.compiler-owned-shared-view asm))
           ;; The by-reference `SmallChoice` (16 bytes) and `WideChoice` (24
-          ;; bytes) arguments are frame temporaries (#7885). The only
-          ;; allocations left are the two 24-byte hidden-sret buffers for the
-          ;; `ReturnChoice` results (#7990).
+          ;; bytes) arguments are frame temporaries (#7885), and so are the
+          ;; 24-byte hidden-sret buffers for the `ReturnChoice` results
+          ;; (#7990): nothing allocates.
           (not
             (compiler-backend-string-contains-alloc-size?
               (owned_view.compiler-owned-shared-view asm)
               16))
-          (compiler-backend-string-contains-alloc-size?
-            (owned_view.compiler-owned-shared-view asm)
-            24)
+          (not
+            (compiler-backend-string-contains-alloc-size?
+              (owned_view.compiler-owned-shared-view asm)
+              24))
           (not
             (compiler_backend.compiler-backend-string-contains?
               (owned_view.compiler-owned-shared-view asm)
@@ -4044,7 +4062,7 @@
           (=
             (compiler-backend-alloc-call-count
               (owned_view.compiler-owned-shared-view asm))
-            2))
+            0))
         true)]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 

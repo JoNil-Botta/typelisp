@@ -974,6 +974,110 @@ end
         54]
       [else 42])))
 
+;; Unused-import findings for selected-item and wildcard imports (#7971).
+;; `(import m.item)` parses like a dotted module path; the driver resolves it,
+;; so these sources select real stdlib items. A selected item is used by its
+;; bare alias; a module alias is not. A wildcard cannot be attributed from the
+;; importing file, so it is never reported.
+(define (selfhost-lint-import-form-ok?
+  [source : String]
+  [unused : i64]
+  [redundant : i64]) : bool
+  (and
+    (=
+      (selfhost-lint-source-unused-import-count
+        (owned_view.compiler-owned-shared-view source))
+      unused)
+    (=
+      (selfhost-lint-source-rule-count
+        source
+        (lint_core.lint-rule-redundant-import-alias-id))
+      redundant)))
+
+(define (selfhost-lint-unused-item-message-ok?) : bool
+  (match (lint_core.lint-findings-get
+    (lint_driver_core.selfhost-lint-source-with-roots
+      "lint_driver_self_test.tl"
+      "(import stdlib.profile.now-ms)\n(define (main) : i64 42)"
+      (lint_svec.new))
+    0)
+    [(lint_core.LintMaybeFinding.Some finding)
+      (string.eq
+        finding.message
+        "unused import: item now-ms from stdlib.profile is never referenced")]
+    [(lint_core.LintMaybeFinding.No) false]))
+
+(define (selfhost-lint-import-forms-self-test) : i64
+  (cond
+    [(not
+        (selfhost-lint-import-form-ok?
+          "(import stdlib.profile.now-ms)\n(define (main) : i64 (now-ms))"
+          0
+          0))
+      100]
+    [(not
+        (selfhost-lint-import-form-ok?
+          "(import stdlib.profile.now-ms as clock)\n(define (main) : i64 (clock))"
+          0
+          0))
+      101]
+    [(not
+        (selfhost-lint-import-form-ok?
+          "(import stdlib.byte_buf.ByteBuf)\n(define (size [b : ByteBuf]) : i64 0)"
+          0
+          0))
+      102]
+    [(not
+        (selfhost-lint-import-form-ok?
+          "(import stdlib.profile.now-ms)\n(define (main) : i64 42)"
+          1
+          0))
+      103]
+    [(not
+        (selfhost-lint-import-form-ok?
+          "(import stdlib.profile.now-ms as clock)\n(define (main) : i64 (let [now-ms : i64 1] now-ms))"
+          1
+          0))
+      104]
+    [(not
+        (selfhost-lint-import-form-ok?
+          "(import stdlib.string.substring)\n(define (main) : i64 (string-length \"abc\"))"
+          1
+          0))
+      105]
+    [(not
+        (selfhost-lint-import-form-ok?
+          "(import stdlib.profile.now-ms as now-ms)\n(define (main) : i64 (now-ms))"
+          0
+          1))
+      106]
+    [(not
+        (selfhost-lint-import-form-ok?
+          "(import stdlib.profile.*)\n(define (main) : i64 (now-ms))"
+          0
+          0))
+      107]
+    [(not
+        (selfhost-lint-import-form-ok?
+          "(import stdlib.profile.*)\n(define (main) : i64 42)"
+          0
+          0))
+      108]
+    [(not
+        (selfhost-lint-import-form-ok?
+          "(import stdlib.profile)\n(define (main) : i64 (profile.now-ms))"
+          0
+          0))
+      109]
+    [(not
+        (selfhost-lint-import-form-ok?
+          "(import stdlib.profile)\n(define (main) : i64 (let [profile : i64 1] profile))"
+          1
+          0))
+      110]
+    [(not (selfhost-lint-unused-item-message-ok?)) 111]
+    [else 42]))
+
 (define (selfhost-lint-package-dead-code-fixture-decls
   [source-a : String]
   [source-b : String]

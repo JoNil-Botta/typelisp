@@ -38398,193 +38398,63 @@
     args
     param-types)
     [(ResultLowerArgs.Ok args-state values)
-      (match (lower-c-abi-return-aggregate-class
-        (lower-global-shared-view ctx)
-        (lower-state-mode args-state)
-        (lower-global-shared-view result-ty))
-        [(LowerCAbiAggregate.Unsupported message)
-          (ResultLowerExpr.Err
-            (box (lower-diagnostic-at-expr ctx origin message)))]
-        [(LowerCAbiAggregate.No)
-          (match (lower-state-alloc-var args-state)
-            [(LowerAlloc.Alloc allocated var-id)
-              (let
-                [instr : ir.CompilerIrInstr
-                  (ir.CompilerIrInstr.Call
-                    var-id
-                    (lower-resolve-call-name-id-with-display
-                      allocated
-                      env
-                      name-id
-                      name)
-                    (ir.compiler-ir-call-args-from-seq values)
-                    (lower-global-shared-view result-ty))]
-                (lower-c-abi-finish-call-result
-                  (lower-global-shared-view ctx)
-                  (lower-state-emit-at-expr
-                    ctx
-                    allocated
-                    instr
-                    (lower-global-shared-view origin))
-                  (ir.CompilerIrValue.Var var-id)
-                  result-ty
-                  (LowerCAbiAggregate.No)
-                  origin))])]
-        [(LowerCAbiAggregate.Integer scalar-ty size)
-          (match (lower-state-alloc-var args-state)
-            [(LowerAlloc.Alloc allocated var-id)
-              (let
-                [instr : ir.CompilerIrInstr
-                  (ir.CompilerIrInstr.Call
-                    var-id
-                    (lower-resolve-call-name-id-with-display
-                      allocated
-                      env
-                      name-id
-                      name)
-                    (ir.compiler-ir-call-args-from-seq values)
-                    (lower-global-shared-view scalar-ty))]
-                (lower-c-abi-finish-call-result
-                  (lower-global-shared-view ctx)
-                  (lower-state-emit-at-expr
-                    ctx
-                    allocated
-                    instr
-                    (lower-global-shared-view origin))
-                  (ir.CompilerIrValue.Var var-id)
-                  result-ty
-                  (LowerCAbiAggregate.Integer scalar-ty size)
-                  origin))])]
-        [(LowerCAbiAggregate.Register slots size)
-          (let
-            [slot-count : i64 (lower-c-abi-slot-list-count slots)]
-            (cond
-              [(= slot-count 1)
-                (match (lower-c-abi-slot-list-ref
-                  (lower-global-shared-view slots)
-                  0)
-                  [(LowerCAbiSlot.Slot scalar-ty _)
-                    (match (lower-state-alloc-var args-state)
-                      [(LowerAlloc.Alloc allocated var-id)
-                        (let
-                          [instr : ir.CompilerIrInstr
-                            (ir.CompilerIrInstr.Call
-                              var-id
-                              (lower-resolve-call-name-id-with-display
-                                allocated
-                                env
-                                name-id
-                                name)
-                              (ir.compiler-ir-call-args-from-seq values)
-                              scalar-ty)]
-                          (lower-c-abi-finish-call-result
-                            (lower-global-shared-view ctx)
-                            (lower-state-emit-at-expr
-                              ctx
-                              allocated
-                              instr
-                              (lower-global-shared-view origin))
-                            (ir.CompilerIrValue.Var var-id)
-                            result-ty
-                            (LowerCAbiAggregate.Register slots size)
-                            origin))])])]
-              [(= slot-count 0)
-                (ResultLowerExpr.Err
-                  (box
-                    (lower-diagnostic-at-expr
-                      ctx
-                      origin
-                      (lower-c-abi-unsupported-message
-                        (lower-state-mode args-state)
-                        result-ty))))]
-              [else
-                (match (lower-reserve-heap-storage
-                  args-state
-                  size
-                  (lower-global-shared-view result-ty))
-                  [(LowerExpr.Expr base-state base _)
-                    (let
-                      [instr : ir.CompilerIrInstr
-                        (ir.ir-instr-call-cabi-store-result
-                          (lower-global-shared-view base)
-                          (lower-resolve-call-name-id-with-display
-                            base-state
-                            env
-                            name-id
-                            name)
-                          (ir.compiler-ir-call-args-from-seq values)
-                          (lower-c-abi-ir-return-slots slots))]
-                      (match (lower-c-abi-materialize-stored-register-result
-                        (lower-global-shared-view ctx)
-                        (lower-state-emit-at-expr ctx base-state instr origin)
-                        base
-                        result-ty)
-                        [(LowerExpr.Expr out-state out-value out-ty)
-                          (ResultLowerExpr.Ok
-                            (LowerExpr.Expr out-state out-value out-ty))]))])]))]
-        [(LowerCAbiAggregate.ByRef _)
-          (ResultLowerExpr.Err
-            (box
-              (lower-diagnostic-at-expr
-                ctx
-                origin
-                (lower-c-abi-unsupported-message
-                  (lower-state-mode args-state)
-                  result-ty))))]
-        [(LowerCAbiAggregate.Memory _)
-          (ResultLowerExpr.Err
-            (box
-              (lower-diagnostic-at-expr
-                ctx
-                origin
-                (lower-c-abi-unsupported-message
-                  (lower-state-mode args-state)
-                  result-ty))))]
-        [(LowerCAbiAggregate.Sret size)
-          ;; Reserve the sret buffer typed as a scalar pointer (U64), NOT
-          ;; the aggregate result type. A register-resident result type would make
-          ;; the backend classify the hidden sret pointer as a 2-word register
-          ;; group, shifting every real argument by one slot (and reading an
-          ;; undefined second word). Typing it U64 keeps the hidden pointer in a
-          ;; single integer register, and it survives copy-propagation (there is
-          ;; no copy to fold). The result materialization below reads the 2 words
-          ;; back from the buffer using `result-ty` explicitly.
-          (match (lower-reserve-heap-storage args-state size (ast.AstType.U64))
-            [(LowerExpr.Expr base-state base _)
-              (match (lower-state-alloc-var base-state)
-                [(LowerAlloc.Alloc allocated var-id)
-                  (let
-                    [instr : ir.CompilerIrInstr
-                      (ir.CompilerIrInstr.Call
-                        var-id
-                        (lower-resolve-call-name-id-with-display
-                          allocated
-                          env
-                          name-id
-                          name)
-                        (ir.compiler-ir-call-args-sret-from-seq
-                          (ir.compiler-ir-value-seq-prepend
-                            (lower-global-shared-view base)
-                            values)
-                          0)
-                        (ast.AstType.U64))]
-                    (lower-c-abi-finish-call-result
-                      (lower-global-shared-view ctx)
-                      (lower-state-emit-at-expr
-                        ctx
-                        allocated
-                        instr
-                        (lower-global-shared-view origin))
-                      base
-                      result-ty
-                      (LowerCAbiAggregate.Sret size)
-                      origin))])])])]
+      (lower-c-abi-call-values
+        ctx
+        args-state
+        (LowerCallTarget.Direct env name-id name)
+        values
+        result-ty
+        origin)]
     [(ResultLowerArgs.Err message) (ResultLowerExpr.Err message)]))
 
-(define (lower-indirect-c-abi-call-values
+;; The callee of a lowered call: a named function (resolved once the call's
+;; destination var is allocated) or a function value.
+(defenum LowerCallTarget
+  (Direct sym_i64_env.SymI64Env i64 String)
+  (Indirect ir.CompilerIrValue))
+
+;; The call instruction for `target`: `Call` for a named callee and, for a
+;; function value, `CallIndirectC` under the C ABI or `CallIndirect` under the
+;; internal one.
+(define (lower-call-target-instr
+  [state : LowerState]
+  [target : LowerCallTarget]
+  [c-abi? : bool]
+  [dst : i64]
+  [args : ir.CompilerIrCallArgs]
+  [ty : ast.AstType]) : ir.CompilerIrInstr
+  (match target
+    [(LowerCallTarget.Direct env source-id name)
+      (ir.CompilerIrInstr.Call
+        dst
+        (lower-resolve-call-name-id-with-display state env source-id name)
+        args
+        ty)]
+    [(LowerCallTarget.Indirect func-value)
+      (if c-abi?
+        (ir.CompilerIrInstr.CallIndirectC dst func-value args ty)
+        (ir.CompilerIrInstr.CallIndirect dst func-value args ty))]))
+
+(define (lower-call-target-store-result-instr
+  [state : LowerState]
+  [target : LowerCallTarget]
+  [base : ir.CompilerIrValue]
+  [args : ir.CompilerIrCallArgs]
+  [slots : ir.CompilerIrCAbiReturnSlotSeq]) : ir.CompilerIrInstr
+  (match target
+    [(LowerCallTarget.Direct env source-id name)
+      (ir.ir-instr-call-cabi-store-result
+        base
+        (lower-resolve-call-name-id-with-display state env source-id name)
+        args
+        slots)]
+    [(LowerCallTarget.Indirect func-value)
+      (ir.ir-instr-call-indirect-cabi-store-result base func-value args slots)]))
+
+(define (lower-c-abi-call-values
   [ctx : tc_core.TcContext]
   [state : LowerState]
-  [func-value : ir.CompilerIrValue]
+  [target : LowerCallTarget]
   [values : ir.CompilerIrValueSeq]
   [result-ty : ast.AstType]
   [origin : ast.AstExpr]) : ResultLowerExpr
@@ -38599,9 +38469,11 @@
         [(LowerAlloc.Alloc allocated var-id)
           (let
             [instr : ir.CompilerIrInstr
-              (ir.CompilerIrInstr.CallIndirectC
+              (lower-call-target-instr
+                allocated
+                target
+                true
                 var-id
-                func-value
                 (ir.compiler-ir-call-args-from-seq values)
                 (lower-global-shared-view result-ty))]
             (lower-c-abi-finish-call-result
@@ -38620,9 +38492,11 @@
         [(LowerAlloc.Alloc allocated var-id)
           (let
             [instr : ir.CompilerIrInstr
-              (ir.CompilerIrInstr.CallIndirectC
+              (lower-call-target-instr
+                allocated
+                target
+                true
                 var-id
-                func-value
                 (ir.compiler-ir-call-args-from-seq values)
                 (lower-global-shared-view scalar-ty))]
             (lower-c-abi-finish-call-result
@@ -38649,9 +38523,11 @@
                   [(LowerAlloc.Alloc allocated var-id)
                     (let
                       [instr : ir.CompilerIrInstr
-                        (ir.CompilerIrInstr.CallIndirectC
+                        (lower-call-target-instr
+                          allocated
+                          target
+                          true
                           var-id
-                          func-value
                           (ir.compiler-ir-call-args-from-seq values)
                           scalar-ty)]
                       (lower-c-abi-finish-call-result
@@ -38682,9 +38558,10 @@
               [(LowerExpr.Expr base-state base _)
                 (let
                   [instr : ir.CompilerIrInstr
-                    (ir.ir-instr-call-indirect-cabi-store-result
+                    (lower-call-target-store-result-instr
+                      base-state
+                      target
                       (lower-global-shared-view base)
-                      func-value
                       (ir.compiler-ir-call-args-from-seq values)
                       (lower-c-abi-ir-return-slots slots))]
                   (match (lower-c-abi-materialize-stored-register-result
@@ -38710,18 +38587,25 @@
             origin
             (lower-c-abi-unsupported-message (lower-state-mode state) result-ty))))]
     [(LowerCAbiAggregate.Sret size)
-      ;; Reserve the sret buffer typed as a scalar pointer (U64) -- see
-      ;; lower-direct-c-abi-call -- so a register-resident result type does not make
-      ;; the backend classify the hidden sret pointer as a 2-register group arg.
+      ;; Reserve the sret buffer typed as a scalar pointer (U64), NOT the
+      ;; aggregate result type. A register-resident result type would make the
+      ;; backend classify the hidden sret pointer as a 2-word register group,
+      ;; shifting every real argument by one slot (and reading an undefined
+      ;; second word). Typing it U64 keeps the hidden pointer in a single integer
+      ;; register, and it survives copy-propagation (there is no copy to fold).
+      ;; The result materialization reads the 2 words back from the buffer using
+      ;; `result-ty` explicitly.
       (match (lower-reserve-heap-storage state size (ast.AstType.U64))
         [(LowerExpr.Expr base-state base _)
           (match (lower-state-alloc-var base-state)
             [(LowerAlloc.Alloc allocated var-id)
               (let
                 [instr : ir.CompilerIrInstr
-                  (ir.CompilerIrInstr.CallIndirectC
+                  (lower-call-target-instr
+                    allocated
+                    target
+                    true
                     var-id
-                    func-value
                     (ir.compiler-ir-call-args-sret-from-seq
                       (ir.compiler-ir-value-seq-prepend
                         (lower-global-shared-view base)
@@ -38772,10 +38656,11 @@
                   args
                   param-types)
                   [(ResultLowerArgs.Ok args-state values)
-                    (lower-indirect-c-abi-call-values
+                    (lower-c-abi-call-values
                       ctx
                       args-state
-                      (ir.CompilerIrValue.Var func-var)
+                      (LowerCallTarget.Indirect
+                        (ir.CompilerIrValue.Var func-var))
                       values
                       result-ty
                       origin)]
@@ -39113,149 +38998,10 @@
       (ResultLowerExpr.Err
         (box (lower-diagnostic "lower: unsupported structural call result")))]))
 
-(define (lower-internal-direct-call-values
+(define (lower-internal-call-values
   [ctx : tc_core.TcContext]
   [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [source-id : i64]
-  [name : String]
-  [values : ir.CompilerIrValueSeq]
-  [param-types : ast.AstTypeList]
-  [result-ty : ast.AstType]
-  [origin : ast.AstExpr]) : ResultLowerExpr
-  (let
-    [mode : CompilerLowerMode (lower-state-mode state)]
-    [result-class : LowerCAbiAggregate
-      (lower-internal-return-class
-        (lower-global-shared-view ctx)
-        mode
-        (lower-global-shared-view result-ty))]
-    (match (lower-internal-call-args
-      (lower-global-shared-view ctx)
-      mode
-      state
-      values
-      param-types
-      (lower-global-shared-view origin))
-      [(ResultLowerArgs.Ok args-state physical-values)
-        (match (lower-global-shared-view result-class)
-          [(LowerCAbiAggregate.Sret size)
-            (match (lower-reserve-inline-storage
-              args-state
-              size
-              (lower-global-shared-view result-ty))
-              [(LowerExpr.Expr slot-state slot-ptr _)
-                (match (lower-cast-value
-                  slot-state
-                  (lower-global-shared-view slot-ptr)
-                  (lower-global-shared-view result-ty)
-                  (ast.AstType.U64))
-                  [(LowerExpr.Expr cast-state sret-pointer _)
-                    (match (lower-state-alloc-var cast-state)
-                      [(LowerAlloc.Alloc allocated call-var)
-                        (let
-                          [callee : i64
-                            (lower-resolve-call-name-id-with-display
-                              allocated
-                              env
-                              source-id
-                              name)]
-                          (ResultLowerExpr.Ok
-                            (LowerExpr.Expr
-                              (lower-state-emit-at-expr
-                                ctx
-                                allocated
-                                (ir.CompilerIrInstr.Call
-                                  call-var
-                                  callee
-                                  (ir.compiler-ir-call-args-sret-from-seq
-                                    (lower-value-seq-prepend-one
-                                      sret-pointer
-                                      physical-values)
-                                    0)
-                                  (ast.AstType.U64))
-                                origin)
-                              slot-ptr
-                              result-ty)))])])])]
-          [(LowerCAbiAggregate.No)
-            ;; Preserve the nominal/existing scalar path (including trailing
-            ;; nominal sret) exactly as before.
-            (match (lower-call-append-sret-arg
-              (lower-global-shared-view ctx)
-              args-state
-              physical-values
-              (lower-global-shared-view result-ty))
-              [(ResultLowerArgs.Ok call-state call-values)
-                (match (lower-state-alloc-var call-state)
-                  [(LowerAlloc.Alloc allocated call-var)
-                    (let
-                      [callee : i64
-                        (lower-resolve-call-name-id-with-display
-                          allocated
-                          env
-                          source-id
-                          name)]
-                      (ResultLowerExpr.Ok
-                        (LowerExpr.Expr
-                          (lower-state-emit-at-expr
-                            ctx
-                            allocated
-                            (ir.CompilerIrInstr.Call
-                              call-var
-                              callee
-                              (lower-call-args-with-nominal-sret
-                                (lower-global-shared-view ctx)
-                                call-values
-                                (lower-global-shared-view result-ty))
-                              (lower-one-word-register-storage-type
-                                (lower-global-shared-view ctx)
-                                (lower-global-shared-view result-ty)))
-                            origin)
-                          (ir.CompilerIrValue.Var call-var)
-                          result-ty)))])]
-              [(ResultLowerArgs.Err message) (ResultLowerExpr.Err message)])]
-          [(LowerCAbiAggregate.Unsupported message)
-            (ResultLowerExpr.Err
-              (box (lower-diagnostic-at-expr ctx origin message)))]
-          [_
-            (match (lower-state-alloc-var args-state)
-              [(LowerAlloc.Alloc allocated call-var)
-                (let
-                  [callee : i64
-                    (lower-resolve-call-name-id-with-display
-                      allocated
-                      env
-                      source-id
-                      name)]
-                  [physical-ret : ast.AstType
-                    (lower-internal-transport-type
-                      (lower-global-shared-view ctx)
-                      (lower-global-shared-view result-ty)
-                      (lower-global-shared-view result-class))]
-                  [call-state : LowerState
-                    (lower-state-emit-at-expr
-                      ctx
-                      allocated
-                      (ir.CompilerIrInstr.Call
-                        call-var
-                        callee
-                        (ir.compiler-ir-call-args-from-seq physical-values)
-                        physical-ret)
-                      origin)]
-                  (match (lower-internal-materialize-call-result
-                    call-state
-                    (ir.CompilerIrValue.Var call-var)
-                    result-ty
-                    result-class)
-                    [(ResultLowerExpr.Ok result) (ResultLowerExpr.Ok result)]
-                    [(ResultLowerExpr.Err message)
-                      (ResultLowerExpr.Err message)]))])])]
-      [(ResultLowerArgs.Err message) (ResultLowerExpr.Err message)])))
-
-(define (lower-internal-indirect-call-values
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [func-value : ir.CompilerIrValue]
+  [target : LowerCallTarget]
   [values : ir.CompilerIrValueSeq]
   [param-types : ast.AstTypeList]
   [result-ty : ast.AstType]
@@ -39295,9 +39041,11 @@
                             (lower-state-emit-at-expr
                               ctx
                               allocated
-                              (ir.CompilerIrInstr.CallIndirect
+                              (lower-call-target-instr
+                                allocated
+                                target
+                                false
                                 call-var
-                                func-value
                                 (ir.compiler-ir-call-args-sret-from-seq
                                   (lower-value-seq-prepend-one
                                     sret-pointer
@@ -39308,10 +39056,10 @@
                             slot-ptr
                             result-ty))])])])]
           [(LowerCAbiAggregate.No)
-            (lower-indirect-call-values
+            (lower-call-values
               ctx
               args-state
-              func-value
+              target
               physical-values
               result-ty
               origin)]
@@ -39331,9 +39079,11 @@
                     (lower-state-emit-at-expr
                       ctx
                       allocated
-                      (ir.CompilerIrInstr.CallIndirect
+                      (lower-call-target-instr
+                        allocated
+                        target
+                        false
                         call-var
-                        func-value
                         (ir.compiler-ir-call-args-from-seq physical-values)
                         physical-ret)
                       origin)]
@@ -39343,50 +39093,6 @@
                     result-ty
                     result-class))])])]
       [(ResultLowerArgs.Err message) (ResultLowerExpr.Err message)])))
-
-(define (lower-direct-call-values
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [source-id : i64]
-  [name : String]
-  [values : ir.CompilerIrValueSeq]
-  [result-ty : ast.AstType]
-  [origin : ast.AstExpr]) : ResultLowerExpr
-  (match (lower-call-append-sret-arg
-    (lower-global-shared-view ctx)
-    state
-    values
-    (lower-global-shared-view result-ty))
-    [(ResultLowerArgs.Ok sret-state sret-values)
-      (match (lower-state-alloc-var sret-state)
-        [(LowerAlloc.Alloc allocated var-id)
-          (let
-            [result-ir-ty : ast.AstType
-              (lower-one-word-register-storage-type
-                (lower-global-shared-view ctx)
-                (lower-global-shared-view result-ty))]
-            [callee : i64
-              (lower-resolve-call-name-id-with-display
-                allocated
-                env
-                source-id
-                name)]
-            [instr : ir.CompilerIrInstr
-              (ir.CompilerIrInstr.Call
-                var-id
-                callee
-                (lower-call-args-with-nominal-sret
-                  (lower-global-shared-view ctx)
-                  sret-values
-                  (lower-global-shared-view result-ty))
-                result-ir-ty)]
-            (ResultLowerExpr.Ok
-              (LowerExpr.Expr
-                (lower-state-emit-at-expr ctx allocated instr origin)
-                (ir.CompilerIrValue.Var var-id)
-                result-ty)))])]
-    [(ResultLowerArgs.Err message) (ResultLowerExpr.Err message)]))
 
 (define (lower-bytes-view-from-parts-result
   [ctx : tc_core.TcContext]
@@ -39481,12 +39187,10 @@
   [origin : ast.AstExpr]) : ResultLowerExpr
   (match args-result
     [(ResultLowerArgs.Ok args-state values)
-      (lower-direct-call-values
+      (lower-call-values
         ctx
         args-state
-        env
-        source-id
-        name
+        (LowerCallTarget.Direct env source-id name)
         values
         result-ty
         origin)]
@@ -39503,12 +39207,10 @@
   [origin : ast.AstExpr]) : ResultLowerExpr
   (match args-result
     [(ResultLowerCallArgs.Ok args-state values writebacks)
-      (match (lower-internal-direct-call-values
+      (match (lower-internal-call-values
         (lower-global-shared-view ctx)
         args-state
-        env
-        source-id
-        name
+        (LowerCallTarget.Direct env source-id name)
         values
         param-types
         result-ty
@@ -39711,10 +39413,10 @@
     result-ty
     origin))
 
-(define (lower-indirect-call-values
+(define (lower-call-values
   [ctx : tc_core.TcContext]
   [state : LowerState]
-  [func-value : ir.CompilerIrValue]
+  [target : LowerCallTarget]
   [values : ir.CompilerIrValueSeq]
   [result-ty : ast.AstType]
   [origin : ast.AstExpr]) : ResultLowerExpr
@@ -39732,9 +39434,11 @@
                 (lower-global-shared-view ctx)
                 (lower-global-shared-view result-ty))]
             [instr : ir.CompilerIrInstr
-              (ir.CompilerIrInstr.CallIndirect
+              (lower-call-target-instr
+                allocated
+                target
+                false
                 var-id
-                func-value
                 (lower-call-args-with-nominal-sret
                   (lower-global-shared-view ctx)
                   sret-values
@@ -39821,10 +39525,10 @@
         (match (tc_core.tc-type-strip-region
           (tc_core.tc-resolve-type (lower-global-shared-view ctx) func-ty))
           [(ast.AstType.Func param-types _)
-            (match (lower-internal-indirect-call-values
+            (match (lower-internal-call-values
               (lower-global-shared-view ctx)
               args-state
-              func-value
+              (LowerCallTarget.Indirect func-value)
               values
               (tc_core.tc-resolve-type-list
                 (lower-global-shared-view ctx)
@@ -39841,10 +39545,10 @@
                         call-ty))])]
               [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
           [_
-            (match (lower-indirect-call-values
+            (match (lower-call-values
               (lower-global-shared-view ctx)
               args-state
-              func-value
+              (LowerCallTarget.Indirect func-value)
               values
               result-ty
               origin)
@@ -39907,10 +39611,10 @@
           (lower-global-shared-view ctx)
           (deref param-types)))
         [(ResultLowerArgs.Ok args-state values)
-          (lower-indirect-c-abi-call-values
+          (lower-c-abi-call-values
             ctx
             args-state
-            func-value
+            (LowerCallTarget.Indirect func-value)
             values
             result-ty
             origin)]

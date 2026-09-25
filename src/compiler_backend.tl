@@ -88785,36 +88785,21 @@
     [(compiler_ir_types.CompilerIrValue.RuntimeGlobal _) false]
     [_ true]))
 
-(define (compiler-backend-object-semantic-call-args-array-supported?
-  [values : (__tl_dyn-array compiler_ir_types.CompilerIrValue)]) : bool
-  (let
-    [index : i64 0]
-    [count : i64 (array-length values)]
-    [supported : bool true]
-    (begin
-      (while (and supported (< index count))
-        (begin
-          (set!
-            supported
-            (compiler-backend-object-semantic-value-supported?
-              (compiler-backend-global-array-element-shared-view values index)))
-          (set! index (+ index 1))))
-      supported)))
+(define (compiler-backend-object-semantic-use-supported?
+  [_role : compiler_ir_types.CompilerIrOperandRole]
+  [supported : bool]
+  [value : compiler_ir_types.CompilerIrValue]) : bool
+  (and supported (compiler-backend-object-semantic-value-supported? value)))
 
-(define (compiler-backend-object-semantic-call-args-supported?
-  [args : compiler_ir_types.CompilerIrCallArgs]) : bool
-  (match args
-    [(compiler_ir_types.CompilerIrCallArgs.Nil) true]
-    [(compiler_ir_types.CompilerIrCallArgs.One value)
-      (compiler-backend-object-semantic-value-supported? value)]
-    [(compiler_ir_types.CompilerIrCallArgs.Two lhs rhs)
-      (and
-        (compiler-backend-object-semantic-value-supported? lhs)
-        (compiler-backend-object-semantic-value-supported? rhs))]
-    [(compiler_ir_types.CompilerIrCallArgs.Array values)
-      (compiler-backend-object-semantic-call-args-array-supported? values)]
-    [(compiler_ir_types.CompilerIrCallArgs.Sret values _)
-      (compiler-backend-object-semantic-call-args-array-supported? values)]))
+;; Every use of `instr` is a value the object emitter can lower.
+(define (compiler-backend-object-semantic-uses-supported?
+  [instr : compiler_ir_types.CompilerIrInstr]) : bool
+  (let
+    [supported : bool true]
+    (compiler_ir_types.compiler-ir-instr-fold-uses
+      instr
+      supported
+      compiler-backend-object-semantic-use-supported?)))
 
 (define (compiler-backend-object-semantic-call-supported?
   [backend-state : CompilerBackendState]
@@ -88829,27 +88814,27 @@
       (not (compiler-backend-fixed-fault-symbol-id? backend-state name)))))
 
 ;; Object-image lowering is deliberately incremental. ELF and COFF can
-;; serialize every byte record produced by the cases below, but several IR
+;; serialize every byte record produced by the cases below, but the other IR
 ;; instructions still have reference-discovery-only placeholders in the object
-;; emitter. This shared scan is therefore the authoritative direct-object
-;; semantic contract; target serializers and linkability checks remain
-;; separate, weaker contracts.
+;; emitter, and its control flow still has differential mismatches for
+;; conditions, early returns, and enum matches. This shared scan is therefore
+;; the authoritative direct-object semantic contract; target serializers and
+;; linkability checks remain separate, weaker contracts.
 (define (compiler-backend-object-instr-semantically-supported?
   [backend-state : CompilerBackendState]
   [instr : compiler_ir_types.CompilerIrInstr]) : bool
-  (match instr
-    [(compiler_ir_types.CompilerIrInstr.LoadOwned _ src _ _)
-      (compiler-backend-object-semantic-value-supported? src)]
-    [(compiler_ir_types.CompilerIrInstr.OwnRoot _ src _)
-      (compiler-backend-object-semantic-value-supported? src)]
-    [(compiler_ir_types.CompilerIrInstr.Mov _ src _)
-      (compiler-backend-object-semantic-value-supported? src)]
-    [(compiler_ir_types.CompilerIrInstr.BinOp _ op lhs rhs ty)
+  (match (compiler-backend-global-shared-view instr)
+    [(compiler_ir_types.CompilerIrInstr.LoadOwned _ _ _ _)
+      (compiler-backend-object-semantic-uses-supported? instr)]
+    [(compiler_ir_types.CompilerIrInstr.OwnRoot _ _ _)
+      (compiler-backend-object-semantic-uses-supported? instr)]
+    [(compiler_ir_types.CompilerIrInstr.Mov _ _ _)
+      (compiler-backend-object-semantic-uses-supported? instr)]
+    [(compiler_ir_types.CompilerIrInstr.BinOp _ op _ _ ty)
       (and
         (compiler-backend-object-semantic-binop-supported? op ty)
-        (compiler-backend-object-semantic-value-supported? lhs)
-        (compiler-backend-object-semantic-value-supported? rhs))]
-    [(compiler_ir_types.CompilerIrInstr.UnOp _ op src ty)
+        (compiler-backend-object-semantic-uses-supported? instr))]
+    [(compiler_ir_types.CompilerIrInstr.UnOp _ op _ ty)
       (and
         ;; The legacy object-only path has no production XMM-home plan. Its
         ;; float-negation placeholder loads/stores GP bits around a hard-wired
@@ -88857,79 +88842,27 @@
         ;; #7205 removes this exclusion only after scalar SSE unary operations
         ;; are emitted from the shared post-regalloc machine program.
         (not (compiler-backend-float-type? ty))
-        (compiler-backend-object-semantic-value-supported? src)
+        (compiler-backend-object-semantic-uses-supported? instr)
         (match op
           [(compiler_ir_types.CompilerIrUnOp.Sqrt) false]
           [(compiler_ir_types.CompilerIrUnOp.BitLength) false]
           [_ true]))]
-    [(compiler_ir_types.CompilerIrInstr.Call _ name args _)
+    [(compiler_ir_types.CompilerIrInstr.Call _ name _ _)
       (and
         (compiler-backend-object-semantic-call-supported? backend-state name)
-        (compiler-backend-object-semantic-call-args-supported? args))]
-    [(compiler_ir_types.CompilerIrInstr.CallIndirect _ _ _ _) false]
-    [(compiler_ir_types.CompilerIrInstr.CallIndirectC _ callee args _)
-      (and
-        (compiler-backend-object-semantic-value-supported? callee)
-        (compiler-backend-object-semantic-call-args-supported? args))]
-    [(compiler_ir_types.CompilerIrInstr.CallCAbiStoreResult _) false]
-    [(compiler_ir_types.CompilerIrInstr.CallIndirectCAbiStoreResult _) false]
-    [(compiler_ir_types.CompilerIrInstr.TailCall _ _ _) false]
-    [(compiler_ir_types.CompilerIrInstr.Store _ value _)
-      (compiler-backend-object-semantic-value-supported? value)]
+        (compiler-backend-object-semantic-uses-supported? instr))]
+    [(compiler_ir_types.CompilerIrInstr.CallIndirectC _ _ _ _)
+      (compiler-backend-object-semantic-uses-supported? instr)]
+    [(compiler_ir_types.CompilerIrInstr.Store _ _ _)
+      (compiler-backend-object-semantic-uses-supported? instr)]
     [(compiler_ir_types.CompilerIrInstr.Jump _) true]
-    ;; The object-only control-flow implementation still has differential
-    ;; mismatches for conditions, early returns, and enum matches.
-    [(compiler_ir_types.CompilerIrInstr.Branch _ _ _) false]
-    [(compiler_ir_types.CompilerIrInstr.TotalEnumBranch _ _ _) false]
-    [(compiler_ir_types.CompilerIrInstr.Return maybe)
-      (match maybe
-        [(compiler_ir_types.CompilerIrMaybeValue.No) true]
-        [(compiler_ir_types.CompilerIrMaybeValue.Some value)
-          (compiler-backend-object-semantic-value-supported? value)])]
-    [(compiler_ir_types.CompilerIrInstr.Phi _ _ _) false]
-    [(compiler_ir_types.CompilerIrInstr.Gep _ base offset _)
-      (and
-        (compiler-backend-object-semantic-value-supported? base)
-        (compiler-backend-object-semantic-value-supported? offset))]
-    [(compiler_ir_types.CompilerIrInstr.Load _ src _)
-      (compiler-backend-object-semantic-value-supported? src)]
-    [(compiler_ir_types.CompilerIrInstr.StorePtr _ _ _) false]
-    [(compiler_ir_types.CompilerIrInstr.StoreOwned _ _ _) false]
-    [(compiler_ir_types.CompilerIrInstr.CopyBytes _ _ _) false]
-    [(compiler_ir_types.CompilerIrInstr.BoundsCheck _ _ _) false]
-    [(compiler_ir_types.CompilerIrInstr.Cast _ _ _ _) false]
-    [(compiler_ir_types.CompilerIrInstr.Bitcast _ _ _ _) false]
-    [(compiler_ir_types.CompilerIrInstr.Splat _ _ _ _) false]
-    [(compiler_ir_types.CompilerIrInstr.VectorBinOp _) false]
-    [(compiler_ir_types.CompilerIrInstr.VectorPrefix _) false]
-    [(compiler_ir_types.CompilerIrInstr.VectorReduce _ _ _ _ _) false]
-    [(compiler_ir_types.CompilerIrInstr.VectorCompare _) false]
-    [(compiler_ir_types.CompilerIrInstr.MaskBinOp _ _ _ _ _) false]
-    [(compiler_ir_types.CompilerIrInstr.MaskNot _ _ _) false]
-    [(compiler_ir_types.CompilerIrInstr.MaskReduce _ _ _ _) false]
-    [(compiler_ir_types.CompilerIrInstr.Select _) false]
-    [(compiler_ir_types.CompilerIrInstr.VectorLoad _ _ _ _ _) false]
-    [(compiler_ir_types.CompilerIrInstr.VectorStore _) false]
-    [(compiler_ir_types.CompilerIrInstr.PredicatedStore _) false]
-    [(compiler_ir_types.CompilerIrInstr.PredicatedLoad _) false]
-    [(compiler_ir_types.CompilerIrInstr.GatherLoad _) false]
-    [(compiler_ir_types.CompilerIrInstr.VectorShuffle _) false]
-    [(compiler_ir_types.CompilerIrInstr.TailMask _ _ _ _) false]
-    [(compiler_ir_types.CompilerIrInstr.CpuId _ _ _ _) false]
-    [(compiler_ir_types.CompilerIrInstr.Xgetbv _ _) false]
-    [(compiler_ir_types.CompilerIrInstr.Syscall _ _) false]
-    [(compiler_ir_types.CompilerIrInstr.SpmdCall _) false]
-    [(compiler_ir_types.CompilerIrInstr.Pack _ _ _) false]
-    [(compiler_ir_types.CompilerIrInstr.Word _ _ _ _) false]
-    [(compiler_ir_types.CompilerIrInstr.TailCallIndirect _ _ _) false]
-    [(compiler_ir_types.CompilerIrInstr.Alloc _ _) false]
-    [(compiler_ir_types.CompilerIrInstr.AddrOf _ _) false]
-    [(compiler_ir_types.CompilerIrInstr.LaneId _ _ _) false]
-    [(compiler_ir_types.CompilerIrInstr.EntryArgc _) false]
-    [(compiler_ir_types.CompilerIrInstr.EntryArgv _) false]
-    [(compiler_ir_types.CompilerIrInstr.EntryEnvp _) false]
-    [(compiler_ir_types.CompilerIrInstr.Switch _ _ _ _) false]
-    [(compiler_ir_types.CompilerIrInstr.TotalEnumSwitch _ _ _ _ _) false]))
+    [(compiler_ir_types.CompilerIrInstr.Return _)
+      (compiler-backend-object-semantic-uses-supported? instr)]
+    [(compiler_ir_types.CompilerIrInstr.Gep _ _ _ _)
+      (compiler-backend-object-semantic-uses-supported? instr)]
+    [(compiler_ir_types.CompilerIrInstr.Load _ _ _)
+      (compiler-backend-object-semantic-uses-supported? instr)]
+    [_ false]))
 
 (define (compiler-backend-object-instrs-semantically-supported?
   [backend-state : CompilerBackendState]

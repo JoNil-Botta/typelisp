@@ -85487,53 +85487,6 @@
           (cobj.CompilerObjectX64Instr.LoadRip symbol)))]
     [_ (compiler-backend-object-value-ref parts site value program-index)]))
 
-(define (compiler-backend-object-call-args
-  [parts : object_target.CompilerBackendObjectTargetParts]
-  [site : String]
-  [args : compiler_ir_types.CompilerIrCallArgs]
-  [index : i64]
-  [program-index : CompilerBackendProgramIndex]) : object_target.CompilerBackendObjectTargetParts
-  (if (>=
-    index
-    (compiler-backend-call-args-count
-      (compiler-backend-global-shared-view args)))
-    parts
-    (compiler-backend-object-call-args
-      (compiler-backend-object-value-ref
-        parts
-        (compiler-backend-global-shared-view site)
-        (compiler-backend-call-arg-at
-          (compiler-backend-global-shared-view args)
-          index)
-        (compiler-backend-global-shared-view program-index))
-      site
-      args
-      (+ index 1)
-      program-index)))
-
-(define (compiler-backend-object-spmd-call-args
-  [parts : object_target.CompilerBackendObjectTargetParts]
-  [site : String]
-  [args : compiler_ir_types.CompilerIrSpmdCallArgSeq]
-  [program-index : CompilerBackendProgramIndex]) : object_target.CompilerBackendObjectTargetParts
-  (let
-    [out : object_target.CompilerBackendObjectTargetParts parts]
-    [i : i64 0]
-    (begin
-      (while (< i args.len)
-        (begin
-          (match (array-ref args.slots i)
-            [(compiler_ir_types.CompilerIrSpmdCallArg.Arg _ value _)
-              (set!
-                out
-                (compiler-backend-object-value-ref
-                  out
-                  (compiler-backend-global-shared-view site)
-                  value
-                  (compiler-backend-global-shared-view program-index)))])
-          (set! i (+ i 1))))
-      out)))
-
 (define (compiler-backend-object-value-seq-ref-from
   [parts : object_target.CompilerBackendObjectTargetParts]
   [site : String]
@@ -87107,6 +87060,57 @@
           count
           program-index)])))
 
+(define (compiler-backend-object-use-ref
+  [site : String]
+  [program-index : CompilerBackendProgramIndex]
+  [_role : compiler_ir_types.CompilerIrOperandRole]
+  [parts : object_target.CompilerBackendObjectTargetParts]
+  [value : compiler_ir_types.CompilerIrValue]) : object_target.CompilerBackendObjectTargetParts
+  (compiler-backend-object-value-ref parts site value program-index))
+
+(define (compiler-backend-object-typed-use-ref
+  [site : String]
+  [ty : compiler_ast_types.AstType]
+  [program-index : CompilerBackendProgramIndex]
+  [_role : compiler_ir_types.CompilerIrOperandRole]
+  [parts : object_target.CompilerBackendObjectTargetParts]
+  [value : compiler_ir_types.CompilerIrValue]) : object_target.CompilerBackendObjectTargetParts
+  (compiler-backend-object-value-ref-with-type
+    parts
+    site
+    value
+    ty
+    program-index))
+
+;; The references of an instruction the object emitter only discovers
+;; references for: each use, in operand order, references the symbol it names.
+(define (compiler-backend-object-uses-ref
+  [parts : object_target.CompilerBackendObjectTargetParts]
+  [site : String]
+  [instr : compiler_ir_types.CompilerIrInstr]
+  [program-index : CompilerBackendProgramIndex]) : object_target.CompilerBackendObjectTargetParts
+  (compiler_ir_types.compiler-ir-instr-fold-uses
+    instr
+    parts
+    compiler-backend-object-use-ref
+    (compiler-backend-global-shared-view site)
+    (compiler-backend-global-shared-view program-index)))
+
+;; compiler-backend-object-uses-ref with every use read as a `ty` value.
+(define (compiler-backend-object-typed-uses-ref
+  [parts : object_target.CompilerBackendObjectTargetParts]
+  [site : String]
+  [instr : compiler_ir_types.CompilerIrInstr]
+  [ty : compiler_ast_types.AstType]
+  [program-index : CompilerBackendProgramIndex]) : object_target.CompilerBackendObjectTargetParts
+  (compiler_ir_types.compiler-ir-instr-fold-uses
+    instr
+    parts
+    compiler-backend-object-typed-use-ref
+    (compiler-backend-global-shared-view site)
+    (compiler-backend-global-shared-view ty)
+    (compiler-backend-global-shared-view program-index)))
+
 (define (compiler-backend-object-instr
   [type-segment-bases : i64]
   [parts : object_target.CompilerBackendObjectTargetParts]
@@ -87118,7 +87122,7 @@
   [instr : compiler_ir_types.CompilerIrInstr]
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]) : object_target.CompilerBackendObjectTargetParts
-  (match instr
+  (match (compiler-backend-global-shared-view instr)
     [(compiler_ir_types.CompilerIrInstr.LoadOwned dst src _ ty)
       (compiler-backend-object-load-ptr-to-var
         type-segment-bases
@@ -87219,17 +87223,6 @@
             program-index)
           dst
           "%rax"))]
-    [(compiler_ir_types.CompilerIrInstr.CallIndirect _ callee args _)
-      (compiler-backend-object-call-args
-        (compiler-backend-object-value-ref
-          parts
-          (compiler-backend-global-shared-view function)
-          callee
-          (compiler-backend-global-shared-view program-index))
-        function
-        args
-        0
-        program-index)]
     [(compiler_ir_types.CompilerIrInstr.CallIndirectC dst callee args _)
       ;; Mirror object-direct-call, with the callee loaded into %r11 after
       ;; the argument moves (load-value-to-reg scratches through %rax, and
@@ -87282,25 +87275,6 @@
           (compiler-backend-global-shared-view function)
           call-target
           args
-          (compiler-backend-global-shared-view program-index)))]
-    [(compiler_ir_types.CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
-      (let
-        [base (compiler-backend-box-field-shared-view payload-box base)]
-        [callee (compiler-backend-box-field-shared-view payload-box callee)]
-        [args (compiler-backend-box-field-shared-view payload-box args)]
-        (compiler-backend-object-call-args
-          (compiler-backend-object-value-ref
-            (compiler-backend-object-value-ref
-              parts
-              (compiler-backend-global-shared-view function)
-              base
-              (compiler-backend-global-shared-view program-index))
-            (compiler-backend-global-shared-view function)
-            callee
-            (compiler-backend-global-shared-view program-index))
-          (compiler-backend-global-shared-view function)
-          args
-          0
           (compiler-backend-global-shared-view program-index)))]
     [(compiler_ir_types.CompilerIrInstr.TailCall name args _)
       (let
@@ -87579,26 +87553,6 @@
         src
         ty
         (compiler-backend-global-shared-view program-index))]
-    [(compiler_ir_types.CompilerIrInstr.CopyBytes dst src _)
-      (compiler-backend-object-value-ref
-        (compiler-backend-object-value-ref
-          parts
-          (compiler-backend-global-shared-view function)
-          dst
-          (compiler-backend-global-shared-view program-index))
-        (compiler-backend-global-shared-view function)
-        src
-        (compiler-backend-global-shared-view program-index))]
-    [(compiler_ir_types.CompilerIrInstr.BoundsCheck index length _)
-      (compiler-backend-object-value-ref
-        (compiler-backend-object-value-ref
-          parts
-          (compiler-backend-global-shared-view function)
-          index
-          (compiler-backend-global-shared-view program-index))
-        function
-        length
-        (compiler-backend-global-shared-view program-index))]
     [(compiler_ir_types.CompilerIrInstr.Cast dst src from-ty _)
       (compiler-backend-object-move-value-to-var
         parts
@@ -87615,89 +87569,40 @@
         src
         from-ty
         (compiler-backend-global-shared-view program-index))]
-    [(compiler_ir_types.CompilerIrInstr.Splat _ value _ elem-ty)
-      (compiler-backend-object-value-ref-with-type
+    [(compiler_ir_types.CompilerIrInstr.Splat _ _ _ elem-ty)
+      (compiler-backend-object-typed-uses-ref
         parts
         function
-        value
+        instr
         elem-ty
-        (compiler-backend-global-shared-view program-index))]
+        program-index)]
     [(compiler_ir_types.CompilerIrInstr.VectorBinOp payload-box)
-      (let
-        [lhs (compiler-backend-box-field-shared-view payload-box lhs)]
-        [rhs (compiler-backend-box-field-shared-view payload-box rhs)]
-        [elem-ty (compiler-backend-box-field-shared-view payload-box ty)]
-        (compiler-backend-object-value-ref-with-type
-          (compiler-backend-object-value-ref-with-type
-            parts
-            (compiler-backend-global-shared-view function)
-            lhs
-            (compiler-backend-global-shared-view elem-ty)
-            (compiler-backend-global-shared-view program-index))
-          (compiler-backend-global-shared-view function)
-          rhs
-          elem-ty
-          (compiler-backend-global-shared-view program-index)))]
+      (compiler-backend-object-typed-uses-ref
+        parts
+        function
+        instr
+        (compiler-backend-box-field-shared-view payload-box ty)
+        program-index)]
     [(compiler_ir_types.CompilerIrInstr.VectorPrefix payload-box)
-      (let
-        [src (compiler-backend-box-field-shared-view payload-box src)]
-        [carry (compiler-backend-box-field-shared-view payload-box carry)]
-        [elem-ty (compiler-backend-box-field-shared-view payload-box ty)]
-        (compiler-backend-object-value-ref-with-type
-          (compiler-backend-object-value-ref-with-type
-            parts
-            (compiler-backend-global-shared-view function)
-            src
-            (compiler-backend-global-shared-view elem-ty)
-            (compiler-backend-global-shared-view program-index))
-          (compiler-backend-global-shared-view function)
-          carry
-          elem-ty
-          (compiler-backend-global-shared-view program-index)))]
-    [(compiler_ir_types.CompilerIrInstr.VectorReduce _ _ src _ elem-ty)
-      (compiler-backend-object-value-ref-with-type
+      (compiler-backend-object-typed-uses-ref
         parts
-        (compiler-backend-global-shared-view function)
-        src
+        function
+        instr
+        (compiler-backend-box-field-shared-view payload-box ty)
+        program-index)]
+    [(compiler_ir_types.CompilerIrInstr.VectorReduce _ _ _ _ elem-ty)
+      (compiler-backend-object-typed-uses-ref
+        parts
+        function
+        instr
         elem-ty
-        (compiler-backend-global-shared-view program-index))]
+        program-index)]
     [(compiler_ir_types.CompilerIrInstr.VectorCompare payload-box)
-      (let
-        [lhs (compiler-backend-box-field-shared-view payload-box lhs)]
-        [rhs (compiler-backend-box-field-shared-view payload-box rhs)]
-        [elem-ty (compiler-backend-box-field-shared-view payload-box ty)]
-        (compiler-backend-object-value-ref-with-type
-          (compiler-backend-object-value-ref-with-type
-            parts
-            (compiler-backend-global-shared-view function)
-            lhs
-            (compiler-backend-global-shared-view elem-ty)
-            (compiler-backend-global-shared-view program-index))
-          (compiler-backend-global-shared-view function)
-          rhs
-          elem-ty
-          program-index))]
-    [(compiler_ir_types.CompilerIrInstr.MaskBinOp _ _ lhs rhs _)
-      (compiler-backend-object-value-ref
-        (compiler-backend-object-value-ref
-          parts
-          (compiler-backend-global-shared-view function)
-          lhs
-          (compiler-backend-global-shared-view program-index))
-        (compiler-backend-global-shared-view function)
-        rhs
-        program-index)]
-    [(compiler_ir_types.CompilerIrInstr.MaskNot _ src _)
-      (compiler-backend-object-value-ref
+      (compiler-backend-object-typed-uses-ref
         parts
-        (compiler-backend-global-shared-view function)
-        src
-        program-index)]
-    [(compiler_ir_types.CompilerIrInstr.MaskReduce _ _ src _)
-      (compiler-backend-object-value-ref
-        parts
-        (compiler-backend-global-shared-view function)
-        src
+        function
+        instr
+        (compiler-backend-box-field-shared-view payload-box ty)
         program-index)]
     [(compiler_ir_types.CompilerIrInstr.Select payload-box)
       (let
@@ -87731,16 +87636,6 @@
             on-false
             ty
             (compiler-backend-global-shared-view program-index))))]
-    [(compiler_ir_types.CompilerIrInstr.VectorLoad _ base index _ _)
-      (compiler-backend-object-value-ref
-        (compiler-backend-object-value-ref
-          parts
-          (compiler-backend-global-shared-view function)
-          base
-          (compiler-backend-global-shared-view program-index))
-        (compiler-backend-global-shared-view function)
-        index
-        (compiler-backend-global-shared-view program-index))]
     [(compiler_ir_types.CompilerIrInstr.VectorStore payload-box)
       (let
         [base (compiler-backend-box-field-shared-view payload-box base)]
@@ -87786,43 +87681,6 @@
           (compiler-backend-global-shared-view function)
           mask
           program-index))]
-    [(compiler_ir_types.CompilerIrInstr.PredicatedLoad payload-box)
-      (let
-        [base (compiler-backend-box-field-shared-view payload-box base)]
-        [index (compiler-backend-box-field-shared-view payload-box index)]
-        [mask (compiler-backend-box-field-shared-view payload-box mask)]
-        (compiler-backend-object-value-ref
-          (compiler-backend-object-value-ref
-            (compiler-backend-object-value-ref
-              parts
-              (compiler-backend-global-shared-view function)
-              base
-              (compiler-backend-global-shared-view program-index))
-            (compiler-backend-global-shared-view function)
-            index
-            (compiler-backend-global-shared-view program-index))
-          (compiler-backend-global-shared-view function)
-          mask
-          (compiler-backend-global-shared-view program-index)))]
-    [(compiler_ir_types.CompilerIrInstr.GatherLoad payload-box)
-      (let
-        [base (compiler-backend-box-field-shared-view payload-box base)]
-        [index-base
-          (compiler-backend-box-field-shared-view payload-box index-base)]
-        [index (compiler-backend-box-field-shared-view payload-box index)]
-        (compiler-backend-object-value-ref
-          (compiler-backend-object-value-ref
-            (compiler-backend-object-value-ref
-              parts
-              (compiler-backend-global-shared-view function)
-              base
-              (compiler-backend-global-shared-view program-index))
-            (compiler-backend-global-shared-view function)
-            index-base
-            (compiler-backend-global-shared-view program-index))
-          (compiler-backend-global-shared-view function)
-          index
-          (compiler-backend-global-shared-view program-index)))]
     [(compiler_ir_types.CompilerIrInstr.VectorShuffle payload-box)
       (let
         [source (compiler-backend-box-field-shared-view payload-box source)]
@@ -87858,53 +87716,6 @@
           function
           active-lanes
           program-index))]
-    [(compiler_ir_types.CompilerIrInstr.TailMask _ index length _)
-      (compiler-backend-object-value-ref
-        (compiler-backend-object-value-ref
-          parts
-          (compiler-backend-global-shared-view function)
-          index
-          (compiler-backend-global-shared-view program-index))
-        function
-        length
-        (compiler-backend-global-shared-view program-index))]
-    [(compiler_ir_types.CompilerIrInstr.CpuId _ leaf subleaf _)
-      (compiler-backend-object-value-ref
-        (compiler-backend-object-value-ref
-          parts
-          (compiler-backend-global-shared-view function)
-          leaf
-          (compiler-backend-global-shared-view program-index))
-        function
-        subleaf
-        (compiler-backend-global-shared-view program-index))]
-    [(compiler_ir_types.CompilerIrInstr.Xgetbv _ index)
-      (compiler-backend-object-value-ref
-        parts
-        function
-        index
-        (compiler-backend-global-shared-view program-index))]
-    [(compiler_ir_types.CompilerIrInstr.Syscall _ args)
-      (compiler-backend-object-call-args
-        parts
-        function
-        args
-        0
-        (compiler-backend-global-shared-view program-index))]
-    [(compiler_ir_types.CompilerIrInstr.SpmdCall payload-box)
-      (let
-        [active-mask
-          (compiler-backend-box-field-shared-view payload-box active-mask)]
-        [args (compiler-backend-box-field-shared-view payload-box args)]
-        (compiler-backend-object-spmd-call-args
-          (compiler-backend-object-value-ref
-            parts
-            (compiler-backend-global-shared-view function)
-            active-mask
-            (compiler-backend-global-shared-view program-index))
-          (compiler-backend-global-shared-view function)
-          args
-          (compiler-backend-global-shared-view program-index)))]
     [(compiler_ir_types.CompilerIrInstr.Pack dst words _)
       (compiler-backend-object-pack-to-var
         parts
@@ -87920,25 +87731,8 @@
         src
         index
         (compiler-backend-global-shared-view program-index))]
-    [(compiler_ir_types.CompilerIrInstr.TailCallIndirect callee args _)
-      (compiler-backend-object-call-args
-        (compiler-backend-object-value-ref
-          parts
-          (compiler-backend-global-shared-view function)
-          callee
-          (compiler-backend-global-shared-view program-index))
-        (compiler-backend-global-shared-view function)
-        args
-        0
-        (compiler-backend-global-shared-view program-index))]
-    ;; Operand-free instructions emit no object bytes.
-    [(compiler_ir_types.CompilerIrInstr.Alloc _ _) parts]
     [(compiler_ir_types.CompilerIrInstr.AddrOf dst src)
       (compiler-backend-object-addr-of-to-var parts dst src)]
-    [(compiler_ir_types.CompilerIrInstr.LaneId _ _ _) parts]
-    [(compiler_ir_types.CompilerIrInstr.EntryArgc _) parts]
-    [(compiler_ir_types.CompilerIrInstr.EntryArgv _) parts]
-    [(compiler_ir_types.CompilerIrInstr.EntryEnvp _) parts]
     [(compiler_ir_types.CompilerIrInstr.Switch index base cases default-label)
       (compiler-backend-object-switch
         parts
@@ -87967,7 +87761,8 @@
         cases
         default-label
         trap-label
-        program-index)]))
+        program-index)]
+    [_ (compiler-backend-object-uses-ref parts function instr program-index)]))
 
 (define (compiler-backend-object-instr-seq
   [type-segment-bases : i64]

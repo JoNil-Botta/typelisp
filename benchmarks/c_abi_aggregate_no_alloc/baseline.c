@@ -1,5 +1,10 @@
 #include <stdint.h>
 
+#if defined(_WIN32)
+/* MSVC ABI float-use marker for the freestanding -NODEFAULTLIB link. */
+int _fltused = 0;
+#endif
+
 /* The by-value parameter callees write their aggregate parameter through a
  * volatile pointer. On Win64 an aggregate wider than 8 bytes is passed as a
  * pointer to a caller-owned copy, so these stores land in that copy; on SysV

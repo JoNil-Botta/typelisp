@@ -5585,13 +5585,6 @@
         (>= (lower-test-count functions "main" (LowerTestInstr.AddrOf)) 4))]
     [_ false]))
 
-(define (compiler-lower-c-abi-result-frame-storage-shape-ok?) : bool
-  (and
-    (compiler-lower-c-abi-result-frame-storage-ok?
-      (lower.CompilerLowerMode.LinuxScalar))
-    (compiler-lower-c-abi-result-frame-storage-ok?
-      (lower.CompilerLowerMode.WindowsScalar))))
-
 (define (compiler-lower-c-abi-windows-nested-small-aggregate-shape-ok?) : bool
   (match (lower-test-functions
     (lower.lower-compiler-source-with-mode

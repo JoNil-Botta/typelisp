@@ -7583,6 +7583,672 @@
       [(AstExpr.MacroExpansion a provenance name)
         (AstExpr.MacroExpansion (,e ,@x a) provenance name)])))
 
+;; `ast-expr-children-eq?` is structural equality of two nodes: the same
+;; variant, equal scalar payloads, and children equal pairwise by the hooks,
+;; which receive both children (`on-literal` compares literals). It is pure:
+;; the order of the comparisons only decides how early it answers false.
+(define (ast-borrow-lifetime-id-eq? [a : i64] [b : i64]) : bool
+  (if (< a 0)
+    (< b 0)
+    (= a b)))
+
+(defmacro (ast-maybe-type-eq?
+  [left : Expr]
+  [right : Expr]
+  [on-type : Expr]
+  [contexts : Expr ...]) : Expr
+  `(match ,left
+    [(AstMaybeType.No)
+      (match ,right
+        [(AstMaybeType.No) true]
+        [_ false])]
+    [(AstMaybeType.Some a)
+      (match ,right
+        [(AstMaybeType.Some b) (,on-type ,@contexts a b)]
+        [_ false])]))
+
+(defmacro (ast-expr-list-eq?
+  [left : Expr]
+  [right : Expr]
+  [on-expr : Expr]
+  [contexts : Expr ...]) : Expr
+  `(let
+    [a ,left]
+    [b ,right]
+    [same : bool (= (ast-expr-list-len (& a)) (ast-expr-list-len (& b)))]
+    [index : i64 0]
+    (begin
+      (while (and same (< index (ast-expr-list-len (& a))))
+        (begin
+          (set!
+            same
+            (,on-expr
+              ,@contexts
+              (ast-expr-list-get (& a) index 0)
+              (ast-expr-list-get (& b) index 0)))
+          (set! index (+ index 1))))
+      same)))
+
+(defmacro (ast-for-owned-slots-eq?
+  [left : Expr]
+  [right : Expr]
+  [on-expr : Expr]
+  [contexts : Expr ...]) : Expr
+  `(let
+    [a ,left]
+    [b ,right]
+    [same : bool (= (ast-expr-list-len (& a)) (ast-expr-list-len (& b)))]
+    [index : i64 0]
+    (begin
+      (while (and same (< index (ast-expr-list-len (& a))))
+        (let
+          [a-slot : i64 (ast-expr-list-get (& a) index 0)]
+          [b-slot : i64 (ast-expr-list-get (& b) index 0)]
+          (begin
+            (set!
+              same
+              (if (< a-slot 0)
+                (< b-slot 0)
+                (and (>= b-slot 0) (,on-expr ,@contexts a-slot b-slot))))
+            (set! index (+ index 1)))))
+      same)))
+
+(defmacro (ast-let-binding-list-eq?
+  [left : Expr]
+  [right : Expr]
+  [on-expr : Expr]
+  [on-type : Expr]
+  [contexts : Expr ...]) : Expr
+  `(let
+    [a ,left]
+    [b ,right]
+    [same : bool
+      (= (ast-let-binding-list-len (& a)) (ast-let-binding-list-len (& b)))]
+    [index : i64 0]
+    (begin
+      (while (and same (< index (ast-let-binding-list-len (& a))))
+        (begin
+          (match (ast-let-binding-list-get
+            (& a)
+            index
+            (ast-let-binding-fallback))
+            [(AstLetBinding.Binding a-name a-ty a-init)
+              (match (ast-let-binding-list-get
+                (& b)
+                index
+                (ast-let-binding-fallback))
+                [(AstLetBinding.Binding b-name b-ty b-init)
+                  (set!
+                    same
+                    (and
+                      (= a-name b-name)
+                      (ast-maybe-type-eq? a-ty b-ty ,on-type ,@contexts)
+                      (,on-expr ,@contexts a-init b-init)))])])
+          (set! index (+ index 1))))
+      same)))
+
+(defmacro (ast-param-list-eq?
+  [left : Expr]
+  [right : Expr]
+  [on-type : Expr]
+  [contexts : Expr ...]) : Expr
+  `(let
+    [a ,left]
+    [b ,right]
+    [same : bool (= (ast-param-list-len (& a)) (ast-param-list-len (& b)))]
+    [index : i64 0]
+    (begin
+      (while (and same (< index (ast-param-list-len (& a))))
+        (begin
+          (match (ast-param-list-get (& a) index (ast-param-fallback))
+            [(AstParam.Param a-name a-ty a-comptime)
+              (match (ast-param-list-get (& b) index (ast-param-fallback))
+                [(AstParam.Param b-name b-ty b-comptime)
+                  (set!
+                    same
+                    (and
+                      (= a-name b-name)
+                      (,on-type ,@contexts a-ty b-ty)
+                      (= a-comptime b-comptime)))])])
+          (set! index (+ index 1))))
+      same)))
+
+(defmacro (ast-match-arm-list-eq?
+  [left : Expr]
+  [right : Expr]
+  [on-expr : Expr]
+  [on-pattern : Expr]
+  [contexts : Expr ...]) : Expr
+  `(let
+    [a ,left]
+    [b ,right]
+    [same : bool
+      (= (ast-match-arm-list-len (& a)) (ast-match-arm-list-len (& b)))]
+    [index : i64 0]
+    (begin
+      (while (and same (< index (ast-match-arm-list-len (& a))))
+        (begin
+          (match (ast-match-arm-list-get (& a) index (ast-match-arm-fallback))
+            [(AstMatchArm.Arm a-pattern a-body)
+              (match (ast-match-arm-list-get
+                (& b)
+                index
+                (ast-match-arm-fallback))
+                [(AstMatchArm.Arm b-pattern b-body)
+                  (set!
+                    same
+                    (and
+                      (,on-pattern ,@contexts a-pattern b-pattern)
+                      (,on-expr ,@contexts a-body b-body)))])])
+          (set! index (+ index 1))))
+      same)))
+
+(defmacro (ast-resource-binding-list-eq?
+  [left : Expr]
+  [right : Expr]
+  [on-expr : Expr]
+  [contexts : Expr ...]) : Expr
+  `(let
+    [a ,left]
+    [b ,right]
+    [same : bool
+      (=
+        (ast-resource-binding-list-len (& a))
+        (ast-resource-binding-list-len (& b)))]
+    [index : i64 0]
+    (begin
+      (while (and same (< index (ast-resource-binding-list-len (& a))))
+        (begin
+          (match (ast-resource-binding-list-get
+            (& a)
+            index
+            (ast-resource-binding-fallback))
+            [(AstResourceBinding.Binding a-name a-init a-cleanup a-move-aware?)
+              (match (ast-resource-binding-list-get
+                (& b)
+                index
+                (ast-resource-binding-fallback))
+                [(AstResourceBinding.Binding
+                    b-name
+                    b-init
+                    b-cleanup
+                    b-move-aware?)
+                  (set!
+                    same
+                    (and
+                      (= a-name b-name)
+                      (= a-move-aware? b-move-aware?)
+                      (,on-expr ,@contexts a-init b-init)
+                      (,on-expr ,@contexts a-cleanup b-cleanup)))])])
+          (set! index (+ index 1))))
+      same)))
+
+(defmacro (ast-expr-children-eq?
+  [left : Expr]
+  [right : Expr]
+  [on-expr : Expr]
+  [on-type-id : Expr]
+  [on-type : Expr]
+  [on-pattern : Expr]
+  [on-literal : Expr]
+  [contexts : Expr ...]) : bool
+  (let
+    [r : Expr right]
+    [e : Expr on-expr]
+    [ti : Expr on-type-id]
+    [ty : Expr on-type]
+    [x : ExprList contexts]
+    `(match ,left
+      [(AstExpr.Spanned a0 s0)
+        (match ,r
+          [(AstExpr.Spanned b0 s1)
+            (and (,e ,@x a0 b0) (ast-source-span-eq? s0 s1))]
+          [_ false])]
+      [(AstExpr.Literal a0)
+        (match ,r
+          [(AstExpr.Literal b0) (,on-literal ,@x a0 b0)]
+          [_ false])]
+      [(AstExpr.Var a0)
+        (match ,r
+          [(AstExpr.Var b0) (= a0 b0)]
+          [_ false])]
+      [(AstExpr.Binary op0 a0 a1)
+        (match ,r
+          [(AstExpr.Binary op1 b0 b1)
+            (and (= op0 op1) (,e ,@x a0 b0) (,e ,@x a1 b1))]
+          [_ false])]
+      [(AstExpr.Unary op0 a0)
+        (match ,r
+          [(AstExpr.Unary op1 b0) (and (= op0 op1) (,e ,@x a0 b0))]
+          [_ false])]
+      [(AstExpr.Call a0 as)
+        (match ,r
+          [(AstExpr.Call b0 bs)
+            (and (,e ,@x a0 b0) (ast-expr-list-eq? as bs ,e ,@x))]
+          [_ false])]
+      [(AstExpr.If a0 a1 a2)
+        (match ,r
+          [(AstExpr.If b0 b1 b2)
+            (and (,e ,@x a0 b0) (,e ,@x a1 b1) (,e ,@x a2 b2))]
+          [_ false])]
+      [(AstExpr.Let a-payload)
+        (match (__tl-box-place a-payload)
+          [(AstLet.Let as a0)
+            (match ,r
+              [(AstExpr.Let b-payload)
+                (match (__tl-box-place b-payload)
+                  [(AstLet.Let bs b0)
+                    (and
+                      (ast-let-binding-list-eq? as bs ,e ,ty ,@x)
+                      (,e ,@x a0 b0))])]
+              [_ false])])]
+      [(AstExpr.Lambda a-payload)
+        (match (__tl-box-place a-payload)
+          [(AstLambda.Lambda as a-ret a0)
+            (match ,r
+              [(AstExpr.Lambda b-payload)
+                (match (__tl-box-place b-payload)
+                  [(AstLambda.Lambda bs b-ret b0)
+                    (and
+                      (ast-param-list-eq? as bs ,ty ,@x)
+                      (ast-maybe-type-eq? a-ret b-ret ,ty ,@x)
+                      (,e ,@x a0 b0))])]
+              [_ false])])]
+      [(AstExpr.Tuple as)
+        (match ,r
+          [(AstExpr.Tuple bs) (ast-expr-list-eq? as bs ,e ,@x)]
+          [_ false])]
+      [(AstExpr.TupleRef a0 i0)
+        (match ,r
+          [(AstExpr.TupleRef b0 i1) (and (= i0 i1) (,e ,@x a0 b0))]
+          [_ false])]
+      [(AstExpr.Array as)
+        (match ,r
+          [(AstExpr.Array bs) (ast-expr-list-eq? as bs ,e ,@x)]
+          [_ false])]
+      [(AstExpr.DynArray as)
+        (match ,r
+          [(AstExpr.DynArray bs) (ast-expr-list-eq? as bs ,e ,@x)]
+          [_ false])]
+      [(AstExpr.FixedMakeArray t0 a0)
+        (match ,r
+          [(AstExpr.FixedMakeArray t1 b0) (and (,ti ,@x t0 t1) (,e ,@x a0 b0))]
+          [_ false])]
+      [(AstExpr.MakeArray t0 a0)
+        (match ,r
+          [(AstExpr.MakeArray t1 b0) (and (,ti ,@x t0 t1) (,e ,@x a0 b0))]
+          [_ false])]
+      [(AstExpr.ArrayRef a0 a1)
+        (match ,r
+          [(AstExpr.ArrayRef b0 b1) (and (,e ,@x a0 b0) (,e ,@x a1 b1))]
+          [_ false])]
+      [(AstExpr.ArraySet a0 a1 a2)
+        (match ,r
+          [(AstExpr.ArraySet b0 b1 b2)
+            (and (,e ,@x a0 b0) (,e ,@x a1 b1) (,e ,@x a2 b2))]
+          [_ false])]
+      [(AstExpr.ArrayTake a0 a1 a2)
+        (match ,r
+          [(AstExpr.ArrayTake b0 b1 b2)
+            (and (,e ,@x a0 b0) (,e ,@x a1 b1) (,e ,@x a2 b2))]
+          [_ false])]
+      [(AstExpr.FixedArrayTake a0 a1)
+        (match ,r
+          [(AstExpr.FixedArrayTake b0 b1) (and (,e ,@x a0 b0) (,e ,@x a1 b1))]
+          [_ false])]
+      [(AstExpr.ArrayPush a0 a1)
+        (match ,r
+          [(AstExpr.ArrayPush b0 b1) (and (,e ,@x a0 b0) (,e ,@x a1 b1))]
+          [_ false])]
+      [(AstExpr.StringRef a0 a1)
+        (match ,r
+          [(AstExpr.StringRef b0 b1) (and (,e ,@x a0 b0) (,e ,@x a1 b1))]
+          [_ false])]
+      [(AstExpr.While a0 a1)
+        (match ,r
+          [(AstExpr.While b0 b1) (and (,e ,@x a0 b0) (,e ,@x a1 b1))]
+          [_ false])]
+      [(AstExpr.Begin as)
+        (match ,r
+          [(AstExpr.Begin bs) (ast-expr-list-eq? as bs ,e ,@x)]
+          [_ false])]
+      [(AstExpr.Unsafe as)
+        (match ,r
+          [(AstExpr.Unsafe bs) (ast-expr-list-eq? as bs ,e ,@x)]
+          [_ false])]
+      [(AstExpr.Set n0 a0)
+        (match ,r
+          [(AstExpr.Set n1 b0) (and (= n0 n1) (,e ,@x a0 b0))]
+          [_ false])]
+      [(AstExpr.Replace a0 a1)
+        (match ,r
+          [(AstExpr.Replace b0 b1) (and (,e ,@x a0 b0) (,e ,@x a1 b1))]
+          [_ false])]
+      [(AstExpr.Ann a0 t0)
+        (match ,r
+          [(AstExpr.Ann b0 t1) (and (,e ,@x a0 b0) (,ti ,@x t0 t1))]
+          [_ false])]
+      [(AstExpr.Cast a0 t0)
+        (match ,r
+          [(AstExpr.Cast b0 t1) (and (,e ,@x a0 b0) (,ti ,@x t0 t1))]
+          [_ false])]
+      [(AstExpr.Borrow m0 l0 a0)
+        (match ,r
+          [(AstExpr.Borrow m1 l1 b0)
+            (and (= m0 m1) (ast-borrow-lifetime-id-eq? l0 l1) (,e ,@x a0 b0))]
+          [_ false])]
+      [(AstExpr.Match a-payload)
+        (match (__tl-box-place a-payload)
+          [(AstMatch.Match a0 as)
+            (match ,r
+              [(AstExpr.Match b-payload)
+                (match (__tl-box-place b-payload)
+                  [(AstMatch.Match b0 bs)
+                    (and
+                      (,e ,@x a0 b0)
+                      (ast-match-arm-list-eq? as bs ,e ,on-pattern ,@x))])]
+              [_ false])])]
+      [(AstExpr.Foreach a-payload)
+        (match (__tl-box-place a-payload)
+          [(AstForeach.Foreach n0 t0 a0 a1 a2)
+            (match ,r
+              [(AstExpr.Foreach b-payload)
+                (match (__tl-box-place b-payload)
+                  [(AstForeach.Foreach n1 t1 b0 b1 b2)
+                    (and
+                      (= n0 n1)
+                      (,ty ,@x t0 t1)
+                      (,e ,@x a0 b0)
+                      (,e ,@x a1 b1)
+                      (,e ,@x a2 b2))])]
+              [_ false])])]
+      [(AstExpr.SpmdReduce a-payload)
+        (match (__tl-box-place a-payload)
+          [(AstSpmdReduce.Reduce op0 n0 t0 a0 a1 a2 a3)
+            (match ,r
+              [(AstExpr.SpmdReduce b-payload)
+                (match (__tl-box-place b-payload)
+                  [(AstSpmdReduce.Reduce op1 n1 t1 b0 b1 b2 b3)
+                    (and
+                      (= op0 op1)
+                      (= n0 n1)
+                      (,ty ,@x t0 t1)
+                      (,e ,@x a0 b0)
+                      (,e ,@x a1 b1)
+                      (,e ,@x a2 b2)
+                      (,e ,@x a3 b3))])]
+              [_ false])])]
+      [(AstExpr.SpmdScan a-payload)
+        (match (__tl-box-place a-payload)
+          [(AstSpmdScan.Scan op0 n0 t0 a0 a1 p0 u0 a2 a3 a4)
+            (match ,r
+              [(AstExpr.SpmdScan b-payload)
+                (match (__tl-box-place b-payload)
+                  [(AstSpmdScan.Scan op1 n1 t1 b0 b1 p1 u1 b2 b3 b4)
+                    (and
+                      (= op0 op1)
+                      (= n0 n1)
+                      (,ty ,@x t0 t1)
+                      (,e ,@x a0 b0)
+                      (,e ,@x a1 b1)
+                      (= p0 p1)
+                      (,ty ,@x u0 u1)
+                      (,e ,@x a2 b2)
+                      (,e ,@x a3 b3)
+                      (,e ,@x a4 b4))])]
+              [_ false])])]
+      [(AstExpr.SpmdCompact a-payload)
+        (match (__tl-box-place a-payload)
+          [(AstSpmdCompact.Compact n0 t0 a0 a1 p0 u0 a2 a3 a4)
+            (match ,r
+              [(AstExpr.SpmdCompact b-payload)
+                (match (__tl-box-place b-payload)
+                  [(AstSpmdCompact.Compact n1 t1 b0 b1 p1 u1 b2 b3 b4)
+                    (and
+                      (= n0 n1)
+                      (,ty ,@x t0 t1)
+                      (,e ,@x a0 b0)
+                      (,e ,@x a1 b1)
+                      (= p0 p1)
+                      (,ty ,@x u0 u1)
+                      (,e ,@x a2 b2)
+                      (,e ,@x a3 b3)
+                      (,e ,@x a4 b4))])]
+              [_ false])])]
+      [(AstExpr.SpmdBroadcast a0 a1)
+        (match ,r
+          [(AstExpr.SpmdBroadcast b0 b1) (and (,e ,@x a0 b0) (,e ,@x a1 b1))]
+          [_ false])]
+      [(AstExpr.SpmdShuffle a0 a1)
+        (match ,r
+          [(AstExpr.SpmdShuffle b0 b1) (and (,e ,@x a0 b0) (,e ,@x a1 b1))]
+          [_ false])]
+      [(AstExpr.SpmdProgramIndex)
+        (match ,r
+          [(AstExpr.SpmdProgramIndex) true]
+          [_ false])]
+      [(AstExpr.SpmdProgramCount)
+        (match ,r
+          [(AstExpr.SpmdProgramCount) true]
+          [_ false])]
+      [(AstExpr.StructGet a0 f0)
+        (match ,r
+          [(AstExpr.StructGet b0 f1) (and (= f0 f1) (,e ,@x a0 b0))]
+          [_ false])]
+      [(AstExpr.StructSet a0 f0 a1)
+        (match ,r
+          [(AstExpr.StructSet b0 f1 b1)
+            (and (= f0 f1) (,e ,@x a0 b0) (,e ,@x a1 b1))]
+          [_ false])]
+      [(AstExpr.WithRegion n0 as)
+        (match ,r
+          [(AstExpr.WithRegion n1 bs)
+            (and (= n0 n1) (ast-expr-list-eq? as bs ,e ,@x))]
+          [_ false])]
+      [(AstExpr.WithEscape a0 as)
+        (match ,r
+          [(AstExpr.WithEscape b0 bs)
+            (and (,e ,@x a0 b0) (ast-expr-list-eq? as bs ,e ,@x))]
+          [_ false])]
+      [(AstExpr.WithScratch as)
+        (match ,r
+          [(AstExpr.WithScratch bs) (ast-expr-list-eq? as bs ,e ,@x)]
+          [_ false])]
+      [(AstExpr.InArena a0 as)
+        (match ,r
+          [(AstExpr.InArena b0 bs)
+            (and (,e ,@x a0 b0) (ast-expr-list-eq? as bs ,e ,@x))]
+          [_ false])]
+      [(AstExpr.WithResource a-payload)
+        (match (__tl-box-place a-payload)
+          [(AstWithResource.WithResource a-bindings as)
+            (match ,r
+              [(AstExpr.WithResource b-payload)
+                (match (__tl-box-place b-payload)
+                  [(AstWithResource.WithResource b-bindings bs)
+                    (and
+                      (ast-resource-binding-list-eq?
+                        a-bindings
+                        b-bindings
+                        ,e
+                        ,@x)
+                      (ast-expr-list-eq? as bs ,e ,@x))])]
+              [_ false])])]
+      [(AstExpr.Box a0)
+        (match ,r
+          [(AstExpr.Box b0) (,e ,@x a0 b0)]
+          [_ false])]
+      [(AstExpr.BoxGet a0)
+        (match ,r
+          [(AstExpr.BoxGet b0) (,e ,@x a0 b0)]
+          [_ false])]
+      [(AstExpr.BoxTake a0)
+        (match ,r
+          [(AstExpr.BoxTake b0) (,e ,@x a0 b0)]
+          [_ false])]
+      [(AstExpr.BoxSet a0 a1)
+        (match ,r
+          [(AstExpr.BoxSet b0 b1) (and (,e ,@x a0 b0) (,e ,@x a1 b1))]
+          [_ false])]
+      [(AstExpr.TypeLiteral t0)
+        (match ,r
+          [(AstExpr.TypeLiteral t1) (,ti ,@x t0 t1)]
+          [_ false])]
+      [(AstExpr.Init t0)
+        (match ,r
+          [(AstExpr.Init t1)
+            (if (< t0 0)
+              (< t1 0)
+              (and (>= t1 0) (,ti ,@x t0 t1)))]
+          [_ false])]
+      [(AstExpr.Comptime a0)
+        (match ,r
+          [(AstExpr.Comptime b0) (,e ,@x a0 b0)]
+          [_ false])]
+      [(AstExpr.Quote a0)
+        (match ,r
+          [(AstExpr.Quote b0) (,e ,@x a0 b0)]
+          [_ false])]
+      [(AstExpr.Quasiquote a0)
+        (match ,r
+          [(AstExpr.Quasiquote b0) (,e ,@x a0 b0)]
+          [_ false])]
+      [(AstExpr.Unquote a0)
+        (match ,r
+          [(AstExpr.Unquote b0) (,e ,@x a0 b0)]
+          [_ false])]
+      [(AstExpr.UnquoteSplicing a0)
+        (match ,r
+          [(AstExpr.UnquoteSplicing b0) (,e ,@x a0 b0)]
+          [_ false])]
+      [(AstExpr.BracketClause as)
+        (match ,r
+          [(AstExpr.BracketClause bs) (ast-expr-list-eq? as bs ,e ,@x)]
+          [_ false])]
+      [(AstExpr.Try a0)
+        (match ,r
+          [(AstExpr.Try b0) (,e ,@x a0 b0)]
+          [_ false])]
+      [(AstExpr.Return a0)
+        (match ,r
+          [(AstExpr.Return b0) (,e ,@x a0 b0)]
+          [_ false])]
+      [(AstExpr.Break)
+        (match ,r
+          [(AstExpr.Break) true]
+          [_ false])]
+      [(AstExpr.Continue)
+        (match ,r
+          [(AstExpr.Continue) true]
+          [_ false])]
+      [(AstExpr.PtrNull t0)
+        (match ,r
+          [(AstExpr.PtrNull t1) (,ti ,@x t0 t1)]
+          [_ false])]
+      [(AstExpr.PtrNullCheck a0)
+        (match ,r
+          [(AstExpr.PtrNullCheck b0) (,e ,@x a0 b0)]
+          [_ false])]
+      [(AstExpr.PtrAddrOf a0)
+        (match ,r
+          [(AstExpr.PtrAddrOf b0) (,e ,@x a0 b0)]
+          [_ false])]
+      [(AstExpr.PtrRead a0)
+        (match ,r
+          [(AstExpr.PtrRead b0) (,e ,@x a0 b0)]
+          [_ false])]
+      [(AstExpr.PtrWrite a0 a1)
+        (match ,r
+          [(AstExpr.PtrWrite b0 b1) (and (,e ,@x a0 b0) (,e ,@x a1 b1))]
+          [_ false])]
+      [(AstExpr.PtrOffset a0 a1)
+        (match ,r
+          [(AstExpr.PtrOffset b0 b1) (and (,e ,@x a0 b0) (,e ,@x a1 b1))]
+          [_ false])]
+      [(AstExpr.PtrCast a0 t0)
+        (match ,r
+          [(AstExpr.PtrCast b0 t1) (and (,e ,@x a0 b0) (,ti ,@x t0 t1))]
+          [_ false])]
+      [(AstExpr.PtrToInt a0)
+        (match ,r
+          [(AstExpr.PtrToInt b0) (,e ,@x a0 b0)]
+          [_ false])]
+      [(AstExpr.IntToPtr a0 t0)
+        (match ,r
+          [(AstExpr.IntToPtr b0 t1) (and (,e ,@x a0 b0) (,ti ,@x t0 t1))]
+          [_ false])]
+      [(AstExpr.StringData a0)
+        (match ,r
+          [(AstExpr.StringData b0) (,e ,@x a0 b0)]
+          [_ false])]
+      [(AstExpr.StringFromBytes a0 a1)
+        (match ,r
+          [(AstExpr.StringFromBytes b0 b1) (and (,e ,@x a0 b0) (,e ,@x a1 b1))]
+          [_ false])]
+      [(AstExpr.ArrayData a0)
+        (match ,r
+          [(AstExpr.ArrayData b0) (,e ,@x a0 b0)]
+          [_ false])]
+      [(AstExpr.BinaryData a0)
+        (match ,r
+          [(AstExpr.BinaryData b0) (string.eq a0 b0)]
+          [_ false])]
+      [(AstExpr.ProgramArgc)
+        (match ,r
+          [(AstExpr.ProgramArgc) true]
+          [_ false])]
+      [(AstExpr.ProgramArgv)
+        (match ,r
+          [(AstExpr.ProgramArgv) true]
+          [_ false])]
+      [(AstExpr.ProgramEnvp)
+        (match ,r
+          [(AstExpr.ProgramEnvp) true]
+          [_ false])]
+      [(AstExpr.CpuIdEax a0 a1)
+        (match ,r
+          [(AstExpr.CpuIdEax b0 b1) (and (,e ,@x a0 b0) (,e ,@x a1 b1))]
+          [_ false])]
+      [(AstExpr.CpuIdEbx a0 a1)
+        (match ,r
+          [(AstExpr.CpuIdEbx b0 b1) (and (,e ,@x a0 b0) (,e ,@x a1 b1))]
+          [_ false])]
+      [(AstExpr.CpuIdEcx a0 a1)
+        (match ,r
+          [(AstExpr.CpuIdEcx b0 b1) (and (,e ,@x a0 b0) (,e ,@x a1 b1))]
+          [_ false])]
+      [(AstExpr.CpuIdEdx a0 a1)
+        (match ,r
+          [(AstExpr.CpuIdEdx b0 b1) (and (,e ,@x a0 b0) (,e ,@x a1 b1))]
+          [_ false])]
+      [(AstExpr.Xgetbv a0)
+        (match ,r
+          [(AstExpr.Xgetbv b0) (,e ,@x a0 b0)]
+          [_ false])]
+      [(AstExpr.Syscall as)
+        (match ,r
+          [(AstExpr.Syscall bs) (ast-expr-list-eq? as bs ,e ,@x)]
+          [_ false])]
+      [(AstExpr.ForOwnedState as)
+        (match ,r
+          [(AstExpr.ForOwnedState bs) (ast-for-owned-slots-eq? as bs ,e ,@x)]
+          [_ false])]
+      [(AstExpr.ForOwnedStep as)
+        (match ,r
+          [(AstExpr.ForOwnedStep bs) (ast-for-owned-slots-eq? as bs ,e ,@x)]
+          [_ false])]
+      [(AstExpr.MacroExpansion a0 p0 n0)
+        (match ,r
+          [(AstExpr.MacroExpansion b0 p1 n1)
+            (and (,e ,@x a0 b0) (= p0 p1) (= n0 n1))]
+          [_ false])])))
+
+(define (ast-expr-for-owned? [expr : (& expr AstExpr)]) : bool
+  (match expr
+    [(AstExpr.ForOwnedState _) true]
+    [(AstExpr.ForOwnedStep _) true]
+    [_ false]))
+
 (define (ast-expr-for-owned-state
   [source-name : i64]
   [index-name : i64]

@@ -47,9 +47,11 @@ repl repl
 run run
 test test'
 
-# Print every "--flag" literal a parser source mentions, one per line.
+# Print every --flag a parser source's code mentions, one per line: quoted
+# literals, and the entries of its cli_option spec tables (strings such as
+# "--debug|-g|--backtrace --target <target>"). Comment lines are skipped.
 parsed_flags() {
-    grep -o '"--[a-z][a-z0-9-]*"' "$1" 2>/dev/null | tr -d '"' | sort -u
+    grep -v '^[[:space:]]*;' "$1" 2>/dev/null | grep -o '[" |]--[a-z][a-z0-9-]*' | cut -c2- | sort -u
 }
 
 # Print the help block body for cli-<name>-help-text out of a main.tl-shaped

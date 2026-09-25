@@ -25,9 +25,10 @@ native_link_detect_host
 # declaration metadata adds two source-visible declarations to that prefix.
 # Removing the generic shared-view bridge subtracts one on both hosts.
 # The checked C function-pointer null abort adds one runtime declaration.
+# The package-first operand-count guard pair adds two declarations on both hosts.
 case "$NL_HOST_OS" in
-    windows) TRUSTED_PREFIX_SKIPPED=224 ;;
-    *) TRUSTED_PREFIX_SKIPPED=219 ;;
+    windows) TRUSTED_PREFIX_SKIPPED=226 ;;
+    *) TRUSTED_PREFIX_SKIPPED=221 ;;
 esac
 
 COMPILER=${1:-${TYPELISP_BIN:-}}
@@ -313,18 +314,19 @@ grep -F "dependency-tlci-verification|phase=prepared|requests=1|entries=1" \
     fail "trusted dependency runtime observation is missing or duplicated"
 grep -F "dependency-tlci-verification|phase=runtime-finished|requests=-1|entries=1" \
     "$NATIVE_ERR" |
-    grep -F "|surface-enabled=1|surface-fragments=1|surface-hits=1|surface-fallbacks=0|surface-decls=20|surface-macro-skipped=$TRUSTED_PREFIX_SKIPPED|surface-typecheck-skipped=$TRUSTED_PREFIX_SKIPPED" \
+    grep -F "|surface-enabled=1|surface-fragments=1|surface-hits=1|surface-fallbacks=0|surface-decls=22|surface-macro-skipped=$TRUSTED_PREFIX_SKIPPED|surface-typecheck-skipped=$TRUSTED_PREFIX_SKIPPED" \
     >/dev/null || fail "trusted dependency frontend surface route mismatch"
 
-assert_profile_eq dependency_tlci_catalog_hits 6 "$NATIVE_ERR"
+assert_profile_eq dependency_tlci_catalog_hits 8 "$NATIVE_ERR"
 assert_profile_eq dependency_tlci_catalog_misses 0 "$NATIVE_ERR"
 assert_profile_eq dependency_tlci_load_failures 0 "$NATIVE_ERR"
-assert_profile_eq dependency_tlci_native_dispatches 5 "$NATIVE_ERR"
-assert_profile_eq dependency_tlci_native_expr_results 2 "$NATIVE_ERR"
-assert_profile_eq dependency_tlci_direct_expr_results 2 "$NATIVE_ERR"
+assert_profile_eq dependency_tlci_native_dispatches 7 "$NATIVE_ERR"
+assert_profile_eq dependency_tlci_native_expr_results 3 "$NATIVE_ERR"
+assert_profile_eq dependency_tlci_direct_expr_results 3 "$NATIVE_ERR"
 assert_profile_eq dependency_tlci_native_module_results 1 "$NATIVE_ERR"
-assert_profile_eq dependency_tlci_native_decls_results 1 "$NATIVE_ERR"
-assert_profile_eq dependency_tlci_parameter_name_lookups 0 "$NATIVE_ERR"
+assert_profile_eq dependency_tlci_native_decls_results 2 "$NATIVE_ERR"
+# The Decls route binds operands by name; only package-first-decls has one.
+assert_profile_eq dependency_tlci_parameter_name_lookups 1 "$NATIVE_ERR"
 assert_profile_eq dependency_tlci_interpreted_fallbacks 2 "$NATIVE_ERR"
 assert_profile_eq dependency_tlci_shell_learns 1 "$NATIVE_ERR"
 assert_profile_eq dependency_tlci_shell_cache_hits 1 "$NATIVE_ERR"
@@ -401,8 +403,8 @@ grep -F "dependency-tlci-verification|phase=runtime-finished|requests=-1|entries
     grep -F "|surface-enabled=0|surface-fragments=1|surface-hits=0|surface-fallbacks=1|surface-decls=0|surface-macro-skipped=0|surface-typecheck-skipped=0" \
     >/dev/null || fail "forced-source dependency frontend route mismatch"
 assert_profile_eq dependency_tlci_native_dispatches 0 "$SOURCE_ERR"
-assert_profile_eq dependency_tlci_load_failures 6 "$SOURCE_ERR"
-assert_profile_eq dependency_tlci_interpreted_fallbacks 6 "$SOURCE_ERR"
+assert_profile_eq dependency_tlci_load_failures 8 "$SOURCE_ERR"
+assert_profile_eq dependency_tlci_interpreted_fallbacks 8 "$SOURCE_ERR"
 
 cmp "$NATIVE_ASM" "$CONSUMER_ASM" >/dev/null ||
     fail "native and forced-source consumer assembly differ"

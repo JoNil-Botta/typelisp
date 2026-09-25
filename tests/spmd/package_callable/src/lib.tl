@@ -24,6 +24,20 @@
       (define (package-unsafe-answer [value : i64]) : i64
         value))))
 
+;; The definition-time body probe binds an empty operand list, so it takes both
+;; guards' `comptime-error` arms; neither may report unless an expansion takes
+;; it.
+(defmacro (package-first [values : i64 ...]) : i64
+  (if (= (comptime.expr-list-length values) 0)
+    (comptime.comptime-error "package-first expects an operand")
+    (comptime.expr-list-nth values 0)))
+
+(defmacro (package-first-decls [values : i64 ...]) : Decls
+  (if (= (comptime.expr-list-length values) 0)
+    (comptime.comptime-error "package-first-decls expects an operand")
+    `(define (package-first-answer) : i64
+      ,(comptime.expr-list-nth values 0))))
+
 ;; Keep one intentionally unsupported producer shape in the catalog. Its first
 ;; native attempt learns the mapping-generation shell and its second call must
 ;; bypass both dispatch and host-session setup before deterministic source CTFE.

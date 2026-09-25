@@ -5,6 +5,8 @@
 
 (fixture.package-decls)
 
+(fixture.package-first-decls 39 1)
+
 (define (fill [out : (__tl_dyn-array i64)] [n : i64]) : bool
   (begin
     (foreach ([i : i64 0 n]) (set! (array-ref out i) (fixture.helper i 3)))
@@ -186,6 +188,8 @@
         (= (fixture.package-increment 41) 42)
         (= (fixture.package-unsupported 42) 42)
         (= (fixture.package-unsupported 41) 41)
+        (= (fixture.package-first 38 1) 38)
+        (= (package-first-answer) 39)
         (= (fixture-generated.answer) 41)
         (= (package-decl-answer) 40)
         (= (fixture.helper 2 3) 5)

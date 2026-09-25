@@ -5,6 +5,7 @@
 (import stdlib.io)
 (import stdlib.string)
 (import compiler_intern as ci)
+(import stdlib.comptime)
 (cfg test (import stdlib.test))
 
 (define compiler-builtin-id-c-fn-check : i64
@@ -797,6 +798,553 @@
 ;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-stdlib_dot_clone_dot_synthesize_helpers : i64
   -1)
+
+;; The reset-aware builtin id table. A row `(id global slot "spelling")` ties
+;; a `compiler-builtin-id-*` global (declared above) to its slot in
+;; `CompilerBuiltinIdsState.ids` and to the source spelling it interns. Slots are
+;; append-only and retired slots stay unused. Rows are in load order, which is
+;; the order their spellings enter the intern table. The table expands into a
+;; `compiler-builtin-id-statements` call, which emits one statement per row.
+(defmacro (compiler-builtin-id-table
+  [mode : comptime.Expr]
+  [context : comptime.Expr]) : unit
+  `(compiler-builtin-id-statements
+    ,mode
+    ,context
+    (id compiler-builtin-id-tl-alloc 0 "tl_alloc")
+    ;; Append-only slot for the compiler-private aligned allocator.
+    (id compiler-builtin-id-tl-alloc-aligned 319 "tl_alloc_aligned")
+    (id compiler-builtin-id-tl-region-mark 1 "tl_region_mark")
+    (id compiler-builtin-id-tl-region-reset 2 "tl_region_reset")
+    (id compiler-builtin-id-tl-arena-make 3 "tl_arena_make")
+    (id compiler-builtin-id-tl-arena-make-small 310 "tl_arena_make_small")
+    (id compiler-builtin-id-tl-arena-make-atomic 4 "tl_arena_make_atomic")
+    (id compiler-builtin-id-tl-arena-current 5 "tl_arena_current")
+    (id compiler-builtin-id-tl-arena-set 6 "tl_arena_set")
+    (id compiler-builtin-id-tl-arena-destroy 7 "tl_arena_destroy")
+    (id compiler-builtin-id-tl-arena-poison-enable 8 "tl_arena_poison_enable")
+    (id
+      compiler-builtin-id-tl-arena-debug-retire-protected
+      320
+      "tl_arena_debug_retire_protected")
+    (id
+      compiler-builtin-id-tl-arena-debug-protect-never-reset
+      313
+      "tl_arena_debug_protect_never_reset")
+    (id
+      compiler-builtin-id-tl-arena-debug-assert-pool-install
+      314
+      "tl_arena_debug_assert_pool_install")
+    (id compiler-builtin-id-tl-thread-entry-ptr 9 "tl_thread_entry_ptr")
+    (id compiler-builtin-id-tl-thread-init 10 "tl_thread_init")
+    (id compiler-builtin-id-tl-atomic-i64-load-ptr 11 "tl_atomic_i64_load_ptr")
+    (id
+      compiler-builtin-id-tl-atomic-i64-store-ptr
+      12
+      "tl_atomic_i64_store_ptr")
+    (id compiler-builtin-id-tl-atomic-i64-add-ptr 13 "tl_atomic_i64_add_ptr")
+    (id
+      compiler-builtin-id-tl-atomic-i64-fetch-add-ptr
+      14
+      "tl_atomic_i64_fetch_add_ptr")
+    (id compiler-builtin-id-tl-atomic-i64-cas-ptr 62 "tl_atomic_i64_cas_ptr")
+    (id compiler-builtin-id-tl-atomic-i32-load-ptr 15 "tl_atomic_i32_load_ptr")
+    (id
+      compiler-builtin-id-tl-atomic-i32-store-ptr
+      16
+      "tl_atomic_i32_store_ptr")
+    (id compiler-builtin-id-tl-atomic-i32-add-ptr 17 "tl_atomic_i32_add_ptr")
+    (id
+      compiler-builtin-id-tl-atomic-i32-fetch-add-ptr
+      18
+      "tl_atomic_i32_fetch_add_ptr")
+    (id compiler-builtin-id-tl-atomic-i32-cas-ptr 63 "tl_atomic_i32_cas_ptr")
+    (id compiler-builtin-id-atomic-i64-load 284 "atomic-i64-load")
+    (id compiler-builtin-id-atomic-i64-store 285 "atomic-i64-store!")
+    (id compiler-builtin-id-atomic-i64-add 286 "atomic-i64-add!")
+    (id compiler-builtin-id-atomic-i64-fetch-add 287 "atomic-i64-fetch-add!")
+    (id compiler-builtin-id-atomic-i64-cas 288 "atomic-i64-cas!")
+    (id compiler-builtin-id-atomic-i32-load 289 "atomic-i32-load")
+    (id compiler-builtin-id-atomic-i32-store 290 "atomic-i32-store!")
+    (id compiler-builtin-id-atomic-i32-add 291 "atomic-i32-add!")
+    (id compiler-builtin-id-atomic-i32-fetch-add 292 "atomic-i32-fetch-add!")
+    (id compiler-builtin-id-atomic-i32-cas 293 "atomic-i32-cas!")
+    (id compiler-builtin-id-tl-profile-alloc-total 19 "tl_profile_alloc_total")
+    (id compiler-builtin-id-tl-profile-alloc-live 20 "tl_profile_alloc_live")
+    (id compiler-builtin-id-tl-profile-alloc-peak 21 "tl_profile_alloc_peak")
+    (id
+      compiler-builtin-id-tl-profile-alloc-reset-peak
+      22
+      "tl_profile_alloc_reset_peak")
+    (id compiler-builtin-id-tl-substring 23 "tl_substring")
+    (id compiler-builtin-id-tl-str-view 24 "tl_str_view")
+    (id compiler-builtin-id-tl-private-string-length 65 "__tl_string_length")
+    (id compiler-builtin-id-tl-private-string-ref 66 "__tl_string_ref")
+    (id compiler-builtin-id-tl-private-string-eq 67 "__tl_string_eq")
+    (id compiler-builtin-id-tl-private-string-to-int 68 "__tl_string_to_int")
+    (id compiler-builtin-id-tl-string-concat 25 "tl_string_concat")
+    (id compiler-builtin-id-tl-string-concat3 26 "tl_string_concat3")
+    (id compiler-builtin-id-tl-string-concat4 27 "tl_string_concat4")
+    (id compiler-builtin-id-tl-string-concat5 28 "tl_string_concat5")
+    (id compiler-builtin-id-tl-string-eq 29 "tl_string_eq")
+    (id compiler-builtin-id-tl-string-to-int 30 "tl_string_to_int")
+    (id compiler-builtin-id-tl-int-to-string 31 "tl_int_to_string")
+    (id compiler-builtin-id-tl-hash-string 32 "tl_hash_string")
+    (id compiler-builtin-id-tl-env-var-exists 33 "tl_env_var_exists")
+    (id compiler-builtin-id-tl-env-var-value 34 "tl_env_var_value")
+    (id compiler-builtin-id-env-path-separator 35 "path-separator")
+    (id compiler-builtin-id-tl-oob-abort 36 "tl_oob_abort")
+    (id compiler-builtin-id-tl-abort-label 37 ".L_tl_abort")
+    (id compiler-builtin-id-tl-div-abort 38 "tl_div_abort")
+    (id compiler-builtin-id-tl-shift-abort 39 "tl_shift_abort")
+    (id compiler-builtin-id-tl-stdin-eof-label 308 ".L_tl_stdin_eof")
+    (id compiler-builtin-id-tl-flush-stdout-label 309 ".L_tl_flush_stdout")
+    (id compiler-builtin-id-tl-array-fill8 40 "tl_array_fill8")
+    (id compiler-builtin-id-tl-array-zero 41 "tl_array_zero")
+    (id compiler-builtin-id-c-fn-check 321 "c-fn-check")
+    (id compiler-builtin-id-tl-c-fn-null-abort 322 "tl_c_fn_null_abort")
+    (id compiler-builtin-id-tl-mem-fill8 316 "tl_mem_fill8")
+    (id compiler-builtin-id-tl-mem-copy-fwd 317 "tl_mem_copy_fwd")
+    (id compiler-builtin-id-tl-mem-copy8-fwd 318 "tl_mem_copy8_fwd")
+    (id
+      compiler-builtin-id-tl-tlci-call-macro-entry
+      294
+      "tl_tlci_call_macro_entry")
+    (id compiler-builtin-id-tl-private-float-sqrt 296 "__tl_float_sqrt")
+    (id compiler-builtin-id-tl-private-float-to-bits 297 "__tl_float_to_bits")
+    (id
+      compiler-builtin-id-tl-private-float-from-bits
+      298
+      "__tl_float_from_bits")
+    (id compiler-builtin-id-string-length 44 "string-length")
+    (id compiler-builtin-id-length 45 "length")
+    (id compiler-builtin-id-string-eq 46 "string-eq")
+    (id compiler-builtin-id-string-eq-question 47 "string=?")
+    (id compiler-builtin-id-eq 192 "eq")
+    (id compiler-builtin-id-string-append 193 "string-append")
+    (id compiler-builtin-id-string-concat 194 "string-concat")
+    (id compiler-builtin-id-string-to-int 48 ">int")
+    (id compiler-builtin-id-string-ref 49 "string-ref")
+    (id compiler-builtin-id-char-at 50 "char-at")
+    (id compiler-builtin-id-array-length 51 "array-length")
+    (id compiler-builtin-id-private-array-length 64 "__tl_array-length")
+    (id compiler-builtin-id-cpuid 52 "cpuid")
+    (id compiler-builtin-id-xgetbv 53 "xgetbv")
+    (id compiler-builtin-id-clone 54 "clone")
+    (id compiler-builtin-id-arena-make 55 "arena-make")
+    (id compiler-builtin-id-arena-make-atomic 56 "arena-make-atomic")
+    (id compiler-builtin-id-arena-current 57 "arena-current")
+    (id compiler-builtin-id-arena-mark 58 "arena-mark")
+    (id compiler-builtin-id-arena-set-bang 59 "arena-set!")
+    (id compiler-builtin-id-arena-destroy 60 "arena-destroy")
+    (id compiler-builtin-id-arena-rewind 61 "arena-rewind")
+    (id compiler-builtin-id-tls-current-arena 69 "tls-current-arena")
+    (id
+      compiler-builtin-id-tls-current-arena-set-bang
+      70
+      "tls-current-arena-set!")
+    (id
+      compiler-builtin-id-tl-tls-current-arena-load
+      71
+      "tl_tls_current_arena_load")
+    (id
+      compiler-builtin-id-tl-tls-current-arena-store
+      72
+      "tl_tls_current_arena_store")
+    (id compiler-builtin-id-fix-empty 73 "")
+    (id
+      compiler-builtin-id-fix-dollar_lower_dot_precise_type_dce
+      74
+      "$lower.precise-type-dce")
+    (id compiler-builtin-id-fix-colon 75 ":")
+    (id
+      compiler-builtin-id-fix-tl_unquote_set_target
+      76
+      "__tl_unquote_set_target")
+    (id
+      compiler-builtin-id-fix-lt_ast_decl_list_fallback_gt
+      77
+      "<ast-decl-list-fallback>")
+    (id compiler-builtin-id-fix-acc 78 "acc")
+    (id compiler-builtin-id-fix-alias 79 "alias")
+    (id compiler-builtin-id-fix-arena_dot_Arena 80 "arena.Arena")
+    (id compiler-builtin-id-fix-ArenaMark 81 "ArenaMark")
+    (id compiler-builtin-id-fix-arm 82 "arm")
+    (id compiler-builtin-id-fix-Box 83 "Box")
+    (id compiler-builtin-id-fix-c 84 "c")
+    (id compiler-builtin-id-fix-callback_target 85 "callback-target")
+    (id compiler-builtin-id-fix-Choice 86 "Choice")
+    (id compiler-builtin-id-fix-clone 87 "clone")
+    (id compiler-builtin-id-fix-CloneShortList 88 "CloneShortList")
+    (id compiler-builtin-id-fix-comptime 89 "comptime")
+    (id
+      compiler-builtin-id-fix-comptime_dot_comptime_error
+      90
+      "comptime.comptime-error")
+    (id compiler-builtin-id-fix-comptime_dot_error 91 "comptime.error")
+    (id
+      compiler-builtin-id-fix-comptime_slash_comptime_error
+      92
+      "comptime/comptime-error")
+    (id compiler-builtin-id-fix-comptime_slash_error 93 "comptime/error")
+    (id compiler-builtin-id-fix-comptime_error 94 "comptime-error")
+    (id compiler-builtin-id-fix-cond 95 "cond")
+    (id compiler-builtin-id-fix-when 268 "when")
+    (id compiler-builtin-id-fix-unless 269 "unless")
+    (id compiler-builtin-id-fix-Cons 96 "Cons")
+    (id compiler-builtin-id-fix-count 97 "count")
+    (id compiler-builtin-id-fix-e 98 "e")
+    (id compiler-builtin-id-fix-else 99 "else")
+    (id compiler-builtin-id-fix-Expr 100 "Expr")
+    (id compiler-builtin-id-fix-ExprBindingClause 101 "ExprBindingClause")
+    (id
+      compiler-builtin-id-fix-ExprBindingClauseList
+      102
+      "ExprBindingClauseList")
+    (id compiler-builtin-id-fix-ExprClause 103 "ExprClause")
+    (id compiler-builtin-id-fix-ExprClauseList 104 "ExprClauseList")
+    (id compiler-builtin-id-fix-ExprList 105 "ExprList")
+    (id compiler-builtin-id-fix-Failed 106 "Failed")
+    (id compiler-builtin-id-fix-field 107 "field")
+    (id compiler-builtin-id-fix-flag 108 "flag")
+    (id compiler-builtin-id-fix-h 109 "h")
+    (id compiler-builtin-id-fix-helper 110 "helper")
+    (id compiler-builtin-id-fix-id 111 "id")
+    (id compiler-builtin-id-fix-import 112 "import")
+    (id compiler-builtin-id-fix-ImportedMark 113 "ImportedMark")
+    (id compiler-builtin-id-fix-info 114 "info")
+    (id compiler-builtin-id-fix-input 115 "input")
+    (id compiler-builtin-id-fix-item 116 "item")
+    (id compiler-builtin-id-fix-items 117 "items")
+    (id compiler-builtin-id-fix-label 118 "label")
+    (id compiler-builtin-id-fix-left 119 "left")
+    (id compiler-builtin-id-fix-left_slash_same 120 "left/same")
+    (id compiler-builtin-id-fix-m 121 "m")
+    (id compiler-builtin-id-fix-macro_only_helper 122 "macro-only-helper")
+    (id compiler-builtin-id-fix-main 123 "main")
+    (id compiler-builtin-id-fix-MatchArm 124 "MatchArm")
+    (id compiler-builtin-id-fix-MatchArmList 125 "MatchArmList")
+    (id compiler-builtin-id-fix-Maybe 126 "Maybe")
+    (id compiler-builtin-id-fix-missing 127 "missing")
+    (id compiler-builtin-id-fix-n 128 "n")
+    (id
+      compiler-builtin-id-fix-name_cache_split_alias_3940
+      129
+      "name_cache_split_alias_3940")
+    (id
+      compiler-builtin-id-fix-name_cache_split_value_3940
+      130
+      "name_cache_split_value_3940")
+    (id compiler-builtin-id-fix-Nil 131 "Nil")
+    (id compiler-builtin-id-fix-Packet 132 "Packet")
+    (id compiler-builtin-id-fix-Pattern 133 "Pattern")
+    (id compiler-builtin-id-fix-PatternList 134 "PatternList")
+    (id compiler-builtin-id-fix-point 135 "point")
+    (id compiler-builtin-id-fix-Point 136 "Point")
+    (id compiler-builtin-id-fix-Ready 137 "Ready")
+    (id compiler-builtin-id-fix-record 138 "record")
+    (id compiler-builtin-id-fix-Record 139 "Record")
+    (id compiler-builtin-id-fix-Result 140 "Result")
+    (id compiler-builtin-id-fix-ResultIoString 141 "ResultIoString")
+    (id compiler-builtin-id-fix-right 142 "right")
+    (id compiler-builtin-id-fix-right_slash_Some 143 "right/Some")
+    (id compiler-builtin-id-fix-same 144 "same")
+    (id compiler-builtin-id-fix-second 145 "second")
+    (id compiler-builtin-id-fix-Some 146 "Some")
+    (id compiler-builtin-id-fix-Status 147 "Status")
+    (id compiler-builtin-id-fix-stdlib 148 "stdlib")
+    (id compiler-builtin-id-fix-stdlib_dot_comptime 195 "stdlib.comptime")
+    (id
+      compiler-builtin-id-fix-stdlib_dot_comptime_dot_comptime_error
+      149
+      "stdlib.comptime.comptime-error")
+    (id
+      compiler-builtin-id-fix-stdlib_dot_comptime_dot_error
+      150
+      "stdlib.comptime.error")
+    (id
+      compiler-builtin-id-fix-stdlib_dot_comptime_slash_comptime_error
+      151
+      "stdlib.comptime/comptime-error")
+    (id
+      compiler-builtin-id-fix-stdlib_dot_comptime_slash_error
+      152
+      "stdlib.comptime/error")
+    (id
+      compiler-builtin-id-fix-stdlib_dot_comptime_slash_ExprBindingClause
+      153
+      "stdlib.comptime/ExprBindingClause")
+    (id
+      compiler-builtin-id-fix-stdlib_dot_comptime_slash_ExprBindingClauseList
+      154
+      "stdlib.comptime/ExprBindingClauseList")
+    (id
+      compiler-builtin-id-fix-stdlib_dot_comptime_slash_ExprClause
+      155
+      "stdlib.comptime/ExprClause")
+    (id
+      compiler-builtin-id-fix-stdlib_dot_comptime_slash_ExprClauseList
+      156
+      "stdlib.comptime/ExprClauseList")
+    (id compiler-builtin-id-fix-stdlib_slash_comptime 157 "stdlib/comptime")
+    (id
+      compiler-builtin-id-fix-stdlib_slash_comptime_dot_comptime_error
+      158
+      "stdlib/comptime.comptime-error")
+    (id
+      compiler-builtin-id-fix-stdlib_slash_comptime_dot_error
+      159
+      "stdlib/comptime.error")
+    (id
+      compiler-builtin-id-fix-stdlib_slash_comptime_slash_comptime_error
+      160
+      "stdlib/comptime/comptime-error")
+    (id
+      compiler-builtin-id-fix-stdlib_slash_comptime_slash_error
+      161
+      "stdlib/comptime/error")
+    (id compiler-builtin-id-fix-stdlib_slash_string 162 "stdlib/string")
+    (id compiler-builtin-id-fix-string 163 "string")
+    (id compiler-builtin-id-fix-subject 164 "subject")
+    (id compiler-builtin-id-fix-t 165 "t")
+    (id compiler-builtin-id-fix-T 166 "T")
+    (id compiler-builtin-id-fix-tag 167 "tag")
+    (id compiler-builtin-id-fix-target 168 "target")
+    (id compiler-builtin-id-fix-ThreadBox 169 "ThreadBox")
+    (id compiler-builtin-id-fix-type 170 "type")
+    (id compiler-builtin-id-fix-TypeField 196 "TypeField")
+    (id compiler-builtin-id-fix-TypeFieldList 197 "TypeFieldList")
+    (id compiler-builtin-id-fix-TypeInfo 198 "TypeInfo")
+    (id compiler-builtin-id-fix-TypeInfoList 199 "TypeInfoList")
+    (id compiler-builtin-id-comptime-type-info-array-variant 171 "Array")
+    (id compiler-builtin-id-comptime-type-info-builtin-variant 172 "Builtin")
+    (id compiler-builtin-id-comptime-type-info-dyn-array-variant 173 "DynArray")
+    (id compiler-builtin-id-comptime-type-info-enum-variant 174 "Enum")
+    (id compiler-builtin-id-comptime-type-info-function-variant 175 "Function")
+    (id compiler-builtin-id-comptime-type-info-struct-variant 176 "Struct")
+    (id compiler-builtin-id-comptime-type-info-tuple-variant 177 "Tuple")
+    (id compiler-builtin-id-fix-TypeParam 200 "TypeParam")
+    (id compiler-builtin-id-fix-TypeParamList 201 "TypeParamList")
+    (id compiler-builtin-id-fix-TypeVariant 202 "TypeVariant")
+    (id compiler-builtin-id-fix-TypeVariantList 203 "TypeVariantList")
+    (id compiler-builtin-id-fix-TypeVariantPayload 204 "TypeVariantPayload")
+    (id
+      compiler-builtin-id-fix-TypeVariantPayloadList
+      205
+      "TypeVariantPayloadList")
+    (id compiler-builtin-id-fix-U 178 "U")
+    (id compiler-builtin-id-fix-unquote 179 "unquote")
+    (id compiler-builtin-id-fix-UsedBox 180 "UsedBox")
+    (id compiler-builtin-id-fix-UsedEnum 181 "UsedEnum")
+    (id compiler-builtin-id-fix-value 182 "value")
+    (id compiler-builtin-id-fix-x 183 "x")
+    (id compiler-builtin-id-fix-xs 184 "xs")
+    (id compiler-builtin-id-fix-y 185 "y")
+    (id compiler-builtin-id-fix-module 186 "module")
+    (id compiler-builtin-id-fix-Module 187 "Module")
+    (id compiler-builtin-id-fix-decls 188 "decls")
+    (id compiler-builtin-id-fix-Decls 189 "Decls")
+    (id compiler-builtin-id-fix-expr 190 "expr")
+    (id
+      compiler-builtin-id-fix-lt_parse_ast_decl_vec_fallback_gt
+      191
+      "<parse-ast-decl-vec-fallback>")
+    (id compiler-builtin-id-fix-append 206 "append")
+    (id compiler-builtin-id-fix-concat 207 "concat")
+    (id compiler-builtin-id-fix-stdlib_dot_string 208 "stdlib.string")
+    (id compiler-builtin-id-runtime-module 209 "stdlib.runtime")
+    (id compiler-builtin-id-runtime-int-to-string 210 "int-to-string")
+    (id compiler-builtin-id-runtime-substring 211 "substring")
+    (id compiler-builtin-id-runtime-str-view 212 "str-view")
+    (id compiler-builtin-id-runtime-string-concat3 213 "string-concat3")
+    (id compiler-builtin-id-runtime-string-concat4 214 "string-concat4")
+    (id compiler-builtin-id-runtime-string-concat5 215 "string-concat5")
+    (id
+      compiler-builtin-id-runtime-atomic-i64-load-ptr
+      216
+      "atomic-i64-load-ptr")
+    (id
+      compiler-builtin-id-runtime-atomic-i64-store-ptr
+      217
+      "atomic-i64-store-ptr!")
+    (id
+      compiler-builtin-id-runtime-atomic-i64-add-ptr
+      218
+      "atomic-i64-add-ptr!")
+    (id
+      compiler-builtin-id-runtime-atomic-i64-fetch-add-ptr
+      219
+      "atomic-i64-fetch-add-ptr!")
+    (id
+      compiler-builtin-id-runtime-atomic-i64-cas-ptr
+      220
+      "atomic-i64-cas-ptr!")
+    (id
+      compiler-builtin-id-runtime-atomic-i32-load-ptr
+      221
+      "atomic-i32-load-ptr")
+    (id
+      compiler-builtin-id-runtime-atomic-i32-store-ptr
+      222
+      "atomic-i32-store-ptr!")
+    (id
+      compiler-builtin-id-runtime-atomic-i32-add-ptr
+      223
+      "atomic-i32-add-ptr!")
+    (id
+      compiler-builtin-id-runtime-atomic-i32-fetch-add-ptr
+      224
+      "atomic-i32-fetch-add-ptr!")
+    (id
+      compiler-builtin-id-runtime-atomic-i32-cas-ptr
+      225
+      "atomic-i32-cas-ptr!")
+    (id
+      compiler-builtin-id-tl-bytes-view-from-str-parts
+      226
+      "tl_bytes_view_from_str_parts")
+    (id
+      compiler-builtin-id-tl-bytes-view-from-buf-parts
+      227
+      "tl_bytes_view_from_buf_parts")
+    (id
+      compiler-builtin-id-tl-bytes-mut-view-from-buf-parts
+      228
+      "tl_bytes_mut_view_from_buf_parts")
+    (id
+      compiler-builtin-id-tl-bytes-view-from-bytes-parts
+      229
+      "tl_bytes_view_from_bytes_parts")
+    (id
+      compiler-builtin-id-tl-bytes-mut-view-from-bytes-parts
+      230
+      "tl_bytes_mut_view_from_bytes_parts")
+    (id compiler-builtin-id-core-macros-module 231 "stdlib.core_macros")
+    (id compiler-builtin-id-core-macros-legacy-module 232 "stdlib.core-macros")
+    (id compiler-builtin-id-fix-slots 233 "slots")
+    (id compiler-builtin-id-tc-default-boundary 234 "__tl_default_boundary")
+    (id compiler-builtin-id-tc-active-region 235 "__tl_active_region")
+    (id compiler-builtin-id-tc-cleanup-owner 236 " __tl_cleanup_owner")
+    (id
+      compiler-builtin-id-tc-ordinary-arena-owner
+      237
+      " __tl_ordinary_arena_owner")
+    (id
+      compiler-builtin-id-tc-atomic-arena-owner
+      238
+      " __tl_atomic_arena_owner")
+    (id compiler-builtin-id-tc-return-type 239 "__tl_return_type")
+    (id compiler-builtin-id-tc-loop-target 240 "__tl_loop_target")
+    (id
+      compiler-builtin-id-tc-hygiene-global-boundary
+      241
+      "__tl_hygiene_global_boundary")
+    (id compiler-builtin-id-tc-unsafe-context 242 " __tl_unsafe_context")
+    (id compiler-builtin-id-fix-body 243 "body")
+    (id compiler-builtin-id-comptime-expr-begin-variant 244 "Begin")
+    (id compiler-builtin-id-comptime-expr-bool-variant 245 "Bool")
+    (id compiler-builtin-id-comptime-expr-call-variant 246 "Call")
+    (id compiler-builtin-id-comptime-expr-if-variant 247 "If")
+    (id compiler-builtin-id-comptime-expr-int-variant 248 "Int")
+    (id compiler-builtin-id-comptime-expr-quasiquote-variant 249 "Quasiquote")
+    (id compiler-builtin-id-comptime-expr-quote-variant 250 "Quote")
+    (id compiler-builtin-id-comptime-expr-splice-variant 251 "Splice")
+    (id compiler-builtin-id-comptime-expr-unquote-variant 252 "Unquote")
+    (id
+      compiler-builtin-id-comptime-expr-unquote-splicing-variant
+      253
+      "UnquoteSplicing")
+    (id compiler-builtin-id-comptime-expr-var-variant 254 "Var")
+    (id compiler-builtin-id-fix-first 255 "first")
+    (id compiler-builtin-id-fix-has_type 256 "has-type")
+    (id compiler-builtin-id-fix-init 257 "init")
+    (id compiler-builtin-id-fix-len 258 "len")
+    (id compiler-builtin-id-comptime-pattern-binding-variant 259 "Binding")
+    (id compiler-builtin-id-comptime-pattern-variant-variant 260 "Variant")
+    (id compiler-builtin-id-comptime-pattern-wildcard-variant 261 "Wildcard")
+    (id compiler-builtin-id-fix-payloads 262 "payloads")
+    (id compiler-builtin-id-comptime-type-info-opaque-variant 263 "Opaque")
+    (id compiler-builtin-id-comptime-type-info-slice-variant 315 "Slice")
+    (id compiler-builtin-id-fix-name 264 "name")
+    (id compiler-builtin-id-fix-pattern 265 "pattern")
+    (id compiler-builtin-id-fix-ty 266 "ty")
+    (id compiler-builtin-id-fix-handle 267 "handle")
+    (id compiler-builtin-id-fix-stdlib_dot_clone 270 "stdlib.clone")
+    (id compiler-builtin-id-fix-synthesize_helpers 271 "synthesize-helpers")
+    (id
+      compiler-builtin-id-fix-stdlib_dot_clone_dot_synthesize_helpers
+      272
+      "stdlib.clone.synthesize-helpers")
+    (id compiler-builtin-id-arena-module 299 "stdlib.arena")
+    (id compiler-builtin-id-arena-type 300 "stdlib.arena/Arena")
+    (id compiler-builtin-id-arena-mark-type 301 "stdlib.arena/ArenaMark")
+    (id compiler-builtin-id-arena-phase-type 302 "stdlib.arena/ArenaPhase")
+    (id compiler-builtin-id-arena-make-base 303 "make")
+    (id compiler-builtin-id-arena-make-atomic-base 304 "make-atomic")
+    (id compiler-builtin-id-arena-phase-base 305 "phase")
+    (id compiler-builtin-id-arena-rewind-safe-base 306 "rewind-safe!")
+    (id compiler-builtin-id-arena-destroy-safe-base 307 "destroy-safe!")
+    ;; Captured into their slots but never loaded, so they stay -1.
+    (id compiler-builtin-id-fix-LetBinding 311)
+    (id compiler-builtin-id-fix-LetBindingList 312)))
+
+;; `load` interns every row's spelling into its global; `capture` copies each
+;; global to its slot of the state `context`; `install` copies it back. Rows
+;; without a spelling are captured only.
+(defmacro (compiler-builtin-id-statements
+  [mode : comptime.Expr]
+  [context : comptime.Expr]
+  [rows : comptime.Expr ...]) : unit
+  (let
+    [mode-name : String
+      (match mode
+        [(comptime.Expr.Var name) name]
+        [_
+          (comptime.comptime-error
+            "compiler-builtin-id-statements: mode is load, capture or install")])]
+    [statements : comptime.ExprList (comptime.expr-list-empty)]
+    [index : i64 (- (comptime.expr-list-length rows) 1)]
+    (begin
+      ;; Prepend back to front so the statements keep table order.
+      (while (>= index 0)
+        (begin
+          (match (comptime.expr-list-nth rows index)
+            [(comptime.Expr.Call _ fields)
+              (match (comptime.expr-list-nth fields 0)
+                [(comptime.Expr.Var _)
+                  (let
+                    [global : comptime.Expr (comptime.expr-list-nth fields 0)]
+                    [slot : comptime.Expr (comptime.expr-list-nth fields 1)]
+                    [loaded? : bool (> (comptime.expr-list-length fields) 2)]
+                    (if (string-eq mode-name "capture")
+                      (set!
+                        statements
+                        (comptime.expr-list-cons
+                          `(state-set! ,context ,slot ,global)
+                          statements))
+                      (if loaded?
+                        (set!
+                          statements
+                          (comptime.expr-list-cons
+                            (if (string-eq mode-name "load")
+                              `(set!
+                                ,global
+                                (compiler-builtin-resolve-name
+                                  ,context
+                                  ,(comptime.expr-list-nth fields 2)))
+                              `(set! ,global (state-ref ,context ,slot)))
+                            statements))
+                        unit)))]
+                [_
+                  (comptime.comptime-error
+                    "compiler-builtin-id-statements: a row names its global first")])]
+            [_
+              (comptime.comptime-error
+                "compiler-builtin-id-statements: rows are (id global slot \"spelling\")")])
+          (set! index (- index 1))))
+      `(begin
+        ,@statements))))
+
 (define compiler-builtin-ctfe-ids : (__tl_dyn-array i64)
   (__tl_make-array i64 300))
 
@@ -937,379 +1485,7 @@
       compiler-builtin-table-id
       compiler-builtin-pool-len
       compiler-builtin-parse-initialized)
-    (state-set! state 0 compiler-builtin-id-tl-alloc)
-    (state-set! state 1 compiler-builtin-id-tl-region-mark)
-    (state-set! state 2 compiler-builtin-id-tl-region-reset)
-    (state-set! state 3 compiler-builtin-id-tl-arena-make)
-    (state-set! state 4 compiler-builtin-id-tl-arena-make-atomic)
-    (state-set! state 5 compiler-builtin-id-tl-arena-current)
-    (state-set! state 6 compiler-builtin-id-tl-arena-set)
-    (state-set! state 7 compiler-builtin-id-tl-arena-destroy)
-    (state-set! state 8 compiler-builtin-id-tl-arena-poison-enable)
-    (state-set! state 9 compiler-builtin-id-tl-thread-entry-ptr)
-    (state-set! state 10 compiler-builtin-id-tl-thread-init)
-    (state-set! state 11 compiler-builtin-id-tl-atomic-i64-load-ptr)
-    (state-set! state 12 compiler-builtin-id-tl-atomic-i64-store-ptr)
-    (state-set! state 13 compiler-builtin-id-tl-atomic-i64-add-ptr)
-    (state-set! state 14 compiler-builtin-id-tl-atomic-i64-fetch-add-ptr)
-    (state-set! state 15 compiler-builtin-id-tl-atomic-i32-load-ptr)
-    (state-set! state 16 compiler-builtin-id-tl-atomic-i32-store-ptr)
-    (state-set! state 17 compiler-builtin-id-tl-atomic-i32-add-ptr)
-    (state-set! state 18 compiler-builtin-id-tl-atomic-i32-fetch-add-ptr)
-    (state-set! state 19 compiler-builtin-id-tl-profile-alloc-total)
-    (state-set! state 20 compiler-builtin-id-tl-profile-alloc-live)
-    (state-set! state 21 compiler-builtin-id-tl-profile-alloc-peak)
-    (state-set! state 22 compiler-builtin-id-tl-profile-alloc-reset-peak)
-    (state-set! state 23 compiler-builtin-id-tl-substring)
-    (state-set! state 24 compiler-builtin-id-tl-str-view)
-    (state-set! state 25 compiler-builtin-id-tl-string-concat)
-    (state-set! state 26 compiler-builtin-id-tl-string-concat3)
-    (state-set! state 27 compiler-builtin-id-tl-string-concat4)
-    (state-set! state 28 compiler-builtin-id-tl-string-concat5)
-    (state-set! state 29 compiler-builtin-id-tl-string-eq)
-    (state-set! state 30 compiler-builtin-id-tl-string-to-int)
-    (state-set! state 31 compiler-builtin-id-tl-int-to-string)
-    (state-set! state 32 compiler-builtin-id-tl-hash-string)
-    (state-set! state 33 compiler-builtin-id-tl-env-var-exists)
-    (state-set! state 34 compiler-builtin-id-tl-env-var-value)
-    (state-set! state 35 compiler-builtin-id-env-path-separator)
-    (state-set! state 36 compiler-builtin-id-tl-oob-abort)
-    (state-set! state 37 compiler-builtin-id-tl-abort-label)
-    (state-set! state 38 compiler-builtin-id-tl-div-abort)
-    (state-set! state 39 compiler-builtin-id-tl-shift-abort)
-    (state-set! state 40 compiler-builtin-id-tl-array-fill8)
-    (state-set! state 41 compiler-builtin-id-tl-array-zero)
-    (state-set! state 44 compiler-builtin-id-string-length)
-    (state-set! state 45 compiler-builtin-id-length)
-    (state-set! state 46 compiler-builtin-id-string-eq)
-    (state-set! state 47 compiler-builtin-id-string-eq-question)
-    (state-set! state 48 compiler-builtin-id-string-to-int)
-    (state-set! state 49 compiler-builtin-id-string-ref)
-    (state-set! state 50 compiler-builtin-id-char-at)
-    (state-set! state 51 compiler-builtin-id-array-length)
-    (state-set! state 52 compiler-builtin-id-cpuid)
-    (state-set! state 53 compiler-builtin-id-xgetbv)
-    (state-set! state 54 compiler-builtin-id-clone)
-    (state-set! state 55 compiler-builtin-id-arena-make)
-    (state-set! state 56 compiler-builtin-id-arena-make-atomic)
-    (state-set! state 57 compiler-builtin-id-arena-current)
-    (state-set! state 58 compiler-builtin-id-arena-mark)
-    (state-set! state 59 compiler-builtin-id-arena-set-bang)
-    (state-set! state 60 compiler-builtin-id-arena-destroy)
-    (state-set! state 61 compiler-builtin-id-arena-rewind)
-    (state-set! state 62 compiler-builtin-id-tl-atomic-i64-cas-ptr)
-    (state-set! state 63 compiler-builtin-id-tl-atomic-i32-cas-ptr)
-    (state-set! state 64 compiler-builtin-id-private-array-length)
-    (state-set! state 65 compiler-builtin-id-tl-private-string-length)
-    (state-set! state 66 compiler-builtin-id-tl-private-string-ref)
-    (state-set! state 67 compiler-builtin-id-tl-private-string-eq)
-    (state-set! state 68 compiler-builtin-id-tl-private-string-to-int)
-    (state-set! state 69 compiler-builtin-id-tls-current-arena)
-    (state-set! state 70 compiler-builtin-id-tls-current-arena-set-bang)
-    (state-set! state 71 compiler-builtin-id-tl-tls-current-arena-load)
-    (state-set! state 72 compiler-builtin-id-tl-tls-current-arena-store)
-    (state-set! state 73 compiler-builtin-id-fix-empty)
-    (state-set!
-      state
-      74
-      compiler-builtin-id-fix-dollar_lower_dot_precise_type_dce)
-    (state-set! state 75 compiler-builtin-id-fix-colon)
-    (state-set! state 76 compiler-builtin-id-fix-tl_unquote_set_target)
-    (state-set! state 77 compiler-builtin-id-fix-lt_ast_decl_list_fallback_gt)
-    (state-set! state 78 compiler-builtin-id-fix-acc)
-    (state-set! state 79 compiler-builtin-id-fix-alias)
-    (state-set! state 80 compiler-builtin-id-fix-arena_dot_Arena)
-    (state-set! state 81 compiler-builtin-id-fix-ArenaMark)
-    (state-set! state 82 compiler-builtin-id-fix-arm)
-    (state-set! state 83 compiler-builtin-id-fix-Box)
-    (state-set! state 84 compiler-builtin-id-fix-c)
-    (state-set! state 85 compiler-builtin-id-fix-callback_target)
-    (state-set! state 86 compiler-builtin-id-fix-Choice)
-    (state-set! state 87 compiler-builtin-id-fix-clone)
-    (state-set! state 88 compiler-builtin-id-fix-CloneShortList)
-    (state-set! state 89 compiler-builtin-id-fix-comptime)
-    (state-set! state 90 compiler-builtin-id-fix-comptime_dot_comptime_error)
-    (state-set! state 91 compiler-builtin-id-fix-comptime_dot_error)
-    (state-set! state 92 compiler-builtin-id-fix-comptime_slash_comptime_error)
-    (state-set! state 93 compiler-builtin-id-fix-comptime_slash_error)
-    (state-set! state 94 compiler-builtin-id-fix-comptime_error)
-    (state-set! state 95 compiler-builtin-id-fix-cond)
-    (state-set! state 96 compiler-builtin-id-fix-Cons)
-    (state-set! state 97 compiler-builtin-id-fix-count)
-    (state-set! state 98 compiler-builtin-id-fix-e)
-    (state-set! state 99 compiler-builtin-id-fix-else)
-    (state-set! state 100 compiler-builtin-id-fix-Expr)
-    (state-set! state 101 compiler-builtin-id-fix-ExprBindingClause)
-    (state-set! state 102 compiler-builtin-id-fix-ExprBindingClauseList)
-    (state-set! state 103 compiler-builtin-id-fix-ExprClause)
-    (state-set! state 104 compiler-builtin-id-fix-ExprClauseList)
-    (state-set! state 105 compiler-builtin-id-fix-ExprList)
-    (state-set! state 106 compiler-builtin-id-fix-Failed)
-    (state-set! state 107 compiler-builtin-id-fix-field)
-    (state-set! state 108 compiler-builtin-id-fix-flag)
-    (state-set! state 109 compiler-builtin-id-fix-h)
-    (state-set! state 110 compiler-builtin-id-fix-helper)
-    (state-set! state 111 compiler-builtin-id-fix-id)
-    (state-set! state 112 compiler-builtin-id-fix-import)
-    (state-set! state 113 compiler-builtin-id-fix-ImportedMark)
-    (state-set! state 114 compiler-builtin-id-fix-info)
-    (state-set! state 115 compiler-builtin-id-fix-input)
-    (state-set! state 116 compiler-builtin-id-fix-item)
-    (state-set! state 117 compiler-builtin-id-fix-items)
-    (state-set! state 118 compiler-builtin-id-fix-label)
-    (state-set! state 119 compiler-builtin-id-fix-left)
-    (state-set! state 120 compiler-builtin-id-fix-left_slash_same)
-    (state-set! state 121 compiler-builtin-id-fix-m)
-    (state-set! state 122 compiler-builtin-id-fix-macro_only_helper)
-    (state-set! state 123 compiler-builtin-id-fix-main)
-    (state-set! state 124 compiler-builtin-id-fix-MatchArm)
-    (state-set! state 125 compiler-builtin-id-fix-MatchArmList)
-    (state-set! state 126 compiler-builtin-id-fix-Maybe)
-    (state-set! state 127 compiler-builtin-id-fix-missing)
-    (state-set! state 128 compiler-builtin-id-fix-n)
-    (state-set! state 129 compiler-builtin-id-fix-name_cache_split_alias_3940)
-    (state-set! state 130 compiler-builtin-id-fix-name_cache_split_value_3940)
-    (state-set! state 131 compiler-builtin-id-fix-Nil)
-    (state-set! state 132 compiler-builtin-id-fix-Packet)
-    (state-set! state 133 compiler-builtin-id-fix-Pattern)
-    (state-set! state 134 compiler-builtin-id-fix-PatternList)
-    (state-set! state 135 compiler-builtin-id-fix-point)
-    (state-set! state 136 compiler-builtin-id-fix-Point)
-    (state-set! state 137 compiler-builtin-id-fix-Ready)
-    (state-set! state 138 compiler-builtin-id-fix-record)
-    (state-set! state 139 compiler-builtin-id-fix-Record)
-    (state-set! state 140 compiler-builtin-id-fix-Result)
-    (state-set! state 141 compiler-builtin-id-fix-ResultIoString)
-    (state-set! state 142 compiler-builtin-id-fix-right)
-    (state-set! state 143 compiler-builtin-id-fix-right_slash_Some)
-    (state-set! state 144 compiler-builtin-id-fix-same)
-    (state-set! state 145 compiler-builtin-id-fix-second)
-    (state-set! state 146 compiler-builtin-id-fix-Some)
-    (state-set! state 147 compiler-builtin-id-fix-Status)
-    (state-set! state 148 compiler-builtin-id-fix-stdlib)
-    (state-set!
-      state
-      149
-      compiler-builtin-id-fix-stdlib_dot_comptime_dot_comptime_error)
-    (state-set! state 150 compiler-builtin-id-fix-stdlib_dot_comptime_dot_error)
-    (state-set!
-      state
-      151
-      compiler-builtin-id-fix-stdlib_dot_comptime_slash_comptime_error)
-    (state-set!
-      state
-      152
-      compiler-builtin-id-fix-stdlib_dot_comptime_slash_error)
-    (state-set!
-      state
-      153
-      compiler-builtin-id-fix-stdlib_dot_comptime_slash_ExprBindingClause)
-    (state-set!
-      state
-      154
-      compiler-builtin-id-fix-stdlib_dot_comptime_slash_ExprBindingClauseList)
-    (state-set!
-      state
-      155
-      compiler-builtin-id-fix-stdlib_dot_comptime_slash_ExprClause)
-    (state-set!
-      state
-      156
-      compiler-builtin-id-fix-stdlib_dot_comptime_slash_ExprClauseList)
-    (state-set! state 157 compiler-builtin-id-fix-stdlib_slash_comptime)
-    (state-set!
-      state
-      158
-      compiler-builtin-id-fix-stdlib_slash_comptime_dot_comptime_error)
-    (state-set!
-      state
-      159
-      compiler-builtin-id-fix-stdlib_slash_comptime_dot_error)
-    (state-set!
-      state
-      160
-      compiler-builtin-id-fix-stdlib_slash_comptime_slash_comptime_error)
-    (state-set!
-      state
-      161
-      compiler-builtin-id-fix-stdlib_slash_comptime_slash_error)
-    (state-set! state 162 compiler-builtin-id-fix-stdlib_slash_string)
-    (state-set! state 163 compiler-builtin-id-fix-string)
-    (state-set! state 164 compiler-builtin-id-fix-subject)
-    (state-set! state 165 compiler-builtin-id-fix-t)
-    (state-set! state 166 compiler-builtin-id-fix-T)
-    (state-set! state 167 compiler-builtin-id-fix-tag)
-    (state-set! state 168 compiler-builtin-id-fix-target)
-    (state-set! state 169 compiler-builtin-id-fix-ThreadBox)
-    (state-set! state 170 compiler-builtin-id-fix-type)
-    (state-set! state 171 compiler-builtin-id-comptime-type-info-array-variant)
-    (state-set!
-      state
-      172
-      compiler-builtin-id-comptime-type-info-builtin-variant)
-    (state-set!
-      state
-      173
-      compiler-builtin-id-comptime-type-info-dyn-array-variant)
-    (state-set! state 174 compiler-builtin-id-comptime-type-info-enum-variant)
-    (state-set!
-      state
-      175
-      compiler-builtin-id-comptime-type-info-function-variant)
-    (state-set! state 176 compiler-builtin-id-comptime-type-info-struct-variant)
-    (state-set! state 177 compiler-builtin-id-comptime-type-info-tuple-variant)
-    (state-set! state 178 compiler-builtin-id-fix-U)
-    (state-set! state 179 compiler-builtin-id-fix-unquote)
-    (state-set! state 180 compiler-builtin-id-fix-UsedBox)
-    (state-set! state 181 compiler-builtin-id-fix-UsedEnum)
-    (state-set! state 182 compiler-builtin-id-fix-value)
-    (state-set! state 183 compiler-builtin-id-fix-x)
-    (state-set! state 184 compiler-builtin-id-fix-xs)
-    (state-set! state 185 compiler-builtin-id-fix-y)
-    (state-set! state 186 compiler-builtin-id-fix-module)
-    (state-set! state 187 compiler-builtin-id-fix-Module)
-    (state-set! state 188 compiler-builtin-id-fix-decls)
-    (state-set! state 189 compiler-builtin-id-fix-Decls)
-    (state-set! state 190 compiler-builtin-id-fix-expr)
-    (state-set!
-      state
-      191
-      compiler-builtin-id-fix-lt_parse_ast_decl_vec_fallback_gt)
-    (state-set! state 192 compiler-builtin-id-eq)
-    (state-set! state 193 compiler-builtin-id-string-append)
-    (state-set! state 194 compiler-builtin-id-string-concat)
-    (state-set! state 195 compiler-builtin-id-fix-stdlib_dot_comptime)
-    (state-set! state 196 compiler-builtin-id-fix-TypeField)
-    (state-set! state 197 compiler-builtin-id-fix-TypeFieldList)
-    (state-set! state 198 compiler-builtin-id-fix-TypeInfo)
-    (state-set! state 199 compiler-builtin-id-fix-TypeInfoList)
-    (state-set! state 200 compiler-builtin-id-fix-TypeParam)
-    (state-set! state 201 compiler-builtin-id-fix-TypeParamList)
-    (state-set! state 202 compiler-builtin-id-fix-TypeVariant)
-    (state-set! state 203 compiler-builtin-id-fix-TypeVariantList)
-    (state-set! state 204 compiler-builtin-id-fix-TypeVariantPayload)
-    (state-set! state 205 compiler-builtin-id-fix-TypeVariantPayloadList)
-    (state-set! state 206 compiler-builtin-id-fix-append)
-    (state-set! state 207 compiler-builtin-id-fix-concat)
-    (state-set! state 208 compiler-builtin-id-fix-stdlib_dot_string)
-    (state-set! state 209 compiler-builtin-id-runtime-module)
-    (state-set! state 210 compiler-builtin-id-runtime-int-to-string)
-    (state-set! state 211 compiler-builtin-id-runtime-substring)
-    (state-set! state 212 compiler-builtin-id-runtime-str-view)
-    (state-set! state 213 compiler-builtin-id-runtime-string-concat3)
-    (state-set! state 214 compiler-builtin-id-runtime-string-concat4)
-    (state-set! state 215 compiler-builtin-id-runtime-string-concat5)
-    (state-set! state 216 compiler-builtin-id-runtime-atomic-i64-load-ptr)
-    (state-set! state 217 compiler-builtin-id-runtime-atomic-i64-store-ptr)
-    (state-set! state 218 compiler-builtin-id-runtime-atomic-i64-add-ptr)
-    (state-set! state 219 compiler-builtin-id-runtime-atomic-i64-fetch-add-ptr)
-    (state-set! state 220 compiler-builtin-id-runtime-atomic-i64-cas-ptr)
-    (state-set! state 221 compiler-builtin-id-runtime-atomic-i32-load-ptr)
-    (state-set! state 222 compiler-builtin-id-runtime-atomic-i32-store-ptr)
-    (state-set! state 223 compiler-builtin-id-runtime-atomic-i32-add-ptr)
-    (state-set! state 224 compiler-builtin-id-runtime-atomic-i32-fetch-add-ptr)
-    (state-set! state 225 compiler-builtin-id-runtime-atomic-i32-cas-ptr)
-    (state-set! state 226 compiler-builtin-id-tl-bytes-view-from-str-parts)
-    (state-set! state 227 compiler-builtin-id-tl-bytes-view-from-buf-parts)
-    (state-set! state 228 compiler-builtin-id-tl-bytes-mut-view-from-buf-parts)
-    (state-set! state 229 compiler-builtin-id-tl-bytes-view-from-bytes-parts)
-    (state-set!
-      state
-      230
-      compiler-builtin-id-tl-bytes-mut-view-from-bytes-parts)
-    (state-set! state 231 compiler-builtin-id-core-macros-module)
-    (state-set! state 232 compiler-builtin-id-core-macros-legacy-module)
-    (state-set! state 233 compiler-builtin-id-fix-slots)
-    (state-set! state 234 compiler-builtin-id-tc-default-boundary)
-    (state-set! state 235 compiler-builtin-id-tc-active-region)
-    (state-set! state 236 compiler-builtin-id-tc-cleanup-owner)
-    (state-set! state 237 compiler-builtin-id-tc-ordinary-arena-owner)
-    (state-set! state 238 compiler-builtin-id-tc-atomic-arena-owner)
-    (state-set! state 239 compiler-builtin-id-tc-return-type)
-    (state-set! state 240 compiler-builtin-id-tc-loop-target)
-    (state-set! state 241 compiler-builtin-id-tc-hygiene-global-boundary)
-    (state-set! state 242 compiler-builtin-id-tc-unsafe-context)
-    (state-set! state 243 compiler-builtin-id-fix-body)
-    (state-set! state 244 compiler-builtin-id-comptime-expr-begin-variant)
-    (state-set! state 245 compiler-builtin-id-comptime-expr-bool-variant)
-    (state-set! state 246 compiler-builtin-id-comptime-expr-call-variant)
-    (state-set! state 247 compiler-builtin-id-comptime-expr-if-variant)
-    (state-set! state 248 compiler-builtin-id-comptime-expr-int-variant)
-    (state-set! state 249 compiler-builtin-id-comptime-expr-quasiquote-variant)
-    (state-set! state 250 compiler-builtin-id-comptime-expr-quote-variant)
-    (state-set! state 251 compiler-builtin-id-comptime-expr-splice-variant)
-    (state-set! state 252 compiler-builtin-id-comptime-expr-unquote-variant)
-    (state-set!
-      state
-      253
-      compiler-builtin-id-comptime-expr-unquote-splicing-variant)
-    (state-set! state 254 compiler-builtin-id-comptime-expr-var-variant)
-    (state-set! state 255 compiler-builtin-id-fix-first)
-    (state-set! state 256 compiler-builtin-id-fix-has_type)
-    (state-set! state 257 compiler-builtin-id-fix-init)
-    (state-set! state 258 compiler-builtin-id-fix-len)
-    (state-set! state 259 compiler-builtin-id-comptime-pattern-binding-variant)
-    (state-set! state 260 compiler-builtin-id-comptime-pattern-variant-variant)
-    (state-set! state 261 compiler-builtin-id-comptime-pattern-wildcard-variant)
-    (state-set! state 262 compiler-builtin-id-fix-payloads)
-    (state-set! state 263 compiler-builtin-id-comptime-type-info-opaque-variant)
-    (state-set! state 264 compiler-builtin-id-fix-name)
-    (state-set! state 265 compiler-builtin-id-fix-pattern)
-    (state-set! state 266 compiler-builtin-id-fix-ty)
-    (state-set! state 267 compiler-builtin-id-fix-handle)
-    (state-set! state 268 compiler-builtin-id-fix-when)
-    (state-set! state 269 compiler-builtin-id-fix-unless)
-    (state-set! state 270 compiler-builtin-id-fix-stdlib_dot_clone)
-    (state-set! state 271 compiler-builtin-id-fix-synthesize_helpers)
-    (state-set!
-      state
-      272
-      compiler-builtin-id-fix-stdlib_dot_clone_dot_synthesize_helpers)
-    (state-set! state 284 compiler-builtin-id-atomic-i64-load)
-    (state-set! state 285 compiler-builtin-id-atomic-i64-store)
-    (state-set! state 286 compiler-builtin-id-atomic-i64-add)
-    (state-set! state 287 compiler-builtin-id-atomic-i64-fetch-add)
-    (state-set! state 288 compiler-builtin-id-atomic-i64-cas)
-    (state-set! state 289 compiler-builtin-id-atomic-i32-load)
-    (state-set! state 290 compiler-builtin-id-atomic-i32-store)
-    (state-set! state 291 compiler-builtin-id-atomic-i32-add)
-    (state-set! state 292 compiler-builtin-id-atomic-i32-fetch-add)
-    (state-set! state 293 compiler-builtin-id-atomic-i32-cas)
-    (state-set! state 294 compiler-builtin-id-tl-tlci-call-macro-entry)
-    (state-set! state 296 compiler-builtin-id-tl-private-float-sqrt)
-    (state-set! state 297 compiler-builtin-id-tl-private-float-to-bits)
-    (state-set! state 298 compiler-builtin-id-tl-private-float-from-bits)
-    (state-set! state 299 compiler-builtin-id-arena-module)
-    (state-set! state 300 compiler-builtin-id-arena-type)
-    (state-set! state 301 compiler-builtin-id-arena-mark-type)
-    (state-set! state 302 compiler-builtin-id-arena-phase-type)
-    (state-set! state 303 compiler-builtin-id-arena-make-base)
-    (state-set! state 304 compiler-builtin-id-arena-make-atomic-base)
-    (state-set! state 305 compiler-builtin-id-arena-phase-base)
-    (state-set! state 306 compiler-builtin-id-arena-rewind-safe-base)
-    (state-set! state 307 compiler-builtin-id-arena-destroy-safe-base)
-    (state-set! state 308 compiler-builtin-id-tl-stdin-eof-label)
-    (state-set! state 309 compiler-builtin-id-tl-flush-stdout-label)
-    (state-set! state 310 compiler-builtin-id-tl-arena-make-small)
-    (state-set! state 311 compiler-builtin-id-fix-LetBinding)
-    (state-set! state 312 compiler-builtin-id-fix-LetBindingList)
-    (state-set!
-      state
-      313
-      compiler-builtin-id-tl-arena-debug-protect-never-reset)
-    (state-set!
-      state
-      314
-      compiler-builtin-id-tl-arena-debug-assert-pool-install)
-    (state-set! state 315 compiler-builtin-id-comptime-type-info-slice-variant)
-    (state-set! state 316 compiler-builtin-id-tl-mem-fill8)
-    (state-set! state 317 compiler-builtin-id-tl-mem-copy-fwd)
-    (state-set! state 318 compiler-builtin-id-tl-mem-copy8-fwd)
-    ;; Append-only reset-aware slot for the compiler-private aligned allocator.
-    (state-set! state 319 compiler-builtin-id-tl-alloc-aligned)
-    (state-set! state 320 compiler-builtin-id-tl-arena-debug-retire-protected)
-    (state-set! state 321 compiler-builtin-id-c-fn-check)
-    (state-set! state 322 compiler-builtin-id-tl-c-fn-null-abort)
+    (compiler-builtin-id-table capture state)
     (state-capture-ctfe-ids! state)))
 
 (define (state-capture) : CompilerBuiltinIdsState
@@ -1323,409 +1499,7 @@
   (begin
     (state-install-ctfe-ids! state)
     (set! compiler-builtin-generation (state-generation state))
-    (set! compiler-builtin-id-tl-alloc (state-ref state 0))
-    (set! compiler-builtin-id-tl-region-mark (state-ref state 1))
-    (set! compiler-builtin-id-tl-region-reset (state-ref state 2))
-    (set! compiler-builtin-id-tl-arena-make (state-ref state 3))
-    (set! compiler-builtin-id-tl-arena-make-atomic (state-ref state 4))
-    (set! compiler-builtin-id-tl-arena-current (state-ref state 5))
-    (set! compiler-builtin-id-tl-arena-set (state-ref state 6))
-    (set! compiler-builtin-id-tl-arena-destroy (state-ref state 7))
-    (set! compiler-builtin-id-tl-arena-poison-enable (state-ref state 8))
-    (set! compiler-builtin-id-tl-thread-entry-ptr (state-ref state 9))
-    (set! compiler-builtin-id-tl-thread-init (state-ref state 10))
-    (set! compiler-builtin-id-tl-atomic-i64-load-ptr (state-ref state 11))
-    (set! compiler-builtin-id-tl-atomic-i64-store-ptr (state-ref state 12))
-    (set! compiler-builtin-id-tl-atomic-i64-add-ptr (state-ref state 13))
-    (set! compiler-builtin-id-tl-atomic-i64-fetch-add-ptr (state-ref state 14))
-    (set! compiler-builtin-id-tl-atomic-i32-load-ptr (state-ref state 15))
-    (set! compiler-builtin-id-tl-atomic-i32-store-ptr (state-ref state 16))
-    (set! compiler-builtin-id-tl-atomic-i32-add-ptr (state-ref state 17))
-    (set! compiler-builtin-id-tl-atomic-i32-fetch-add-ptr (state-ref state 18))
-    (set! compiler-builtin-id-tl-profile-alloc-total (state-ref state 19))
-    (set! compiler-builtin-id-tl-profile-alloc-live (state-ref state 20))
-    (set! compiler-builtin-id-tl-profile-alloc-peak (state-ref state 21))
-    (set! compiler-builtin-id-tl-profile-alloc-reset-peak (state-ref state 22))
-    (set! compiler-builtin-id-tl-substring (state-ref state 23))
-    (set! compiler-builtin-id-tl-str-view (state-ref state 24))
-    (set! compiler-builtin-id-tl-string-concat (state-ref state 25))
-    (set! compiler-builtin-id-tl-string-concat3 (state-ref state 26))
-    (set! compiler-builtin-id-tl-string-concat4 (state-ref state 27))
-    (set! compiler-builtin-id-tl-string-concat5 (state-ref state 28))
-    (set! compiler-builtin-id-tl-string-eq (state-ref state 29))
-    (set! compiler-builtin-id-tl-string-to-int (state-ref state 30))
-    (set! compiler-builtin-id-tl-int-to-string (state-ref state 31))
-    (set! compiler-builtin-id-tl-hash-string (state-ref state 32))
-    (set! compiler-builtin-id-tl-env-var-exists (state-ref state 33))
-    (set! compiler-builtin-id-tl-env-var-value (state-ref state 34))
-    (set! compiler-builtin-id-env-path-separator (state-ref state 35))
-    (set! compiler-builtin-id-tl-oob-abort (state-ref state 36))
-    (set! compiler-builtin-id-tl-abort-label (state-ref state 37))
-    (set! compiler-builtin-id-tl-div-abort (state-ref state 38))
-    (set! compiler-builtin-id-tl-shift-abort (state-ref state 39))
-    (set! compiler-builtin-id-tl-array-fill8 (state-ref state 40))
-    (set! compiler-builtin-id-tl-array-zero (state-ref state 41))
-    (set! compiler-builtin-id-tl-mem-fill8 (state-ref state 316))
-    (set! compiler-builtin-id-c-fn-check (state-ref state 321))
-    (set! compiler-builtin-id-tl-c-fn-null-abort (state-ref state 322))
-    (set! compiler-builtin-id-tl-mem-copy-fwd (state-ref state 317))
-    (set! compiler-builtin-id-tl-mem-copy8-fwd (state-ref state 318))
-    (set! compiler-builtin-id-tl-alloc-aligned (state-ref state 319))
-    (set!
-      compiler-builtin-id-tl-arena-debug-retire-protected
-      (state-ref state 320))
-    (set! compiler-builtin-id-string-length (state-ref state 44))
-    (set! compiler-builtin-id-length (state-ref state 45))
-    (set! compiler-builtin-id-string-eq (state-ref state 46))
-    (set! compiler-builtin-id-string-eq-question (state-ref state 47))
-    (set! compiler-builtin-id-string-to-int (state-ref state 48))
-    (set! compiler-builtin-id-string-ref (state-ref state 49))
-    (set! compiler-builtin-id-char-at (state-ref state 50))
-    (set! compiler-builtin-id-array-length (state-ref state 51))
-    (set! compiler-builtin-id-cpuid (state-ref state 52))
-    (set! compiler-builtin-id-xgetbv (state-ref state 53))
-    (set! compiler-builtin-id-clone (state-ref state 54))
-    (set! compiler-builtin-id-arena-make (state-ref state 55))
-    (set! compiler-builtin-id-arena-make-atomic (state-ref state 56))
-    (set! compiler-builtin-id-arena-current (state-ref state 57))
-    (set! compiler-builtin-id-arena-mark (state-ref state 58))
-    (set! compiler-builtin-id-arena-set-bang (state-ref state 59))
-    (set! compiler-builtin-id-arena-destroy (state-ref state 60))
-    (set! compiler-builtin-id-arena-rewind (state-ref state 61))
-    (set! compiler-builtin-id-tl-atomic-i64-cas-ptr (state-ref state 62))
-    (set! compiler-builtin-id-tl-atomic-i32-cas-ptr (state-ref state 63))
-    (set! compiler-builtin-id-private-array-length (state-ref state 64))
-    (set! compiler-builtin-id-tl-private-string-length (state-ref state 65))
-    (set! compiler-builtin-id-tl-private-string-ref (state-ref state 66))
-    (set! compiler-builtin-id-tl-private-string-eq (state-ref state 67))
-    (set! compiler-builtin-id-tl-private-string-to-int (state-ref state 68))
-    (set! compiler-builtin-id-tls-current-arena (state-ref state 69))
-    (set! compiler-builtin-id-tls-current-arena-set-bang (state-ref state 70))
-    (set! compiler-builtin-id-tl-tls-current-arena-load (state-ref state 71))
-    (set! compiler-builtin-id-tl-tls-current-arena-store (state-ref state 72))
-    (set! compiler-builtin-id-fix-empty (state-ref state 73))
-    (set!
-      compiler-builtin-id-fix-dollar_lower_dot_precise_type_dce
-      (state-ref state 74))
-    (set! compiler-builtin-id-fix-colon (state-ref state 75))
-    (set! compiler-builtin-id-fix-tl_unquote_set_target (state-ref state 76))
-    (set!
-      compiler-builtin-id-fix-lt_ast_decl_list_fallback_gt
-      (state-ref state 77))
-    (set! compiler-builtin-id-fix-acc (state-ref state 78))
-    (set! compiler-builtin-id-fix-alias (state-ref state 79))
-    (set! compiler-builtin-id-fix-arena_dot_Arena (state-ref state 80))
-    (set! compiler-builtin-id-fix-ArenaMark (state-ref state 81))
-    (set! compiler-builtin-id-fix-arm (state-ref state 82))
-    (set! compiler-builtin-id-fix-Box (state-ref state 83))
-    (set! compiler-builtin-id-fix-c (state-ref state 84))
-    (set! compiler-builtin-id-fix-callback_target (state-ref state 85))
-    (set! compiler-builtin-id-fix-Choice (state-ref state 86))
-    (set! compiler-builtin-id-fix-clone (state-ref state 87))
-    (set! compiler-builtin-id-fix-CloneShortList (state-ref state 88))
-    (set! compiler-builtin-id-fix-comptime (state-ref state 89))
-    (set!
-      compiler-builtin-id-fix-comptime_dot_comptime_error
-      (state-ref state 90))
-    (set! compiler-builtin-id-fix-comptime_dot_error (state-ref state 91))
-    (set!
-      compiler-builtin-id-fix-comptime_slash_comptime_error
-      (state-ref state 92))
-    (set! compiler-builtin-id-fix-comptime_slash_error (state-ref state 93))
-    (set! compiler-builtin-id-fix-comptime_error (state-ref state 94))
-    (set! compiler-builtin-id-fix-cond (state-ref state 95))
-    (set! compiler-builtin-id-fix-Cons (state-ref state 96))
-    (set! compiler-builtin-id-fix-count (state-ref state 97))
-    (set! compiler-builtin-id-fix-e (state-ref state 98))
-    (set! compiler-builtin-id-fix-else (state-ref state 99))
-    (set! compiler-builtin-id-fix-Expr (state-ref state 100))
-    (set! compiler-builtin-id-fix-ExprBindingClause (state-ref state 101))
-    (set! compiler-builtin-id-fix-ExprBindingClauseList (state-ref state 102))
-    (set! compiler-builtin-id-fix-ExprClause (state-ref state 103))
-    (set! compiler-builtin-id-fix-ExprClauseList (state-ref state 104))
-    (set! compiler-builtin-id-fix-ExprList (state-ref state 105))
-    (set! compiler-builtin-id-fix-Failed (state-ref state 106))
-    (set! compiler-builtin-id-fix-field (state-ref state 107))
-    (set! compiler-builtin-id-fix-flag (state-ref state 108))
-    (set! compiler-builtin-id-fix-h (state-ref state 109))
-    (set! compiler-builtin-id-fix-helper (state-ref state 110))
-    (set! compiler-builtin-id-fix-id (state-ref state 111))
-    (set! compiler-builtin-id-fix-import (state-ref state 112))
-    (set! compiler-builtin-id-fix-ImportedMark (state-ref state 113))
-    (set! compiler-builtin-id-fix-info (state-ref state 114))
-    (set! compiler-builtin-id-fix-input (state-ref state 115))
-    (set! compiler-builtin-id-fix-item (state-ref state 116))
-    (set! compiler-builtin-id-fix-items (state-ref state 117))
-    (set! compiler-builtin-id-fix-label (state-ref state 118))
-    (set! compiler-builtin-id-fix-left (state-ref state 119))
-    (set! compiler-builtin-id-fix-left_slash_same (state-ref state 120))
-    (set! compiler-builtin-id-fix-m (state-ref state 121))
-    (set! compiler-builtin-id-fix-macro_only_helper (state-ref state 122))
-    (set! compiler-builtin-id-fix-main (state-ref state 123))
-    (set! compiler-builtin-id-fix-MatchArm (state-ref state 124))
-    (set! compiler-builtin-id-fix-MatchArmList (state-ref state 125))
-    (set! compiler-builtin-id-fix-Maybe (state-ref state 126))
-    (set! compiler-builtin-id-fix-missing (state-ref state 127))
-    (set! compiler-builtin-id-fix-n (state-ref state 128))
-    (set!
-      compiler-builtin-id-fix-name_cache_split_alias_3940
-      (state-ref state 129))
-    (set!
-      compiler-builtin-id-fix-name_cache_split_value_3940
-      (state-ref state 130))
-    (set! compiler-builtin-id-fix-Nil (state-ref state 131))
-    (set! compiler-builtin-id-fix-Packet (state-ref state 132))
-    (set! compiler-builtin-id-fix-Pattern (state-ref state 133))
-    (set! compiler-builtin-id-fix-PatternList (state-ref state 134))
-    (set! compiler-builtin-id-fix-point (state-ref state 135))
-    (set! compiler-builtin-id-fix-Point (state-ref state 136))
-    (set! compiler-builtin-id-fix-Ready (state-ref state 137))
-    (set! compiler-builtin-id-fix-record (state-ref state 138))
-    (set! compiler-builtin-id-fix-Record (state-ref state 139))
-    (set! compiler-builtin-id-fix-Result (state-ref state 140))
-    (set! compiler-builtin-id-fix-ResultIoString (state-ref state 141))
-    (set! compiler-builtin-id-fix-right (state-ref state 142))
-    (set! compiler-builtin-id-fix-right_slash_Some (state-ref state 143))
-    (set! compiler-builtin-id-fix-same (state-ref state 144))
-    (set! compiler-builtin-id-fix-second (state-ref state 145))
-    (set! compiler-builtin-id-fix-Some (state-ref state 146))
-    (set! compiler-builtin-id-fix-Status (state-ref state 147))
-    (set! compiler-builtin-id-fix-stdlib (state-ref state 148))
-    (set!
-      compiler-builtin-id-fix-stdlib_dot_comptime_dot_comptime_error
-      (state-ref state 149))
-    (set!
-      compiler-builtin-id-fix-stdlib_dot_comptime_dot_error
-      (state-ref state 150))
-    (set!
-      compiler-builtin-id-fix-stdlib_dot_comptime_slash_comptime_error
-      (state-ref state 151))
-    (set!
-      compiler-builtin-id-fix-stdlib_dot_comptime_slash_error
-      (state-ref state 152))
-    (set!
-      compiler-builtin-id-fix-stdlib_dot_comptime_slash_ExprBindingClause
-      (state-ref state 153))
-    (set!
-      compiler-builtin-id-fix-stdlib_dot_comptime_slash_ExprBindingClauseList
-      (state-ref state 154))
-    (set!
-      compiler-builtin-id-fix-stdlib_dot_comptime_slash_ExprClause
-      (state-ref state 155))
-    (set!
-      compiler-builtin-id-fix-stdlib_dot_comptime_slash_ExprClauseList
-      (state-ref state 156))
-    (set! compiler-builtin-id-fix-stdlib_slash_comptime (state-ref state 157))
-    (set!
-      compiler-builtin-id-fix-stdlib_slash_comptime_dot_comptime_error
-      (state-ref state 158))
-    (set!
-      compiler-builtin-id-fix-stdlib_slash_comptime_dot_error
-      (state-ref state 159))
-    (set!
-      compiler-builtin-id-fix-stdlib_slash_comptime_slash_comptime_error
-      (state-ref state 160))
-    (set!
-      compiler-builtin-id-fix-stdlib_slash_comptime_slash_error
-      (state-ref state 161))
-    (set! compiler-builtin-id-fix-stdlib_slash_string (state-ref state 162))
-    (set! compiler-builtin-id-fix-string (state-ref state 163))
-    (set! compiler-builtin-id-fix-subject (state-ref state 164))
-    (set! compiler-builtin-id-fix-t (state-ref state 165))
-    (set! compiler-builtin-id-fix-T (state-ref state 166))
-    (set! compiler-builtin-id-fix-tag (state-ref state 167))
-    (set! compiler-builtin-id-fix-target (state-ref state 168))
-    (set! compiler-builtin-id-fix-ThreadBox (state-ref state 169))
-    (set! compiler-builtin-id-fix-type (state-ref state 170))
-    (set!
-      compiler-builtin-id-comptime-type-info-array-variant
-      (state-ref state 171))
-    (set!
-      compiler-builtin-id-comptime-type-info-builtin-variant
-      (state-ref state 172))
-    (set!
-      compiler-builtin-id-comptime-type-info-dyn-array-variant
-      (state-ref state 173))
-    (set!
-      compiler-builtin-id-comptime-type-info-enum-variant
-      (state-ref state 174))
-    (set!
-      compiler-builtin-id-comptime-type-info-function-variant
-      (state-ref state 175))
-    (set!
-      compiler-builtin-id-comptime-type-info-struct-variant
-      (state-ref state 176))
-    (set!
-      compiler-builtin-id-comptime-type-info-tuple-variant
-      (state-ref state 177))
-    (set! compiler-builtin-id-fix-U (state-ref state 178))
-    (set! compiler-builtin-id-fix-unquote (state-ref state 179))
-    (set! compiler-builtin-id-fix-UsedBox (state-ref state 180))
-    (set! compiler-builtin-id-fix-UsedEnum (state-ref state 181))
-    (set! compiler-builtin-id-fix-value (state-ref state 182))
-    (set! compiler-builtin-id-fix-x (state-ref state 183))
-    (set! compiler-builtin-id-fix-xs (state-ref state 184))
-    (set! compiler-builtin-id-fix-y (state-ref state 185))
-    (set! compiler-builtin-id-fix-module (state-ref state 186))
-    (set! compiler-builtin-id-fix-Module (state-ref state 187))
-    (set! compiler-builtin-id-fix-decls (state-ref state 188))
-    (set! compiler-builtin-id-fix-Decls (state-ref state 189))
-    (set! compiler-builtin-id-fix-expr (state-ref state 190))
-    (set!
-      compiler-builtin-id-fix-lt_parse_ast_decl_vec_fallback_gt
-      (state-ref state 191))
-    (set! compiler-builtin-id-eq (state-ref state 192))
-    (set! compiler-builtin-id-string-append (state-ref state 193))
-    (set! compiler-builtin-id-string-concat (state-ref state 194))
-    (set! compiler-builtin-id-fix-stdlib_dot_comptime (state-ref state 195))
-    (set! compiler-builtin-id-fix-TypeField (state-ref state 196))
-    (set! compiler-builtin-id-fix-TypeFieldList (state-ref state 197))
-    (set! compiler-builtin-id-fix-TypeInfo (state-ref state 198))
-    (set! compiler-builtin-id-fix-TypeInfoList (state-ref state 199))
-    (set! compiler-builtin-id-fix-TypeParam (state-ref state 200))
-    (set! compiler-builtin-id-fix-TypeParamList (state-ref state 201))
-    (set! compiler-builtin-id-fix-TypeVariant (state-ref state 202))
-    (set! compiler-builtin-id-fix-TypeVariantList (state-ref state 203))
-    (set! compiler-builtin-id-fix-TypeVariantPayload (state-ref state 204))
-    (set! compiler-builtin-id-fix-TypeVariantPayloadList (state-ref state 205))
-    (set! compiler-builtin-id-fix-append (state-ref state 206))
-    (set! compiler-builtin-id-fix-concat (state-ref state 207))
-    (set! compiler-builtin-id-fix-stdlib_dot_string (state-ref state 208))
-    (set! compiler-builtin-id-runtime-module (state-ref state 209))
-    (set! compiler-builtin-id-runtime-int-to-string (state-ref state 210))
-    (set! compiler-builtin-id-runtime-substring (state-ref state 211))
-    (set! compiler-builtin-id-runtime-str-view (state-ref state 212))
-    (set! compiler-builtin-id-runtime-string-concat3 (state-ref state 213))
-    (set! compiler-builtin-id-runtime-string-concat4 (state-ref state 214))
-    (set! compiler-builtin-id-runtime-string-concat5 (state-ref state 215))
-    (set! compiler-builtin-id-runtime-atomic-i64-load-ptr (state-ref state 216))
-    (set!
-      compiler-builtin-id-runtime-atomic-i64-store-ptr
-      (state-ref state 217))
-    (set! compiler-builtin-id-runtime-atomic-i64-add-ptr (state-ref state 218))
-    (set!
-      compiler-builtin-id-runtime-atomic-i64-fetch-add-ptr
-      (state-ref state 219))
-    (set! compiler-builtin-id-runtime-atomic-i64-cas-ptr (state-ref state 220))
-    (set! compiler-builtin-id-runtime-atomic-i32-load-ptr (state-ref state 221))
-    (set!
-      compiler-builtin-id-runtime-atomic-i32-store-ptr
-      (state-ref state 222))
-    (set! compiler-builtin-id-runtime-atomic-i32-add-ptr (state-ref state 223))
-    (set!
-      compiler-builtin-id-runtime-atomic-i32-fetch-add-ptr
-      (state-ref state 224))
-    (set! compiler-builtin-id-runtime-atomic-i32-cas-ptr (state-ref state 225))
-    (set!
-      compiler-builtin-id-tl-bytes-view-from-str-parts
-      (state-ref state 226))
-    (set!
-      compiler-builtin-id-tl-bytes-view-from-buf-parts
-      (state-ref state 227))
-    (set!
-      compiler-builtin-id-tl-bytes-mut-view-from-buf-parts
-      (state-ref state 228))
-    (set!
-      compiler-builtin-id-tl-bytes-view-from-bytes-parts
-      (state-ref state 229))
-    (set!
-      compiler-builtin-id-tl-bytes-mut-view-from-bytes-parts
-      (state-ref state 230))
-    (set! compiler-builtin-id-core-macros-module (state-ref state 231))
-    (set! compiler-builtin-id-core-macros-legacy-module (state-ref state 232))
-    (set! compiler-builtin-id-fix-slots (state-ref state 233))
-    (set! compiler-builtin-id-tc-default-boundary (state-ref state 234))
-    (set! compiler-builtin-id-tc-active-region (state-ref state 235))
-    (set! compiler-builtin-id-tc-cleanup-owner (state-ref state 236))
-    (set! compiler-builtin-id-tc-ordinary-arena-owner (state-ref state 237))
-    (set! compiler-builtin-id-tc-atomic-arena-owner (state-ref state 238))
-    (set! compiler-builtin-id-tc-return-type (state-ref state 239))
-    (set! compiler-builtin-id-tc-loop-target (state-ref state 240))
-    (set! compiler-builtin-id-tc-hygiene-global-boundary (state-ref state 241))
-    (set! compiler-builtin-id-tc-unsafe-context (state-ref state 242))
-    (set! compiler-builtin-id-fix-body (state-ref state 243))
-    (set! compiler-builtin-id-comptime-expr-begin-variant (state-ref state 244))
-    (set! compiler-builtin-id-comptime-expr-bool-variant (state-ref state 245))
-    (set! compiler-builtin-id-comptime-expr-call-variant (state-ref state 246))
-    (set! compiler-builtin-id-comptime-expr-if-variant (state-ref state 247))
-    (set! compiler-builtin-id-comptime-expr-int-variant (state-ref state 248))
-    (set!
-      compiler-builtin-id-comptime-expr-quasiquote-variant
-      (state-ref state 249))
-    (set! compiler-builtin-id-comptime-expr-quote-variant (state-ref state 250))
-    (set!
-      compiler-builtin-id-comptime-expr-splice-variant
-      (state-ref state 251))
-    (set!
-      compiler-builtin-id-comptime-expr-unquote-variant
-      (state-ref state 252))
-    (set!
-      compiler-builtin-id-comptime-expr-unquote-splicing-variant
-      (state-ref state 253))
-    (set! compiler-builtin-id-comptime-expr-var-variant (state-ref state 254))
-    (set! compiler-builtin-id-fix-first (state-ref state 255))
-    (set! compiler-builtin-id-fix-has_type (state-ref state 256))
-    (set! compiler-builtin-id-fix-init (state-ref state 257))
-    (set! compiler-builtin-id-fix-len (state-ref state 258))
-    (set!
-      compiler-builtin-id-comptime-pattern-binding-variant
-      (state-ref state 259))
-    (set!
-      compiler-builtin-id-comptime-pattern-variant-variant
-      (state-ref state 260))
-    (set!
-      compiler-builtin-id-comptime-pattern-wildcard-variant
-      (state-ref state 261))
-    (set! compiler-builtin-id-fix-payloads (state-ref state 262))
-    (set!
-      compiler-builtin-id-comptime-type-info-opaque-variant
-      (state-ref state 263))
-    (set!
-      compiler-builtin-id-comptime-type-info-slice-variant
-      (state-ref state 315))
-    (set! compiler-builtin-id-fix-name (state-ref state 264))
-    (set! compiler-builtin-id-fix-pattern (state-ref state 265))
-    (set! compiler-builtin-id-fix-ty (state-ref state 266))
-    (set! compiler-builtin-id-fix-handle (state-ref state 267))
-    (set! compiler-builtin-id-fix-when (state-ref state 268))
-    (set! compiler-builtin-id-fix-unless (state-ref state 269))
-    (set! compiler-builtin-id-fix-stdlib_dot_clone (state-ref state 270))
-    (set! compiler-builtin-id-fix-synthesize_helpers (state-ref state 271))
-    (set!
-      compiler-builtin-id-fix-stdlib_dot_clone_dot_synthesize_helpers
-      (state-ref state 272))
-    (set! compiler-builtin-id-atomic-i64-load (state-ref state 284))
-    (set! compiler-builtin-id-atomic-i64-store (state-ref state 285))
-    (set! compiler-builtin-id-atomic-i64-add (state-ref state 286))
-    (set! compiler-builtin-id-atomic-i64-fetch-add (state-ref state 287))
-    (set! compiler-builtin-id-atomic-i64-cas (state-ref state 288))
-    (set! compiler-builtin-id-atomic-i32-load (state-ref state 289))
-    (set! compiler-builtin-id-atomic-i32-store (state-ref state 290))
-    (set! compiler-builtin-id-atomic-i32-add (state-ref state 291))
-    (set! compiler-builtin-id-atomic-i32-fetch-add (state-ref state 292))
-    (set! compiler-builtin-id-atomic-i32-cas (state-ref state 293))
-    (set! compiler-builtin-id-tl-tlci-call-macro-entry (state-ref state 294))
-    (set! compiler-builtin-id-tl-private-float-sqrt (state-ref state 296))
-    (set! compiler-builtin-id-tl-private-float-to-bits (state-ref state 297))
-    (set! compiler-builtin-id-tl-private-float-from-bits (state-ref state 298))
-    (set! compiler-builtin-id-arena-module (state-ref state 299))
-    (set! compiler-builtin-id-arena-type (state-ref state 300))
-    (set! compiler-builtin-id-arena-mark-type (state-ref state 301))
-    (set! compiler-builtin-id-arena-phase-type (state-ref state 302))
-    (set! compiler-builtin-id-arena-make-base (state-ref state 303))
-    (set! compiler-builtin-id-arena-make-atomic-base (state-ref state 304))
-    (set! compiler-builtin-id-arena-phase-base (state-ref state 305))
-    (set! compiler-builtin-id-arena-rewind-safe-base (state-ref state 306))
-    (set! compiler-builtin-id-arena-destroy-safe-base (state-ref state 307))
-    (set! compiler-builtin-id-tl-stdin-eof-label (state-ref state 308))
-    (set! compiler-builtin-id-tl-flush-stdout-label (state-ref state 309))
-    (set! compiler-builtin-id-tl-arena-make-small (state-ref state 310))
-    (set!
-      compiler-builtin-id-tl-arena-debug-protect-never-reset
-      (state-ref state 313))
-    (set!
-      compiler-builtin-id-tl-arena-debug-assert-pool-install
-      (state-ref state 314))
+    (compiler-builtin-id-table install state)
     (set! compiler-builtin-table-id (state-table-id state))
     (set! compiler-builtin-pool-len (state-pool-len state))
     (set! compiler-builtin-parse-initialized (state-parse-initialized? state))))
@@ -1758,1338 +1532,632 @@
         (compiler-builtin-ctfe-set! index -1)
         (set! index (+ index 1))))))
 
+;; The CTFE builtin catalog: each CTFE builtin's source spelling and its slot
+;; in `compiler-builtin-ctfe-ids`. Slots are append-only; a slot missing here is
+;; retired or reserved and stays -1. `compiler-builtin-ctfe` reads the intern
+;; id of a spelling, and the loader below fills the slots in slot order.
+(defmacro (compiler-builtin-ctfe-slot [spelling : comptime.Expr]) : i64
+  (comptime.expr-int
+    (match (comptime.expr-string-value spelling)
+      ["size-of" 0]
+      ["align-of" 1]
+      ["offset-of" 2]
+      ["__tl_string_eq" 3]
+      ["string-eq" 4]
+      ["string=?" 5]
+      ["__tl_string_length" 6]
+      ["string-length" 7]
+      ["length" 8]
+      ["__tl_string_ref" 9]
+      ["string-ref" 10]
+      ["char-at" 11]
+      ["__tl_string_to_int" 12]
+      [">int" 13]
+      ["string-append" 14]
+      ["string-concat" 15]
+      ["int->string" 16]
+      ["comptime-error" 17]
+      ["error" 18]
+      ["expr-bool?" 19]
+      ["expr-bool-value" 20]
+      ["expr-if?" 21]
+      ["expr-if-cond" 22]
+      ["expr-if-then" 23]
+      ["expr-if-else" 24]
+      ["expr-clause-first" 25]
+      ["expr-clause-second" 26]
+      ["expr-bool" 27]
+      ["expr-int" 28]
+      ["expr-string" 29]
+      ["expr-var" 30]
+      ["expr-struct-get" 31]
+      ["expr-tuple-ref" 32]
+      ["expr-struct-set" 33]
+      ["expr-splice" 34]
+      ["expr-if" 35]
+      ["pattern-wildcard" 36]
+      ["pattern-binding" 37]
+      ["pattern-variant" 38]
+      ["pattern-list-empty" 39]
+      ["pattern-list-cons" 40]
+      ["match-arm" 41]
+      ["match-arm-list-empty" 42]
+      ["match-arm-list-cons" 43]
+      ["expr-match" 44]
+      ["expr-type" 45]
+      ["type-info" 46]
+      ["module-name" 47]
+      ["module-export-macro?" 48]
+      ["module-hook" 49]
+      ["expr-list-length" 51]
+      ["expr-list-nth" 54]
+      ["expr-clause-list-length" 56]
+      ["expr-clause-list-nth" 59]
+      ["expr-clause-list->expr-list" 60]
+      ["expr-binding-clause-name" 61]
+      ["expr-binding-clause-has-type?" 62]
+      ["expr-binding-clause-type" 63]
+      ["expr-binding-clause-init" 64]
+      ["expr-binding-clause-list-length" 66]
+      ["expr-binding-clause-list-nth" 69]
+      ["expr-binding-clause-list->expr-list" 70]
+      ["type-kind" 71]
+      ["type-key" 72]
+      ["type-nominal-module" 73]
+      ["type-nominal-name" 74]
+      ["struct-field-count" 75]
+      ["struct-field-name" 76]
+      ["struct-field-type" 77]
+      ["enum-variant-count" 78]
+      ["enum-variant-name" 79]
+      ["enum-variant-payload-count" 80]
+      ["enum-variant-payload-type" 81]
+      ["array-element-type" 82]
+      ["array-length" 83]
+      ["array-dynamic?" 84]
+      ["tuple-element-count" 85]
+      ["tuple-element-type" 86]
+      ["function-param-count" 87]
+      ["function-param-type" 88]
+      ["function-return-type" 89]
+      ["pattern-list-bindings" 90]
+      ["expr-string?" 91]
+      ["expr-string-value" 92]
+      ["string-slice" 93]
+      ["expr-mut-borrow" 94]
+      ["expr-call" 95]
+      ["expr-list-empty" 96]
+      ["expr-list-cons" 97]
+      ["expr-mut-call0" 98]
+      ["expr-mut-call1" 99]
+      ["expr-mut-call2" 100]
+      ["expr-list-fold-if" 101]
+      ["expr-clause-list-fold-if" 102]
+      ["append" 103]
+      ["concat" 104]
+      ["__typelisp internal resolved struct type" 106]
+      ["__typelisp internal resolved enum type" 107]
+      ["None" 108]
+      ["Array" 109]
+      ["&" 110]
+      ["&mut" 111]
+      ["in" 112]
+      ["while" 113]
+      ["make-array" 114]
+      ["array-ref" 115]
+      ["array-push!" 116]
+      ["init" 118]
+      ["ptr-null" 119]
+      [":" 120]
+      ["if" 121]
+      ["begin" 122]
+      ["unsafe" 123]
+      ["tuple" 124]
+      ["array" 125]
+      ["quote" 126]
+      ["quasiquote" 127]
+      ["unquote" 128]
+      ["unquote-splicing" 129]
+      ["return" 130]
+      ["try" 131]
+      ["box" 132]
+      ["box-get" 133]
+      ["box-take" 134]
+      ["type" 135]
+      ["syscall" 136]
+      ["+" 137]
+      ["-" 138]
+      ["*" 139]
+      ["/" 140]
+      ["%" 141]
+      ["=" 142]
+      ["!=" 143]
+      ["<" 144]
+      ["<=" 145]
+      [">" 146]
+      [">=" 147]
+      ["and" 148]
+      ["or" 149]
+      ["bit-and" 150]
+      ["bit-or" 151]
+      ["bit-xor" 152]
+      ["shl" 153]
+      ["shr" 154]
+      ["not" 155]
+      ["bit-not" 156]
+      ["set!" 157]
+      ["String" 158]
+      ["i64" 159]
+      ["i32" 160]
+      ["i16" 161]
+      ["i8" 162]
+      ["u64" 163]
+      ["u32" 164]
+      ["u16" 165]
+      ["u8" 166]
+      ["f64" 167]
+      ["f32" 168]
+      ["bool" 169]
+      ["char" 170]
+      ["str" 171]
+      ["bytes" 172]
+      ["unit" 173]
+      ["never" 174]
+      ["Tuple" 175]
+      ["->" 176]
+      ["Ptr" 177]
+      ["MutPtr" 178]
+      [":consume" 179]
+      ["_" 180]
+      ["let" 181]
+      ["match" 182]
+      ["struct-get" 183]
+      ["array-set!" 184]
+      ["array-take!" 185]
+      ["cast" 186]
+      ["ann" 187]
+      ["tuple-ref" 188]
+      ["ptr-null?" 189]
+      ["ptr-addr-of" 190]
+      ["ptr-read" 191]
+      ["ptr-write!" 192]
+      ["ptr-offset" 193]
+      ["ptr-cast" 194]
+      ["ptr->int" 195]
+      ["int->ptr" 196]
+      ["string-data" 197]
+      ["string-from-bytes" 198]
+      ["array-data" 199]
+      ["program-argc" 200]
+      ["program-argv" 201]
+      ["program-envp" 202]
+      ["cpuid-eax" 203]
+      ["cpuid-ebx" 204]
+      ["cpuid-ecx" 205]
+      ["cpuid-edx" 206]
+      ["xgetbv" 207]
+      ["true" 208]
+      ["false" 209]
+      ["type-cleanup-owning?" 210]
+      ["type-cleanup-function" 211]
+      ["expr-binary-data" 212]
+      ["__typelisp internal binary data" 213]
+      ["box-element-type" 214]
+      ["expr-list-type-nth" 215]
+      ["module-value?" 216]
+      ["module-value-type" 217]
+      ["reference-element-type" 218]
+      ["all" 219]
+      ["any" 220]
+      [":kind" 221]
+      ["..." 222]
+      ["string" 223]
+      ["dyn-array" 224]
+      ["function" 225]
+      ["struct" 226]
+      ["enum" 227]
+      ["ptr" 228]
+      ["mut-ptr" 229]
+      ["ref" 230]
+      ["mut-ref" 231]
+      ["region" 232]
+      ["type-var" 233]
+      [":cleanup" 234]
+      [":owned" 235]
+      [":lifetimes" 236]
+      [":repr" 237]
+      [":packed" 238]
+      ["packed" 239]
+      ["scalar" 240]
+      ["avx2" 241]
+      ["avx512" 242]
+      ["cfg" 243]
+      ["uniform" 244]
+      ["varying" 245]
+      ["none" 246]
+      ["lanes" 247]
+      ["args" 248]
+      ["result" 249]
+      ["index-param" 250]
+      ["specialization" 251]
+      [":export-symbol" 252]
+      [":spmd-callable" 253]
+      ["c-varargs" 254]
+      [":abi" 255]
+      [":symbol" 256]
+      [":link-lib" 257]
+      [":link-search" 258]
+      [":link-arg" 259]
+      ["as" 260]
+      [":as" 261]
+      ["sum" 262]
+      ["min" 263]
+      ["max" 264]
+      ["defgeneric" 265]
+      ["generic" 266]
+      ["deftrait" 267]
+      ["trait" 268]
+      ["interface" 269]
+      ["impl" 270]
+      ["where" 271]
+      ["pattern-binding-typed" 272]
+      ["expr-resource-scope" 273]
+      ["expr-let-scope" 274]
+      ["expr-set-var" 275]
+      ["expr-begin-unit" 276]
+      ["expr-not" 277]
+      ["expr-while" 278]
+      ["syntax-name-fresh" 279]
+      ["__tl_dyn-array" 280]
+      ["slice" 281]
+      ["expr-borrow" 282]
+      ["expr-array-ref" 283]
+      ["expr-replace" 284]
+      ["module-value-expr" 285]
+      ["function-shared-borrow-returns-string?" 286]
+      ["expr-shared-call1" 287]
+      ["expr-shared-let-scope" 288]
+      ["type-expr" 289]
+      ["expr-lambda1" 290]
+      [":ignore" 291]
+      [":slow" 292]
+      [":must-use" 293]
+      ["c-function" 294]
+      ["CFunc" 295]
+      ["nullable" 296]
+      ["non-null" 297]
+      ["unsafe-nullable" 298]
+      ["unsafe-non-null" 299]
+      [_
+        (comptime.comptime-error
+          "compiler-builtin-ctfe-slot: not a CTFE builtin spelling")])))
+
+(defmacro (compiler-builtin-ctfe [spelling : comptime.Expr]) : i64
+  `(compiler-builtin-ctfe-ref (compiler-builtin-ctfe-slot ,spelling)))
+
+(defmacro (compiler-builtin-load-ctfe!
+  [insert-missing : comptime.Expr]
+  [spelling : comptime.Expr]) : unit
+  `(compiler-builtin-load-ctfe-id!
+    ,insert-missing
+    (compiler-builtin-ctfe-slot ,spelling)
+    ,spelling))
+
 (define (compiler-builtin-load-ctfe-ids! [insert-missing : bool]) : unit
   (begin
     ;; Clear unassigned and retired slots as well as populated ones. This keeps
     ;; catalog holes from retaining zero or an id loaded by an older snapshot.
     (compiler-builtin-clear-ctfe-ids!)
-    (compiler-builtin-load-ctfe-id! insert-missing 0 "size-of")
-    (compiler-builtin-load-ctfe-id! insert-missing 1 "align-of")
-    (compiler-builtin-load-ctfe-id! insert-missing 2 "offset-of")
-    (compiler-builtin-load-ctfe-id! insert-missing 3 "__tl_string_eq")
-    (compiler-builtin-load-ctfe-id! insert-missing 4 "string-eq")
-    (compiler-builtin-load-ctfe-id! insert-missing 5 "string=?")
-    (compiler-builtin-load-ctfe-id! insert-missing 6 "__tl_string_length")
-    (compiler-builtin-load-ctfe-id! insert-missing 7 "string-length")
-    (compiler-builtin-load-ctfe-id! insert-missing 8 "length")
-    (compiler-builtin-load-ctfe-id! insert-missing 9 "__tl_string_ref")
-    (compiler-builtin-load-ctfe-id! insert-missing 10 "string-ref")
-    (compiler-builtin-load-ctfe-id! insert-missing 11 "char-at")
-    (compiler-builtin-load-ctfe-id! insert-missing 12 "__tl_string_to_int")
-    (compiler-builtin-load-ctfe-id! insert-missing 13 ">int")
-    (compiler-builtin-load-ctfe-id! insert-missing 14 "string-append")
-    (compiler-builtin-load-ctfe-id! insert-missing 15 "string-concat")
-    (compiler-builtin-load-ctfe-id! insert-missing 16 "int->string")
-    (compiler-builtin-load-ctfe-id! insert-missing 17 "comptime-error")
-    (compiler-builtin-load-ctfe-id! insert-missing 18 "error")
-    (compiler-builtin-load-ctfe-id! insert-missing 19 "expr-bool?")
-    (compiler-builtin-load-ctfe-id! insert-missing 20 "expr-bool-value")
-    (compiler-builtin-load-ctfe-id! insert-missing 21 "expr-if?")
-    (compiler-builtin-load-ctfe-id! insert-missing 22 "expr-if-cond")
-    (compiler-builtin-load-ctfe-id! insert-missing 23 "expr-if-then")
-    (compiler-builtin-load-ctfe-id! insert-missing 24 "expr-if-else")
-    (compiler-builtin-load-ctfe-id! insert-missing 25 "expr-clause-first")
-    (compiler-builtin-load-ctfe-id! insert-missing 26 "expr-clause-second")
-    (compiler-builtin-load-ctfe-id! insert-missing 27 "expr-bool")
-    (compiler-builtin-load-ctfe-id! insert-missing 28 "expr-int")
-    (compiler-builtin-load-ctfe-id! insert-missing 29 "expr-string")
-    (compiler-builtin-load-ctfe-id! insert-missing 30 "expr-var")
-    (compiler-builtin-load-ctfe-id! insert-missing 31 "expr-struct-get")
-    (compiler-builtin-load-ctfe-id! insert-missing 32 "expr-tuple-ref")
-    (compiler-builtin-load-ctfe-id! insert-missing 33 "expr-struct-set")
-    (compiler-builtin-load-ctfe-id! insert-missing 34 "expr-splice")
-    (compiler-builtin-load-ctfe-id! insert-missing 35 "expr-if")
-    (compiler-builtin-load-ctfe-id! insert-missing 36 "pattern-wildcard")
-    (compiler-builtin-load-ctfe-id! insert-missing 37 "pattern-binding")
-    (compiler-builtin-load-ctfe-id! insert-missing 38 "pattern-variant")
-    (compiler-builtin-load-ctfe-id! insert-missing 39 "pattern-list-empty")
-    (compiler-builtin-load-ctfe-id! insert-missing 40 "pattern-list-cons")
-    (compiler-builtin-load-ctfe-id! insert-missing 41 "match-arm")
-    (compiler-builtin-load-ctfe-id! insert-missing 42 "match-arm-list-empty")
-    (compiler-builtin-load-ctfe-id! insert-missing 43 "match-arm-list-cons")
-    (compiler-builtin-load-ctfe-id! insert-missing 44 "expr-match")
-    (compiler-builtin-load-ctfe-id! insert-missing 45 "expr-type")
-    (compiler-builtin-load-ctfe-id! insert-missing 46 "type-info")
-    (compiler-builtin-load-ctfe-id! insert-missing 47 "module-name")
-    (compiler-builtin-load-ctfe-id! insert-missing 48 "module-export-macro?")
-    (compiler-builtin-load-ctfe-id! insert-missing 49 "module-hook")
-    (compiler-builtin-load-ctfe-id! insert-missing 51 "expr-list-length")
-    (compiler-builtin-load-ctfe-id! insert-missing 54 "expr-list-nth")
-    (compiler-builtin-load-ctfe-id! insert-missing 56 "expr-clause-list-length")
-    (compiler-builtin-load-ctfe-id! insert-missing 59 "expr-clause-list-nth")
-    (compiler-builtin-load-ctfe-id!
+    (compiler-builtin-load-ctfe! insert-missing "size-of")
+    (compiler-builtin-load-ctfe! insert-missing "align-of")
+    (compiler-builtin-load-ctfe! insert-missing "offset-of")
+    (compiler-builtin-load-ctfe! insert-missing "__tl_string_eq")
+    (compiler-builtin-load-ctfe! insert-missing "string-eq")
+    (compiler-builtin-load-ctfe! insert-missing "string=?")
+    (compiler-builtin-load-ctfe! insert-missing "__tl_string_length")
+    (compiler-builtin-load-ctfe! insert-missing "string-length")
+    (compiler-builtin-load-ctfe! insert-missing "length")
+    (compiler-builtin-load-ctfe! insert-missing "__tl_string_ref")
+    (compiler-builtin-load-ctfe! insert-missing "string-ref")
+    (compiler-builtin-load-ctfe! insert-missing "char-at")
+    (compiler-builtin-load-ctfe! insert-missing "__tl_string_to_int")
+    (compiler-builtin-load-ctfe! insert-missing ">int")
+    (compiler-builtin-load-ctfe! insert-missing "string-append")
+    (compiler-builtin-load-ctfe! insert-missing "string-concat")
+    (compiler-builtin-load-ctfe! insert-missing "int->string")
+    (compiler-builtin-load-ctfe! insert-missing "comptime-error")
+    (compiler-builtin-load-ctfe! insert-missing "error")
+    (compiler-builtin-load-ctfe! insert-missing "expr-bool?")
+    (compiler-builtin-load-ctfe! insert-missing "expr-bool-value")
+    (compiler-builtin-load-ctfe! insert-missing "expr-if?")
+    (compiler-builtin-load-ctfe! insert-missing "expr-if-cond")
+    (compiler-builtin-load-ctfe! insert-missing "expr-if-then")
+    (compiler-builtin-load-ctfe! insert-missing "expr-if-else")
+    (compiler-builtin-load-ctfe! insert-missing "expr-clause-first")
+    (compiler-builtin-load-ctfe! insert-missing "expr-clause-second")
+    (compiler-builtin-load-ctfe! insert-missing "expr-bool")
+    (compiler-builtin-load-ctfe! insert-missing "expr-int")
+    (compiler-builtin-load-ctfe! insert-missing "expr-string")
+    (compiler-builtin-load-ctfe! insert-missing "expr-var")
+    (compiler-builtin-load-ctfe! insert-missing "expr-struct-get")
+    (compiler-builtin-load-ctfe! insert-missing "expr-tuple-ref")
+    (compiler-builtin-load-ctfe! insert-missing "expr-struct-set")
+    (compiler-builtin-load-ctfe! insert-missing "expr-splice")
+    (compiler-builtin-load-ctfe! insert-missing "expr-if")
+    (compiler-builtin-load-ctfe! insert-missing "pattern-wildcard")
+    (compiler-builtin-load-ctfe! insert-missing "pattern-binding")
+    (compiler-builtin-load-ctfe! insert-missing "pattern-variant")
+    (compiler-builtin-load-ctfe! insert-missing "pattern-list-empty")
+    (compiler-builtin-load-ctfe! insert-missing "pattern-list-cons")
+    (compiler-builtin-load-ctfe! insert-missing "match-arm")
+    (compiler-builtin-load-ctfe! insert-missing "match-arm-list-empty")
+    (compiler-builtin-load-ctfe! insert-missing "match-arm-list-cons")
+    (compiler-builtin-load-ctfe! insert-missing "expr-match")
+    (compiler-builtin-load-ctfe! insert-missing "expr-type")
+    (compiler-builtin-load-ctfe! insert-missing "type-info")
+    (compiler-builtin-load-ctfe! insert-missing "module-name")
+    (compiler-builtin-load-ctfe! insert-missing "module-export-macro?")
+    (compiler-builtin-load-ctfe! insert-missing "module-hook")
+    (compiler-builtin-load-ctfe! insert-missing "expr-list-length")
+    (compiler-builtin-load-ctfe! insert-missing "expr-list-nth")
+    (compiler-builtin-load-ctfe! insert-missing "expr-clause-list-length")
+    (compiler-builtin-load-ctfe! insert-missing "expr-clause-list-nth")
+    (compiler-builtin-load-ctfe! insert-missing "expr-clause-list->expr-list")
+    (compiler-builtin-load-ctfe! insert-missing "expr-binding-clause-name")
+    (compiler-builtin-load-ctfe! insert-missing "expr-binding-clause-has-type?")
+    (compiler-builtin-load-ctfe! insert-missing "expr-binding-clause-type")
+    (compiler-builtin-load-ctfe! insert-missing "expr-binding-clause-init")
+    (compiler-builtin-load-ctfe!
       insert-missing
-      60
-      "expr-clause-list->expr-list")
-    (compiler-builtin-load-ctfe-id!
-      insert-missing
-      61
-      "expr-binding-clause-name")
-    (compiler-builtin-load-ctfe-id!
-      insert-missing
-      62
-      "expr-binding-clause-has-type?")
-    (compiler-builtin-load-ctfe-id!
-      insert-missing
-      63
-      "expr-binding-clause-type")
-    (compiler-builtin-load-ctfe-id!
-      insert-missing
-      64
-      "expr-binding-clause-init")
-    (compiler-builtin-load-ctfe-id!
-      insert-missing
-      66
       "expr-binding-clause-list-length")
-    (compiler-builtin-load-ctfe-id!
+    (compiler-builtin-load-ctfe! insert-missing "expr-binding-clause-list-nth")
+    (compiler-builtin-load-ctfe!
       insert-missing
-      69
-      "expr-binding-clause-list-nth")
-    (compiler-builtin-load-ctfe-id!
-      insert-missing
-      70
       "expr-binding-clause-list->expr-list")
-    (compiler-builtin-load-ctfe-id! insert-missing 71 "type-kind")
-    (compiler-builtin-load-ctfe-id! insert-missing 72 "type-key")
-    (compiler-builtin-load-ctfe-id! insert-missing 73 "type-nominal-module")
-    (compiler-builtin-load-ctfe-id! insert-missing 74 "type-nominal-name")
-    (compiler-builtin-load-ctfe-id! insert-missing 75 "struct-field-count")
-    (compiler-builtin-load-ctfe-id! insert-missing 76 "struct-field-name")
-    (compiler-builtin-load-ctfe-id! insert-missing 77 "struct-field-type")
-    (compiler-builtin-load-ctfe-id! insert-missing 78 "enum-variant-count")
-    (compiler-builtin-load-ctfe-id! insert-missing 79 "enum-variant-name")
-    (compiler-builtin-load-ctfe-id!
-      insert-missing
-      80
-      "enum-variant-payload-count")
-    (compiler-builtin-load-ctfe-id!
-      insert-missing
-      81
-      "enum-variant-payload-type")
-    (compiler-builtin-load-ctfe-id! insert-missing 82 "array-element-type")
-    (compiler-builtin-load-ctfe-id! insert-missing 83 "array-length")
-    (compiler-builtin-load-ctfe-id! insert-missing 84 "array-dynamic?")
-    (compiler-builtin-load-ctfe-id! insert-missing 85 "tuple-element-count")
-    (compiler-builtin-load-ctfe-id! insert-missing 86 "tuple-element-type")
-    (compiler-builtin-load-ctfe-id! insert-missing 87 "function-param-count")
-    (compiler-builtin-load-ctfe-id! insert-missing 88 "function-param-type")
-    (compiler-builtin-load-ctfe-id! insert-missing 89 "function-return-type")
-    (compiler-builtin-load-ctfe-id! insert-missing 90 "pattern-list-bindings")
-    (compiler-builtin-load-ctfe-id! insert-missing 91 "expr-string?")
-    (compiler-builtin-load-ctfe-id! insert-missing 92 "expr-string-value")
-    (compiler-builtin-load-ctfe-id! insert-missing 93 "string-slice")
-    (compiler-builtin-load-ctfe-id! insert-missing 94 "expr-mut-borrow")
-    (compiler-builtin-load-ctfe-id! insert-missing 95 "expr-call")
-    (compiler-builtin-load-ctfe-id! insert-missing 96 "expr-list-empty")
-    (compiler-builtin-load-ctfe-id! insert-missing 97 "expr-list-cons")
-    (compiler-builtin-load-ctfe-id! insert-missing 98 "expr-mut-call0")
-    (compiler-builtin-load-ctfe-id! insert-missing 99 "expr-mut-call1")
-    (compiler-builtin-load-ctfe-id! insert-missing 100 "expr-mut-call2")
-    (compiler-builtin-load-ctfe-id! insert-missing 101 "expr-list-fold-if")
-    (compiler-builtin-load-ctfe-id!
-      insert-missing
-      102
-      "expr-clause-list-fold-if")
-    (compiler-builtin-load-ctfe-id! insert-missing 103 "append")
-    (compiler-builtin-load-ctfe-id! insert-missing 104 "concat")
+    (compiler-builtin-load-ctfe! insert-missing "type-kind")
+    (compiler-builtin-load-ctfe! insert-missing "type-key")
+    (compiler-builtin-load-ctfe! insert-missing "type-nominal-module")
+    (compiler-builtin-load-ctfe! insert-missing "type-nominal-name")
+    (compiler-builtin-load-ctfe! insert-missing "struct-field-count")
+    (compiler-builtin-load-ctfe! insert-missing "struct-field-name")
+    (compiler-builtin-load-ctfe! insert-missing "struct-field-type")
+    (compiler-builtin-load-ctfe! insert-missing "enum-variant-count")
+    (compiler-builtin-load-ctfe! insert-missing "enum-variant-name")
+    (compiler-builtin-load-ctfe! insert-missing "enum-variant-payload-count")
+    (compiler-builtin-load-ctfe! insert-missing "enum-variant-payload-type")
+    (compiler-builtin-load-ctfe! insert-missing "array-element-type")
+    (compiler-builtin-load-ctfe! insert-missing "array-length")
+    (compiler-builtin-load-ctfe! insert-missing "array-dynamic?")
+    (compiler-builtin-load-ctfe! insert-missing "tuple-element-count")
+    (compiler-builtin-load-ctfe! insert-missing "tuple-element-type")
+    (compiler-builtin-load-ctfe! insert-missing "function-param-count")
+    (compiler-builtin-load-ctfe! insert-missing "function-param-type")
+    (compiler-builtin-load-ctfe! insert-missing "function-return-type")
+    (compiler-builtin-load-ctfe! insert-missing "pattern-list-bindings")
+    (compiler-builtin-load-ctfe! insert-missing "expr-string?")
+    (compiler-builtin-load-ctfe! insert-missing "expr-string-value")
+    (compiler-builtin-load-ctfe! insert-missing "string-slice")
+    (compiler-builtin-load-ctfe! insert-missing "expr-mut-borrow")
+    (compiler-builtin-load-ctfe! insert-missing "expr-call")
+    (compiler-builtin-load-ctfe! insert-missing "expr-list-empty")
+    (compiler-builtin-load-ctfe! insert-missing "expr-list-cons")
+    (compiler-builtin-load-ctfe! insert-missing "expr-mut-call0")
+    (compiler-builtin-load-ctfe! insert-missing "expr-mut-call1")
+    (compiler-builtin-load-ctfe! insert-missing "expr-mut-call2")
+    (compiler-builtin-load-ctfe! insert-missing "expr-list-fold-if")
+    (compiler-builtin-load-ctfe! insert-missing "expr-clause-list-fold-if")
+    (compiler-builtin-load-ctfe! insert-missing "append")
+    (compiler-builtin-load-ctfe! insert-missing "concat")
+    ;; Slot 105 repeats the spelling of slot 13.
     (compiler-builtin-load-ctfe-id! insert-missing 105 ">int")
-    (compiler-builtin-load-ctfe-id!
+    (compiler-builtin-load-ctfe!
       insert-missing
-      106
       "__typelisp internal resolved struct type")
-    (compiler-builtin-load-ctfe-id!
+    (compiler-builtin-load-ctfe!
       insert-missing
-      107
       "__typelisp internal resolved enum type")
-    (compiler-builtin-load-ctfe-id! insert-missing 108 "None")
-    (compiler-builtin-load-ctfe-id! insert-missing 109 "Array")
-    (compiler-builtin-load-ctfe-id! insert-missing 110 "&")
-    (compiler-builtin-load-ctfe-id! insert-missing 111 "&mut")
-    (compiler-builtin-load-ctfe-id! insert-missing 112 "in")
-    (compiler-builtin-load-ctfe-id! insert-missing 113 "while")
-    (compiler-builtin-load-ctfe-id! insert-missing 114 "make-array")
-    (compiler-builtin-load-ctfe-id! insert-missing 115 "array-ref")
-    (compiler-builtin-load-ctfe-id! insert-missing 116 "array-push!")
+    (compiler-builtin-load-ctfe! insert-missing "None")
+    (compiler-builtin-load-ctfe! insert-missing "Array")
+    (compiler-builtin-load-ctfe! insert-missing "&")
+    (compiler-builtin-load-ctfe! insert-missing "&mut")
+    (compiler-builtin-load-ctfe! insert-missing "in")
+    (compiler-builtin-load-ctfe! insert-missing "while")
+    (compiler-builtin-load-ctfe! insert-missing "make-array")
+    (compiler-builtin-load-ctfe! insert-missing "array-ref")
+    (compiler-builtin-load-ctfe! insert-missing "array-push!")
+    ;; Slot 117 repeats the spelling of slot 10.
     (compiler-builtin-load-ctfe-id! insert-missing 117 "string-ref")
-    (compiler-builtin-load-ctfe-id! insert-missing 118 "init")
-    (compiler-builtin-load-ctfe-id! insert-missing 119 "ptr-null")
-    (compiler-builtin-load-ctfe-id! insert-missing 120 ":")
-    (compiler-builtin-load-ctfe-id! insert-missing 121 "if")
-    (compiler-builtin-load-ctfe-id! insert-missing 122 "begin")
-    (compiler-builtin-load-ctfe-id! insert-missing 123 "unsafe")
-    (compiler-builtin-load-ctfe-id! insert-missing 124 "tuple")
-    (compiler-builtin-load-ctfe-id! insert-missing 125 "array")
-    (compiler-builtin-load-ctfe-id! insert-missing 126 "quote")
-    (compiler-builtin-load-ctfe-id! insert-missing 127 "quasiquote")
-    (compiler-builtin-load-ctfe-id! insert-missing 128 "unquote")
-    (compiler-builtin-load-ctfe-id! insert-missing 129 "unquote-splicing")
-    (compiler-builtin-load-ctfe-id! insert-missing 130 "return")
-    (compiler-builtin-load-ctfe-id! insert-missing 131 "try")
-    (compiler-builtin-load-ctfe-id! insert-missing 132 "box")
-    (compiler-builtin-load-ctfe-id! insert-missing 133 "box-get")
-    (compiler-builtin-load-ctfe-id! insert-missing 134 "box-take")
-    (compiler-builtin-load-ctfe-id! insert-missing 135 "type")
-    (compiler-builtin-load-ctfe-id! insert-missing 136 "syscall")
-    (compiler-builtin-load-ctfe-id! insert-missing 137 "+")
-    (compiler-builtin-load-ctfe-id! insert-missing 138 "-")
-    (compiler-builtin-load-ctfe-id! insert-missing 139 "*")
-    (compiler-builtin-load-ctfe-id! insert-missing 140 "/")
-    (compiler-builtin-load-ctfe-id! insert-missing 141 "%")
-    (compiler-builtin-load-ctfe-id! insert-missing 142 "=")
-    (compiler-builtin-load-ctfe-id! insert-missing 143 "!=")
-    (compiler-builtin-load-ctfe-id! insert-missing 144 "<")
-    (compiler-builtin-load-ctfe-id! insert-missing 145 "<=")
-    (compiler-builtin-load-ctfe-id! insert-missing 146 ">")
-    (compiler-builtin-load-ctfe-id! insert-missing 147 ">=")
-    (compiler-builtin-load-ctfe-id! insert-missing 148 "and")
-    (compiler-builtin-load-ctfe-id! insert-missing 149 "or")
-    (compiler-builtin-load-ctfe-id! insert-missing 150 "bit-and")
-    (compiler-builtin-load-ctfe-id! insert-missing 151 "bit-or")
-    (compiler-builtin-load-ctfe-id! insert-missing 152 "bit-xor")
-    (compiler-builtin-load-ctfe-id! insert-missing 153 "shl")
-    (compiler-builtin-load-ctfe-id! insert-missing 154 "shr")
-    (compiler-builtin-load-ctfe-id! insert-missing 155 "not")
-    (compiler-builtin-load-ctfe-id! insert-missing 156 "bit-not")
-    (compiler-builtin-load-ctfe-id! insert-missing 157 "set!")
-    (compiler-builtin-load-ctfe-id! insert-missing 158 "String")
-    (compiler-builtin-load-ctfe-id! insert-missing 159 "i64")
-    (compiler-builtin-load-ctfe-id! insert-missing 160 "i32")
-    (compiler-builtin-load-ctfe-id! insert-missing 161 "i16")
-    (compiler-builtin-load-ctfe-id! insert-missing 162 "i8")
-    (compiler-builtin-load-ctfe-id! insert-missing 163 "u64")
-    (compiler-builtin-load-ctfe-id! insert-missing 164 "u32")
-    (compiler-builtin-load-ctfe-id! insert-missing 165 "u16")
-    (compiler-builtin-load-ctfe-id! insert-missing 166 "u8")
-    (compiler-builtin-load-ctfe-id! insert-missing 167 "f64")
-    (compiler-builtin-load-ctfe-id! insert-missing 168 "f32")
-    (compiler-builtin-load-ctfe-id! insert-missing 169 "bool")
-    (compiler-builtin-load-ctfe-id! insert-missing 170 "char")
-    (compiler-builtin-load-ctfe-id! insert-missing 171 "str")
-    (compiler-builtin-load-ctfe-id! insert-missing 172 "bytes")
-    (compiler-builtin-load-ctfe-id! insert-missing 173 "unit")
-    (compiler-builtin-load-ctfe-id! insert-missing 174 "never")
-    (compiler-builtin-load-ctfe-id! insert-missing 175 "Tuple")
-    (compiler-builtin-load-ctfe-id! insert-missing 176 "->")
-    (compiler-builtin-load-ctfe-id! insert-missing 177 "Ptr")
-    (compiler-builtin-load-ctfe-id! insert-missing 178 "MutPtr")
-    (compiler-builtin-load-ctfe-id! insert-missing 179 ":consume")
-    (compiler-builtin-load-ctfe-id! insert-missing 180 "_")
-    (compiler-builtin-load-ctfe-id! insert-missing 181 "let")
-    (compiler-builtin-load-ctfe-id! insert-missing 182 "match")
-    (compiler-builtin-load-ctfe-id! insert-missing 183 "struct-get")
-    (compiler-builtin-load-ctfe-id! insert-missing 184 "array-set!")
-    (compiler-builtin-load-ctfe-id! insert-missing 185 "array-take!")
-    (compiler-builtin-load-ctfe-id! insert-missing 186 "cast")
-    (compiler-builtin-load-ctfe-id! insert-missing 187 "ann")
-    (compiler-builtin-load-ctfe-id! insert-missing 188 "tuple-ref")
-    (compiler-builtin-load-ctfe-id! insert-missing 189 "ptr-null?")
-    (compiler-builtin-load-ctfe-id! insert-missing 190 "ptr-addr-of")
-    (compiler-builtin-load-ctfe-id! insert-missing 191 "ptr-read")
-    (compiler-builtin-load-ctfe-id! insert-missing 192 "ptr-write!")
-    (compiler-builtin-load-ctfe-id! insert-missing 193 "ptr-offset")
-    (compiler-builtin-load-ctfe-id! insert-missing 194 "ptr-cast")
-    (compiler-builtin-load-ctfe-id! insert-missing 195 "ptr->int")
-    (compiler-builtin-load-ctfe-id! insert-missing 196 "int->ptr")
-    (compiler-builtin-load-ctfe-id! insert-missing 197 "string-data")
-    (compiler-builtin-load-ctfe-id! insert-missing 198 "string-from-bytes")
-    (compiler-builtin-load-ctfe-id! insert-missing 199 "array-data")
-    (compiler-builtin-load-ctfe-id! insert-missing 200 "program-argc")
-    (compiler-builtin-load-ctfe-id! insert-missing 201 "program-argv")
-    (compiler-builtin-load-ctfe-id! insert-missing 202 "program-envp")
-    (compiler-builtin-load-ctfe-id! insert-missing 203 "cpuid-eax")
-    (compiler-builtin-load-ctfe-id! insert-missing 204 "cpuid-ebx")
-    (compiler-builtin-load-ctfe-id! insert-missing 205 "cpuid-ecx")
-    (compiler-builtin-load-ctfe-id! insert-missing 206 "cpuid-edx")
-    (compiler-builtin-load-ctfe-id! insert-missing 207 "xgetbv")
-    (compiler-builtin-load-ctfe-id! insert-missing 208 "true")
-    (compiler-builtin-load-ctfe-id! insert-missing 209 "false")
-    (compiler-builtin-load-ctfe-id! insert-missing 210 "type-cleanup-owning?")
-    (compiler-builtin-load-ctfe-id! insert-missing 211 "type-cleanup-function")
-    (compiler-builtin-load-ctfe-id! insert-missing 212 "expr-binary-data")
-    (compiler-builtin-load-ctfe-id!
+    (compiler-builtin-load-ctfe! insert-missing "init")
+    (compiler-builtin-load-ctfe! insert-missing "ptr-null")
+    (compiler-builtin-load-ctfe! insert-missing ":")
+    (compiler-builtin-load-ctfe! insert-missing "if")
+    (compiler-builtin-load-ctfe! insert-missing "begin")
+    (compiler-builtin-load-ctfe! insert-missing "unsafe")
+    (compiler-builtin-load-ctfe! insert-missing "tuple")
+    (compiler-builtin-load-ctfe! insert-missing "array")
+    (compiler-builtin-load-ctfe! insert-missing "quote")
+    (compiler-builtin-load-ctfe! insert-missing "quasiquote")
+    (compiler-builtin-load-ctfe! insert-missing "unquote")
+    (compiler-builtin-load-ctfe! insert-missing "unquote-splicing")
+    (compiler-builtin-load-ctfe! insert-missing "return")
+    (compiler-builtin-load-ctfe! insert-missing "try")
+    (compiler-builtin-load-ctfe! insert-missing "box")
+    (compiler-builtin-load-ctfe! insert-missing "box-get")
+    (compiler-builtin-load-ctfe! insert-missing "box-take")
+    (compiler-builtin-load-ctfe! insert-missing "type")
+    (compiler-builtin-load-ctfe! insert-missing "syscall")
+    (compiler-builtin-load-ctfe! insert-missing "+")
+    (compiler-builtin-load-ctfe! insert-missing "-")
+    (compiler-builtin-load-ctfe! insert-missing "*")
+    (compiler-builtin-load-ctfe! insert-missing "/")
+    (compiler-builtin-load-ctfe! insert-missing "%")
+    (compiler-builtin-load-ctfe! insert-missing "=")
+    (compiler-builtin-load-ctfe! insert-missing "!=")
+    (compiler-builtin-load-ctfe! insert-missing "<")
+    (compiler-builtin-load-ctfe! insert-missing "<=")
+    (compiler-builtin-load-ctfe! insert-missing ">")
+    (compiler-builtin-load-ctfe! insert-missing ">=")
+    (compiler-builtin-load-ctfe! insert-missing "and")
+    (compiler-builtin-load-ctfe! insert-missing "or")
+    (compiler-builtin-load-ctfe! insert-missing "bit-and")
+    (compiler-builtin-load-ctfe! insert-missing "bit-or")
+    (compiler-builtin-load-ctfe! insert-missing "bit-xor")
+    (compiler-builtin-load-ctfe! insert-missing "shl")
+    (compiler-builtin-load-ctfe! insert-missing "shr")
+    (compiler-builtin-load-ctfe! insert-missing "not")
+    (compiler-builtin-load-ctfe! insert-missing "bit-not")
+    (compiler-builtin-load-ctfe! insert-missing "set!")
+    (compiler-builtin-load-ctfe! insert-missing "String")
+    (compiler-builtin-load-ctfe! insert-missing "i64")
+    (compiler-builtin-load-ctfe! insert-missing "i32")
+    (compiler-builtin-load-ctfe! insert-missing "i16")
+    (compiler-builtin-load-ctfe! insert-missing "i8")
+    (compiler-builtin-load-ctfe! insert-missing "u64")
+    (compiler-builtin-load-ctfe! insert-missing "u32")
+    (compiler-builtin-load-ctfe! insert-missing "u16")
+    (compiler-builtin-load-ctfe! insert-missing "u8")
+    (compiler-builtin-load-ctfe! insert-missing "f64")
+    (compiler-builtin-load-ctfe! insert-missing "f32")
+    (compiler-builtin-load-ctfe! insert-missing "bool")
+    (compiler-builtin-load-ctfe! insert-missing "char")
+    (compiler-builtin-load-ctfe! insert-missing "str")
+    (compiler-builtin-load-ctfe! insert-missing "bytes")
+    (compiler-builtin-load-ctfe! insert-missing "unit")
+    (compiler-builtin-load-ctfe! insert-missing "never")
+    (compiler-builtin-load-ctfe! insert-missing "Tuple")
+    (compiler-builtin-load-ctfe! insert-missing "->")
+    (compiler-builtin-load-ctfe! insert-missing "Ptr")
+    (compiler-builtin-load-ctfe! insert-missing "MutPtr")
+    (compiler-builtin-load-ctfe! insert-missing ":consume")
+    (compiler-builtin-load-ctfe! insert-missing "_")
+    (compiler-builtin-load-ctfe! insert-missing "let")
+    (compiler-builtin-load-ctfe! insert-missing "match")
+    (compiler-builtin-load-ctfe! insert-missing "struct-get")
+    (compiler-builtin-load-ctfe! insert-missing "array-set!")
+    (compiler-builtin-load-ctfe! insert-missing "array-take!")
+    (compiler-builtin-load-ctfe! insert-missing "cast")
+    (compiler-builtin-load-ctfe! insert-missing "ann")
+    (compiler-builtin-load-ctfe! insert-missing "tuple-ref")
+    (compiler-builtin-load-ctfe! insert-missing "ptr-null?")
+    (compiler-builtin-load-ctfe! insert-missing "ptr-addr-of")
+    (compiler-builtin-load-ctfe! insert-missing "ptr-read")
+    (compiler-builtin-load-ctfe! insert-missing "ptr-write!")
+    (compiler-builtin-load-ctfe! insert-missing "ptr-offset")
+    (compiler-builtin-load-ctfe! insert-missing "ptr-cast")
+    (compiler-builtin-load-ctfe! insert-missing "ptr->int")
+    (compiler-builtin-load-ctfe! insert-missing "int->ptr")
+    (compiler-builtin-load-ctfe! insert-missing "string-data")
+    (compiler-builtin-load-ctfe! insert-missing "string-from-bytes")
+    (compiler-builtin-load-ctfe! insert-missing "array-data")
+    (compiler-builtin-load-ctfe! insert-missing "program-argc")
+    (compiler-builtin-load-ctfe! insert-missing "program-argv")
+    (compiler-builtin-load-ctfe! insert-missing "program-envp")
+    (compiler-builtin-load-ctfe! insert-missing "cpuid-eax")
+    (compiler-builtin-load-ctfe! insert-missing "cpuid-ebx")
+    (compiler-builtin-load-ctfe! insert-missing "cpuid-ecx")
+    (compiler-builtin-load-ctfe! insert-missing "cpuid-edx")
+    (compiler-builtin-load-ctfe! insert-missing "xgetbv")
+    (compiler-builtin-load-ctfe! insert-missing "true")
+    (compiler-builtin-load-ctfe! insert-missing "false")
+    (compiler-builtin-load-ctfe! insert-missing "type-cleanup-owning?")
+    (compiler-builtin-load-ctfe! insert-missing "type-cleanup-function")
+    (compiler-builtin-load-ctfe! insert-missing "expr-binary-data")
+    (compiler-builtin-load-ctfe!
       insert-missing
-      213
       "__typelisp internal binary data")
-    (compiler-builtin-load-ctfe-id! insert-missing 214 "box-element-type")
-    (compiler-builtin-load-ctfe-id! insert-missing 215 "expr-list-type-nth")
-    (compiler-builtin-load-ctfe-id! insert-missing 216 "module-value?")
-    (compiler-builtin-load-ctfe-id! insert-missing 217 "module-value-type")
-    (compiler-builtin-load-ctfe-id! insert-missing 218 "reference-element-type")
-    ;; Parser-only fixed syntax names share this reset-aware table with CTFE.
-    ;; Appending preserves every existing index consumed by compiler_ctfe.tl.
-    (compiler-builtin-load-ctfe-id! insert-missing 219 "all")
-    (compiler-builtin-load-ctfe-id! insert-missing 220 "any")
-    (compiler-builtin-load-ctfe-id! insert-missing 221 ":kind")
-    (compiler-builtin-load-ctfe-id! insert-missing 222 "...")
-    (compiler-builtin-load-ctfe-id! insert-missing 223 "string")
-    (compiler-builtin-load-ctfe-id! insert-missing 224 "dyn-array")
-    (compiler-builtin-load-ctfe-id! insert-missing 225 "function")
-    (compiler-builtin-load-ctfe-id! insert-missing 226 "struct")
-    (compiler-builtin-load-ctfe-id! insert-missing 227 "enum")
-    (compiler-builtin-load-ctfe-id! insert-missing 228 "ptr")
-    (compiler-builtin-load-ctfe-id! insert-missing 229 "mut-ptr")
-    (compiler-builtin-load-ctfe-id! insert-missing 230 "ref")
-    (compiler-builtin-load-ctfe-id! insert-missing 231 "mut-ref")
-    (compiler-builtin-load-ctfe-id! insert-missing 232 "region")
-    (compiler-builtin-load-ctfe-id! insert-missing 233 "type-var")
-    ;; Remaining parser-only fixed metadata, SPMD, extern, import, and policy
-    ;; names. These IDs deliberately use source provenance: a generated name
-    ;; with identical display text must not acquire fixed-syntax identity.
-    (compiler-builtin-load-ctfe-id! insert-missing 234 ":cleanup")
-    (compiler-builtin-load-ctfe-id! insert-missing 235 ":owned")
-    (compiler-builtin-load-ctfe-id! insert-missing 236 ":lifetimes")
-    (compiler-builtin-load-ctfe-id! insert-missing 237 ":repr")
-    (compiler-builtin-load-ctfe-id! insert-missing 238 ":packed")
-    (compiler-builtin-load-ctfe-id! insert-missing 239 "packed")
-    (compiler-builtin-load-ctfe-id! insert-missing 240 "scalar")
-    (compiler-builtin-load-ctfe-id! insert-missing 241 "avx2")
-    (compiler-builtin-load-ctfe-id! insert-missing 242 "avx512")
-    (compiler-builtin-load-ctfe-id! insert-missing 243 "cfg")
-    (compiler-builtin-load-ctfe-id! insert-missing 244 "uniform")
-    (compiler-builtin-load-ctfe-id! insert-missing 245 "varying")
-    (compiler-builtin-load-ctfe-id! insert-missing 246 "none")
-    (compiler-builtin-load-ctfe-id! insert-missing 247 "lanes")
-    (compiler-builtin-load-ctfe-id! insert-missing 248 "args")
-    (compiler-builtin-load-ctfe-id! insert-missing 249 "result")
-    (compiler-builtin-load-ctfe-id! insert-missing 250 "index-param")
-    (compiler-builtin-load-ctfe-id! insert-missing 251 "specialization")
-    (compiler-builtin-load-ctfe-id! insert-missing 252 ":export-symbol")
-    (compiler-builtin-load-ctfe-id! insert-missing 253 ":spmd-callable")
-    (compiler-builtin-load-ctfe-id! insert-missing 254 "c-varargs")
-    (compiler-builtin-load-ctfe-id! insert-missing 255 ":abi")
-    (compiler-builtin-load-ctfe-id! insert-missing 256 ":symbol")
-    (compiler-builtin-load-ctfe-id! insert-missing 257 ":link-lib")
-    (compiler-builtin-load-ctfe-id! insert-missing 258 ":link-search")
-    (compiler-builtin-load-ctfe-id! insert-missing 259 ":link-arg")
-    (compiler-builtin-load-ctfe-id! insert-missing 260 "as")
-    (compiler-builtin-load-ctfe-id! insert-missing 261 ":as")
-    (compiler-builtin-load-ctfe-id! insert-missing 262 "sum")
-    (compiler-builtin-load-ctfe-id! insert-missing 263 "min")
-    (compiler-builtin-load-ctfe-id! insert-missing 264 "max")
-    (compiler-builtin-load-ctfe-id! insert-missing 265 "defgeneric")
-    (compiler-builtin-load-ctfe-id! insert-missing 266 "generic")
-    (compiler-builtin-load-ctfe-id! insert-missing 267 "deftrait")
-    (compiler-builtin-load-ctfe-id! insert-missing 268 "trait")
-    (compiler-builtin-load-ctfe-id! insert-missing 269 "interface")
-    (compiler-builtin-load-ctfe-id! insert-missing 270 "impl")
-    (compiler-builtin-load-ctfe-id! insert-missing 271 "where")
-    ;; Generic source-macro builders append after the parser-only fixed names
-    ;; so every ID already shipped by main keeps its stable index.
-    (compiler-builtin-load-ctfe-id! insert-missing 272 "pattern-binding-typed")
-    (compiler-builtin-load-ctfe-id! insert-missing 273 "expr-resource-scope")
-    (compiler-builtin-load-ctfe-id! insert-missing 274 "expr-let-scope")
-    (compiler-builtin-load-ctfe-id! insert-missing 275 "expr-set-var")
-    (compiler-builtin-load-ctfe-id! insert-missing 276 "expr-begin-unit")
-    (compiler-builtin-load-ctfe-id! insert-missing 277 "expr-not")
-    (compiler-builtin-load-ctfe-id! insert-missing 278 "expr-while")
-    (compiler-builtin-load-ctfe-id! insert-missing 279 "syntax-name-fresh")
-    ;; New CTFE names append after all shipped IDs so generated names with the
-    ;; same display text cannot acquire the private source-head identity.
-    (compiler-builtin-load-ctfe-id! insert-missing 280 "__tl_dyn-array")
-    (compiler-builtin-load-ctfe-id! insert-missing 281 "slice")
-    (compiler-builtin-load-ctfe-id! insert-missing 282 "expr-borrow")
-    (compiler-builtin-load-ctfe-id! insert-missing 283 "expr-array-ref")
-    (compiler-builtin-load-ctfe-id! insert-missing 284 "expr-replace")
-    (compiler-builtin-load-ctfe-id! insert-missing 285 "module-value-expr")
-    (compiler-builtin-load-ctfe-id!
+    (compiler-builtin-load-ctfe! insert-missing "box-element-type")
+    (compiler-builtin-load-ctfe! insert-missing "expr-list-type-nth")
+    (compiler-builtin-load-ctfe! insert-missing "module-value?")
+    (compiler-builtin-load-ctfe! insert-missing "module-value-type")
+    (compiler-builtin-load-ctfe! insert-missing "reference-element-type")
+    (compiler-builtin-load-ctfe! insert-missing "all")
+    (compiler-builtin-load-ctfe! insert-missing "any")
+    (compiler-builtin-load-ctfe! insert-missing ":kind")
+    (compiler-builtin-load-ctfe! insert-missing "...")
+    (compiler-builtin-load-ctfe! insert-missing "string")
+    (compiler-builtin-load-ctfe! insert-missing "dyn-array")
+    (compiler-builtin-load-ctfe! insert-missing "function")
+    (compiler-builtin-load-ctfe! insert-missing "struct")
+    (compiler-builtin-load-ctfe! insert-missing "enum")
+    (compiler-builtin-load-ctfe! insert-missing "ptr")
+    (compiler-builtin-load-ctfe! insert-missing "mut-ptr")
+    (compiler-builtin-load-ctfe! insert-missing "ref")
+    (compiler-builtin-load-ctfe! insert-missing "mut-ref")
+    (compiler-builtin-load-ctfe! insert-missing "region")
+    (compiler-builtin-load-ctfe! insert-missing "type-var")
+    (compiler-builtin-load-ctfe! insert-missing ":cleanup")
+    (compiler-builtin-load-ctfe! insert-missing ":owned")
+    (compiler-builtin-load-ctfe! insert-missing ":lifetimes")
+    (compiler-builtin-load-ctfe! insert-missing ":repr")
+    (compiler-builtin-load-ctfe! insert-missing ":packed")
+    (compiler-builtin-load-ctfe! insert-missing "packed")
+    (compiler-builtin-load-ctfe! insert-missing "scalar")
+    (compiler-builtin-load-ctfe! insert-missing "avx2")
+    (compiler-builtin-load-ctfe! insert-missing "avx512")
+    (compiler-builtin-load-ctfe! insert-missing "cfg")
+    (compiler-builtin-load-ctfe! insert-missing "uniform")
+    (compiler-builtin-load-ctfe! insert-missing "varying")
+    (compiler-builtin-load-ctfe! insert-missing "none")
+    (compiler-builtin-load-ctfe! insert-missing "lanes")
+    (compiler-builtin-load-ctfe! insert-missing "args")
+    (compiler-builtin-load-ctfe! insert-missing "result")
+    (compiler-builtin-load-ctfe! insert-missing "index-param")
+    (compiler-builtin-load-ctfe! insert-missing "specialization")
+    (compiler-builtin-load-ctfe! insert-missing ":export-symbol")
+    (compiler-builtin-load-ctfe! insert-missing ":spmd-callable")
+    (compiler-builtin-load-ctfe! insert-missing "c-varargs")
+    (compiler-builtin-load-ctfe! insert-missing ":abi")
+    (compiler-builtin-load-ctfe! insert-missing ":symbol")
+    (compiler-builtin-load-ctfe! insert-missing ":link-lib")
+    (compiler-builtin-load-ctfe! insert-missing ":link-search")
+    (compiler-builtin-load-ctfe! insert-missing ":link-arg")
+    (compiler-builtin-load-ctfe! insert-missing "as")
+    (compiler-builtin-load-ctfe! insert-missing ":as")
+    (compiler-builtin-load-ctfe! insert-missing "sum")
+    (compiler-builtin-load-ctfe! insert-missing "min")
+    (compiler-builtin-load-ctfe! insert-missing "max")
+    (compiler-builtin-load-ctfe! insert-missing "defgeneric")
+    (compiler-builtin-load-ctfe! insert-missing "generic")
+    (compiler-builtin-load-ctfe! insert-missing "deftrait")
+    (compiler-builtin-load-ctfe! insert-missing "trait")
+    (compiler-builtin-load-ctfe! insert-missing "interface")
+    (compiler-builtin-load-ctfe! insert-missing "impl")
+    (compiler-builtin-load-ctfe! insert-missing "where")
+    (compiler-builtin-load-ctfe! insert-missing "pattern-binding-typed")
+    (compiler-builtin-load-ctfe! insert-missing "expr-resource-scope")
+    (compiler-builtin-load-ctfe! insert-missing "expr-let-scope")
+    (compiler-builtin-load-ctfe! insert-missing "expr-set-var")
+    (compiler-builtin-load-ctfe! insert-missing "expr-begin-unit")
+    (compiler-builtin-load-ctfe! insert-missing "expr-not")
+    (compiler-builtin-load-ctfe! insert-missing "expr-while")
+    (compiler-builtin-load-ctfe! insert-missing "syntax-name-fresh")
+    (compiler-builtin-load-ctfe! insert-missing "__tl_dyn-array")
+    (compiler-builtin-load-ctfe! insert-missing "slice")
+    (compiler-builtin-load-ctfe! insert-missing "expr-borrow")
+    (compiler-builtin-load-ctfe! insert-missing "expr-array-ref")
+    (compiler-builtin-load-ctfe! insert-missing "expr-replace")
+    (compiler-builtin-load-ctfe! insert-missing "module-value-expr")
+    (compiler-builtin-load-ctfe!
       insert-missing
-      286
       "function-shared-borrow-returns-string?")
-    (compiler-builtin-load-ctfe-id! insert-missing 287 "expr-shared-call1")
-    (compiler-builtin-load-ctfe-id! insert-missing 288 "expr-shared-let-scope")
-    ;; Reflected type -> opaque type-literal syntax bridge. Append-only: every
-    ;; previously shipped CTFE name keeps its stable reset-aware slot.
-    (compiler-builtin-load-ctfe-id! insert-missing 289 "type-expr")
-    ;; Computed one-parameter lambda builder. Append-only for reset-stable IDs.
-    (compiler-builtin-load-ctfe-id! insert-missing 290 "expr-lambda1")
-    ;; Inline-test declaration metadata. Append-only so parser syntax remains
-    ;; source-provenance-aware without renumbering any shipped CTFE name.
-    (compiler-builtin-load-ctfe-id! insert-missing 291 ":ignore")
-    (compiler-builtin-load-ctfe-id! insert-missing 292 ":slow")
-    (compiler-builtin-load-ctfe-id! insert-missing 293 ":must-use")
-    (compiler-builtin-load-ctfe-id! insert-missing 294 "c-function")
-    (compiler-builtin-load-ctfe-id! insert-missing 295 "CFunc")
-    (compiler-builtin-load-ctfe-id! insert-missing 296 "nullable")
-    (compiler-builtin-load-ctfe-id! insert-missing 297 "non-null")
-    (compiler-builtin-load-ctfe-id! insert-missing 298 "unsafe-nullable")
-    (compiler-builtin-load-ctfe-id! insert-missing 299 "unsafe-non-null")))
+    (compiler-builtin-load-ctfe! insert-missing "expr-shared-call1")
+    (compiler-builtin-load-ctfe! insert-missing "expr-shared-let-scope")
+    (compiler-builtin-load-ctfe! insert-missing "type-expr")
+    (compiler-builtin-load-ctfe! insert-missing "expr-lambda1")
+    (compiler-builtin-load-ctfe! insert-missing ":ignore")
+    (compiler-builtin-load-ctfe! insert-missing ":slow")
+    (compiler-builtin-load-ctfe! insert-missing ":must-use")
+    (compiler-builtin-load-ctfe! insert-missing "c-function")
+    (compiler-builtin-load-ctfe! insert-missing "CFunc")
+    (compiler-builtin-load-ctfe! insert-missing "nullable")
+    (compiler-builtin-load-ctfe! insert-missing "non-null")
+    (compiler-builtin-load-ctfe! insert-missing "unsafe-nullable")
+    (compiler-builtin-load-ctfe! insert-missing "unsafe-non-null")))
 
 (define (compiler-builtin-load! [insert-missing : bool]) : unit
   (begin
     (compiler-builtin-load-ctfe-ids! insert-missing)
-    (set!
-      compiler-builtin-id-tl-alloc
-      (compiler-builtin-resolve-name insert-missing "tl_alloc"))
-    (set!
-      compiler-builtin-id-tl-alloc-aligned
-      (compiler-builtin-resolve-name insert-missing "tl_alloc_aligned"))
-    (set!
-      compiler-builtin-id-tl-region-mark
-      (compiler-builtin-resolve-name insert-missing "tl_region_mark"))
-    (set!
-      compiler-builtin-id-tl-region-reset
-      (compiler-builtin-resolve-name insert-missing "tl_region_reset"))
-    (set!
-      compiler-builtin-id-tl-arena-make
-      (compiler-builtin-resolve-name insert-missing "tl_arena_make"))
-    (set!
-      compiler-builtin-id-tl-arena-make-small
-      (compiler-builtin-resolve-name insert-missing "tl_arena_make_small"))
-    (set!
-      compiler-builtin-id-tl-arena-make-atomic
-      (compiler-builtin-resolve-name insert-missing "tl_arena_make_atomic"))
-    (set!
-      compiler-builtin-id-tl-arena-current
-      (compiler-builtin-resolve-name insert-missing "tl_arena_current"))
-    (set!
-      compiler-builtin-id-tl-arena-set
-      (compiler-builtin-resolve-name insert-missing "tl_arena_set"))
-    (set!
-      compiler-builtin-id-tl-arena-destroy
-      (compiler-builtin-resolve-name insert-missing "tl_arena_destroy"))
-    (set!
-      compiler-builtin-id-tl-arena-poison-enable
-      (compiler-builtin-resolve-name insert-missing "tl_arena_poison_enable"))
-    (set!
-      compiler-builtin-id-tl-arena-debug-retire-protected
-      (compiler-builtin-resolve-name
-        insert-missing
-        "tl_arena_debug_retire_protected"))
-    (set!
-      compiler-builtin-id-tl-arena-debug-protect-never-reset
-      (compiler-builtin-resolve-name
-        insert-missing
-        "tl_arena_debug_protect_never_reset"))
-    (set!
-      compiler-builtin-id-tl-arena-debug-assert-pool-install
-      (compiler-builtin-resolve-name
-        insert-missing
-        "tl_arena_debug_assert_pool_install"))
-    (set!
-      compiler-builtin-id-tl-thread-entry-ptr
-      (compiler-builtin-resolve-name insert-missing "tl_thread_entry_ptr"))
-    (set!
-      compiler-builtin-id-tl-thread-init
-      (compiler-builtin-resolve-name insert-missing "tl_thread_init"))
-    (set!
-      compiler-builtin-id-tl-atomic-i64-load-ptr
-      (compiler-builtin-resolve-name insert-missing "tl_atomic_i64_load_ptr"))
-    (set!
-      compiler-builtin-id-tl-atomic-i64-store-ptr
-      (compiler-builtin-resolve-name insert-missing "tl_atomic_i64_store_ptr"))
-    (set!
-      compiler-builtin-id-tl-atomic-i64-add-ptr
-      (compiler-builtin-resolve-name insert-missing "tl_atomic_i64_add_ptr"))
-    (set!
-      compiler-builtin-id-tl-atomic-i64-fetch-add-ptr
-      (compiler-builtin-resolve-name
-        insert-missing
-        "tl_atomic_i64_fetch_add_ptr"))
-    (set!
-      compiler-builtin-id-tl-atomic-i64-cas-ptr
-      (compiler-builtin-resolve-name insert-missing "tl_atomic_i64_cas_ptr"))
-    (set!
-      compiler-builtin-id-tl-atomic-i32-load-ptr
-      (compiler-builtin-resolve-name insert-missing "tl_atomic_i32_load_ptr"))
-    (set!
-      compiler-builtin-id-tl-atomic-i32-store-ptr
-      (compiler-builtin-resolve-name insert-missing "tl_atomic_i32_store_ptr"))
-    (set!
-      compiler-builtin-id-tl-atomic-i32-add-ptr
-      (compiler-builtin-resolve-name insert-missing "tl_atomic_i32_add_ptr"))
-    (set!
-      compiler-builtin-id-tl-atomic-i32-fetch-add-ptr
-      (compiler-builtin-resolve-name
-        insert-missing
-        "tl_atomic_i32_fetch_add_ptr"))
-    (set!
-      compiler-builtin-id-tl-atomic-i32-cas-ptr
-      (compiler-builtin-resolve-name insert-missing "tl_atomic_i32_cas_ptr"))
-    (set!
-      compiler-builtin-id-atomic-i64-load
-      (compiler-builtin-resolve-name insert-missing "atomic-i64-load"))
-    (set!
-      compiler-builtin-id-atomic-i64-store
-      (compiler-builtin-resolve-name insert-missing "atomic-i64-store!"))
-    (set!
-      compiler-builtin-id-atomic-i64-add
-      (compiler-builtin-resolve-name insert-missing "atomic-i64-add!"))
-    (set!
-      compiler-builtin-id-atomic-i64-fetch-add
-      (compiler-builtin-resolve-name insert-missing "atomic-i64-fetch-add!"))
-    (set!
-      compiler-builtin-id-atomic-i64-cas
-      (compiler-builtin-resolve-name insert-missing "atomic-i64-cas!"))
-    (set!
-      compiler-builtin-id-atomic-i32-load
-      (compiler-builtin-resolve-name insert-missing "atomic-i32-load"))
-    (set!
-      compiler-builtin-id-atomic-i32-store
-      (compiler-builtin-resolve-name insert-missing "atomic-i32-store!"))
-    (set!
-      compiler-builtin-id-atomic-i32-add
-      (compiler-builtin-resolve-name insert-missing "atomic-i32-add!"))
-    (set!
-      compiler-builtin-id-atomic-i32-fetch-add
-      (compiler-builtin-resolve-name insert-missing "atomic-i32-fetch-add!"))
-    (set!
-      compiler-builtin-id-atomic-i32-cas
-      (compiler-builtin-resolve-name insert-missing "atomic-i32-cas!"))
-    (set!
-      compiler-builtin-id-tl-profile-alloc-total
-      (compiler-builtin-resolve-name insert-missing "tl_profile_alloc_total"))
-    (set!
-      compiler-builtin-id-tl-profile-alloc-live
-      (compiler-builtin-resolve-name insert-missing "tl_profile_alloc_live"))
-    (set!
-      compiler-builtin-id-tl-profile-alloc-peak
-      (compiler-builtin-resolve-name insert-missing "tl_profile_alloc_peak"))
-    (set!
-      compiler-builtin-id-tl-profile-alloc-reset-peak
-      (compiler-builtin-resolve-name
-        insert-missing
-        "tl_profile_alloc_reset_peak"))
-    (set!
-      compiler-builtin-id-tl-substring
-      (compiler-builtin-resolve-name insert-missing "tl_substring"))
-    (set!
-      compiler-builtin-id-tl-str-view
-      (compiler-builtin-resolve-name insert-missing "tl_str_view"))
-    (set!
-      compiler-builtin-id-tl-private-string-length
-      (compiler-builtin-resolve-name insert-missing "__tl_string_length"))
-    (set!
-      compiler-builtin-id-tl-private-string-ref
-      (compiler-builtin-resolve-name insert-missing "__tl_string_ref"))
-    (set!
-      compiler-builtin-id-tl-private-string-eq
-      (compiler-builtin-resolve-name insert-missing "__tl_string_eq"))
-    (set!
-      compiler-builtin-id-tl-private-string-to-int
-      (compiler-builtin-resolve-name insert-missing "__tl_string_to_int"))
-    (set!
-      compiler-builtin-id-tl-string-concat
-      (compiler-builtin-resolve-name insert-missing "tl_string_concat"))
-    (set!
-      compiler-builtin-id-tl-string-concat3
-      (compiler-builtin-resolve-name insert-missing "tl_string_concat3"))
-    (set!
-      compiler-builtin-id-tl-string-concat4
-      (compiler-builtin-resolve-name insert-missing "tl_string_concat4"))
-    (set!
-      compiler-builtin-id-tl-string-concat5
-      (compiler-builtin-resolve-name insert-missing "tl_string_concat5"))
-    (set!
-      compiler-builtin-id-tl-string-eq
-      (compiler-builtin-resolve-name insert-missing "tl_string_eq"))
-    (set!
-      compiler-builtin-id-tl-string-to-int
-      (compiler-builtin-resolve-name insert-missing "tl_string_to_int"))
-    (set!
-      compiler-builtin-id-tl-int-to-string
-      (compiler-builtin-resolve-name insert-missing "tl_int_to_string"))
-    (set!
-      compiler-builtin-id-tl-hash-string
-      (compiler-builtin-resolve-name insert-missing "tl_hash_string"))
-    (set!
-      compiler-builtin-id-tl-env-var-exists
-      (compiler-builtin-resolve-name insert-missing "tl_env_var_exists"))
-    (set!
-      compiler-builtin-id-tl-env-var-value
-      (compiler-builtin-resolve-name insert-missing "tl_env_var_value"))
-    (set!
-      compiler-builtin-id-env-path-separator
-      (compiler-builtin-resolve-name insert-missing "path-separator"))
-    (set!
-      compiler-builtin-id-tl-oob-abort
-      (compiler-builtin-resolve-name insert-missing "tl_oob_abort"))
-    (set!
-      compiler-builtin-id-tl-abort-label
-      (compiler-builtin-resolve-name insert-missing ".L_tl_abort"))
-    (set!
-      compiler-builtin-id-tl-div-abort
-      (compiler-builtin-resolve-name insert-missing "tl_div_abort"))
-    (set!
-      compiler-builtin-id-tl-shift-abort
-      (compiler-builtin-resolve-name insert-missing "tl_shift_abort"))
-    (set!
-      compiler-builtin-id-tl-stdin-eof-label
-      (compiler-builtin-resolve-name insert-missing ".L_tl_stdin_eof"))
-    (set!
-      compiler-builtin-id-tl-flush-stdout-label
-      (compiler-builtin-resolve-name insert-missing ".L_tl_flush_stdout"))
-    (set!
-      compiler-builtin-id-tl-array-fill8
-      (compiler-builtin-resolve-name insert-missing "tl_array_fill8"))
-    (set!
-      compiler-builtin-id-tl-array-zero
-      (compiler-builtin-resolve-name insert-missing "tl_array_zero"))
-    (set!
-      compiler-builtin-id-c-fn-check
-      (compiler-builtin-resolve-name insert-missing "c-fn-check"))
-    (set!
-      compiler-builtin-id-tl-c-fn-null-abort
-      (compiler-builtin-resolve-name insert-missing "tl_c_fn_null_abort"))
-    (set!
-      compiler-builtin-id-tl-mem-fill8
-      (compiler-builtin-resolve-name insert-missing "tl_mem_fill8"))
-    (set!
-      compiler-builtin-id-tl-mem-copy-fwd
-      (compiler-builtin-resolve-name insert-missing "tl_mem_copy_fwd"))
-    (set!
-      compiler-builtin-id-tl-mem-copy8-fwd
-      (compiler-builtin-resolve-name insert-missing "tl_mem_copy8_fwd"))
-    (set!
-      compiler-builtin-id-tl-tlci-call-macro-entry
-      (compiler-builtin-resolve-name insert-missing "tl_tlci_call_macro_entry"))
-    (set!
-      compiler-builtin-id-tl-private-float-sqrt
-      (compiler-builtin-resolve-name insert-missing "__tl_float_sqrt"))
-    (set!
-      compiler-builtin-id-tl-private-float-to-bits
-      (compiler-builtin-resolve-name insert-missing "__tl_float_to_bits"))
-    (set!
-      compiler-builtin-id-tl-private-float-from-bits
-      (compiler-builtin-resolve-name insert-missing "__tl_float_from_bits"))
-    (set!
-      compiler-builtin-id-string-length
-      (compiler-builtin-resolve-name insert-missing "string-length"))
-    (set!
-      compiler-builtin-id-length
-      (compiler-builtin-resolve-name insert-missing "length"))
-    (set!
-      compiler-builtin-id-string-eq
-      (compiler-builtin-resolve-name insert-missing "string-eq"))
-    (set!
-      compiler-builtin-id-string-eq-question
-      (compiler-builtin-resolve-name insert-missing "string=?"))
-    (set!
-      compiler-builtin-id-eq
-      (compiler-builtin-resolve-name insert-missing "eq"))
-    (set!
-      compiler-builtin-id-string-append
-      (compiler-builtin-resolve-name insert-missing "string-append"))
-    (set!
-      compiler-builtin-id-string-concat
-      (compiler-builtin-resolve-name insert-missing "string-concat"))
-    (set!
-      compiler-builtin-id-string-to-int
-      (compiler-builtin-resolve-name insert-missing ">int"))
-    (set!
-      compiler-builtin-id-string-ref
-      (compiler-builtin-resolve-name insert-missing "string-ref"))
-    (set!
-      compiler-builtin-id-char-at
-      (compiler-builtin-resolve-name insert-missing "char-at"))
-    (set!
-      compiler-builtin-id-array-length
-      (compiler-builtin-resolve-name insert-missing "array-length"))
-    (set!
-      compiler-builtin-id-private-array-length
-      (compiler-builtin-resolve-name insert-missing "__tl_array-length"))
-    (set!
-      compiler-builtin-id-cpuid
-      (compiler-builtin-resolve-name insert-missing "cpuid"))
-    (set!
-      compiler-builtin-id-xgetbv
-      (compiler-builtin-resolve-name insert-missing "xgetbv"))
-    (set!
-      compiler-builtin-id-clone
-      (compiler-builtin-resolve-name insert-missing "clone"))
-    (set!
-      compiler-builtin-id-arena-make
-      (compiler-builtin-resolve-name insert-missing "arena-make"))
-    (set!
-      compiler-builtin-id-arena-make-atomic
-      (compiler-builtin-resolve-name insert-missing "arena-make-atomic"))
-    (set!
-      compiler-builtin-id-arena-current
-      (compiler-builtin-resolve-name insert-missing "arena-current"))
-    (set!
-      compiler-builtin-id-arena-mark
-      (compiler-builtin-resolve-name insert-missing "arena-mark"))
-    (set!
-      compiler-builtin-id-arena-set-bang
-      (compiler-builtin-resolve-name insert-missing "arena-set!"))
-    (set!
-      compiler-builtin-id-arena-destroy
-      (compiler-builtin-resolve-name insert-missing "arena-destroy"))
-    (set!
-      compiler-builtin-id-arena-rewind
-      (compiler-builtin-resolve-name insert-missing "arena-rewind"))
-    (set!
-      compiler-builtin-id-tls-current-arena
-      (compiler-builtin-resolve-name insert-missing "tls-current-arena"))
-    (set!
-      compiler-builtin-id-tls-current-arena-set-bang
-      (compiler-builtin-resolve-name insert-missing "tls-current-arena-set!"))
-    (set!
-      compiler-builtin-id-tl-tls-current-arena-load
-      (compiler-builtin-resolve-name insert-missing "tl_tls_current_arena_load"))
-    (set!
-      compiler-builtin-id-tl-tls-current-arena-store
-      (compiler-builtin-resolve-name
-        insert-missing
-        "tl_tls_current_arena_store"))
-    (set!
-      compiler-builtin-id-fix-empty
-      (compiler-builtin-resolve-name insert-missing ""))
-    (set!
-      compiler-builtin-id-fix-dollar_lower_dot_precise_type_dce
-      (compiler-builtin-resolve-name insert-missing "$lower.precise-type-dce"))
-    (set!
-      compiler-builtin-id-fix-colon
-      (compiler-builtin-resolve-name insert-missing ":"))
-    (set!
-      compiler-builtin-id-fix-tl_unquote_set_target
-      (compiler-builtin-resolve-name insert-missing "__tl_unquote_set_target"))
-    (set!
-      compiler-builtin-id-fix-lt_ast_decl_list_fallback_gt
-      (compiler-builtin-resolve-name insert-missing "<ast-decl-list-fallback>"))
-    (set!
-      compiler-builtin-id-fix-acc
-      (compiler-builtin-resolve-name insert-missing "acc"))
-    (set!
-      compiler-builtin-id-fix-alias
-      (compiler-builtin-resolve-name insert-missing "alias"))
-    (set!
-      compiler-builtin-id-fix-arena_dot_Arena
-      (compiler-builtin-resolve-name insert-missing "arena.Arena"))
-    (set!
-      compiler-builtin-id-fix-ArenaMark
-      (compiler-builtin-resolve-name insert-missing "ArenaMark"))
-    (set!
-      compiler-builtin-id-fix-arm
-      (compiler-builtin-resolve-name insert-missing "arm"))
-    (set!
-      compiler-builtin-id-fix-Box
-      (compiler-builtin-resolve-name insert-missing "Box"))
-    (set!
-      compiler-builtin-id-fix-c
-      (compiler-builtin-resolve-name insert-missing "c"))
-    (set!
-      compiler-builtin-id-fix-callback_target
-      (compiler-builtin-resolve-name insert-missing "callback-target"))
-    (set!
-      compiler-builtin-id-fix-Choice
-      (compiler-builtin-resolve-name insert-missing "Choice"))
-    (set!
-      compiler-builtin-id-fix-clone
-      (compiler-builtin-resolve-name insert-missing "clone"))
-    (set!
-      compiler-builtin-id-fix-CloneShortList
-      (compiler-builtin-resolve-name insert-missing "CloneShortList"))
-    (set!
-      compiler-builtin-id-fix-comptime
-      (compiler-builtin-resolve-name insert-missing "comptime"))
-    (set!
-      compiler-builtin-id-fix-comptime_dot_comptime_error
-      (compiler-builtin-resolve-name insert-missing "comptime.comptime-error"))
-    (set!
-      compiler-builtin-id-fix-comptime_dot_error
-      (compiler-builtin-resolve-name insert-missing "comptime.error"))
-    (set!
-      compiler-builtin-id-fix-comptime_slash_comptime_error
-      (compiler-builtin-resolve-name insert-missing "comptime/comptime-error"))
-    (set!
-      compiler-builtin-id-fix-comptime_slash_error
-      (compiler-builtin-resolve-name insert-missing "comptime/error"))
-    (set!
-      compiler-builtin-id-fix-comptime_error
-      (compiler-builtin-resolve-name insert-missing "comptime-error"))
-    (set!
-      compiler-builtin-id-fix-cond
-      (compiler-builtin-resolve-name insert-missing "cond"))
-    (set!
-      compiler-builtin-id-fix-when
-      (compiler-builtin-resolve-name insert-missing "when"))
-    (set!
-      compiler-builtin-id-fix-unless
-      (compiler-builtin-resolve-name insert-missing "unless"))
-    (set!
-      compiler-builtin-id-fix-Cons
-      (compiler-builtin-resolve-name insert-missing "Cons"))
-    (set!
-      compiler-builtin-id-fix-count
-      (compiler-builtin-resolve-name insert-missing "count"))
-    (set!
-      compiler-builtin-id-fix-e
-      (compiler-builtin-resolve-name insert-missing "e"))
-    (set!
-      compiler-builtin-id-fix-else
-      (compiler-builtin-resolve-name insert-missing "else"))
-    (set!
-      compiler-builtin-id-fix-Expr
-      (compiler-builtin-resolve-name insert-missing "Expr"))
-    (set!
-      compiler-builtin-id-fix-ExprBindingClause
-      (compiler-builtin-resolve-name insert-missing "ExprBindingClause"))
-    (set!
-      compiler-builtin-id-fix-ExprBindingClauseList
-      (compiler-builtin-resolve-name insert-missing "ExprBindingClauseList"))
-    (set!
-      compiler-builtin-id-fix-ExprClause
-      (compiler-builtin-resolve-name insert-missing "ExprClause"))
-    (set!
-      compiler-builtin-id-fix-ExprClauseList
-      (compiler-builtin-resolve-name insert-missing "ExprClauseList"))
-    (set!
-      compiler-builtin-id-fix-ExprList
-      (compiler-builtin-resolve-name insert-missing "ExprList"))
-    (set!
-      compiler-builtin-id-fix-Failed
-      (compiler-builtin-resolve-name insert-missing "Failed"))
-    (set!
-      compiler-builtin-id-fix-field
-      (compiler-builtin-resolve-name insert-missing "field"))
-    (set!
-      compiler-builtin-id-fix-flag
-      (compiler-builtin-resolve-name insert-missing "flag"))
-    (set!
-      compiler-builtin-id-fix-h
-      (compiler-builtin-resolve-name insert-missing "h"))
-    (set!
-      compiler-builtin-id-fix-helper
-      (compiler-builtin-resolve-name insert-missing "helper"))
-    (set!
-      compiler-builtin-id-fix-id
-      (compiler-builtin-resolve-name insert-missing "id"))
-    (set!
-      compiler-builtin-id-fix-import
-      (compiler-builtin-resolve-name insert-missing "import"))
-    (set!
-      compiler-builtin-id-fix-ImportedMark
-      (compiler-builtin-resolve-name insert-missing "ImportedMark"))
-    (set!
-      compiler-builtin-id-fix-info
-      (compiler-builtin-resolve-name insert-missing "info"))
-    (set!
-      compiler-builtin-id-fix-input
-      (compiler-builtin-resolve-name insert-missing "input"))
-    (set!
-      compiler-builtin-id-fix-item
-      (compiler-builtin-resolve-name insert-missing "item"))
-    (set!
-      compiler-builtin-id-fix-items
-      (compiler-builtin-resolve-name insert-missing "items"))
-    (set!
-      compiler-builtin-id-fix-label
-      (compiler-builtin-resolve-name insert-missing "label"))
-    (set!
-      compiler-builtin-id-fix-left
-      (compiler-builtin-resolve-name insert-missing "left"))
-    (set!
-      compiler-builtin-id-fix-left_slash_same
-      (compiler-builtin-resolve-name insert-missing "left/same"))
-    (set!
-      compiler-builtin-id-fix-m
-      (compiler-builtin-resolve-name insert-missing "m"))
-    (set!
-      compiler-builtin-id-fix-macro_only_helper
-      (compiler-builtin-resolve-name insert-missing "macro-only-helper"))
-    (set!
-      compiler-builtin-id-fix-main
-      (compiler-builtin-resolve-name insert-missing "main"))
-    (set!
-      compiler-builtin-id-fix-MatchArm
-      (compiler-builtin-resolve-name insert-missing "MatchArm"))
-    (set!
-      compiler-builtin-id-fix-MatchArmList
-      (compiler-builtin-resolve-name insert-missing "MatchArmList"))
-    (set!
-      compiler-builtin-id-fix-Maybe
-      (compiler-builtin-resolve-name insert-missing "Maybe"))
-    (set!
-      compiler-builtin-id-fix-missing
-      (compiler-builtin-resolve-name insert-missing "missing"))
-    (set!
-      compiler-builtin-id-fix-n
-      (compiler-builtin-resolve-name insert-missing "n"))
-    (set!
-      compiler-builtin-id-fix-name_cache_split_alias_3940
-      (compiler-builtin-resolve-name
-        insert-missing
-        "name_cache_split_alias_3940"))
-    (set!
-      compiler-builtin-id-fix-name_cache_split_value_3940
-      (compiler-builtin-resolve-name
-        insert-missing
-        "name_cache_split_value_3940"))
-    (set!
-      compiler-builtin-id-fix-Nil
-      (compiler-builtin-resolve-name insert-missing "Nil"))
-    (set!
-      compiler-builtin-id-fix-Packet
-      (compiler-builtin-resolve-name insert-missing "Packet"))
-    (set!
-      compiler-builtin-id-fix-Pattern
-      (compiler-builtin-resolve-name insert-missing "Pattern"))
-    (set!
-      compiler-builtin-id-fix-PatternList
-      (compiler-builtin-resolve-name insert-missing "PatternList"))
-    (set!
-      compiler-builtin-id-fix-point
-      (compiler-builtin-resolve-name insert-missing "point"))
-    (set!
-      compiler-builtin-id-fix-Point
-      (compiler-builtin-resolve-name insert-missing "Point"))
-    (set!
-      compiler-builtin-id-fix-Ready
-      (compiler-builtin-resolve-name insert-missing "Ready"))
-    (set!
-      compiler-builtin-id-fix-record
-      (compiler-builtin-resolve-name insert-missing "record"))
-    (set!
-      compiler-builtin-id-fix-Record
-      (compiler-builtin-resolve-name insert-missing "Record"))
-    (set!
-      compiler-builtin-id-fix-Result
-      (compiler-builtin-resolve-name insert-missing "Result"))
-    (set!
-      compiler-builtin-id-fix-ResultIoString
-      (compiler-builtin-resolve-name insert-missing "ResultIoString"))
-    (set!
-      compiler-builtin-id-fix-right
-      (compiler-builtin-resolve-name insert-missing "right"))
-    (set!
-      compiler-builtin-id-fix-right_slash_Some
-      (compiler-builtin-resolve-name insert-missing "right/Some"))
-    (set!
-      compiler-builtin-id-fix-same
-      (compiler-builtin-resolve-name insert-missing "same"))
-    (set!
-      compiler-builtin-id-fix-second
-      (compiler-builtin-resolve-name insert-missing "second"))
-    (set!
-      compiler-builtin-id-fix-Some
-      (compiler-builtin-resolve-name insert-missing "Some"))
-    (set!
-      compiler-builtin-id-fix-Status
-      (compiler-builtin-resolve-name insert-missing "Status"))
-    (set!
-      compiler-builtin-id-fix-stdlib
-      (compiler-builtin-resolve-name insert-missing "stdlib"))
-    (set!
-      compiler-builtin-id-fix-stdlib_dot_comptime
-      (compiler-builtin-resolve-name insert-missing "stdlib.comptime"))
-    (set!
-      compiler-builtin-id-fix-stdlib_dot_comptime_dot_comptime_error
-      (compiler-builtin-resolve-name
-        insert-missing
-        "stdlib.comptime.comptime-error"))
-    (set!
-      compiler-builtin-id-fix-stdlib_dot_comptime_dot_error
-      (compiler-builtin-resolve-name insert-missing "stdlib.comptime.error"))
-    (set!
-      compiler-builtin-id-fix-stdlib_dot_comptime_slash_comptime_error
-      (compiler-builtin-resolve-name
-        insert-missing
-        "stdlib.comptime/comptime-error"))
-    (set!
-      compiler-builtin-id-fix-stdlib_dot_comptime_slash_error
-      (compiler-builtin-resolve-name insert-missing "stdlib.comptime/error"))
-    (set!
-      compiler-builtin-id-fix-stdlib_dot_comptime_slash_ExprBindingClause
-      (compiler-builtin-resolve-name
-        insert-missing
-        "stdlib.comptime/ExprBindingClause"))
-    (set!
-      compiler-builtin-id-fix-stdlib_dot_comptime_slash_ExprBindingClauseList
-      (compiler-builtin-resolve-name
-        insert-missing
-        "stdlib.comptime/ExprBindingClauseList"))
-    (set!
-      compiler-builtin-id-fix-stdlib_dot_comptime_slash_ExprClause
-      (compiler-builtin-resolve-name
-        insert-missing
-        "stdlib.comptime/ExprClause"))
-    (set!
-      compiler-builtin-id-fix-stdlib_dot_comptime_slash_ExprClauseList
-      (compiler-builtin-resolve-name
-        insert-missing
-        "stdlib.comptime/ExprClauseList"))
-    (set!
-      compiler-builtin-id-fix-stdlib_slash_comptime
-      (compiler-builtin-resolve-name insert-missing "stdlib/comptime"))
-    (set!
-      compiler-builtin-id-fix-stdlib_slash_comptime_dot_comptime_error
-      (compiler-builtin-resolve-name
-        insert-missing
-        "stdlib/comptime.comptime-error"))
-    (set!
-      compiler-builtin-id-fix-stdlib_slash_comptime_dot_error
-      (compiler-builtin-resolve-name insert-missing "stdlib/comptime.error"))
-    (set!
-      compiler-builtin-id-fix-stdlib_slash_comptime_slash_comptime_error
-      (compiler-builtin-resolve-name
-        insert-missing
-        "stdlib/comptime/comptime-error"))
-    (set!
-      compiler-builtin-id-fix-stdlib_slash_comptime_slash_error
-      (compiler-builtin-resolve-name insert-missing "stdlib/comptime/error"))
-    (set!
-      compiler-builtin-id-fix-stdlib_slash_string
-      (compiler-builtin-resolve-name insert-missing "stdlib/string"))
-    (set!
-      compiler-builtin-id-fix-string
-      (compiler-builtin-resolve-name insert-missing "string"))
-    (set!
-      compiler-builtin-id-fix-subject
-      (compiler-builtin-resolve-name insert-missing "subject"))
-    (set!
-      compiler-builtin-id-fix-t
-      (compiler-builtin-resolve-name insert-missing "t"))
-    (set!
-      compiler-builtin-id-fix-T
-      (compiler-builtin-resolve-name insert-missing "T"))
-    (set!
-      compiler-builtin-id-fix-tag
-      (compiler-builtin-resolve-name insert-missing "tag"))
-    (set!
-      compiler-builtin-id-fix-target
-      (compiler-builtin-resolve-name insert-missing "target"))
-    (set!
-      compiler-builtin-id-fix-ThreadBox
-      (compiler-builtin-resolve-name insert-missing "ThreadBox"))
-    (set!
-      compiler-builtin-id-fix-type
-      (compiler-builtin-resolve-name insert-missing "type"))
-    (set!
-      compiler-builtin-id-fix-TypeField
-      (compiler-builtin-resolve-name insert-missing "TypeField"))
-    (set!
-      compiler-builtin-id-fix-TypeFieldList
-      (compiler-builtin-resolve-name insert-missing "TypeFieldList"))
-    (set!
-      compiler-builtin-id-fix-TypeInfo
-      (compiler-builtin-resolve-name insert-missing "TypeInfo"))
-    (set!
-      compiler-builtin-id-fix-TypeInfoList
-      (compiler-builtin-resolve-name insert-missing "TypeInfoList"))
-    (set!
-      compiler-builtin-id-comptime-type-info-array-variant
-      (compiler-builtin-resolve-name insert-missing "Array"))
-    (set!
-      compiler-builtin-id-comptime-type-info-builtin-variant
-      (compiler-builtin-resolve-name insert-missing "Builtin"))
-    (set!
-      compiler-builtin-id-comptime-type-info-dyn-array-variant
-      (compiler-builtin-resolve-name insert-missing "DynArray"))
-    (set!
-      compiler-builtin-id-comptime-type-info-enum-variant
-      (compiler-builtin-resolve-name insert-missing "Enum"))
-    (set!
-      compiler-builtin-id-comptime-type-info-function-variant
-      (compiler-builtin-resolve-name insert-missing "Function"))
-    (set!
-      compiler-builtin-id-comptime-type-info-struct-variant
-      (compiler-builtin-resolve-name insert-missing "Struct"))
-    (set!
-      compiler-builtin-id-comptime-type-info-tuple-variant
-      (compiler-builtin-resolve-name insert-missing "Tuple"))
-    (set!
-      compiler-builtin-id-fix-TypeParam
-      (compiler-builtin-resolve-name insert-missing "TypeParam"))
-    (set!
-      compiler-builtin-id-fix-TypeParamList
-      (compiler-builtin-resolve-name insert-missing "TypeParamList"))
-    (set!
-      compiler-builtin-id-fix-TypeVariant
-      (compiler-builtin-resolve-name insert-missing "TypeVariant"))
-    (set!
-      compiler-builtin-id-fix-TypeVariantList
-      (compiler-builtin-resolve-name insert-missing "TypeVariantList"))
-    (set!
-      compiler-builtin-id-fix-TypeVariantPayload
-      (compiler-builtin-resolve-name insert-missing "TypeVariantPayload"))
-    (set!
-      compiler-builtin-id-fix-TypeVariantPayloadList
-      (compiler-builtin-resolve-name insert-missing "TypeVariantPayloadList"))
-    (set!
-      compiler-builtin-id-fix-U
-      (compiler-builtin-resolve-name insert-missing "U"))
-    (set!
-      compiler-builtin-id-fix-unquote
-      (compiler-builtin-resolve-name insert-missing "unquote"))
-    (set!
-      compiler-builtin-id-fix-UsedBox
-      (compiler-builtin-resolve-name insert-missing "UsedBox"))
-    (set!
-      compiler-builtin-id-fix-UsedEnum
-      (compiler-builtin-resolve-name insert-missing "UsedEnum"))
-    (set!
-      compiler-builtin-id-fix-value
-      (compiler-builtin-resolve-name insert-missing "value"))
-    (set!
-      compiler-builtin-id-fix-x
-      (compiler-builtin-resolve-name insert-missing "x"))
-    (set!
-      compiler-builtin-id-fix-xs
-      (compiler-builtin-resolve-name insert-missing "xs"))
-    (set!
-      compiler-builtin-id-fix-y
-      (compiler-builtin-resolve-name insert-missing "y"))
-    (set!
-      compiler-builtin-id-fix-module
-      (compiler-builtin-resolve-name insert-missing "module"))
-    (set!
-      compiler-builtin-id-fix-Module
-      (compiler-builtin-resolve-name insert-missing "Module"))
-    (set!
-      compiler-builtin-id-fix-decls
-      (compiler-builtin-resolve-name insert-missing "decls"))
-    (set!
-      compiler-builtin-id-fix-Decls
-      (compiler-builtin-resolve-name insert-missing "Decls"))
-    (set!
-      compiler-builtin-id-fix-expr
-      (compiler-builtin-resolve-name insert-missing "expr"))
-    (set!
-      compiler-builtin-id-fix-lt_parse_ast_decl_vec_fallback_gt
-      (compiler-builtin-resolve-name
-        insert-missing
-        "<parse-ast-decl-vec-fallback>"))
-    (set!
-      compiler-builtin-id-fix-append
-      (compiler-builtin-resolve-name insert-missing "append"))
-    (set!
-      compiler-builtin-id-fix-concat
-      (compiler-builtin-resolve-name insert-missing "concat"))
-    (set!
-      compiler-builtin-id-fix-stdlib_dot_string
-      (compiler-builtin-resolve-name insert-missing "stdlib.string"))
-    (set!
-      compiler-builtin-id-runtime-module
-      (compiler-builtin-resolve-name insert-missing "stdlib.runtime"))
-    (set!
-      compiler-builtin-id-runtime-int-to-string
-      (compiler-builtin-resolve-name insert-missing "int-to-string"))
-    (set!
-      compiler-builtin-id-runtime-substring
-      (compiler-builtin-resolve-name insert-missing "substring"))
-    (set!
-      compiler-builtin-id-runtime-str-view
-      (compiler-builtin-resolve-name insert-missing "str-view"))
-    (set!
-      compiler-builtin-id-runtime-string-concat3
-      (compiler-builtin-resolve-name insert-missing "string-concat3"))
-    (set!
-      compiler-builtin-id-runtime-string-concat4
-      (compiler-builtin-resolve-name insert-missing "string-concat4"))
-    (set!
-      compiler-builtin-id-runtime-string-concat5
-      (compiler-builtin-resolve-name insert-missing "string-concat5"))
-    (set!
-      compiler-builtin-id-runtime-atomic-i64-load-ptr
-      (compiler-builtin-resolve-name insert-missing "atomic-i64-load-ptr"))
-    (set!
-      compiler-builtin-id-runtime-atomic-i64-store-ptr
-      (compiler-builtin-resolve-name insert-missing "atomic-i64-store-ptr!"))
-    (set!
-      compiler-builtin-id-runtime-atomic-i64-add-ptr
-      (compiler-builtin-resolve-name insert-missing "atomic-i64-add-ptr!"))
-    (set!
-      compiler-builtin-id-runtime-atomic-i64-fetch-add-ptr
-      (compiler-builtin-resolve-name insert-missing "atomic-i64-fetch-add-ptr!"))
-    (set!
-      compiler-builtin-id-runtime-atomic-i64-cas-ptr
-      (compiler-builtin-resolve-name insert-missing "atomic-i64-cas-ptr!"))
-    (set!
-      compiler-builtin-id-runtime-atomic-i32-load-ptr
-      (compiler-builtin-resolve-name insert-missing "atomic-i32-load-ptr"))
-    (set!
-      compiler-builtin-id-runtime-atomic-i32-store-ptr
-      (compiler-builtin-resolve-name insert-missing "atomic-i32-store-ptr!"))
-    (set!
-      compiler-builtin-id-runtime-atomic-i32-add-ptr
-      (compiler-builtin-resolve-name insert-missing "atomic-i32-add-ptr!"))
-    (set!
-      compiler-builtin-id-runtime-atomic-i32-fetch-add-ptr
-      (compiler-builtin-resolve-name insert-missing "atomic-i32-fetch-add-ptr!"))
-    (set!
-      compiler-builtin-id-runtime-atomic-i32-cas-ptr
-      (compiler-builtin-resolve-name insert-missing "atomic-i32-cas-ptr!"))
-    (set!
-      compiler-builtin-id-tl-bytes-view-from-str-parts
-      (compiler-builtin-resolve-name
-        insert-missing
-        "tl_bytes_view_from_str_parts"))
-    (set!
-      compiler-builtin-id-tl-bytes-view-from-buf-parts
-      (compiler-builtin-resolve-name
-        insert-missing
-        "tl_bytes_view_from_buf_parts"))
-    (set!
-      compiler-builtin-id-tl-bytes-mut-view-from-buf-parts
-      (compiler-builtin-resolve-name
-        insert-missing
-        "tl_bytes_mut_view_from_buf_parts"))
-    (set!
-      compiler-builtin-id-tl-bytes-view-from-bytes-parts
-      (compiler-builtin-resolve-name
-        insert-missing
-        "tl_bytes_view_from_bytes_parts"))
-    (set!
-      compiler-builtin-id-tl-bytes-mut-view-from-bytes-parts
-      (compiler-builtin-resolve-name
-        insert-missing
-        "tl_bytes_mut_view_from_bytes_parts"))
-    (set!
-      compiler-builtin-id-core-macros-module
-      (compiler-builtin-resolve-name insert-missing "stdlib.core_macros"))
-    (set!
-      compiler-builtin-id-core-macros-legacy-module
-      (compiler-builtin-resolve-name insert-missing "stdlib.core-macros"))
-    (set!
-      compiler-builtin-id-fix-slots
-      (compiler-builtin-resolve-name insert-missing "slots"))
-    (set!
-      compiler-builtin-id-tc-default-boundary
-      (compiler-builtin-resolve-name insert-missing "__tl_default_boundary"))
-    (set!
-      compiler-builtin-id-tc-active-region
-      (compiler-builtin-resolve-name insert-missing "__tl_active_region"))
-    (set!
-      compiler-builtin-id-tc-cleanup-owner
-      (compiler-builtin-resolve-name insert-missing " __tl_cleanup_owner"))
-    (set!
-      compiler-builtin-id-tc-ordinary-arena-owner
-      (compiler-builtin-resolve-name
-        insert-missing
-        " __tl_ordinary_arena_owner"))
-    (set!
-      compiler-builtin-id-tc-atomic-arena-owner
-      (compiler-builtin-resolve-name insert-missing " __tl_atomic_arena_owner"))
-    (set!
-      compiler-builtin-id-tc-return-type
-      (compiler-builtin-resolve-name insert-missing "__tl_return_type"))
-    (set!
-      compiler-builtin-id-tc-loop-target
-      (compiler-builtin-resolve-name insert-missing "__tl_loop_target"))
-    (set!
-      compiler-builtin-id-tc-hygiene-global-boundary
-      (compiler-builtin-resolve-name
-        insert-missing
-        "__tl_hygiene_global_boundary"))
-    (set!
-      compiler-builtin-id-tc-unsafe-context
-      (compiler-builtin-resolve-name insert-missing " __tl_unsafe_context"))
-    (set!
-      compiler-builtin-id-fix-body
-      (compiler-builtin-resolve-name insert-missing "body"))
-    (set!
-      compiler-builtin-id-comptime-expr-begin-variant
-      (compiler-builtin-resolve-name insert-missing "Begin"))
-    (set!
-      compiler-builtin-id-comptime-expr-bool-variant
-      (compiler-builtin-resolve-name insert-missing "Bool"))
-    (set!
-      compiler-builtin-id-comptime-expr-call-variant
-      (compiler-builtin-resolve-name insert-missing "Call"))
-    (set!
-      compiler-builtin-id-comptime-expr-if-variant
-      (compiler-builtin-resolve-name insert-missing "If"))
-    (set!
-      compiler-builtin-id-comptime-expr-int-variant
-      (compiler-builtin-resolve-name insert-missing "Int"))
-    (set!
-      compiler-builtin-id-comptime-expr-quasiquote-variant
-      (compiler-builtin-resolve-name insert-missing "Quasiquote"))
-    (set!
-      compiler-builtin-id-comptime-expr-quote-variant
-      (compiler-builtin-resolve-name insert-missing "Quote"))
-    (set!
-      compiler-builtin-id-comptime-expr-splice-variant
-      (compiler-builtin-resolve-name insert-missing "Splice"))
-    (set!
-      compiler-builtin-id-comptime-expr-unquote-variant
-      (compiler-builtin-resolve-name insert-missing "Unquote"))
-    (set!
-      compiler-builtin-id-comptime-expr-unquote-splicing-variant
-      (compiler-builtin-resolve-name insert-missing "UnquoteSplicing"))
-    (set!
-      compiler-builtin-id-comptime-expr-var-variant
-      (compiler-builtin-resolve-name insert-missing "Var"))
-    (set!
-      compiler-builtin-id-fix-first
-      (compiler-builtin-resolve-name insert-missing "first"))
-    (set!
-      compiler-builtin-id-fix-has_type
-      (compiler-builtin-resolve-name insert-missing "has-type"))
-    (set!
-      compiler-builtin-id-fix-init
-      (compiler-builtin-resolve-name insert-missing "init"))
-    (set!
-      compiler-builtin-id-fix-len
-      (compiler-builtin-resolve-name insert-missing "len"))
-    (set!
-      compiler-builtin-id-comptime-pattern-binding-variant
-      (compiler-builtin-resolve-name insert-missing "Binding"))
-    (set!
-      compiler-builtin-id-comptime-pattern-variant-variant
-      (compiler-builtin-resolve-name insert-missing "Variant"))
-    (set!
-      compiler-builtin-id-comptime-pattern-wildcard-variant
-      (compiler-builtin-resolve-name insert-missing "Wildcard"))
-    (set!
-      compiler-builtin-id-fix-payloads
-      (compiler-builtin-resolve-name insert-missing "payloads"))
-    (set!
-      compiler-builtin-id-comptime-type-info-opaque-variant
-      (compiler-builtin-resolve-name insert-missing "Opaque"))
-    (set!
-      compiler-builtin-id-comptime-type-info-slice-variant
-      (compiler-builtin-resolve-name insert-missing "Slice"))
-    (set!
-      compiler-builtin-id-fix-name
-      (compiler-builtin-resolve-name insert-missing "name"))
-    (set!
-      compiler-builtin-id-fix-pattern
-      (compiler-builtin-resolve-name insert-missing "pattern"))
-    (set!
-      compiler-builtin-id-fix-ty
-      (compiler-builtin-resolve-name insert-missing "ty"))
-    (set!
-      compiler-builtin-id-fix-handle
-      (compiler-builtin-resolve-name insert-missing "handle"))
-    (set!
-      compiler-builtin-id-fix-stdlib_dot_clone
-      (compiler-builtin-resolve-name insert-missing "stdlib.clone"))
-    (set!
-      compiler-builtin-id-fix-synthesize_helpers
-      (compiler-builtin-resolve-name insert-missing "synthesize-helpers"))
-    (set!
-      compiler-builtin-id-fix-stdlib_dot_clone_dot_synthesize_helpers
-      (compiler-builtin-resolve-name
-        insert-missing
-        "stdlib.clone.synthesize-helpers"))
-    (set!
-      compiler-builtin-id-arena-module
-      (compiler-builtin-resolve-name insert-missing "stdlib.arena"))
-    (set!
-      compiler-builtin-id-arena-type
-      (compiler-builtin-resolve-name insert-missing "stdlib.arena/Arena"))
-    (set!
-      compiler-builtin-id-arena-mark-type
-      (compiler-builtin-resolve-name insert-missing "stdlib.arena/ArenaMark"))
-    (set!
-      compiler-builtin-id-arena-phase-type
-      (compiler-builtin-resolve-name insert-missing "stdlib.arena/ArenaPhase"))
-    (set!
-      compiler-builtin-id-arena-make-base
-      (compiler-builtin-resolve-name insert-missing "make"))
-    (set!
-      compiler-builtin-id-arena-make-atomic-base
-      (compiler-builtin-resolve-name insert-missing "make-atomic"))
-    (set!
-      compiler-builtin-id-arena-phase-base
-      (compiler-builtin-resolve-name insert-missing "phase"))
-    (set!
-      compiler-builtin-id-arena-rewind-safe-base
-      (compiler-builtin-resolve-name insert-missing "rewind-safe!"))
-    (set!
-      compiler-builtin-id-arena-destroy-safe-base
-      (compiler-builtin-resolve-name insert-missing "destroy-safe!"))
+    (compiler-builtin-id-table load insert-missing)
     (set! compiler-builtin-generation (ci.intern-generation))
     (set! compiler-builtin-table-id (ci.intern-active-table-id))
     (set! compiler-builtin-pool-len (ci.intern-pool-len))
@@ -3233,210 +2301,226 @@
   test
   (define (compiler-builtin-parser-syntax-ids-current-ok?) : bool
     (and
-      (= (compiler-builtin-ctfe-ref 219) (ci.intern-source-slice "all" 0 3))
-      (= (compiler-builtin-ctfe-ref 220) (ci.intern-source-slice "any" 0 3))
-      (= (compiler-builtin-ctfe-ref 221) (ci.intern-source-slice ":kind" 0 5))
-      (= (compiler-builtin-ctfe-ref 222) (ci.intern-source-slice "..." 0 3))
-      (= (compiler-builtin-ctfe-ref 223) (ci.intern-source-slice "string" 0 6))
+      (= (compiler-builtin-ctfe "all") (ci.intern-source-slice "all" 0 3))
+      (= (compiler-builtin-ctfe "any") (ci.intern-source-slice "any" 0 3))
+      (= (compiler-builtin-ctfe ":kind") (ci.intern-source-slice ":kind" 0 5))
+      (= (compiler-builtin-ctfe "...") (ci.intern-source-slice "..." 0 3))
+      (= (compiler-builtin-ctfe "string") (ci.intern-source-slice "string" 0 6))
       (=
-        (compiler-builtin-ctfe-ref 224)
+        (compiler-builtin-ctfe "dyn-array")
         (ci.intern-source-slice "dyn-array" 0 9))
       (=
-        (compiler-builtin-ctfe-ref 225)
+        (compiler-builtin-ctfe "function")
         (ci.intern-source-slice "function" 0 8))
-      (= (compiler-builtin-ctfe-ref 226) (ci.intern-source-slice "struct" 0 6))
-      (= (compiler-builtin-ctfe-ref 227) (ci.intern-source-slice "enum" 0 4))
-      (= (compiler-builtin-ctfe-ref 228) (ci.intern-source-slice "ptr" 0 3))
-      (= (compiler-builtin-ctfe-ref 229) (ci.intern-source-slice "mut-ptr" 0 7))
-      (= (compiler-builtin-ctfe-ref 230) (ci.intern-source-slice "ref" 0 3))
-      (= (compiler-builtin-ctfe-ref 231) (ci.intern-source-slice "mut-ref" 0 7))
-      (= (compiler-builtin-ctfe-ref 232) (ci.intern-source-slice "region" 0 6))
+      (= (compiler-builtin-ctfe "struct") (ci.intern-source-slice "struct" 0 6))
+      (= (compiler-builtin-ctfe "enum") (ci.intern-source-slice "enum" 0 4))
+      (= (compiler-builtin-ctfe "ptr") (ci.intern-source-slice "ptr" 0 3))
       (=
-        (compiler-builtin-ctfe-ref 233)
+        (compiler-builtin-ctfe "mut-ptr")
+        (ci.intern-source-slice "mut-ptr" 0 7))
+      (= (compiler-builtin-ctfe "ref") (ci.intern-source-slice "ref" 0 3))
+      (=
+        (compiler-builtin-ctfe "mut-ref")
+        (ci.intern-source-slice "mut-ref" 0 7))
+      (= (compiler-builtin-ctfe "region") (ci.intern-source-slice "region" 0 6))
+      (=
+        (compiler-builtin-ctfe "type-var")
         (ci.intern-source-slice "type-var" 0 8))
       (=
-        (compiler-builtin-ctfe-ref 234)
+        (compiler-builtin-ctfe ":cleanup")
         (ci.intern-source-slice ":cleanup" 0 8))
-      (= (compiler-builtin-ctfe-ref 235) (ci.intern-source-slice ":owned" 0 6))
+      (= (compiler-builtin-ctfe ":owned") (ci.intern-source-slice ":owned" 0 6))
       (=
-        (compiler-builtin-ctfe-ref 236)
+        (compiler-builtin-ctfe ":lifetimes")
         (ci.intern-source-slice ":lifetimes" 0 10))
-      (= (compiler-builtin-ctfe-ref 237) (ci.intern-source-slice ":repr" 0 5))
-      (= (compiler-builtin-ctfe-ref 238) (ci.intern-source-slice ":packed" 0 7))
-      (= (compiler-builtin-ctfe-ref 239) (ci.intern-source-slice "packed" 0 6))
-      (= (compiler-builtin-ctfe-ref 240) (ci.intern-source-slice "scalar" 0 6))
-      (= (compiler-builtin-ctfe-ref 241) (ci.intern-source-slice "avx2" 0 4))
-      (= (compiler-builtin-ctfe-ref 242) (ci.intern-source-slice "avx512" 0 6))
-      (= (compiler-builtin-ctfe-ref 243) (ci.intern-source-slice "cfg" 0 3))
-      (= (compiler-builtin-ctfe-ref 244) (ci.intern-source-slice "uniform" 0 7))
-      (= (compiler-builtin-ctfe-ref 245) (ci.intern-source-slice "varying" 0 7))
-      (= (compiler-builtin-ctfe-ref 246) (ci.intern-source-slice "none" 0 4))
-      (= (compiler-builtin-ctfe-ref 247) (ci.intern-source-slice "lanes" 0 5))
-      (= (compiler-builtin-ctfe-ref 248) (ci.intern-source-slice "args" 0 4))
-      (= (compiler-builtin-ctfe-ref 249) (ci.intern-source-slice "result" 0 6))
+      (= (compiler-builtin-ctfe ":repr") (ci.intern-source-slice ":repr" 0 5))
       (=
-        (compiler-builtin-ctfe-ref 250)
+        (compiler-builtin-ctfe ":packed")
+        (ci.intern-source-slice ":packed" 0 7))
+      (= (compiler-builtin-ctfe "packed") (ci.intern-source-slice "packed" 0 6))
+      (= (compiler-builtin-ctfe "scalar") (ci.intern-source-slice "scalar" 0 6))
+      (= (compiler-builtin-ctfe "avx2") (ci.intern-source-slice "avx2" 0 4))
+      (= (compiler-builtin-ctfe "avx512") (ci.intern-source-slice "avx512" 0 6))
+      (= (compiler-builtin-ctfe "cfg") (ci.intern-source-slice "cfg" 0 3))
+      (=
+        (compiler-builtin-ctfe "uniform")
+        (ci.intern-source-slice "uniform" 0 7))
+      (=
+        (compiler-builtin-ctfe "varying")
+        (ci.intern-source-slice "varying" 0 7))
+      (= (compiler-builtin-ctfe "none") (ci.intern-source-slice "none" 0 4))
+      (= (compiler-builtin-ctfe "lanes") (ci.intern-source-slice "lanes" 0 5))
+      (= (compiler-builtin-ctfe "args") (ci.intern-source-slice "args" 0 4))
+      (= (compiler-builtin-ctfe "result") (ci.intern-source-slice "result" 0 6))
+      (=
+        (compiler-builtin-ctfe "index-param")
         (ci.intern-source-slice "index-param" 0 11))
       (=
-        (compiler-builtin-ctfe-ref 251)
+        (compiler-builtin-ctfe "specialization")
         (ci.intern-source-slice "specialization" 0 14))
       (=
-        (compiler-builtin-ctfe-ref 252)
+        (compiler-builtin-ctfe ":export-symbol")
         (ci.intern-source-slice ":export-symbol" 0 14))
       (=
-        (compiler-builtin-ctfe-ref 253)
+        (compiler-builtin-ctfe ":spmd-callable")
         (ci.intern-source-slice ":spmd-callable" 0 14))
       (=
-        (compiler-builtin-ctfe-ref 254)
+        (compiler-builtin-ctfe "c-varargs")
         (ci.intern-source-slice "c-varargs" 0 9))
-      (= (compiler-builtin-ctfe-ref 255) (ci.intern-source-slice ":abi" 0 4))
-      (= (compiler-builtin-ctfe-ref 256) (ci.intern-source-slice ":symbol" 0 7))
+      (= (compiler-builtin-ctfe ":abi") (ci.intern-source-slice ":abi" 0 4))
       (=
-        (compiler-builtin-ctfe-ref 257)
+        (compiler-builtin-ctfe ":symbol")
+        (ci.intern-source-slice ":symbol" 0 7))
+      (=
+        (compiler-builtin-ctfe ":link-lib")
         (ci.intern-source-slice ":link-lib" 0 9))
       (=
-        (compiler-builtin-ctfe-ref 258)
+        (compiler-builtin-ctfe ":link-search")
         (ci.intern-source-slice ":link-search" 0 12))
       (=
-        (compiler-builtin-ctfe-ref 259)
+        (compiler-builtin-ctfe ":link-arg")
         (ci.intern-source-slice ":link-arg" 0 9))
-      (= (compiler-builtin-ctfe-ref 260) (ci.intern-source-slice "as" 0 2))
-      (= (compiler-builtin-ctfe-ref 261) (ci.intern-source-slice ":as" 0 3))
-      (= (compiler-builtin-ctfe-ref 262) (ci.intern-source-slice "sum" 0 3))
-      (= (compiler-builtin-ctfe-ref 263) (ci.intern-source-slice "min" 0 3))
-      (= (compiler-builtin-ctfe-ref 264) (ci.intern-source-slice "max" 0 3))
+      (= (compiler-builtin-ctfe "as") (ci.intern-source-slice "as" 0 2))
+      (= (compiler-builtin-ctfe ":as") (ci.intern-source-slice ":as" 0 3))
+      (= (compiler-builtin-ctfe "sum") (ci.intern-source-slice "sum" 0 3))
+      (= (compiler-builtin-ctfe "min") (ci.intern-source-slice "min" 0 3))
+      (= (compiler-builtin-ctfe "max") (ci.intern-source-slice "max" 0 3))
       (=
-        (compiler-builtin-ctfe-ref 265)
+        (compiler-builtin-ctfe "defgeneric")
         (ci.intern-source-slice "defgeneric" 0 10))
-      (= (compiler-builtin-ctfe-ref 266) (ci.intern-source-slice "generic" 0 7))
       (=
-        (compiler-builtin-ctfe-ref 267)
+        (compiler-builtin-ctfe "generic")
+        (ci.intern-source-slice "generic" 0 7))
+      (=
+        (compiler-builtin-ctfe "deftrait")
         (ci.intern-source-slice "deftrait" 0 8))
-      (= (compiler-builtin-ctfe-ref 268) (ci.intern-source-slice "trait" 0 5))
+      (= (compiler-builtin-ctfe "trait") (ci.intern-source-slice "trait" 0 5))
       (=
-        (compiler-builtin-ctfe-ref 269)
+        (compiler-builtin-ctfe "interface")
         (ci.intern-source-slice "interface" 0 9))
-      (= (compiler-builtin-ctfe-ref 270) (ci.intern-source-slice "impl" 0 4))
-      (= (compiler-builtin-ctfe-ref 271) (ci.intern-source-slice "where" 0 5))
+      (= (compiler-builtin-ctfe "impl") (ci.intern-source-slice "impl" 0 4))
+      (= (compiler-builtin-ctfe "where") (ci.intern-source-slice "where" 0 5))
       (=
-        (compiler-builtin-ctfe-ref 272)
+        (compiler-builtin-ctfe "pattern-binding-typed")
         (ci.intern-source-slice "pattern-binding-typed" 0 21))
       (=
-        (compiler-builtin-ctfe-ref 273)
+        (compiler-builtin-ctfe "expr-resource-scope")
         (ci.intern-source-slice "expr-resource-scope" 0 19))
       (=
-        (compiler-builtin-ctfe-ref 274)
+        (compiler-builtin-ctfe "expr-let-scope")
         (ci.intern-source-slice "expr-let-scope" 0 14))
       (=
-        (compiler-builtin-ctfe-ref 275)
+        (compiler-builtin-ctfe "expr-set-var")
         (ci.intern-source-slice "expr-set-var" 0 12))
       (=
-        (compiler-builtin-ctfe-ref 276)
+        (compiler-builtin-ctfe "expr-begin-unit")
         (ci.intern-source-slice "expr-begin-unit" 0 15))
       (=
-        (compiler-builtin-ctfe-ref 277)
+        (compiler-builtin-ctfe "expr-not")
         (ci.intern-source-slice "expr-not" 0 8))
       (=
-        (compiler-builtin-ctfe-ref 278)
+        (compiler-builtin-ctfe "expr-while")
         (ci.intern-source-slice "expr-while" 0 10))
       (=
-        (compiler-builtin-ctfe-ref 279)
+        (compiler-builtin-ctfe "syntax-name-fresh")
         (ci.intern-source-slice "syntax-name-fresh" 0 17))
       (=
-        (compiler-builtin-ctfe-ref 280)
+        (compiler-builtin-ctfe "__tl_dyn-array")
         (ci.intern-source-slice "__tl_dyn-array" 0 14))
-      (= (compiler-builtin-ctfe-ref 281) (ci.intern-source-slice "slice" 0 5))
+      (= (compiler-builtin-ctfe "slice") (ci.intern-source-slice "slice" 0 5))
       (=
-        (compiler-builtin-ctfe-ref 282)
+        (compiler-builtin-ctfe "expr-borrow")
         (ci.intern-source-slice "expr-borrow" 0 11))
       (=
-        (compiler-builtin-ctfe-ref 283)
+        (compiler-builtin-ctfe "expr-array-ref")
         (ci.intern-source-slice "expr-array-ref" 0 14))
       (=
-        (compiler-builtin-ctfe-ref 284)
+        (compiler-builtin-ctfe "expr-replace")
         (ci.intern-source-slice "expr-replace" 0 12))
       (=
-        (compiler-builtin-ctfe-ref 285)
+        (compiler-builtin-ctfe "module-value-expr")
         (ci.intern-source-slice "module-value-expr" 0 17))
       (=
-        (compiler-builtin-ctfe-ref 286)
+        (compiler-builtin-ctfe "function-shared-borrow-returns-string?")
         (ci.intern-source-slice "function-shared-borrow-returns-string?" 0 38))
       (=
-        (compiler-builtin-ctfe-ref 287)
+        (compiler-builtin-ctfe "expr-shared-call1")
         (ci.intern-source-slice "expr-shared-call1" 0 17))
       (=
-        (compiler-builtin-ctfe-ref 288)
+        (compiler-builtin-ctfe "expr-shared-let-scope")
         (ci.intern-source-slice "expr-shared-let-scope" 0 21))
       (=
-        (compiler-builtin-ctfe-ref 289)
+        (compiler-builtin-ctfe "type-expr")
         (ci.intern-source-slice "type-expr" 0 9))
       (=
-        (compiler-builtin-ctfe-ref 290)
+        (compiler-builtin-ctfe "expr-lambda1")
         (ci.intern-source-slice "expr-lambda1" 0 12))
-      (= (compiler-builtin-ctfe-ref 291) (ci.intern-source-slice ":ignore" 0 7))
-      (= (compiler-builtin-ctfe-ref 292) (ci.intern-source-slice ":slow" 0 5))
       (=
-        (compiler-builtin-ctfe-ref 293)
+        (compiler-builtin-ctfe ":ignore")
+        (ci.intern-source-slice ":ignore" 0 7))
+      (= (compiler-builtin-ctfe ":slow") (ci.intern-source-slice ":slow" 0 5))
+      (=
+        (compiler-builtin-ctfe ":must-use")
         (ci.intern-source-slice ":must-use" 0 9))
       (=
-        (compiler-builtin-ctfe-ref 294)
+        (compiler-builtin-ctfe "c-function")
         (ci.intern-source-slice "c-function" 0 10))
-      (= (compiler-builtin-ctfe-ref 295) (ci.intern-source-slice "CFunc" 0 5))
+      (= (compiler-builtin-ctfe "CFunc") (ci.intern-source-slice "CFunc" 0 5))
       (=
-        (compiler-builtin-ctfe-ref 296)
+        (compiler-builtin-ctfe "nullable")
         (ci.intern-source-slice "nullable" 0 8))
       (=
-        (compiler-builtin-ctfe-ref 297)
+        (compiler-builtin-ctfe "non-null")
         (ci.intern-source-slice "non-null" 0 8))
       (=
-        (compiler-builtin-ctfe-ref 298)
+        (compiler-builtin-ctfe "unsafe-nullable")
         (ci.intern-source-slice "unsafe-nullable" 0 15))
       (=
-        (compiler-builtin-ctfe-ref 299)
+        (compiler-builtin-ctfe "unsafe-non-null")
         (ci.intern-source-slice "unsafe-non-null" 0 15))
       (not
         (=
-          (compiler-builtin-ctfe-ref 219)
+          (compiler-builtin-ctfe "all")
           (ci.intern-generated-canonical-name "all")))
       (not
         (=
-          (compiler-builtin-ctfe-ref 234)
+          (compiler-builtin-ctfe ":cleanup")
           (ci.intern-generated-canonical-name ":cleanup")))
       (not
         (=
-          (compiler-builtin-ctfe-ref 243)
+          (compiler-builtin-ctfe "cfg")
           (ci.intern-generated-canonical-name "cfg")))
       (not
         (=
-          (compiler-builtin-ctfe-ref 255)
+          (compiler-builtin-ctfe ":abi")
           (ci.intern-generated-canonical-name ":abi")))
       (not
         (=
-          (compiler-builtin-ctfe-ref 260)
+          (compiler-builtin-ctfe "as")
           (ci.intern-generated-canonical-name "as")))
       (not
         (=
-          (compiler-builtin-ctfe-ref 265)
+          (compiler-builtin-ctfe "defgeneric")
           (ci.intern-generated-canonical-name "defgeneric")))
       (not
         (=
-          (compiler-builtin-ctfe-ref 280)
+          (compiler-builtin-ctfe "__tl_dyn-array")
           (ci.intern-generated-canonical-name "__tl_dyn-array")))
       (not
         (=
-          (compiler-builtin-ctfe-ref 281)
+          (compiler-builtin-ctfe "slice")
           (ci.intern-generated-canonical-name "slice")))
       (not
         (=
-          (compiler-builtin-ctfe-ref 291)
+          (compiler-builtin-ctfe ":ignore")
           (ci.intern-generated-canonical-name ":ignore")))
       (not
         (=
-          (compiler-builtin-ctfe-ref 292)
+          (compiler-builtin-ctfe ":slow")
           (ci.intern-generated-canonical-name ":slow")))
       (not
         (=
-          (compiler-builtin-ctfe-ref 293)
+          (compiler-builtin-ctfe ":must-use")
           (ci.intern-generated-canonical-name ":must-use"))))))
 
 (cfg

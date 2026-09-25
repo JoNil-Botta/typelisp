@@ -40,12 +40,12 @@ if [ "${1:-}" = "--job" ]; then # --job <compiler> <out> <counts-only> <max-exac
     set -- --opt-level 2 --target linux-x86_64 --stdlib-root stdlib --stdlib-root src
     method=counts
     if [ "$counts_only" = 0 ] &&
-        "$tl" compile "$file" -o "$work/tailrec.ir" "$@" --dump-ir after-tailrec --trace-passes \
+        "$tl" compile "$file" -o "$work/round_input.ir" "$@" --dump-ir after-round_input --trace-passes \
             > /dev/null 2> "$work/stderr"; then
         grep '^optimizer-pass|' "$work/stderr" > "$work/trace" || true
         if [ "$(cut -d'|' -f2 "$work/trace" | sort -u | wc -l)" -le "$max_exact" ]; then
             method=exact
-            for slot in $(cut -d'|' -f3 "$work/trace" | sort -u | grep -vx tailrec); do
+            for slot in $(cut -d'|' -f3 "$work/trace" | sort -u | grep -vx round_input); do
                 "$tl" compile "$file" -o "$work/$slot.ir" "$@" --dump-ir "after-$slot" \
                     > /dev/null 2>&1 || { method=counts; break; }
             done

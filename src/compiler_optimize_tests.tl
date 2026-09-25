@@ -28197,9 +28197,10 @@
 ;; --- INL-7: the loop a loop-free caller has not been given yet ---------------
 ;;
 ;; The tier directly above rests on "the imported loop becomes the caller's ONLY
-;; one", read off the caller's natural loops. The inliner runs BEFORE the
-;; per-function pipeline, and that pipeline's FIRST pass (opt-tailrec-function)
-;; turns a self tail-call into a back edge to the entry block. So a
+;; one", read off the caller's natural loops. The inliner ran BEFORE
+;; opt-tailrec-function (then the per-function pipeline's first pass; INL-11 now
+;; runs it ahead of the inliner), which turns a self tail-call into a back edge
+;; to the entry block. So a
 ;; self-tail-recursive caller presents here with an empty natural-loop set and
 ;; leaves with a loop around its whole body, and an import admitted on the
 ;; strength of the empty set lands inside it.
@@ -29699,8 +29700,7 @@
 ;; function BEFORE the whole-program inline stage (opt-tailrec-function-seq!),
 ;; so the inliner meets this body as the loop it becomes -- a jump back to its
 ;; own entry, no tail call left -- and refuses it by shape (an exitless loop
-;; has no return to splice). The per-function tailrec that follows finds
-;; nothing left to rewrite.
+;; has no return to splice).
 (define (opt-inline-single-block-self-tail-call-callee
   [symbols : OptInlineMultiTestSymbols]) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
@@ -30016,8 +30016,8 @@
 ;; ITSELF. Its own tail call is now a site the walk visits, and it is the site
 ;; that must stay refused -- expanding it would copy the body into itself and
 ;; the next round would do it again. opt-inline-callee-ok? refuses it by name
-;; and opt-inline-lookup-inlinable refuses it by SCC; opt-tailrec, which runs
-;; after this whole stage, is what turns it into a loop.
+;; and opt-inline-lookup-inlinable refuses it by SCC; opt-tailrec is what turns
+;; it into a loop.
 (define (opt-inline-self-tail-recursive-callee
   [symbols : OptInlineMultiTestSymbols]) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
@@ -32131,16 +32131,8 @@
   (let
     [rewritten : ir.CompilerIrFunction
       (opt.opt-tailrec-function (opt-tailrec-test-function))]
-    [once : ir.CompilerIrFunction
-      (opt.optimize-function-once-with-summaries
-        (ast.ast-node-pool-reader-context-current)
-        (ast.ast-node-pool-reader-type-segment-bases)
-        (opt-tailrec-test-function)
-        (opt.opt-loop-bce-empty-summaries))]
     [rewritten-blocks : ir.CompilerIrBlockList
       (opt.opt-function-blocks (opt.compiler-opt-global-shared-view rewritten))]
-    [once-blocks : ir.CompilerIrBlockList
-      (opt.opt-function-blocks (opt.compiler-opt-global-shared-view once))]
     [rewritten-instrs : ir.CompilerIrInstrSeq
       (opt-tailrec-entry-instrs
         (opt.compiler-opt-global-shared-view rewritten-blocks))]
@@ -32174,25 +32166,6 @@
               (ir.compiler-ir-label "entry"))
             2))
         4]
-      [(not
-          (=
-            (opt-count-tail-call-blocks
-              (opt.compiler-opt-global-shared-view once-blocks))
-            0))
-        5]
-      [(not (opt.opt-verify-ok? (opt.opt-verify-function once))) 8]
-      [(not
-          (opt-block-list-has-label?
-            (opt.compiler-opt-global-shared-view once-blocks)
-            (ir.compiler-ir-label "entry__ssa_entry")))
-        9]
-      [(not
-          (=
-            (opt-count-jump-to-blocks
-              once-blocks
-              (ir.compiler-ir-label "entry"))
-            2))
-        6]
       [(not
           (opt.opt-function-eq
             (ast.ast-node-pool-reader-type-segment-bases)
@@ -61269,11 +61242,13 @@
           ir.CompilerIrFunctionAbi.Ordinary))]
     [blocks : ir.CompilerIrBlockList
       (opt.opt-function-blocks (opt.compiler-opt-global-shared-view optimized))]
+    ;; The caller's self tail call is rewritten into its loop before the
+    ;; pipeline, as the program-wide tailrec stage does ahead of the inliner.
     [merged : ir.CompilerIrFunction
       (opt-test-optimize-function
         (ast.ast-node-pool-reader-context-current)
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt-merged-loop-test-function))]
+        (opt.opt-tailrec-function (opt-merged-loop-test-function)))]
     [merged-blocks : ir.CompilerIrBlockList
       (opt.opt-function-blocks (opt.compiler-opt-global-shared-view merged))]
     (cond

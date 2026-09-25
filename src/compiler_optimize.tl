@@ -123071,13 +123071,12 @@
       (profile_state.compiler-profile-state-metrics
         (profile_state.compiler-profile-state-shared-view
           summaries.profile-state))]
-    [_t-tailrec : i64 (cfg compile-profile (profile.now-ms) 0)]
-    [tailrec : ir.CompilerIrFunction
-      (compiler-opt-debug-observe-function
-        type-segment-bases
-        "tailrec"
-        (opt-tailrec-function func))]
-    (match tailrec
+    ;; The round's input, observed so `--trace-passes`/`--dump-ir` show what
+    ;; the first slot (fold) starts from.
+    (match (compiler-opt-debug-observe-function
+      type-segment-bases
+      "round_input"
+      func)
       [(ir.CompilerIrFunction.Function
           name
           params
@@ -123088,12 +123087,6 @@
         ;; Fold first so SCCP can reuse local facts, then simplify the reachable
         ;; CFG and eliminate dead pure assignments.
         (let
-          [_p-tailrec : unit
-            (compiler-opt-profile-pass-note
-              summaries.profile-state
-              "tailrec"
-              name
-              _t-tailrec)]
           ;; Substitute proven constant-global operands up front so the local
           ;; folds below see literals: a mask global otherwise keeps its `and`
           ;; alive into the loop cluster, pushing an otherwise-unrollable body
@@ -128940,14 +128933,14 @@
     func))
 
 ;; INL-11. The self-tail-call rewrite, applied to every function before the
-;; program-level inline stage. Per-function tailrec runs AFTER inlining, so a
+;; program-level inline stage. Run per function AFTER inlining, a
 ;; self tail-recursive helper (a list `contains?`, a `next-child-from` scan, a
 ;; heap's `sift-down!`) reached the inliner as a recursive body -- never
 ;; call-free, refused at every site-depth reading, and a caller whose sites
 ;; all read as straight-line -- although one pass later it is a plain loop.
 ;; Running the rewrite first lets the inliner read the loop it will see anyway.
-;; The rewrite is a no-op on a function without a convertible self tail call,
-;; and the per-function run that follows is a no-op on a rewritten one.
+;; The rewrite is a no-op on a function without a convertible self tail call.
+;; This is the only tailrec run: the per-function pipeline no longer repeats it.
 ;;
 ;; The functions it rewrote are recorded by slot (opt-inline-tailrec-converted)
 ;; for one refusal: a converted callee is never inlined. Written as recursion,
@@ -133976,10 +133969,10 @@
 ;; than once per invocation. The natural-loop set is read off the same lazy
 ;; caller facts the site clause forces, so a candidate only pays for them once.
 ;;
-;; INL-7. The natural-loop set alone does not answer that question, because the
-;; inliner runs BEFORE the per-function pipeline and one of the passes it runs
-;; before is `tailrec` (opt-tailrec-function, the first pass of
-;; optimize-function-once-with-summaries). That pass rewrites a SELF TAIL-CALL
+;; INL-7. The natural-loop set alone did not answer that question, because the
+;; inliner ran BEFORE `tailrec` (opt-tailrec-function, then the first pass of
+;; the per-function pipeline; INL-11 now runs it ahead of the inliner). That
+;; pass rewrites a SELF TAIL-CALL
 ;; into a back edge to the entry block. A self-tail-recursive caller therefore
 ;; presents to this band with an empty natural-loop set and leaves the pipeline
 ;; with a loop around its whole body -- and an import admitted here on the
@@ -138297,8 +138290,8 @@
 ;; opt-inline-multiblock-instr-reason: its target is a computed value the census
 ;; cannot see through to price. Self- and mutual recursion are refused by
 ;; opt-inline-lookup-inlinable's SCC test and by opt-inline-callee-ok?'s name
-;; test, which is what leaves a tail-recursive function's own self-site for
-;; opt-tailrec (it runs after this stage) instead of expanding it here.
+;; test, which is what leaves a tail-recursive function's own self-site alone
+;; instead of expanding it here.
 (define (opt-inline-try-with-spans
   [instr : ir.CompilerIrInstr]
   [index : OptFunctionIndex]

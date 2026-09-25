@@ -5518,8 +5518,8 @@
 ;; Every Win64 by-reference argument gets its own frame temporary: the callee
 ;; may write through either pointer, so two arguments built from the same value,
 ;; register-resident or memory-class, and call results passed straight on,
-;; never share one copy. None of the six copies allocates (#7885); the two
-;; allocations left are the hidden-sret result buffers of `big-make` (#7990).
+;; never share one copy. None of the six copies allocates (#7885), and neither
+;; do the hidden-sret result buffers of `big-make` (#7990).
 (define (compiler-lower-c-abi-windows-byref-aggregate-temps-shape-ok?) : bool
   (match (lower-test-functions
     (lower.lower-compiler-source-with-mode
@@ -5527,7 +5527,7 @@
       (lower.CompilerLowerMode.WindowsScalar)))
     [(LowerTestFunctions.Some functions)
       (and
-        (= (lower-test-function-call-count functions "main" "tl_alloc") 2)
+        (= (lower-test-function-call-count functions "main" "tl_alloc") 0)
         (=
           (lower-test-function-distinct-arg-call-count
             functions
@@ -5547,6 +5547,50 @@
             "made-pair-use")
           1))]
     [_ false]))
+
+(define (compiler-lower-c-abi-result-frame-storage-source) : String
+  "(defstruct Triple (:repr c) (a i64) (b i64) (c i64))
+(defstruct Pair (:repr c) (a i64) (b i64))
+(defstruct IntFloat (:repr c) (a i32) (b f32))
+(extern (triple-make [seed : i64]) : Triple (:symbol \"tl_cabi_triple_make\"))
+(extern triple-maker (:symbol \"tl_cabi_triple_make_ptr\") : (CFunc non-null (-> i64 Triple)))
+(extern (pair-make [seed : i64]) : Pair (:symbol \"tl_cabi_pair_make\"))
+(extern (int-float-make [seed : i32]) : IntFloat (:symbol \"tl_cabi_int_float_make\"))
+(define (main) : i64
+  (let
+    [t : Triple (triple-make 7)]
+    [u : Triple (triple-maker 8)]
+    [p : Pair (pair-make 9)]
+    [f : IntFloat (int-float-make (cast 10 : i32))]
+    (+ t.c (+ u.c (+ p.b (cast f.a : i64))))))")
+
+;; A C aggregate result lands in caller frame storage whether it comes back
+;; through a hidden result pointer (`Triple`, directly and through a `CFunc`;
+;; `Pair` on Win64), in two registers (`Pair` on SysV), or in one register
+;; holding a value TypeLisp keeps in memory (`IntFloat`). Nothing calls
+;; tl_alloc (#7990). The four results need 3 + 3 + 2 + 1 frame slots, each
+;; result's own, and one address per result.
+(define (compiler-lower-c-abi-result-frame-storage-ok?
+  [mode : lower.CompilerLowerMode]) : bool
+  (match (lower-test-functions
+    (lower.lower-compiler-source-with-mode
+      (compiler-lower-c-abi-result-frame-storage-source)
+      mode))
+    [(LowerTestFunctions.Some functions)
+      (and
+        (= (lower-test-function-call-count functions "main" "tl_alloc") 0)
+        (= (lower-test-function-call-count functions "main" "triple-make") 1)
+        (= (lower-test-count functions "main" (LowerTestInstr.IndirectCCall)) 1)
+        (>= (lower-test-count functions "main" (LowerTestInstr.Alloc)) 9)
+        (>= (lower-test-count functions "main" (LowerTestInstr.AddrOf)) 4))]
+    [_ false]))
+
+(define (compiler-lower-c-abi-result-frame-storage-shape-ok?) : bool
+  (and
+    (compiler-lower-c-abi-result-frame-storage-ok?
+      (lower.CompilerLowerMode.LinuxScalar))
+    (compiler-lower-c-abi-result-frame-storage-ok?
+      (lower.CompilerLowerMode.WindowsScalar))))
 
 (define (compiler-lower-c-abi-windows-nested-small-aggregate-shape-ok?) : bool
   (match (lower-test-functions
@@ -5804,9 +5848,9 @@
           1)
         (= (lower-test-count functions "main" (LowerTestInstr.IndirectCCall)) 4)
         ;; The two by-reference `WideChoice` arguments are copied into
-        ;; frame temporaries (#7885). The two allocations left are the
-        ;; hidden-sret result buffers of the `ReturnChoice` calls (#7990).
-        (= (lower-test-function-call-count functions "main" "tl_alloc") 2))]
+        ;; frame temporaries (#7885), and the hidden-sret result buffers
+        ;; of the `ReturnChoice` calls are frame storage too (#7990).
+        (= (lower-test-function-call-count functions "main" "tl_alloc") 0))]
     [_ false]))
 
 (define (compiler-lower-global-source) : String

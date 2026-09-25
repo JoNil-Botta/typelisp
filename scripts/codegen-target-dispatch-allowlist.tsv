@@ -16,6 +16,7 @@ src/compiler_lower.tl	lower-mode-windows-c-abi?	abi	lower-mode-windows-c-abi[?]	
 src/compiler_lower.tl	lower-mode-c-abi?	abi	lower-mode-(linux|windows)-c-abi[?]	2	Combined C ABI helper intentionally delegates to target-specific ABI predicates.
 src/compiler_lower_tests.tl	compiler-lower-c-abi-linux-payload-enum-shape-ok?	test-only	CompilerLowerMode.LinuxScalar	1	Inline lowerer test asserts Linux C ABI payload enum aggregate shape.
 src/compiler_lower_tests.tl	compiler-lower-c-abi-linux-tag-only-enum-shape-ok?	test-only	CompilerLowerMode.LinuxScalar	1	Inline lowerer test asserts Linux C ABI enum aggregate shape.
+src/compiler_lower_tests.tl	compiler-lower-c-abi-result-frame-storage-shape-ok?	test-only	CompilerLowerMode[.](Linux|Windows)Scalar	2	Inline lowerer test asserts C ABI aggregate results use frame storage on both targets.
 src/compiler_lower_tests.tl	compiler-lower-c-abi-windows-byref-aggregate-shape-ok?	test-only	CompilerLowerMode.WindowsScalar	1	Inline lowerer test asserts Win64 by-reference aggregate shape.
 src/compiler_lower_tests.tl	compiler-lower-c-abi-windows-byref-aggregate-temps-shape-ok?	test-only	CompilerLowerMode.WindowsScalar	1	Inline lowerer test asserts distinct Win64 by-reference argument temporaries.
 src/compiler_lower_tests.tl	compiler-lower-c-abi-windows-enum-aggregate-shape-ok?	test-only	CompilerLowerMode.WindowsScalar	1	Inline lowerer test asserts Win64 enum aggregate shape.

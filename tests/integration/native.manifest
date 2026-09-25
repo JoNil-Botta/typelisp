@@ -329,8 +329,8 @@ tail_call_stack_args|all|-|tests/integration/tail_call_stack_args.tl|42|-|-|-|-
 tail_aggregate_return|all|-|tests/integration/tail_aggregate_return.tl|42|-|-|-|-
 aggregate_return_no_alloc|all|-|tests/integration/aggregate_return_no_alloc.tl|42|-|-|stdlib/profile.tl stdlib/string.tl|-
 aggregate_return_no_alloc|all|0,2|tests/integration/aggregate_return_no_alloc.tl|42|-|-|stdlib/profile.tl stdlib/string.tl|stage-stdlib
-c_abi_aggregate_arg_no_alloc|all|-|tests/integration/c_abi_aggregate_arg_no_alloc.tl|42|-|-|benchmarks/c_abi_aggregate_arg_no_alloc/baseline.c stdlib/profile.tl|-
-c_abi_aggregate_arg_no_alloc|all|0,2|tests/integration/c_abi_aggregate_arg_no_alloc.tl|42|-|-|benchmarks/c_abi_aggregate_arg_no_alloc/baseline.c stdlib/profile.tl|stage-stdlib
+c_abi_aggregate_no_alloc|all|-|tests/integration/c_abi_aggregate_no_alloc.tl|42|-|-|benchmarks/c_abi_aggregate_no_alloc/baseline.c stdlib/profile.tl|-
+c_abi_aggregate_no_alloc|all|0,2|tests/integration/c_abi_aggregate_no_alloc.tl|42|-|-|benchmarks/c_abi_aggregate_no_alloc/baseline.c stdlib/profile.tl|stage-stdlib
 tuple_inline_storage_lifetime|all|-|tests/integration/tuple_inline_storage_lifetime.tl|42|-|-|stdlib/string.tl|-
 tuple_inline_storage_lifetime|all|0,2|tests/integration/tuple_inline_storage_lifetime.tl|42|-|-|stdlib/string.tl|stage-stdlib
 tail_direct_mutual|all|-|tests/integration/tail_direct_mutual.tl|42|-|-|-|-

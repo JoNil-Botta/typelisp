@@ -275,8 +275,6 @@
     [(ir.CompilerIrInstr.Gep dst _ _ _) (not (opt.opt-used-contains set dst))]
     [(ir.CompilerIrInstr.Cast dst _ _ _) (not (opt.opt-used-contains set dst))]
     [(ir.CompilerIrInstr.Load dst _ _) (not (opt.opt-used-contains set dst))]
-    [(ir.CompilerIrInstr.LoadOwned dst _ _ _)
-      (not (opt.opt-used-contains set dst))]
     [(ir.CompilerIrInstr.BinOp dst op _ rhs ty)
       (and
         (not (opt.opt-dce-binop-traps? op rhs ty))
@@ -4954,9 +4952,9 @@
               (opt-agsplit-gep 2 1 8)
               (opt-agsplit-store-literal 2 11)
               (opt-agsplit-load 3 2)
-              (ir.CompilerIrInstr.OwnRoot
-                4
+              (ir.CompilerIrInstr.StoreOwned
                 (ir.CompilerIrValue.Var 1)
+                (ir.CompilerIrValue.Var 3)
                 (ast.AstType.String))
               (ir.CompilerIrInstr.Return
                 (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 3)))))
@@ -94169,10 +94167,9 @@
         (= mode 7)
         (ir.compiler-ir-instr-builder-push!
           (&mut builder)
-          (ir.CompilerIrInstr.LoadOwned
+          (ir.CompilerIrInstr.Load
             20
-            (ir.CompilerIrValue.Var 2)
-            10
+            (ir.CompilerIrValue.Var 10)
             (ast.AstType.I64))))
       (when
         (= mode 8)

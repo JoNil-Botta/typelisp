@@ -1874,8 +1874,6 @@
   (match instr
     [(ir.CompilerIrInstr.Mov dst _ ty)
       (compiler-reg-var-type-array-set! present types dst ty)]
-    [(ir.CompilerIrInstr.OwnRoot dst _ ty)
-      (compiler-reg-var-type-array-set! present types dst ty)]
     [(ir.CompilerIrInstr.AddrOf dst _)
       (compiler-reg-var-type-array-set!
         present
@@ -1889,8 +1887,6 @@
         dst
         (compiler-reg-addr-of-result-type))]
     [(ir.CompilerIrInstr.Load dst _ ty)
-      (compiler-reg-var-type-array-set! present types dst ty)]
-    [(ir.CompilerIrInstr.LoadOwned dst _ _ ty)
       (compiler-reg-var-type-array-set! present types dst ty)]
     [(ir.CompilerIrInstr.Cast dst _ _ to-ty)
       (compiler-reg-var-type-array-set! present types dst to-ty)]
@@ -38771,9 +38767,7 @@
     ;; These read no operand that invalidates a colour.
     [(ir.CompilerIrInstr.Alloc _ _) unit]
     [(ir.CompilerIrInstr.AddrOf _ _) unit]
-    [(ir.CompilerIrInstr.OwnRoot _ _ _) unit]
     [(ir.CompilerIrInstr.Load _ _ _) unit]
-    [(ir.CompilerIrInstr.LoadOwned _ _ _ _) unit]
     [(ir.CompilerIrInstr.CopyBytes _ _ _) unit]
     [(ir.CompilerIrInstr.LaneId _ _ _) unit]
     [(ir.CompilerIrInstr.EntryArgc _) unit]
@@ -41327,20 +41321,8 @@
   [remap : (__tl_dyn-array i64)]
   [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
   (match (compiler-reg-global-shared-view instr)
-    ;; The ownership capabilities have served their purpose once optimization
-    ;; is complete. Erase them at the SSA-to-home boundary so a home id reused
-    ;; by register allocation can never be mistaken for the original owner
-    ;; identity.
-    [(ir.CompilerIrInstr.OwnRoot dst value ty)
-      (ir.CompilerIrInstr.Mov
-        (compiler-reg-remap-id (compiler-reg-global-shared-view remap) dst)
-        (compiler-reg-remap-value remap value)
-        ty)]
-    [(ir.CompilerIrInstr.LoadOwned dst src _ ty)
-      (ir.CompilerIrInstr.Load
-        (compiler-reg-remap-id (compiler-reg-global-shared-view remap) dst)
-        (compiler-reg-remap-value remap src)
-        ty)]
+    ;; The ownership edge has served its purpose once optimization is
+    ;; complete. Erase it at the SSA-to-home boundary.
     [(ir.CompilerIrInstr.StoreOwned ptr value ty)
       (ir.CompilerIrInstr.StorePtr
         (compiler-reg-remap-value (compiler-reg-global-shared-view remap) ptr)
@@ -42654,16 +42636,6 @@
             0)
           operands))]
     [(ir.CompilerIrInstr.Load dst src _)
-      (+
-        (if (compiler-reg-scratch-value-spilled?
-          (compiler-reg-global-shared-view assignments)
-          src)
-          1
-          0)
-        (if (compiler-reg-scratch-var-spilled? assignments dst)
-          1
-          0))]
-    [(ir.CompilerIrInstr.LoadOwned dst src _ _)
       (+
         (if (compiler-reg-scratch-value-spilled?
           (compiler-reg-global-shared-view assignments)

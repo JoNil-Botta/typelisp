@@ -53703,24 +53703,6 @@
                 (compiler-backend-apply-instr-diagnostic
                   (deref message)
                   instr-diag)))])]
-      [(compiler_ir_types.CompilerIrInstr.OwnRoot dst src ty)
-        (match (compiler-backend-emit-class-correct-mov-with-plan
-          ctx.type-segment-bases
-          ctx.assignments
-          ctx.blocks
-          dst
-          src
-          ty
-          ctx.program-index
-          ctx.vars
-          ctx.backend-state)
-          [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
-          [(ResultCompilerBackend.Err message)
-            (ResultCompilerBackend.Err
-              (box
-                (compiler-backend-apply-instr-diagnostic
-                  (deref message)
-                  instr-diag)))])]
       [(compiler_ir_types.CompilerIrInstr.Alloc _ _)
         (ResultCompilerBackend.Ok "")]
       [(compiler_ir_types.CompilerIrInstr.AddrOf dst src)
@@ -53758,23 +53740,6 @@
                   (deref message)
                   instr-diag)))])]
       [(compiler_ir_types.CompilerIrInstr.Load dst src ty)
-        (match (compiler-backend-emit-load-instr
-          ctx.type-segment-bases
-          ctx.assignments
-          dst
-          src
-          ty
-          ""
-          ""
-          ctx.backend-state)
-          [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
-          [(ResultCompilerBackend.Err message)
-            (ResultCompilerBackend.Err
-              (box
-                (compiler-backend-apply-instr-diagnostic
-                  (deref message)
-                  instr-diag)))])]
-      [(compiler_ir_types.CompilerIrInstr.LoadOwned dst src _ ty)
         (match (compiler-backend-emit-load-instr
           ctx.type-segment-bases
           ctx.assignments
@@ -54817,9 +54782,7 @@
 ;; Every use counts, Pack words included, so the single-use fusion peepholes
 ;; cannot elide the home store of a var a Pack/Word still reads (-O2 copy-prop
 ;; substitutes vars directly into Pack/Word operands); so does AddrOf's storage
-;; var. LoadOwned's owner is optimizer-only evidence, not a machine operand:
-;; counting it after register allocation could confuse a reused physical-home id
-;; with a real backend use (and therefore with that home's unrelated width).
+;; var.
 (define (compiler-backend-count-instr-uses
   [counts : (__tl_dyn-array i64)]
   [instr : compiler_ir_types.CompilerIrInstr]) : unit
@@ -75214,7 +75177,6 @@
     ;; them as destinations.
     [(compiler_ir_types.CompilerIrInstr.TailCall name _ _) name]
     [(compiler_ir_types.CompilerIrInstr.Store name _ _) name]
-    [(compiler_ir_types.CompilerIrInstr.OwnRoot _ _ _) (- 0 2)]
     [(compiler_ir_types.CompilerIrInstr.StoreOwned _ _ _) (- 0 2)]
     [(compiler_ir_types.CompilerIrInstr.VectorBinOp _) (- 0 2)]
     [(compiler_ir_types.CompilerIrInstr.VectorPrefix _) (- 0 2)]
@@ -81556,8 +81518,6 @@
   (match instr
     [(compiler_ir_types.CompilerIrInstr.Mov _ src _)
       (compiler-backend-collect-value-collections collections src)]
-    [(compiler_ir_types.CompilerIrInstr.OwnRoot _ src _)
-      (compiler-backend-collect-value-collections collections src)]
     [(compiler_ir_types.CompilerIrInstr.BinOp _ _ lhs rhs _)
       (compiler-backend-collect-value-collections
         (compiler-backend-collect-value-collections collections lhs)
@@ -81665,8 +81625,6 @@
         (compiler-backend-collect-value-collections collections base)
         offset)]
     [(compiler_ir_types.CompilerIrInstr.Load _ src _)
-      (compiler-backend-collect-value-collections collections src)]
-    [(compiler_ir_types.CompilerIrInstr.LoadOwned _ src _ _)
       (compiler-backend-collect-value-collections collections src)]
     [(compiler_ir_types.CompilerIrInstr.StorePtr dst src _)
       (compiler-backend-collect-value-collections
@@ -87380,23 +87338,6 @@
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]) : object_target.CompilerBackendObjectTargetParts
   (match (compiler-backend-global-shared-view instr)
-    [(compiler_ir_types.CompilerIrInstr.LoadOwned dst src _ ty)
-      (compiler-backend-object-load-ptr-to-var
-        type-segment-bases
-        parts
-        function
-        dst
-        src
-        ty
-        program-index)]
-    [(compiler_ir_types.CompilerIrInstr.OwnRoot dst src ty)
-      (compiler-backend-object-move-value-to-var
-        parts
-        function
-        dst
-        src
-        ty
-        program-index)]
     [(compiler_ir_types.CompilerIrInstr.Mov dst src ty)
       (if (compiler-backend-copy-group?
         type-segment-bases
@@ -89105,10 +89046,6 @@
   [backend-state : CompilerBackendState]
   [instr : compiler_ir_types.CompilerIrInstr]) : bool
   (match instr
-    [(compiler_ir_types.CompilerIrInstr.LoadOwned _ src _ _)
-      (compiler-backend-object-semantic-value-supported? src)]
-    [(compiler_ir_types.CompilerIrInstr.OwnRoot _ src _)
-      (compiler-backend-object-semantic-value-supported? src)]
     [(compiler_ir_types.CompilerIrInstr.Mov _ src _)
       (compiler-backend-object-semantic-value-supported? src)]
     [(compiler_ir_types.CompilerIrInstr.BinOp _ op lhs rhs ty)

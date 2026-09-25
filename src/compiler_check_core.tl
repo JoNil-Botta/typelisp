@@ -171,7 +171,7 @@
           [(ResultCompilerCheck.Err semantic-diagnostics advisories)
             (begin
               (compiler-check-diagnostic-list-insert-all-source-order
-                (owned_view.compiler-owned-box-shared-view semantic-diagnostics)
+                (deref semantic-diagnostics)
                 (&mut owned-parse))
               (ResultCompilerCheck.Err (box owned-parse) advisories))])))))
 
@@ -196,12 +196,12 @@
     (match (compiler_typecheck_api.typecheck-compiler-program-with-paths-cache-and-load-state-and-prefix-cache-state-and-pools
       (compiler_load.compiler-load-serial-test-session-state)
       (tc.tc-prefix-snapshot-serial-test-cache-state-shared-view)
-      (owned_view.compiler-owned-shared-view job-state)
-      (ast.ast-program (owned_view.compiler-owned-shared-view decls))
-      (owned_view.compiler-owned-shared-view paths)
-      (owned_view.compiler-owned-shared-view stdlib-roots)
-      (owned_view.compiler-owned-shared-view cfgs)
-      (owned_view.compiler-owned-shared-view cache-scope)
+      job-state
+      (ast.ast-program decls)
+      paths
+      stdlib-roots
+      cfgs
+      cache-scope
       (ast.ast-node-pool-context-capture-active))
       [(tc.ResultCompilerTypecheck.Ok summary)
         (begin
@@ -214,9 +214,7 @@
           (cfg compile-profile (compiler-check-profile-finish "typecheck"))
           (ResultCompilerCheck.Err
             (box
-              (compiler-check-diagnostics-with-fallback-path
-                (owned_view.compiler-owned-box-shared-view diag)
-                path))
+              (compiler-check-diagnostics-with-fallback-path (deref diag) path))
             (compiler-check-advisories-for-job job-state)))])))
 
 (define (compiler-check-program-with-paths-cache
@@ -227,11 +225,11 @@
   [cfgs : sym_i64_env.SymI64Env]
   [cache-scope : String]) : ResultCompilerCheck
   (compiler-check-program-with-paths-cache-and-job-state
-    (owned_view.compiler-owned-shared-view path)
+    path
     decls
     paths
     stdlib-roots
-    (owned_view.compiler-owned-shared-view cfgs)
+    cfgs
     cache-scope
     (tc.tc-serial-job-state)))
 
@@ -261,7 +259,7 @@
             prelude-paths
             (ast.ast-decl-path-list-with-modules entry-paths entry-modules))
           stdlib-roots
-          (owned_view.compiler-owned-shared-view cfgs)
+          cfgs
           cache-scope
           job-state))]
     [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
@@ -285,7 +283,7 @@
     prelude-paths
     loaded
     stdlib-roots
-    (owned_view.compiler-owned-shared-view cfgs)
+    cfgs
     cache-scope
     (tc.tc-serial-job-state)))
 
@@ -301,8 +299,8 @@
   [job-state : tc.TcJobState]) : ResultCompilerCheck
   (match (parser.parse-ast-source-recovery-diagnostic-with-cfg
     (owned_view.compiler-owned-shared-view path)
-    (owned_view.compiler-owned-shared-view source)
-    (owned_view.compiler-owned-shared-view cfgs))
+    source
+    cfgs)
     [(parser.ResultAstProgramRecovery.Fatal diagnostics)
       (begin
         (cfg compile-profile (compiler-check-profile-finish "load"))
@@ -314,8 +312,7 @@
         [parse-identity : compiler_load.CompilerLoadParseIdentity
           (compiler_load.compiler-load-parse-identity
             (owned_view.compiler-owned-shared-view path)
-            (compiler_load.compiler-load-canonical-module-id-from-path
-              (owned_view.compiler-owned-shared-view path))
+            (compiler_load.compiler-load-canonical-module-id-from-path path)
             ast.AstMaybeModuleName.No)]
         [loaded : compiler_load.ResultCompilerLoadWithPaths
           (compiler_load.compiler-load-program-with-paths-and-roots-expect-cfg
@@ -327,14 +324,14 @@
             cfgs
             parse-identity)]
         (compiler-check-result-with-parse-diagnostics
-          (owned_view.compiler-owned-box-shared-view diagnostics)
+          (deref diagnostics)
           (compiler-check-loaded-with-prelude-cache-and-job-state
             path
             prelude-decls
             prelude-paths
             loaded
-            (owned_view.compiler-owned-shared-view stdlib-roots)
-            (owned_view.compiler-owned-shared-view cfgs)
+            stdlib-roots
+            cfgs
             cache-scope
             job-state)))]))
 
@@ -355,8 +352,8 @@
             path
             decls
             (owned_view.compiler-owned-shared-view owned-paths)
-            (owned_view.compiler-owned-shared-view stdlib-roots)
-            (owned_view.compiler-owned-shared-view cfgs)
+            stdlib-roots
+            cfgs
             cache-scope)
             [(ResultCompilerCheck.Ok summary advisories)
               (ResultCompilerCheckWithPaths.Ok summary owned-paths advisories)]
@@ -399,8 +396,8 @@
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerCheck
   (match (parser.parse-ast-source-recovery-diagnostic-with-cfg
     (owned_view.compiler-owned-shared-view path)
-    (owned_view.compiler-owned-shared-view source)
-    (owned_view.compiler-owned-shared-view cfgs))
+    source
+    cfgs)
     [(parser.ResultAstProgramRecovery.Fatal diagnostics)
       (begin
         (cfg compile-profile (compiler-check-profile-finish "load"))
@@ -410,8 +407,7 @@
         [parse-identity : compiler_load.CompilerLoadParseIdentity
           (compiler_load.compiler-load-parse-identity
             (owned_view.compiler-owned-shared-view path)
-            (compiler_load.compiler-load-canonical-module-id-from-path
-              (owned_view.compiler-owned-shared-view path))
+            (compiler_load.compiler-load-canonical-module-id-from-path path)
             ast.AstMaybeModuleName.No)]
         [loaded : compiler_load.ResultCompilerLoadWithPaths
           (compiler_load.compiler-load-package-program-with-paths-and-roots-expect
@@ -422,20 +418,20 @@
             ast.AstMaybeModuleName.No
             manifest-dir
             deps
-            (owned_view.compiler-owned-shared-view cfgs)
+            cfgs
             parse-identity)]
         (compiler-check-result-with-parse-diagnostics
-          (owned_view.compiler-owned-box-shared-view diagnostics)
+          (deref diagnostics)
           (compiler-check-loaded-with-prelude-cache
             path
             prelude-decls
             prelude-paths
             loaded
             (owned_view.compiler-owned-shared-view stdlib-roots)
-            (owned_view.compiler-owned-shared-view cfgs)
+            cfgs
             (compiler_typecheck_api.compiler-typecheck-prefix-cache-scope
               "typecheck-prefix-check"
-              (owned_view.compiler-owned-shared-view stdlib-roots)
+              stdlib-roots
               cfgs))))]))
 
 (define (compiler-check-package-source-with-roots-and-cfg
@@ -454,7 +450,7 @@
       (owned_view.compiler-owned-shared-view stdlib-roots)
       (owned_view.compiler-owned-shared-view manifest-dir)
       (owned_view.compiler-owned-shared-view deps)
-      (owned_view.compiler-owned-shared-view cfgs))
+      cfgs)
       [(compiler_load.ResultCompilerLoadWithPaths.Ok
           prelude-decls
           prelude-paths
@@ -491,17 +487,17 @@
     (compiler-check-loaded-cache-with-paths
       (owned_view.compiler-owned-shared-view path)
       (compiler_load.compiler-load-package-file-with-runtime-cfg
-        (owned_view.compiler-owned-shared-view path)
+        path
         (owned_view.compiler-owned-shared-view stdlib-roots)
-        (owned_view.compiler-owned-shared-view manifest-dir)
-        (owned_view.compiler-owned-shared-view deps)
+        manifest-dir
+        deps
         emit-entry
-        (owned_view.compiler-owned-shared-view cfgs))
+        cfgs)
       (owned_view.compiler-owned-shared-view stdlib-roots)
-      (owned_view.compiler-owned-shared-view cfgs)
+      cfgs
       (compiler_typecheck_api.compiler-typecheck-prefix-cache-scope
         "typecheck-prefix-check"
-        (owned_view.compiler-owned-shared-view stdlib-roots)
+        stdlib-roots
         cfgs))))
 
 (define (compiler-check-source [path : String] [source : String]) : ResultCompilerCheck
@@ -524,7 +520,7 @@
     (match (compiler_load.compiler-load-core-macro-prelude-with-roots-cfg
       (sym_i64_env.sym-i64-empty)
       (owned_view.compiler-owned-shared-view stdlib-roots)
-      (owned_view.compiler-owned-shared-view cfgs))
+      cfgs)
       [(compiler_load.ResultCompilerLoadWithPaths.Ok
           prelude-decls
           prelude-paths
@@ -537,10 +533,10 @@
           (ast.ast-decl-path-list-with-modules prelude-paths prelude-modules)
           prelude-seen
           (owned_view.compiler-owned-shared-view stdlib-roots)
-          (owned_view.compiler-owned-shared-view cfgs)
+          cfgs
           (compiler_typecheck_api.compiler-typecheck-prefix-cache-scope
             "typecheck-prefix-check"
-            (owned_view.compiler-owned-shared-view stdlib-roots)
+            stdlib-roots
             cfgs)
           job-state)]
       [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
@@ -602,15 +598,15 @@
     (tc.tc-job-state-reset-advisories! (tc.tc-serial-job-state))
     (match (parser.parse-ast-source-recovery-diagnostic-with-cfg
       (owned_view.compiler-owned-shared-view path)
-      (owned_view.compiler-owned-shared-view source)
+      source
       (compiler-check-language-cfgs))
       [(parser.ResultAstProgramRecovery.Parsed program diagnostics)
         (compiler-check-result-with-parse-diagnostics
-          (owned_view.compiler-owned-box-shared-view diagnostics)
-          (match (owned_view.compiler-owned-shared-view program)
+          (deref diagnostics)
+          (match program
             [(ast.AstProgram.Program decls-box)
               (compiler-check-program-with-paths-cache
-                (owned_view.compiler-owned-shared-view path)
+                path
                 (ast.ast-decl-list-box-shared-view decls-box)
                 (ast.ast-decl-path-list-new)
                 (svec.new)
@@ -727,12 +723,10 @@
 (define (compiler-check-inline-layout-name-ok?
   [ctx : tc.TcContext]
   [name : String]) : bool
-  (match (compiler_typecheck_api.compiler-typecheck-context-program
-    (owned_view.compiler-owned-shared-view ctx))
+  (match (compiler_typecheck_api.compiler-typecheck-context-program ctx)
     [(ast.AstProgram.Program decls-box)
       (let
-        [decls : ast.AstDeclList
-          (owned_view.compiler-owned-box-shared-view decls-box)]
+        [decls : ast.AstDeclList (deref decls-box)]
         [index : i64 0]
         [name-id : i64 -1]
         (begin
@@ -788,23 +782,13 @@
                       cbi.compiler-builtin-id-fix-empty
                       (ast.ast-node-pool-context-capture-active))]
                   (and
+                    (compiler-check-inline-layout-name-ok? ctx "AstTypeList")
+                    (compiler-check-inline-layout-name-ok? ctx "AstExprList")
+                    (compiler-check-inline-layout-name-ok? ctx "AstPatternList")
+                    (compiler-check-inline-layout-name-ok? ctx "AstDeclList")
+                    (compiler-check-inline-layout-name-ok? ctx "AstParamList")
                     (compiler-check-inline-layout-name-ok?
-                      (owned_view.compiler-owned-shared-view ctx)
-                      "AstTypeList")
-                    (compiler-check-inline-layout-name-ok?
-                      (owned_view.compiler-owned-shared-view ctx)
-                      "AstExprList")
-                    (compiler-check-inline-layout-name-ok?
-                      (owned_view.compiler-owned-shared-view ctx)
-                      "AstPatternList")
-                    (compiler-check-inline-layout-name-ok?
-                      (owned_view.compiler-owned-shared-view ctx)
-                      "AstDeclList")
-                    (compiler-check-inline-layout-name-ok?
-                      (owned_view.compiler-owned-shared-view ctx)
-                      "AstParamList")
-                    (compiler-check-inline-layout-name-ok?
-                      (owned_view.compiler-owned-shared-view ctx)
+                      ctx
                       "AstVariantDefList")))]
               [(csym.ResultCompilerRegistries.Err _) false])]
           [(csym.ResultCompilerSymbols.Err _) false]))]

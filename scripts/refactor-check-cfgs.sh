@@ -37,6 +37,7 @@ for target in linux-x86_64 windows-x86_64; do
     check "$target" compile-profile compile-profile-summary compile-startup-profile
     check "$target" embedded-stdlib-tlci compiler-build-identity
     check "$target" embedded-stdlib-tlci tlci-native-route-stress dependency-tlci-verification tlci-bootstrap-mutation-witness
+    check "$target" compile-profile compiler-build-identity embedded-stdlib-tlci tlci-native-route-stress dependency-tlci-verification
     check "$target" compiler-surface-producer compiler-surface-selftest
     check "$target" compiler-backtrace compiler-arena-debug
 done

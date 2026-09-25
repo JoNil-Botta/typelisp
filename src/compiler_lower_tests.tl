@@ -7686,13 +7686,6 @@
               4))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
-(define (compiler-lower-c-abi-result-frame-storage-shape-ok?) : bool
-  (and
-    (compiler-lower-c-abi-result-frame-storage-ok?
-      (compiler_lower.CompilerLowerMode.LinuxScalar))
-    (compiler-lower-c-abi-result-frame-storage-ok?
-      (compiler_lower.CompilerLowerMode.WindowsScalar))))
-
 (define (compiler-lower-c-abi-windows-nested-small-aggregate-shape-ok?) : bool
   (match (compiler_lower.lower-compiler-source-with-mode
     (compiler-lower-c-abi-windows-nested-small-aggregate-source)

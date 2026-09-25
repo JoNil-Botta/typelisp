@@ -99,6 +99,45 @@
                     (CompilerLzssFrame.Err
                       "compiler lzss: impossible raw length")))])))])))
 
+;: Copy one back-reference: `length` bytes starting `distance` bytes before
+;: `out-index` to `out-index`, in the output buffer whose data pointer is
+;: `out-data`. The caller has already checked that both ranges lie inside the
+;: buffer. A source at least eight bytes back is final for a whole word
+;: ahead, so words copy it exactly as the byte loop would; a nearer,
+;: overlapping source and the tail go byte by byte. Shared by this decoder and
+;: the embedded stdlib TLCH envelope, which decodes the same token stream.
+;: `distance` and `length` must be plain locals: they are read repeatedly.
+(defmacro (compiler-lzss-copy-match!
+  [out-data : Expr]
+  [out-index : Expr]
+  [distance : Expr]
+  [length : Expr]) : unit
+  `(let
+    [dst : (MutPtr u8)
+      (unsafe
+        (ptr-offset ,out-data ,out-index))]
+    [copied : i64 0]
+    (begin
+      (when
+        (>= ,distance 8)
+        (let
+          [words : i64 (- ,length 7)]
+          (while (< copied words)
+            (begin
+              (unsafe
+                (ptr-write!
+                  (ptr-cast (ptr-offset dst copied) : (MutPtr i64))
+                  (ptr-read
+                    (ptr-cast (ptr-offset dst (- copied ,distance)) : (Ptr i64)))))
+              (set! copied (+ copied 8))))))
+      (while (< copied ,length)
+        (begin
+          (unsafe
+            (ptr-write!
+              (ptr-offset dst copied)
+              (ptr-read (ptr-offset dst (- copied ,distance)))))
+          (set! copied (+ copied 1)))))))
+
 (define (compiler-lzss-decode-tokens
   [payload : (& payload (__tl_dyn-array u8))]
   [compressed-start : i64]
@@ -179,15 +218,14 @@
                                   error
                                   "compiler lzss: token exceeds raw length"))]
                             [else
-                              (let
-                                [copy-index : i64 0]
-                                (while (< copy-index length)
-                                  (begin
-                                    (set!
-                                      (array-ref out out-index)
-                                      (array-ref out (- out-index offset)))
-                                    (set! out-index (+ out-index 1))
-                                    (set! copy-index (+ copy-index 1)))))])))))
+                              (begin
+                                (compiler-lzss-copy-match!
+                                  (unsafe
+                                    (__tl_array-data out))
+                                  out-index
+                                  offset
+                                  length)
+                                (set! out-index (+ out-index length)))])))))
                   (set! bit (+ bit 1))))))))
       (cond
         [(not valid) (CompilerLzssBytes.Err error)]

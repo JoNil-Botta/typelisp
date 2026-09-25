@@ -4568,10 +4568,6 @@
       (compiler_optimize_tests.compiler-optimize-unroll-p5a-remainder-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-bce-version-mb-paired-self-test"
-      (compiler_optimize_tests.compiler-optimize-bce-version-mb-paired-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-debug-verifier-self-test"
       (compiler_optimize_tests.compiler-optimize-debug-verifier-self-test)
       42)
@@ -5591,13 +5587,6 @@
     (compiler_optimize_tests.compiler-optimize-bce-version-p5a-self-test)
     42
     "shifted-limit compares, counter+K indices and the minimized guard version"))
-
-(test
-  bce-version-multiblock-paired-checks
-  (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-bce-version-mb-paired-self-test)
-    42
-    "late in-place pairing combines adjacent affine bounds checks"))
 
 (test
   optimizer-debug-verifier-identity

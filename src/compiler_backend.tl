@@ -15753,7 +15753,7 @@
               (set! index (+ index 1))))
           (compiler-backend-plan-body-reg-mask-var
             assignments
-            (compiler_liveness.compiler-live-instr-def-var instr)
+            (compiler_ir_types.compiler-ir-instr-dst instr)
             out))))))
 
 (define (compiler-backend-plan-body-reg-mask
@@ -27732,7 +27732,7 @@
           [_
             (compiler-backend-shift-count-bounds-note!
               (compiler-backend-global-shared-view bounds)
-              (compiler_liveness.compiler-live-instr-def-var
+              (compiler_ir_types.compiler-ir-instr-dst
                 (compiler-backend-global-array-element-shared-view slots index))
               -1)])
         (set! index (+ index 1))))))
@@ -69477,7 +69477,7 @@
         true)
       (compiler-backend-use-count-inc
         (compiler-backend-global-shared-view mask-counts)
-        (compiler_regalloc.compiler-reg-instr-def-var
+        (compiler_ir_types.compiler-ir-instr-dst
           (compiler-backend-global-shared-view instr)))
       (compiler-backend-count-instr-uses mask-counts instr)
       (compiler-backend-function-state-set-bool!
@@ -74496,7 +74496,7 @@
             (begin
               (let
                 [dst : i64
-                  (compiler_regalloc.compiler-reg-instr-def-var
+                  (compiler_ir_types.compiler-ir-instr-dst
                     (compiler-backend-global-array-element-shared-view slots j))]
                 (if (and (>= dst 0) (< dst (array-length defs)))
                   (set! (array-ref defs dst) (+ (array-ref defs dst) 1))
@@ -74639,7 +74639,7 @@
     (begin
       (while (<= j to)
         (if (=
-          (compiler_regalloc.compiler-reg-instr-def-var
+          (compiler_ir_types.compiler-ir-instr-dst
             (compiler-backend-global-array-element-shared-view slots j))
           var)
           (begin

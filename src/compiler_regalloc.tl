@@ -3955,7 +3955,7 @@
         segments
         segment-starts
         segment-ends
-        (live.compiler-live-instr-def-var instr)
+        (ir.compiler-ir-instr-dst instr)
         ids
         id-count
         live-after
@@ -4052,7 +4052,7 @@
           (compiler-reg-extend-interval
             (&mut starts)
             (&mut ends)
-            (live.compiler-live-instr-def-var instr)
+            (ir.compiler-ir-instr-dst instr)
             point)
           (compiler-reg-extend-interval-ids!
             (&mut starts)
@@ -4947,7 +4947,7 @@
           (&mut segment-starts)
           (&mut segment-ends)
           mask
-          (live.compiler-live-instr-def-var instr)
+          (ir.compiler-ir-instr-dst instr)
           point)
         (compiler-reg-ep-touch-ids!
           (compiler-reg-global-shared-view segments)
@@ -5291,7 +5291,7 @@
           (if (and
             (>= var 0)
             (=
-              (compiler-reg-instr-def-var
+              (ir.compiler-ir-instr-dst
                 (compiler-reg-global-array-element-shared-view slots index))
               var))
             (set! found true)
@@ -5340,7 +5340,7 @@
           (if (and
             (>= var 0)
             (=
-              (compiler-reg-instr-def-var
+              (ir.compiler-ir-instr-dst
                 (compiler-reg-global-array-element-shared-view slots index))
               var))
             (set! found index)
@@ -9129,15 +9129,6 @@
 ;; for proven same-value pairs; the geometry predicate is unchanged, and the
 ;; all-pairs class-compatibility check still rejects any class that would mix a
 ;; distinct-value var with an overlapping member.
-;; The single var an instruction defines, or -1. This is
-;; `live.compiler-live-instr-def-var`, the same decode the liveness def set is
-;; built from, so the def census can never disagree with liveness about where a
-;; var is defined (a missed def site would understate a multi-def var and is the
-;; one unsound failure mode). Mirrors the def list of
-;; compiler-reg-instr-def-type-array!.
-(define (compiler-reg-instr-def-var [instr : ir.CompilerIrInstr]) : i64
-  (live.compiler-live-instr-def-var instr))
-
 (define (compiler-reg-count-def!
   [counts : (&mut counts (__tl_dyn-array i64))]
   [var : i64]) : unit
@@ -9157,7 +9148,7 @@
         (begin
           (compiler-reg-count-def!
             counts
-            (compiler-reg-instr-def-var
+            (ir.compiler-ir-instr-dst
               (compiler-reg-global-array-element-shared-view slots index)))
           (set! index (+ index 1))))
       unit)))
@@ -9548,7 +9539,7 @@
         (begin
           (let
             [v : i64
-              (compiler-reg-instr-def-var
+              (ir.compiler-ir-instr-dst
                 (compiler-reg-global-array-element-shared-view slots index))]
             (if (and (>= v 0) (< v (array-length cursor)))
               (let
@@ -13121,7 +13112,7 @@
         (compiler-reg-ref-counts-add-ids-weighted! counts ids id-count weight)
         (compiler-reg-ref-counts-add-var-weighted!
           counts
-          (live.compiler-live-instr-def-var instr)
+          (ir.compiler-ir-instr-dst instr)
           weight)))))
 
 (define (compiler-reg-ref-counts-seq!
@@ -13261,7 +13252,7 @@
                   unit)
                 (set! index (+ index 1)))))
           (let
-            [def-var : i64 (live.compiler-live-instr-def-var instr)]
+            [def-var : i64 (ir.compiler-ir-instr-dst instr)]
             (if (and (>= def-var 0) (< def-var (array-length marks)))
               (set! (array-ref marks def-var) true)
               unit)))))))
@@ -14496,7 +14487,7 @@
       (live.compiler-live-instr-use-ids!
         (compiler-reg-global-shared-view instr))]
     [def-var : i64
-      (live.compiler-live-instr-def-var (compiler-reg-global-shared-view instr))]
+      (ir.compiler-ir-instr-dst (compiler-reg-global-shared-view instr))]
     (begin
       (if (< id-count 0)
         (let
@@ -22762,7 +22753,7 @@
                           weight))
                       (compiler-reg-call-hole-max-weight-var!
                         maxw
-                        (live.compiler-live-instr-def-var instr)
+                        (ir.compiler-ir-instr-dst instr)
                         weight)))
                   (set! i (+ i 1)))))])
         (set! index (+ index 1))))))
@@ -22804,7 +22795,7 @@
 ;; instruction and not defined BY it -- a value live after a point it does not
 ;; define was necessarily live before it, so the two tests are the whole
 ;; condition. Every IR instruction defines at most one var
-;; (`compiler-live-instr-defs` is a singleton of `compiler-live-instr-def-var`),
+;; (`compiler-live-instr-defs` is a singleton of `ir.compiler-ir-instr-dst`),
 ;; so the def test is one comparison and no set is built.
 ;; Charge one crossing to every eligible value live THROUGH this clobber, at
 ;; exactly the price the rewrite will pay: a store AND a reload the first time,
@@ -23044,7 +23035,7 @@
                                 slots
                                 i)]
                             [def-var : i64
-                              (live.compiler-live-instr-def-var
+                              (ir.compiler-ir-instr-dst
                                 (compiler-reg-global-shared-view instr))]
                             (begin
                               (if (compiler-reg-clobber-instr-kind?
@@ -23399,8 +23390,7 @@
             [instr : ir.CompilerIrInstr
               (compiler-reg-global-array-element-shared-view slots index)]
             [def-var : i64
-              (live.compiler-live-instr-def-var
-                (compiler-reg-global-shared-view instr))]
+              (ir.compiler-ir-instr-dst (compiler-reg-global-shared-view instr))]
             (begin
               (if (and
                 (< index last)
@@ -23586,7 +23576,7 @@
               (compiler-reg-call-hole-selected-bit
                 selected
                 selected-count
-                (live.compiler-live-instr-def-var
+                (ir.compiler-ir-instr-dst
                   (compiler-reg-global-shared-view instr)))]
             [bits : i64 pending]
             (begin
@@ -23760,8 +23750,7 @@
                     0))
                 (set! stopped true)]
               ;; A redefinition makes the reloaded value dead too.
-              [(= (live.compiler-live-instr-def-var instr) var)
-                (set! stopped true)]
+              [(= (ir.compiler-ir-instr-dst instr) var) (set! stopped true)]
               [else unit]))
           (set! index (+ index 1))))
       (cond [needed true] [stopped false] [else exit?]))))
@@ -23939,7 +23928,7 @@
                         slots
                         index)]
                     [def-var : i64
-                      (live.compiler-live-instr-def-var
+                      (ir.compiler-ir-instr-dst
                         (compiler-reg-global-shared-view instr))]
                     (if (and
                       (< index last)
@@ -25154,7 +25143,7 @@
                       cursor
                       generation))
                   (compiler-reg-loop-park-note-resident!
-                    (live.compiler-live-instr-def-var instr)
+                    (ir.compiler-ir-instr-dst instr)
                     vars
                     weight
                     stamp
@@ -25883,7 +25872,7 @@
                   [(ir.CompilerIrInstr.Phi _ _ _) (set! floor (+ index 1))]
                   [_ (set! phis false)]))
               (when
-                (= (live.compiler-live-instr-def-var instr) var)
+                (= (ir.compiler-ir-instr-dst instr) var)
                 (set! floor (+ index 1)))))
           (set! index (+ index 1))))
       floor)))
@@ -27280,7 +27269,7 @@
                                       cur-firstdef)
                                     (compiler-reg-global-shared-view cur-depth)))
                                 (compiler-reg-call-region-note-var!
-                                  (live.compiler-live-instr-def-var instr)
+                                  (ir.compiler-ir-instr-dst instr)
                                   true
                                   cand
                                   n
@@ -27560,7 +27549,7 @@
   (match (compiler-reg-global-shared-view instr)
     [(ir.CompilerIrInstr.Phi _ _ _)
       (compiler-reg-call-region-loop-note-var!
-        (live.compiler-live-instr-def-var instr)
+        (ir.compiler-ir-instr-dst instr)
         true
         cand
         n
@@ -27595,7 +27584,7 @@
               uses
               defs))
           (compiler-reg-call-region-loop-note-var!
-            (live.compiler-live-instr-def-var instr)
+            (ir.compiler-ir-instr-dst instr)
             true
             cand
             n
@@ -28321,7 +28310,7 @@
                 busy)
               (set! index (+ index 1))))))
       (compiler-reg-call-region-evict-mark-var!
-        (live.compiler-live-instr-def-var instr)
+        (ir.compiler-ir-instr-dst instr)
         n
         parents
         assignments
@@ -28441,7 +28430,7 @@
                               (compiler-reg-call-region-root
                                 parents
                                 n
-                                (live.compiler-live-instr-def-var
+                                (ir.compiler-ir-instr-dst
                                   (compiler-reg-global-shared-view instr)))
                               vr)
                             (compiler-reg-call-region-evict-set-hits-class?
@@ -28553,7 +28542,7 @@
                     (begin
                       (when
                         (=
-                          (live.compiler-live-instr-def-var
+                          (ir.compiler-ir-instr-dst
                             (compiler-reg-global-shared-view instr))
                           v)
                         (let
@@ -35286,7 +35275,7 @@
                   unit))
               (set! index (+ index 1))))
           (let
-            [def-var : i64 (live.compiler-live-instr-def-var instr)]
+            [def-var : i64 (ir.compiler-ir-instr-dst instr)]
             (if (and
               (>= def-var 0)
               (< def-var (array-length out))
@@ -39791,7 +39780,7 @@
                 (compiler-reg-extend-interval
                   (&mut starts)
                   (&mut ends)
-                  (live.compiler-live-instr-def-var instr)
+                  (ir.compiler-ir-instr-dst instr)
                   out-point)
                 (compiler-reg-extend-interval-ids!
                   (&mut starts)
@@ -44293,7 +44282,7 @@
     (begin
       (compiler-reg-ref-counts-add-var-weighted!
         (&mut def-counts)
-        (compiler-reg-instr-def-var (compiler-reg-global-shared-view instr))
+        (ir.compiler-ir-instr-dst (compiler-reg-global-shared-view instr))
         1)
       (match instr
         [(ir.CompilerIrInstr.Mov dst value ty)

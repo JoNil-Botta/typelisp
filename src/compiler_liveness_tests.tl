@@ -216,7 +216,7 @@
       (live.compiler-live-instr-uses (clone instr))]
     [defs : live.CompilerLiveI64Set
       (live.compiler-live-instr-defs (clone instr))]
-    [def-var : i64 (live.compiler-live-instr-def-var (clone instr))]
+    [def-var : i64 (ir.compiler-ir-instr-dst (clone instr))]
     [ids : (__tl_dyn-array i64) (live.compiler-live-instr-ids)]
     [id-count : i64 (live.compiler-live-instr-use-ids! instr)]
     [index : i64 0]
@@ -738,21 +738,21 @@
         (ir.CompilerIrValue.Var 71)
         ty)]
     (and
-      (= (live.compiler-live-instr-def-var (clone root)) 51)
+      (= (ir.compiler-ir-instr-dst (clone root)) 51)
       (live.compiler-live-set-eq?
         (live.compiler-live-instr-defs (clone root))
         (live.compiler-live-set1 51))
       (live.compiler-live-set-eq?
         (live.compiler-live-instr-uses root)
         (live.compiler-live-set1 50))
-      (= (live.compiler-live-instr-def-var (clone load)) 52)
+      (= (ir.compiler-ir-instr-dst (clone load)) 52)
       (live.compiler-live-set-eq?
         (live.compiler-live-instr-defs (clone load))
         (live.compiler-live-set1 52))
       (live.compiler-live-set-eq?
         (live.compiler-live-instr-uses load)
         (live.compiler-live-set1 60))
-      (= (live.compiler-live-instr-def-var (clone store)) -1)
+      (= (ir.compiler-ir-instr-dst (clone store)) -1)
       (live.compiler-live-set-eq?
         (live.compiler-live-instr-defs (clone store))
         (live.compiler-live-set-empty))

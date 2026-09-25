@@ -1436,7 +1436,7 @@
 (define (compiler-typecheck-fixture-nominal-id
   [program : ast.AstProgram]
   [name : String]) : i64
-  (match (ast.ast-global-shared-view program)
+  (match program
     [(ast.AstProgram.Program decls-box)
       (let
         [decls : ast.AstDeclList (ast.ast-decl-list-box-shared-view decls-box)]
@@ -1496,24 +1496,24 @@
                       cbi.compiler-builtin-id-fix-empty
                       (ast.ast-node-pool-context-capture-active))]
                   (match (tc_core.tc-repr-c-struct-layout-id
-                    (tc_core.tc-global-shared-view ctx)
+                    ctx
                     "Packet"
                     (compiler-typecheck-fixture-nominal-id
                       (ast.ast-global-shared-view program)
                       "Packet"))
                     [(tc_core.ResultTcReprCLayout.Ok packet)
                       (match (tc_core.tc-repr-c-struct-layout-id
-                        (tc_core.tc-global-shared-view ctx)
+                        ctx
                         "Outer"
                         (compiler-typecheck-fixture-nominal-id
                           (ast.ast-global-shared-view program)
                           "Outer"))
                         [(tc_core.ResultTcReprCLayout.Ok outer)
                           (match (tc_core.tc-repr-c-struct-layout-id
-                            (tc_core.tc-global-shared-view ctx)
+                            ctx
                             "WideC"
                             (compiler-typecheck-fixture-nominal-id
-                              (ast.ast-global-shared-view program)
+                              program
                               "WideC"))
                             [(tc_core.ResultTcReprCLayout.Ok wide)
                               (let
@@ -1543,8 +1543,7 @@
                                     8)
                                   (=
                                     (tc_core.tc-repr-c-layout-field-offset
-                                      (tc_core.tc-repr-c-layout-fields
-                                        (tc_core.tc-global-shared-view packet))
+                                      (tc_core.tc-repr-c-layout-fields packet)
                                       "flag")
                                     16)
                                   (=
@@ -1563,28 +1562,21 @@
                                     4)
                                   (=
                                     (tc_core.tc-repr-c-layout-field-offset
-                                      (tc_core.tc-repr-c-layout-fields
-                                        (tc_core.tc-global-shared-view outer))
+                                      (tc_core.tc-repr-c-layout-fields outer)
                                       "tail")
                                     12)
                                   (=
                                     (tc_core.tc-repr-c-layout-size
                                       (tc_core.tc-global-shared-view wide))
                                     48)
-                                  (=
-                                    (tc_core.tc-repr-c-layout-align
-                                      (tc_core.tc-global-shared-view wide))
-                                    8)
+                                  (= (tc_core.tc-repr-c-layout-align wide) 8)
                                   (=
                                     (tc_core.tc-repr-c-field-layout-list-count
                                       wide-fields)
                                     12)
                                   (=
                                     (array-length
-                                      (__tl-project-field
-                                        (tc_core.tc-global-shared-view
-                                          wide-fields)
-                                        slots))
+                                      (__tl-project-field wide-fields slots))
                                     12)
                                   (=
                                     (tc_core.tc-repr-c-layout-field-offset
@@ -1600,8 +1592,7 @@
                                     24)
                                   (=
                                     (tc_core.tc-repr-c-layout-field-offset
-                                      (tc_core.tc-global-shared-view
-                                        wide-fields)
+                                      wide-fields
                                       "f11")
                                     42)))]
                             [(tc_core.ResultTcReprCLayout.Err _) false])]
@@ -1630,11 +1621,9 @@
                       cbi.compiler-builtin-id-fix-empty
                       (ast.ast-node-pool-context-capture-active))]
                   (match (tc_core.tc-repr-c-struct-layout-id
-                    (tc_core.tc-global-shared-view ctx)
+                    ctx
                     "Vec2"
-                    (compiler-typecheck-fixture-nominal-id
-                      (ast.ast-global-shared-view program)
-                      "Vec2"))
+                    (compiler-typecheck-fixture-nominal-id program "Vec2"))
                     [(tc_core.ResultTcReprCLayout.Ok layout)
                       (and
                         (=
@@ -1659,8 +1648,7 @@
                           4)
                         (=
                           (tc_core.tc-repr-c-layout-field-offset
-                            (tc_core.tc-repr-c-layout-fields
-                              (tc_core.tc-global-shared-view layout))
+                            (tc_core.tc-repr-c-layout-fields layout)
                             "tag")
                           8))]
                     [(tc_core.ResultTcReprCLayout.Err _) false]))]
@@ -1736,11 +1724,9 @@
                       cbi.compiler-builtin-id-fix-empty
                       (ast.ast-node-pool-context-capture-active))]
                   (match (tc_core.tc-repr-c-struct-layout-id
-                    (tc_core.tc-global-shared-view ctx)
+                    ctx
                     (tc_core.tc-global-shared-view name)
-                    (compiler-typecheck-fixture-nominal-id
-                      (ast.ast-global-shared-view program)
-                      name))
+                    (compiler-typecheck-fixture-nominal-id program name))
                     [(tc_core.ResultTcReprCLayout.Ok _) false]
                     [(tc_core.ResultTcReprCLayout.Err message)
                       (string.eq message want)]))]
@@ -1768,11 +1754,9 @@
                       cbi.compiler-builtin-id-fix-empty
                       (ast.ast-node-pool-context-capture-active))]
                   (match (tc_core.tc-repr-c-struct-layout-id
-                    (tc_core.tc-global-shared-view ctx)
+                    ctx
                     "Mixed"
-                    (compiler-typecheck-fixture-nominal-id
-                      (ast.ast-global-shared-view program)
-                      "Mixed"))
+                    (compiler-typecheck-fixture-nominal-id program "Mixed"))
                     [(tc_core.ResultTcReprCLayout.Ok layout)
                       (and
                         (=
@@ -1803,8 +1787,7 @@
                           24)
                         (=
                           (tc_core.tc-repr-c-layout-field-offset
-                            (tc_core.tc-repr-c-layout-fields
-                              (tc_core.tc-global-shared-view layout))
+                            (tc_core.tc-repr-c-layout-fields layout)
                             "tail")
                           40))]
                     [(tc_core.ResultTcReprCLayout.Err _) false]))]
@@ -1848,11 +1831,9 @@
                     cbi.compiler-builtin-id-fix-empty
                     (ast.ast-node-pool-context-capture-active))]
                 (tc_core.tc-inline-aggregate-layout-finite-ok
-                  (tc_core.tc-global-shared-view ctx)
+                  ctx
                   (tc_core.tc-global-shared-view name)
-                  (compiler-typecheck-fixture-nominal-id
-                    (ast.ast-global-shared-view program)
-                    name)))]
+                  (compiler-typecheck-fixture-nominal-id program name)))]
             [(csym.ResultCompilerRegistries.Err message)
               (tc_core.ResultTcUnit.Err message)])]
         [(csym.ResultCompilerSymbols.Err message)
@@ -1884,10 +1865,8 @@
                     cbi.compiler-builtin-id-fix-empty
                     (ast.ast-node-pool-context-capture-active))]
                 (match (tc_core.tc-inline-aggregate-layout-for-id
-                  (tc_core.tc-global-shared-view ctx)
-                  (compiler-typecheck-fixture-nominal-id
-                    (ast.ast-global-shared-view program)
-                    name))
+                  ctx
+                  (compiler-typecheck-fixture-nominal-id program name))
                   [(tc_core.ResultTcInlineAggregateLayout.Ok layout)
                     (= (tc_core.tc-inline-aggregate-layout-size layout) want)]
                   [(tc_core.ResultTcInlineAggregateLayout.Err _) false]))]
@@ -2207,7 +2186,7 @@
                 [ok : bool true]
                 (begin
                   (match (tc_core.tc-inline-aggregate-layout-for-id
-                    (tc_core.tc-global-shared-view ctx)
+                    ctx
                     (compiler-typecheck-fixture-nominal-id
                       (ast.ast-global-shared-view program)
                       "InlinePacket"))
@@ -2254,7 +2233,7 @@
                             (set! ok false))
                           (if (=
                             (tc_core.tc-inline-aggregate-layout-field-offset-id
-                              (tc_core.tc-global-shared-view layout)
+                              layout
                               small-id)
                             18)
                             unit
@@ -2262,7 +2241,7 @@
                     [(tc_core.ResultTcInlineAggregateLayout.Err _)
                       (set! ok false)])
                   (match (tc_core.tc-inline-aggregate-layout-for-id
-                    (tc_core.tc-global-shared-view ctx)
+                    ctx
                     (compiler-typecheck-fixture-nominal-id
                       (ast.ast-global-shared-view program)
                       "InlineChoice"))
@@ -2348,7 +2327,7 @@
                             (set! ok false))
                           (if (=
                             (tc_core.tc-inline-aggregate-layout-variant-payload-offset-id
-                              (tc_core.tc-global-shared-view layout)
+                              layout
                               pair-id
                               0)
                             8)
@@ -2357,7 +2336,7 @@
                     [(tc_core.ResultTcInlineAggregateLayout.Err _)
                       (set! ok false)])
                   (match (tc_core.tc-inline-aggregate-layout-for-id
-                    (tc_core.tc-global-shared-view ctx)
+                    ctx
                     (compiler-typecheck-fixture-nominal-id
                       (ast.ast-global-shared-view program)
                       "WidePacket"))
@@ -2379,10 +2358,7 @@
                                 (tc_core.tc-inline-field-layout-list-count
                                   fields)
                                 12)
-                              (=
-                                (array-length
-                                  (tc_core.tc-global-shared-view fields.slots))
-                                12)
+                              (= (array-length fields.slots) 12)
                               (string.eq
                                 (tc_core.tc-env-key-name-text first-id)
                                 "f0")
@@ -2403,7 +2379,7 @@
                                 24)
                               (=
                                 (tc_core.tc-inline-aggregate-layout-field-offset-id
-                                  (tc_core.tc-global-shared-view layout)
+                                  layout
                                   last-id)
                                 50))
                               unit
@@ -2412,12 +2388,12 @@
                     [(tc_core.ResultTcInlineAggregateLayout.Err _)
                       (set! ok false)])
                   (match (tc_core.tc-inline-aggregate-layout-for-id
-                    (tc_core.tc-global-shared-view ctx)
+                    ctx
                     (compiler-typecheck-fixture-nominal-id
                       (ast.ast-global-shared-view program)
                       "WideChoice"))
                     [(tc_core.ResultTcInlineAggregateLayout.Ok layout)
-                      (match (tc_core.tc-global-shared-view layout)
+                      (match layout
                         [(tc_core.TcInlineAggregateLayout.Enum
                             size
                             align
@@ -2448,10 +2424,7 @@
                                 (tc_core.tc-inline-variant-layout-list-count
                                   variants)
                                 12)
-                              (=
-                                (array-length
-                                  (tc_core.tc-global-shared-view variants.slots))
-                                12)
+                              (= (array-length variants.slots) 12)
                               (string.eq
                                 (tc_core.tc-env-key-name-text first-id)
                                 "V0")
@@ -2462,10 +2435,7 @@
                                 (tc_core.tc-inline-payload-layout-list-count
                                   payloads)
                                 3)
-                              (=
-                                (array-length
-                                  (tc_core.tc-global-shared-view payloads.slots))
-                                3)
+                              (= (array-length payloads.slots) 3)
                               (=
                                 (tc_core.tc-inline-payload-layout-list-offset
                                   (tc_core.tc-global-shared-view payloads)
@@ -2478,7 +2448,7 @@
                                 16)
                               (=
                                 (tc_core.tc-inline-payload-layout-list-offset
-                                  (tc_core.tc-global-shared-view payloads)
+                                  payloads
                                   2)
                                 24))
                               unit
@@ -2487,21 +2457,18 @@
                     [(tc_core.ResultTcInlineAggregateLayout.Err _)
                       (set! ok false)])
                   (match (tc_core.tc-inline-aggregate-layout-for-id
-                    (tc_core.tc-global-shared-view ctx)
-                    (compiler-typecheck-fixture-nominal-id
-                      (ast.ast-global-shared-view program)
-                      "Tree"))
+                    ctx
+                    (compiler-typecheck-fixture-nominal-id program "Tree"))
                     [(tc_core.ResultTcInlineAggregateLayout.Ok layout)
                       (if (=
-                        (tc_core.tc-inline-aggregate-layout-size
-                          (tc_core.tc-global-shared-view layout))
+                        (tc_core.tc-inline-aggregate-layout-size layout)
                         24)
                         unit
                         (set! ok false))]
                     [(tc_core.ResultTcInlineAggregateLayout.Err _)
                       (set! ok false)])
                   (match (tc_core.tc-inline-aggregate-type-layout
-                    (tc_core.tc-global-shared-view ctx)
+                    ctx
                     (ast.ast-ty-tuple
                       (tc_core.tc-type-list2 (ast.AstType.U8) (ast.AstType.I32))))
                     [(tc_core.ResultTcLayoutInfo.Ok info)
@@ -2512,7 +2479,7 @@
                         (set! ok false))]
                     [(tc_core.ResultTcLayoutInfo.Err _) (set! ok false)])
                   (match (tc_core.tc-inline-aggregate-type-layout
-                    (tc_core.tc-global-shared-view ctx)
+                    ctx
                     (ast.ast-ty-array
                       (ast.ast-ty-tuple
                         (tc_core.tc-type-list2
@@ -2527,7 +2494,7 @@
                         (set! ok false))]
                     [(tc_core.ResultTcLayoutInfo.Err _) (set! ok false)])
                   (match (tc_core.tc-inline-aggregate-type-layout
-                    (tc_core.tc-global-shared-view ctx)
+                    ctx
                     (ast.ast-ty-box
                       (ast.AstType.Struct (ci.intern "InlinePacket"))))
                     [(tc_core.ResultTcLayoutInfo.Ok info)
@@ -2538,7 +2505,7 @@
                         (set! ok false))]
                     [(tc_core.ResultTcLayoutInfo.Err _) (set! ok false)])
                   (match (tc_core.tc-inline-aggregate-type-layout
-                    (tc_core.tc-global-shared-view ctx)
+                    ctx
                     (ast.ast-ty-dyn-array
                       (ast.AstType.Struct (ci.intern "InlinePacket"))))
                     [(tc_core.ResultTcLayoutInfo.Ok info)
@@ -2587,9 +2554,7 @@
       (compiler-typecheck-inline-layout-ok?
         (tc_core.tc-global-shared-view src)
         "InlineHelperRoots")
-      (compiler-typecheck-inline-layout-ok?
-        (tc_core.tc-global-shared-view src)
-        "CompilerPkgDeps"))))
+      (compiler-typecheck-inline-layout-ok? src "CompilerPkgDeps"))))
 
 (define (compiler-typecheck-inline-ctfe-metadata-source) : String
   "(defenum CompilerCtfeValue
@@ -2679,9 +2644,7 @@
       (compiler-typecheck-inline-layout-ok?
         (tc_core.tc-global-shared-view src)
         "CtfeReflectFieldList")
-      (compiler-typecheck-inline-layout-ok?
-        (tc_core.tc-global-shared-view src)
-        "CtfeReflectVariantList"))))
+      (compiler-typecheck-inline-layout-ok? src "CtfeReflectVariantList"))))
 
 (define (compiler-typecheck-inline-boxed-ast-list-source) : String
   "(defenum AstType
@@ -2730,9 +2693,7 @@
       (compiler-typecheck-inline-layout-ok?
         (tc_core.tc-global-shared-view src)
         "AstExpr")
-      (compiler-typecheck-inline-layout-ok?
-        (tc_core.tc-global-shared-view src)
-        "FixtureExprList"))))
+      (compiler-typecheck-inline-layout-ok? src "FixtureExprList"))))
 
 (define (compiler-typecheck-inline-boxed-formatter-source) : String
   "(defenum FormatToken
@@ -2768,9 +2729,7 @@
       (compiler-typecheck-inline-layout-ok?
         (tc_core.tc-global-shared-view src)
         "FormatCstList")
-      (compiler-typecheck-inline-layout-ok?
-        (tc_core.tc-global-shared-view src)
-        "Doc"))))
+      (compiler-typecheck-inline-layout-ok? src "Doc"))))
 
 (define (compiler-typecheck-inline-pointer-boundaries-source) : String
   "(defstruct Node
@@ -3706,10 +3665,7 @@
         (tc_core.TcTryCarrier return-info)
         (tc_core.TcTryResidualTypeMismatch operand-residual return-residual))
       (and
-        (=
-          (tc_core.tc-result-info-enum-id
-            (tc_core.tc-global-shared-view operand-info))
-          operand-id)
+        (= (tc_core.tc-result-info-enum-id operand-info) operand-id)
         (= (tc_core.tc-result-info-enum-id return-info) return-id)
         (match (tc_core.tc-global-shared-view operand-residual)
           [(ast.AstType.Struct operand-error-id)
@@ -3746,9 +3702,7 @@
 
 (define (compiler-typecheck-try-query-context-ok? [ctx : tc_core.TcContext]) : bool
   (let
-    [program : ast.AstProgram
-      (tc_api.compiler-typecheck-context-program
-        (tc_core.tc-global-shared-view ctx))]
+    [program : ast.AstProgram (tc_api.compiler-typecheck-context-program ctx)]
     [input-result-id : i64
       (compiler-typecheck-fixture-nominal-id
         (ast.ast-global-shared-view program)
@@ -3778,7 +3732,7 @@
         (io.panic "typecheck: try query fixture identity lookup failed"))
       (unless
         (match (tc_core.tc-try-query
-          (tc_core.tc-global-shared-view ctx)
+          ctx
           (ast.AstType.Enum input-result-id)
           (ast.AstType.Enum outer-result-id)
           tc_core.TcTryEarlyExitAllowed)
@@ -3792,7 +3746,7 @@
         (io.panic "typecheck: compatible Result try query failed"))
       (unless
         (match (tc_core.tc-try-query
-          (tc_core.tc-global-shared-view ctx)
+          ctx
           (ast.AstType.Enum input-option-id)
           (ast.AstType.Enum outer-option-id)
           tc_core.TcTryEarlyExitAllowed)
@@ -3807,7 +3761,7 @@
       (unless
         (compiler-typecheck-try-query-residual-mismatch-ok?
           (tc_core.tc-try-query
-            (tc_core.tc-global-shared-view ctx)
+            ctx
             (ast.AstType.Enum input-result-id)
             (ast.AstType.Enum other-result-id)
             tc_core.TcTryEarlyExitAllowed)
@@ -4281,87 +4235,59 @@
 (define (compiler-typecheck-move-kind-copyable-group-ok?
   [ctx : tc_core.TcContext]) : bool
   (and
+    (tc_core.tc-type-copyable? ctx (ast.AstType.I64))
+    (tc_core.tc-type-copyable? ctx (ast.AstType.I32))
+    (tc_core.tc-type-copyable? ctx (ast.AstType.F64))
+    (tc_core.tc-type-copyable? ctx (ast.AstType.F32))
+    (tc_core.tc-type-copyable? ctx (ast.AstType.Bool))
+    (tc_core.tc-type-copyable? ctx (ast.AstType.Char))
+    (tc_core.tc-type-copyable? ctx (ast.AstType.Unit))
+    (tc_core.tc-type-copyable? ctx (ast.AstType.Never))
     (tc_core.tc-type-copyable?
-      (tc_core.tc-global-shared-view ctx)
-      (ast.AstType.I64))
-    (tc_core.tc-type-copyable?
-      (tc_core.tc-global-shared-view ctx)
-      (ast.AstType.I32))
-    (tc_core.tc-type-copyable?
-      (tc_core.tc-global-shared-view ctx)
-      (ast.AstType.F64))
-    (tc_core.tc-type-copyable?
-      (tc_core.tc-global-shared-view ctx)
-      (ast.AstType.F32))
-    (tc_core.tc-type-copyable?
-      (tc_core.tc-global-shared-view ctx)
-      (ast.AstType.Bool))
-    (tc_core.tc-type-copyable?
-      (tc_core.tc-global-shared-view ctx)
-      (ast.AstType.Char))
-    (tc_core.tc-type-copyable?
-      (tc_core.tc-global-shared-view ctx)
-      (ast.AstType.Unit))
-    (tc_core.tc-type-copyable?
-      (tc_core.tc-global-shared-view ctx)
-      (ast.AstType.Never))
-    (tc_core.tc-type-copyable?
-      (tc_core.tc-global-shared-view ctx)
+      ctx
       (ast.ast-ty-func (ast.ast-type-list-new) (ast.AstType.I64)))
     (tc_core.tc-type-copyable?
-      (tc_core.tc-global-shared-view ctx)
+      ctx
       (ast.ast-ty-ptr
         (ast.ast-ty-region
           cbi.compiler-builtin-id-fix-value
           (ast.AstType.String))))
     (tc_core.tc-type-copyable?
-      (tc_core.tc-global-shared-view ctx)
+      ctx
       (ast.ast-ty-mut-ptr (ast.ast-ty-dyn-array (ast.AstType.I64))))
     (tc_core.tc-type-copyable?
-      (tc_core.tc-global-shared-view ctx)
+      ctx
       (ast.ast-ty-ref cbi.compiler-builtin-id-fix-n (ast.AstType.String)))
     (tc_core.tc-type-copyable?
-      (tc_core.tc-global-shared-view ctx)
+      ctx
       (ast.ast-ty-ref cbi.compiler-builtin-id-fix-n (ast.AstType.Str)))
     (tc_core.tc-type-copyable?
-      (tc_core.tc-global-shared-view ctx)
+      ctx
       (ast.ast-ty-ref cbi.compiler-builtin-id-fix-n (ast.AstType.Bytes)))
     ;; Arrays and tuples are structurally Copyable.
+    (tc_core.tc-type-copyable? ctx (ast.ast-ty-array (ast.AstType.I64) 4))
+    (tc_core.tc-type-copyable? ctx (ast.ast-ty-array (ast.AstType.I64) 0))
     (tc_core.tc-type-copyable?
-      (tc_core.tc-global-shared-view ctx)
-      (ast.ast-ty-array (ast.AstType.I64) 4))
-    (tc_core.tc-type-copyable?
-      (tc_core.tc-global-shared-view ctx)
-      (ast.ast-ty-array (ast.AstType.I64) 0))
-    (tc_core.tc-type-copyable?
-      (tc_core.tc-global-shared-view ctx)
+      ctx
       (ast.ast-ty-tuple
         (ast.ast-type-cons
           (ast.AstType.I64)
           (ast.ast-type-cons (ast.AstType.Bool) (ast.ast-type-list-new)))))
-    (tc_core.tc-type-copyable?
-      (tc_core.tc-global-shared-view ctx)
-      (ast.ast-ty-tuple (ast.ast-type-list-new)))
-    (tc_core.tc-type-copyable?
-      (tc_core.tc-global-shared-view ctx)
-      (ast.AstType.Struct (ci.intern "Scalar")))
-    (tc_core.tc-type-copyable?
-      (tc_core.tc-global-shared-view ctx)
-      (ast.AstType.Struct (ci.intern "ScalarC")))
-    (tc_core.tc-type-copyable?
-      (tc_core.tc-global-shared-view ctx)
-      (ast.AstType.Enum (ci.intern "ScalarEnum")))
+    (tc_core.tc-type-copyable? ctx (ast.ast-ty-tuple (ast.ast-type-list-new)))
+    (tc_core.tc-type-copyable? ctx (ast.AstType.Struct (ci.intern "Scalar")))
+    (tc_core.tc-type-copyable? ctx (ast.AstType.Struct (ci.intern "ScalarC")))
+    (tc_core.tc-type-copyable? ctx (ast.AstType.Enum (ci.intern "ScalarEnum")))
     ;; One recursive positive chain covers array + tuple +
     ;; struct + enum + shared reference.
     (tc_core.tc-type-copyable?
-      (tc_core.tc-global-shared-view ctx)
+      ctx
       (ast.ast-ty-struct-args
         (ci.intern "NestedCopy")
         (ast.ast-lifetime-cons
           cbi.compiler-builtin-id-fix-n
           (ast.ast-lifetime-list-new))))
     (tc_core.tc-type-copyable?
-      (tc_core.tc-global-shared-view ctx)
+      ctx
       (ast.ast-ty-enum-args
         (ci.intern "NestedChoice")
         (ast.ast-lifetime-cons
@@ -4369,79 +4295,59 @@
           (ast.ast-lifetime-list-new))))
     ;; Lifetime arguments do not affect Copy; shared refs do.
     (tc_core.tc-type-copyable?
-      (tc_core.tc-global-shared-view ctx)
+      ctx
       (ast.ast-ty-struct-args
         (ci.intern "RefBox")
         (ast.ast-lifetime-cons
           cbi.compiler-builtin-id-fix-n
           (ast.ast-lifetime-list-new))))
     (tc_core.tc-type-copyable?
-      (tc_core.tc-global-shared-view ctx)
+      ctx
       (ast.ast-ty-enum-args
         (ci.intern "RefOption")
         (ast.ast-lifetime-cons
           cbi.compiler-builtin-id-fix-n
           (ast.ast-lifetime-list-new))))
-    (tc_core.tc-type-copyable?
-      (tc_core.tc-global-shared-view ctx)
-      (ast.AstType.I64))))
+    (tc_core.tc-type-copyable? ctx (ast.AstType.I64))))
 
 (define (compiler-typecheck-move-kind-move-only-group-ok?
   [ctx : tc_core.TcContext]) : bool
   (and
-    (tc_core.tc-type-move-only?
-      (tc_core.tc-global-shared-view ctx)
-      (ast.AstType.String))
-    (tc_core.tc-type-move-only?
-      (tc_core.tc-global-shared-view ctx)
-      (ast.AstType.Str))
-    (tc_core.tc-type-move-only?
-      (tc_core.tc-global-shared-view ctx)
-      (ast.AstType.Bytes))
-    (tc_core.tc-type-move-only?
-      (tc_core.tc-global-shared-view ctx)
-      (ast.ast-ty-dyn-array (ast.AstType.I64)))
+    (tc_core.tc-type-move-only? ctx (ast.AstType.String))
+    (tc_core.tc-type-move-only? ctx (ast.AstType.Str))
+    (tc_core.tc-type-move-only? ctx (ast.AstType.Bytes))
+    (tc_core.tc-type-move-only? ctx (ast.ast-ty-dyn-array (ast.AstType.I64)))
     ;; Zero-length arrays still classify by element.
+    (tc_core.tc-type-move-only? ctx (ast.ast-ty-array (ast.AstType.String) 0))
+    (tc_core.tc-type-move-only? ctx (ast.ast-ty-box (ast.AstType.I64)))
+    (tc_core.tc-type-move-only? ctx (ast.AstType.Struct (ci.intern "Box")))
     (tc_core.tc-type-move-only?
-      (tc_core.tc-global-shared-view ctx)
-      (ast.ast-ty-array (ast.AstType.String) 0))
-    (tc_core.tc-type-move-only?
-      (tc_core.tc-global-shared-view ctx)
-      (ast.ast-ty-box (ast.AstType.I64)))
-    (tc_core.tc-type-move-only?
-      (tc_core.tc-global-shared-view ctx)
-      (ast.AstType.Struct (ci.intern "Box")))
-    (tc_core.tc-type-move-only?
-      (tc_core.tc-global-shared-view ctx)
+      ctx
       (ast.AstType.Enum (ci.intern "MoveOnlyEnum")))
     (tc_core.tc-type-move-only?
-      (tc_core.tc-global-shared-view ctx)
+      ctx
       (ast.AstType.Struct (ci.intern "CleanupScalar")))
     (tc_core.tc-type-move-only?
-      (tc_core.tc-global-shared-view ctx)
+      ctx
       (ast.AstType.Enum (ci.intern "CleanupEnum")))
-    (tc_core.tc-type-move-only?
-      (tc_core.tc-global-shared-view ctx)
-      (ast.AstType.Struct (ci.intern "Cycle")))
+    (tc_core.tc-type-move-only? ctx (ast.AstType.Struct (ci.intern "Cycle")))
     ;; Nested enum/struct poison must propagate through every aggregate layer.
     (tc_core.tc-type-move-only?
-      (tc_core.tc-global-shared-view ctx)
+      ctx
       (ast.AstType.Enum (ci.intern "PoisonChoice")))
     (tc_core.tc-type-move-only?
-      (tc_core.tc-global-shared-view ctx)
+      ctx
       (ast.AstType.Struct (ci.intern "NestedPoison")))
     ;; Missing lifetime arguments are conservative.
+    (tc_core.tc-type-move-only? ctx (ast.AstType.Struct (ci.intern "RefBox")))
     (tc_core.tc-type-move-only?
-      (tc_core.tc-global-shared-view ctx)
-      (ast.AstType.Struct (ci.intern "RefBox")))
-    (tc_core.tc-type-move-only?
-      (tc_core.tc-global-shared-view ctx)
+      ctx
       (ast.ast-ty-enum-args (ci.intern "RefOption") (ast.ast-lifetime-list-new)))
     (tc_core.tc-type-move-only?
-      (tc_core.tc-global-shared-view ctx)
+      ctx
       (ast.ast-ty-mut-ref cbi.compiler-builtin-id-fix-value (ast.AstType.I64)))
     (tc_core.tc-type-move-only?
-      (tc_core.tc-global-shared-view ctx)
+      ctx
       (ast.ast-ty-tuple
         (ast.ast-type-cons
           (ast.AstType.Struct (ci.intern "Box"))
@@ -4453,33 +4359,29 @@
   [ctx : tc_core.TcContext]) : bool
   (and
     (tc_core.tc-type-copyable?
-      (tc_core.tc-global-shared-view ctx)
+      ctx
       (ast.ast-ty-region cbi.compiler-builtin-id-fix-n (ast.AstType.I64)))
     (tc_core.tc-type-copyable?
-      (tc_core.tc-global-shared-view ctx)
+      ctx
       (ast.ast-ty-region
         cbi.compiler-builtin-id-fix-n
         (ast.ast-ty-ref cbi.compiler-builtin-id-fix-value (ast.AstType.String))))
     (tc_core.tc-type-copyable?
-      (tc_core.tc-global-shared-view ctx)
+      ctx
       (ast.ast-ty-region
         cbi.compiler-builtin-id-fix-n
         (ast.ast-ty-tuple
           (ast.ast-type-cons (ast.AstType.I64) (ast.ast-type-list-new)))))
     (tc_core.tc-type-move-only?
-      (tc_core.tc-global-shared-view ctx)
+      ctx
       (ast.ast-ty-region cbi.compiler-builtin-id-fix-n (ast.AstType.String)))
     (tc_core.tc-type-move-only?
-      (tc_core.tc-global-shared-view ctx)
+      ctx
       (ast.ast-ty-region
         cbi.compiler-builtin-id-fix-value
         (ast.ast-ty-mut-ref cbi.compiler-builtin-id-fix-value (ast.AstType.I64))))
-    (tc_core.tc-type-copyable?
-      (tc_core.tc-global-shared-view ctx)
-      (ast.AstType.I64))
-    (tc_core.tc-type-move-only?
-      (tc_core.tc-global-shared-view ctx)
-      (ast.AstType.String))))
+    (tc_core.tc-type-copyable? ctx (ast.AstType.I64))
+    (tc_core.tc-type-move-only? ctx (ast.AstType.String))))
 
 (define (compiler-typecheck-move-kind-fixture-tests-ok?) : bool
   (match (parser.parse-ast-source (compiler-typecheck-move-kind-fixture-source))
@@ -4491,17 +4393,15 @@
               (let
                 [ctx : tc_core.TcContext
                   (tc_core.tc-context-new
-                    (ast.ast-global-shared-view program)
+                    program
                     symbols
                     registries
                     ""
                     cbi.compiler-builtin-id-fix-empty
                     (ast.ast-node-pool-context-capture-active))]
                 (and
-                  (compiler-typecheck-move-kind-copyable-group-ok?
-                    (tc_core.tc-global-shared-view ctx))
-                  (compiler-typecheck-move-kind-move-only-group-ok?
-                    (tc_core.tc-global-shared-view ctx))
+                  (compiler-typecheck-move-kind-copyable-group-ok? ctx)
+                  (compiler-typecheck-move-kind-move-only-group-ok? ctx)
                   (compiler-typecheck-move-kind-wrapper-group-ok? ctx)))]
             [(csym.ResultCompilerRegistries.Err _) false])]
         [(csym.ResultCompilerSymbols.Err _) false])]
@@ -10031,10 +9931,7 @@
             10
             100)]
         [pattern-with-bind : tc_core.MacroHygieneEnv
-          (tc_core.macro-hygiene-env-bind-raw
-            (tc_core.tc-global-shared-view pattern)
-            10
-            101)]
+          (tc_core.macro-hygiene-env-bind-raw pattern 10 101)]
         [pattern-shadow : tc_core.MacroHygieneEnv
           (tc_core.macro-hygiene-env-bind-pattern-name-raw
             (tc_core.tc-global-shared-view pattern-with-bind)
@@ -10048,9 +9945,7 @@
             80)]
         (and
           (compiler-typecheck-hygiene-name-missing?
-            (tc_core.macro-hygiene-env-lookup
-              (tc_core.tc-global-shared-view empty)
-              7))
+            (tc_core.macro-hygiene-env-lookup empty 7))
           (compiler-typecheck-hygiene-name-is?
             (tc_core.macro-hygiene-env-lookup
               (tc_core.tc-global-shared-view parent)
@@ -10071,17 +9966,13 @@
               9)
             90)
           (compiler-typecheck-hygiene-name-missing?
-            (tc_core.macro-hygiene-env-lookup
-              (tc_core.tc-global-shared-view right)
-              8))
+            (tc_core.macro-hygiene-env-lookup right 8))
           (compiler-typecheck-hygiene-name-missing?
             (tc_core.macro-hygiene-env-lookup
               (tc_core.tc-global-shared-view parent)
               8))
           (compiler-typecheck-hygiene-name-is?
-            (tc_core.macro-hygiene-env-lookup
-              (tc_core.tc-global-shared-view shadow-two)
-              7)
+            (tc_core.macro-hygiene-env-lookup shadow-two 7)
             72)
           (compiler-typecheck-hygiene-name-is?
             (tc_core.macro-hygiene-env-lookup
@@ -10089,28 +9980,18 @@
               10)
             101)
           (compiler-typecheck-hygiene-name-is?
-            (tc_core.macro-hygiene-env-lookup-pattern-name
-              (tc_core.tc-global-shared-view pattern-with-bind)
-              10)
+            (tc_core.macro-hygiene-env-lookup-pattern-name pattern-with-bind 10)
             100)
           (compiler-typecheck-hygiene-name-is?
-            (tc_core.macro-hygiene-env-lookup-pattern-name
-              (tc_core.tc-global-shared-view pattern-shadow)
-              10)
+            (tc_core.macro-hygiene-env-lookup-pattern-name pattern-shadow 10)
             102)
           (compiler-typecheck-hygiene-name-missing?
-            (tc_core.macro-hygiene-env-lookup-pattern-name
-              (tc_core.tc-global-shared-view left)
-              8))
+            (tc_core.macro-hygiene-env-lookup-pattern-name left 8))
           (compiler-typecheck-hygiene-name-is?
-            (tc_core.macro-hygiene-env-lookup
-              (tc_core.tc-global-shared-view parent)
-              7)
+            (tc_core.macro-hygiene-env-lookup parent 7)
             70)
           (compiler-typecheck-hygiene-name-is?
-            (tc_core.macro-hygiene-env-lookup
-              (tc_core.tc-global-shared-view deep)
-              179)
+            (tc_core.macro-hygiene-env-lookup deep 179)
             1079))))))
 
 (define (compiler-typecheck-macro-own-when-source) : String
@@ -12124,7 +12005,7 @@
         [tc_core.TcMoveConflict.No false])]
     [partial-one : tc_core.TcMovedSet
       (tc_core.tc-moved-remove-exact-path
-        (tc_core.tc-moved-clone (tc_core.tc-global-shared-view partial))
+        (tc_core.tc-moved-clone partial)
         items-id
         items0)]
     [partial-clear : tc_core.TcMovedSet
@@ -12139,9 +12020,7 @@
         [(tc_core.TcMoveConflict.Some _ _) true]
         [tc_core.TcMoveConflict.No false])]
     [partial-keeps-marker : bool
-      (tc_core.tc-moved-partial?
-        (tc_core.tc-global-shared-view partial-one)
-        items-id)]
+      (tc_core.tc-moved-partial? partial-one items-id)]
     [partial-clears-sibling : bool
       (not
         (match (tc_core.tc-moved-path-exact-conflict
@@ -12150,10 +12029,7 @@
           [(tc_core.TcMoveConflict.Some _ _) true]
           [tc_core.TcMoveConflict.No false]))]
     [partial-clears-marker : bool
-      (not
-        (tc_core.tc-moved-partial?
-          (tc_core.tc-global-shared-view partial-clear)
-          items-id))]
+      (not (tc_core.tc-moved-partial? partial-clear items-id))]
     [root-path : tc_core.TcMovedSet
       (tc_core.tc-moved-add-path-fact
         (tc_core.tc-moved-empty)
@@ -12187,7 +12063,7 @@
         growth-id
         0
         64
-        (ast.ast-global-shared-view origin-a))]
+        origin-a)]
     [retained-parent-isolated : bool
       (and
         (match (tc_core.tc-moved-path-exact-conflict-kind
@@ -12242,7 +12118,7 @@
           [(tc_core.TcMoveConflict.Some _ _) true]
           [tc_core.TcMoveConflict.No false])
         (match (tc_core.tc-moved-path-exact-conflict-kind
-          (tc_core.tc-global-shared-view sibling-successor)
+          sibling-successor
           growth63
           (tc_core.TcMovedPathKind.BorrowShared))
           [(tc_core.TcMoveConflict.Some _ _) false]
@@ -12256,8 +12132,7 @@
           (tc_core.TcMovedPathKind.BorrowShared))
         (not
           (tc_core.tc-moved-path-facts-contains-exact-kind?
-            (tc_core.tc-moved-paths
-              (tc_core.tc-global-shared-view growth-successor))
+            (tc_core.tc-moved-paths growth-successor)
             shadowed-root
             (tc_core.TcMovedPathKind.BorrowShared))))]
     [separate-store : tc_core.TcMovedSet
@@ -12301,8 +12176,7 @@
           (tc_core.TcMovedPathKind.BorrowShared))
         (not
           (tc_core.tc-moved-path-facts-contains-exact-kind?
-            (tc_core.tc-moved-paths
-              (tc_core.tc-global-shared-view cross-store-removed))
+            (tc_core.tc-moved-paths cross-store-removed)
             growth1
             (tc_core.TcMovedPathKind.BorrowShared))))]
     [missing-removal : tc_core.TcMovedSet
@@ -12325,12 +12199,10 @@
           (tc_core.tc-global-shared-view cross-store-union))
         (tc_core.tc-moved-paths missing-filter))]
     [filtered-growth : tc_core.TcMovedSet
-      (tc_core.tc-moved-remove-root-state
-        (tc_core.tc-global-shared-view cross-store-union)
-        growth-id)]
+      (tc_core.tc-moved-remove-root-state cross-store-union growth-id)]
     [changed-filter-reuses-tail : bool
       (compiler-typecheck-moved-facts-same-dense-snapshot?
-        (tc_core.tc-moved-paths (tc_core.tc-global-shared-view retained-parent))
+        (tc_core.tc-moved-paths retained-parent)
         (tc_core.tc-moved-paths filtered-growth))]
     [union-left : tc_core.TcMovedSet
       (tc_core.tc-moved-add-value (tc_core.tc-moved-empty) shared-id 101)]
@@ -12344,9 +12216,9 @@
         [tc_core.TcMoveConflict.No false])]
     (and
       (= (tc_core.tc-moved-len (tc_core.tc-moved-empty)) 0)
-      (= (tc_core.tc-moved-len (tc_core.tc-global-shared-view dupe)) 1)
+      (= (tc_core.tc-moved-len dupe) 1)
       (= (tc_core.tc-moved-len (tc_core.tc-global-shared-view two)) 2)
-      (>= (tc_core.tc-moved-capacity (tc_core.tc-global-shared-view two)) 8)
+      (>= (tc_core.tc-moved-capacity two) 8)
       (not (tc_core.tc-moved-contains? removed alpha-id))
       origin-whole-ok
       origin-clone-ok

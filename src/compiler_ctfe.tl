@@ -4933,6 +4933,28 @@
     [(ast.AstType.Slice _) true]
     [_ false]))
 
+;; A named type's recorded layout size or alignment, or `missing` when no
+;; layout is recorded for it.
+(define (ctfe-layout-size-or
+  [layouts : CtfeLayoutInfoList]
+  [name : i64]
+  [missing : i64]) : i64
+  (match (ctfe-layout-info-lookup-name-id layouts name)
+    [(CtfeMaybeLayoutInfo.Some info)
+      (match info
+        [(CtfeLayoutInfo.Info _ _ size _ _) size])]
+    [(CtfeMaybeLayoutInfo.None) missing]))
+
+(define (ctfe-layout-align-or
+  [layouts : CtfeLayoutInfoList]
+  [name : i64]
+  [missing : i64]) : i64
+  (match (ctfe-layout-info-lookup-name-id layouts name)
+    [(CtfeMaybeLayoutInfo.Some info)
+      (match info
+        [(CtfeLayoutInfo.Info _ _ _ align _) align])]
+    [(CtfeMaybeLayoutInfo.None) missing]))
+
 (define (ctfe-type-size-with-pools
   [pools : ast.AstNodePoolContext]
   [layouts : CtfeLayoutInfoList]
@@ -4993,43 +5015,13 @@
     ;; recorded layout rather than from the tag width. Returning the tag width
     ;; here reported 8 for every enum while `offset-of` on a struct field of the
     ;; same type reported the real inline size.
-    [(ast.AstType.Enum name)
-      (match (ctfe-layout-info-lookup-name-id layouts name)
-        [(CtfeMaybeLayoutInfo.Some info)
-          (match info
-            [(CtfeLayoutInfo.Info _ _ size _ _) size])]
-        [(CtfeMaybeLayoutInfo.None) -1])]
-    [(ast.AstType.EnumArgs name _)
-      (match (ctfe-layout-info-lookup-name-id layouts name)
-        [(CtfeMaybeLayoutInfo.Some info)
-          (match info
-            [(CtfeLayoutInfo.Info _ _ size _ _) size])]
-        [(CtfeMaybeLayoutInfo.None) -1])]
-    [(ast.AstType.Struct name)
-      (match (ctfe-layout-info-lookup-name-id layouts name)
-        [(CtfeMaybeLayoutInfo.Some info)
-          (match info
-            [(CtfeLayoutInfo.Info _ _ size _ _) size])]
-        [(CtfeMaybeLayoutInfo.None) 8])]
-    [(ast.AstType.StructArgs name _)
-      (match (ctfe-layout-info-lookup-name-id layouts name)
-        [(CtfeMaybeLayoutInfo.Some info)
-          (match info
-            [(CtfeLayoutInfo.Info _ _ size _ _) size])]
-        [(CtfeMaybeLayoutInfo.None) 8])]
+    [(ast.AstType.Enum name) (ctfe-layout-size-or layouts name -1)]
+    [(ast.AstType.EnumArgs name _) (ctfe-layout-size-or layouts name -1)]
+    [(ast.AstType.Struct name) (ctfe-layout-size-or layouts name 8)]
+    [(ast.AstType.StructArgs name _) (ctfe-layout-size-or layouts name 8)]
     [(ast.AstType.String) 8]
-    [(ast.AstType.Var name)
-      (match (ctfe-layout-info-lookup-name-id layouts name)
-        [(CtfeMaybeLayoutInfo.Some info)
-          (match info
-            [(CtfeLayoutInfo.Info _ _ size _ _) size])]
-        [(CtfeMaybeLayoutInfo.None) -1])]
-    [(ast.AstType.VarArgs name _)
-      (match (ctfe-layout-info-lookup-name-id layouts name)
-        [(CtfeMaybeLayoutInfo.Some info)
-          (match info
-            [(CtfeLayoutInfo.Info _ _ size _ _) size])]
-        [(CtfeMaybeLayoutInfo.None) -1])]))
+    [(ast.AstType.Var name) (ctfe-layout-size-or layouts name -1)]
+    [(ast.AstType.VarArgs name _) (ctfe-layout-size-or layouts name -1)]))
 
 (define (ctfe-type-align-with-pools
   [pools : ast.AstNodePoolContext]
@@ -5076,31 +5068,11 @@
         (ast.ast-node-pool-context-type-get pools inner))]
     [(ast.AstType.Enum _) 8]
     [(ast.AstType.EnumArgs _ _) 8]
-    [(ast.AstType.Struct name)
-      (match (ctfe-layout-info-lookup-name-id layouts name)
-        [(CtfeMaybeLayoutInfo.Some info)
-          (match info
-            [(CtfeLayoutInfo.Info _ _ _ align _) align])]
-        [(CtfeMaybeLayoutInfo.None) 8])]
-    [(ast.AstType.StructArgs name _)
-      (match (ctfe-layout-info-lookup-name-id layouts name)
-        [(CtfeMaybeLayoutInfo.Some info)
-          (match info
-            [(CtfeLayoutInfo.Info _ _ _ align _) align])]
-        [(CtfeMaybeLayoutInfo.None) 8])]
+    [(ast.AstType.Struct name) (ctfe-layout-align-or layouts name 8)]
+    [(ast.AstType.StructArgs name _) (ctfe-layout-align-or layouts name 8)]
     [(ast.AstType.String) 8]
-    [(ast.AstType.Var name)
-      (match (ctfe-layout-info-lookup-name-id layouts name)
-        [(CtfeMaybeLayoutInfo.Some info)
-          (match info
-            [(CtfeLayoutInfo.Info _ _ _ align _) align])]
-        [(CtfeMaybeLayoutInfo.None) -1])]
-    [(ast.AstType.VarArgs name _)
-      (match (ctfe-layout-info-lookup-name-id layouts name)
-        [(CtfeMaybeLayoutInfo.Some info)
-          (match info
-            [(CtfeLayoutInfo.Info _ _ _ align _) align])]
-        [(CtfeMaybeLayoutInfo.None) -1])]))
+    [(ast.AstType.Var name) (ctfe-layout-align-or layouts name -1)]
+    [(ast.AstType.VarArgs name _) (ctfe-layout-align-or layouts name -1)]))
 
 (define (ctfe-layout-query-value-with-pools
   [pools : ast.AstNodePoolContext]

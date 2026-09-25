@@ -69010,25 +69010,19 @@
       type-env
       (lower-global-shared-view index)
       (lower-global-shared-view body))
-      [(LowerMaybeVectorMap.Some _ _ _)
+      [(LowerMaybeVectorMap.Some stores elem-ty lanes)
         (lower-avx2-foreach-lowered
-          (lower-global-shared-view ctx)
+          ctx
           state
           env
           type-env
           index-id
-          (lower-global-shared-view index)
+          index
           index-ty
           start-value
           end-value
-          (lower-global-shared-view body)
-          (lower-simple-vector-map
-            ctx
-            (lower-state-mode state)
-            env
-            type-env
-            index
-            body))]
+          body
+          (LowerMaybeVectorMap.Some stores elem-ty lanes))]
       [(LowerMaybeVectorMap.No)
         (if (lower-vector-body-has-atomic-call?
           (lower-global-shared-view ctx)
@@ -69055,26 +69049,19 @@
             type-env
             (lower-global-shared-view index)
             (lower-global-shared-view body))
-            [(LowerMaybeMaskedVectorMap.Some _)
+            [(LowerMaybeMaskedVectorMap.Some lanes)
               (lower-avx512-masked-foreach-lowered
-                (lower-global-shared-view ctx)
+                ctx
                 state
                 env
                 type-env
                 index-id
-                (lower-global-shared-view index)
+                index
                 index-ty
                 start-value
                 end-value
-                (lower-global-shared-view body)
-                (lower-masked-vector-map
-                  ctx
-                  (lower-state-function-state state)
-                  (lower-state-mode state)
-                  env
-                  type-env
-                  index
-                  body))]
+                body
+                (LowerMaybeMaskedVectorMap.Some lanes))]
             [(LowerMaybeMaskedVectorMap.No)
               (match (lower-spmd-numeric-failure
                 (lower-global-shared-view ctx)

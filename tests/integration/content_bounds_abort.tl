@@ -1,10 +1,9 @@
 ;; The negative twin of content_bounds_csr: the SAME shape fed a malformed
 ;; corpus. `cb-src` carries the raw values, and with `bump` = 1 the last one is
-;; `n`, which is out of range for `cb-keys`. CB-1 changes nothing about that
-;; run: the store-side check is the one that fires, it is never retired, and the
-;; abort site and message must be byte-identical to the base compiler's. The
-;; load-side check CB-1 does retire could not have been the one to fire -- the
-;; program stops at the store side before anything reads `cb-edges`.
+;; `n`, which is out of range for `cb-keys`. The store-side check is the one
+;; that fires, and the abort site and message must be the same at every
+;; optimization level: the program stops at the store side before anything
+;; reads `cb-edges`.
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.vector)

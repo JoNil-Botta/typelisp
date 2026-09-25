@@ -1,6 +1,6 @@
-;; Runtime coverage for the guarded sp-1/sp-2 bounds-check pairing rule. Both
-;; underflow states must still take the ordinary array bounds abort at opt0 and
-;; opt2: sp=1 makes only sp-2 wrap, while sp=0 makes both indices wrap.
+;; Runtime coverage for adjacent sp-1/sp-2 bounds checks in a stack-machine
+;; loop. Both underflow states must take the ordinary array bounds abort at opt0
+;; and opt2: sp=1 makes only sp-2 wrap, while sp=0 makes both indices wrap.
 (import stdlib.io)
 (import stdlib.string)
 

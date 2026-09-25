@@ -1,11 +1,11 @@
-;; CK-1: twin arrays allocated in ONE function with GVN-equal lengths.
+;; Twin arrays allocated in ONE function with GVN-equal lengths.
 ;;
 ;; Three shapes in one body, all indexed with the SAME cursor:
 ;;   `xs`/`ys`  a single-return allocating helper called twice with one length
 ;;   `ps`/`qs`  two `__tl_make-array`s with one length var
 ;;   `zs`       a longer array, which belongs to neither family
-;; The second check of each twin pair is the one CK-1 retires; the first stays
-;; and is the site any out-of-range cursor aborts at (ck_local_len_eq_abort).
+;; The first check of each twin pair is the site any out-of-range cursor aborts
+;; at (ck_local_len_eq_abort).
 ;; The exit code carries the accumulated value, so a wrong retirement shows up
 ;; as a wrong number rather than as a silent pass.
 (import stdlib.io)

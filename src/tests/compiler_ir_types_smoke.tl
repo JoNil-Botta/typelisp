@@ -977,11 +977,10 @@
           " private spmd-private-v1 @helper avx2 lanes 8 [0 active-mask : bool,"
           " 1 source 0 uniform i64 : i64, 2 source 1 varying i64 : i64]"
           " index none result varying i64"))
-      (string.eq
-        (compiler_ir_types.compiler-ir-instr-describe
-          (ast.ast-node-pool-reader-type-segment-bases)
+      (=
+        (compiler_ir_types.compiler-ir-instr-dst
           (compiler_ir_types.compiler-ir-global-shared-view instr))
-        "  spmd_call helper backend avx2 lanes 8 mask %20(uniform %21 : i64, varying %22 : i64) -> %6 : varying i64")
+        6)
       (match (compiler_ir_types.compiler-ir-global-shared-view instr)
         [(compiler_ir_types.CompilerIrInstr.SpmdCall payload-box)
           (let

@@ -10240,118 +10240,6 @@
           (ast.ast-type-segment-bases-get type-segment-bases elem))
         ")")]))
 
-(define (compiler-ir-vector-type-name
-  [type-segment-bases : i64]
-  [elem : ast.AstType]
-  [lanes : i64]) : String
-  (str_cat.str-cat
-    "(Vector "
-    (compiler-ir-type-name type-segment-bases elem)
-    " "
-    (string.int->string lanes)
-    ")"))
-
-(define (compiler-ir-mask-type-name [lanes : i64]) : String
-  (str_cat.str-cat "(Mask " (string.int->string lanes) ")"))
-
-(define (compiler-ir-value-describe [value : CompilerIrValue]) : String
-  (match value
-    [(CompilerIrValue.Var id) (str_cat.str-cat "%" (string.int->string id) "")]
-    [(CompilerIrValue.Global name)
-      (str_cat.str-cat "@" (compiler-ir-symbol-text name) "")]
-    [(CompilerIrValue.GlobalAddr name)
-      (str_cat.str-cat "&@" (compiler-ir-symbol-text name) "")]
-    [(CompilerIrValue.Function name)
-      (str_cat.str-cat "fn@" (compiler-ir-symbol-text name) "")]
-    [(CompilerIrValue.I64 n) (string.int->string n)]
-    [(CompilerIrValue.F64 n)
-      (str_cat.str-cat "float-bits:" (compiler-ir-u64-payload-render n))]
-    [(CompilerIrValue.Bool b)
-      (if b
-        "true"
-        "false")]
-    [(CompilerIrValue.Char c) (string.int->string (cast c : i64))]
-    [(CompilerIrValue.String s) s]
-    [(CompilerIrValue.Bytes s)
-      (str_cat.str-cat
-        "<bytes:"
-        (string.int->string (string.string-length s))
-        ">")]
-    [(CompilerIrValue.RuntimeGlobal init)
-      (str_cat.str-cat "runtime-init@" (compiler-ir-symbol-text init) "")]
-    [(CompilerIrValue.Unit) "unit"]))
-
-(define (compiler-ir-value-seq-describe-from
-  [values : CompilerIrValueSeq]
-  [index : i64]) : String
-  (if (>= index values.len)
-    ""
-    (str_cat.str-cat
-      (if (= index 0)
-        ""
-        ", ")
-      (compiler-ir-value-describe
-        (compiler-ir-value-seq-ref
-          (compiler-ir-global-shared-view values)
-          index))
-      (compiler-ir-value-seq-describe-from values (+ index 1)))))
-
-(define (compiler-ir-value-seq-describe [values : CompilerIrValueSeq]) : String
-  (compiler-ir-value-seq-describe-from values 0))
-
-(define (compiler-ir-spmd-call-arg-describe
-  [type-segment-bases : i64]
-  [arg : CompilerIrSpmdCallArg]) : String
-  (match arg
-    [(CompilerIrSpmdCallArg.Arg class value ty)
-      (str_cat.str-cat
-        (compiler-ir-spmd-value-class-render class)
-        " "
-        (compiler-ir-value-describe value)
-        " : "
-        (compiler-ir-type-name type-segment-bases ty))]))
-
-(define (compiler-ir-spmd-call-arg-seq-describe-from
-  [type-segment-bases : i64]
-  [seq : CompilerIrSpmdCallArgSeq]
-  [index : i64]) : String
-  (let
-    [count : i64 seq.len]
-    [slots : (__tl_dyn-array CompilerIrSpmdCallArg)
-      (compiler-ir-global-shared-view seq.slots)]
-    (if (>= index count)
-      ""
-      (str_cat.str-cat
-        (compiler-ir-spmd-call-arg-describe
-          type-segment-bases
-          (compiler-ir-array-shared-view slots index))
-        (if (= (+ index 1) count)
-          ""
-          (str_cat.str-cat
-            ", "
-            (compiler-ir-spmd-call-arg-seq-describe-from
-              type-segment-bases
-              seq
-              (+ index 1))))))))
-
-(define (compiler-ir-spmd-call-args-describe
-  [type-segment-bases : i64]
-  [args : CompilerIrSpmdCallArgSeq]) : String
-  (compiler-ir-spmd-call-arg-seq-describe-from type-segment-bases args 0))
-
-(define (compiler-ir-spmd-call-result-describe
-  [type-segment-bases : i64]
-  [result : CompilerIrSpmdCallResult]) : String
-  (match result
-    [(CompilerIrSpmdCallResult.Unit) "unit"]
-    [(CompilerIrSpmdCallResult.Value dst class ty)
-      (str_cat.str-cat
-        (compiler-ir-value-describe (CompilerIrValue.Var dst))
-        " : "
-        (compiler-ir-spmd-value-class-render class)
-        " "
-        (compiler-ir-type-name type-segment-bases ty))]))
-
 (define (compiler-ir-binop-name [op : CompilerIrBinOp]) : String
   (match op
     [(CompilerIrBinOp.Add) "add"]
@@ -10376,339 +10264,6 @@
     [(CompilerIrBinOp.BitXor) "bitxor"]
     [(CompilerIrBinOp.Shl _) "shl"]
     [(CompilerIrBinOp.Shr _) "shr"]))
-
-(define (compiler-ir-mask-binop-name [op : CompilerIrMaskBinOp]) : String
-  (match op
-    [(CompilerIrMaskBinOp.And) "mask_and"]
-    [(CompilerIrMaskBinOp.Or) "mask_or"]))
-
-(define (compiler-ir-vector-reduce-op-name [op : CompilerIrVectorReduceOp]) : String
-  (match op
-    [(CompilerIrVectorReduceOp.Sum) "sum"]
-    [(CompilerIrVectorReduceOp.Min) "min"]
-    [(CompilerIrVectorReduceOp.Max) "max"]))
-
-(define (compiler-ir-vector-prefix-op-name [op : CompilerIrVectorPrefixOp]) : String
-  (match op
-    [(CompilerIrVectorPrefixOp.Sum) "sum"]
-    [(CompilerIrVectorPrefixOp.Min) "min"]
-    [(CompilerIrVectorPrefixOp.Max) "max"]
-    [(CompilerIrVectorPrefixOp.All) "all"]
-    [(CompilerIrVectorPrefixOp.Any) "any"]))
-
-(define (compiler-ir-mask-reduce-op-name [op : CompilerIrMaskReduceOp]) : String
-  (match op
-    [(CompilerIrMaskReduceOp.All) "all"]
-    [(CompilerIrMaskReduceOp.Any) "any"]))
-
-(define (compiler-ir-lane-type-name
-  [type-segment-bases : i64]
-  [lanes : i64]
-  [elem : ast.AstType]) : String
-  (str_cat.str-cat
-    (string.int->string lanes)
-    " x "
-    (compiler-ir-type-name type-segment-bases elem)))
-
-(define (compiler-ir-vector-suffix
-  [type-segment-bases : i64]
-  [lanes : i64]
-  [elem : ast.AstType]) : String
-  (str_cat.str-cat
-    " : "
-    (compiler-ir-lane-type-name type-segment-bases lanes elem)
-    ""))
-
-(define (compiler-ir-instr-describe
-  [type-segment-bases : i64]
-  [instr : CompilerIrInstr]) : String
-  (match instr
-    [(CompilerIrInstr.LaneId dst lanes ty)
-      (str_cat.str-cat
-        "  "
-        (compiler-ir-value-describe (CompilerIrValue.Var dst))
-        " = lane_id "
-        (compiler-ir-lane-type-name type-segment-bases lanes ty)
-        "")]
-    [(CompilerIrInstr.Splat dst value lanes ty)
-      (str_cat.str-cat
-        "  "
-        (compiler-ir-value-describe (CompilerIrValue.Var dst))
-        " = splat "
-        (compiler-ir-value-describe value)
-        (compiler-ir-vector-suffix type-segment-bases lanes ty)
-        "")]
-    [(CompilerIrInstr.VectorBinOp payload-box)
-      (let
-        [dst (compiler-ir-box-field-shared-view payload-box dst)]
-        [op (compiler-ir-box-field-shared-view payload-box op)]
-        [lhs (compiler-ir-box-field-shared-view payload-box lhs)]
-        [rhs (compiler-ir-box-field-shared-view payload-box rhs)]
-        [lanes (compiler-ir-box-field-shared-view payload-box lanes)]
-        [elem-ty (compiler-ir-box-field-shared-view payload-box ty)]
-        (str_cat.str-cat
-          "  "
-          (compiler-ir-value-describe (CompilerIrValue.Var dst))
-          " = vector_"
-          (compiler-ir-binop-name op)
-          " "
-          (compiler-ir-value-describe lhs)
-          ", "
-          (compiler-ir-value-describe rhs)
-          (compiler-ir-vector-suffix type-segment-bases lanes elem-ty)))]
-    [(CompilerIrInstr.VectorPrefix payload-box)
-      (let
-        [dst (compiler-ir-box-field-shared-view payload-box dst)]
-        [op (compiler-ir-box-field-shared-view payload-box op)]
-        [src (compiler-ir-box-field-shared-view payload-box src)]
-        [carry (compiler-ir-box-field-shared-view payload-box carry)]
-        [lanes (compiler-ir-box-field-shared-view payload-box lanes)]
-        [elem-ty (compiler-ir-box-field-shared-view payload-box ty)]
-        (str_cat.str-cat
-          "  "
-          (compiler-ir-value-describe (CompilerIrValue.Var dst))
-          " = vector_prefix_"
-          (compiler-ir-vector-prefix-op-name op)
-          " "
-          (compiler-ir-value-describe src)
-          ", carry "
-          (compiler-ir-value-describe carry)
-          (compiler-ir-vector-suffix type-segment-bases lanes elem-ty)))]
-    [(CompilerIrInstr.VectorReduce dst op src lanes elem-ty)
-      (str_cat.str-cat
-        "  "
-        (compiler-ir-value-describe (CompilerIrValue.Var dst))
-        " = vector_reduce_"
-        (compiler-ir-vector-reduce-op-name op)
-        " "
-        (compiler-ir-value-describe src)
-        (compiler-ir-vector-suffix type-segment-bases lanes elem-ty))]
-    [(CompilerIrInstr.VectorCompare payload-box)
-      (let
-        [dst (compiler-ir-box-field-shared-view payload-box dst)]
-        [op (compiler-ir-box-field-shared-view payload-box op)]
-        [lhs (compiler-ir-box-field-shared-view payload-box lhs)]
-        [rhs (compiler-ir-box-field-shared-view payload-box rhs)]
-        [lanes (compiler-ir-box-field-shared-view payload-box lanes)]
-        [elem-ty (compiler-ir-box-field-shared-view payload-box ty)]
-        (str_cat.str-cat
-          "  "
-          (compiler-ir-value-describe (CompilerIrValue.Var dst))
-          " = vector_cmp_"
-          (compiler-ir-binop-name op)
-          " "
-          (compiler-ir-value-describe lhs)
-          ", "
-          (compiler-ir-value-describe rhs)
-          (compiler-ir-vector-suffix type-segment-bases lanes elem-ty)))]
-    [(CompilerIrInstr.MaskBinOp dst op lhs rhs lanes)
-      (str_cat.str-cat
-        "  "
-        (compiler-ir-value-describe (CompilerIrValue.Var dst))
-        " = "
-        (compiler-ir-mask-binop-name op)
-        " "
-        (compiler-ir-value-describe lhs)
-        ", "
-        (compiler-ir-value-describe rhs)
-        " : "
-        (string.int->string lanes))]
-    [(CompilerIrInstr.MaskNot dst src lanes)
-      (str_cat.str-cat
-        "  "
-        (compiler-ir-value-describe (CompilerIrValue.Var dst))
-        " = mask_not "
-        (compiler-ir-value-describe src)
-        " : "
-        (string.int->string lanes))]
-    [(CompilerIrInstr.MaskReduce dst op src lanes)
-      (str_cat.str-cat
-        "  "
-        (compiler-ir-value-describe (CompilerIrValue.Var dst))
-        " = mask_reduce_"
-        (compiler-ir-mask-reduce-op-name op)
-        " "
-        (compiler-ir-value-describe src)
-        " : "
-        (string.int->string lanes))]
-    [(CompilerIrInstr.Select payload-box)
-      (let
-        [dst (compiler-ir-box-field-shared-view payload-box dst)]
-        [mask (compiler-ir-box-field-shared-view payload-box mask)]
-        [on-true (compiler-ir-box-field-shared-view payload-box on-true)]
-        [on-false (compiler-ir-box-field-shared-view payload-box on-false)]
-        [lanes (compiler-ir-box-field-shared-view payload-box lanes)]
-        [ty (compiler-ir-box-field-shared-view payload-box ty)]
-        (str_cat.str-cat
-          "  "
-          (compiler-ir-value-describe (CompilerIrValue.Var dst))
-          " = select "
-          (compiler-ir-value-describe mask)
-          ", "
-          (compiler-ir-value-describe on-true)
-          ", "
-          (compiler-ir-value-describe on-false)
-          (compiler-ir-vector-suffix type-segment-bases lanes ty)))]
-    [(CompilerIrInstr.VectorLoad dst base index lanes elem-ty)
-      (str_cat.str-cat
-        "  "
-        (compiler-ir-value-describe (CompilerIrValue.Var dst))
-        " = vector_load "
-        (compiler-ir-value-describe base)
-        ", "
-        (compiler-ir-value-describe index)
-        (compiler-ir-vector-suffix type-segment-bases lanes elem-ty))]
-    [(CompilerIrInstr.VectorStore payload-box)
-      (let
-        [base (compiler-ir-box-field-shared-view payload-box base)]
-        [index (compiler-ir-box-field-shared-view payload-box index)]
-        [value (compiler-ir-box-field-shared-view payload-box value)]
-        [lanes (compiler-ir-box-field-shared-view payload-box lanes)]
-        [elem-ty (compiler-ir-box-field-shared-view payload-box ty)]
-        (str_cat.str-cat
-          "  vector_store "
-          (compiler-ir-value-describe base)
-          ", "
-          (compiler-ir-value-describe index)
-          ", "
-          (compiler-ir-value-describe value)
-          (compiler-ir-vector-suffix type-segment-bases lanes elem-ty)))]
-    [(CompilerIrInstr.PredicatedStore payload-box)
-      (let
-        [base (compiler-ir-box-field-shared-view payload-box base)]
-        [index (compiler-ir-box-field-shared-view payload-box index)]
-        [value (compiler-ir-box-field-shared-view payload-box value)]
-        [mask (compiler-ir-box-field-shared-view payload-box mask)]
-        [lanes (compiler-ir-box-field-shared-view payload-box lanes)]
-        [elem-ty (compiler-ir-box-field-shared-view payload-box ty)]
-        (str_cat.str-cat
-          "  predicated_store "
-          (compiler-ir-value-describe base)
-          ", "
-          (compiler-ir-value-describe index)
-          ", "
-          (compiler-ir-value-describe value)
-          ", "
-          (compiler-ir-value-describe mask)
-          (compiler-ir-vector-suffix type-segment-bases lanes elem-ty)))]
-    [(CompilerIrInstr.PredicatedLoad payload-box)
-      (let
-        [dst (compiler-ir-box-field-shared-view payload-box dst)]
-        [base (compiler-ir-box-field-shared-view payload-box base)]
-        [index (compiler-ir-box-field-shared-view payload-box index)]
-        [mask (compiler-ir-box-field-shared-view payload-box mask)]
-        [lanes (compiler-ir-box-field-shared-view payload-box lanes)]
-        [elem-ty (compiler-ir-box-field-shared-view payload-box ty)]
-        (str_cat.str-cat
-          "  "
-          (compiler-ir-value-describe (CompilerIrValue.Var dst))
-          " = predicated_load "
-          (compiler-ir-value-describe base)
-          ", "
-          (compiler-ir-value-describe index)
-          ", "
-          (compiler-ir-value-describe mask)
-          (compiler-ir-vector-suffix type-segment-bases lanes elem-ty)))]
-    [(CompilerIrInstr.GatherLoad payload-box)
-      (let
-        [dst (compiler-ir-box-field-shared-view payload-box dst)]
-        [base (compiler-ir-box-field-shared-view payload-box base)]
-        [index-base (compiler-ir-box-field-shared-view payload-box index-base)]
-        [index (compiler-ir-box-field-shared-view payload-box index)]
-        [lane-offset
-          (compiler-ir-box-field-shared-view payload-box lane-offset)]
-        [lanes (compiler-ir-box-field-shared-view payload-box lanes)]
-        [elem-ty (compiler-ir-box-field-shared-view payload-box ty)]
-        (str_cat.str-cat
-          "  "
-          (compiler-ir-value-describe (CompilerIrValue.Var dst))
-          " = gather_load "
-          (compiler-ir-value-describe base)
-          ", "
-          (compiler-ir-value-describe index-base)
-          ", "
-          (compiler-ir-value-describe index)
-          (if lane-offset
-            " lane-offset"
-            "")
-          (compiler-ir-vector-suffix type-segment-bases lanes elem-ty)))]
-    [(CompilerIrInstr.VectorShuffle payload-box)
-      (let
-        [dst (compiler-ir-box-field-shared-view payload-box dst)]
-        [source (compiler-ir-box-field-shared-view payload-box source)]
-        [selector-low
-          (compiler-ir-box-field-shared-view payload-box selector-low)]
-        [selector-high
-          (compiler-ir-box-field-shared-view payload-box selector-high)]
-        [active-lanes
-          (compiler-ir-box-field-shared-view payload-box active-lanes)]
-        [lanes (compiler-ir-box-field-shared-view payload-box lanes)]
-        [elem-ty (compiler-ir-box-field-shared-view payload-box ty)]
-        (str_cat.str-cat
-          "  "
-          (compiler-ir-value-describe (CompilerIrValue.Var dst))
-          " = vector_shuffle "
-          (compiler-ir-value-describe source)
-          ", "
-          (compiler-ir-value-describe selector-low)
-          ", "
-          (compiler-ir-maybe-value-render selector-high)
-          " active "
-          (compiler-ir-value-describe active-lanes)
-          (compiler-ir-vector-suffix type-segment-bases lanes elem-ty)))]
-    [(CompilerIrInstr.TailMask dst index len lanes)
-      (str_cat.str-cat
-        "  "
-        (compiler-ir-value-describe (CompilerIrValue.Var dst))
-        " = tail_mask "
-        (compiler-ir-value-describe index)
-        ", "
-        (compiler-ir-value-describe len)
-        " : "
-        (string.int->string lanes))]
-    [(CompilerIrInstr.SpmdCall payload-box)
-      (let
-        [callee (compiler-ir-box-field-shared-view payload-box callee)]
-        [backend (compiler-ir-box-field-shared-view payload-box backend)]
-        [lanes (compiler-ir-box-field-shared-view payload-box lanes)]
-        [active-mask
-          (compiler-ir-box-field-shared-view payload-box active-mask)]
-        [args (compiler-ir-box-field-shared-view payload-box args)]
-        [result (compiler-ir-box-field-shared-view payload-box result)]
-        (str_cat.str-cat
-          "  spmd_call "
-          (compiler-ir-symbol-text callee)
-          " backend "
-          (compiler-ir-spmd-backend-render backend)
-          " lanes "
-          (string.int->string lanes)
-          " mask "
-          (compiler-ir-value-describe active-mask)
-          "("
-          (compiler-ir-spmd-call-args-describe type-segment-bases args)
-          ") -> "
-          (compiler-ir-spmd-call-result-describe type-segment-bases result)))]
-    [(CompilerIrInstr.Switch index base cases default-label)
-      (str_cat.str-cat
-        "  switch "
-        (compiler-ir-value-describe index)
-        " base "
-        (string.int->string base)
-        " ["
-        (compiler-ir-switch-case-seq-render cases)
-        "] default "
-        (compiler-ir-label-text default-label))]
-    [(CompilerIrInstr.TotalEnumSwitch index base cases default-label _)
-      (str_cat.str-cat
-        "  switch "
-        (compiler-ir-value-describe index)
-        " base "
-        (string.int->string base)
-        " ["
-        (compiler-ir-switch-case-seq-render cases)
-        "] default "
-        (compiler-ir-label-text default-label))]
-    [_ "non-vector-mask-instr"]))
 
 (define (compiler-ir-value-var-eq? [value : CompilerIrValue] [want : i64]) : bool
   (match value
@@ -10967,201 +10522,187 @@
     (compiler-ir-effect-invalidates-cse? CompilerIrEffect.ControlFlow)
     (compiler-ir-effect-invalidates-cse? CompilerIrEffect.Unknown)))
 
-(define (compiler-ir-display-type-names-ok?) : bool
-  (and
-    (string.eq
-      (compiler-ir-vector-type-name
-        (ast.ast-node-pool-reader-type-segment-bases)
-        (ast.AstType.I32)
-        8)
-      "(Vector i32 8)")
-    (string.eq (compiler-ir-mask-type-name 8) "(Mask 8)")))
+(define (compiler-ir-renders-as? [instr : CompilerIrInstr] [want : String]) : bool
+  (string.eq
+    (compiler-ir-instr-render
+      (cis.InternStructuralSessionHandle 0)
+      (ast.ast-node-pool-reader-type-segment-bases)
+      instr)
+    want))
 
 (define (compiler-ir-display-op-names-ok?) : bool
   (and
-    (string.eq
-      (compiler-ir-vector-reduce-op-name CompilerIrVectorReduceOp.Sum)
-      "sum")
-    (string.eq
-      (compiler-ir-vector-reduce-op-name CompilerIrVectorReduceOp.Min)
-      "min")
-    (string.eq
-      (compiler-ir-vector-reduce-op-name CompilerIrVectorReduceOp.Max)
-      "max")
-    (string.eq
-      (compiler-ir-vector-prefix-op-name CompilerIrVectorPrefixOp.Sum)
-      "sum")
-    (string.eq
-      (compiler-ir-vector-prefix-op-name CompilerIrVectorPrefixOp.Min)
-      "min")
-    (string.eq
-      (compiler-ir-vector-prefix-op-name CompilerIrVectorPrefixOp.Max)
-      "max")
-    (string.eq
-      (compiler-ir-vector-prefix-op-name CompilerIrVectorPrefixOp.All)
-      "all")
-    (string.eq
-      (compiler-ir-vector-prefix-op-name CompilerIrVectorPrefixOp.Any)
-      "any")
-    (string.eq
-      (compiler-ir-mask-reduce-op-name CompilerIrMaskReduceOp.All)
-      "all")
-    (string.eq
-      (compiler-ir-mask-reduce-op-name CompilerIrMaskReduceOp.Any)
-      "any")
-    (string.eq (compiler-ir-mask-binop-name CompilerIrMaskBinOp.And) "mask_and")
-    (string.eq (compiler-ir-mask-binop-name CompilerIrMaskBinOp.Or) "mask_or")))
+    (compiler-ir-renders-as?
+      (CompilerIrInstr.VectorReduce
+        8
+        CompilerIrVectorReduceOp.Sum
+        (CompilerIrValue.Var 2)
+        4
+        (ast.AstType.I64))
+      "  %8 = vector_reduce_sum %2 lanes 4 : i64")
+    (compiler-ir-renders-as?
+      (CompilerIrInstr.VectorReduce
+        8
+        CompilerIrVectorReduceOp.Min
+        (CompilerIrValue.Var 2)
+        4
+        (ast.AstType.I64))
+      "  %8 = vector_reduce_min %2 lanes 4 : i64")
+    (compiler-ir-renders-as?
+      (CompilerIrInstr.VectorReduce
+        8
+        CompilerIrVectorReduceOp.Max
+        (CompilerIrValue.Var 2)
+        4
+        (ast.AstType.I64))
+      "  %8 = vector_reduce_max %2 lanes 4 : i64")
+    (compiler-ir-renders-as?
+      (ir-instr-vector-prefix
+        42
+        CompilerIrVectorPrefixOp.Sum
+        (CompilerIrValue.Var 7)
+        (CompilerIrValue.I64 -3)
+        4
+        (ast.AstType.I64))
+      "  %42 = vector_prefix_sum %7, carry -3 lanes 4 : i64")
+    (compiler-ir-renders-as?
+      (ir-instr-vector-prefix
+        42
+        CompilerIrVectorPrefixOp.Max
+        (CompilerIrValue.Var 7)
+        (CompilerIrValue.I64 -3)
+        4
+        (ast.AstType.I64))
+      "  %42 = vector_prefix_max %7, carry -3 lanes 4 : i64")
+    (compiler-ir-renders-as?
+      (ir-instr-vector-prefix
+        42
+        CompilerIrVectorPrefixOp.All
+        (CompilerIrValue.Var 7)
+        (CompilerIrValue.I64 -3)
+        4
+        (ast.AstType.I64))
+      "  %42 = vector_prefix_all %7, carry -3 lanes 4 : i64")
+    (compiler-ir-renders-as?
+      (ir-instr-vector-prefix
+        42
+        CompilerIrVectorPrefixOp.Any
+        (CompilerIrValue.Var 7)
+        (CompilerIrValue.I64 -3)
+        4
+        (ast.AstType.I64))
+      "  %42 = vector_prefix_any %7, carry -3 lanes 4 : i64")
+    (compiler-ir-renders-as?
+      (CompilerIrInstr.MaskReduce
+        9
+        CompilerIrMaskReduceOp.All
+        (CompilerIrValue.Var 5)
+        4)
+      "  %9 = mask_reduce_all %5 lanes 4")
+    (compiler-ir-renders-as?
+      (CompilerIrInstr.MaskBinOp
+        4
+        CompilerIrMaskBinOp.And
+        (CompilerIrValue.Var 3)
+        (CompilerIrValue.Var 3)
+        4)
+      "  %4 = mask_and %3, %3 lanes 4")))
 
 (define (compiler-ir-display-instrs-ok?) : bool
-  (let
-    [ok : bool true]
-    (begin
-      (if (string.eq
-        (compiler-ir-instr-describe
-          (ast.ast-node-pool-reader-type-segment-bases)
-          (CompilerIrInstr.LaneId 0 4 (ast.AstType.I64)))
-        "  %0 = lane_id 4 x i64")
-        unit
-        (set! ok false))
-      (if (string.eq
-        (compiler-ir-instr-describe
-          (ast.ast-node-pool-reader-type-segment-bases)
-          (CompilerIrInstr.Splat 1 (CompilerIrValue.I64 7) 4 (ast.AstType.I64)))
-        "  %1 = splat 7 : 4 x i64")
-        unit
-        (set! ok false))
-      (if (string.eq
-        (compiler-ir-instr-describe
-          (ast.ast-node-pool-reader-type-segment-bases)
-          (ir-instr-vector-bin-op
-            2
-            (CompilerIrBinOp.Add)
-            (CompilerIrValue.Var 0)
-            (CompilerIrValue.Var 1)
-            4
-            (ast.AstType.I64)))
-        "  %2 = vector_add %0, %1 : 4 x i64")
-        unit
-        (set! ok false))
-      (if (string.eq
-        (compiler-ir-instr-describe
-          (ast.ast-node-pool-reader-type-segment-bases)
-          (CompilerIrInstr.VectorReduce
-            8
-            (CompilerIrVectorReduceOp.Sum)
-            (CompilerIrValue.Var 2)
-            4
-            (ast.AstType.I64)))
-        "  %8 = vector_reduce_sum %2 : 4 x i64")
-        unit
-        (set! ok false))
-      (if (string.eq
-        (compiler-ir-instr-describe
-          (ast.ast-node-pool-reader-type-segment-bases)
-          (ir-instr-vector-compare
-            3
-            (CompilerIrBinOp.Lt)
-            (CompilerIrValue.Var 0)
-            (CompilerIrValue.Var 1)
-            4
-            (ast.AstType.I64)))
-        "  %3 = vector_cmp_lt %0, %1 : 4 x i64")
-        unit
-        (set! ok false))
-      (if (string.eq
-        (compiler-ir-instr-describe
-          (ast.ast-node-pool-reader-type-segment-bases)
-          (CompilerIrInstr.MaskBinOp
-            4
-            (CompilerIrMaskBinOp.Or)
-            (CompilerIrValue.Var 3)
-            (CompilerIrValue.Var 3)
-            4))
-        "  %4 = mask_or %3, %3 : 4")
-        unit
-        (set! ok false))
-      (if (string.eq
-        (compiler-ir-instr-describe
-          (ast.ast-node-pool-reader-type-segment-bases)
-          (CompilerIrInstr.MaskNot 5 (CompilerIrValue.Var 4) 4))
-        "  %5 = mask_not %4 : 4")
-        unit
-        (set! ok false))
-      (if (string.eq
-        (compiler-ir-instr-describe
-          (ast.ast-node-pool-reader-type-segment-bases)
-          (CompilerIrInstr.MaskReduce
-            9
-            (CompilerIrMaskReduceOp.Any)
-            (CompilerIrValue.Var 5)
-            4))
-        "  %9 = mask_reduce_any %5 : 4")
-        unit
-        (set! ok false))
-      (if (string.eq
-        (compiler-ir-instr-describe
-          (ast.ast-node-pool-reader-type-segment-bases)
-          (ir-instr-select
-            6
-            (CompilerIrValue.Var 5)
-            (CompilerIrValue.Var 2)
-            (CompilerIrValue.Var 1)
-            4
-            (ast.AstType.I64)))
-        "  %6 = select %5, %2, %1 : 4 x i64")
-        unit
-        (set! ok false))
-      (if (string.eq
-        (compiler-ir-instr-describe
-          (ast.ast-node-pool-reader-type-segment-bases)
-          (CompilerIrInstr.VectorLoad
-            7
-            (CompilerIrValue.Var 10)
-            (CompilerIrValue.Var 11)
-            4
-            (ast.AstType.I64)))
-        "  %7 = vector_load %10, %11 : 4 x i64")
-        unit
-        (set! ok false))
-      (if (string.eq
-        (compiler-ir-instr-describe
-          (ast.ast-node-pool-reader-type-segment-bases)
-          (ir-instr-vector-store
-            (CompilerIrValue.Var 12)
-            (CompilerIrValue.Var 11)
-            (CompilerIrValue.Var 6)
-            4
-            (ast.AstType.I64)))
-        "  vector_store %12, %11, %6 : 4 x i64")
-        unit
-        (set! ok false))
-      (if (string.eq
-        (compiler-ir-instr-describe
-          (ast.ast-node-pool-reader-type-segment-bases)
-          (ir-instr-predicated-store
-            (CompilerIrValue.Var 12)
-            (CompilerIrValue.Var 11)
-            (CompilerIrValue.Var 6)
-            (CompilerIrValue.Var 5)
-            4
-            (ast.AstType.I64)))
-        "  predicated_store %12, %11, %6, %5 : 4 x i64")
-        unit
-        (set! ok false))
-      (if (string.eq
-        (compiler-ir-instr-describe
-          (ast.ast-node-pool-reader-type-segment-bases)
-          (ir-instr-predicated-load
-            10
-            (CompilerIrValue.Var 12)
-            (CompilerIrValue.Var 11)
-            (CompilerIrValue.Var 5)
-            4
-            (ast.AstType.I64)))
-        "  %10 = predicated_load %12, %11, %5 : 4 x i64")
-        unit
-        (set! ok false))
-      ok)))
+  (and
+    (compiler-ir-renders-as?
+      (CompilerIrInstr.LaneId 0 4 (ast.AstType.I64))
+      "  %0 = lane_id 4 : i64")
+    (compiler-ir-renders-as?
+      (CompilerIrInstr.Splat 1 (CompilerIrValue.I64 7) 4 (ast.AstType.I64))
+      "  %1 = splat 7 lanes 4 : i64")
+    (compiler-ir-renders-as?
+      (ir-instr-vector-bin-op
+        2
+        (CompilerIrBinOp.Add)
+        (CompilerIrValue.Var 0)
+        (CompilerIrValue.Var 1)
+        4
+        (ast.AstType.I64))
+      "  %2 = vector_add %0, %1 lanes 4 : i64")
+    (compiler-ir-renders-as?
+      (CompilerIrInstr.VectorReduce
+        8
+        (CompilerIrVectorReduceOp.Sum)
+        (CompilerIrValue.Var 2)
+        4
+        (ast.AstType.I64))
+      "  %8 = vector_reduce_sum %2 lanes 4 : i64")
+    (compiler-ir-renders-as?
+      (ir-instr-vector-compare
+        3
+        (CompilerIrBinOp.Lt)
+        (CompilerIrValue.Var 0)
+        (CompilerIrValue.Var 1)
+        4
+        (ast.AstType.I64))
+      "  %3 = vector_compare_lt %0, %1 lanes 4 : i64")
+    (compiler-ir-renders-as?
+      (CompilerIrInstr.MaskBinOp
+        4
+        (CompilerIrMaskBinOp.Or)
+        (CompilerIrValue.Var 3)
+        (CompilerIrValue.Var 3)
+        4)
+      "  %4 = mask_or %3, %3 lanes 4")
+    (compiler-ir-renders-as?
+      (CompilerIrInstr.MaskNot 5 (CompilerIrValue.Var 4) 4)
+      "  %5 = mask_not %4 lanes 4")
+    (compiler-ir-renders-as?
+      (CompilerIrInstr.MaskReduce
+        9
+        (CompilerIrMaskReduceOp.Any)
+        (CompilerIrValue.Var 5)
+        4)
+      "  %9 = mask_reduce_any %5 lanes 4")
+    (compiler-ir-renders-as?
+      (ir-instr-select
+        6
+        (CompilerIrValue.Var 5)
+        (CompilerIrValue.Var 2)
+        (CompilerIrValue.Var 1)
+        4
+        (ast.AstType.I64))
+      "  %6 = select %5, %2, %1 lanes 4 : i64")
+    (compiler-ir-renders-as?
+      (CompilerIrInstr.VectorLoad
+        7
+        (CompilerIrValue.Var 10)
+        (CompilerIrValue.Var 11)
+        4
+        (ast.AstType.I64))
+      "  %7 = vector_load %10, %11 lanes 4 : i64")
+    (compiler-ir-renders-as?
+      (ir-instr-vector-store
+        (CompilerIrValue.Var 12)
+        (CompilerIrValue.Var 11)
+        (CompilerIrValue.Var 6)
+        4
+        (ast.AstType.I64))
+      "  vector_store %12, %11, %6 lanes 4 : i64")
+    (compiler-ir-renders-as?
+      (ir-instr-predicated-store
+        (CompilerIrValue.Var 12)
+        (CompilerIrValue.Var 11)
+        (CompilerIrValue.Var 6)
+        (CompilerIrValue.Var 5)
+        4
+        (ast.AstType.I64))
+      "  predicated_store %12, %11, %6 mask %5 lanes 4 : i64")
+    (compiler-ir-renders-as?
+      (ir-instr-predicated-load
+        10
+        (CompilerIrValue.Var 12)
+        (CompilerIrValue.Var 11)
+        (CompilerIrValue.Var 5)
+        4
+        (ast.AstType.I64))
+      "  %10 = predicated_load %12, %11 mask %5 lanes 4 : i64")))
 
 (define (compiler-ir-vector-prefix-display-clone-ok?) : bool
   (let
@@ -11183,11 +10724,6 @@
           (ast.ast-node-pool-reader-type-segment-bases)
           (compiler-ir-global-shared-view instr))
         "  %42 = vector_prefix_min %7, carry -3 lanes 4 : i64")
-      (string.eq
-        (compiler-ir-instr-describe
-          (ast.ast-node-pool-reader-type-segment-bases)
-          (compiler-ir-global-shared-view instr))
-        "  %42 = vector_prefix_min %7, carry -3 : 4 x i64")
       (compiler-ir-effect-is? instr CompilerIrEffect.Pure)
       (match cloned
         [(CompilerIrInstr.VectorPrefix payload-box)
@@ -11222,11 +10758,9 @@
         (CompilerIrValue.Var 2)
         8)]
     (and
-      (string.eq
-        (compiler-ir-instr-describe
-          (ast.ast-node-pool-reader-type-segment-bases)
-          (compiler-ir-global-shared-view instr))
-        "  %9 = tail_mask %1, %2 : 8")
+      (compiler-ir-renders-as?
+        (compiler-ir-global-shared-view instr)
+        "  %9 = tail_mask %1, %2 lanes 8")
       (compiler-ir-effect-is?
         (compiler-ir-global-shared-view instr)
         CompilerIrEffect.Pure)
@@ -12113,7 +11647,6 @@
 
 (define (compiler-ir-display-self-test-ok?) : bool
   (and
-    (compiler-ir-display-type-names-ok?)
     (compiler-ir-display-op-names-ok?)
     (compiler-ir-display-instrs-ok?)
     (compiler-ir-vector-prefix-display-clone-ok?)
@@ -12142,18 +11675,9 @@
         4
         cases
         (compiler-ir-label "other"))]
-    (and
-      (string.eq
-        (compiler-ir-instr-render
-          (cis.InternStructuralSessionHandle 0)
-          (ast.ast-node-pool-reader-type-segment-bases)
-          (compiler-ir-global-shared-view instr))
-        "  switch %9 base 4 [4:four, 5:five] default other")
-      (string.eq
-        (compiler-ir-instr-describe
-          (ast.ast-node-pool-reader-type-segment-bases)
-          instr)
-        "  switch %9 base 4 [4:four, 5:five] default other"))))
+    (compiler-ir-renders-as?
+      instr
+      "  switch %9 base 4 [4:four, 5:five] default other")))
 
 (define (compiler-ir-source-spans-entry-list-ok?) : bool
   (let
@@ -12907,8 +12431,7 @@
       (compiler-ir-value-seq-entry-var? cloned 2 30)
       (string.eq
         (compiler-ir-value-seq-render (compiler-ir-global-shared-view words))
-        "%10, %20, %30")
-      (string.eq (compiler-ir-value-seq-describe words) "%10, %20, %30"))))
+        "%10, %20, %30"))))
 
 (define (compiler-ir-descriptor-pair-capability-ok?) : bool
   (let

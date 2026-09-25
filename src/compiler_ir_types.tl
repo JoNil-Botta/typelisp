@@ -1353,6 +1353,2541 @@
         result
         origin))))
 
+;; --- instruction operand API ------------------------------------------------
+;;
+;; One classification of every CompilerIrInstr operand, shared by the passes
+;; that walk instructions generically. Each operand has one kind:
+;;
+;;   def    the var the instruction defines (`compiler-ir-instr-dst`); the
+;;          SPMD call result var included.
+;;   use    a CompilerIrValue operand, reported with a CompilerIrOperandRole.
+;;          Call arguments, Pack words, SPMD call arguments, Return and
+;;          VectorShuffle maybe-values and phi inputs are uses, visited in
+;;          constructor order.
+;;   type   an ast.AstType field: instruction types, SPMD argument/result types
+;;          and C-ABI return-slot types.
+;;   label  a block label: jump, branch and switch targets, a present
+;;          TotalEnumSwitch trap label, the BoundsCheck success label and phi
+;;          predecessor labels.
+;;   slot   a raw var id that is neither a def nor a value use: AddrOf's
+;;          storage var and LoadOwned's owner evidence. No operand macro reads
+;;          or rewrites a slot; a pass that treats one as a read (liveness) or
+;;          renames it (var renumbering) matches those variants first.
+;;   fixed  everything else is copied unchanged: ops, lane counts, sizes,
+;;          symbols (callees, Store names), switch bases, the SPMD backend and
+;;          origin descriptor.
+;;
+;; Pack words are uses: the backend reads every word of a register group, and
+;; liveness already counts them. Most of the optimizer's program-summary
+;; scanners skip them today, a possible gap in their address-taken facts that
+;; adopting this classification closes.
+;;
+;; A pass that sees phi inputs as edge uses, reads a lanes-0 Select as scalar,
+;; or otherwise departs from this table matches the variants it treats
+;; specially first and falls through to a macro; the macros themselves have no
+;; wildcard arm, so a new instruction does not compile until it is classified
+;; here.
+;;
+;; The macros follow compiler-ir-call-args-map/visit: each expands at the call
+;; site to one match with direct calls of a pass-owned mapper/visitor symbol,
+;; extra context expressions first:
+;;   (visitor ctx... role value)          (folder ctx... role acc value) -> acc
+;;   (use-mapper ctx... role value) -> value
+;;   (def-mapper ctx... dst) -> dst       (type-mapper ctx... ty) -> ty
+;;   (label-mapper ctx... label) -> label (successor-visitor ctx... label)
+;;   (value-eq ctx... a b) -> bool        (type-eq ctx... a b) -> bool
+(defenum CompilerIrOperandRole
+  ;; A one-lane value (stored values, indexes, carries, Pack words, returns).
+  (Scalar)
+  ;; An address the instruction reads, writes or calls through.
+  (Address)
+  ;; A lane vector. Select keeps its vector roles when `lanes` is 0.
+  (Vector)
+  ;; A lane mask, including an SPMD call's active mask.
+  (Mask)
+  ;; A call, syscall or uniform SPMD argument.
+  (CallArg)
+  ;; A phi input; it is read on the edge from its predecessor label.
+  (PhiInput)
+  ;; A branch condition or switch index.
+  (Condition))
+
+(define (compiler-ir-spmd-value-class-role [class : CompilerIrSpmdValueClass]) : CompilerIrOperandRole
+  (match class
+    [(CompilerIrSpmdValueClass.Uniform) (CompilerIrOperandRole.CallArg)]
+    [(CompilerIrSpmdValueClass.Varying) (CompilerIrOperandRole.Vector)]
+    [(CompilerIrSpmdValueClass.Mask) (CompilerIrOperandRole.Mask)]))
+
+;: The var `instr` defines, or -1. Var ids are nonnegative.
+(define (compiler-ir-instr-dst [instr : CompilerIrInstr]) : i64
+  (match instr
+    [(CompilerIrInstr.Mov dst _ _) dst]
+    [(CompilerIrInstr.Alloc dst _) dst]
+    [(CompilerIrInstr.AddrOf dst _) dst]
+    [(CompilerIrInstr.Gep dst _ _ _) dst]
+    [(CompilerIrInstr.OwnRoot dst _ _) dst]
+    [(CompilerIrInstr.Load dst _ _) dst]
+    [(CompilerIrInstr.LoadOwned dst _ _ _) dst]
+    [(CompilerIrInstr.StoreOwned _ _ _) -1]
+    [(CompilerIrInstr.StorePtr _ _ _) -1]
+    [(CompilerIrInstr.CopyBytes _ _ _) -1]
+    [(CompilerIrInstr.BoundsCheck _ _ _) -1]
+    [(CompilerIrInstr.Cast dst _ _ _) dst]
+    [(CompilerIrInstr.Bitcast dst _ _ _) dst]
+    [(CompilerIrInstr.BinOp dst _ _ _ _) dst]
+    [(CompilerIrInstr.UnOp dst _ _ _) dst]
+    [(CompilerIrInstr.LaneId dst _ _) dst]
+    [(CompilerIrInstr.Splat dst _ _ _) dst]
+    [(CompilerIrInstr.VectorBinOp payload-box)
+      (compiler-ir-box-field-shared-view payload-box dst)]
+    [(CompilerIrInstr.VectorPrefix payload-box)
+      (compiler-ir-box-field-shared-view payload-box dst)]
+    [(CompilerIrInstr.VectorReduce dst _ _ _ _) dst]
+    [(CompilerIrInstr.VectorCompare payload-box)
+      (compiler-ir-box-field-shared-view payload-box dst)]
+    [(CompilerIrInstr.MaskBinOp dst _ _ _ _) dst]
+    [(CompilerIrInstr.MaskNot dst _ _) dst]
+    [(CompilerIrInstr.MaskReduce dst _ _ _) dst]
+    [(CompilerIrInstr.Select payload-box)
+      (compiler-ir-box-field-shared-view payload-box dst)]
+    [(CompilerIrInstr.VectorLoad dst _ _ _ _) dst]
+    [(CompilerIrInstr.VectorStore _) -1]
+    [(CompilerIrInstr.PredicatedStore _) -1]
+    [(CompilerIrInstr.PredicatedLoad payload-box)
+      (compiler-ir-box-field-shared-view payload-box dst)]
+    [(CompilerIrInstr.GatherLoad payload-box)
+      (compiler-ir-box-field-shared-view payload-box dst)]
+    [(CompilerIrInstr.VectorShuffle payload-box)
+      (compiler-ir-box-field-shared-view payload-box dst)]
+    [(CompilerIrInstr.TailMask dst _ _ _) dst]
+    [(CompilerIrInstr.EntryArgc dst) dst]
+    [(CompilerIrInstr.EntryArgv dst) dst]
+    [(CompilerIrInstr.EntryEnvp dst) dst]
+    [(CompilerIrInstr.CpuId dst _ _ _) dst]
+    [(CompilerIrInstr.Xgetbv dst _) dst]
+    [(CompilerIrInstr.Syscall dst _) dst]
+    [(CompilerIrInstr.Call dst _ _ _) dst]
+    [(CompilerIrInstr.CallIndirect dst _ _ _) dst]
+    [(CompilerIrInstr.CallIndirectC dst _ _ _) dst]
+    [(CompilerIrInstr.CallCAbiStoreResult _) -1]
+    [(CompilerIrInstr.CallIndirectCAbiStoreResult _) -1]
+    [(CompilerIrInstr.SpmdCall payload-box)
+      (match (compiler-ir-box-field-shared-view payload-box result)
+        [(CompilerIrSpmdCallResult.Unit) -1]
+        [(CompilerIrSpmdCallResult.Value dst _ _) dst])]
+    [(CompilerIrInstr.TailCall _ _ _) -1]
+    [(CompilerIrInstr.Store _ _ _) -1]
+    [(CompilerIrInstr.Jump _) -1]
+    [(CompilerIrInstr.Branch _ _ _) -1]
+    [(CompilerIrInstr.TotalEnumBranch _ _ _) -1]
+    [(CompilerIrInstr.Return _) -1]
+    [(CompilerIrInstr.Phi dst _ _) dst]
+    [(CompilerIrInstr.Pack dst _ _) dst]
+    [(CompilerIrInstr.Word dst _ _ _) dst]
+    [(CompilerIrInstr.TailCallIndirect _ _ _) -1]
+    [(CompilerIrInstr.Switch _ _ _ _) -1]
+    [(CompilerIrInstr.TotalEnumSwitch _ _ _ _ _) -1]))
+
+;: The value type the instruction states for its destination: the type field
+;: of a scalar result (a Cast's target, a comparison's `bool`, an SPMD call's
+;: result type, a lanes-0 Select's type). `No` for instructions without a
+;: destination and for destinations that are addresses (Alloc, AddrOf, Gep),
+;: lane vectors or masks, or untyped machine results (Entry*, CpuId, Xgetbv,
+;: Syscall).
+(define (compiler-ir-instr-dst-type [instr : CompilerIrInstr]) : ast.AstMaybeType
+  (match instr
+    [(CompilerIrInstr.Mov _ _ ty) (ast.AstMaybeType.Some ty)]
+    [(CompilerIrInstr.Alloc _ _) (ast.AstMaybeType.No)]
+    [(CompilerIrInstr.AddrOf _ _) (ast.AstMaybeType.No)]
+    [(CompilerIrInstr.Gep _ _ _ _) (ast.AstMaybeType.No)]
+    [(CompilerIrInstr.OwnRoot _ _ ty) (ast.AstMaybeType.Some ty)]
+    [(CompilerIrInstr.Load _ _ ty) (ast.AstMaybeType.Some ty)]
+    [(CompilerIrInstr.LoadOwned _ _ _ ty) (ast.AstMaybeType.Some ty)]
+    [(CompilerIrInstr.StoreOwned _ _ _) (ast.AstMaybeType.No)]
+    [(CompilerIrInstr.StorePtr _ _ _) (ast.AstMaybeType.No)]
+    [(CompilerIrInstr.CopyBytes _ _ _) (ast.AstMaybeType.No)]
+    [(CompilerIrInstr.BoundsCheck _ _ _) (ast.AstMaybeType.No)]
+    [(CompilerIrInstr.Cast _ _ _ to-ty) (ast.AstMaybeType.Some to-ty)]
+    [(CompilerIrInstr.Bitcast _ _ _ to-ty) (ast.AstMaybeType.Some to-ty)]
+    [(CompilerIrInstr.BinOp _ op _ _ ty)
+      (ast.AstMaybeType.Some (compiler-ir-binop-result-type op ty))]
+    [(CompilerIrInstr.UnOp _ _ _ ty) (ast.AstMaybeType.Some ty)]
+    [(CompilerIrInstr.LaneId _ _ _) (ast.AstMaybeType.No)]
+    [(CompilerIrInstr.Splat _ _ _ _) (ast.AstMaybeType.No)]
+    [(CompilerIrInstr.VectorBinOp _) (ast.AstMaybeType.No)]
+    [(CompilerIrInstr.VectorPrefix _) (ast.AstMaybeType.No)]
+    [(CompilerIrInstr.VectorReduce _ _ _ _ ty) (ast.AstMaybeType.Some ty)]
+    [(CompilerIrInstr.VectorCompare _) (ast.AstMaybeType.No)]
+    [(CompilerIrInstr.MaskBinOp _ _ _ _ _) (ast.AstMaybeType.No)]
+    [(CompilerIrInstr.MaskNot _ _ _) (ast.AstMaybeType.No)]
+    [(CompilerIrInstr.MaskReduce _ _ _ _)
+      (ast.AstMaybeType.Some (ast.AstType.Bool))]
+    [(CompilerIrInstr.Select payload-box)
+      (let
+        [payload : CompilerIrInstrSelectPayload
+          (compiler-ir-box-shared-view payload-box)]
+        (if (= payload.lanes 0)
+          (ast.AstMaybeType.Some payload.ty)
+          (ast.AstMaybeType.No)))]
+    [(CompilerIrInstr.VectorLoad _ _ _ _ _) (ast.AstMaybeType.No)]
+    [(CompilerIrInstr.VectorStore _) (ast.AstMaybeType.No)]
+    [(CompilerIrInstr.PredicatedStore _) (ast.AstMaybeType.No)]
+    [(CompilerIrInstr.PredicatedLoad _) (ast.AstMaybeType.No)]
+    [(CompilerIrInstr.GatherLoad _) (ast.AstMaybeType.No)]
+    [(CompilerIrInstr.VectorShuffle _) (ast.AstMaybeType.No)]
+    [(CompilerIrInstr.TailMask _ _ _ _) (ast.AstMaybeType.No)]
+    [(CompilerIrInstr.EntryArgc _) (ast.AstMaybeType.No)]
+    [(CompilerIrInstr.EntryArgv _) (ast.AstMaybeType.No)]
+    [(CompilerIrInstr.EntryEnvp _) (ast.AstMaybeType.No)]
+    [(CompilerIrInstr.CpuId _ _ _ _) (ast.AstMaybeType.No)]
+    [(CompilerIrInstr.Xgetbv _ _) (ast.AstMaybeType.No)]
+    [(CompilerIrInstr.Syscall _ _) (ast.AstMaybeType.No)]
+    [(CompilerIrInstr.Call _ _ _ ty) (ast.AstMaybeType.Some ty)]
+    [(CompilerIrInstr.CallIndirect _ _ _ ty) (ast.AstMaybeType.Some ty)]
+    [(CompilerIrInstr.CallIndirectC _ _ _ ty) (ast.AstMaybeType.Some ty)]
+    [(CompilerIrInstr.CallCAbiStoreResult _) (ast.AstMaybeType.No)]
+    [(CompilerIrInstr.CallIndirectCAbiStoreResult _) (ast.AstMaybeType.No)]
+    [(CompilerIrInstr.SpmdCall payload-box)
+      (match (compiler-ir-box-field-shared-view payload-box result)
+        [(CompilerIrSpmdCallResult.Unit) (ast.AstMaybeType.No)]
+        [(CompilerIrSpmdCallResult.Value _ _ ty) (ast.AstMaybeType.Some ty)])]
+    [(CompilerIrInstr.TailCall _ _ _) (ast.AstMaybeType.No)]
+    [(CompilerIrInstr.Store _ _ _) (ast.AstMaybeType.No)]
+    [(CompilerIrInstr.Jump _) (ast.AstMaybeType.No)]
+    [(CompilerIrInstr.Branch _ _ _) (ast.AstMaybeType.No)]
+    [(CompilerIrInstr.TotalEnumBranch _ _ _) (ast.AstMaybeType.No)]
+    [(CompilerIrInstr.Return _) (ast.AstMaybeType.No)]
+    [(CompilerIrInstr.Phi _ _ ty) (ast.AstMaybeType.Some ty)]
+    [(CompilerIrInstr.Pack _ _ ty) (ast.AstMaybeType.Some ty)]
+    [(CompilerIrInstr.Word _ _ _ ty) (ast.AstMaybeType.Some ty)]
+    [(CompilerIrInstr.TailCallIndirect _ _ _) (ast.AstMaybeType.No)]
+    [(CompilerIrInstr.Switch _ _ _ _) (ast.AstMaybeType.No)]
+    [(CompilerIrInstr.TotalEnumSwitch _ _ _ _ _) (ast.AstMaybeType.No)]))
+
+;; Folds beside compiler-ir-value-seq-visit and compiler-ir-call-args-visit:
+;; `(folder ctx... acc value)` returns the next accumulator.
+(defmacro (compiler-ir-value-seq-fold
+  [values : Expr]
+  [acc : Expr]
+  [folder : Expr]
+  [contexts : Expr ...]) : Expr
+  `(let
+    [fold-acc ,acc]
+    [value-seq : compiler_ir_types.CompilerIrValueSeq ,values]
+    [source : (__tl_dyn-array compiler_ir_types.CompilerIrValue)
+      value-seq.slots]
+    [index : i64 0]
+    (begin
+      (while (< index value-seq.len)
+        (begin
+          (set!
+            fold-acc
+            (,folder
+              ,@contexts
+              fold-acc
+              (unsafe
+                (ptr-read (ptr-offset (__tl_array-data source) index)))))
+          (set! index (+ index 1))))
+      fold-acc)))
+
+(defmacro (compiler-ir-call-args-fold
+  [args : Expr]
+  [acc : Expr]
+  [folder : Expr]
+  [contexts : Expr ...]) : Expr
+  `(let
+    [fold-acc ,acc]
+    (begin
+      (match ,args
+        [(compiler_ir_types.CompilerIrCallArgs.Nil) unit]
+        [(compiler_ir_types.CompilerIrCallArgs.One value)
+          (set! fold-acc (,folder ,@contexts fold-acc value))]
+        [(compiler_ir_types.CompilerIrCallArgs.Two a b)
+          (begin
+            (set! fold-acc (,folder ,@contexts fold-acc a))
+            (set! fold-acc (,folder ,@contexts fold-acc b)))]
+        [(compiler_ir_types.CompilerIrCallArgs.Array values)
+          (set!
+            fold-acc
+            (compiler-ir-value-array-fold values fold-acc ,folder ,@contexts))]
+        [(compiler_ir_types.CompilerIrCallArgs.Sret values _)
+          (set!
+            fold-acc
+            (compiler-ir-value-array-fold values fold-acc ,folder ,@contexts))])
+      fold-acc)))
+
+(defmacro (compiler-ir-value-array-fold
+  [values : Expr]
+  [acc : Expr]
+  [folder : Expr]
+  [contexts : Expr ...]) : Expr
+  `(let
+    [fold-acc ,acc]
+    [source : (__tl_dyn-array compiler_ir_types.CompilerIrValue) ,values]
+    [count : i64 (array-length source)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            fold-acc
+            (,folder
+              ,@contexts
+              fold-acc
+              (unsafe
+                (ptr-read (ptr-offset (__tl_array-data source) index)))))
+          (set! index (+ index 1))))
+      fold-acc)))
+
+;; Phi inputs in order, value and predecessor label together:
+;;   (visitor ctx... value label)   (folder ctx... acc value label) -> acc
+;;   (value-mapper ctx... value)    (label-mapper ctx... label)
+;; A mapper given as `_` is the identity; with both identities the sequence is
+;; returned as is, otherwise the result owns fresh storage.
+(defmacro (compiler-ir-phi-inputs-visit
+  [inputs : Expr]
+  [visitor : Expr]
+  [contexts : Expr ...]) : unit
+  `(compiler-ir-phi-inputs-walk ,inputs _ _ ,visitor ,@contexts))
+
+(defmacro (compiler-ir-phi-inputs-fold
+  [inputs : Expr]
+  [acc : Expr]
+  [folder : Expr]
+  [contexts : Expr ...]) : Expr
+  `(let
+    [fold-acc ,acc]
+    (begin
+      (compiler-ir-phi-inputs-walk ,inputs fold-acc _ ,folder ,@contexts)
+      fold-acc)))
+
+(defmacro (compiler-ir-phi-inputs-map
+  [inputs : Expr]
+  [value-mapper : Expr]
+  [label-mapper : Expr]
+  [contexts : Expr ...]) : CompilerIrPhiInputSeq
+  `(compiler-ir-phi-inputs-rebuild
+    ,inputs
+    ,value-mapper
+    _
+    ,label-mapper
+    ,@contexts))
+
+;; Shared loop of the phi-input visit and fold. `acc` is `_` to visit, or the
+;; accumulator variable to fold. With `role` `_` the callback receives the
+;; value and label; with a role it receives the role and value (the operand
+;; walk of compiler-ir-instr-fold-uses).
+(defmacro (compiler-ir-phi-inputs-walk
+  [inputs : Expr]
+  [acc : Expr]
+  [role : Expr]
+  [f : Expr]
+  [contexts : Expr ...]) : unit
+  (let
+    [visit? : bool
+      (match acc
+        [(Expr.Var name)
+          (match name
+            ["_" true]
+            [_ false])]
+        [_ false])]
+    [no-role? : bool
+      (match role
+        [(Expr.Var name)
+          (match name
+            ["_" true]
+            [_ false])]
+        [_ false])]
+    [step : Expr
+      (if visit?
+        (if no-role?
+          `(,f ,@contexts input.value input.label)
+          `(,f ,@contexts ,role input.value))
+        (if no-role?
+          `(set! ,acc (,f ,@contexts ,acc input.value input.label))
+          `(set! ,acc (,f ,@contexts ,role ,acc input.value))))]
+    `(let
+      [phi-inputs : compiler_ir_types.CompilerIrPhiInputSeq ,inputs]
+      [phi-slots : (__tl_dyn-array compiler_ir_types.CompilerIrPhiInput)
+        phi-inputs.slots]
+      [phi-index : i64 0]
+      (while (< phi-index phi-inputs.len)
+        (let
+          [input : compiler_ir_types.CompilerIrPhiInput
+            (unsafe
+              (ptr-read
+                (ptr-offset
+                  (__tl_array-data phi-slots)
+                  (+ phi-inputs.start phi-index))))]
+          (begin
+            ,step
+            (set! phi-index (+ phi-index 1))))))))
+
+;; phi-inputs-map with an optional operand role passed to the value mapper
+;; before the value (`_` passes none).
+(defmacro (compiler-ir-phi-inputs-rebuild
+  [inputs : Expr]
+  [value-mapper : Expr]
+  [value-role : Expr]
+  [label-mapper : Expr]
+  [contexts : Expr ...]) : CompilerIrPhiInputSeq
+  (let
+    [keep-values? : bool
+      (match value-mapper
+        [(Expr.Var name)
+          (match name
+            ["_" true]
+            [_ false])]
+        [_ false])]
+    [keep-labels? : bool
+      (match label-mapper
+        [(Expr.Var name)
+          (match name
+            ["_" true]
+            [_ false])]
+        [_ false])]
+    [no-role? : bool
+      (match value-role
+        [(Expr.Var name)
+          (match name
+            ["_" true]
+            [_ false])]
+        [_ false])]
+    [value-out : Expr
+      (if keep-values?
+        'input.value
+        (if no-role?
+          `(,value-mapper ,@contexts input.value)
+          `(,value-mapper ,@contexts ,value-role input.value)))]
+    [label-out : Expr
+      (if keep-labels?
+        'input.label
+        `(,label-mapper ,@contexts input.label))]
+    (if (if keep-values?
+      keep-labels?
+      false)
+      inputs
+      `(let
+        [phi-inputs : compiler_ir_types.CompilerIrPhiInputSeq ,inputs]
+        [phi-slots : (__tl_dyn-array compiler_ir_types.CompilerIrPhiInput)
+          phi-inputs.slots]
+        [phi-out : (__tl_dyn-array compiler_ir_types.CompilerIrPhiInput)
+          (__tl_make-array compiler_ir_types.CompilerIrPhiInput phi-inputs.len)]
+        [phi-index : i64 0]
+        (begin
+          (while (< phi-index phi-inputs.len)
+            (let
+              [input : compiler_ir_types.CompilerIrPhiInput
+                (unsafe
+                  (ptr-read
+                    (ptr-offset
+                      (__tl_array-data phi-slots)
+                      (+ phi-inputs.start phi-index))))]
+              (begin
+                (set!
+                  (array-ref phi-out phi-index)
+                  (compiler_ir_types.CompilerIrPhiInput ,value-out ,label-out))
+                (set! phi-index (+ phi-index 1)))))
+          (compiler_ir_types.CompilerIrPhiInputSeq phi-out 0 phi-inputs.len))))))
+
+;; Switch case target labels in case order: (visitor ctx... label).
+(defmacro (compiler-ir-switch-cases-visit
+  [cases : Expr]
+  [visitor : Expr]
+  [contexts : Expr ...]) : unit
+  `(let
+    [switch-cases : compiler_ir_types.CompilerIrSwitchCaseSeq ,cases]
+    [case-slots : (__tl_dyn-array compiler_ir_types.CompilerIrSwitchCase)
+      switch-cases.slots]
+    [case-index : i64 0]
+    (while (< case-index switch-cases.len)
+      (begin
+        (match (unsafe
+          (ptr-read (ptr-offset (__tl_array-data case-slots) case-index)))
+          [(compiler_ir_types.CompilerIrSwitchCase.Case _ case-label)
+            (,visitor ,@contexts case-label)])
+        (set! case-index (+ case-index 1))))))
+
+;; Per-operand steps of the instruction macros below. `shape` is a bare name:
+;; `value`, `maybe` (a CompilerIrMaybeValue), `values` (a CompilerIrValueSeq),
+;; `args` (CompilerIrCallArgs), `spmd-args` or `phi-inputs` (whose roles come
+;; from the SPMD value class and PhiInput; pass `_` as their role).
+;; A use step visits `(f ctx... role value)`, or with an accumulator variable
+;; `acc` (not `_`) folds `(set! acc (f ctx... role acc value))`.
+(defmacro (compiler-ir-use-step
+  [shape : Expr]
+  [role : Expr]
+  [operand : Expr]
+  [acc : Expr]
+  [f : Expr]
+  [contexts : Expr ...]) : unit
+  (let
+    [visit? : bool
+      (match acc
+        [(Expr.Var name)
+          (match name
+            ["_" true]
+            [_ false])]
+        [_ false])]
+    [shape-name : String
+      (match shape
+        [(Expr.Var name) name]
+        [_ (comptime-error "compiler-ir-use-step: shape must be a bare name")])]
+    [value-step : Expr
+      (if visit?
+        `(,f ,@contexts ,role use-value)
+        `(set! ,acc (,f ,@contexts ,role ,acc use-value)))]
+    [spmd-step : Expr
+      (if visit?
+        `(,f ,@contexts (compiler-ir-spmd-value-class-role use-class) use-value)
+        `(set!
+          ,acc
+          (,f
+            ,@contexts
+            (compiler-ir-spmd-value-class-role use-class)
+            ,acc
+            use-value)))]
+    (match shape-name
+      ["value"
+        `(let
+          [use-value ,operand]
+          ,value-step)]
+      ["maybe"
+        `(match ,operand
+          [(compiler_ir_types.CompilerIrMaybeValue.No) unit]
+          [(compiler_ir_types.CompilerIrMaybeValue.Some use-value) ,value-step])]
+      ["values"
+        (if visit?
+          `(compiler-ir-value-seq-visit ,operand ,f ,@contexts ,role)
+          `(set!
+            ,acc
+            (compiler-ir-value-seq-fold ,operand ,acc ,f ,@contexts ,role)))]
+      ["args"
+        (if visit?
+          `(compiler-ir-call-args-visit ,operand ,f ,@contexts ,role)
+          `(set!
+            ,acc
+            (compiler-ir-call-args-fold ,operand ,acc ,f ,@contexts ,role)))]
+      ["spmd-args"
+        `(let
+          [spmd-args : compiler_ir_types.CompilerIrSpmdCallArgSeq ,operand]
+          [spmd-slots : (__tl_dyn-array compiler_ir_types.CompilerIrSpmdCallArg)
+            spmd-args.slots]
+          [spmd-index : i64 0]
+          (while (< spmd-index spmd-args.len)
+            (begin
+              (match (unsafe
+                (ptr-read (ptr-offset (__tl_array-data spmd-slots) spmd-index)))
+                [(compiler_ir_types.CompilerIrSpmdCallArg.Arg
+                    use-class
+                    use-value
+                    _)
+                  ,spmd-step])
+              (set! spmd-index (+ spmd-index 1)))))]
+      ["phi-inputs"
+        `(compiler-ir-phi-inputs-walk
+          ,operand
+          ,acc
+          (compiler_ir_types.CompilerIrOperandRole.PhiInput)
+          ,f
+          ,@contexts)]
+      [_ 'compiler-ir-unknown-operand-shape])))
+
+;; A mapped use: `(mapper ctx... role value)` per value of the shape (`value`,
+;; `maybe`, `values` or `args`); `_` keeps the operand as is.
+(defmacro (compiler-ir-map-use
+  [shape : Expr]
+  [role : Expr]
+  [operand : Expr]
+  [mapper : Expr]
+  [contexts : Expr ...]) : Expr
+  (let
+    [keep? : bool
+      (match mapper
+        [(Expr.Var name)
+          (match name
+            ["_" true]
+            [_ false])]
+        [_ false])]
+    [shape-name : String
+      (match shape
+        [(Expr.Var name) name]
+        [_ (comptime-error "compiler-ir-map-use: shape must be a bare name")])]
+    (if keep?
+      operand
+      (match shape-name
+        ["value" `(,mapper ,@contexts ,role ,operand)]
+        ["maybe"
+          `(match ,operand
+            [(compiler_ir_types.CompilerIrMaybeValue.No)
+              (compiler_ir_types.CompilerIrMaybeValue.No)]
+            [(compiler_ir_types.CompilerIrMaybeValue.Some use-value)
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (,mapper ,@contexts ,role use-value))])]
+        ["values"
+          `(compiler-ir-value-seq-map ,operand ,mapper ,@contexts ,role)]
+        ["args" `(compiler-ir-call-args-map ,operand ,mapper ,@contexts ,role)]
+        [_ 'compiler-ir-unknown-operand-shape]))))
+
+;; A mapped def, type or label: `(mapper ctx... operand)`; `_` keeps it.
+(defmacro (compiler-ir-map-field
+  [operand : Expr]
+  [mapper : Expr]
+  [contexts : Expr ...]) : Expr
+  (match mapper
+    [(Expr.Var name)
+      (match name
+        ["_" operand]
+        [_ `(,mapper ,@contexts ,operand)])]
+    [_ `(,mapper ,@contexts ,operand)]))
+
+;; An absent trap label (`compiler-ir-label-none`) stays absent.
+(defmacro (compiler-ir-map-trap-label
+  [label : Expr]
+  [mapper : Expr]
+  [contexts : Expr ...]) : i64
+  (match mapper
+    [(Expr.Var name)
+      (match name
+        ["_" label]
+        [_
+          `(let
+            [trap-label : i64 ,label]
+            (if (= trap-label (compiler-ir-label-none))
+              trap-label
+              (,mapper ,@contexts trap-label)))])]
+    [_
+      `(let
+        [trap-label : i64 ,label]
+        (if (= trap-label (compiler-ir-label-none))
+          trap-label
+          (,mapper ,@contexts trap-label)))]))
+
+(defmacro (compiler-ir-map-spmd-args
+  [args : Expr]
+  [use-mapper : Expr]
+  [type-mapper : Expr]
+  [contexts : Expr ...]) : CompilerIrSpmdCallArgSeq
+  (let
+    [keep-uses? : bool
+      (match use-mapper
+        [(Expr.Var name)
+          (match name
+            ["_" true]
+            [_ false])]
+        [_ false])]
+    [keep-types? : bool
+      (match type-mapper
+        [(Expr.Var name)
+          (match name
+            ["_" true]
+            [_ false])]
+        [_ false])]
+    [value-out : Expr
+      (if keep-uses?
+        'arg-value
+        `(,use-mapper
+          ,@contexts
+          (compiler-ir-spmd-value-class-role arg-class)
+          arg-value))]
+    [type-out : Expr
+      (if keep-types?
+        'arg-ty
+        `(,type-mapper ,@contexts arg-ty))]
+    (if (if keep-uses?
+      keep-types?
+      false)
+      args
+      `(let
+        [spmd-args : compiler_ir_types.CompilerIrSpmdCallArgSeq ,args]
+        [spmd-slots : (__tl_dyn-array compiler_ir_types.CompilerIrSpmdCallArg)
+          spmd-args.slots]
+        [spmd-out : (__tl_dyn-array compiler_ir_types.CompilerIrSpmdCallArg)
+          (__tl_make-array
+            compiler_ir_types.CompilerIrSpmdCallArg
+            spmd-args.len)]
+        [spmd-index : i64 0]
+        (begin
+          (while (< spmd-index spmd-args.len)
+            (begin
+              (match (unsafe
+                (ptr-read (ptr-offset (__tl_array-data spmd-slots) spmd-index)))
+                [(compiler_ir_types.CompilerIrSpmdCallArg.Arg
+                    arg-class
+                    arg-value
+                    arg-ty)
+                  (set!
+                    (array-ref spmd-out spmd-index)
+                    (compiler_ir_types.CompilerIrSpmdCallArg.Arg
+                      arg-class
+                      ,value-out
+                      ,type-out))])
+              (set! spmd-index (+ spmd-index 1))))
+          (compiler_ir_types.CompilerIrSpmdCallArgSeq spmd-out spmd-args.len))))))
+
+(defmacro (compiler-ir-map-spmd-result
+  [result : Expr]
+  [def-mapper : Expr]
+  [type-mapper : Expr]
+  [contexts : Expr ...]) : CompilerIrSpmdCallResult
+  `(match ,result
+    [(compiler_ir_types.CompilerIrSpmdCallResult.Unit)
+      (compiler_ir_types.CompilerIrSpmdCallResult.Unit)]
+    [(compiler_ir_types.CompilerIrSpmdCallResult.Value
+        result-dst
+        class
+        result-ty)
+      (compiler_ir_types.CompilerIrSpmdCallResult.Value
+        (compiler-ir-map-field result-dst ,def-mapper ,@contexts)
+        class
+        (compiler-ir-map-field result-ty ,type-mapper ,@contexts))]))
+
+(defmacro (compiler-ir-map-switch-cases
+  [cases : Expr]
+  [label-mapper : Expr]
+  [contexts : Expr ...]) : CompilerIrSwitchCaseSeq
+  (match label-mapper
+    [(Expr.Var name)
+      (match name
+        ["_" cases]
+        [_ `(compiler-ir-switch-cases-relabel ,cases ,label-mapper ,@contexts)])]
+    [_ `(compiler-ir-switch-cases-relabel ,cases ,label-mapper ,@contexts)]))
+
+(defmacro (compiler-ir-switch-cases-relabel
+  [cases : Expr]
+  [label-mapper : Expr]
+  [contexts : Expr ...]) : CompilerIrSwitchCaseSeq
+  `(let
+    [switch-cases : compiler_ir_types.CompilerIrSwitchCaseSeq ,cases]
+    [case-slots : (__tl_dyn-array compiler_ir_types.CompilerIrSwitchCase)
+      switch-cases.slots]
+    [case-out : (__tl_dyn-array compiler_ir_types.CompilerIrSwitchCase)
+      (__tl_make-array compiler_ir_types.CompilerIrSwitchCase switch-cases.len)]
+    [case-index : i64 0]
+    (begin
+      (while (< case-index switch-cases.len)
+        (begin
+          (match (unsafe
+            (ptr-read (ptr-offset (__tl_array-data case-slots) case-index)))
+            [(compiler_ir_types.CompilerIrSwitchCase.Case tag case-label)
+              (set!
+                (array-ref case-out case-index)
+                (compiler_ir_types.CompilerIrSwitchCase.Case
+                  tag
+                  (,label-mapper ,@contexts case-label)))])
+          (set! case-index (+ case-index 1))))
+      (compiler_ir_types.CompilerIrSwitchCaseSeq case-out switch-cases.len))))
+
+(defmacro (compiler-ir-map-c-abi-slots
+  [slots : Expr]
+  [type-mapper : Expr]
+  [contexts : Expr ...]) : CompilerIrCAbiReturnSlotSeq
+  (match type-mapper
+    [(Expr.Var name)
+      (match name
+        ["_" slots]
+        [_ `(compiler-ir-c-abi-slots-retype ,slots ,type-mapper ,@contexts)])]
+    [_ `(compiler-ir-c-abi-slots-retype ,slots ,type-mapper ,@contexts)]))
+
+(defmacro (compiler-ir-c-abi-slots-retype
+  [slots : Expr]
+  [type-mapper : Expr]
+  [contexts : Expr ...]) : CompilerIrCAbiReturnSlotSeq
+  `(let
+    [return-slots : compiler_ir_types.CompilerIrCAbiReturnSlotSeq ,slots]
+    [slot-items : (__tl_dyn-array compiler_ir_types.CompilerIrCAbiReturnSlot)
+      return-slots.slots]
+    [slot-out : (__tl_dyn-array compiler_ir_types.CompilerIrCAbiReturnSlot)
+      (__tl_make-array
+        compiler_ir_types.CompilerIrCAbiReturnSlot
+        return-slots.len)]
+    [slot-index : i64 0]
+    (begin
+      (while (< slot-index return-slots.len)
+        (begin
+          (match (unsafe
+            (ptr-read (ptr-offset (__tl_array-data slot-items) slot-index)))
+            [(compiler_ir_types.CompilerIrCAbiReturnSlot.Slot slot-ty offset)
+              (set!
+                (array-ref slot-out slot-index)
+                (compiler_ir_types.CompilerIrCAbiReturnSlot.Slot
+                  (,type-mapper ,@contexts slot-ty)
+                  offset))])
+          (set! slot-index (+ slot-index 1))))
+      (compiler_ir_types.CompilerIrCAbiReturnSlotSeq slot-out return-slots.len))))
+
+;; Shared body of visit-uses and fold-uses; `acc` is `_` to visit.
+(defmacro (compiler-ir-instr-walk-uses
+  [instr : Expr]
+  [acc : Expr]
+  [f : Expr]
+  [contexts : Expr ...]) : unit
+  (let
+    [tail : ExprList
+      (match `(begin
+        ,acc
+        ,f
+        ,@contexts)
+        [(Expr.Begin items) items]
+        [_ (expr-list-empty)])]
+    [scalar : Expr '(compiler_ir_types.CompilerIrOperandRole.Scalar)]
+    [address : Expr '(compiler_ir_types.CompilerIrOperandRole.Address)]
+    [vector : Expr '(compiler_ir_types.CompilerIrOperandRole.Vector)]
+    [mask : Expr '(compiler_ir_types.CompilerIrOperandRole.Mask)]
+    [call-arg : Expr '(compiler_ir_types.CompilerIrOperandRole.CallArg)]
+    [condition : Expr '(compiler_ir_types.CompilerIrOperandRole.Condition)]
+    `(match ,instr
+      [(compiler_ir_types.CompilerIrInstr.Mov _ src _)
+        (compiler-ir-use-step value ,scalar src ,@tail)]
+      [(compiler_ir_types.CompilerIrInstr.Alloc _ _) unit]
+      [(compiler_ir_types.CompilerIrInstr.AddrOf _ _) unit]
+      [(compiler_ir_types.CompilerIrInstr.Gep _ base offset _)
+        (begin
+          (compiler-ir-use-step value ,address base ,@tail)
+          (compiler-ir-use-step value ,scalar offset ,@tail))]
+      [(compiler_ir_types.CompilerIrInstr.OwnRoot _ src _)
+        (compiler-ir-use-step value ,scalar src ,@tail)]
+      [(compiler_ir_types.CompilerIrInstr.Load _ src _)
+        (compiler-ir-use-step value ,address src ,@tail)]
+      [(compiler_ir_types.CompilerIrInstr.LoadOwned _ src _ _)
+        (compiler-ir-use-step value ,address src ,@tail)]
+      [(compiler_ir_types.CompilerIrInstr.StoreOwned ptr value _)
+        (begin
+          (compiler-ir-use-step value ,address ptr ,@tail)
+          (compiler-ir-use-step value ,scalar value ,@tail))]
+      [(compiler_ir_types.CompilerIrInstr.StorePtr ptr value _)
+        (begin
+          (compiler-ir-use-step value ,address ptr ,@tail)
+          (compiler-ir-use-step value ,scalar value ,@tail))]
+      [(compiler_ir_types.CompilerIrInstr.CopyBytes ptr src _)
+        (begin
+          (compiler-ir-use-step value ,address ptr ,@tail)
+          (compiler-ir-use-step value ,address src ,@tail))]
+      [(compiler_ir_types.CompilerIrInstr.BoundsCheck index length _)
+        (begin
+          (compiler-ir-use-step value ,scalar index ,@tail)
+          (compiler-ir-use-step value ,scalar length ,@tail))]
+      [(compiler_ir_types.CompilerIrInstr.Cast _ src _ _)
+        (compiler-ir-use-step value ,scalar src ,@tail)]
+      [(compiler_ir_types.CompilerIrInstr.Bitcast _ src _ _)
+        (compiler-ir-use-step value ,scalar src ,@tail)]
+      [(compiler_ir_types.CompilerIrInstr.BinOp _ _ lhs rhs _)
+        (begin
+          (compiler-ir-use-step value ,scalar lhs ,@tail)
+          (compiler-ir-use-step value ,scalar rhs ,@tail))]
+      [(compiler_ir_types.CompilerIrInstr.UnOp _ _ src _)
+        (compiler-ir-use-step value ,scalar src ,@tail)]
+      [(compiler_ir_types.CompilerIrInstr.LaneId _ _ _) unit]
+      [(compiler_ir_types.CompilerIrInstr.Splat _ value _ _)
+        (compiler-ir-use-step value ,scalar value ,@tail)]
+      [(compiler_ir_types.CompilerIrInstr.VectorBinOp payload-box)
+        (let
+          [payload : compiler_ir_types.CompilerIrInstrVectorBinOpPayload
+            (compiler-ir-box-shared-view payload-box)]
+          (begin
+            (compiler-ir-use-step value ,vector payload.lhs ,@tail)
+            (compiler-ir-use-step value ,vector payload.rhs ,@tail)))]
+      [(compiler_ir_types.CompilerIrInstr.VectorPrefix payload-box)
+        (let
+          [payload : compiler_ir_types.CompilerIrInstrVectorPrefixPayload
+            (compiler-ir-box-shared-view payload-box)]
+          (begin
+            (compiler-ir-use-step value ,vector payload.src ,@tail)
+            (compiler-ir-use-step value ,scalar payload.carry ,@tail)))]
+      [(compiler_ir_types.CompilerIrInstr.VectorReduce _ _ src _ _)
+        (compiler-ir-use-step value ,vector src ,@tail)]
+      [(compiler_ir_types.CompilerIrInstr.VectorCompare payload-box)
+        (let
+          [payload : compiler_ir_types.CompilerIrInstrVectorComparePayload
+            (compiler-ir-box-shared-view payload-box)]
+          (begin
+            (compiler-ir-use-step value ,vector payload.lhs ,@tail)
+            (compiler-ir-use-step value ,vector payload.rhs ,@tail)))]
+      [(compiler_ir_types.CompilerIrInstr.MaskBinOp _ _ lhs rhs _)
+        (begin
+          (compiler-ir-use-step value ,mask lhs ,@tail)
+          (compiler-ir-use-step value ,mask rhs ,@tail))]
+      [(compiler_ir_types.CompilerIrInstr.MaskNot _ src _)
+        (compiler-ir-use-step value ,mask src ,@tail)]
+      [(compiler_ir_types.CompilerIrInstr.MaskReduce _ _ src _)
+        (compiler-ir-use-step value ,mask src ,@tail)]
+      [(compiler_ir_types.CompilerIrInstr.Select payload-box)
+        (let
+          [payload : compiler_ir_types.CompilerIrInstrSelectPayload
+            (compiler-ir-box-shared-view payload-box)]
+          (begin
+            (compiler-ir-use-step value ,mask payload.mask ,@tail)
+            (compiler-ir-use-step value ,vector payload.on-true ,@tail)
+            (compiler-ir-use-step value ,vector payload.on-false ,@tail)))]
+      [(compiler_ir_types.CompilerIrInstr.VectorLoad _ base index _ _)
+        (begin
+          (compiler-ir-use-step value ,address base ,@tail)
+          (compiler-ir-use-step value ,scalar index ,@tail))]
+      [(compiler_ir_types.CompilerIrInstr.VectorStore payload-box)
+        (let
+          [payload : compiler_ir_types.CompilerIrInstrVectorStorePayload
+            (compiler-ir-box-shared-view payload-box)]
+          (begin
+            (compiler-ir-use-step value ,address payload.base ,@tail)
+            (compiler-ir-use-step value ,scalar payload.index ,@tail)
+            (compiler-ir-use-step value ,vector payload.value ,@tail)))]
+      [(compiler_ir_types.CompilerIrInstr.PredicatedStore payload-box)
+        (let
+          [payload : compiler_ir_types.CompilerIrInstrPredicatedStorePayload
+            (compiler-ir-box-shared-view payload-box)]
+          (begin
+            (compiler-ir-use-step value ,address payload.base ,@tail)
+            (compiler-ir-use-step value ,scalar payload.index ,@tail)
+            (compiler-ir-use-step value ,vector payload.value ,@tail)
+            (compiler-ir-use-step value ,mask payload.mask ,@tail)))]
+      [(compiler_ir_types.CompilerIrInstr.PredicatedLoad payload-box)
+        (let
+          [payload : compiler_ir_types.CompilerIrInstrPredicatedLoadPayload
+            (compiler-ir-box-shared-view payload-box)]
+          (begin
+            (compiler-ir-use-step value ,address payload.base ,@tail)
+            (compiler-ir-use-step value ,scalar payload.index ,@tail)
+            (compiler-ir-use-step value ,mask payload.mask ,@tail)))]
+      [(compiler_ir_types.CompilerIrInstr.GatherLoad payload-box)
+        (let
+          [payload : compiler_ir_types.CompilerIrInstrGatherLoadPayload
+            (compiler-ir-box-shared-view payload-box)]
+          (begin
+            (compiler-ir-use-step value ,address payload.base ,@tail)
+            (compiler-ir-use-step value ,address payload.index-base ,@tail)
+            (compiler-ir-use-step value ,scalar payload.index ,@tail)))]
+      [(compiler_ir_types.CompilerIrInstr.VectorShuffle payload-box)
+        (let
+          [payload : compiler_ir_types.CompilerIrInstrVectorShufflePayload
+            (compiler-ir-box-shared-view payload-box)]
+          (begin
+            (compiler-ir-use-step value ,vector payload.source ,@tail)
+            (compiler-ir-use-step value ,vector payload.selector-low ,@tail)
+            (compiler-ir-use-step maybe ,vector payload.selector-high ,@tail)
+            (compiler-ir-use-step value ,scalar payload.active-lanes ,@tail)))]
+      [(compiler_ir_types.CompilerIrInstr.TailMask _ index len _)
+        (begin
+          (compiler-ir-use-step value ,scalar index ,@tail)
+          (compiler-ir-use-step value ,scalar len ,@tail))]
+      [(compiler_ir_types.CompilerIrInstr.EntryArgc _) unit]
+      [(compiler_ir_types.CompilerIrInstr.EntryArgv _) unit]
+      [(compiler_ir_types.CompilerIrInstr.EntryEnvp _) unit]
+      [(compiler_ir_types.CompilerIrInstr.CpuId _ leaf subleaf _)
+        (begin
+          (compiler-ir-use-step value ,scalar leaf ,@tail)
+          (compiler-ir-use-step value ,scalar subleaf ,@tail))]
+      [(compiler_ir_types.CompilerIrInstr.Xgetbv _ index)
+        (compiler-ir-use-step value ,scalar index ,@tail)]
+      [(compiler_ir_types.CompilerIrInstr.Syscall _ args)
+        (compiler-ir-use-step args ,call-arg args ,@tail)]
+      [(compiler_ir_types.CompilerIrInstr.Call _ _ args _)
+        (compiler-ir-use-step args ,call-arg args ,@tail)]
+      [(compiler_ir_types.CompilerIrInstr.CallIndirect _ callee args _)
+        (begin
+          (compiler-ir-use-step value ,address callee ,@tail)
+          (compiler-ir-use-step args ,call-arg args ,@tail))]
+      [(compiler_ir_types.CompilerIrInstr.CallIndirectC _ callee args _)
+        (begin
+          (compiler-ir-use-step value ,address callee ,@tail)
+          (compiler-ir-use-step args ,call-arg args ,@tail))]
+      [(compiler_ir_types.CompilerIrInstr.CallCAbiStoreResult payload-box)
+        (let
+          [payload : compiler_ir_types.CompilerIrInstrCallCAbiStoreResultPayload
+            (compiler-ir-box-shared-view payload-box)]
+          (begin
+            (compiler-ir-use-step value ,address payload.base ,@tail)
+            (compiler-ir-use-step args ,call-arg payload.args ,@tail)))]
+      [(compiler_ir_types.CompilerIrInstr.CallIndirectCAbiStoreResult
+          payload-box)
+        (let
+          [payload : compiler_ir_types.CompilerIrInstrCallIndirectCAbiStoreResultPayload
+            (compiler-ir-box-shared-view payload-box)]
+          (begin
+            (compiler-ir-use-step value ,address payload.base ,@tail)
+            (compiler-ir-use-step value ,address payload.callee ,@tail)
+            (compiler-ir-use-step args ,call-arg payload.args ,@tail)))]
+      [(compiler_ir_types.CompilerIrInstr.SpmdCall payload-box)
+        (let
+          [payload : compiler_ir_types.CompilerIrInstrSpmdCallPayload
+            (compiler-ir-box-shared-view payload-box)]
+          (begin
+            (compiler-ir-use-step value ,mask payload.active-mask ,@tail)
+            (compiler-ir-use-step spmd-args _ payload.args ,@tail)))]
+      [(compiler_ir_types.CompilerIrInstr.TailCall _ args _)
+        (compiler-ir-use-step args ,call-arg args ,@tail)]
+      [(compiler_ir_types.CompilerIrInstr.Store _ value _)
+        (compiler-ir-use-step value ,scalar value ,@tail)]
+      [(compiler_ir_types.CompilerIrInstr.Jump _) unit]
+      [(compiler_ir_types.CompilerIrInstr.Branch cond _ _)
+        (compiler-ir-use-step value ,condition cond ,@tail)]
+      [(compiler_ir_types.CompilerIrInstr.TotalEnumBranch cond _ _)
+        (compiler-ir-use-step value ,condition cond ,@tail)]
+      [(compiler_ir_types.CompilerIrInstr.Return value)
+        (compiler-ir-use-step maybe ,scalar value ,@tail)]
+      [(compiler_ir_types.CompilerIrInstr.Phi _ inputs _)
+        (compiler-ir-use-step phi-inputs _ inputs ,@tail)]
+      [(compiler_ir_types.CompilerIrInstr.Pack _ words _)
+        (compiler-ir-use-step values ,scalar words ,@tail)]
+      [(compiler_ir_types.CompilerIrInstr.Word _ src _ _)
+        (compiler-ir-use-step value ,scalar src ,@tail)]
+      [(compiler_ir_types.CompilerIrInstr.TailCallIndirect callee args _)
+        (begin
+          (compiler-ir-use-step value ,address callee ,@tail)
+          (compiler-ir-use-step args ,call-arg args ,@tail))]
+      [(compiler_ir_types.CompilerIrInstr.Switch index _ _ _)
+        (compiler-ir-use-step value ,condition index ,@tail)]
+      [(compiler_ir_types.CompilerIrInstr.TotalEnumSwitch index _ _ _ _)
+        (compiler-ir-use-step value ,condition index ,@tail)])))
+
+;: Every use of `instr` in operand order: `(visitor ctx... role value)`.
+(defmacro (compiler-ir-instr-visit-uses
+  [instr : Expr]
+  [visitor : Expr]
+  [contexts : Expr ...]) : unit
+  `(compiler-ir-instr-walk-uses ,instr _ ,visitor ,@contexts))
+
+;: Fold every use of `instr` in operand order:
+;: `(folder ctx... role acc value)` returns the next accumulator.
+(defmacro (compiler-ir-instr-fold-uses
+  [instr : Expr]
+  [acc : Expr]
+  [folder : Expr]
+  [contexts : Expr ...]) : Expr
+  `(let
+    [fold-acc ,acc]
+    (begin
+      (compiler-ir-instr-walk-uses ,instr fold-acc ,folder ,@contexts)
+      fold-acc)))
+
+;: Rebuild `instr` with each use, def, type and label passed through its
+;: mapper; slots and fixed fields are copied. A mapper given as `_` is the
+;: identity and generates no call; the containers that kind owns (call
+;: arguments, Pack words, SPMD arguments, phi inputs, switch cases, C-ABI
+;: return slots) are then shared with `instr` rather than copied, so a deep
+;: clone that must own fresh storage passes a real identity mapper. The SPMD
+;: origin descriptor is copied with `clone` and its types are not mapped: a
+;: pass that must re-home them matches SpmdCall first.
+(defmacro (compiler-ir-instr-map
+  [instr : Expr]
+  [use-mapper : Expr]
+  [def-mapper : Expr]
+  [type-mapper : Expr]
+  [label-mapper : Expr]
+  [contexts : Expr ...]) : CompilerIrInstr
+  (let
+    [use-tail : ExprList
+      (match `(begin
+        ,use-mapper
+        ,@contexts)
+        [(Expr.Begin items) items]
+        [_ (expr-list-empty)])]
+    [def-tail : ExprList
+      (match `(begin
+        ,def-mapper
+        ,@contexts)
+        [(Expr.Begin items) items]
+        [_ (expr-list-empty)])]
+    [type-tail : ExprList
+      (match `(begin
+        ,type-mapper
+        ,@contexts)
+        [(Expr.Begin items) items]
+        [_ (expr-list-empty)])]
+    [label-tail : ExprList
+      (match `(begin
+        ,label-mapper
+        ,@contexts)
+        [(Expr.Begin items) items]
+        [_ (expr-list-empty)])]
+    [scalar : Expr '(compiler_ir_types.CompilerIrOperandRole.Scalar)]
+    [address : Expr '(compiler_ir_types.CompilerIrOperandRole.Address)]
+    [vector : Expr '(compiler_ir_types.CompilerIrOperandRole.Vector)]
+    [mask : Expr '(compiler_ir_types.CompilerIrOperandRole.Mask)]
+    [call-arg : Expr '(compiler_ir_types.CompilerIrOperandRole.CallArg)]
+    [condition : Expr '(compiler_ir_types.CompilerIrOperandRole.Condition)]
+    [phi-input : Expr '(compiler_ir_types.CompilerIrOperandRole.PhiInput)]
+    `(match ,instr
+      [(compiler_ir_types.CompilerIrInstr.Mov dst src ty)
+        (compiler_ir_types.CompilerIrInstr.Mov
+          (compiler-ir-map-field dst ,@def-tail)
+          (compiler-ir-map-use value ,scalar src ,@use-tail)
+          (compiler-ir-map-field ty ,@type-tail))]
+      [(compiler_ir_types.CompilerIrInstr.Alloc dst ty)
+        (compiler_ir_types.CompilerIrInstr.Alloc
+          (compiler-ir-map-field dst ,@def-tail)
+          (compiler-ir-map-field ty ,@type-tail))]
+      [(compiler_ir_types.CompilerIrInstr.AddrOf dst src)
+        (compiler_ir_types.CompilerIrInstr.AddrOf
+          (compiler-ir-map-field dst ,@def-tail)
+          src)]
+      [(compiler_ir_types.CompilerIrInstr.Gep dst base offset ty)
+        (compiler_ir_types.CompilerIrInstr.Gep
+          (compiler-ir-map-field dst ,@def-tail)
+          (compiler-ir-map-use value ,address base ,@use-tail)
+          (compiler-ir-map-use value ,scalar offset ,@use-tail)
+          (compiler-ir-map-field ty ,@type-tail))]
+      [(compiler_ir_types.CompilerIrInstr.OwnRoot dst src ty)
+        (compiler_ir_types.CompilerIrInstr.OwnRoot
+          (compiler-ir-map-field dst ,@def-tail)
+          (compiler-ir-map-use value ,scalar src ,@use-tail)
+          (compiler-ir-map-field ty ,@type-tail))]
+      [(compiler_ir_types.CompilerIrInstr.Load dst src ty)
+        (compiler_ir_types.CompilerIrInstr.Load
+          (compiler-ir-map-field dst ,@def-tail)
+          (compiler-ir-map-use value ,address src ,@use-tail)
+          (compiler-ir-map-field ty ,@type-tail))]
+      [(compiler_ir_types.CompilerIrInstr.LoadOwned dst src owner ty)
+        (compiler_ir_types.CompilerIrInstr.LoadOwned
+          (compiler-ir-map-field dst ,@def-tail)
+          (compiler-ir-map-use value ,address src ,@use-tail)
+          owner
+          (compiler-ir-map-field ty ,@type-tail))]
+      [(compiler_ir_types.CompilerIrInstr.StoreOwned ptr value ty)
+        (compiler_ir_types.CompilerIrInstr.StoreOwned
+          (compiler-ir-map-use value ,address ptr ,@use-tail)
+          (compiler-ir-map-use value ,scalar value ,@use-tail)
+          (compiler-ir-map-field ty ,@type-tail))]
+      [(compiler_ir_types.CompilerIrInstr.StorePtr ptr value ty)
+        (compiler_ir_types.CompilerIrInstr.StorePtr
+          (compiler-ir-map-use value ,address ptr ,@use-tail)
+          (compiler-ir-map-use value ,scalar value ,@use-tail)
+          (compiler-ir-map-field ty ,@type-tail))]
+      [(compiler_ir_types.CompilerIrInstr.CopyBytes ptr src size)
+        (compiler_ir_types.CompilerIrInstr.CopyBytes
+          (compiler-ir-map-use value ,address ptr ,@use-tail)
+          (compiler-ir-map-use value ,address src ,@use-tail)
+          size)]
+      [(compiler_ir_types.CompilerIrInstr.BoundsCheck index length ok-label)
+        (compiler_ir_types.CompilerIrInstr.BoundsCheck
+          (compiler-ir-map-use value ,scalar index ,@use-tail)
+          (compiler-ir-map-use value ,scalar length ,@use-tail)
+          (compiler-ir-map-field ok-label ,@label-tail))]
+      [(compiler_ir_types.CompilerIrInstr.Cast dst src from-ty to-ty)
+        (compiler_ir_types.CompilerIrInstr.Cast
+          (compiler-ir-map-field dst ,@def-tail)
+          (compiler-ir-map-use value ,scalar src ,@use-tail)
+          (compiler-ir-map-field from-ty ,@type-tail)
+          (compiler-ir-map-field to-ty ,@type-tail))]
+      [(compiler_ir_types.CompilerIrInstr.Bitcast dst src from-ty to-ty)
+        (compiler_ir_types.CompilerIrInstr.Bitcast
+          (compiler-ir-map-field dst ,@def-tail)
+          (compiler-ir-map-use value ,scalar src ,@use-tail)
+          (compiler-ir-map-field from-ty ,@type-tail)
+          (compiler-ir-map-field to-ty ,@type-tail))]
+      [(compiler_ir_types.CompilerIrInstr.BinOp dst op lhs rhs ty)
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          (compiler-ir-map-field dst ,@def-tail)
+          op
+          (compiler-ir-map-use value ,scalar lhs ,@use-tail)
+          (compiler-ir-map-use value ,scalar rhs ,@use-tail)
+          (compiler-ir-map-field ty ,@type-tail))]
+      [(compiler_ir_types.CompilerIrInstr.UnOp dst op src ty)
+        (compiler_ir_types.CompilerIrInstr.UnOp
+          (compiler-ir-map-field dst ,@def-tail)
+          op
+          (compiler-ir-map-use value ,scalar src ,@use-tail)
+          (compiler-ir-map-field ty ,@type-tail))]
+      [(compiler_ir_types.CompilerIrInstr.LaneId dst lanes ty)
+        (compiler_ir_types.CompilerIrInstr.LaneId
+          (compiler-ir-map-field dst ,@def-tail)
+          lanes
+          (compiler-ir-map-field ty ,@type-tail))]
+      [(compiler_ir_types.CompilerIrInstr.Splat dst value lanes ty)
+        (compiler_ir_types.CompilerIrInstr.Splat
+          (compiler-ir-map-field dst ,@def-tail)
+          (compiler-ir-map-use value ,scalar value ,@use-tail)
+          lanes
+          (compiler-ir-map-field ty ,@type-tail))]
+      [(compiler_ir_types.CompilerIrInstr.VectorBinOp payload-box)
+        (let
+          [payload : compiler_ir_types.CompilerIrInstrVectorBinOpPayload
+            (compiler-ir-box-shared-view payload-box)]
+          (ir-instr-vector-bin-op
+            (compiler-ir-map-field payload.dst ,@def-tail)
+            payload.op
+            (compiler-ir-map-use value ,vector payload.lhs ,@use-tail)
+            (compiler-ir-map-use value ,vector payload.rhs ,@use-tail)
+            payload.lanes
+            (compiler-ir-map-field payload.ty ,@type-tail)))]
+      [(compiler_ir_types.CompilerIrInstr.VectorPrefix payload-box)
+        (let
+          [payload : compiler_ir_types.CompilerIrInstrVectorPrefixPayload
+            (compiler-ir-box-shared-view payload-box)]
+          (ir-instr-vector-prefix
+            (compiler-ir-map-field payload.dst ,@def-tail)
+            payload.op
+            (compiler-ir-map-use value ,vector payload.src ,@use-tail)
+            (compiler-ir-map-use value ,scalar payload.carry ,@use-tail)
+            payload.lanes
+            (compiler-ir-map-field payload.ty ,@type-tail)))]
+      [(compiler_ir_types.CompilerIrInstr.VectorReduce dst op src lanes ty)
+        (compiler_ir_types.CompilerIrInstr.VectorReduce
+          (compiler-ir-map-field dst ,@def-tail)
+          op
+          (compiler-ir-map-use value ,vector src ,@use-tail)
+          lanes
+          (compiler-ir-map-field ty ,@type-tail))]
+      [(compiler_ir_types.CompilerIrInstr.VectorCompare payload-box)
+        (let
+          [payload : compiler_ir_types.CompilerIrInstrVectorComparePayload
+            (compiler-ir-box-shared-view payload-box)]
+          (ir-instr-vector-compare
+            (compiler-ir-map-field payload.dst ,@def-tail)
+            payload.op
+            (compiler-ir-map-use value ,vector payload.lhs ,@use-tail)
+            (compiler-ir-map-use value ,vector payload.rhs ,@use-tail)
+            payload.lanes
+            (compiler-ir-map-field payload.ty ,@type-tail)))]
+      [(compiler_ir_types.CompilerIrInstr.MaskBinOp dst op lhs rhs lanes)
+        (compiler_ir_types.CompilerIrInstr.MaskBinOp
+          (compiler-ir-map-field dst ,@def-tail)
+          op
+          (compiler-ir-map-use value ,mask lhs ,@use-tail)
+          (compiler-ir-map-use value ,mask rhs ,@use-tail)
+          lanes)]
+      [(compiler_ir_types.CompilerIrInstr.MaskNot dst src lanes)
+        (compiler_ir_types.CompilerIrInstr.MaskNot
+          (compiler-ir-map-field dst ,@def-tail)
+          (compiler-ir-map-use value ,mask src ,@use-tail)
+          lanes)]
+      [(compiler_ir_types.CompilerIrInstr.MaskReduce dst op src lanes)
+        (compiler_ir_types.CompilerIrInstr.MaskReduce
+          (compiler-ir-map-field dst ,@def-tail)
+          op
+          (compiler-ir-map-use value ,mask src ,@use-tail)
+          lanes)]
+      [(compiler_ir_types.CompilerIrInstr.Select payload-box)
+        (let
+          [payload : compiler_ir_types.CompilerIrInstrSelectPayload
+            (compiler-ir-box-shared-view payload-box)]
+          (ir-instr-select
+            (compiler-ir-map-field payload.dst ,@def-tail)
+            (compiler-ir-map-use value ,mask payload.mask ,@use-tail)
+            (compiler-ir-map-use value ,vector payload.on-true ,@use-tail)
+            (compiler-ir-map-use value ,vector payload.on-false ,@use-tail)
+            payload.lanes
+            (compiler-ir-map-field payload.ty ,@type-tail)))]
+      [(compiler_ir_types.CompilerIrInstr.VectorLoad dst base index lanes ty)
+        (compiler_ir_types.CompilerIrInstr.VectorLoad
+          (compiler-ir-map-field dst ,@def-tail)
+          (compiler-ir-map-use value ,address base ,@use-tail)
+          (compiler-ir-map-use value ,scalar index ,@use-tail)
+          lanes
+          (compiler-ir-map-field ty ,@type-tail))]
+      [(compiler_ir_types.CompilerIrInstr.VectorStore payload-box)
+        (let
+          [payload : compiler_ir_types.CompilerIrInstrVectorStorePayload
+            (compiler-ir-box-shared-view payload-box)]
+          (ir-instr-vector-store
+            (compiler-ir-map-use value ,address payload.base ,@use-tail)
+            (compiler-ir-map-use value ,scalar payload.index ,@use-tail)
+            (compiler-ir-map-use value ,vector payload.value ,@use-tail)
+            payload.lanes
+            (compiler-ir-map-field payload.ty ,@type-tail)))]
+      [(compiler_ir_types.CompilerIrInstr.PredicatedStore payload-box)
+        (let
+          [payload : compiler_ir_types.CompilerIrInstrPredicatedStorePayload
+            (compiler-ir-box-shared-view payload-box)]
+          (ir-instr-predicated-store
+            (compiler-ir-map-use value ,address payload.base ,@use-tail)
+            (compiler-ir-map-use value ,scalar payload.index ,@use-tail)
+            (compiler-ir-map-use value ,vector payload.value ,@use-tail)
+            (compiler-ir-map-use value ,mask payload.mask ,@use-tail)
+            payload.lanes
+            (compiler-ir-map-field payload.ty ,@type-tail)))]
+      [(compiler_ir_types.CompilerIrInstr.PredicatedLoad payload-box)
+        (let
+          [payload : compiler_ir_types.CompilerIrInstrPredicatedLoadPayload
+            (compiler-ir-box-shared-view payload-box)]
+          (ir-instr-predicated-load
+            (compiler-ir-map-field payload.dst ,@def-tail)
+            (compiler-ir-map-use value ,address payload.base ,@use-tail)
+            (compiler-ir-map-use value ,scalar payload.index ,@use-tail)
+            (compiler-ir-map-use value ,mask payload.mask ,@use-tail)
+            payload.lanes
+            (compiler-ir-map-field payload.ty ,@type-tail)))]
+      [(compiler_ir_types.CompilerIrInstr.GatherLoad payload-box)
+        (let
+          [payload : compiler_ir_types.CompilerIrInstrGatherLoadPayload
+            (compiler-ir-box-shared-view payload-box)]
+          (ir-instr-gather-load
+            (compiler-ir-map-field payload.dst ,@def-tail)
+            (compiler-ir-map-use value ,address payload.base ,@use-tail)
+            (compiler-ir-map-use value ,address payload.index-base ,@use-tail)
+            (compiler-ir-map-use value ,scalar payload.index ,@use-tail)
+            payload.lane-offset
+            payload.lanes
+            (compiler-ir-map-field payload.ty ,@type-tail)))]
+      [(compiler_ir_types.CompilerIrInstr.VectorShuffle payload-box)
+        (let
+          [payload : compiler_ir_types.CompilerIrInstrVectorShufflePayload
+            (compiler-ir-box-shared-view payload-box)]
+          (ir-instr-vector-shuffle
+            (compiler-ir-map-field payload.dst ,@def-tail)
+            (compiler-ir-map-use value ,vector payload.source ,@use-tail)
+            (compiler-ir-map-use value ,vector payload.selector-low ,@use-tail)
+            (compiler-ir-map-use maybe ,vector payload.selector-high ,@use-tail)
+            (compiler-ir-map-use value ,scalar payload.active-lanes ,@use-tail)
+            payload.lanes
+            (compiler-ir-map-field payload.ty ,@type-tail)))]
+      [(compiler_ir_types.CompilerIrInstr.TailMask dst index len lanes)
+        (compiler_ir_types.CompilerIrInstr.TailMask
+          (compiler-ir-map-field dst ,@def-tail)
+          (compiler-ir-map-use value ,scalar index ,@use-tail)
+          (compiler-ir-map-use value ,scalar len ,@use-tail)
+          lanes)]
+      [(compiler_ir_types.CompilerIrInstr.EntryArgc dst)
+        (compiler_ir_types.CompilerIrInstr.EntryArgc
+          (compiler-ir-map-field dst ,@def-tail))]
+      [(compiler_ir_types.CompilerIrInstr.EntryArgv dst)
+        (compiler_ir_types.CompilerIrInstr.EntryArgv
+          (compiler-ir-map-field dst ,@def-tail))]
+      [(compiler_ir_types.CompilerIrInstr.EntryEnvp dst)
+        (compiler_ir_types.CompilerIrInstr.EntryEnvp
+          (compiler-ir-map-field dst ,@def-tail))]
+      [(compiler_ir_types.CompilerIrInstr.CpuId dst leaf subleaf reg-index)
+        (compiler_ir_types.CompilerIrInstr.CpuId
+          (compiler-ir-map-field dst ,@def-tail)
+          (compiler-ir-map-use value ,scalar leaf ,@use-tail)
+          (compiler-ir-map-use value ,scalar subleaf ,@use-tail)
+          reg-index)]
+      [(compiler_ir_types.CompilerIrInstr.Xgetbv dst index)
+        (compiler_ir_types.CompilerIrInstr.Xgetbv
+          (compiler-ir-map-field dst ,@def-tail)
+          (compiler-ir-map-use value ,scalar index ,@use-tail))]
+      [(compiler_ir_types.CompilerIrInstr.Syscall dst args)
+        (compiler_ir_types.CompilerIrInstr.Syscall
+          (compiler-ir-map-field dst ,@def-tail)
+          (compiler-ir-map-use args ,call-arg args ,@use-tail))]
+      [(compiler_ir_types.CompilerIrInstr.Call dst name args ty)
+        (compiler_ir_types.CompilerIrInstr.Call
+          (compiler-ir-map-field dst ,@def-tail)
+          name
+          (compiler-ir-map-use args ,call-arg args ,@use-tail)
+          (compiler-ir-map-field ty ,@type-tail))]
+      [(compiler_ir_types.CompilerIrInstr.CallIndirect dst callee args ty)
+        (compiler_ir_types.CompilerIrInstr.CallIndirect
+          (compiler-ir-map-field dst ,@def-tail)
+          (compiler-ir-map-use value ,address callee ,@use-tail)
+          (compiler-ir-map-use args ,call-arg args ,@use-tail)
+          (compiler-ir-map-field ty ,@type-tail))]
+      [(compiler_ir_types.CompilerIrInstr.CallIndirectC dst callee args ty)
+        (compiler_ir_types.CompilerIrInstr.CallIndirectC
+          (compiler-ir-map-field dst ,@def-tail)
+          (compiler-ir-map-use value ,address callee ,@use-tail)
+          (compiler-ir-map-use args ,call-arg args ,@use-tail)
+          (compiler-ir-map-field ty ,@type-tail))]
+      [(compiler_ir_types.CompilerIrInstr.CallCAbiStoreResult payload-box)
+        (let
+          [payload : compiler_ir_types.CompilerIrInstrCallCAbiStoreResultPayload
+            (compiler-ir-box-shared-view payload-box)]
+          (ir-instr-call-cabi-store-result
+            (compiler-ir-map-use value ,address payload.base ,@use-tail)
+            payload.name
+            (compiler-ir-map-use args ,call-arg payload.args ,@use-tail)
+            (compiler-ir-map-c-abi-slots payload.slots ,@type-tail)))]
+      [(compiler_ir_types.CompilerIrInstr.CallIndirectCAbiStoreResult
+          payload-box)
+        (let
+          [payload : compiler_ir_types.CompilerIrInstrCallIndirectCAbiStoreResultPayload
+            (compiler-ir-box-shared-view payload-box)]
+          (ir-instr-call-indirect-cabi-store-result
+            (compiler-ir-map-use value ,address payload.base ,@use-tail)
+            (compiler-ir-map-use value ,address payload.callee ,@use-tail)
+            (compiler-ir-map-use args ,call-arg payload.args ,@use-tail)
+            (compiler-ir-map-c-abi-slots payload.slots ,@type-tail)))]
+      [(compiler_ir_types.CompilerIrInstr.SpmdCall payload-box)
+        (let
+          [payload : compiler_ir_types.CompilerIrInstrSpmdCallPayload
+            (compiler-ir-box-shared-view payload-box)]
+          (ir-instr-spmd-call-with-origin
+            payload.callee
+            payload.backend
+            payload.lanes
+            (compiler-ir-map-use value ,mask payload.active-mask ,@use-tail)
+            (compiler-ir-map-spmd-args
+              payload.args
+              ,use-mapper
+              ,type-mapper
+              ,@contexts)
+            (compiler-ir-map-spmd-result
+              payload.result
+              ,def-mapper
+              ,type-mapper
+              ,@contexts)
+            (clone payload.origin)))]
+      [(compiler_ir_types.CompilerIrInstr.TailCall name args ty)
+        (compiler_ir_types.CompilerIrInstr.TailCall
+          name
+          (compiler-ir-map-use args ,call-arg args ,@use-tail)
+          (compiler-ir-map-field ty ,@type-tail))]
+      [(compiler_ir_types.CompilerIrInstr.Store name value ty)
+        (compiler_ir_types.CompilerIrInstr.Store
+          name
+          (compiler-ir-map-use value ,scalar value ,@use-tail)
+          (compiler-ir-map-field ty ,@type-tail))]
+      [(compiler_ir_types.CompilerIrInstr.Jump label)
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler-ir-map-field label ,@label-tail))]
+      [(compiler_ir_types.CompilerIrInstr.Branch cond true-label false-label)
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler-ir-map-use value ,condition cond ,@use-tail)
+          (compiler-ir-map-field true-label ,@label-tail)
+          (compiler-ir-map-field false-label ,@label-tail))]
+      [(compiler_ir_types.CompilerIrInstr.TotalEnumBranch
+          cond
+          true-label
+          false-label)
+        (compiler_ir_types.CompilerIrInstr.TotalEnumBranch
+          (compiler-ir-map-use value ,condition cond ,@use-tail)
+          (compiler-ir-map-field true-label ,@label-tail)
+          (compiler-ir-map-field false-label ,@label-tail))]
+      [(compiler_ir_types.CompilerIrInstr.Return value)
+        (compiler_ir_types.CompilerIrInstr.Return
+          (compiler-ir-map-use maybe ,scalar value ,@use-tail))]
+      [(compiler_ir_types.CompilerIrInstr.Phi dst inputs ty)
+        (compiler_ir_types.CompilerIrInstr.Phi
+          (compiler-ir-map-field dst ,@def-tail)
+          (compiler-ir-phi-inputs-rebuild
+            inputs
+            ,use-mapper
+            ,phi-input
+            ,label-mapper
+            ,@contexts)
+          (compiler-ir-map-field ty ,@type-tail))]
+      [(compiler_ir_types.CompilerIrInstr.Pack dst words ty)
+        (compiler_ir_types.CompilerIrInstr.Pack
+          (compiler-ir-map-field dst ,@def-tail)
+          (compiler-ir-map-use values ,scalar words ,@use-tail)
+          (compiler-ir-map-field ty ,@type-tail))]
+      [(compiler_ir_types.CompilerIrInstr.Word dst src index ty)
+        (compiler_ir_types.CompilerIrInstr.Word
+          (compiler-ir-map-field dst ,@def-tail)
+          (compiler-ir-map-use value ,scalar src ,@use-tail)
+          index
+          (compiler-ir-map-field ty ,@type-tail))]
+      [(compiler_ir_types.CompilerIrInstr.TailCallIndirect callee args ty)
+        (compiler_ir_types.CompilerIrInstr.TailCallIndirect
+          (compiler-ir-map-use value ,address callee ,@use-tail)
+          (compiler-ir-map-use args ,call-arg args ,@use-tail)
+          (compiler-ir-map-field ty ,@type-tail))]
+      [(compiler_ir_types.CompilerIrInstr.Switch index base cases default-label)
+        (compiler_ir_types.CompilerIrInstr.Switch
+          (compiler-ir-map-use value ,condition index ,@use-tail)
+          base
+          (compiler-ir-map-switch-cases cases ,@label-tail)
+          (compiler-ir-map-field default-label ,@label-tail))]
+      [(compiler_ir_types.CompilerIrInstr.TotalEnumSwitch
+          index
+          base
+          cases
+          default-label
+          trap-label)
+        (compiler_ir_types.CompilerIrInstr.TotalEnumSwitch
+          (compiler-ir-map-use value ,condition index ,@use-tail)
+          base
+          (compiler-ir-map-switch-cases cases ,@label-tail)
+          (compiler-ir-map-field default-label ,@label-tail)
+          (compiler-ir-map-trap-label trap-label ,@label-tail))])))
+
+;: `compiler-ir-instr-map` with only a use mapper.
+(defmacro (compiler-ir-instr-map-uses
+  [instr : Expr]
+  [use-mapper : Expr]
+  [contexts : Expr ...]) : CompilerIrInstr
+  `(compiler-ir-instr-map ,instr ,use-mapper _ _ _ ,@contexts))
+
+(define (compiler-ir-dst-replace [dst : i64] [_old : i64]) : i64
+  dst)
+
+;: `instr` with its destination var replaced; an instruction without one is
+;: returned unchanged.
+(define (compiler-ir-instr-with-dst [instr : CompilerIrInstr] [dst : i64]) : CompilerIrInstr
+  (compiler-ir-instr-map instr _ compiler-ir-dst-replace _ _ dst))
+
+;: The control-flow successor labels of a terminator: a Jump target, a branch's
+;: true then false label, a switch's default label, then a present
+;: TotalEnumSwitch trap label, then the case labels in order. Labels are not
+;: deduplicated. A BoundsCheck success label is not an edge.
+(defmacro (compiler-ir-instr-visit-successors
+  [instr : Expr]
+  [visitor : Expr]
+  [contexts : Expr ...]) : unit
+  `(match ,instr
+    [(compiler_ir_types.CompilerIrInstr.Mov _ _ _) unit]
+    [(compiler_ir_types.CompilerIrInstr.Alloc _ _) unit]
+    [(compiler_ir_types.CompilerIrInstr.AddrOf _ _) unit]
+    [(compiler_ir_types.CompilerIrInstr.Gep _ _ _ _) unit]
+    [(compiler_ir_types.CompilerIrInstr.OwnRoot _ _ _) unit]
+    [(compiler_ir_types.CompilerIrInstr.Load _ _ _) unit]
+    [(compiler_ir_types.CompilerIrInstr.LoadOwned _ _ _ _) unit]
+    [(compiler_ir_types.CompilerIrInstr.StoreOwned _ _ _) unit]
+    [(compiler_ir_types.CompilerIrInstr.StorePtr _ _ _) unit]
+    [(compiler_ir_types.CompilerIrInstr.CopyBytes _ _ _) unit]
+    [(compiler_ir_types.CompilerIrInstr.BoundsCheck _ _ _) unit]
+    [(compiler_ir_types.CompilerIrInstr.Cast _ _ _ _) unit]
+    [(compiler_ir_types.CompilerIrInstr.Bitcast _ _ _ _) unit]
+    [(compiler_ir_types.CompilerIrInstr.BinOp _ _ _ _ _) unit]
+    [(compiler_ir_types.CompilerIrInstr.UnOp _ _ _ _) unit]
+    [(compiler_ir_types.CompilerIrInstr.LaneId _ _ _) unit]
+    [(compiler_ir_types.CompilerIrInstr.Splat _ _ _ _) unit]
+    [(compiler_ir_types.CompilerIrInstr.VectorBinOp _) unit]
+    [(compiler_ir_types.CompilerIrInstr.VectorPrefix _) unit]
+    [(compiler_ir_types.CompilerIrInstr.VectorReduce _ _ _ _ _) unit]
+    [(compiler_ir_types.CompilerIrInstr.VectorCompare _) unit]
+    [(compiler_ir_types.CompilerIrInstr.MaskBinOp _ _ _ _ _) unit]
+    [(compiler_ir_types.CompilerIrInstr.MaskNot _ _ _) unit]
+    [(compiler_ir_types.CompilerIrInstr.MaskReduce _ _ _ _) unit]
+    [(compiler_ir_types.CompilerIrInstr.Select _) unit]
+    [(compiler_ir_types.CompilerIrInstr.VectorLoad _ _ _ _ _) unit]
+    [(compiler_ir_types.CompilerIrInstr.VectorStore _) unit]
+    [(compiler_ir_types.CompilerIrInstr.PredicatedStore _) unit]
+    [(compiler_ir_types.CompilerIrInstr.PredicatedLoad _) unit]
+    [(compiler_ir_types.CompilerIrInstr.GatherLoad _) unit]
+    [(compiler_ir_types.CompilerIrInstr.VectorShuffle _) unit]
+    [(compiler_ir_types.CompilerIrInstr.TailMask _ _ _ _) unit]
+    [(compiler_ir_types.CompilerIrInstr.EntryArgc _) unit]
+    [(compiler_ir_types.CompilerIrInstr.EntryArgv _) unit]
+    [(compiler_ir_types.CompilerIrInstr.EntryEnvp _) unit]
+    [(compiler_ir_types.CompilerIrInstr.CpuId _ _ _ _) unit]
+    [(compiler_ir_types.CompilerIrInstr.Xgetbv _ _) unit]
+    [(compiler_ir_types.CompilerIrInstr.Syscall _ _) unit]
+    [(compiler_ir_types.CompilerIrInstr.Call _ _ _ _) unit]
+    [(compiler_ir_types.CompilerIrInstr.CallIndirect _ _ _ _) unit]
+    [(compiler_ir_types.CompilerIrInstr.CallIndirectC _ _ _ _) unit]
+    [(compiler_ir_types.CompilerIrInstr.CallCAbiStoreResult _) unit]
+    [(compiler_ir_types.CompilerIrInstr.CallIndirectCAbiStoreResult _) unit]
+    [(compiler_ir_types.CompilerIrInstr.SpmdCall _) unit]
+    [(compiler_ir_types.CompilerIrInstr.TailCall _ _ _) unit]
+    [(compiler_ir_types.CompilerIrInstr.Store _ _ _) unit]
+    [(compiler_ir_types.CompilerIrInstr.Jump label) (,visitor ,@contexts label)]
+    [(compiler_ir_types.CompilerIrInstr.Branch _ true-label false-label)
+      (begin
+        (,visitor ,@contexts true-label)
+        (,visitor ,@contexts false-label))]
+    [(compiler_ir_types.CompilerIrInstr.TotalEnumBranch
+        _
+        true-label
+        false-label)
+      (begin
+        (,visitor ,@contexts true-label)
+        (,visitor ,@contexts false-label))]
+    [(compiler_ir_types.CompilerIrInstr.Return _) unit]
+    [(compiler_ir_types.CompilerIrInstr.Phi _ _ _) unit]
+    [(compiler_ir_types.CompilerIrInstr.Pack _ _ _) unit]
+    [(compiler_ir_types.CompilerIrInstr.Word _ _ _ _) unit]
+    [(compiler_ir_types.CompilerIrInstr.TailCallIndirect _ _ _) unit]
+    [(compiler_ir_types.CompilerIrInstr.Switch _ _ cases default-label)
+      (begin
+        (,visitor ,@contexts default-label)
+        (compiler-ir-switch-cases-visit cases ,visitor ,@contexts))]
+    [(compiler_ir_types.CompilerIrInstr.TotalEnumSwitch
+        _
+        _
+        cases
+        default-label
+        trap-label)
+      (begin
+        (,visitor ,@contexts default-label)
+        (if (= trap-label (compiler_ir_types.compiler-ir-label-none))
+          unit
+          (,visitor ,@contexts trap-label))
+        (compiler-ir-switch-cases-visit cases ,visitor ,@contexts))]))
+
+;; Op equality for compiler-ir-instr-zip-eq; a shift's count types compare
+;; with `(type-eq ctx... a b)`.
+(defmacro (compiler-ir-bin-op-zip-eq
+  [a : Expr]
+  [b : Expr]
+  [type-eq : Expr]
+  [contexts : Expr ...]) : bool
+  `(let
+    [zip-op-a : compiler_ir_types.CompilerIrBinOp ,a]
+    [zip-op-b : compiler_ir_types.CompilerIrBinOp ,b]
+    (match zip-op-a
+      [(compiler_ir_types.CompilerIrBinOp.Add)
+        (match zip-op-b
+          [(compiler_ir_types.CompilerIrBinOp.Add) true]
+          [_ false])]
+      [(compiler_ir_types.CompilerIrBinOp.Sub)
+        (match zip-op-b
+          [(compiler_ir_types.CompilerIrBinOp.Sub) true]
+          [_ false])]
+      [(compiler_ir_types.CompilerIrBinOp.Mul)
+        (match zip-op-b
+          [(compiler_ir_types.CompilerIrBinOp.Mul) true]
+          [_ false])]
+      [(compiler_ir_types.CompilerIrBinOp.Div)
+        (match zip-op-b
+          [(compiler_ir_types.CompilerIrBinOp.Div) true]
+          [_ false])]
+      [(compiler_ir_types.CompilerIrBinOp.Mod)
+        (match zip-op-b
+          [(compiler_ir_types.CompilerIrBinOp.Mod) true]
+          [_ false])]
+      [(compiler_ir_types.CompilerIrBinOp.SafeDiv)
+        (match zip-op-b
+          [(compiler_ir_types.CompilerIrBinOp.SafeDiv) true]
+          [_ false])]
+      [(compiler_ir_types.CompilerIrBinOp.SafeMod)
+        (match zip-op-b
+          [(compiler_ir_types.CompilerIrBinOp.SafeMod) true]
+          [_ false])]
+      [(compiler_ir_types.CompilerIrBinOp.Eq)
+        (match zip-op-b
+          [(compiler_ir_types.CompilerIrBinOp.Eq) true]
+          [_ false])]
+      [(compiler_ir_types.CompilerIrBinOp.Ne)
+        (match zip-op-b
+          [(compiler_ir_types.CompilerIrBinOp.Ne) true]
+          [_ false])]
+      [(compiler_ir_types.CompilerIrBinOp.Lt)
+        (match zip-op-b
+          [(compiler_ir_types.CompilerIrBinOp.Lt) true]
+          [_ false])]
+      [(compiler_ir_types.CompilerIrBinOp.Le)
+        (match zip-op-b
+          [(compiler_ir_types.CompilerIrBinOp.Le) true]
+          [_ false])]
+      [(compiler_ir_types.CompilerIrBinOp.Gt)
+        (match zip-op-b
+          [(compiler_ir_types.CompilerIrBinOp.Gt) true]
+          [_ false])]
+      [(compiler_ir_types.CompilerIrBinOp.Ge)
+        (match zip-op-b
+          [(compiler_ir_types.CompilerIrBinOp.Ge) true]
+          [_ false])]
+      [(compiler_ir_types.CompilerIrBinOp.BitTestEq)
+        (match zip-op-b
+          [(compiler_ir_types.CompilerIrBinOp.BitTestEq) true]
+          [_ false])]
+      [(compiler_ir_types.CompilerIrBinOp.BitTestNe)
+        (match zip-op-b
+          [(compiler_ir_types.CompilerIrBinOp.BitTestNe) true]
+          [_ false])]
+      [(compiler_ir_types.CompilerIrBinOp.And)
+        (match zip-op-b
+          [(compiler_ir_types.CompilerIrBinOp.And) true]
+          [_ false])]
+      [(compiler_ir_types.CompilerIrBinOp.Or)
+        (match zip-op-b
+          [(compiler_ir_types.CompilerIrBinOp.Or) true]
+          [_ false])]
+      [(compiler_ir_types.CompilerIrBinOp.BitAnd)
+        (match zip-op-b
+          [(compiler_ir_types.CompilerIrBinOp.BitAnd) true]
+          [_ false])]
+      [(compiler_ir_types.CompilerIrBinOp.BitOr)
+        (match zip-op-b
+          [(compiler_ir_types.CompilerIrBinOp.BitOr) true]
+          [_ false])]
+      [(compiler_ir_types.CompilerIrBinOp.BitXor)
+        (match zip-op-b
+          [(compiler_ir_types.CompilerIrBinOp.BitXor) true]
+          [_ false])]
+      [(compiler_ir_types.CompilerIrBinOp.Shl a-count-ty)
+        (match zip-op-b
+          [(compiler_ir_types.CompilerIrBinOp.Shl b-count-ty)
+            (,type-eq ,@contexts a-count-ty b-count-ty)]
+          [_ false])]
+      [(compiler_ir_types.CompilerIrBinOp.Shr a-count-ty)
+        (match zip-op-b
+          [(compiler_ir_types.CompilerIrBinOp.Shr b-count-ty)
+            (,type-eq ,@contexts a-count-ty b-count-ty)]
+          [_ false])])))
+
+(define (compiler-ir-switch-case-seq-eq?
+  [a : CompilerIrSwitchCaseSeq]
+  [b : CompilerIrSwitchCaseSeq]) : bool
+  (let
+    [same : bool (= a.len b.len)]
+    [index : i64 0]
+    (begin
+      (while (and same (< index a.len))
+        (begin
+          (match (compiler-ir-switch-case-seq-ref a index)
+            [(CompilerIrSwitchCase.Case a-tag a-label)
+              (match (compiler-ir-switch-case-seq-ref b index)
+                [(CompilerIrSwitchCase.Case b-tag b-label)
+                  (set! same (and (= a-tag b-tag) (= a-label b-label)))])])
+          (set! index (+ index 1))))
+      same)))
+
+;; Pairwise use equality for compiler-ir-instr-zip-eq: `(value-eq ctx... a b)`
+;; per value pair of the shape (`value`, `maybe`, `values`, `args` or
+;; `phi-inputs`, whose labels must also match), after the shapes agree.
+(defmacro (compiler-ir-zip-use
+  [shape : Expr]
+  [a : Expr]
+  [b : Expr]
+  [value-eq : Expr]
+  [contexts : Expr ...]) : bool
+  (match shape
+    [(Expr.Var shape-name)
+      (match shape-name
+        ["value" `(,value-eq ,@contexts ,a ,b)]
+        ["maybe"
+          `(match ,a
+            [(compiler_ir_types.CompilerIrMaybeValue.No)
+              (match ,b
+                [(compiler_ir_types.CompilerIrMaybeValue.No) true]
+                [_ false])]
+            [(compiler_ir_types.CompilerIrMaybeValue.Some a-value)
+              (match ,b
+                [(compiler_ir_types.CompilerIrMaybeValue.Some b-value)
+                  (,value-eq ,@contexts a-value b-value)]
+                [_ false])])]
+        ["values"
+          `(let
+            [a-values : compiler_ir_types.CompilerIrValueSeq ,a]
+            [b-values : compiler_ir_types.CompilerIrValueSeq ,b]
+            (and
+              (= a-values.len b-values.len)
+              (compiler-ir-zip-value-slots
+                a-values.slots
+                b-values.slots
+                a-values.len
+                ,value-eq
+                ,@contexts)))]
+        ["args"
+          `(match ,a
+            [(compiler_ir_types.CompilerIrCallArgs.Nil)
+              (match ,b
+                [(compiler_ir_types.CompilerIrCallArgs.Nil) true]
+                [_ false])]
+            [(compiler_ir_types.CompilerIrCallArgs.One a-value)
+              (match ,b
+                [(compiler_ir_types.CompilerIrCallArgs.One b-value)
+                  (,value-eq ,@contexts a-value b-value)]
+                [_ false])]
+            [(compiler_ir_types.CompilerIrCallArgs.Two a-first a-second)
+              (match ,b
+                [(compiler_ir_types.CompilerIrCallArgs.Two b-first b-second)
+                  (and
+                    (,value-eq ,@contexts a-first b-first)
+                    (,value-eq ,@contexts a-second b-second))]
+                [_ false])]
+            [(compiler_ir_types.CompilerIrCallArgs.Array a-values)
+              (match ,b
+                [(compiler_ir_types.CompilerIrCallArgs.Array b-values)
+                  (and
+                    (= (array-length a-values) (array-length b-values))
+                    (compiler-ir-zip-value-slots
+                      a-values
+                      b-values
+                      (array-length a-values)
+                      ,value-eq
+                      ,@contexts))]
+                [_ false])]
+            [(compiler_ir_types.CompilerIrCallArgs.Sret a-values a-index)
+              (match ,b
+                [(compiler_ir_types.CompilerIrCallArgs.Sret b-values b-index)
+                  (and
+                    (= a-index b-index)
+                    (= (array-length a-values) (array-length b-values))
+                    (compiler-ir-zip-value-slots
+                      a-values
+                      b-values
+                      (array-length a-values)
+                      ,value-eq
+                      ,@contexts))]
+                [_ false])])]
+        ["phi-inputs"
+          `(let
+            [a-inputs : compiler_ir_types.CompilerIrPhiInputSeq ,a]
+            [b-inputs : compiler_ir_types.CompilerIrPhiInputSeq ,b]
+            [same : bool (= a-inputs.len b-inputs.len)]
+            [index : i64 0]
+            (begin
+              (while (and same (< index a-inputs.len))
+                (let
+                  [a-input : compiler_ir_types.CompilerIrPhiInput
+                    (compiler-ir-phi-input-seq-ref
+                      (compiler-ir-global-shared-view a-inputs)
+                      index)]
+                  [b-input : compiler_ir_types.CompilerIrPhiInput
+                    (compiler-ir-phi-input-seq-ref
+                      (compiler-ir-global-shared-view b-inputs)
+                      index)]
+                  (begin
+                    (set!
+                      same
+                      (and
+                        (= a-input.label b-input.label)
+                        (,value-eq ,@contexts a-input.value b-input.value)))
+                    (set! index (+ index 1)))))
+              same))]
+        [_ 'compiler-ir-unknown-operand-shape])]
+    [_ 'compiler-ir-unknown-operand-shape]))
+
+(defmacro (compiler-ir-zip-value-slots
+  [a : Expr]
+  [b : Expr]
+  [count : Expr]
+  [value-eq : Expr]
+  [contexts : Expr ...]) : bool
+  `(let
+    [slot-count : i64 ,count]
+    [a-slots : (__tl_dyn-array compiler_ir_types.CompilerIrValue) ,a]
+    [b-slots : (__tl_dyn-array compiler_ir_types.CompilerIrValue) ,b]
+    [same : bool true]
+    [index : i64 0]
+    (begin
+      (while (and same (< index slot-count))
+        (begin
+          (set!
+            same
+            (,value-eq
+              ,@contexts
+              (unsafe
+                (ptr-read (ptr-offset (__tl_array-data a-slots) index)))
+              (unsafe
+                (ptr-read (ptr-offset (__tl_array-data b-slots) index)))))
+          (set! index (+ index 1))))
+      same)))
+
+(defmacro (compiler-ir-zip-type
+  [a : Expr]
+  [b : Expr]
+  [type-eq : Expr]
+  [contexts : Expr ...]) : bool
+  `(,type-eq ,@contexts ,a ,b))
+
+(defmacro (compiler-ir-zip-c-abi-slots
+  [a : Expr]
+  [b : Expr]
+  [type-eq : Expr]
+  [contexts : Expr ...]) : bool
+  `(let
+    [a-slots : compiler_ir_types.CompilerIrCAbiReturnSlotSeq ,a]
+    [b-slots : compiler_ir_types.CompilerIrCAbiReturnSlotSeq ,b]
+    [a-items : (__tl_dyn-array compiler_ir_types.CompilerIrCAbiReturnSlot)
+      a-slots.slots]
+    [b-items : (__tl_dyn-array compiler_ir_types.CompilerIrCAbiReturnSlot)
+      b-slots.slots]
+    [same : bool (= a-slots.len b-slots.len)]
+    [index : i64 0]
+    (begin
+      (while (and same (< index a-slots.len))
+        (begin
+          (match (unsafe
+            (ptr-read (ptr-offset (__tl_array-data a-items) index)))
+            [(compiler_ir_types.CompilerIrCAbiReturnSlot.Slot a-ty a-offset)
+              (match (unsafe
+                (ptr-read (ptr-offset (__tl_array-data b-items) index)))
+                [(compiler_ir_types.CompilerIrCAbiReturnSlot.Slot b-ty b-offset)
+                  (set!
+                    same
+                    (and (= a-offset b-offset) (,type-eq ,@contexts a-ty b-ty)))])])
+          (set! index (+ index 1))))
+      same)))
+
+;: Structural instruction equality: the same variant and fixed fields, with
+;: `(value-eq ctx... a b)` for every use pair and `(type-eq ctx... a b)` for
+;: every type pair (shift count types included). Defs, slots, labels and
+;: symbols compare as ids. SpmdCall is never equal: its origin descriptor has
+;: no structural equality here.
+(defmacro (compiler-ir-instr-zip-eq
+  [a : Expr]
+  [b : Expr]
+  [value-eq : Expr]
+  [type-eq : Expr]
+  [contexts : Expr ...]) : bool
+  (let
+    [value-tail : ExprList
+      (match `(begin
+        ,value-eq
+        ,@contexts)
+        [(Expr.Begin items) items]
+        [_ (expr-list-empty)])]
+    [type-tail : ExprList
+      (match `(begin
+        ,type-eq
+        ,@contexts)
+        [(Expr.Begin items) items]
+        [_ (expr-list-empty)])]
+    `(let
+      [zip-a ,a]
+      [zip-b ,b]
+      (match zip-a
+        [(compiler_ir_types.CompilerIrInstr.Mov a-dst a-src a-ty)
+          (match zip-b
+            [(compiler_ir_types.CompilerIrInstr.Mov b-dst b-src b-ty)
+              (and
+                (= a-dst b-dst)
+                (compiler-ir-zip-use value a-src b-src ,@value-tail)
+                (compiler-ir-zip-type a-ty b-ty ,@type-tail))]
+            [_ false])]
+        [(compiler_ir_types.CompilerIrInstr.Alloc a-dst a-ty)
+          (match zip-b
+            [(compiler_ir_types.CompilerIrInstr.Alloc b-dst b-ty)
+              (and (= a-dst b-dst) (compiler-ir-zip-type a-ty b-ty ,@type-tail))]
+            [_ false])]
+        [(compiler_ir_types.CompilerIrInstr.AddrOf a-dst a-src)
+          (match zip-b
+            [(compiler_ir_types.CompilerIrInstr.AddrOf b-dst b-src)
+              (and (= a-dst b-dst) (= a-src b-src))]
+            [_ false])]
+        [(compiler_ir_types.CompilerIrInstr.Gep a-dst a-base a-offset a-ty)
+          (match zip-b
+            [(compiler_ir_types.CompilerIrInstr.Gep b-dst b-base b-offset b-ty)
+              (and
+                (= a-dst b-dst)
+                (compiler-ir-zip-use value a-base b-base ,@value-tail)
+                (compiler-ir-zip-use value a-offset b-offset ,@value-tail)
+                (compiler-ir-zip-type a-ty b-ty ,@type-tail))]
+            [_ false])]
+        [(compiler_ir_types.CompilerIrInstr.OwnRoot a-dst a-src a-ty)
+          (match zip-b
+            [(compiler_ir_types.CompilerIrInstr.OwnRoot b-dst b-src b-ty)
+              (and
+                (= a-dst b-dst)
+                (compiler-ir-zip-use value a-src b-src ,@value-tail)
+                (compiler-ir-zip-type a-ty b-ty ,@type-tail))]
+            [_ false])]
+        [(compiler_ir_types.CompilerIrInstr.Load a-dst a-src a-ty)
+          (match zip-b
+            [(compiler_ir_types.CompilerIrInstr.Load b-dst b-src b-ty)
+              (and
+                (= a-dst b-dst)
+                (compiler-ir-zip-use value a-src b-src ,@value-tail)
+                (compiler-ir-zip-type a-ty b-ty ,@type-tail))]
+            [_ false])]
+        [(compiler_ir_types.CompilerIrInstr.LoadOwned a-dst a-src a-owner a-ty)
+          (match zip-b
+            [(compiler_ir_types.CompilerIrInstr.LoadOwned
+                b-dst
+                b-src
+                b-owner
+                b-ty)
+              (and
+                (= a-dst b-dst)
+                (compiler-ir-zip-use value a-src b-src ,@value-tail)
+                (= a-owner b-owner)
+                (compiler-ir-zip-type a-ty b-ty ,@type-tail))]
+            [_ false])]
+        [(compiler_ir_types.CompilerIrInstr.StoreOwned a-ptr a-value a-ty)
+          (match zip-b
+            [(compiler_ir_types.CompilerIrInstr.StoreOwned b-ptr b-value b-ty)
+              (and
+                (compiler-ir-zip-use value a-ptr b-ptr ,@value-tail)
+                (compiler-ir-zip-use value a-value b-value ,@value-tail)
+                (compiler-ir-zip-type a-ty b-ty ,@type-tail))]
+            [_ false])]
+        [(compiler_ir_types.CompilerIrInstr.StorePtr a-ptr a-value a-ty)
+          (match zip-b
+            [(compiler_ir_types.CompilerIrInstr.StorePtr b-ptr b-value b-ty)
+              (and
+                (compiler-ir-zip-use value a-ptr b-ptr ,@value-tail)
+                (compiler-ir-zip-use value a-value b-value ,@value-tail)
+                (compiler-ir-zip-type a-ty b-ty ,@type-tail))]
+            [_ false])]
+        [(compiler_ir_types.CompilerIrInstr.CopyBytes a-ptr a-src a-size)
+          (match zip-b
+            [(compiler_ir_types.CompilerIrInstr.CopyBytes b-ptr b-src b-size)
+              (and
+                (compiler-ir-zip-use value a-ptr b-ptr ,@value-tail)
+                (compiler-ir-zip-use value a-src b-src ,@value-tail)
+                (= a-size b-size))]
+            [_ false])]
+        [(compiler_ir_types.CompilerIrInstr.BoundsCheck
+            a-index
+            a-length
+            a-ok-label)
+          (match zip-b
+            [(compiler_ir_types.CompilerIrInstr.BoundsCheck
+                b-index
+                b-length
+                b-ok-label)
+              (and
+                (compiler-ir-zip-use value a-index b-index ,@value-tail)
+                (compiler-ir-zip-use value a-length b-length ,@value-tail)
+                (= a-ok-label b-ok-label))]
+            [_ false])]
+        [(compiler_ir_types.CompilerIrInstr.Cast a-dst a-src a-from-ty a-to-ty)
+          (match zip-b
+            [(compiler_ir_types.CompilerIrInstr.Cast
+                b-dst
+                b-src
+                b-from-ty
+                b-to-ty)
+              (and
+                (= a-dst b-dst)
+                (compiler-ir-zip-use value a-src b-src ,@value-tail)
+                (compiler-ir-zip-type a-from-ty b-from-ty ,@type-tail)
+                (compiler-ir-zip-type a-to-ty b-to-ty ,@type-tail))]
+            [_ false])]
+        [(compiler_ir_types.CompilerIrInstr.Bitcast
+            a-dst
+            a-src
+            a-from-ty
+            a-to-ty)
+          (match zip-b
+            [(compiler_ir_types.CompilerIrInstr.Bitcast
+                b-dst
+                b-src
+                b-from-ty
+                b-to-ty)
+              (and
+                (= a-dst b-dst)
+                (compiler-ir-zip-use value a-src b-src ,@value-tail)
+                (compiler-ir-zip-type a-from-ty b-from-ty ,@type-tail)
+                (compiler-ir-zip-type a-to-ty b-to-ty ,@type-tail))]
+            [_ false])]
+        [(compiler_ir_types.CompilerIrInstr.BinOp a-dst a-op a-lhs a-rhs a-ty)
+          (match zip-b
+            [(compiler_ir_types.CompilerIrInstr.BinOp
+                b-dst
+                b-op
+                b-lhs
+                b-rhs
+                b-ty)
+              (and
+                (= a-dst b-dst)
+                (compiler-ir-bin-op-zip-eq a-op b-op ,@type-tail)
+                (compiler-ir-zip-use value a-lhs b-lhs ,@value-tail)
+                (compiler-ir-zip-use value a-rhs b-rhs ,@value-tail)
+                (compiler-ir-zip-type a-ty b-ty ,@type-tail))]
+            [_ false])]
+        [(compiler_ir_types.CompilerIrInstr.UnOp a-dst a-op a-src a-ty)
+          (match zip-b
+            [(compiler_ir_types.CompilerIrInstr.UnOp b-dst b-op b-src b-ty)
+              (and
+                (= a-dst b-dst)
+                (= a-op b-op)
+                (compiler-ir-zip-use value a-src b-src ,@value-tail)
+                (compiler-ir-zip-type a-ty b-ty ,@type-tail))]
+            [_ false])]
+        [(compiler_ir_types.CompilerIrInstr.LaneId a-dst a-lanes a-ty)
+          (match zip-b
+            [(compiler_ir_types.CompilerIrInstr.LaneId b-dst b-lanes b-ty)
+              (and
+                (= a-dst b-dst)
+                (= a-lanes b-lanes)
+                (compiler-ir-zip-type a-ty b-ty ,@type-tail))]
+            [_ false])]
+        [(compiler_ir_types.CompilerIrInstr.Splat a-dst a-value a-lanes a-ty)
+          (match zip-b
+            [(compiler_ir_types.CompilerIrInstr.Splat
+                b-dst
+                b-value
+                b-lanes
+                b-ty)
+              (and
+                (= a-dst b-dst)
+                (compiler-ir-zip-use value a-value b-value ,@value-tail)
+                (= a-lanes b-lanes)
+                (compiler-ir-zip-type a-ty b-ty ,@type-tail))]
+            [_ false])]
+        [(compiler_ir_types.CompilerIrInstr.VectorBinOp a-box)
+          (match zip-b
+            [(compiler_ir_types.CompilerIrInstr.VectorBinOp b-box)
+              (let
+                [a : compiler_ir_types.CompilerIrInstrVectorBinOpPayload
+                  (compiler-ir-box-shared-view a-box)]
+                [b : compiler_ir_types.CompilerIrInstrVectorBinOpPayload
+                  (compiler-ir-box-shared-view b-box)]
+                (and
+                  (= a.dst b.dst)
+                  (compiler-ir-bin-op-zip-eq a.op b.op ,@type-tail)
+                  (compiler-ir-zip-use value a.lhs b.lhs ,@value-tail)
+                  (compiler-ir-zip-use value a.rhs b.rhs ,@value-tail)
+                  (= a.lanes b.lanes)
+                  (compiler-ir-zip-type a.ty b.ty ,@type-tail)))]
+            [_ false])]
+        [(compiler_ir_types.CompilerIrInstr.VectorPrefix a-box)
+          (match zip-b
+            [(compiler_ir_types.CompilerIrInstr.VectorPrefix b-box)
+              (let
+                [a : compiler_ir_types.CompilerIrInstrVectorPrefixPayload
+                  (compiler-ir-box-shared-view a-box)]
+                [b : compiler_ir_types.CompilerIrInstrVectorPrefixPayload
+                  (compiler-ir-box-shared-view b-box)]
+                (and
+                  (= a.dst b.dst)
+                  (= a.op b.op)
+                  (compiler-ir-zip-use value a.src b.src ,@value-tail)
+                  (compiler-ir-zip-use value a.carry b.carry ,@value-tail)
+                  (= a.lanes b.lanes)
+                  (compiler-ir-zip-type a.ty b.ty ,@type-tail)))]
+            [_ false])]
+        [(compiler_ir_types.CompilerIrInstr.VectorReduce
+            a-dst
+            a-op
+            a-src
+            a-lanes
+            a-ty)
+          (match zip-b
+            [(compiler_ir_types.CompilerIrInstr.VectorReduce
+                b-dst
+                b-op
+                b-src
+                b-lanes
+                b-ty)
+              (and
+                (= a-dst b-dst)
+                (= a-op b-op)
+                (compiler-ir-zip-use value a-src b-src ,@value-tail)
+                (= a-lanes b-lanes)
+                (compiler-ir-zip-type a-ty b-ty ,@type-tail))]
+            [_ false])]
+        [(compiler_ir_types.CompilerIrInstr.VectorCompare a-box)
+          (match zip-b
+            [(compiler_ir_types.CompilerIrInstr.VectorCompare b-box)
+              (let
+                [a : compiler_ir_types.CompilerIrInstrVectorComparePayload
+                  (compiler-ir-box-shared-view a-box)]
+                [b : compiler_ir_types.CompilerIrInstrVectorComparePayload
+                  (compiler-ir-box-shared-view b-box)]
+                (and
+                  (= a.dst b.dst)
+                  (compiler-ir-bin-op-zip-eq a.op b.op ,@type-tail)
+                  (compiler-ir-zip-use value a.lhs b.lhs ,@value-tail)
+                  (compiler-ir-zip-use value a.rhs b.rhs ,@value-tail)
+                  (= a.lanes b.lanes)
+                  (compiler-ir-zip-type a.ty b.ty ,@type-tail)))]
+            [_ false])]
+        [(compiler_ir_types.CompilerIrInstr.MaskBinOp
+            a-dst
+            a-op
+            a-lhs
+            a-rhs
+            a-lanes)
+          (match zip-b
+            [(compiler_ir_types.CompilerIrInstr.MaskBinOp
+                b-dst
+                b-op
+                b-lhs
+                b-rhs
+                b-lanes)
+              (and
+                (= a-dst b-dst)
+                (= a-op b-op)
+                (compiler-ir-zip-use value a-lhs b-lhs ,@value-tail)
+                (compiler-ir-zip-use value a-rhs b-rhs ,@value-tail)
+                (= a-lanes b-lanes))]
+            [_ false])]
+        [(compiler_ir_types.CompilerIrInstr.MaskNot a-dst a-src a-lanes)
+          (match zip-b
+            [(compiler_ir_types.CompilerIrInstr.MaskNot b-dst b-src b-lanes)
+              (and
+                (= a-dst b-dst)
+                (compiler-ir-zip-use value a-src b-src ,@value-tail)
+                (= a-lanes b-lanes))]
+            [_ false])]
+        [(compiler_ir_types.CompilerIrInstr.MaskReduce a-dst a-op a-src a-lanes)
+          (match zip-b
+            [(compiler_ir_types.CompilerIrInstr.MaskReduce
+                b-dst
+                b-op
+                b-src
+                b-lanes)
+              (and
+                (= a-dst b-dst)
+                (= a-op b-op)
+                (compiler-ir-zip-use value a-src b-src ,@value-tail)
+                (= a-lanes b-lanes))]
+            [_ false])]
+        [(compiler_ir_types.CompilerIrInstr.Select a-box)
+          (match zip-b
+            [(compiler_ir_types.CompilerIrInstr.Select b-box)
+              (let
+                [a : compiler_ir_types.CompilerIrInstrSelectPayload
+                  (compiler-ir-box-shared-view a-box)]
+                [b : compiler_ir_types.CompilerIrInstrSelectPayload
+                  (compiler-ir-box-shared-view b-box)]
+                (and
+                  (= a.dst b.dst)
+                  (compiler-ir-zip-use value a.mask b.mask ,@value-tail)
+                  (compiler-ir-zip-use value a.on-true b.on-true ,@value-tail)
+                  (compiler-ir-zip-use value a.on-false b.on-false ,@value-tail)
+                  (= a.lanes b.lanes)
+                  (compiler-ir-zip-type a.ty b.ty ,@type-tail)))]
+            [_ false])]
+        [(compiler_ir_types.CompilerIrInstr.VectorLoad
+            a-dst
+            a-base
+            a-index
+            a-lanes
+            a-ty)
+          (match zip-b
+            [(compiler_ir_types.CompilerIrInstr.VectorLoad
+                b-dst
+                b-base
+                b-index
+                b-lanes
+                b-ty)
+              (and
+                (= a-dst b-dst)
+                (compiler-ir-zip-use value a-base b-base ,@value-tail)
+                (compiler-ir-zip-use value a-index b-index ,@value-tail)
+                (= a-lanes b-lanes)
+                (compiler-ir-zip-type a-ty b-ty ,@type-tail))]
+            [_ false])]
+        [(compiler_ir_types.CompilerIrInstr.VectorStore a-box)
+          (match zip-b
+            [(compiler_ir_types.CompilerIrInstr.VectorStore b-box)
+              (let
+                [a : compiler_ir_types.CompilerIrInstrVectorStorePayload
+                  (compiler-ir-box-shared-view a-box)]
+                [b : compiler_ir_types.CompilerIrInstrVectorStorePayload
+                  (compiler-ir-box-shared-view b-box)]
+                (and
+                  (compiler-ir-zip-use value a.base b.base ,@value-tail)
+                  (compiler-ir-zip-use value a.index b.index ,@value-tail)
+                  (compiler-ir-zip-use value a.value b.value ,@value-tail)
+                  (= a.lanes b.lanes)
+                  (compiler-ir-zip-type a.ty b.ty ,@type-tail)))]
+            [_ false])]
+        [(compiler_ir_types.CompilerIrInstr.PredicatedStore a-box)
+          (match zip-b
+            [(compiler_ir_types.CompilerIrInstr.PredicatedStore b-box)
+              (let
+                [a : compiler_ir_types.CompilerIrInstrPredicatedStorePayload
+                  (compiler-ir-box-shared-view a-box)]
+                [b : compiler_ir_types.CompilerIrInstrPredicatedStorePayload
+                  (compiler-ir-box-shared-view b-box)]
+                (and
+                  (compiler-ir-zip-use value a.base b.base ,@value-tail)
+                  (compiler-ir-zip-use value a.index b.index ,@value-tail)
+                  (compiler-ir-zip-use value a.value b.value ,@value-tail)
+                  (compiler-ir-zip-use value a.mask b.mask ,@value-tail)
+                  (= a.lanes b.lanes)
+                  (compiler-ir-zip-type a.ty b.ty ,@type-tail)))]
+            [_ false])]
+        [(compiler_ir_types.CompilerIrInstr.PredicatedLoad a-box)
+          (match zip-b
+            [(compiler_ir_types.CompilerIrInstr.PredicatedLoad b-box)
+              (let
+                [a : compiler_ir_types.CompilerIrInstrPredicatedLoadPayload
+                  (compiler-ir-box-shared-view a-box)]
+                [b : compiler_ir_types.CompilerIrInstrPredicatedLoadPayload
+                  (compiler-ir-box-shared-view b-box)]
+                (and
+                  (= a.dst b.dst)
+                  (compiler-ir-zip-use value a.base b.base ,@value-tail)
+                  (compiler-ir-zip-use value a.index b.index ,@value-tail)
+                  (compiler-ir-zip-use value a.mask b.mask ,@value-tail)
+                  (= a.lanes b.lanes)
+                  (compiler-ir-zip-type a.ty b.ty ,@type-tail)))]
+            [_ false])]
+        [(compiler_ir_types.CompilerIrInstr.GatherLoad a-box)
+          (match zip-b
+            [(compiler_ir_types.CompilerIrInstr.GatherLoad b-box)
+              (let
+                [a : compiler_ir_types.CompilerIrInstrGatherLoadPayload
+                  (compiler-ir-box-shared-view a-box)]
+                [b : compiler_ir_types.CompilerIrInstrGatherLoadPayload
+                  (compiler-ir-box-shared-view b-box)]
+                (and
+                  (= a.dst b.dst)
+                  (compiler-ir-zip-use value a.base b.base ,@value-tail)
+                  (compiler-ir-zip-use
+                    value
+                    a.index-base
+                    b.index-base
+                    ,@value-tail)
+                  (compiler-ir-zip-use value a.index b.index ,@value-tail)
+                  (= a.lane-offset b.lane-offset)
+                  (= a.lanes b.lanes)
+                  (compiler-ir-zip-type a.ty b.ty ,@type-tail)))]
+            [_ false])]
+        [(compiler_ir_types.CompilerIrInstr.VectorShuffle a-box)
+          (match zip-b
+            [(compiler_ir_types.CompilerIrInstr.VectorShuffle b-box)
+              (let
+                [a : compiler_ir_types.CompilerIrInstrVectorShufflePayload
+                  (compiler-ir-box-shared-view a-box)]
+                [b : compiler_ir_types.CompilerIrInstrVectorShufflePayload
+                  (compiler-ir-box-shared-view b-box)]
+                (and
+                  (= a.dst b.dst)
+                  (compiler-ir-zip-use value a.source b.source ,@value-tail)
+                  (compiler-ir-zip-use
+                    value
+                    a.selector-low
+                    b.selector-low
+                    ,@value-tail)
+                  (compiler-ir-zip-use
+                    maybe
+                    a.selector-high
+                    b.selector-high
+                    ,@value-tail)
+                  (compiler-ir-zip-use
+                    value
+                    a.active-lanes
+                    b.active-lanes
+                    ,@value-tail)
+                  (= a.lanes b.lanes)
+                  (compiler-ir-zip-type a.ty b.ty ,@type-tail)))]
+            [_ false])]
+        [(compiler_ir_types.CompilerIrInstr.TailMask
+            a-dst
+            a-index
+            a-len
+            a-lanes)
+          (match zip-b
+            [(compiler_ir_types.CompilerIrInstr.TailMask
+                b-dst
+                b-index
+                b-len
+                b-lanes)
+              (and
+                (= a-dst b-dst)
+                (compiler-ir-zip-use value a-index b-index ,@value-tail)
+                (compiler-ir-zip-use value a-len b-len ,@value-tail)
+                (= a-lanes b-lanes))]
+            [_ false])]
+        [(compiler_ir_types.CompilerIrInstr.EntryArgc a-dst)
+          (match zip-b
+            [(compiler_ir_types.CompilerIrInstr.EntryArgc b-dst)
+              (= a-dst b-dst)]
+            [_ false])]
+        [(compiler_ir_types.CompilerIrInstr.EntryArgv a-dst)
+          (match zip-b
+            [(compiler_ir_types.CompilerIrInstr.EntryArgv b-dst)
+              (= a-dst b-dst)]
+            [_ false])]
+        [(compiler_ir_types.CompilerIrInstr.EntryEnvp a-dst)
+          (match zip-b
+            [(compiler_ir_types.CompilerIrInstr.EntryEnvp b-dst)
+              (= a-dst b-dst)]
+            [_ false])]
+        [(compiler_ir_types.CompilerIrInstr.CpuId
+            a-dst
+            a-leaf
+            a-subleaf
+            a-reg-index)
+          (match zip-b
+            [(compiler_ir_types.CompilerIrInstr.CpuId
+                b-dst
+                b-leaf
+                b-subleaf
+                b-reg-index)
+              (and
+                (= a-dst b-dst)
+                (compiler-ir-zip-use value a-leaf b-leaf ,@value-tail)
+                (compiler-ir-zip-use value a-subleaf b-subleaf ,@value-tail)
+                (= a-reg-index b-reg-index))]
+            [_ false])]
+        [(compiler_ir_types.CompilerIrInstr.Xgetbv a-dst a-index)
+          (match zip-b
+            [(compiler_ir_types.CompilerIrInstr.Xgetbv b-dst b-index)
+              (and
+                (= a-dst b-dst)
+                (compiler-ir-zip-use value a-index b-index ,@value-tail))]
+            [_ false])]
+        [(compiler_ir_types.CompilerIrInstr.Syscall a-dst a-args)
+          (match zip-b
+            [(compiler_ir_types.CompilerIrInstr.Syscall b-dst b-args)
+              (and
+                (= a-dst b-dst)
+                (compiler-ir-zip-use args a-args b-args ,@value-tail))]
+            [_ false])]
+        [(compiler_ir_types.CompilerIrInstr.Call a-dst a-name a-args a-ty)
+          (match zip-b
+            [(compiler_ir_types.CompilerIrInstr.Call b-dst b-name b-args b-ty)
+              (and
+                (= a-dst b-dst)
+                (= a-name b-name)
+                (compiler-ir-zip-use args a-args b-args ,@value-tail)
+                (compiler-ir-zip-type a-ty b-ty ,@type-tail))]
+            [_ false])]
+        [(compiler_ir_types.CompilerIrInstr.CallIndirect
+            a-dst
+            a-callee
+            a-args
+            a-ty)
+          (match zip-b
+            [(compiler_ir_types.CompilerIrInstr.CallIndirect
+                b-dst
+                b-callee
+                b-args
+                b-ty)
+              (and
+                (= a-dst b-dst)
+                (compiler-ir-zip-use value a-callee b-callee ,@value-tail)
+                (compiler-ir-zip-use args a-args b-args ,@value-tail)
+                (compiler-ir-zip-type a-ty b-ty ,@type-tail))]
+            [_ false])]
+        [(compiler_ir_types.CompilerIrInstr.CallIndirectC
+            a-dst
+            a-callee
+            a-args
+            a-ty)
+          (match zip-b
+            [(compiler_ir_types.CompilerIrInstr.CallIndirectC
+                b-dst
+                b-callee
+                b-args
+                b-ty)
+              (and
+                (= a-dst b-dst)
+                (compiler-ir-zip-use value a-callee b-callee ,@value-tail)
+                (compiler-ir-zip-use args a-args b-args ,@value-tail)
+                (compiler-ir-zip-type a-ty b-ty ,@type-tail))]
+            [_ false])]
+        [(compiler_ir_types.CompilerIrInstr.CallCAbiStoreResult a-box)
+          (match zip-b
+            [(compiler_ir_types.CompilerIrInstr.CallCAbiStoreResult b-box)
+              (let
+                [a : compiler_ir_types.CompilerIrInstrCallCAbiStoreResultPayload
+                  (compiler-ir-box-shared-view a-box)]
+                [b : compiler_ir_types.CompilerIrInstrCallCAbiStoreResultPayload
+                  (compiler-ir-box-shared-view b-box)]
+                (and
+                  (compiler-ir-zip-use value a.base b.base ,@value-tail)
+                  (= a.name b.name)
+                  (compiler-ir-zip-use args a.args b.args ,@value-tail)
+                  (compiler-ir-zip-c-abi-slots a.slots b.slots ,@type-tail)))]
+            [_ false])]
+        [(compiler_ir_types.CompilerIrInstr.CallIndirectCAbiStoreResult a-box)
+          (match zip-b
+            [(compiler_ir_types.CompilerIrInstr.CallIndirectCAbiStoreResult
+                b-box)
+              (let
+                [a : compiler_ir_types.CompilerIrInstrCallIndirectCAbiStoreResultPayload
+                  (compiler-ir-box-shared-view a-box)]
+                [b : compiler_ir_types.CompilerIrInstrCallIndirectCAbiStoreResultPayload
+                  (compiler-ir-box-shared-view b-box)]
+                (and
+                  (compiler-ir-zip-use value a.base b.base ,@value-tail)
+                  (compiler-ir-zip-use value a.callee b.callee ,@value-tail)
+                  (compiler-ir-zip-use args a.args b.args ,@value-tail)
+                  (compiler-ir-zip-c-abi-slots a.slots b.slots ,@type-tail)))]
+            [_ false])]
+        [(compiler_ir_types.CompilerIrInstr.SpmdCall _) false]
+        [(compiler_ir_types.CompilerIrInstr.TailCall a-name a-args a-ty)
+          (match zip-b
+            [(compiler_ir_types.CompilerIrInstr.TailCall b-name b-args b-ty)
+              (and
+                (= a-name b-name)
+                (compiler-ir-zip-use args a-args b-args ,@value-tail)
+                (compiler-ir-zip-type a-ty b-ty ,@type-tail))]
+            [_ false])]
+        [(compiler_ir_types.CompilerIrInstr.Store a-name a-value a-ty)
+          (match zip-b
+            [(compiler_ir_types.CompilerIrInstr.Store b-name b-value b-ty)
+              (and
+                (= a-name b-name)
+                (compiler-ir-zip-use value a-value b-value ,@value-tail)
+                (compiler-ir-zip-type a-ty b-ty ,@type-tail))]
+            [_ false])]
+        [(compiler_ir_types.CompilerIrInstr.Jump a-label)
+          (match zip-b
+            [(compiler_ir_types.CompilerIrInstr.Jump b-label)
+              (= a-label b-label)]
+            [_ false])]
+        [(compiler_ir_types.CompilerIrInstr.Branch
+            a-cond
+            a-true-label
+            a-false-label)
+          (match zip-b
+            [(compiler_ir_types.CompilerIrInstr.Branch
+                b-cond
+                b-true-label
+                b-false-label)
+              (and
+                (compiler-ir-zip-use value a-cond b-cond ,@value-tail)
+                (= a-true-label b-true-label)
+                (= a-false-label b-false-label))]
+            [_ false])]
+        [(compiler_ir_types.CompilerIrInstr.TotalEnumBranch
+            a-cond
+            a-true-label
+            a-false-label)
+          (match zip-b
+            [(compiler_ir_types.CompilerIrInstr.TotalEnumBranch
+                b-cond
+                b-true-label
+                b-false-label)
+              (and
+                (compiler-ir-zip-use value a-cond b-cond ,@value-tail)
+                (= a-true-label b-true-label)
+                (= a-false-label b-false-label))]
+            [_ false])]
+        [(compiler_ir_types.CompilerIrInstr.Return a-value)
+          (match zip-b
+            [(compiler_ir_types.CompilerIrInstr.Return b-value)
+              (compiler-ir-zip-use maybe a-value b-value ,@value-tail)]
+            [_ false])]
+        [(compiler_ir_types.CompilerIrInstr.Phi a-dst a-inputs a-ty)
+          (match zip-b
+            [(compiler_ir_types.CompilerIrInstr.Phi b-dst b-inputs b-ty)
+              (and
+                (= a-dst b-dst)
+                (compiler-ir-zip-use phi-inputs a-inputs b-inputs ,@value-tail)
+                (compiler-ir-zip-type a-ty b-ty ,@type-tail))]
+            [_ false])]
+        [(compiler_ir_types.CompilerIrInstr.Pack a-dst a-words a-ty)
+          (match zip-b
+            [(compiler_ir_types.CompilerIrInstr.Pack b-dst b-words b-ty)
+              (and
+                (= a-dst b-dst)
+                (compiler-ir-zip-use values a-words b-words ,@value-tail)
+                (compiler-ir-zip-type a-ty b-ty ,@type-tail))]
+            [_ false])]
+        [(compiler_ir_types.CompilerIrInstr.Word a-dst a-src a-index a-ty)
+          (match zip-b
+            [(compiler_ir_types.CompilerIrInstr.Word b-dst b-src b-index b-ty)
+              (and
+                (= a-dst b-dst)
+                (compiler-ir-zip-use value a-src b-src ,@value-tail)
+                (= a-index b-index)
+                (compiler-ir-zip-type a-ty b-ty ,@type-tail))]
+            [_ false])]
+        [(compiler_ir_types.CompilerIrInstr.TailCallIndirect
+            a-callee
+            a-args
+            a-ty)
+          (match zip-b
+            [(compiler_ir_types.CompilerIrInstr.TailCallIndirect
+                b-callee
+                b-args
+                b-ty)
+              (and
+                (compiler-ir-zip-use value a-callee b-callee ,@value-tail)
+                (compiler-ir-zip-use args a-args b-args ,@value-tail)
+                (compiler-ir-zip-type a-ty b-ty ,@type-tail))]
+            [_ false])]
+        [(compiler_ir_types.CompilerIrInstr.Switch
+            a-index
+            a-base
+            a-cases
+            a-default-label)
+          (match zip-b
+            [(compiler_ir_types.CompilerIrInstr.Switch
+                b-index
+                b-base
+                b-cases
+                b-default-label)
+              (and
+                (compiler-ir-zip-use value a-index b-index ,@value-tail)
+                (= a-base b-base)
+                (compiler-ir-switch-case-seq-eq? a-cases b-cases)
+                (= a-default-label b-default-label))]
+            [_ false])]
+        [(compiler_ir_types.CompilerIrInstr.TotalEnumSwitch
+            a-index
+            a-base
+            a-cases
+            a-default-label
+            a-trap-label)
+          (match zip-b
+            [(compiler_ir_types.CompilerIrInstr.TotalEnumSwitch
+                b-index
+                b-base
+                b-cases
+                b-default-label
+                b-trap-label)
+              (and
+                (compiler-ir-zip-use value a-index b-index ,@value-tail)
+                (= a-base b-base)
+                (compiler-ir-switch-case-seq-eq? a-cases b-cases)
+                (= a-default-label b-default-label)
+                (= a-trap-label b-trap-label))]
+            [_ false])]))))
+
 ;; --- Same-program private SPMD ABI (#7405) ------------------------------------
 ;;
 ;; Construction, clone, equality, rendering, and integrity checks for
@@ -4097,43 +6632,6 @@
       (CompilerIrValue.RuntimeGlobal (compiler-ir-symbol-clone init))]
     [(CompilerIrValue.Unit) (CompilerIrValue.Unit)]))
 
-(define (compiler-ir-clone-maybe-value [value : CompilerIrMaybeValue]) : CompilerIrMaybeValue
-  (match value
-    [(CompilerIrMaybeValue.No) (CompilerIrMaybeValue.No)]
-    [(CompilerIrMaybeValue.Some inner)
-      (CompilerIrMaybeValue.Some (compiler-ir-clone-value inner))]))
-
-(define (compiler-ir-clone-value-seq [values : CompilerIrValueSeq]) : CompilerIrValueSeq
-  (let
-    [slots : (__tl_dyn-array CompilerIrValue)
-      (__tl_make-array CompilerIrValue values.len)]
-    [index : i64 0]
-    (begin
-      (while (< index values.len)
-        (begin
-          (set!
-            (array-ref slots index)
-            (compiler-ir-clone-value
-              (compiler-ir-value-seq-ref
-                (compiler-ir-global-shared-view values)
-                index)))
-          (set! index (+ index 1))))
-      (CompilerIrValueSeq slots values.len))))
-
-(define (compiler-ir-clone-call-args [args : CompilerIrCallArgs]) : CompilerIrCallArgs
-  (match args
-    [(CompilerIrCallArgs.Nil) (CompilerIrCallArgs.Nil)]
-    [(CompilerIrCallArgs.One a)
-      (CompilerIrCallArgs.One (compiler-ir-clone-value a))]
-    [(CompilerIrCallArgs.Two a b)
-      (CompilerIrCallArgs.Two
-        (compiler-ir-clone-value a)
-        (compiler-ir-clone-value b))]
-    [(CompilerIrCallArgs.Array values)
-      (CompilerIrCallArgs.Array (clone values))]
-    [(CompilerIrCallArgs.Sret values index)
-      (CompilerIrCallArgs.Sret (clone values) index)]))
-
 (define (compiler-ir-clone-spmd-backend [backend : CompilerIrSpmdBackend]) : CompilerIrSpmdBackend
   (match backend
     [(CompilerIrSpmdBackend.Scalar) (CompilerIrSpmdBackend.Scalar)]
@@ -4198,72 +6696,6 @@
         (compiler-ir-clone-spmd-value-class class)
         (compiler-ir-clone-type pools ty))]))
 
-(define (compiler-ir-clone-c-abi-return-slot
-  [pools : ast.AstNodePoolContext]
-  [slot : CompilerIrCAbiReturnSlot]) : CompilerIrCAbiReturnSlot
-  (match slot
-    [(CompilerIrCAbiReturnSlot.Slot ty offset)
-      (CompilerIrCAbiReturnSlot.Slot (compiler-ir-clone-type pools ty) offset)]))
-
-(define (compiler-ir-clone-c-abi-return-slot-seq-fill
-  [pools : ast.AstNodePoolContext]
-  [src : (__tl_dyn-array CompilerIrCAbiReturnSlot)]
-  [dst : (&mut dst (__tl_dyn-array CompilerIrCAbiReturnSlot))]
-  [index : i64]
-  [count : i64]) : unit
-  (if (>= index count)
-    unit
-    (begin
-      (set!
-        (array-ref dst index)
-        (compiler-ir-clone-c-abi-return-slot
-          (compiler-ir-global-shared-view pools)
-          (compiler-ir-array-shared-view src index)))
-      (compiler-ir-clone-c-abi-return-slot-seq-fill
-        pools
-        src
-        dst
-        (+ index 1)
-        count))))
-
-(define (compiler-ir-clone-c-abi-return-slots
-  [pools : ast.AstNodePoolContext]
-  [seq : CompilerIrCAbiReturnSlotSeq]) : CompilerIrCAbiReturnSlotSeq
-  (let
-    [count : i64 seq.len]
-    [src : (__tl_dyn-array CompilerIrCAbiReturnSlot) seq.slots]
-    [dst : (__tl_dyn-array CompilerIrCAbiReturnSlot)
-      (__tl_make-array CompilerIrCAbiReturnSlot count)]
-    (begin
-      (compiler-ir-clone-c-abi-return-slot-seq-fill
-        pools
-        src
-        (&mut dst)
-        0
-        count)
-      (CompilerIrCAbiReturnSlotSeq dst count))))
-
-(define (compiler-ir-clone-phi-input-seq [inputs : CompilerIrPhiInputSeq]) : CompilerIrPhiInputSeq
-  (let
-    [builder : CompilerIrPhiInputBuilder
-      (compiler-ir-phi-input-builder-with-capacity inputs.len)]
-    [index : i64 0]
-    (begin
-      (while (< index inputs.len)
-        (let
-          [input : CompilerIrPhiInput
-            (compiler-ir-phi-input-seq-ref
-              (compiler-ir-global-shared-view inputs)
-              index)]
-          (begin
-            (compiler-ir-phi-input-builder-push!
-              (&mut builder)
-              (CompilerIrPhiInput
-                (compiler-ir-clone-value input.value)
-                input.label))
-            (set! index (+ index 1)))))
-      (compiler-ir-phi-input-builder-to-seq builder))))
-
 (define (compiler-ir-phi-input-seq-reverse-onto
   [inputs : CompilerIrPhiInputSeq]
   [acc : CompilerIrPhiInputSeq]) : CompilerIrPhiInputSeq
@@ -4282,27 +6714,6 @@
           (set! index (- index 1))))
       (compiler-ir-phi-input-builder-append-seq! (&mut builder) acc)
       (compiler-ir-phi-input-builder-to-seq builder))))
-
-(define (compiler-ir-clone-switch-case [case : CompilerIrSwitchCase]) : CompilerIrSwitchCase
-  (match case
-    [(CompilerIrSwitchCase.Case tag label)
-      (CompilerIrSwitchCase.Case tag label)]))
-
-(define (compiler-ir-clone-switch-case-seq
-  [cases : (& cases CompilerIrSwitchCaseSeq)]) : CompilerIrSwitchCaseSeq
-  (let
-    [slots : (__tl_dyn-array CompilerIrSwitchCase)
-      (__tl_make-array CompilerIrSwitchCase cases.len)]
-    [index : i64 0]
-    (begin
-      (while (< index cases.len)
-        (begin
-          (set!
-            (array-ref slots index)
-            (compiler-ir-clone-switch-case
-              (compiler-ir-switch-case-seq-ref cases index)))
-          (set! index (+ index 1))))
-      (CompilerIrSwitchCaseSeq slots cases.len))))
 
 ;; Deep-clone a (flattened) AstType into the CURRENT arena. The builtin
 ;; clone$AstType copies the i64 ty-pool child ids verbatim, which only SHARES the
@@ -4429,318 +6840,26 @@
       (compiler-ir-clone-type-list-into pools (& tys) (&mut out) 0)
       out)))
 
+(define (compiler-ir-clone-operand
+  [_pools : ast.AstNodePoolContext]
+  [_role : CompilerIrOperandRole]
+  [value : CompilerIrValue]) : CompilerIrValue
+  (compiler-ir-clone-value value))
+
+;; Labels are ids; mapping them through a real function still rebuilds every
+;; label container, which the clone must own.
+(define (compiler-ir-clone-label
+  [_pools : ast.AstNodePoolContext]
+  [label : i64]) : i64
+  label)
+
+;; Deep-clone an instruction into the current arena: every value, type and
+;; container is rebuilt. The SPMD origin descriptor carries its own types, so
+;; SpmdCall is cloned field by field.
 (define (compiler-ir-clone-instr
   [pools : ast.AstNodePoolContext]
   [instr : CompilerIrInstr]) : CompilerIrInstr
-  (match instr
-    [(CompilerIrInstr.Mov dst src ty)
-      (CompilerIrInstr.Mov
-        dst
-        (compiler-ir-clone-value src)
-        (compiler-ir-clone-type pools ty))]
-    [(CompilerIrInstr.Alloc dst ty)
-      (CompilerIrInstr.Alloc dst (compiler-ir-clone-type pools ty))]
-    [(CompilerIrInstr.AddrOf dst src) (CompilerIrInstr.AddrOf dst src)]
-    [(CompilerIrInstr.Gep dst base offset ty)
-      (CompilerIrInstr.Gep
-        dst
-        (compiler-ir-clone-value base)
-        (compiler-ir-clone-value offset)
-        (compiler-ir-clone-type pools ty))]
-    [(CompilerIrInstr.Load dst src ty)
-      (CompilerIrInstr.Load
-        dst
-        (compiler-ir-clone-value src)
-        (compiler-ir-clone-type pools ty))]
-    [(CompilerIrInstr.LoadOwned dst src owner ty)
-      (CompilerIrInstr.LoadOwned
-        dst
-        (compiler-ir-clone-value src)
-        owner
-        (compiler-ir-clone-type pools ty))]
-    [(CompilerIrInstr.OwnRoot dst src ty)
-      (CompilerIrInstr.OwnRoot
-        dst
-        (compiler-ir-clone-value src)
-        (compiler-ir-clone-type pools ty))]
-    [(CompilerIrInstr.StoreOwned dst src ty)
-      (CompilerIrInstr.StoreOwned
-        (compiler-ir-clone-value dst)
-        (compiler-ir-clone-value src)
-        (compiler-ir-clone-type pools ty))]
-    [(CompilerIrInstr.StorePtr dst src ty)
-      (CompilerIrInstr.StorePtr
-        (compiler-ir-clone-value dst)
-        (compiler-ir-clone-value src)
-        (compiler-ir-clone-type pools ty))]
-    [(CompilerIrInstr.CopyBytes dst src size)
-      (CompilerIrInstr.CopyBytes
-        (compiler-ir-clone-value dst)
-        (compiler-ir-clone-value src)
-        size)]
-    [(CompilerIrInstr.BoundsCheck index length label)
-      (CompilerIrInstr.BoundsCheck
-        (compiler-ir-clone-value index)
-        (compiler-ir-clone-value length)
-        label)]
-    [(CompilerIrInstr.Cast dst src from-ty to-ty)
-      (CompilerIrInstr.Cast
-        dst
-        (compiler-ir-clone-value src)
-        (compiler-ir-clone-type (compiler-ir-global-shared-view pools) from-ty)
-        (compiler-ir-clone-type pools to-ty))]
-    [(CompilerIrInstr.Bitcast dst src from-ty to-ty)
-      (CompilerIrInstr.Bitcast
-        dst
-        (compiler-ir-clone-value src)
-        (compiler-ir-clone-type (compiler-ir-global-shared-view pools) from-ty)
-        (compiler-ir-clone-type pools to-ty))]
-    [(CompilerIrInstr.BinOp dst op lhs rhs ty)
-      (CompilerIrInstr.BinOp
-        dst
-        op
-        (compiler-ir-clone-value lhs)
-        (compiler-ir-clone-value rhs)
-        (compiler-ir-clone-type pools ty))]
-    [(CompilerIrInstr.UnOp dst op src ty)
-      (CompilerIrInstr.UnOp
-        dst
-        op
-        (compiler-ir-clone-value src)
-        (compiler-ir-clone-type pools ty))]
-    [(CompilerIrInstr.LaneId dst lane ty)
-      (CompilerIrInstr.LaneId dst lane (compiler-ir-clone-type pools ty))]
-    [(CompilerIrInstr.Splat dst value lanes ty)
-      (CompilerIrInstr.Splat
-        dst
-        (compiler-ir-clone-value value)
-        lanes
-        (compiler-ir-clone-type pools ty))]
-    [(CompilerIrInstr.VectorBinOp payload-box)
-      (let
-        [dst (compiler-ir-box-field-shared-view payload-box dst)]
-        [op (compiler-ir-box-field-shared-view payload-box op)]
-        [lhs (compiler-ir-box-field-shared-view payload-box lhs)]
-        [rhs (compiler-ir-box-field-shared-view payload-box rhs)]
-        [lanes (compiler-ir-box-field-shared-view payload-box lanes)]
-        [ty (compiler-ir-box-field-shared-view payload-box ty)]
-        (ir-instr-vector-bin-op
-          dst
-          op
-          (compiler-ir-clone-value lhs)
-          (compiler-ir-clone-value rhs)
-          lanes
-          (compiler-ir-clone-type pools ty)))]
-    [(CompilerIrInstr.VectorPrefix payload-box)
-      (let
-        [dst (compiler-ir-box-field-shared-view payload-box dst)]
-        [op (compiler-ir-box-field-shared-view payload-box op)]
-        [src (compiler-ir-box-field-shared-view payload-box src)]
-        [carry (compiler-ir-box-field-shared-view payload-box carry)]
-        [lanes (compiler-ir-box-field-shared-view payload-box lanes)]
-        [ty (compiler-ir-box-field-shared-view payload-box ty)]
-        (ir-instr-vector-prefix
-          dst
-          op
-          (compiler-ir-clone-value src)
-          (compiler-ir-clone-value carry)
-          lanes
-          (compiler-ir-clone-type pools ty)))]
-    [(CompilerIrInstr.VectorReduce dst op src lanes ty)
-      (CompilerIrInstr.VectorReduce
-        dst
-        op
-        (compiler-ir-clone-value src)
-        lanes
-        (compiler-ir-clone-type pools ty))]
-    [(CompilerIrInstr.VectorCompare payload-box)
-      (let
-        [dst (compiler-ir-box-field-shared-view payload-box dst)]
-        [op (compiler-ir-box-field-shared-view payload-box op)]
-        [lhs (compiler-ir-box-field-shared-view payload-box lhs)]
-        [rhs (compiler-ir-box-field-shared-view payload-box rhs)]
-        [lanes (compiler-ir-box-field-shared-view payload-box lanes)]
-        [ty (compiler-ir-box-field-shared-view payload-box ty)]
-        (ir-instr-vector-compare
-          dst
-          op
-          (compiler-ir-clone-value lhs)
-          (compiler-ir-clone-value rhs)
-          lanes
-          (compiler-ir-clone-type pools ty)))]
-    [(CompilerIrInstr.MaskBinOp dst op lhs rhs lanes)
-      (CompilerIrInstr.MaskBinOp
-        dst
-        op
-        (compiler-ir-clone-value lhs)
-        (compiler-ir-clone-value rhs)
-        lanes)]
-    [(CompilerIrInstr.MaskNot dst src lanes)
-      (CompilerIrInstr.MaskNot dst (compiler-ir-clone-value src) lanes)]
-    [(CompilerIrInstr.MaskReduce dst op src lanes)
-      (CompilerIrInstr.MaskReduce dst op (compiler-ir-clone-value src) lanes)]
-    [(CompilerIrInstr.Select payload-box)
-      (let
-        [dst (compiler-ir-box-field-shared-view payload-box dst)]
-        [cond (compiler-ir-box-field-shared-view payload-box mask)]
-        [then-value (compiler-ir-box-field-shared-view payload-box on-true)]
-        [else-value (compiler-ir-box-field-shared-view payload-box on-false)]
-        [lanes (compiler-ir-box-field-shared-view payload-box lanes)]
-        [ty (compiler-ir-box-field-shared-view payload-box ty)]
-        (ir-instr-select
-          dst
-          (compiler-ir-clone-value cond)
-          (compiler-ir-clone-value then-value)
-          (compiler-ir-clone-value else-value)
-          lanes
-          (compiler-ir-clone-type pools ty)))]
-    [(CompilerIrInstr.VectorLoad dst base index lanes ty)
-      (CompilerIrInstr.VectorLoad
-        dst
-        (compiler-ir-clone-value base)
-        (compiler-ir-clone-value index)
-        lanes
-        (compiler-ir-clone-type pools ty))]
-    [(CompilerIrInstr.VectorStore payload-box)
-      (let
-        [base (compiler-ir-box-field-shared-view payload-box base)]
-        [index (compiler-ir-box-field-shared-view payload-box index)]
-        [value (compiler-ir-box-field-shared-view payload-box value)]
-        [lanes (compiler-ir-box-field-shared-view payload-box lanes)]
-        [ty (compiler-ir-box-field-shared-view payload-box ty)]
-        (ir-instr-vector-store
-          (compiler-ir-clone-value base)
-          (compiler-ir-clone-value index)
-          (compiler-ir-clone-value value)
-          lanes
-          (compiler-ir-clone-type pools ty)))]
-    [(CompilerIrInstr.PredicatedStore payload-box)
-      (let
-        [base (compiler-ir-box-field-shared-view payload-box base)]
-        [index (compiler-ir-box-field-shared-view payload-box index)]
-        [value (compiler-ir-box-field-shared-view payload-box value)]
-        [mask (compiler-ir-box-field-shared-view payload-box mask)]
-        [lanes (compiler-ir-box-field-shared-view payload-box lanes)]
-        [ty (compiler-ir-box-field-shared-view payload-box ty)]
-        (ir-instr-predicated-store
-          (compiler-ir-clone-value base)
-          (compiler-ir-clone-value index)
-          (compiler-ir-clone-value value)
-          (compiler-ir-clone-value mask)
-          lanes
-          (compiler-ir-clone-type pools ty)))]
-    [(CompilerIrInstr.PredicatedLoad payload-box)
-      (let
-        [dst (compiler-ir-box-field-shared-view payload-box dst)]
-        [base (compiler-ir-box-field-shared-view payload-box base)]
-        [index (compiler-ir-box-field-shared-view payload-box index)]
-        [mask (compiler-ir-box-field-shared-view payload-box mask)]
-        [lanes (compiler-ir-box-field-shared-view payload-box lanes)]
-        [ty (compiler-ir-box-field-shared-view payload-box ty)]
-        (ir-instr-predicated-load
-          dst
-          (compiler-ir-clone-value base)
-          (compiler-ir-clone-value index)
-          (compiler-ir-clone-value mask)
-          lanes
-          (compiler-ir-clone-type pools ty)))]
-    [(CompilerIrInstr.GatherLoad payload-box)
-      (let
-        [dst (compiler-ir-box-field-shared-view payload-box dst)]
-        [base (compiler-ir-box-field-shared-view payload-box base)]
-        [index-base (compiler-ir-box-field-shared-view payload-box index-base)]
-        [index (compiler-ir-box-field-shared-view payload-box index)]
-        [lane-offset
-          (compiler-ir-box-field-shared-view payload-box lane-offset)]
-        [lanes (compiler-ir-box-field-shared-view payload-box lanes)]
-        [ty (compiler-ir-box-field-shared-view payload-box ty)]
-        (ir-instr-gather-load
-          dst
-          (compiler-ir-clone-value base)
-          (compiler-ir-clone-value index-base)
-          (compiler-ir-clone-value index)
-          lane-offset
-          lanes
-          (compiler-ir-clone-type pools ty)))]
-    [(CompilerIrInstr.VectorShuffle payload-box)
-      (let
-        [dst (compiler-ir-box-field-shared-view payload-box dst)]
-        [source (compiler-ir-box-field-shared-view payload-box source)]
-        [selector-low
-          (compiler-ir-box-field-shared-view payload-box selector-low)]
-        [selector-high
-          (compiler-ir-box-field-shared-view payload-box selector-high)]
-        [active-lanes
-          (compiler-ir-box-field-shared-view payload-box active-lanes)]
-        [lanes (compiler-ir-box-field-shared-view payload-box lanes)]
-        [ty (compiler-ir-box-field-shared-view payload-box ty)]
-        (ir-instr-vector-shuffle
-          dst
-          (compiler-ir-clone-value source)
-          (compiler-ir-clone-value selector-low)
-          (compiler-ir-clone-maybe-value selector-high)
-          (compiler-ir-clone-value active-lanes)
-          lanes
-          (compiler-ir-clone-type pools ty)))]
-    [(CompilerIrInstr.TailMask dst index len lanes)
-      (CompilerIrInstr.TailMask
-        dst
-        (compiler-ir-clone-value index)
-        (compiler-ir-clone-value len)
-        lanes)]
-    [(CompilerIrInstr.EntryArgc dst) (CompilerIrInstr.EntryArgc dst)]
-    [(CompilerIrInstr.EntryArgv dst) (CompilerIrInstr.EntryArgv dst)]
-    [(CompilerIrInstr.EntryEnvp dst) (CompilerIrInstr.EntryEnvp dst)]
-    [(CompilerIrInstr.CpuId dst leaf subleaf lanes)
-      (CompilerIrInstr.CpuId
-        dst
-        (compiler-ir-clone-value leaf)
-        (compiler-ir-clone-value subleaf)
-        lanes)]
-    [(CompilerIrInstr.Xgetbv dst index)
-      (CompilerIrInstr.Xgetbv dst (compiler-ir-clone-value index))]
-    [(CompilerIrInstr.Syscall dst args)
-      (CompilerIrInstr.Syscall dst (compiler-ir-clone-call-args args))]
-    [(CompilerIrInstr.Call dst name args ty)
-      (CompilerIrInstr.Call
-        dst
-        (compiler-ir-symbol-clone name)
-        (compiler-ir-clone-call-args args)
-        (compiler-ir-clone-type pools ty))]
-    [(CompilerIrInstr.CallIndirect dst callee args ty)
-      (CompilerIrInstr.CallIndirect
-        dst
-        (compiler-ir-clone-value callee)
-        (compiler-ir-clone-call-args args)
-        (compiler-ir-clone-type pools ty))]
-    [(CompilerIrInstr.CallIndirectC dst callee args ty)
-      (CompilerIrInstr.CallIndirectC
-        dst
-        (compiler-ir-clone-value callee)
-        (compiler-ir-clone-call-args args)
-        (compiler-ir-clone-type pools ty))]
-    [(CompilerIrInstr.CallCAbiStoreResult payload-box)
-      (let
-        [base (compiler-ir-box-field-shared-view payload-box base)]
-        [name (compiler-ir-box-field-shared-view payload-box name)]
-        [args (compiler-ir-box-field-shared-view payload-box args)]
-        [slots (compiler-ir-box-field-shared-view payload-box slots)]
-        (ir-instr-call-cabi-store-result
-          (compiler-ir-clone-value base)
-          (compiler-ir-symbol-clone name)
-          (compiler-ir-clone-call-args args)
-          (compiler-ir-clone-c-abi-return-slots pools slots)))]
-    [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
-      (let
-        [base (compiler-ir-box-field-shared-view payload-box base)]
-        [callee (compiler-ir-box-field-shared-view payload-box callee)]
-        [args (compiler-ir-box-field-shared-view payload-box args)]
-        [slots (compiler-ir-box-field-shared-view payload-box slots)]
-        (ir-instr-call-indirect-cabi-store-result
-          (compiler-ir-clone-value base)
-          (compiler-ir-clone-value callee)
-          (compiler-ir-clone-call-args args)
-          (compiler-ir-clone-c-abi-return-slots pools slots)))]
+  (match (compiler-ir-global-shared-view instr)
     [(CompilerIrInstr.SpmdCall payload-box)
       (let
         [callee (compiler-ir-box-field-shared-view payload-box callee)]
@@ -4763,65 +6882,14 @@
             (compiler-ir-global-shared-view pools)
             result)
           (compiler-ir-clone-spmd-call-origin pools origin)))]
-    [(CompilerIrInstr.TailCall name args ty)
-      (CompilerIrInstr.TailCall
-        (compiler-ir-symbol-clone name)
-        (compiler-ir-clone-call-args args)
-        (compiler-ir-clone-type pools ty))]
-    [(CompilerIrInstr.Store name value ty)
-      (CompilerIrInstr.Store
-        (compiler-ir-symbol-clone name)
-        (compiler-ir-clone-value value)
-        (compiler-ir-clone-type pools ty))]
-    [(CompilerIrInstr.Jump label) (CompilerIrInstr.Jump label)]
-    [(CompilerIrInstr.Branch cond true-label false-label)
-      (CompilerIrInstr.Branch
-        (compiler-ir-clone-value cond)
-        true-label
-        false-label)]
-    [(CompilerIrInstr.TotalEnumBranch cond true-label false-label)
-      (CompilerIrInstr.TotalEnumBranch
-        (compiler-ir-clone-value cond)
-        true-label
-        false-label)]
-    [(CompilerIrInstr.Return value)
-      (CompilerIrInstr.Return (compiler-ir-clone-maybe-value value))]
-    [(CompilerIrInstr.Phi dst inputs ty)
-      (CompilerIrInstr.Phi
-        dst
-        (compiler-ir-clone-phi-input-seq inputs)
-        (compiler-ir-clone-type pools ty))]
-    [(CompilerIrInstr.Pack dst words ty)
-      (CompilerIrInstr.Pack
-        dst
-        (compiler-ir-clone-value-seq words)
-        (compiler-ir-clone-type pools ty))]
-    [(CompilerIrInstr.Word dst src index ty)
-      (CompilerIrInstr.Word
-        dst
-        (compiler-ir-clone-value src)
-        index
-        (compiler-ir-clone-type pools ty))]
-    [(CompilerIrInstr.TailCallIndirect callee args ty)
-      (CompilerIrInstr.TailCallIndirect
-        (compiler-ir-clone-value callee)
-        (compiler-ir-clone-call-args args)
-        (compiler-ir-clone-type pools ty))]
-    [(CompilerIrInstr.Switch index base cases default-label)
-      (CompilerIrInstr.Switch
-        (compiler-ir-clone-value index)
-        base
-        (compiler-ir-clone-switch-case-seq cases)
-        default-label)]
-    [(CompilerIrInstr.TotalEnumSwitch index base cases default-label trap-label)
-      (CompilerIrInstr.TotalEnumSwitch
-        (compiler-ir-clone-value index)
-        base
-        (compiler-ir-clone-switch-case-seq cases)
-        default-label
-        (if (= trap-label (compiler-ir-label-none))
-          trap-label
-          trap-label))]))
+    [_
+      (compiler-ir-instr-map
+        instr
+        compiler-ir-clone-operand
+        _
+        compiler-ir-clone-type
+        compiler-ir-clone-label
+        pools)]))
 
 (define (compiler-ir-clone-instr-seq-fill
   [pools : ast.AstNodePoolContext]
@@ -7305,241 +9373,40 @@
   [span : ast.AstSourceSpan]) : CompilerSourceSpans
   (compiler-source-spans-insert-instr-unlocated spans function instr span))
 
+(defenum CompilerSourceSpansMaybeInstrKey
+  (No)
+  (Some CompilerSourceSpansInstrKey))
+
+;; An instruction's span key: its destination value, the name a Store writes, or
+;; a BoundsCheck's success label. Other stores, control flow and C-ABI result
+;; stores have none.
+(define (compiler-source-spans-instr-key
+  [function : CompilerIrSymbolId]
+  [instr : CompilerIrInstr]) : CompilerSourceSpansMaybeInstrKey
+  (match (compiler-ir-global-shared-view instr)
+    [(CompilerIrInstr.Store name _ _)
+      (CompilerSourceSpansMaybeInstrKey.Some
+        (CompilerSourceSpansInstrKey.Store function name))]
+    [(CompilerIrInstr.BoundsCheck _ _ ok-label)
+      (CompilerSourceSpansMaybeInstrKey.Some
+        (CompilerSourceSpansInstrKey.Bounds function ok-label))]
+    [_
+      (let
+        [dst : i64 (compiler-ir-instr-dst instr)]
+        (if (< dst 0)
+          (CompilerSourceSpansMaybeInstrKey.No)
+          (CompilerSourceSpansMaybeInstrKey.Some
+            (CompilerSourceSpansInstrKey.Value function dst))))]))
+
 (define (compiler-source-spans-insert-instr-unlocated
   [spans : CompilerSourceSpans]
   [function : CompilerIrSymbolId]
   [instr : CompilerIrInstr]
   [span : ast.AstSourceSpan]) : CompilerSourceSpans
-  (match instr
-    [(CompilerIrInstr.Mov dst _ _)
-      (compiler-source-spans-insert-instr-entry
-        spans
-        (CompilerSourceSpansInstrKey.Value function dst)
-        span)]
-    [(CompilerIrInstr.Alloc dst _)
-      (compiler-source-spans-insert-instr-entry
-        spans
-        (CompilerSourceSpansInstrKey.Value function dst)
-        span)]
-    [(CompilerIrInstr.AddrOf dst _)
-      (compiler-source-spans-insert-instr-entry
-        spans
-        (CompilerSourceSpansInstrKey.Value function dst)
-        span)]
-    [(CompilerIrInstr.Gep dst _ _ _)
-      (compiler-source-spans-insert-instr-entry
-        spans
-        (CompilerSourceSpansInstrKey.Value function dst)
-        span)]
-    [(CompilerIrInstr.Load dst _ _)
-      (compiler-source-spans-insert-instr-entry
-        spans
-        (CompilerSourceSpansInstrKey.Value function dst)
-        span)]
-    [(CompilerIrInstr.LoadOwned dst _ _ _)
-      (compiler-source-spans-insert-instr-entry
-        spans
-        (CompilerSourceSpansInstrKey.Value function dst)
-        span)]
-    [(CompilerIrInstr.OwnRoot dst _ _)
-      (compiler-source-spans-insert-instr-entry
-        spans
-        (CompilerSourceSpansInstrKey.Value function dst)
-        span)]
-    [(CompilerIrInstr.Cast dst _ _ _)
-      (compiler-source-spans-insert-instr-entry
-        spans
-        (CompilerSourceSpansInstrKey.Value function dst)
-        span)]
-    [(CompilerIrInstr.Bitcast dst _ _ _)
-      (compiler-source-spans-insert-instr-entry
-        spans
-        (CompilerSourceSpansInstrKey.Value function dst)
-        span)]
-    [(CompilerIrInstr.BinOp dst _ _ _ _)
-      (compiler-source-spans-insert-instr-entry
-        spans
-        (CompilerSourceSpansInstrKey.Value function dst)
-        span)]
-    [(CompilerIrInstr.UnOp dst _ _ _)
-      (compiler-source-spans-insert-instr-entry
-        spans
-        (CompilerSourceSpansInstrKey.Value function dst)
-        span)]
-    [(CompilerIrInstr.LaneId dst _ _)
-      (compiler-source-spans-insert-instr-entry
-        spans
-        (CompilerSourceSpansInstrKey.Value function dst)
-        span)]
-    [(CompilerIrInstr.Splat dst _ _ _)
-      (compiler-source-spans-insert-instr-entry
-        spans
-        (CompilerSourceSpansInstrKey.Value function dst)
-        span)]
-    [(CompilerIrInstr.VectorBinOp payload-box)
-      (let
-        [dst (compiler-ir-box-field-shared-view payload-box dst)]
-        (compiler-source-spans-insert-instr-entry
-          spans
-          (CompilerSourceSpansInstrKey.Value function dst)
-          span))]
-    [(CompilerIrInstr.VectorPrefix payload-box)
-      (let
-        [dst (compiler-ir-box-field-shared-view payload-box dst)]
-        (compiler-source-spans-insert-instr-entry
-          spans
-          (CompilerSourceSpansInstrKey.Value function dst)
-          span))]
-    [(CompilerIrInstr.VectorReduce dst _ _ _ _)
-      (compiler-source-spans-insert-instr-entry
-        spans
-        (CompilerSourceSpansInstrKey.Value function dst)
-        span)]
-    [(CompilerIrInstr.VectorCompare payload-box)
-      (let
-        [dst (compiler-ir-box-field-shared-view payload-box dst)]
-        (compiler-source-spans-insert-instr-entry
-          spans
-          (CompilerSourceSpansInstrKey.Value function dst)
-          span))]
-    [(CompilerIrInstr.MaskBinOp dst _ _ _ _)
-      (compiler-source-spans-insert-instr-entry
-        spans
-        (CompilerSourceSpansInstrKey.Value function dst)
-        span)]
-    [(CompilerIrInstr.MaskNot dst _ _)
-      (compiler-source-spans-insert-instr-entry
-        spans
-        (CompilerSourceSpansInstrKey.Value function dst)
-        span)]
-    [(CompilerIrInstr.MaskReduce dst _ _ _)
-      (compiler-source-spans-insert-instr-entry
-        spans
-        (CompilerSourceSpansInstrKey.Value function dst)
-        span)]
-    [(CompilerIrInstr.Select payload-box)
-      (let
-        [dst (compiler-ir-box-field-shared-view payload-box dst)]
-        (compiler-source-spans-insert-instr-entry
-          spans
-          (CompilerSourceSpansInstrKey.Value function dst)
-          span))]
-    [(CompilerIrInstr.VectorLoad dst _ _ _ _)
-      (compiler-source-spans-insert-instr-entry
-        spans
-        (CompilerSourceSpansInstrKey.Value function dst)
-        span)]
-    [(CompilerIrInstr.PredicatedLoad payload-box)
-      (let
-        [dst (compiler-ir-box-field-shared-view payload-box dst)]
-        (compiler-source-spans-insert-instr-entry
-          spans
-          (CompilerSourceSpansInstrKey.Value function dst)
-          span))]
-    [(CompilerIrInstr.GatherLoad payload-box)
-      (let
-        [dst (compiler-ir-box-field-shared-view payload-box dst)]
-        (compiler-source-spans-insert-instr-entry
-          spans
-          (CompilerSourceSpansInstrKey.Value function dst)
-          span))]
-    [(CompilerIrInstr.VectorShuffle payload-box)
-      (let
-        [dst (compiler-ir-box-field-shared-view payload-box dst)]
-        (compiler-source-spans-insert-instr-entry
-          spans
-          (CompilerSourceSpansInstrKey.Value function dst)
-          span))]
-    [(CompilerIrInstr.TailMask dst _ _ _)
-      (compiler-source-spans-insert-instr-entry
-        spans
-        (CompilerSourceSpansInstrKey.Value function dst)
-        span)]
-    [(CompilerIrInstr.EntryArgc dst)
-      (compiler-source-spans-insert-instr-entry
-        spans
-        (CompilerSourceSpansInstrKey.Value function dst)
-        span)]
-    [(CompilerIrInstr.EntryArgv dst)
-      (compiler-source-spans-insert-instr-entry
-        spans
-        (CompilerSourceSpansInstrKey.Value function dst)
-        span)]
-    [(CompilerIrInstr.EntryEnvp dst)
-      (compiler-source-spans-insert-instr-entry
-        spans
-        (CompilerSourceSpansInstrKey.Value function dst)
-        span)]
-    [(CompilerIrInstr.CpuId dst _ _ _)
-      (compiler-source-spans-insert-instr-entry
-        spans
-        (CompilerSourceSpansInstrKey.Value function dst)
-        span)]
-    [(CompilerIrInstr.Xgetbv dst _)
-      (compiler-source-spans-insert-instr-entry
-        spans
-        (CompilerSourceSpansInstrKey.Value function dst)
-        span)]
-    [(CompilerIrInstr.Syscall dst _)
-      (compiler-source-spans-insert-instr-entry
-        spans
-        (CompilerSourceSpansInstrKey.Value function dst)
-        span)]
-    [(CompilerIrInstr.Call dst _ _ _)
-      (compiler-source-spans-insert-instr-entry
-        spans
-        (CompilerSourceSpansInstrKey.Value function dst)
-        span)]
-    [(CompilerIrInstr.CallIndirect dst _ _ _)
-      (compiler-source-spans-insert-instr-entry
-        spans
-        (CompilerSourceSpansInstrKey.Value function dst)
-        span)]
-    [(CompilerIrInstr.CallIndirectC dst _ _ _)
-      (compiler-source-spans-insert-instr-entry
-        spans
-        (CompilerSourceSpansInstrKey.Value function dst)
-        span)]
-    [(CompilerIrInstr.BoundsCheck _ _ ok-label)
-      (compiler-source-spans-insert-instr-entry
-        spans
-        (CompilerSourceSpansInstrKey.Bounds function ok-label)
-        span)]
-    [(CompilerIrInstr.CallCAbiStoreResult _) spans]
-    [(CompilerIrInstr.CallIndirectCAbiStoreResult _) spans]
-    [(CompilerIrInstr.SpmdCall payload-box)
-      (let
-        [result (compiler-ir-box-field-shared-view payload-box result)]
-        (match result
-          [(CompilerIrSpmdCallResult.Unit) spans]
-          [(CompilerIrSpmdCallResult.Value dst _ _)
-            (compiler-source-spans-insert-instr-entry
-              spans
-              (CompilerSourceSpansInstrKey.Value function dst)
-              span)]))]
-    [(CompilerIrInstr.Pack dst _ _)
-      (compiler-source-spans-insert-instr-entry
-        spans
-        (CompilerSourceSpansInstrKey.Value function dst)
-        span)]
-    [(CompilerIrInstr.Word dst _ _ _)
-      (compiler-source-spans-insert-instr-entry
-        spans
-        (CompilerSourceSpansInstrKey.Value function dst)
-        span)]
-    ;; Tail-indirect is control flow and does not define a destination value.
-    [(CompilerIrInstr.TailCallIndirect _ _ _) spans]
-    [(CompilerIrInstr.Store name _ _)
-      (compiler-source-spans-insert-instr-entry
-        spans
-        (CompilerSourceSpansInstrKey.Store function name)
-        span)]
-    [(CompilerIrInstr.Phi dst _ _)
-      (compiler-source-spans-insert-instr-entry
-        spans
-        (CompilerSourceSpansInstrKey.Value function dst)
-        span)]
-    [_ spans]))
+  (match (compiler-source-spans-instr-key function instr)
+    [(CompilerSourceSpansMaybeInstrKey.No) spans]
+    [(CompilerSourceSpansMaybeInstrKey.Some key)
+      (compiler-source-spans-insert-instr-entry spans key span)]))
 
 (define (compiler-source-spans-insert-instr-located
   [spans : CompilerSourceSpans]
@@ -7547,25 +9414,10 @@
   [instr : CompilerIrInstr]
   [path-id : i64]
   [span : ast.AstSourceSpan]) : CompilerSourceSpans
-  (let
-    [before : i64
-      (compiler-source-spans-instr-count (compiler-ir-global-shared-view spans))]
-    [inserted : CompilerSourceSpans
-      (compiler-source-spans-insert-instr-unlocated spans function instr span)]
-    (if (>
-      (compiler-source-spans-instr-count
-        (compiler-ir-global-shared-view inserted))
-      before)
-      (match (compiler-ir-global-shared-view inserted)
-        [(CompilerSourceSpans.Spans _ instr-entries _)
-          (match (array-ref instr-entries.slots (- instr-entries.len 1))
-            [(CompilerSourceSpansInstrEntry.Entry key _ _)
-              (begin
-                (set!
-                  (array-ref instr-entries.slots (- instr-entries.len 1))
-                  (CompilerSourceSpansInstrEntry.Entry key path-id span))
-                inserted)])])
-      inserted)))
+  (match (compiler-source-spans-instr-key function instr)
+    [(CompilerSourceSpansMaybeInstrKey.No) spans]
+    [(CompilerSourceSpansMaybeInstrKey.Some key)
+      (compiler-source-spans-insert-instr-entry-located spans key path-id span)]))
 
 ;; --- bounds-check clone-suffix fallback -----------------------------------
 ;; A BoundsCheck carries no destination value, so its span is keyed by its
@@ -7695,196 +9547,17 @@
   [instr : CompilerIrInstr]) : CompilerMaybeSourceLocation
   (match spans
     [(CompilerSourceSpans.Spans _ instr-entries _)
-      (match instr
-        [(CompilerIrInstr.Mov dst _ _)
-          (compiler-source-spans-instr-entry-list-lookup
-            instr-entries
-            (CompilerSourceSpansInstrKey.Value function dst))]
-        [(CompilerIrInstr.Alloc dst _)
-          (compiler-source-spans-instr-entry-list-lookup
-            instr-entries
-            (CompilerSourceSpansInstrKey.Value function dst))]
-        [(CompilerIrInstr.AddrOf dst _)
-          (compiler-source-spans-instr-entry-list-lookup
-            instr-entries
-            (CompilerSourceSpansInstrKey.Value function dst))]
-        [(CompilerIrInstr.Gep dst _ _ _)
-          (compiler-source-spans-instr-entry-list-lookup
-            instr-entries
-            (CompilerSourceSpansInstrKey.Value function dst))]
-        [(CompilerIrInstr.Load dst _ _)
-          (compiler-source-spans-instr-entry-list-lookup
-            instr-entries
-            (CompilerSourceSpansInstrKey.Value function dst))]
-        [(CompilerIrInstr.LoadOwned dst _ _ _)
-          (compiler-source-spans-instr-entry-list-lookup
-            instr-entries
-            (CompilerSourceSpansInstrKey.Value function dst))]
-        [(CompilerIrInstr.OwnRoot dst _ _)
-          (compiler-source-spans-instr-entry-list-lookup
-            instr-entries
-            (CompilerSourceSpansInstrKey.Value function dst))]
-        [(CompilerIrInstr.Cast dst _ _ _)
-          (compiler-source-spans-instr-entry-list-lookup
-            instr-entries
-            (CompilerSourceSpansInstrKey.Value function dst))]
-        [(CompilerIrInstr.Bitcast dst _ _ _)
-          (compiler-source-spans-instr-entry-list-lookup
-            instr-entries
-            (CompilerSourceSpansInstrKey.Value function dst))]
-        [(CompilerIrInstr.BinOp dst _ _ _ _)
-          (compiler-source-spans-instr-entry-list-lookup
-            instr-entries
-            (CompilerSourceSpansInstrKey.Value function dst))]
-        [(CompilerIrInstr.UnOp dst _ _ _)
-          (compiler-source-spans-instr-entry-list-lookup
-            instr-entries
-            (CompilerSourceSpansInstrKey.Value function dst))]
-        [(CompilerIrInstr.LaneId dst _ _)
-          (compiler-source-spans-instr-entry-list-lookup
-            instr-entries
-            (CompilerSourceSpansInstrKey.Value function dst))]
-        [(CompilerIrInstr.Splat dst _ _ _)
-          (compiler-source-spans-instr-entry-list-lookup
-            instr-entries
-            (CompilerSourceSpansInstrKey.Value function dst))]
-        [(CompilerIrInstr.VectorBinOp payload-box)
-          (let
-            [dst (compiler-ir-box-field-shared-view payload-box dst)]
-            (compiler-source-spans-instr-entry-list-lookup
-              instr-entries
-              (CompilerSourceSpansInstrKey.Value function dst)))]
-        [(CompilerIrInstr.VectorPrefix payload-box)
-          (let
-            [dst (compiler-ir-box-field-shared-view payload-box dst)]
-            (compiler-source-spans-instr-entry-list-lookup
-              instr-entries
-              (CompilerSourceSpansInstrKey.Value function dst)))]
-        [(CompilerIrInstr.VectorReduce dst _ _ _ _)
-          (compiler-source-spans-instr-entry-list-lookup
-            instr-entries
-            (CompilerSourceSpansInstrKey.Value function dst))]
-        [(CompilerIrInstr.VectorCompare payload-box)
-          (let
-            [dst (compiler-ir-box-field-shared-view payload-box dst)]
-            (compiler-source-spans-instr-entry-list-lookup
-              instr-entries
-              (CompilerSourceSpansInstrKey.Value function dst)))]
-        [(CompilerIrInstr.MaskBinOp dst _ _ _ _)
-          (compiler-source-spans-instr-entry-list-lookup
-            instr-entries
-            (CompilerSourceSpansInstrKey.Value function dst))]
-        [(CompilerIrInstr.MaskNot dst _ _)
-          (compiler-source-spans-instr-entry-list-lookup
-            instr-entries
-            (CompilerSourceSpansInstrKey.Value function dst))]
-        [(CompilerIrInstr.MaskReduce dst _ _ _)
-          (compiler-source-spans-instr-entry-list-lookup
-            instr-entries
-            (CompilerSourceSpansInstrKey.Value function dst))]
-        [(CompilerIrInstr.Select payload-box)
-          (let
-            [dst (compiler-ir-box-field-shared-view payload-box dst)]
-            (compiler-source-spans-instr-entry-list-lookup
-              instr-entries
-              (CompilerSourceSpansInstrKey.Value function dst)))]
-        [(CompilerIrInstr.VectorLoad dst _ _ _ _)
-          (compiler-source-spans-instr-entry-list-lookup
-            instr-entries
-            (CompilerSourceSpansInstrKey.Value function dst))]
-        [(CompilerIrInstr.PredicatedLoad payload-box)
-          (let
-            [dst (compiler-ir-box-field-shared-view payload-box dst)]
-            (compiler-source-spans-instr-entry-list-lookup
-              instr-entries
-              (CompilerSourceSpansInstrKey.Value function dst)))]
-        [(CompilerIrInstr.GatherLoad payload-box)
-          (let
-            [dst (compiler-ir-box-field-shared-view payload-box dst)]
-            (compiler-source-spans-instr-entry-list-lookup
-              instr-entries
-              (CompilerSourceSpansInstrKey.Value function dst)))]
-        [(CompilerIrInstr.VectorShuffle payload-box)
-          (let
-            [dst (compiler-ir-box-field-shared-view payload-box dst)]
-            (compiler-source-spans-instr-entry-list-lookup
-              instr-entries
-              (CompilerSourceSpansInstrKey.Value function dst)))]
-        [(CompilerIrInstr.TailMask dst _ _ _)
-          (compiler-source-spans-instr-entry-list-lookup
-            instr-entries
-            (CompilerSourceSpansInstrKey.Value function dst))]
-        [(CompilerIrInstr.EntryArgc dst)
-          (compiler-source-spans-instr-entry-list-lookup
-            instr-entries
-            (CompilerSourceSpansInstrKey.Value function dst))]
-        [(CompilerIrInstr.EntryArgv dst)
-          (compiler-source-spans-instr-entry-list-lookup
-            instr-entries
-            (CompilerSourceSpansInstrKey.Value function dst))]
-        [(CompilerIrInstr.EntryEnvp dst)
-          (compiler-source-spans-instr-entry-list-lookup
-            instr-entries
-            (CompilerSourceSpansInstrKey.Value function dst))]
-        [(CompilerIrInstr.CpuId dst _ _ _)
-          (compiler-source-spans-instr-entry-list-lookup
-            instr-entries
-            (CompilerSourceSpansInstrKey.Value function dst))]
-        [(CompilerIrInstr.Xgetbv dst _)
-          (compiler-source-spans-instr-entry-list-lookup
-            instr-entries
-            (CompilerSourceSpansInstrKey.Value function dst))]
-        [(CompilerIrInstr.Syscall dst _)
-          (compiler-source-spans-instr-entry-list-lookup
-            instr-entries
-            (CompilerSourceSpansInstrKey.Value function dst))]
-        [(CompilerIrInstr.Call dst _ _ _)
-          (compiler-source-spans-instr-entry-list-lookup
-            instr-entries
-            (CompilerSourceSpansInstrKey.Value function dst))]
-        [(CompilerIrInstr.CallIndirect dst _ _ _)
-          (compiler-source-spans-instr-entry-list-lookup
-            instr-entries
-            (CompilerSourceSpansInstrKey.Value function dst))]
-        [(CompilerIrInstr.CallIndirectC dst _ _ _)
-          (compiler-source-spans-instr-entry-list-lookup
-            instr-entries
-            (CompilerSourceSpansInstrKey.Value function dst))]
-        [(CompilerIrInstr.BoundsCheck _ _ ok-label)
-          (compiler-source-spans-lookup-bounds instr-entries function ok-label)]
-        [(CompilerIrInstr.CallCAbiStoreResult payload-box)
-          (CompilerMaybeSourceLocation.No)]
-        [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
-          (CompilerMaybeSourceLocation.No)]
-        [(CompilerIrInstr.SpmdCall payload-box)
-          (let
-            [result (compiler-ir-box-field-shared-view payload-box result)]
-            (match result
-              [(CompilerIrSpmdCallResult.Unit) (CompilerMaybeSourceLocation.No)]
-              [(CompilerIrSpmdCallResult.Value dst _ _)
-                (compiler-source-spans-instr-entry-list-lookup
-                  instr-entries
-                  (CompilerSourceSpansInstrKey.Value function dst))]))]
-        [(CompilerIrInstr.Pack dst _ _)
-          (compiler-source-spans-instr-entry-list-lookup
-            instr-entries
-            (CompilerSourceSpansInstrKey.Value function dst))]
-        [(CompilerIrInstr.Word dst _ _ _)
-          (compiler-source-spans-instr-entry-list-lookup
-            instr-entries
-            (CompilerSourceSpansInstrKey.Value function dst))]
-        ;; Tail-indirect is control flow and does not define a destination value.
-        [(CompilerIrInstr.TailCallIndirect _ _ _)
-          (CompilerMaybeSourceLocation.No)]
-        [(CompilerIrInstr.Store name _ _)
-          (compiler-source-spans-instr-entry-list-lookup
-            instr-entries
-            (CompilerSourceSpansInstrKey.Store function name))]
-        [(CompilerIrInstr.Phi dst _ _)
-          (compiler-source-spans-instr-entry-list-lookup
-            instr-entries
-            (CompilerSourceSpansInstrKey.Value function dst))]
-        [_ (CompilerMaybeSourceLocation.No)])]))
+      (match (compiler-source-spans-instr-key function instr)
+        [(CompilerSourceSpansMaybeInstrKey.No) (CompilerMaybeSourceLocation.No)]
+        [(CompilerSourceSpansMaybeInstrKey.Some key)
+          (match (compiler-ir-global-shared-view key)
+            [(CompilerSourceSpansInstrKey.Bounds key-function ok-label)
+              (compiler-source-spans-lookup-bounds
+                instr-entries
+                key-function
+                ok-label)]
+            [_
+              (compiler-source-spans-instr-entry-list-lookup instr-entries key)])])]))
 
 (define (compiler-source-spans-lookup-instr
   [spans : CompilerSourceSpans]
@@ -9724,44 +11397,19 @@
 (define (compiler-ir-representation-instr-def-type!
   [instr : CompilerIrInstr]
   [types : CompilerIrRepresentationVarTypes]) : unit
-  (match instr
-    [(CompilerIrInstr.Mov dst _ ty)
-      (compiler-ir-representation-var-type-set! types dst ty)]
-    [(CompilerIrInstr.Load dst _ ty)
-      (compiler-ir-representation-var-type-set! types dst ty)]
-    [(CompilerIrInstr.LoadOwned dst _ _ ty)
-      (compiler-ir-representation-var-type-set! types dst ty)]
-    [(CompilerIrInstr.OwnRoot dst _ ty)
-      (compiler-ir-representation-var-type-set! types dst ty)]
-    [(CompilerIrInstr.Cast dst _ _ ty)
-      (compiler-ir-representation-var-type-set! types dst ty)]
-    [(CompilerIrInstr.Bitcast dst _ _ ty)
-      (compiler-ir-representation-var-type-set! types dst ty)]
-    [(CompilerIrInstr.BinOp dst op _ _ ty)
-      (compiler-ir-representation-var-type-set!
-        types
-        dst
-        (compiler-ir-binop-result-type op ty))]
-    [(CompilerIrInstr.UnOp dst _ _ ty)
-      (compiler-ir-representation-var-type-set! types dst ty)]
-    [(CompilerIrInstr.VectorReduce dst _ _ _ ty)
-      (compiler-ir-representation-var-type-set! types dst ty)]
-    [(CompilerIrInstr.MaskReduce dst _ _ _)
-      (compiler-ir-representation-var-type-set! types dst (ast.AstType.Bool))]
-    [(CompilerIrInstr.Call dst _ _ ty)
-      (compiler-ir-representation-var-type-set! types dst ty)]
-    [(CompilerIrInstr.SpmdCall payload-box)
-      (match (__tl-project-field (__tl-box-place payload-box) result)
-        [(CompilerIrSpmdCallResult.Unit) unit]
-        [(CompilerIrSpmdCallResult.Value dst _ ty)
-          (compiler-ir-representation-var-type-set! types dst ty)])]
-    [(CompilerIrInstr.Phi dst _ ty)
-      (compiler-ir-representation-var-type-set! types dst ty)]
-    [(CompilerIrInstr.Pack dst _ ty)
-      (compiler-ir-representation-var-type-set! types dst ty)]
-    [(CompilerIrInstr.Word dst _ _ ty)
-      (compiler-ir-representation-var-type-set! types dst ty)]
-    [_ unit]))
+  (match (compiler-ir-global-shared-view instr)
+    ;; The index does not type indirect-call results or a scalar Select.
+    [(CompilerIrInstr.CallIndirect _ _ _ _) unit]
+    [(CompilerIrInstr.CallIndirectC _ _ _ _) unit]
+    [(CompilerIrInstr.Select _) unit]
+    [_
+      (match (compiler-ir-instr-dst-type (compiler-ir-global-shared-view instr))
+        [(ast.AstMaybeType.No) unit]
+        [(ast.AstMaybeType.Some ty)
+          (compiler-ir-representation-var-type-set!
+            types
+            (compiler-ir-instr-dst instr)
+            ty)])]))
 
 (define (compiler-ir-representation-instr-types!
   [instrs : CompilerIrInstrSeq]
@@ -11177,9 +12825,19 @@
     [slots : CompilerIrCAbiReturnSlotSeq
       (CompilerIrCAbiReturnSlotSeq slot-data 2)]
     [cloned : CompilerIrCAbiReturnSlotSeq
-      (compiler-ir-clone-c-abi-return-slots
+      (match (compiler-ir-clone-instr
         pools
-        (compiler-ir-global-shared-view slots))]
+        (ir-instr-call-cabi-store-result
+          (CompilerIrValue.Var 0)
+          0
+          (CompilerIrCallArgs.Nil)
+          (compiler-ir-global-shared-view slots)))
+        [(CompilerIrInstr.CallCAbiStoreResult payload-box)
+          (compiler-ir-box-field-shared-view payload-box slots)]
+        [_
+          (CompilerIrCAbiReturnSlotSeq
+            (__tl_make-array CompilerIrCAbiReturnSlot 0)
+            0)])]
     (and
       (= slots.len 2)
       (compiler-ir-c-abi-return-slot-seq-entry-i64-offset? slots 0 0)
@@ -11216,7 +12874,14 @@
       (compiler-ir-value-builder-push! (&mut builder) (CompilerIrValue.Var 30))]
     [words : CompilerIrValueSeq (compiler-ir-value-builder-to-seq builder)]
     [cloned : CompilerIrValueSeq
-      (compiler-ir-clone-value-seq (compiler-ir-global-shared-view words))]
+      (match (compiler-ir-clone-instr
+        (ast.ast-node-pool-reader-context-current)
+        (CompilerIrInstr.Pack
+          40
+          (compiler-ir-global-shared-view words)
+          (ast.AstType.I64)))
+        [(CompilerIrInstr.Pack _ cloned-words _) cloned-words]
+        [_ (compiler-ir-value-seq-empty)])]
     [instr : CompilerIrInstr
       (CompilerIrInstr.Pack
         40
@@ -11345,7 +13010,14 @@
           (compiler-ir-label "loop")
           (compiler-ir-phi-input-seq-empty)))]
     [cloned : CompilerIrPhiInputSeq
-      (compiler-ir-clone-phi-input-seq (compiler-ir-global-shared-view inputs))]
+      (match (compiler-ir-clone-instr
+        (ast.ast-node-pool-reader-context-current)
+        (CompilerIrInstr.Phi
+          1
+          (compiler-ir-global-shared-view inputs)
+          (ast.AstType.I64)))
+        [(CompilerIrInstr.Phi _ cloned-inputs _) cloned-inputs]
+        [_ (compiler-ir-phi-input-seq-empty)])]
     [tail : CompilerIrPhiInputSeq
       (let
         [phi-inputs-at-9678-7 : CompilerIrPhiInputSeq
@@ -11414,7 +13086,15 @@
         [cases : CompilerIrSwitchCaseSeq
           (compiler-ir-switch-case-builder-to-seq builder)]
         [cloned : CompilerIrSwitchCaseSeq
-          (compiler-ir-clone-switch-case-seq cases)]
+          (match (compiler-ir-clone-instr
+            (ast.ast-node-pool-reader-context-current)
+            (CompilerIrInstr.Switch
+              (CompilerIrValue.I64 0)
+              0
+              (compiler-ir-global-shared-view cases)
+              (compiler-ir-label "default")))
+            [(CompilerIrInstr.Switch _ _ cloned-cases _) cloned-cases]
+            [_ (compiler-ir-switch-case-seq-empty)])]
         (and
           (= (compiler-ir-switch-case-seq-count cases) 2)
           (string.eq

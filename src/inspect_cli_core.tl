@@ -6,6 +6,7 @@
 (import stdlib.str_cat_runtime as str_cat)
 (cfg embedded-stdlib-tlci (import compiler_embedded_stdlib_tlci))
 (import tlci_core)
+(cfg test (import tlci_core_tests))
 
 (define (tlci-inspect-help-text) : String
   "Usage:
@@ -466,7 +467,8 @@ Summary:
     tlci-inspect-imports-and-file-size
     (let
       [ok : bool
-        (match (tlci_core.tlci-emit-image (tlci_core.tlci-test-imports-image))
+        (match (tlci_core.tlci-emit-image
+          (tlci_core_tests.tlci-test-imports-image))
           [(tlci_core.ResultTlciBytes.Err _) false]
           [(tlci_core.ResultTlciBytes.Ok bytes)
             (match (tlci_core.tlci-parse-image
@@ -506,7 +508,7 @@ Summary:
           (tlci_core.tlci-build-host-platform)
           tlci_core.tlci-callback-abi-version
           "inspect-v2-test"
-          (tlci_core.tlci-test-v2-metadata)
+          (tlci_core_tests.tlci-test-v2-metadata)
           (tlci_core.tlci-empty-bytes)
           (tlci_core.tlci-empty-bytes)
           (tlci_core.tlci-empty-bytes)

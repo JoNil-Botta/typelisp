@@ -131,8 +131,9 @@ typecheck self-test's `defmacro-probe-error` rows and
 `macro_untaken_comptime_error` native row put such arms before and after the
 taken arm for expression and `Decls` macros, and require a taken arm to still
 report the author's message. The package fixture's `package-first` pair repeats
-the operand-count guard on the dependency route, which
-`verify-package-native-tlci.sh` runs natively and through forced-source CTFE.
+the operand-count guard and puts rejecting arms before and after the selected
+arms on the dependency route, which `verify-package-native-tlci.sh` runs
+natively and through forced-source CTFE.
 
 ## Vector reduction source ownership
 

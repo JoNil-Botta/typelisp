@@ -4,6 +4,7 @@
 ;; images, and this module also assembles the focused dispatch proof used by
 ;; the loader smoke.
 (import stdlib.byte_buf_core)
+(import stdlib.comptime)
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
@@ -514,586 +515,432 @@
   3)
 (define tlci-host-callback-status-bad-request : i64
   4)
-(define tlci-host-callback-name-fuel-check : String
-  "fuel-check")
-(define tlci-host-callback-name-diagnostic : String
-  "diagnostic")
-(define tlci-host-callback-name-scratch-alloc : String
-  "scratch-alloc")
-(define tlci-host-callback-name-scratch-reset : String
-  "scratch-reset")
-(define tlci-host-callback-name-expr-string : String
-  "expr-string")
-(define tlci-host-callback-name-expr-var : String
-  "expr-var")
-(define tlci-host-callback-name-expr-struct-get : String
-  "expr-struct-get")
-(define tlci-host-callback-name-expr-tuple-ref : String
-  "expr-tuple-ref")
-(define tlci-host-callback-name-expr-struct-set : String
-  "expr-struct-set")
-(define tlci-host-callback-name-string-eq : String
-  "string-eq")
-(define tlci-host-callback-name-string-append : String
-  "string-append")
-(define tlci-host-callback-name-int->string : String
-  "int->string")
-(define tlci-host-callback-name-expr-splice : String
-  "expr-splice")
-(define tlci-host-callback-name-expr-if : String
-  "expr-if")
-(define tlci-host-callback-name-pattern-wildcard : String
-  "pattern-wildcard")
-(define tlci-host-callback-name-pattern-binding : String
-  "pattern-binding")
-(define tlci-host-callback-name-pattern-variant : String
-  "pattern-variant")
-(define tlci-host-callback-name-pattern-list-empty : String
-  "pattern-list-empty")
-(define tlci-host-callback-name-pattern-list-cons : String
-  "pattern-list-cons")
-(define tlci-host-callback-name-pattern-list-cons-from-values : String
-  "pattern-list-cons-from-values")
-(define tlci-host-callback-name-match-arm : String
-  "match-arm")
-(define tlci-host-callback-name-match-arm-list-empty : String
-  "match-arm-list-empty")
-(define tlci-host-callback-name-match-arm-list-cons : String
-  "match-arm-list-cons")
-(define tlci-host-callback-name-expr-match : String
-  "expr-match")
-(define tlci-host-callback-name-expr-type : String
-  "expr-type")
-(define tlci-host-callback-name-type-expr : String
-  "type-expr")
-(define tlci-host-callback-name-module-name : String
-  "module-name")
-(define tlci-host-callback-name-module-hook : String
-  "module-hook")
-(define tlci-host-callback-name-type-kind : String
-  "type-kind")
-(define tlci-host-callback-name-type-key : String
-  "type-key")
-(define tlci-host-callback-name-struct-field-count : String
-  "struct-field-count")
-(define tlci-host-callback-name-struct-field-name : String
-  "struct-field-name")
-(define tlci-host-callback-name-struct-field-type : String
-  "struct-field-type")
-(define tlci-host-callback-name-enum-variant-count : String
-  "enum-variant-count")
-(define tlci-host-callback-name-enum-variant-name : String
-  "enum-variant-name")
-(define tlci-host-callback-name-enum-variant-payload-count : String
-  "enum-variant-payload-count")
-(define tlci-host-callback-name-enum-variant-payload-type : String
-  "enum-variant-payload-type")
-(define tlci-host-callback-name-array-element-type : String
-  "array-element-type")
-(define tlci-host-callback-name-box-element-type : String
-  "box-element-type")
-(define tlci-host-callback-name-array-length : String
-  "array-length")
-(define tlci-host-callback-name-array-dynamic? : String
-  "array-dynamic?")
-(define tlci-host-callback-name-tuple-element-count : String
-  "tuple-element-count")
-(define tlci-host-callback-name-tuple-element-type : String
-  "tuple-element-type")
-(define tlci-host-callback-name-function-param-count : String
-  "function-param-count")
-(define tlci-host-callback-name-function-return-type : String
-  "function-return-type")
-(define tlci-host-callback-name-expr-list-length : String
-  "expr-list-length")
-(define tlci-host-callback-name-expr-list-nth : String
-  "expr-list-nth")
-(define tlci-host-callback-name-expr-list-type-nth : String
-  "expr-list-type-nth")
-(define tlci-host-callback-name-expr-binding-clause-name : String
-  "expr-binding-clause-name")
-(define tlci-host-callback-name-expr-binding-clause-has-type? : String
-  "expr-binding-clause-has-type?")
-(define tlci-host-callback-name-expr-binding-clause-type : String
-  "expr-binding-clause-type")
-(define tlci-host-callback-name-expr-binding-clause-init : String
-  "expr-binding-clause-init")
-(define tlci-host-callback-name-expr-binding-clause-list-length : String
-  "expr-binding-clause-list-length")
-(define tlci-host-callback-name-expr-binding-clause-list-nth : String
-  "expr-binding-clause-list-nth")
-(define tlci-host-callback-name-pattern-list-bindings : String
-  "pattern-list-bindings")
-(define tlci-host-callback-name-type-cleanup-owning? : String
-  "type-cleanup-owning?")
-(define tlci-host-callback-name-type-cleanup-function : String
-  "type-cleanup-function")
-(define tlci-host-callback-name-module-value? : String
-  "module-value?")
-(define tlci-host-callback-name-module-value-type : String
-  "module-value-type")
-(define tlci-host-callback-name-module-value-expr : String
-  "module-value-expr")
-(define tlci-host-callback-name-function-shared-borrow-returns-string? : String
-  "function-shared-borrow-returns-string?")
-(define tlci-host-callback-name-reference-element-type : String
-  "reference-element-type")
 
-;; Construction ops for natively compiled quasiquote bodies. Values under
-;; construction live entirely on a compiler-owned session value stack, so the
-;; image never holds result handles: list-empty pushes a fresh empty
-;; expression list, list-append pops an element then a list and pushes the
-;; appended list, push-operand pushes the macro operand named by immediate
-;; `a`, expr-call pops an argument list then a callee and pushes the call
-;; expression. commit-result pops the stack top into the session result.
-;; The embedded image and its consumer are always the same source-bound binary.
-;; Refs #5212.
-(define tlci-host-callback-name-expr-list-empty : String
-  "expr-list-empty")
-(define tlci-host-callback-name-expr-list-cons : String
-  "expr-list-cons")
-(define tlci-host-callback-name-expr-list-append : String
-  "expr-list-append")
-(define tlci-host-callback-name-push-operand : String
-  "push-operand")
-(define tlci-host-callback-name-expr-call : String
-  "expr-call")
-(define tlci-host-callback-name-expr-shared-call1 : String
-  "expr-shared-call1")
-(define tlci-host-callback-name-commit-result : String
-  "commit-result")
+;; Host callback ABI table: one row per named callback a native image may
+;; import, naming the compiler host's implementation
+;; `compiler-comptime-host-callback-<name>` of the ABI callback `<name>`.
+;; `(tlci-host-callback-table collector contexts...)` expands to
+;; `(collector contexts... rows...)`, so this table is the one source of
+;; callback identity: `tlci-host-callback-name` checks each ABI name the
+;; native producer emits against it, the producer declares one
+;; `_tl_comptime_host_<name>` extern per row, and the compiler host registers
+;; every row's implementation. (Spelling the implementations here also keeps
+;; them in `typelisp test` harnesses, whose source-reachability pruning cannot
+;; see names that macros assemble.) Every row shares one native signature, the
+;; session cookie plus three i64 arguments; the abort callback has its own
+;; fixed table slot and is not a row. Row order is not ABI: images bind
+;; imports by name.
+(defmacro (tlci-host-callback-table [collector : Expr] [contexts : Expr ...]) : Expr
+  `(,collector
+    ,@contexts
+    compiler-comptime-host-callback-fuel-check
+    compiler-comptime-host-callback-diagnostic
+    compiler-comptime-host-callback-scratch-alloc
+    compiler-comptime-host-callback-scratch-reset
+    compiler-comptime-host-callback-expr-string
+    compiler-comptime-host-callback-expr-var
+    compiler-comptime-host-callback-expr-struct-get
+    compiler-comptime-host-callback-expr-tuple-ref
+    compiler-comptime-host-callback-expr-struct-set
+    compiler-comptime-host-callback-string-eq
+    compiler-comptime-host-callback-string-append
+    compiler-comptime-host-callback-int->string
+    compiler-comptime-host-callback-expr-splice
+    compiler-comptime-host-callback-expr-if
+    compiler-comptime-host-callback-pattern-wildcard
+    compiler-comptime-host-callback-pattern-binding
+    compiler-comptime-host-callback-pattern-variant
+    compiler-comptime-host-callback-pattern-list-empty
+    compiler-comptime-host-callback-pattern-list-cons
+    compiler-comptime-host-callback-pattern-list-cons-from-values
+    compiler-comptime-host-callback-match-arm
+    compiler-comptime-host-callback-match-arm-list-empty
+    compiler-comptime-host-callback-match-arm-list-cons
+    compiler-comptime-host-callback-expr-match
+    compiler-comptime-host-callback-expr-type
+    compiler-comptime-host-callback-type-expr
+    compiler-comptime-host-callback-module-name
+    compiler-comptime-host-callback-module-hook
+    compiler-comptime-host-callback-type-kind
+    compiler-comptime-host-callback-type-key
+    compiler-comptime-host-callback-struct-field-count
+    compiler-comptime-host-callback-struct-field-name
+    compiler-comptime-host-callback-struct-field-type
+    compiler-comptime-host-callback-enum-variant-count
+    compiler-comptime-host-callback-enum-variant-name
+    compiler-comptime-host-callback-enum-variant-payload-count
+    compiler-comptime-host-callback-enum-variant-payload-type
+    compiler-comptime-host-callback-array-element-type
+    compiler-comptime-host-callback-box-element-type
+    compiler-comptime-host-callback-array-length
+    compiler-comptime-host-callback-array-dynamic?
+    compiler-comptime-host-callback-tuple-element-count
+    compiler-comptime-host-callback-tuple-element-type
+    compiler-comptime-host-callback-function-param-count
+    compiler-comptime-host-callback-function-return-type
+    compiler-comptime-host-callback-expr-list-length
+    compiler-comptime-host-callback-expr-list-nth
+    compiler-comptime-host-callback-expr-list-type-nth
+    compiler-comptime-host-callback-expr-binding-clause-name
+    compiler-comptime-host-callback-expr-binding-clause-has-type?
+    compiler-comptime-host-callback-expr-binding-clause-type
+    compiler-comptime-host-callback-expr-binding-clause-init
+    compiler-comptime-host-callback-expr-binding-clause-list-length
+    compiler-comptime-host-callback-expr-binding-clause-list-nth
+    compiler-comptime-host-callback-pattern-list-bindings
+    compiler-comptime-host-callback-type-cleanup-owning?
+    compiler-comptime-host-callback-type-cleanup-function
+    compiler-comptime-host-callback-module-value?
+    compiler-comptime-host-callback-module-value-type
+    compiler-comptime-host-callback-module-value-expr
+    compiler-comptime-host-callback-function-shared-borrow-returns-string?
+    compiler-comptime-host-callback-reference-element-type
+    ;; Construction ops for natively compiled quasiquote bodies. Values under
+    ;; construction live entirely on a compiler-owned session value stack, so
+    ;; the image never holds result handles: list-empty pushes a fresh empty
+    ;; expression list, list-append pops an element then a list and pushes the
+    ;; appended list, push-operand pushes the macro operand named by immediate
+    ;; `a`, expr-call pops an argument list then a callee and pushes the call
+    ;; expression. commit-result pops the stack top into the session result. The
+    ;; embedded image and its consumer are always the same source-bound binary.
+    ;; Refs #5212.
+    compiler-comptime-host-callback-expr-list-empty
+    compiler-comptime-host-callback-expr-list-cons
+    compiler-comptime-host-callback-expr-list-append
+    compiler-comptime-host-callback-push-operand
+    compiler-comptime-host-callback-expr-call
+    compiler-comptime-host-callback-expr-shared-call1
+    compiler-comptime-host-callback-commit-result
+    ;; Template source spans. The parser wraps every expression it reads in an
+    ;; `AstExpr.Spanned`, and the interpreted quasiquote reconstructs that
+    ;; wrapper around every template node it rebuilds, so a natively produced
+    ;; expansion only matches the interpreted one when it rebuilds the wrappers
+    ;; too. Both ops re-wrap the stack top and take the span in their
+    ;; immediates: `a` is the start line, `b` the start column, `c` the end line
+    ;; and column packed `(line << 32) | column`. expr-span is the
+    ;; template-origin form and always wraps. expr-span-unquoted covers a
+    ;; template position that was an unquote: the substituted value is already
+    ;; spanned at its own call site, so the template span applies only when it
+    ;; is not, matching the interpreted quote's unquoted-origin rule. Neither op
+    ;; disturbs a stack top that carries no expression node (a type or a
+    ;; comptime scalar), which the interpreted route never spans either. Refs
+    ;; #5212.
+    compiler-comptime-host-callback-expr-span
+    compiler-comptime-host-callback-expr-span-unquoted
+    ;; Intrinsic node construction: pop two operand expressions and push the
+    ;; dedicated node the parser produces (rather than a generic call). Refs
+    ;; #5213.
+    compiler-comptime-host-callback-expr-array-ref
+    compiler-comptime-host-callback-expr-array-take
+    compiler-comptime-host-callback-expr-array-push
+    compiler-comptime-host-callback-expr-replace
+    ;; Pop a size expression and a type value and push the make-array node the
+    ;; parser produces for `(__tl_make-array ,T ,count)`. Refs #5213.
+    compiler-comptime-host-callback-expr-make-array
+    ;; Comptime reflection and literal construction for computed transformer
+    ;; bodies (refs #5213 N2/N3). operand-type-kind-eq compares the type-kind
+    ;; string of a type operand against caller bytes and returns 1/0 as data (a
+    ;; negative value reports a bad request); the literal ops push literal
+    ;; expression nodes.
+    compiler-comptime-host-callback-operand-type-kind-eq
+    compiler-comptime-host-callback-expr-bool-literal
+    compiler-comptime-host-callback-expr-int-literal
+    compiler-comptime-host-callback-expr-list-fold-if
+    compiler-comptime-host-callback-expr-clause-list-fold-if
+    compiler-comptime-host-callback-pattern-binding-typed
+    compiler-comptime-host-callback-expr-resource-scope
+    compiler-comptime-host-callback-expr-let-scope
+    compiler-comptime-host-callback-expr-shared-let-scope
+    compiler-comptime-host-callback-expr-for-owned
+    compiler-comptime-host-callback-expr-set-var
+    compiler-comptime-host-callback-expr-begin-unit
+    compiler-comptime-host-callback-expr-not
+    compiler-comptime-host-callback-expr-while
+    compiler-comptime-host-callback-syntax-name-fresh
+    ;; General quasiquote template construction (refs #5596): expr-begin pops an
+    ;; expression list and pushes the begin node the parser produces;
+    ;; expr-binary-op pops the right then the left operand expression and pushes
+    ;; a binary node for the AstBinOp ordinal in immediate `a`; expr-unary-op
+    ;; pops the operand expression and pushes a unary node for the AstUnOp
+    ;; ordinal in immediate `a`; expr-char-literal pushes a char literal node
+    ;; for the code point in immediate `a`; expr-unit-literal pushes the unit
+    ;; literal node. The embedded image and its consumer are always the same
+    ;; source-bound binary.
+    compiler-comptime-host-callback-expr-begin
+    compiler-comptime-host-callback-expr-binary-op
+    compiler-comptime-host-callback-expr-unary-op
+    compiler-comptime-host-callback-expr-char-literal
+    compiler-comptime-host-callback-expr-unit-literal
+    ;; Computed-body locals and declaration-template construction (refs #5603).
+    ;; local-set pops one value into the session local slot named by immediate
+    ;; `a`; local-get pushes the slot's value. expr-var-from-value pops a
+    ;; comptime String or Name value and pushes the variable node the
+    ;; interpreted `(comptime.)expr-var` builtin produces (syntax-name
+    ;; resolution over the source-name session included). expr-bracket-clause
+    ;; pops an expression list and pushes the bracket-clause node the parser
+    ;; produces for `[item ...]` in templates. expr-borrow pops the place
+    ;; expression and pushes a borrow node: immediate `a` is 1 for `&mut` and 0
+    ;; for `&`; the lifetime is inferred. The embedded image and its consumer
+    ;; are always the same source-bound binary.
+    compiler-comptime-host-callback-local-set
+    compiler-comptime-host-callback-local-get
+    compiler-comptime-host-callback-expr-var-from-value
+    compiler-comptime-host-callback-expr-bracket-clause
+    compiler-comptime-host-callback-expr-borrow
+    ;; Computed-body support (refs #5603): string-value pushes the comptime
+    ;; String value for caller bytes (a parsed-source string identity like the
+    ;; lexer's); diagnostic-from-value pops a comptime String into the session
+    ;; diagnostic and answers with the diagnostic status; pattern-var pushes a
+    ;; unit/variable pattern for caller bytes with the template-source mark.
+    compiler-comptime-host-callback-string-value
+    compiler-comptime-host-callback-diagnostic-from-value
+    compiler-comptime-host-callback-pattern-var
+    ;; More template construction (refs #5603): expr-array-set pops the value,
+    ;; index, and target expressions and pushes the array-set! node; let-binding
+    ;; pops the init expression and pushes a named let binding (template-source
+    ;; marked like the interpreted quote); let-binding-list-empty/cons build the
+    ;; binding list; expr-let pops the body and the binding list and pushes the
+    ;; let node.
+    compiler-comptime-host-callback-expr-array-set
+    compiler-comptime-host-callback-let-binding
+    compiler-comptime-host-callback-let-binding-list-empty
+    compiler-comptime-host-callback-let-binding-list-cons
+    compiler-comptime-host-callback-expr-let
+    ;; expr-lambda reconstructs a quasiquoted lambda from its parameter types,
+    ;; optional return type, and body. The parameter names/flags are carried in
+    ;; a compact immediate payload so the value stack remains syntax-only.
+    compiler-comptime-host-callback-expr-lambda
+    ;; Public computed one-parameter lambda builder. Unlike the template
+    ;; callback, its hygienic name, reflected parameter type, and assembled body
+    ;; are all supplied on the host value stack.
+    compiler-comptime-host-callback-expr-lambda1
+    ;; Typed template bindings (refs #5603): type-var pushes the AstType.Var for
+    ;; caller bytes (unmarked, matching the interpreted type quote);
+    ;; let-binding- typed pops the type value then the init expression and
+    ;; pushes a binding carrying both.
+    compiler-comptime-host-callback-type-var
+    compiler-comptime-host-callback-let-binding-typed
+    ;; type-scalar pushes the scalar AstType variant named by immediate ordinal
+    ;; (the primitive type constructors; refs #5603).
+    compiler-comptime-host-callback-type-scalar
+    ;; expr-int-from-data pushes an int literal expression whose value is the
+    ;; data i64 in immediate `a` (used when a computed reflection yields a
+    ;; runtime count, refs #5603).
+    compiler-comptime-host-callback-expr-int-from-data
+    ;; Expression-value destructuring for computed bodies that match on the
+    ;; shape of an operand (refs #5602). operand-expr-call? answers 1/0 as data
+    ;; for "operand `a` is a call expression" (a negative value is its
+    ;; malformed-request sentinel, like the other data-returning probes); the
+    ;; two accessors push the callee expression and the argument list the
+    ;; interpreted `(comptime.Expr.Call callee args)` pattern binds. All three
+    ;; unwrap `Spanned` and diagnostic-only macro expansion markers first,
+    ;; matching `ctfe-match-expr-variant`.
+    compiler-comptime-host-callback-operand-expr-call?
+    compiler-comptime-host-callback-operand-expr-call-callee
+    compiler-comptime-host-callback-operand-expr-call-args
+    ;; The `comptime.Expr.Int` half of the same destructuring (refs #5602).
+    ;; operand-expr-int? answers 1/0 as data with a negative malformed-request
+    ;; sentinel; operand-expr-int-value answers the literal's i64 value as data
+    ;; and is only issued after the probe, so it has no error channel of its
+    ;; own. Both unwrap `Spanned` and diagnostic-only macro expansion markers
+    ;; first. local-expr-list-length and local-expr-list-nth are the local-slot
+    ;; twins of the operand-only expr-list callbacks: a destructured `ExprList`
+    ;; payload lives in a session local, and the fold bodies index it there.
+    compiler-comptime-host-callback-operand-expr-int?
+    compiler-comptime-host-callback-operand-expr-int-value
+    compiler-comptime-host-callback-local-expr-int?
+    compiler-comptime-host-callback-local-expr-int-value
+    compiler-comptime-host-callback-local-expr-list-length
+    compiler-comptime-host-callback-local-expr-list-nth
+    compiler-comptime-host-callback-local-expr-string?
+    compiler-comptime-host-callback-local-expr-var?
+    compiler-comptime-host-callback-local-expr-var-name
+    compiler-comptime-host-callback-local-expr-begin?
+    compiler-comptime-host-callback-local-expr-begin-items
+    compiler-comptime-host-callback-local-bool-value
+    compiler-comptime-host-callback-value-bool
+    ;; Remaining binder-free template node kinds (refs #5605, #6240):
+    ;; expr-return, expr-box, expr-box-get, and expr-box-take each pop one
+    ;; expression and push the corresponding AST node; expr-float-literal pushes
+    ;; a float literal carrying the caller bytes, which are the literal's exact
+    ;; source text (the interpreted quote preserves float spelling verbatim).
+    ;; The embedded image and its consumer are always the same source-bound
+    ;; binary.
+    compiler-comptime-host-callback-expr-return
+    compiler-comptime-host-callback-expr-box
+    compiler-comptime-host-callback-expr-box-get
+    compiler-comptime-host-callback-expr-box-take
+    compiler-comptime-host-callback-expr-float-literal
+    ;; Computed-scrutinee probes and cast/init templates (refs #5604, #5606).
+    ;; The two probes share operand-type-kind-eq's shape -- operand index in
+    ;; `a`, caller bytes in `b`/`c`, 1/0 as data and a negative
+    ;; malformed-request sentinel -- so they bypass the status latch the same
+    ;; way: operand-expr-type-kind-eq compares the type-kind of an Expr
+    ;; operand's produced type, and operand-type-key-eq compares a type
+    ;; operand's canonical key. expr-cast pops the type value then the operand
+    ;; expression and pushes the cast node the parser produces. expr-init pops
+    ;; one type value and pushes the typed `(init : T)` node. The embedded image
+    ;; and its consumer are always the same source-bound binary.
+    compiler-comptime-host-callback-operand-expr-type-kind-eq
+    compiler-comptime-host-callback-operand-type-key-eq
+    compiler-comptime-host-callback-expr-cast
+    compiler-comptime-host-callback-expr-ann
+    compiler-comptime-host-callback-expr-init
+    ;; Raw-pointer and `unsafe` template node kinds (refs #5605). expr-unsafe
+    ;; pops an expression list and pushes the `(unsafe ...)` node;
+    ;; expr-ptr-read, expr-ptr-addr-of, expr-ptr-to-int, and expr-string-data
+    ;; each pop one expression; expr-ptr-write, expr-ptr-offset, and
+    ;; expr-string-from-bytes pop the second then the first operand;
+    ;; expr-array-data pops one. expr-ptr-cast pops the type value then the
+    ;; pointer expression. These complete the template subset the
+    ;; `stdlib.text_buf_family` generators need.
+    compiler-comptime-host-callback-expr-unsafe
+    compiler-comptime-host-callback-expr-ptr-read
+    compiler-comptime-host-callback-expr-ptr-addr-of
+    compiler-comptime-host-callback-expr-ptr-to-int
+    compiler-comptime-host-callback-expr-int-to-ptr
+    compiler-comptime-host-callback-expr-string-data
+    compiler-comptime-host-callback-expr-ptr-write
+    compiler-comptime-host-callback-expr-ptr-offset
+    compiler-comptime-host-callback-expr-string-from-bytes
+    compiler-comptime-host-callback-expr-array-data
+    ;; expr-ptr-cast pops the type value then the pointer expression, the order
+    ;; expr-make-array uses. Held back from #5703 because the type walker could
+    ;; not render `(Ptr T)`; the composite type callbacks fix that. Refs #5605.
+    compiler-comptime-host-callback-expr-ptr-cast
+    ;; The literal text of a string-literal `Expr`, pushed as the comptime
+    ;; String value the interpreted `comptime.expr-string-value` yields -- the
+    ;; same `(CompilerCtfeValue.String (intern-str id) id)` identity, so a
+    ;; downstream `expr-var`/`string-append` sees exactly what interpretation
+    ;; gave it. The operand form reads a macro operand directly; the generic
+    ;; form pops a computed Expr from the session stack. A non-literal produces
+    ;; the interpreted diagnostic rather than silently yielding empty text.
+    compiler-comptime-host-callback-operand-expr-string-value
+    compiler-comptime-host-callback-expr-string-value
+    ;; `comptime.Expr.Var` destructuring: a data probe for "operand `a` is a
+    ;; plain identifier expression", and an accessor pushing that identifier's
+    ;; spelling as a comptime String so the body can build a derived name from
+    ;; it. The serialize nested-alias shape needs exactly this pair. Both unwrap
+    ;; `Spanned` and diagnostic-only macro expansion markers first, matching
+    ;; `ctfe-match-expr-variant`. Refs #5700.
+    compiler-comptime-host-callback-operand-expr-var?
+    compiler-comptime-host-callback-operand-expr-var-name
+    ;; value-i64 pushes a comptime i64 from immediate `a`, which is what
+    ;; `comptime.int->string` consumes when its argument is a literal or a
+    ;; compile-time data local rather than a stack value. Refs #5700.
+    compiler-comptime-host-callback-value-i64
+    ;; A computed value-position unit literal must still occupy a session stack
+    ;; slot so conditional validation bindings can share the ordinary local-set
+    ;; continuation with their diagnostic alternative. Refs #5606.
+    compiler-comptime-host-callback-value-unit
+    ;; Select one of two already-computed session values from an i64 condition
+    ;; immediate. The producer only emits this for side-effect-free Var
+    ;; branches.
+    compiler-comptime-host-callback-value-select
+    ;; Comptime string scanning over a String session local (refs #5701). The
+    ;; scanner bodies bind a String once -- from `comptime.expr-string-value` or
+    ;; `type-key` -- and then walk it, so all three read the local by slot
+    ;; instead of routing every step through a stack push. local-string-length
+    ;; answers the byte length as data and local-string-ref the byte at `b` as
+    ;; data, both with a negative malformed-request sentinel; local-string-slice
+    ;; pushes the `[b, b+c)` range as the generated comptime String
+    ;; `comptime.string-slice` yields. expr-string-from-value pops a comptime
+    ;; String and pushes the string-literal expression `comptime.expr-string`
+    ;; builds, carrying the popped value's own intern id so a template embeds
+    ;; exactly the text interpretation would. Their explicit names keep the
+    ;; local-slot semantics distinct from the stack-shaped `string-length` /
+    ;; `string-ref` callbacks.
+    compiler-comptime-host-callback-local-string-length
+    compiler-comptime-host-callback-local-string-ref
+    compiler-comptime-host-callback-local-string-slice
+    compiler-comptime-host-callback-expr-string-from-value
+    ;; operand-expr-string? answers 1/0 as data for "operand `a` is a string
+    ;; literal expression", the `comptime.expr-string?` guard every
+    ;; literal-template macro opens with, with the same negative
+    ;; malformed-request sentinel as the other operand probes. Refs #5701.
+    compiler-comptime-host-callback-operand-expr-string?
+    ;; Composite type templates (refs #5605).
+    ;; `embedded-native-template-type-ops` rendered only `AstType.Var` and
+    ;; scalars, which is what actually kept the `stdlib.text_buf_family`
+    ;; generators and generated vector modules on the interpreted route -- their
+    ;; annotations are `(__tl_dyn-array String)`, `(Ptr u8)`, `(MutPtr i64)`,
+    ;; `(& text str)` and `(&mut buf TextBuf)`, not any missing expression node
+    ;; kind. Each callback pops the element/inner type value and pushes the
+    ;; wrapper, so a nested annotation builds bottom-up like an expression
+    ;; template does. type-ptr and type-ref select mutability with immediate
+    ;; `a`; type-array takes its element count in `a`; type-ref takes the
+    ;; lifetime name in `b`/`c`. type-var-args takes a lifetime count in `a` and
+    ;; a count-validated newline-delimited nominal/lifetime payload in `b`/`c`,
+    ;; preserving the unresolved VarArgs identity and argument order. Refs
+    ;; #6551.
+    compiler-comptime-host-callback-type-ptr
+    compiler-comptime-host-callback-type-box
+    compiler-comptime-host-callback-type-dyn-array
+    compiler-comptime-host-callback-type-array
+    compiler-comptime-host-callback-type-ref
+    compiler-comptime-host-callback-type-slice
+    compiler-comptime-host-callback-type-tuple
+    compiler-comptime-host-callback-type-var-args
+    ;; A computed struct field name is a stack value rather than caller bytes:
+    ;; pop the name after the target expression and push the resulting field
+    ;; projection. Refs #5626.
+    compiler-comptime-host-callback-expr-struct-get-from-value
+    ;; A computed struct assignment has its field name on the value stack too:
+    ;; pop target, Name/String field, and value expressions, then push the
+    ;; resulting assignment. Refs #5999.
+    compiler-comptime-host-callback-expr-struct-set-from-value
+    ;; A quasiquoted `(set! ,place value)` only knows its assignment shape after
+    ;; the unquoted place has produced an Expr session value. Pop that place and
+    ;; the value expression, then reconstruct the matching variable,
+    ;; struct-field, or box assignment. Refs #6550.
+    compiler-comptime-host-callback-expr-set-from-place
+    ;; Computed enum variant names likewise retain their source-name identity as
+    ;; a session value. Pop a PatternList after the name and push the resulting
+    ;; variant pattern. Refs #5626.
+    compiler-comptime-host-callback-pattern-variant-from-value
+    ;; The computed public cons builder evaluates its head before its tail;
+    ;; consume that stack order and prepend the head to the MatchArmList. Refs
+    ;; #5626.
+    compiler-comptime-host-callback-match-arm-list-cons-from-values
+    ;; Tuple and array templates consume the ExprList assembled by the shared
+    ;; template argument/splice path and push the corresponding expression
+    ;; reconstructed by interpreted quasiquote. Refs #5724, #6215.
+    compiler-comptime-host-callback-expr-tuple
+    compiler-comptime-host-callback-expr-array))
 
-;; Template source spans. The parser wraps every expression it reads in an
-;; `AstExpr.Spanned`, and the interpreted quasiquote reconstructs that wrapper
-;; around every template node it rebuilds, so a natively produced expansion
-;; only matches the interpreted one when it rebuilds the wrappers too. Both ops
-;; re-wrap the stack top and take the span in their immediates: `a` is the
-;; start line, `b` the start column, `c` the end line and column packed
-;; `(line << 32) | column`. expr-span is the template-origin form and always
-;; wraps. expr-span-unquoted covers a template position that was an unquote:
-;; the substituted value is already spanned at its own call site, so the
-;; template span applies only when it is not, matching the interpreted quote's
-;; unquoted-origin rule. Neither op disturbs a stack top that carries no
-;; expression node (a type or a comptime scalar), which the interpreted route
-;; never spans either. Refs #5212.
-(define tlci-host-callback-name-expr-span : String
-  "expr-span")
-(define tlci-host-callback-name-expr-span-unquoted : String
-  "expr-span-unquoted")
+;; The ABI name String of one host callback table row. A name outside the
+;; table fails to compile. (The definition-time macro checker runs the lookup
+;; with no rows; that admits every name.)
+(defmacro (tlci-host-callback-name [name : Expr]) : String
+  `(tlci-host-callback-table tlci-host-callback-name-lookup ,name))
 
-;; Intrinsic node construction: pop two operand expressions and push the
-;; dedicated node the parser produces (rather than a generic call). Refs #5213.
-(define tlci-host-callback-name-expr-array-ref : String
-  "expr-array-ref")
-(define tlci-host-callback-name-expr-array-take : String
-  "expr-array-take")
-(define tlci-host-callback-name-expr-array-push : String
-  "expr-array-push")
-(define tlci-host-callback-name-expr-replace : String
-  "expr-replace")
+(defmacro (tlci-host-callback-name-lookup [name : Expr] [rows : Expr ...]) : String
+  (match name
+    [(comptime.Expr.Var text)
+      (let
+        [row-name : String
+          (comptime.string-append "compiler-comptime-host-callback-" text)]
+        [count : i64 (expr-list-length rows)]
+        [index : i64 0]
+        [found : bool (= count 0)]
+        (begin
+          (while (< index count)
+            (begin
+              (match (expr-list-nth rows index)
+                [(comptime.Expr.Var row)
+                  (if (string.eq row row-name)
+                    (begin
+                      (set! found true)
+                      (set! index count))
+                    unit)]
+                [_ unit])
+              (set! index (+ index 1))))
+          (if found
+            (comptime.expr-string text)
+            (comptime-error
+              (comptime.string-append "tlci: unknown host callback " text)))))]
+    [_ (comptime-error "tlci-host-callback-name: expected a bare name")]))
 
-;; Pop a size expression and a type value and push the make-array node the
-;; parser produces for `(__tl_make-array ,T ,count)`. Refs #5213.
-(define tlci-host-callback-name-expr-make-array : String
-  "expr-make-array")
-
-;; Comptime reflection and literal construction for computed transformer
-;; bodies (refs #5213 N2/N3). operand-type-kind-eq compares the type-kind
-;; string of a type operand against caller bytes and returns 1/0 as data (a
-;; negative value reports a bad request); the literal ops push literal
-;; expression nodes.
-(define tlci-host-callback-name-operand-type-kind-eq : String
-  "operand-type-kind-eq")
-(define tlci-host-callback-name-expr-bool-literal : String
-  "expr-bool-literal")
-(define tlci-host-callback-name-expr-int-literal : String
-  "expr-int-literal")
-(define tlci-host-callback-name-expr-list-fold-if : String
-  "expr-list-fold-if")
-(define tlci-host-callback-name-expr-clause-list-fold-if : String
-  "expr-clause-list-fold-if")
-(define tlci-host-callback-name-pattern-binding-typed : String
-  "pattern-binding-typed")
-(define tlci-host-callback-name-expr-resource-scope : String
-  "expr-resource-scope")
-(define tlci-host-callback-name-expr-let-scope : String
-  "expr-let-scope")
-(define tlci-host-callback-name-expr-shared-let-scope : String
-  "expr-shared-let-scope")
-(define tlci-host-callback-name-expr-for-owned : String
-  "expr-for-owned")
-(define tlci-host-callback-name-expr-set-var : String
-  "expr-set-var")
-(define tlci-host-callback-name-expr-begin-unit : String
-  "expr-begin-unit")
-(define tlci-host-callback-name-expr-not : String
-  "expr-not")
-(define tlci-host-callback-name-expr-while : String
-  "expr-while")
-(define tlci-host-callback-name-syntax-name-fresh : String
-  "syntax-name-fresh")
-
-;; General quasiquote template construction (refs #5596): expr-begin pops an
-;; expression list and pushes the begin node the parser produces; expr-binary-op
-;; pops the right then the left operand expression and pushes a binary node for
-;; the AstBinOp ordinal in immediate `a`; expr-unary-op pops the operand
-;; expression and pushes a unary node for the AstUnOp ordinal in immediate `a`;
-;; expr-char-literal pushes a char literal node for the code point in immediate
-;; `a`; expr-unit-literal pushes the unit literal node. The embedded image and
-;; its consumer are always the same source-bound binary.
-(define tlci-host-callback-name-expr-begin : String
-  "expr-begin")
-(define tlci-host-callback-name-expr-binary-op : String
-  "expr-binary-op")
-(define tlci-host-callback-name-expr-unary-op : String
-  "expr-unary-op")
-(define tlci-host-callback-name-expr-char-literal : String
-  "expr-char-literal")
-(define tlci-host-callback-name-expr-unit-literal : String
-  "expr-unit-literal")
-
-;; Computed-body locals and declaration-template construction (refs #5603).
-;; local-set pops one value into the session local slot named by immediate `a`;
-;; local-get pushes the slot's value. expr-var-from-value pops a comptime
-;; String or Name value and pushes the variable node the interpreted
-;; `(comptime.)expr-var` builtin produces (syntax-name resolution over the
-;; source-name session included). expr-bracket-clause pops an expression list
-;; and pushes the bracket-clause node the parser produces for `[item ...]` in
-;; templates. expr-borrow pops the place expression and pushes a borrow node:
-;; immediate `a` is 1 for `&mut` and 0 for `&`; the lifetime is inferred.
-;; The embedded image and its consumer are always the same source-bound binary.
-(define tlci-host-callback-name-local-set : String
-  "local-set")
-(define tlci-host-callback-name-local-get : String
-  "local-get")
-(define tlci-host-callback-name-expr-var-from-value : String
-  "expr-var-from-value")
-(define tlci-host-callback-name-expr-bracket-clause : String
-  "expr-bracket-clause")
-(define tlci-host-callback-name-expr-borrow : String
-  "expr-borrow")
-
-;; Computed-body support (refs #5603): string-value pushes the comptime String
-;; value for caller bytes (a parsed-source string identity like the lexer's);
-;; diagnostic-from-value pops a comptime String into the session diagnostic
-;; and answers with the diagnostic status; pattern-var pushes a unit/variable
-;; pattern for caller bytes with the template-source mark.
-(define tlci-host-callback-name-string-value : String
-  "string-value")
-(define tlci-host-callback-name-diagnostic-from-value : String
-  "diagnostic-from-value")
-(define tlci-host-callback-name-pattern-var : String
-  "pattern-var")
-
-;; More template construction (refs #5603): expr-array-set pops the value,
-;; index, and target expressions and pushes the array-set! node; let-binding
-;; pops the init expression and pushes a named let binding (template-source
-;; marked like the interpreted quote); let-binding-list-empty/cons build the
-;; binding list; expr-let pops the body and the binding list and pushes the
-;; let node.
-(define tlci-host-callback-name-expr-array-set : String
-  "expr-array-set")
-(define tlci-host-callback-name-let-binding : String
-  "let-binding")
-(define tlci-host-callback-name-let-binding-list-empty : String
-  "let-binding-list-empty")
-(define tlci-host-callback-name-let-binding-list-cons : String
-  "let-binding-list-cons")
-(define tlci-host-callback-name-expr-let : String
-  "expr-let")
-
-;; expr-lambda reconstructs a quasiquoted lambda from its parameter types,
-;; optional return type, and body. The parameter names/flags are carried in a
-;; compact immediate payload so the value stack remains syntax-only.
-(define tlci-host-callback-name-expr-lambda : String
-  "expr-lambda")
-
-;; Public computed one-parameter lambda builder. Unlike the template callback,
-;; its hygienic name, reflected parameter type, and assembled body are all
-;; supplied on the host value stack.
-(define tlci-host-callback-name-expr-lambda1 : String
-  "expr-lambda1")
-
-;; Typed template bindings (refs #5603): type-var pushes the AstType.Var for
-;; caller bytes (unmarked, matching the interpreted type quote); let-binding-
-;; typed pops the type value then the init expression and pushes a binding
-;; carrying both.
-(define tlci-host-callback-name-type-var : String
-  "type-var")
-(define tlci-host-callback-name-let-binding-typed : String
-  "let-binding-typed")
-
-;; type-scalar pushes the scalar AstType variant named by immediate ordinal
-;; (the primitive type constructors; refs #5603).
-(define tlci-host-callback-name-type-scalar : String
-  "type-scalar")
-
-;; expr-int-from-data pushes an int literal expression whose value is the
-;; data i64 in immediate `a` (used when a computed reflection yields a
-;; runtime count, refs #5603).
-(define tlci-host-callback-name-expr-int-from-data : String
-  "expr-int-from-data")
-
-;; Expression-value destructuring for computed bodies that match on the shape
-;; of an operand (refs #5602). operand-expr-call? answers 1/0 as data for
-;; "operand `a` is a call expression" (a negative value is its malformed-request
-;; sentinel, like the other data-returning probes); the two accessors push the
-;; callee expression and the argument list the interpreted
-;; `(comptime.Expr.Call callee args)` pattern binds. All three unwrap `Spanned`
-;; and diagnostic-only macro expansion markers first, matching
-;; `ctfe-match-expr-variant`.
-(define tlci-host-callback-name-operand-expr-call? : String
-  "operand-expr-call?")
-(define tlci-host-callback-name-operand-expr-call-callee : String
-  "operand-expr-call-callee")
-(define tlci-host-callback-name-operand-expr-call-args : String
-  "operand-expr-call-args")
-
-;; The `comptime.Expr.Int` half of the same destructuring (refs #5602).
-;; operand-expr-int? answers 1/0 as data with a negative malformed-request
-;; sentinel; operand-expr-int-value answers the literal's i64 value as data and
-;; is only issued after the probe, so it has no error channel of its own. Both
-;; unwrap `Spanned` and diagnostic-only macro expansion markers first.
-;; local-expr-list-length and local-expr-list-nth are
-;; the local-slot twins of the operand-only expr-list callbacks: a destructured
-;; `ExprList` payload lives in a session local, and the fold bodies index it
-;; there.
-(define tlci-host-callback-name-operand-expr-int? : String
-  "operand-expr-int?")
-(define tlci-host-callback-name-operand-expr-int-value : String
-  "operand-expr-int-value")
-(define tlci-host-callback-name-local-expr-int? : String
-  "local-expr-int?")
-(define tlci-host-callback-name-local-expr-int-value : String
-  "local-expr-int-value")
-(define tlci-host-callback-name-local-expr-list-length : String
-  "local-expr-list-length")
-(define tlci-host-callback-name-local-expr-list-nth : String
-  "local-expr-list-nth")
-(define tlci-host-callback-name-local-expr-string? : String
-  "local-expr-string?")
-(define tlci-host-callback-name-local-expr-var? : String
-  "local-expr-var?")
-(define tlci-host-callback-name-local-expr-var-name : String
-  "local-expr-var-name")
-(define tlci-host-callback-name-local-expr-begin? : String
-  "local-expr-begin?")
-(define tlci-host-callback-name-local-expr-begin-items : String
-  "local-expr-begin-items")
-(define tlci-host-callback-name-local-bool-value : String
-  "local-bool-value")
-(define tlci-host-callback-name-value-bool : String
-  "value-bool")
-
-;; Remaining binder-free template node kinds (refs #5605, #6240): expr-return,
-;; expr-box, expr-box-get, and expr-box-take each pop one expression and push
-;; the corresponding AST node;
-;; expr-float-literal pushes a float literal carrying the caller bytes, which
-;; are the literal's exact source text (the interpreted quote preserves float
-;; spelling verbatim). The embedded image and its consumer are always the same
-;; source-bound binary.
-(define tlci-host-callback-name-expr-return : String
-  "expr-return")
-(define tlci-host-callback-name-expr-box : String
-  "expr-box")
-(define tlci-host-callback-name-expr-box-get : String
-  "expr-box-get")
-(define tlci-host-callback-name-expr-box-take : String
-  "expr-box-take")
-(define tlci-host-callback-name-expr-float-literal : String
-  "expr-float-literal")
-
-;; Computed-scrutinee probes and cast/init templates (refs #5604, #5606). The
-;; two probes
-;; share operand-type-kind-eq's shape -- operand index in `a`, caller bytes in
-;; `b`/`c`, 1/0 as data and a negative malformed-request sentinel -- so they
-;; bypass the status latch the same way: operand-expr-type-kind-eq compares
-;; the type-kind of an Expr operand's produced type, and operand-type-key-eq
-;; compares a type operand's canonical key. expr-cast pops the type value then
-;; the operand expression and pushes the cast node the parser produces.
-;; expr-init pops one type value and pushes the typed `(init : T)` node. The
-;; embedded image and its consumer are always the same source-bound binary.
-(define tlci-host-callback-name-operand-expr-type-kind-eq : String
-  "operand-expr-type-kind-eq")
-(define tlci-host-callback-name-operand-type-key-eq : String
-  "operand-type-key-eq")
-(define tlci-host-callback-name-expr-cast : String
-  "expr-cast")
-(define tlci-host-callback-name-expr-ann : String
-  "expr-ann")
-(define tlci-host-callback-name-expr-init : String
-  "expr-init")
-
-;; Raw-pointer and `unsafe` template node kinds (refs #5605). expr-unsafe pops
-;; an expression list and pushes the `(unsafe ...)` node; expr-ptr-read,
-;; expr-ptr-addr-of, expr-ptr-to-int, and expr-string-data each pop one
-;; expression;
-;; expr-ptr-write, expr-ptr-offset, and expr-string-from-bytes pop the second
-;; then the first operand; expr-array-data pops one. expr-ptr-cast pops the type
-;; value then the pointer expression. These complete the template subset the
-;; `stdlib.text_buf_family` generators need.
-(define tlci-host-callback-name-expr-unsafe : String
-  "expr-unsafe")
-(define tlci-host-callback-name-expr-ptr-read : String
-  "expr-ptr-read")
-(define tlci-host-callback-name-expr-ptr-addr-of : String
-  "expr-ptr-addr-of")
-(define tlci-host-callback-name-expr-ptr-to-int : String
-  "expr-ptr-to-int")
-(define tlci-host-callback-name-expr-int-to-ptr : String
-  "expr-int-to-ptr")
-(define tlci-host-callback-name-expr-string-data : String
-  "expr-string-data")
-(define tlci-host-callback-name-expr-ptr-write : String
-  "expr-ptr-write")
-(define tlci-host-callback-name-expr-ptr-offset : String
-  "expr-ptr-offset")
-(define tlci-host-callback-name-expr-string-from-bytes : String
-  "expr-string-from-bytes")
-(define tlci-host-callback-name-expr-array-data : String
-  "expr-array-data")
-
-;; expr-ptr-cast pops the type value then the pointer expression, the order
-;; expr-make-array uses. Held back from #5703 because the type walker could not
-;; render `(Ptr T)`; the composite type callbacks fix that. Refs #5605.
-(define tlci-host-callback-name-expr-ptr-cast : String
-  "expr-ptr-cast")
-
-;; The literal text of a string-literal `Expr`, pushed as the comptime String
-;; value the interpreted `comptime.expr-string-value` yields -- the same
-;; `(CompilerCtfeValue.String (intern-str id) id)` identity, so a downstream
-;; `expr-var`/`string-append` sees exactly what interpretation gave it. The
-;; operand form reads a macro operand directly; the generic form pops a computed
-;; Expr from the session stack. A non-literal produces the interpreted
-;; diagnostic rather than silently yielding empty text.
-(define tlci-host-callback-name-operand-expr-string-value : String
-  "operand-expr-string-value")
-(define tlci-host-callback-name-expr-string-value : String
-  "expr-string-value")
-
-;; `comptime.Expr.Var` destructuring: a data probe for "operand `a` is a plain
-;; identifier expression", and an accessor pushing that identifier's spelling as
-;; a comptime String so the body can build a derived name from it. The serialize
-;; nested-alias shape needs exactly this pair. Both unwrap `Spanned` and
-;; diagnostic-only macro expansion markers first, matching
-;; `ctfe-match-expr-variant`. Refs #5700.
-(define tlci-host-callback-name-operand-expr-var? : String
-  "operand-expr-var?")
-(define tlci-host-callback-name-operand-expr-var-name : String
-  "operand-expr-var-name")
-
-;; value-i64 pushes a comptime i64 from immediate `a`, which is what
-;; `comptime.int->string` consumes when its argument is a literal or a
-;; compile-time data local rather than a stack value. Refs #5700.
-(define tlci-host-callback-name-value-i64 : String
-  "value-i64")
-
-;; A computed value-position unit literal must still occupy a session stack
-;; slot so conditional validation bindings can share the ordinary local-set
-;; continuation with their diagnostic alternative. Refs #5606.
-(define tlci-host-callback-name-value-unit : String
-  "value-unit")
-
-;; Select one of two already-computed session values from an i64 condition
-;; immediate. The producer only emits this for side-effect-free Var branches.
-(define tlci-host-callback-name-value-select : String
-  "value-select")
-
-;; Comptime string scanning over a String session local (refs #5701). The
-;; scanner bodies bind a String once -- from `comptime.expr-string-value` or
-;; `type-key` -- and then walk it, so all three read the local by slot instead
-;; of routing every step through a stack push. local-string-length answers the
-;; byte length as data and local-string-ref the byte at `b` as data, both with
-;; a negative malformed-request sentinel; local-string-slice pushes the
-;; `[b, b+c)` range as the generated comptime String
-;; `comptime.string-slice` yields.
-;; expr-string-from-value pops a comptime String and pushes the string-literal
-;; expression `comptime.expr-string` builds, carrying the popped value's own
-;; intern id so a template embeds exactly the text interpretation would.
-;; Their explicit names keep the local-slot semantics distinct from the
-;; stack-shaped `string-length` / `string-ref` callbacks.
-(define tlci-host-callback-name-local-string-length : String
-  "local-string-length")
-(define tlci-host-callback-name-local-string-ref : String
-  "local-string-ref")
-(define tlci-host-callback-name-local-string-slice : String
-  "local-string-slice")
-(define tlci-host-callback-name-expr-string-from-value : String
-  "expr-string-from-value")
-
-;; operand-expr-string? answers 1/0 as data for "operand `a` is a string
-;; literal expression", the `comptime.expr-string?` guard every literal-template
-;; macro opens with, with the same negative malformed-request sentinel as the
-;; other operand probes. Refs #5701.
-(define tlci-host-callback-name-operand-expr-string? : String
-  "operand-expr-string?")
-
-;; Composite type templates (refs #5605). `embedded-native-template-type-ops`
-;; rendered only `AstType.Var` and scalars, which is what actually kept the
-;; `stdlib.text_buf_family` generators and generated vector modules on the
-;; interpreted route -- their annotations are `(__tl_dyn-array String)`, `(Ptr u8)`,
-;; `(MutPtr i64)`, `(& text str)` and `(&mut buf TextBuf)`, not any missing
-;; expression node kind. Each callback pops the element/inner type value and
-;; pushes the wrapper, so a nested annotation builds bottom-up like an
-;; expression template does. type-ptr and type-ref select mutability with
-;; immediate `a`; type-array takes its element count in `a`; type-ref takes the
-;; lifetime name in `b`/`c`. type-var-args takes a lifetime count in `a` and a
-;; count-validated newline-delimited nominal/lifetime payload in `b`/`c`,
-;; preserving the unresolved VarArgs identity and argument order. Refs #6551.
-(define tlci-host-callback-name-type-ptr : String
-  "type-ptr")
-(define tlci-host-callback-name-type-box : String
-  "type-box")
-(define tlci-host-callback-name-type-dyn-array : String
-  "type-dyn-array")
-(define tlci-host-callback-name-type-array : String
-  "type-array")
-(define tlci-host-callback-name-type-ref : String
-  "type-ref")
-(define tlci-host-callback-name-type-slice : String
-  "type-slice")
-(define tlci-host-callback-name-type-tuple : String
-  "type-tuple")
-(define tlci-host-callback-name-type-var-args : String
-  "type-var-args")
-
-;; A computed struct field name is a stack value rather than caller bytes:
-;; pop the name after the target expression and push the resulting field
-;; projection. Refs #5626.
-(define tlci-host-callback-name-expr-struct-get-from-value : String
-  "expr-struct-get-from-value")
-
-;; A computed struct assignment has its field name on the value stack too:
-;; pop target, Name/String field, and value expressions, then push the
-;; resulting assignment. Refs #5999.
-(define tlci-host-callback-name-expr-struct-set-from-value : String
-  "expr-struct-set-from-value")
-
-;; A quasiquoted `(set! ,place value)` only knows its assignment shape after
-;; the unquoted place has produced an Expr session value. Pop that place and
-;; the value expression, then reconstruct the matching variable, struct-field,
-;; or box assignment. Refs #6550.
-(define tlci-host-callback-name-expr-set-from-place : String
-  "expr-set-from-place")
-
-;; Computed enum variant names likewise retain their source-name identity as a
-;; session value. Pop a PatternList after the name and push the resulting
-;; variant pattern. Refs #5626.
-(define tlci-host-callback-name-pattern-variant-from-value : String
-  "pattern-variant-from-value")
-
-;; The computed public cons builder evaluates its head before its tail; consume
-;; that stack order and prepend the head to the MatchArmList. Refs #5626.
-(define tlci-host-callback-name-match-arm-list-cons-from-values : String
-  "match-arm-list-cons-from-values")
-
-;; Tuple and array templates consume the ExprList assembled by the shared
-;; template argument/splice path and push the corresponding expression
-;; reconstructed by interpreted quasiquote. Refs #5724, #6215.
-(define tlci-host-callback-name-expr-tuple : String
-  "expr-tuple")
-(define tlci-host-callback-name-expr-array : String
-  "expr-array")
 (define tlci-header-size : i64
   176)
 (define tlci-page-align : i64

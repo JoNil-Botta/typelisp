@@ -22,6 +22,7 @@
 (import tlci_core)
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
+(import stdlib.comptime)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.string)
 
@@ -655,8 +656,7 @@
         (embedded-native-template-push!
           ops
           ops-count
-          (tlci_core.tlci-host-callback-name-shared-view
-            tlci_core.tlci-host-callback-name-push-operand)
+          (tlci_core.tlci-host-callback-name push-operand)
           (string.int->string param)
           "0"
           "0")
@@ -669,8 +669,7 @@
             (embedded-native-template-push!
               ops
               ops-count
-              (tlci_core.tlci-host-callback-name-shared-view
-                tlci_core.tlci-host-callback-name-local-get)
+              (tlci_core.tlci-host-callback-name local-get)
               (string.int->string slot)
               "0"
               "0")
@@ -698,8 +697,7 @@
             (embedded-native-template-push!
               ops
               ops-count
-              (tlci_core.tlci-host-callback-name-shared-view
-                tlci_core.tlci-host-callback-name-push-operand)
+              (tlci_core.tlci-host-callback-name push-operand)
               (string.int->string param)
               "0"
               "0")
@@ -738,8 +736,7 @@
                     ops
                     ops-count
                     (embedded-native-op-call
-                      (tlci_core.tlci-host-callback-name-shared-view
-                        tlci_core.tlci-host-callback-name-expr-var)
+                      (tlci_core.tlci-host-callback-name expr-var)
                       (embedded-native-name-arg
                         (owned_view.compiler-owned-shared-view missing-name))
                       (string.int->string (string.string-length missing-name))
@@ -748,8 +745,7 @@
                     ops
                     ops-count
                     (embedded-native-op-call
-                      (tlci_core.tlci-host-callback-name-shared-view
-                        tlci_core.tlci-host-callback-name-expr-var)
+                      (tlci_core.tlci-host-callback-name expr-var)
                       (embedded-native-name-arg
                         (owned_view.compiler-owned-shared-view
                           else-not-final-name))
@@ -760,8 +756,8 @@
                     ops
                     ops-count
                     (embedded-native-op-call
-                      (tlci_core.tlci-host-callback-name-shared-view
-                        tlci_core.tlci-host-callback-name-expr-clause-list-fold-if)
+                      (tlci_core.tlci-host-callback-name
+                        expr-clause-list-fold-if)
                       (string.int->string clauses-index)
                       "0"
                       "0"))
@@ -798,8 +794,7 @@
                       ops
                       ops-count
                       (embedded-native-op-call
-                        (tlci_core.tlci-host-callback-name-shared-view
-                          tlci_core.tlci-host-callback-name-expr-bool-literal)
+                        (tlci_core.tlci-host-callback-name expr-bool-literal)
                         (string.int->string when-true)
                         "0"
                         "0"))
@@ -807,8 +802,7 @@
                       ops
                       ops-count
                       (embedded-native-op-call
-                        (tlci_core.tlci-host-callback-name-shared-view
-                          tlci_core.tlci-host-callback-name-expr-bool-literal)
+                        (tlci_core.tlci-host-callback-name expr-bool-literal)
                         (string.int->string when-false)
                         "0"
                         "0"))
@@ -816,8 +810,7 @@
                       ops
                       ops-count
                       (embedded-native-op-call
-                        (tlci_core.tlci-host-callback-name-shared-view
-                          tlci_core.tlci-host-callback-name-expr-list-fold-if)
+                        (tlci_core.tlci-host-callback-name expr-list-fold-if)
                         (string.int->string items-index)
                         (string.int->string continue-flag)
                         "0"))
@@ -830,8 +823,7 @@
                     (embedded-native-template-push!
                       ops
                       ops-count
-                      (tlci_core.tlci-host-callback-name-shared-view
-                        tlci_core.tlci-host-callback-name-expr-var)
+                      (tlci_core.tlci-host-callback-name expr-var)
                       (embedded-native-name-arg
                         (owned_view.compiler-owned-shared-view var-name))
                       (string.int->string (string.string-length var-name))
@@ -1051,10 +1043,8 @@
               ops
               ops-count
               (if (embedded-native-unquote-template-node? inner)
-                (tlci_core.tlci-host-callback-name-shared-view
-                  tlci_core.tlci-host-callback-name-expr-span-unquoted)
-                (tlci_core.tlci-host-callback-name-shared-view
-                  tlci_core.tlci-host-callback-name-expr-span))
+                (tlci_core.tlci-host-callback-name expr-span-unquoted)
+                (tlci_core.tlci-host-callback-name expr-span))
               (string.int->string
                 (compiler_ast_types.ast-source-span-start-line span))
               (string.int->string
@@ -1086,8 +1076,7 @@
             (embedded-native-template-push!
               ops
               ops-count
-              (tlci_core.tlci-host-callback-name-shared-view
-                tlci_core.tlci-host-callback-name-expr-bool-literal)
+              (tlci_core.tlci-host-callback-name expr-bool-literal)
               (if flag
                 "1"
                 "0")
@@ -1102,8 +1091,7 @@
               (embedded-native-template-push!
                 ops
                 ops-count
-                (tlci_core.tlci-host-callback-name-shared-view
-                  tlci_core.tlci-host-callback-name-expr-int-literal)
+                (tlci_core.tlci-host-callback-name expr-int-literal)
                 (string.int->string value)
                 "0"
                 "0")
@@ -1116,8 +1104,7 @@
               (embedded-native-template-push!
                 ops
                 ops-count
-                (tlci_core.tlci-host-callback-name-shared-view
-                  tlci_core.tlci-host-callback-name-expr-string)
+                (tlci_core.tlci-host-callback-name expr-string)
                 (embedded-native-name-arg
                   (embedded-native-escape-string
                     (owned_view.compiler-owned-shared-view text)))
@@ -1129,8 +1116,7 @@
             (embedded-native-template-push!
               ops
               ops-count
-              (tlci_core.tlci-host-callback-name-shared-view
-                tlci_core.tlci-host-callback-name-expr-char-literal)
+              (tlci_core.tlci-host-callback-name expr-char-literal)
               (string.int->string (cast c : i64))
               "0"
               "0")
@@ -1140,8 +1126,7 @@
             (embedded-native-template-push!
               ops
               ops-count
-              (tlci_core.tlci-host-callback-name-shared-view
-                tlci_core.tlci-host-callback-name-expr-unit-literal)
+              (tlci_core.tlci-host-callback-name expr-unit-literal)
               "0"
               "0"
               "0")
@@ -1151,8 +1136,7 @@
             (embedded-native-template-push!
               ops
               ops-count
-              (tlci_core.tlci-host-callback-name-shared-view
-                tlci_core.tlci-host-callback-name-expr-float-literal)
+              (tlci_core.tlci-host-callback-name expr-float-literal)
               (embedded-native-name-arg
                 (embedded-native-escape-string
                   (owned_view.compiler-owned-shared-view text)))
@@ -1167,8 +1151,7 @@
           (embedded-native-template-push!
             ops
             ops-count
-            (tlci_core.tlci-host-callback-name-shared-view
-              tlci_core.tlci-host-callback-name-expr-var)
+            (tlci_core.tlci-host-callback-name expr-var)
             (embedded-native-name-arg
               (owned_view.compiler-owned-shared-view name))
             (string.int->string (string.string-length name))
@@ -1192,8 +1175,7 @@
                 (embedded-native-template-push!
                   ops
                   ops-count
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-expr-call)
+                  (tlci_core.tlci-host-callback-name expr-call)
                   "0"
                   "0"
                   "0")
@@ -1218,8 +1200,7 @@
                     (embedded-native-template-push!
                       ops
                       ops-count
-                      (tlci_core.tlci-host-callback-name-shared-view
-                        tlci_core.tlci-host-callback-name-expr-if)
+                      (tlci_core.tlci-host-callback-name expr-if)
                       "0"
                       "0"
                       "0")
@@ -1234,8 +1215,7 @@
             (embedded-native-template-push!
               ops
               ops-count
-              (tlci_core.tlci-host-callback-name-shared-view
-                tlci_core.tlci-host-callback-name-expr-begin)
+              (tlci_core.tlci-host-callback-name expr-begin)
               "0"
               "0"
               "0")
@@ -1250,8 +1230,7 @@
             (embedded-native-template-push!
               ops
               ops-count
-              (tlci_core.tlci-host-callback-name-shared-view
-                tlci_core.tlci-host-callback-name-expr-tuple)
+              (tlci_core.tlci-host-callback-name expr-tuple)
               "0"
               "0"
               "0")
@@ -1266,8 +1245,7 @@
             (embedded-native-template-push!
               ops
               ops-count
-              (tlci_core.tlci-host-callback-name-shared-view
-                tlci_core.tlci-host-callback-name-expr-array)
+              (tlci_core.tlci-host-callback-name expr-array)
               "0"
               "0"
               "0")
@@ -1282,8 +1260,7 @@
             (embedded-native-template-push!
               ops
               ops-count
-              (tlci_core.tlci-host-callback-name-shared-view
-                tlci_core.tlci-host-callback-name-expr-tuple-ref)
+              (tlci_core.tlci-host-callback-name expr-tuple-ref)
               (string.int->string index)
               "0"
               "0")
@@ -1298,8 +1275,7 @@
             (embedded-native-template-push!
               ops
               ops-count
-              (tlci_core.tlci-host-callback-name-shared-view
-                tlci_core.tlci-host-callback-name-expr-bracket-clause)
+              (tlci_core.tlci-host-callback-name expr-bracket-clause)
               "0"
               "0"
               "0")
@@ -1318,8 +1294,7 @@
                 (embedded-native-template-push!
                   ops
                   ops-count
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-expr-borrow)
+                  (tlci_core.tlci-host-callback-name expr-borrow)
                   (if mutable
                     "1"
                     "0")
@@ -1333,8 +1308,7 @@
                   (embedded-native-template-push!
                     ops
                     ops-count
-                    (tlci_core.tlci-host-callback-name-shared-view
-                      tlci_core.tlci-host-callback-name-expr-borrow)
+                    (tlci_core.tlci-host-callback-name expr-borrow)
                     (if mutable
                       "1"
                       "0")
@@ -1364,8 +1338,7 @@
                     (embedded-native-template-push!
                       ops
                       ops-count
-                      (tlci_core.tlci-host-callback-name-shared-view
-                        tlci_core.tlci-host-callback-name-expr-match)
+                      (tlci_core.tlci-host-callback-name expr-match)
                       "0"
                       "0"
                       "0")
@@ -1382,8 +1355,7 @@
               (embedded-native-template-push!
                 ops
                 ops-count
-                (tlci_core.tlci-host-callback-name-shared-view
-                  tlci_core.tlci-host-callback-name-expr-struct-get)
+                (tlci_core.tlci-host-callback-name expr-struct-get)
                 (embedded-native-name-arg
                   (owned_view.compiler-owned-shared-view field-name))
                 (string.int->string (string.string-length field-name))
@@ -1409,8 +1381,7 @@
                     (embedded-native-template-push!
                       ops
                       ops-count
-                      (tlci_core.tlci-host-callback-name-shared-view
-                        tlci_core.tlci-host-callback-name-expr-array-set)
+                      (tlci_core.tlci-host-callback-name expr-array-set)
                       "0"
                       "0"
                       "0")
@@ -1435,8 +1406,7 @@
                     (embedded-native-template-push!
                       ops
                       ops-count
-                      (tlci_core.tlci-host-callback-name-shared-view
-                        tlci_core.tlci-host-callback-name-expr-array-take)
+                      (tlci_core.tlci-host-callback-name expr-array-take)
                       "0"
                       "0"
                       "0")
@@ -1448,8 +1418,7 @@
             (embedded-native-template-push!
               ops
               ops-count
-              (tlci_core.tlci-host-callback-name-shared-view
-                tlci_core.tlci-host-callback-name-let-binding-list-empty)
+              (tlci_core.tlci-host-callback-name let-binding-list-empty)
               "0"
               "0"
               "0")
@@ -1472,8 +1441,7 @@
                       (embedded-native-template-push!
                         ops
                         ops-count
-                        (tlci_core.tlci-host-callback-name-shared-view
-                          tlci_core.tlci-host-callback-name-expr-let)
+                        (tlci_core.tlci-host-callback-name expr-let)
                         "0"
                         "0"
                         "0")
@@ -1516,8 +1484,7 @@
                         (embedded-native-template-push!
                           ops
                           ops-count
-                          (tlci_core.tlci-host-callback-name-shared-view
-                            tlci_core.tlci-host-callback-name-expr-lambda)
+                          (tlci_core.tlci-host-callback-name expr-lambda)
                           (embedded-native-name-arg
                             (embedded-native-escape-string
                               (string.copy payload)))
@@ -1544,8 +1511,7 @@
                 (embedded-native-template-push!
                   ops
                   ops-count
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-expr-binary-op)
+                  (tlci_core.tlci-host-callback-name expr-binary-op)
                   (string.int->string (embedded-native-binop-ordinal op))
                   "0"
                   "0")
@@ -1560,8 +1526,7 @@
             (embedded-native-template-push!
               ops
               ops-count
-              (tlci_core.tlci-host-callback-name-shared-view
-                tlci_core.tlci-host-callback-name-expr-unary-op)
+              (tlci_core.tlci-host-callback-name expr-unary-op)
               (string.int->string (embedded-native-unop-ordinal op))
               "0"
               "0")
@@ -1570,32 +1535,28 @@
       (embedded-native-template-unary-node-ops
         params
         inner-node
-        (tlci_core.tlci-host-callback-name-shared-view
-          tlci_core.tlci-host-callback-name-expr-return)
+        (tlci_core.tlci-host-callback-name expr-return)
         ops
         ops-count)]
     [(compiler_ast_types.AstExpr.Box inner-node)
       (embedded-native-template-unary-node-ops
         params
         inner-node
-        (tlci_core.tlci-host-callback-name-shared-view
-          tlci_core.tlci-host-callback-name-expr-box)
+        (tlci_core.tlci-host-callback-name expr-box)
         ops
         ops-count)]
     [(compiler_ast_types.AstExpr.BoxGet inner-node)
       (embedded-native-template-unary-node-ops
         params
         inner-node
-        (tlci_core.tlci-host-callback-name-shared-view
-          tlci_core.tlci-host-callback-name-expr-box-get)
+        (tlci_core.tlci-host-callback-name expr-box-get)
         ops
         ops-count)]
     [(compiler_ast_types.AstExpr.BoxTake inner-node)
       (embedded-native-template-unary-node-ops
         params
         inner-node
-        (tlci_core.tlci-host-callback-name-shared-view
-          tlci_core.tlci-host-callback-name-expr-box-take)
+        (tlci_core.tlci-host-callback-name expr-box-take)
         ops
         ops-count)]
     ;; Raw-pointer and `unsafe` template nodes, the last shapes the
@@ -1604,24 +1565,21 @@
       (embedded-native-template-unary-node-ops
         params
         inner-node
-        (tlci_core.tlci-host-callback-name-shared-view
-          tlci_core.tlci-host-callback-name-expr-ptr-read)
+        (tlci_core.tlci-host-callback-name expr-ptr-read)
         ops
         ops-count)]
     [(compiler_ast_types.AstExpr.PtrAddrOf inner-node)
       (embedded-native-template-unary-node-ops
         params
         inner-node
-        (tlci_core.tlci-host-callback-name-shared-view
-          tlci_core.tlci-host-callback-name-expr-ptr-addr-of)
+        (tlci_core.tlci-host-callback-name expr-ptr-addr-of)
         ops
         ops-count)]
     [(compiler_ast_types.AstExpr.PtrToInt inner-node)
       (embedded-native-template-unary-node-ops
         params
         inner-node
-        (tlci_core.tlci-host-callback-name-shared-view
-          tlci_core.tlci-host-callback-name-expr-ptr-to-int)
+        (tlci_core.tlci-host-callback-name expr-ptr-to-int)
         ops
         ops-count)]
     [(compiler_ast_types.AstExpr.IntToPtr inner-node cast-type-id)
@@ -1643,8 +1601,7 @@
                 (embedded-native-template-push!
                   ops
                   ops-count
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-expr-int-to-ptr)
+                  (tlci_core.tlci-host-callback-name expr-int-to-ptr)
                   "0"
                   "0"
                   "0")
@@ -1653,8 +1610,7 @@
       (embedded-native-template-unary-node-ops
         params
         inner-node
-        (tlci_core.tlci-host-callback-name-shared-view
-          tlci_core.tlci-host-callback-name-expr-string-data)
+        (tlci_core.tlci-host-callback-name expr-string-data)
         ops
         ops-count)]
     [(compiler_ast_types.AstExpr.PtrWrite ptr-node value-node)
@@ -1662,8 +1618,7 @@
         params
         ptr-node
         value-node
-        (tlci_core.tlci-host-callback-name-shared-view
-          tlci_core.tlci-host-callback-name-expr-ptr-write)
+        (tlci_core.tlci-host-callback-name expr-ptr-write)
         ops
         ops-count)]
     [(compiler_ast_types.AstExpr.PtrOffset ptr-node offset-node)
@@ -1671,8 +1626,7 @@
         params
         ptr-node
         offset-node
-        (tlci_core.tlci-host-callback-name-shared-view
-          tlci_core.tlci-host-callback-name-expr-ptr-offset)
+        (tlci_core.tlci-host-callback-name expr-ptr-offset)
         ops
         ops-count)]
     ;; `(ptr-cast p : T)`: the pointer expression then the type template, the
@@ -1696,8 +1650,7 @@
                 (embedded-native-template-push!
                   ops
                   ops-count
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-expr-ptr-cast)
+                  (tlci_core.tlci-host-callback-name expr-ptr-cast)
                   "0"
                   "0"
                   "0")
@@ -1706,8 +1659,7 @@
       (embedded-native-template-unary-node-ops
         params
         inner-node
-        (tlci_core.tlci-host-callback-name-shared-view
-          tlci_core.tlci-host-callback-name-expr-array-data)
+        (tlci_core.tlci-host-callback-name expr-array-data)
         ops
         ops-count)]
     [(compiler_ast_types.AstExpr.StringFromBytes data-node length-node)
@@ -1715,8 +1667,7 @@
         params
         data-node
         length-node
-        (tlci_core.tlci-host-callback-name-shared-view
-          tlci_core.tlci-host-callback-name-expr-string-from-bytes)
+        (tlci_core.tlci-host-callback-name expr-string-from-bytes)
         ops
         ops-count)]
     [(compiler_ast_types.AstExpr.Unsafe body-exprs)
@@ -1733,8 +1684,7 @@
             (embedded-native-template-push!
               ops
               ops-count
-              (tlci_core.tlci-host-callback-name-shared-view
-                tlci_core.tlci-host-callback-name-expr-unsafe)
+              (tlci_core.tlci-host-callback-name expr-unsafe)
               "0"
               "0"
               "0")
@@ -1760,8 +1710,7 @@
                   (embedded-native-template-push!
                     ops
                     ops-count
-                    (tlci_core.tlci-host-callback-name-shared-view
-                      tlci_core.tlci-host-callback-name-expr-set-from-place)
+                    (tlci_core.tlci-host-callback-name expr-set-from-place)
                     "0"
                     "0"
                     "0")
@@ -1782,8 +1731,7 @@
                     (embedded-native-template-push!
                       ops
                       ops-count
-                      (tlci_core.tlci-host-callback-name-shared-view
-                        tlci_core.tlci-host-callback-name-expr-struct-set)
+                      (tlci_core.tlci-host-callback-name expr-struct-set)
                       (embedded-native-name-arg
                         (owned_view.compiler-owned-shared-view field-name))
                       (string.int->string (string.string-length field-name))
@@ -1810,8 +1758,7 @@
                 (embedded-native-template-push!
                   ops
                   ops-count
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-expr-cast)
+                  (tlci_core.tlci-host-callback-name expr-cast)
                   "0"
                   "0"
                   "0")
@@ -1837,8 +1784,7 @@
                 (embedded-native-template-push!
                   ops
                   ops-count
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-expr-ann)
+                  (tlci_core.tlci-host-callback-name expr-ann)
                   "0"
                   "0"
                   "0")
@@ -1858,8 +1804,7 @@
                 (embedded-native-template-push!
                   ops
                   ops-count
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-expr-init)
+                  (tlci_core.tlci-host-callback-name expr-init)
                   "0"
                   "0"
                   "0")
@@ -1877,8 +1822,7 @@
               (embedded-native-template-push!
                 ops
                 ops-count
-                (tlci_core.tlci-host-callback-name-shared-view
-                  tlci_core.tlci-host-callback-name-expr-set-var)
+                (tlci_core.tlci-host-callback-name expr-set-var)
                 (embedded-native-name-arg
                   (owned_view.compiler-owned-shared-view name))
                 (string.int->string (string.string-length name))
@@ -1899,8 +1843,7 @@
                 (embedded-native-template-push!
                   ops
                   ops-count
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-expr-while)
+                  (tlci_core.tlci-host-callback-name expr-while)
                   "0"
                   "0"
                   "0")
@@ -1920,8 +1863,7 @@
                 (embedded-native-template-push!
                   ops
                   ops-count
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-expr-array-ref)
+                  (tlci_core.tlci-host-callback-name expr-array-ref)
                   "0"
                   "0"
                   "0")
@@ -1945,8 +1887,7 @@
                 (embedded-native-template-push!
                   ops
                   ops-count
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-expr-replace)
+                  (tlci_core.tlci-host-callback-name expr-replace)
                   "0"
                   "0"
                   "0")
@@ -1966,8 +1907,7 @@
                 (embedded-native-template-push!
                   ops
                   ops-count
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-expr-array-push)
+                  (tlci_core.tlci-host-callback-name expr-array-push)
                   "0"
                   "0"
                   "0")
@@ -1991,8 +1931,7 @@
                 (embedded-native-template-push!
                   ops
                   ops-count
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-expr-make-array)
+                  (tlci_core.tlci-host-callback-name expr-make-array)
                   "0"
                   "0"
                   "0")
@@ -2023,8 +1962,7 @@
       (embedded-native-template-push!
         ops
         ops-count
-        (tlci_core.tlci-host-callback-name-shared-view
-          tlci_core.tlci-host-callback-name-expr-list-empty)
+        (tlci_core.tlci-host-callback-name expr-list-empty)
         "0"
         "0"
         "0")
@@ -2049,10 +1987,8 @@
                           ops
                           ops-count
                           (if (< param 0)
-                            (tlci_core.tlci-host-callback-name-shared-view
-                              tlci_core.tlci-host-callback-name-local-get)
-                            (tlci_core.tlci-host-callback-name-shared-view
-                              tlci_core.tlci-host-callback-name-push-operand))
+                            (tlci_core.tlci-host-callback-name local-get)
+                            (tlci_core.tlci-host-callback-name push-operand))
                           (string.int->string
                             (if (< param 0)
                               slot
@@ -2062,8 +1998,7 @@
                         (embedded-native-template-push!
                           ops
                           ops-count
-                          (tlci_core.tlci-host-callback-name-shared-view
-                            tlci_core.tlci-host-callback-name-expr-splice)
+                          (tlci_core.tlci-host-callback-name expr-splice)
                           "0"
                           "0"
                           "0")
@@ -2086,8 +2021,7 @@
                     (embedded-native-template-push!
                       ops
                       ops-count
-                      (tlci_core.tlci-host-callback-name-shared-view
-                        tlci_core.tlci-host-callback-name-expr-list-append)
+                      (tlci_core.tlci-host-callback-name expr-list-append)
                       "0"
                       "0"
                       "0")
@@ -2115,8 +2049,7 @@
       (embedded-native-template-push!
         ops
         ops-count
-        (tlci_core.tlci-host-callback-name-shared-view
-          tlci_core.tlci-host-callback-name-match-arm-list-empty)
+        (tlci_core.tlci-host-callback-name match-arm-list-empty)
         "0"
         "0"
         "0")
@@ -2133,8 +2066,7 @@
                       (embedded-native-template-push!
                         ops
                         ops-count
-                        (tlci_core.tlci-host-callback-name-shared-view
-                          tlci_core.tlci-host-callback-name-pattern-wildcard)
+                        (tlci_core.tlci-host-callback-name pattern-wildcard)
                         "0"
                         "0"
                         "0")
@@ -2146,8 +2078,7 @@
                         (embedded-native-template-push!
                           ops
                           ops-count
-                          (tlci_core.tlci-host-callback-name-shared-view
-                            tlci_core.tlci-host-callback-name-pattern-binding)
+                          (tlci_core.tlci-host-callback-name pattern-binding)
                           (embedded-native-name-arg
                             (owned_view.compiler-owned-shared-view pat-name))
                           (string.int->string (string.string-length pat-name))
@@ -2162,8 +2093,7 @@
                             (embedded-native-template-push!
                               ops
                               ops-count
-                              (tlci_core.tlci-host-callback-name-shared-view
-                                tlci_core.tlci-host-callback-name-pattern-var)
+                              (tlci_core.tlci-host-callback-name pattern-var)
                               (embedded-native-name-arg
                                 (owned_view.compiler-owned-shared-view pat-name))
                               (string.int->string
@@ -2191,8 +2121,7 @@
                           (embedded-native-template-push!
                             ops
                             ops-count
-                            (tlci_core.tlci-host-callback-name-shared-view
-                              tlci_core.tlci-host-callback-name-pattern-variant)
+                            (tlci_core.tlci-host-callback-name pattern-variant)
                             (embedded-native-name-arg
                               (owned_view.compiler-owned-shared-view pat-name))
                             (string.int->string (string.string-length pat-name))
@@ -2216,16 +2145,14 @@
                       (embedded-native-template-push!
                         ops
                         ops-count
-                        (tlci_core.tlci-host-callback-name-shared-view
-                          tlci_core.tlci-host-callback-name-match-arm)
+                        (tlci_core.tlci-host-callback-name match-arm)
                         "0"
                         "0"
                         "0")
                       (embedded-native-template-push!
                         ops
                         ops-count
-                        (tlci_core.tlci-host-callback-name-shared-view
-                          tlci_core.tlci-host-callback-name-match-arm-list-cons)
+                        (tlci_core.tlci-host-callback-name match-arm-list-cons)
                         "0"
                         "0"
                         "0")
@@ -2250,8 +2177,7 @@
         (embedded-native-template-push!
           ops
           ops-count
-          (tlci_core.tlci-host-callback-name-shared-view
-            tlci_core.tlci-host-callback-name-pattern-wildcard)
+          (tlci_core.tlci-host-callback-name pattern-wildcard)
           "0"
           "0"
           "0")
@@ -2263,8 +2189,7 @@
           (embedded-native-template-push!
             ops
             ops-count
-            (tlci_core.tlci-host-callback-name-shared-view
-              tlci_core.tlci-host-callback-name-pattern-binding)
+            (tlci_core.tlci-host-callback-name pattern-binding)
             (embedded-native-name-arg
               (owned_view.compiler-owned-shared-view name))
             (string.int->string (string.string-length name))
@@ -2279,8 +2204,7 @@
               (embedded-native-template-push!
                 ops
                 ops-count
-                (tlci_core.tlci-host-callback-name-shared-view
-                  tlci_core.tlci-host-callback-name-pattern-var)
+                (tlci_core.tlci-host-callback-name pattern-var)
                 (embedded-native-name-arg
                   (owned_view.compiler-owned-shared-view name))
                 (string.int->string (string.string-length name))
@@ -2299,8 +2223,7 @@
             (embedded-native-template-push!
               ops
               ops-count
-              (tlci_core.tlci-host-callback-name-shared-view
-                tlci_core.tlci-host-callback-name-pattern-variant)
+              (tlci_core.tlci-host-callback-name pattern-variant)
               (embedded-native-name-arg
                 (owned_view.compiler-owned-shared-view name))
               (string.int->string (string.string-length name))
@@ -2412,8 +2335,7 @@
         (embedded-native-template-push!
           ops
           ops-count
-          (tlci_core.tlci-host-callback-name-shared-view
-            tlci_core.tlci-host-callback-name-type-ref)
+          (tlci_core.tlci-host-callback-name type-ref)
           (string.int->string mutable)
           (embedded-native-name-arg
             (owned_view.compiler-owned-shared-view region))
@@ -2461,8 +2383,7 @@
       (embedded-native-template-type-wrap-ops
         params
         elem-id
-        (tlci_core.tlci-host-callback-name-shared-view
-          tlci_core.tlci-host-callback-name-type-ptr)
+        (tlci_core.tlci-host-callback-name type-ptr)
         "0"
         ops
         ops-count)]
@@ -2470,8 +2391,7 @@
       (embedded-native-template-type-wrap-ops
         params
         elem-id
-        (tlci_core.tlci-host-callback-name-shared-view
-          tlci_core.tlci-host-callback-name-type-ptr)
+        (tlci_core.tlci-host-callback-name type-ptr)
         "1"
         ops
         ops-count)]
@@ -2479,8 +2399,7 @@
       (embedded-native-template-type-wrap-ops
         params
         elem-id
-        (tlci_core.tlci-host-callback-name-shared-view
-          tlci_core.tlci-host-callback-name-type-box)
+        (tlci_core.tlci-host-callback-name type-box)
         "0"
         ops
         ops-count)]
@@ -2488,8 +2407,7 @@
       (embedded-native-template-type-wrap-ops
         params
         elem-id
-        (tlci_core.tlci-host-callback-name-shared-view
-          tlci_core.tlci-host-callback-name-type-dyn-array)
+        (tlci_core.tlci-host-callback-name type-dyn-array)
         "0"
         ops
         ops-count)]
@@ -2497,8 +2415,7 @@
       (embedded-native-template-type-wrap-ops
         params
         elem-id
-        (tlci_core.tlci-host-callback-name-shared-view
-          tlci_core.tlci-host-callback-name-type-slice)
+        (tlci_core.tlci-host-callback-name type-slice)
         "0"
         ops
         ops-count)]
@@ -2506,8 +2423,7 @@
       (embedded-native-template-type-wrap-ops
         params
         elem-id
-        (tlci_core.tlci-host-callback-name-shared-view
-          tlci_core.tlci-host-callback-name-type-array)
+        (tlci_core.tlci-host-callback-name type-array)
         (string.int->string count)
         ops
         ops-count)]
@@ -2543,8 +2459,7 @@
             (embedded-native-template-push!
               ops
               ops-count
-              (tlci_core.tlci-host-callback-name-shared-view
-                tlci_core.tlci-host-callback-name-type-tuple)
+              (tlci_core.tlci-host-callback-name type-tuple)
               (string.int->string
                 (compiler_ast_types.ast-type-list-len (& elems)))
               "0"
@@ -2583,10 +2498,8 @@
                   ops
                   ops-count
                   (if (>= param 0)
-                    (tlci_core.tlci-host-callback-name-shared-view
-                      tlci_core.tlci-host-callback-name-push-operand)
-                    (tlci_core.tlci-host-callback-name-shared-view
-                      tlci_core.tlci-host-callback-name-local-get))
+                    (tlci_core.tlci-host-callback-name push-operand)
+                    (tlci_core.tlci-host-callback-name local-get))
                   (string.int->string
                     (if (>= param 0)
                       param
@@ -2607,8 +2520,7 @@
                 (embedded-native-template-push!
                   ops
                   ops-count
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-type-var-args)
+                  (tlci_core.tlci-host-callback-name type-var-args)
                   (string.int->string count)
                   (embedded-native-name-arg
                     (embedded-native-escape-string
@@ -2622,8 +2534,7 @@
           (embedded-native-template-push!
             ops
             ops-count
-            (tlci_core.tlci-host-callback-name-shared-view
-              tlci_core.tlci-host-callback-name-type-var)
+            (tlci_core.tlci-host-callback-name type-var)
             (embedded-native-name-arg
               (owned_view.compiler-owned-shared-view type-name))
             (string.int->string (string.string-length type-name))
@@ -2638,8 +2549,7 @@
             (embedded-native-template-push!
               ops
               ops-count
-              (tlci_core.tlci-host-callback-name-shared-view
-                tlci_core.tlci-host-callback-name-type-scalar)
+              (tlci_core.tlci-host-callback-name type-scalar)
               (string.int->string ordinal)
               "0"
               "0")
@@ -2765,8 +2675,7 @@
                       (embedded-native-template-push!
                         ops
                         ops-count
-                        (tlci_core.tlci-host-callback-name-shared-view
-                          tlci_core.tlci-host-callback-name-let-binding)
+                        (tlci_core.tlci-host-callback-name let-binding)
                         (embedded-native-name-arg
                           (owned_view.compiler-owned-shared-view name))
                         (string.int->string (string.string-length name))
@@ -2786,8 +2695,8 @@
                           (embedded-native-template-push!
                             ops
                             ops-count
-                            (tlci_core.tlci-host-callback-name-shared-view
-                              tlci_core.tlci-host-callback-name-let-binding-typed)
+                            (tlci_core.tlci-host-callback-name
+                              let-binding-typed)
                             (embedded-native-name-arg
                               (owned_view.compiler-owned-shared-view name))
                             (string.int->string (string.string-length name))
@@ -2802,8 +2711,7 @@
                   (embedded-native-template-push!
                     ops
                     ops-count
-                    (tlci_core.tlci-host-callback-name-shared-view
-                      tlci_core.tlci-host-callback-name-let-binding-list-cons)
+                    (tlci_core.tlci-host-callback-name let-binding-list-cons)
                     "0"
                     "0"
                     "0")
@@ -2951,8 +2859,7 @@
               (embedded-native-template-push!
                 ops
                 ops-count
-                (tlci_core.tlci-host-callback-name-shared-view
-                  tlci_core.tlci-host-callback-name-string-value)
+                (tlci_core.tlci-host-callback-name string-value)
                 (embedded-native-name-arg
                   (embedded-native-escape-string
                     (owned_view.compiler-owned-shared-view text)))
@@ -2964,8 +2871,7 @@
             (embedded-native-template-push!
               ops
               ops-count
-              (tlci_core.tlci-host-callback-name-shared-view
-                tlci_core.tlci-host-callback-name-value-unit)
+              (tlci_core.tlci-host-callback-name value-unit)
               "0"
               "0"
               "0")
@@ -2975,8 +2881,7 @@
             (embedded-native-template-push!
               ops
               ops-count
-              (tlci_core.tlci-host-callback-name-shared-view
-                tlci_core.tlci-host-callback-name-value-i64)
+              (tlci_core.tlci-host-callback-name value-i64)
               (string.int->string value)
               "0"
               "0")
@@ -2986,8 +2891,7 @@
             (embedded-native-template-push!
               ops
               ops-count
-              (tlci_core.tlci-host-callback-name-shared-view
-                tlci_core.tlci-host-callback-name-value-bool)
+              (tlci_core.tlci-host-callback-name value-bool)
               (if flag
                 "1"
                 "0")
@@ -3030,8 +2934,7 @@
                     (embedded-native-template-push!
                       ops
                       ops-count
-                      (tlci_core.tlci-host-callback-name-shared-view
-                        tlci_core.tlci-host-callback-name-value-select)
+                      (tlci_core.tlci-host-callback-name value-select)
                       condition
                       "0"
                       "0")
@@ -3059,8 +2962,7 @@
                   params
                   (compiler_ast_types.ast-expr-list-get (& args) 0 0)
                   (compiler_ast_types.ast-expr-list-get (& args) 1 0)
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-string-append)
+                  (tlci_core.tlci-host-callback-name string-append)
                   ops
                   ops-count)]
               [(and
@@ -3081,8 +2983,7 @@
                       (embedded-native-template-push!
                         ops
                         ops-count
-                        (tlci_core.tlci-host-callback-name-shared-view
-                          tlci_core.tlci-host-callback-name-syntax-name-fresh)
+                        (tlci_core.tlci-host-callback-name syntax-name-fresh)
                         "0"
                         "0"
                         "0")
@@ -3105,8 +3006,7 @@
                       (embedded-native-template-push!
                         ops
                         ops-count
-                        (tlci_core.tlci-host-callback-name-shared-view
-                          tlci_core.tlci-host-callback-name-expr-begin-unit)
+                        (tlci_core.tlci-host-callback-name expr-begin-unit)
                         "0"
                         "0"
                         "0")
@@ -3129,16 +3029,14 @@
                       (embedded-native-template-push!
                         ops
                         ops-count
-                        (tlci_core.tlci-host-callback-name-shared-view
-                          tlci_core.tlci-host-callback-name-value-i64)
+                        (tlci_core.tlci-host-callback-name value-i64)
                         data-text
                         "0"
                         "0")
                       (embedded-native-template-push!
                         ops
                         ops-count
-                        (tlci_core.tlci-host-callback-name-shared-view
-                          tlci_core.tlci-host-callback-name-int->string)
+                        (tlci_core.tlci-host-callback-name int->string)
                         "0"
                         "0"
                         "0")
@@ -3159,8 +3057,7 @@
                           (embedded-native-template-push!
                             ops
                             ops-count
-                            (tlci_core.tlci-host-callback-name-shared-view
-                              tlci_core.tlci-host-callback-name-int->string)
+                            (tlci_core.tlci-host-callback-name int->string)
                             "0"
                             "0"
                             "0")
@@ -3177,8 +3074,7 @@
                       (embedded-native-template-push!
                         ops
                         ops-count
-                        (tlci_core.tlci-host-callback-name-shared-view
-                          tlci_core.tlci-host-callback-name-expr-var)
+                        (tlci_core.tlci-host-callback-name expr-var)
                         (embedded-native-name-arg
                           (owned_view.compiler-owned-shared-view lit-name))
                         (string.int->string (string.string-length lit-name))
@@ -3197,8 +3093,8 @@
                           (embedded-native-template-push!
                             ops
                             ops-count
-                            (tlci_core.tlci-host-callback-name-shared-view
-                              tlci_core.tlci-host-callback-name-expr-var-from-value)
+                            (tlci_core.tlci-host-callback-name
+                              expr-var-from-value)
                             "0"
                             "0"
                             "0")
@@ -3224,8 +3120,7 @@
                       (embedded-native-template-push!
                         ops
                         ops-count
-                        (tlci_core.tlci-host-callback-name-shared-view
-                          tlci_core.tlci-host-callback-name-module-name)
+                        (tlci_core.tlci-host-callback-name module-name)
                         "0"
                         "0"
                         "0")
@@ -3241,8 +3136,7 @@
                   params
                   (compiler_ast_types.ast-expr-list-get (& args) 0 0)
                   (compiler_ast_types.ast-expr-list-get (& args) 1 0)
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-module-hook)
+                  (tlci_core.tlci-host-callback-name module-hook)
                   ops
                   ops-count)]
               ;; Resolve the public signature recorded for a module value. Both
@@ -3257,8 +3151,7 @@
                   params
                   (compiler_ast_types.ast-expr-list-get (& args) 0 0)
                   (compiler_ast_types.ast-expr-list-get (& args) 1 0)
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-module-value-type)
+                  (tlci_core.tlci-host-callback-name module-value-type)
                   ops
                   ops-count)]
               [(and
@@ -3270,8 +3163,7 @@
                   params
                   (compiler_ast_types.ast-expr-list-get (& args) 0 0)
                   (compiler_ast_types.ast-expr-list-get (& args) 1 0)
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-module-value-expr)
+                  (tlci_core.tlci-host-callback-name module-value-expr)
                   ops
                   ops-count)]
               ;; `(comptime.expr-type e)`: the checked type of an Expr operand
@@ -3294,8 +3186,7 @@
                       (embedded-native-template-push!
                         ops
                         ops-count
-                        (tlci_core.tlci-host-callback-name-shared-view
-                          tlci_core.tlci-host-callback-name-expr-type)
+                        (tlci_core.tlci-host-callback-name expr-type)
                         "0"
                         "0"
                         "0")
@@ -3320,8 +3211,7 @@
                       (embedded-native-template-push!
                         ops
                         ops-count
-                        (tlci_core.tlci-host-callback-name-shared-view
-                          tlci_core.tlci-host-callback-name-type-expr)
+                        (tlci_core.tlci-host-callback-name type-expr)
                         "0"
                         "0"
                         "0")
@@ -3344,8 +3234,8 @@
                       (embedded-native-template-push!
                         ops
                         ops-count
-                        (tlci_core.tlci-host-callback-name-shared-view
-                          tlci_core.tlci-host-callback-name-operand-expr-string-value)
+                        (tlci_core.tlci-host-callback-name
+                          operand-expr-string-value)
                         (string.int->string param)
                         "0"
                         "0")
@@ -3363,8 +3253,8 @@
                           (embedded-native-template-push!
                             ops
                             ops-count
-                            (tlci_core.tlci-host-callback-name-shared-view
-                              tlci_core.tlci-host-callback-name-expr-string-value)
+                            (tlci_core.tlci-host-callback-name
+                              expr-string-value)
                             "0"
                             "0"
                             "0")
@@ -3390,8 +3280,8 @@
                       (embedded-native-template-push!
                         ops
                         ops-count
-                        (tlci_core.tlci-host-callback-name-shared-view
-                          tlci_core.tlci-host-callback-name-expr-string-from-value)
+                        (tlci_core.tlci-host-callback-name
+                          expr-string-from-value)
                         "0"
                         "0"
                         "0")
@@ -3424,8 +3314,7 @@
                       (embedded-native-template-push!
                         ops
                         ops-count
-                        (tlci_core.tlci-host-callback-name-shared-view
-                          tlci_core.tlci-host-callback-name-local-string-slice)
+                        (tlci_core.tlci-host-callback-name local-string-slice)
                         (string.int->string slot)
                         start-text
                         len-text)
@@ -3438,8 +3327,7 @@
                 (embedded-native-computed-type-query-ops
                   params
                   (compiler_ast_types.ast-expr-list-get (& args) 0 0)
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-type-key)
+                  (tlci_core.tlci-host-callback-name type-key)
                   "0"
                   ops
                   ops-count)]
@@ -3451,8 +3339,7 @@
                 (embedded-native-computed-type-query-ops
                   params
                   (compiler_ast_types.ast-expr-list-get (& args) 0 0)
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-type-key)
+                  (tlci_core.tlci-host-callback-name type-key)
                   "1"
                   ops
                   ops-count)]
@@ -3464,8 +3351,7 @@
                 (embedded-native-computed-type-query-ops
                   params
                   (compiler_ast_types.ast-expr-list-get (& args) 0 0)
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-type-key)
+                  (tlci_core.tlci-host-callback-name type-key)
                   "2"
                   ops
                   ops-count)]
@@ -3477,8 +3363,7 @@
                 (embedded-native-computed-type-query-ops
                   params
                   (compiler_ast_types.ast-expr-list-get (& args) 0 0)
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-type-kind)
+                  (tlci_core.tlci-host-callback-name type-kind)
                   "0"
                   ops
                   ops-count)]
@@ -3490,8 +3375,7 @@
                 (embedded-native-computed-type-query-ops
                   params
                   (compiler_ast_types.ast-expr-list-get (& args) 0 0)
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-array-element-type)
+                  (tlci_core.tlci-host-callback-name array-element-type)
                   "0"
                   ops
                   ops-count)]
@@ -3503,8 +3387,7 @@
                 (embedded-native-computed-type-query-ops
                   params
                   (compiler_ast_types.ast-expr-list-get (& args) 0 0)
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-box-element-type)
+                  (tlci_core.tlci-host-callback-name box-element-type)
                   "0"
                   ops
                   ops-count)]
@@ -3516,8 +3399,7 @@
                 (embedded-native-computed-type-query-ops
                   params
                   (compiler_ast_types.ast-expr-list-get (& args) 0 0)
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-reference-element-type)
+                  (tlci_core.tlci-host-callback-name reference-element-type)
                   "0"
                   ops
                   ops-count)]
@@ -3529,8 +3411,7 @@
                 (embedded-native-computed-type-query-ops
                   params
                   (compiler_ast_types.ast-expr-list-get (& args) 0 0)
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-function-return-type)
+                  (tlci_core.tlci-host-callback-name function-return-type)
                   "0"
                   ops
                   ops-count)]
@@ -3542,8 +3423,7 @@
                 (embedded-native-computed-type-query-ops
                   params
                   (compiler_ast_types.ast-expr-list-get (& args) 0 0)
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-type-cleanup-function)
+                  (tlci_core.tlci-host-callback-name type-cleanup-function)
                   "0"
                   ops
                   ops-count)]
@@ -3556,8 +3436,7 @@
                   params
                   (compiler_ast_types.ast-expr-list-get (& args) 0 0)
                   (compiler_ast_types.ast-expr-list-get (& args) 1 0)
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-struct-field-name)
+                  (tlci_core.tlci-host-callback-name struct-field-name)
                   ops
                   ops-count)]
               [(and
@@ -3569,8 +3448,7 @@
                   params
                   (compiler_ast_types.ast-expr-list-get (& args) 0 0)
                   (compiler_ast_types.ast-expr-list-get (& args) 1 0)
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-enum-variant-name)
+                  (tlci_core.tlci-host-callback-name enum-variant-name)
                   ops
                   ops-count)]
               [(and
@@ -3582,8 +3460,7 @@
                   params
                   (compiler_ast_types.ast-expr-list-get (& args) 0 0)
                   (compiler_ast_types.ast-expr-list-get (& args) 1 0)
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-struct-field-type)
+                  (tlci_core.tlci-host-callback-name struct-field-type)
                   ops
                   ops-count)]
               [(and
@@ -3596,8 +3473,7 @@
                   (compiler_ast_types.ast-expr-list-get (& args) 0 0)
                   (compiler_ast_types.ast-expr-list-get (& args) 1 0)
                   (compiler_ast_types.ast-expr-list-get (& args) 2 0)
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-enum-variant-payload-type)
+                  (tlci_core.tlci-host-callback-name enum-variant-payload-type)
                   ops
                   ops-count)]
               [(and
@@ -3609,8 +3485,7 @@
                   params
                   (compiler_ast_types.ast-expr-list-get (& args) 0 0)
                   (compiler_ast_types.ast-expr-list-get (& args) 1 0)
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-tuple-element-type)
+                  (tlci_core.tlci-host-callback-name tuple-element-type)
                   ops
                   ops-count)]
               [(and
@@ -3669,8 +3544,7 @@
                   (compiler_ast_types.ast-expr-list-get (& args) 0 0)
                   (compiler_ast_types.ast-expr-list-get (& args) 1 0)
                   (compiler_ast_types.ast-expr-list-get (& args) 2 0)
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-expr-if)
+                  (tlci_core.tlci-host-callback-name expr-if)
                   ops
                   ops-count)]
               [(and
@@ -3683,8 +3557,7 @@
                   (compiler_ast_types.ast-expr-list-get (& args) 0 0)
                   (compiler_ast_types.ast-expr-list-get (& args) 1 0)
                   (compiler_ast_types.ast-expr-list-get (& args) 2 0)
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-expr-let-scope)
+                  (tlci_core.tlci-host-callback-name expr-let-scope)
                   ops
                   ops-count)]
               [(and
@@ -3697,8 +3570,7 @@
                   (compiler_ast_types.ast-expr-list-get (& args) 0 0)
                   (compiler_ast_types.ast-expr-list-get (& args) 1 0)
                   (compiler_ast_types.ast-expr-list-get (& args) 2 0)
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-expr-shared-let-scope)
+                  (tlci_core.tlci-host-callback-name expr-shared-let-scope)
                   ops
                   ops-count)]
               [(and
@@ -3711,8 +3583,7 @@
                   (compiler_ast_types.ast-expr-list-get (& args) 0 0)
                   (compiler_ast_types.ast-expr-list-get (& args) 1 0)
                   (compiler_ast_types.ast-expr-list-get (& args) 2 0)
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-expr-lambda1)
+                  (tlci_core.tlci-host-callback-name expr-lambda1)
                   ops
                   ops-count)]
               [(and
@@ -3724,8 +3595,7 @@
                   params
                   (compiler_ast_types.ast-expr-list-get (& args) 0 0)
                   (compiler_ast_types.ast-expr-list-get (& args) 1 0)
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-expr-set-var)
+                  (tlci_core.tlci-host-callback-name expr-set-var)
                   ops
                   ops-count)]
               [(and
@@ -3746,8 +3616,7 @@
                       (embedded-native-template-push!
                         ops
                         ops-count
-                        (tlci_core.tlci-host-callback-name-shared-view
-                          tlci_core.tlci-host-callback-name-expr-not)
+                        (tlci_core.tlci-host-callback-name expr-not)
                         "0"
                         "0"
                         "0")
@@ -3761,8 +3630,7 @@
                   params
                   (compiler_ast_types.ast-expr-list-get (& args) 0 0)
                   (compiler_ast_types.ast-expr-list-get (& args) 1 0)
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-expr-while)
+                  (tlci_core.tlci-host-callback-name expr-while)
                   ops
                   ops-count)]
               [(and
@@ -3780,8 +3648,7 @@
                       (embedded-native-template-push!
                         ops
                         ops-count
-                        (tlci_core.tlci-host-callback-name-shared-view
-                          tlci_core.tlci-host-callback-name-expr-bool-literal)
+                        (tlci_core.tlci-host-callback-name expr-bool-literal)
                         value
                         "0"
                         "0")
@@ -3795,8 +3662,7 @@
                   params
                   (compiler_ast_types.ast-expr-list-get (& args) 0 0)
                   (compiler_ast_types.ast-expr-list-get (& args) 1 0)
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-expr-call)
+                  (tlci_core.tlci-host-callback-name expr-call)
                   ops
                   ops-count)]
               [(and
@@ -3808,8 +3674,7 @@
                   params
                   (compiler_ast_types.ast-expr-list-get (& args) 0 0)
                   (compiler_ast_types.ast-expr-list-get (& args) 1 0)
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-expr-shared-call1)
+                  (tlci_core.tlci-host-callback-name expr-shared-call1)
                   ops
                   ops-count)]
               [(and
@@ -3821,8 +3686,7 @@
                   params
                   (compiler_ast_types.ast-expr-list-get (& args) 0 0)
                   (compiler_ast_types.ast-expr-list-get (& args) 1 0)
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-expr-array-ref)
+                  (tlci_core.tlci-host-callback-name expr-array-ref)
                   ops
                   ops-count)]
               [(and
@@ -3834,8 +3698,7 @@
                   params
                   (compiler_ast_types.ast-expr-list-get (& args) 0 0)
                   (compiler_ast_types.ast-expr-list-get (& args) 1 0)
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-expr-replace)
+                  (tlci_core.tlci-host-callback-name expr-replace)
                   ops
                   ops-count)]
               [(and
@@ -3847,8 +3710,7 @@
                   (embedded-native-template-push!
                     ops
                     ops-count
-                    (tlci_core.tlci-host-callback-name-shared-view
-                      tlci_core.tlci-host-callback-name-expr-list-empty)
+                    (tlci_core.tlci-host-callback-name expr-list-empty)
                     "0"
                     "0"
                     "0")
@@ -3862,8 +3724,7 @@
                   params
                   (compiler_ast_types.ast-expr-list-get (& args) 0 0)
                   (compiler_ast_types.ast-expr-list-get (& args) 1 0)
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-expr-list-cons)
+                  (tlci_core.tlci-host-callback-name expr-list-cons)
                   ops
                   ops-count)]
               [(and
@@ -3884,8 +3745,7 @@
                       (embedded-native-template-push!
                         ops
                         ops-count
-                        (tlci_core.tlci-host-callback-name-shared-view
-                          tlci_core.tlci-host-callback-name-expr-borrow)
+                        (tlci_core.tlci-host-callback-name expr-borrow)
                         "0"
                         "0"
                         "0")
@@ -3908,8 +3768,7 @@
                       (embedded-native-template-push!
                         ops
                         ops-count
-                        (tlci_core.tlci-host-callback-name-shared-view
-                          tlci_core.tlci-host-callback-name-expr-borrow)
+                        (tlci_core.tlci-host-callback-name expr-borrow)
                         "1"
                         "0"
                         "0")
@@ -3923,8 +3782,7 @@
                   params
                   (compiler_ast_types.ast-expr-list-get (& args) 0 0)
                   (compiler_ast_types.ast-expr-list-get (& args) 1 0)
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-expr-struct-get-from-value)
+                  (tlci_core.tlci-host-callback-name expr-struct-get-from-value)
                   ops
                   ops-count)]
               [(and
@@ -3937,8 +3795,7 @@
                   (compiler_ast_types.ast-expr-list-get (& args) 0 0)
                   (compiler_ast_types.ast-expr-list-get (& args) 1 0)
                   (compiler_ast_types.ast-expr-list-get (& args) 2 0)
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-expr-struct-set-from-value)
+                  (tlci_core.tlci-host-callback-name expr-struct-set-from-value)
                   ops
                   ops-count)]
               [(and
@@ -3950,8 +3807,7 @@
                   params
                   (compiler_ast_types.ast-expr-list-get (& args) 0 0)
                   (compiler_ast_types.ast-expr-list-get (& args) 1 0)
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-expr-tuple-ref)
+                  (tlci_core.tlci-host-callback-name expr-tuple-ref)
                   ops
                   ops-count)]
               [(and
@@ -3963,8 +3819,7 @@
                   params
                   (compiler_ast_types.ast-expr-list-get (& args) 0 0)
                   (compiler_ast_types.ast-expr-list-get (& args) 1 0)
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-pattern-list-bindings)
+                  (tlci_core.tlci-host-callback-name pattern-list-bindings)
                   ops
                   ops-count)]
               [(and
@@ -3985,8 +3840,7 @@
                       (embedded-native-template-push!
                         ops
                         ops-count
-                        (tlci_core.tlci-host-callback-name-shared-view
-                          tlci_core.tlci-host-callback-name-pattern-binding)
+                        (tlci_core.tlci-host-callback-name pattern-binding)
                         "0"
                         "0"
                         "0")
@@ -4000,8 +3854,7 @@
                   params
                   (compiler_ast_types.ast-expr-list-get (& args) 0 0)
                   (compiler_ast_types.ast-expr-list-get (& args) 1 0)
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-pattern-binding-typed)
+                  (tlci_core.tlci-host-callback-name pattern-binding-typed)
                   ops
                   ops-count)]
               [(and
@@ -4013,8 +3866,7 @@
                   (embedded-native-template-push!
                     ops
                     ops-count
-                    (tlci_core.tlci-host-callback-name-shared-view
-                      tlci_core.tlci-host-callback-name-pattern-list-empty)
+                    (tlci_core.tlci-host-callback-name pattern-list-empty)
                     "0"
                     "0"
                     "0")
@@ -4028,8 +3880,8 @@
                   params
                   (compiler_ast_types.ast-expr-list-get (& args) 0 0)
                   (compiler_ast_types.ast-expr-list-get (& args) 1 0)
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-pattern-list-cons-from-values)
+                  (tlci_core.tlci-host-callback-name
+                    pattern-list-cons-from-values)
                   ops
                   ops-count)]
               [(and
@@ -4041,8 +3893,7 @@
                   params
                   (compiler_ast_types.ast-expr-list-get (& args) 0 0)
                   (compiler_ast_types.ast-expr-list-get (& args) 1 0)
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-pattern-variant-from-value)
+                  (tlci_core.tlci-host-callback-name pattern-variant-from-value)
                   ops
                   ops-count)]
               [(and
@@ -4054,8 +3905,7 @@
                   (embedded-native-template-push!
                     ops
                     ops-count
-                    (tlci_core.tlci-host-callback-name-shared-view
-                      tlci_core.tlci-host-callback-name-pattern-wildcard)
+                    (tlci_core.tlci-host-callback-name pattern-wildcard)
                     "0"
                     "0"
                     "0")
@@ -4069,8 +3919,7 @@
                   params
                   (compiler_ast_types.ast-expr-list-get (& args) 0 0)
                   (compiler_ast_types.ast-expr-list-get (& args) 1 0)
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-match-arm)
+                  (tlci_core.tlci-host-callback-name match-arm)
                   ops
                   ops-count)]
               [(and
@@ -4082,8 +3931,7 @@
                   (embedded-native-template-push!
                     ops
                     ops-count
-                    (tlci_core.tlci-host-callback-name-shared-view
-                      tlci_core.tlci-host-callback-name-match-arm-list-empty)
+                    (tlci_core.tlci-host-callback-name match-arm-list-empty)
                     "0"
                     "0"
                     "0")
@@ -4097,8 +3945,8 @@
                   params
                   (compiler_ast_types.ast-expr-list-get (& args) 0 0)
                   (compiler_ast_types.ast-expr-list-get (& args) 1 0)
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-match-arm-list-cons-from-values)
+                  (tlci_core.tlci-host-callback-name
+                    match-arm-list-cons-from-values)
                   ops
                   ops-count)]
               [(and
@@ -4110,8 +3958,7 @@
                   params
                   (compiler_ast_types.ast-expr-list-get (& args) 0 0)
                   (compiler_ast_types.ast-expr-list-get (& args) 1 0)
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-expr-match)
+                  (tlci_core.tlci-host-callback-name expr-match)
                   ops
                   ops-count)]
               [(and
@@ -4130,8 +3977,7 @@
                         (embedded-native-template-push!
                           ops
                           ops-count
-                          (tlci_core.tlci-host-callback-name-shared-view
-                            tlci_core.tlci-host-callback-name-expr-int-literal)
+                          (tlci_core.tlci-host-callback-name expr-int-literal)
                           (string.int->string value)
                           "0"
                           "0")
@@ -4151,8 +3997,8 @@
                           (embedded-native-template-push!
                             ops
                             ops-count
-                            (tlci_core.tlci-host-callback-name-shared-view
-                              tlci_core.tlci-host-callback-name-expr-int-from-data)
+                            (tlci_core.tlci-host-callback-name
+                              expr-int-from-data)
                             text
                             "0"
                             "0")
@@ -4178,8 +4024,8 @@
                       (embedded-native-template-push!
                         ops
                         ops-count
-                        (tlci_core.tlci-host-callback-name-shared-view
-                          tlci_core.tlci-host-callback-name-expr-binding-clause-list-nth)
+                        (tlci_core.tlci-host-callback-name
+                          expr-binding-clause-list-nth)
                         (string.int->string list-param)
                         index-text
                         "0")
@@ -4205,16 +4051,16 @@
                       [(or
                           (string.eq head "comptime.expr-binding-clause-name")
                           (string.eq head "expr-binding-clause-name"))
-                        (tlci_core.tlci-host-callback-name-shared-view
-                          tlci_core.tlci-host-callback-name-expr-binding-clause-name)]
+                        (tlci_core.tlci-host-callback-name
+                          expr-binding-clause-name)]
                       [(or
                           (string.eq head "comptime.expr-binding-clause-type")
                           (string.eq head "expr-binding-clause-type"))
-                        (tlci_core.tlci-host-callback-name-shared-view
-                          tlci_core.tlci-host-callback-name-expr-binding-clause-type)]
+                        (tlci_core.tlci-host-callback-name
+                          expr-binding-clause-type)]
                       [else
-                        (tlci_core.tlci-host-callback-name-shared-view
-                          tlci_core.tlci-host-callback-name-expr-binding-clause-init)])]
+                        (tlci_core.tlci-host-callback-name
+                          expr-binding-clause-init)])]
                   (if (< opened 0)
                     -1
                     (begin
@@ -4249,8 +4095,7 @@
                       (embedded-native-template-push!
                         ops
                         ops-count
-                        (tlci_core.tlci-host-callback-name-shared-view
-                          tlci_core.tlci-host-callback-name-expr-list-type-nth)
+                        (tlci_core.tlci-host-callback-name expr-list-type-nth)
                         (string.int->string list-param)
                         index-text
                         "0")
@@ -4291,10 +4136,9 @@
                         ops
                         ops-count
                         (if (>= list-param 0)
-                          (tlci_core.tlci-host-callback-name-shared-view
-                            tlci_core.tlci-host-callback-name-expr-list-nth)
-                          (tlci_core.tlci-host-callback-name-shared-view
-                            tlci_core.tlci-host-callback-name-local-expr-list-nth))
+                          (tlci_core.tlci-host-callback-name expr-list-nth)
+                          (tlci_core.tlci-host-callback-name
+                            local-expr-list-nth))
                         (string.int->string
                           (if (>= list-param 0)
                             list-param
@@ -4614,8 +4458,7 @@
         (if (not (embedded-native-local-bool? slot))
           (embedded-native-data-value params node)
           (embedded-native-data-probe-value
-            (tlci_core.tlci-host-callback-name-shared-view
-              tlci_core.tlci-host-callback-name-local-bool-value)
+            (tlci_core.tlci-host-callback-name local-bool-value)
             (string.int->string slot)
             "0")))]
     [_ (embedded-native-data-value params node)]))
@@ -4812,8 +4655,7 @@
           (embedded-native-template-push!
             (&mut ops)
             (&mut ops-count)
-            (tlci_core.tlci-host-callback-name-shared-view
-              tlci_core.tlci-host-callback-name-string-value)
+            (tlci_core.tlci-host-callback-name string-value)
             (embedded-native-name-arg
               (embedded-native-escape-string
                 (owned_view.compiler-owned-shared-view literal)))
@@ -4828,8 +4670,7 @@
                   (embedded-native-ops-open-text ops (array-ref ops-count 0))
                   (embedded-native-data-probe-open
                     (owned_view.compiler-owned-shared-view result)
-                    (tlci_core.tlci-host-callback-name-shared-view
-                      tlci_core.tlci-host-callback-name-string-eq)
+                    (tlci_core.tlci-host-callback-name string-eq)
                     "0"
                     "0"))
                 result
@@ -4922,10 +4763,8 @@
                     (embedded-native-data-expr-probe-value
                       params
                       scrutinee
-                      (tlci_core.tlci-host-callback-name-shared-view
-                        tlci_core.tlci-host-callback-name-operand-expr-var?)
-                      (tlci_core.tlci-host-callback-name-shared-view
-                        tlci_core.tlci-host-callback-name-local-expr-var?))
+                      (tlci_core.tlci-host-callback-name operand-expr-var?)
+                      (tlci_core.tlci-host-callback-name local-expr-var?))
                     (embedded-native-data-value-none)))]
               [_ (embedded-native-data-value-none)])])]
       [_ (embedded-native-data-value-none)])))
@@ -4961,50 +4800,43 @@
                     (or
                       (string.eq head "comptime.struct-field-count")
                       (string.eq head "struct-field-count")))
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-struct-field-count)]
+                  (tlci_core.tlci-host-callback-name struct-field-count)]
                 [(and
                     (= argc 1)
                     (or
                       (string.eq head "comptime.enum-variant-count")
                       (string.eq head "enum-variant-count")))
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-enum-variant-count)]
+                  (tlci_core.tlci-host-callback-name enum-variant-count)]
                 [(and
                     (= argc 2)
                     (or
                       (string.eq head "comptime.enum-variant-payload-count")
                       (string.eq head "enum-variant-payload-count")))
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-enum-variant-payload-count)]
+                  (tlci_core.tlci-host-callback-name enum-variant-payload-count)]
                 [(and
                     (= argc 1)
                     (or
                       (string.eq head "comptime.tuple-element-count")
                       (string.eq head "tuple-element-count")))
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-tuple-element-count)]
+                  (tlci_core.tlci-host-callback-name tuple-element-count)]
                 [(and
                     (= argc 1)
                     (or
                       (string.eq head "comptime.array-length")
                       (string.eq head "array-length")))
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-array-length)]
+                  (tlci_core.tlci-host-callback-name array-length)]
                 [(and
                     (= argc 1)
                     (or
                       (string.eq head "comptime.function-param-count")
                       (string.eq head "function-param-count")))
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-function-param-count)]
+                  (tlci_core.tlci-host-callback-name function-param-count)]
                 [(and
                     (= argc 1)
                     (or
                       (string.eq head "comptime.type-cleanup-owning?")
                       (string.eq head "type-cleanup-owning?")))
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-type-cleanup-owning?)]
+                  (tlci_core.tlci-host-callback-name type-cleanup-owning?)]
                 [else ""])]
             (if (= (string.string-length op) 0)
               (embedded-native-data-value-none)
@@ -5074,8 +4906,8 @@
                   (if (< slot 0)
                     (embedded-native-data-value-none)
                     (embedded-native-data-probe-value
-                      (tlci_core.tlci-host-callback-name-shared-view
-                        tlci_core.tlci-host-callback-name-expr-binding-clause-has-type?)
+                      (tlci_core.tlci-host-callback-name
+                        expr-binding-clause-has-type?)
                       (string.int->string slot)
                       "0")))]
               [_ (embedded-native-data-value-none)])
@@ -5103,8 +4935,7 @@
                 params
                 (compiler_ast_types.ast-expr-list-get (& args) 0 0)
                 (compiler_ast_types.ast-expr-list-get (& args) 1 0)
-                (tlci_core.tlci-host-callback-name-shared-view
-                  tlci_core.tlci-host-callback-name-string-eq))
+                (tlci_core.tlci-host-callback-name string-eq))
               (embedded-native-data-value-none)))]
         [_ (embedded-native-data-value-none)])]
     [_ (embedded-native-data-value-none)]))
@@ -5127,8 +4958,7 @@
                 params
                 (compiler_ast_types.ast-expr-list-get (& args) 0 0)
                 (compiler_ast_types.ast-expr-list-get (& args) 1 0)
-                (tlci_core.tlci-host-callback-name-shared-view
-                  tlci_core.tlci-host-callback-name-module-value?))
+                (tlci_core.tlci-host-callback-name module-value?))
               (embedded-native-data-value-none)))]
         [_ (embedded-native-data-value-none)])]
     [_ (embedded-native-data-value-none)]))
@@ -5153,8 +4983,8 @@
                 params
                 (compiler_ast_types.ast-expr-list-get (& args) 0 0)
                 (compiler_ast_types.ast-expr-list-get (& args) 1 0)
-                (tlci_core.tlci-host-callback-name-shared-view
-                  tlci_core.tlci-host-callback-name-function-shared-borrow-returns-string?))
+                (tlci_core.tlci-host-callback-name
+                  function-shared-borrow-returns-string?))
               (embedded-native-data-value-none)))]
         [_ (embedded-native-data-value-none)])]
     [_ (embedded-native-data-value-none)]))
@@ -5169,10 +4999,8 @@
         node
         "comptime.expr-string?"
         "expr-string?"
-        (tlci_core.tlci-host-callback-name-shared-view
-          tlci_core.tlci-host-callback-name-operand-expr-string?)
-        (tlci_core.tlci-host-callback-name-shared-view
-          tlci_core.tlci-host-callback-name-local-expr-string?))]
+        (tlci_core.tlci-host-callback-name operand-expr-string?)
+        (tlci_core.tlci-host-callback-name local-expr-string?))]
     (if (not (string.eq expr-string.text ""))
       expr-string
       (let
@@ -5206,8 +5034,8 @@
                             node)]
                         (if (>= binding-operand 0)
                           (embedded-native-data-probe-value
-                            (tlci_core.tlci-host-callback-name-shared-view
-                              tlci_core.tlci-host-callback-name-expr-binding-clause-list-length)
+                            (tlci_core.tlci-host-callback-name
+                              expr-binding-clause-list-length)
                             (string.int->string binding-operand)
                             "0")
                           (let
@@ -5217,8 +5045,8 @@
                                 node)]
                             (if (>= operand 0)
                               (embedded-native-data-probe-value
-                                (tlci_core.tlci-host-callback-name-shared-view
-                                  tlci_core.tlci-host-callback-name-expr-list-length)
+                                (tlci_core.tlci-host-callback-name
+                                  expr-list-length)
                                 (string.int->string operand)
                                 "0")
                               (let
@@ -5228,8 +5056,8 @@
                                     node)]
                                 (if (>= slot 0)
                                   (embedded-native-data-probe-value
-                                    (tlci_core.tlci-host-callback-name-shared-view
-                                      tlci_core.tlci-host-callback-name-local-expr-list-length)
+                                    (tlci_core.tlci-host-callback-name
+                                      local-expr-list-length)
                                     (string.int->string slot)
                                     "0")
                                   (let
@@ -5274,8 +5102,7 @@
                     (string.eq head "__tl_string_length"))
                   (= argc 1))
                 (embedded-native-data-probe-value
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-local-string-length)
+                  (tlci_core.tlci-host-callback-name local-string-length)
                   (string.int->string slot)
                   "0")]
               [(and
@@ -5298,8 +5125,7 @@
                     (let
                       [probe : EmbeddedNativeDataValue
                         (embedded-native-data-probe-value
-                          (tlci_core.tlci-host-callback-name-shared-view
-                            tlci_core.tlci-host-callback-name-local-string-ref)
+                          (tlci_core.tlci-host-callback-name local-string-ref)
                           (string.int->string slot)
                           index.text)]
                       (EmbeddedNativeDataValue
@@ -5542,8 +5368,7 @@
           (embedded-native-template-push!
             ops
             ops-count
-            (tlci_core.tlci-host-callback-name-shared-view
-              tlci_core.tlci-host-callback-name-expr-for-owned)
+            (tlci_core.tlci-host-callback-name expr-for-owned)
             (string.int->string mode)
             "0"
             "0")
@@ -5597,8 +5422,7 @@
                     (embedded-native-template-push!
                       ops
                       ops-count
-                      (tlci_core.tlci-host-callback-name-shared-view
-                        tlci_core.tlci-host-callback-name-expr-resource-scope)
+                      (tlci_core.tlci-host-callback-name expr-resource-scope)
                       move-aware
                       "0"
                       "0")
@@ -5847,8 +5671,7 @@
                   (compiler_ast_types.ast-expr-list-get (& args) 0 0)
                   (embedded-native-arm-block-with-final
                     (embedded-native-single-op-ops
-                      (tlci_core.tlci-host-callback-name-shared-view
-                        tlci_core.tlci-host-callback-name-expr-var-from-value)
+                      (tlci_core.tlci-host-callback-name expr-var-from-value)
                       "0"
                       "0"
                       "0")
@@ -5875,8 +5698,7 @@
                   params
                   (compiler_ast_types.ast-expr-list-get (& args) 0 0)
                   (compiler_ast_types.ast-expr-list-get (& args) 1 0)
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-string-append)
+                  (tlci_core.tlci-host-callback-name string-append)
                   final)]
               ;; A control-flow value used as the tail of `expr-list-cons`
               ;; needs the caller's continuation: evaluate the head first,
@@ -5897,8 +5719,7 @@
                   params
                   (compiler_ast_types.ast-expr-list-get (& args) 0 0)
                   (compiler_ast_types.ast-expr-list-get (& args) 1 0)
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-expr-list-cons)
+                  (tlci_core.tlci-host-callback-name expr-list-cons)
                   final)]
               ;; `(comptime.expr-int data)`: reflection counts, local data, and
               ;; arithmetic over either flow into the literal builder without
@@ -6498,8 +6319,7 @@
                   " : i64\n"
                   (embedded-native-arm-block-with-final
                     (embedded-native-single-op-ops
-                      (tlci_core.tlci-host-callback-name-shared-view
-                        tlci_core.tlci-host-callback-name-operand-expr-var-name)
+                      (tlci_core.tlci-host-callback-name operand-expr-var-name)
                       (string.int->string param)
                       "0"
                       "0")
@@ -6565,10 +6385,8 @@
     scrutinee
     arms
     "Var"
-    (tlci_core.tlci-host-callback-name-shared-view
-      tlci_core.tlci-host-callback-name-local-expr-var?)
-    (tlci_core.tlci-host-callback-name-shared-view
-      tlci_core.tlci-host-callback-name-local-expr-var-name)
+    (tlci_core.tlci-host-callback-name local-expr-var?)
+    (tlci_core.tlci-host-callback-name local-expr-var-name)
     "__tlci_var_match"
     "vm"
     "vb"
@@ -6933,10 +6751,8 @@
                 scrutinee
                 (& arms)
                 "Begin"
-                (tlci_core.tlci-host-callback-name-shared-view
-                  tlci_core.tlci-host-callback-name-local-expr-begin?)
-                (tlci_core.tlci-host-callback-name-shared-view
-                  tlci_core.tlci-host-callback-name-local-expr-begin-items)
+                (tlci_core.tlci-host-callback-name local-expr-begin?)
+                (tlci_core.tlci-host-callback-name local-expr-begin-items)
                 "__tlci_payload_match"
                 "pm"
                 "pb"
@@ -7452,10 +7268,8 @@
                 (if (>= direct 0)
                   (EmbeddedNativeScrutineeProbe.ScrutineeProbe
                     (if kind?
-                      (tlci_core.tlci-host-callback-name-shared-view
-                        tlci_core.tlci-host-callback-name-operand-type-kind-eq)
-                      (tlci_core.tlci-host-callback-name-shared-view
-                        tlci_core.tlci-host-callback-name-operand-type-key-eq))
+                      (tlci_core.tlci-host-callback-name operand-type-kind-eq)
+                      (tlci_core.tlci-host-callback-name operand-type-key-eq))
                     direct)
                   ;; `(type-kind (comptime.expr-type e))` is the only nested
                   ;; operand form in the dispatch set; `type-key` never wraps
@@ -7468,8 +7282,8 @@
                       (if (< expr-index 0)
                         (EmbeddedNativeScrutineeProbe.NoScrutineeProbe)
                         (EmbeddedNativeScrutineeProbe.ScrutineeProbe
-                          (tlci_core.tlci-host-callback-name-shared-view
-                            tlci_core.tlci-host-callback-name-operand-expr-type-kind-eq)
+                          (tlci_core.tlci-host-callback-name
+                            operand-expr-type-kind-eq)
                           expr-index))))))))]
         [_ (EmbeddedNativeScrutineeProbe.NoScrutineeProbe)])]
     [_ (EmbeddedNativeScrutineeProbe.NoScrutineeProbe)]))
@@ -7758,8 +7572,7 @@
 "
               (embedded-native-arm-block-with-final
                 (embedded-native-single-op-ops
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-operand-expr-var-name)
+                  (tlci_core.tlci-host-callback-name operand-expr-var-name)
                   (string.int->string param)
                   "0"
                   "0")
@@ -7924,10 +7737,8 @@
     (let
       [op : String
         (if (= index 0)
-          (tlci_core.tlci-host-callback-name-shared-view
-            tlci_core.tlci-host-callback-name-operand-expr-call-callee)
-          (tlci_core.tlci-host-callback-name-shared-view
-            tlci_core.tlci-host-callback-name-operand-expr-call-args))]
+          (tlci_core.tlci-host-callback-name operand-expr-call-callee)
+          (tlci_core.tlci-host-callback-name operand-expr-call-args))]
       [head : String
         (match (compiler_ast_types.ast-pattern-list-get
           pat-args
@@ -8249,187 +8060,46 @@
           "walked"
           "diagnostic-capacity-exceeded")))))
 
+;; The extern text of every host callback the generated entries may call, one
+;; declaration per `tlci_core.tlci-host-callback-table` row, assembled once at
+;; compile time.
+(defmacro (embedded-native-host-extern-text [rows : Expr ...]) : String
+  (let
+    [prefix-length : i64
+      (string.string-length "compiler-comptime-host-callback-")]
+    [count : i64 (expr-list-length rows)]
+    [index : i64 0]
+    [text : String ""]
+    (begin
+      (while (< index count)
+        (begin
+          (match (expr-list-nth rows index)
+            [(comptime.Expr.Var row)
+              (let
+                [name : String
+                  (comptime.string-slice
+                    row
+                    prefix-length
+                    (- (string.string-length row) prefix-length))]
+                (set!
+                  text
+                  (comptime.string-append
+                    text
+                    (comptime.string-append
+                      (comptime.string-append "(extern comptime-host-" name)
+                      (comptime.string-append
+                        (comptime.string-append
+                          " (:symbol \"_tl_comptime_host_"
+                          name)
+                        "\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n")))))]
+            [_
+              (comptime-error
+                "embedded-native-host-extern-text: rows must be bare names")])
+          (set! index (+ index 1))))
+      (comptime.expr-string text))))
+
 (define (embedded-native-host-externs) : String
-  (str_cat.str-cat
-    "(extern comptime-host-fuel-check (:symbol \"_tl_comptime_host_fuel-check\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-diagnostic (:symbol \"_tl_comptime_host_diagnostic\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-scratch-alloc (:symbol \"_tl_comptime_host_scratch-alloc\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-scratch-reset (:symbol \"_tl_comptime_host_scratch-reset\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-var (:symbol \"_tl_comptime_host_expr-var\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-module-name (:symbol \"_tl_comptime_host_module-name\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-module-hook (:symbol \"_tl_comptime_host_module-hook\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-module-value? (:symbol \"_tl_comptime_host_module-value?\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-module-value-type (:symbol \"_tl_comptime_host_module-value-type\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-module-value-expr (:symbol \"_tl_comptime_host_module-value-expr\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-function-shared-borrow-returns-string? (:symbol \"_tl_comptime_host_function-shared-borrow-returns-string?\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-list-empty (:symbol \"_tl_comptime_host_expr-list-empty\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-list-cons (:symbol \"_tl_comptime_host_expr-list-cons\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-list-append (:symbol \"_tl_comptime_host_expr-list-append\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-push-operand (:symbol \"_tl_comptime_host_push-operand\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-call (:symbol \"_tl_comptime_host_expr-call\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-shared-call1 (:symbol \"_tl_comptime_host_expr-shared-call1\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-span (:symbol \"_tl_comptime_host_expr-span\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-span-unquoted (:symbol \"_tl_comptime_host_expr-span-unquoted\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-tuple (:symbol \"_tl_comptime_host_expr-tuple\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-array (:symbol \"_tl_comptime_host_expr-array\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-array-ref (:symbol \"_tl_comptime_host_expr-array-ref\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-array-take (:symbol \"_tl_comptime_host_expr-array-take\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-replace (:symbol \"_tl_comptime_host_expr-replace\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-array-push (:symbol \"_tl_comptime_host_expr-array-push\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-make-array (:symbol \"_tl_comptime_host_expr-make-array\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-operand-type-kind-eq (:symbol \"_tl_comptime_host_operand-type-kind-eq\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-operand-expr-type-kind-eq (:symbol \"_tl_comptime_host_operand-expr-type-kind-eq\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-operand-type-key-eq (:symbol \"_tl_comptime_host_operand-type-key-eq\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-type (:symbol \"_tl_comptime_host_expr-type\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-type-expr (:symbol \"_tl_comptime_host_type-expr\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-cast (:symbol \"_tl_comptime_host_expr-cast\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-ann (:symbol \"_tl_comptime_host_expr-ann\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-init (:symbol \"_tl_comptime_host_expr-init\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-bool-literal (:symbol \"_tl_comptime_host_expr-bool-literal\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-int-literal (:symbol \"_tl_comptime_host_expr-int-literal\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-string (:symbol \"_tl_comptime_host_expr-string\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-splice (:symbol \"_tl_comptime_host_expr-splice\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-if (:symbol \"_tl_comptime_host_expr-if\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-list-length (:symbol \"_tl_comptime_host_expr-list-length\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-binding-clause-list-length (:symbol \"_tl_comptime_host_expr-binding-clause-list-length\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-syntax-name-fresh (:symbol \"_tl_comptime_host_syntax-name-fresh\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-begin-unit (:symbol \"_tl_comptime_host_expr-begin-unit\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-list-nth (:symbol \"_tl_comptime_host_expr-list-nth\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-list-type-nth (:symbol \"_tl_comptime_host_expr-list-type-nth\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-binding-clause-list-nth (:symbol \"_tl_comptime_host_expr-binding-clause-list-nth\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-binding-clause-name (:symbol \"_tl_comptime_host_expr-binding-clause-name\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-binding-clause-has-type? (:symbol \"_tl_comptime_host_expr-binding-clause-has-type?\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-binding-clause-type (:symbol \"_tl_comptime_host_expr-binding-clause-type\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-binding-clause-init (:symbol \"_tl_comptime_host_expr-binding-clause-init\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-begin (:symbol \"_tl_comptime_host_expr-begin\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-binary-op (:symbol \"_tl_comptime_host_expr-binary-op\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-unary-op (:symbol \"_tl_comptime_host_expr-unary-op\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-char-literal (:symbol \"_tl_comptime_host_expr-char-literal\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-unit-literal (:symbol \"_tl_comptime_host_expr-unit-literal\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-local-set (:symbol \"_tl_comptime_host_local-set\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-local-get (:symbol \"_tl_comptime_host_local-get\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-var-from-value (:symbol \"_tl_comptime_host_expr-var-from-value\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-bracket-clause (:symbol \"_tl_comptime_host_expr-bracket-clause\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-borrow (:symbol \"_tl_comptime_host_expr-borrow\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-type-key (:symbol \"_tl_comptime_host_type-key\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-struct-field-name (:symbol \"_tl_comptime_host_struct-field-name\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-enum-variant-name (:symbol \"_tl_comptime_host_enum-variant-name\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-struct-field-count (:symbol \"_tl_comptime_host_struct-field-count\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-enum-variant-count (:symbol \"_tl_comptime_host_enum-variant-count\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-enum-variant-payload-count (:symbol \"_tl_comptime_host_enum-variant-payload-count\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-tuple-element-count (:symbol \"_tl_comptime_host_tuple-element-count\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-struct-field-type (:symbol \"_tl_comptime_host_struct-field-type\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-enum-variant-payload-type (:symbol \"_tl_comptime_host_enum-variant-payload-type\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-tuple-element-type (:symbol \"_tl_comptime_host_tuple-element-type\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-string-append (:symbol \"_tl_comptime_host_string-append\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-pattern-wildcard (:symbol \"_tl_comptime_host_pattern-wildcard\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-pattern-binding (:symbol \"_tl_comptime_host_pattern-binding\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-pattern-binding-typed (:symbol \"_tl_comptime_host_pattern-binding-typed\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-pattern-variant (:symbol \"_tl_comptime_host_pattern-variant\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-pattern-list-empty (:symbol \"_tl_comptime_host_pattern-list-empty\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-pattern-list-cons (:symbol \"_tl_comptime_host_pattern-list-cons\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-pattern-list-cons-from-values (:symbol \"_tl_comptime_host_pattern-list-cons-from-values\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-pattern-list-bindings (:symbol \"_tl_comptime_host_pattern-list-bindings\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-pattern-variant-from-value (:symbol \"_tl_comptime_host_pattern-variant-from-value\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-match-arm-list-cons-from-values (:symbol \"_tl_comptime_host_match-arm-list-cons-from-values\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-match-arm (:symbol \"_tl_comptime_host_match-arm\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-match-arm-list-empty (:symbol \"_tl_comptime_host_match-arm-list-empty\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-match-arm-list-cons (:symbol \"_tl_comptime_host_match-arm-list-cons\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-match (:symbol \"_tl_comptime_host_expr-match\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-string-value (:symbol \"_tl_comptime_host_string-value\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-diagnostic-from-value (:symbol \"_tl_comptime_host_diagnostic-from-value\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-pattern-var (:symbol \"_tl_comptime_host_pattern-var\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-string-eq (:symbol \"_tl_comptime_host_string-eq\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-tuple-ref (:symbol \"_tl_comptime_host_expr-tuple-ref\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-struct-get (:symbol \"_tl_comptime_host_expr-struct-get\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-struct-get-from-value (:symbol \"_tl_comptime_host_expr-struct-get-from-value\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-struct-set-from-value (:symbol \"_tl_comptime_host_expr-struct-set-from-value\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-set-from-place (:symbol \"_tl_comptime_host_expr-set-from-place\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-array-set (:symbol \"_tl_comptime_host_expr-array-set\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-struct-set (:symbol \"_tl_comptime_host_expr-struct-set\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-return (:symbol \"_tl_comptime_host_expr-return\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-box (:symbol \"_tl_comptime_host_expr-box\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-box-get (:symbol \"_tl_comptime_host_expr-box-get\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-box-take (:symbol \"_tl_comptime_host_expr-box-take\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-ptr-read (:symbol \"_tl_comptime_host_expr-ptr-read\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-ptr-addr-of (:symbol \"_tl_comptime_host_expr-ptr-addr-of\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-ptr-to-int (:symbol \"_tl_comptime_host_expr-ptr-to-int\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-int-to-ptr (:symbol \"_tl_comptime_host_expr-int-to-ptr\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-string-data (:symbol \"_tl_comptime_host_expr-string-data\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-array-data (:symbol \"_tl_comptime_host_expr-array-data\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-string-from-bytes (:symbol \"_tl_comptime_host_expr-string-from-bytes\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-ptr-write (:symbol \"_tl_comptime_host_expr-ptr-write\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-ptr-offset (:symbol \"_tl_comptime_host_expr-ptr-offset\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-unsafe (:symbol \"_tl_comptime_host_expr-unsafe\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-float-literal (:symbol \"_tl_comptime_host_expr-float-literal\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-let-binding (:symbol \"_tl_comptime_host_let-binding\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-let-binding-list-empty (:symbol \"_tl_comptime_host_let-binding-list-empty\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-let-binding-list-cons (:symbol \"_tl_comptime_host_let-binding-list-cons\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-let (:symbol \"_tl_comptime_host_expr-let\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-lambda (:symbol \"_tl_comptime_host_expr-lambda\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-lambda1 (:symbol \"_tl_comptime_host_expr-lambda1\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-type-var (:symbol \"_tl_comptime_host_type-var\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-type-var-args (:symbol \"_tl_comptime_host_type-var-args\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-type-scalar (:symbol \"_tl_comptime_host_type-scalar\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-array-element-type (:symbol \"_tl_comptime_host_array-element-type\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-box-element-type (:symbol \"_tl_comptime_host_box-element-type\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-reference-element-type (:symbol \"_tl_comptime_host_reference-element-type\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-function-param-count (:symbol \"_tl_comptime_host_function-param-count\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-function-return-type (:symbol \"_tl_comptime_host_function-return-type\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-type-cleanup-owning? (:symbol \"_tl_comptime_host_type-cleanup-owning?\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-type-cleanup-function (:symbol \"_tl_comptime_host_type-cleanup-function\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-array-length (:symbol \"_tl_comptime_host_array-length\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-array-dynamic? (:symbol \"_tl_comptime_host_array-dynamic?\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-operand-expr-call? (:symbol \"_tl_comptime_host_operand-expr-call?\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-operand-expr-call-callee (:symbol \"_tl_comptime_host_operand-expr-call-callee\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-operand-expr-call-args (:symbol \"_tl_comptime_host_operand-expr-call-args\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-ptr-cast (:symbol \"_tl_comptime_host_expr-ptr-cast\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-type-ptr (:symbol \"_tl_comptime_host_type-ptr\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-type-box (:symbol \"_tl_comptime_host_type-box\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-type-dyn-array (:symbol \"_tl_comptime_host_type-dyn-array\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-type-array (:symbol \"_tl_comptime_host_type-array\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-type-slice (:symbol \"_tl_comptime_host_type-slice\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-type-ref (:symbol \"_tl_comptime_host_type-ref\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-type-tuple (:symbol \"_tl_comptime_host_type-tuple\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-operand-expr-string-value (:symbol \"_tl_comptime_host_operand-expr-string-value\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-string-value (:symbol \"_tl_comptime_host_expr-string-value\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-operand-expr-string? (:symbol \"_tl_comptime_host_operand-expr-string?\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-operand-expr-int? (:symbol \"_tl_comptime_host_operand-expr-int?\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-operand-expr-int-value (:symbol \"_tl_comptime_host_operand-expr-int-value\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-local-expr-list-length (:symbol \"_tl_comptime_host_local-expr-list-length\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-local-expr-list-nth (:symbol \"_tl_comptime_host_local-expr-list-nth\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-local-expr-string? (:symbol \"_tl_comptime_host_local-expr-string?\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-local-expr-int? (:symbol \"_tl_comptime_host_local-expr-int?\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-local-expr-int-value (:symbol \"_tl_comptime_host_local-expr-int-value\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-local-expr-var? (:symbol \"_tl_comptime_host_local-expr-var?\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-local-expr-var-name (:symbol \"_tl_comptime_host_local-expr-var-name\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-local-expr-begin? (:symbol \"_tl_comptime_host_local-expr-begin?\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-local-expr-begin-items (:symbol \"_tl_comptime_host_local-expr-begin-items\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-local-bool-value (:symbol \"_tl_comptime_host_local-bool-value\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-value-bool (:symbol \"_tl_comptime_host_value-bool\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-value-i64 (:symbol \"_tl_comptime_host_value-i64\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-value-unit (:symbol \"_tl_comptime_host_value-unit\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-value-select (:symbol \"_tl_comptime_host_value-select\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-int->string (:symbol \"_tl_comptime_host_int->string\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-operand-expr-var? (:symbol \"_tl_comptime_host_operand-expr-var?\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-operand-expr-var-name (:symbol \"_tl_comptime_host_operand-expr-var-name\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-local-string-length (:symbol \"_tl_comptime_host_local-string-length\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-local-string-ref (:symbol \"_tl_comptime_host_local-string-ref\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-local-string-slice (:symbol \"_tl_comptime_host_local-string-slice\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-string-from-value (:symbol \"_tl_comptime_host_expr-string-from-value\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-int-from-data (:symbol \"_tl_comptime_host_expr-int-from-data\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-set-var (:symbol \"_tl_comptime_host_expr-set-var\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-resource-scope (:symbol \"_tl_comptime_host_expr-resource-scope\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-let-scope (:symbol \"_tl_comptime_host_expr-let-scope\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-shared-let-scope (:symbol \"_tl_comptime_host_expr-shared-let-scope\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-for-owned (:symbol \"_tl_comptime_host_expr-for-owned\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-not (:symbol \"_tl_comptime_host_expr-not\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-while (:symbol \"_tl_comptime_host_expr-while\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-let-binding-typed (:symbol \"_tl_comptime_host_let-binding-typed\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-type-kind (:symbol \"_tl_comptime_host_type-kind\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-list-fold-if (:symbol \"_tl_comptime_host_expr-list-fold-if\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-expr-clause-list-fold-if (:symbol \"_tl_comptime_host_expr-clause-list-fold-if\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"
-    "(extern comptime-host-commit-result (:symbol \"_tl_comptime_host_commit-result\") : (CFunc non-null (-> i64 i64 i64 i64 i64 i64)))\n"))
+  (tlci_core.tlci-host-callback-table embedded-native-host-extern-text))
 
 (define (embedded-native-source
   [names : (__tl_dyn-array String)]

@@ -255,19 +255,20 @@ if [ -n "$LATE_MISSING" ]; then
     exit 1
 fi
 
-# The post-prune literal rewrite runs after the ordinary function pipeline.
-# Its trace and dump must expose that later boundary, including unchanged IR.
+# The post-prune total-switch rewrite runs after the ordinary function
+# pipeline. Its trace and dump must expose that later boundary, including
+# unchanged IR.
 "$COMPILER" compile "$SOURCE" \
-    --dump-ir after-uniform_phi \
+    --dump-ir after-total_switch \
     --trace-passes \
     --verify-ir \
     --opt-level 2 \
-    -o "$WORKDIR/optimizer_fold.after-uniform_phi.ir" \
+    -o "$WORKDIR/optimizer_fold.after-total_switch.ir" \
     --stdlib-root "$ROOT/stdlib" \
     --stdlib-root "$ROOT/src" \
-    >"$WORKDIR/uniform-phi.stdout" 2>"$WORKDIR/uniform-phi.stderr"
-grep -F "optimizer-pass|main|uniform_phi|blocks=" "$WORKDIR/uniform-phi.stderr" >/dev/null
-grep -F "after uniform_phi @main" "$WORKDIR/optimizer_fold.after-uniform_phi.ir" >/dev/null
+    >"$WORKDIR/total-switch.stdout" 2>"$WORKDIR/total-switch.stderr"
+grep -F "optimizer-pass|main|total_switch|blocks=" "$WORKDIR/total-switch.stderr" >/dev/null
+grep -F "after total_switch @main" "$WORKDIR/optimizer_fold.after-total_switch.ir" >/dev/null
 
 "$COMPILER" compile "$SOURCE" \
     --verify-ir \

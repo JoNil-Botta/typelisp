@@ -2125,6 +2125,29 @@ if [ "$NL_HOST_OS" = windows ]; then
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_type_pool typecheck 12 1024 24 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
+    # Inspect the retained reader before its final exact-prefix compaction;
+    # measuring only after compaction would hide stranded growth arrays.
+    if ! awk -F'|' '
+        $1 == "compile-profile" && $2 == "reader.retained.rows" {
+            if (state != 0 || $3 <= 0) bad = 1
+            rows = $3; state = 1
+        }
+        $1 == "compile-profile" && $2 == "reader.retained.capacity" {
+            if (state != 1 || $3 < rows) bad = 1
+            capacity = $3; state = 2
+        }
+        $1 == "compile-profile" && $2 == "reader.retained.row_bytes" {
+            if (state != 2 || $3 <= 0) bad = 1
+            width = $3; state = 3
+        }
+        $1 == "compile-profile" && $2 == "reader.retained.arena_bytes" {
+            if (state != 3 || $3 < capacity * width || $3 * 4 > rows * width * 5) bad = 1
+            snapshots++; state = 0
+        }
+        END { exit (bad || state != 0 || snapshots == 0) }
+    ' "$SELFHOST_STDERR"; then
+        fail "retained reader storage exceeds 1.25 times its live row bytes or has incomplete accounting"
+    fi
     # Each ownership boundary must expose used nodes, logical capacity, and
     # physical segmentation for both pools. Values vary with the source graph;
     # the exact selfhost segment invariants above catch sizing regressions.

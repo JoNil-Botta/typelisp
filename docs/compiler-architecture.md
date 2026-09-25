@@ -120,9 +120,16 @@ own owner so growing one cannot repeatedly allocate the other's capacity. The
 reader scratch profile row sums both owners. Token and reader literal payloads
 remain in their source/interner owners. Growth therefore preserves records and
 indices without retaining all previous capacities. The separate spanned reader
-pool also owns declaration/member origins and must follow its existing retained
-origin handoff instead. Whole-load scan release still empties all scan scratch
-owners, while reusable sessions retain only their current capacities.
+pool also owns declaration/member origins. Its load handoff transfers the live
+prefix into an exclusive owner without changing row ids. Subsequent node growth
+moves both rows and live builders to a replacement owner with bounded slack,
+then destroys the old owner. Reset revokes exclusive ownership before another
+load session can share the reader arena; pre-handoff growth must preserve that
+shared arena. The final handoff compacts the prefix again after lowering. The
+compile-profile verifier checks retained arena bytes before that compaction,
+and `src/tests/scan_storage_growth.tl` covers relocation, current-owner retirement,
+failed reads and shared-session reuse. Whole-load scan release still empties
+all scan scratch owners, while reusable sessions retain their current capacity.
 
 The ordinary, PIC and owned package driver paths share checked-pool ownership through
 `compiler-driver-state-begin-checked-lower!` and

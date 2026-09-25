@@ -11,6 +11,197 @@
 (import stdlib.io)
 (cfg compile-profile (import stdlib.profile))
 
+(define (retained-reader-row? [index : i64]) : bool
+  (match (reader.sp-node-get index)
+    [(reader.SpannedSexpr.Int value text span)
+      (and
+        (= value index)
+        (string.eq text "retained")
+        (= span.start-line (+ index 1)))]
+    [_ false]))
+
+(define (retained-reader-growth-ok? [pool-current? : bool]) : bool
+  (begin
+    (reader.sp-node-pool-reset!)
+    (reader.sp-node-pool-compact-retained!)
+    (let
+      [index : i64 0]
+      [caller : i64 (arena.tl_arena_current)]
+      (begin
+        (while (< index 32768)
+          (begin
+            (reader.sp-node-push
+              (reader.SpannedSexpr.Int
+                index
+                "retained"
+                (token.SourceSpan (+ index 1) 2 3 4)))
+            (set! index (+ index 1))))
+        (reader.sp-node-pool-compact-retained!)
+        (let
+          [builder : reader.SpannedSexprBuilder
+            (reader.spanned-sexpr-builder-new)]
+          [span : token.SourceSpan (token.SourceSpan 9 8 7 6)]
+          [old-owner : i64 (reader.sp-node-pool-base-arena-handle-value)]
+          [_old-bytes : i64
+            (allocation_profile.compiler-allocation-profile-arena-bump-bytes
+              old-owner)]
+          [_before : i64 (cfg compile-profile (profile.alloc-live) 0)]
+          [valid : bool true]
+          (begin
+            (reader.spanned-sexpr-builder-push
+              builder
+              (reader.SpannedSexpr.Float "1.5" span))
+            (reader.spanned-sexpr-builder-push
+              builder
+              (reader.SpannedSexpr.List 4 2 span))
+            (if pool-current?
+              (unsafe
+                ;; lint-allow: raw-arena-op
+                (arena.tl_arena_set old-owner))
+              unit)
+            (reader.sp-node-push
+              (reader.SpannedSexpr.Int
+                32768
+                "retained"
+                (token.SourceSpan 32769 2 3 4)))
+            (let
+              [new-owner : i64 (reader.sp-node-pool-base-arena-handle-value)]
+              [new-bytes : i64
+                (allocation_profile.compiler-allocation-profile-arena-bump-bytes
+                  new-owner)]
+              [_after : i64 (cfg compile-profile (profile.alloc-live) 0)]
+              (begin
+                (set!
+                  valid
+                  (and
+                    (!= old-owner new-owner)
+                    (<= (* new-bytes 4) (* 32769 56 5))
+                    (=
+                      (arena.tl_arena_current)
+                      (if pool-current?
+                        new-owner
+                        caller))
+                    (cfg
+                      compile-profile
+                      (= (- _after _before) (- new-bytes _old-bytes))
+                      true)))
+                (unsafe
+                  ;; lint-allow: raw-arena-op
+                  (arena.tl_arena_set caller))))
+            (set! index 0)
+            (while (< index 32769)
+              (begin
+                (set! valid (and valid (retained-reader-row? index)))
+                (set! index (+ index 1))))
+            (match (reader.spanned-sexpr-list-from-builder builder span)
+              [(reader.SpannedSexpr.List start length _)
+                (set!
+                  valid
+                  (and
+                    valid
+                    (= start 32769)
+                    (= length 2)
+                    (match (reader.sp-node-get start)
+                      [(reader.SpannedSexpr.Float text saved)
+                        (and (string.eq text "1.5") (= saved.start-line 9))]
+                      [_ false])
+                    (match (reader.sp-node-get (+ start 1))
+                      [(reader.SpannedSexpr.List child count _)
+                        (and
+                          (= child 4)
+                          (= count 2)
+                          (retained-reader-row? child))]
+                      [_ false])))]
+              [_ (set! valid false)])
+            (reader.sp-node-pool-reset!)
+            (reader.sp-node-pool-compact-retained!)
+            (and valid (= (reader.sp-node-pool-base-arena-handle-value) 0))))))))
+
+(test
+  retained-reader-growth-preserves-rows-and-builders
+  (unless
+    (and (retained-reader-growth-ok? false) (retained-reader-growth-ok? true))
+    (io.panic
+      "retained reader: growth changed rows, builders, owner accounting or active arena")))
+
+(test
+  retained-reader-reset-restores-shared-growth
+  (begin
+    (reader.sp-node-pool-reset!)
+    (reader.sp-node-pool-compact-retained!)
+    (reader.sp-node-push
+      (reader.SpannedSexpr.Int 0 "" (token.SourceSpan 1 1 1 1)))
+    (reader.sp-node-pool-compact-retained!)
+    (reader.sp-node-pool-reset!)
+    (let
+      [owner : i64 (reader.sp-node-pool-base-arena-handle-value)]
+      [shared : String
+        (in-arena (arena.Arena owner) (string.copy "shared reader storage"))]
+      [index : i64 0]
+      (begin
+        (while (< index 2049)
+          (begin
+            (reader.sp-node-push
+              (reader.SpannedSexpr.Int index "" (token.SourceSpan 1 1 1 1)))
+            (set! index (+ index 1))))
+        (unless
+          (and
+            (= owner (reader.sp-node-pool-base-arena-handle-value))
+            (string.eq shared "shared reader storage"))
+          (io.panic
+            "retained reader: reset allowed growth to destroy shared storage"))))
+    (reader.sp-node-pool-reset!)
+    (reader.sp-node-pool-compact-retained!)))
+
+(test
+  retained-reader-error-and-empty-reuse
+  (begin
+    (reader.sp-node-pool-reset!)
+    (reader.sp-node-pool-compact-retained!)
+    (reader.sp-node-push
+      (reader.SpannedSexpr.Int 0 "retained" (token.SourceSpan 1 1 1 1)))
+    (reader.sp-node-pool-compact-retained!)
+    (match (lex.spanned-result "(7 (8) \"text\"")
+      [(lex.ResultSpannedTokens.Ok tokens)
+        (match (reader.spanned-result tokens)
+          [(reader.ResultSpannedSexpr.Err _)
+            (unless
+              (and (= (reader.sp-node-pool-len) 1) (retained-reader-row? 0))
+              (io.panic "retained reader: failed read lost the retained prefix"))]
+          [_ (io.panic "retained reader: accepted an unterminated list")])]
+      [_
+        (io.panic "retained reader: lexer rejected the malformed reader input")])
+    (match (lex.spanned-result "(9 10)")
+      [(lex.ResultSpannedTokens.Ok tokens)
+        (match (reader.spanned-result tokens)
+          [(reader.ResultSpannedSexpr.Ok form)
+            (match form
+              [(reader.SpannedSexpr.List start length _)
+                (unless
+                  (and (= start 1) (= length 2))
+                  (io.panic "retained reader: failed read left a live builder"))]
+              [_
+                (io.panic "retained reader: expected a list after failed read")])]
+          [_ (io.panic "retained reader: valid reuse failed")])]
+      [_ (io.panic "retained reader: valid reuse failed to lex")])
+    (reader.sp-node-pool-reset!)
+    (let
+      [caller : i64 (arena.tl_arena_current)]
+      (begin
+        (unsafe
+          ;; lint-allow: raw-arena-op
+          (arena.tl_arena_set (reader.sp-node-pool-base-arena-handle-value)))
+        (reader.sp-node-pool-compact-retained!)
+        (unless
+          (and
+            (= (arena.tl_arena_current) 0)
+            (= (reader.sp-node-pool-base-arena-handle-value) 0))
+          (io.panic
+            "retained reader: empty compaction left a retired owner active"))
+        (unsafe
+          ;; lint-allow: raw-arena-op
+          (arena.tl_arena_set caller))))))
+
 (cfg
   compile-profile
   (test

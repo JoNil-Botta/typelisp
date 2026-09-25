@@ -161,6 +161,13 @@ to enable this counter-based guard; ordinary tests still cover retained storage.
 The compiler-check smoke's loader suite covers cached imports and session
 resets, while the compile-profile gate verifies scratch owners are zero at
 load handoff and retains the separate reader-origin lifetime contract.
+The same storage tests cover post-handoff spanned rows and live builders,
+retirement while their owner is current, reset back to shared growth, and
+malformed/empty reuse. With `--cfg compile-profile`, the growth test reconciles
+the process live-byte delta with the replacement owner's bytes, so leaving the
+old owner allocated fails even if its rows remain readable. The selfhost profile
+probe bounds retained-reader storage before final compaction to 1.25 times the
+live row payload.
 
 Literal classification and contextual numeric checking must read expression
 children from the caller's pool. The `tc-literal-expression-pool-isolation`

@@ -756,6 +756,7 @@ replace_global_noncopy_reject|check-fail|tests/safety/replace_global_noncopy_rej
 replace_cleanup_owner_reject|check-fail|tests/safety/replace_cleanup_owner_reject.tl|-|replace! cannot replace an active cleanup owner
 replace_cleanup_owner_element_reject|check-fail|tests/safety/replace_cleanup_owner_element_reject.tl|-|replace! cannot replace an active cleanup owner
 replace_cleanup_owner_slot_reject|check-fail|tests/safety/replace_cleanup_owner_slot_reject.tl|-|replace! cannot replace an active cleanup owner
+replace_cleanup_owner_nested_reject|check-fail|tests/safety/replace_cleanup_owner_nested_reject.tl|-|replace! cannot replace an active cleanup owner
 replace_spmd_reject|check-fail|tests/safety/replace_spmd_reject.tl|-|replace! is not supported in SPMD
 replace_type_mismatch_reject|check-fail|tests/safety/replace_type_mismatch_reject.tl|-|replace! replacement type mismatch
 replace_lifetime_store_reject|check-fail|tests/safety/replace_lifetime_store_reject.tl|-|source lifetime `short-life` does not outlive required lifetime `long-life`

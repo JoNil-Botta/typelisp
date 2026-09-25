@@ -201,7 +201,7 @@ write_differential_rows branch_phi_switch tests/integration/enum_match.tl
 write_differential_rows tail_call tests/integration/tail_call_stack_args.tl
 write_differential_rows register_group tests/integration/register_group_try.tl
 write_differential_rows pointer_copy tests/integration/ptr_aggregate_copy.tl
-write_differential_rows bounds_check tests/integration/fixed_array_take.tl
+write_differential_rows bounds_check tests/integration/replace_fixed_array_elements.tl
 write_differential_rows string_match tests/integration/string_match.tl
 write_differential_rows u64_float_casts tests/integration/u64_float_casts.tl
 
@@ -256,7 +256,7 @@ write_fallback_differential_expected branch_phi_switch tests/integration/enum_ma
 write_fallback_differential_expected tail_call tests/integration/tail_call_stack_args.tl
 write_fallback_differential_expected register_group tests/integration/register_group_try.tl
 write_fallback_differential_expected pointer_copy tests/integration/ptr_aggregate_copy.tl
-write_fallback_differential_expected bounds_check tests/integration/fixed_array_take.tl
+write_fallback_differential_expected bounds_check tests/integration/replace_fixed_array_elements.tl
 write_fallback_differential_expected string_match tests/integration/string_match.tl
 write_fallback_differential_expected u64_float_casts tests/integration/u64_float_casts.tl
 cmp "$DIFFERENTIAL_EXPECTED" "$DIFFERENTIAL_PLAN" ||

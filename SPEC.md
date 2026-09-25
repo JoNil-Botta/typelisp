@@ -3056,8 +3056,8 @@ resolves to its declaration, however the name is spelled (alias-qualified,
 full canonical path, selected item with or without `as`, or `.*`), and even
 inside `unsafe`. The rule covers `set!` of the global or of any field, tuple
 element, array element, or `deref` projection reached from it (§5.10),
-`replace!` (§5.10.1), `array-take!`, and `&mut` borrows (§3.10), including one
-passed to a helper. The diagnostic names the global and its defining module.
+`replace!` (§5.10.1), and `&mut` borrows (§3.10), including one passed to a
+helper. The diagnostic names the global and its defining module.
 Reading the global and taking shared borrows remain allowed, and a local or
 parameter that shadows an imported name is an ordinary local place. A module
 that intends others to change its state exposes a function that performs the
@@ -3983,15 +3983,6 @@ move-only values and as copies for copyable values:
   is a by-value position and follows the same structural copy/move rule.
 - Fixed-array element stores. `(set! (array-ref place index) value)` follows
   the current-state matrix below.
-- `array-take!` fixed-array elements. `(array-take! items index)` transfers the
-  old element value to its result and immediately writes `(init : T)` back to
-  the same slot, so the source place remains fully initialized and is not
-  recorded as moved. For a copyable `T` the result is an ordinary copy before
-  the same reset. The receiver must be an owned fixed-array storage place or a
-  mutable reference to one, `T` must be `init`-eligible, and active or explicit
-  cleanup ownership is rejected. The ordinary non-Copy global-source rule also
-  applies: resetting a global slot does not permit moving its old owner out,
-  and a global that another module declares cannot be reset at all (§4.4.2).
 - `replace!` initialized places. `(replace! place replacement)` atomically with
   respect to source initialization transfers the old value to the expression
   result and installs the caller-supplied replacement. Copyable old values are
@@ -4036,9 +4027,9 @@ are accepted. Their elements follow the same uniform by-value rule:
 Without a Drop system, overwriting another live move-only element may leave its
 old arena-owned storage unreachable until the arena is reclaimed; overwriting a
 cleanup owner must not silently lose its cleanup obligation. Fixed-array
-destructuring is available through
-`(array p1 ... pn)`, #6235 supplied the checked `array-take!` operation
-described above, and #6241 owns general caller-supplied replacement.
+destructuring is available through `(array p1 ... pn)`, and
+`(replace! (array-ref items index) replacement)` (§5.10.1) moves one element
+out by installing a caller-supplied replacement.
 
 **Concrete closure calls.** Lambda literals and their direct local bindings
 retain the checker-only shared, mutable, or consuming capability described in
@@ -4671,13 +4662,6 @@ analysis.
 Cleanup-owning aggregates are not initialized by `init`: constructing one
 would also commit to cleanup execution and failure behavior, so they require
 explicit constructors.
-
-The fixed-array `(array-take! items index)` operation uses these same
-eligibility and construction rules for its immediate replacement value. It
-rejects an element type for which `(init : T)` is unavailable rather than
-leaving a moved or uninitialized slot.
-`replace!` does not require `init` eligibility because its caller supplies a
-fully typed replacement; unlike `array-take!`, it never synthesizes one.
 
 ```lisp test=ignore name=init-expression-examples reason="illustrates source surface"
 (defstruct Point (x i64) (y i64))
@@ -6723,7 +6707,6 @@ borrowed Slice reference forms described in section 3.2:
 | `array-length` | `(Array T N) → i64` / `(& r (Array T N)) → i64` / `(&mut r (Array T N)) → i64` / `(__tl_dyn-array T) → i64` (private) / `(& r (Slice T)) → i64` / `(&mut r (Slice T)) → i64` | Array-only alias for `length`; fixed arrays return constant `N` |
 | `array-ref` | `(Array T N) i64 → T` / `(& r (Array T N)) i64 → T` / `(&mut r (Array T N)) i64 → T` / `(& r (Slice T)) i64 → T` / `(&mut r (Slice T)) i64 → T` | Bounds-checked read/place projection through an owned fixed array, a supported reference, or a borrowed Slice receiver |
 | `(set! (array-ref place index) value)` | `place i64 T → unit` | Bounds-checked write through an owned fixed-array place, mutable fixed-array reference, or mutable Slice receiver; shared receivers are rejected |
-| `array-take!` | `(Array T N) i64 → T` / `(&mut r (Array T N)) i64 → T` | Bounds-check, return the old fixed-array element, and immediately replace its slot with `(init : T)`; requires an owned storage place or mutable reference and an `init`-eligible, non-cleanup-owning `T` |
 | `replace!` | `place T → T` | Evaluate and reserve initialized writable storage once, return its old value by copy/move, and commit a caller-supplied `T` without an uninitialized interval |
 | `slice-view` | `source i64 i64 → (& r (Slice T))` | Checked, allocation-free view over a fixed array, private dynamic buffer, suitable reference, or borrowed Slice; source and indices evaluate once left-to-right |
 | `slice-mut-view` | `source i64 i64 → (&mut r (Slice T))` | Checked, allocation-free exclusive view over a mutable fixed/dynamic array, suitable mutable reference, or mutable Slice; no shared-to-mutable strengthening |
@@ -6749,7 +6732,7 @@ Owned `String` arguments place an auto-borrow at typed call sites. Per the
 section 3.11 contract, non-consuming text inputs take `(& lifetime str)`
 while allocating operations return owned `String`.
 
-**Bounds checks and traps.** `array-ref` reads/place writes, `array-take!`, indexed
+**Bounds checks and traps.** `array-ref` reads/place writes, indexed
 `replace!`, the imported
 `string-ref`, and `substring` / `string-slice` / `substring-view` perform
 runtime bounds checks. An out-of-bounds access calls the `tl_oob_abort`
@@ -7110,9 +7093,7 @@ runtime contracts:
   `(Tuple bool T)` and updates the separate dynamic-array liveness bitmap. The
   cleanup-owning consuming-vector specialization keeps both operands behind an
   opaque raw iterator-state pointer, so safe source cannot call `array-ref` on
-  a false-liveness `T` slot or forge the bitmap/cursor used by later steps. The
-  public `array-take!` spelling accepts exactly two operands and never exposes
-  that storage protocol.
+  a false-liveness `T` slot or forge the bitmap/cursor used by later steps.
 
 ### 6.2 Runtime functions (emitted by the backend)
 

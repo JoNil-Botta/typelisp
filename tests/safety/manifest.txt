@@ -19,9 +19,6 @@ fixed_make_array_negative_count_reject|check-fail|tests/safety/fixed_make_array_
 array_bounds_trap|run-trap|tests/safety/array_bounds_trap.tl|134|array index out of bounds: index=1 length=1
 dead_frame_abort_only_trap|run-trap|tests/safety/dead_frame_abort_only_trap.tl|134|array index out of bounds: index=7 length=4
 array_set_bounds_trap|run-trap|tests/safety/array_set_bounds_trap.tl|134|array index out of bounds: index=1 length=1
-fixed_array_take_bounds_trap|run-trap|tests/safety/fixed_array_take_bounds_trap.tl|134|array index out of bounds: index=1 length=1
-fixed_array_take_negative_bounds_trap|run-trap|tests/safety/fixed_array_take_negative_bounds_trap.tl|134|array index out of bounds: index=-1 length=1
-fixed_array_take_huge_bounds_trap|run-trap|tests/safety/fixed_array_take_huge_bounds_trap.tl|134|array index out of bounds: index=9223372036854775807 length=1
 string_bounds_trap|run-trap|tests/safety/string_bounds_trap.tl|134|array index out of bounds: index=1 length=1
 make_array_negative_trap|run-trap|tests/safety/make_array_negative_trap.tl|134|tl: array index out of bounds
 byte_buf_bytes_bounds_trap|run-trap|tests/safety/byte_buf_bytes_bounds_trap.tl|134|tl: array index out of bounds
@@ -726,37 +723,34 @@ global_move_try_result_reject|check-fail|tests/safety/global_move_try_result_rej
 global_move_scoped_result_reject|check-fail|tests/safety/global_move_scoped_result_reject.tl|-|cannot move out of global `global-text`
 global_move_result_shadowing_ok|check-ok|tests/safety/global_move_result_shadowing_ok.tl|-|-
 
-# Public fixed-array take requires mutable storage, an init-eligible element,
-# the two-operand spelling, and ordinary move-source ownership rules.
-fixed_array_take_shared_ref_reject|check-fail|tests/safety/fixed_array_take_shared_ref_reject.tl|-|requires owned fixed-array storage or mutable reference
-fixed_array_take_temporary_reject|check-fail|tests/safety/fixed_array_take_temporary_reject.tl|-|receiver must be a fixed-array storage place
-fixed_array_take_dynamic_reject|check-fail|tests/safety/fixed_array_take_dynamic_reject.tl|-|requires fixed array type
-fixed_array_take_cleanup_reject|check-fail|tests/safety/fixed_array_take_cleanup_reject.tl|-|element cannot be reinitialized
-fixed_array_take_active_cleanup_owner_reject|check-fail|tests/safety/fixed_array_take_active_cleanup_owner_reject.tl|-|cannot take from an active cleanup owner
-fixed_array_take_borrow_live_reject|check-fail|tests/safety/fixed_array_take_borrow_live_reject.tl|-|cannot assign to borrowed place `items`
-fixed_array_take_legacy_arity_reject|check-fail|tests/safety/fixed_array_take_legacy_arity_reject.tl|-|expects exactly two operands
-fixed_array_take_global_noncopy_reject|check-fail|tests/safety/fixed_array_take_global_noncopy_reject.tl|-|cannot move out of global `global-items`
+# The removed public array-take! reports its replace! migration.
+array_take_removed_reject|check-fail|tests/safety/array_take_removed_reject.tl|-|parse: array-take! was removed; use (replace! (array-ref array index) replacement)
 
 # Move-safe replace! requires initialized writable storage, reserves its place
 # across RHS evaluation, preserves lifetime/ownership facts, and checks indexes
 # before running the replacement expression.
 replace_reference_lifetime_ok|check-ok|tests/safety/replace_reference_lifetime_ok.tl|-|-
 replace_shared_ref_reject|check-fail|tests/safety/replace_shared_ref_reject.tl|-|set! array element requires mutable array access
+replace_fixed_array_shared_ref_reject|check-fail|tests/safety/replace_fixed_array_shared_ref_reject.tl|-|set! array element requires mutable array access
 replace_raw_pointer_reject|check-fail|tests/safety/replace_raw_pointer_reject.tl|-|replace! target must be a storage place
 replace_temporary_reject|check-fail|tests/safety/replace_temporary_reject.tl|-|replace! target must be a mutable place
+replace_fixed_array_temporary_reject|check-fail|tests/safety/replace_fixed_array_temporary_reject.tl|-|replace! target must be a storage place
 replace_moved_reject|check-fail|tests/safety/replace_moved_reject.tl|-|use of moved value `text`
 replace_partial_root_reject|check-fail|tests/safety/replace_partial_root_reject.tl|-|use of moved value `owners`
 replace_moved_field_reject|check-fail|tests/safety/replace_moved_field_reject.tl|-|use of moved value `owners.left`
 replace_borrow_live_reject|check-fail|tests/safety/replace_borrow_live_reject.tl|-|cannot mutably borrow borrowed place `value`
+replace_fixed_array_borrow_live_reject|check-fail|tests/safety/replace_fixed_array_borrow_live_reject.tl|-|cannot mutably borrow borrowed place `items`
 replace_self_move_reject|check-fail|tests/safety/replace_self_move_reject.tl|-|cannot move borrowed place `text`
 replace_whole_subpath_overlap_reject|check-fail|tests/safety/replace_whole_subpath_overlap_reject.tl|-|cannot move borrowed place `owners.left`
 replace_dynamic_overlap_reject|check-fail|tests/safety/replace_dynamic_overlap_reject.tl|-|cannot move owner-consuming value out of aggregate path
 replace_rhs_mutation_reject|check-fail|tests/safety/replace_rhs_mutation_reject.tl|-|cannot mutably borrow borrowed place `value`
 replace_global_noncopy_reject|check-fail|tests/safety/replace_global_noncopy_reject.tl|-|cannot move out of global `global-text`
+replace_fixed_array_global_noncopy_reject|check-fail|tests/safety/replace_fixed_array_global_noncopy_reject.tl|-|cannot move out of global `global-items`
 replace_cleanup_owner_reject|check-fail|tests/safety/replace_cleanup_owner_reject.tl|-|replace! cannot replace an active cleanup owner
 replace_cleanup_owner_element_reject|check-fail|tests/safety/replace_cleanup_owner_element_reject.tl|-|replace! cannot replace an active cleanup owner
 replace_cleanup_owner_slot_reject|check-fail|tests/safety/replace_cleanup_owner_slot_reject.tl|-|replace! cannot replace an active cleanup owner
 replace_cleanup_owner_nested_reject|check-fail|tests/safety/replace_cleanup_owner_nested_reject.tl|-|replace! cannot replace an active cleanup owner
+replace_fixed_array_cleanup_reject|check-fail|tests/safety/replace_fixed_array_cleanup_reject.tl|-|replace! does not support cleanup-owning places
 replace_spmd_reject|check-fail|tests/safety/replace_spmd_reject.tl|-|replace! is not supported in SPMD
 replace_type_mismatch_reject|check-fail|tests/safety/replace_type_mismatch_reject.tl|-|replace! replacement type mismatch
 replace_lifetime_store_reject|check-fail|tests/safety/replace_lifetime_store_reject.tl|-|source lifetime `short-life` does not outlive required lifetime `long-life`
@@ -868,7 +862,7 @@ foreign_global_tuple_set_reject|check-fail|tests/safety/foreign_global_tuple_set
 foreign_global_element_set_reject|check-fail|tests/safety/foreign_global_element_set_reject.tl|-|typecheck: cannot assign to an element of global `slots` owned by module `foreign_global_dep`
 foreign_global_deref_set_reject|check-fail|tests/safety/foreign_global_deref_set_reject.tl|-|typecheck: cannot assign through global `boxed` owned by module `foreign_global_dep`
 foreign_global_replace_reject|check-fail|tests/safety/foreign_global_replace_reject.tl|-|typecheck: cannot replace a place in global `counter` owned by module `foreign_global_dep`
-foreign_global_array_take_reject|check-fail|tests/safety/foreign_global_array_take_reject.tl|-|typecheck: cannot take an element of global `slots` owned by module `foreign_global_dep`
+foreign_global_replace_element_reject|check-fail|tests/safety/foreign_global_replace_element_reject.tl|-|typecheck: cannot replace a place in global `slots` owned by module `foreign_global_dep`
 foreign_global_mut_borrow_reject|check-fail|tests/safety/foreign_global_mut_borrow_reject.tl|-|typecheck: cannot mutably borrow global `counter` owned by module `foreign_global_dep`
 foreign_global_mut_borrow_field_reject|check-fail|tests/safety/foreign_global_mut_borrow_field_reject.tl|-|typecheck: cannot mutably borrow global `pair` owned by module `foreign_global_dep`
 foreign_global_mut_borrow_element_reject|check-fail|tests/safety/foreign_global_mut_borrow_element_reject.tl|-|typecheck: cannot mutably borrow global `slots` owned by module `foreign_global_dep`

@@ -474,11 +474,6 @@
           (codec.surface-ast-write-i64! out target)
           (codec.surface-ast-write-i64! out live)
           (codec.surface-ast-write-i64! out index))]
-      [(ast.AstExpr.FixedArrayTake target index)
-        (begin
-          (codec.surface-ast-write-i64! out 79)
-          (codec.surface-ast-write-i64! out target)
-          (codec.surface-ast-write-i64! out index))]
       [(ast.AstExpr.Replace place replacement)
         (begin
           (codec.surface-ast-write-i64! out 84)
@@ -1132,10 +1127,6 @@
           (codec.surface-ast-read-i64! reader))]
       [(= tag 77) (ast.AstExpr.Xgetbv (codec.surface-ast-read-i64! reader))]
       [(= tag 78) (ast.AstExpr.Syscall (surface-ast-read-expr-list! reader))]
-      [(= tag 79)
-        (ast.AstExpr.FixedArrayTake
-          (codec.surface-ast-read-i64! reader)
-          (codec.surface-ast-read-i64! reader))]
       [(= tag 80)
         (ast.AstExpr.ForOwnedState
           (ast.ast-for-owned-state-payload

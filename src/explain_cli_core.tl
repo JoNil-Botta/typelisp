@@ -467,8 +467,8 @@ Description:
     Every module can read another module's globals, but only the module that
     declares a global may write it. Assigning to the global or to a field,
     tuple element, array element or deref projection reached from it, using
-    replace! or array-take! on it, or taking &mut of it from another module
-    is rejected under every import spelling, even inside unsafe. Code that a
+    replace! on it, or taking &mut of it from another module is rejected
+    under every import spelling, even inside unsafe. Code that a
     macro expands into a module is checked as that module's code.
 
 Minimal failing example:

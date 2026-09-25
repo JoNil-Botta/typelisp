@@ -2496,9 +2496,6 @@
 (define (compiler-parse-tag-expr-array-take) : i64
   303)
 
-(define (compiler-parse-tag-expr-fixed-array-take) : i64
-  305)
-
 (define (compiler-parse-tag-expr-replace) : i64
   314)
 
@@ -2536,6 +2533,9 @@
 
 (define (compiler-parse-tag-expr-retired-array-data) : i64
   317)
+
+(define (compiler-parse-tag-expr-retired-array-take) : i64
+  305)
 
 ;; Legacy nodes remain available while parsing quoted seed templates. They are
 ;; not accepted as ordinary source expressions at depth zero.
@@ -3294,7 +3294,7 @@
         (compiler-parse-dispatch-bind
           out
           "array-take!"
-          (compiler-parse-tag-expr-fixed-array-take)))
+          (compiler-parse-tag-expr-retired-array-take)))
       (set!
         out
         (compiler-parse-dispatch-bind
@@ -7429,39 +7429,6 @@
         [_ (ResultAstExpr.Err "parse: malformed __tl_array-take!")])]
     [_ (ResultAstExpr.Err "parse: malformed __tl_array-take!")]))
 
-(define (parse-ast-fixed-array-take
-  [dispatch : sym_i64_env.SymI64Env]
-  [pools : ast.AstNodePoolContext]
-  [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-view rest)
-    [(reader.SpannedSexprView.Cons array index-tail _)
-      (match (reader.spanned-sexpr-view index-tail)
-        [(reader.SpannedSexprView.Cons index end _)
-          (match (reader.spanned-sexpr-view end)
-            [(reader.SpannedSexprView.Nil _)
-              (match (parse-ast-expr-with-pools
-                (compiler-parse-place-shared-view dispatch)
-                (compiler-parse-place-shared-view pools)
-                array)
-                [(ResultAstExpr.Ok parsed-array)
-                  (match (parse-ast-expr-with-pools
-                    dispatch
-                    (compiler-parse-place-shared-view pools)
-                    index)
-                    [(ResultAstExpr.Ok parsed-index)
-                      (ResultAstExpr.Ok
-                        (ast.ast-expr-fixed-array-take-with-pools
-                          pools
-                          parsed-array
-                          parsed-index))]
-                    [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
-                [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
-            [_
-              (ResultAstExpr.Err
-                "parse: array-take! expects exactly two operands; compatibility storage must use private __tl_array-take!")])]
-        [_ (ResultAstExpr.Err "parse: malformed array-take!")])]
-    [_ (ResultAstExpr.Err "parse: malformed array-take!")]))
-
 (define (parse-ast-for-owned-state
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
@@ -9346,8 +9313,6 @@
       (parse-ast-array-push dispatch pools rest)]
     [(= tag (compiler-parse-tag-expr-array-take))
       (parse-ast-private-array-take dispatch pools rest)]
-    [(= tag (compiler-parse-tag-expr-fixed-array-take))
-      (parse-ast-fixed-array-take dispatch pools rest)]
     [(= tag (compiler-parse-tag-expr-for-owned-state))
       (parse-ast-for-owned-state dispatch pools rest)]
     [(= tag (compiler-parse-tag-expr-for-owned-step))
@@ -9405,6 +9370,9 @@
     [(= tag (compiler-parse-tag-expr-retired-array-data))
       (ResultAstExpr.Err
         "parse: array-data was removed; raw dynamic-buffer storage is compiler-private")]
+    [(= tag (compiler-parse-tag-expr-retired-array-take))
+      (ResultAstExpr.Err
+        "parse: array-take! was removed; use (replace! (array-ref array index) replacement)")]
     [(= tag (compiler-parse-tag-expr-struct-get))
       (parse-ast-struct-get dispatch pools rest)]
     [(= tag (compiler-parse-tag-expr-comptime))
@@ -14945,15 +14913,17 @@
 (define (compiler-parse-array-take-ok?) : bool
   (and
     (compiler-parse-ok?
-      "(define (main [items : (Array i64 1)]) : i64 (array-take! items 0))")
-    (compiler-parse-ok?
       "(define (main [items : (__tl_dyn-array i64)] [live : (__tl_dyn-array bool)]) : (Tuple bool i64) (__tl_array-take! items live 0))")
     ;; Keep the neighboring parser tag distinct: a previous collision caused
-    ;; every dereference to dispatch to the two-operand array-take parser.
+    ;; every dereference to dispatch to an array-take parser.
     (compiler-parse-ok? "(define (main [item : (Box i64)]) : i64 (deref item))")
+    ;; Every public arity reports the single migration diagnostic.
+    (compiler-parse-error-ok?
+      "(define (main [items : (Array i64 1)]) : i64 (array-take! items 0))"
+      "parse: array-take! was removed; use (replace! (array-ref array index) replacement)")
     (compiler-parse-error-ok?
       "(define (main [items : (Array i64 1)] [live : (Array bool 1)]) : i64 (array-take! items live 0))"
-      "parse: array-take! expects exactly two operands; compatibility storage must use private __tl_array-take!")))
+      "parse: array-take! was removed; use (replace! (array-ref array index) replacement)")))
 
 (define (compiler-parse-replace-ok?) : bool
   (and

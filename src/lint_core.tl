@@ -934,7 +934,6 @@
     [(ast.AstExpr.Set _ _) true]
     [(ast.AstExpr.ArraySet _ _ _) true]
     [(ast.AstExpr.ArrayTake _ _ _) true]
-    [(ast.AstExpr.FixedArrayTake _ _) true]
     [(ast.AstExpr.Replace _ _) true]
     [(ast.AstExpr.ArrayPush _ _) true]
     [(ast.AstExpr.StructSet _ _ _) true]
@@ -980,7 +979,6 @@
     [(ast.AstExpr.Set _ _) true]
     [(ast.AstExpr.ArraySet _ _ _) true]
     [(ast.AstExpr.ArrayTake _ _ _) true]
-    [(ast.AstExpr.FixedArrayTake _ _) true]
     [(ast.AstExpr.Replace _ _) true]
     [(ast.AstExpr.ArrayPush _ _) true]
     [(ast.AstExpr.StructSet _ _ _) true]
@@ -2789,14 +2787,6 @@
           (lint-expr-uses-import?
             (ast.ast-node-get index)
             (owned_view.compiler-owned-shared-view import-ref))))]
-    [(ast.AstExpr.FixedArrayTake array index)
-      (if (lint-expr-uses-import?
-        (ast.ast-node-get array)
-        (owned_view.compiler-owned-shared-view import-ref))
-        true
-        (lint-expr-uses-import?
-          (ast.ast-node-get index)
-          (owned_view.compiler-owned-shared-view import-ref)))]
     [(ast.AstExpr.Replace place replacement)
       (if (lint-expr-uses-import?
         (ast.ast-node-get place)
@@ -4533,8 +4523,6 @@
       (lint-unsafe-scan-three-nodes array index value scope)]
     [(ast.AstExpr.ArrayTake array live index)
       (lint-unsafe-scan-three-nodes array live index scope)]
-    [(ast.AstExpr.FixedArrayTake array index)
-      (lint-unsafe-scan-two-nodes array index scope)]
     [(ast.AstExpr.Replace place replacement)
       (lint-unsafe-scan-two-nodes place replacement scope)]
     [(ast.AstExpr.ArrayPush array value)
@@ -5600,11 +5588,6 @@
           (ast.ast-node-get live)
           (lint-copy-on-update-expr (ast.ast-node-get array) state span)
           span)
-        span)]
-    [(ast.AstExpr.FixedArrayTake array index)
-      (lint-copy-on-update-expr
-        (ast.ast-node-get index)
-        (lint-copy-on-update-expr (ast.ast-node-get array) state span)
         span)]
     [(ast.AstExpr.Replace place replacement)
       (lint-copy-on-update-expr
@@ -6837,21 +6820,6 @@
             (lint-single-element-array-expr
               (ast.ast-node-get live)
               (lint-single-element-array-expr (ast.ast-node-get array) state)))))]
-    [(ast.AstExpr.FixedArrayTake array index)
-      (let
-        [name : String
-          (lint-single-element-array-var-name (ast.ast-node-get array))]
-        (if (and
-          (lint-single-element-array-candidate-tracked?
-            (owned_view.compiler-owned-shared-view state.candidates)
-            (owned_view.compiler-owned-shared-view name))
-          (lint-single-element-array-int-literal? (ast.ast-node-get index) 0))
-          (lint-single-element-array-note-use
-            (owned_view.compiler-owned-shared-view state)
-            name)
-          (lint-single-element-array-expr
-            (ast.ast-node-get index)
-            (lint-single-element-array-expr (ast.ast-node-get array) state))))]
     [(ast.AstExpr.Replace place replacement)
       (lint-single-element-array-expr
         (ast.ast-node-get replacement)
@@ -7404,10 +7372,6 @@
         (lint-unused-assignment-note-reads
           (ast.ast-node-get live)
           (lint-unused-assignment-note-reads (ast.ast-node-get array) state)))]
-    [(ast.AstExpr.FixedArrayTake array index)
-      (lint-unused-assignment-note-reads
-        (ast.ast-node-get index)
-        (lint-unused-assignment-note-reads (ast.ast-node-get array) state))]
     [(ast.AstExpr.Replace place replacement)
       (lint-unused-assignment-note-reads
         (ast.ast-node-get replacement)
@@ -10002,10 +9966,6 @@
         (lint-unused-variable-quasiquote-expr
           (ast.ast-node-get live)
           (lint-unused-variable-quasiquote-expr (ast.ast-node-get array) state)))]
-    [(ast.AstExpr.FixedArrayTake array index)
-      (lint-unused-variable-quasiquote-expr
-        (ast.ast-node-get index)
-        (lint-unused-variable-quasiquote-expr (ast.ast-node-get array) state))]
     [(ast.AstExpr.Replace place replacement)
       (lint-unused-variable-quasiquote-expr
         (ast.ast-node-get replacement)
@@ -10617,11 +10577,6 @@
           (ast.ast-node-get live)
           (lint-unused-variable-expr (ast.ast-node-get array) state span)
           span)
-        span)]
-    [(ast.AstExpr.FixedArrayTake array index)
-      (lint-unused-variable-expr
-        (ast.ast-node-get index)
-        (lint-unused-variable-expr (ast.ast-node-get array) state span)
         span)]
     [(ast.AstExpr.Replace place replacement)
       (lint-unused-variable-expr
@@ -12338,11 +12293,6 @@
           index
           threshold
           (lint-walk-expr live threshold (lint-walk-expr array threshold acc))))]
-    [(ast.AstExpr.FixedArrayTake array-box index-box)
-      (let
-        [array : ast.AstExpr (ast.ast-node-get array-box)]
-        [index : ast.AstExpr (ast.ast-node-get index-box)]
-        (lint-walk-expr index threshold (lint-walk-expr array threshold acc)))]
     [(ast.AstExpr.Replace place-box replacement-box)
       (let
         [place : ast.AstExpr (ast.ast-node-get place-box)]

@@ -4136,18 +4136,6 @@
           scope
           env
           index))]
-    [(ast.AstExpr.FixedArrayTake target index)
-      (begin
-        (compiler-semantic-walk-quasiquote-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          target)
-        (compiler-semantic-walk-quasiquote-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          index))]
     [(ast.AstExpr.ArrayPush target value)
       (begin
         (compiler-semantic-walk-quasiquote-node!
@@ -6315,18 +6303,6 @@
           scope
           env
           live)
-        (compiler-semantic-walk-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          index))]
-    [(ast.AstExpr.FixedArrayTake target index)
-      (begin
-        (compiler-semantic-walk-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          target)
         (compiler-semantic-walk-node!
           (owned_view.compiler-owned-shared-view state)
           scope

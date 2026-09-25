@@ -2257,14 +2257,6 @@
             session
             live
             (tltest-reach-mark-expr session array names))))]
-    [(ast.AstExpr.FixedArrayTake array-box index-box)
-      (let
-        [array : ast.AstExpr (ast.ast-node-get array-box)]
-        [index : ast.AstExpr (ast.ast-node-get index-box)]
-        (tltest-reach-mark-expr
-          session
-          index
-          (tltest-reach-mark-expr session array names)))]
     [(ast.AstExpr.Replace place-box replacement-box)
       (let
         [place : ast.AstExpr (ast.ast-node-get place-box)]

@@ -115,234 +115,115 @@
             (ResultRunCliConfig.Err
               "run: source file arguments must appear before run options; use -- before package runtime args")])])))
 
-(define (run-cli-parse-options
-  [idx : i64]
-  [count : i64]
-  [source : String]
-  [target : backend.CompilerBackendTarget]
-  [mode : backend.CompilerBackendMode]
-  [stdlib-roots : cli_svec.Vec]
-  [cfgs : build_run_core.SourceToolCfgNames]
-  [runtime-args : process.ProcessStringList]
-  [opt-level : i64]
-  [link-inputs : build_run_core.SourceToolLinkInputs]) : ResultRunCliConfig
-  (if (>= idx count)
-    (ResultRunCliConfig.Ok
-      (RunCliConfig.Config
-        source
-        target
-        mode
-        stdlib-roots
-        cfgs
-        runtime-args
-        opt-level
-        link-inputs))
-    (let
-      [current : String (io.arg idx)]
-      (match (cli_option.cli-common-option-parse
-        (string.copy (& current))
-        idx
-        count
-        cli_option.cli-common-option-all)
-        [(cli_option.CliCommonOption.Missing kind)
-          (ResultRunCliConfig.Err
-            (cli_option.cli-common-option-missing-message "run" kind))]
-        [(cli_option.CliCommonOption.Value kind parsed-value next-idx)
-          (let
-            [value : String (string.copy (& parsed-value))]
-            (match kind
-              [(cli_option.CliCommonOptionKind.StdlibRoot)
-                (run-cli-parse-options
-                  next-idx
-                  count
-                  source
-                  target
-                  mode
-                  (let
-                    [next-roots : cli_svec.Vec stdlib-roots]
-                    (begin
-                      (cli_svec.push-ref! (&mut next-roots) value)
-                      next-roots))
-                  cfgs
-                  runtime-args
-                  opt-level
-                  link-inputs)]
-              [(cli_option.CliCommonOptionKind.Cfg)
-                (run-cli-parse-options
-                  next-idx
-                  count
-                  source
-                  target
-                  mode
-                  stdlib-roots
-                  (build_run_core.source-tool-cfg-names-add cfgs value)
-                  runtime-args
-                  opt-level
-                  link-inputs)]
-              [(cli_option.CliCommonOptionKind.Target)
-                (match (build_run_core.source-tool-target
-                  (string.copy (& value)))
-                  [(build_run_core.ResultSourceToolTarget.Ok parsed-target)
-                    (run-cli-parse-options
-                      next-idx
-                      count
-                      source
-                      parsed-target
-                      mode
-                      stdlib-roots
-                      cfgs
-                      runtime-args
-                      opt-level
-                      link-inputs)]
-                  [(build_run_core.ResultSourceToolTarget.Err _)
-                    (ResultRunCliConfig.Err (run-cli-unknown-target value))])]
-              [(cli_option.CliCommonOptionKind.OptLevel)
-                (if (build_run_core.source-tool-opt-level-valid?
-                  (string.copy (& value)))
-                  (run-cli-parse-options
-                    next-idx
-                    count
-                    source
-                    target
-                    mode
-                    stdlib-roots
-                    cfgs
-                    runtime-args
-                    (string.>int value)
-                    link-inputs)
-                  (ResultRunCliConfig.Err (run-cli-unknown-opt-level value)))]))]
-        [(cli_option.CliCommonOption.NotCommon)
-          (cond
-            [(or
-                (string.eq current "--debug")
-                (string.eq current "-g")
-                (string.eq current "--backtrace"))
-              (begin
-                (ir.compiler-debug-info-set-enabled! true)
-                (run-cli-parse-options
-                  (+ idx 1)
-                  count
-                  source
-                  target
-                  mode
-                  stdlib-roots
-                  cfgs
-                  runtime-args
-                  opt-level
-                  link-inputs))]
-            [(string.eq current "--")
-              (ResultRunCliConfig.Ok
-                (RunCliConfig.Config
-                  source
-                  target
-                  mode
-                  stdlib-roots
-                  cfgs
-                  (build_run_core.source-tool-args-from-argv
-                    (+ idx 1)
-                    count
-                    runtime-args)
-                  opt-level
-                  link-inputs))]
-            [(string.eq current "--backend-mode")
-              (if (>= (+ idx 1) count)
-                (ResultRunCliConfig.Err "run: --backend-mode requires a value")
-                (let
-                  [value : String (io.arg (+ idx 1))]
-                  (match (build_run_core.source-tool-backend-mode "run" value)
-                    [(build_run_core.ResultSourceToolBackendMode.Ok parsed-mode)
-                      (run-cli-parse-options
-                        (+ idx 2)
-                        count
-                        source
-                        target
-                        parsed-mode
-                        stdlib-roots
-                        cfgs
-                        runtime-args
-                        opt-level
-                        link-inputs)]
-                    [(build_run_core.ResultSourceToolBackendMode.Err message)
-                      (ResultRunCliConfig.Err message)])))]
-            [(string.eq current "--link-lib")
-              (if (>= (+ idx 1) count)
-                (ResultRunCliConfig.Err "run: --link-lib requires a value")
-                (run-cli-parse-options
-                  (+ idx 2)
-                  count
-                  source
-                  target
-                  mode
-                  stdlib-roots
-                  cfgs
-                  runtime-args
-                  opt-level
-                  (build_run_core.source-tool-link-inputs-add-lib
-                    link-inputs
-                    (io.arg (+ idx 1)))))]
-            [(string.eq current "--link-search")
-              (if (>= (+ idx 1) count)
-                (ResultRunCliConfig.Err "run: --link-search requires a value")
-                (run-cli-parse-options
-                  (+ idx 2)
-                  count
-                  source
-                  target
-                  mode
-                  stdlib-roots
-                  cfgs
-                  runtime-args
-                  opt-level
-                  (build_run_core.source-tool-link-inputs-add-search-dir
-                    link-inputs
-                    (io.arg (+ idx 1)))))]
-            [(string.eq current "--link-arg")
-              (if (>= (+ idx 1) count)
-                (ResultRunCliConfig.Err "run: --link-arg requires a value")
-                (run-cli-parse-options
-                  (+ idx 2)
-                  count
-                  source
-                  target
-                  mode
-                  stdlib-roots
-                  cfgs
-                  runtime-args
-                  opt-level
-                  (build_run_core.source-tool-link-inputs-add-raw-arg
-                    link-inputs
-                    (io.arg (+ idx 1)))))]
-            [else
-              (ResultRunCliConfig.Ok
-                (RunCliConfig.Config
-                  source
-                  target
-                  mode
-                  stdlib-roots
-                  cfgs
-                  (build_run_core.source-tool-args-from-argv
-                    idx
-                    count
-                    runtime-args)
-                  opt-level
-                  link-inputs))])]))))
-
 (define (run-cli-config-from [idx : i64] [count : i64]) : ResultRunCliConfig
-  (if (or (<= count idx) (build_run_core.source-tool-flag? (io.arg idx)))
+  (if (or (<= count idx) (cli_option.cli-flag? (io.arg idx)))
     (run-cli-package-config-from idx count)
     (let
       [source : String (io.arg idx)]
-      (run-cli-parse-options
-        (+ idx 1)
-        count
-        source
-        (build_run_core.source-tool-default-target)
-        (backend.CompilerBackendMode.Scalar)
-        (cli_svec.new)
-        (build_run_core.source-tool-cfg-names-empty)
-        (process.args-empty)
-        (opt.compiler-optimize-default-level)
-        (build_run_core.source-tool-link-inputs-empty)))))
+      [args : cli_option.CliArgs
+        (cli_option.cli-args
+          "run"
+          "--stdlib-root <dir> --cfg <name> --target <target> --opt-level <0|1|2>
+           --debug|-g|--backtrace --backend-mode <mode> --link-lib <name>
+           --link-search <dir> --link-arg <arg>"
+          (+ idx 1)
+          count)]
+      [target : backend.CompilerBackendTarget
+        (build_run_core.source-tool-default-target)]
+      [mode : backend.CompilerBackendMode (backend.CompilerBackendMode.Scalar)]
+      [stdlib-roots : cli_svec.Vec (cli_svec.new)]
+      [cfgs : build_run_core.SourceToolCfgNames
+        (build_run_core.source-tool-cfg-names-empty)]
+      [runtime-args : process.ProcessStringList (process.args-empty)]
+      [opt-level : i64 (opt.compiler-optimize-default-level)]
+      [link-inputs : build_run_core.SourceToolLinkInputs
+        (build_run_core.source-tool-link-inputs-empty)]
+      (begin
+        (while (cli_option.cli-args-next! (&mut args))
+          (cond
+            [(string.eq args.name "--stdlib-root")
+              (cli_svec.push-ref!
+                (&mut stdlib-roots)
+                (cli_option.cli-args-value (& args)))]
+            [(string.eq args.name "--cfg")
+              (set!
+                cfgs
+                (build_run_core.source-tool-cfg-names-add
+                  cfgs
+                  (cli_option.cli-args-value (& args))))]
+            [(string.eq args.name "--target")
+              (let
+                [value : String (cli_option.cli-args-value (& args))]
+                (match (build_run_core.source-tool-target
+                  (string.copy (& value)))
+                  [(build_run_core.ResultSourceToolTarget.Ok parsed-target)
+                    (set! target parsed-target)]
+                  [(build_run_core.ResultSourceToolTarget.Err _)
+                    (cli_option.cli-args-fail!
+                      (&mut args)
+                      (run-cli-unknown-target value))]))]
+            [(string.eq args.name "--opt-level")
+              (let
+                [value : String (cli_option.cli-args-value (& args))]
+                [level : i64 (cli_option.cli-option-opt-level (& value))]
+                (if (< level 0)
+                  (cli_option.cli-args-fail!
+                    (&mut args)
+                    (run-cli-unknown-opt-level value))
+                  (set! opt-level level)))]
+            [(string.eq args.name "--debug")
+              (ir.compiler-debug-info-set-enabled! true)]
+            [(string.eq args.name "--backend-mode")
+              (match (build_run_core.source-tool-backend-mode
+                "run"
+                (cli_option.cli-args-value (& args)))
+                [(build_run_core.ResultSourceToolBackendMode.Ok parsed-mode)
+                  (set! mode parsed-mode)]
+                [(build_run_core.ResultSourceToolBackendMode.Err message)
+                  (cli_option.cli-args-fail! (&mut args) message)])]
+            [(string.eq args.name "--link-lib")
+              (set!
+                link-inputs
+                (build_run_core.source-tool-link-inputs-add-lib
+                  link-inputs
+                  (cli_option.cli-args-value (& args))))]
+            [(string.eq args.name "--link-search")
+              (set!
+                link-inputs
+                (build_run_core.source-tool-link-inputs-add-search-dir
+                  link-inputs
+                  (cli_option.cli-args-value (& args))))]
+            [(string.eq args.name "--link-arg")
+              (set!
+                link-inputs
+                (build_run_core.source-tool-link-inputs-add-raw-arg
+                  link-inputs
+                  (cli_option.cli-args-value (& args))))]
+            ;; `--`, or the first argument that is no run option, starts the
+            ;; program's own arguments.
+            [else
+              (begin
+                (set!
+                  runtime-args
+                  (build_run_core.source-tool-args-from-argv
+                    (if (string.eq args.arg "--")
+                      args.next
+                      args.index)
+                    count
+                    runtime-args))
+                (cli_option.cli-args-stop! (&mut args)))]))
+        (if args.failed
+          (ResultRunCliConfig.Err args.error)
+          (ResultRunCliConfig.Ok
+            (RunCliConfig.Config
+              source
+              target
+              mode
+              stdlib-roots
+              cfgs
+              runtime-args
+              opt-level
+              link-inputs)))))))
 
 (define (run-cli-typecheck-doctests
   [source : String]

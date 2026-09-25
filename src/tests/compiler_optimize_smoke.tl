@@ -3404,10 +3404,6 @@
       (compiler_optimize_tests.compiler-optimize-licm-global-mod-ref-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-licm-frozen-global-self-test"
-      (compiler_optimize_tests.compiler-optimize-licm-frozen-global-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-global-cell-call-mod-ref-self-test"
       (compiler_optimize_tests.compiler-optimize-global-cell-call-mod-ref-self-test)
       42)

@@ -53668,21 +53668,12 @@
       (compiler-backend-function-state-set-string!
         ctx.function-state
         compiler-backend-function-string-current-c-memory-planned-xmm
-        (match (& instr)
-          [(compiler_ir_types.CompilerIrInstr.Call _ _ _ _) ""]
-          [(compiler_ir_types.CompilerIrInstr.CallIndirectC _ _ _ _) ""]
-          [(compiler_ir_types.CompilerIrInstr.CallCAbiStoreResult _) ""]
-          [(compiler_ir_types.CompilerIrInstr.CallIndirectCAbiStoreResult _) ""]
-          [_ ""]))]
+        "")]
     [_phi-planned-xmm : unit
       (compiler-backend-function-state-set-string!
         ctx.function-state
         compiler-backend-function-string-current-phi-planned-xmm-cycle
-        (match (& instr)
-          [(compiler_ir_types.CompilerIrInstr.Jump _) ""]
-          [(compiler_ir_types.CompilerIrInstr.Branch _ _ _) ""]
-          [(compiler_ir_types.CompilerIrInstr.TotalEnumBranch _ _ _) ""]
-          [_ ""]))]
+        "")]
     ;; Sound-scavenger: reserve this instruction's operand + result homes so the
     ;; scavenge can never hand one back as scratch (LLVM RegScavenger model).
     [_reserved-mask : i64

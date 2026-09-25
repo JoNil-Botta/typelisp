@@ -20,6 +20,7 @@
 (import doc_test)
 (import test_cli_core)
 (import stdlib.string)
+(import source_text_core as source_text)
 (import stdlib.str_cat_runtime as str_cat)
 
 (defenum RunCliConfig
@@ -28,7 +29,7 @@
     backend.CompilerBackendTarget
     backend.CompilerBackendMode
     cli_svec.Vec
-    build_run_core.SourceToolCfgNames
+    cli_svec.Vec
     process.ProcessStringList
     i64
     build_run_core.SourceToolLinkInputs)
@@ -44,18 +45,11 @@
 (define (run-cli-unknown-opt-level [value : String]) : String
   (str_cat.str-cat "run: unknown opt level " value "; expected 0, 1, or 2"))
 
-(define (run-cli-string-prefix? [text : String] [prefix : String]) : bool
-  (let
-    [prefix-len : i64 (string.string-length prefix)]
-    (and
-      (>= (string.string-length text) prefix-len)
-      (string.eq (string.substring text 0 prefix-len) prefix))))
-
 (define (run-cli-rewrite-build-error [message : String]) : String
   (let
     [prefix : String "build: "]
     [prefix-len : i64 (string.string-length prefix)]
-    (if (run-cli-string-prefix? (string.copy (& message)) prefix)
+    (if (source_text.starts-with? message prefix)
       (str_cat.str-cat
         "run: "
         (string.substring
@@ -132,8 +126,7 @@
         (build_run_core.source-tool-default-target)]
       [mode : backend.CompilerBackendMode (backend.CompilerBackendMode.Scalar)]
       [stdlib-roots : cli_svec.Vec (cli_svec.new)]
-      [cfgs : build_run_core.SourceToolCfgNames
-        (build_run_core.source-tool-cfg-names-empty)]
+      [cfgs : cli_svec.Vec (cli_svec.new)]
       [runtime-args : process.ProcessStringList (process.args-empty)]
       [opt-level : i64 (opt.compiler-optimize-default-level)]
       [link-inputs : build_run_core.SourceToolLinkInputs
@@ -146,11 +139,9 @@
                 (&mut stdlib-roots)
                 (cli_option.cli-args-value (& args)))]
             [(string.eq args.name "--cfg")
-              (set!
-                cfgs
-                (build_run_core.source-tool-cfg-names-add
-                  cfgs
-                  (cli_option.cli-args-value (& args))))]
+              (cli_svec.push-ref!
+                (&mut cfgs)
+                (cli_option.cli-args-value (& args)))]
             [(string.eq args.name "--target")
               (let
                 [value : String (cli_option.cli-args-value (& args))]
@@ -229,7 +220,7 @@
   [source : String]
   [target : backend.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
-  [cfgs : build_run_core.SourceToolCfgNames]
+  [cfgs : cli_svec.Vec]
   [runtime-args : process.ProcessStringList]
   [opt-level : i64]
   [mode : backend.CompilerBackendMode]
@@ -237,8 +228,7 @@
   (let
     [stdlib-roots-cell : (__tl_dyn-array cli_svec.Vec)
       (__tl_make-array stdlib-roots)]
-    [cfgs-cell : (__tl_dyn-array build_run_core.SourceToolCfgNames)
-      (__tl_make-array cfgs)]
+    [cfgs-cell : (__tl_dyn-array cli_svec.Vec) (__tl_make-array cfgs)]
     [doctest-status : i64
       (doc_test.doc-test-typecheck-file-status
         (string.copy (& source))

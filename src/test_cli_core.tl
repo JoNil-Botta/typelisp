@@ -36,6 +36,7 @@
 (import compiler_typecheck_api)
 (import compiler_typecheck_core as tc_core)
 (import stdlib.string)
+(import source_text_core as source_text)
 (import stdlib.str_cat_runtime as str_cat)
 (import sym_i64_env)
 
@@ -371,36 +372,6 @@
 (define (tltest-invalid-opt-level [value : String]) : String
   (str_cat.str-cat "test: invalid --opt-level " value "; expected 0, 1, or 2"))
 
-(define (tltest-batch-line-end [text : String] [start : i64] [n : i64]) : i64
-  (let
-    [i : i64 start]
-    [keep : bool true]
-    (begin
-      (while keep
-        (if (< i n)
-          (if (or
-            (= (string.string-ref text i) '\n')
-            (= (string.string-ref text i) '\r'))
-            (set! keep false)
-            (set! i (+ i 1)))
-          (set! keep false)))
-      i)))
-
-(define (tltest-batch-next-line-start
-  [text : String]
-  [line-end : i64]
-  [n : i64]) : i64
-  (begin
-    (unless (< line-end n) (return line-end))
-    (let
-      [c : char (string.string-ref text line-end)]
-      (begin
-        (unless (= c '\r') (return (+ line-end 1)))
-        (unless (< (+ line-end 1) n) (return (+ line-end 1)))
-        (if (= (string.string-ref text (+ line-end 1)) '\n')
-          (+ line-end 2)
-          (+ line-end 1))))))
-
 (define (tltest-batch-paths-from-text-from
   [text : String]
   [start : i64]
@@ -409,16 +380,8 @@
   (if (>= start n)
     paths
     (let
-      [line-end : i64
-        (tltest-batch-line-end
-          (owned_view.compiler-owned-shared-view text)
-          start
-          n)]
-      [next-start : i64
-        (tltest-batch-next-line-start
-          (owned_view.compiler-owned-shared-view text)
-          line-end
-          n)]
+      [line-end : i64 (source_text.line-end text start)]
+      [next-start : i64 (source_text.next-line-start text line-end)]
       (if (= start line-end)
         (tltest-batch-paths-from-text-from text next-start n paths)
         (tltest-batch-paths-from-text-from
@@ -5182,14 +5145,6 @@
         (string.string-length text)
         true))))
 
-(define (tltest-string-prefix? [text : String] [prefix : String]) : bool
-  (let
-    [text-len : i64 (string.string-length text)]
-    [prefix-len : i64 (string.string-length prefix)]
-    (if (> prefix-len text-len)
-      false
-      (string.eq (string.substring text 0 prefix-len) prefix))))
-
 (define (tltest-package-tests-prefix [manifest-dir : String]) : String
   (str_cat.str-cat
     (compiler_load.compiler-load-normalize-path
@@ -5197,7 +5152,7 @@
     "/"))
 
 (define (tltest-package-test-source? [source : String] [tests-prefix : String]) : bool
-  (tltest-string-prefix?
+  (source_text.starts-with?
     (compiler_load.compiler-load-normalize-path source)
     tests-prefix))
 
@@ -5218,7 +5173,7 @@
   [manifest-managed : bool]) : bool
   (and
     manifest-managed
-    (tltest-string-prefix?
+    (source_text.starts-with?
       normalized
       (tltest-package-tests-subdir-prefix tests-prefix "integration"))))
 
@@ -5239,47 +5194,47 @@
       (tltest-package-manifest-managed-integration-source?
         (owned_view.compiler-owned-shared-view normalized)
         (owned_view.compiler-owned-shared-view tests-prefix))
-      (tltest-string-prefix?
-        (owned_view.compiler-owned-shared-view normalized)
+      (source_text.starts-with?
+        normalized
         (tltest-package-tests-subdir-prefix
           (owned_view.compiler-owned-shared-view tests-prefix)
           "diagnostics"))
-      (tltest-string-prefix?
-        (owned_view.compiler-owned-shared-view normalized)
+      (source_text.starts-with?
+        normalized
         (tltest-package-tests-subdir-prefix
           (owned_view.compiler-owned-shared-view tests-prefix)
           "format_golden"))
-      (tltest-string-prefix?
-        (owned_view.compiler-owned-shared-view normalized)
+      (source_text.starts-with?
+        normalized
         (tltest-package-tests-subdir-prefix
           (owned_view.compiler-owned-shared-view tests-prefix)
           "golden"))
-      (tltest-string-prefix?
-        (owned_view.compiler-owned-shared-view normalized)
+      (source_text.starts-with?
+        normalized
         (tltest-package-tests-subdir-prefix
           (owned_view.compiler-owned-shared-view tests-prefix)
           "inline"))
-      (tltest-string-prefix?
-        (owned_view.compiler-owned-shared-view normalized)
+      (source_text.starts-with?
+        normalized
         (tltest-package-tests-subdir-prefix
           (owned_view.compiler-owned-shared-view tests-prefix)
           "no-libc"))
-      (tltest-string-prefix?
-        (owned_view.compiler-owned-shared-view normalized)
+      (source_text.starts-with?
+        normalized
         (tltest-package-tests-subdir-prefix
           (owned_view.compiler-owned-shared-view tests-prefix)
           "public-tools"))
-      (tltest-string-prefix?
-        (owned_view.compiler-owned-shared-view normalized)
+      (source_text.starts-with?
+        normalized
         (tltest-package-tests-subdir-prefix
           (owned_view.compiler-owned-shared-view tests-prefix)
           "safety"))
-      (tltest-string-prefix?
-        (owned_view.compiler-owned-shared-view normalized)
+      (source_text.starts-with?
+        normalized
         (tltest-package-tests-subdir-prefix
           (owned_view.compiler-owned-shared-view tests-prefix)
           "spmd"))
-      (tltest-string-prefix?
+      (source_text.starts-with?
         normalized
         (tltest-package-tests-subdir-prefix tests-prefix "tlci")))))
 

@@ -15,6 +15,7 @@
 (import compiler_diagnostic as cdiag)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.string)
+(import source_text_core as source_text)
 (import compiler_ast_types as ast)
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
@@ -2263,22 +2264,6 @@
               (set! i (+ i 1))))
           findings))]))
 
-(define (lint-string-prefix? [text : String] [prefix : String]) : bool
-  (let
-    [text-len : i64 (string.string-length text)]
-    [prefix-len : i64 (string.string-length prefix)]
-    (if (> prefix-len text-len)
-      false
-      (let
-        [idx : i64 0]
-        [ok : bool true]
-        (begin
-          (while (and ok (< idx prefix-len))
-            (if (= (string.string-ref text idx) (string.string-ref prefix idx))
-              (set! idx (+ idx 1))
-              (set! ok false)))
-          ok)))))
-
 (define (lint-name-qualified-by-separator?
   [name : String]
   [qualifier : String]
@@ -2289,11 +2274,7 @@
     (cond
       [(<= qualifier-len 0) false]
       [(<= name-len qualifier-len) false]
-      [(not
-          (lint-string-prefix?
-            (owned_view.compiler-owned-shared-view name)
-            qualifier))
-        false]
+      [(not (source_text.starts-with? name qualifier)) false]
       [else (= (string.string-ref name qualifier-len) separator)])))
 
 (define (lint-name-qualified-by? [name : String] [qualifier : String]) : bool
@@ -3898,33 +3879,6 @@
     [(ast.AstImportKind.Macro _ _) false]
     [(ast.AstImportKind.MacroDecls _ _) false]))
 
-(define (lint-string-has-suffix-at?
-  [text : String]
-  [suffix : String]
-  [base : i64]
-  [index : i64]
-  [n : i64]) : bool
-  (if (>= index n)
-    true
-    (if (=
-      (cast (string.string-ref text (+ base index)) : i64)
-      (cast (string.string-ref suffix index) : i64))
-      (lint-string-has-suffix-at? text suffix base (+ index 1) n)
-      false)))
-
-(define (lint-string-has-suffix? [text : String] [suffix : String]) : bool
-  (let
-    [text-len : i64 (string.string-length text)]
-    [suffix-len : i64 (string.string-length suffix)]
-    (if (< text-len suffix-len)
-      false
-      (lint-string-has-suffix-at?
-        text
-        suffix
-        (- text-len suffix-len)
-        0
-        suffix-len))))
-
 (define (lint-stdlib-string-module-name? [module-name : String]) : bool
   (or
     (string.eq module-name "stdlib.string")
@@ -3932,16 +3886,10 @@
     (string.eq module-name "stdlib/string.tl")
     (string.eq module-name "string")
     (string.eq module-name "string.tl")
-    (lint-string-has-suffix?
-      (owned_view.compiler-owned-shared-view module-name)
-      "/stdlib/string.tl")
-    (lint-string-has-suffix?
-      (owned_view.compiler-owned-shared-view module-name)
-      "\\stdlib\\string.tl")
-    (lint-string-has-suffix?
-      (owned_view.compiler-owned-shared-view module-name)
-      "\\stdlib/string.tl")
-    (lint-string-has-suffix? module-name "/stdlib\\string.tl")))
+    (source_text.ends-with? module-name "/stdlib/string.tl")
+    (source_text.ends-with? module-name "\\stdlib\\string.tl")
+    (source_text.ends-with? module-name "\\stdlib/string.tl")
+    (source_text.ends-with? module-name "/stdlib\\string.tl")))
 
 (define (lint-unused-import-finding
   [module-name : String]

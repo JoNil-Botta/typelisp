@@ -16,6 +16,7 @@
 (import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.string)
+(import source_text_core as source_text)
 (import stdlib.vector)
 
 (defenum DocItemKind
@@ -131,31 +132,6 @@
 (define (doc-newline? [c : char]) : bool
   (or (= c '\n') (= c '\r')))
 
-(define (doc-line-end [src : String] [start : i64] [n : i64]) : i64
-  (let
-    [i : i64 start]
-    [keep : bool true]
-    (begin
-      (while keep
-        (if (< i n)
-          (if (doc-newline? (string.string-ref src i))
-            (set! keep false)
-            (set! i (+ i 1)))
-          (set! keep false)))
-      i)))
-
-(define (doc-next-line-start [src : String] [line-end : i64] [n : i64]) : i64
-  (begin
-    (unless (< line-end n) (return line-end))
-    (let
-      [k : char (string.string-ref src line-end)]
-      (begin
-        (unless (= k '\r') (return (+ line-end 1)))
-        (unless (< (+ line-end 1) n) (return (+ line-end 1)))
-        (if (= (string.string-ref src (+ line-end 1)) '\n')
-          (+ line-end 2)
-          (+ line-end 1))))))
-
 (define (doc-first-nonspace [src : String] [start : i64] [end : i64]) : i64
   (let
     [i : i64 start]
@@ -168,52 +144,6 @@
             (set! keep false))
           (set! keep false)))
       i)))
-
-(define (doc-string-prefix-at?
-  [text : (& text str)]
-  [prefix : (& prefix str)]
-  [start : i64]) : bool
-  (let
-    [text-len : i64 (string.string-length text)]
-    [prefix-len : i64 (string.string-length prefix)]
-    (if (< start 0)
-      false
-      (if (> (+ start prefix-len) text-len)
-        false
-        (let
-          [i : i64 0]
-          [ok : bool true]
-          (begin
-            (while ok
-              (if (< i prefix-len)
-                (if (=
-                  (string.string-ref text (+ start i))
-                  (string.string-ref prefix i))
-                  (set! i (+ i 1))
-                  (set! ok false))
-                (set! ok false)))
-            (= i prefix-len)))))))
-
-(define (doc-string-contains? [text : (& text str)] [needle : (& needle str)]) : bool
-  (let
-    [text-len : i64 (string.string-length text)]
-    [needle-len : i64 (string.string-length needle)]
-    (if (= needle-len 0)
-      true
-      (let
-        [i : i64 0]
-        [found : bool false]
-        [done : bool false]
-        (begin
-          (while (not done)
-            (if (<= (+ i needle-len) text-len)
-              (if (doc-string-prefix-at? text needle i)
-                (begin
-                  (set! found true)
-                  (set! done true))
-                (set! i (+ i 1)))
-              (set! done true)))
-          found)))))
 
 (define (doc-append-line
   [current : String]
@@ -239,12 +169,12 @@
       (string.substring src body-start (- line-end body-start)))))
 
 (define (doc-module-doc-prefix-len [src : String] [line-start : i64]) : i64
-  (if (doc-string-prefix-at? src ";#" line-start)
+  (if (string.is-string-prefix-at src ";#" line-start)
     2
     0))
 
 (define (doc-item-doc-prefix-len [src : String] [line-start : i64]) : i64
-  (if (doc-string-prefix-at? src ";:" line-start)
+  (if (string.is-string-prefix-at src ";:" line-start)
     2
     0))
 
@@ -316,13 +246,7 @@
               [(= c ';')
                 (set!
                   i
-                  (doc-next-line-start
-                    (owned_view.compiler-owned-shared-view src)
-                    (doc-line-end
-                      (owned_view.compiler-owned-shared-view src)
-                      i
-                      n)
-                    n))]
+                  (source_text.next-line-start src (source_text.line-end src i)))]
               [(= c '"')
                 (set!
                   i
@@ -409,13 +333,7 @@
               [(= c ';')
                 (set!
                   i
-                  (doc-next-line-start
-                    (owned_view.compiler-owned-shared-view src)
-                    (doc-line-end
-                      (owned_view.compiler-owned-shared-view src)
-                      i
-                      n)
-                    n))]
+                  (source_text.next-line-start src (source_text.line-end src i)))]
               [else (set! keep false)]))
           (set! keep false)))
       i)))
@@ -568,20 +486,14 @@
     (begin
       (while (< i n)
         (let
-          [line-end : i64
-            (doc-line-end (owned_view.compiler-owned-shared-view src) i n)]
+          [line-end : i64 (source_text.line-end src i)]
           [line-start : i64
             (doc-first-nonspace
               (owned_view.compiler-owned-shared-view src)
               i
               line-end)]
           (if (= line-start line-end)
-            (set!
-              i
-              (doc-next-line-start
-                (owned_view.compiler-owned-shared-view src)
-                line-end
-                n))
+            (set! i (source_text.next-line-start src line-end))
             (let
               [c : char (string.string-ref src line-start)]
               (if (= c ';')
@@ -605,12 +517,7 @@
                       (set! module-has true)
                       (set! pending-doc "")
                       (set! pending-has false)
-                      (set!
-                        i
-                        (doc-next-line-start
-                          (owned_view.compiler-owned-shared-view src)
-                          line-end
-                          n)))
+                      (set! i (source_text.next-line-start src line-end)))
                     (let
                       [item-prefix-len : i64
                         (doc-item-doc-prefix-len
@@ -629,21 +536,11 @@
                                 line-end
                                 item-prefix-len)))
                           (set! pending-has true)
-                          (set!
-                            i
-                            (doc-next-line-start
-                              (owned_view.compiler-owned-shared-view src)
-                              line-end
-                              n)))
+                          (set! i (source_text.next-line-start src line-end)))
                         (begin
                           (set! pending-doc "")
                           (set! pending-has false)
-                          (set!
-                            i
-                            (doc-next-line-start
-                              (owned_view.compiler-owned-shared-view src)
-                              line-end
-                              n)))))))
+                          (set! i (source_text.next-line-start src line-end)))))))
                 (if (= c '(')
                   (let
                     [form-end : i64
@@ -675,12 +572,7 @@
                   (begin
                     (set! pending-doc "")
                     (set! pending-has false)
-                    (set!
-                      i
-                      (doc-next-line-start
-                        (owned_view.compiler-owned-shared-view src)
-                        line-end
-                        n)))))))))
+                    (set! i (source_text.next-line-start src line-end)))))))))
       (DocExtraction.Extraction module-doc (doc-item-array-to-list items)))))
 
 (define (doc-extract-file [path : String]) : DocExtraction
@@ -743,7 +635,7 @@
         (unless (= (doc-kind-tag kind) kind-tag) (return false))
         (unless (string.eq item-name name) (return false))
         (unless (string.eq item-doc doc-text) (return false))
-        (doc-string-contains? signature signature-fragment))]))
+        (string.contains signature signature-fragment))]))
 
 (define (doc-extract-smoke-items-ok? [items : doc_item_vec.Vec]) : bool
   (begin

@@ -34,6 +34,7 @@
 (import (vector.vector lsp_vector_families.LspDeclEntry core) as lsp_decl_vec)
 (import (vector.vector lsp_vector_families.LspDocument core) as lsp_document_vec)
 (import stdlib.string)
+(import source_text_core as source_text)
 (import token)
 (import sym_i64_env)
 
@@ -425,25 +426,6 @@
 (define (lsp-frame-trim-header-value [text : String]) : String
   (lsp-frame-trim-left-space (lsp-frame-trim-right-space-cr text)))
 
-(define (lsp-frame-starts-with? [text : String] [prefix : String]) : bool
-  (let
-    [text-len : i64 (string.string-length text)]
-    [prefix-len : i64 (string.string-length prefix)]
-    [i : i64 0]
-    [ok : bool true]
-    (if (< text-len prefix-len)
-      false
-      (begin
-        (while (< i prefix-len)
-          (if ok
-            (if (= (string.string-ref text i) (string.string-ref prefix i))
-              (set! i (+ i 1))
-              (begin
-                (set! ok false)
-                (set! i prefix-len)))
-            (set! i prefix-len)))
-        ok))))
-
 (define (lsp-frame-digit? [c : char]) : bool
   (and (>= c '0') (<= c '9')))
 
@@ -466,9 +448,7 @@
         ok))))
 
 (define (lsp-frame-parse-content-length [line : String]) : LspLengthParse
-  (if (lsp-frame-starts-with?
-    (owned_view.compiler-owned-shared-view line)
-    "Content-Length:")
+  (if (source_text.starts-with? line "Content-Length:")
     (let
       [value : String
         (lsp-frame-trim-header-value
@@ -2539,9 +2519,7 @@
       path)))
 
 (define (lsp-file-uri-to-path [uri : String]) : LspUriPath
-  (if (lsp-frame-starts-with?
-    (owned_view.compiler-owned-shared-view uri)
-    "file://")
+  (if (source_text.starts-with? uri "file://")
     (match (lsp-percent-decode
       (string.substring uri 7 (- (string.string-length uri) 7)))
       [(LspStringResult.Ok decoded)
@@ -17141,30 +17119,6 @@
 (define lsp-transcript-batch-header : String
   "typelisp-lsp-transcript-batch-v1")
 
-(define (lsp-transcript-batch-line-end [text : String] [start : i64] [n : i64]) : i64
-  (let
-    [i : i64 start]
-    (begin
-      (while (and
-        (< i n)
-        (not (= (string.string-ref text i) '\n'))
-        (not (= (string.string-ref text i) '\r')))
-        (set! i (+ i 1)))
-      i)))
-
-(define (lsp-transcript-batch-next-line
-  [text : String]
-  [line-end : i64]
-  [n : i64]) : i64
-  (if (>= line-end n)
-    n
-    (if (and
-      (= (string.string-ref text line-end) '\r')
-      (< (+ line-end 1) n)
-      (= (string.string-ref text (+ line-end 1)) '\n'))
-      (+ line-end 2)
-      (+ line-end 1))))
-
 (define (lsp-transcript-batch-tab [text : String] [start : i64] [end : i64]) : i64
   (let
     [i : i64 start]
@@ -17278,21 +17232,13 @@
 (define (lsp-transcript-batch-validate [text : String]) : String
   (let
     [n : i64 (string.string-length text)]
-    [first-end : i64
-      (lsp-transcript-batch-line-end
-        (owned_view.compiler-owned-shared-view text)
-        0
-        n)]
+    [first-end : i64 (source_text.line-end text 0)]
     [first : String
       (lsp-transcript-batch-field
         (owned_view.compiler-owned-shared-view text)
         0
         first-end)]
-    [cursor : i64
-      (lsp-transcript-batch-next-line
-        (owned_view.compiler-owned-shared-view text)
-        first-end
-        n)]
+    [cursor : i64 (source_text.next-line-start text first-end)]
     [line-number : i64 2]
     [entries : i64 0]
     [ids : lsp_svec.Vec (lsp_svec.new)]
@@ -17304,16 +17250,8 @@
         unit)
       (while (and (= (string.string-length error) 0) (< cursor n))
         (let
-          [line-end : i64
-            (lsp-transcript-batch-line-end
-              (owned_view.compiler-owned-shared-view text)
-              cursor
-              n)]
-          [next : i64
-            (lsp-transcript-batch-next-line
-              (owned_view.compiler-owned-shared-view text)
-              line-end
-              n)]
+          [line-end : i64 (source_text.line-end text cursor)]
+          [next : i64 (source_text.next-line-start text line-end)]
           (begin
             (if (= cursor line-end)
               (set!
@@ -17389,31 +17327,15 @@
   [prefix-cache-stats : bool]) : i64
   (let
     [n : i64 (string.string-length text)]
-    [first-end : i64
-      (lsp-transcript-batch-line-end
-        (owned_view.compiler-owned-shared-view text)
-        0
-        n)]
-    [cursor : i64
-      (lsp-transcript-batch-next-line
-        (owned_view.compiler-owned-shared-view text)
-        first-end
-        n)]
+    [first-end : i64 (source_text.line-end text 0)]
+    [cursor : i64 (source_text.next-line-start text first-end)]
     [line-number : i64 2]
     [status : i64 0]
     (begin
       (while (and (= status 0) (< cursor n))
         (let
-          [line-end : i64
-            (lsp-transcript-batch-line-end
-              (owned_view.compiler-owned-shared-view text)
-              cursor
-              n)]
-          [next : i64
-            (lsp-transcript-batch-next-line
-              (owned_view.compiler-owned-shared-view text)
-              line-end
-              n)]
+          [line-end : i64 (source_text.line-end text cursor)]
+          [next : i64 (source_text.next-line-start text line-end)]
           (begin
             (match (lsp-transcript-batch-parse-entry
               (owned_view.compiler-owned-shared-view text)
@@ -19443,9 +19365,7 @@
             "method"
             "")
           "tl/replaceBody")
-        (lsp-frame-starts-with?
-          (owned_view.compiler-owned-shared-view message)
-          "newBody is not a valid form: "))
+        (source_text.starts-with? message "newBody is not a valid form: "))
       (match (lsp-json-string-field operation "newBody")
         [(LspJsonText.Ok new-body)
           (lsp-replace-body-validation-message new-body)]
@@ -19475,9 +19395,7 @@
         "method"
         "")
       "tl/replaceBody")
-    (lsp-frame-starts-with?
-      (owned_view.compiler-owned-shared-view message)
-      "newBody is not a valid form: "))
+    (source_text.starts-with? message "newBody is not a valid form: "))
     (match (lsp-json-string-field
       (owned_view.compiler-owned-shared-view operation)
       "newBody")

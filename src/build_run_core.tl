@@ -56,88 +56,18 @@
   (Ok SourceToolLinkInputs)
   (Err String))
 
-(defstruct SourceToolCfgNames
-  (slots (__tl_dyn-array String))
-  (len i64))
-
-(define (source-tool-cfg-names-with-capacity [capacity : i64]) : SourceToolCfgNames
+(define (source-tool-cfg-names-to-env [names : cli_svec.Vec]) : sym_i64_env.SymI64Env
   (let
-    [cap : i64
-      (if (< capacity 1)
-        1
-        capacity)]
-    (SourceToolCfgNames (__tl_make-array String cap) 0)))
-
-(define (source-tool-cfg-names-empty) : SourceToolCfgNames
-  (source-tool-cfg-names-with-capacity 4))
-
-(define (source-tool-cfg-names-copy-range!
-  [dst : (&mut dst (__tl_dyn-array String))]
-  [src : (& src (__tl_dyn-array String))]
-  [index : i64]
-  [count : i64]) : unit
-  (let
-    [i : i64 index]
-    (while (< i count)
-      (begin
-        (set! (array-ref dst i) (array-ref src i))
-        (set! i (+ i 1))))))
-
-(define (source-tool-cfg-names-grow! [names : (&mut names SourceToolCfgNames)]) : unit
-  (let
-    [count : i64 names.len]
-    [old-cap : i64 (array-length names.slots)]
-    [new-cap : i64
-      (if (< old-cap 1)
-        1
-        (* old-cap 2))]
-    [bigger : (__tl_dyn-array String) (__tl_make-array String new-cap)]
+    [env : sym_i64_env.SymI64Env (cfg_core.compiler-cfg-empty)]
+    [index : i64 0]
     (begin
-      (source-tool-cfg-names-copy-range! (&mut bigger) (& names.slots) 0 count)
-      (set! names.slots bigger))))
-
-(define (source-tool-cfg-names-push!
-  [names : (&mut names SourceToolCfgNames)]
-  [name : String]) : unit
-  (begin
-    (if (< names.len (array-length names.slots))
-      unit
-      (source-tool-cfg-names-grow! names))
-    (let
-      [index : i64 names.len]
-      (begin
-        (set! (array-ref names.slots index) name)
-        (set! names.len (+ index 1))))))
-
-(define (source-tool-cfg-names-get
-  [names : (& names SourceToolCfgNames)]
-  [index : i64]) : String
-  (if (if (>= index 0)
-    (< index names.len)
-    false)
-    (array-ref names.slots index)
-    ""))
-
-(define (source-tool-cfg-names-add [names : SourceToolCfgNames] [name : String]) : SourceToolCfgNames
-  (let
-    [next : SourceToolCfgNames names]
-    (begin
-      (source-tool-cfg-names-push! (&mut next) name)
-      next)))
-
-(define (source-tool-cfg-names-to-env-from
-  [names : (& names SourceToolCfgNames)]
-  [index : i64]
-  [env : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
-  (if (>= index names.len)
-    env
-    (source-tool-cfg-names-to-env-from
-      names
-      (+ index 1)
-      (cfg_core.compiler-cfg-enable env (source-tool-cfg-names-get names index)))))
-
-(define (source-tool-cfg-names-to-env [names : SourceToolCfgNames]) : sym_i64_env.SymI64Env
-  (source-tool-cfg-names-to-env-from (& names) 0 (cfg_core.compiler-cfg-empty)))
+      (while (< index (cli_svec.len (& names)))
+        (begin
+          (set!
+            env
+            (cfg_core.compiler-cfg-enable env (cli_svec.get (& names) index "")))
+          (set! index (+ index 1))))
+      env)))
 
 (define (source-tool-target-name [target : backend.CompilerBackendTarget]) : String
   (match target
@@ -2122,7 +2052,7 @@
   [source : String]
   [target : backend.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
-  [cfg-names : SourceToolCfgNames]
+  [cfg-names : cli_svec.Vec]
   [runtime-args : process.ProcessStringList]
   [opt-level : i64]
   [mode : backend.CompilerBackendMode]
@@ -2195,7 +2125,7 @@
   [source : String]
   [target : backend.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
-  [cfg-names : SourceToolCfgNames]
+  [cfg-names : cli_svec.Vec]
   [runtime-args : process.ProcessStringList]
   [opt-level : i64]
   [mode : backend.CompilerBackendMode]

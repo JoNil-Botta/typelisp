@@ -42,6 +42,7 @@
 (import doc_test)
 (import test_cli_core)
 (import stdlib.string)
+(import source_text_core as source_text)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.text_buf)
 (import sym_i64_env)
@@ -77,113 +78,36 @@
 (define compile-cli-trace-passes-requested : bool
   false)
 
-(defstruct CompileCliCfgNames
-  (slots (__tl_dyn-array String))
-  (len i64))
-
-(define (compile-cli-cfg-names-with-capacity [capacity : i64]) : CompileCliCfgNames
+(define (compile-cli-cfg-names-to-env [names : (& names cli_svec.Vec)]) : sym_i64_env.SymI64Env
   (let
-    [cap : i64
-      (if (< capacity 1)
-        1
-        capacity)]
-    (CompileCliCfgNames (__tl_make-array String cap) 0)))
-
-(define (compile-cli-cfg-names-empty) : CompileCliCfgNames
-  (compile-cli-cfg-names-with-capacity 4))
-
-(define (compile-cli-cfg-names-copy-range!
-  [dst : (&mut dst (__tl_dyn-array String))]
-  [src : (& src (__tl_dyn-array String))]
-  [index : i64]
-  [count : i64]) : unit
-  (let
-    [i : i64 index]
-    (while (< i count)
-      (begin
-        (set! (array-ref dst i) (array-ref src i))
-        (set! i (+ i 1))))))
-
-(define (compile-cli-cfg-names-grow! [names : (&mut names CompileCliCfgNames)]) : unit
-  (let
-    [count : i64 names.len]
-    [old-cap : i64 (array-length names.slots)]
-    [new-cap : i64
-      (if (< old-cap 1)
-        1
-        (* old-cap 2))]
-    [bigger : (__tl_dyn-array String) (__tl_make-array String new-cap)]
+    [env : sym_i64_env.SymI64Env (cfg_core.compiler-cfg-empty)]
+    [index : i64 0]
     (begin
-      (compile-cli-cfg-names-copy-range! (&mut bigger) (& names.slots) 0 count)
-      (set! names.slots bigger))))
-
-(define (compile-cli-cfg-names-push!
-  [names : (&mut names CompileCliCfgNames)]
-  [name : String]) : unit
-  (begin
-    (if (< names.len (array-length names.slots))
-      unit
-      (compile-cli-cfg-names-grow! names))
-    (let
-      [index : i64 names.len]
-      (begin
-        (set! (array-ref names.slots index) name)
-        (set! names.len (+ index 1))))))
-
-(define (compile-cli-cfg-names-get
-  [names : (& names CompileCliCfgNames)]
-  [index : i64]) : String
-  (if (if (>= index 0)
-    (< index names.len)
-    false)
-    (array-ref names.slots index)
-    ""))
-
-(define (compile-cli-cfg-names-add [names : CompileCliCfgNames] [name : String]) : CompileCliCfgNames
-  (let
-    [next : CompileCliCfgNames names]
-    (begin
-      (compile-cli-cfg-names-push! (&mut next) name)
-      next)))
-
-(define (compile-cli-cfg-names-to-env-from
-  [names : (& names CompileCliCfgNames)]
-  [index : i64]
-  [env : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
-  (if (>= index names.len)
-    env
-    (compile-cli-cfg-names-to-env-from
-      names
-      (+ index 1)
-      (cfg_core.compiler-cfg-enable env (compile-cli-cfg-names-get names index)))))
-
-(define (compile-cli-cfg-names-to-env [names : (& names CompileCliCfgNames)]) : sym_i64_env.SymI64Env
-  (compile-cli-cfg-names-to-env-from (& names) 0 (cfg_core.compiler-cfg-empty)))
-
-(define (compile-cli-cfg-names-to-env-with-intern-state-from
-  [names : (& names CompileCliCfgNames)]
-  [index : i64]
-  [env : sym_i64_env.SymI64Env]
-  [intern-state : (&mut intern-state ci.InternCompatState)]) : sym_i64_env.SymI64Env
-  (if (>= index names.len)
-    env
-    (compile-cli-cfg-names-to-env-with-intern-state-from
-      names
-      (+ index 1)
-      (cfg_core.compiler-cfg-enable-with-intern-state
-        env
-        (compile-cli-cfg-names-get names index)
-        intern-state)
-      intern-state)))
+      (while (< index (cli_svec.len names))
+        (begin
+          (set!
+            env
+            (cfg_core.compiler-cfg-enable env (cli_svec.get names index "")))
+          (set! index (+ index 1))))
+      env)))
 
 (define (compile-cli-cfg-names-to-env-with-intern-state
-  [names : CompileCliCfgNames]
+  [names : cli_svec.Vec]
   [intern-state : (&mut intern-state ci.InternCompatState)]) : sym_i64_env.SymI64Env
-  (compile-cli-cfg-names-to-env-with-intern-state-from
-    (& names)
-    0
-    (cfg_core.compiler-cfg-empty)
-    intern-state))
+  (let
+    [env : sym_i64_env.SymI64Env (cfg_core.compiler-cfg-empty)]
+    [index : i64 0]
+    (begin
+      (while (< index (cli_svec.len (& names)))
+        (begin
+          (set!
+            env
+            (cfg_core.compiler-cfg-enable-with-intern-state
+              env
+              (cli_svec.get (& names) index "")
+              intern-state))
+          (set! index (+ index 1))))
+      env)))
 
 (defenum CompileCliConfig
   (Config
@@ -194,7 +118,7 @@
     bool
     backend.CompilerBackendTarget
     cli_svec.Vec
-    CompileCliCfgNames
+    cli_svec.Vec
     backend.CompilerBackendMode
     i64))
 
@@ -204,7 +128,7 @@
     bool
     backend.CompilerBackendTarget
     cli_svec.Vec
-    CompileCliCfgNames
+    cli_svec.Vec
     backend.CompilerBackendMode
     i64
     bool
@@ -234,7 +158,7 @@
 (define (compile-cli-after-pass? [value : String]) : bool
   (and
     (> (string.string-length value) 6)
-    (string.eq (string.substring value 0 6) "after-")))
+    (source_text.starts-with? value "after-")))
 
 (define (compile-cli-default-output-with-extension
   [input-path : String]
@@ -312,7 +236,7 @@
   (target backend.CompilerBackendTarget)
   (has-target bool)
   (stdlib-roots cli_svec.Vec)
-  (cfgs CompileCliCfgNames)
+  (cfgs cli_svec.Vec)
   (opt-level i64)
   (has-opt-level bool)
   (backend-mode backend.CompilerBackendMode))
@@ -322,7 +246,7 @@
     (backend.CompilerBackendTarget.Linux)
     false
     (cli_svec.new)
-    (compile-cli-cfg-names-empty)
+    (cli_svec.new)
     (opt.compiler-optimize-default-level)
     false
     (backend.CompilerBackendMode.Scalar)))
@@ -341,7 +265,7 @@
         true)]
     [(string.eq args.name "--cfg")
       (begin
-        (compile-cli-cfg-names-push!
+        (cli_svec.push-ref!
           (&mut options.cfgs)
           (cli_option.cli-args-value args))
         true)]
@@ -693,7 +617,7 @@
   [has-target : bool]
   [target : backend.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
-  [cfgs : CompileCliCfgNames]
+  [cfgs : cli_svec.Vec]
   [backend-mode : backend.CompilerBackendMode]
   [opt-level : i64]
   [inline-preflight : bool]) : i64
@@ -987,7 +911,7 @@
   [assembly-path : String]
   [force-assembly : bool]
   [stdlib-roots : cli_svec.Vec]
-  [cfgs : CompileCliCfgNames]
+  [cfgs : cli_svec.Vec]
   [backend-mode : backend.CompilerBackendMode]
   [opt-level : i64]) : ResultCompileCliWindowsBatchEntry
   (begin
@@ -1075,7 +999,7 @@
   [stride : i64]
   [target : backend.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
-  [cfgs : (& cfgs CompileCliCfgNames)]
+  [cfgs : (& cfgs cli_svec.Vec)]
   [ran-preflight : bool]) : i64
   (if (>= index (cli_svec.len entries))
     (if ran-preflight
@@ -1144,7 +1068,7 @@
   [entries : (& entries cli_svec.Vec)]
   [target : backend.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
-  [cfgs : (& cfgs CompileCliCfgNames)]) : i64
+  [cfgs : (& cfgs cli_svec.Vec)]) : i64
   (compile-cli-run-batch-inline-tests-from
     (& entries)
     0
@@ -1158,7 +1082,7 @@
   [entries : (& entries cli_svec.Vec)]
   [target : backend.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
-  [cfgs : (& cfgs CompileCliCfgNames)]) : i64
+  [cfgs : (& cfgs cli_svec.Vec)]) : i64
   (compile-cli-run-batch-inline-tests-from
     (& entries)
     0
@@ -1167,29 +1091,6 @@
     stdlib-roots
     cfgs
     false))
-
-(define (compile-cli-batch-line-end [text : String] [start : i64] [n : i64]) : i64
-  (let
-    [i : i64 start]
-    [done : bool false]
-    (begin
-      (while (and (not done) (< i n))
-        (let
-          [c : char (string.string-ref text i)]
-          (if (or (= c '\n') (= c '\r'))
-            (set! done true)
-            (set! i (+ i 1)))))
-      i)))
-
-(define (compile-cli-batch-next-line [text : String] [line-end : i64] [n : i64]) : i64
-  (if (>= line-end n)
-    n
-    (if (and
-      (= (string.string-ref text line-end) '\r')
-      (< (+ line-end 1) n)
-      (= (string.string-ref text (+ line-end 1)) '\n'))
-      (+ line-end 2)
-      (+ line-end 1))))
 
 (define (compile-cli-batch-find-separator
   [text : String]
@@ -1225,16 +1126,8 @@
   (if (>= start n)
     0
     (let
-      [line-end : i64
-        (compile-cli-batch-line-end
-          (owned_view.compiler-owned-shared-view text)
-          start
-          n)]
-      [next-start : i64
-        (compile-cli-batch-next-line
-          (owned_view.compiler-owned-shared-view text)
-          line-end
-          n)]
+      [line-end : i64 (source_text.line-end text start)]
+      [next-start : i64 (source_text.next-line-start text line-end)]
       (if (= start line-end)
         (compile-cli-batch-parse-entries-into!
           text
@@ -1296,16 +1189,8 @@
   (if (>= start n)
     0
     (let
-      [line-end : i64
-        (compile-cli-batch-line-end
-          (owned_view.compiler-owned-shared-view text)
-          start
-          n)]
-      [next-start : i64
-        (compile-cli-batch-next-line
-          (owned_view.compiler-owned-shared-view text)
-          line-end
-          n)]
+      [line-end : i64 (source_text.line-end text start)]
+      [next-start : i64 (source_text.next-line-start text line-end)]
       (if (= start line-end)
         (compile-cli-windows-batch-parse-entries-into!
           text
@@ -1433,7 +1318,7 @@
   [has-target : bool]
   [target : backend.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
-  [cfgs : CompileCliCfgNames]
+  [cfgs : cli_svec.Vec]
   [backend-mode : backend.CompilerBackendMode]
   [opt-level : i64]
   [previous-compat-arena : i64]) : i64
@@ -1619,7 +1504,7 @@
   [has-target : bool]
   [target : backend.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
-  [cfgs : CompileCliCfgNames]
+  [cfgs : cli_svec.Vec]
   [backend-mode : backend.CompilerBackendMode]
   [opt-level : i64]) : i64
   (begin
@@ -1642,7 +1527,7 @@
   [entries : (& entries cli_svec.Vec)]
   [index : i64]
   [stdlib-roots : cli_svec.Vec]
-  [cfgs : CompileCliCfgNames]
+  [cfgs : cli_svec.Vec]
   [backend-mode : backend.CompilerBackendMode]
   [opt-level : i64]
   [previous-compat-arena : i64]
@@ -1833,7 +1718,7 @@
   [entries : cli_svec.Vec]
   [result-plan-path : String]
   [stdlib-roots : cli_svec.Vec]
-  [cfgs : CompileCliCfgNames]
+  [cfgs : cli_svec.Vec]
   [backend-mode : backend.CompilerBackendMode]
   [opt-level : i64]) : i64
   (let
@@ -1864,7 +1749,7 @@
   [has-target : bool]
   [target : backend.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
-  [cfgs : CompileCliCfgNames]
+  [cfgs : cli_svec.Vec]
   [backend-mode : backend.CompilerBackendMode]
   [opt-level : i64]) : i64
   (match (compile-cli-batch-parse-entries-from
@@ -1913,7 +1798,7 @@
   [result-plan-path : String]
   [target : backend.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
-  [cfgs : CompileCliCfgNames]
+  [cfgs : cli_svec.Vec]
   [backend-mode : backend.CompilerBackendMode]
   [opt-level : i64]) : i64
   (match (compile-cli-windows-batch-parse-entries-from

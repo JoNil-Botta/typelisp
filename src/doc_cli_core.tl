@@ -35,6 +35,7 @@
 (import stdlib.hashmap)
 (import (hashmap.hashmap String i64) as doc_path_map)
 (import stdlib.string)
+(import source_text_core as source_text)
 (import sym_i64_env)
 
 (defenum DocMaybeString
@@ -659,36 +660,6 @@
       (doc-print-wrote output-path)
       0)))
 
-(define (doc-test-batch-line-end [text : String] [start : i64] [n : i64]) : i64
-  (let
-    [i : i64 start]
-    [keep : bool true]
-    (begin
-      (while keep
-        (if (< i n)
-          (if (or
-            (= (string.string-ref text i) '\n')
-            (= (string.string-ref text i) '\r'))
-            (set! keep false)
-            (set! i (+ i 1)))
-          (set! keep false)))
-      i)))
-
-(define (doc-test-batch-next-line-start
-  [text : String]
-  [line-end : i64]
-  [n : i64]) : i64
-  (begin
-    (unless (< line-end n) (return line-end))
-    (let
-      [c : char (string.string-ref text line-end)]
-      (begin
-        (unless (= c '\r') (return (+ line-end 1)))
-        (unless (< (+ line-end 1) n) (return (+ line-end 1)))
-        (if (= (string.string-ref text (+ line-end 1)) '\n')
-          (+ line-end 2)
-          (+ line-end 1))))))
-
 (define (doc-test-batch-paths-from-text [text : String]) : doc_svec.Vec
   (let
     [n : i64 (string.string-length text)]
@@ -697,22 +668,13 @@
     (begin
       (while (< i n)
         (let
-          [line-end : i64
-            (doc-test-batch-line-end
-              (owned_view.compiler-owned-shared-view text)
-              i
-              n)]
+          [line-end : i64 (source_text.line-end text i)]
           [line : String (string.substring text i (- line-end i))]
           (begin
             (if (> (string.string-length line) 0)
               (doc_svec.push-ref! (&mut paths) line)
               unit)
-            (set!
-              i
-              (doc-test-batch-next-line-start
-                (owned_view.compiler-owned-shared-view text)
-                line-end
-                n)))))
+            (set! i (source_text.next-line-start text line-end)))))
       paths)))
 
 (define (doc-test-batch-paths [list-path : String]) : ResultDocTestBatchPaths

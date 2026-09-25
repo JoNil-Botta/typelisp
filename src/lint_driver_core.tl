@@ -278,29 +278,6 @@
 (define (selfhost-lint-space? [c : char]) : bool
   (or (= c ' ') (= c '\t') (= c '\n') (= c '\r')))
 
-(define (selfhost-lint-prefix-at?
-  [source : String]
-  [start : i64]
-  [needle : String]) : bool
-  (let
-    [source-len : i64 (string.string-length source)]
-    [needle-len : i64 (string.string-length needle)]
-    (if (< start 0)
-      false
-      (if (> (+ start needle-len) source-len)
-        false
-        (let
-          [ok : bool true]
-          [idx : i64 0]
-          (begin
-            (while (and ok (< idx needle-len))
-              (if (=
-                (string.string-ref source (+ start idx))
-                (string.string-ref needle idx))
-                (set! idx (+ idx 1))
-                (set! ok false)))
-            ok))))))
-
 (define (selfhost-lint-form-delim? [source : String] [idx : i64]) : bool
   (let
     [source-len : i64 (string.string-length source)]
@@ -509,10 +486,7 @@
     [needle : String "(begin"]
     [needle-len : i64 (string.string-length needle)]
     (if (and
-      (selfhost-lint-prefix-at?
-        (owned_view.compiler-owned-shared-view source)
-        start
-        needle)
+      (string.is-string-prefix-at source needle start)
       (selfhost-lint-form-delim?
         (owned_view.compiler-owned-shared-view source)
         (+ start needle-len)))
@@ -568,10 +542,7 @@
       (while (and (< idx source-len) (not stop))
         (if (= (string.string-ref source idx) '\n')
           (set! stop true)
-          (if (selfhost-lint-prefix-at?
-            (owned_view.compiler-owned-shared-view source)
-            idx
-            (owned_view.compiler-owned-shared-view needle))
+          (if (string.is-string-prefix-at source needle idx)
             (begin
               (set! found true)
               (set! stop true))
@@ -609,10 +580,7 @@
             line)]
         [idx : i64 (+ line-start (- col 1))]
         (and
-          (selfhost-lint-prefix-at?
-            (owned_view.compiler-owned-shared-view source)
-            idx
-            (owned_view.compiler-owned-shared-view needle))
+          (string.is-string-prefix-at source needle idx)
           (selfhost-lint-form-delim?
             source
             (+ idx (string.string-length needle))))))))
@@ -1943,7 +1911,7 @@
   (str_cat.str-cat (selfhost-lint-dead-qualified-ref-prefix) key "\n" fallback))
 
 (define (selfhost-lint-dead-qualified-ref? [ref : String]) : bool
-  (selfhost-lint-prefix-at? ref 0 (selfhost-lint-dead-qualified-ref-prefix)))
+  (string.is-string-prefix-at ref (selfhost-lint-dead-qualified-ref-prefix) 0))
 
 (define (selfhost-lint-dead-qualified-ref-separator [ref : String]) : i64
   (string.index-of-byte
@@ -1983,7 +1951,7 @@
     name))
 
 (define (selfhost-lint-dead-source-root? [root : String]) : bool
-  (selfhost-lint-prefix-at? root 0 (selfhost-lint-dead-source-root-prefix)))
+  (string.is-string-prefix-at root (selfhost-lint-dead-source-root-prefix) 0))
 
 (define (selfhost-lint-dead-source-root-separator [root : String]) : i64
   (string.index-of-byte
@@ -2694,10 +2662,7 @@
     [i : i64 idx]
     (begin
       (while (and (< found 0) (< i source-len))
-        (if (selfhost-lint-prefix-at?
-          (owned_view.compiler-owned-shared-view source)
-          i
-          (owned_view.compiler-owned-shared-view needle))
+        (if (string.is-string-prefix-at source needle i)
           (set! found i)
           (set! i (+ i 1))))
       found)))

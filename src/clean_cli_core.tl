@@ -13,6 +13,7 @@
 (import compiler_backend as backend)
 (import compiler_load as load)
 (import stdlib.string)
+(import source_text_core as source_text)
 (import stdlib.str_cat_runtime as str_cat)
 
 (defenum CleanConfig
@@ -24,76 +25,15 @@
   (Ok CleanConfig)
   (Err String))
 
-(define (clean-string-prefix-at?
-  [text : String]
-  [prefix : String]
-  [start : i64]) : bool
-  (let
-    [text-len : i64 (string.string-length text)]
-    [prefix-len : i64 (string.string-length prefix)]
-    (if (< start 0)
-      false
-      (if (> (+ start prefix-len) text-len)
-        false
-        (let
-          [i : i64 0]
-          [ok : bool true]
-          (begin
-            (while (and ok (< i prefix-len))
-              (if (=
-                (string.string-ref text (+ start i))
-                (string.string-ref prefix i))
-                (set! i (+ i 1))
-                (set! ok false)))
-            ok))))))
-
-(define (clean-string-prefix? [text : String] [prefix : String]) : bool
-  (clean-string-prefix-at? text prefix 0))
-
-(define (clean-string-contains? [text : String] [needle : String]) : bool
-  (let
-    [text-len : i64 (string.string-length text)]
-    [needle-len : i64 (string.string-length needle)]
-    (if (= needle-len 0)
-      true
-      (if (> needle-len text-len)
-        false
-        (let
-          [i : i64 0]
-          [found : bool false]
-          (begin
-            (while (and (not found) (<= i (- text-len needle-len)))
-              (if (clean-string-prefix-at?
-                (owned_view.compiler-owned-shared-view text)
-                (owned_view.compiler-owned-shared-view needle)
-                i)
-                (set! found true)
-                (set! i (+ i 1))))
-            found))))))
-
-(define (clean-string-suffix? [text : String] [suffix : String]) : bool
-  (let
-    [text-len : i64 (string.string-length text)]
-    [suffix-len : i64 (string.string-length suffix)]
-    (if (> suffix-len text-len)
-      false
-      (string.eq
-        (string.substring text (- text-len suffix-len) suffix-len)
-        suffix))))
-
 (define (clean-vcs-metadata-path? [path : String]) : bool
   (or
     (string.eq path ".git")
-    (clean-string-prefix? (owned_view.compiler-owned-shared-view path) ".git/")
-    (clean-string-prefix? (owned_view.compiler-owned-shared-view path) ".git\\")
-    (clean-string-contains?
-      (owned_view.compiler-owned-shared-view path)
-      "/.git/")
-    (clean-string-contains?
-      (owned_view.compiler-owned-shared-view path)
-      "\\.git\\")
-    (clean-string-suffix? (owned_view.compiler-owned-shared-view path) "/.git")
-    (clean-string-suffix? path "\\.git")))
+    (source_text.starts-with? path ".git/")
+    (source_text.starts-with? path ".git\\")
+    (string.contains path "/.git/")
+    (string.contains path "\\.git\\")
+    (source_text.ends-with? path "/.git")
+    (source_text.ends-with? path "\\.git")))
 
 (define (clean-dangerous-path? [path : String]) : bool
   (or
@@ -261,7 +201,7 @@
   (and
     (not (clean-dangerous-path? (owned_view.compiler-owned-shared-view path)))
     (not (string.eq source path))
-    (not (clean-string-suffix? path ".tl"))))
+    (not (source_text.ends-with? path ".tl"))))
 
 (define (clean-remove-source-artifact
   [source : String]
@@ -341,9 +281,8 @@
   (and
     (load.compiler-load-package-token-valid?
       (owned_view.compiler-owned-shared-view name))
-    (not
-      (clean-string-contains? (owned_view.compiler-owned-shared-view name) "/"))
-    (not (clean-string-contains? name "\\"))))
+    (not (string.contains name "/"))
+    (not (string.contains name "\\"))))
 
 (define (clean-package-artifact-safe?
   [manifest-dir : String]
@@ -356,7 +295,9 @@
       (str_cat.str-cat (owned_view.compiler-owned-shared-view output-dir) "/")]
     (and
       (not (clean-dangerous-path? (owned_view.compiler-owned-shared-view path)))
-      (or (string.eq path output-dir) (clean-string-prefix? path output-prefix)))))
+      (or
+        (string.eq path output-dir)
+        (source_text.starts-with? path output-prefix)))))
 
 (define (clean-remove-package-file
   [manifest-dir : String]
@@ -566,10 +507,8 @@
       (string.eq normalized expected)
       (or
         (string.eq expected "target/exp")
-        (clean-string-suffix?
-          (owned_view.compiler-owned-shared-view expected)
-          "/target/exp")
-        (clean-string-suffix? expected "\\target\\exp")))))
+        (source_text.ends-with? expected "/target/exp")
+        (source_text.ends-with? expected "\\target\\exp")))))
 
 (define (clean-experiments-from-path [manifest-path : String] [dry-run : bool]) : i64
   (match (build_cli_core.build-load-manifest

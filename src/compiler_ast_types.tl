@@ -3426,218 +3426,10 @@
     [(AstType.MutPtr inner) (hash.combine 34 inner)]
     [(AstType.Slice elem) (hash.combine 37 elem)]))
 
-(define (ty-lifetime-list-eq-at?
-  [a : (& a AstLifetimeList)]
-  [b : (& b AstLifetimeList)]
-  [len : i64]
-  [index : i64]) : bool
-  (if (>= index len)
-    true
-    (and
-      (= (array-ref a.slots index) (array-ref b.slots index))
-      (ty-lifetime-list-eq-at? a b len (+ index 1)))))
-
-(define (ty-lifetime-list-eq?
-  [a : (& a AstLifetimeList)]
-  [b : (& b AstLifetimeList)]) : bool
-  (let
-    [len : i64 (ast-lifetime-list-len a)]
-    (and (= len (ast-lifetime-list-len b)) (ty-lifetime-list-eq-at? a b len 0))))
-
-(define (ty-type-list-eq-at?
-  [a : (& a AstTypeList)]
-  [b : (& b AstTypeList)]
-  [len : i64]
-  [index : i64]) : bool
-  (if (>= index len)
-    true
-    (and
-      (= (array-ref a.slots index) (array-ref b.slots index))
-      (ty-type-list-eq-at? a b len (+ index 1)))))
-
-(define (ty-type-list-eq? [a : (& a AstTypeList)] [b : (& b AstTypeList)]) : bool
-  (let
-    [len : i64 (ast-type-list-len a)]
-    (and (= len (ast-type-list-len b)) (ty-type-list-eq-at? a b len 0))))
-
 ;; Shallow structural equality between a stored node and a candidate node. Child
 ;; ids compare as plain integers because children are themselves deduplicated.
 (define (ty-node-shallow-value-eq? [a : AstType] [b : AstType]) : bool
-  (match a
-    [(AstType.I64)
-      (match b
-        [(AstType.I64) true]
-        [_ false])]
-    [(AstType.I32)
-      (match b
-        [(AstType.I32) true]
-        [_ false])]
-    [(AstType.I16)
-      (match b
-        [(AstType.I16) true]
-        [_ false])]
-    [(AstType.I8)
-      (match b
-        [(AstType.I8) true]
-        [_ false])]
-    [(AstType.U64)
-      (match b
-        [(AstType.U64) true]
-        [_ false])]
-    [(AstType.U32)
-      (match b
-        [(AstType.U32) true]
-        [_ false])]
-    [(AstType.U16)
-      (match b
-        [(AstType.U16) true]
-        [_ false])]
-    [(AstType.U8)
-      (match b
-        [(AstType.U8) true]
-        [_ false])]
-    [(AstType.F64)
-      (match b
-        [(AstType.F64) true]
-        [_ false])]
-    [(AstType.F32)
-      (match b
-        [(AstType.F32) true]
-        [_ false])]
-    [(AstType.Bool)
-      (match b
-        [(AstType.Bool) true]
-        [_ false])]
-    [(AstType.Char)
-      (match b
-        [(AstType.Char) true]
-        [_ false])]
-    [(AstType.String)
-      (match b
-        [(AstType.String) true]
-        [_ false])]
-    [(AstType.Str)
-      (match b
-        [(AstType.Str) true]
-        [_ false])]
-    [(AstType.Bytes)
-      (match b
-        [(AstType.Bytes) true]
-        [_ false])]
-    [(AstType.Unit)
-      (match b
-        [(AstType.Unit) true]
-        [_ false])]
-    [(AstType.Never)
-      (match b
-        [(AstType.Never) true]
-        [_ false])]
-    [(AstType.Expr)
-      (match b
-        [(AstType.Expr) true]
-        [_ false])]
-    [(AstType.ExprList)
-      (match b
-        [(AstType.ExprList) true]
-        [_ false])]
-    [(AstType.Func a-args a-ret)
-      (match b
-        [(AstType.Func b-args b-ret)
-          (and
-            (= a-ret b-ret)
-            (ty-type-list-eq? (& (deref a-args)) (& (deref b-args))))]
-        [_ false])]
-    [(AstType.Tuple a-elems)
-      (match b
-        [(AstType.Tuple b-elems)
-          (ty-type-list-eq? (& (deref a-elems)) (& (deref b-elems)))]
-        [_ false])]
-    [(AstType.Array a-elem a-count)
-      (match b
-        [(AstType.Array b-elem b-count)
-          (and (= a-elem b-elem) (= a-count b-count))]
-        [_ false])]
-    [(AstType.DynArray a-elem)
-      (match b
-        [(AstType.DynArray b-elem) (= a-elem b-elem)]
-        [_ false])]
-    [(AstType.Box a-inner)
-      (match b
-        [(AstType.Box b-inner) (= a-inner b-inner)]
-        [_ false])]
-    [(AstType.Region a-name a-inner)
-      (match b
-        [(AstType.Region b-name b-inner)
-          (and (= a-inner b-inner) (= a-name b-name))]
-        [_ false])]
-    [(AstType.Ref a-name a-inner)
-      (match b
-        [(AstType.Ref b-name b-inner)
-          (and (= a-inner b-inner) (= a-name b-name))]
-        [_ false])]
-    [(AstType.MutRef a-name a-inner)
-      (match b
-        [(AstType.MutRef b-name b-inner)
-          (and (= a-inner b-inner) (= a-name b-name))]
-        [_ false])]
-    [(AstType.Enum a-name)
-      (match b
-        [(AstType.Enum b-name) (= a-name b-name)]
-        [_ false])]
-    [(AstType.EnumArgs a-name a-lifetimes)
-      (match b
-        [(AstType.EnumArgs b-name b-lifetimes)
-          (and
-            (= a-name b-name)
-            (ty-lifetime-list-eq?
-              (& (deref a-lifetimes))
-              (& (deref b-lifetimes))))]
-        [_ false])]
-    [(AstType.Struct a-name)
-      (match b
-        [(AstType.Struct b-name) (= a-name b-name)]
-        [_ false])]
-    [(AstType.StructArgs a-name a-lifetimes)
-      (match b
-        [(AstType.StructArgs b-name b-lifetimes)
-          (and
-            (= a-name b-name)
-            (ty-lifetime-list-eq?
-              (& (deref a-lifetimes))
-              (& (deref b-lifetimes))))]
-        [_ false])]
-    [(AstType.Var a-name)
-      (match b
-        [(AstType.Var b-name) (= a-name b-name)]
-        [_ false])]
-    [(AstType.VarArgs a-name a-lifetimes)
-      (match b
-        [(AstType.VarArgs b-name b-lifetimes)
-          (and
-            (= a-name b-name)
-            (ty-lifetime-list-eq?
-              (& (deref a-lifetimes))
-              (& (deref b-lifetimes))))]
-        [_ false])]
-    [(AstType.CFunc a-signature a-mode)
-      (match b
-        [(AstType.CFunc b-signature b-mode)
-          (and
-            (= a-signature b-signature)
-            (ast-c-function-mode-eq? a-mode b-mode))]
-        [_ false])]
-    [(AstType.Ptr a-inner)
-      (match b
-        [(AstType.Ptr b-inner) (= a-inner b-inner)]
-        [_ false])]
-    [(AstType.MutPtr a-inner)
-      (match b
-        [(AstType.MutPtr b-inner) (= a-inner b-inner)]
-        [_ false])]
-    [(AstType.Slice a-elem)
-      (match b
-        [(AstType.Slice b-elem) (= a-elem b-elem)]
-        [_ false])]))
+  (ast-type-children-eq? a b ast-type-id-same?))
 
 (define (ty-node-shallow-eq? [a-id : i64] [b : AstType]) : bool
   (ty-node-shallow-value-eq? (ty-node-get a-id) b))
@@ -8249,6 +8041,389 @@
     [(AstExpr.ForOwnedStep _) true]
     [_ false]))
 
+;; --- AstType child schema ---
+;; The child type ids of each AstType variant, in payload order: Func's
+;; argument ids and then its result id, Tuple's element ids, and the single
+;; element, inner or signature id of the other composite variants. Nominal
+;; names, lifetimes, regions, array lengths and C-function modes are not
+;; children. Like the AstExpr schema, each macro expands to a direct match over
+;; every variant with no wildcard arm and calls a pass-owned hook with the
+;; context expressions first and the child id last.
+(defmacro (ast-type-id-list-fold
+  [ids : Expr]
+  [combine : Expr]
+  [seed : Expr]
+  [on-type-id : Expr]
+  [contexts : Expr ...]) : Expr
+  `(let
+    [list ,ids]
+    [acc ,seed]
+    [index : i64 0]
+    (begin
+      (while (< index (ast-type-list-len (& list)))
+        (begin
+          (set!
+            acc
+            (,combine
+              acc
+              (,on-type-id
+                ,@contexts
+                (ast-type-list-get (& list) index (ast-type-id-fallback)))))
+          (set! index (+ index 1))))
+      acc)))
+
+(defmacro (ast-type-fold-children
+  [ty : Expr]
+  [combine : Expr]
+  [seed : Expr]
+  [on-type-id : Expr]
+  [contexts : Expr ...]) : Expr
+  (let
+    [c : Expr combine]
+    [s : Expr seed]
+    [t : Expr on-type-id]
+    [x : ExprList contexts]
+    `(match ,ty
+      [(AstType.I64) ,s]
+      [(AstType.I32) ,s]
+      [(AstType.I16) ,s]
+      [(AstType.I8) ,s]
+      [(AstType.U64) ,s]
+      [(AstType.U32) ,s]
+      [(AstType.U16) ,s]
+      [(AstType.U8) ,s]
+      [(AstType.F64) ,s]
+      [(AstType.F32) ,s]
+      [(AstType.Bool) ,s]
+      [(AstType.Char) ,s]
+      [(AstType.String) ,s]
+      [(AstType.Str) ,s]
+      [(AstType.Bytes) ,s]
+      [(AstType.Unit) ,s]
+      [(AstType.Never) ,s]
+      [(AstType.Expr) ,s]
+      [(AstType.ExprList) ,s]
+      [(AstType.Func args ret)
+        (,c (ast-type-id-list-fold (deref args) ,c ,s ,t ,@x) (,t ,@x ret))]
+      [(AstType.Tuple elems) (ast-type-id-list-fold (deref elems) ,c ,s ,t ,@x)]
+      [(AstType.Array elem _) (,c ,s (,t ,@x elem))]
+      [(AstType.DynArray elem) (,c ,s (,t ,@x elem))]
+      [(AstType.Box elem) (,c ,s (,t ,@x elem))]
+      [(AstType.Ptr elem) (,c ,s (,t ,@x elem))]
+      [(AstType.MutPtr elem) (,c ,s (,t ,@x elem))]
+      [(AstType.Slice elem) (,c ,s (,t ,@x elem))]
+      [(AstType.Region _ inner) (,c ,s (,t ,@x inner))]
+      [(AstType.Ref _ inner) (,c ,s (,t ,@x inner))]
+      [(AstType.MutRef _ inner) (,c ,s (,t ,@x inner))]
+      [(AstType.Enum _) ,s]
+      [(AstType.Struct _) ,s]
+      [(AstType.Var _) ,s]
+      [(AstType.EnumArgs _ _) ,s]
+      [(AstType.StructArgs _ _) ,s]
+      [(AstType.VarArgs _ _) ,s]
+      [(AstType.CFunc signature _) (,c ,s (,t ,@x signature))])))
+
+(defmacro (ast-type-for-each-child
+  [ty : Expr]
+  [on-type-id : Expr]
+  [contexts : Expr ...]) : unit
+  `(ast-type-fold-children ,ty ast-fold-seq unit ,on-type-id ,@contexts))
+
+;; `ast-type-map-children` rebuilds the node with each child id replaced by its
+;; hook's result, in payload order, and copies the lifetime lists.
+(defmacro (ast-type-id-list-map
+  [ids : Expr]
+  [on-type-id : Expr]
+  [contexts : Expr ...]) : Expr
+  `(let
+    [list ,ids]
+    [out (ast-type-list-with-capacity (ast-type-list-len (& list)))]
+    [index : i64 0]
+    (begin
+      (while (< index (ast-type-list-len (& list)))
+        (begin
+          (ast-type-list-push
+            (&mut out)
+            (,on-type-id
+              ,@contexts
+              (ast-type-list-get (& list) index (ast-type-id-fallback))))
+          (set! index (+ index 1))))
+      out)))
+
+(defmacro (ast-type-map-children
+  [ty : Expr]
+  [on-type-id : Expr]
+  [contexts : Expr ...]) : AstType
+  (let
+    [t : Expr on-type-id]
+    [x : ExprList contexts]
+    `(match ,ty
+      [(AstType.I64) (AstType.I64)]
+      [(AstType.I32) (AstType.I32)]
+      [(AstType.I16) (AstType.I16)]
+      [(AstType.I8) (AstType.I8)]
+      [(AstType.U64) (AstType.U64)]
+      [(AstType.U32) (AstType.U32)]
+      [(AstType.U16) (AstType.U16)]
+      [(AstType.U8) (AstType.U8)]
+      [(AstType.F64) (AstType.F64)]
+      [(AstType.F32) (AstType.F32)]
+      [(AstType.Bool) (AstType.Bool)]
+      [(AstType.Char) (AstType.Char)]
+      [(AstType.String) (AstType.String)]
+      [(AstType.Str) (AstType.Str)]
+      [(AstType.Bytes) (AstType.Bytes)]
+      [(AstType.Unit) (AstType.Unit)]
+      [(AstType.Never) (AstType.Never)]
+      [(AstType.Expr) (AstType.Expr)]
+      [(AstType.ExprList) (AstType.ExprList)]
+      [(AstType.Func args ret)
+        (AstType.Func
+          (box (ast-type-id-list-map (deref args) ,t ,@x))
+          (,t ,@x ret))]
+      [(AstType.Tuple elems)
+        (AstType.Tuple (box (ast-type-id-list-map (deref elems) ,t ,@x)))]
+      [(AstType.Array elem count) (AstType.Array (,t ,@x elem) count)]
+      [(AstType.DynArray elem) (AstType.DynArray (,t ,@x elem))]
+      [(AstType.Box elem) (AstType.Box (,t ,@x elem))]
+      [(AstType.Ptr elem) (AstType.Ptr (,t ,@x elem))]
+      [(AstType.MutPtr elem) (AstType.MutPtr (,t ,@x elem))]
+      [(AstType.Slice elem) (AstType.Slice (,t ,@x elem))]
+      [(AstType.Region name inner) (AstType.Region name (,t ,@x inner))]
+      [(AstType.Ref name inner) (AstType.Ref name (,t ,@x inner))]
+      [(AstType.MutRef name inner) (AstType.MutRef name (,t ,@x inner))]
+      [(AstType.Enum name) (AstType.Enum name)]
+      [(AstType.Struct name) (AstType.Struct name)]
+      [(AstType.Var name) (AstType.Var name)]
+      [(AstType.EnumArgs name lifetimes)
+        (AstType.EnumArgs name (box (ast-lifetime-list-copy (deref lifetimes))))]
+      [(AstType.StructArgs name lifetimes)
+        (AstType.StructArgs
+          name
+          (box (ast-lifetime-list-copy (deref lifetimes))))]
+      [(AstType.VarArgs name lifetimes)
+        (AstType.VarArgs name (box (ast-lifetime-list-copy (deref lifetimes))))]
+      [(AstType.CFunc signature mode) (AstType.CFunc (,t ,@x signature) mode)])))
+
+;; `ast-type-children-eq?` is structural equality of two nodes: the same
+;; variant, equal non-child payloads, and child ids equal pairwise by the hook.
+(defmacro (ast-type-id-list-eq?
+  [left : Expr]
+  [right : Expr]
+  [on-type-id : Expr]
+  [contexts : Expr ...]) : Expr
+  `(let
+    [a ,left]
+    [b ,right]
+    [same : bool (= (ast-type-list-len (& a)) (ast-type-list-len (& b)))]
+    [index : i64 0]
+    (begin
+      (while (and same (< index (ast-type-list-len (& a))))
+        (begin
+          (set!
+            same
+            (,on-type-id
+              ,@contexts
+              (ast-type-list-get (& a) index (ast-type-id-fallback))
+              (ast-type-list-get (& b) index (ast-type-id-fallback))))
+          (set! index (+ index 1))))
+      same)))
+
+(defmacro (ast-type-children-eq?
+  [left : Expr]
+  [right : Expr]
+  [on-type-id : Expr]
+  [contexts : Expr ...]) : bool
+  (let
+    [r : Expr right]
+    [t : Expr on-type-id]
+    [x : ExprList contexts]
+    `(match ,left
+      [(AstType.I64)
+        (match ,r
+          [(AstType.I64) true]
+          [_ false])]
+      [(AstType.I32)
+        (match ,r
+          [(AstType.I32) true]
+          [_ false])]
+      [(AstType.I16)
+        (match ,r
+          [(AstType.I16) true]
+          [_ false])]
+      [(AstType.I8)
+        (match ,r
+          [(AstType.I8) true]
+          [_ false])]
+      [(AstType.U64)
+        (match ,r
+          [(AstType.U64) true]
+          [_ false])]
+      [(AstType.U32)
+        (match ,r
+          [(AstType.U32) true]
+          [_ false])]
+      [(AstType.U16)
+        (match ,r
+          [(AstType.U16) true]
+          [_ false])]
+      [(AstType.U8)
+        (match ,r
+          [(AstType.U8) true]
+          [_ false])]
+      [(AstType.F64)
+        (match ,r
+          [(AstType.F64) true]
+          [_ false])]
+      [(AstType.F32)
+        (match ,r
+          [(AstType.F32) true]
+          [_ false])]
+      [(AstType.Bool)
+        (match ,r
+          [(AstType.Bool) true]
+          [_ false])]
+      [(AstType.Char)
+        (match ,r
+          [(AstType.Char) true]
+          [_ false])]
+      [(AstType.String)
+        (match ,r
+          [(AstType.String) true]
+          [_ false])]
+      [(AstType.Str)
+        (match ,r
+          [(AstType.Str) true]
+          [_ false])]
+      [(AstType.Bytes)
+        (match ,r
+          [(AstType.Bytes) true]
+          [_ false])]
+      [(AstType.Unit)
+        (match ,r
+          [(AstType.Unit) true]
+          [_ false])]
+      [(AstType.Never)
+        (match ,r
+          [(AstType.Never) true]
+          [_ false])]
+      [(AstType.Expr)
+        (match ,r
+          [(AstType.Expr) true]
+          [_ false])]
+      [(AstType.ExprList)
+        (match ,r
+          [(AstType.ExprList) true]
+          [_ false])]
+      [(AstType.Func a-args a-ret)
+        (match ,r
+          [(AstType.Func b-args b-ret)
+            (and
+              (ast-type-id-list-eq? (deref a-args) (deref b-args) ,t ,@x)
+              (,t ,@x a-ret b-ret))]
+          [_ false])]
+      [(AstType.Tuple a-elems)
+        (match ,r
+          [(AstType.Tuple b-elems)
+            (ast-type-id-list-eq? (deref a-elems) (deref b-elems) ,t ,@x)]
+          [_ false])]
+      [(AstType.Array a-elem a-count)
+        (match ,r
+          [(AstType.Array b-elem b-count)
+            (and (= a-count b-count) (,t ,@x a-elem b-elem))]
+          [_ false])]
+      [(AstType.DynArray a-elem)
+        (match ,r
+          [(AstType.DynArray b-elem) (,t ,@x a-elem b-elem)]
+          [_ false])]
+      [(AstType.Box a-elem)
+        (match ,r
+          [(AstType.Box b-elem) (,t ,@x a-elem b-elem)]
+          [_ false])]
+      [(AstType.Ptr a-elem)
+        (match ,r
+          [(AstType.Ptr b-elem) (,t ,@x a-elem b-elem)]
+          [_ false])]
+      [(AstType.MutPtr a-elem)
+        (match ,r
+          [(AstType.MutPtr b-elem) (,t ,@x a-elem b-elem)]
+          [_ false])]
+      [(AstType.Slice a-elem)
+        (match ,r
+          [(AstType.Slice b-elem) (,t ,@x a-elem b-elem)]
+          [_ false])]
+      [(AstType.Region a-name a-inner)
+        (match ,r
+          [(AstType.Region b-name b-inner)
+            (and (= a-name b-name) (,t ,@x a-inner b-inner))]
+          [_ false])]
+      [(AstType.Ref a-name a-inner)
+        (match ,r
+          [(AstType.Ref b-name b-inner)
+            (and (= a-name b-name) (,t ,@x a-inner b-inner))]
+          [_ false])]
+      [(AstType.MutRef a-name a-inner)
+        (match ,r
+          [(AstType.MutRef b-name b-inner)
+            (and (= a-name b-name) (,t ,@x a-inner b-inner))]
+          [_ false])]
+      [(AstType.Enum a-name)
+        (match ,r
+          [(AstType.Enum b-name) (= a-name b-name)]
+          [_ false])]
+      [(AstType.Struct a-name)
+        (match ,r
+          [(AstType.Struct b-name) (= a-name b-name)]
+          [_ false])]
+      [(AstType.Var a-name)
+        (match ,r
+          [(AstType.Var b-name) (= a-name b-name)]
+          [_ false])]
+      [(AstType.EnumArgs a-name a-lifetimes)
+        (match ,r
+          [(AstType.EnumArgs b-name b-lifetimes)
+            (and
+              (= a-name b-name)
+              (ast-lifetime-list-eq? (deref a-lifetimes) (deref b-lifetimes)))]
+          [_ false])]
+      [(AstType.StructArgs a-name a-lifetimes)
+        (match ,r
+          [(AstType.StructArgs b-name b-lifetimes)
+            (and
+              (= a-name b-name)
+              (ast-lifetime-list-eq? (deref a-lifetimes) (deref b-lifetimes)))]
+          [_ false])]
+      [(AstType.VarArgs a-name a-lifetimes)
+        (match ,r
+          [(AstType.VarArgs b-name b-lifetimes)
+            (and
+              (= a-name b-name)
+              (ast-lifetime-list-eq? (deref a-lifetimes) (deref b-lifetimes)))]
+          [_ false])]
+      [(AstType.CFunc a-signature a-mode)
+        (match ,r
+          [(AstType.CFunc b-signature b-mode)
+            (and
+              (ast-c-function-mode-eq? a-mode b-mode)
+              (,t ,@x a-signature b-signature))]
+          [_ false])])))
+
+;; Hooks: child ids compare equal as ids (hash-consed pools), or by structure
+;; through the installed reader or a hoisted segment-bases token.
+(defmacro (ast-type-id-same? [a : Expr] [b : Expr]) : Expr
+  `(= ,a ,b))
+
+(defmacro (ast-type-installed-ids-eq? [a : Expr] [b : Expr]) : Expr
+  `(ast-type-eq?
+    (ast-node-pool-reader-type-get ,a)
+    (ast-node-pool-reader-type-get ,b)))
+
+(defmacro (ast-type-seg-ids-eq? [seg-bases : Expr] [a : Expr] [b : Expr]) : Expr
+  `(ast-type-eq-with-seg-bases?
+    ,seg-bases
+    (ast-type-segment-bases-get ,seg-bases ,a)
+    (ast-type-segment-bases-get ,seg-bases ,b)))
+
 (define (ast-expr-for-owned-state
   [source-name : i64]
   [index-name : i64]
@@ -10279,7 +10454,7 @@
 (define (ast-compaction-copy-string [text : String]) : String
   (string.copy (& text)))
 
-(define (ast-compaction-remap-lifetime-list-into
+(define (ast-lifetime-list-copy-into
   [lifetimes : (& lifetimes AstLifetimeList)]
   [out : (&mut out AstLifetimeList)]
   [index : i64]) : unit
@@ -10289,103 +10464,25 @@
       (ast-lifetime-list-push
         out
         (ast-lifetime-list-get lifetimes index (ast-lifetime-fallback)))
-      (ast-compaction-remap-lifetime-list-into lifetimes out (+ index 1)))))
+      (ast-lifetime-list-copy-into lifetimes out (+ index 1)))))
 
-(define (ast-compaction-remap-lifetime-list [lifetimes : AstLifetimeList]) : AstLifetimeList
+(define (ast-lifetime-list-copy [lifetimes : AstLifetimeList]) : AstLifetimeList
   (let
     [out : AstLifetimeList
       (ast-lifetime-list-with-capacity (ast-lifetime-list-len (& lifetimes)))]
     (begin
-      (ast-compaction-remap-lifetime-list-into (& lifetimes) (&mut out) 0)
+      (ast-lifetime-list-copy-into (& lifetimes) (&mut out) 0)
       out)))
 
 (define (ast-compaction-remap-type-list
   [remap : (& remap AstProgramCompactionRemap)]
   [types : AstTypeList]) : AstTypeList
-  (let
-    [out : AstTypeList
-      (ast-type-list-with-capacity (ast-type-list-len (& types)))]
-    (begin
-      (ast-compaction-remap-type-list-into remap (& types) (&mut out) 0)
-      out)))
-
-(define (ast-compaction-remap-type-list-into
-  [remap : (& remap AstProgramCompactionRemap)]
-  [types : (& types AstTypeList)]
-  [out : (&mut out AstTypeList)]
-  [index : i64]) : unit
-  (if (>= index (ast-type-list-len types))
-    unit
-    (begin
-      (ast-type-list-push
-        out
-        (ast-compaction-remap-type-id
-          remap
-          (ast-type-list-get types index (ast-type-id-fallback))))
-      (ast-compaction-remap-type-list-into remap types out (+ index 1)))))
+  (ast-type-id-list-map types ast-compaction-remap-type-id remap))
 
 (define (ast-compaction-remap-type
   [remap : (& remap AstProgramCompactionRemap)]
   [ty : AstType]) : AstType
-  (match ty
-    [(AstType.I64) (AstType.I64)]
-    [(AstType.I32) (AstType.I32)]
-    [(AstType.I16) (AstType.I16)]
-    [(AstType.I8) (AstType.I8)]
-    [(AstType.U64) (AstType.U64)]
-    [(AstType.U32) (AstType.U32)]
-    [(AstType.U16) (AstType.U16)]
-    [(AstType.U8) (AstType.U8)]
-    [(AstType.F64) (AstType.F64)]
-    [(AstType.F32) (AstType.F32)]
-    [(AstType.Bool) (AstType.Bool)]
-    [(AstType.Char) (AstType.Char)]
-    [(AstType.String) (AstType.String)]
-    [(AstType.Str) (AstType.Str)]
-    [(AstType.Bytes) (AstType.Bytes)]
-    [(AstType.Unit) (AstType.Unit)]
-    [(AstType.Never) (AstType.Never)]
-    [(AstType.Expr) (AstType.Expr)]
-    [(AstType.ExprList) (AstType.ExprList)]
-    [(AstType.Func args ret)
-      (AstType.Func
-        (box (ast-compaction-remap-type-list remap (deref args)))
-        (ast-compaction-remap-type-id remap ret))]
-    [(AstType.Tuple elems)
-      (AstType.Tuple (box (ast-compaction-remap-type-list remap (deref elems))))]
-    [(AstType.Array elem count)
-      (AstType.Array (ast-compaction-remap-type-id remap elem) count)]
-    [(AstType.DynArray elem)
-      (AstType.DynArray (ast-compaction-remap-type-id remap elem))]
-    [(AstType.Box elem) (AstType.Box (ast-compaction-remap-type-id remap elem))]
-    [(AstType.Region region inner)
-      (AstType.Region region (ast-compaction-remap-type-id remap inner))]
-    [(AstType.Ref region inner)
-      (AstType.Ref region (ast-compaction-remap-type-id remap inner))]
-    [(AstType.MutRef region inner)
-      (AstType.MutRef region (ast-compaction-remap-type-id remap inner))]
-    [(AstType.Enum name) (AstType.Enum name)]
-    [(AstType.EnumArgs name lifetimes)
-      (AstType.EnumArgs
-        name
-        (box (ast-compaction-remap-lifetime-list (deref lifetimes))))]
-    [(AstType.Struct name) (AstType.Struct name)]
-    [(AstType.StructArgs name lifetimes)
-      (AstType.StructArgs
-        name
-        (box (ast-compaction-remap-lifetime-list (deref lifetimes))))]
-    [(AstType.Var name) (AstType.Var name)]
-    [(AstType.VarArgs name lifetimes)
-      (AstType.VarArgs
-        name
-        (box (ast-compaction-remap-lifetime-list (deref lifetimes))))]
-    [(AstType.CFunc signature mode)
-      (AstType.CFunc (ast-compaction-remap-type-id remap signature) mode)]
-    [(AstType.Ptr elem) (AstType.Ptr (ast-compaction-remap-type-id remap elem))]
-    [(AstType.MutPtr elem)
-      (AstType.MutPtr (ast-compaction-remap-type-id remap elem))]
-    [(AstType.Slice elem)
-      (AstType.Slice (ast-compaction-remap-type-id remap elem))]))
+  (ast-type-map-children ty ast-compaction-remap-type-id remap))
 
 (define (ast-compaction-remap-type-id
   [remap : (& remap AstProgramCompactionRemap)]
@@ -10956,7 +11053,7 @@
       (AstDecl.DefEnumLifetimes
         (ast-compaction-remap-decl-meta remap decl-meta)
         name
-        (ast-compaction-remap-lifetime-list lifetimes)
+        (ast-lifetime-list-copy lifetimes)
         (ast-compaction-remap-enum-cleanup cleanup)
         (ast-compaction-remap-variant-def-list remap variants))]
     [(AstDecl.DefStruct decl-meta name repr cleanup fields)
@@ -10970,7 +11067,7 @@
       (AstDecl.DefStructLifetimes
         (ast-compaction-remap-decl-meta remap decl-meta)
         name
-        (ast-compaction-remap-lifetime-list lifetimes)
+        (ast-lifetime-list-copy lifetimes)
         repr
         (ast-compaction-remap-struct-cleanup cleanup)
         (ast-compaction-remap-field-def-list remap fields))]
@@ -11414,233 +11511,11 @@
       (= len (ast-lifetime-list-len (& b)))
       (ast-lifetime-list-eq-at? (& a) (& b) len 0))))
 
-;; Legacy/test equality family for callers using the installed reader. Compiler
-;; phases use `ast-type-eq-with-pools?` or its hoisted segment-bases worker.
-(define (ast-type-list-eq-at?
-  [a : (& a AstTypeList)]
-  [b : (& b AstTypeList)]
-  [len : i64]
-  [index : i64]) : bool
-  (if (>= index len)
-    true
-    (and
-      (ast-type-eq?
-        (ast-node-pool-reader-type-get (array-ref a.slots index))
-        (ast-node-pool-reader-type-get (array-ref b.slots index)))
-      (ast-type-list-eq-at? a b len (+ index 1)))))
-
 (define (ast-type-list-eq? [a : AstTypeList] [b : AstTypeList]) : bool
-  (let
-    [len : i64 (ast-type-list-len (& a))]
-    (and
-      (= len (ast-type-list-len (& b)))
-      (ast-type-list-eq-at? (& a) (& b) len 0))))
+  (ast-type-id-list-eq? a b ast-type-installed-ids-eq?))
 
 (define (ast-type-eq? [a : AstType] [b : AstType]) : bool
-  (match a
-    [(AstType.I64)
-      (match b
-        [(AstType.I64) true]
-        [_ false])]
-    [(AstType.I32)
-      (match b
-        [(AstType.I32) true]
-        [_ false])]
-    [(AstType.I16)
-      (match b
-        [(AstType.I16) true]
-        [_ false])]
-    [(AstType.I8)
-      (match b
-        [(AstType.I8) true]
-        [_ false])]
-    [(AstType.U64)
-      (match b
-        [(AstType.U64) true]
-        [_ false])]
-    [(AstType.U32)
-      (match b
-        [(AstType.U32) true]
-        [_ false])]
-    [(AstType.U16)
-      (match b
-        [(AstType.U16) true]
-        [_ false])]
-    [(AstType.U8)
-      (match b
-        [(AstType.U8) true]
-        [_ false])]
-    [(AstType.F64)
-      (match b
-        [(AstType.F64) true]
-        [_ false])]
-    [(AstType.F32)
-      (match b
-        [(AstType.F32) true]
-        [_ false])]
-    [(AstType.Bool)
-      (match b
-        [(AstType.Bool) true]
-        [_ false])]
-    [(AstType.Char)
-      (match b
-        [(AstType.Char) true]
-        [_ false])]
-    [(AstType.String)
-      (match b
-        [(AstType.String) true]
-        [_ false])]
-    [(AstType.Str)
-      (match b
-        [(AstType.Str) true]
-        [_ false])]
-    [(AstType.Bytes)
-      (match b
-        [(AstType.Bytes) true]
-        [_ false])]
-    [(AstType.Unit)
-      (match b
-        [(AstType.Unit) true]
-        [_ false])]
-    [(AstType.Never)
-      (match b
-        [(AstType.Never) true]
-        [_ false])]
-    [(AstType.Expr)
-      (match b
-        [(AstType.Expr) true]
-        [_ false])]
-    [(AstType.ExprList)
-      (match b
-        [(AstType.ExprList) true]
-        [_ false])]
-    [(AstType.Func a-args a-ret)
-      (match b
-        [(AstType.Func b-args b-ret)
-          (and
-            (ast-type-list-eq? (deref a-args) (deref b-args))
-            (ast-type-eq?
-              (ast-node-pool-reader-type-get a-ret)
-              (ast-node-pool-reader-type-get b-ret)))]
-        [_ false])]
-    [(AstType.Tuple a-elems)
-      (match b
-        [(AstType.Tuple b-elems)
-          (ast-type-list-eq? (deref a-elems) (deref b-elems))]
-        [_ false])]
-    [(AstType.Array a-elem a-len)
-      (match b
-        [(AstType.Array b-elem b-len)
-          (and
-            (= a-len b-len)
-            (ast-type-eq?
-              (ast-node-pool-reader-type-get a-elem)
-              (ast-node-pool-reader-type-get b-elem)))]
-        [_ false])]
-    [(AstType.DynArray a-elem)
-      (match b
-        [(AstType.DynArray b-elem)
-          (ast-type-eq?
-            (ast-node-pool-reader-type-get a-elem)
-            (ast-node-pool-reader-type-get b-elem))]
-        [_ false])]
-    [(AstType.Box a-elem)
-      (match b
-        [(AstType.Box b-elem)
-          (ast-type-eq?
-            (ast-node-pool-reader-type-get a-elem)
-            (ast-node-pool-reader-type-get b-elem))]
-        [_ false])]
-    [(AstType.Region a-region a-inner)
-      (match b
-        [(AstType.Region b-region b-inner)
-          (and
-            (= a-region b-region)
-            (ast-type-eq?
-              (ast-node-pool-reader-type-get a-inner)
-              (ast-node-pool-reader-type-get b-inner)))]
-        [_ false])]
-    [(AstType.Ref a-lifetime a-inner)
-      (match b
-        [(AstType.Ref b-lifetime b-inner)
-          (and
-            (= a-lifetime b-lifetime)
-            (ast-type-eq?
-              (ast-node-pool-reader-type-get a-inner)
-              (ast-node-pool-reader-type-get b-inner)))]
-        [_ false])]
-    [(AstType.MutRef a-lifetime a-inner)
-      (match b
-        [(AstType.MutRef b-lifetime b-inner)
-          (and
-            (= a-lifetime b-lifetime)
-            (ast-type-eq?
-              (ast-node-pool-reader-type-get a-inner)
-              (ast-node-pool-reader-type-get b-inner)))]
-        [_ false])]
-    [(AstType.Enum a-name)
-      (match b
-        [(AstType.Enum b-name) (= a-name b-name)]
-        [_ false])]
-    [(AstType.EnumArgs a-name a-lifetimes)
-      (match b
-        [(AstType.EnumArgs b-name b-lifetimes)
-          (and
-            (= a-name b-name)
-            (ast-lifetime-list-eq? (deref a-lifetimes) (deref b-lifetimes)))]
-        [_ false])]
-    [(AstType.Struct a-name)
-      (match b
-        [(AstType.Struct b-name) (= a-name b-name)]
-        [_ false])]
-    [(AstType.StructArgs a-name a-lifetimes)
-      (match b
-        [(AstType.StructArgs b-name b-lifetimes)
-          (and
-            (= a-name b-name)
-            (ast-lifetime-list-eq? (deref a-lifetimes) (deref b-lifetimes)))]
-        [_ false])]
-    [(AstType.Var a-name)
-      (match b
-        [(AstType.Var b-name) (= a-name b-name)]
-        [_ false])]
-    [(AstType.VarArgs a-name a-lifetimes)
-      (match b
-        [(AstType.VarArgs b-name b-lifetimes)
-          (and
-            (= a-name b-name)
-            (ast-lifetime-list-eq? (deref a-lifetimes) (deref b-lifetimes)))]
-        [_ false])]
-    [(AstType.CFunc a-signature a-mode)
-      (match b
-        [(AstType.CFunc b-signature b-mode)
-          (and
-            (ast-c-function-mode-eq? a-mode b-mode)
-            (ast-type-eq?
-              (ast-node-pool-reader-type-get a-signature)
-              (ast-node-pool-reader-type-get b-signature)))]
-        [_ false])]
-    [(AstType.Ptr a-elem)
-      (match b
-        [(AstType.Ptr b-elem)
-          (ast-type-eq?
-            (ast-node-pool-reader-type-get a-elem)
-            (ast-node-pool-reader-type-get b-elem))]
-        [_ false])]
-    [(AstType.MutPtr a-elem)
-      (match b
-        [(AstType.MutPtr b-elem)
-          (ast-type-eq?
-            (ast-node-pool-reader-type-get a-elem)
-            (ast-node-pool-reader-type-get b-elem))]
-        [_ false])]
-    [(AstType.Slice a-elem)
-      (match b
-        [(AstType.Slice b-elem)
-          (ast-type-eq?
-            (ast-node-pool-reader-type-get a-elem)
-            (ast-node-pool-reader-type-get b-elem))]
-        [_ false])]))
+  (ast-type-children-eq? a b ast-type-installed-ids-eq?))
 
 (define (ast-extern-abi-eq? [a : AstExternAbi] [b : AstExternAbi]) : bool
   (match a
@@ -11656,21 +11531,6 @@
       (match b
         [(AstExternAbi.CVarargsTyped bty) (ast-type-eq? aty bty)]
         [_ false])]))
-
-(define (ast-type-list-eq-at-with-seg-bases?
-  [seg-bases : i64]
-  [a : (& a AstTypeList)]
-  [b : (& b AstTypeList)]
-  [len : i64]
-  [index : i64]) : bool
-  (if (>= index len)
-    true
-    (and
-      (ast-type-eq-with-seg-bases?
-        seg-bases
-        (ast-type-segment-bases-get seg-bases (array-ref a.slots index))
-        (ast-type-segment-bases-get seg-bases (array-ref b.slots index)))
-      (ast-type-list-eq-at-with-seg-bases? seg-bases a b len (+ index 1)))))
 
 ;; Read-only walk entry point: snapshot the type pool's segment-bases once, so
 ;; the recursive workers address nodes exactly as cheaply as `ty-node-get`.
@@ -11688,242 +11548,7 @@
   [seg-bases : i64]
   [a : AstType]
   [b : AstType]) : bool
-  (match a
-    [(AstType.I64)
-      (match b
-        [(AstType.I64) true]
-        [_ false])]
-    [(AstType.I32)
-      (match b
-        [(AstType.I32) true]
-        [_ false])]
-    [(AstType.I16)
-      (match b
-        [(AstType.I16) true]
-        [_ false])]
-    [(AstType.I8)
-      (match b
-        [(AstType.I8) true]
-        [_ false])]
-    [(AstType.U64)
-      (match b
-        [(AstType.U64) true]
-        [_ false])]
-    [(AstType.U32)
-      (match b
-        [(AstType.U32) true]
-        [_ false])]
-    [(AstType.U16)
-      (match b
-        [(AstType.U16) true]
-        [_ false])]
-    [(AstType.U8)
-      (match b
-        [(AstType.U8) true]
-        [_ false])]
-    [(AstType.F64)
-      (match b
-        [(AstType.F64) true]
-        [_ false])]
-    [(AstType.F32)
-      (match b
-        [(AstType.F32) true]
-        [_ false])]
-    [(AstType.Bool)
-      (match b
-        [(AstType.Bool) true]
-        [_ false])]
-    [(AstType.Char)
-      (match b
-        [(AstType.Char) true]
-        [_ false])]
-    [(AstType.String)
-      (match b
-        [(AstType.String) true]
-        [_ false])]
-    [(AstType.Str)
-      (match b
-        [(AstType.Str) true]
-        [_ false])]
-    [(AstType.Bytes)
-      (match b
-        [(AstType.Bytes) true]
-        [_ false])]
-    [(AstType.Unit)
-      (match b
-        [(AstType.Unit) true]
-        [_ false])]
-    [(AstType.Never)
-      (match b
-        [(AstType.Never) true]
-        [_ false])]
-    [(AstType.Expr)
-      (match b
-        [(AstType.Expr) true]
-        [_ false])]
-    [(AstType.ExprList)
-      (match b
-        [(AstType.ExprList) true]
-        [_ false])]
-    [(AstType.Func a-args a-ret)
-      (match b
-        [(AstType.Func b-args b-ret)
-          (let
-            [a-arg-list : AstTypeList (deref a-args)]
-            [b-arg-list : AstTypeList (deref b-args)]
-            [a-arg-len : i64 (ast-type-list-len (& a-arg-list))]
-            (and
-              (= a-arg-len (ast-type-list-len (& b-arg-list)))
-              (ast-type-list-eq-at-with-seg-bases?
-                seg-bases
-                (& a-arg-list)
-                (& b-arg-list)
-                a-arg-len
-                0)
-              (ast-type-eq-with-seg-bases?
-                seg-bases
-                (ast-type-segment-bases-get seg-bases a-ret)
-                (ast-type-segment-bases-get seg-bases b-ret))))]
-        [_ false])]
-    [(AstType.Tuple a-elems)
-      (match b
-        [(AstType.Tuple b-elems)
-          (let
-            [a-elem-list : AstTypeList (deref a-elems)]
-            [b-elem-list : AstTypeList (deref b-elems)]
-            [a-elem-len : i64 (ast-type-list-len (& a-elem-list))]
-            (and
-              (= a-elem-len (ast-type-list-len (& b-elem-list)))
-              (ast-type-list-eq-at-with-seg-bases?
-                seg-bases
-                (& a-elem-list)
-                (& b-elem-list)
-                a-elem-len
-                0)))]
-        [_ false])]
-    [(AstType.Array a-elem a-len)
-      (match b
-        [(AstType.Array b-elem b-len)
-          (and
-            (= a-len b-len)
-            (ast-type-eq-with-seg-bases?
-              seg-bases
-              (ast-type-segment-bases-get seg-bases a-elem)
-              (ast-type-segment-bases-get seg-bases b-elem)))]
-        [_ false])]
-    [(AstType.DynArray a-elem)
-      (match b
-        [(AstType.DynArray b-elem)
-          (ast-type-eq-with-seg-bases?
-            seg-bases
-            (ast-type-segment-bases-get seg-bases a-elem)
-            (ast-type-segment-bases-get seg-bases b-elem))]
-        [_ false])]
-    [(AstType.Box a-elem)
-      (match b
-        [(AstType.Box b-elem)
-          (ast-type-eq-with-seg-bases?
-            seg-bases
-            (ast-type-segment-bases-get seg-bases a-elem)
-            (ast-type-segment-bases-get seg-bases b-elem))]
-        [_ false])]
-    [(AstType.Region a-region a-inner)
-      (match b
-        [(AstType.Region b-region b-inner)
-          (and
-            (= a-region b-region)
-            (ast-type-eq-with-seg-bases?
-              seg-bases
-              (ast-type-segment-bases-get seg-bases a-inner)
-              (ast-type-segment-bases-get seg-bases b-inner)))]
-        [_ false])]
-    [(AstType.Ref a-lifetime a-inner)
-      (match b
-        [(AstType.Ref b-lifetime b-inner)
-          (and
-            (= a-lifetime b-lifetime)
-            (ast-type-eq-with-seg-bases?
-              seg-bases
-              (ast-type-segment-bases-get seg-bases a-inner)
-              (ast-type-segment-bases-get seg-bases b-inner)))]
-        [_ false])]
-    [(AstType.MutRef a-lifetime a-inner)
-      (match b
-        [(AstType.MutRef b-lifetime b-inner)
-          (and
-            (= a-lifetime b-lifetime)
-            (ast-type-eq-with-seg-bases?
-              seg-bases
-              (ast-type-segment-bases-get seg-bases a-inner)
-              (ast-type-segment-bases-get seg-bases b-inner)))]
-        [_ false])]
-    [(AstType.Enum a-name)
-      (match b
-        [(AstType.Enum b-name) (= a-name b-name)]
-        [_ false])]
-    [(AstType.EnumArgs a-name a-lifetimes)
-      (match b
-        [(AstType.EnumArgs b-name b-lifetimes)
-          (and
-            (= a-name b-name)
-            (ast-lifetime-list-eq? (deref a-lifetimes) (deref b-lifetimes)))]
-        [_ false])]
-    [(AstType.Struct a-name)
-      (match b
-        [(AstType.Struct b-name) (= a-name b-name)]
-        [_ false])]
-    [(AstType.StructArgs a-name a-lifetimes)
-      (match b
-        [(AstType.StructArgs b-name b-lifetimes)
-          (and
-            (= a-name b-name)
-            (ast-lifetime-list-eq? (deref a-lifetimes) (deref b-lifetimes)))]
-        [_ false])]
-    [(AstType.Var a-name)
-      (match b
-        [(AstType.Var b-name) (= a-name b-name)]
-        [_ false])]
-    [(AstType.VarArgs a-name a-lifetimes)
-      (match b
-        [(AstType.VarArgs b-name b-lifetimes)
-          (and
-            (= a-name b-name)
-            (ast-lifetime-list-eq? (deref a-lifetimes) (deref b-lifetimes)))]
-        [_ false])]
-    [(AstType.CFunc a-signature a-mode)
-      (match b
-        [(AstType.CFunc b-signature b-mode)
-          (and
-            (ast-c-function-mode-eq? a-mode b-mode)
-            (ast-type-eq-with-seg-bases?
-              seg-bases
-              (ast-type-segment-bases-get seg-bases a-signature)
-              (ast-type-segment-bases-get seg-bases b-signature)))]
-        [_ false])]
-    [(AstType.Ptr a-elem)
-      (match b
-        [(AstType.Ptr b-elem)
-          (ast-type-eq-with-seg-bases?
-            seg-bases
-            (ast-type-segment-bases-get seg-bases a-elem)
-            (ast-type-segment-bases-get seg-bases b-elem))]
-        [_ false])]
-    [(AstType.MutPtr a-elem)
-      (match b
-        [(AstType.MutPtr b-elem)
-          (ast-type-eq-with-seg-bases?
-            seg-bases
-            (ast-type-segment-bases-get seg-bases a-elem)
-            (ast-type-segment-bases-get seg-bases b-elem))]
-        [_ false])]
-    [(AstType.Slice a-elem)
-      (match b
-        [(AstType.Slice b-elem)
-          (ast-type-eq-with-seg-bases?
-            seg-bases
-            (ast-type-segment-bases-get seg-bases a-elem)
-            (ast-type-segment-bases-get seg-bases b-elem))]
-        [_ false])]))
+  (ast-type-children-eq? a b ast-type-seg-ids-eq? seg-bases))
 
 (define (ast-extern-link-input-eq?
   [a : AstExternLinkInput]

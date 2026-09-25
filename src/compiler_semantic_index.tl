@@ -3406,57 +3406,18 @@
         [(ast.AstType.EnumArgs resolved-name-id _)
           (compiler-semantic-record-type-name-use! state resolved-name-id)]
         [_ (compiler-semantic-record-type-name-use! state name-id)])]
-    [(ast.AstType.Func args ret)
-      (begin
-        (compiler-semantic-walk-type-list!
-          (owned_view.compiler-owned-shared-view state)
-          (deref args))
-        (compiler-semantic-walk-type!
-          (owned_view.compiler-owned-shared-view state)
-          (tc.tc-context-type-get state.ctx ret)))]
-    [(ast.AstType.CFunc signature _)
-      (compiler-semantic-walk-type!
-        (owned_view.compiler-owned-shared-view state)
-        (tc.tc-context-type-get state.ctx signature))]
-    [(ast.AstType.Tuple items)
-      (compiler-semantic-walk-type-list! state (deref items))]
-    [(ast.AstType.Array elem _)
-      (compiler-semantic-walk-type!
-        (owned_view.compiler-owned-shared-view state)
-        (tc.tc-context-type-get state.ctx elem))]
-    [(ast.AstType.DynArray elem)
-      (compiler-semantic-walk-type!
-        (owned_view.compiler-owned-shared-view state)
-        (tc.tc-context-type-get state.ctx elem))]
-    [(ast.AstType.Box elem)
-      (compiler-semantic-walk-type!
-        (owned_view.compiler-owned-shared-view state)
-        (tc.tc-context-type-get state.ctx elem))]
-    [(ast.AstType.Region _ elem)
-      (compiler-semantic-walk-type!
-        (owned_view.compiler-owned-shared-view state)
-        (tc.tc-context-type-get state.ctx elem))]
-    [(ast.AstType.Ref _ elem)
-      (compiler-semantic-walk-type!
-        (owned_view.compiler-owned-shared-view state)
-        (tc.tc-context-type-get state.ctx elem))]
-    [(ast.AstType.MutRef _ elem)
-      (compiler-semantic-walk-type!
-        (owned_view.compiler-owned-shared-view state)
-        (tc.tc-context-type-get state.ctx elem))]
-    [(ast.AstType.Ptr elem)
-      (compiler-semantic-walk-type!
-        (owned_view.compiler-owned-shared-view state)
-        (tc.tc-context-type-get state.ctx elem))]
-    [(ast.AstType.MutPtr elem)
-      (compiler-semantic-walk-type!
-        (owned_view.compiler-owned-shared-view state)
-        (tc.tc-context-type-get state.ctx elem))]
-    [(ast.AstType.Slice elem)
-      (compiler-semantic-walk-type!
-        (owned_view.compiler-owned-shared-view state)
-        (tc.tc-context-type-get state.ctx elem))]
-    [_ unit]))
+    [_
+      (ast.ast-type-for-each-child
+        (owned_view.compiler-owned-shared-view ty)
+        compiler-semantic-walk-type-child!
+        (owned_view.compiler-owned-shared-view state))]))
+
+(define (compiler-semantic-walk-type-child!
+  [state : CompilerSemanticWalkState]
+  [ty-id : i64]) : unit
+  (compiler-semantic-walk-type!
+    (owned_view.compiler-owned-shared-view state)
+    (tc.tc-context-type-get state.ctx ty-id)))
 
 (define (compiler-semantic-walk-type-list!
   [state : CompilerSemanticWalkState]

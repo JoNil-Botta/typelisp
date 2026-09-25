@@ -7101,43 +7101,21 @@
     summary
     locals))
 
-(define (compiler-load-session-state-lazy-type-list-demand-at?
-  [state : CompilerLoadSessionState]
-  [types : (& types ast.AstTypeList)]
-  [alias : i64]
-  [summary : (& summary CompilerLoadSurfaceSummary)]
-  [locals : sym_i64_env.SymI64Env]
-  [index : i64]) : CompilerLoadLazyAliasDemand
-  (if (>= index (ast.ast-type-list-len types))
-    (compiler-load-lazy-alias-demand-none)
-    (compiler-load-lazy-alias-demand-merge
-      (compiler-load-session-state-lazy-type-id-demand
-        (owned_view.compiler-owned-shared-view state)
-        (ast.ast-type-list-get types index (ast.ast-type-id-fallback))
-        alias
-        summary
-        locals)
-      (compiler-load-session-state-lazy-type-list-demand-at?
-        state
-        types
-        alias
-        summary
-        locals
-        (+ index 1)))))
-
 (define (compiler-load-session-state-lazy-type-list-demand
   [state : CompilerLoadSessionState]
   [types : ast.AstTypeList]
   [alias : i64]
   [summary : (& summary CompilerLoadSurfaceSummary)]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
-  (compiler-load-session-state-lazy-type-list-demand-at?
-    state
-    (& types)
+  (ast.ast-type-id-list-fold
+    types
+    compiler-load-lazy-alias-demand-merge
+    (compiler-load-lazy-alias-demand-none)
+    compiler-load-lazy-type-id-demand-hook
+    (owned_view.compiler-owned-shared-view state)
     alias
     summary
-    locals
-    0))
+    locals))
 
 (define (compiler-load-session-state-lazy-type-demand
   [state : CompilerLoadSessionState]
@@ -7145,77 +7123,7 @@
   [alias : i64]
   [summary : (& summary CompilerLoadSurfaceSummary)]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
-  (match ty
-    [(ast.AstType.Func args ret)
-      (compiler-load-lazy-alias-demand-merge
-        (compiler-load-session-state-lazy-type-list-demand
-          (owned_view.compiler-owned-shared-view state)
-          (deref args)
-          alias
-          summary
-          locals)
-        (compiler-load-session-state-lazy-type-id-demand
-          state
-          ret
-          alias
-          summary
-          locals))]
-    [(ast.AstType.Tuple items)
-      (compiler-load-session-state-lazy-type-list-demand
-        state
-        (deref items)
-        alias
-        summary
-        locals)]
-    [(ast.AstType.Array elem _)
-      (compiler-load-session-state-lazy-type-id-demand
-        state
-        elem
-        alias
-        summary
-        locals)]
-    [(ast.AstType.DynArray elem)
-      (compiler-load-session-state-lazy-type-id-demand
-        state
-        elem
-        alias
-        summary
-        locals)]
-    [(ast.AstType.Slice elem)
-      (compiler-load-session-state-lazy-type-id-demand
-        state
-        elem
-        alias
-        summary
-        locals)]
-    [(ast.AstType.Box elem)
-      (compiler-load-session-state-lazy-type-id-demand
-        state
-        elem
-        alias
-        summary
-        locals)]
-    [(ast.AstType.Region _ inner)
-      (compiler-load-session-state-lazy-type-id-demand
-        state
-        inner
-        alias
-        summary
-        locals)]
-    [(ast.AstType.Ref _ inner)
-      (compiler-load-session-state-lazy-type-id-demand
-        state
-        inner
-        alias
-        summary
-        locals)]
-    [(ast.AstType.MutRef _ inner)
-      (compiler-load-session-state-lazy-type-id-demand
-        state
-        inner
-        alias
-        summary
-        locals)]
+  (match (owned_view.compiler-owned-shared-view ty)
     [(ast.AstType.Enum name)
       (compiler-load-session-state-lazy-name-demand
         state
@@ -7258,21 +7166,18 @@
         alias
         summary
         locals)]
-    [(ast.AstType.Ptr inner)
-      (compiler-load-session-state-lazy-type-id-demand
-        state
-        inner
+    ;; A C-function type's signature is not an alias use.
+    [(ast.AstType.CFunc _ _) (compiler-load-lazy-alias-demand-none)]
+    [_
+      (ast.ast-type-fold-children
+        ty
+        compiler-load-lazy-alias-demand-merge
+        (compiler-load-lazy-alias-demand-none)
+        compiler-load-lazy-type-id-demand-hook
+        (owned_view.compiler-owned-shared-view state)
         alias
         summary
-        locals)]
-    [(ast.AstType.MutPtr inner)
-      (compiler-load-session-state-lazy-type-id-demand
-        state
-        inner
-        alias
-        summary
-        locals)]
-    [_ (compiler-load-lazy-alias-demand-none)]))
+        locals)]))
 
 (define (compiler-load-session-state-lazy-maybe-type-demand
   [state : CompilerLoadSessionState]

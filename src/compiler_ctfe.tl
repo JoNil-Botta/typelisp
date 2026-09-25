@@ -4197,24 +4197,10 @@
 (define (ctfe-lifetime-list-key [lifetimes : ast.AstLifetimeList]) : String
   (ctfe-lifetime-list-key-at (& lifetimes) 0))
 
-(define (ctfe-lifetime-list-eq-at
-  [a : (& a ast.AstLifetimeList)]
-  [b : (& b ast.AstLifetimeList)]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-lifetime-list-len a))
-    true
-    (and
-      (=
-        (ast.ast-lifetime-list-get a index (ast.ast-lifetime-fallback))
-        (ast.ast-lifetime-list-get b index (ast.ast-lifetime-fallback)))
-      (ctfe-lifetime-list-eq-at a b (+ index 1)))))
-
 (define (ctfe-lifetime-list-eq
   [a : ast.AstLifetimeList]
   [b : ast.AstLifetimeList]) : bool
-  (and
-    (= (ast.ast-lifetime-list-len (& a)) (ast.ast-lifetime-list-len (& b)))
-    (ctfe-lifetime-list-eq-at (& a) (& b) 0)))
+  (ast.ast-lifetime-list-eq? a b))
 
 (define (ctfe-type-key-with-reflections-and-pools
   [pools : ast.AstNodePoolContext]
@@ -14822,247 +14808,16 @@
   [env : (& env CtfeEnv)]
   [a : ast.AstTypeList]
   [b : ast.AstTypeList]) : bool
-  (and
-    (= (ast.ast-type-list-len (& a)) (ast.ast-type-list-len (& b)))
-    (ctfe-type-list-eq-in-env-at env (& a) (& b) 0)))
-
-(define (ctfe-type-list-eq-in-env-at
-  [env : (& env CtfeEnv)]
-  [a : (& a ast.AstTypeList)]
-  [b : (& b ast.AstTypeList)]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-type-list-len a))
-    true
-    (and
-      (ctfe-type-eq-in-env
-        env
-        (ctfe-ty-get
-          env
-          (ast.ast-type-list-get a index (ast.ast-type-id-fallback)))
-        (ctfe-ty-get
-          env
-          (ast.ast-type-list-get b index (ast.ast-type-id-fallback))))
-      (ctfe-type-list-eq-in-env-at env a b (+ index 1)))))
+  (let
+    [pools : ast.AstNodePoolContext (ctfe-env-pools env)]
+    [seg-bases : i64 (ast.ast-node-pool-context-type-segment-bases pools)]
+    (ast.ast-type-id-list-eq? a b ast.ast-type-seg-ids-eq? seg-bases)))
 
 (define (ctfe-type-eq-in-env
   [env : (& env CtfeEnv)]
   [a : ast.AstType]
   [b : ast.AstType]) : bool
-  (match a
-    [(ast.AstType.I64)
-      (match b
-        [(ast.AstType.I64) true]
-        [_ false])]
-    [(ast.AstType.I32)
-      (match b
-        [(ast.AstType.I32) true]
-        [_ false])]
-    [(ast.AstType.I16)
-      (match b
-        [(ast.AstType.I16) true]
-        [_ false])]
-    [(ast.AstType.I8)
-      (match b
-        [(ast.AstType.I8) true]
-        [_ false])]
-    [(ast.AstType.U64)
-      (match b
-        [(ast.AstType.U64) true]
-        [_ false])]
-    [(ast.AstType.U32)
-      (match b
-        [(ast.AstType.U32) true]
-        [_ false])]
-    [(ast.AstType.U16)
-      (match b
-        [(ast.AstType.U16) true]
-        [_ false])]
-    [(ast.AstType.U8)
-      (match b
-        [(ast.AstType.U8) true]
-        [_ false])]
-    [(ast.AstType.F64)
-      (match b
-        [(ast.AstType.F64) true]
-        [_ false])]
-    [(ast.AstType.F32)
-      (match b
-        [(ast.AstType.F32) true]
-        [_ false])]
-    [(ast.AstType.Bool)
-      (match b
-        [(ast.AstType.Bool) true]
-        [_ false])]
-    [(ast.AstType.Char)
-      (match b
-        [(ast.AstType.Char) true]
-        [_ false])]
-    [(ast.AstType.String)
-      (match b
-        [(ast.AstType.String) true]
-        [_ false])]
-    [(ast.AstType.Str)
-      (match b
-        [(ast.AstType.Str) true]
-        [_ false])]
-    [(ast.AstType.Bytes)
-      (match b
-        [(ast.AstType.Bytes) true]
-        [_ false])]
-    [(ast.AstType.Unit)
-      (match b
-        [(ast.AstType.Unit) true]
-        [_ false])]
-    [(ast.AstType.Never)
-      (match b
-        [(ast.AstType.Never) true]
-        [_ false])]
-    [(ast.AstType.Expr)
-      (match b
-        [(ast.AstType.Expr) true]
-        [_ false])]
-    [(ast.AstType.ExprList)
-      (match b
-        [(ast.AstType.ExprList) true]
-        [_ false])]
-    [(ast.AstType.Func a-args a-ret)
-      (match b
-        [(ast.AstType.Func b-args b-ret)
-          (and
-            (ctfe-type-list-eq-in-env env (deref a-args) (deref b-args))
-            (ctfe-type-eq-in-env
-              env
-              (ctfe-ty-get env a-ret)
-              (ctfe-ty-get env b-ret)))]
-        [_ false])]
-    [(ast.AstType.CFunc a-signature a-mode)
-      (match b
-        [(ast.AstType.CFunc b-signature b-mode)
-          (and
-            (ast.ast-c-function-mode-eq? a-mode b-mode)
-            (ctfe-type-eq-in-env
-              env
-              (ctfe-ty-get env a-signature)
-              (ctfe-ty-get env b-signature)))]
-        [_ false])]
-    [(ast.AstType.Tuple a-elems)
-      (match b
-        [(ast.AstType.Tuple b-elems)
-          (ctfe-type-list-eq-in-env env (deref a-elems) (deref b-elems))]
-        [_ false])]
-    [(ast.AstType.Array a-elem a-count)
-      (match b
-        [(ast.AstType.Array b-elem b-count)
-          (and
-            (= a-count b-count)
-            (ctfe-type-eq-in-env
-              env
-              (ctfe-ty-get env a-elem)
-              (ctfe-ty-get env b-elem)))]
-        [_ false])]
-    [(ast.AstType.DynArray a-elem)
-      (match b
-        [(ast.AstType.DynArray b-elem)
-          (ctfe-type-eq-in-env
-            env
-            (ctfe-ty-get env a-elem)
-            (ctfe-ty-get env b-elem))]
-        [_ false])]
-    [(ast.AstType.Slice a-elem)
-      (match b
-        [(ast.AstType.Slice b-elem)
-          (ctfe-type-eq-in-env
-            env
-            (ctfe-ty-get env a-elem)
-            (ctfe-ty-get env b-elem))]
-        [_ false])]
-    [(ast.AstType.Box a-elem)
-      (match b
-        [(ast.AstType.Box b-elem)
-          (ctfe-type-eq-in-env
-            env
-            (ctfe-ty-get env a-elem)
-            (ctfe-ty-get env b-elem))]
-        [_ false])]
-    [(ast.AstType.Ptr a-elem)
-      (match b
-        [(ast.AstType.Ptr b-elem)
-          (ctfe-type-eq-in-env
-            env
-            (ctfe-ty-get env a-elem)
-            (ctfe-ty-get env b-elem))]
-        [_ false])]
-    [(ast.AstType.MutPtr a-elem)
-      (match b
-        [(ast.AstType.MutPtr b-elem)
-          (ctfe-type-eq-in-env
-            env
-            (ctfe-ty-get env a-elem)
-            (ctfe-ty-get env b-elem))]
-        [_ false])]
-    [(ast.AstType.Ref a-region a-inner)
-      (match b
-        [(ast.AstType.Ref b-region b-inner)
-          (and
-            (= a-region b-region)
-            (ctfe-type-eq-in-env
-              env
-              (ctfe-ty-get env a-inner)
-              (ctfe-ty-get env b-inner)))]
-        [_ false])]
-    [(ast.AstType.MutRef a-region a-inner)
-      (match b
-        [(ast.AstType.MutRef b-region b-inner)
-          (and
-            (= a-region b-region)
-            (ctfe-type-eq-in-env
-              env
-              (ctfe-ty-get env a-inner)
-              (ctfe-ty-get env b-inner)))]
-        [_ false])]
-    [(ast.AstType.Region a-region a-inner)
-      (match b
-        [(ast.AstType.Region b-region b-inner)
-          (and
-            (= a-region b-region)
-            (ctfe-type-eq-in-env
-              env
-              (ctfe-ty-get env a-inner)
-              (ctfe-ty-get env b-inner)))]
-        [_ false])]
-    [(ast.AstType.Enum a-name)
-      (match b
-        [(ast.AstType.Enum b-name) (= a-name b-name)]
-        [_ false])]
-    [(ast.AstType.EnumArgs a-name a-lifetimes)
-      (match b
-        [(ast.AstType.EnumArgs b-name b-lifetimes)
-          (and
-            (= a-name b-name)
-            (ctfe-lifetime-list-eq (deref a-lifetimes) (deref b-lifetimes)))]
-        [_ false])]
-    [(ast.AstType.Struct a-name)
-      (match b
-        [(ast.AstType.Struct b-name) (= a-name b-name)]
-        [_ false])]
-    [(ast.AstType.StructArgs a-name a-lifetimes)
-      (match b
-        [(ast.AstType.StructArgs b-name b-lifetimes)
-          (and
-            (= a-name b-name)
-            (ctfe-lifetime-list-eq (deref a-lifetimes) (deref b-lifetimes)))]
-        [_ false])]
-    [(ast.AstType.Var a-name)
-      (match b
-        [(ast.AstType.Var b-name) (= a-name b-name)]
-        [_ false])]
-    [(ast.AstType.VarArgs a-name a-lifetimes)
-      (match b
-        [(ast.AstType.VarArgs b-name b-lifetimes)
-          (and
-            (= a-name b-name)
-            (ctfe-lifetime-list-eq (deref a-lifetimes) (deref b-lifetimes)))]
-        [_ false])]))
+  (ast.ast-type-eq-with-pools? (ctfe-env-pools env) a b))
 
 (define (ctfe-type-list-eq [a : ast.AstTypeList] [b : ast.AstTypeList]) : bool
   (let

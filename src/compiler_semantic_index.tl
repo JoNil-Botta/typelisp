@@ -3829,494 +3829,34 @@
           (ast.ast-expr-list-get (& items) index 0))
         (set! index (+ index 1))))))
 
-(define (compiler-semantic-walk-quasiquote-list!
-  [state : CompilerSemanticWalkState]
-  [scope : CompilerSemanticBindingSnapshot]
-  [env : tc.TcTypeEnv]
-  [items : ast.AstExprList]) : unit
-  (let
-    [index : i64 0]
-    (while (< index (ast.ast-expr-list-len (& items)))
-      (begin
-        (compiler-semantic-walk-quasiquote-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          (ast.ast-expr-list-get (& items) index 0))
-        (set! index (+ index 1))))))
-
-(define (compiler-semantic-walk-quasiquote-let-bindings!
-  [state : CompilerSemanticWalkState]
-  [scope : CompilerSemanticBindingSnapshot]
-  [env : tc.TcTypeEnv]
-  [bindings : ast.AstLetBindingList]) : unit
-  (let
-    [index : i64 0]
-    (while (< index (ast.ast-let-binding-list-len (& bindings)))
-      (begin
-        (match (ast.ast-let-binding-list-get
-          (& bindings)
-          index
-          (ast.ast-let-binding-fallback))
-          [(ast.AstLetBinding.Binding _ _ init)
-            (compiler-semantic-walk-quasiquote-node!
-              (owned_view.compiler-owned-shared-view state)
-              scope
-              env
-              init)])
-        (set! index (+ index 1))))))
-
-(define (compiler-semantic-walk-quasiquote-match-arms!
-  [state : CompilerSemanticWalkState]
-  [scope : CompilerSemanticBindingSnapshot]
-  [env : tc.TcTypeEnv]
-  [arms : ast.AstMatchArmList]) : unit
-  (let
-    [index : i64 0]
-    (while (< index (ast.ast-match-arm-list-len (& arms)))
-      (begin
-        (match (ast.ast-match-arm-list-get
-          (& arms)
-          index
-          (ast.ast-match-arm-fallback))
-          [(ast.AstMatchArm.Arm _ body)
-            (compiler-semantic-walk-quasiquote-node!
-              (owned_view.compiler-owned-shared-view state)
-              scope
-              env
-              body)])
-        (set! index (+ index 1))))))
-
-(define (compiler-semantic-walk-quasiquote-resource-bindings!
-  [state : CompilerSemanticWalkState]
-  [scope : CompilerSemanticBindingSnapshot]
-  [env : tc.TcTypeEnv]
-  [bindings : ast.AstResourceBindingList]) : unit
-  (let
-    [index : i64 0]
-    (while (< index (ast.ast-resource-binding-list-len (& bindings)))
-      (begin
-        (match (ast.ast-resource-binding-list-get
-          (& bindings)
-          index
-          (ast.ast-resource-binding-fallback))
-          [(ast.AstResourceBinding.Binding _ init cleanup _)
-            (begin
-              (compiler-semantic-walk-quasiquote-node!
-                (owned_view.compiler-owned-shared-view state)
-                scope
-                env
-                init)
-              (compiler-semantic-walk-quasiquote-node!
-                (owned_view.compiler-owned-shared-view state)
-                scope
-                env
-                cleanup))])
-        (set! index (+ index 1))))))
-
 (define (compiler-semantic-walk-quasiquote-node!
   [state : CompilerSemanticWalkState]
   [scope : CompilerSemanticBindingSnapshot]
   [env : tc.TcTypeEnv]
   [node-id : i64]) : unit
   (match (ast.ast-node-get node-id)
-    [(ast.AstExpr.Spanned inner _)
-      (compiler-semantic-walk-quasiquote-node! state scope env inner)]
-    [(ast.AstExpr.MacroExpansion inner _ _)
-      (compiler-semantic-walk-quasiquote-node! state scope env inner)]
     [(ast.AstExpr.Unquote inner)
       (compiler-semantic-walk-node! state scope env inner)]
     [(ast.AstExpr.UnquoteSplicing inner)
       (compiler-semantic-walk-node! state scope env inner)]
-    [(ast.AstExpr.Binary _ left right)
-      (begin
-        (compiler-semantic-walk-quasiquote-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          left)
-        (compiler-semantic-walk-quasiquote-node! state scope env right))]
-    [(ast.AstExpr.Unary _ inner)
-      (compiler-semantic-walk-quasiquote-node! state scope env inner)]
-    [(ast.AstExpr.Call callee args)
-      (begin
-        (compiler-semantic-walk-quasiquote-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          callee)
-        (compiler-semantic-walk-quasiquote-list! state scope env args))]
-    [(ast.AstExpr.BracketClause items)
-      (compiler-semantic-walk-quasiquote-list! state scope env items)]
-    [(ast.AstExpr.If condition then-expr else-expr)
-      (begin
-        (compiler-semantic-walk-quasiquote-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          condition)
-        (compiler-semantic-walk-quasiquote-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          then-expr)
-        (compiler-semantic-walk-quasiquote-node! state scope env else-expr))]
-    [(ast.AstExpr.Let payload)
-      (match (__tl-box-place payload)
-        [(ast.AstLet.Let bindings body)
-          (begin
-            (compiler-semantic-walk-quasiquote-let-bindings!
-              (owned_view.compiler-owned-shared-view state)
-              scope
-              env
-              bindings)
-            (compiler-semantic-walk-quasiquote-node! state scope env body))])]
-    [(ast.AstExpr.Lambda payload)
-      (match (__tl-box-place payload)
-        [(ast.AstLambda.Lambda _ _ body)
-          (compiler-semantic-walk-quasiquote-node! state scope env body)])]
-    [(ast.AstExpr.Tuple items)
-      (compiler-semantic-walk-quasiquote-list! state scope env items)]
-    [(ast.AstExpr.TupleRef target _)
-      (compiler-semantic-walk-quasiquote-node! state scope env target)]
-    [(ast.AstExpr.Array items)
-      (compiler-semantic-walk-quasiquote-list! state scope env items)]
-    [(ast.AstExpr.DynArray items)
-      (compiler-semantic-walk-quasiquote-list! state scope env items)]
-    [(ast.AstExpr.FixedMakeArray _ size)
-      (compiler-semantic-walk-quasiquote-node! state scope env size)]
-    [(ast.AstExpr.MakeArray _ size)
-      (compiler-semantic-walk-quasiquote-node! state scope env size)]
-    [(ast.AstExpr.ArrayRef target index)
-      (begin
-        (compiler-semantic-walk-quasiquote-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          target)
-        (compiler-semantic-walk-quasiquote-node! state scope env index))]
-    [(ast.AstExpr.ArraySet target index value)
-      (begin
-        (compiler-semantic-walk-quasiquote-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          target)
-        (compiler-semantic-walk-quasiquote-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          index)
-        (compiler-semantic-walk-quasiquote-node! state scope env value))]
-    [(ast.AstExpr.ArrayTake target live index)
-      (begin
-        (compiler-semantic-walk-quasiquote-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          target)
-        (compiler-semantic-walk-quasiquote-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          live)
-        (compiler-semantic-walk-quasiquote-node! state scope env index))]
-    [(ast.AstExpr.FixedArrayTake target index)
-      (begin
-        (compiler-semantic-walk-quasiquote-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          target)
-        (compiler-semantic-walk-quasiquote-node! state scope env index))]
-    [(ast.AstExpr.ArrayPush target value)
-      (begin
-        (compiler-semantic-walk-quasiquote-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          target)
-        (compiler-semantic-walk-quasiquote-node! state scope env value))]
-    [(ast.AstExpr.StringRef target index)
-      (begin
-        (compiler-semantic-walk-quasiquote-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          target)
-        (compiler-semantic-walk-quasiquote-node! state scope env index))]
-    [(ast.AstExpr.While condition body)
-      (begin
-        (compiler-semantic-walk-quasiquote-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          condition)
-        (compiler-semantic-walk-quasiquote-node! state scope env body))]
-    [(ast.AstExpr.Begin items)
-      (compiler-semantic-walk-quasiquote-list! state scope env items)]
-    [(ast.AstExpr.Unsafe items)
-      (compiler-semantic-walk-quasiquote-list! state scope env items)]
-    [(ast.AstExpr.Set _ value)
-      (compiler-semantic-walk-quasiquote-node! state scope env value)]
-    [(ast.AstExpr.Ann inner _)
-      (compiler-semantic-walk-quasiquote-node! state scope env inner)]
-    [(ast.AstExpr.Cast inner _)
-      (compiler-semantic-walk-quasiquote-node! state scope env inner)]
-    [(ast.AstExpr.Borrow _ _ inner)
-      (compiler-semantic-walk-quasiquote-node! state scope env inner)]
-    [(ast.AstExpr.Match payload)
-      (match (__tl-box-place payload)
-        [(ast.AstMatch.Match scrutinee arms)
-          (begin
-            (compiler-semantic-walk-quasiquote-node!
-              (owned_view.compiler-owned-shared-view state)
-              scope
-              env
-              scrutinee)
-            (compiler-semantic-walk-quasiquote-match-arms! state scope env arms))])]
-    [(ast.AstExpr.Foreach payload)
-      (match (__tl-box-place payload)
-        [(ast.AstForeach.Foreach _ _ start end body)
-          (begin
-            (compiler-semantic-walk-quasiquote-node!
-              (owned_view.compiler-owned-shared-view state)
-              scope
-              env
-              start)
-            (compiler-semantic-walk-quasiquote-node!
-              (owned_view.compiler-owned-shared-view state)
-              scope
-              env
-              end)
-            (compiler-semantic-walk-quasiquote-node! state scope env body))])]
-    [(ast.AstExpr.SpmdReduce payload)
-      (match (__tl-box-place payload)
-        [(ast.AstSpmdReduce.Reduce _ _ _ start end init value)
-          (begin
-            (compiler-semantic-walk-quasiquote-node!
-              (owned_view.compiler-owned-shared-view state)
-              scope
-              env
-              start)
-            (compiler-semantic-walk-quasiquote-node!
-              (owned_view.compiler-owned-shared-view state)
-              scope
-              env
-              end)
-            (compiler-semantic-walk-quasiquote-node!
-              (owned_view.compiler-owned-shared-view state)
-              scope
-              env
-              init)
-            (compiler-semantic-walk-quasiquote-node! state scope env value))])]
-    [(ast.AstExpr.SpmdScan payload)
-      (match (__tl-box-place payload)
-        [(ast.AstSpmdScan.Scan _ _ _ start end _ _ init value body)
-          (begin
-            (compiler-semantic-walk-quasiquote-node!
-              (owned_view.compiler-owned-shared-view state)
-              scope
-              env
-              start)
-            (compiler-semantic-walk-quasiquote-node!
-              (owned_view.compiler-owned-shared-view state)
-              scope
-              env
-              end)
-            (compiler-semantic-walk-quasiquote-node!
-              (owned_view.compiler-owned-shared-view state)
-              scope
-              env
-              init)
-            (compiler-semantic-walk-quasiquote-node!
-              (owned_view.compiler-owned-shared-view state)
-              scope
-              env
-              value)
-            (compiler-semantic-walk-quasiquote-node! state scope env body))])]
-    [(ast.AstExpr.SpmdCompact payload)
-      (match (__tl-box-place payload)
-        [(ast.AstSpmdCompact.Compact _ _ start end _ _ init keep body)
-          (begin
-            (compiler-semantic-walk-quasiquote-node!
-              (owned_view.compiler-owned-shared-view state)
-              scope
-              env
-              start)
-            (compiler-semantic-walk-quasiquote-node!
-              (owned_view.compiler-owned-shared-view state)
-              scope
-              env
-              end)
-            (compiler-semantic-walk-quasiquote-node!
-              (owned_view.compiler-owned-shared-view state)
-              scope
-              env
-              init)
-            (compiler-semantic-walk-quasiquote-node!
-              (owned_view.compiler-owned-shared-view state)
-              scope
-              env
-              keep)
-            (compiler-semantic-walk-quasiquote-node! state scope env body))])]
-    [(ast.AstExpr.SpmdBroadcast value lane)
-      (begin
-        (compiler-semantic-walk-quasiquote-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          value)
-        (compiler-semantic-walk-quasiquote-node! state scope env lane))]
-    [(ast.AstExpr.SpmdShuffle value lane)
-      (begin
-        (compiler-semantic-walk-quasiquote-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          value)
-        (compiler-semantic-walk-quasiquote-node! state scope env lane))]
-    [(ast.AstExpr.StructGet target _)
-      (compiler-semantic-walk-quasiquote-node! state scope env target)]
-    [(ast.AstExpr.StructSet target _ value)
-      (begin
-        (compiler-semantic-walk-quasiquote-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          target)
-        (compiler-semantic-walk-quasiquote-node! state scope env value))]
-    [(ast.AstExpr.WithRegion _ body)
-      (compiler-semantic-walk-quasiquote-list! state scope env body)]
-    [(ast.AstExpr.WithEscape scratch body)
-      (begin
-        (compiler-semantic-walk-quasiquote-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          scratch)
-        (compiler-semantic-walk-quasiquote-list! state scope env body))]
-    [(ast.AstExpr.WithScratch body)
-      (compiler-semantic-walk-quasiquote-list! state scope env body)]
-    [(ast.AstExpr.InArena arena body)
-      (begin
-        (compiler-semantic-walk-quasiquote-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          arena)
-        (compiler-semantic-walk-quasiquote-list! state scope env body))]
-    [(ast.AstExpr.WithResource payload)
-      (match (__tl-box-place payload)
-        [(ast.AstWithResource.WithResource bindings body)
-          (begin
-            (compiler-semantic-walk-quasiquote-resource-bindings!
-              (owned_view.compiler-owned-shared-view state)
-              scope
-              env
-              bindings)
-            (compiler-semantic-walk-quasiquote-list! state scope env body))])]
-    [(ast.AstExpr.Box inner)
-      (compiler-semantic-walk-quasiquote-node! state scope env inner)]
-    [(ast.AstExpr.BoxGet inner)
-      (compiler-semantic-walk-quasiquote-node! state scope env inner)]
-    [(ast.AstExpr.BoxTake inner)
-      (compiler-semantic-walk-quasiquote-node! state scope env inner)]
-    [(ast.AstExpr.BoxSet target value)
-      (begin
-        (compiler-semantic-walk-quasiquote-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          target)
-        (compiler-semantic-walk-quasiquote-node! state scope env value))]
-    [(ast.AstExpr.Comptime inner)
-      (compiler-semantic-walk-quasiquote-node! state scope env inner)]
-    [(ast.AstExpr.Try inner)
-      (compiler-semantic-walk-quasiquote-node! state scope env inner)]
-    [(ast.AstExpr.Return inner)
-      (compiler-semantic-walk-quasiquote-node! state scope env inner)]
-    [(ast.AstExpr.PtrNullCheck inner)
-      (compiler-semantic-walk-quasiquote-node! state scope env inner)]
-    [(ast.AstExpr.PtrAddrOf inner)
-      (compiler-semantic-walk-quasiquote-node! state scope env inner)]
-    [(ast.AstExpr.PtrRead inner)
-      (compiler-semantic-walk-quasiquote-node! state scope env inner)]
-    [(ast.AstExpr.PtrWrite ptr value)
-      (begin
-        (compiler-semantic-walk-quasiquote-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          ptr)
-        (compiler-semantic-walk-quasiquote-node! state scope env value))]
-    [(ast.AstExpr.PtrOffset ptr offset)
-      (begin
-        (compiler-semantic-walk-quasiquote-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          ptr)
-        (compiler-semantic-walk-quasiquote-node! state scope env offset))]
-    [(ast.AstExpr.PtrCast ptr _)
-      (compiler-semantic-walk-quasiquote-node! state scope env ptr)]
-    [(ast.AstExpr.PtrToInt ptr)
-      (compiler-semantic-walk-quasiquote-node! state scope env ptr)]
-    [(ast.AstExpr.IntToPtr value _)
-      (compiler-semantic-walk-quasiquote-node! state scope env value)]
-    [(ast.AstExpr.StringData value)
-      (compiler-semantic-walk-quasiquote-node! state scope env value)]
-    [(ast.AstExpr.StringFromBytes data len)
-      (begin
-        (compiler-semantic-walk-quasiquote-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          data)
-        (compiler-semantic-walk-quasiquote-node! state scope env len))]
-    [(ast.AstExpr.ArrayData value)
-      (compiler-semantic-walk-quasiquote-node! state scope env value)]
-    [(ast.AstExpr.CpuIdEax leaf subleaf)
-      (begin
-        (compiler-semantic-walk-quasiquote-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          leaf)
-        (compiler-semantic-walk-quasiquote-node! state scope env subleaf))]
-    [(ast.AstExpr.CpuIdEbx leaf subleaf)
-      (begin
-        (compiler-semantic-walk-quasiquote-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          leaf)
-        (compiler-semantic-walk-quasiquote-node! state scope env subleaf))]
-    [(ast.AstExpr.CpuIdEcx leaf subleaf)
-      (begin
-        (compiler-semantic-walk-quasiquote-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          leaf)
-        (compiler-semantic-walk-quasiquote-node! state scope env subleaf))]
-    [(ast.AstExpr.CpuIdEdx leaf subleaf)
-      (begin
-        (compiler-semantic-walk-quasiquote-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          leaf)
-        (compiler-semantic-walk-quasiquote-node! state scope env subleaf))]
-    [(ast.AstExpr.Xgetbv index)
-      (compiler-semantic-walk-quasiquote-node! state scope env index)]
-    [(ast.AstExpr.Syscall args)
-      (compiler-semantic-walk-quasiquote-list! state scope env args)]
     [(ast.AstExpr.Quote _) unit]
     ;; CTFE preserves a nested quasiquote wholesale. Its unquotes belong to
     ;; the future quasiquote evaluation rather than the surrounding macro.
     [(ast.AstExpr.Quasiquote _) unit]
-    [_ unit]))
+    [(ast.AstExpr.Replace _ _) unit]
+    [(ast.AstExpr.ForOwnedState _) unit]
+    [(ast.AstExpr.ForOwnedStep _) unit]
+    ;; Template syntax: only expression children can hold an unquote.
+    [_
+      (ast.ast-expr-for-each-child
+        (ast.ast-node-get node-id)
+        compiler-semantic-walk-quasiquote-node!
+        ast.ast-child-unit
+        ast.ast-child-unit
+        ast.ast-child-unit
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env)]))
 
 (define (compiler-semantic-walk-let!
   [state : CompilerSemanticWalkState]
@@ -5759,24 +5299,7 @@
       unit
       (begin
         (set! (array-ref visited node-id) 1)
-        (let
-          [expr : ast.AstExpr (ast.ast-node-get node-id)]
-          (match (owned_view.compiler-owned-shared-view expr)
-            [(ast.AstExpr.Spanned inner-id span)
-              (compiler-semantic-walk-node-with-span!
-                state
-                scope
-                env
-                inner-id
-                (CompilerSemanticMaybeSpan.Some span))]
-            [(ast.AstExpr.MacroExpansion inner-id _ _)
-              (compiler-semantic-walk-node-with-span!
-                state
-                scope
-                env
-                inner-id
-                maybe-span)]
-            [_ (compiler-semantic-walk-expr! state scope env expr maybe-span)]))))))
+        (compiler-semantic-walk-expr! state scope env node-id maybe-span)))))
 
 (define (compiler-semantic-walk-node!
   [state : CompilerSemanticWalkState]
@@ -5794,9 +5317,11 @@
   [state : CompilerSemanticWalkState]
   [scope : CompilerSemanticBindingSnapshot]
   [env : tc.TcTypeEnv]
-  [expr : ast.AstExpr]
+  [node-id : i64]
   [maybe-span : CompilerSemanticMaybeSpan]) : unit
-  (match expr
+  ;; The arms below resolve names, scopes and fields; every other variant's
+  ;; children are walked through the AstExpr child schema.
+  (match (ast.ast-node-get node-id)
     [(ast.AstExpr.Spanned inner-id span)
       (compiler-semantic-walk-node-with-span!
         state
@@ -5821,37 +5346,6 @@
         CompilerSemanticAccess.Read)
         unit
         (compiler-semantic-record-name-use! state scope name maybe-span))]
-    [(ast.AstExpr.Binary _ left right)
-      (begin
-        (compiler-semantic-walk-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          left)
-        (compiler-semantic-walk-node! state scope env right))]
-    [(ast.AstExpr.Unary _ inner)
-      (compiler-semantic-walk-node! state scope env inner)]
-    [(ast.AstExpr.Call callee args)
-      (begin
-        (compiler-semantic-walk-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          callee)
-        (compiler-semantic-walk-expr-list! state scope env args))]
-    [(ast.AstExpr.If condition then-expr else-expr)
-      (begin
-        (compiler-semantic-walk-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          condition)
-        (compiler-semantic-walk-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          then-expr)
-        (compiler-semantic-walk-node! state scope env else-expr))]
     [(ast.AstExpr.Let payload)
       (match (__tl-box-place payload)
         [(ast.AstLet.Let bindings body)
@@ -5867,128 +5361,8 @@
             maybe-ret
             body
             maybe-span)])]
-    [(ast.AstExpr.Tuple items)
-      (compiler-semantic-walk-expr-list! state scope env items)]
-    [(ast.AstExpr.TupleRef target _)
-      (compiler-semantic-walk-node! state scope env target)]
-    [(ast.AstExpr.Array items)
-      (compiler-semantic-walk-expr-list! state scope env items)]
-    [(ast.AstExpr.DynArray items)
-      (compiler-semantic-walk-expr-list! state scope env items)]
-    [(ast.AstExpr.FixedMakeArray ty-id size)
-      (begin
-        (compiler-semantic-walk-type!
-          (owned_view.compiler-owned-shared-view state)
-          (tc.tc-context-type-get state.ctx ty-id))
-        (compiler-semantic-walk-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          size))]
-    [(ast.AstExpr.MakeArray ty-id size)
-      (begin
-        (compiler-semantic-walk-type!
-          (owned_view.compiler-owned-shared-view state)
-          (tc.tc-context-type-get state.ctx ty-id))
-        (compiler-semantic-walk-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          size))]
-    [(ast.AstExpr.ArrayRef target index)
-      (begin
-        (compiler-semantic-walk-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          target)
-        (compiler-semantic-walk-node! state scope env index))]
-    [(ast.AstExpr.ArraySet target index value)
-      (begin
-        (compiler-semantic-walk-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          target)
-        (compiler-semantic-walk-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          index)
-        (compiler-semantic-walk-node! state scope env value))]
-    [(ast.AstExpr.ArrayTake target live index)
-      (begin
-        (compiler-semantic-walk-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          target)
-        (compiler-semantic-walk-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          live)
-        (compiler-semantic-walk-node! state scope env index))]
-    [(ast.AstExpr.FixedArrayTake target index)
-      (begin
-        (compiler-semantic-walk-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          target)
-        (compiler-semantic-walk-node! state scope env index))]
-    [(ast.AstExpr.ArrayPush target value)
-      (begin
-        (compiler-semantic-walk-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          target)
-        (compiler-semantic-walk-node! state scope env value))]
-    [(ast.AstExpr.StringRef target index)
-      (begin
-        (compiler-semantic-walk-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          target)
-        (compiler-semantic-walk-node! state scope env index))]
-    [(ast.AstExpr.While condition body)
-      (begin
-        (compiler-semantic-walk-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          condition)
-        (compiler-semantic-walk-node! state scope env body))]
-    [(ast.AstExpr.Begin items)
-      (compiler-semantic-walk-expr-list! state scope env items)]
-    [(ast.AstExpr.Unsafe items)
-      (compiler-semantic-walk-expr-list! state scope env items)]
     [(ast.AstExpr.Set name value)
       (compiler-semantic-walk-set! state scope env name value maybe-span)]
-    [(ast.AstExpr.Ann inner ty-id)
-      (begin
-        (compiler-semantic-walk-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          inner)
-        (compiler-semantic-walk-type!
-          (owned_view.compiler-owned-shared-view state)
-          (tc.tc-context-type-get state.ctx ty-id)))]
-    [(ast.AstExpr.Cast inner ty-id)
-      (begin
-        (compiler-semantic-walk-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          inner)
-        (compiler-semantic-walk-type!
-          (owned_view.compiler-owned-shared-view state)
-          (tc.tc-context-type-get state.ctx ty-id)))]
-    [(ast.AstExpr.Borrow _ _ inner)
-      (compiler-semantic-walk-node! state scope env inner)]
     [(ast.AstExpr.Match payload)
       (match (__tl-box-place payload)
         [(ast.AstMatch.Match scrutinee arms)
@@ -6093,22 +5467,6 @@
             keep
             body
             maybe-span)])]
-    [(ast.AstExpr.SpmdBroadcast value lane)
-      (begin
-        (compiler-semantic-walk-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          value)
-        (compiler-semantic-walk-node! state scope env lane))]
-    [(ast.AstExpr.SpmdShuffle value lane)
-      (begin
-        (compiler-semantic-walk-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          value)
-        (compiler-semantic-walk-node! state scope env lane))]
     [(ast.AstExpr.StructGet target field)
       (begin
         (compiler-semantic-walk-node!
@@ -6136,26 +5494,6 @@
           field
           CompilerSemanticAccess.Write)
         (compiler-semantic-walk-node! state scope env value))]
-    [(ast.AstExpr.WithRegion _ body)
-      (compiler-semantic-walk-expr-list! state scope env body)]
-    [(ast.AstExpr.WithEscape scratch body)
-      (begin
-        (compiler-semantic-walk-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          scratch)
-        (compiler-semantic-walk-expr-list! state scope env body))]
-    [(ast.AstExpr.WithScratch body)
-      (compiler-semantic-walk-expr-list! state scope env body)]
-    [(ast.AstExpr.InArena arena body)
-      (begin
-        (compiler-semantic-walk-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          arena)
-        (compiler-semantic-walk-expr-list! state scope env body))]
     [(ast.AstExpr.WithResource payload)
       (match (__tl-box-place payload)
         [(ast.AstWithResource.WithResource bindings body)
@@ -6166,145 +5504,38 @@
             bindings
             body
             maybe-span)])]
-    [(ast.AstExpr.Box value)
-      (compiler-semantic-walk-node! state scope env value)]
-    [(ast.AstExpr.BoxGet value)
-      (compiler-semantic-walk-node! state scope env value)]
-    [(ast.AstExpr.BoxTake value)
-      (compiler-semantic-walk-node! state scope env value)]
-    [(ast.AstExpr.BoxSet target value)
-      (begin
-        (compiler-semantic-walk-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          target)
-        (compiler-semantic-walk-node! state scope env value))]
-    [(ast.AstExpr.Comptime inner)
-      (compiler-semantic-walk-node! state scope env inner)]
     [(ast.AstExpr.Quote _) unit]
     [(ast.AstExpr.Quasiquote inner)
       (compiler-semantic-walk-quasiquote-node! state scope env inner)]
-    [(ast.AstExpr.Unquote inner)
-      (compiler-semantic-walk-node! state scope env inner)]
-    [(ast.AstExpr.UnquoteSplicing inner)
-      (compiler-semantic-walk-node! state scope env inner)]
-    [(ast.AstExpr.BracketClause items)
-      (compiler-semantic-walk-expr-list! state scope env items)]
-    [(ast.AstExpr.Try inner)
-      (compiler-semantic-walk-node! state scope env inner)]
-    [(ast.AstExpr.Return inner)
-      (compiler-semantic-walk-node! state scope env inner)]
-    [(ast.AstExpr.PtrNullCheck inner)
-      (compiler-semantic-walk-node! state scope env inner)]
-    [(ast.AstExpr.PtrAddrOf inner)
-      (compiler-semantic-walk-node! state scope env inner)]
-    [(ast.AstExpr.PtrRead inner)
-      (compiler-semantic-walk-node! state scope env inner)]
-    [(ast.AstExpr.PtrWrite ptr value)
-      (begin
-        (compiler-semantic-walk-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          ptr)
-        (compiler-semantic-walk-node! state scope env value))]
-    [(ast.AstExpr.PtrOffset ptr offset)
-      (begin
-        (compiler-semantic-walk-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          ptr)
-        (compiler-semantic-walk-node! state scope env offset))]
-    [(ast.AstExpr.PtrCast ptr ty-id)
-      (begin
-        (compiler-semantic-walk-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          ptr)
-        (compiler-semantic-walk-type!
-          (owned_view.compiler-owned-shared-view state)
-          (tc.tc-context-type-get state.ctx ty-id)))]
-    [(ast.AstExpr.PtrToInt ptr)
-      (compiler-semantic-walk-node! state scope env ptr)]
-    [(ast.AstExpr.IntToPtr value ty-id)
-      (begin
-        (compiler-semantic-walk-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          value)
-        (compiler-semantic-walk-type!
-          (owned_view.compiler-owned-shared-view state)
-          (tc.tc-context-type-get state.ctx ty-id)))]
-    [(ast.AstExpr.TypeLiteral ty-id)
-      (compiler-semantic-walk-type!
+    [(ast.AstExpr.Replace _ _) unit]
+    [(ast.AstExpr.ForOwnedState _) unit]
+    [(ast.AstExpr.ForOwnedStep _) unit]
+    [_
+      (ast.ast-expr-for-each-child
+        (ast.ast-node-get node-id)
+        compiler-semantic-walk-node!
+        compiler-semantic-walk-type-id!
+        compiler-semantic-walk-child-type!
+        ast.ast-child-unit
         (owned_view.compiler-owned-shared-view state)
-        (tc.tc-context-type-get state.ctx ty-id))]
-    [(ast.AstExpr.Init maybe-ty-id)
-      (match (ast.ast-maybe-type-from-id-with-pools
-        (tc.tc-context-pools state.ctx)
-        maybe-ty-id)
-        [(ast.AstMaybeType.Some ty)
-          (compiler-semantic-walk-type!
-            (owned_view.compiler-owned-shared-view state)
-            ty)]
-        [(ast.AstMaybeType.No) unit])]
-    [(ast.AstExpr.PtrNull ty-id)
-      (compiler-semantic-walk-type!
-        (owned_view.compiler-owned-shared-view state)
-        (tc.tc-context-type-get state.ctx ty-id))]
-    [(ast.AstExpr.StringData value)
-      (compiler-semantic-walk-node! state scope env value)]
-    [(ast.AstExpr.StringFromBytes data len)
-      (begin
-        (compiler-semantic-walk-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          data)
-        (compiler-semantic-walk-node! state scope env len))]
-    [(ast.AstExpr.ArrayData value)
-      (compiler-semantic-walk-node! state scope env value)]
-    [(ast.AstExpr.CpuIdEax leaf subleaf)
-      (begin
-        (compiler-semantic-walk-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          leaf)
-        (compiler-semantic-walk-node! state scope env subleaf))]
-    [(ast.AstExpr.CpuIdEbx leaf subleaf)
-      (begin
-        (compiler-semantic-walk-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          leaf)
-        (compiler-semantic-walk-node! state scope env subleaf))]
-    [(ast.AstExpr.CpuIdEcx leaf subleaf)
-      (begin
-        (compiler-semantic-walk-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          leaf)
-        (compiler-semantic-walk-node! state scope env subleaf))]
-    [(ast.AstExpr.CpuIdEdx leaf subleaf)
-      (begin
-        (compiler-semantic-walk-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          leaf)
-        (compiler-semantic-walk-node! state scope env subleaf))]
-    [(ast.AstExpr.Xgetbv index)
-      (compiler-semantic-walk-node! state scope env index)]
-    [(ast.AstExpr.Syscall args)
-      (compiler-semantic-walk-expr-list! state scope env args)]
-    [_ unit]))
+        scope
+        env)]))
+
+(define (compiler-semantic-walk-type-id!
+  [state : CompilerSemanticWalkState]
+  [_scope : CompilerSemanticBindingSnapshot]
+  [_env : tc.TcTypeEnv]
+  [ty-id : i64]) : unit
+  (compiler-semantic-walk-type!
+    (owned_view.compiler-owned-shared-view state)
+    (tc.tc-context-type-get state.ctx ty-id)))
+
+(define (compiler-semantic-walk-child-type!
+  [state : CompilerSemanticWalkState]
+  [_scope : CompilerSemanticBindingSnapshot]
+  [_env : tc.TcTypeEnv]
+  [ty : ast.AstType]) : unit
+  (compiler-semantic-walk-type! state ty))
 
 (define (compiler-semantic-decl-param-search-start
   [state : CompilerSemanticWalkState]

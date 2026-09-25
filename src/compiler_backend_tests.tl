@@ -2841,6 +2841,104 @@
             (set! case-index (+ case-index 1)))))
       ok)))
 
+;; The absent-next-block sentinel must never erase an invalid target. Include
+;; a valid backward jump so rejecting every object is not a passing result.
+(define (compiler-backend-object-terminal-label-case-ok?
+  [case-index : i64]
+  [flags : bool]
+  [dense : bool]
+  [target : compiler_backend.CompilerBackendTarget]) : bool
+  (let
+    [entry : i64 (compiler_ir_types.compiler-ir-label "entry")]
+    [terminator : compiler_ir_types.CompilerIrInstr
+      (if (< case-index 2)
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (if (= case-index 0)
+            entry
+            -1))
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (if flags
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.CompilerIrValue.I64 1))
+          (if (= case-index 2)
+            -1
+            entry)
+          (if (= case-index 3)
+            -1
+            entry)))]
+    [tail : compiler_ir_types.CompilerIrInstrSeq
+      (compiler-backend-test-instr-seq-prepend
+        terminator
+        (compiler_ir_types.compiler-ir-instr-seq-empty))]
+    [instrs : compiler_ir_types.CompilerIrInstrSeq
+      (if flags
+        (compiler-backend-test-instr-seq-prepend
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            0
+            (compiler_ir_types.CompilerIrBinOp.Eq)
+            (compiler_ir_types.CompilerIrValue.I64 1)
+            (compiler_ir_types.CompilerIrValue.I64 1)
+            (compiler_ast_types.AstType.I64))
+          tail)
+        tail)]
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block entry instrs)
+        (compiler_ir_types.CompilerIrBlockList.Nil))]
+    [program : compiler_ir_types.CompilerIrProgram
+      (compiler_ir_types.CompilerIrProgram.Program
+        (compiler_ir_types.compiler-ir-global-seq-empty)
+        (compiler_ir_types.compiler-ir-function-seq-prepend
+          (compiler_ir_types.CompilerIrFunction.Function
+            (ci.intern "main")
+            (compiler_ir_types.compiler-ir-param-seq-empty)
+            (compiler_ast_types.AstType.I64)
+            1
+            (if dense
+              (compiler_ir_types.CompilerIrBlockList.Array
+                (compiler_ir_types.compiler-ir-block-seq-from-list blocks))
+              blocks)
+            (compiler_ir_types.CompilerIrFunctionAbi.Ordinary))
+          (compiler_ir_types.compiler-ir-function-seq-empty))
+        (compiler_ir_types.compiler-ir-extern-seq-empty))]
+    [renders : bool
+      (match (compiler_backend.compiler-backend-emit-program-object-image-target
+        program
+        target
+        (compiler_ir_types.compiler-source-spans-empty)
+        true)
+        [(compiler_backend.ResultCompilerBackendObject.Err _) false]
+        [(compiler_backend.ResultCompilerBackendObject.Ok image)
+          (match target
+            [(compiler_backend.CompilerBackendTarget.Linux)
+              (match (elf.compiler-object-elf-render image)
+                [(elf.ResultCompilerObjectElf.Err _) false]
+                [(elf.ResultCompilerObjectElf.Ok _) true])]
+            [(compiler_backend.CompilerBackendTarget.Windows)
+              (match (coff.compiler-object-coff-render image)
+                [(coff.ResultCompilerObjectCoff.Err _) false]
+                [(coff.ResultCompilerObjectCoff.Ok _) true])])])]
+    (= renders (= case-index 0))))
+
+(define (compiler-backend-object-terminal-labels-ok?) : bool
+  (let
+    [index : i64 0]
+    [ok : bool true]
+    (begin
+      (while (and ok (< index 32))
+        (begin
+          (set!
+            ok
+            (compiler-backend-object-terminal-label-case-ok?
+              (% index 4)
+              (= (% (/ index 4) 2) 1)
+              (= (% (/ index 8) 2) 1)
+              (if (< index 16)
+                (compiler_backend.CompilerBackendTarget.Linux)
+                (compiler_backend.CompilerBackendTarget.Windows))))
+          (set! index (+ index 1))))
+      ok)))
+
 (define (compiler-backend-windows-object-manifest-resource-ok?
   [image : cobj.CompilerObjectImage]) : bool
   (let
@@ -59936,6 +60034,7 @@ b_keep:
         (compiler-backend-object-phi-edge-copy-ok?)
         (compiler-backend-object-branch-flags-ok?)
         (compiler-backend-object-flags-isolation-ok?)
+        (compiler-backend-object-terminal-labels-ok?)
         (compiler-backend-coff-renders-real-text-ok?)
         (compiler-backend-windows-object-entry-unwind-ok?)
         (compiler-backend-windows-object-unit-main-zero-ok?)

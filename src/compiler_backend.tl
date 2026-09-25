@@ -92836,7 +92836,9 @@
   [symbol : String]
   [label : i64]
   [next-label : i64]) : object_target.CompilerBackendObjectTargetParts
-  (if (= label next-label)
+  (if (and
+    (compiler_ir_types.compiler-ir-label-some? next-label)
+    (= label next-label))
     parts
     (object_target.compiler-backend-object-add-text
       (object_target.compiler-backend-object-add-text-relocation
@@ -93155,6 +93157,14 @@
         [next-label : i64
           (compiler-backend-object-next-label
             (compiler-backend-global-shared-view program-index))]
+        [true-is-next : bool
+          (and
+            (compiler_ir_types.compiler-ir-label-some? next-label)
+            (= true-label next-label))]
+        [false-is-next : bool
+          (and
+            (compiler_ir_types.compiler-ir-label-some? next-label)
+            (= false-label next-label))]
         [flags-cc : i64
           (compiler-backend-object-branch-flags-cc
             (compiler-backend-global-shared-view cond)
@@ -93168,10 +93178,7 @@
             (compiler-backend-global-shared-view true-copies))
           (compiler-backend-object-phi-copy-list-nil?
             (compiler-backend-global-shared-view false-copies)))
-          (if (and
-            (< flags-cc 0)
-            (not (= true-label next-label))
-            (not (= false-label next-label)))
+          (if (and (< flags-cc 0) (not true-is-next) (not false-is-next))
             (object_target.compiler-backend-object-add-text
               (object_target.compiler-backend-object-add-text-relocation
                 (object_target.compiler-backend-object-add-text-relocation
@@ -93198,7 +93205,7 @@
                   (compiler-backend-global-shared-view cond)
                   flags-cc
                   (compiler-backend-global-shared-view program-index))]
-              (if (= true-label next-label)
+              (if true-is-next
                 (compiler-backend-object-jcc
                   tested
                   (compiler-backend-global-shared-view function)

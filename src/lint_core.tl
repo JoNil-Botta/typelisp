@@ -2314,71 +2314,58 @@
     true
     (lint-name-qualified-by-separator? name qualifier '/')))
 
-(define (lint-name-uses-import?
-  [name : String]
-  [alias : String]
-  [module-name : String]) : bool
+;; The import the unused-import walker looks for. A reference uses it when it
+;; is qualified by the import's alias or by its full module name.
+(defstruct LintImportRef
+  (alias String)
+  (module-name String))
+
+(define (lint-name-uses-import? [name : String] [import-ref : LintImportRef]) : bool
   (if (lint-name-qualified-by?
     (owned_view.compiler-owned-shared-view name)
-    alias)
+    import-ref.alias)
     true
-    (lint-name-qualified-by? name module-name)))
+    (lint-name-qualified-by? name import-ref.module-name)))
 
-(define (lint-name-id-uses-import?
-  [name : i64]
-  [alias : String]
-  [module-name : String]) : bool
+(define (lint-name-id-uses-import? [name : i64] [import-ref : LintImportRef]) : bool
   (lint-name-uses-import?
     (ci.intern-str name)
-    (owned_view.compiler-owned-shared-view alias)
-    (owned_view.compiler-owned-shared-view module-name)))
+    (owned_view.compiler-owned-shared-view import-ref)))
 
 (define (lint-maybe-type-uses-import?
   [maybe-ty : ast.AstMaybeType]
-  [alias : String]
-  [module-name : String]) : bool
+  [import-ref : LintImportRef]) : bool
   (match maybe-ty
     [(ast.AstMaybeType.No) false]
     [(ast.AstMaybeType.Some ty)
       (lint-type-uses-import?
         ty
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]))
+        (owned_view.compiler-owned-shared-view import-ref))]))
 
 (define (lint-type-list-uses-import?
   [types : ast.AstTypeList]
-  [alias : String]
-  [module-name : String]) : bool
-  (lint-type-list-uses-import-at? (& types) alias module-name 0))
+  [import-ref : LintImportRef]) : bool
+  (lint-type-list-uses-import-at? (& types) import-ref 0))
 
 (define (lint-type-list-uses-import-at?
   [types : (& types ast.AstTypeList)]
-  [alias : String]
-  [module-name : String]
+  [import-ref : LintImportRef]
   [index : i64]) : bool
   (if (>= index (ast.ast-type-list-len types))
     false
     (if (lint-type-uses-import?
       (ast.ty-node-get
         (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))
-      (owned_view.compiler-owned-shared-view alias)
-      (owned_view.compiler-owned-shared-view module-name))
+      (owned_view.compiler-owned-shared-view import-ref))
       true
-      (lint-type-list-uses-import-at? types alias module-name (+ index 1)))))
+      (lint-type-list-uses-import-at? types import-ref (+ index 1)))))
 
-(define (lint-type-id-uses-import?
-  [ty : i64]
-  [alias : String]
-  [module-name : String]) : bool
+(define (lint-type-id-uses-import? [ty : i64] [import-ref : LintImportRef]) : bool
   (lint-type-uses-import?
     (ast.ty-node-get ty)
-    (owned_view.compiler-owned-shared-view alias)
-    (owned_view.compiler-owned-shared-view module-name)))
+    (owned_view.compiler-owned-shared-view import-ref)))
 
-(define (lint-type-uses-import?
-  [ty : ast.AstType]
-  [alias : String]
-  [module-name : String]) : bool
+(define (lint-type-uses-import? [ty : ast.AstType] [import-ref : LintImportRef]) : bool
   (match ty
     [(ast.AstType.I64) false]
     [(ast.AstType.I32) false]
@@ -2402,106 +2389,86 @@
     [(ast.AstType.Func args ret)
       (if (lint-type-list-uses-import?
         (owned_view.compiler-owned-box-shared-view args)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
+        (owned_view.compiler-owned-shared-view import-ref))
         true
         (lint-type-id-uses-import?
           ret
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+          (owned_view.compiler-owned-shared-view import-ref)))]
     [(ast.AstType.CFunc signature _)
-      (lint-type-id-uses-import? signature alias module-name)]
+      (lint-type-id-uses-import? signature import-ref)]
     [(ast.AstType.Tuple items)
       (lint-type-list-uses-import?
         (owned_view.compiler-owned-box-shared-view items)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstType.Array elem _)
       (lint-type-id-uses-import?
         elem
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstType.DynArray elem)
       (lint-type-id-uses-import?
         elem
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstType.Slice elem)
       (lint-type-id-uses-import?
         elem
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstType.Box elem)
       (lint-type-id-uses-import?
         elem
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstType.Region _ inner)
       (lint-type-id-uses-import?
         inner
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstType.Ref _ inner)
       (lint-type-id-uses-import?
         inner
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstType.MutRef _ inner)
       (lint-type-id-uses-import?
         inner
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstType.Enum name)
       (lint-name-id-uses-import?
         name
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstType.EnumArgs name _)
       (lint-name-id-uses-import?
         name
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstType.Struct name)
       (lint-name-id-uses-import?
         name
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstType.StructArgs name _)
       (lint-name-id-uses-import?
         name
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstType.Var name)
       (lint-name-id-uses-import?
         name
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstType.VarArgs name _)
       (lint-name-id-uses-import?
         name
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstType.Ptr inner)
       (lint-type-id-uses-import?
         inner
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstType.MutPtr inner)
       (lint-type-id-uses-import?
         inner
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]))
+        (owned_view.compiler-owned-shared-view import-ref))]))
 
 (define (lint-param-list-uses-import?
   [params : ast.AstParamList]
-  [alias : String]
-  [module-name : String]) : bool
-  (lint-param-list-uses-import-at? (& params) alias module-name 0))
+  [import-ref : LintImportRef]) : bool
+  (lint-param-list-uses-import-at? (& params) import-ref 0))
 
 (define (lint-param-list-uses-import-at?
   [params : (& params ast.AstParamList)]
-  [alias : String]
-  [module-name : String]
+  [import-ref : LintImportRef]
   [index : i64]) : bool
   (if (>= index (ast.ast-param-list-len params))
     false
@@ -2509,21 +2476,18 @@
       [(ast.AstParam.Param _ ty _)
         (if (lint-type-uses-import?
           ty
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name))
+          (owned_view.compiler-owned-shared-view import-ref))
           true
-          (lint-param-list-uses-import-at? params alias module-name (+ index 1)))])))
+          (lint-param-list-uses-import-at? params import-ref (+ index 1)))])))
 
 (define (lint-macro-param-list-uses-import?
   [params : ast.AstMacroParamList]
-  [alias : String]
-  [module-name : String]) : bool
-  (lint-macro-param-list-uses-import-at? (& params) alias module-name 0))
+  [import-ref : LintImportRef]) : bool
+  (lint-macro-param-list-uses-import-at? (& params) import-ref 0))
 
 (define (lint-macro-param-list-uses-import-at?
   [params : (& params ast.AstMacroParamList)]
-  [alias : String]
-  [module-name : String]
+  [import-ref : LintImportRef]
   [index : i64]) : bool
   (if (>= index (ast.ast-macro-param-list-len params))
     false
@@ -2534,82 +2498,54 @@
       [(ast.AstMacroParam.Param _ ty _ _)
         (if (lint-type-uses-import?
           ty
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name))
+          (owned_view.compiler-owned-shared-view import-ref))
           true
-          (lint-macro-param-list-uses-import-at?
-            params
-            alias
-            module-name
-            (+ index 1)))])))
+          (lint-macro-param-list-uses-import-at? params import-ref (+ index 1)))])))
 
 (define (lint-pattern-list-uses-import?
   [patterns : ast.AstPatternList]
-  [alias : String]
-  [module-name : String]) : bool
-  (lint-pattern-list-uses-import-at? (& patterns) alias module-name 0))
+  [import-ref : LintImportRef]) : bool
+  (lint-pattern-list-uses-import-at? (& patterns) import-ref 0))
 
 (define (lint-pattern-list-uses-import-at?
   [patterns : (& patterns ast.AstPatternList)]
-  [alias : String]
-  [module-name : String]
+  [import-ref : LintImportRef]
   [index : i64]) : bool
   (if (>= index patterns.len)
     false
     (if (lint-pattern-uses-import?
       (ast.ast-pattern-list-get patterns index (ast.ast-pattern-fallback))
-      (owned_view.compiler-owned-shared-view alias)
-      (owned_view.compiler-owned-shared-view module-name))
+      (owned_view.compiler-owned-shared-view import-ref))
       true
-      (lint-pattern-list-uses-import-at? patterns alias module-name (+ index 1)))))
+      (lint-pattern-list-uses-import-at? patterns import-ref (+ index 1)))))
 
 (define (lint-pattern-uses-import?
   [pattern : ast.AstPattern]
-  [alias : String]
-  [module-name : String]) : bool
+  [import-ref : LintImportRef]) : bool
   (match pattern
     [(ast.AstPattern.Var _ maybe-ty)
       (lint-maybe-type-uses-import?
         maybe-ty
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstPattern.Tuple items)
       (lint-pattern-list-uses-import?
         (owned_view.compiler-owned-box-shared-view items)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstPattern.Array items)
       (lint-pattern-list-uses-import?
         (owned_view.compiler-owned-box-shared-view items)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstPattern.Wildcard) false]
     [(ast.AstPattern.Binding _) false]
     [(ast.AstPattern.Variant name items)
       (if (lint-name-id-uses-import?
         name
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
+        (owned_view.compiler-owned-shared-view import-ref))
         true
         (lint-pattern-list-uses-import?
           (owned_view.compiler-owned-box-shared-view items)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+          (owned_view.compiler-owned-shared-view import-ref)))]
     [(ast.AstPattern.Literal _) false]))
-
-(define (lint-unused-unsafe-candidate-sentinel?
-  [alias : String]
-  [module-name : String]) : bool
-  (and
-    (string.eq alias "__tl_lint_unused_unsafe_candidate")
-    (string.eq module-name "")))
-
-(define (lint-requires-enclosing-unsafe-sentinel?
-  [alias : String]
-  [module-name : String]) : bool
-  (and
-    (string.eq alias "__tl_lint_requires_enclosing_unsafe")
-    (string.eq module-name "")))
 
 (define (lint-expr-list-requires-enclosing-unsafe? [exprs : ast.AstExprList]) : bool
   (__tl-project-field
@@ -2620,14 +2556,12 @@
 
 (define (lint-expr-list-uses-import?
   [exprs : ast.AstExprList]
-  [alias : String]
-  [module-name : String]) : bool
-  (lint-expr-list-uses-import-at? (& exprs) alias module-name 0))
+  [import-ref : LintImportRef]) : bool
+  (lint-expr-list-uses-import-at? (& exprs) import-ref 0))
 
 (define (lint-expr-list-uses-import-at?
   [exprs : (& exprs ast.AstExprList)]
-  [alias : String]
-  [module-name : String]
+  [import-ref : LintImportRef]
   [index : i64]) : bool
   (if (>= index exprs.len)
     false
@@ -2636,21 +2570,18 @@
         (ast.ast-node-get (ast.ast-expr-list-get exprs index 0))]
       (if (lint-expr-uses-import?
         head
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
+        (owned_view.compiler-owned-shared-view import-ref))
         true
-        (lint-expr-list-uses-import-at? exprs alias module-name (+ index 1))))))
+        (lint-expr-list-uses-import-at? exprs import-ref (+ index 1))))))
 
 (define (lint-let-bindings-use-import?
   [bindings : ast.AstLetBindingList]
-  [alias : String]
-  [module-name : String]) : bool
-  (lint-let-bindings-use-import-at? (& bindings) alias module-name 0))
+  [import-ref : LintImportRef]) : bool
+  (lint-let-bindings-use-import-at? (& bindings) import-ref 0))
 
 (define (lint-let-bindings-use-import-at?
   [bindings : (& bindings ast.AstLetBindingList)]
-  [alias : String]
-  [module-name : String]
+  [import-ref : LintImportRef]
   [index : i64]) : bool
   (if (>= index (ast.ast-let-binding-list-len bindings))
     false
@@ -2661,30 +2592,22 @@
       [(ast.AstLetBinding.Binding _ maybe-ty init)
         (if (lint-maybe-type-uses-import?
           maybe-ty
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name))
+          (owned_view.compiler-owned-shared-view import-ref))
           true
           (if (lint-expr-uses-import?
             (ast.ast-node-get init)
-            (owned_view.compiler-owned-shared-view alias)
-            (owned_view.compiler-owned-shared-view module-name))
+            (owned_view.compiler-owned-shared-view import-ref))
             true
-            (lint-let-bindings-use-import-at?
-              bindings
-              alias
-              module-name
-              (+ index 1))))])))
+            (lint-let-bindings-use-import-at? bindings import-ref (+ index 1))))])))
 
 (define (lint-match-arms-use-import?
   [arms : ast.AstMatchArmList]
-  [alias : String]
-  [module-name : String]) : bool
-  (lint-match-arms-use-import-at? (& arms) alias module-name 0))
+  [import-ref : LintImportRef]) : bool
+  (lint-match-arms-use-import-at? (& arms) import-ref 0))
 
 (define (lint-match-arms-use-import-at?
   [arms : (& arms ast.AstMatchArmList)]
-  [alias : String]
-  [module-name : String]
+  [import-ref : LintImportRef]
   [index : i64]) : bool
   (if (>= index arms.len)
     false
@@ -2692,26 +2615,22 @@
       [(ast.AstMatchArm.Arm pattern body)
         (if (lint-pattern-uses-import?
           pattern
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name))
+          (owned_view.compiler-owned-shared-view import-ref))
           true
           (if (lint-expr-uses-import?
             (ast.ast-node-get body)
-            (owned_view.compiler-owned-shared-view alias)
-            (owned_view.compiler-owned-shared-view module-name))
+            (owned_view.compiler-owned-shared-view import-ref))
             true
-            (lint-match-arms-use-import-at? arms alias module-name (+ index 1))))])))
+            (lint-match-arms-use-import-at? arms import-ref (+ index 1))))])))
 
 (define (lint-resource-bindings-use-import?
   [bindings : ast.AstResourceBindingList]
-  [alias : String]
-  [module-name : String]) : bool
-  (lint-resource-bindings-use-import-at? (& bindings) alias module-name 0))
+  [import-ref : LintImportRef]) : bool
+  (lint-resource-bindings-use-import-at? (& bindings) import-ref 0))
 
 (define (lint-resource-bindings-use-import-at?
   [bindings : (& bindings ast.AstResourceBindingList)]
-  [alias : String]
-  [module-name : String]
+  [import-ref : LintImportRef]
   [index : i64]) : bool
   (if (>= index (ast.ast-resource-binding-list-len bindings))
     false
@@ -2722,250 +2641,202 @@
       [(ast.AstResourceBinding.Binding _ init cleanup _)
         (if (lint-expr-uses-import?
           (ast.ast-node-get init)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name))
+          (owned_view.compiler-owned-shared-view import-ref))
           true
           (if (lint-expr-uses-import?
             (ast.ast-node-get cleanup)
-            (owned_view.compiler-owned-shared-view alias)
-            (owned_view.compiler-owned-shared-view module-name))
+            (owned_view.compiler-owned-shared-view import-ref))
             true
             (lint-resource-bindings-use-import-at?
               bindings
-              alias
-              module-name
+              import-ref
               (+ index 1))))])))
 
 (define (lint-expr-uses-import?
   [expr : ast.AstExpr]
-  [alias : String]
-  [module-name : String]) : bool
+  [import-ref : LintImportRef]) : bool
   (match expr
     [(ast.AstExpr.Spanned inner-box _)
       (lint-expr-uses-import?
         (ast.ast-node-get inner-box)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstExpr.MacroExpansion inner-box _ _)
       (lint-expr-uses-import?
         (ast.ast-node-get inner-box)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstExpr.Literal _) false]
     [(ast.AstExpr.Var name)
       (lint-name-id-uses-import?
         name
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstExpr.Binary _ left right)
       (if (lint-expr-uses-import?
         (ast.ast-node-get left)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
+        (owned_view.compiler-owned-shared-view import-ref))
         true
         (lint-expr-uses-import?
           (ast.ast-node-get right)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+          (owned_view.compiler-owned-shared-view import-ref)))]
     [(ast.AstExpr.Unary _ inner)
       (lint-expr-uses-import?
         (ast.ast-node-get inner)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstExpr.Call func args)
       (if (lint-expr-uses-import?
         (ast.ast-node-get func)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
+        (owned_view.compiler-owned-shared-view import-ref))
         true
         (lint-expr-list-uses-import?
           args
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+          (owned_view.compiler-owned-shared-view import-ref)))]
     [(ast.AstExpr.If cond then-branch else-branch)
       (if (lint-expr-uses-import?
         (ast.ast-node-get cond)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
+        (owned_view.compiler-owned-shared-view import-ref))
         true
         (if (lint-expr-uses-import?
           (ast.ast-node-get then-branch)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name))
+          (owned_view.compiler-owned-shared-view import-ref))
           true
           (lint-expr-uses-import?
             (ast.ast-node-get else-branch)
-            (owned_view.compiler-owned-shared-view alias)
-            (owned_view.compiler-owned-shared-view module-name))))]
+            (owned_view.compiler-owned-shared-view import-ref))))]
     [(ast.AstExpr.Let let-box)
       (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body)
           (if (lint-let-bindings-use-import?
             bindings
-            (owned_view.compiler-owned-shared-view alias)
-            (owned_view.compiler-owned-shared-view module-name))
+            (owned_view.compiler-owned-shared-view import-ref))
             true
             (lint-expr-uses-import?
               (ast.ast-node-get body)
-              (owned_view.compiler-owned-shared-view alias)
-              (owned_view.compiler-owned-shared-view module-name)))])]
+              (owned_view.compiler-owned-shared-view import-ref)))])]
     [(ast.AstExpr.Lambda lambda-box)
       (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda params ret body)
           (if (lint-param-list-uses-import?
             params
-            (owned_view.compiler-owned-shared-view alias)
-            (owned_view.compiler-owned-shared-view module-name))
+            (owned_view.compiler-owned-shared-view import-ref))
             true
             (if (lint-maybe-type-uses-import?
               ret
-              (owned_view.compiler-owned-shared-view alias)
-              (owned_view.compiler-owned-shared-view module-name))
+              (owned_view.compiler-owned-shared-view import-ref))
               true
               (lint-expr-uses-import?
                 (ast.ast-node-get body)
-                (owned_view.compiler-owned-shared-view alias)
-                (owned_view.compiler-owned-shared-view module-name))))])]
+                (owned_view.compiler-owned-shared-view import-ref))))])]
     [(ast.AstExpr.Tuple exprs)
       (lint-expr-list-uses-import?
         exprs
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstExpr.TupleRef tuple _)
       (lint-expr-uses-import?
         (ast.ast-node-get tuple)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstExpr.Array exprs)
       (lint-expr-list-uses-import?
         exprs
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstExpr.DynArray exprs)
       (lint-expr-list-uses-import?
         exprs
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstExpr.FixedMakeArray elem-id len)
       (if (lint-type-uses-import?
         (ast.ty-node-get elem-id)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
+        (owned_view.compiler-owned-shared-view import-ref))
         true
         (lint-expr-uses-import?
           (ast.ast-node-get len)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+          (owned_view.compiler-owned-shared-view import-ref)))]
     [(ast.AstExpr.MakeArray elem-id len)
       (if (lint-type-uses-import?
         (ast.ty-node-get elem-id)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
+        (owned_view.compiler-owned-shared-view import-ref))
         true
         (lint-expr-uses-import?
           (ast.ast-node-get len)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+          (owned_view.compiler-owned-shared-view import-ref)))]
     [(ast.AstExpr.ArrayRef array index)
       (if (lint-expr-uses-import?
         (ast.ast-node-get array)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
+        (owned_view.compiler-owned-shared-view import-ref))
         true
         (lint-expr-uses-import?
           (ast.ast-node-get index)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+          (owned_view.compiler-owned-shared-view import-ref)))]
     [(ast.AstExpr.ArraySet array index value)
       (if (lint-expr-uses-import?
         (ast.ast-node-get array)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
+        (owned_view.compiler-owned-shared-view import-ref))
         true
         (if (lint-expr-uses-import?
           (ast.ast-node-get index)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name))
+          (owned_view.compiler-owned-shared-view import-ref))
           true
           (lint-expr-uses-import?
             (ast.ast-node-get value)
-            (owned_view.compiler-owned-shared-view alias)
-            (owned_view.compiler-owned-shared-view module-name))))]
+            (owned_view.compiler-owned-shared-view import-ref))))]
     [(ast.AstExpr.ArrayTake array live index)
       (if (lint-expr-uses-import?
         (ast.ast-node-get array)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
+        (owned_view.compiler-owned-shared-view import-ref))
         true
         (if (lint-expr-uses-import?
           (ast.ast-node-get live)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name))
+          (owned_view.compiler-owned-shared-view import-ref))
           true
           (lint-expr-uses-import?
             (ast.ast-node-get index)
-            (owned_view.compiler-owned-shared-view alias)
-            (owned_view.compiler-owned-shared-view module-name))))]
+            (owned_view.compiler-owned-shared-view import-ref))))]
     [(ast.AstExpr.FixedArrayTake array index)
       (if (lint-expr-uses-import?
         (ast.ast-node-get array)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
+        (owned_view.compiler-owned-shared-view import-ref))
         true
         (lint-expr-uses-import?
           (ast.ast-node-get index)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+          (owned_view.compiler-owned-shared-view import-ref)))]
     [(ast.AstExpr.Replace place replacement)
       (if (lint-expr-uses-import?
         (ast.ast-node-get place)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
+        (owned_view.compiler-owned-shared-view import-ref))
         true
         (lint-expr-uses-import?
           (ast.ast-node-get replacement)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+          (owned_view.compiler-owned-shared-view import-ref)))]
     [(ast.AstExpr.ArrayPush array value)
       (if (lint-expr-uses-import?
         (ast.ast-node-get array)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
+        (owned_view.compiler-owned-shared-view import-ref))
         true
         (lint-expr-uses-import?
           (ast.ast-node-get value)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+          (owned_view.compiler-owned-shared-view import-ref)))]
     [(ast.AstExpr.StringRef text index)
       (if (lint-expr-uses-import?
         (ast.ast-node-get text)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
+        (owned_view.compiler-owned-shared-view import-ref))
         true
         (lint-expr-uses-import?
           (ast.ast-node-get index)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+          (owned_view.compiler-owned-shared-view import-ref)))]
     [(ast.AstExpr.While cond body)
       (if (lint-expr-uses-import?
         (ast.ast-node-get cond)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
+        (owned_view.compiler-owned-shared-view import-ref))
         true
         (lint-expr-uses-import?
           (ast.ast-node-get body)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+          (owned_view.compiler-owned-shared-view import-ref)))]
     [(ast.AstExpr.ForOwnedState payload)
       (if (lint-expr-uses-import?
         (ast.ast-node-get (ast.ast-for-owned-state-source (& payload)))
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
+        (owned_view.compiler-owned-shared-view import-ref))
         true
         (lint-expr-uses-import?
           (ast.ast-node-get (ast.ast-for-owned-state-body (& payload)))
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+          (owned_view.compiler-owned-shared-view import-ref)))]
     [(ast.AstExpr.ForOwnedStep payload)
       (let
         [expected-type : i64 (ast.ast-for-owned-step-expected-type (& payload))]
@@ -2973,139 +2844,101 @@
           (>= expected-type 0)
           (lint-expr-uses-import?
             (ast.ast-node-get expected-type)
-            (owned_view.compiler-owned-shared-view alias)
-            (owned_view.compiler-owned-shared-view module-name)))
+            (owned_view.compiler-owned-shared-view import-ref)))
           true
           (lint-expr-uses-import?
             (ast.ast-node-get (ast.ast-for-owned-step-body (& payload)))
-            (owned_view.compiler-owned-shared-view alias)
-            (owned_view.compiler-owned-shared-view module-name))))]
+            (owned_view.compiler-owned-shared-view import-ref))))]
     [(ast.AstExpr.Begin exprs)
       (lint-expr-list-uses-import?
         exprs
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstExpr.Unsafe exprs)
-      (cond
-        [(lint-requires-enclosing-unsafe-sentinel?
-            (owned_view.compiler-owned-shared-view alias)
-            (owned_view.compiler-owned-shared-view module-name))
-          false]
-        [(lint-unused-unsafe-candidate-sentinel?
-            (owned_view.compiler-owned-shared-view alias)
-            (owned_view.compiler-owned-shared-view module-name))
-          (if (lint-expr-list-requires-enclosing-unsafe?
-            (owned_view.compiler-owned-shared-view exprs))
-            (lint-expr-list-uses-import?
-              (owned_view.compiler-owned-shared-view exprs)
-              (owned_view.compiler-owned-shared-view alias)
-              (owned_view.compiler-owned-shared-view module-name))
-            true)]
-        [else
-          (lint-expr-list-uses-import?
-            (owned_view.compiler-owned-shared-view exprs)
-            (owned_view.compiler-owned-shared-view alias)
-            (owned_view.compiler-owned-shared-view module-name))])]
+      (lint-expr-list-uses-import?
+        (owned_view.compiler-owned-shared-view exprs)
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstExpr.Set target value)
       (if (lint-name-id-uses-import?
         target
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
+        (owned_view.compiler-owned-shared-view import-ref))
         true
         (lint-expr-uses-import?
           (ast.ast-node-get value)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+          (owned_view.compiler-owned-shared-view import-ref)))]
     [(ast.AstExpr.Ann inner ty-id)
       (if (lint-expr-uses-import?
         (ast.ast-node-get inner)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
+        (owned_view.compiler-owned-shared-view import-ref))
         true
         (lint-type-uses-import?
           (ast.ty-node-get ty-id)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+          (owned_view.compiler-owned-shared-view import-ref)))]
     [(ast.AstExpr.Cast inner ty-id)
       (if (lint-expr-uses-import?
         (ast.ast-node-get inner)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
+        (owned_view.compiler-owned-shared-view import-ref))
         true
         (lint-type-uses-import?
           (ast.ty-node-get ty-id)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+          (owned_view.compiler-owned-shared-view import-ref)))]
     [(ast.AstExpr.Borrow _ _ place)
       (lint-expr-uses-import?
         (ast.ast-node-get place)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstExpr.Match match-box)
       (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrutinee arms)
           (if (lint-expr-uses-import?
             (ast.ast-node-get scrutinee)
-            (owned_view.compiler-owned-shared-view alias)
-            (owned_view.compiler-owned-shared-view module-name))
+            (owned_view.compiler-owned-shared-view import-ref))
             true
             (lint-match-arms-use-import?
               arms
-              (owned_view.compiler-owned-shared-view alias)
-              (owned_view.compiler-owned-shared-view module-name)))])]
+              (owned_view.compiler-owned-shared-view import-ref)))])]
     [(ast.AstExpr.Foreach fe-box)
       (match (__tl-box-place fe-box)
         [(ast.AstForeach.Foreach _ index-ty start end body)
           (cond
             [(lint-type-uses-import?
                 index-ty
-                (owned_view.compiler-owned-shared-view alias)
-                (owned_view.compiler-owned-shared-view module-name))
+                (owned_view.compiler-owned-shared-view import-ref))
               true]
             [(lint-expr-uses-import?
                 (ast.ast-node-get start)
-                (owned_view.compiler-owned-shared-view alias)
-                (owned_view.compiler-owned-shared-view module-name))
+                (owned_view.compiler-owned-shared-view import-ref))
               true]
             [(lint-expr-uses-import?
                 (ast.ast-node-get end)
-                (owned_view.compiler-owned-shared-view alias)
-                (owned_view.compiler-owned-shared-view module-name))
+                (owned_view.compiler-owned-shared-view import-ref))
               true]
             [else
               (lint-expr-uses-import?
                 (ast.ast-node-get body)
-                (owned_view.compiler-owned-shared-view alias)
-                (owned_view.compiler-owned-shared-view module-name))])])]
+                (owned_view.compiler-owned-shared-view import-ref))])])]
     [(ast.AstExpr.SpmdReduce reduce-box)
       (match (__tl-box-place reduce-box)
         [(ast.AstSpmdReduce.Reduce _ _ index-ty start end init value)
           (cond
             [(lint-type-uses-import?
                 index-ty
-                (owned_view.compiler-owned-shared-view alias)
-                (owned_view.compiler-owned-shared-view module-name))
+                (owned_view.compiler-owned-shared-view import-ref))
               true]
             [(lint-expr-uses-import?
                 (ast.ast-node-get start)
-                (owned_view.compiler-owned-shared-view alias)
-                (owned_view.compiler-owned-shared-view module-name))
+                (owned_view.compiler-owned-shared-view import-ref))
               true]
             [(lint-expr-uses-import?
                 (ast.ast-node-get end)
-                (owned_view.compiler-owned-shared-view alias)
-                (owned_view.compiler-owned-shared-view module-name))
+                (owned_view.compiler-owned-shared-view import-ref))
               true]
             [(lint-expr-uses-import?
                 (ast.ast-node-get init)
-                (owned_view.compiler-owned-shared-view alias)
-                (owned_view.compiler-owned-shared-view module-name))
+                (owned_view.compiler-owned-shared-view import-ref))
               true]
             [else
               (lint-expr-uses-import?
                 (ast.ast-node-get value)
-                (owned_view.compiler-owned-shared-view alias)
-                (owned_view.compiler-owned-shared-view module-name))])])]
+                (owned_view.compiler-owned-shared-view import-ref))])])]
     [(ast.AstExpr.SpmdScan scan-box)
       (match (__tl-box-place scan-box)
         [(ast.AstSpmdScan.Scan
@@ -3122,39 +2955,32 @@
           (cond
             [(lint-type-uses-import?
                 index-ty
-                (owned_view.compiler-owned-shared-view alias)
-                (owned_view.compiler-owned-shared-view module-name))
+                (owned_view.compiler-owned-shared-view import-ref))
               true]
             [(lint-type-uses-import?
                 prefix-ty
-                (owned_view.compiler-owned-shared-view alias)
-                (owned_view.compiler-owned-shared-view module-name))
+                (owned_view.compiler-owned-shared-view import-ref))
               true]
             [(lint-expr-uses-import?
                 (ast.ast-node-get start)
-                (owned_view.compiler-owned-shared-view alias)
-                (owned_view.compiler-owned-shared-view module-name))
+                (owned_view.compiler-owned-shared-view import-ref))
               true]
             [(lint-expr-uses-import?
                 (ast.ast-node-get end)
-                (owned_view.compiler-owned-shared-view alias)
-                (owned_view.compiler-owned-shared-view module-name))
+                (owned_view.compiler-owned-shared-view import-ref))
               true]
             [(lint-expr-uses-import?
                 (ast.ast-node-get init)
-                (owned_view.compiler-owned-shared-view alias)
-                (owned_view.compiler-owned-shared-view module-name))
+                (owned_view.compiler-owned-shared-view import-ref))
               true]
             [(lint-expr-uses-import?
                 (ast.ast-node-get value)
-                (owned_view.compiler-owned-shared-view alias)
-                (owned_view.compiler-owned-shared-view module-name))
+                (owned_view.compiler-owned-shared-view import-ref))
               true]
             [else
               (lint-expr-uses-import?
                 (ast.ast-node-get body)
-                (owned_view.compiler-owned-shared-view alias)
-                (owned_view.compiler-owned-shared-view module-name))])])]
+                (owned_view.compiler-owned-shared-view import-ref))])])]
     [(ast.AstExpr.SpmdCompact compact-box)
       (match (__tl-box-place compact-box)
         [(ast.AstSpmdCompact.Compact
@@ -3170,318 +2996,224 @@
           (cond
             [(lint-type-uses-import?
                 index-ty
-                (owned_view.compiler-owned-shared-view alias)
-                (owned_view.compiler-owned-shared-view module-name))
+                (owned_view.compiler-owned-shared-view import-ref))
               true]
             [(lint-type-uses-import?
                 slot-ty
-                (owned_view.compiler-owned-shared-view alias)
-                (owned_view.compiler-owned-shared-view module-name))
+                (owned_view.compiler-owned-shared-view import-ref))
               true]
             [(lint-expr-uses-import?
                 (ast.ast-node-get start)
-                (owned_view.compiler-owned-shared-view alias)
-                (owned_view.compiler-owned-shared-view module-name))
+                (owned_view.compiler-owned-shared-view import-ref))
               true]
             [(lint-expr-uses-import?
                 (ast.ast-node-get end)
-                (owned_view.compiler-owned-shared-view alias)
-                (owned_view.compiler-owned-shared-view module-name))
+                (owned_view.compiler-owned-shared-view import-ref))
               true]
             [(lint-expr-uses-import?
                 (ast.ast-node-get init)
-                (owned_view.compiler-owned-shared-view alias)
-                (owned_view.compiler-owned-shared-view module-name))
+                (owned_view.compiler-owned-shared-view import-ref))
               true]
             [(lint-expr-uses-import?
                 (ast.ast-node-get keep)
-                (owned_view.compiler-owned-shared-view alias)
-                (owned_view.compiler-owned-shared-view module-name))
+                (owned_view.compiler-owned-shared-view import-ref))
               true]
             [else
               (lint-expr-uses-import?
                 (ast.ast-node-get body)
-                (owned_view.compiler-owned-shared-view alias)
-                (owned_view.compiler-owned-shared-view module-name))])])]
+                (owned_view.compiler-owned-shared-view import-ref))])])]
     [(ast.AstExpr.SpmdBroadcast value lane)
       (if (lint-expr-uses-import?
         (ast.ast-node-get value)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
+        (owned_view.compiler-owned-shared-view import-ref))
         true
         (lint-expr-uses-import?
           (ast.ast-node-get lane)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+          (owned_view.compiler-owned-shared-view import-ref)))]
     [(ast.AstExpr.SpmdShuffle value lane)
       (if (lint-expr-uses-import?
         (ast.ast-node-get value)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
+        (owned_view.compiler-owned-shared-view import-ref))
         true
         (lint-expr-uses-import?
           (ast.ast-node-get lane)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+          (owned_view.compiler-owned-shared-view import-ref)))]
     [(ast.AstExpr.StructGet receiver _)
       (lint-expr-uses-import?
         (ast.ast-node-get receiver)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstExpr.StructSet receiver _ value)
       (if (lint-expr-uses-import?
         (ast.ast-node-get receiver)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
+        (owned_view.compiler-owned-shared-view import-ref))
         true
         (lint-expr-uses-import?
           (ast.ast-node-get value)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+          (owned_view.compiler-owned-shared-view import-ref)))]
     [(ast.AstExpr.WithRegion _ body)
       (lint-expr-list-uses-import?
         body
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstExpr.WithEscape scratch body)
       (if (lint-expr-uses-import?
         (ast.ast-node-get scratch)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
+        (owned_view.compiler-owned-shared-view import-ref))
         true
         (lint-expr-list-uses-import?
           body
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+          (owned_view.compiler-owned-shared-view import-ref)))]
     [(ast.AstExpr.WithScratch body)
       (lint-expr-list-uses-import?
         body
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstExpr.InArena arena body)
       (if (lint-expr-uses-import?
         (ast.ast-node-get arena)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
+        (owned_view.compiler-owned-shared-view import-ref))
         true
         (lint-expr-list-uses-import?
           body
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+          (owned_view.compiler-owned-shared-view import-ref)))]
     [(ast.AstExpr.WithResource wr-box)
       (match (__tl-box-place wr-box)
         [(ast.AstWithResource.WithResource bindings body)
           (if (lint-resource-bindings-use-import?
             bindings
-            (owned_view.compiler-owned-shared-view alias)
-            (owned_view.compiler-owned-shared-view module-name))
+            (owned_view.compiler-owned-shared-view import-ref))
             true
             (lint-expr-list-uses-import?
               body
-              (owned_view.compiler-owned-shared-view alias)
-              (owned_view.compiler-owned-shared-view module-name)))])]
+              (owned_view.compiler-owned-shared-view import-ref)))])]
     [(ast.AstExpr.Box inner)
       (lint-expr-uses-import?
         (ast.ast-node-get inner)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstExpr.BoxGet inner)
       (lint-expr-uses-import?
         (ast.ast-node-get inner)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstExpr.BoxTake inner)
       (lint-expr-uses-import?
         (ast.ast-node-get inner)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstExpr.BoxSet inner value)
       (if (lint-expr-uses-import?
         (ast.ast-node-get inner)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
+        (owned_view.compiler-owned-shared-view import-ref))
         true
         (lint-expr-uses-import?
           (ast.ast-node-get value)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+          (owned_view.compiler-owned-shared-view import-ref)))]
     [(ast.AstExpr.TypeLiteral ty-id)
       (lint-type-uses-import?
         (ast.ty-node-get ty-id)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstExpr.Init maybe-ty-id)
       (lint-maybe-type-uses-import?
         (ast.ast-maybe-type-from-id maybe-ty-id)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstExpr.Comptime inner)
       (lint-expr-uses-import?
         (ast.ast-node-get inner)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstExpr.Quote inner)
       (lint-expr-uses-import?
         (ast.ast-node-get inner)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstExpr.Quasiquote inner)
       (lint-expr-uses-import?
         (ast.ast-node-get inner)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstExpr.Unquote inner)
       (lint-expr-uses-import?
         (ast.ast-node-get inner)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstExpr.UnquoteSplicing inner)
       (lint-expr-uses-import?
         (ast.ast-node-get inner)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstExpr.BracketClause items)
       (lint-expr-list-uses-import?
         items
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstExpr.Try inner)
       (lint-expr-uses-import?
         (ast.ast-node-get inner)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstExpr.Return inner)
       (lint-expr-uses-import?
         (ast.ast-node-get inner)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstExpr.Break) false]
     [(ast.AstExpr.Continue) false]
     [(ast.AstExpr.PtrNull ty-id)
       (lint-type-uses-import?
         (ast.ty-node-get ty-id)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstExpr.PtrNullCheck inner)
       (lint-expr-uses-import?
         (ast.ast-node-get inner)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstExpr.PtrAddrOf place)
-      (if (lint-requires-enclosing-unsafe-sentinel?
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
-        true
-        (lint-expr-uses-import?
-          (ast.ast-node-get place)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+      (lint-expr-uses-import?
+        (ast.ast-node-get place)
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstExpr.PtrRead ptr)
-      (if (lint-requires-enclosing-unsafe-sentinel?
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
-        true
-        (lint-expr-uses-import?
-          (ast.ast-node-get ptr)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+      (lint-expr-uses-import?
+        (ast.ast-node-get ptr)
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstExpr.PtrWrite ptr value)
-      (if (lint-requires-enclosing-unsafe-sentinel?
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
-        true
-        (if (lint-expr-uses-import?
-          (ast.ast-node-get ptr)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name))
-          true
-          (lint-expr-uses-import?
-            (ast.ast-node-get value)
-            (owned_view.compiler-owned-shared-view alias)
-            (owned_view.compiler-owned-shared-view module-name))))]
-    [(ast.AstExpr.PtrOffset ptr offset)
-      (if (lint-requires-enclosing-unsafe-sentinel?
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
-        true
-        (if (lint-expr-uses-import?
-          (ast.ast-node-get ptr)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name))
-          true
-          (lint-expr-uses-import?
-            (ast.ast-node-get offset)
-            (owned_view.compiler-owned-shared-view alias)
-            (owned_view.compiler-owned-shared-view module-name))))]
-    [(ast.AstExpr.PtrCast ptr ty-id)
-      (if (lint-requires-enclosing-unsafe-sentinel?
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
-        true
-        (if (lint-expr-uses-import?
-          (ast.ast-node-get ptr)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name))
-          true
-          (lint-type-uses-import?
-            (ast.ty-node-get ty-id)
-            (owned_view.compiler-owned-shared-view alias)
-            (owned_view.compiler-owned-shared-view module-name))))]
-    [(ast.AstExpr.PtrToInt ptr)
-      (if (lint-requires-enclosing-unsafe-sentinel?
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
+      (if (lint-expr-uses-import?
+        (ast.ast-node-get ptr)
+        (owned_view.compiler-owned-shared-view import-ref))
         true
         (lint-expr-uses-import?
-          (ast.ast-node-get ptr)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
-    [(ast.AstExpr.IntToPtr value ty-id)
-      (if (lint-requires-enclosing-unsafe-sentinel?
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
-        true
-        (if (lint-expr-uses-import?
           (ast.ast-node-get value)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name))
-          true
-          (lint-type-uses-import?
-            (ast.ty-node-get ty-id)
-            (owned_view.compiler-owned-shared-view alias)
-            (owned_view.compiler-owned-shared-view module-name))))]
+          (owned_view.compiler-owned-shared-view import-ref)))]
+    [(ast.AstExpr.PtrOffset ptr offset)
+      (if (lint-expr-uses-import?
+        (ast.ast-node-get ptr)
+        (owned_view.compiler-owned-shared-view import-ref))
+        true
+        (lint-expr-uses-import?
+          (ast.ast-node-get offset)
+          (owned_view.compiler-owned-shared-view import-ref)))]
+    [(ast.AstExpr.PtrCast ptr ty-id)
+      (if (lint-expr-uses-import?
+        (ast.ast-node-get ptr)
+        (owned_view.compiler-owned-shared-view import-ref))
+        true
+        (lint-type-uses-import?
+          (ast.ty-node-get ty-id)
+          (owned_view.compiler-owned-shared-view import-ref)))]
+    [(ast.AstExpr.PtrToInt ptr)
+      (lint-expr-uses-import?
+        (ast.ast-node-get ptr)
+        (owned_view.compiler-owned-shared-view import-ref))]
+    [(ast.AstExpr.IntToPtr value ty-id)
+      (if (lint-expr-uses-import?
+        (ast.ast-node-get value)
+        (owned_view.compiler-owned-shared-view import-ref))
+        true
+        (lint-type-uses-import?
+          (ast.ty-node-get ty-id)
+          (owned_view.compiler-owned-shared-view import-ref)))]
     [(ast.AstExpr.StringData inner)
-      (if (lint-requires-enclosing-unsafe-sentinel?
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
-        true
-        (lint-expr-uses-import?
-          (ast.ast-node-get inner)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+      (lint-expr-uses-import?
+        (ast.ast-node-get inner)
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstExpr.StringFromBytes ptr len)
-      (if (lint-requires-enclosing-unsafe-sentinel?
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
-        true
-        (if (lint-expr-uses-import?
-          (ast.ast-node-get ptr)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name))
-          true
-          (lint-expr-uses-import?
-            (ast.ast-node-get len)
-            (owned_view.compiler-owned-shared-view alias)
-            (owned_view.compiler-owned-shared-view module-name))))]
-    [(ast.AstExpr.ArrayData inner)
-      (if (lint-requires-enclosing-unsafe-sentinel?
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
+      (if (lint-expr-uses-import?
+        (ast.ast-node-get ptr)
+        (owned_view.compiler-owned-shared-view import-ref))
         true
         (lint-expr-uses-import?
-          (ast.ast-node-get inner)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+          (ast.ast-node-get len)
+          (owned_view.compiler-owned-shared-view import-ref)))]
+    [(ast.AstExpr.ArrayData inner)
+      (lint-expr-uses-import?
+        (ast.ast-node-get inner)
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstExpr.BinaryData _) false]
     [(ast.AstExpr.SpmdProgramIndex) false]
     [(ast.AstExpr.SpmdProgramCount) false]
@@ -3491,105 +3223,83 @@
     [(ast.AstExpr.CpuIdEax leaf subleaf)
       (if (lint-expr-uses-import?
         (ast.ast-node-get leaf)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
+        (owned_view.compiler-owned-shared-view import-ref))
         true
         (lint-expr-uses-import?
           (ast.ast-node-get subleaf)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+          (owned_view.compiler-owned-shared-view import-ref)))]
     [(ast.AstExpr.CpuIdEbx leaf subleaf)
       (if (lint-expr-uses-import?
         (ast.ast-node-get leaf)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
+        (owned_view.compiler-owned-shared-view import-ref))
         true
         (lint-expr-uses-import?
           (ast.ast-node-get subleaf)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+          (owned_view.compiler-owned-shared-view import-ref)))]
     [(ast.AstExpr.CpuIdEcx leaf subleaf)
       (if (lint-expr-uses-import?
         (ast.ast-node-get leaf)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
+        (owned_view.compiler-owned-shared-view import-ref))
         true
         (lint-expr-uses-import?
           (ast.ast-node-get subleaf)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+          (owned_view.compiler-owned-shared-view import-ref)))]
     [(ast.AstExpr.CpuIdEdx leaf subleaf)
       (if (lint-expr-uses-import?
         (ast.ast-node-get leaf)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
+        (owned_view.compiler-owned-shared-view import-ref))
         true
         (lint-expr-uses-import?
           (ast.ast-node-get subleaf)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+          (owned_view.compiler-owned-shared-view import-ref)))]
     [(ast.AstExpr.Xgetbv index)
       (lint-expr-uses-import?
         (ast.ast-node-get index)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstExpr.Syscall args)
-      (if (lint-requires-enclosing-unsafe-sentinel?
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
-        true
-        (lint-expr-list-uses-import?
-          args
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]))
+      (lint-expr-list-uses-import?
+        args
+        (owned_view.compiler-owned-shared-view import-ref))]))
 
 (define (lint-extern-abi-uses-import?
   [abi : ast.AstExternAbi]
-  [alias : String]
-  [module-name : String]) : bool
+  [import-ref : LintImportRef]) : bool
   (match abi
     [(ast.AstExternAbi.C) false]
     [(ast.AstExternAbi.CVarargsOpen) false]
     [(ast.AstExternAbi.CVarargsTyped tail-ty)
       (lint-type-uses-import?
         tail-ty
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]))
+        (owned_view.compiler-owned-shared-view import-ref))]))
 
 (define (lint-extern-metadata-uses-import?
   [meta : ast.AstExternMetadata]
-  [alias : String]
-  [module-name : String]) : bool
+  [import-ref : LintImportRef]) : bool
   (match meta
     [(ast.AstExternMetadata.Metadata abi _ _ _ _)
       (lint-extern-abi-uses-import?
         abi
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]))
+        (owned_view.compiler-owned-shared-view import-ref))]))
 
 (define (lint-field-cleanup-uses-import?
   [cleanup : ast.AstFieldCleanup]
-  [alias : String]
-  [module-name : String]) : bool
+  [import-ref : LintImportRef]) : bool
   (match cleanup
     [(ast.AstFieldCleanup.No) false]
     [(ast.AstFieldCleanup.Fn name)
       (lint-name-id-uses-import?
         (ci.intern-syntax-id-value name)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstFieldCleanup.Owned) false]))
 
 (define (lint-field-def-list-uses-import?
   [fields : ast.AstFieldDefList]
-  [alias : String]
-  [module-name : String]) : bool
-  (lint-field-def-list-uses-import-at? (& fields) alias module-name 0))
+  [import-ref : LintImportRef]) : bool
+  (lint-field-def-list-uses-import-at? (& fields) import-ref 0))
 
 (define (lint-field-def-list-uses-import-at?
   [fields : (& fields ast.AstFieldDefList)]
-  [alias : String]
-  [module-name : String]
+  [import-ref : LintImportRef]
   [index : i64]) : bool
   (if (>= index fields.len)
     false
@@ -3600,71 +3310,53 @@
       [(ast.AstFieldDef.Def _ ty cleanup)
         (if (lint-type-uses-import?
           ty
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name))
+          (owned_view.compiler-owned-shared-view import-ref))
           true
           (if (lint-field-cleanup-uses-import?
             cleanup
-            (owned_view.compiler-owned-shared-view alias)
-            (owned_view.compiler-owned-shared-view module-name))
+            (owned_view.compiler-owned-shared-view import-ref))
             true
-            (lint-field-def-list-uses-import-at?
-              fields
-              alias
-              module-name
-              (+ index 1))))])))
+            (lint-field-def-list-uses-import-at? fields import-ref (+ index 1))))])))
 
 (define (lint-struct-cleanup-uses-import?
   [cleanup : ast.AstStructCleanup]
-  [alias : String]
-  [module-name : String]) : bool
+  [import-ref : LintImportRef]) : bool
   (match cleanup
     [(ast.AstStructCleanup.No) false]
     [(ast.AstStructCleanup.Fn name)
       (lint-name-id-uses-import?
         (ci.intern-syntax-id-value name)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]))
+        (owned_view.compiler-owned-shared-view import-ref))]))
 
 (define (lint-enum-cleanup-uses-import?
   [cleanup : ast.AstEnumCleanup]
-  [alias : String]
-  [module-name : String]) : bool
+  [import-ref : LintImportRef]) : bool
   (match cleanup
     [(ast.AstEnumCleanup.No) false]
     [(ast.AstEnumCleanup.Fn name)
       (lint-name-id-uses-import?
         (ci.intern-syntax-id-value name)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]))
+        (owned_view.compiler-owned-shared-view import-ref))]))
 
 (define (lint-variant-payload-cleanup-uses-import?
   [cleanup : ast.AstVariantPayloadCleanup]
-  [alias : String]
-  [module-name : String]) : bool
+  [import-ref : LintImportRef]) : bool
   (match cleanup
     [(ast.AstVariantPayloadCleanup.No) false]
     [(ast.AstVariantPayloadCleanup.Fn name)
       (lint-name-id-uses-import?
         (ci.intern-syntax-id-value name)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstVariantPayloadCleanup.Owned) false]))
 
 (define (lint-variant-payload-cleanup-list-uses-import?
   [items : ast.AstVariantPayloadCleanupList]
-  [alias : String]
-  [module-name : String]) : bool
-  (lint-variant-payload-cleanup-list-uses-import-at?
-    (& items)
-    alias
-    module-name
-    0))
+  [import-ref : LintImportRef]) : bool
+  (lint-variant-payload-cleanup-list-uses-import-at? (& items) import-ref 0))
 
 (define (lint-variant-payload-cleanup-list-uses-import-at?
   [items : (& items ast.AstVariantPayloadCleanupList)]
-  [alias : String]
-  [module-name : String]
+  [import-ref : LintImportRef]
   [index : i64]) : bool
   (if (>= index items.len)
     false
@@ -3673,25 +3365,21 @@
         items
         index
         (ast.ast-variant-payload-cleanup-fallback))
-      (owned_view.compiler-owned-shared-view alias)
-      (owned_view.compiler-owned-shared-view module-name))
+      (owned_view.compiler-owned-shared-view import-ref))
       true
       (lint-variant-payload-cleanup-list-uses-import-at?
         items
-        alias
-        module-name
+        import-ref
         (+ index 1)))))
 
 (define (lint-variant-def-list-uses-import?
   [variants : ast.AstVariantDefList]
-  [alias : String]
-  [module-name : String]) : bool
-  (lint-variant-def-list-uses-import-at? (& variants) alias module-name 0))
+  [import-ref : LintImportRef]) : bool
+  (lint-variant-def-list-uses-import-at? (& variants) import-ref 0))
 
 (define (lint-variant-def-list-uses-import-at?
   [variants : (& variants ast.AstVariantDefList)]
-  [alias : String]
-  [module-name : String]
+  [import-ref : LintImportRef]
   [index : i64]) : bool
   (if (>= index variants.len)
     false
@@ -3702,25 +3390,21 @@
       [(ast.AstVariantDef.Def _ payloads cleanups)
         (if (lint-type-list-uses-import?
           payloads
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name))
+          (owned_view.compiler-owned-shared-view import-ref))
           true
           (if (lint-variant-payload-cleanup-list-uses-import?
             cleanups
-            (owned_view.compiler-owned-shared-view alias)
-            (owned_view.compiler-owned-shared-view module-name))
+            (owned_view.compiler-owned-shared-view import-ref))
             true
             (lint-variant-def-list-uses-import-at?
               variants
-              alias
-              module-name
+              import-ref
               (+ index 1))))])))
 
 (define (lint-dispatch-variant-list-uses-import-from?
   [variants : (& variants ast.AstDispatchVariantList)]
   [index : i64]
-  [alias : String]
-  [module-name : String]) : bool
+  [import-ref : LintImportRef]) : bool
   (if (>= index variants.len)
     false
     (match (ast.ast-dispatch-variant-list-get
@@ -3730,145 +3414,118 @@
       [(ast.AstDispatchVariant.Variant _ name)
         (if (lint-name-id-uses-import?
           name
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name))
+          (owned_view.compiler-owned-shared-view import-ref))
           true
           (lint-dispatch-variant-list-uses-import-from?
             variants
             (+ index 1)
-            (owned_view.compiler-owned-shared-view alias)
-            (owned_view.compiler-owned-shared-view module-name)))])))
+            (owned_view.compiler-owned-shared-view import-ref)))])))
 
 (define (lint-dispatch-variant-list-uses-import?
   [variants : ast.AstDispatchVariantList]
-  [alias : String]
-  [module-name : String]) : bool
+  [import-ref : LintImportRef]) : bool
   (lint-dispatch-variant-list-uses-import-from?
     (& variants)
     0
-    (owned_view.compiler-owned-shared-view alias)
-    (owned_view.compiler-owned-shared-view module-name)))
+    (owned_view.compiler-owned-shared-view import-ref)))
 
 (define (lint-generated-decl-meta-uses-import?
   [meta : ast.AstGeneratedDeclMeta]
-  [alias : String]
-  [module-name : String]) : bool
+  [import-ref : LintImportRef]) : bool
   (match meta
     [(ast.AstGeneratedDeclMeta.No) false]
     [(ast.AstGeneratedDeclMeta.Some _ _ args _)
       (lint-expr-list-uses-import?
         args
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]))
+        (owned_view.compiler-owned-shared-view import-ref))]))
 
 (define (lint-decl-uses-import-inner?
   [decl : ast.AstDecl]
-  [alias : String]
-  [module-name : String]) : bool
+  [import-ref : LintImportRef]) : bool
   (match (owned_view.compiler-owned-shared-view decl)
     [(ast.AstDecl.Module _) false]
     [(ast.AstDecl.ModuleBody _ body)
       (lint-decl-list-uses-import?
         (ast.ast-decl-list-box-shared-view body)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstDecl.Def decl-meta _ maybe-ty body)
       (if (lint-maybe-type-uses-import?
         maybe-ty
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
+        (owned_view.compiler-owned-shared-view import-ref))
         true
         (lint-expr-uses-import?
           (ast.ast-node-get body)
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+          (owned_view.compiler-owned-shared-view import-ref)))]
     [(ast.AstDecl.DefFn decl-meta _ params ret body _)
       (if (lint-param-list-uses-import?
         params
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
+        (owned_view.compiler-owned-shared-view import-ref))
         true
         (if (lint-type-uses-import?
           ret
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name))
+          (owned_view.compiler-owned-shared-view import-ref))
           true
           (lint-expr-uses-import?
             (ast.ast-node-get body)
-            (owned_view.compiler-owned-shared-view alias)
-            (owned_view.compiler-owned-shared-view module-name))))]
+            (owned_view.compiler-owned-shared-view import-ref))))]
     [(ast.AstDecl.DefMacro decl-meta _ params ret body)
       (if (lint-macro-param-list-uses-import?
         params
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
+        (owned_view.compiler-owned-shared-view import-ref))
         true
         (if (lint-type-uses-import?
           ret
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name))
+          (owned_view.compiler-owned-shared-view import-ref))
           true
           (lint-expr-uses-import?
             (ast.ast-node-get body)
-            (owned_view.compiler-owned-shared-view alias)
-            (owned_view.compiler-owned-shared-view module-name))))]
+            (owned_view.compiler-owned-shared-view import-ref))))]
     [(ast.AstDecl.Extern decl-meta _ _ meta ty)
       (if (lint-extern-metadata-uses-import?
         (ast.ast-extern-metadata-box-shared-view meta)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
+        (owned_view.compiler-owned-shared-view import-ref))
         true
         (lint-type-uses-import?
           ty
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+          (owned_view.compiler-owned-shared-view import-ref)))]
     [(ast.AstDecl.DefEnum decl-meta _ cleanup variants)
       (if (lint-enum-cleanup-uses-import?
         cleanup
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
+        (owned_view.compiler-owned-shared-view import-ref))
         true
         (lint-variant-def-list-uses-import?
           variants
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+          (owned_view.compiler-owned-shared-view import-ref)))]
     [(ast.AstDecl.DefEnumLifetimes decl-meta _ _ cleanup variants)
       (if (lint-enum-cleanup-uses-import?
         cleanup
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
+        (owned_view.compiler-owned-shared-view import-ref))
         true
         (lint-variant-def-list-uses-import?
           variants
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+          (owned_view.compiler-owned-shared-view import-ref)))]
     [(ast.AstDecl.DefStruct decl-meta _ _ cleanup fields)
       (if (lint-struct-cleanup-uses-import?
         cleanup
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
+        (owned_view.compiler-owned-shared-view import-ref))
         true
         (lint-field-def-list-uses-import?
           fields
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+          (owned_view.compiler-owned-shared-view import-ref)))]
     [(ast.AstDecl.DefStructLifetimes decl-meta _ _ _ cleanup fields)
       (if (lint-struct-cleanup-uses-import?
         cleanup
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
+        (owned_view.compiler-owned-shared-view import-ref))
         true
         (lint-field-def-list-uses-import?
           fields
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name)))]
+          (owned_view.compiler-owned-shared-view import-ref)))]
     [(ast.AstDecl.Import
         decl-meta
         (ast.AstImportSpec.Spec (ast.AstImportKind.Macro call-expr _) _ _ _ _))
       (lint-expr-uses-import?
         (ast.ast-node-get call-expr)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstDecl.Import
         decl-meta
         (ast.AstImportSpec.Spec
@@ -3879,8 +3536,7 @@
           _))
       (lint-expr-uses-import?
         (ast.ast-node-get call-expr)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstDecl.Import decl-meta _) false]
     [(ast.AstDecl.IncludeStr _ _) false]
     [(ast.AstDecl.IncludeStrComptime _ _) false]
@@ -3889,37 +3545,30 @@
     [(ast.AstDecl.DefDispatch decl-meta _ variants)
       (lint-dispatch-variant-list-uses-import?
         variants
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstDecl.Test _ body _ _)
       (lint-expr-uses-import?
         (ast.ast-node-get body)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]
+        (owned_view.compiler-owned-shared-view import-ref))]
     [(ast.AstDecl.Unsafe inner)
       (lint-decl-uses-import?
         (ast.ast-decl-box-shared-view inner)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))]))
+        (owned_view.compiler-owned-shared-view import-ref))]))
 
 (define (lint-decl-uses-import?
   [decl : ast.AstDecl]
-  [alias : String]
-  [module-name : String]) : bool
+  [import-ref : LintImportRef]) : bool
   (if (lint-generated-decl-meta-uses-import?
     (ast.ast-decl-generated-meta (owned_view.compiler-owned-shared-view decl))
-    (owned_view.compiler-owned-shared-view alias)
-    (owned_view.compiler-owned-shared-view module-name))
+    (owned_view.compiler-owned-shared-view import-ref))
     true
     (lint-decl-uses-import-inner?
       decl
-      (owned_view.compiler-owned-shared-view alias)
-      (owned_view.compiler-owned-shared-view module-name))))
+      (owned_view.compiler-owned-shared-view import-ref))))
 
 (define (lint-decl-list-uses-import?
   [decls : ast.AstDeclList]
-  [alias : String]
-  [module-name : String]) : bool
+  [import-ref : LintImportRef]) : bool
   (match (ast.ast-decl-list-step decls)
     [(ast.AstDeclListStep.Nil) false]
     [(ast.AstDeclListStep.Cons decl rest)
@@ -3927,13 +3576,11 @@
         [rest : ast.AstDeclList rest]
         (if (lint-decl-uses-import?
           decl
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name))
+          (owned_view.compiler-owned-shared-view import-ref))
           true
           (lint-decl-list-uses-import?
             rest
-            (owned_view.compiler-owned-shared-view alias)
-            (owned_view.compiler-owned-shared-view module-name))))]))
+            (owned_view.compiler-owned-shared-view import-ref))))]))
 
 (define (lint-program-has-unused-unsafe-candidate? [program : ast.AstProgram]) : bool
   (lint-unsafe-program-has-candidate? program))
@@ -4442,8 +4089,9 @@
                     (if (or
                       (lint-decl-list-uses-import?
                         (owned_view.compiler-owned-shared-view all-decls)
-                        (ci.intern-str alias)
-                        (ci.intern-str module-name))
+                        (LintImportRef
+                          (ci.intern-str alias)
+                          (ci.intern-str module-name)))
                       (and
                         (lint-stdlib-string-module-name?
                           (ci.intern-str module-name))

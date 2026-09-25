@@ -16,6 +16,7 @@
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.string)
 (import source_text_core as source_text)
+(import stdlib.comptime)
 (import compiler_ast_types as ast)
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
@@ -55,258 +56,11 @@
     finding.span
     (LintFixAvailable fix)))
 
-;: Stable rule id for the dormant nested-`if`-ladder rule. Rule ids are the
-;: suppression key (`;; lint-allow: <rule-id>`) and the registry key, so this
-;: remains registered even while bootstrap source stays on nested `if`.
-(define (lint-rule-nested-if-ladder-id) : String
-  "nested-if-ladder")
-
-;: Public message text retained for compatibility with rule metadata lookups.
-(define (lint-rule-nested-if-ladder-message) : String
-  "nested if-ladder: chain of if/else-if; prefer cond (value/guard ladders) or match (variant dispatch)")
-
 (define (lint-rule-nested-if-ladder-value-message) : String
   "nested if-ladder: value dispatch chain; prefer bracket-arm cond or match")
 
 (define (lint-rule-nested-if-ladder-guard-message) : String
   "nested if-ladder: guard flow chain; prefer cond with guard arms or when/unless")
-
-(define (lint-rule-nested-if-ladder-suggestion) : String
-  "prefer cond (value/guard ladders) or match (variant dispatch)")
-
-(define (lint-rule-nested-let-id) : String
-  "nested-let")
-
-(define (lint-rule-nested-let-message) : String
-  "nested let: body is a single let; merge bindings into one sequential let")
-
-(define (lint-rule-nested-let-suggestion) : String
-  "merge the nested let bindings into one sequential let")
-
-(define (lint-rule-single-begin-id) : String
-  "single-begin")
-
-(define (lint-rule-single-begin-message) : String
-  "single begin: begin with one expression is redundant")
-
-(define (lint-rule-single-begin-suggestion) : String
-  "remove the begin wrapper")
-
-(define (lint-rule-return-path-chain-id) : String
-  "return-path-chain")
-
-(define (lint-rule-return-path-chain-message) : String
-  "return-path chain: nested success-path ifs; prefer guard clauses with (return ...)")
-
-(define (lint-rule-return-path-chain-suggestion) : String
-  "prefer early return guards with (return ...)")
-
-(define (lint-rule-unit-if-guard-id) : String
-  "unit-if-guard")
-
-(define (lint-rule-unit-if-guard-message) : String
-  "unit guard if: prefer when/unless")
-
-(define (lint-rule-unit-if-guard-suggestion) : String
-  "prefer when/unless for unit guard branches")
-
-(define (lint-rule-no-effect-id) : String
-  "no-effect")
-
-(define (lint-rule-no-effect-message) : String
-  "no-effect expression: value is discarded")
-
-(define (lint-rule-no-effect-suggestion) : String
-  "remove the expression or use its value")
-
-(define (lint-rule-unreachable-code-id) : String
-  "unreachable-code")
-
-(define (lint-rule-unreachable-code-message) : String
-  "unreachable code: expression follows a terminal expression")
-
-(define (lint-rule-unreachable-code-suggestion) : String
-  "remove the unreachable expression or move it before the terminal expression")
-
-(define (lint-rule-redundant-divergence-padding-id) : String
-  "redundant-divergence-padding")
-
-(define (lint-rule-redundant-divergence-padding-message) : String
-  "redundant divergence padding: trailing expressions after panic/error are dead")
-
-(define (lint-rule-redundant-divergence-padding-suggestion) : String
-  "remove the trailing dead expression and the stale unreachable-code lint allow")
-
-(define (lint-rule-deprecated-string-concat-id) : String
-  "deprecated-string-concat")
-
-(define (lint-rule-deprecated-string-concat-message) : String
-  "deprecated string concatenation primitive: use str-cat for fixed arity or text_buf for incremental building")
-
-(define (lint-rule-deprecated-string-concat-suggestion) : String
-  "import stdlib/str_cat.tl and use str-cat, or use stdlib/text_buf.tl in accumulation loops")
-
-(define (lint-rule-nested-str-cat-id) : String
-  "nested-str-cat")
-
-(define (lint-rule-nested-str-cat-message) : String
-  "nested str-cat: prefer one flat str-cat call")
-
-(define (lint-rule-nested-str-cat-suggestion) : String
-  "flatten nested str-cat operands into the outer call")
-
-(define (lint-rule-cascading-and-or-id) : String
-  "cascading-and-or")
-
-(define (lint-rule-cascading-and-or-message) : String
-  "cascading and/or: prefer one flat n-ary macro call")
-
-(define (lint-rule-cascading-and-or-suggestion) : String
-  "flatten same-operator and/or operands, e.g. (and a b c)")
-
-(define (lint-rule-transitional-core-macro-qualifier-id) : String
-  "transitional-core-macro-qualifier")
-
-(define (lint-rule-transitional-core-macro-qualifier-message) : String
-  "transitional core macro qualifier: use the bare prelude macro spelling")
-
-(define (lint-rule-transitional-core-macro-qualifier-suggestion) : String
-  "replace core.when/core.unless/core.and/core.or/core.cond with when/unless/and/or/cond")
-
-(define (lint-rule-unused-import-id) : String
-  "unused-import")
-
-(define (lint-rule-unused-import-message) : String
-  "unused import: imported module alias is never referenced")
-
-(define (lint-rule-unused-import-suggestion) : String
-  "remove the import or prefix an intentionally unused alias with _")
-
-(define (lint-rule-redundant-import-alias-id) : String
-  "redundant-import-alias")
-
-(define (lint-rule-redundant-import-alias-message) : String
-  "redundant import alias: dotted module import already binds that alias")
-
-(define (lint-rule-redundant-import-alias-suggestion) : String
-  "remove the explicit as clause")
-
-(define (lint-rule-redundant-function-name-id) : String
-  "redundant-function-name")
-
-(define (lint-rule-redundant-function-name-message) : String
-  "redundant function name: local function or macro repeats the module prefix")
-
-(define (lint-rule-redundant-function-name-suggestion) : String
-  "drop the module prefix from the local function or macro name")
-
-(define (lint-rule-dead-code-id) : String
-  "dead-code")
-
-(define (lint-rule-dead-code-message) : String
-  "dead code: top-level declaration is unreachable from package entry/test roots")
-
-(define (lint-rule-dead-code-suggestion) : String
-  "remove the declaration or reference it from package entry/test roots")
-
-(define (lint-rule-unused-assignment-id) : String
-  "unused-assignment")
-
-(define (lint-rule-unused-assignment-message) : String
-  "unused assignment: value is overwritten before it is read")
-
-(define (lint-rule-unused-assignment-suggestion) : String
-  "remove the assignment or read the value before overwriting it")
-
-(define (lint-rule-copy-on-update-struct-id) : String
-  "copy-on-update-struct")
-
-(define (lint-rule-copy-on-update-struct-message) : String
-  "copy-on-update struct mutation: prefer in-place field assignment")
-
-(define (lint-rule-copy-on-update-struct-suggestion) : String
-  "replace same-struct reassignment with (set! value.field new-value)")
-
-(define (lint-rule-prefer-dynamic-array-literal-id) : String
-  "prefer-dynamic-array-literal")
-
-(define (lint-rule-prefer-dynamic-array-literal-message) : String
-  "hand-filled private dynamic buffer: prefer (__tl_make-array v0 v1 ...)")
-
-(define (lint-rule-prefer-dynamic-array-literal-suggestion) : String
-  "replace the allocation and consecutive array element assignments with a dynamic array literal")
-
-(define (lint-rule-single-element-array-cell-id) : String
-  "single-element-array-cell")
-
-(define (lint-rule-single-element-array-cell-message) : String
-  "single-element array scalar cell: prefer Box T, &mut, or return-value refactoring")
-
-(define (lint-rule-single-element-array-cell-suggestion) : String
-  "replace the one-element array cell with Box T, &mut, or an explicit returned value")
-
-(define (lint-rule-unused-variable-id) : String
-  "unused-variable")
-
-(define (lint-rule-unused-variable-message) : String
-  "unused variable: parameter or local binding is never used")
-
-(define (lint-rule-unused-variable-suggestion) : String
-  "remove the binding or prefix an intentionally unused name with _")
-
-(define (lint-rule-unused-unsafe-id) : String
-  "unused-unsafe")
-
-(define (lint-rule-unused-unsafe-message) : String
-  "unused unsafe block: body does not require unsafe context")
-
-(define (lint-rule-unused-unsafe-suggestion) : String
-  "remove the unsafe wrapper")
-
-(define (lint-rule-raw-arena-op-id) : String
-  "raw-arena-op")
-
-(define (lint-rule-raw-arena-op-message) : String
-  "raw arena operation: direct set/destroy/rewind is restricted to audited modules")
-
-(define (lint-rule-raw-arena-op-suggestion) : String
-  "use in-arena, with-scratch, with-arena, rewind-safe!, or destroy-safe!")
-
-(define (lint-rule-global-name-case-id) : String
-  "global-name-case")
-
-(define (lint-rule-global-name-case-message) : String
-  "global name case: top-level value bindings use kebab-case")
-
-(define (lint-rule-global-name-case-suggestion) : String
-  "rename the binding to kebab-case")
-
-(define (lint-rule-function-name-case-id) : String
-  "function-name-case")
-
-(define (lint-rule-function-name-case-message) : String
-  "function name case: functions, dispatch functions, and macros use kebab-case")
-
-(define (lint-rule-function-name-case-suggestion) : String
-  "rename the declaration to kebab-case")
-
-(define (lint-rule-local-name-case-id) : String
-  "local-name-case")
-
-(define (lint-rule-local-name-case-message) : String
-  "local name case: parameters and local binders use kebab-case; one-letter type operands may use uppercase")
-
-(define (lint-rule-local-name-case-suggestion) : String
-  "rename the parameter or local binding to its conventional case")
-
-(define (lint-rule-type-name-case-id) : String
-  "type-name-case")
-
-(define (lint-rule-type-name-case-message) : String
-  "type name case: struct and enum declarations use UpperCamelCase")
-
-(define (lint-rule-type-name-case-suggestion) : String
-  "rename the type declaration to UpperCamelCase")
 
 ;: Stable lint severity ordered from disabled to non-overridable error.
 (defenum LintLevel
@@ -405,225 +159,229 @@
   (NotFound)
   (Found LintRule))
 
-(define (lint-rule-nested-if-ladder) : LintRule
-  (LintRule
-    (lint-rule-nested-if-ladder-id)
-    (lint-rule-nested-if-ladder-message)
-    (lint-rule-nested-if-ladder-suggestion)
-    LintLevel.Warn
-    (bit-or lint-group-style-mask lint-group-complexity-mask)))
+;: Declare lint rule `name`: its stable id (the `lint-allow` suppression key
+;: and registry key), finding message and structured suggestion as
+;: `lint-rule-<name>-id`, `-message` and `-suggestion`, and its registry entry
+;: `(lint-rule-<name>)` with a default level and built-in group mask.
+(defmacro (deflint-rule
+  [name : Expr]
+  [message : Expr]
+  [suggestion : Expr]
+  [level : Expr]
+  [groups : Expr]) : Decls
+  (let
+    [id : String
+      (match name
+        [(Expr.Var value) value]
+        [_ (comptime-error "deflint-rule: the rule name must be a bare name")])]
+    [prefix : String (comptime.string-append "lint-rule-" id)]
+    [id-fn : Expr (comptime.expr-var (comptime.string-append prefix "-id"))]
+    [message-fn : Expr
+      (comptime.expr-var (comptime.string-append prefix "-message"))]
+    [suggestion-fn : Expr
+      (comptime.expr-var (comptime.string-append prefix "-suggestion"))]
+    `(begin
+      (define (,id-fn) : String
+        ,(comptime.expr-string id))
+      (define (,message-fn) : String
+        ,message)
+      (define (,suggestion-fn) : String
+        ,suggestion)
+      (define (,(comptime.expr-var prefix)) : LintRule
+        (LintRule (,id-fn) (,message-fn) (,suggestion-fn) ,level ,groups)))))
 
-(define (lint-rule-nested-let) : LintRule
-  (LintRule
-    (lint-rule-nested-let-id)
-    (lint-rule-nested-let-message)
-    (lint-rule-nested-let-suggestion)
-    LintLevel.Warn
-    (bit-or lint-group-style-mask lint-group-complexity-mask)))
+;; The dormant nested-`if`-ladder rule stays registered (its id is the
+;; `lint-allow` suppression key) while bootstrap source stays on nested `if`.
+;; Findings use the value/guard messages above; the registry message remains
+;; for rule metadata lookups.
+(deflint-rule
+  nested-if-ladder
+  "nested if-ladder: chain of if/else-if; prefer cond (value/guard ladders) or match (variant dispatch)"
+  "prefer cond (value/guard ladders) or match (variant dispatch)"
+  LintLevel.Warn
+  (bit-or lint-group-style-mask lint-group-complexity-mask))
 
-(define (lint-rule-single-begin) : LintRule
-  (LintRule
-    (lint-rule-single-begin-id)
-    (lint-rule-single-begin-message)
-    (lint-rule-single-begin-suggestion)
-    LintLevel.Warn
-    lint-group-style-mask))
+(deflint-rule
+  nested-let
+  "nested let: body is a single let; merge bindings into one sequential let"
+  "merge the nested let bindings into one sequential let"
+  LintLevel.Warn
+  (bit-or lint-group-style-mask lint-group-complexity-mask))
 
-(define (lint-rule-return-path-chain) : LintRule
-  (LintRule
-    (lint-rule-return-path-chain-id)
-    (lint-rule-return-path-chain-message)
-    (lint-rule-return-path-chain-suggestion)
-    LintLevel.Warn
-    (bit-or lint-group-style-mask lint-group-complexity-mask)))
+(deflint-rule
+  single-begin
+  "single begin: begin with one expression is redundant"
+  "remove the begin wrapper"
+  LintLevel.Warn
+  lint-group-style-mask)
 
-(define (lint-rule-unit-if-guard) : LintRule
-  (LintRule
-    (lint-rule-unit-if-guard-id)
-    (lint-rule-unit-if-guard-message)
-    (lint-rule-unit-if-guard-suggestion)
-    LintLevel.Warn
-    lint-group-style-mask))
+(deflint-rule
+  return-path-chain
+  "return-path chain: nested success-path ifs; prefer guard clauses with (return ...)"
+  "prefer early return guards with (return ...)"
+  LintLevel.Warn
+  (bit-or lint-group-style-mask lint-group-complexity-mask))
 
-(define (lint-rule-no-effect) : LintRule
-  (LintRule
-    (lint-rule-no-effect-id)
-    (lint-rule-no-effect-message)
-    (lint-rule-no-effect-suggestion)
-    LintLevel.Warn
-    lint-group-correctness-mask))
+(deflint-rule
+  unit-if-guard
+  "unit guard if: prefer when/unless"
+  "prefer when/unless for unit guard branches"
+  LintLevel.Warn
+  lint-group-style-mask)
 
-(define (lint-rule-unreachable-code) : LintRule
-  (LintRule
-    (lint-rule-unreachable-code-id)
-    (lint-rule-unreachable-code-message)
-    (lint-rule-unreachable-code-suggestion)
-    LintLevel.Warn
-    lint-group-correctness-mask))
+(deflint-rule
+  no-effect
+  "no-effect expression: value is discarded"
+  "remove the expression or use its value"
+  LintLevel.Warn
+  lint-group-correctness-mask)
 
-(define (lint-rule-redundant-divergence-padding) : LintRule
-  (LintRule
-    (lint-rule-redundant-divergence-padding-id)
-    (lint-rule-redundant-divergence-padding-message)
-    (lint-rule-redundant-divergence-padding-suggestion)
-    LintLevel.Warn
-    lint-group-correctness-mask))
+(deflint-rule
+  unreachable-code
+  "unreachable code: expression follows a terminal expression"
+  "remove the unreachable expression or move it before the terminal expression"
+  LintLevel.Warn
+  lint-group-correctness-mask)
 
-(define (lint-rule-deprecated-string-concat) : LintRule
-  (LintRule
-    (lint-rule-deprecated-string-concat-id)
-    (lint-rule-deprecated-string-concat-message)
-    (lint-rule-deprecated-string-concat-suggestion)
-    LintLevel.Allow
-    (bit-or
-      lint-group-compatibility-mask
-      lint-group-future-incompatibility-mask)))
+(deflint-rule
+  redundant-divergence-padding
+  "redundant divergence padding: trailing expressions after panic/error are dead"
+  "remove the trailing dead expression and the stale unreachable-code lint allow"
+  LintLevel.Warn
+  lint-group-correctness-mask)
 
-(define (lint-rule-nested-str-cat) : LintRule
-  (LintRule
-    (lint-rule-nested-str-cat-id)
-    (lint-rule-nested-str-cat-message)
-    (lint-rule-nested-str-cat-suggestion)
-    LintLevel.Warn
-    (bit-or lint-group-style-mask lint-group-performance-mask)))
+(deflint-rule
+  deprecated-string-concat
+  "deprecated string concatenation primitive: use str-cat for fixed arity or text_buf for incremental building"
+  "import stdlib/str_cat.tl and use str-cat, or use stdlib/text_buf.tl in accumulation loops"
+  LintLevel.Allow
+  (bit-or lint-group-compatibility-mask lint-group-future-incompatibility-mask))
 
-(define (lint-rule-cascading-and-or) : LintRule
-  (LintRule
-    (lint-rule-cascading-and-or-id)
-    (lint-rule-cascading-and-or-message)
-    (lint-rule-cascading-and-or-suggestion)
-    LintLevel.Warn
-    (bit-or lint-group-style-mask lint-group-complexity-mask)))
+(deflint-rule
+  nested-str-cat
+  "nested str-cat: prefer one flat str-cat call"
+  "flatten nested str-cat operands into the outer call"
+  LintLevel.Warn
+  (bit-or lint-group-style-mask lint-group-performance-mask))
 
-(define (lint-rule-transitional-core-macro-qualifier) : LintRule
-  (LintRule
-    (lint-rule-transitional-core-macro-qualifier-id)
-    (lint-rule-transitional-core-macro-qualifier-message)
-    (lint-rule-transitional-core-macro-qualifier-suggestion)
-    LintLevel.Warn
-    (bit-or
-      lint-group-compatibility-mask
-      lint-group-future-incompatibility-mask)))
+(deflint-rule
+  cascading-and-or
+  "cascading and/or: prefer one flat n-ary macro call"
+  "flatten same-operator and/or operands, e.g. (and a b c)"
+  LintLevel.Warn
+  (bit-or lint-group-style-mask lint-group-complexity-mask))
 
-(define (lint-rule-unused-import) : LintRule
-  (LintRule
-    (lint-rule-unused-import-id)
-    (lint-rule-unused-import-message)
-    (lint-rule-unused-import-suggestion)
-    LintLevel.Warn
-    (bit-or lint-group-correctness-mask lint-group-style-mask)))
+(deflint-rule
+  transitional-core-macro-qualifier
+  "transitional core macro qualifier: use the bare prelude macro spelling"
+  "replace core.when/core.unless/core.and/core.or/core.cond with when/unless/and/or/cond"
+  LintLevel.Warn
+  (bit-or lint-group-compatibility-mask lint-group-future-incompatibility-mask))
 
-(define (lint-rule-redundant-import-alias) : LintRule
-  (LintRule
-    (lint-rule-redundant-import-alias-id)
-    (lint-rule-redundant-import-alias-message)
-    (lint-rule-redundant-import-alias-suggestion)
-    LintLevel.Warn
-    lint-group-style-mask))
+(deflint-rule
+  unused-import
+  "unused import: imported module alias is never referenced"
+  "remove the import or prefix an intentionally unused alias with _"
+  LintLevel.Warn
+  (bit-or lint-group-correctness-mask lint-group-style-mask))
 
-(define (lint-rule-redundant-function-name) : LintRule
-  (LintRule
-    (lint-rule-redundant-function-name-id)
-    (lint-rule-redundant-function-name-message)
-    (lint-rule-redundant-function-name-suggestion)
-    LintLevel.Allow
-    lint-group-style-mask))
+(deflint-rule
+  redundant-import-alias
+  "redundant import alias: dotted module import already binds that alias"
+  "remove the explicit as clause"
+  LintLevel.Warn
+  lint-group-style-mask)
 
-(define (lint-rule-dead-code) : LintRule
-  (LintRule
-    (lint-rule-dead-code-id)
-    (lint-rule-dead-code-message)
-    (lint-rule-dead-code-suggestion)
-    LintLevel.Warn
-    lint-group-correctness-mask))
+(deflint-rule
+  redundant-function-name
+  "redundant function name: local function or macro repeats the module prefix"
+  "drop the module prefix from the local function or macro name"
+  LintLevel.Allow
+  lint-group-style-mask)
 
-(define (lint-rule-unused-assignment) : LintRule
-  (LintRule
-    (lint-rule-unused-assignment-id)
-    (lint-rule-unused-assignment-message)
-    (lint-rule-unused-assignment-suggestion)
-    LintLevel.Warn
-    (bit-or lint-group-correctness-mask lint-group-performance-mask)))
+(deflint-rule
+  dead-code
+  "dead code: top-level declaration is unreachable from package entry/test roots"
+  "remove the declaration or reference it from package entry/test roots"
+  LintLevel.Warn
+  lint-group-correctness-mask)
 
-(define (lint-rule-copy-on-update-struct) : LintRule
-  (LintRule
-    (lint-rule-copy-on-update-struct-id)
-    (lint-rule-copy-on-update-struct-message)
-    (lint-rule-copy-on-update-struct-suggestion)
-    LintLevel.Warn
-    lint-group-performance-mask))
+(deflint-rule
+  unused-assignment
+  "unused assignment: value is overwritten before it is read"
+  "remove the assignment or read the value before overwriting it"
+  LintLevel.Warn
+  (bit-or lint-group-correctness-mask lint-group-performance-mask))
 
-(define (lint-rule-prefer-dynamic-array-literal) : LintRule
-  (LintRule
-    (lint-rule-prefer-dynamic-array-literal-id)
-    (lint-rule-prefer-dynamic-array-literal-message)
-    (lint-rule-prefer-dynamic-array-literal-suggestion)
-    LintLevel.Warn
-    (bit-or lint-group-style-mask lint-group-performance-mask)))
+(deflint-rule
+  copy-on-update-struct
+  "copy-on-update struct mutation: prefer in-place field assignment"
+  "replace same-struct reassignment with (set! value.field new-value)"
+  LintLevel.Warn
+  lint-group-performance-mask)
 
-(define (lint-rule-single-element-array-cell) : LintRule
-  (LintRule
-    (lint-rule-single-element-array-cell-id)
-    (lint-rule-single-element-array-cell-message)
-    (lint-rule-single-element-array-cell-suggestion)
-    LintLevel.Warn
-    (bit-or lint-group-style-mask lint-group-performance-mask)))
+(deflint-rule
+  prefer-dynamic-array-literal
+  "hand-filled private dynamic buffer: prefer (__tl_make-array v0 v1 ...)"
+  "replace the allocation and consecutive array element assignments with a dynamic array literal"
+  LintLevel.Warn
+  (bit-or lint-group-style-mask lint-group-performance-mask))
 
-(define (lint-rule-unused-variable) : LintRule
-  (LintRule
-    (lint-rule-unused-variable-id)
-    (lint-rule-unused-variable-message)
-    (lint-rule-unused-variable-suggestion)
-    LintLevel.Warn
-    (bit-or lint-group-correctness-mask lint-group-style-mask)))
+(deflint-rule
+  single-element-array-cell
+  "single-element array scalar cell: prefer Box T, &mut, or return-value refactoring"
+  "replace the one-element array cell with Box T, &mut, or an explicit returned value"
+  LintLevel.Warn
+  (bit-or lint-group-style-mask lint-group-performance-mask))
 
-(define (lint-rule-unused-unsafe) : LintRule
-  (LintRule
-    (lint-rule-unused-unsafe-id)
-    (lint-rule-unused-unsafe-message)
-    (lint-rule-unused-unsafe-suggestion)
-    LintLevel.Warn
-    lint-group-unsafe-mask))
+(deflint-rule
+  unused-variable
+  "unused variable: parameter or local binding is never used"
+  "remove the binding or prefix an intentionally unused name with _"
+  LintLevel.Warn
+  (bit-or lint-group-correctness-mask lint-group-style-mask))
 
-(define (lint-rule-raw-arena-op) : LintRule
-  (LintRule
-    (lint-rule-raw-arena-op-id)
-    (lint-rule-raw-arena-op-message)
-    (lint-rule-raw-arena-op-suggestion)
-    LintLevel.Warn
-    (bit-or lint-group-correctness-mask lint-group-unsafe-mask)))
+(deflint-rule
+  unused-unsafe
+  "unused unsafe block: body does not require unsafe context"
+  "remove the unsafe wrapper"
+  LintLevel.Warn
+  lint-group-unsafe-mask)
 
-(define (lint-rule-global-name-case) : LintRule
-  (LintRule
-    (lint-rule-global-name-case-id)
-    (lint-rule-global-name-case-message)
-    (lint-rule-global-name-case-suggestion)
-    LintLevel.Allow
-    lint-group-style-mask))
+(deflint-rule
+  raw-arena-op
+  "raw arena operation: direct set/destroy/rewind is restricted to audited modules"
+  "use in-arena, with-scratch, with-arena, rewind-safe!, or destroy-safe!"
+  LintLevel.Warn
+  (bit-or lint-group-correctness-mask lint-group-unsafe-mask))
 
-(define (lint-rule-function-name-case) : LintRule
-  (LintRule
-    (lint-rule-function-name-case-id)
-    (lint-rule-function-name-case-message)
-    (lint-rule-function-name-case-suggestion)
-    LintLevel.Allow
-    lint-group-style-mask))
+(deflint-rule
+  global-name-case
+  "global name case: top-level value bindings use kebab-case"
+  "rename the binding to kebab-case"
+  LintLevel.Allow
+  lint-group-style-mask)
 
-(define (lint-rule-local-name-case) : LintRule
-  (LintRule
-    (lint-rule-local-name-case-id)
-    (lint-rule-local-name-case-message)
-    (lint-rule-local-name-case-suggestion)
-    LintLevel.Allow
-    lint-group-style-mask))
+(deflint-rule
+  function-name-case
+  "function name case: functions, dispatch functions, and macros use kebab-case"
+  "rename the declaration to kebab-case"
+  LintLevel.Allow
+  lint-group-style-mask)
 
-(define (lint-rule-type-name-case) : LintRule
-  (LintRule
-    (lint-rule-type-name-case-id)
-    (lint-rule-type-name-case-message)
-    (lint-rule-type-name-case-suggestion)
-    LintLevel.Allow
-    lint-group-style-mask))
+(deflint-rule
+  local-name-case
+  "local name case: parameters and local binders use kebab-case; one-letter type operands may use uppercase"
+  "rename the parameter or local binding to its conventional case"
+  LintLevel.Allow
+  lint-group-style-mask)
+
+(deflint-rule
+  type-name-case
+  "type name case: struct and enum declarations use UpperCamelCase"
+  "rename the type declaration to UpperCamelCase"
+  LintLevel.Allow
+  lint-group-style-mask)
 
 ;: Small registry for lint metadata. New rules plug into this table and the
 ;: shared lookup helpers without requiring public driver edits.

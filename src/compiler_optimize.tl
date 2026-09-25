@@ -7159,6 +7159,50 @@
 (define (opt-unop-eq [a : ir.CompilerIrUnOp] [b : ir.CompilerIrUnOp]) : bool
   (= (opt-unop-tag a) (opt-unop-tag b)))
 
+(define (opt-mask-binop-tag [op : ir.CompilerIrMaskBinOp]) : i64
+  (match op
+    [(ir.CompilerIrMaskBinOp.And) 0]
+    [(ir.CompilerIrMaskBinOp.Or) 1]))
+
+(define (opt-mask-binop-eq
+  [a : ir.CompilerIrMaskBinOp]
+  [b : ir.CompilerIrMaskBinOp]) : bool
+  (= (opt-mask-binop-tag a) (opt-mask-binop-tag b)))
+
+(define (opt-vector-reduce-tag [op : ir.CompilerIrVectorReduceOp]) : i64
+  (match op
+    [(ir.CompilerIrVectorReduceOp.Sum) 0]
+    [(ir.CompilerIrVectorReduceOp.Min) 1]
+    [(ir.CompilerIrVectorReduceOp.Max) 2]))
+
+(define (opt-vector-reduce-eq
+  [a : ir.CompilerIrVectorReduceOp]
+  [b : ir.CompilerIrVectorReduceOp]) : bool
+  (= (opt-vector-reduce-tag a) (opt-vector-reduce-tag b)))
+
+(define (opt-vector-prefix-op-tag [op : ir.CompilerIrVectorPrefixOp]) : i64
+  (match op
+    [(ir.CompilerIrVectorPrefixOp.Sum) 0]
+    [(ir.CompilerIrVectorPrefixOp.Min) 1]
+    [(ir.CompilerIrVectorPrefixOp.Max) 2]
+    [(ir.CompilerIrVectorPrefixOp.All) 3]
+    [(ir.CompilerIrVectorPrefixOp.Any) 4]))
+
+(define (opt-vector-prefix-op-eq?
+  [a : ir.CompilerIrVectorPrefixOp]
+  [b : ir.CompilerIrVectorPrefixOp]) : bool
+  (= (opt-vector-prefix-op-tag a) (opt-vector-prefix-op-tag b)))
+
+(define (opt-mask-reduce-tag [op : ir.CompilerIrMaskReduceOp]) : i64
+  (match op
+    [(ir.CompilerIrMaskReduceOp.All) 0]
+    [(ir.CompilerIrMaskReduceOp.Any) 1]))
+
+(define (opt-mask-reduce-eq
+  [a : ir.CompilerIrMaskReduceOp]
+  [b : ir.CompilerIrMaskReduceOp]) : bool
+  (= (opt-mask-reduce-tag a) (opt-mask-reduce-tag b)))
+
 (define (opt-value-eq [a : ir.CompilerIrValue] [b : ir.CompilerIrValue]) : bool
   (match a
     [(ir.CompilerIrValue.Var ia)
@@ -7728,11 +7772,80 @@
           (hash.i64 name)
           (opt-lifetime-list-hash (deref lifetimes))))]))
 
-(define (opt-zip-value-eq
-  [_type-segment-bases : i64]
-  [a : ir.CompilerIrValue]
-  [b : ir.CompilerIrValue]) : bool
-  (opt-value-eq a b))
+(define (opt-maybe-value-eq
+  [a : ir.CompilerIrMaybeValue]
+  [b : ir.CompilerIrMaybeValue]) : bool
+  (match a
+    [(ir.CompilerIrMaybeValue.No)
+      (match b
+        [(ir.CompilerIrMaybeValue.No) true]
+        [_ false])]
+    [(ir.CompilerIrMaybeValue.Some av)
+      (match b
+        [(ir.CompilerIrMaybeValue.Some bv) (opt-value-eq av bv)]
+        [_ false])]))
+
+(define (opt-value-seq-eq-from
+  [a : ir.CompilerIrValueSeq]
+  [b : ir.CompilerIrValueSeq]
+  [index : i64]) : bool
+  (if (>= index a.len)
+    true
+    (and
+      (opt-value-eq
+        (ir.compiler-ir-value-seq-ref (compiler-opt-global-shared-view a) index)
+        (ir.compiler-ir-value-seq-ref (compiler-opt-global-shared-view b) index))
+      (opt-value-seq-eq-from a b (+ index 1)))))
+
+(define (opt-value-seq-eq
+  [a : ir.CompilerIrValueSeq]
+  [b : ir.CompilerIrValueSeq]) : bool
+  (and (= a.len b.len) (opt-value-seq-eq-from a b 0)))
+
+(define (opt-call-args-array-eq
+  [a : (__tl_dyn-array ir.CompilerIrValue)]
+  [b : (__tl_dyn-array ir.CompilerIrValue)]
+  [index : i64]) : bool
+  (if (>= index (array-length a))
+    true
+    (and
+      (opt-value-eq
+        (compiler-opt-global-array-element-shared-view a index)
+        (compiler-opt-global-array-element-shared-view b index))
+      (opt-call-args-array-eq a b (+ index 1)))))
+
+(define (opt-call-args-eq
+  [a : ir.CompilerIrCallArgs]
+  [b : ir.CompilerIrCallArgs]) : bool
+  (match a
+    [(ir.CompilerIrCallArgs.Nil)
+      (match b
+        [(ir.CompilerIrCallArgs.Nil) true]
+        [_ false])]
+    [(ir.CompilerIrCallArgs.One av)
+      (match b
+        [(ir.CompilerIrCallArgs.One bv) (opt-value-eq av bv)]
+        [_ false])]
+    [(ir.CompilerIrCallArgs.Two aa ab)
+      (match b
+        [(ir.CompilerIrCallArgs.Two ba bb)
+          (and (opt-value-eq aa ba) (opt-value-eq ab bb))]
+        [_ false])]
+    [(ir.CompilerIrCallArgs.Array av)
+      (match b
+        [(ir.CompilerIrCallArgs.Array bv)
+          (and
+            (= (array-length av) (array-length bv))
+            (opt-call-args-array-eq av bv 0))]
+        [_ false])]
+    [(ir.CompilerIrCallArgs.Sret av ai)
+      (match b
+        [(ir.CompilerIrCallArgs.Sret bv bi)
+          (and
+            (= ai bi)
+            (= (array-length av) (array-length bv))
+            (opt-call-args-array-eq av bv 0))]
+        [_ false])]))
 
 (define (opt-phi-input-eq
   [av : ir.CompilerIrValue]
@@ -7783,14 +7896,176 @@
               (opt-phi-input-eq av alabel bv blabel)
               (opt-phi-input-seq-eq at bt))))))))
 
-;; Structural instruction equality. BinOp, VectorBinOp and VectorCompare compare
-;; their ops with opt-binop-eq, whose shift count tags lump every non-integer
-;; count type together; the rest go through compiler-ir-instr-zip-eq.
+(define (opt-switch-case-eq
+  [a : ir.CompilerIrSwitchCase]
+  [b : ir.CompilerIrSwitchCase]) : bool
+  (match a
+    [(ir.CompilerIrSwitchCase.Case at alabel)
+      (match b
+        [(ir.CompilerIrSwitchCase.Case bt blabel)
+          (and (= at bt) (= alabel blabel))])]))
+
+(define (opt-switch-case-seq-eq
+  [a : ir.CompilerIrSwitchCaseSeq]
+  [b : ir.CompilerIrSwitchCaseSeq]) : bool
+  (if (not (= a.len b.len))
+    false
+    (let
+      [index : i64 0]
+      (begin
+        (while (< index a.len)
+          (begin
+            (unless
+              (opt-switch-case-eq
+                (ir.compiler-ir-switch-case-seq-ref a index)
+                (ir.compiler-ir-switch-case-seq-ref b index))
+              (return false))
+            (set! index (+ index 1))))
+        true))))
+
+(define (opt-c-abi-return-slot-eq
+  [type-segment-bases : i64]
+  [a : ir.CompilerIrCAbiReturnSlot]
+  [b : ir.CompilerIrCAbiReturnSlot]) : bool
+  (match a
+    [(ir.CompilerIrCAbiReturnSlot.Slot aty aoffset)
+      (match b
+        [(ir.CompilerIrCAbiReturnSlot.Slot bty boffset)
+          (and (= aoffset boffset) (opt-type-eq type-segment-bases aty bty))])]))
+
+(define (opt-c-abi-return-slot-seq-eq-from
+  [type-segment-bases : i64]
+  [a : (__tl_dyn-array ir.CompilerIrCAbiReturnSlot)]
+  [b : (__tl_dyn-array ir.CompilerIrCAbiReturnSlot)]
+  [index : i64]
+  [count : i64]) : bool
+  (if (>= index count)
+    true
+    (and
+      (opt-c-abi-return-slot-eq
+        type-segment-bases
+        (compiler-opt-global-array-element-shared-view a index)
+        (compiler-opt-global-array-element-shared-view b index))
+      (opt-c-abi-return-slot-seq-eq-from
+        type-segment-bases
+        a
+        b
+        (+ index 1)
+        count))))
+
+(define (opt-c-abi-return-slot-seq-eq
+  [type-segment-bases : i64]
+  [a : ir.CompilerIrCAbiReturnSlotSeq]
+  [b : ir.CompilerIrCAbiReturnSlotSeq]) : bool
+  (let
+    [count : i64 a.len]
+    (and
+      (= count b.len)
+      (opt-c-abi-return-slot-seq-eq-from
+        type-segment-bases
+        a.slots
+        b.slots
+        0
+        count))))
+
 (define (opt-instr-eq
   [type-segment-bases : i64]
   [a : ir.CompilerIrInstr]
   [b : ir.CompilerIrInstr]) : bool
-  (match (compiler-opt-global-shared-view a)
+  (match a
+    [(ir.CompilerIrInstr.Mov ad av aty)
+      (match b
+        [(ir.CompilerIrInstr.Mov bd bv bty)
+          (and
+            (= ad bd)
+            (opt-value-eq av bv)
+            (opt-type-eq type-segment-bases aty bty))]
+        [_ false])]
+    [(ir.CompilerIrInstr.OwnRoot ad av aty)
+      (match b
+        [(ir.CompilerIrInstr.OwnRoot bd bv bty)
+          (and
+            (= ad bd)
+            (opt-value-eq av bv)
+            (opt-type-eq type-segment-bases aty bty))]
+        [_ false])]
+    [(ir.CompilerIrInstr.Alloc ad aty)
+      (match b
+        [(ir.CompilerIrInstr.Alloc bd bty)
+          (and (= ad bd) (opt-type-eq type-segment-bases aty bty))]
+        [_ false])]
+    [(ir.CompilerIrInstr.AddrOf ad av)
+      (match b
+        [(ir.CompilerIrInstr.AddrOf bd bv) (and (= ad bd) (= av bv))]
+        [_ false])]
+    [(ir.CompilerIrInstr.Gep ad abase aoffset aty)
+      (match b
+        [(ir.CompilerIrInstr.Gep bd bbase boffset bty)
+          (and
+            (= ad bd)
+            (opt-value-eq abase bbase)
+            (opt-value-eq aoffset boffset)
+            (opt-type-eq type-segment-bases aty bty))]
+        [_ false])]
+    [(ir.CompilerIrInstr.Load ad av aty)
+      (match b
+        [(ir.CompilerIrInstr.Load bd bv bty)
+          (and
+            (= ad bd)
+            (opt-value-eq av bv)
+            (opt-type-eq type-segment-bases aty bty))]
+        [_ false])]
+    [(ir.CompilerIrInstr.LoadOwned adst asrc aowner aty)
+      (match b
+        [(ir.CompilerIrInstr.LoadOwned bdst bsrc bowner bty)
+          (and
+            (= adst bdst)
+            (opt-value-eq asrc bsrc)
+            (= aowner bowner)
+            (opt-type-eq type-segment-bases aty bty))]
+        [_ false])]
+    [(ir.CompilerIrInstr.StorePtr aptr av aty)
+      (match b
+        [(ir.CompilerIrInstr.StorePtr bptr bv bty)
+          (and
+            (opt-value-eq aptr bptr)
+            (opt-value-eq av bv)
+            (opt-type-eq type-segment-bases aty bty))]
+        [_ false])]
+    [(ir.CompilerIrInstr.StoreOwned aptr av aty)
+      (match b
+        [(ir.CompilerIrInstr.StoreOwned bptr bv bty)
+          (and
+            (opt-value-eq aptr bptr)
+            (opt-value-eq av bv)
+            (opt-type-eq type-segment-bases aty bty))]
+        [_ false])]
+    [(ir.CompilerIrInstr.CopyBytes adst asrc asize)
+      (match b
+        [(ir.CompilerIrInstr.CopyBytes bdst bsrc bsize)
+          (and
+            (= asize bsize)
+            (opt-value-eq adst bdst)
+            (opt-value-eq asrc bsrc))]
+        [_ false])]
+    [(ir.CompilerIrInstr.Cast ad av afrom ato)
+      (match b
+        [(ir.CompilerIrInstr.Cast bd bv bfrom bto)
+          (and
+            (= ad bd)
+            (opt-value-eq av bv)
+            (opt-type-eq type-segment-bases afrom bfrom)
+            (opt-type-eq type-segment-bases ato bto))]
+        [_ false])]
+    [(ir.CompilerIrInstr.Bitcast ad av afrom ato)
+      (match b
+        [(ir.CompilerIrInstr.Bitcast bd bv bfrom bto)
+          (and
+            (= ad bd)
+            (opt-value-eq av bv)
+            (opt-type-eq type-segment-bases afrom bfrom)
+            (opt-type-eq type-segment-bases ato bto))]
+        [_ false])]
     [(ir.CompilerIrInstr.BinOp ad aop al ar aty)
       (match b
         [(ir.CompilerIrInstr.BinOp bd bop bl br bty)
@@ -7799,6 +8074,32 @@
             (opt-binop-eq aop bop)
             (opt-value-eq al bl)
             (opt-value-eq ar br)
+            (opt-type-eq type-segment-bases aty bty))]
+        [_ false])]
+    [(ir.CompilerIrInstr.UnOp ad aop av aty)
+      (match b
+        [(ir.CompilerIrInstr.UnOp bd bop bv bty)
+          (and
+            (= ad bd)
+            (opt-unop-eq aop bop)
+            (opt-value-eq av bv)
+            (opt-type-eq type-segment-bases aty bty))]
+        [_ false])]
+    [(ir.CompilerIrInstr.LaneId ad alanes aty)
+      (match b
+        [(ir.CompilerIrInstr.LaneId bd blanes bty)
+          (and
+            (= ad bd)
+            (= alanes blanes)
+            (opt-type-eq type-segment-bases aty bty))]
+        [_ false])]
+    [(ir.CompilerIrInstr.Splat ad av alanes aty)
+      (match b
+        [(ir.CompilerIrInstr.Splat bd bv blanes bty)
+          (and
+            (= ad bd)
+            (opt-value-eq av bv)
+            (= alanes blanes)
             (opt-type-eq type-segment-bases aty bty))]
         [_ false])]
     [(ir.CompilerIrInstr.VectorBinOp payload-box)
@@ -7827,6 +8128,83 @@
                 (= alanes blanes)
                 (opt-type-eq type-segment-bases aty bty)))]
           [_ false]))]
+    [(ir.CompilerIrInstr.VectorPrefix payload-box)
+      (let
+        [ad (compiler-opt-box-field-shared-view payload-box dst)]
+        [aop (compiler-opt-box-field-shared-view payload-box op)]
+        [as (compiler-opt-box-field-shared-view payload-box src)]
+        [ac (compiler-opt-box-field-shared-view payload-box carry)]
+        [alanes (compiler-opt-box-field-shared-view payload-box lanes)]
+        [aty (compiler-opt-box-field-shared-view payload-box ty)]
+        (match b
+          [(ir.CompilerIrInstr.VectorPrefix other-payload-box)
+            (let
+              [bd (compiler-opt-box-field-shared-view other-payload-box dst)]
+              [bop (compiler-opt-box-field-shared-view other-payload-box op)]
+              [bs (compiler-opt-box-field-shared-view other-payload-box src)]
+              [bc (compiler-opt-box-field-shared-view other-payload-box carry)]
+              [blanes
+                (compiler-opt-box-field-shared-view other-payload-box lanes)]
+              [bty (compiler-opt-box-field-shared-view other-payload-box ty)]
+              (and
+                (= ad bd)
+                (opt-vector-prefix-op-eq? aop bop)
+                (opt-value-eq as bs)
+                (opt-value-eq ac bc)
+                (= alanes blanes)
+                (opt-type-eq type-segment-bases aty bty)))]
+          [_ false]))]
+    [(ir.CompilerIrInstr.GatherLoad payload-box)
+      (let
+        [ad (compiler-opt-box-field-shared-view payload-box dst)]
+        [abase (compiler-opt-box-field-shared-view payload-box base)]
+        [aindex-base
+          (compiler-opt-box-field-shared-view payload-box index-base)]
+        [aindex (compiler-opt-box-field-shared-view payload-box index)]
+        [alane-offset
+          (compiler-opt-box-field-shared-view payload-box lane-offset)]
+        [alanes (compiler-opt-box-field-shared-view payload-box lanes)]
+        [aty (compiler-opt-box-field-shared-view payload-box ty)]
+        (match b
+          [(ir.CompilerIrInstr.GatherLoad other-payload-box)
+            (let
+              [bd (compiler-opt-box-field-shared-view other-payload-box dst)]
+              [bbase
+                (compiler-opt-box-field-shared-view other-payload-box base)]
+              [bindex-base
+                (compiler-opt-box-field-shared-view
+                  other-payload-box
+                  index-base)]
+              [bindex
+                (compiler-opt-box-field-shared-view other-payload-box index)]
+              [blane-offset
+                (compiler-opt-box-field-shared-view
+                  other-payload-box
+                  lane-offset)]
+              [blanes
+                (compiler-opt-box-field-shared-view other-payload-box lanes)]
+              [bty (compiler-opt-box-field-shared-view other-payload-box ty)]
+              (and
+                (= ad bd)
+                (opt-value-eq abase bbase)
+                (opt-value-eq aindex-base bindex-base)
+                (opt-value-eq aindex bindex)
+                (if alane-offset
+                  blane-offset
+                  (not blane-offset))
+                (= alanes blanes)
+                (opt-type-eq type-segment-bases aty bty)))]
+          [_ false]))]
+    [(ir.CompilerIrInstr.VectorReduce ad aop av alanes aty)
+      (match b
+        [(ir.CompilerIrInstr.VectorReduce bd bop bv blanes bty)
+          (and
+            (= ad bd)
+            (opt-vector-reduce-eq aop bop)
+            (opt-value-eq av bv)
+            (= alanes blanes)
+            (opt-type-eq type-segment-bases aty bty))]
+        [_ false])]
     [(ir.CompilerIrInstr.VectorCompare payload-box)
       (let
         [ad (compiler-opt-box-field-shared-view payload-box dst)]
@@ -7853,13 +8231,402 @@
                 (= alanes blanes)
                 (opt-type-eq type-segment-bases aty bty)))]
           [_ false]))]
-    [_
-      (ir.compiler-ir-instr-zip-eq
-        a
-        b
-        opt-zip-value-eq
-        opt-type-eq
-        type-segment-bases)]))
+    [(ir.CompilerIrInstr.MaskBinOp ad aop al ar alanes)
+      (match b
+        [(ir.CompilerIrInstr.MaskBinOp bd bop bl br blanes)
+          (and
+            (= ad bd)
+            (opt-mask-binop-eq aop bop)
+            (opt-value-eq al bl)
+            (opt-value-eq ar br)
+            (= alanes blanes))]
+        [_ false])]
+    [(ir.CompilerIrInstr.MaskNot ad av alanes)
+      (match b
+        [(ir.CompilerIrInstr.MaskNot bd bv blanes)
+          (and (= ad bd) (opt-value-eq av bv) (= alanes blanes))]
+        [_ false])]
+    [(ir.CompilerIrInstr.MaskReduce ad aop av alanes)
+      (match b
+        [(ir.CompilerIrInstr.MaskReduce bd bop bv blanes)
+          (and
+            (= ad bd)
+            (opt-mask-reduce-eq aop bop)
+            (opt-value-eq av bv)
+            (= alanes blanes))]
+        [_ false])]
+    [(ir.CompilerIrInstr.Select payload-box)
+      (let
+        [ad (compiler-opt-box-field-shared-view payload-box dst)]
+        [amask (compiler-opt-box-field-shared-view payload-box mask)]
+        [at (compiler-opt-box-field-shared-view payload-box on-true)]
+        [af (compiler-opt-box-field-shared-view payload-box on-false)]
+        [alanes (compiler-opt-box-field-shared-view payload-box lanes)]
+        [aty (compiler-opt-box-field-shared-view payload-box ty)]
+        (match b
+          [(ir.CompilerIrInstr.Select other-payload-box)
+            (let
+              [bd (compiler-opt-box-field-shared-view other-payload-box dst)]
+              [bmask
+                (compiler-opt-box-field-shared-view other-payload-box mask)]
+              [bt
+                (compiler-opt-box-field-shared-view other-payload-box on-true)]
+              [bf
+                (compiler-opt-box-field-shared-view other-payload-box on-false)]
+              [blanes
+                (compiler-opt-box-field-shared-view other-payload-box lanes)]
+              [bty (compiler-opt-box-field-shared-view other-payload-box ty)]
+              (and
+                (= ad bd)
+                (opt-value-eq amask bmask)
+                (opt-value-eq at bt)
+                (opt-value-eq af bf)
+                (= alanes blanes)
+                (opt-type-eq type-segment-bases aty bty)))]
+          [_ false]))]
+    [(ir.CompilerIrInstr.VectorLoad ad abase aindex alanes aty)
+      (match b
+        [(ir.CompilerIrInstr.VectorLoad bd bbase bindex blanes bty)
+          (and
+            (= ad bd)
+            (opt-value-eq abase bbase)
+            (opt-value-eq aindex bindex)
+            (= alanes blanes)
+            (opt-type-eq type-segment-bases aty bty))]
+        [_ false])]
+    [(ir.CompilerIrInstr.VectorStore payload-box)
+      (let
+        [abase (compiler-opt-box-field-shared-view payload-box base)]
+        [aindex (compiler-opt-box-field-shared-view payload-box index)]
+        [av (compiler-opt-box-field-shared-view payload-box value)]
+        [alanes (compiler-opt-box-field-shared-view payload-box lanes)]
+        [aty (compiler-opt-box-field-shared-view payload-box ty)]
+        (match b
+          [(ir.CompilerIrInstr.VectorStore other-payload-box)
+            (let
+              [bbase
+                (compiler-opt-box-field-shared-view other-payload-box base)]
+              [bindex
+                (compiler-opt-box-field-shared-view other-payload-box index)]
+              [bv (compiler-opt-box-field-shared-view other-payload-box value)]
+              [blanes
+                (compiler-opt-box-field-shared-view other-payload-box lanes)]
+              [bty (compiler-opt-box-field-shared-view other-payload-box ty)]
+              (and
+                (opt-value-eq abase bbase)
+                (opt-value-eq aindex bindex)
+                (opt-value-eq av bv)
+                (= alanes blanes)
+                (opt-type-eq type-segment-bases aty bty)))]
+          [_ false]))]
+    [(ir.CompilerIrInstr.PredicatedStore payload-box)
+      (let
+        [abase (compiler-opt-box-field-shared-view payload-box base)]
+        [aindex (compiler-opt-box-field-shared-view payload-box index)]
+        [av (compiler-opt-box-field-shared-view payload-box value)]
+        [amask (compiler-opt-box-field-shared-view payload-box mask)]
+        [alanes (compiler-opt-box-field-shared-view payload-box lanes)]
+        [aty (compiler-opt-box-field-shared-view payload-box ty)]
+        (match b
+          [(ir.CompilerIrInstr.PredicatedStore other-payload-box)
+            (let
+              [bbase
+                (compiler-opt-box-field-shared-view other-payload-box base)]
+              [bindex
+                (compiler-opt-box-field-shared-view other-payload-box index)]
+              [bv (compiler-opt-box-field-shared-view other-payload-box value)]
+              [bmask
+                (compiler-opt-box-field-shared-view other-payload-box mask)]
+              [blanes
+                (compiler-opt-box-field-shared-view other-payload-box lanes)]
+              [bty (compiler-opt-box-field-shared-view other-payload-box ty)]
+              (and
+                (opt-value-eq abase bbase)
+                (opt-value-eq aindex bindex)
+                (opt-value-eq av bv)
+                (opt-value-eq amask bmask)
+                (= alanes blanes)
+                (opt-type-eq type-segment-bases aty bty)))]
+          [_ false]))]
+    [(ir.CompilerIrInstr.PredicatedLoad payload-box)
+      (let
+        [ad (compiler-opt-box-field-shared-view payload-box dst)]
+        [abase (compiler-opt-box-field-shared-view payload-box base)]
+        [aindex (compiler-opt-box-field-shared-view payload-box index)]
+        [amask (compiler-opt-box-field-shared-view payload-box mask)]
+        [alanes (compiler-opt-box-field-shared-view payload-box lanes)]
+        [aty (compiler-opt-box-field-shared-view payload-box ty)]
+        (match b
+          [(ir.CompilerIrInstr.PredicatedLoad other-payload-box)
+            (let
+              [bd (compiler-opt-box-field-shared-view other-payload-box dst)]
+              [bbase
+                (compiler-opt-box-field-shared-view other-payload-box base)]
+              [bindex
+                (compiler-opt-box-field-shared-view other-payload-box index)]
+              [bmask
+                (compiler-opt-box-field-shared-view other-payload-box mask)]
+              [blanes
+                (compiler-opt-box-field-shared-view other-payload-box lanes)]
+              [bty (compiler-opt-box-field-shared-view other-payload-box ty)]
+              (and
+                (= ad bd)
+                (opt-value-eq abase bbase)
+                (opt-value-eq aindex bindex)
+                (opt-value-eq amask bmask)
+                (= alanes blanes)
+                (opt-type-eq type-segment-bases aty bty)))]
+          [_ false]))]
+    [(ir.CompilerIrInstr.VectorShuffle payload-box)
+      (let
+        [ad (compiler-opt-box-field-shared-view payload-box dst)]
+        [asource (compiler-opt-box-field-shared-view payload-box source)]
+        [aselector-low
+          (compiler-opt-box-field-shared-view payload-box selector-low)]
+        [aselector-high
+          (compiler-opt-box-field-shared-view payload-box selector-high)]
+        [aactive-lanes
+          (compiler-opt-box-field-shared-view payload-box active-lanes)]
+        [alanes (compiler-opt-box-field-shared-view payload-box lanes)]
+        [aty (compiler-opt-box-field-shared-view payload-box ty)]
+        (match b
+          [(ir.CompilerIrInstr.VectorShuffle other-payload-box)
+            (let
+              [bd (compiler-opt-box-field-shared-view other-payload-box dst)]
+              [bsource
+                (compiler-opt-box-field-shared-view other-payload-box source)]
+              [bselector-low
+                (compiler-opt-box-field-shared-view
+                  other-payload-box
+                  selector-low)]
+              [bselector-high
+                (compiler-opt-box-field-shared-view
+                  other-payload-box
+                  selector-high)]
+              [bactive-lanes
+                (compiler-opt-box-field-shared-view
+                  other-payload-box
+                  active-lanes)]
+              [blanes
+                (compiler-opt-box-field-shared-view other-payload-box lanes)]
+              [bty (compiler-opt-box-field-shared-view other-payload-box ty)]
+              (and
+                (= ad bd)
+                (opt-value-eq asource bsource)
+                (opt-value-eq aselector-low bselector-low)
+                (opt-maybe-value-eq aselector-high bselector-high)
+                (opt-value-eq aactive-lanes bactive-lanes)
+                (= alanes blanes)
+                (opt-type-eq type-segment-bases aty bty)))]
+          [_ false]))]
+    [(ir.CompilerIrInstr.TailMask ad aindex alength alanes)
+      (match b
+        [(ir.CompilerIrInstr.TailMask bd bindex blength blanes)
+          (and
+            (= ad bd)
+            (opt-value-eq aindex bindex)
+            (opt-value-eq alength blength)
+            (= alanes blanes))]
+        [_ false])]
+    [(ir.CompilerIrInstr.EntryArgc ad)
+      (match b
+        [(ir.CompilerIrInstr.EntryArgc bd) (= ad bd)]
+        [_ false])]
+    [(ir.CompilerIrInstr.EntryArgv ad)
+      (match b
+        [(ir.CompilerIrInstr.EntryArgv bd) (= ad bd)]
+        [_ false])]
+    [(ir.CompilerIrInstr.EntryEnvp ad)
+      (match b
+        [(ir.CompilerIrInstr.EntryEnvp bd) (= ad bd)]
+        [_ false])]
+    [(ir.CompilerIrInstr.CpuId ad aleaf asubleaf areg)
+      (match b
+        [(ir.CompilerIrInstr.CpuId bd bleaf bsubleaf breg)
+          (and
+            (= ad bd)
+            (opt-value-eq aleaf bleaf)
+            (opt-value-eq asubleaf bsubleaf)
+            (= areg breg))]
+        [_ false])]
+    [(ir.CompilerIrInstr.Xgetbv ad aindex)
+      (match b
+        [(ir.CompilerIrInstr.Xgetbv bd bindex)
+          (and (= ad bd) (opt-value-eq aindex bindex))]
+        [_ false])]
+    [(ir.CompilerIrInstr.Syscall ad aargs)
+      (match b
+        [(ir.CompilerIrInstr.Syscall bd bargs)
+          (and (= ad bd) (opt-call-args-eq aargs bargs))]
+        [_ false])]
+    [(ir.CompilerIrInstr.Call ad aname aargs aty)
+      (match b
+        [(ir.CompilerIrInstr.Call bd bname bargs bty)
+          (and
+            (= ad bd)
+            (ir.compiler-ir-symbol-eq? aname bname)
+            (opt-call-args-eq aargs bargs)
+            (opt-type-eq type-segment-bases aty bty))]
+        [_ false])]
+    [(ir.CompilerIrInstr.CallIndirect ad afunc aargs aty)
+      (match b
+        [(ir.CompilerIrInstr.CallIndirect bd bfunc bargs bty)
+          (and
+            (= ad bd)
+            (opt-value-eq afunc bfunc)
+            (opt-call-args-eq aargs bargs)
+            (opt-type-eq type-segment-bases aty bty))]
+        [_ false])]
+    [(ir.CompilerIrInstr.CallIndirectC ad afunc aargs aty)
+      (match b
+        [(ir.CompilerIrInstr.CallIndirectC bd bfunc bargs bty)
+          (and
+            (= ad bd)
+            (opt-value-eq afunc bfunc)
+            (opt-call-args-eq aargs bargs)
+            (opt-type-eq type-segment-bases aty bty))]
+        [_ false])]
+    [(ir.CompilerIrInstr.CallCAbiStoreResult payload-box)
+      (let
+        [abase (compiler-opt-box-field-shared-view payload-box base)]
+        [aname (compiler-opt-box-field-shared-view payload-box name)]
+        [aargs (compiler-opt-box-field-shared-view payload-box args)]
+        [aslots (compiler-opt-box-field-shared-view payload-box slots)]
+        (match b
+          [(ir.CompilerIrInstr.CallCAbiStoreResult other-payload-box)
+            (let
+              [bbase
+                (compiler-opt-box-field-shared-view other-payload-box base)]
+              [bname
+                (compiler-opt-box-field-shared-view other-payload-box name)]
+              [bargs
+                (compiler-opt-box-field-shared-view other-payload-box args)]
+              [bslots
+                (compiler-opt-box-field-shared-view other-payload-box slots)]
+              (and
+                (opt-value-eq abase bbase)
+                (ir.compiler-ir-symbol-eq? aname bname)
+                (opt-call-args-eq aargs bargs)
+                (opt-c-abi-return-slot-seq-eq type-segment-bases aslots bslots)))]
+          [_ false]))]
+    [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
+      (let
+        [abase (compiler-opt-box-field-shared-view payload-box base)]
+        [afunc (compiler-opt-box-field-shared-view payload-box callee)]
+        [aargs (compiler-opt-box-field-shared-view payload-box args)]
+        [aslots (compiler-opt-box-field-shared-view payload-box slots)]
+        (match b
+          [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult other-payload-box)
+            (let
+              [bbase
+                (compiler-opt-box-field-shared-view other-payload-box base)]
+              [bfunc
+                (compiler-opt-box-field-shared-view other-payload-box callee)]
+              [bargs
+                (compiler-opt-box-field-shared-view other-payload-box args)]
+              [bslots
+                (compiler-opt-box-field-shared-view other-payload-box slots)]
+              (and
+                (opt-value-eq abase bbase)
+                (opt-value-eq afunc bfunc)
+                (opt-call-args-eq aargs bargs)
+                (opt-c-abi-return-slot-seq-eq type-segment-bases aslots bslots)))]
+          [_ false]))]
+    [(ir.CompilerIrInstr.SpmdCall _) false]
+    [(ir.CompilerIrInstr.TailCall aname aargs aty)
+      (match b
+        [(ir.CompilerIrInstr.TailCall bname bargs bty)
+          (and
+            (ir.compiler-ir-symbol-eq? aname bname)
+            (opt-call-args-eq aargs bargs)
+            (opt-type-eq type-segment-bases aty bty))]
+        [_ false])]
+    [(ir.CompilerIrInstr.TailCallIndirect afunc aargs aty)
+      (match b
+        [(ir.CompilerIrInstr.TailCallIndirect bfunc bargs bty)
+          (and
+            (opt-value-eq afunc bfunc)
+            (opt-call-args-eq aargs bargs)
+            (opt-type-eq type-segment-bases aty bty))]
+        [_ false])]
+    [(ir.CompilerIrInstr.Store aname av aty)
+      (match b
+        [(ir.CompilerIrInstr.Store bname bv bty)
+          (and
+            (ir.compiler-ir-symbol-eq? aname bname)
+            (opt-value-eq av bv)
+            (opt-type-eq type-segment-bases aty bty))]
+        [_ false])]
+    [(ir.CompilerIrInstr.BoundsCheck aindex alength alabel)
+      (match b
+        [(ir.CompilerIrInstr.BoundsCheck bindex blength blabel)
+          (and
+            (opt-value-eq aindex bindex)
+            (opt-value-eq alength blength)
+            (= alabel blabel))]
+        [_ false])]
+    [(ir.CompilerIrInstr.Jump alabel)
+      (match b
+        [(ir.CompilerIrInstr.Jump blabel) (= alabel blabel)]
+        [_ false])]
+    [(ir.CompilerIrInstr.Branch av at bt)
+      (match b
+        [(ir.CompilerIrInstr.Branch bv af bf)
+          (and (= at af) (= bt bf) (opt-value-eq av bv))]
+        [_ false])]
+    [(ir.CompilerIrInstr.TotalEnumBranch av at bt)
+      (match b
+        [(ir.CompilerIrInstr.TotalEnumBranch bv af bf)
+          (and (= at af) (= bt bf) (opt-value-eq av bv))]
+        [_ false])]
+    [(ir.CompilerIrInstr.Return av)
+      (match b
+        [(ir.CompilerIrInstr.Return bv) (opt-maybe-value-eq av bv)]
+        [_ false])]
+    [(ir.CompilerIrInstr.Phi ad ainputs aty)
+      (match b
+        [(ir.CompilerIrInstr.Phi bd binputs bty)
+          (and
+            (= ad bd)
+            (opt-phi-input-seq-eq ainputs binputs)
+            (opt-type-eq type-segment-bases aty bty))]
+        [_ false])]
+    [(ir.CompilerIrInstr.Pack ad awords aty)
+      (match b
+        [(ir.CompilerIrInstr.Pack bd bwords bty)
+          (and
+            (= ad bd)
+            (opt-value-seq-eq awords bwords)
+            (opt-type-eq type-segment-bases aty bty))]
+        [_ false])]
+    [(ir.CompilerIrInstr.Word ad asrc ai aty)
+      (match b
+        [(ir.CompilerIrInstr.Word bd bsrc bi bty)
+          (and
+            (= ad bd)
+            (opt-value-eq asrc bsrc)
+            (= ai bi)
+            (opt-type-eq type-segment-bases aty bty))]
+        [_ false])]
+    [(ir.CompilerIrInstr.Switch av abase acases adefault)
+      (match b
+        [(ir.CompilerIrInstr.Switch bv bbase bcases bdefault)
+          (and
+            (opt-value-eq av bv)
+            (= abase bbase)
+            (opt-switch-case-seq-eq acases bcases)
+            (= adefault bdefault))]
+        [_ false])]
+    [(ir.CompilerIrInstr.TotalEnumSwitch av abase acases adefault atrap)
+      (match b
+        [(ir.CompilerIrInstr.TotalEnumSwitch bv bbase bcases bdefault btrap)
+          (and
+            (opt-value-eq av bv)
+            (= abase bbase)
+            (opt-switch-case-seq-eq acases bcases)
+            (= adefault bdefault)
+            (= atrap btrap))]
+        [_ false])]))
 
 (define (opt-instr-seq-eq-from
   [type-segment-bases : i64]

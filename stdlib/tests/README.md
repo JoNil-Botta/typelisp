@@ -51,6 +51,14 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
   by hot compiler/runtime modules, including reserve, push, array and string
   append, binary NUL/high-byte preservation, and explicit array/string finish
   boundaries.
+- `byte_le.tl` owns inline tests for little-endian push/set/read round trips of
+  16-, 32-, and 64-bit fields: byte order, zero-extended narrow reads, low-bit
+  truncation on narrow writes, sign-bit preservation, and in-place writes that
+  leave neighboring bytes alone.
+- `byte_reader.tl` owns inline tests for in-order reads of every width, exact
+  end detection, sticky truncation (cursor and first failure kept, later reads
+  and failures ignored), the work limit and its charging rule, negative counts,
+  and caller-defined failures.
 - `http_head_codec.tl` covers strict byte-oriented HTTP/1.1 request-head
   serialization and incremental response-head parsing: every split boundary,
   exact consumption with one-byte and 32 KiB coalesced body suffixes, bounded

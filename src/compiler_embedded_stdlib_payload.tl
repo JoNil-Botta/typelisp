@@ -11,6 +11,10 @@
 
 (include-str-lzss payload-byte-buf-core "../stdlib/byte_buf_core.tl")
 
+(include-str-lzss payload-byte-le "../stdlib/byte_le.tl")
+
+(include-str-lzss payload-byte-reader "../stdlib/byte_reader.tl")
+
 (include-str-lzss payload-clone "../stdlib/clone.tl")
 
 (include-str-lzss payload-cpu "../stdlib/cpu.tl")
@@ -150,6 +154,10 @@
       (compiler-embedded-stdlib-payload-copy payload-byte-buf)]
     [(string.eq suffix "byte_buf_core.tl")
       (compiler-embedded-stdlib-payload-copy payload-byte-buf-core)]
+    [(string.eq suffix "byte_le.tl")
+      (compiler-embedded-stdlib-payload-copy payload-byte-le)]
+    [(string.eq suffix "byte_reader.tl")
+      (compiler-embedded-stdlib-payload-copy payload-byte-reader)]
     [(string.eq suffix "clone.tl")
       (compiler-embedded-stdlib-payload-copy payload-clone)]
     [(string.eq suffix "cpu.tl")

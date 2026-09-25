@@ -4,7 +4,9 @@
 ;; is represented here by three canonical Huffman alphabets: literal-or-match,
 ;; match distance, and match length. Code lengths are stored explicitly so the
 ;; decoder owns no fixed model and repeated encoder runs are byte-identical.
+(import stdlib.byte_le)
 (import stdlib.string)
+(import compiler_lzss as lzss)
 (import compiler_owned_view as owned_view)
 
 (define (compiler-embedded-stdlib-tlci-codec-main-symbols) : i64
@@ -80,24 +82,6 @@
           (set! index (+ index 1))))
       matches)))
 
-;; Caller proves eight bytes are present and byte seven has its high bit clear.
-(define (compiler-embedded-stdlib-tlci-codec-read-i64-le
-  [payload : (& payload (__tl_dyn-array u8))]
-  [start : i64]) : i64
-  (let
-    [index : i64 0]
-    [value : i64 0]
-    (begin
-      (while (< index 8)
-        (begin
-          (set!
-            value
-            (bit-or
-              value
-              (shl (cast (array-ref payload (+ start index)) : i64) (* index 8))))
-          (set! index (+ index 1))))
-      value)))
-
 (define (compiler-embedded-stdlib-tlci-codec-table-bytes) : i64
   (+
     (compiler-embedded-stdlib-tlci-codec-main-symbols)
@@ -133,12 +117,8 @@
           "embedded stdlib tlci envelope: bit length overflows i64")]
       [else
         (let
-          [raw-len : i64
-            (compiler-embedded-stdlib-tlci-codec-read-i64-le payload prefix-len)]
-          [bit-len : i64
-            (compiler-embedded-stdlib-tlci-codec-read-i64-le
-              payload
-              (+ prefix-len 8))]
+          [raw-len : i64 (byte_le.read-u64 payload prefix-len)]
+          [bit-len : i64 (byte_le.read-u64 payload (+ prefix-len 8))]
           [bit-bytes : i64
             (+
               (/ bit-len 8)
@@ -586,51 +566,11 @@
                                       (set!
                                         available
                                         (- after-distance (shr length-entry 13)))
-                                      ;; A source at least a word back is final
-                                      ;; for a whole word ahead, so words copy it;
-                                      ;; the last may run up to 7 bytes past the
-                                      ;; match, inside `out`, and later output
-                                      ;; overwrites them before anything reads
-                                      ;; them (reads are only ever behind the
-                                      ;; write position).
-                                      (if (and
-                                        (>= distance 8)
-                                        (<= (+ out-index (+ length 7)) raw-len))
-                                        (let
-                                          [dst : (MutPtr u8)
-                                            (unsafe
-                                              (ptr-offset out-data out-index))]
-                                          [copied : i64 0]
-                                          (while (< copied length)
-                                            (begin
-                                              (unsafe
-                                                (ptr-write!
-                                                  (ptr-cast
-                                                    (ptr-offset dst copied)
-                                                    : (MutPtr i64))
-                                                  (ptr-read
-                                                    (ptr-cast
-                                                      (ptr-offset
-                                                        dst
-                                                        (- copied distance))
-                                                      : (Ptr i64)))))
-                                              (set! copied (+ copied 8)))))
-                                        (let
-                                          [copied : i64 0]
-                                          (while (< copied length)
-                                            (begin
-                                              (unsafe
-                                                (ptr-write!
-                                                  (ptr-offset
-                                                    out-data
-                                                    (+ out-index copied))
-                                                  (ptr-read
-                                                    (ptr-offset
-                                                      out-data
-                                                      (-
-                                                        (+ out-index copied)
-                                                        distance)))))
-                                              (set! copied (+ copied 1))))))
+                                      (lzss.compiler-lzss-copy-match!
+                                        out-data
+                                        out-index
+                                        distance
+                                        length)
                                       (set! out-index (+ out-index length)))))))]))))
                   (set! consumed (- (* (- next-byte bit-start) 8) available))
                   (when
@@ -788,58 +728,17 @@
                                           (return
                                             (CompilerEmbeddedStdlibTlciCodecBytes.Err
                                               "embedded stdlib tlci envelope: backreference exceeds output"))]
-                                        ;; Both ranges were just checked to lie
-                                        ;; inside `out`. A source at least eight
-                                        ;; bytes back is already written for a whole
-                                        ;; word ahead, so words copy it exactly as
-                                        ;; the byte loop would; a nearer, overlapping
-                                        ;; source and the tail go byte by byte.
                                         [else
-                                          (let
-                                            [copied : i64 0]
-                                            (begin
-                                              (when
-                                                (>= distance 8)
-                                                (let
-                                                  [dst : (MutPtr u8)
-                                                    (unsafe
-                                                      (ptr-offset
-                                                        (__tl_array-data out)
-                                                        out-index))]
-                                                  [words : i64 (- length 7)]
-                                                  (while (< copied words)
-                                                    (begin
-                                                      (unsafe
-                                                        (ptr-write!
-                                                          (ptr-cast
-                                                            (ptr-offset
-                                                              dst
-                                                              copied)
-                                                            : (MutPtr i64))
-                                                          (ptr-read
-                                                            (ptr-cast
-                                                              (ptr-offset
-                                                                dst
-                                                                (-
-                                                                  copied
-                                                                  distance))
-                                                              : (Ptr i64)))))
-                                                      (set! copied (+ copied 8))))))
-                                              (while (< copied length)
-                                                (begin
-                                                  (set!
-                                                    (array-ref
-                                                      out
-                                                      (+ out-index copied))
-                                                    (array-ref
-                                                      out
-                                                      (-
-                                                        (+ out-index copied)
-                                                        distance)))
-                                                  (set! copied (+ copied 1))))
-                                              (set!
-                                                out-index
-                                                (+ out-index length))))]))))))))))))))
+                                          (begin
+                                            (lzss.compiler-lzss-copy-match!
+                                              (unsafe
+                                                (__tl_array-data out))
+                                              out-index
+                                              distance
+                                              length)
+                                            (set!
+                                              out-index
+                                              (+ out-index length)))]))))))))))))))
             (if (!= consumed bit-len)
               (CompilerEmbeddedStdlibTlciCodecBytes.Err
                 "embedded stdlib tlci envelope: trailing huffman bits")

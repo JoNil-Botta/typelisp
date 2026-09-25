@@ -45,7 +45,7 @@
         (c-function-codec-bytes 17 (ast.ast-c-function-mode-key mode) true)
         (c-function-codec-session)
         (__tl_make-array i64 0))]
-    [decoded : ast.AstType (codec.surface-ast-read-type! (& reader))]
+    [decoded : ast.AstType (codec.surface-ast-read-type! (&mut reader))]
     (and
       (codec.surface-ast-reader-valid? (& reader))
       (= (codec.surface-ast-reader-offset (& reader)) 24)
@@ -64,7 +64,7 @@
         (c-function-codec-bytes signature mode complete)
         (c-function-codec-session)
         (__tl_make-array i64 0))]
-    [_decoded : ast.AstType (codec.surface-ast-read-type! (& reader))]
+    [_decoded : ast.AstType (codec.surface-ast-read-type! (&mut reader))]
     (not (codec.surface-ast-reader-valid? (& reader)))))
 
 (test
@@ -120,9 +120,9 @@
         (c-function-codec-bytes signature 1 true)
         (c-function-codec-session)
         (__tl_make-array i64 0))]
-    [_decoded : ast.AstType (codec.surface-ast-read-type! (& reader))]
+    [_decoded : ast.AstType (codec.surface-ast-read-type! (&mut reader))]
     (begin
-      (codec.surface-ast-validate-c-function-signatures! (& reader) pools)
+      (codec.surface-ast-validate-c-function-signatures! (&mut reader) pools)
       (codec.surface-ast-reader-valid? (& reader)))))
 
 (test

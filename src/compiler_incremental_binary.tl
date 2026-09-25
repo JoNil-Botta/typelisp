@@ -1,23 +1,21 @@
 ;; compiler_incremental_binary.tl - bounded primitives for incremental query
 ;; identity transcripts.
 ;;
-;; The query schema lives in compiler_incremental_identity.tl.  This leaf owns
-;; only its little-endian framing, checked cursor, exact byte comparisons, and
-;; portable text/path validation.  It deliberately does not import compiler
-;; state, filesystem access, or cache storage.
+;; The query schema lives in compiler_incremental_identity.tl. Integers use
+;; stdlib.byte_le and the checked cursor is a stdlib.byte_reader; this leaf adds
+;; the owned-byte and string limits, exact byte comparisons, and portable
+;; text/path validation. It deliberately does not import compiler state,
+;; filesystem access, or cache storage.
 (import stdlib.byte_buf_core)
+(import stdlib.byte_le)
+(import stdlib.byte_reader)
 (import stdlib.string)
 
+;; The cursor's own failures (byte_reader.error-truncated and
+;; error-work-limit) are reported as the identity schema's truncated and
+;; work-limit errors; every other code is the schema's own.
 (defstruct CompilerIncrementalBinaryReader
-  (bytes (__tl_dyn-array u8))
-  (offset i64)
-  (end i64)
-  (ok? bool)
-  (error-code i64)
-  (error-offset i64)
-  (error-message String)
-  (work i64)
-  (max-work i64)
+  (cursor byte_reader.ByteReader)
   (owned-bytes i64)
   (max-owned-bytes i64)
   (max-string-bytes i64))
@@ -42,29 +40,22 @@
   (let
     [length : i64 (array-length bytes)]
     (if (> length max-owned-bytes)
+      (let
+        [cursor : byte_reader.ByteReader
+          (byte_reader.new (__tl_make-array u8 0) max-work)]
+        (begin
+          (byte_reader.fail!
+            (&mut cursor)
+            8
+            0
+            "incremental identity owned-byte limit exceeded")
+          (CompilerIncrementalBinaryReader
+            cursor
+            0
+            max-owned-bytes
+            max-string-bytes)))
       (CompilerIncrementalBinaryReader
-        (__tl_make-array u8 0)
-        0
-        0
-        false
-        8
-        0
-        "incremental identity owned-byte limit exceeded"
-        0
-        max-work
-        0
-        max-owned-bytes
-        max-string-bytes)
-      (CompilerIncrementalBinaryReader
-        (compiler-incremental-binary-copy bytes)
-        0
-        length
-        true
-        0
-        0
-        ""
-        0
-        max-work
+        (byte_reader.new (compiler-incremental-binary-copy bytes) max-work)
         length
         max-owned-bytes
         max-string-bytes))))
@@ -74,84 +65,12 @@
   [code : i64]
   [offset : i64]
   [message : String]) : unit
-  (if reader.ok?
-    (begin
-      (set! reader.ok? false)
-      (set! reader.error-code code)
-      (set! reader.error-offset offset)
-      (set! reader.error-message message))
-    unit))
-
-(define (compiler-incremental-binary-range-present?
-  [length : i64]
-  [start : i64]
-  [count : i64]) : bool
-  (and (>= start 0) (>= count 0) (<= start length) (<= count (- length start))))
-
-(define (compiler-incremental-binary-consume!
-  [reader : (&mut reader CompilerIncrementalBinaryReader)]
-  [count : i64]) : bool
-  (cond
-    [(not reader.ok?) false]
-    [(not
-        (compiler-incremental-binary-range-present?
-          reader.end
-          reader.offset
-          count))
-      (begin
-        (compiler-incremental-binary-fail!
-          reader
-          3
-          reader.offset
-          "incremental identity transcript is truncated")
-        false)]
-    [(> count (- reader.max-work reader.work))
-      (begin
-        (compiler-incremental-binary-fail!
-          reader
-          9
-          reader.offset
-          "incremental identity work limit exceeded")
-        false)]
-    [else
-      (begin
-        (set! reader.work (+ reader.work count))
-        true)]))
+  (byte_reader.fail! (&mut reader.cursor) code offset message))
 
 (define (compiler-incremental-binary-push-u8!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [value : i64]) : unit
   (byte_buf_core.byte-buf-builder-push out (cast value : u8)))
-
-(define (compiler-incremental-binary-push-u32!
-  [out : (&mut out byte_buf_core.ByteBufBuilder)]
-  [value : i64]) : unit
-  (let
-    [bits : u64 (cast value : u64)]
-    [index : i64 0]
-    (while (< index 4)
-      (begin
-        (byte_buf_core.byte-buf-builder-push
-          out
-          (cast
-            (bit-and (shr bits (cast (* index 8) : u64)) (cast 255 : u64))
-            : u8))
-        (set! index (+ index 1))))))
-
-(define (compiler-incremental-binary-push-u64!
-  [out : (&mut out byte_buf_core.ByteBufBuilder)]
-  [value : i64]) : unit
-  (let
-    [bits : u64 (cast value : u64)]
-    [index : i64 0]
-    (while (< index 8)
-      (begin
-        (byte_buf_core.byte-buf-builder-push
-          out
-          (cast
-            (bit-and (shr bits (cast (* index 8) : u64)) (cast 255 : u64))
-            : u8))
-        (set! index (+ index 1))))))
 
 (define (compiler-incremental-binary-push-string!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
@@ -160,7 +79,7 @@
     [length : i64 (string.string-length text)]
     [index : i64 0]
     (begin
-      (compiler-incremental-binary-push-u32! out length)
+      (byte_le.push-u32! out length)
       (while (< index length)
         (begin
           (byte_buf_core.byte-buf-builder-push
@@ -172,60 +91,6 @@
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [bytes : (& bytes (__tl_dyn-array u8))]) : unit
   (byte_buf_core.byte-buf-builder-append-array out bytes))
-
-(define (compiler-incremental-binary-read-u8!
-  [reader : (&mut reader CompilerIncrementalBinaryReader)]) : i64
-  (if (compiler-incremental-binary-consume! reader 1)
-    (let
-      [offset : i64 reader.offset]
-      (begin
-        (set! reader.offset (+ offset 1))
-        (cast (array-ref reader.bytes offset) : i64)))
-    0))
-
-(define (compiler-incremental-binary-read-u32!
-  [reader : (&mut reader CompilerIncrementalBinaryReader)]) : i64
-  (if (compiler-incremental-binary-consume! reader 4)
-    (let
-      [offset : i64 reader.offset]
-      [value : i64 0]
-      [index : i64 0]
-      (begin
-        (while (< index 4)
-          (begin
-            (set!
-              value
-              (bit-or
-                value
-                (shl
-                  (cast (array-ref reader.bytes (+ offset index)) : i64)
-                  (* index 8))))
-            (set! index (+ index 1))))
-        (set! reader.offset (+ offset 4))
-        value))
-    0))
-
-(define (compiler-incremental-binary-read-u64!
-  [reader : (&mut reader CompilerIncrementalBinaryReader)]) : i64
-  (if (compiler-incremental-binary-consume! reader 8)
-    (let
-      [offset : i64 reader.offset]
-      [value : u64 (cast 0 : u64)]
-      [index : i64 0]
-      (begin
-        (while (< index 8)
-          (begin
-            (set!
-              value
-              (bit-or
-                value
-                (shl
-                  (cast (array-ref reader.bytes (+ offset index)) : u64)
-                  (cast (* index 8) : u64))))
-            (set! index (+ index 1))))
-        (set! reader.offset (+ offset 8))
-        (cast value : i64)))
-    0))
 
 (define (compiler-incremental-binary-continuation? [byte : i64]) : bool
   (and (>= byte 0x80) (<= byte 0xbf)))
@@ -240,11 +105,7 @@
   (let
     [index : i64 start]
     [end : i64 (+ start length)]
-    [ok? : bool
-      (compiler-incremental-binary-range-present?
-        (array-length bytes)
-        start
-        length)]
+    [ok? : bool (byte_reader.range-present? (array-length bytes) start length)]
     (begin
       (while (and ok? (< index end))
         (let
@@ -354,11 +215,11 @@
   [reader : (&mut reader CompilerIncrementalBinaryReader)]
   [path? : bool]) : String
   (let
-    [length-offset : i64 reader.offset]
-    [length : i64 (compiler-incremental-binary-read-u32! reader)]
-    [start : i64 reader.offset]
+    [length-offset : i64 reader.cursor.offset]
+    [length : i64 (byte_reader.read-u32! (&mut reader.cursor))]
+    [start : i64 reader.cursor.offset]
     (cond
-      [(not reader.ok?) ""]
+      [(not reader.cursor.ok?) ""]
       [(> length reader.max-string-bytes)
         (begin
           (compiler-incremental-binary-fail!
@@ -367,11 +228,11 @@
             length-offset
             "incremental identity string limit exceeded")
           "")]
-      [(not (compiler-incremental-binary-consume! reader length)) ""]
-      [(not (compiler-incremental-binary-consume! reader length)) ""]
+      [(not (byte_reader.consume! (&mut reader.cursor) length)) ""]
+      [(not (byte_reader.consume! (&mut reader.cursor) length)) ""]
       [(not
           (compiler-incremental-binary-utf8-range-valid?
-            (& reader.bytes)
+            (& reader.cursor.bytes)
             start
             length))
         (begin
@@ -382,10 +243,10 @@
             "incremental identity text is not canonical UTF-8")
           "")]
       [(if path?
-          (if (compiler-incremental-binary-consume! reader length)
+          (if (byte_reader.consume! (&mut reader.cursor) length)
             (not
               (compiler-incremental-binary-path-range-valid?
-                (& reader.bytes)
+                (& reader.cursor.bytes)
                 start
                 length))
             true)
@@ -414,9 +275,9 @@
               (begin
                 (set!
                   (array-ref out index)
-                  (array-ref reader.bytes (+ start index)))
+                  (array-ref reader.cursor.bytes (+ start index)))
                 (set! index (+ index 1))))
-            (set! reader.offset (+ start length))
+            (set! reader.cursor.offset (+ start length))
             (set! reader.owned-bytes (+ reader.owned-bytes length))
             (unsafe
               (string-from-bytes

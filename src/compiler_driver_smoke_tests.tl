@@ -1693,7 +1693,7 @@
             (>= (cbi.state-ctfe-ref builtins-a 0) 0)
             (=
               (cbi.state-ctfe-ref builtins-a 0)
-              (cbi.compiler-builtin-ctfe-ref 0))
+              (cbi.compiler-builtin-ctfe "size-of"))
             ;; Decoy: B's compatibility state never saw a load.
             (not (cbi.state-table-current-with? builtins-b gen-b0 table-b)))]
         (begin
@@ -1730,7 +1730,7 @@
                     (cbi.state-table-current-with? builtins-b gen-b table-b)
                     (=
                       (cbi.state-ctfe-ref builtins-b 0)
-                      (cbi.compiler-builtin-ctfe-ref 0)))]
+                      (cbi.compiler-builtin-ctfe "size-of")))]
                 (and
                   loaded-ok?
                   reset-ok?

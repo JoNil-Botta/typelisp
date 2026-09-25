@@ -6051,19 +6051,19 @@
                 (compiler-symbols-miss-score
                   (compiler-symbols-lookup-value-id
                     symbols
-                    (cbi.compiler-builtin-ctfe-ref 16)))
+                    (cbi.compiler-builtin-ctfe "int->string")))
                 1)
               (=
                 (compiler-symbols-miss-score
                   (compiler-symbols-lookup-value-id
                     symbols
-                    (cbi.compiler-builtin-ctfe-ref 14)))
+                    (cbi.compiler-builtin-ctfe "string-append")))
                 1)
               (=
                 (compiler-symbols-miss-score
                   (compiler-symbols-lookup-value-id
                     symbols
-                    (cbi.compiler-builtin-ctfe-ref 15)))
+                    (cbi.compiler-builtin-ctfe "string-concat")))
                 1)
               (=
                 (compiler-symbol-lookup-score

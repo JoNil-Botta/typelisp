@@ -23,10 +23,10 @@ bodies below. Grouped names are exact `AstExpr` variants.
 | `Init`, `FixedMakeArray` | Select the expected type and route to `lower-init-expr`. |
 | `Var` | Small dotted-field rewrite or `lower-var-or-nullary-variant-id` route. |
 | `Ann`, `Cast`, `Borrow` | Small operand-resolution wrappers around existing expected-value, cast and borrow helpers. |
-| `Call`, `Lambda`, `Let`, `Begin`, `Unsafe` | Unpack children/bindings and route to `lower-call`, `lower-lambda`, `lower-let-bindings`, or `lower-begin-expected`; unsafe entry changes the type environment. |
+| `Call`, `Lambda`, `Let`, `Begin`, `Unsafe` | Unpack children/bindings and route to `lower-call`, `lower-lambda`, `lower-let-bindings`, or `lower-begin-expected`; unsafe entry changes the type environment. Direct and indirect calls share one lowering per ABI (`lower-c-abi-call-values`, `lower-internal-call-values`, `lower-call-values`) through a `LowerCallTarget`. |
 | `If`, `While`, `ForOwnedState`, `ForOwnedStep`, `Foreach` | Resolve children or unpack the typed payload, then use the existing control-flow family helper. |
 | `SpmdReduce`, `SpmdScan`, `SpmdCompact`, `SpmdBroadcast`, `SpmdShuffle` | Existing SPMD helpers own lowering. The longer dispatcher wrappers unpack payloads and forward resolved child expressions; they do not construct family IR. |
-| `Match`, `StringRef`, `StructGet`, `StructSet` | Child-resolution routes to the existing match/string/field helpers. |
+| `Match`, `StringRef`, `StructGet`, `StructSet` | Child-resolution routes to the existing match/string/field helpers. Value and tail-position matches share one arm walker (`lower-match-dispatch` and the `lower-match-*` arms) parameterized by a `LowerMatchCont`. |
 | `MakeArray`, `Array`, `DynArray`, `ArrayRef`, `ArraySet`, `ArrayTake`, `FixedArrayTake`, `Replace`, `ArrayPush` | Existing allocation/literal/element/ownership helpers; dispatcher only forwards the selected family and operands. |
 | `Tuple`, `TupleRef` | Existing tuple construction/access helpers. |
 | `WithRegion`, `WithEscape`, `WithScratch`, `InArena`, `WithResource` | Existing arena/resource helpers own cleanup and lifetime handoffs. |
@@ -40,8 +40,9 @@ bodies below. Grouped names are exact `AstExpr` variants.
 | Fallback | Source-attributed unsupported-expression rejection. |
 
 Small routing arms may remain: splitting a child lookup from its helper call
-adds no separate contract. Do not duplicate type queries, add a general visitor,
-or treat this ledger as a line-count target. Update the affected row when a
+adds no separate contract. Do not duplicate type queries, add a general visitor
+to this dispatcher (shared traversal macros for analysis walkers are fine), or
+treat this ledger as a line-count target. Update the affected row when a
 family changes, and remove its superseded implementation in the same slice.
 
 For the operator family, retain contextual numeric/unary tests, short-circuit

@@ -122650,7 +122650,7 @@
 ;; own, so `dst` is defined under exactly the type the site's `Call dst` gave
 ;; it. The two are computed the same way from the same declared return type --
 ;; a direct call's IR type is `lower-one-word-register-storage-type` of the
-;; callee's result type (compiler_lower.tl lower-direct-call-values) and a tail
+;; callee's result type (compiler_lower.tl lower-call-values) and a tail
 ;; call's is the same normalisation of the enclosing function's return type,
 ;; which a `return f(...)` makes equal -- so this is a choice about which
 ;; spelling to preserve, and preserving the site's leaves every downstream

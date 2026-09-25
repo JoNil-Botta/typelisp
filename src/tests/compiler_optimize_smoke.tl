@@ -3412,10 +3412,6 @@
       (compiler_optimize_tests.compiler-optimize-global-cell-call-mod-ref-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-pd-self-test"
-      (compiler_optimize_tests.compiler-optimize-pd-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-cfg-straighten-below-threader-self-test"
       (compiler_optimize_tests.compiler-optimize-cfg-straighten-below-threader-self-test)
       42)

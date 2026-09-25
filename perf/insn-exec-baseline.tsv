@@ -21,7 +21,7 @@ benchmark/typelisp/opt_quicksort	394817921
 benchmark/c-scalar/opt_quicksort	398372863
 benchmark/typelisp/spmd_reduce	1364174979
 benchmark/c-scalar/spmd_reduce	3381322973
-benchmark/typelisp/cfg_domloops	532792545
+benchmark/typelisp/cfg_domloops	532687641
 benchmark/c-scalar/cfg_domloops	423071026
 benchmark/typelisp/gvn_table	705629291
 benchmark/c-scalar/gvn_table	620750567
@@ -37,11 +37,11 @@ benchmark/typelisp/read_sexpr	725524506
 benchmark/c-scalar/read_sexpr	598159391
 benchmark/typelisp/callgraph_scc	472272745
 benchmark/c-scalar/callgraph_scc	341685484
-benchmark/typelisp/ssa_construct	633023510
+benchmark/typelisp/ssa_construct	631891358
 benchmark/c-scalar/ssa_construct	448154599
 benchmark/typelisp/sccp_lattice	557467776
 benchmark/c-scalar/sccp_lattice	400603744
-benchmark/typelisp/regalloc_greedy	573040768
+benchmark/typelisp/regalloc_greedy	568181510
 benchmark/c-scalar/regalloc_greedy	404020977
 benchmark/typelisp/asm_render	690337473
 benchmark/c-scalar/asm_render	644231943

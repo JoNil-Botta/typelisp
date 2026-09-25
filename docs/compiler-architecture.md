@@ -285,6 +285,20 @@ Logical traversal stays newest-first; CSR emission reads physical slots in
 oldest-first order directly, without constructing reversed intermediate lists.
 The integer-sequence and CSR tests cover growth, branches, duplicates and offsets.
 
+LICM separates loop invariance from dereferenceability. An element load needs
+the descriptor's element stride, a compatible load width, and a bound at its
+destination. The late LICM run can guard a scalar load with an unsigned
+preheader test and value phi, preserving the source check or branch that
+dominates its uses. Bound facts retain instruction positions so a later check
+cannot license an earlier load. Additional loop exits and selective equalities
+on varying loop phis are profitability refusals for this speculative setup.
+The unused zero arm does not make a handle dereferenceable: later LICM visits
+track it through copies, casts, phi joins, and constant folding before moving
+dependent reads. Guard plans remain deferred until the ordinary loop walk
+finishes, so newly inserted blocks cannot invalidate its
+dominator facts or enclosing-loop memory summaries. The rewrite repairs phi
+predecessors and verifies the complete resulting function before publication.
+
 Call-memory root scanning, summary accumulation and write predicates read the
 live prefix of dense block sequences directly through the block sequence accessor.
 These internal shallow reads require valid storage and an index below logical len.

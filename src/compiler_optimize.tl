@@ -28462,7 +28462,7 @@
 ;; reads it rip-relative at the use site (`movq sym(%rip), reg`), which is why
 ;; `GlobalAddr` (`leaq`) is a separate value form. So it is loop-invariant
 ;; exactly when nothing in the loop body can write that cell, the same question
-;; the Load and Gep arms of opt-licm-candidate? already put to the loop's store
+;; the Load and Gep arms of opt-licm-invariant? already put to the loop's store
 ;; summaries; `globals-clean?` carries that answer instead of the old blanket
 ;; refusal. A global cell is written only by `Store` (the rip-relative store
 ;; form, MemoryWrite -> header-or-unknown-store) or through a pointer derived
@@ -28518,7 +28518,7 @@
 ;;
 ;; The older reading's register-pressure argument is preserved where it was
 ;; measured. `any-call?` stays, untouched, on the Gep and Load arms of
-;; opt-licm-candidate?, which is where the P6 hoist/allocate interlock priced
+;; opt-licm-invariant?, which is where the P6 hoist/allocate interlock priced
 ;; loop-spanning live ranges that cross a call (cachegrind, one run each on the
 ;; then-baseline: dropping that term gave back the whole gvn_table win,
 ;; 1,299,265,156 with it and 1,306,531,147 without against a 1,306,562,712
@@ -30434,7 +30434,7 @@
 ;; -> 614,441,836 (+0.56%), cfg_domloops 768,935,005 -> 769,279,945 (+0.04%).
 ;;
 ;; THE TRADE SPLITS IN TWO. `globals-clean?` drives two unrelated things: the
-;; INVARIANCE question opt-licm-candidate? asks of a `Global` operand, and the
+;; INVARIANCE question opt-licm-invariant? asks of a `Global` operand, and the
 ;; loop-scope cell promotion (opt-licm-global-promote). Measured separately on
 ;; this corpus:
 ;;
@@ -32184,7 +32184,7 @@
         ;; opt-licm-store-summary-for-direct-call), so it can write neither the
         ;; loaded root nor any other object: nothing it does can invalidate a
         ;; load the summaries already certify. Recognizing that is the same
-        ;; refinement the Gep arm of opt-licm-candidate? already applies, moved
+        ;; refinement the Gep arm of opt-licm-invariant? already applies, moved
         ;; here so the Load arm shares it. `any-call?` still closes the path for
         ;; indirect, C-ABI and SPMD calls, which set call-or-unknown? in both
         ;; summaries and therefore fail this disjunct -- as does an element-only
@@ -32440,7 +32440,7 @@
 ;; (`target/research/phase3/intern_table.md` S4.1 site 10, 10,318,032 Ir).
 ;;
 ;; So a var whose every use is a branch condition is not collected here, and
-;; the BinOp/UnOp arms of `opt-licm-candidate?` -- which is where this set is
+;; the BinOp/UnOp arms of `opt-licm-invariant?` -- which is where this set is
 ;; read -- leave such a compare in place. A boolean with any OTHER use (an
 ;; `And` chain, a phi, a store, a call argument) has to be materialized
 ;; wherever it is defined, so hoisting it really does remove work per
@@ -32596,7 +32596,7 @@
 
 ;; --- element-load dereferenceability (#7992) ---------------------------------
 ;;
-;; The memory proof the Load arm of opt-licm-candidate? runs answers one
+;; The memory proof the Load arm of opt-licm-invariant? runs answers one
 ;; question: can the loop write the word this load reads? Moving the load to the
 ;; preheader asks a second one: is the ADDRESS readable there? For the classes
 ;; the hoist was built on the answer is unconditional. A descriptor's own header
@@ -32643,17 +32643,22 @@
   (offsets (__tl_dyn-array i64))
   (lens (__tl_dyn-array ir.CompilerIrValue))
   (blocks (__tl_dyn-array i64))
+  ;; -1 for an incoming-edge fact; otherwise the check's instruction position.
+  (positions (__tl_dyn-array i64))
   ;; Rows whose index is a nonnegative literal, scanned linearly.
   (literal-indexes (__tl_dyn-array i64))
   (literal-lens (__tl_dyn-array ir.CompilerIrValue))
-  (literal-blocks (__tl_dyn-array i64)))
+  (literal-blocks (__tl_dyn-array i64))
+  (literal-positions (__tl_dyn-array i64)))
 
 ;; The facts, and where one loop's hoist lands: the dominator tree and the
 ;; preheader's dense id (-1 proves nothing).
 (defstruct OptLicmDerefSite
   (facts OptLicmDerefFacts)
   (doms OptDomInfo)
-  (at i64))
+  (at i64)
+  (preheader i64)
+  (guards (__tl_dyn-array OptLicmGuardList)))
 
 ;; The two passes of the fact scan share one walk. With `fill?` false a row is
 ;; COUNTED -- on `cursor[key + 1]`, or on `literal-cursor[0]` -- and with
@@ -32663,10 +32668,12 @@
   (cursor (__tl_dyn-array i64))
   (lens (__tl_dyn-array ir.CompilerIrValue))
   (blocks (__tl_dyn-array i64))
+  (positions (__tl_dyn-array i64))
   (literal-cursor (__tl_dyn-array i64))
   (literal-indexes (__tl_dyn-array i64))
   (literal-lens (__tl_dyn-array ir.CompilerIrValue))
-  (literal-blocks (__tl_dyn-array i64)))
+  (literal-blocks (__tl_dyn-array i64))
+  (literal-positions (__tl_dyn-array i64)))
 
 (define (opt-licm-deref-fuel) : i64
   8)
@@ -32714,7 +32721,10 @@
             [(ir.CompilerIrInstr.Gep dst _ _ _) dst]
             [(ir.CompilerIrInstr.Load dst _ _) dst]
             [(ir.CompilerIrInstr.LoadOwned dst _ _ _) dst]
+            [(ir.CompilerIrInstr.Phi dst _ _) dst]
             [(ir.CompilerIrInstr.Mov dst _ _) dst]
+            [(ir.CompilerIrInstr.Cast dst _ _ _) dst]
+            [(ir.CompilerIrInstr.Bitcast dst _ _ _) dst]
             [(ir.CompilerIrInstr.BinOp dst _ _ _ _) dst]
             [_ (- 0 1)])]
         (begin
@@ -32751,7 +32761,8 @@
   [sources : OptValueSources]
   [index : ir.CompilerIrValue]
   [len : ir.CompilerIrValue]
-  [block : i64]) : unit
+  [block : i64]
+  [position : i64]) : unit
   (match (opt-licm-deref-resolve
     (compiler-opt-global-shared-view defs)
     (compiler-opt-global-shared-view sources)
@@ -32773,6 +32784,7 @@
                   (array-ref sink.lens slot)
                   (compiler-opt-global-shared-view len))
                 (set! (array-ref sink.blocks slot) block)
+                (set! (array-ref sink.positions slot) position)
                 (set! (array-ref cursor var) (+ slot 1))))
             (set!
               (array-ref cursor (+ var 1))
@@ -32790,7 +32802,8 @@
                 (set!
                   (array-ref sink.literal-lens slot)
                   (compiler-opt-global-shared-view len))
-                (set! (array-ref sink.literal-blocks slot) block))
+                (set! (array-ref sink.literal-blocks slot) block)
+                (set! (array-ref sink.literal-positions slot) position))
               unit)
             (set! (array-ref cursor 0) (+ slot 1)))))]
     [_ unit]))
@@ -32880,7 +32893,7 @@
                       (opt-binop-eq
                         (compiler-opt-global-shared-view op)
                         (ir.CompilerIrBinOp.Ge))))
-                  (opt-licm-deref-row! sink defs sources lhs rhs block)]
+                  (opt-licm-deref-row! sink defs sources lhs rhs block -1)]
                 ;; `rhs < lhs` holds: taken `gt`, or `le` not taken.
                 [(or
                     (and
@@ -32893,7 +32906,7 @@
                       (opt-binop-eq
                         (compiler-opt-global-shared-view op)
                         (ir.CompilerIrBinOp.Le))))
-                  (opt-licm-deref-row! sink defs sources rhs lhs block)]
+                  (opt-licm-deref-row! sink defs sources rhs lhs block -1)]
                 [else unit]))]
           [_ unit]))]
     [_ unit]))
@@ -32941,7 +32954,8 @@
                   (compiler-opt-global-shared-view sources)
                   check-index
                   length
-                  id)]
+                  id
+                  cursor)]
               [(ir.CompilerIrInstr.Branch cond true-label false-label)
                 (if (= true-label false-label)
                   unit
@@ -33035,9 +33049,11 @@
           (compiler-opt-global-shared-view offsets)
           (__tl_make-array ir.CompilerIrValue 0)
           (__tl_make-array i64 0)
+          (__tl_make-array i64 0)
           (compiler-opt-global-shared-view literal-count)
           (__tl_make-array i64 0)
           (__tl_make-array ir.CompilerIrValue 0)
+          (__tl_make-array i64 0)
           (__tl_make-array i64 0))
         (compiler-opt-global-shared-view defs)
         (compiler-opt-global-shared-view sources)
@@ -33057,6 +33073,7 @@
     [lens : (__tl_dyn-array ir.CompilerIrValue)
       (__tl_make-array ir.CompilerIrValue total)]
     [rows : (__tl_dyn-array i64) (__tl_make-array i64 total)]
+    [positions : (__tl_dyn-array i64) (__tl_make-array i64 total)]
     [cursor : (__tl_dyn-array i64) (__tl_make-array i64 (+ frame 1))]
     [_cursor : unit
       (let
@@ -33070,6 +33087,7 @@
     [literal-lens : (__tl_dyn-array ir.CompilerIrValue)
       (__tl_make-array ir.CompilerIrValue literals)]
     [literal-blocks : (__tl_dyn-array i64) (__tl_make-array i64 literals)]
+    [literal-positions : (__tl_dyn-array i64) (__tl_make-array i64 literals)]
     (begin
       (opt-licm-deref-scan-blocks!
         (OptLicmDerefSink
@@ -33077,10 +33095,12 @@
           (compiler-opt-global-shared-view cursor)
           (compiler-opt-global-shared-view lens)
           (compiler-opt-global-shared-view rows)
+          (compiler-opt-global-shared-view positions)
           (compiler-opt-global-shared-view literal-cursor)
           (compiler-opt-global-shared-view literal-indexes)
           (compiler-opt-global-shared-view literal-lens)
-          (compiler-opt-global-shared-view literal-blocks))
+          (compiler-opt-global-shared-view literal-blocks)
+          (compiler-opt-global-shared-view literal-positions))
         (compiler-opt-global-shared-view defs)
         (compiler-opt-global-shared-view sources)
         (compiler-opt-global-shared-view index)
@@ -33092,9 +33112,11 @@
         offsets
         lens
         rows
+        positions
         literal-indexes
         literal-lens
-        literal-blocks))))
+        literal-blocks
+        literal-positions))))
 
 ;; A descriptor, as one comparable key: a single-definition handle var (copies
 ;; looked through) is its var id, and a header-typed global -- whose own
@@ -33253,6 +33275,57 @@
       (opt-licm-deref-header-element type-segment-bases ty)]
     [(OptMaybeAstType.No) (OptMaybeAstType.No)]))
 
+;; Guard phis may carry zero on a path that never reaches the original read.
+;; That is a valid unused value, not a dereferenceable descriptor. Preserve
+;; the distinction through copies and phi joins on later LICM visits.
+(define (opt-licm-deref-null-phi?
+  [facts : OptLicmDerefFacts]
+  [value : ir.CompilerIrValue]
+  [fuel : i64]) : bool
+  (if (<= fuel 0)
+    true
+    (match (opt-licm-deref-resolve
+      (compiler-opt-global-shared-view facts.defs)
+      (compiler-opt-global-shared-view facts.sources)
+      value
+      (opt-licm-deref-fuel))
+      [(ir.CompilerIrValue.I64 value) (= value 0)]
+      [(ir.CompilerIrValue.F64 value) (= value 0)]
+      [(ir.CompilerIrValue.Bool value) (not value)]
+      [(ir.CompilerIrValue.Var var)
+        (match (opt-licm-deref-def
+          (compiler-opt-global-shared-view facts.defs)
+          (compiler-opt-global-shared-view facts.sources)
+          var)
+          [(OptBoolBranchDef.Some (ir.CompilerIrInstr.Phi _ inputs _) _)
+            (let
+              [pos : i64 0]
+              [found? : bool false]
+              (begin
+                (while (and (not found?) (< pos inputs.len))
+                  (begin
+                    (let
+                      [input
+                        (ir.compiler-ir-phi-input-seq-ref
+                          (compiler-opt-global-shared-view inputs)
+                          pos)]
+                      (set!
+                        found?
+                        (opt-licm-deref-null-phi?
+                          (compiler-opt-global-shared-view facts)
+                          (compiler-opt-global-shared-view input.value)
+                          (- fuel 1))))
+                    (set! pos (+ pos 1))))
+                found?))]
+          [(OptBoolBranchDef.Some (ir.CompilerIrInstr.Mov _ src _) _)
+            (opt-licm-deref-null-phi? facts src (- fuel 1))]
+          [(OptBoolBranchDef.Some (ir.CompilerIrInstr.Cast _ src _ _) _)
+            (opt-licm-deref-null-phi? facts src (- fuel 1))]
+          [(OptBoolBranchDef.Some (ir.CompilerIrInstr.Bitcast _ src _ _) _)
+            (opt-licm-deref-null-phi? facts src (- fuel 1))]
+          [_ false])]
+      [_ false])))
+
 (define (opt-licm-deref-address
   [type-segment-bases : i64]
   [types : OptSsaVarTypes]
@@ -33309,8 +33382,147 @@
                     base)
                     [(OptLicmDerefAddress.No) (OptLicmDerefAddress.No)]
                     [_ (OptLicmDerefAddress.Opaque)])))]
-            [_ (OptLicmDerefAddress.No)])]
+            [_
+              (if (opt-licm-deref-null-phi?
+                facts
+                resolved
+                (opt-licm-deref-fuel))
+                (OptLicmDerefAddress.Opaque)
+                (OptLicmDerefAddress.No))])]
+        [(ir.CompilerIrValue.I64 value)
+          (if (= value 0)
+            (OptLicmDerefAddress.Opaque)
+            (OptLicmDerefAddress.No))]
         [_ (OptLicmDerefAddress.No)]))))
+
+;; Preheader facts may occur anywhere before its terminator. Guarded motion
+;; instead asks what was proven at the original load, and requires a bound
+;; whose value is also available outside the loop.
+(defenum OptLicmDerefQuery
+  (Preheader)
+  (Unavailable)
+  (Guard i64 i64 opt_i64_i64_map.Map opt_i64_i64_map.Map))
+
+(define (opt-licm-deref-row-usable?
+  [type-segment-bases : i64]
+  [types : OptSsaVarTypes]
+  [site : OptLicmDerefSite]
+  [query : OptLicmDerefQuery]
+  [key : i64]
+  [block : i64]
+  [position : i64]
+  [length : ir.CompilerIrValue]) : bool
+  (and
+    (match query
+      [(OptLicmDerefQuery.Preheader)
+        (opt-dom-info-dominates-id?
+          (compiler-opt-global-shared-view site.doms)
+          block
+          site.at)]
+      [(OptLicmDerefQuery.Unavailable) false]
+      [(OptLicmDerefQuery.Guard at before loop-defs hoisted)
+        (and
+          (opt-dom-info-dominates-id?
+            (compiler-opt-global-shared-view site.doms)
+            block
+            at)
+          (or (not (= block at)) (< position before))
+          (opt-licm-value-invariant?
+            false
+            loop-defs
+            hoisted
+            (compiler-opt-global-shared-view length)))])
+    (=
+      (opt-licm-deref-word-owner
+        type-segment-bases
+        types
+        site.facts
+        length
+        false)
+      key)))
+
+(define (opt-licm-deref-bound-length
+  [type-segment-bases : i64]
+  [types : OptSsaVarTypes]
+  [site : OptLicmDerefSite]
+  [query : OptLicmDerefQuery]
+  [index : ir.CompilerIrValue]
+  [key : i64]) : ir.CompilerIrMaybeValue
+  (let
+    [facts : OptLicmDerefFacts site.facts]
+    [result : ir.CompilerIrMaybeValue (ir.CompilerIrMaybeValue.No)]
+    [found? : bool false]
+    (match (opt-licm-deref-resolve
+      (compiler-opt-global-shared-view facts.defs)
+      (compiler-opt-global-shared-view facts.sources)
+      index
+      (opt-licm-deref-fuel))
+      [(ir.CompilerIrValue.Var var)
+        (let
+          [offsets : (__tl_dyn-array i64) facts.offsets]
+          (if (or
+            (not (opt-gvn-stable-var? facts.sources var))
+            (< var 0)
+            (>= (+ var 1) (array-length offsets)))
+            result
+            (let
+              [row : i64 (array-ref offsets var)]
+              [end : i64 (array-ref offsets (+ var 1))]
+              (begin
+                (while (and (not found?) (< row end))
+                  (let
+                    [length
+                      (compiler-opt-global-array-element-shared-view
+                        facts.lens
+                        row)]
+                    (begin
+                      (when
+                        (opt-licm-deref-row-usable?
+                          type-segment-bases
+                          (compiler-opt-global-shared-view types)
+                          (compiler-opt-global-shared-view site)
+                          (compiler-opt-global-shared-view query)
+                          key
+                          (array-ref facts.blocks row)
+                          (array-ref facts.positions row)
+                          (compiler-opt-global-shared-view length))
+                        (begin
+                          (set! found? true)
+                          (set! result (ir.CompilerIrMaybeValue.Some length))))
+                      (set! row (+ row 1)))))
+                result))))]
+      ;; A larger nonnegative literal bound covers this element too.
+      [(ir.CompilerIrValue.I64 literal)
+        (let
+          [indexes : (__tl_dyn-array i64) facts.literal-indexes]
+          [count : i64 (array-length indexes)]
+          [row : i64 0]
+          (begin
+            (while (and (not found?) (>= literal 0) (< row count))
+              (let
+                [length
+                  (compiler-opt-global-array-element-shared-view
+                    facts.literal-lens
+                    row)]
+                (begin
+                  (when
+                    (and
+                      (>= (array-ref indexes row) literal)
+                      (opt-licm-deref-row-usable?
+                        type-segment-bases
+                        (compiler-opt-global-shared-view types)
+                        (compiler-opt-global-shared-view site)
+                        (compiler-opt-global-shared-view query)
+                        key
+                        (array-ref facts.literal-blocks row)
+                        (array-ref facts.literal-positions row)
+                        (compiler-opt-global-shared-view length)))
+                    (begin
+                      (set! found? true)
+                      (set! result (ir.CompilerIrMaybeValue.Some length))))
+                  (set! row (+ row 1)))))
+            result))]
+      [_ result])))
 
 ;; Is `index <u length-of(key)` proven where the site's hoist lands?
 (define (opt-licm-deref-proven?
@@ -33319,81 +33531,47 @@
   [site : OptLicmDerefSite]
   [index : ir.CompilerIrValue]
   [key : i64]) : bool
-  (let
-    [facts : OptLicmDerefFacts site.facts]
-    (if (< site.at 0)
-      false
-      (match (opt-licm-deref-resolve
-        (compiler-opt-global-shared-view facts.defs)
-        (compiler-opt-global-shared-view facts.sources)
-        index
-        (opt-licm-deref-fuel))
-        [(ir.CompilerIrValue.Var var)
-          (let
-            [offsets : (__tl_dyn-array i64) facts.offsets]
-            (if (or
-              (not (opt-gvn-stable-var? facts.sources var))
-              (< var 0)
-              (>= (+ var 1) (array-length offsets)))
-              false
+  (match (opt-licm-deref-bound-length
+    type-segment-bases
+    types
+    site
+    (OptLicmDerefQuery.Preheader)
+    index
+    key)
+    [(ir.CompilerIrMaybeValue.Some _) true]
+    [_ false]))
+
+(define (opt-licm-deref-load-query
+  [site : OptLicmDerefSite]
+  [dst : i64]
+  [loop-defs : opt_i64_i64_map.Map]
+  [hoisted : opt_i64_i64_map.Map]) : OptLicmDerefQuery
+  (match (opt-licm-deref-def site.facts.defs site.facts.sources dst)
+    [(OptBoolBranchDef.Some _ label)
+      (match (opt-cfg-index-id
+        (compiler-opt-global-shared-view site.doms.index)
+        label)
+        [(option_i64.Some at)
+          (match (opt-cfg-index-block site.doms.index at)
+            [(OptMaybeBlock.Some (ir.CompilerIrBlock.Block _ instrs))
               (let
-                [row : i64 (array-ref offsets var)]
-                [end : i64 (array-ref offsets (+ var 1))]
-                [found : bool false]
+                [position : i64 0]
+                [count (ir.compiler-ir-instr-seq-count instrs)]
+                [found? : bool false]
                 (begin
-                  (while (and (not found) (< row end))
+                  (while (and (not found?) (< position count))
                     (begin
-                      (if (and
-                        (opt-dom-info-dominates-id?
-                          (compiler-opt-global-shared-view site.doms)
-                          (array-ref facts.blocks row)
-                          site.at)
-                        (=
-                          (opt-licm-deref-word-owner
-                            type-segment-bases
-                            (compiler-opt-global-shared-view types)
-                            (compiler-opt-global-shared-view facts)
-                            (compiler-opt-global-array-element-shared-view
-                              facts.lens
-                              row)
-                            false)
-                          key))
-                        (set! found true)
-                        unit)
-                      (set! row (+ row 1))))
-                  found))))]
-        ;; A literal index is proven by any row bounding the same descriptor
-        ;; at a literal at least as large.
-        [(ir.CompilerIrValue.I64 literal)
-          (let
-            [indexes : (__tl_dyn-array i64) facts.literal-indexes]
-            [count : i64 (array-length indexes)]
-            [row : i64 0]
-            [found : bool false]
-            (begin
-              (while (and (not found) (>= literal 0) (< row count))
-                (begin
-                  (if (and
-                    (>= (array-ref indexes row) literal)
-                    (opt-dom-info-dominates-id?
-                      (compiler-opt-global-shared-view site.doms)
-                      (array-ref facts.literal-blocks row)
-                      site.at)
-                    (=
-                      (opt-licm-deref-word-owner
-                        type-segment-bases
-                        (compiler-opt-global-shared-view types)
-                        (compiler-opt-global-shared-view facts)
-                        (compiler-opt-global-array-element-shared-view
-                          facts.literal-lens
-                          row)
-                        false)
-                      key))
-                    (set! found true)
-                    unit)
-                  (set! row (+ row 1))))
-              found))]
-        [_ false]))))
+                      (match (opt-instr-def-var
+                        (ir.compiler-ir-instr-seq-ref instrs position))
+                        [(option_i64.Some var) (set! found? (= var dst))]
+                        [_ unit])
+                      (unless found? (set! position (+ position 1)))))
+                  (if found?
+                    (OptLicmDerefQuery.Guard at position loop-defs hoisted)
+                    (OptLicmDerefQuery.Unavailable))))]
+            [_ (OptLicmDerefQuery.Unavailable)])]
+        [_ (OptLicmDerefQuery.Unavailable)])]
+    [_ (OptLicmDerefQuery.Unavailable)]))
 
 ;; May a Load of `load-ty` through `src` execute at the site's preheader? True
 ;; unless the address is element storage -- by its provenance class or by its
@@ -33402,6 +33580,26 @@
 ;; element type and the read is no wider than that element; anything else (a
 ;; word read at a byte index, a raw pointer re-typed over the buffer) is
 ;; refused.
+(define (opt-licm-deref-element-compatible?
+  [type-segment-bases : i64]
+  [types : OptSsaVarTypes]
+  [facts : OptLicmDerefFacts]
+  [key : i64]
+  [stride : ast.AstType]
+  [load-ty : ast.AstType]) : bool
+  (match (opt-licm-deref-key-element type-segment-bases types facts key)
+    [(OptMaybeAstType.No) false]
+    [(OptMaybeAstType.Some elem)
+      (let
+        [width (opt-load-loc-type-size type-segment-bases load-ty)]
+        (and
+          (opt-type-eq
+            type-segment-bases
+            stride
+            (compiler-opt-global-shared-view elem))
+          (> width 0)
+          (<= width (opt-load-loc-type-size type-segment-bases elem))))]))
+
 (define (opt-licm-deref-load-ok?
   [type-segment-bases : i64]
   [types : OptSsaVarTypes]
@@ -33426,25 +33624,35 @@
       [(OptLicmDerefAddress.No) (not element-kind?)]
       [(OptLicmDerefAddress.Opaque) false]
       [(OptLicmDerefAddress.Element index key stride)
-        (match (opt-licm-deref-key-element
-          type-segment-bases
-          (compiler-opt-global-shared-view types)
-          (compiler-opt-global-shared-view site.facts)
-          key)
-          [(OptMaybeAstType.No) false]
-          [(OptMaybeAstType.Some elem)
-            (let
-              [width : i64 (opt-load-loc-type-size type-segment-bases load-ty)]
-              (and
-                (opt-type-eq
-                  type-segment-bases
-                  (compiler-opt-global-shared-view stride)
-                  (compiler-opt-global-shared-view elem))
-                (> width 0)
-                (<= width (opt-load-loc-type-size type-segment-bases elem))
-                (opt-licm-deref-proven? type-segment-bases types site index key)))])])))
+        (and
+          (opt-licm-deref-element-compatible?
+            type-segment-bases
+            (compiler-opt-global-shared-view types)
+            (compiler-opt-global-shared-view site.facts)
+            key
+            stride
+            load-ty)
+          (opt-licm-deref-proven?
+            type-segment-bases
+            (compiler-opt-global-shared-view types)
+            (compiler-opt-global-shared-view site)
+            (compiler-opt-global-shared-view index)
+            key))])))
 
-(define (opt-licm-candidate?
+(define (opt-licm-deref-instr-ok?
+  [type-segment-bases : i64]
+  [types : OptSsaVarTypes]
+  [ptrs : OptLicmPtrEnv]
+  [site : OptLicmDerefSite]
+  [instr : ir.CompilerIrInstr]) : bool
+  (match instr
+    [(ir.CompilerIrInstr.Load _ src ty)
+      (opt-licm-deref-load-ok? type-segment-bases types ptrs site src ty)]
+    [(ir.CompilerIrInstr.LoadOwned _ src _ ty)
+      (opt-licm-deref-load-ok? type-segment-bases types ptrs site src ty)]
+    [_ true]))
+
+(define (opt-licm-invariant?
   [type-segment-bases : i64]
   [loop-defs : opt_i64_i64_map.Map]
   [hoisted : opt_i64_i64_map.Map]
@@ -33463,9 +33671,6 @@
   ;; opt-licm-value-invariant? and opt-licm-globals-clean?.
   [globals : OptLicmGlobalFacts]
   [hot-uses : (__tl_dyn-array i64)]
-  ;; #7992: where this loop's hoist lands, and the facts that bound an
-  ;; element load there (opt-licm-deref-load-ok?).
-  [deref-site : OptLicmDerefSite]
   [instr : ir.CompilerIrInstr]) : bool
   (match (compiler-opt-global-shared-view instr)
     [(ir.CompilerIrInstr.Mov _ src _)
@@ -33679,7 +33884,7 @@
       ;; comes solely from the explicit owner witness and verifier.
       (and
         globals.owned-hoist?
-        (opt-licm-candidate?
+        (opt-licm-invariant?
           type-segment-bases
           loop-defs
           hoisted
@@ -33695,7 +33900,6 @@
           descriptor-header-hoist?
           globals
           hot-uses
-          deref-site
           (ir.CompilerIrInstr.Load dst src ty)))]
     [(ir.CompilerIrInstr.Load dst src load-ty)
       (and
@@ -33787,18 +33991,502 @@
               (compiler-opt-global-shared-view types)
               (compiler-opt-global-shared-view ptrs)
               true
-              (compiler-opt-global-shared-view src))))
-        ;; #7992: and the address has to be readable at the preheader whether
-        ;; or not the loop would have read it. Asked last: it walks
-        ;; definitions, and every clause above is cheaper and refuses more.
-        (opt-licm-deref-load-ok?
+              (compiler-opt-global-shared-view src)))))]
+    [_ false]))
+
+;; Guard plans retain the original load until every loop's analysis is done.
+;; Emitting diamonds during that walk would invalidate enclosing-loop bodies.
+(defstruct OptLicmGuardPlan
+  (preheader i64)
+  (at i64)
+  (dst i64)
+  (src ir.CompilerIrValue)
+  (ty ast.AstType)
+  (index ir.CompilerIrValue)
+  (length ir.CompilerIrValue))
+
+(defenum OptLicmGuardList
+  (Nil)
+  (Cons OptLicmGuardPlan (Box OptLicmGuardList)))
+
+(define (opt-licm-guard-remove
+  [plans : OptLicmGuardList]
+  [dst : i64]
+  [at : i64]
+  [doms : OptDomInfo]) : OptLicmGuardList
+  (match plans
+    [(OptLicmGuardList.Nil) (OptLicmGuardList.Nil)]
+    [(OptLicmGuardList.Cons plan rest)
+      (if (and
+        (= plan.dst dst)
+        (opt-dom-info-dominates-id?
+          (compiler-opt-global-shared-view doms)
+          at
+          plan.at))
+        (compiler-opt-box-shared-view rest)
+        (OptLicmGuardList.Cons
+          plan
+          (box
+            (opt-licm-guard-remove
+              (compiler-opt-box-shared-view rest)
+              dst
+              at
+              doms))))]))
+
+(define (opt-licm-guard-add
+  [plans : OptLicmGuardList]
+  [plan : OptLicmGuardPlan]
+  [doms : OptDomInfo]) : OptLicmGuardList
+  (match plans
+    [(OptLicmGuardList.Nil)
+      (OptLicmGuardList.Cons plan (box (OptLicmGuardList.Nil)))]
+    [(OptLicmGuardList.Cons old rest)
+      (if (= old.dst plan.dst)
+        (OptLicmGuardList.Cons
+          (if (opt-dom-info-dominates-id? doms plan.at old.at)
+            plan
+            old)
+          rest)
+        (OptLicmGuardList.Cons
+          old
+          (box
+            (opt-licm-guard-add (compiler-opt-box-shared-view rest) plan doms))))]))
+
+(define (opt-licm-guard-retarget
+  [plans : OptLicmGuardList]
+  [from : i64]
+  [to : i64]) : OptLicmGuardList
+  (match plans
+    [(OptLicmGuardList.Nil) (OptLicmGuardList.Nil)]
+    [(OptLicmGuardList.Cons plan rest)
+      (OptLicmGuardList.Cons
+        (OptLicmGuardPlan
+          (if (= plan.preheader from)
+            to
+            plan.preheader)
+          plan.at
+          plan.dst
+          plan.src
+          plan.ty
+          plan.index
+          plan.length)
+        (box
+          (opt-licm-guard-retarget (compiler-opt-box-shared-view rest) from to)))]))
+
+;; An equality selecting a varying loop phi (or an invariant offset of it)
+;; is a sparse-iteration use. Its read may run too few times to repay guard
+;; setup. This is a profitability refusal, independent of the memory proof.
+(define (opt-licm-guard-sparse-value?
+  [facts : OptLicmDerefFacts]
+  [loop-defs : opt_i64_i64_map.Map]
+  [hoisted : opt_i64_i64_map.Map]
+  [value : ir.CompilerIrValue]
+  [fuel : i64]) : bool
+  (if (or
+    (<= fuel 0)
+    (opt-licm-value-invariant?
+      false
+      (compiler-opt-global-shared-view loop-defs)
+      (compiler-opt-global-shared-view hoisted)
+      (compiler-opt-global-shared-view value)))
+    false
+    (match (opt-licm-deref-resolve
+      (compiler-opt-global-shared-view facts.defs)
+      (compiler-opt-global-shared-view facts.sources)
+      value
+      (opt-licm-deref-fuel))
+      [(ir.CompilerIrValue.Var var)
+        (match (opt-licm-deref-def
+          (compiler-opt-global-shared-view facts.defs)
+          (compiler-opt-global-shared-view facts.sources)
+          var)
+          [(OptBoolBranchDef.Some (ir.CompilerIrInstr.Phi _ _ ty) _)
+            (opt-integer-type? ty)]
+          [(OptBoolBranchDef.Some (ir.CompilerIrInstr.BinOp _ op lhs rhs _) _)
+            (and
+              (or
+                (opt-binop-eq
+                  (compiler-opt-global-shared-view op)
+                  (ir.CompilerIrBinOp.Add))
+                (opt-binop-eq op (ir.CompilerIrBinOp.Sub)))
+              (if (opt-licm-value-invariant?
+                false
+                (compiler-opt-global-shared-view loop-defs)
+                (compiler-opt-global-shared-view hoisted)
+                (compiler-opt-global-shared-view lhs))
+                (opt-licm-guard-sparse-value?
+                  facts
+                  loop-defs
+                  hoisted
+                  rhs
+                  (- fuel 1))
+                (and
+                  (opt-licm-value-invariant?
+                    false
+                    (compiler-opt-global-shared-view loop-defs)
+                    (compiler-opt-global-shared-view hoisted)
+                    rhs)
+                  (opt-licm-guard-sparse-value?
+                    facts
+                    loop-defs
+                    hoisted
+                    lhs
+                    (- fuel 1)))))]
+          [_ false])]
+      [_ false])))
+
+(define (opt-licm-guard-sparse-use?
+  [site : OptLicmDerefSite]
+  [query : OptLicmDerefQuery]) : bool
+  (match query
+    [(OptLicmDerefQuery.Guard at _ loop-defs hoisted)
+      (let
+        [id : i64 at]
+        [found? : bool false]
+        (begin
+          (while (and (not found?) (>= id 0) (not (= id site.at)))
+            (begin
+              (match (opt-cfg-index-block
+                (compiler-opt-global-shared-view site.doms.index)
+                id)
+                [(OptMaybeBlock.Some (ir.CompilerIrBlock.Block _ instrs))
+                  (when
+                    (> instrs.len 0)
+                    (match (ir.compiler-ir-instr-seq-ref
+                      instrs
+                      (- instrs.len 1))
+                      [(ir.CompilerIrInstr.Branch cond yes no)
+                        (match (opt-licm-deref-resolve
+                          (compiler-opt-global-shared-view site.facts.defs)
+                          (compiler-opt-global-shared-view site.facts.sources)
+                          cond
+                          (opt-licm-deref-fuel))
+                          [(ir.CompilerIrValue.Var var)
+                            (match (opt-licm-deref-def
+                              (compiler-opt-global-shared-view site.facts.defs)
+                              (compiler-opt-global-shared-view
+                                site.facts.sources)
+                              var)
+                              [(OptBoolBranchDef.Some
+                                  (ir.CompilerIrInstr.BinOp _ op lhs rhs _)
+                                  _)
+                                (let
+                                  [target : i64
+                                    (cond
+                                      [(opt-binop-eq
+                                          (compiler-opt-global-shared-view op)
+                                          (ir.CompilerIrBinOp.Eq))
+                                        yes]
+                                      [(opt-binop-eq op (ir.CompilerIrBinOp.Ne))
+                                        no]
+                                      [else -1])]
+                                  [edge : i64
+                                    (opt-licm-deref-edge-target
+                                      (compiler-opt-global-shared-view
+                                        site.doms.index)
+                                      id
+                                      target)]
+                                  (when
+                                    (and
+                                      (not (= yes no))
+                                      (>= edge 0)
+                                      (opt-dom-info-dominates-id?
+                                        (compiler-opt-global-shared-view
+                                          site.doms)
+                                        edge
+                                        at))
+                                    (set!
+                                      found?
+                                      (if (opt-licm-value-invariant?
+                                        false
+                                        (compiler-opt-global-shared-view
+                                          loop-defs)
+                                        (compiler-opt-global-shared-view
+                                          hoisted)
+                                        (compiler-opt-global-shared-view lhs))
+                                        (opt-licm-guard-sparse-value?
+                                          (compiler-opt-global-shared-view
+                                            site.facts)
+                                          (compiler-opt-global-shared-view
+                                            loop-defs)
+                                          (compiler-opt-global-shared-view
+                                            hoisted)
+                                          rhs
+                                          8)
+                                        (and
+                                          (opt-licm-value-invariant?
+                                            false
+                                            (compiler-opt-global-shared-view
+                                              loop-defs)
+                                            (compiler-opt-global-shared-view
+                                              hoisted)
+                                            rhs)
+                                          (opt-licm-guard-sparse-value?
+                                            (compiler-opt-global-shared-view
+                                              site.facts)
+                                            (compiler-opt-global-shared-view
+                                              loop-defs)
+                                            (compiler-opt-global-shared-view
+                                              hoisted)
+                                            lhs
+                                            8))))))]
+                              [_ unit])]
+                          [_ unit])]
+                      [_ unit]))]
+                [_ unit])
+              (let
+                [parent : i64 (array-ref site.doms.idom id)]
+                (set!
+                  id
+                  (if (= parent id)
+                    -1
+                    parent)))))
+          found?))]
+    [_ false]))
+
+(define (opt-licm-guard-collect!
+  [type-segment-bases : i64]
+  [types : OptSsaVarTypes]
+  [site : OptLicmDerefSite]
+  [loop-defs : opt_i64_i64_map.Map]
+  [hoisted : opt_i64_i64_map.Map]
+  [instr : ir.CompilerIrInstr]) : unit
+  (if (= (array-length site.guards) 0)
+    unit
+    (match instr
+      [(ir.CompilerIrInstr.Load dst src ty)
+        (match (opt-licm-deref-address
           type-segment-bases
           (compiler-opt-global-shared-view types)
-          (compiler-opt-global-shared-view ptrs)
-          (compiler-opt-global-shared-view deref-site)
-          (compiler-opt-global-shared-view src)
-          load-ty))]
-    [_ false]))
+          (compiler-opt-global-shared-view site.facts)
+          (compiler-opt-global-shared-view src))
+          [(OptLicmDerefAddress.Element raw-index key stride)
+            (let
+              [index
+                (opt-licm-deref-resolve
+                  (compiler-opt-global-shared-view site.facts.defs)
+                  (compiler-opt-global-shared-view site.facts.sources)
+                  raw-index
+                  (opt-licm-deref-fuel))]
+              [query
+                (opt-licm-deref-load-query
+                  (compiler-opt-global-shared-view site)
+                  dst
+                  (compiler-opt-global-shared-view loop-defs)
+                  (compiler-opt-global-shared-view hoisted))]
+              (when
+                (and
+                  (not
+                    (opt-licm-guard-sparse-use?
+                      (compiler-opt-global-shared-view site)
+                      (compiler-opt-global-shared-view query)))
+                  (opt-licm-deref-element-compatible?
+                    type-segment-bases
+                    (compiler-opt-global-shared-view types)
+                    (compiler-opt-global-shared-view site.facts)
+                    key
+                    stride
+                    (compiler-opt-global-shared-view ty))
+                  (<=
+                    (opt-load-loc-type-size
+                      type-segment-bases
+                      (compiler-opt-global-shared-view ty))
+                    8)
+                  (opt-licm-value-invariant?
+                    false
+                    (compiler-opt-global-shared-view loop-defs)
+                    (compiler-opt-global-shared-view hoisted)
+                    (compiler-opt-global-shared-view index)))
+                (match (opt-licm-deref-bound-length
+                  type-segment-bases
+                  (compiler-opt-global-shared-view types)
+                  (compiler-opt-global-shared-view site)
+                  query
+                  (compiler-opt-global-shared-view index)
+                  key)
+                  [(ir.CompilerIrMaybeValue.No) unit]
+                  [(ir.CompilerIrMaybeValue.Some length)
+                    (set!
+                      (array-ref site.guards 0)
+                      (opt-licm-guard-add
+                        (compiler-opt-global-array-element-shared-view
+                          site.guards
+                          0)
+                        (OptLicmGuardPlan
+                          site.preheader
+                          site.at
+                          dst
+                          (compiler-opt-global-shared-view src)
+                          (compiler-opt-global-shared-view ty)
+                          (compiler-opt-global-shared-view index)
+                          (compiler-opt-global-shared-view length))
+                        site.doms))])))]
+          [_ unit])]
+      [_ unit])))
+
+(define (opt-licm-guard-zero [ty : ast.AstType]) : ir.CompilerIrValue
+  (match ty
+    [(ast.AstType.F32) (ir.CompilerIrValue.F64 0)]
+    [(ast.AstType.F64) (ir.CompilerIrValue.F64 0)]
+    [(ast.AstType.Bool) (ir.CompilerIrValue.Bool false)]
+    [_ (ir.CompilerIrValue.I64 0)]))
+
+;; The preheader retains all its instructions before the guard. Only the load
+;; leaves the body; the source check and all observable effects keep their order.
+;; The false-edge zero cannot reach a use: its original check aborts first.
+(define (opt-licm-guard-emit
+  [blocks : ir.CompilerIrBlockList]
+  [plan : OptLicmGuardPlan]
+  [load-label : i64]
+  [join-label : i64]
+  [fresh : i64]) : ir.CompilerIrBlockList
+  (let
+    [seq (ir.compiler-ir-block-seq-from-list blocks)]
+    [out (ir.compiler-ir-block-builder-with-capacity (+ seq.len 2))]
+    [pos : i64 0]
+    (begin
+      (while (< pos seq.len)
+        (begin
+          (match (ir.compiler-ir-block-seq-ref seq pos)
+            [(ir.CompilerIrBlock.Block label instrs)
+              (let
+                [count (ir.compiler-ir-instr-seq-count instrs)]
+                [kept (ir.compiler-ir-instr-builder-with-capacity (+ count 2))]
+                [cursor : i64 0]
+                (begin
+                  (while (< cursor count)
+                    (let
+                      [instr (ir.compiler-ir-instr-seq-ref instrs cursor)]
+                      (begin
+                        (match (compiler-opt-global-shared-view instr)
+                          [(ir.CompilerIrInstr.Load dst _ _)
+                            (unless
+                              (= dst plan.dst)
+                              (ir.compiler-ir-instr-builder-push!
+                                (&mut kept)
+                                instr))]
+                          [(ir.CompilerIrInstr.Phi dst inputs ty)
+                            (ir.compiler-ir-instr-builder-push!
+                              (&mut kept)
+                              (ir.CompilerIrInstr.Phi
+                                dst
+                                (ir.compiler-ir-phi-input-seq-relabel
+                                  inputs
+                                  plan.preheader
+                                  join-label)
+                                ty))]
+                          [_
+                            (unless
+                              (and
+                                (= label plan.preheader)
+                                (opt-cfg-terminator-instr?
+                                  (compiler-opt-global-shared-view instr)))
+                              (ir.compiler-ir-instr-builder-push!
+                                (&mut kept)
+                                instr))])
+                        (set! cursor (+ cursor 1)))))
+                  (if (= label plan.preheader)
+                    (begin
+                      (ir.compiler-ir-instr-builder-push!
+                        (&mut kept)
+                        (ir.CompilerIrInstr.BinOp
+                          fresh
+                          (ir.CompilerIrBinOp.Lt)
+                          (compiler-opt-global-shared-view plan.index)
+                          (compiler-opt-global-shared-view plan.length)
+                          (ast.AstType.U64)))
+                      (ir.compiler-ir-instr-builder-push!
+                        (&mut kept)
+                        (ir.CompilerIrInstr.Branch
+                          (ir.CompilerIrValue.Var fresh)
+                          load-label
+                          join-label))
+                      (ir.compiler-ir-block-builder-push!
+                        (&mut out)
+                        (ir.CompilerIrBlock.Block
+                          label
+                          (ir.compiler-ir-instr-builder-to-seq kept)))
+                      (ir.compiler-ir-block-builder-push!
+                        (&mut out)
+                        (ir.CompilerIrBlock.Block
+                          load-label
+                          (ir.compiler-ir-instr-seq2
+                            (ir.CompilerIrInstr.Load
+                              (+ fresh 1)
+                              (compiler-opt-global-shared-view plan.src)
+                              (compiler-opt-global-shared-view plan.ty))
+                            (ir.CompilerIrInstr.Jump join-label))))
+                      (ir.compiler-ir-block-builder-push!
+                        (&mut out)
+                        (ir.CompilerIrBlock.Block
+                          join-label
+                          (ir.compiler-ir-instr-seq2
+                            (ir.CompilerIrInstr.Phi
+                              plan.dst
+                              (ir.compiler-ir-phi-input-seq-prepend
+                                (opt-licm-guard-zero
+                                  (compiler-opt-global-shared-view plan.ty))
+                                label
+                                (ir.compiler-ir-phi-input-seq-prepend
+                                  (ir.CompilerIrValue.Var (+ fresh 1))
+                                  load-label
+                                  (ir.compiler-ir-phi-input-seq-empty)))
+                              (compiler-opt-global-shared-view plan.ty))
+                            (ir.compiler-ir-instr-seq-ref instrs (- count 1))))))
+                    (ir.compiler-ir-block-builder-push!
+                      (&mut out)
+                      (ir.CompilerIrBlock.Block
+                        label
+                        (ir.compiler-ir-instr-builder-to-seq kept))))))])
+          (set! pos (+ pos 1))))
+      (ir.compiler-ir-block-builder-to-list out))))
+
+(define (opt-licm-guards-trace! [plans : OptLicmGuardList]) : unit
+  (when
+    (and compiler-opt-debug-trace-passes (not compiler-opt-debug-suppressed?))
+    (match plans
+      [(OptLicmGuardList.Nil) unit]
+      [(OptLicmGuardList.Cons plan rest)
+        (begin
+          (io.print-error
+            (str_cat.str-cat
+              "licm-guard|"
+              (ir.compiler-ir-symbol-text opt-licm-trace-function)
+              "|"
+              (ir.compiler-ir-label-text plan.preheader)
+              "|%"
+              (string.int->string plan.dst)
+              "\n"))
+          (opt-licm-guards-trace! (compiler-opt-box-shared-view rest)))])))
+
+(define (opt-licm-guards-apply
+  [plans : OptLicmGuardList]
+  [blocks : ir.CompilerIrBlockList]
+  [frame-cell : (__tl_dyn-array i64)]) : ir.CompilerIrBlockList
+  (match plans
+    [(OptLicmGuardList.Nil) blocks]
+    [(OptLicmGuardList.Cons plan rest)
+      (let
+        [load-label
+          (opt-loop-preheaders-fresh-label
+            (compiler-opt-global-shared-view blocks)
+            plan.preheader
+            0)]
+        [join-label
+          (opt-loop-preheaders-fresh-label
+            (compiler-opt-global-shared-view blocks)
+            load-label
+            0)]
+        [fresh (array-ref frame-cell 0)]
+        (begin
+          (set! (array-ref frame-cell 0) (+ fresh 2))
+          (opt-licm-guards-apply
+            (opt-licm-guard-retarget
+              (compiler-opt-box-shared-view rest)
+              plan.preheader
+              join-label)
+            (opt-licm-guard-emit blocks plan load-label join-label fresh)
+            frame-cell)))]))
 
 (define (opt-licm-add-hoisted-def
   [hoisted : opt_i64_i64_map.Map]
@@ -33866,8 +34554,8 @@
         (let
           [instr : ir.CompilerIrInstr
             (ir.compiler-ir-instr-seq-ref instrs cursor)]
-          (begin
-            (if (opt-licm-candidate?
+          [invariant? : bool
+            (opt-licm-invariant?
               type-segment-bases
               (compiler-opt-global-shared-view loop-defs)
               (compiler-opt-global-shared-view next-hoisted)
@@ -33883,17 +34571,51 @@
               descriptor-header-hoist?
               (compiler-opt-global-shared-view globals)
               (compiler-opt-global-shared-view hot-uses)
-              (compiler-opt-global-shared-view deref-site)
-              (compiler-opt-global-shared-view instr))
+              (compiler-opt-global-shared-view instr))]
+          (begin
+            (if (and
+              invariant?
+              (opt-licm-deref-instr-ok?
+                type-segment-bases
+                (compiler-opt-global-shared-view types)
+                (compiler-opt-global-shared-view ptrs)
+                (compiler-opt-global-shared-view deref-site)
+                (compiler-opt-global-shared-view instr)))
               (begin
                 (ir.compiler-ir-instr-builder-push!
                   (&mut moved)
                   (compiler-opt-global-shared-view instr))
                 (set!
                   next-hoisted
-                  (opt-licm-add-hoisted-def next-hoisted instr))
+                  (opt-licm-add-hoisted-def
+                    next-hoisted
+                    (compiler-opt-global-shared-view instr)))
+                (when
+                  (> (array-length deref-site.guards) 0)
+                  (match (opt-instr-def-var instr)
+                    [(option_i64.Some dst)
+                      (set!
+                        (array-ref deref-site.guards 0)
+                        (opt-licm-guard-remove
+                          (compiler-opt-global-array-element-shared-view
+                            deref-site.guards
+                            0)
+                          dst
+                          deref-site.at
+                          (compiler-opt-global-shared-view deref-site.doms)))]
+                    [_ unit]))
                 (set! changed true))
-              (ir.compiler-ir-instr-builder-push! (&mut kept) instr))
+              (begin
+                (when
+                  invariant?
+                  (opt-licm-guard-collect!
+                    type-segment-bases
+                    (compiler-opt-global-shared-view types)
+                    (compiler-opt-global-shared-view deref-site)
+                    (compiler-opt-global-shared-view loop-defs)
+                    (compiler-opt-global-shared-view next-hoisted)
+                    (compiler-opt-global-shared-view instr)))
+                (ir.compiler-ir-instr-builder-push! (&mut kept) instr)))
             (set! cursor (+ cursor 1)))))
       (OptLicmInstrsResult.Result
         (ir.compiler-ir-instr-builder-to-seq kept)
@@ -34584,7 +35306,7 @@
 ;; unallocated -- LICM keeps its memory gates for those.
 ;;
 ;; The gate has two tiers. The LOOP-WIDE one is `globals-promote-clean?`: the
-;; same `globals-clean?` the Load and Gep arms of opt-licm-candidate? ask, plus
+;; same `globals-clean?` the Load and Gep arms of opt-licm-invariant? ask, plus
 ;; the memory-clean call tier those arms still refuse, admitted under a live-in
 ;; budget (opt-licm-global-promote-live-in-budget). It answers for every cell at
 ;; once, so before P18 a body that wrote ANY cell promoted none of them.
@@ -35900,7 +36622,7 @@
         (ir.compiler-ir-block-seq-to-list seq))]))
 
 ;; The context one loop hands the walk. It is the same set of facts
-;; opt-licm-candidate? is called with, plus the three loop-site numbers whose
+;; opt-licm-invariant? is called with, plus the three loop-site numbers whose
 ;; arithmetic the reasons quote (side-exit kind, live-in count, header-ref
 ;; count); bundling them keeps the walk's own arity at the traversal state.
 (defstruct OptLicmRefuseCtx
@@ -36427,6 +37149,7 @@
   [late? : bool]
   ;; #7992: the function's element-bound facts (opt-licm-deref-facts).
   [deref-facts : OptLicmDerefFacts]
+  [guards : (__tl_dyn-array OptLicmGuardList)]
   ;; Valid for `blocks`: LICM only inserts into existing preheaders, so the
   ;; original dominance relation remains valid throughout this loop walk.
   [context : OptCfgContext]
@@ -36507,7 +37230,7 @@
         ;; handle) still move out of a suppressed loop when the RAW body
         ;; summary is header-load-safe -- no call that may write and no
         ;; header-or-unknown store, element stores excepted because they
-        ;; cannot touch header words (see opt-licm-candidate?). Their
+        ;; cannot touch header words (see opt-licm-invariant?). Their
         ;; descriptor-address Geps already ride the late-mode exemption, so
         ;; the loaded value replaces the address's loop-spanning live range
         ;; instead of adding a new one. The flag stays false pre-BCE (late?
@@ -36643,7 +37366,14 @@
               (compiler-opt-global-shared-view context.index)
               preheader)
               [(option_i64.Some id) id]
-              [(option_i64.None) (- 0 1)]))]
+              [(option_i64.None) (- 0 1)])
+            preheader
+            ;; A loop with an additional early exit may be a short probe. Its
+            ;; bypassable read does not justify a diamond and a live-in value.
+            ;; Preserve ordinary proved motion; price only the new guard here.
+            (if (and late? (= side-exit-kind 0))
+              (compiler-opt-global-shared-view guards)
+              (__tl_make-array OptLicmGuardList 0)))]
         (match (opt-licm-filter-body-blocks
           type-segment-bases
           (compiler-opt-global-shared-view loop-defs)
@@ -36760,6 +37490,7 @@
   [frame-cell : (__tl_dyn-array i64)]
   [late? : bool]
   [deref-facts : OptLicmDerefFacts]
+  [guards : (__tl_dyn-array OptLicmGuardList)]
   [context : OptCfgContext]
   [all-loops : OptNaturalLoopList]
   [loops : OptNaturalLoopList]
@@ -36777,6 +37508,7 @@
         (compiler-opt-global-shared-view frame-cell)
         late?
         (compiler-opt-global-shared-view deref-facts)
+        (compiler-opt-global-shared-view guards)
         (compiler-opt-global-shared-view context)
         (compiler-opt-global-shared-view all-loops)
         (compiler-opt-global-shared-view blocks)
@@ -36792,6 +37524,7 @@
             (compiler-opt-global-shared-view frame-cell)
             late?
             (compiler-opt-global-shared-view deref-facts)
+            (compiler-opt-global-shared-view guards)
             (compiler-opt-global-shared-view context)
             (compiler-opt-global-shared-view all-loops)
             (compiler-opt-box-shared-view rest)
@@ -36806,7 +37539,7 @@
 ;; can move anything.  A real hoist chain must start with one instruction whose
 ;; operands are already defined outside the loop (later candidates can depend
 ;; on that first hoist), so this syntactic seed test has no false negatives.
-;; It is deliberately broader than opt-licm-candidate?: source stability,
+;; It is deliberately broader than opt-licm-invariant?: source stability,
 ;; memory effects, global cleanliness, vector mode, and live-range policy stay
 ;; with the full pass.  The cheap test only proves when that work cannot pay.
 (define (opt-licm-seed-value?
@@ -37019,6 +37752,8 @@
                 ;; Loop-scope global promotion mints fresh vars, so the pass
                 ;; carries the frame counter in a cell and writes the final
                 ;; value back into the rewritten function.
+                [guards : (__tl_dyn-array OptLicmGuardList)
+                  (__tl_make-array OptLicmGuardList 1)]
                 [frame-cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
                 [_seed-frame : unit (set! (array-ref frame-cell 0) frame)]
                 (match (opt-licm-apply-loops
@@ -37031,40 +37766,68 @@
                   (compiler-opt-global-shared-view frame-cell)
                   late?
                   (compiler-opt-global-shared-view deref-facts)
+                  (compiler-opt-global-shared-view guards)
                   (compiler-opt-global-shared-view context)
                   (compiler-opt-global-shared-view loops)
                   (compiler-opt-global-shared-view loops)
                   (compiler-opt-global-shared-view blocks))
                   [(OptBlockListPassResult.Result hoisted-blocks licm-changed?)
-                    (if (not licm-changed?)
-                      ;; Nothing hoisted: the input context still describes the
-                      ;; unchanged CFG, so skip the context rebuild and the
-                      ;; post-pass verify entirely.
-                      (OptFunctionCtxResult.Result func context)
-                      (let
-                        [hoisted : ir.CompilerIrFunction
-                          (ir.CompilerIrFunction.Function
-                            name
-                            params
-                            ret-ty
-                            (array-ref frame-cell 0)
-                            (compiler-opt-global-shared-view hoisted-blocks)
-                            (compiler-opt-global-shared-view function-abi))]
-                        ;; LICM may hoist into a synthesized preheader edge, so build
-                        ;; one fresh context for the rewritten CFG, reuse it for the
-                        ;; post-pass verify, and hand it back for the next pass.
-                        [hoisted-context : OptCfgContext
-                          (opt-cfg-context-build
-                            (compiler-opt-global-shared-view hoisted-blocks))]
-                        (match (opt-verify-function-with-context
-                          (compiler-opt-global-shared-view hoisted)
-                          (compiler-opt-global-shared-view hoisted-context))
-                          [(ResultCompilerOptimizeVerify.Ok)
-                            (OptFunctionCtxResult.Result
-                              hoisted
-                              hoisted-context)]
-                          [(ResultCompilerOptimizeVerify.Err _)
-                            (OptFunctionCtxResult.Result func context)])))]))))])]
+                    (let
+                      [plans
+                        (compiler-opt-global-array-element-shared-view guards 0)]
+                      [guarded?
+                        (match (compiler-opt-global-shared-view plans)
+                          [(OptLicmGuardList.Nil) false]
+                          [_ true])]
+                      [hoisted-blocks
+                        (opt-licm-guards-apply
+                          (compiler-opt-global-shared-view plans)
+                          hoisted-blocks
+                          (compiler-opt-global-shared-view frame-cell))]
+                      (if (not (or licm-changed? guarded?))
+                        ;; Nothing hoisted: the input context still describes the
+                        ;; unchanged CFG, so skip the context rebuild and the
+                        ;; post-pass verify entirely.
+                        (OptFunctionCtxResult.Result func context)
+                        (let
+                          [hoisted : ir.CompilerIrFunction
+                            (ir.CompilerIrFunction.Function
+                              name
+                              params
+                              ret-ty
+                              (array-ref frame-cell 0)
+                              (compiler-opt-global-shared-view hoisted-blocks)
+                              (compiler-opt-global-shared-view function-abi))]
+                          ;; LICM may hoist into a synthesized preheader edge, so build
+                          ;; one fresh context for the rewritten CFG, reuse it for the
+                          ;; post-pass verify, and hand it back for the next pass.
+                          [hoisted-context : OptCfgContext
+                            (opt-cfg-context-build
+                              (compiler-opt-global-shared-view hoisted-blocks))]
+                          (match (opt-verify-function-with-context
+                            (compiler-opt-global-shared-view hoisted)
+                            (compiler-opt-global-shared-view hoisted-context))
+                            [(ResultCompilerOptimizeVerify.Ok)
+                              (begin
+                                (opt-licm-guards-trace! plans)
+                                (OptFunctionCtxResult.Result
+                                  hoisted
+                                  hoisted-context))]
+                            [(ResultCompilerOptimizeVerify.Err message)
+                              (begin
+                                (when
+                                  (and
+                                    guarded?
+                                    compiler-opt-debug-trace-passes
+                                    (not compiler-opt-debug-suppressed?))
+                                  (io.print-error
+                                    (str_cat.str-cat
+                                      "licm-guard-reject|"
+                                      (ir.compiler-ir-symbol-text name)
+                                      "|"
+                                      message
+                                      "\n")))
+                                (OptFunctionCtxResult.Result func context))]))))]))))])]
     [(ResultCompilerOptimizeVerify.Err _)
       (OptFunctionCtxResult.Result func context)]))
 

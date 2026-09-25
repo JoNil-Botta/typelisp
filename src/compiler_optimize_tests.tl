@@ -69086,36 +69086,34 @@
     blocks
     compiler_ir_types.CompilerIrFunctionAbi.Ordinary))
 
-;; The loads left in `pre` (the preheader) and in `arm` after one LICM run,
-;; packed as `pre * 10 + arm`: 10 is a hoisted read, 1 one that stayed.
+(define (opt-licm-bound-optimize
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [late? : bool]) : compiler_ir_types.CompilerIrFunction
+  (match (compiler_optimize.opt-licm-function-with-context-result-and-direct-call-clean
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (compiler_optimize.opt-cfg-context-build
+      (compiler_optimize.compiler-opt-global-shared-view blocks))
+    false
+    (opt_i64_i64_map.with-capacity 1)
+    (opt_i64_i64_map.with-capacity 1)
+    (compiler_optimize.opt-global-cell-summary-empty)
+    late?
+    (opt-licm-bound-function blocks))
+    [(compiler_optimize.OptFunctionCtxResult.Result next _) next]))
+
+;; pre * 10 + arm: ordinary hoists are 10, retained reads 1, guarded reads 0.
 (define (opt-licm-bound-run [mode : i64] [late? : bool]) : i64
   (let
-    [blocks : compiler_ir_types.CompilerIrBlockList
-      (opt-licm-bound-blocks mode)]
-    [func : compiler_ir_types.CompilerIrFunction
-      (opt-licm-bound-function
-        (compiler_ir_types.compiler-ir-global-shared-view blocks))]
-    [result : compiler_ir_types.CompilerIrFunction
-      (match (compiler_optimize.opt-licm-function-with-context-result-and-direct-call-clean
-        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        (compiler_optimize.opt-cfg-context-build
-          (compiler_ir_types.compiler-ir-global-shared-view blocks))
-        false
-        (opt_i64_i64_map.with-capacity 1)
-        (opt_i64_i64_map.with-capacity 1)
-        (compiler_optimize.opt-global-cell-summary-empty)
-        late?
-        func)
-        [(compiler_optimize.OptFunctionCtxResult.Result next _) next])]
-    [out : compiler_ir_types.CompilerIrBlockList
-      (compiler_optimize.opt-function-blocks result)]
+    [out
+      (compiler_optimize.opt-function-blocks
+        (opt-licm-bound-optimize (opt-licm-bound-blocks mode) late?))]
     (+
       (*
-        (opt-licm-multi-exit-count-loads
-          (compiler_ir_types.compiler-ir-global-shared-view out)
+        (opt-count-load-label-blocks
+          (compiler_optimize.compiler-opt-global-shared-view out)
           (compiler_ir_types.compiler-ir-label "pre"))
         10)
-      (opt-licm-multi-exit-count-loads
+      (opt-count-load-label-blocks
         out
         (compiler_ir_types.compiler-ir-label "arm")))))
 
@@ -69139,9 +69137,388 @@
       [(not (= (opt-licm-bound-run 12 false) kept)) 15]
       ;; The post-BCE run takes the same rule: the versioner's guard is the
       ;; proof a fast copy's read carries there.
-      [(not (= (opt-licm-bound-run 0 true) kept)) 11]
+      [(not (= (opt-licm-bound-run 0 true) 0)) 11]
       [(not (= (opt-licm-bound-run 2 true) hoisted)) 12]
       [else 42])))
+
+;; Mutations of the checked conditional read isolate each guarded-hoist premise.
+;; 1 writes the word, 2 varies the index, 3 varies the bound, 4 checks too late,
+;; 5 has no check, 6 tests ordinary proved motion, 7 shares the preheader twice.
+;; 8 and 10 use opposite unsigned branch edges, 9 uses a signed comparison,
+;; 11 compares against a different descriptor's length, and 12/13 have early
+;; exits that return or continue into a call.
+(define (opt-licm-guard-test-blocks [mode : i64]) : compiler_ir_types.CompilerIrBlockList
+  (let
+    [blocks
+      (compiler_ir_types.compiler-ir-block-seq-from-list
+        (opt-licm-bound-blocks
+          (if (= mode 6)
+            1
+            0)))]
+    [out (compiler_ir_types.compiler-ir-block-builder-new)]
+    [pos : i64 0]
+    (begin
+      (while (< pos blocks.len)
+        (begin
+          (match (compiler_ir_types.compiler-ir-block-seq-ref blocks pos)
+            [(compiler_ir_types.CompilerIrBlock.Block label instrs)
+              (if (and
+                (or (and (>= mode 8) (<= mode 11)) (>= mode 14))
+                (= label (compiler_ir_types.compiler-ir-label "loop")))
+                (let
+                  [kept (compiler_ir_types.compiler-ir-instr-builder-new)]
+                  [cursor : i64 0]
+                  (begin
+                    (while (< cursor instrs.len)
+                      (begin
+                        (match (compiler_ir_types.compiler-ir-instr-seq-ref
+                          instrs
+                          cursor)
+                          [(compiler_ir_types.CompilerIrInstr.Branch _ yes no)
+                            (begin
+                              (when
+                                (>= mode 17)
+                                (compiler_ir_types.compiler-ir-instr-builder-push!
+                                  (&mut kept)
+                                  (compiler_ir_types.CompilerIrInstr.BinOp
+                                    30
+                                    (compiler_ir_types.CompilerIrBinOp.Sub)
+                                    (compiler_ir_types.CompilerIrValue.Var
+                                      (if (= mode 17)
+                                        12
+                                        2))
+                                    (compiler_ir_types.CompilerIrValue.Var 2)
+                                    (compiler_ast_types.AstType.I64))))
+                              (compiler_ir_types.compiler-ir-instr-builder-push!
+                                (&mut kept)
+                                (compiler_ir_types.CompilerIrInstr.BinOp
+                                  29
+                                  (cond
+                                    [(= mode 10)
+                                      (compiler_ir_types.CompilerIrBinOp.Ge)]
+                                    [(= mode 16)
+                                      (compiler_ir_types.CompilerIrBinOp.Ne)]
+                                    [(>= mode 14)
+                                      (compiler_ir_types.CompilerIrBinOp.Eq)]
+                                    [else
+                                      (compiler_ir_types.CompilerIrBinOp.Lt)])
+                                  (compiler_ir_types.CompilerIrValue.Var
+                                    (cond
+                                      [(>= mode 17) 30]
+                                      [(or (= mode 14) (= mode 16)) 12]
+                                      [else 2]))
+                                  (if (>= mode 14)
+                                    (compiler_ir_types.CompilerIrValue.I64 3)
+                                    (compiler_ir_types.CompilerIrValue.Var
+                                      (if (= mode 11)
+                                        9
+                                        5)))
+                                  (if (= mode 9)
+                                    (compiler_ast_types.AstType.I64)
+                                    (compiler_ast_types.AstType.U64))))
+                              (compiler_ir_types.compiler-ir-instr-builder-push!
+                                (&mut kept)
+                                (compiler_ir_types.CompilerIrInstr.Branch
+                                  (compiler_ir_types.CompilerIrValue.Var 29)
+                                  (if (or (= mode 10) (= mode 16))
+                                    no
+                                    yes)
+                                  (if (or (= mode 10) (= mode 16))
+                                    yes
+                                    no))))]
+                          [_
+                            (compiler_ir_types.compiler-ir-instr-builder-push!
+                              (&mut kept)
+                              (compiler_ir_types.compiler-ir-instr-seq-ref
+                                instrs
+                                cursor))])
+                        (set! cursor (+ cursor 1))))
+                    (compiler_ir_types.compiler-ir-block-builder-push!
+                      (&mut out)
+                      (compiler_ir_types.CompilerIrBlock.Block
+                        label
+                        (compiler_ir_types.compiler-ir-instr-builder-to-seq
+                          kept)))))
+                (if (= label (compiler_ir_types.compiler-ir-label "arm"))
+                  (let
+                    [kept (compiler_ir_types.compiler-ir-instr-builder-new)]
+                    [cursor : i64 0]
+                    (begin
+                      (while (< cursor instrs.len)
+                        (begin
+                          (match (compiler_ir_types.compiler-ir-instr-seq-ref
+                            instrs
+                            cursor)
+                            [(compiler_ir_types.CompilerIrInstr.BoundsCheck
+                                index
+                                length
+                                check-label)
+                              (unless
+                                (or
+                                  (= mode 4)
+                                  (= mode 5)
+                                  (and (>= mode 8) (<= mode 11)))
+                                (compiler_ir_types.compiler-ir-instr-builder-push!
+                                  (&mut kept)
+                                  (compiler_ir_types.CompilerIrInstr.BoundsCheck
+                                    (if (= mode 2)
+                                      (compiler_ir_types.CompilerIrValue.Var 12)
+                                      index)
+                                    (if (= mode 3)
+                                      (compiler_ir_types.CompilerIrValue.Var 12)
+                                      length)
+                                    check-label)))]
+                            [(compiler_ir_types.CompilerIrInstr.Gep
+                                dst
+                                base
+                                index
+                                ty)
+                              (compiler_ir_types.compiler-ir-instr-builder-push!
+                                (&mut kept)
+                                (compiler_ir_types.CompilerIrInstr.Gep
+                                  dst
+                                  base
+                                  (if (= mode 2)
+                                    (compiler_ir_types.CompilerIrValue.Var 12)
+                                    index)
+                                  ty))]
+                            [(compiler_ir_types.CompilerIrInstr.Jump target)
+                              (compiler_ir_types.compiler-ir-instr-builder-push!
+                                (&mut kept)
+                                (if (or (= mode 12) (= mode 13))
+                                  (compiler_ir_types.CompilerIrInstr.Branch
+                                    (compiler_ir_types.CompilerIrValue.Var 0)
+                                    target
+                                    (compiler_ir_types.compiler-ir-label "exit"))
+                                  (compiler_ir_types.CompilerIrInstr.Jump
+                                    target)))]
+                            [(compiler_ir_types.CompilerIrInstr.Load dst src ty)
+                              (begin
+                                (when
+                                  (= mode 1)
+                                  (compiler_ir_types.compiler-ir-instr-builder-push!
+                                    (&mut kept)
+                                    (compiler_ir_types.CompilerIrInstr.StorePtr
+                                      (compiler_optimize.compiler-opt-global-shared-view
+                                        src)
+                                      (compiler_ir_types.CompilerIrValue.I64 99)
+                                      (compiler_optimize.compiler-opt-global-shared-view
+                                        ty))))
+                                (compiler_ir_types.compiler-ir-instr-builder-push!
+                                  (&mut kept)
+                                  (compiler_ir_types.CompilerIrInstr.Load
+                                    dst
+                                    (compiler_optimize.compiler-opt-global-shared-view
+                                      src)
+                                    (compiler_optimize.compiler-opt-global-shared-view
+                                      ty)))
+                                (when
+                                  (= mode 4)
+                                  (compiler_ir_types.compiler-ir-instr-builder-push!
+                                    (&mut kept)
+                                    (compiler_ir_types.CompilerIrInstr.BoundsCheck
+                                      (compiler_ir_types.CompilerIrValue.Var 2)
+                                      (compiler_ir_types.CompilerIrValue.Var 5)
+                                      (compiler_ir_types.compiler-ir-label
+                                        "late_check"))))
+                                (when
+                                  (= mode 7)
+                                  (compiler_ir_types.compiler-ir-instr-builder-push!
+                                    (&mut kept)
+                                    (compiler_ir_types.CompilerIrInstr.Load
+                                      28
+                                      src
+                                      ty))))]
+                            [_
+                              (compiler_ir_types.compiler-ir-instr-builder-push!
+                                (&mut kept)
+                                (compiler_ir_types.compiler-ir-instr-seq-ref
+                                  instrs
+                                  cursor))])
+                          (set! cursor (+ cursor 1))))
+                      (compiler_ir_types.compiler-ir-block-builder-push!
+                        (&mut out)
+                        (compiler_ir_types.CompilerIrBlock.Block
+                          label
+                          (compiler_ir_types.compiler-ir-instr-builder-to-seq
+                            kept)))))
+                  (compiler_ir_types.compiler-ir-block-builder-push!
+                    (&mut out)
+                    (compiler_ir_types.CompilerIrBlock.Block
+                      label
+                      (if (and
+                        (= mode 13)
+                        (= label (compiler_ir_types.compiler-ir-label "exit")))
+                        (opt-test-instrs-with-tail
+                          instrs
+                          (compiler_ir_types.CompilerIrInstr.Call
+                            30
+                            (opt-test-symbol "after-probe")
+                            (compiler_ir_types.CompilerIrCallArgs.Nil)
+                            (compiler_ast_types.AstType.Unit)))
+                        instrs)))))])
+          (set! pos (+ pos 1))))
+      (compiler_ir_types.compiler-ir-block-builder-to-list out))))
+
+(test
+  licm-guarded-element-load
+  (let
+    [mode : i64 0]
+    (while (< mode 19)
+      (let
+        [input (opt-licm-guard-test-blocks mode)]
+        [result (opt-licm-bound-optimize input true)]
+        [blocks
+          (compiler_optimize.opt-function-blocks
+            (compiler_optimize.compiler-opt-global-shared-view result))]
+        [diamonds : i64
+          (cond
+            [(or (= mode 0) (= mode 8) (= mode 10) (= mode 15) (= mode 18)) 1]
+            [(= mode 7) 2]
+            [else 0])]
+        (begin
+          (test.assert-true
+            (compiler_optimize.opt-verify-ok?
+              (compiler_optimize.opt-verify-function result))
+            "guarded loads preserve SSA dominance and phi predecessor edges")
+          (test.assert-i64-eq
+            (opt-count-phi-blocks
+              (compiler_optimize.compiler-opt-global-shared-view blocks))
+            (+ 3 diamonds)
+            "one phi per guarded load, with ordinary proved loads unchanged")
+          (test.assert-i64-eq
+            (opt-count-load-label-blocks
+              (compiler_optimize.compiler-opt-global-shared-view blocks)
+              (compiler_ir_types.compiler-ir-label "arm"))
+            (if (or (> diamonds 0) (= mode 6))
+              0
+              1)
+            "only invariant checked reads without a loop write leave the arm")
+          (test.assert-i64-eq
+            (match (compiler_optimize.opt-cfg-find-block
+              blocks
+              (compiler_ir_types.compiler-ir-label "arm"))
+              [(compiler_optimize.OptMaybeBlock.Some
+                  (compiler_ir_types.CompilerIrBlock.Block _ instrs))
+                (opt-count-bounds-instrs instrs)]
+              [_ -1])
+            (if (or (= mode 5) (and (>= mode 8) (<= mode 11)))
+              0
+              1)
+            "the original aborting check stays in its arm")
+          (set! mode (+ mode 1)))))))
+
+;; A guarded handle's false-edge zero cannot license a dependent descriptor
+;; read at the join. The original element check must still protect that read
+;; when LICM visits the function again.
+(test
+  licm-guarded-handle-dereference
+  (let
+    [mode : i64 0]
+    (while (< mode 5)
+      (begin
+        (let
+          [source
+            (compiler_ir_types.compiler-ir-block-seq-from-list
+              (opt-licm-bound-blocks 5))]
+          [out (compiler_ir_types.compiler-ir-block-builder-new)]
+          [pos : i64 0]
+          (begin
+            (while (< pos source.len)
+              (begin
+                (match (compiler_ir_types.compiler-ir-block-seq-ref source pos)
+                  [(compiler_ir_types.CompilerIrBlock.Block label instrs)
+                    (let
+                      [next
+                        (cond
+                          [(= label (compiler_ir_types.compiler-ir-label "pre"))
+                            (opt-test-instrs-with-tail
+                              (opt-test-instrs-with-tail
+                                instrs
+                                (if (= mode 2)
+                                  (compiler_ir_types.CompilerIrInstr.Bitcast
+                                    29
+                                    (compiler_ir_types.CompilerIrValue.Var 28)
+                                    (compiler_ast_types.AstType.DynArray 0)
+                                    (compiler_ast_types.AstType.U64))
+                                  (compiler_ir_types.CompilerIrInstr.Mov
+                                    29
+                                    (compiler_ir_types.CompilerIrValue.Var 28)
+                                    (compiler_ast_types.AstType.DynArray 0))))
+                              (compiler_ir_types.CompilerIrInstr.Phi
+                                28
+                                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                                  (compiler_ir_types.CompilerIrValue.Var 1)
+                                  (compiler_ir_types.compiler-ir-label "entry")
+                                  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                                    (if (= mode 4)
+                                      (compiler_ir_types.CompilerIrValue.Var 1)
+                                      (compiler_ir_types.CompilerIrValue.I64 0))
+                                    (compiler_ir_types.compiler-ir-label "alt")
+                                    (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+                                (compiler_ast_types.AstType.DynArray 0)))]
+                          [(= label (compiler_ir_types.compiler-ir-label "arm"))
+                            (let
+                              [kept
+                                (compiler_ir_types.compiler-ir-instr-builder-new)]
+                              [cursor : i64 0]
+                              (begin
+                                (while (< cursor instrs.len)
+                                  (begin
+                                    (compiler_ir_types.compiler-ir-instr-builder-push!
+                                      (&mut kept)
+                                      (match (compiler_ir_types.compiler-ir-instr-seq-ref
+                                        instrs
+                                        cursor)
+                                        [(compiler_ir_types.CompilerIrInstr.Gep
+                                            dst
+                                            _
+                                            _
+                                            ty)
+                                          (compiler_ir_types.CompilerIrInstr.Gep
+                                            dst
+                                            (if (= mode 3)
+                                              (compiler_ir_types.CompilerIrValue.I64
+                                                0)
+                                              (compiler_ir_types.CompilerIrValue.Var
+                                                (if (= mode 0)
+                                                  28
+                                                  29)))
+                                            (compiler_ir_types.CompilerIrValue.I64
+                                              1)
+                                            ty)]
+                                        [_
+                                          (compiler_ir_types.compiler-ir-instr-seq-ref
+                                            instrs
+                                            cursor)]))
+                                    (set! cursor (+ cursor 1))))
+                                (compiler_ir_types.compiler-ir-instr-builder-to-seq
+                                  kept)))]
+                          [else instrs])]
+                      (compiler_ir_types.compiler-ir-block-builder-push!
+                        (&mut out)
+                        (compiler_ir_types.CompilerIrBlock.Block label next)))])
+                (set! pos (+ pos 1))))
+            (let
+              [result
+                (opt-licm-bound-optimize
+                  (compiler_ir_types.compiler-ir-block-builder-to-list out)
+                  true)]
+              (begin
+                (test.assert-true
+                  (compiler_optimize.opt-verify-ok?
+                    (compiler_optimize.opt-verify-function
+                      (compiler_optimize.compiler-opt-global-shared-view result)))
+                  "guarded handle fixture retains valid SSA")
+                (test.assert-i64-eq
+                  (opt-count-load-label-blocks
+                    (compiler_optimize.opt-function-blocks result)
+                    (compiler_ir_types.compiler-ir-label "arm"))
+                  (if (= mode 4)
+                    0
+                    1)
+                  "only the nonnull control permits descriptor motion")))))
+        (set! mode (+ mode 1))))))
 
 ;; --- descriptor-header hoist past the return-shaped suppression ---------------
 ;;

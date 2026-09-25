@@ -1,6 +1,6 @@
 ;; compiler_surface_facts.tl - relocatable checked-prefix facts shared by
 ;; package surface producers and consumers.
-(import stdlib.byte_le)
+(import stdlib.byte_reader)
 (import compiler_surface_identity as surface_identity)
 (import compiler_intern_state as cis)
 (cfg
@@ -13,6 +13,13 @@
     compiler-build-identity
     embedded-stdlib-tlci)
   (import stdlib.byte_buf_core))
+(cfg
+  (any
+    compiler-surface-producer
+    compiler-surface-selftest
+    compiler-build-identity
+    embedded-stdlib-tlci)
+  (import stdlib.byte_le))
 
 (defmacro (surface-facts-shared-view [place : Expr]) : Expr
   `(unsafe
@@ -62,12 +69,6 @@
 (defenum ResultSurfaceTypecheckFactsBuilder
   (Ok SurfaceTypecheckFactsBuilder)
   (Err String))
-
-(defstruct SurfaceTypecheckFactReader
-  (bytes (__tl_dyn-array u8))
-  (offset (__tl_dyn-array i64))
-  (ok (__tl_dyn-array bool))
-  (message (__tl_dyn-array String)))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -917,41 +918,19 @@
             (ResultSurfaceTypecheckFactBytes.Err
               "surface facts: identity is not relocatable")))))))
 
-(define (surface-typecheck-fact-reader-new [bytes : (__tl_dyn-array u8)]) : SurfaceTypecheckFactReader
-  (let
-    [offset : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-    [ok : (__tl_dyn-array bool) (__tl_make-array bool 1)]
-    [message : (__tl_dyn-array String) (__tl_make-array String 1)]
-    (begin
-      (set! (array-ref offset 0) 0)
-      (set! (array-ref ok 0) true)
-      (set! (array-ref message 0) "")
-      (SurfaceTypecheckFactReader bytes offset ok message))))
-
-(define (surface-typecheck-fact-reader-fail!
-  [reader : (& reader SurfaceTypecheckFactReader)]
-  [message : String]) : unit
-  (if (array-ref reader.ok 0)
-    (begin
-      (set! (array-ref reader.ok 0) false)
-      (set! (array-ref reader.message 0) message))
-    unit))
-
 (define (surface-typecheck-fact-reader-u64!
-  [reader : (& reader SurfaceTypecheckFactReader)]) : i64
-  (let
-    [offset : i64 (array-ref reader.offset 0)]
-    (if (or
-      (not (array-ref reader.ok 0))
-      (> offset (- (array-length reader.bytes) 8)))
+  [reader : (&mut reader byte_reader.ByteReader)]) : i64
+  (if (byte_reader.available? reader 8)
+    (byte_reader.read-u64! reader)
+    (let
+      [offset : i64 reader.offset]
       (begin
-        (surface-typecheck-fact-reader-fail!
+        (byte_reader.fail!
           reader
+          byte_reader.error-truncated
+          offset
           "surface facts: truncated u64")
-        -1)
-      (begin
-        (set! (array-ref reader.offset 0) (+ offset 8))
-        (byte_le.read-u64 reader.bytes offset)))))
+        -1))))
 
 (define (surface-typecheck-facts-portable-id-valid?
   [id : i64]
@@ -971,16 +950,17 @@
   [structural-session : cis.InternStructuralSessionHandle]
   [remap : (__tl_dyn-array i64)]) : ResultSurfaceTypecheckFacts
   (let
-    [reader : SurfaceTypecheckFactReader
-      (surface-typecheck-fact-reader-new bytes)]
-    [magic : i64 (surface-typecheck-fact-reader-u64! reader)]
-    [schema : i64 (surface-typecheck-fact-reader-u64! reader)]
-    [macro-prefix-decl-count : i64 (surface-typecheck-fact-reader-u64! reader)]
-    [prefix-decl-count : i64 (surface-typecheck-fact-reader-u64! reader)]
-    [summary-values : i64 (surface-typecheck-fact-reader-u64! reader)]
-    [summary-functions : i64 (surface-typecheck-fact-reader-u64! reader)]
-    [summary-externs : i64 (surface-typecheck-fact-reader-u64! reader)]
-    [clone-count : i64 (surface-typecheck-fact-reader-u64! reader)]
+    [reader : byte_reader.ByteReader
+      (byte_reader.new bytes byte_reader.unlimited-work)]
+    [magic : i64 (surface-typecheck-fact-reader-u64! (&mut reader))]
+    [schema : i64 (surface-typecheck-fact-reader-u64! (&mut reader))]
+    [macro-prefix-decl-count : i64
+      (surface-typecheck-fact-reader-u64! (&mut reader))]
+    [prefix-decl-count : i64 (surface-typecheck-fact-reader-u64! (&mut reader))]
+    [summary-values : i64 (surface-typecheck-fact-reader-u64! (&mut reader))]
+    [summary-functions : i64 (surface-typecheck-fact-reader-u64! (&mut reader))]
+    [summary-externs : i64 (surface-typecheck-fact-reader-u64! (&mut reader))]
+    [clone-count : i64 (surface-typecheck-fact-reader-u64! (&mut reader))]
     (if (or
       (not (= magic surface-typecheck-facts-magic))
       (not (= schema surface-typecheck-facts-schema-version))
@@ -1000,11 +980,14 @@
         [identity-count : i64 (array-length remap)]
         [index : i64 0]
         (begin
-          (while (and (array-ref reader.ok 0) (< index clone-count))
+          (while (and reader.ok? (< index clone-count))
             (let
-              [decl-key : i64 (surface-typecheck-fact-reader-u64! reader)]
-              [root-key : i64 (surface-typecheck-fact-reader-u64! reader)]
-              [call-index : i64 (surface-typecheck-fact-reader-u64! reader)]
+              [decl-key : i64
+                (surface-typecheck-fact-reader-u64! (&mut reader))]
+              [root-key : i64
+                (surface-typecheck-fact-reader-u64! (&mut reader))]
+              [call-index : i64
+                (surface-typecheck-fact-reader-u64! (&mut reader))]
               (if (or
                 (not
                   (surface-typecheck-facts-portable-id-valid?
@@ -1015,9 +998,13 @@
                     root-key
                     identity-count))
                 (< call-index 0))
-                (surface-typecheck-fact-reader-fail!
-                  reader
-                  "surface facts: invalid identity reference")
+                (let
+                  [offset : i64 reader.offset]
+                  (byte_reader.fail!
+                    (&mut reader)
+                    byte_reader.error-invalid
+                    offset
+                    "surface facts: invalid identity reference"))
                 (begin
                   (set!
                     (array-ref decl-keys index)
@@ -1045,10 +1032,9 @@
                 root-keys
                 call-indices)]
             (cond
-              [(not (array-ref reader.ok 0))
-                (ResultSurfaceTypecheckFacts.Err
-                  (surface-facts-array-shared-view reader.message 0))]
-              [(not (= (array-ref reader.offset 0) (array-length reader.bytes)))
+              [(not reader.ok?)
+                (ResultSurfaceTypecheckFacts.Err reader.error-message)]
+              [(not (= reader.offset reader.end))
                 (ResultSurfaceTypecheckFacts.Err
                   "surface facts: trailing payload bytes")]
               [(not (surface-typecheck-facts-valid? facts))

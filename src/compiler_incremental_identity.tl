@@ -10,6 +10,7 @@
 (import stdlib.byte_buf)
 (import stdlib.byte_buf_core)
 (import stdlib.byte_le)
+(import stdlib.byte_reader)
 (import stdlib.crypto_sha256 as sha256)
 (import stdlib.string)
 
@@ -1324,10 +1325,25 @@
 
 (define (compiler-incremental-reader-error
   [reader : (& reader binary.CompilerIncrementalBinaryReader)]) : CompilerIncrementalIdentityError
-  (compiler-incremental-error
-    reader.error-code
-    reader.error-offset
-    (string.copy (& reader.error-message))))
+  (let
+    [code : i64 reader.cursor.error-code]
+    [offset : i64 reader.cursor.error-offset]
+    (cond
+      [(= code byte_reader.error-truncated)
+        (compiler-incremental-error
+          compiler-incremental-error-truncated
+          offset
+          "incremental identity transcript is truncated")]
+      [(= code byte_reader.error-work-limit)
+        (compiler-incremental-error
+          compiler-incremental-error-work-limit
+          offset
+          "incremental identity work limit exceeded")]
+      [else
+        (compiler-incremental-error
+          code
+          offset
+          (string.copy (& reader.cursor.error-message)))])))
 
 (define (compiler-incremental-read-digest!
   [reader : (&mut reader binary.CompilerIncrementalBinaryReader)]) : sha256.Sha256Digest
@@ -1339,7 +1355,7 @@
         (begin
           (set!
             (array-ref octets index)
-            (cast (binary.compiler-incremental-binary-read-u8! reader) : u8))
+            (cast (byte_reader.read-u8! (&mut reader.cursor)) : u8))
           (set! index (+ index 1))))
       (sha256.Sha256Digest octets))))
 
@@ -1349,20 +1365,19 @@
   (let
     [domain : String
       (binary.compiler-incremental-binary-read-string! reader false)]
-    [schema : i64 (binary.compiler-incremental-binary-read-u32! reader)]
-    [material-length : i64
-      (binary.compiler-incremental-binary-read-u64! reader)]
+    [schema : i64 (byte_reader.read-u32! (&mut reader.cursor))]
+    [material-length : i64 (byte_reader.read-u64! (&mut reader.cursor))]
     [digest : sha256.Sha256Digest (compiler-incremental-read-digest! reader)]
     [child : CompilerIncrementalChildIdentity
       (CompilerIncrementalChildIdentity domain schema material-length digest)]
     (begin
-      (if (if reader.ok?
+      (if (if reader.cursor.ok?
         (not (compiler-incremental-child-valid? (& child) limits))
         false)
         (binary.compiler-incremental-binary-fail!
           reader
           compiler-incremental-error-value
-          reader.offset
+          reader.cursor.offset
           "incremental child identity is invalid")
         unit)
       child)))
@@ -1373,19 +1388,19 @@
   (let
     [domain : String
       (binary.compiler-incremental-binary-read-string! reader false)]
-    [schema : i64 (binary.compiler-incremental-binary-read-u32! reader)]
-    [exact-length : i64 (binary.compiler-incremental-binary-read-u64! reader)]
+    [schema : i64 (byte_reader.read-u32! (&mut reader.cursor))]
+    [exact-length : i64 (byte_reader.read-u64! (&mut reader.cursor))]
     [digest : sha256.Sha256Digest (compiler-incremental-read-digest! reader)]
     [content : CompilerIncrementalContentIdentity
       (CompilerIncrementalContentIdentity domain schema exact-length digest)]
     (begin
-      (if (if reader.ok?
+      (if (if reader.cursor.ok?
         (not (compiler-incremental-content-valid? (& content) limits))
         false)
         (binary.compiler-incremental-binary-fail!
           reader
           compiler-incremental-error-value
-          reader.offset
+          reader.cursor.offset
           "incremental content identity is invalid")
         unit)
       content)))
@@ -1443,23 +1458,25 @@
 (define (compiler-incremental-reader-charge-work!
   [reader : (&mut reader binary.CompilerIncrementalBinaryReader)]
   [additional : i64]) : bool
-  (if (or (< additional 0) (> additional (- reader.max-work reader.work)))
+  (if (or
+    (< additional 0)
+    (> additional (- reader.cursor.max-work reader.cursor.work)))
     (begin
       (binary.compiler-incremental-binary-fail!
         reader
         compiler-incremental-error-work-limit
-        reader.offset
+        reader.cursor.offset
         "incremental identity work limit exceeded")
       false)
     (begin
-      (set! reader.work (+ reader.work additional))
+      (set! reader.cursor.work (+ reader.cursor.work additional))
       true)))
 
 (define (compiler-incremental-read-query-kind!
   [reader : (&mut reader binary.CompilerIncrementalBinaryReader)]) : CompilerIncrementalQueryKind
   (let
-    [tag-offset : i64 reader.offset]
-    [tag : i64 (binary.compiler-incremental-binary-read-u8! reader)]
+    [tag-offset : i64 reader.cursor.offset]
+    [tag : i64 (byte_reader.read-u8! (&mut reader.cursor))]
     (cond
       [(= tag 1) (CompilerIncrementalQueryKind.Parse)]
       [(= tag 2) (CompilerIncrementalQueryKind.Typecheck)]
@@ -1495,7 +1512,7 @@
         (binary.compiler-incremental-binary-fail!
           reader
           compiler-incremental-error-owned-limit
-          reader.offset
+          reader.cursor.offset
           "incremental identity record storage exceeds owned-byte limit")
         false)
       (begin
@@ -1514,17 +1531,17 @@
       (binary.compiler-incremental-binary-read-string! reader false)]
     [backend : String
       (binary.compiler-incremental-binary-read-string! reader false)]
-    [opt-level : i64 (binary.compiler-incremental-binary-read-u32! reader)]
-    [debug-byte-offset : i64 reader.offset]
-    [debug-byte : i64 (binary.compiler-incremental-binary-read-u8! reader)]
+    [opt-level : i64 (byte_reader.read-u32! (&mut reader.cursor))]
+    [debug-byte-offset : i64 reader.cursor.offset]
+    [debug-byte : i64 (byte_reader.read-u8! (&mut reader.cursor))]
     [path-remap : String
       (binary.compiler-incremental-binary-read-string! reader false)]
     [generated-source-policy : String
       (binary.compiler-incremental-binary-read-string! reader false)]
-    [count-offset : i64 reader.offset]
-    [count : i64 (binary.compiler-incremental-binary-read-u32! reader)]
+    [count-offset : i64 reader.cursor.offset]
+    [count : i64 (byte_reader.read-u32! (&mut reader.cursor))]
     [allocation-ok? : bool
-      (if (and reader.ok? (<= count limits.max-records))
+      (if (and reader.cursor.ok? (<= count limits.max-records))
         (compiler-incremental-reader-reserve-owned-records! reader count 64)
         false)]
     [extensions : (__tl_dyn-array CompilerIncrementalConfigField)
@@ -1533,27 +1550,26 @@
         (__tl_make-array CompilerIncrementalConfigField 0))]
     [index : i64 0]
     (begin
-      (if (and reader.ok? (> count limits.max-records))
+      (if (and reader.cursor.ok? (> count limits.max-records))
         (binary.compiler-incremental-binary-fail!
           reader
           compiler-incremental-error-record-limit
           count-offset
           "configuration extension count exceeds limit")
         unit)
-      (if (and reader.ok? (not (or (= debug-byte 0) (= debug-byte 1))))
+      (if (and reader.cursor.ok? (not (or (= debug-byte 0) (= debug-byte 1))))
         (binary.compiler-incremental-binary-fail!
           reader
           compiler-incremental-error-value
           debug-byte-offset
           "configuration debug byte must be zero or one")
         unit)
-      (while (and reader.ok? (< index count))
+      (while (and reader.cursor.ok? (< index count))
         (let
-          [frame-start : i64 reader.offset]
-          [payload-length : i64
-            (binary.compiler-incremental-binary-read-u32! reader)]
-          [payload-start : i64 reader.offset]
-          [outer-end : i64 reader.end]
+          [frame-start : i64 reader.cursor.offset]
+          [payload-length : i64 (byte_reader.read-u32! (&mut reader.cursor))]
+          [payload-start : i64 reader.cursor.offset]
+          [outer-end : i64 reader.cursor.end]
           (if (> payload-length limits.max-record-bytes)
             (binary.compiler-incremental-binary-fail!
               reader
@@ -1561,7 +1577,7 @@
               frame-start
               "configuration extension frame exceeds its byte limit")
             (if (not
-              (binary.compiler-incremental-binary-range-present?
+              (byte_reader.range-present?
                 outer-end
                 payload-start
                 payload-length))
@@ -1573,7 +1589,7 @@
               (let
                 [payload-end : i64 (+ payload-start payload-length)]
                 (begin
-                  (set! reader.end payload-end)
+                  (set! reader.cursor.end payload-end)
                   (let
                     [name : String
                       (binary.compiler-incremental-binary-read-string!
@@ -1584,16 +1600,18 @@
                         reader
                         false)]
                     (begin
-                      (if (and reader.ok? (!= reader.offset payload-end))
+                      (if (and
+                        reader.cursor.ok?
+                        (!= reader.cursor.offset payload-end))
                         (binary.compiler-incremental-binary-fail!
                           reader
                           compiler-incremental-error-layout
-                          reader.offset
+                          reader.cursor.offset
                           "configuration extension has trailing bytes")
                         unit)
-                      (set! reader.end outer-end)
+                      (set! reader.cursor.end outer-end)
                       (if (and
-                        reader.ok?
+                        reader.cursor.ok?
                         (> index 0)
                         (not
                           (stdlib.sort.string-less-borrowed?
@@ -1605,7 +1623,7 @@
                           frame-start
                           "configuration field names are duplicate or out of order")
                         unit)
-                      (if reader.ok?
+                      (if reader.cursor.ok?
                         (begin
                           (set!
                             (array-ref extensions index)
@@ -1674,24 +1692,24 @@
         [(= tag 10)
           (CompilerIncrementalInput.OrderedChild
             (binary.compiler-incremental-binary-read-string! reader false)
-            (binary.compiler-incremental-binary-read-u64! reader)
+            (byte_reader.read-u64! (&mut reader.cursor))
             (compiler-incremental-read-child! reader limits))]
         [else
           (begin
             (binary.compiler-incremental-binary-fail!
               reader
               compiler-incremental-error-unknown-tag
-              (- reader.offset 5)
+              (- reader.cursor.offset 5)
               "unknown incremental input tag")
             (CompilerIncrementalInput.LogicalName "invalid" ""))])]
     (begin
-      (if (if reader.ok?
+      (if (if reader.cursor.ok?
         (not (compiler-incremental-input-valid? (& input) limits))
         false)
         (binary.compiler-incremental-binary-fail!
           reader
           (compiler-incremental-input-invalid-code (& input) limits)
-          reader.offset
+          reader.cursor.offset
           "decoded incremental input is invalid")
         unit)
       input)))
@@ -1735,23 +1753,21 @@
             limits.max-string-bytes)]
         [domain : String
           (binary.compiler-incremental-binary-read-string! (&mut reader) false)]
-        [schema-offset : i64 reader.offset]
-        [schema : i64
-          (binary.compiler-incremental-binary-read-u32! (&mut reader))]
+        [schema-offset : i64 reader.cursor.offset]
+        [schema : i64 (byte_reader.read-u32! (&mut reader.cursor))]
         [kind : CompilerIncrementalQueryKind
           (compiler-incremental-read-query-kind! (&mut reader))]
         [build : CompilerIncrementalChildIdentity
           (compiler-incremental-read-child! (&mut reader) limits)]
-        [count-offset : i64 reader.offset]
-        [count : i64
-          (binary.compiler-incremental-binary-read-u32! (&mut reader))]
+        [count-offset : i64 reader.cursor.offset]
+        [count : i64 (byte_reader.read-u32! (&mut reader.cursor))]
         [required-depth : i64
           (if (> count 0)
             3
             2)]
         [allocation-ok? : bool
           (if (and
-            reader.ok?
+            reader.cursor.ok?
             (<= count limits.max-records)
             (>= limits.max-nesting-depth required-depth))
             (compiler-incremental-reader-reserve-owned-records!
@@ -1768,7 +1784,7 @@
         [previous-length : i64 0]
         (begin
           (if (and
-            reader.ok?
+            reader.cursor.ok?
             (not
               (compiler-incremental-string-eq?
                 (& domain)
@@ -1779,7 +1795,9 @@
               0
               "incremental transcript domain is unknown")
             unit)
-          (if (and reader.ok? (!= schema compiler-incremental-identity-schema))
+          (if (and
+            reader.cursor.ok?
+            (!= schema compiler-incremental-identity-schema))
             (binary.compiler-incremental-binary-fail!
               (&mut reader)
               compiler-incremental-error-schema
@@ -1787,7 +1805,7 @@
               "incremental transcript schema is unknown")
             unit)
           (if (and
-            reader.ok?
+            reader.cursor.ok?
             (not
               (compiler-incremental-string-eq?
                 (& build.domain)
@@ -1798,29 +1816,30 @@
               count-offset
               "compiler-build identity has the wrong nominal domain")
             unit)
-          (if (and reader.ok? (> count limits.max-records))
+          (if (and reader.cursor.ok? (> count limits.max-records))
             (binary.compiler-incremental-binary-fail!
               (&mut reader)
               compiler-incremental-error-record-limit
               count-offset
               "incremental transcript record count exceeds limit")
             unit)
-          (if (and reader.ok? (< limits.max-nesting-depth required-depth))
+          (if (and
+            reader.cursor.ok?
+            (< limits.max-nesting-depth required-depth))
             (binary.compiler-incremental-binary-fail!
               (&mut reader)
               compiler-incremental-error-depth-limit
               count-offset
               "incremental transcript exceeds the nesting-depth limit")
             unit)
-          (while (and reader.ok? (< index count))
+          (while (and reader.cursor.ok? (< index count))
             (let
-              [frame-start : i64 reader.offset]
-              [tag : i64
-                (binary.compiler-incremental-binary-read-u8! (&mut reader))]
+              [frame-start : i64 reader.cursor.offset]
+              [tag : i64 (byte_reader.read-u8! (&mut reader.cursor))]
               [payload-length : i64
-                (binary.compiler-incremental-binary-read-u32! (&mut reader))]
-              [payload-start : i64 reader.offset]
-              [query-end : i64 reader.end]
+                (byte_reader.read-u32! (&mut reader.cursor))]
+              [payload-start : i64 reader.cursor.offset]
+              [query-end : i64 reader.cursor.end]
               (if (> payload-length limits.max-record-bytes)
                 (binary.compiler-incremental-binary-fail!
                   (&mut reader)
@@ -1828,7 +1847,7 @@
                   frame-start
                   "incremental input frame exceeds its byte limit")
                 (if (not
-                  (binary.compiler-incremental-binary-range-present?
+                  (byte_reader.range-present?
                     query-end
                     payload-start
                     payload-length))
@@ -1841,7 +1860,7 @@
                     [payload-end : i64 (+ payload-start payload-length)]
                     [frame-length : i64 (+ 5 payload-length)]
                     (begin
-                      (set! reader.end payload-end)
+                      (set! reader.cursor.end payload-end)
                       (let
                         [input : CompilerIncrementalInput
                           (compiler-incremental-read-input!
@@ -1849,23 +1868,25 @@
                             tag
                             limits)]
                         (begin
-                          (if (and reader.ok? (!= reader.offset payload-end))
+                          (if (and
+                            reader.cursor.ok?
+                            (!= reader.cursor.offset payload-end))
                             (binary.compiler-incremental-binary-fail!
                               (&mut reader)
                               compiler-incremental-error-layout
-                              reader.offset
+                              reader.cursor.offset
                               "incremental input frame has trailing bytes")
                             unit)
-                          (set! reader.end query-end)
+                          (set! reader.cursor.end query-end)
                           (if (and
-                            reader.ok?
+                            reader.cursor.ok?
                             (>= previous-start 0)
                             (compiler-incremental-reader-charge-work!
                               (&mut reader)
                               (+ previous-length frame-length))
                             (not
                               (compiler-incremental-range-less?
-                                (& reader.bytes)
+                                (& reader.cursor.bytes)
                                 previous-start
                                 previous-length
                                 frame-start
@@ -1876,7 +1897,7 @@
                               frame-start
                               "incremental input records are duplicate or out of order")
                             unit)
-                          (if (and reader.ok? (> index 0))
+                          (if (and reader.cursor.ok? (> index 0))
                             (let
                               [previous : CompilerIncrementalInput
                                 (owned_view.compiler-owned-array-element-shared-view
@@ -1892,21 +1913,23 @@
                                   "duplicate ordered-child sequence ordinal")
                                 unit))
                             unit)
-                          (if reader.ok?
+                          (if reader.cursor.ok?
                             (begin
                               (set! (array-ref inputs index) input)
                               (set! previous-start frame-start)
                               (set! previous-length frame-length)
                               (set! index (+ index 1)))
                             unit)))))))))
-          (if (and reader.ok? (!= reader.offset (array-length reader.bytes)))
+          (if (and
+            reader.cursor.ok?
+            (!= reader.cursor.offset (array-length reader.cursor.bytes)))
             (binary.compiler-incremental-binary-fail!
               (&mut reader)
               compiler-incremental-error-trailing
-              reader.offset
+              reader.cursor.offset
               "incremental transcript has trailing bytes")
             unit)
-          (if reader.ok?
+          (if reader.cursor.ok?
             (ResultCompilerIncrementalDecodedQuery.Ok
               (CompilerIncrementalDecodedQuery kind build inputs))
             (ResultCompilerIncrementalDecodedQuery.Err

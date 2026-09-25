@@ -42,6 +42,11 @@
 (define error-work-limit : i64
   -2)
 
+;: Error code for a caller's own validation failure when the caller keeps no
+;: error codes of its own.
+(define error-invalid : i64
+  -3)
+
 ;: A work limit that no input can reach.
 (define unlimited-work : i64
   9223372036854775807)

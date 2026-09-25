@@ -145,7 +145,7 @@
         unit))))
 
 (define (surface-ast-read-macro-type-kind-list!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstMacroTypeKindList
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstMacroTypeKindList
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
     [out : ast.AstMacroTypeKindList
@@ -190,7 +190,7 @@
           (set! index (+ index 1)))))))
 
 (define (surface-ast-read-macro-param-list!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstMacroParamList
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstMacroParamList
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array ast.AstMacroParam)
@@ -231,7 +231,7 @@
       [(ast.AstFieldCleanup.Owned) (codec.surface-ast-write-i64! out 2)])))
 
 (define (surface-ast-read-field-cleanup!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstFieldCleanup
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstFieldCleanup
   (let
     [tag : i64 (codec.surface-ast-read-i64! reader)]
     (cond
@@ -275,7 +275,7 @@
           (set! index (+ index 1)))))))
 
 (define (surface-ast-read-field-def-list!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstFieldDefList
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstFieldDefList
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array ast.AstFieldDef)
@@ -310,7 +310,7 @@
         [(ast.AstStructRepr.C) 1]))))
 
 (define (surface-ast-read-struct-repr!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstStructRepr
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstStructRepr
   (let
     [tag : i64 (codec.surface-ast-read-i64! reader)]
     (if (= tag 0)
@@ -342,7 +342,7 @@
           (codec.surface-ast-write-type! out context ty))])))
 
 (define (surface-ast-read-extern-abi!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstExternAbi
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstExternAbi
   (let
     [tag : i64 (codec.surface-ast-read-i64! reader)]
     (cond
@@ -373,7 +373,7 @@
         [(ast.AstExternKind.Function) 1]))))
 
 (define (surface-ast-read-extern-kind!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstExternKind
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstExternKind
   (let
     [tag : i64 (codec.surface-ast-read-i64! reader)]
     (if (= tag 0)
@@ -417,7 +417,7 @@
           (set! index (+ index 1)))))))
 
 (define (surface-ast-read-extern-link-list!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstExternLinkInputList
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstExternLinkInputList
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array ast.AstExternLinkInput)
@@ -460,7 +460,7 @@
         [(ast.AstSpmdParamClass.Varying) 1]))))
 
 (define (surface-ast-read-spmd-param-class!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstSpmdParamClass
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstSpmdParamClass
   (if (= (codec.surface-ast-read-i64! reader) 0)
     ast.AstSpmdParamClass.Uniform
     ast.AstSpmdParamClass.Varying))
@@ -487,7 +487,7 @@
             (set! index (+ index 1))))))))
 
 (define (surface-ast-read-spmd-param-class-list!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstSpmdParamClassList
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstSpmdParamClassList
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array ast.AstSpmdParamClass)
@@ -519,7 +519,7 @@
         [(ast.AstSpmdResultClass.Varying) 2]))))
 
 (define (surface-ast-read-spmd-result-class!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstSpmdResultClass
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstSpmdResultClass
   (let
     [tag : i64 (codec.surface-ast-read-i64! reader)]
     (cond
@@ -562,7 +562,7 @@
         unit))))
 
 (define (surface-ast-read-spmd-specialization-list!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstSpmdSpecializationList
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstSpmdSpecializationList
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array ast.AstSpmdSpecialization)
@@ -606,7 +606,7 @@
           (surface-ast-write-spmd-specialization-list! out (deref items)))])))
 
 (define (surface-ast-read-fn-metadata!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstFnMetadata
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstFnMetadata
   (let
     [tag : i64 (codec.surface-ast-read-i64! reader)]
     (cond
@@ -670,7 +670,7 @@
         unit))))
 
 (define (surface-ast-read-imported-spmd-specialization-list!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstImportedSpmdSpecializationList
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstImportedSpmdSpecializationList
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array ast.AstImportedSpmdSpecialization)
@@ -729,7 +729,7 @@
         unit))))
 
 (define (surface-ast-read-imported-spmd-callable-list!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstImportedSpmdCallableList
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstImportedSpmdCallableList
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array ast.AstImportedSpmdCallable)
@@ -769,7 +769,7 @@
             (deref callables)))])))
 
 (define (surface-ast-read-imported-spmd-metadata!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstImportedSpmdMetadata
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstImportedSpmdMetadata
   (let
     [tag : i64 (codec.surface-ast-read-i64! reader)]
     (cond
@@ -818,7 +818,7 @@
           (surface-ast-write-imported-spmd-metadata! out context imported))])))
 
 (define (surface-ast-read-extern-metadata!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstExternMetadata
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstExternMetadata
   (ast.AstExternMetadata.Metadata
     (surface-ast-read-extern-abi! reader)
     (ci.intern-id-from-renderable (codec.surface-ast-read-name! reader))
@@ -849,7 +849,7 @@
         (codec.surface-ast-write-i64! out 2)])))
 
 (define (surface-ast-read-variant-cleanup!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstVariantPayloadCleanup
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstVariantPayloadCleanup
   (let
     [tag : i64 (codec.surface-ast-read-i64! reader)]
     (cond
@@ -899,7 +899,7 @@
           (set! index (+ index 1)))))))
 
 (define (surface-ast-read-variant-def-list!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstVariantDefList
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstVariantDefList
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array ast.AstVariantDef)
@@ -951,7 +951,7 @@
             (ci.intern-syntax-id-value name)))])))
 
 (define (surface-ast-read-struct-cleanup!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstStructCleanup
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstStructCleanup
   (if (= (codec.surface-ast-read-i64! reader) 0)
     ast.AstStructCleanup.No
     (ast.AstStructCleanup.Fn
@@ -978,7 +978,7 @@
             (ci.intern-syntax-id-value name)))])))
 
 (define (surface-ast-read-enum-cleanup!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstEnumCleanup
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstEnumCleanup
   (if (= (codec.surface-ast-read-i64! reader) 0)
     ast.AstEnumCleanup.No
     (ast.AstEnumCleanup.Fn
@@ -1002,7 +1002,7 @@
           (codec.surface-ast-write-name! out context name))])))
 
 (define (surface-ast-read-maybe-module-name!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstMaybeModuleName
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstMaybeModuleName
   (if (= (codec.surface-ast-read-i64! reader) 0)
     ast.AstMaybeModuleName.No
     (ast.AstMaybeModuleName.Some (codec.surface-ast-read-name! reader))))
@@ -1025,7 +1025,7 @@
           (codec.surface-ast-write-name! out context name))])))
 
 (define (surface-ast-read-maybe-import-alias!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstMaybeImportAlias
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstMaybeImportAlias
   (if (= (codec.surface-ast-read-i64! reader) 0)
     ast.AstMaybeImportAlias.No
     (ast.AstMaybeImportAlias.Some (codec.surface-ast-read-name! reader))))
@@ -1059,7 +1059,7 @@
           (surface-ast-write-maybe-module-name! out context module-name))])))
 
 (define (surface-ast-read-import-kind!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstImportKind
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstImportKind
   (let
     [tag : i64 (codec.surface-ast-read-i64! reader)]
     (cond
@@ -1102,7 +1102,7 @@
           (codec.surface-ast-write-span! out (deref span)))])))
 
 (define (surface-ast-read-import-spec!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstImportSpec
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstImportSpec
   (ast.AstImportSpec.Spec
     (surface-ast-read-import-kind! reader)
     (codec.surface-ast-read-string! reader)
@@ -1139,7 +1139,7 @@
           (set! index (+ index 1)))))))
 
 (define (surface-ast-read-dispatch-variant-list!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstDispatchVariantList
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstDispatchVariantList
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array ast.AstDispatchVariant)
@@ -1199,7 +1199,7 @@
                 (codec.surface-ast-write-string! out key))]))])))
 
 (define (surface-ast-read-decl-meta!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstDeclMeta
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstDeclMeta
   (let
     [tag : i64 (codec.surface-ast-read-i64! reader)]
     (if (or (= tag 0) (= tag 1))
@@ -1221,7 +1221,7 @@
         (ast.ast-decl-meta-runtime-shared-view)))))
 
 (define (surface-ast-read-comptime-decl-meta!
-  [reader : (& reader codec.SurfaceAstReader)]
+  [reader : (&mut reader codec.SurfaceAstReader)]
   [markers : i64]) : ast.AstDeclMeta
   (let
     [generated-tag : i64 (codec.surface-ast-read-i64! reader)]
@@ -1268,7 +1268,8 @@
               structural-session
               (__tl_make-array i64 0))]
           [before : arena.ArenaMark (arena.mark)]
-          [decoded : ast.AstDeclMeta (surface-ast-read-decl-meta! (& reader))]
+          [decoded : ast.AstDeclMeta
+            (surface-ast-read-decl-meta! (&mut reader))]
           [after : arena.ArenaMark (arena.mark)]
           (and
             (codec.surface-ast-reader-valid? (& reader))
@@ -1300,7 +1301,7 @@
               structural-session
               (__tl_make-array i64 0))]
           (begin
-            (surface-ast-read-decl-meta! (& reader))
+            (surface-ast-read-decl-meta! (&mut reader))
             (not (codec.surface-ast-reader-valid? (& reader)))))))))
 
 (cfg
@@ -1427,7 +1428,7 @@
               0)))])))
 
 (define (surface-ast-read-test-metadata!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstTestMetadata
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstTestMetadata
   (let
     [tag : i64 (codec.surface-ast-read-i64! reader)]
     (cond
@@ -1623,7 +1624,7 @@
               (ast.ast-array-shared-view decls.slots (+ decls.offset index)))
             (set! index (+ index 1))))))))
 
-(define (surface-ast-read-decl! [reader : (& reader codec.SurfaceAstReader)]) : ast.AstDecl
+(define (surface-ast-read-decl! [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstDecl
   (let
     [tag : i64 (codec.surface-ast-read-i64! reader)]
     (cond
@@ -1728,7 +1729,7 @@
           (ast.AstDecl.Module (codec.surface-ast-read-name! reader)))])))
 
 (define (surface-ast-read-decl-list!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstDeclList
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstDeclList
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array ast.AstDecl) (__tl_make-array ast.AstDecl count)]
@@ -1770,7 +1771,8 @@
               (ast.ast-decl-path-list-provenance-id (& paths) index 0))
             (set! index (+ index 1))))))))
 
-(define (surface-ast-read-paths! [reader : (& reader codec.SurfaceAstReader)]) : ast.AstDeclPathList
+(define (surface-ast-read-paths!
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstDeclPathList
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array String) (__tl_make-array String count)]
@@ -1810,7 +1812,8 @@
               (array-ref modules.slots (+ modules.offset index)))
             (set! index (+ index 1))))))))
 
-(define (surface-ast-read-modules! [reader : (& reader codec.SurfaceAstReader)]) : ast.AstDeclModuleList
+(define (surface-ast-read-modules!
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstDeclModuleList
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array i64) (__tl_make-array i64 count)]
@@ -1849,7 +1852,7 @@
                 (set! cursor rest))]))
         unit))))
 
-(define (surface-ast-read-seen! [reader : (& reader codec.SurfaceAstReader)]) : sym_i64_env.SymI64Env
+(define (surface-ast-read-seen! [reader : (&mut reader codec.SurfaceAstReader)]) : sym_i64_env.SymI64Env
   (let
     [tag : i64 (codec.surface-ast-read-i64! reader)]
     (cond
@@ -1970,7 +1973,7 @@
                   (codec.surface-ast-write-invalid-name context))))))))))
 
 (define (surface-ast-decode-pools!
-  [reader : (& reader codec.SurfaceAstReader)]
+  [reader : (&mut reader codec.SurfaceAstReader)]
   [pools : ast.AstNodePoolContext]
   [type-count : i64]
   [expr-count : i64]) : unit
@@ -2019,11 +2022,11 @@
     [expected-identity-count : i64 (array-length identity-remap)]
     [reader : codec.SurfaceAstReader
       (codec.surface-ast-reader-new bytes structural-session identity-remap)]
-    [magic : i64 (codec.surface-ast-read-i64! reader)]
-    [schema : i64 (codec.surface-ast-read-i64! reader)]
-    [identity-count : i64 (codec.surface-ast-read-i64! reader)]
-    [type-count : i64 (codec.surface-ast-read-count! reader)]
-    [expr-count : i64 (codec.surface-ast-read-count! reader)]
+    [magic : i64 (codec.surface-ast-read-i64! (&mut reader))]
+    [schema : i64 (codec.surface-ast-read-i64! (&mut reader))]
+    [identity-count : i64 (codec.surface-ast-read-i64! (&mut reader))]
+    [type-count : i64 (codec.surface-ast-read-count! (&mut reader))]
+    [expr-count : i64 (codec.surface-ast-read-count! (&mut reader))]
     (if (or
       (not (= magic surface-ast-magic))
       (not (= schema surface-ast-schema-version))
@@ -2032,19 +2035,19 @@
         "surface ast: bad magic, schema, or identity binding")
       (begin
         (surface-ast-decode-pools!
-          (& reader)
+          (&mut reader)
           (owned_view.compiler-owned-shared-view pools)
           type-count
           expr-count)
         (let
-          [decls : ast.AstDeclList (surface-ast-read-decl-list! (& reader))]
-          [paths : ast.AstDeclPathList (surface-ast-read-paths! (& reader))]
+          [decls : ast.AstDeclList (surface-ast-read-decl-list! (&mut reader))]
+          [paths : ast.AstDeclPathList (surface-ast-read-paths! (&mut reader))]
           [modules : ast.AstDeclModuleList
-            (surface-ast-read-modules! (& reader))]
-          [seen : sym_i64_env.SymI64Env (surface-ast-read-seen! (& reader))]
+            (surface-ast-read-modules! (&mut reader))]
+          [seen : sym_i64_env.SymI64Env (surface-ast-read-seen! (&mut reader))]
           [_c-signatures : unit
             (codec.surface-ast-validate-c-function-signatures!
-              (& reader)
+              (&mut reader)
               (owned_view.compiler-owned-shared-view pools))]
           (cond
             [(not (codec.surface-ast-reader-valid? (& reader)))

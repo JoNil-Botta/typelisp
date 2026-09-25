@@ -13,7 +13,7 @@
 (import compiler_intern as ci)
 (import compiler_intern_state as cis)
 (import compiler_surface_binary as binary)
-(import stdlib.byte_le)
+(import stdlib.byte_reader)
 
 (defmacro (surface-identity-shared-view [place : Expr]) : Expr
   `(unsafe
@@ -32,6 +32,13 @@
     compiler-build-identity
     embedded-stdlib-tlci)
   (import stdlib.byte_buf_core))
+(cfg
+  (any
+    compiler-surface-producer
+    compiler-surface-selftest
+    compiler-build-identity
+    embedded-stdlib-tlci)
+  (import stdlib.byte_le))
 
 (defstruct SurfaceIdentityKey
   (package-name String)
@@ -57,12 +64,6 @@
 (defstruct SurfaceIdentityHydration
   (key SurfaceIdentityKey)
   (remap (__tl_dyn-array i64)))
-
-(defstruct SurfaceIdentityReader
-  (bytes (__tl_dyn-array u8))
-  (offset (__tl_dyn-array i64))
-  (ok (__tl_dyn-array bool))
-  (message (__tl_dyn-array String)))
 
 (defenum ResultSurfaceIdentityPayload
   (Ok SurfaceIdentityPayload)
@@ -595,72 +596,52 @@
           (set! ok false)))
       ok)))
 
-(define (surface-identity-reader-new [bytes : (__tl_dyn-array u8)]) : SurfaceIdentityReader
-  (let
-    [offset : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-    [ok : (__tl_dyn-array bool) (__tl_make-array bool 1)]
-    [message : (__tl_dyn-array String) (__tl_make-array String 1)]
-    (begin
-      (set! (array-ref offset 0) 0)
-      (set! (array-ref ok 0) true)
-      (set! (array-ref message 0) "")
-      (SurfaceIdentityReader bytes offset ok message))))
-
-(define (surface-identity-reader-fail!
-  [reader : (& reader SurfaceIdentityReader)]
-  [message : String]) : unit
-  (if (array-ref reader.ok 0)
-    (begin
-      (set! (array-ref reader.ok 0) false)
-      (set! (array-ref reader.message 0) message))
-    unit))
-
 (define (surface-identity-reader-u64!
-  [reader : (& reader SurfaceIdentityReader)]) : i64
-  (let
-    [offset : i64 (array-ref reader.offset 0)]
-    (if (or
-      (not (array-ref reader.ok 0))
-      (> offset (- (array-length reader.bytes) 8)))
+  [reader : (&mut reader byte_reader.ByteReader)]) : i64
+  (if (byte_reader.available? reader 8)
+    (byte_reader.read-u64! reader)
+    (let
+      [offset : i64 reader.offset]
       (begin
-        (surface-identity-reader-fail! reader "surface identity: truncated u64")
-        -1)
-      (begin
-        (set! (array-ref reader.offset 0) (+ offset 8))
-        (byte_le.read-u64 reader.bytes offset)))))
+        (byte_reader.fail!
+          reader
+          byte_reader.error-truncated
+          offset
+          "surface identity: truncated u64")
+        -1))))
 
 (define (surface-identity-reader-string!
-  [reader : (& reader SurfaceIdentityReader)]) : String
+  [reader : (&mut reader byte_reader.ByteReader)]) : String
   (let
-    [len : i64 (surface-identity-reader-u64! reader)]
-    [offset : i64 (array-ref reader.offset 0)]
-    (if (or
-      (< len 0)
-      (> offset (array-length reader.bytes))
-      (> len (- (array-length reader.bytes) offset)))
-      (begin
-        (surface-identity-reader-fail!
-          reader
-          "surface identity: truncated string")
-        "")
+    [len : i64 (surface-identity-reader-u64! (&mut reader))]
+    [offset : i64 reader.offset]
+    (if (and (>= len 0) (byte_reader.available? reader len))
       (let
         [value : String
           (binary.surface-binary-bytes->string reader.bytes offset len)]
         (begin
-          (set! (array-ref reader.offset 0) (+ offset len))
-          value)))))
+          (byte_reader.skip! reader len)
+          value))
+      (begin
+        (byte_reader.fail!
+          reader
+          byte_reader.error-truncated
+          offset
+          "surface identity: truncated string")
+        ""))))
 
 (define (surface-identity-safe-count? [count : i64]) : bool
   (and (>= count 0) (<= count surface-identity-max-count)))
 
 (define (surface-identity-decode [bytes : (__tl_dyn-array u8)]) : ResultSurfaceIdentityPayload
   (let
-    [reader : SurfaceIdentityReader (surface-identity-reader-new bytes)]
-    [magic : i64 (surface-identity-reader-u64! reader)]
-    [schema : i64 (surface-identity-reader-u64! reader)]
-    [module-count : i64 (surface-identity-reader-u64! reader)]
-    [source-count : i64 (surface-identity-reader-u64! reader)]
-    [generated-count : i64 (surface-identity-reader-u64! reader)]
+    [reader : byte_reader.ByteReader
+      (byte_reader.new bytes byte_reader.unlimited-work)]
+    [magic : i64 (surface-identity-reader-u64! (&mut reader))]
+    [schema : i64 (surface-identity-reader-u64! (&mut reader))]
+    [module-count : i64 (surface-identity-reader-u64! (&mut reader))]
+    [source-count : i64 (surface-identity-reader-u64! (&mut reader))]
+    [generated-count : i64 (surface-identity-reader-u64! (&mut reader))]
     (if (or
       (not (= magic surface-identity-magic))
       (not (= schema surface-identity-schema-version))
@@ -670,10 +651,11 @@
       (ResultSurfaceIdentityPayload.Err
         "surface identity: bad magic, schema, or count")
       (let
-        [package-name : String (surface-identity-reader-string! reader)]
-        [source-hash : String (surface-identity-reader-string! reader)]
-        [compiler-build : String (surface-identity-reader-string! reader)]
-        [configuration : String (surface-identity-reader-string! reader)]
+        [package-name : String (surface-identity-reader-string! (&mut reader))]
+        [source-hash : String (surface-identity-reader-string! (&mut reader))]
+        [compiler-build : String
+          (surface-identity-reader-string! (&mut reader))]
+        [configuration : String (surface-identity-reader-string! (&mut reader))]
         [modules : (__tl_dyn-array String)
           (__tl_make-array String module-count)]
         [source-names : (__tl_dyn-array String)
@@ -682,32 +664,36 @@
           (__tl_make-array SurfaceGeneratedIdentity generated-count)]
         [index : i64 0]
         (begin
-          (while (and (array-ref reader.ok 0) (< index module-count))
+          (while (and reader.ok? (< index module-count))
             (begin
               (set!
                 (array-ref modules index)
-                (surface-identity-reader-string! reader))
+                (surface-identity-reader-string! (&mut reader)))
               (set! index (+ index 1))))
           (set! index 0)
-          (while (and (array-ref reader.ok 0) (< index source-count))
+          (while (and reader.ok? (< index source-count))
             (begin
               (set!
                 (array-ref source-names index)
-                (surface-identity-reader-string! reader))
+                (surface-identity-reader-string! (&mut reader)))
               (set! index (+ index 1))))
           (set! index 0)
-          (while (and (array-ref reader.ok 0) (< index generated-count))
+          (while (and reader.ok? (< index generated-count))
             (let
-              [flags : i64 (surface-identity-reader-u64! reader)]
-              [ref0 : i64 (surface-identity-reader-u64! reader)]
-              [ref1 : i64 (surface-identity-reader-u64! reader)]
-              [ref2 : i64 (surface-identity-reader-u64! reader)]
-              [name : String (surface-identity-reader-string! reader)]
+              [flags : i64 (surface-identity-reader-u64! (&mut reader))]
+              [ref0 : i64 (surface-identity-reader-u64! (&mut reader))]
+              [ref1 : i64 (surface-identity-reader-u64! (&mut reader))]
+              [ref2 : i64 (surface-identity-reader-u64! (&mut reader))]
+              [name : String (surface-identity-reader-string! (&mut reader))]
               (begin
                 (if (or (< flags 0) (> flags 7))
-                  (surface-identity-reader-fail!
-                    reader
-                    "surface identity: invalid generated identity flags")
+                  (let
+                    [offset : i64 reader.offset]
+                    (byte_reader.fail!
+                      (&mut reader)
+                      byte_reader.error-invalid
+                      offset
+                      "surface identity: invalid generated identity flags"))
                   unit)
                 (set!
                   (array-ref generated index)
@@ -734,10 +720,9 @@
             [payload : SurfaceIdentityPayload
               (SurfaceIdentityPayload key source-names generated)]
             (cond
-              [(not (array-ref reader.ok 0))
-                (ResultSurfaceIdentityPayload.Err
-                  (surface-identity-string-array-shared-view reader.message 0))]
-              [(not (= (array-ref reader.offset 0) (array-length reader.bytes)))
+              [(not reader.ok?)
+                (ResultSurfaceIdentityPayload.Err reader.error-message)]
+              [(not (= reader.offset reader.end))
                 (ResultSurfaceIdentityPayload.Err
                   "surface identity: trailing payload bytes")]
               [(not (surface-identity-payload-valid? (& payload)))

@@ -2,6 +2,7 @@
 ;; This module is used by the payload builder and is not linked into `typelisp`.
 (import compiler_ctfe as ctfe)
 (import stdlib.byte_buf_core)
+(import stdlib.byte_le)
 (import stdlib.string)
 
 (define (compiler-embedded-stdlib-tlci-encoder-prefix) : String
@@ -582,18 +583,6 @@
       (compiler-embedded-stdlib-tlci-encoder-finish-bits! (&mut writer))
       writer)))
 
-(define (compiler-embedded-stdlib-tlci-encoder-push-i64-le!
-  [out : (&mut out byte_buf_core.ByteBufBuilder)]
-  [value : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index 8)
-      (begin
-        (byte_buf_core.byte-buf-builder-push
-          out
-          (cast (bit-and (shr value (* index 8)) 255) : u8))
-        (set! index (+ index 1))))))
-
 (define (compiler-embedded-stdlib-tlci-encoder-append-lengths!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [codes : (& codes CompilerEmbeddedStdlibTlciEncoderCodes)]) : unit
@@ -623,12 +612,8 @@
       (byte_buf_core.byte-buf-builder-append-string
         (&mut out)
         (compiler-embedded-stdlib-tlci-encoder-prefix))
-      (compiler-embedded-stdlib-tlci-encoder-push-i64-le!
-        (&mut out)
-        frequencies.raw-len)
-      (compiler-embedded-stdlib-tlci-encoder-push-i64-le!
-        (&mut out)
-        writer.bits)
+      (byte_le.push-u64! (&mut out) frequencies.raw-len)
+      (byte_le.push-u64! (&mut out) writer.bits)
       (compiler-embedded-stdlib-tlci-encoder-append-lengths!
         (&mut out)
         main-codes)

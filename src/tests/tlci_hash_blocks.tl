@@ -1,6 +1,7 @@
 ;; The digest polynomial is format-stable. Check every short subrange against
 ;; bytewise modular arithmetic, including maximal bytes and incoming hashes.
 (import tlci_core as tlci)
+(import tlci_core_tests)
 (import stdlib.test)
 (import stdlib.arena)
 
@@ -24,7 +25,7 @@
     [bytes : (__tl_dyn-array u8)
       (if (= pattern 0)
         (__tl_make-array u8 n)
-        (tlci.tlci-test-hash-bytes
+        (tlci_core_tests.tlci-test-hash-bytes
           n
           (if (= pattern 1)
             -1
@@ -79,7 +80,7 @@
     [bytes : (__tl_dyn-array u8)
       (if (= pattern 0)
         (__tl_make-array u8 (+ n 32))
-        (tlci.tlci-test-hash-bytes
+        (tlci_core_tests.tlci-test-hash-bytes
           (+ n 32)
           (if (= pattern 1)
             -1

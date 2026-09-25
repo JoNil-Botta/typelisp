@@ -20,6 +20,8 @@
 (import sym_i64_env)
 (import tlci_core as tlci)
 (import tlci_loader)
+(import tlci_core_tests)
+(import tlci_loader_tests)
 
 (define (discovery-test-roots) : roots_vec.Vec
   (let
@@ -308,13 +310,13 @@
   [owner : i64]) : bool
   (in-arena
     (arena.Arena owner)
-    (match (tlci_loader.tlci-loader-test-emit-with-real-fixup)
+    (match (tlci_loader_tests.tlci-loader-test-emit-with-real-fixup)
       [(tlci.ResultTlciBytes.Err _) false]
       [(tlci.ResultTlciBytes.Ok bytes)
         (match (tlci_loader.tlci-loader-load-from-bytes-with-host
           owner
           bytes
-          (tlci.tlci-test-host-callback-table))
+          (tlci_core_tests.tlci-test-host-callback-table))
           [(tlci_loader.ResultTlciLoadedImage.Err _) false]
           [(tlci_loader.ResultTlciLoadedImage.Ok loaded)
             (=
@@ -332,7 +334,7 @@
                     tlci.tlci-callback-abi-version
                     "abcdef0")
                   (load.CompilerLoadDependencyCatalogImage.Some
-                    (tlci_loader.tlci-loader-test-image 0))
+                    (tlci_loader_tests.tlci-loader-test-image 0))
                   (tlci.tlci-spmd-callables-empty)
                   (load.CompilerLoadDependencyCatalogStatus.TrustedCode loaded)))
               0)])])))

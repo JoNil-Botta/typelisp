@@ -35,6 +35,7 @@
 (import stdlib.hashmap)
 (import (hashmap.hashmap String i64) as doc_path_map)
 (import stdlib.string)
+(import source_text_core as source_text)
 (import sym_i64_env)
 
 (defenum DocMaybeString
@@ -607,9 +608,6 @@
             (owned_view.compiler-owned-shared-view report))))
       (doc_test.doc-test-run-report-status report))))
 
-(define (doc-flag? [value : String]) : bool
-  (and (> (string.string-length value) 0) (= (string.string-ref value 0) '-')))
-
 (define (doc-stdlib-roots [idx : i64]) : doc_svec.Vec
   (let
     [i : i64 idx]
@@ -662,36 +660,6 @@
       (doc-print-wrote output-path)
       0)))
 
-(define (doc-test-batch-line-end [text : String] [start : i64] [n : i64]) : i64
-  (let
-    [i : i64 start]
-    [keep : bool true]
-    (begin
-      (while keep
-        (if (< i n)
-          (if (or
-            (= (string.string-ref text i) '\n')
-            (= (string.string-ref text i) '\r'))
-            (set! keep false)
-            (set! i (+ i 1)))
-          (set! keep false)))
-      i)))
-
-(define (doc-test-batch-next-line-start
-  [text : String]
-  [line-end : i64]
-  [n : i64]) : i64
-  (begin
-    (unless (< line-end n) (return line-end))
-    (let
-      [c : char (string.string-ref text line-end)]
-      (begin
-        (unless (= c '\r') (return (+ line-end 1)))
-        (unless (< (+ line-end 1) n) (return (+ line-end 1)))
-        (if (= (string.string-ref text (+ line-end 1)) '\n')
-          (+ line-end 2)
-          (+ line-end 1))))))
-
 (define (doc-test-batch-paths-from-text [text : String]) : doc_svec.Vec
   (let
     [n : i64 (string.string-length text)]
@@ -700,22 +668,13 @@
     (begin
       (while (< i n)
         (let
-          [line-end : i64
-            (doc-test-batch-line-end
-              (owned_view.compiler-owned-shared-view text)
-              i
-              n)]
+          [line-end : i64 (source_text.line-end text i)]
           [line : String (string.substring text i (- line-end i))]
           (begin
             (if (> (string.string-length line) 0)
               (doc_svec.push-ref! (&mut paths) line)
               unit)
-            (set!
-              i
-              (doc-test-batch-next-line-start
-                (owned_view.compiler-owned-shared-view text)
-                line-end
-                n)))))
+            (set! i (source_text.next-line-start text line-end)))))
       paths)))
 
 (define (doc-test-batch-paths [list-path : String]) : ResultDocTestBatchPaths
@@ -766,114 +725,57 @@
           (ResultDocTestCliConfig.Ok
             (DocTestCliConfig.File input-paths stdlib-roots))])]))
 
-(define (doc-test-parse-options
-  [idx : i64]
-  [count : i64]
-  [input-paths : doc_svec.Vec]
-  [manifest-path : String]
-  [has-manifest : bool]
-  [stdlib-roots : doc_svec.Vec]
-  [batch-list : DocMaybeString]) : ResultDocTestCliConfig
-  (if (>= idx count)
-    (doc-test-config-finish
-      input-paths
-      manifest-path
-      has-manifest
-      stdlib-roots
-      batch-list)
-    (let
-      [current : String (io.arg idx)]
-      (match (cli_option.cli-common-option-parse
-        (owned_view.compiler-owned-shared-view current)
-        idx
-        count
-        cli_option.cli-common-option-stdlib-root)
-        [(cli_option.CliCommonOption.Missing kind)
-          (ResultDocTestCliConfig.Err
-            (cli_option.cli-common-option-missing-message "doc" kind))]
-        [(cli_option.CliCommonOption.Value _ value next-idx)
-          (doc-test-parse-options
-            next-idx
-            count
-            input-paths
-            manifest-path
-            has-manifest
-            (let
-              [next-roots : doc_svec.Vec stdlib-roots]
-              (begin
-                (doc_svec.push-ref! (&mut next-roots) value)
-                next-roots))
-            batch-list)]
-        [(cli_option.CliCommonOption.NotCommon)
-          (cond
-            [(string.eq current "--manifest-path")
-              (if (>= (+ idx 1) count)
-                (ResultDocTestCliConfig.Err
-                  "doc: --manifest-path requires a value")
-                (if has-manifest
-                  (ResultDocTestCliConfig.Err "doc: duplicate --manifest-path")
-                  (doc-test-parse-options
-                    (+ idx 2)
-                    count
-                    input-paths
-                    (io.arg (+ idx 1))
-                    true
-                    stdlib-roots
-                    batch-list)))]
-            [(string.eq current "--batch")
-              (if (>= (+ idx 1) count)
-                (ResultDocTestCliConfig.Err "doc: --batch requires a value")
-                (match batch-list
-                  [(DocMaybeString.Some _)
-                    (ResultDocTestCliConfig.Err "doc: duplicate --batch")]
-                  [(DocMaybeString.No)
-                    (doc-test-parse-options
-                      (+ idx 2)
-                      count
-                      input-paths
-                      manifest-path
-                      has-manifest
-                      stdlib-roots
-                      (DocMaybeString.Some (io.arg (+ idx 1))))]))]
-            [(string.eq current "--prefix-cache-stats")
-              (begin
-                (set! doc-test-prefix-cache-stats true)
-                (doc-test-parse-options
-                  (+ idx 1)
-                  count
-                  input-paths
-                  manifest-path
-                  has-manifest
-                  stdlib-roots
-                  batch-list))]
-            [(doc-flag? (owned_view.compiler-owned-shared-view current))
-              (ResultDocTestCliConfig.Err
-                (str_cat.str-cat "doc: unknown flag " current))]
-            [else
-              (doc-test-parse-options
-                (+ idx 1)
-                count
-                (let
-                  [next-paths : doc_svec.Vec input-paths]
-                  (begin
-                    (doc_svec.push-ref! (&mut next-paths) current)
-                    next-paths))
-                manifest-path
-                has-manifest
-                stdlib-roots
-                batch-list)])]))))
-
 (define (doc-test-config-from [base : i64] [count : i64]) : ResultDocTestCliConfig
-  (begin
-    (set! doc-test-prefix-cache-stats false)
-    (doc-test-parse-options
-      (+ base 1)
-      count
-      (doc_svec.new)
-      ""
-      false
-      (doc_svec.new)
-      (DocMaybeString.No))))
+  (let
+    [args : cli_option.CliArgs
+      (cli_option.cli-args
+        "doc"
+        "--stdlib-root <dir> --manifest-path <file> --batch <file> --prefix-cache-stats"
+        (+ base 1)
+        count)]
+    [input-paths : doc_svec.Vec (doc_svec.new)]
+    [manifest-path : String ""]
+    [has-manifest : bool false]
+    [stdlib-roots : doc_svec.Vec (doc_svec.new)]
+    [batch-list : DocMaybeString (DocMaybeString.No)]
+    (begin
+      (set! doc-test-prefix-cache-stats false)
+      (while (cli_option.cli-args-next! (&mut args))
+        (cond
+          [(string.eq args.name "--stdlib-root")
+            (doc_svec.push-ref!
+              (&mut stdlib-roots)
+              (cli_option.cli-args-value (& args)))]
+          [(string.eq args.name "--manifest-path")
+            (if has-manifest
+              (cli_option.cli-args-fail!
+                (&mut args)
+                "doc: duplicate --manifest-path")
+              (begin
+                (set! manifest-path (cli_option.cli-args-value (& args)))
+                (set! has-manifest true)))]
+          [(string.eq args.name "--batch")
+            (match batch-list
+              [(DocMaybeString.Some _)
+                (cli_option.cli-args-fail! (&mut args) "doc: duplicate --batch")]
+              [(DocMaybeString.No)
+                (set!
+                  batch-list
+                  (DocMaybeString.Some (cli_option.cli-args-value (& args))))])]
+          [(string.eq args.name "--prefix-cache-stats")
+            (set! doc-test-prefix-cache-stats true)]
+          [(cli_option.cli-flag? args.arg)
+            (cli_option.cli-args-fail-arg! (&mut args) "doc: unknown flag ")]
+          [else
+            (doc_svec.push-ref! (&mut input-paths) (string.copy (& args.arg)))]))
+      (if args.failed
+        (ResultDocTestCliConfig.Err args.error)
+        (doc-test-config-finish
+          input-paths
+          manifest-path
+          has-manifest
+          stdlib-roots
+          batch-list)))))
 
 (define (doc-test-files-from
   [input-paths : (& input-paths doc_svec.Vec)]
@@ -1008,134 +910,65 @@
               open?
               no-deps?))])]))
 
-(define (doc-default-parse-options
-  [idx : i64]
-  [count : i64]
-  [input-paths : doc_svec.Vec]
-  [output-path : DocMaybeString]
-  [manifest-path : String]
-  [open? : bool]
-  [no-deps? : bool]
-  [stdlib-roots : doc_svec.Vec]) : ResultDocDefaultCliConfig
-  (if (>= idx count)
-    (doc-default-config-finish
-      input-paths
-      output-path
-      (owned_view.compiler-owned-shared-view manifest-path)
-      (not (string.eq manifest-path ""))
-      open?
-      no-deps?
-      stdlib-roots)
-    (let
-      [current : String (io.arg idx)]
-      (match (cli_option.cli-common-option-parse
-        (owned_view.compiler-owned-shared-view current)
-        idx
-        count
-        cli_option.cli-common-option-stdlib-root)
-        [(cli_option.CliCommonOption.Missing kind)
-          (ResultDocDefaultCliConfig.Err
-            (cli_option.cli-common-option-missing-message "doc" kind))]
-        [(cli_option.CliCommonOption.Value _ value next-idx)
-          (doc-default-parse-options
-            next-idx
-            count
-            input-paths
-            output-path
-            manifest-path
-            open?
-            no-deps?
-            (let
-              [next-roots : doc_svec.Vec stdlib-roots]
-              (begin
-                (doc_svec.push-ref! (&mut next-roots) value)
-                next-roots)))]
-        [(cli_option.CliCommonOption.NotCommon)
-          (cond
-            [(string.eq current "-o")
-              (if (>= (+ idx 1) count)
-                (ResultDocDefaultCliConfig.Err "doc: -o requires a value")
-                (match output-path
-                  [(DocMaybeString.Some _)
-                    (ResultDocDefaultCliConfig.Err "doc: duplicate -o")]
-                  [(DocMaybeString.No)
-                    (doc-default-parse-options
-                      (+ idx 2)
-                      count
-                      input-paths
-                      (DocMaybeString.Some (io.arg (+ idx 1)))
-                      manifest-path
-                      open?
-                      no-deps?
-                      stdlib-roots)]))]
-            [(string.eq current "--manifest-path")
-              (if (>= (+ idx 1) count)
-                (ResultDocDefaultCliConfig.Err
-                  "doc: --manifest-path requires a value")
-                (if (not (string.eq manifest-path ""))
-                  (ResultDocDefaultCliConfig.Err
-                    "doc: duplicate --manifest-path")
-                  (doc-default-parse-options
-                    (+ idx 2)
-                    count
-                    input-paths
-                    output-path
-                    (io.arg (+ idx 1))
-                    open?
-                    no-deps?
-                    stdlib-roots)))]
-            [(string.eq current "--open")
-              (if open?
-                (ResultDocDefaultCliConfig.Err "doc: duplicate --open")
-                (doc-default-parse-options
-                  (+ idx 1)
-                  count
-                  input-paths
-                  output-path
-                  manifest-path
-                  true
-                  no-deps?
-                  stdlib-roots))]
-            [(string.eq current "--no-deps")
-              (if no-deps?
-                (ResultDocDefaultCliConfig.Err "doc: duplicate --no-deps")
-                (doc-default-parse-options
-                  (+ idx 1)
-                  count
-                  input-paths
-                  output-path
-                  manifest-path
-                  open?
-                  true
-                  stdlib-roots))]
-            [(doc-flag? (owned_view.compiler-owned-shared-view current))
-              (ResultDocDefaultCliConfig.Err
-                (str_cat.str-cat "doc: unknown flag " current))]
-            [else
-              (doc-default-parse-options
-                (+ idx 1)
-                count
-                (let
-                  [next-paths : doc_svec.Vec input-paths]
-                  (begin
-                    (doc_svec.push-ref! (&mut next-paths) current)
-                    next-paths))
-                output-path
-                manifest-path
-                open?
-                no-deps?
-                stdlib-roots)])]))))
-
 (define (doc-default-config-from [base : i64] [count : i64]) : ResultDocDefaultCliConfig
-  (doc-default-parse-options
-    base
-    count
-    (doc_svec.new)
-    (DocMaybeString.No)
-    ""
-    false
-    false
-    (doc_svec.new)))
+  (let
+    [args : cli_option.CliArgs
+      (cli_option.cli-args
+        "doc"
+        "--stdlib-root <dir> -o <out.md> --manifest-path <file> --open --no-deps"
+        base
+        count)]
+    [input-paths : doc_svec.Vec (doc_svec.new)]
+    [output-path : DocMaybeString (DocMaybeString.No)]
+    [manifest-path : String ""]
+    [open? : bool false]
+    [no-deps? : bool false]
+    [stdlib-roots : doc_svec.Vec (doc_svec.new)]
+    (begin
+      (while (cli_option.cli-args-next! (&mut args))
+        (cond
+          [(string.eq args.name "--stdlib-root")
+            (doc_svec.push-ref!
+              (&mut stdlib-roots)
+              (cli_option.cli-args-value (& args)))]
+          [(string.eq args.name "-o")
+            (match output-path
+              [(DocMaybeString.Some _)
+                (cli_option.cli-args-fail! (&mut args) "doc: duplicate -o")]
+              [(DocMaybeString.No)
+                (set!
+                  output-path
+                  (DocMaybeString.Some (cli_option.cli-args-value (& args))))])]
+          ;; An empty --manifest-path value reads as absent, so a later one is
+          ;; not a duplicate.
+          [(string.eq args.name "--manifest-path")
+            (if (not (string.eq manifest-path ""))
+              (cli_option.cli-args-fail!
+                (&mut args)
+                "doc: duplicate --manifest-path")
+              (set! manifest-path (cli_option.cli-args-value (& args))))]
+          [(string.eq args.name "--open")
+            (if open?
+              (cli_option.cli-args-fail! (&mut args) "doc: duplicate --open")
+              (set! open? true))]
+          [(string.eq args.name "--no-deps")
+            (if no-deps?
+              (cli_option.cli-args-fail! (&mut args) "doc: duplicate --no-deps")
+              (set! no-deps? true))]
+          [(cli_option.cli-flag? args.arg)
+            (cli_option.cli-args-fail-arg! (&mut args) "doc: unknown flag ")]
+          [else
+            (doc_svec.push-ref! (&mut input-paths) (string.copy (& args.arg)))]))
+      (if args.failed
+        (ResultDocDefaultCliConfig.Err args.error)
+        (doc-default-config-finish
+          input-paths
+          output-path
+          (string.copy (& manifest-path))
+          (not (string.eq manifest-path ""))
+          open?
+          no-deps?
+          stdlib-roots)))))
 
 (define (doc-invalid-args) : i64
   (begin

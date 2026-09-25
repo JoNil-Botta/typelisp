@@ -32,7 +32,7 @@
         (codec.surface-ast-write-name! out context name)))))
 
 (define (surface-ast-read-optional-name!
-  [reader : (& reader codec.SurfaceAstReader)]) : i64
+  [reader : (&mut reader codec.SurfaceAstReader)]) : i64
   (if (codec.surface-ast-read-bool! reader)
     (codec.surface-ast-read-name! reader)
     -1))
@@ -57,7 +57,7 @@
             (set! index (+ index 1))))))))
 
 (define (surface-ast-read-expr-list!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstExprList
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstExprList
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array i64) (__tl_make-array i64 count)]
@@ -86,7 +86,8 @@
           (codec.surface-ast-write-type! out context ty)
           (codec.surface-ast-write-bool! out is-comptime))])))
 
-(define (surface-ast-read-param! [reader : (& reader codec.SurfaceAstReader)]) : ast.AstParam
+(define (surface-ast-read-param!
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstParam
   (ast.AstParam.Param
     (codec.surface-ast-read-name! reader)
     (codec.surface-ast-read-type! reader)
@@ -116,7 +117,7 @@
             (set! index (+ index 1))))))))
 
 (define (surface-ast-read-param-list!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstParamList
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstParamList
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array ast.AstParam) (__tl_make-array ast.AstParam count)]
@@ -191,7 +192,7 @@
           (codec.surface-ast-write-literal! out context literal))])))
 
 (define (surface-ast-read-pattern-list!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstPatternList
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstPatternList
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array ast.AstPattern)
@@ -204,7 +205,8 @@
           (set! index (+ index 1))))
       (ast.AstPatternList slots count))))
 
-(define (surface-ast-read-pattern! [reader : (& reader codec.SurfaceAstReader)]) : ast.AstPattern
+(define (surface-ast-read-pattern!
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstPattern
   (let
     [tag : i64 (codec.surface-ast-read-i64! reader)]
     (cond
@@ -256,7 +258,7 @@
           (set! index (+ index 1)))))))
 
 (define (surface-ast-read-let-binding-list!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstLetBindingList
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstLetBindingList
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array ast.AstLetBinding)
@@ -300,7 +302,7 @@
           (set! index (+ index 1)))))))
 
 (define (surface-ast-read-resource-binding-list!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstResourceBindingList
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstResourceBindingList
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array ast.AstResourceBinding)
@@ -343,7 +345,7 @@
           (set! index (+ index 1)))))))
 
 (define (surface-ast-read-match-arm-list!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstMatchArmList
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstMatchArmList
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array ast.AstMatchArm)
@@ -856,7 +858,7 @@
             (ci.intern-composite-right-id-unchecked provenance-id))
           (surface-ast-write-optional-name! out context macro-name-id))])))
 
-(define (surface-ast-read-expr! [reader : (& reader codec.SurfaceAstReader)]) : ast.AstExpr
+(define (surface-ast-read-expr! [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstExpr
   (let
     [tag : i64 (codec.surface-ast-read-i64! reader)]
     (cond

@@ -186,7 +186,7 @@
   [kind : cobj.CompilerObjectSymbolKind]) : CompilerBackendObjectTargetParts
   (if (cobj.compiler-object-symbol-builder-contains?
     parts.symbols
-    (owned_view.compiler-owned-shared-view name)
+    name
     (cobj.CompilerObjectSymbolBinding.Extern)
     kind)
     parts

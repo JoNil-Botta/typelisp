@@ -169,7 +169,7 @@
             [executable
               (backend.compiler-backend-runtime-features-for-emission
                 (backend.CompilerBackendTarget.Linux)
-                (owned.compiler-owned-shared-view plan)
+                plan
                 state
                 (owned.compiler-owned-shared-view index)
                 (owned.compiler-owned-shared-view refs)
@@ -178,7 +178,7 @@
             [library
               (backend.compiler-backend-runtime-features-for-emission
                 (backend.CompilerBackendTarget.Linux)
-                (owned.compiler-owned-shared-view plan)
+                plan
                 state
                 (owned.compiler-owned-shared-view index)
                 (owned.compiler-owned-shared-view refs)

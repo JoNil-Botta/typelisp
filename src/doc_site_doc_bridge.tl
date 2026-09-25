@@ -3,17 +3,18 @@
 (import doc_extract)
 (import doc_render)
 (import doc_html)
+(import stdlib.string)
 
 (define (bridge-doc-string-prefix-at?
   [text : (& text str)]
   [prefix : (& prefix str)]
   [offset : i64]) : bool
-  (doc_extract.doc-string-prefix-at? text prefix offset))
+  (string.is-string-prefix-at text prefix offset))
 
 (define (bridge-doc-string-contains?
   [text : (& text str)]
   [needle : (& needle str)]) : bool
-  (doc_extract.doc-string-contains? text needle))
+  (string.contains text needle))
 
 (define (bridge-doc-render-anchor [text : (& text str)]) : String
   (doc_render.doc-render-anchor text))

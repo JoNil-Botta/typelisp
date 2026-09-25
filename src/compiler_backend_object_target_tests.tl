@@ -24,10 +24,7 @@
     [windows-sections : cobj.CompilerObjectSectionList windows-image.sections]
     (begin
       (test.assert-true
-        (=
-          (cobj.compiler-object-section-list-count
-            (owned_view.compiler-owned-shared-view linux-sections))
-          4)
+        (= (cobj.compiler-object-section-list-count linux-sections) 4)
         "Linux leaf emits only the shared ELF section set")
       (test.assert-true
         (cobj.compiler-object-section-contains-bytes?
@@ -41,7 +38,7 @@
         "Linux leaf owns the System V TLCI macro bridge")
       (test.assert-true
         (cobj.compiler-object-section-contains-bytes?
-          (owned_view.compiler-owned-shared-view linux-sections)
+          linux-sections
           (object_linux.compiler-backend-object-exit-bytes))
         "Linux leaf owns the syscall exit tail")
       (test.assert-true
@@ -52,10 +49,7 @@
           (cobj.CompilerObjectSymbolKind.Function))
         "Linux leaf exports the native entry")
       (test.assert-true
-        (=
-          (cobj.compiler-object-section-list-count
-            (owned_view.compiler-owned-shared-view windows-sections))
-          7)
+        (= (cobj.compiler-object-section-list-count windows-sections) 7)
         "Windows leaf emits COFF pdata, xdata, and resource sections")
       (test.assert-true
         (cobj.compiler-object-section-contains-bytes?

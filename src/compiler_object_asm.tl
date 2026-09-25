@@ -361,9 +361,7 @@
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [sections : cobj.CompilerObjectSectionList]) : bool
   (let
-    [count : i64
-      (cobj.compiler-object-section-list-count
-        (owned_view.compiler-owned-shared-view sections))]
+    [count : i64 (cobj.compiler-object-section-list-count sections)]
     [index : i64 0]
     [ok : bool true]
     (begin

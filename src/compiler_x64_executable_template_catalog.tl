@@ -1,6 +1,5 @@
 ;; compiler_x64_executable_template_catalog.tl - Reviewed x86-64 template rows.
 (import compiler_x64_executable_template as x64)
-(import compiler_owned_view as owned_view)
 (import stdlib.hash)
 (import stdlib.io)
 (import stdlib.string)
@@ -233,7 +232,7 @@
       (compiler-x64-template-registry-gate id)]
     (begin
       (compiler-x64-template-require-kind!
-        (owned_view.compiler-owned-shared-view row)
+        row
         target
         (x64.CompilerX64TemplateRenderKind.Assembly))
       (compiler-x64-template-require-rendered-payload! row (& rendered))
@@ -248,7 +247,7 @@
       (compiler-x64-template-registry-gate id)]
     (begin
       (compiler-x64-template-require-kind!
-        (owned_view.compiler-owned-shared-view row)
+        row
         target
         (x64.CompilerX64TemplateRenderKind.OpaqueBytes))
       (compiler-x64-template-require-rendered-payload! row (& rendered))

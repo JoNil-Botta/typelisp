@@ -114579,7 +114579,8 @@
                 (ctfe_support.ctfe-env-macro-state env))
               (cfg
                 compile-profile
-                (if (macro-tlci-resolved-catalog-dependency? catalog)
+                (if (macro-tlci-resolved-catalog-dependency?
+                  (tc-global-shared-view catalog))
                   unit
                   (compiler-tc-stdlib-tlci-entry-invoke-start!)))
               (macro-dependency-tlci-note-if!
@@ -114595,7 +114596,8 @@
                 (begin
                   (cfg
                     compile-profile
-                    (if (macro-tlci-resolved-catalog-dependency? catalog)
+                    (if (macro-tlci-resolved-catalog-dependency?
+                      (tc-global-shared-view catalog))
                       unit
                       (compiler-tc-stdlib-tlci-entry-invoke-finish!)))
                   (match dispatch-result
@@ -114659,7 +114661,7 @@
                                 (cfg
                                   compile-profile
                                   (if (macro-tlci-resolved-catalog-dependency?
-                                    catalog)
+                                    (tc-global-shared-view catalog))
                                     unit
                                     (begin
                                       (set!
@@ -114672,13 +114674,15 @@
                                         (+
                                           compiler-tc-macro-stdlib-tlci-native-dispatches
                                           1))
-                                      (if (tc-macro-result-module? ret)
+                                      (if (tc-macro-result-module?
+                                        (tc-global-shared-view ret))
                                         (set!
                                           compiler-tc-macro-stdlib-tlci-native-module-results
                                           (+
                                             compiler-tc-macro-stdlib-tlci-native-module-results
                                             1))
-                                        (if (tc-macro-result-decls? ret)
+                                        (if (tc-macro-result-decls?
+                                          (tc-global-shared-view ret))
                                           (set!
                                             compiler-tc-macro-stdlib-tlci-native-decls-results
                                             (+
@@ -114740,7 +114744,7 @@
                                   (cfg
                                     compile-profile
                                     (if (macro-tlci-resolved-catalog-dependency?
-                                      catalog)
+                                      (tc-global-shared-view catalog))
                                       unit
                                       (set!
                                         compiler-tc-macro-stdlib-tlci-shell-learns
@@ -115025,9 +115029,9 @@
                     (tc-global-shared-view fallback-module)
                     fallback-module-id
                     type-env
-                    macro-name
+                    (tc-global-shared-view macro-name)
                     (tc-global-shared-view params)
-                    expanded-args
+                    (tc-global-shared-view expanded-args)
                     (tc-ctfe-env ctx)
                     (macro-expand-expr-type-macro?
                       (tc-context-macro-state ctx)

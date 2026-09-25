@@ -69066,109 +69066,18 @@
             [(LowerScrutineeHome.Home home-state scrut-var)
               (match (lower-state-fresh-label home-state "match_merge")
                 [(LowerLabel.Label merge-state merge-label)
-                  (match (tc_core.tc-type-strip-region
-                    (tc_core.tc-resolve-type
-                      (lower-global-shared-view ctx)
-                      (lower-global-shared-view scrut-ty)))
-                    [(ast.AstType.Enum _)
-                      (lower-match-enum
-                        ctx
-                        merge-state
-                        env
-                        type-env
-                        scrut-var
-                        scrut-ty
-                        arms
-                        merge-label
-                        expr-ty
-                        (tc_core.TcMaybeNameId.No)
-                        false)]
-                    [(ast.AstType.EnumArgs _ _)
-                      (lower-match-enum
-                        ctx
-                        merge-state
-                        env
-                        type-env
-                        scrut-var
-                        scrut-ty
-                        arms
-                        merge-label
-                        expr-ty
-                        (tc_core.TcMaybeNameId.No)
-                        false)]
-                    [(ast.AstType.Ref borrow-lifetime referent-box)
-                      (let
-                        [referent-ty : ast.AstType
-                          (tc_core.tc-type-strip-region
-                            (tc_core.tc-resolve-type
-                              (lower-global-shared-view ctx)
-                              (tc_core.tc-context-type-get
-                                (lower-global-shared-view ctx)
-                                referent-box)))]
-                        (match (lower-global-shared-view referent-ty)
-                          [(ast.AstType.Enum _)
-                            (lower-match-enum
-                              ctx
-                              merge-state
-                              env
-                              type-env
-                              scrut-var
-                              referent-ty
-                              arms
-                              merge-label
-                              expr-ty
-                              (tc_core.TcMaybeNameId.Some borrow-lifetime)
-                              true)]
-                          [(ast.AstType.EnumArgs _ _)
-                            (lower-match-enum
-                              ctx
-                              merge-state
-                              env
-                              type-env
-                              scrut-var
-                              referent-ty
-                              arms
-                              merge-label
-                              expr-ty
-                              (tc_core.TcMaybeNameId.Some borrow-lifetime)
-                              true)]
-                          [_
-                            (lower-match-arms
-                              ctx
-                              merge-state
-                              env
-                              type-env
-                              scrut-var
-                              scrut-ty
-                              arms
-                              merge-label
-                              expr-ty
-                              (ir.compiler-ir-phi-input-seq-empty))]))]
-                    [(ast.AstType.VarArgs _ _)
-                      (lower-match-enum
-                        ctx
-                        merge-state
-                        env
-                        type-env
-                        scrut-var
-                        scrut-ty
-                        arms
-                        merge-label
-                        expr-ty
-                        (tc_core.TcMaybeNameId.No)
-                        false)]
-                    [_
-                      (lower-match-arms
-                        ctx
-                        merge-state
-                        env
-                        type-env
-                        scrut-var
-                        scrut-ty
-                        arms
-                        merge-label
-                        expr-ty
-                        (ir.compiler-ir-phi-input-seq-empty))])])])])]
+                  (lower-match-dispatch
+                    ctx
+                    merge-state
+                    env
+                    type-env
+                    scrut-var
+                    scrut-ty
+                    arms
+                    (LowerMatchCont.Value
+                      merge-label
+                      expr-ty
+                      (ir.compiler-ir-phi-input-seq-empty)))])])])]
     [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
 
 (define (lower-match-borrowed-enum
@@ -69231,8 +69140,10 @@
                               scrut-var
                               enum-ty
                               arms
-                              merge-label
-                              expr-ty
+                              (LowerMatchCont.Value
+                                merge-label
+                                expr-ty
+                                (ir.compiler-ir-phi-input-seq-empty))
                               (tc_core.TcMaybeNameId.Some borrow-lifetime)
                               resident)])])])]
               [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])])]
@@ -69316,101 +69227,6 @@
               (ResultLowerExpr.Err
                 (box (lower-diagnostic-at-expr ctx scrutinee message)))])))]
     [_ (lower-match-value ctx state env type-env scrutinee arms expr-ty)]))
-
-(define (lower-match-enum
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [scrut-var : i64]
-  [scrut-ty : ast.AstType]
-  [arms : ast.AstMatchArmList]
-  [merge-label : i64]
-  [expr-ty : ast.AstType]
-  [borrow-lifetime : tc_core.TcMaybeNameId]
-  [force-memory : bool]) : ResultLowerExpr
-  ;; A 1-word register-resident enum value IS the tag word (nullary, no
-  ;; payload); match on `scrut-var` directly. A 2-word register-group enum holds
-  ;; the tag in word0; extract it with IrInstrWord. Neither touches memory. One
-  ;; layout build (lower-type-register-words) decides all three cases.
-  ;; `force-memory` (borrowed match of a spilled register-resident scrutinee)
-  ;; overrides the value paths: scrut-var then holds the ADDRESS of the enum
-  ;; bytes and tag/payloads are read through it like any memory enum.
-  (let
-    [scrut-words : i64
-      (lower-type-register-words
-        (lower-global-shared-view ctx)
-        (lower-global-shared-view scrut-ty))]
-    (if (and (> scrut-words 0) (not force-memory))
-      (if (= scrut-words 2)
-        (match (lower-emit-word
-          state
-          (ir.CompilerIrValue.Var scrut-var)
-          0
-          (ast.AstType.I64))
-          [(LowerExpr.Expr tag-state tag-value _)
-            (match tag-value
-              [(ir.CompilerIrValue.Var tag-var)
-                (lower-match-enum-arms
-                  ctx
-                  tag-state
-                  env
-                  type-env
-                  scrut-var
-                  scrut-ty
-                  tag-var
-                  arms
-                  merge-label
-                  expr-ty
-                  borrow-lifetime
-                  (ir.compiler-ir-phi-input-seq-empty)
-                  true
-                  false)]
-              [_
-                (ResultLowerExpr.Err
-                  (box
-                    (lower-diagnostic "lower: internal enum tag extract failed")))])])
-        (lower-match-enum-arms
-          ctx
-          state
-          env
-          type-env
-          scrut-var
-          scrut-ty
-          scrut-var
-          arms
-          merge-label
-          expr-ty
-          borrow-lifetime
-          (ir.compiler-ir-phi-input-seq-empty)
-          false
-          false))
-      (match (lower-load-at-offset
-        state
-        (ir.CompilerIrValue.Var scrut-var)
-        0
-        (ast.AstType.I64))
-        [(LowerExpr.Expr tag-state tag-value _)
-          (match tag-value
-            [(ir.CompilerIrValue.Var tag-var)
-              (lower-match-enum-arms
-                ctx
-                tag-state
-                env
-                type-env
-                scrut-var
-                scrut-ty
-                tag-var
-                arms
-                merge-label
-                expr-ty
-                borrow-lifetime
-                (ir.compiler-ir-phi-input-seq-empty)
-                false
-                false)]
-            [_
-              (ResultLowerExpr.Err
-                (box (lower-diagnostic "lower: internal enum tag load failed")))])]))))
 
 (define (lower-box-pattern-for-type?
   [ctx : tc_core.TcContext]
@@ -70585,545 +70401,6 @@
             (box (lower-diagnostic "lower: unsupported match pattern")))))]
     [_ (ResultLowerEnv.Ok state env type-env)]))
 
-(define (lower-match-arms
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [scrut-var : i64]
-  [scrut-ty : ast.AstType]
-  [arms : ast.AstMatchArmList]
-  [merge-label : i64]
-  [expr-ty : ast.AstType]
-  [phi-inputs : ir.CompilerIrPhiInputSeq]) : ResultLowerExpr
-  (if (ast.ast-match-arm-list-empty? (& arms))
-    (ResultLowerExpr.Err (box (lower-diagnostic "lower: match with no arms")))
-    (let
-      [arm : ast.AstMatchArm
-        (ast.ast-match-arm-list-get (& arms) 0 (ast.ast-match-arm-fallback))]
-      [rest : ast.AstMatchArmList (ast.ast-match-arm-list-tail arms)]
-      (if (ast.ast-match-arm-list-empty? (& rest))
-        (lower-match-catch-all
-          ctx
-          state
-          env
-          type-env
-          scrut-var
-          scrut-ty
-          arm
-          merge-label
-          expr-ty
-          phi-inputs)
-        (match (lower-global-shared-view arm)
-          [(ast.AstMatchArm.Arm pat body-box)
-            (let
-              [body : ast.AstExpr
-                (lower-context-expr-get (lower-global-shared-view ctx) body-box)]
-              (match pat
-                [(ast.AstPattern.Literal lit)
-                  (lower-match-literal-arm
-                    ctx
-                    state
-                    env
-                    type-env
-                    scrut-var
-                    scrut-ty
-                    lit
-                    body
-                    rest
-                    merge-label
-                    expr-ty
-                    phi-inputs)]
-                [(ast.AstPattern.Binding _)
-                  (lower-match-catch-all
-                    ctx
-                    state
-                    env
-                    type-env
-                    scrut-var
-                    scrut-ty
-                    arm
-                    merge-label
-                    expr-ty
-                    phi-inputs)]
-                [(ast.AstPattern.Wildcard)
-                  (lower-match-catch-all
-                    ctx
-                    state
-                    env
-                    type-env
-                    scrut-var
-                    scrut-ty
-                    arm
-                    merge-label
-                    expr-ty
-                    phi-inputs)]
-                [(ast.AstPattern.Tuple _)
-                  (lower-match-catch-all
-                    ctx
-                    state
-                    env
-                    type-env
-                    scrut-var
-                    scrut-ty
-                    arm
-                    merge-label
-                    expr-ty
-                    phi-inputs)]
-                [(ast.AstPattern.Array _)
-                  (lower-match-catch-all
-                    ctx
-                    state
-                    env
-                    type-env
-                    scrut-var
-                    scrut-ty
-                    arm
-                    merge-label
-                    expr-ty
-                    phi-inputs)]
-                [(ast.AstPattern.Variant variant-name _)
-                  (if (lower-box-pattern-for-type?
-                    (lower-global-shared-view ctx)
-                    (lower-global-shared-view scrut-ty)
-                    variant-name)
-                    (lower-match-catch-all
-                      ctx
-                      state
-                      env
-                      type-env
-                      scrut-var
-                      scrut-ty
-                      arm
-                      merge-label
-                      expr-ty
-                      phi-inputs)
-                    (if (lower-struct-pattern-for-type?
-                      (lower-global-shared-view ctx)
-                      (lower-global-shared-view scrut-ty)
-                      variant-name)
-                      (lower-match-catch-all
-                        ctx
-                        state
-                        env
-                        type-env
-                        scrut-var
-                        scrut-ty
-                        arm
-                        merge-label
-                        expr-ty
-                        phi-inputs)
-                      (ResultLowerExpr.Err
-                        (box
-                          (lower-diagnostic
-                            (lower-unsupported-match-pattern-message
-                              ctx
-                              scrut-ty
-                              (tc_core.tc-env-key-name-text variant-name)))))))]
-                [_
-                  (ResultLowerExpr.Err
-                    (box (lower-diagnostic "lower: unsupported match pattern")))]))])))))
-
-(define (lower-match-enum-final-pattern
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [scrut-var : i64]
-  [scrut-ty : ast.AstType]
-  [arm : ast.AstMatchArm]
-  [pat : ast.AstPattern]
-  [body : ast.AstExpr]
-  [merge-label : i64]
-  [expr-ty : ast.AstType]
-  [borrow-lifetime : tc_core.TcMaybeNameId]
-  [phi-inputs : ir.CompilerIrPhiInputSeq]
-  [scrut-reg-group? : bool]) : ResultLowerExpr
-  (match pat
-    [(ast.AstPattern.Wildcard)
-      (lower-match-catch-all
-        ctx
-        state
-        env
-        type-env
-        scrut-var
-        scrut-ty
-        arm
-        merge-label
-        expr-ty
-        phi-inputs)]
-    [(ast.AstPattern.Binding variant-name)
-      (lower-match-variant-final
-        ctx
-        state
-        env
-        type-env
-        scrut-var
-        scrut-ty
-        variant-name
-        (ast.ast-pattern-list-new)
-        body
-        merge-label
-        expr-ty
-        borrow-lifetime
-        phi-inputs
-        scrut-reg-group?)]
-    [(ast.AstPattern.Variant variant-name args-box)
-      (let
-        [args : ast.AstPatternList (deref args-box)]
-        (lower-match-variant-final
-          ctx
-          state
-          env
-          type-env
-          scrut-var
-          scrut-ty
-          variant-name
-          args
-          body
-          merge-label
-          expr-ty
-          borrow-lifetime
-          phi-inputs
-          scrut-reg-group?))]
-    [_
-      (ResultLowerExpr.Err
-        (box (lower-diagnostic "lower: unsupported enum match pattern")))]))
-
-(define (lower-match-enum-branch-pattern
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [scrut-var : i64]
-  [scrut-ty : ast.AstType]
-  [tag-var : i64]
-  [arm : ast.AstMatchArm]
-  [pat : ast.AstPattern]
-  [body : ast.AstExpr]
-  [rest : ast.AstMatchArmList]
-  [merge-label : i64]
-  [expr-ty : ast.AstType]
-  [borrow-lifetime : tc_core.TcMaybeNameId]
-  [phi-inputs : ir.CompilerIrPhiInputSeq]
-  [scrut-reg-group? : bool]
-  [total-enum-switch? : bool]) : ResultLowerExpr
-  (match pat
-    [(ast.AstPattern.Wildcard)
-      (lower-match-catch-all
-        ctx
-        state
-        env
-        type-env
-        scrut-var
-        scrut-ty
-        arm
-        merge-label
-        expr-ty
-        phi-inputs)]
-    [(ast.AstPattern.Binding variant-name)
-      (lower-match-variant-arm
-        ctx
-        state
-        env
-        type-env
-        scrut-var
-        scrut-ty
-        tag-var
-        variant-name
-        (ast.ast-pattern-list-new)
-        body
-        rest
-        merge-label
-        expr-ty
-        borrow-lifetime
-        phi-inputs
-        scrut-reg-group?
-        total-enum-switch?)]
-    [(ast.AstPattern.Variant variant-name args-box)
-      (let
-        [args : ast.AstPatternList (deref args-box)]
-        (lower-match-variant-arm
-          ctx
-          state
-          env
-          type-env
-          scrut-var
-          scrut-ty
-          tag-var
-          variant-name
-          args
-          body
-          rest
-          merge-label
-          expr-ty
-          borrow-lifetime
-          phi-inputs
-          scrut-reg-group?
-          total-enum-switch?))]
-    [_
-      (ResultLowerExpr.Err
-        (box (lower-diagnostic "lower: unsupported enum match pattern")))]))
-
-(define (lower-match-enum-arms
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [scrut-var : i64]
-  [scrut-ty : ast.AstType]
-  [tag-var : i64]
-  [arms : ast.AstMatchArmList]
-  [merge-label : i64]
-  [expr-ty : ast.AstType]
-  [borrow-lifetime : tc_core.TcMaybeNameId]
-  [phi-inputs : ir.CompilerIrPhiInputSeq]
-  [scrut-reg-group? : bool]
-  [total-enum-switch? : bool]) : ResultLowerExpr
-  (if (ast.ast-match-arm-list-empty? (& arms))
-    (ResultLowerExpr.Err (box (lower-diagnostic "lower: match with no arms")))
-    (let
-      [arm : ast.AstMatchArm
-        (ast.ast-match-arm-list-get (& arms) 0 (ast.ast-match-arm-fallback))]
-      [rest : ast.AstMatchArmList (ast.ast-match-arm-list-tail arms)]
-      (match (lower-global-shared-view arm)
-        [(ast.AstMatchArm.Arm pat body-box)
-          (let
-            [body : ast.AstExpr
-              (lower-context-expr-get (lower-global-shared-view ctx) body-box)]
-            (if (ast.ast-match-arm-list-empty? (& rest))
-              (lower-match-enum-final-pattern
-                ctx
-                state
-                env
-                type-env
-                scrut-var
-                scrut-ty
-                arm
-                pat
-                body
-                merge-label
-                expr-ty
-                borrow-lifetime
-                phi-inputs
-                scrut-reg-group?)
-              (lower-match-enum-branch-pattern
-                ctx
-                state
-                env
-                type-env
-                scrut-var
-                scrut-ty
-                tag-var
-                arm
-                pat
-                body
-                rest
-                merge-label
-                expr-ty
-                borrow-lifetime
-                phi-inputs
-                scrut-reg-group?
-                total-enum-switch?)))]))))
-
-(define (lower-match-variant-final
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [scrut-var : i64]
-  [scrut-ty : ast.AstType]
-  [variant-name-id : i64]
-  [args : ast.AstPatternList]
-  [body : ast.AstExpr]
-  [merge-label : i64]
-  [expr-ty : ast.AstType]
-  [borrow-lifetime : tc_core.TcMaybeNameId]
-  [phi-inputs : ir.CompilerIrPhiInputSeq]
-  [scrut-reg-group? : bool]) : ResultLowerExpr
-  (let
-    [symbols : (& ctx csym.CompilerSymbols) (tc_core.tc-context-symbols ctx)]
-    [variant-name : String (tc_core.tc-env-key-name-text variant-name-id)]
-    [resolved-scrut-ty : ast.AstType
-      (tc_core.tc-type-strip-region
-        (tc_core.tc-resolve-type (lower-global-shared-view ctx) scrut-ty))]
-    [handle : i64
-      (lower-variant-constructor-handle-id-or
-        (lower-global-shared-view ctx)
-        (lower-global-shared-view variant-name)
-        variant-name-id
-        (lower-global-shared-view resolved-scrut-ty)
-        (csym.compiler-symbols-missing-handle))]
-    (if (csym.compiler-symbols-handle-found? handle)
-      (match (csym.compiler-registries-variant-fields-indexed symbols handle)
-        [(parser.ResultAstTypeList.Ok fields)
-          (let
-            [resolved-fields : ast.AstTypeList
-              (lower-variant-payload-fields-for-handle
-                (lower-global-shared-view ctx)
-                handle
-                (lower-global-shared-view resolved-scrut-ty)
-                fields)]
-            ;; The final arm has no next-arm continuation, so a refutable
-            ;; payload subpattern here would have nowhere to fall through to;
-            ;; require a trailing catch-all instead.
-            (if (lower-pattern-list-refutable-for-types?
-              (lower-global-shared-view ctx)
-              args
-              (lower-global-shared-view resolved-fields))
-              (ResultLowerExpr.Err
-                (box
-                  (lower-diagnostic
-                    "lower: refutable payload pattern in final match arm requires a trailing catch-all")))
-              (match (lower-bind-match-variant-payloads
-                (lower-global-shared-view ctx)
-                state
-                env
-                type-env
-                borrow-lifetime
-                (ir.CompilerIrValue.Var scrut-var)
-                args
-                resolved-fields
-                (lower-state-mode state)
-                (lower-enum-type-name-id-or
-                  (lower-global-shared-view resolved-scrut-ty)
-                  -1)
-                (lower-enum-type-name-or-empty resolved-scrut-ty)
-                variant-name
-                (lower-variant-handle-name-id-or
-                  (lower-global-shared-view ctx)
-                  handle
-                  variant-name-id)
-                0
-                8
-                merge-label
-                scrut-reg-group?)
-                [(ResultLowerEnv.Ok body-start body-env body-type-env)
-                  (match (lower-expr-expected
-                    (lower-global-shared-view ctx)
-                    body-start
-                    body-env
-                    body-type-env
-                    (lower-global-shared-view body)
-                    (lower-global-shared-view expr-ty)
-                    body)
-                    [(ResultLowerExpr.Ok body-lowered)
-                      (match body-lowered
-                        [(LowerExpr.Expr body-state body-value body-ty)
-                          (let
-                            [body-end-label : i64
-                              (lower-state-current-label body-state)]
-                            (if (tc_core.tc-never-type? body-ty)
-                              (lower-match-finish
-                                ctx
-                                body-state
-                                merge-label
-                                expr-ty
-                                phi-inputs)
-                              (lower-match-finish
-                                ctx
-                                (lower-state-emit
-                                  body-state
-                                  (ir.CompilerIrInstr.Jump merge-label))
-                                merge-label
-                                expr-ty
-                                (ir.compiler-ir-phi-input-seq-prepend
-                                  body-value
-                                  body-end-label
-                                  phi-inputs))))])]
-                    [(ResultLowerExpr.Err message)
-                      (ResultLowerExpr.Err message)])]
-                [(ResultLowerEnv.Err message) (ResultLowerExpr.Err message)])))]
-        [(parser.ResultAstTypeList.Err message)
-          (ResultLowerExpr.Err (box (lower-diagnostic message)))])
-      (ResultLowerExpr.Err
-        (box
-          (lower-diagnostic
-            (str_cat.str-cat "lower: unknown variant " variant-name)))))))
-
-(define (lower-match-variant-body
-  [ctx : tc_core.TcContext]
-  [body-start : LowerState]
-  [next-label : i64]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [scrut-var : i64]
-  [scrut-ty : ast.AstType]
-  [tag-var : i64]
-  [variant-name : String]
-  [variant-name-id : i64]
-  [fields : ast.AstTypeList]
-  [args : ast.AstPatternList]
-  [body : ast.AstExpr]
-  [rest : ast.AstMatchArmList]
-  [merge-label : i64]
-  [expr-ty : ast.AstType]
-  [borrow-lifetime : tc_core.TcMaybeNameId]
-  [phi-inputs : ir.CompilerIrPhiInputSeq]
-  [scrut-reg-group? : bool]
-  [total-enum-switch? : bool]) : ResultLowerExpr
-  (match (lower-bind-match-variant-payloads
-    (lower-global-shared-view ctx)
-    body-start
-    env
-    type-env
-    borrow-lifetime
-    (ir.CompilerIrValue.Var scrut-var)
-    args
-    fields
-    (lower-state-mode body-start)
-    (lower-enum-type-name-id-or (lower-global-shared-view scrut-ty) -1)
-    (lower-enum-type-name-or-empty (lower-global-shared-view scrut-ty))
-    variant-name
-    variant-name-id
-    0
-    8
-    next-label
-    scrut-reg-group?)
-    [(ResultLowerEnv.Ok bound-state body-env body-type-env)
-      (match (lower-expr-expected
-        (lower-global-shared-view ctx)
-        bound-state
-        body-env
-        body-type-env
-        (lower-global-shared-view body)
-        (lower-global-shared-view expr-ty)
-        body)
-        [(ResultLowerExpr.Ok body-lowered)
-          (match body-lowered
-            [(LowerExpr.Expr body-state body-value body-ty)
-              (let
-                [body-end-label : i64 (lower-state-current-label body-state)]
-                (lower-match-enum-arms
-                  ctx
-                  (if (tc_core.tc-never-type?
-                    (lower-global-shared-view body-ty))
-                    (lower-state-finish-block body-state next-label)
-                    (lower-state-finish-block
-                      (lower-state-emit
-                        body-state
-                        (ir.CompilerIrInstr.Jump merge-label))
-                      next-label))
-                  env
-                  type-env
-                  scrut-var
-                  scrut-ty
-                  tag-var
-                  rest
-                  merge-label
-                  expr-ty
-                  borrow-lifetime
-                  (if (tc_core.tc-never-type? body-ty)
-                    phi-inputs
-                    (ir.compiler-ir-phi-input-seq-prepend
-                      body-value
-                      body-end-label
-                      phi-inputs))
-                  scrut-reg-group?
-                  total-enum-switch?))])]
-        [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
-    [(ResultLowerEnv.Err message) (ResultLowerExpr.Err message)]))
-
 ;; The switch-form pass is deliberately the only place that may materialize
 ;; the final enum tag and unreachable default. Lowering keeps the classic
 ;; fallthrough instruction shape. Once exactly four explicit comparisons
@@ -71169,260 +70446,6 @@
         "match_total_enum_default"
         "match_total_enum_chain")
       "match_next")))
-
-(define (lower-match-variant-arm
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [scrut-var : i64]
-  [scrut-ty : ast.AstType]
-  [tag-var : i64]
-  [variant-name-id : i64]
-  [args : ast.AstPatternList]
-  [body : ast.AstExpr]
-  [rest : ast.AstMatchArmList]
-  [merge-label : i64]
-  [expr-ty : ast.AstType]
-  [borrow-lifetime : tc_core.TcMaybeNameId]
-  [phi-inputs : ir.CompilerIrPhiInputSeq]
-  [scrut-reg-group? : bool]
-  [total-enum-switch? : bool]) : ResultLowerExpr
-  (let
-    [symbols : (& ctx csym.CompilerSymbols) (tc_core.tc-context-symbols ctx)]
-    [variant-name : String (tc_core.tc-env-key-name-text variant-name-id)]
-    [resolved-scrut-ty : ast.AstType
-      (tc_core.tc-type-strip-region
-        (tc_core.tc-resolve-type
-          (lower-global-shared-view ctx)
-          (lower-global-shared-view scrut-ty)))]
-    [handle : i64
-      (lower-variant-constructor-handle-id-or
-        (lower-global-shared-view ctx)
-        (lower-global-shared-view variant-name)
-        variant-name-id
-        (lower-global-shared-view resolved-scrut-ty)
-        (csym.compiler-symbols-missing-handle))]
-    (if (csym.compiler-symbols-handle-found? handle)
-      (match (csym.compiler-registries-variant-fields-indexed symbols handle)
-        [(parser.ResultAstTypeList.Ok fields)
-          (let
-            [next-total-enum-switch? : bool
-              (lower-total-enum-switch-next? total-enum-switch? (& rest))]
-            [resolved-fields : ast.AstTypeList
-              (lower-variant-payload-fields-for-handle
-                (lower-global-shared-view ctx)
-                handle
-                resolved-scrut-ty
-                fields)]
-            (match (lower-state-alloc-var state)
-              [(LowerAlloc.Alloc eq-alloc eq-var)
-                (let
-                  [eq-state : LowerState
-                    (lower-state-emit
-                      eq-alloc
-                      (ir.CompilerIrInstr.BinOp
-                        eq-var
-                        ir.CompilerIrBinOp.Eq
-                        (ir.CompilerIrValue.Var tag-var)
-                        (ir.CompilerIrValue.I64
-                          (csym.compiler-registry-handle-child-index handle))
-                        (ast.AstType.I64)))]
-                  (match (lower-state-fresh-label eq-state "match_arm")
-                    [(LowerLabel.Label body-label-state body-label)
-                      (match (lower-state-fresh-label
-                        body-label-state
-                        (lower-enum-match-next-label-base
-                          next-total-enum-switch?
-                          rest))
-                        [(LowerLabel.Label next-label-state next-label)
-                          (let
-                            [body-start : LowerState
-                              (lower-state-finish-block
-                                (lower-state-emit
-                                  next-label-state
-                                  (if next-total-enum-switch?
-                                    (ir.CompilerIrInstr.TotalEnumBranch
-                                      (ir.CompilerIrValue.Var eq-var)
-                                      body-label
-                                      next-label)
-                                    (ir.CompilerIrInstr.Branch
-                                      (ir.CompilerIrValue.Var eq-var)
-                                      body-label
-                                      next-label)))
-                                body-label)]
-                            (lower-match-variant-body
-                              (lower-global-shared-view ctx)
-                              body-start
-                              next-label
-                              env
-                              type-env
-                              scrut-var
-                              scrut-ty
-                              tag-var
-                              variant-name
-                              (lower-variant-handle-name-id-or
-                                ctx
-                                handle
-                                variant-name-id)
-                              resolved-fields
-                              args
-                              body
-                              rest
-                              merge-label
-                              expr-ty
-                              borrow-lifetime
-                              phi-inputs
-                              scrut-reg-group?
-                              next-total-enum-switch?))])]))]))]
-        [(parser.ResultAstTypeList.Err message)
-          (ResultLowerExpr.Err (box (lower-diagnostic message)))])
-      (ResultLowerExpr.Err
-        (box
-          (lower-diagnostic
-            (str_cat.str-cat "lower: unknown variant " variant-name)))))))
-
-(define (lower-match-literal-arm
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [scrut-var : i64]
-  [scrut-ty : ast.AstType]
-  [lit : ast.AstLiteral]
-  [body : ast.AstExpr]
-  [rest : ast.AstMatchArmList]
-  [merge-label : i64]
-  [expr-ty : ast.AstType]
-  [phi-inputs : ir.CompilerIrPhiInputSeq]) : ResultLowerExpr
-  (match (lower-state-alloc-var state)
-    [(LowerAlloc.Alloc eq-alloc eq-var)
-      (let
-        [eq-state : LowerState
-          (lower-state-emit
-            eq-alloc
-            (ir.CompilerIrInstr.BinOp
-              eq-var
-              ir.CompilerIrBinOp.Eq
-              (ir.CompilerIrValue.Var scrut-var)
-              (lower-literal-value-with-type
-                (tc_core.tc-context-source-names (lower-global-shared-view ctx))
-                lit
-                (lower-global-shared-view scrut-ty))
-              (lower-global-shared-view scrut-ty)))]
-        (match (lower-state-fresh-label eq-state "match_arm")
-          [(LowerLabel.Label body-label-state body-label)
-            (match (lower-state-fresh-label body-label-state "match_next")
-              [(LowerLabel.Label next-label-state next-label)
-                (let
-                  [body-start : LowerState
-                    (lower-state-finish-block
-                      (lower-state-emit
-                        next-label-state
-                        (ir.CompilerIrInstr.Branch
-                          (ir.CompilerIrValue.Var eq-var)
-                          body-label
-                          next-label))
-                      body-label)]
-                  (match (lower-expr-expected
-                    (lower-global-shared-view ctx)
-                    body-start
-                    env
-                    type-env
-                    (lower-global-shared-view body)
-                    (lower-global-shared-view expr-ty)
-                    body)
-                    [(ResultLowerExpr.Ok body-lowered)
-                      (match body-lowered
-                        [(LowerExpr.Expr body-state body-value body-ty)
-                          (let
-                            [body-end-label : i64
-                              (lower-state-current-label body-state)]
-                            (lower-match-arms
-                              ctx
-                              (if (tc_core.tc-never-type?
-                                (lower-global-shared-view body-ty))
-                                (lower-state-finish-block body-state next-label)
-                                (lower-state-finish-block
-                                  (lower-state-emit
-                                    body-state
-                                    (ir.CompilerIrInstr.Jump merge-label))
-                                  next-label))
-                              env
-                              type-env
-                              scrut-var
-                              scrut-ty
-                              rest
-                              merge-label
-                              expr-ty
-                              (if (tc_core.tc-never-type? body-ty)
-                                phi-inputs
-                                (ir.compiler-ir-phi-input-seq-prepend
-                                  body-value
-                                  body-end-label
-                                  phi-inputs))))])]
-                    [(ResultLowerExpr.Err message)
-                      (ResultLowerExpr.Err message)]))])]))]))
-
-(define (lower-match-catch-all
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [scrut-var : i64]
-  [scrut-ty : ast.AstType]
-  [arm : ast.AstMatchArm]
-  [merge-label : i64]
-  [expr-ty : ast.AstType]
-  [phi-inputs : ir.CompilerIrPhiInputSeq]) : ResultLowerExpr
-  (match arm
-    [(ast.AstMatchArm.Arm pat body-box)
-      (let
-        [body : ast.AstExpr
-          (lower-context-expr-get (lower-global-shared-view ctx) body-box)]
-        (match (lower-bind-match-catch-all-pattern
-          (lower-global-shared-view ctx)
-          state
-          env
-          type-env
-          scrut-var
-          scrut-ty
-          pat)
-          [(ResultLowerEnv.Ok body-start body-env body-type-env)
-            (match (lower-expr-expected
-              (lower-global-shared-view ctx)
-              body-start
-              body-env
-              body-type-env
-              (lower-global-shared-view body)
-              (lower-global-shared-view expr-ty)
-              body)
-              [(ResultLowerExpr.Ok body-lowered)
-                (match body-lowered
-                  [(LowerExpr.Expr body-state body-value body-ty)
-                    (let
-                      [body-end-label : i64
-                        (lower-state-current-label body-state)]
-                      (if (tc_core.tc-never-type? body-ty)
-                        (lower-match-finish
-                          ctx
-                          body-state
-                          merge-label
-                          expr-ty
-                          phi-inputs)
-                        (lower-match-finish
-                          ctx
-                          (lower-state-emit
-                            body-state
-                            (ir.CompilerIrInstr.Jump merge-label))
-                          merge-label
-                          expr-ty
-                          (ir.compiler-ir-phi-input-seq-prepend
-                            body-value
-                            body-end-label
-                            phi-inputs))))])]
-              [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
-          [(ResultLowerEnv.Err message) (ResultLowerExpr.Err message)]))]))
 
 (define (lower-phi-input-seq-empty? [phi-inputs : ir.CompilerIrPhiInputSeq]) : bool
   (let
@@ -71473,6 +70496,916 @@
   (if (sym_i64_env.sym-i64-contains-id env name)
     (not (lower-type-env-contains-reference? type-env))
     true))
+
+;; How a match arm's body continues. A value match (`lower-match-value`) jumps
+;; from each arm to `merge-label` and feeds its result to the merge phi, whose
+;; inputs accumulate arm by arm; a tail match (`lower-tail-match`) returns from
+;; the function in every arm. One arm walker serves both.
+(defenum LowerMatchCont
+  (Value i64 ast.AstType ir.CompilerIrPhiInputSeq)
+  (Tail ast.AstType i64))
+
+(defenum ResultLowerMatchArm
+  (Ok LowerState LowerMatchCont)
+  (Err (Box cdiag.CompilerDiagnostic)))
+
+(define (lower-match-cont-tail? [cont : LowerMatchCont]) : bool
+  (match cont
+    [(LowerMatchCont.Value _ _ _) false]
+    [(LowerMatchCont.Tail _ _) true]))
+
+;; Lower one arm body. A value arm that does not diverge jumps to the merge
+;; block and records its result as a phi input; a tail arm returns. The
+;; returned state is still inside the arm's last block.
+(define (lower-match-arm-body
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [body : ast.AstExpr]
+  [cont : LowerMatchCont]) : ResultLowerMatchArm
+  (match cont
+    [(LowerMatchCont.Value merge-label expr-ty phi-inputs)
+      (match (lower-expr-expected
+        (lower-global-shared-view ctx)
+        state
+        env
+        type-env
+        (lower-global-shared-view body)
+        (lower-global-shared-view expr-ty)
+        body)
+        [(ResultLowerExpr.Ok body-lowered)
+          (match body-lowered
+            [(LowerExpr.Expr body-state body-value body-ty)
+              (let
+                [body-end-label : i64 (lower-state-current-label body-state)]
+                (if (tc_core.tc-never-type? body-ty)
+                  (ResultLowerMatchArm.Ok
+                    body-state
+                    (LowerMatchCont.Value merge-label expr-ty phi-inputs))
+                  (ResultLowerMatchArm.Ok
+                    (lower-state-emit
+                      body-state
+                      (ir.CompilerIrInstr.Jump merge-label))
+                    (LowerMatchCont.Value
+                      merge-label
+                      expr-ty
+                      (ir.compiler-ir-phi-input-seq-prepend
+                        body-value
+                        body-end-label
+                        phi-inputs)))))])]
+        [(ResultLowerExpr.Err message) (ResultLowerMatchArm.Err message)])]
+    [(LowerMatchCont.Tail ret-ty sret-var)
+      (match (lower-tail-expr
+        (lower-global-shared-view ctx)
+        state
+        env
+        type-env
+        body
+        (lower-global-shared-view ret-ty)
+        sret-var)
+        [(ResultLowerState.Ok body-state)
+          (ResultLowerMatchArm.Ok
+            body-state
+            (LowerMatchCont.Tail ret-ty sret-var))]
+        [(ResultLowerState.Err message) (ResultLowerMatchArm.Err message)])]))
+
+;; Lower the last arm's body and close the match: a value match builds its
+;; merge block and phi; a tail match has already returned.
+(define (lower-match-arm-final
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [body : ast.AstExpr]
+  [cont : LowerMatchCont]) : ResultLowerExpr
+  (match (lower-match-arm-body ctx state env type-env body cont)
+    [(ResultLowerMatchArm.Ok body-state next-cont)
+      (match next-cont
+        [(LowerMatchCont.Value merge-label expr-ty phi-inputs)
+          (lower-match-finish ctx body-state merge-label expr-ty phi-inputs)]
+        [(LowerMatchCont.Tail _ _)
+          (ResultLowerExpr.Ok
+            (LowerExpr.Expr
+              body-state
+              ir.CompilerIrValue.Unit
+              (ast.AstType.Never)))])]
+    [(ResultLowerMatchArm.Err message) (ResultLowerExpr.Err message)]))
+
+(define (lower-match-tail-result [result : ResultLowerExpr]) : ResultLowerState
+  (match result
+    [(ResultLowerExpr.Ok lowered)
+      (match lowered
+        [(LowerExpr.Expr tail-state _ _) (ResultLowerState.Ok tail-state)])]
+    [(ResultLowerExpr.Err message) (ResultLowerState.Err message)]))
+
+;; Dispatch a lowered scrutinee: enums (directly, through a shared reference,
+;; or generic) match by tag, everything else by the scalar compare chain.
+(define (lower-match-dispatch
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [scrut-var : i64]
+  [scrut-ty : ast.AstType]
+  [arms : ast.AstMatchArmList]
+  [cont : LowerMatchCont]) : ResultLowerExpr
+  (match (tc_core.tc-type-strip-region
+    (tc_core.tc-resolve-type
+      (lower-global-shared-view ctx)
+      (lower-global-shared-view scrut-ty)))
+    [(ast.AstType.Enum _)
+      (lower-match-enum
+        ctx
+        state
+        env
+        type-env
+        scrut-var
+        scrut-ty
+        arms
+        cont
+        (tc_core.TcMaybeNameId.No)
+        false)]
+    [(ast.AstType.EnumArgs _ _)
+      (lower-match-enum
+        ctx
+        state
+        env
+        type-env
+        scrut-var
+        scrut-ty
+        arms
+        cont
+        (tc_core.TcMaybeNameId.No)
+        false)]
+    [(ast.AstType.Ref borrow-lifetime referent-box)
+      (let
+        [referent-ty : ast.AstType
+          (tc_core.tc-type-strip-region
+            (tc_core.tc-resolve-type
+              (lower-global-shared-view ctx)
+              (tc_core.tc-context-type-get
+                (lower-global-shared-view ctx)
+                referent-box)))]
+        (match (lower-global-shared-view referent-ty)
+          [(ast.AstType.Enum _)
+            (lower-match-enum
+              ctx
+              state
+              env
+              type-env
+              scrut-var
+              referent-ty
+              arms
+              cont
+              (tc_core.TcMaybeNameId.Some borrow-lifetime)
+              true)]
+          [(ast.AstType.EnumArgs _ _)
+            (lower-match-enum
+              ctx
+              state
+              env
+              type-env
+              scrut-var
+              referent-ty
+              arms
+              cont
+              (tc_core.TcMaybeNameId.Some borrow-lifetime)
+              true)]
+          [_
+            (lower-match-arms
+              ctx
+              state
+              env
+              type-env
+              scrut-var
+              scrut-ty
+              arms
+              cont)]))]
+    [(ast.AstType.VarArgs _ _)
+      (lower-match-enum
+        ctx
+        state
+        env
+        type-env
+        scrut-var
+        scrut-ty
+        arms
+        cont
+        (tc_core.TcMaybeNameId.No)
+        false)]
+    [_ (lower-match-arms ctx state env type-env scrut-var scrut-ty arms cont)]))
+
+(define (lower-match-arms
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [scrut-var : i64]
+  [scrut-ty : ast.AstType]
+  [arms : ast.AstMatchArmList]
+  [cont : LowerMatchCont]) : ResultLowerExpr
+  (if (ast.ast-match-arm-list-empty? (& arms))
+    (ResultLowerExpr.Err (box (lower-diagnostic "lower: match with no arms")))
+    (let
+      [arm : ast.AstMatchArm
+        (ast.ast-match-arm-list-get (& arms) 0 (ast.ast-match-arm-fallback))]
+      [rest : ast.AstMatchArmList (ast.ast-match-arm-list-tail arms)]
+      (if (ast.ast-match-arm-list-empty? (& rest))
+        (lower-match-catch-all
+          ctx
+          state
+          env
+          type-env
+          scrut-var
+          scrut-ty
+          arm
+          cont)
+        (match (lower-global-shared-view arm)
+          [(ast.AstMatchArm.Arm pat body-box)
+            (let
+              [body : ast.AstExpr
+                (lower-context-expr-get (lower-global-shared-view ctx) body-box)]
+              (match pat
+                [(ast.AstPattern.Literal lit)
+                  (lower-match-literal-arm
+                    ctx
+                    state
+                    env
+                    type-env
+                    scrut-var
+                    scrut-ty
+                    lit
+                    body
+                    rest
+                    cont)]
+                [(ast.AstPattern.Binding _)
+                  (lower-match-catch-all
+                    ctx
+                    state
+                    env
+                    type-env
+                    scrut-var
+                    scrut-ty
+                    arm
+                    cont)]
+                [(ast.AstPattern.Wildcard)
+                  (lower-match-catch-all
+                    ctx
+                    state
+                    env
+                    type-env
+                    scrut-var
+                    scrut-ty
+                    arm
+                    cont)]
+                ;; A tuple or array pattern before the last arm is a catch-all
+                ;; in value position; tail position does not accept one.
+                [(ast.AstPattern.Tuple _)
+                  (if (lower-match-cont-tail? (lower-global-shared-view cont))
+                    (ResultLowerExpr.Err
+                      (box
+                        (lower-diagnostic "lower: unsupported match pattern")))
+                    (lower-match-catch-all
+                      ctx
+                      state
+                      env
+                      type-env
+                      scrut-var
+                      scrut-ty
+                      arm
+                      cont))]
+                [(ast.AstPattern.Array _)
+                  (if (lower-match-cont-tail? (lower-global-shared-view cont))
+                    (ResultLowerExpr.Err
+                      (box
+                        (lower-diagnostic "lower: unsupported match pattern")))
+                    (lower-match-catch-all
+                      ctx
+                      state
+                      env
+                      type-env
+                      scrut-var
+                      scrut-ty
+                      arm
+                      cont))]
+                [(ast.AstPattern.Variant variant-name _)
+                  (if (lower-box-pattern-for-type?
+                    (lower-global-shared-view ctx)
+                    (lower-global-shared-view scrut-ty)
+                    variant-name)
+                    (lower-match-catch-all
+                      ctx
+                      state
+                      env
+                      type-env
+                      scrut-var
+                      scrut-ty
+                      arm
+                      cont)
+                    (if (lower-struct-pattern-for-type?
+                      (lower-global-shared-view ctx)
+                      (lower-global-shared-view scrut-ty)
+                      variant-name)
+                      (lower-match-catch-all
+                        ctx
+                        state
+                        env
+                        type-env
+                        scrut-var
+                        scrut-ty
+                        arm
+                        cont)
+                      (ResultLowerExpr.Err
+                        (box
+                          (lower-diagnostic
+                            (if (lower-match-cont-tail? cont)
+                              "lower: unsupported match pattern"
+                              (lower-unsupported-match-pattern-message
+                                ctx
+                                scrut-ty
+                                (tc_core.tc-env-key-name-text variant-name))))))))]
+                [_
+                  (ResultLowerExpr.Err
+                    (box (lower-diagnostic "lower: unsupported match pattern")))]))])))))
+
+(define (lower-match-literal-arm
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [scrut-var : i64]
+  [scrut-ty : ast.AstType]
+  [lit : ast.AstLiteral]
+  [body : ast.AstExpr]
+  [rest : ast.AstMatchArmList]
+  [cont : LowerMatchCont]) : ResultLowerExpr
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc.Alloc eq-alloc eq-var)
+      (let
+        [eq-state : LowerState
+          (lower-state-emit
+            eq-alloc
+            (ir.CompilerIrInstr.BinOp
+              eq-var
+              ir.CompilerIrBinOp.Eq
+              (ir.CompilerIrValue.Var scrut-var)
+              (lower-literal-value-with-type
+                (tc_core.tc-context-source-names (lower-global-shared-view ctx))
+                lit
+                (lower-global-shared-view scrut-ty))
+              (lower-global-shared-view scrut-ty)))]
+        (match (lower-state-fresh-label eq-state "match_arm")
+          [(LowerLabel.Label body-label-state body-label)
+            (match (lower-state-fresh-label body-label-state "match_next")
+              [(LowerLabel.Label next-label-state next-label)
+                (let
+                  [body-start : LowerState
+                    (lower-state-finish-block
+                      (lower-state-emit
+                        next-label-state
+                        (ir.CompilerIrInstr.Branch
+                          (ir.CompilerIrValue.Var eq-var)
+                          body-label
+                          next-label))
+                      body-label)]
+                  (match (lower-match-arm-body
+                    ctx
+                    body-start
+                    env
+                    type-env
+                    body
+                    cont)
+                    [(ResultLowerMatchArm.Ok body-state next-cont)
+                      (lower-match-arms
+                        ctx
+                        (lower-state-finish-block body-state next-label)
+                        env
+                        type-env
+                        scrut-var
+                        scrut-ty
+                        rest
+                        next-cont)]
+                    [(ResultLowerMatchArm.Err message)
+                      (ResultLowerExpr.Err message)]))])]))]))
+
+(define (lower-match-catch-all
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [scrut-var : i64]
+  [scrut-ty : ast.AstType]
+  [arm : ast.AstMatchArm]
+  [cont : LowerMatchCont]) : ResultLowerExpr
+  (match arm
+    [(ast.AstMatchArm.Arm pat body-box)
+      (let
+        [body : ast.AstExpr
+          (lower-context-expr-get (lower-global-shared-view ctx) body-box)]
+        (match (lower-bind-match-catch-all-pattern
+          (lower-global-shared-view ctx)
+          state
+          env
+          type-env
+          scrut-var
+          scrut-ty
+          pat)
+          [(ResultLowerEnv.Ok body-start body-env body-type-env)
+            (lower-match-arm-final
+              ctx
+              body-start
+              body-env
+              body-type-env
+              body
+              cont)]
+          [(ResultLowerEnv.Err message) (ResultLowerExpr.Err message)]))]))
+
+(define (lower-match-enum
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [scrut-var : i64]
+  [scrut-ty : ast.AstType]
+  [arms : ast.AstMatchArmList]
+  [cont : LowerMatchCont]
+  [borrow-lifetime : tc_core.TcMaybeNameId]
+  [force-memory : bool]) : ResultLowerExpr
+  ;; A 1-word register-resident enum value IS the tag word (nullary, no
+  ;; payload); match on `scrut-var` directly. A 2-word register-group enum holds
+  ;; the tag in word0; extract it with IrInstrWord. Neither touches memory. One
+  ;; layout build (lower-type-register-words) decides all three cases.
+  ;; `force-memory` (borrowed match of a spilled register-resident scrutinee)
+  ;; overrides the value paths: scrut-var then holds the ADDRESS of the enum
+  ;; bytes and tag/payloads are read through it like any memory enum.
+  (let
+    [scrut-words : i64
+      (lower-type-register-words
+        (lower-global-shared-view ctx)
+        (lower-global-shared-view scrut-ty))]
+    (if (and (> scrut-words 0) (not force-memory))
+      (if (= scrut-words 2)
+        (match (lower-emit-word
+          state
+          (ir.CompilerIrValue.Var scrut-var)
+          0
+          (ast.AstType.I64))
+          [(LowerExpr.Expr tag-state tag-value _)
+            (match tag-value
+              [(ir.CompilerIrValue.Var tag-var)
+                (lower-match-enum-arms
+                  ctx
+                  tag-state
+                  env
+                  type-env
+                  scrut-var
+                  scrut-ty
+                  tag-var
+                  arms
+                  cont
+                  borrow-lifetime
+                  true
+                  false)]
+              [_
+                (ResultLowerExpr.Err
+                  (box
+                    (lower-diagnostic "lower: internal enum tag extract failed")))])])
+        (lower-match-enum-arms
+          ctx
+          state
+          env
+          type-env
+          scrut-var
+          scrut-ty
+          scrut-var
+          arms
+          cont
+          borrow-lifetime
+          false
+          false))
+      (match (lower-load-at-offset
+        state
+        (ir.CompilerIrValue.Var scrut-var)
+        0
+        (ast.AstType.I64))
+        [(LowerExpr.Expr tag-state tag-value _)
+          (match tag-value
+            [(ir.CompilerIrValue.Var tag-var)
+              (lower-match-enum-arms
+                ctx
+                tag-state
+                env
+                type-env
+                scrut-var
+                scrut-ty
+                tag-var
+                arms
+                cont
+                borrow-lifetime
+                false
+                false)]
+            [_
+              (ResultLowerExpr.Err
+                (box (lower-diagnostic "lower: internal enum tag load failed")))])]))))
+
+(define (lower-match-enum-final-pattern
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [scrut-var : i64]
+  [scrut-ty : ast.AstType]
+  [arm : ast.AstMatchArm]
+  [pat : ast.AstPattern]
+  [body : ast.AstExpr]
+  [cont : LowerMatchCont]
+  [borrow-lifetime : tc_core.TcMaybeNameId]
+  [scrut-reg-group? : bool]) : ResultLowerExpr
+  (match pat
+    [(ast.AstPattern.Wildcard)
+      (lower-match-catch-all ctx state env type-env scrut-var scrut-ty arm cont)]
+    [(ast.AstPattern.Binding variant-name)
+      (lower-match-variant-final
+        ctx
+        state
+        env
+        type-env
+        scrut-var
+        scrut-ty
+        variant-name
+        (ast.ast-pattern-list-new)
+        body
+        cont
+        borrow-lifetime
+        scrut-reg-group?)]
+    [(ast.AstPattern.Variant variant-name args-box)
+      (let
+        [args : ast.AstPatternList (deref args-box)]
+        (lower-match-variant-final
+          ctx
+          state
+          env
+          type-env
+          scrut-var
+          scrut-ty
+          variant-name
+          args
+          body
+          cont
+          borrow-lifetime
+          scrut-reg-group?))]
+    [_
+      (ResultLowerExpr.Err
+        (box (lower-diagnostic "lower: unsupported enum match pattern")))]))
+
+(define (lower-match-enum-branch-pattern
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [scrut-var : i64]
+  [scrut-ty : ast.AstType]
+  [tag-var : i64]
+  [arm : ast.AstMatchArm]
+  [pat : ast.AstPattern]
+  [body : ast.AstExpr]
+  [rest : ast.AstMatchArmList]
+  [cont : LowerMatchCont]
+  [borrow-lifetime : tc_core.TcMaybeNameId]
+  [scrut-reg-group? : bool]
+  [total-enum-switch? : bool]) : ResultLowerExpr
+  (match pat
+    [(ast.AstPattern.Wildcard)
+      (lower-match-catch-all ctx state env type-env scrut-var scrut-ty arm cont)]
+    [(ast.AstPattern.Binding variant-name)
+      (lower-match-variant-arm
+        ctx
+        state
+        env
+        type-env
+        scrut-var
+        scrut-ty
+        tag-var
+        variant-name
+        (ast.ast-pattern-list-new)
+        body
+        rest
+        cont
+        borrow-lifetime
+        scrut-reg-group?
+        total-enum-switch?)]
+    [(ast.AstPattern.Variant variant-name args-box)
+      (let
+        [args : ast.AstPatternList (deref args-box)]
+        (lower-match-variant-arm
+          ctx
+          state
+          env
+          type-env
+          scrut-var
+          scrut-ty
+          tag-var
+          variant-name
+          args
+          body
+          rest
+          cont
+          borrow-lifetime
+          scrut-reg-group?
+          total-enum-switch?))]
+    [_
+      (ResultLowerExpr.Err
+        (box (lower-diagnostic "lower: unsupported enum match pattern")))]))
+
+(define (lower-match-enum-arms
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [scrut-var : i64]
+  [scrut-ty : ast.AstType]
+  [tag-var : i64]
+  [arms : ast.AstMatchArmList]
+  [cont : LowerMatchCont]
+  [borrow-lifetime : tc_core.TcMaybeNameId]
+  [scrut-reg-group? : bool]
+  [total-enum-switch? : bool]) : ResultLowerExpr
+  (if (ast.ast-match-arm-list-empty? (& arms))
+    (ResultLowerExpr.Err (box (lower-diagnostic "lower: match with no arms")))
+    (let
+      [arm : ast.AstMatchArm
+        (ast.ast-match-arm-list-get (& arms) 0 (ast.ast-match-arm-fallback))]
+      [rest : ast.AstMatchArmList (ast.ast-match-arm-list-tail arms)]
+      (match (lower-global-shared-view arm)
+        [(ast.AstMatchArm.Arm pat body-box)
+          (let
+            [body : ast.AstExpr
+              (lower-context-expr-get (lower-global-shared-view ctx) body-box)]
+            (if (ast.ast-match-arm-list-empty? (& rest))
+              (lower-match-enum-final-pattern
+                ctx
+                state
+                env
+                type-env
+                scrut-var
+                scrut-ty
+                arm
+                pat
+                body
+                cont
+                borrow-lifetime
+                scrut-reg-group?)
+              (lower-match-enum-branch-pattern
+                ctx
+                state
+                env
+                type-env
+                scrut-var
+                scrut-ty
+                tag-var
+                arm
+                pat
+                body
+                rest
+                cont
+                borrow-lifetime
+                scrut-reg-group?
+                total-enum-switch?)))]))))
+
+(define (lower-match-variant-final
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [scrut-var : i64]
+  [scrut-ty : ast.AstType]
+  [variant-name-id : i64]
+  [args : ast.AstPatternList]
+  [body : ast.AstExpr]
+  [cont : LowerMatchCont]
+  [borrow-lifetime : tc_core.TcMaybeNameId]
+  [scrut-reg-group? : bool]) : ResultLowerExpr
+  (let
+    [symbols : csym.CompilerSymbols (tc_core.tc-context-symbols-view ctx)]
+    (match (lower-variant-arm-resolution
+      (lower-global-shared-view ctx)
+      (lower-state-function-state state)
+      symbols
+      scrut-ty
+      variant-name-id)
+      [(LowerVariantArmResolution.Missing variant-name)
+        (ResultLowerExpr.Err
+          (box
+            (lower-diagnostic
+              (str_cat.str-cat "lower: unknown variant " variant-name))))]
+      [(LowerVariantArmResolution.FieldsErr message)
+        (ResultLowerExpr.Err (box (lower-diagnostic message)))]
+      [(LowerVariantArmResolution.Some
+          variant-name
+          resolved-scrut-ty
+          handle
+          resolved-fields
+          handle-name-id)
+        ;; The final arm has no next-arm continuation, so a refutable
+        ;; payload subpattern here would have nowhere to fall through to;
+        ;; require a trailing catch-all instead.
+        (if (lower-pattern-list-refutable-for-types?
+          (lower-global-shared-view ctx)
+          args
+          (lower-global-shared-view resolved-fields))
+          (ResultLowerExpr.Err
+            (box
+              (lower-diagnostic
+                "lower: refutable payload pattern in final match arm requires a trailing catch-all")))
+          (match (lower-bind-match-variant-payloads
+            (lower-global-shared-view ctx)
+            state
+            env
+            type-env
+            borrow-lifetime
+            (ir.CompilerIrValue.Var scrut-var)
+            args
+            resolved-fields
+            (lower-state-mode state)
+            (lower-enum-type-name-id-or
+              (lower-global-shared-view resolved-scrut-ty)
+              -1)
+            (lower-enum-type-name-or-empty resolved-scrut-ty)
+            variant-name
+            handle-name-id
+            0
+            8
+            (match (lower-global-shared-view cont)
+              [(LowerMatchCont.Value merge-label _ _) merge-label]
+              [(LowerMatchCont.Tail _ _) (lower-state-current-label state)])
+            scrut-reg-group?)
+            [(ResultLowerEnv.Ok body-start body-env body-type-env)
+              (lower-match-arm-final
+                ctx
+                body-start
+                body-env
+                body-type-env
+                body
+                cont)]
+            [(ResultLowerEnv.Err message) (ResultLowerExpr.Err message)]))])))
+
+(define (lower-match-variant-body
+  [ctx : tc_core.TcContext]
+  [body-start : LowerState]
+  [next-label : i64]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [scrut-var : i64]
+  [scrut-ty : ast.AstType]
+  [tag-var : i64]
+  [variant-name : String]
+  [variant-name-id : i64]
+  [fields : ast.AstTypeList]
+  [args : ast.AstPatternList]
+  [body : ast.AstExpr]
+  [rest : ast.AstMatchArmList]
+  [cont : LowerMatchCont]
+  [borrow-lifetime : tc_core.TcMaybeNameId]
+  [scrut-reg-group? : bool]
+  [total-enum-switch? : bool]) : ResultLowerExpr
+  (match (lower-bind-match-variant-payloads
+    (lower-global-shared-view ctx)
+    body-start
+    env
+    type-env
+    borrow-lifetime
+    (ir.CompilerIrValue.Var scrut-var)
+    args
+    fields
+    (lower-state-mode body-start)
+    (lower-enum-type-name-id-or (lower-global-shared-view scrut-ty) -1)
+    (lower-enum-type-name-or-empty (lower-global-shared-view scrut-ty))
+    variant-name
+    variant-name-id
+    0
+    8
+    next-label
+    scrut-reg-group?)
+    [(ResultLowerEnv.Ok bound-state body-env body-type-env)
+      (match (lower-match-arm-body
+        ctx
+        bound-state
+        body-env
+        body-type-env
+        body
+        cont)
+        [(ResultLowerMatchArm.Ok body-state next-cont)
+          (lower-match-enum-arms
+            ctx
+            (lower-state-finish-block body-state next-label)
+            env
+            type-env
+            scrut-var
+            scrut-ty
+            tag-var
+            rest
+            next-cont
+            borrow-lifetime
+            scrut-reg-group?
+            total-enum-switch?)]
+        [(ResultLowerMatchArm.Err message) (ResultLowerExpr.Err message)])]
+    [(ResultLowerEnv.Err message) (ResultLowerExpr.Err message)]))
+
+(define (lower-match-variant-arm
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [scrut-var : i64]
+  [scrut-ty : ast.AstType]
+  [tag-var : i64]
+  [variant-name-id : i64]
+  [args : ast.AstPatternList]
+  [body : ast.AstExpr]
+  [rest : ast.AstMatchArmList]
+  [cont : LowerMatchCont]
+  [borrow-lifetime : tc_core.TcMaybeNameId]
+  [scrut-reg-group? : bool]
+  [total-enum-switch? : bool]) : ResultLowerExpr
+  (let
+    [symbols : csym.CompilerSymbols (tc_core.tc-context-symbols-view ctx)]
+    (match (lower-variant-arm-resolution
+      (lower-global-shared-view ctx)
+      (lower-state-function-state state)
+      symbols
+      (lower-global-shared-view scrut-ty)
+      variant-name-id)
+      [(LowerVariantArmResolution.Missing variant-name)
+        (ResultLowerExpr.Err
+          (box
+            (lower-diagnostic
+              (str_cat.str-cat "lower: unknown variant " variant-name))))]
+      [(LowerVariantArmResolution.FieldsErr message)
+        (ResultLowerExpr.Err (box (lower-diagnostic message)))]
+      [(LowerVariantArmResolution.Some
+          variant-name
+          resolved-scrut-ty
+          handle
+          resolved-fields
+          handle-name-id)
+        (match (lower-state-alloc-var state)
+          [(LowerAlloc.Alloc eq-alloc eq-var)
+            (let
+              [next-total-enum-switch? : bool
+                (lower-total-enum-switch-next? total-enum-switch? (& rest))]
+              [eq-state : LowerState
+                (lower-state-emit
+                  eq-alloc
+                  (ir.CompilerIrInstr.BinOp
+                    eq-var
+                    ir.CompilerIrBinOp.Eq
+                    (ir.CompilerIrValue.Var tag-var)
+                    (ir.CompilerIrValue.I64
+                      (csym.compiler-registry-handle-child-index handle))
+                    (ast.AstType.I64)))]
+              (match (lower-state-fresh-label eq-state "match_arm")
+                [(LowerLabel.Label body-label-state body-label)
+                  (match (lower-state-fresh-label
+                    body-label-state
+                    (lower-enum-match-next-label-base
+                      next-total-enum-switch?
+                      rest))
+                    [(LowerLabel.Label next-label-state next-label)
+                      (let
+                        [body-start : LowerState
+                          (lower-state-finish-block
+                            (lower-state-emit
+                              next-label-state
+                              (if next-total-enum-switch?
+                                (ir.CompilerIrInstr.TotalEnumBranch
+                                  (ir.CompilerIrValue.Var eq-var)
+                                  body-label
+                                  next-label)
+                                (ir.CompilerIrInstr.Branch
+                                  (ir.CompilerIrValue.Var eq-var)
+                                  body-label
+                                  next-label)))
+                            body-label)]
+                        (lower-match-variant-body
+                          (lower-global-shared-view ctx)
+                          body-start
+                          next-label
+                          env
+                          type-env
+                          scrut-var
+                          scrut-ty
+                          tag-var
+                          variant-name
+                          handle-name-id
+                          resolved-fields
+                          args
+                          body
+                          rest
+                          cont
+                          borrow-lifetime
+                          scrut-reg-group?
+                          next-total-enum-switch?))])]))])])))
 
 (define (lower-tail-call-reference-capturing-lambda?
   [ctx : tc_core.TcContext]
@@ -73042,483 +72975,6 @@
                         (ResultLowerState.Err message)]))])])])]
     [(ResultLowerExpr.Err message) (ResultLowerState.Err message)]))
 
-(define (lower-tail-match-arms
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [scrut-var : i64]
-  [scrut-ty : ast.AstType]
-  [arms : ast.AstMatchArmList]
-  [ret-ty : ast.AstType]
-  [sret-var : i64]) : ResultLowerState
-  (if (ast.ast-match-arm-list-empty? (& arms))
-    (ResultLowerState.Err (box (lower-diagnostic "lower: match with no arms")))
-    (let
-      [arm : ast.AstMatchArm
-        (ast.ast-match-arm-list-get (& arms) 0 (ast.ast-match-arm-fallback))]
-      [rest : ast.AstMatchArmList (ast.ast-match-arm-list-tail arms)]
-      (if (ast.ast-match-arm-list-empty? (& rest))
-        (lower-tail-match-catch-all
-          ctx
-          state
-          env
-          type-env
-          scrut-var
-          scrut-ty
-          arm
-          ret-ty
-          sret-var)
-        (match (lower-global-shared-view arm)
-          [(ast.AstMatchArm.Arm pat body-box)
-            (let
-              [body : ast.AstExpr
-                (lower-context-expr-get (lower-global-shared-view ctx) body-box)]
-              (match pat
-                [(ast.AstPattern.Literal lit)
-                  (lower-tail-match-literal-arm
-                    ctx
-                    state
-                    env
-                    type-env
-                    scrut-var
-                    scrut-ty
-                    lit
-                    body
-                    rest
-                    ret-ty
-                    sret-var)]
-                [(ast.AstPattern.Binding _)
-                  (lower-tail-match-catch-all
-                    ctx
-                    state
-                    env
-                    type-env
-                    scrut-var
-                    scrut-ty
-                    arm
-                    ret-ty
-                    sret-var)]
-                [(ast.AstPattern.Wildcard)
-                  (lower-tail-match-catch-all
-                    ctx
-                    state
-                    env
-                    type-env
-                    scrut-var
-                    scrut-ty
-                    arm
-                    ret-ty
-                    sret-var)]
-                [(ast.AstPattern.Variant variant-name _)
-                  (if (lower-box-pattern-for-type?
-                    (lower-global-shared-view ctx)
-                    (lower-global-shared-view scrut-ty)
-                    variant-name)
-                    (lower-tail-match-catch-all
-                      ctx
-                      state
-                      env
-                      type-env
-                      scrut-var
-                      scrut-ty
-                      arm
-                      ret-ty
-                      sret-var)
-                    (if (lower-struct-pattern-for-type?
-                      (lower-global-shared-view ctx)
-                      (lower-global-shared-view scrut-ty)
-                      variant-name)
-                      (lower-tail-match-catch-all
-                        ctx
-                        state
-                        env
-                        type-env
-                        scrut-var
-                        scrut-ty
-                        arm
-                        ret-ty
-                        sret-var)
-                      (ResultLowerState.Err
-                        (box
-                          (lower-diagnostic "lower: unsupported match pattern")))))]
-                [_
-                  (ResultLowerState.Err
-                    (box (lower-diagnostic "lower: unsupported match pattern")))]))])))))
-
-(define (lower-tail-match-literal-arm
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [scrut-var : i64]
-  [scrut-ty : ast.AstType]
-  [lit : ast.AstLiteral]
-  [body : ast.AstExpr]
-  [rest : ast.AstMatchArmList]
-  [ret-ty : ast.AstType]
-  [sret-var : i64]) : ResultLowerState
-  (match (lower-state-alloc-var state)
-    [(LowerAlloc.Alloc eq-alloc eq-var)
-      (let
-        [eq-state : LowerState
-          (lower-state-emit
-            eq-alloc
-            (ir.CompilerIrInstr.BinOp
-              eq-var
-              ir.CompilerIrBinOp.Eq
-              (ir.CompilerIrValue.Var scrut-var)
-              (lower-literal-value-with-type
-                (tc_core.tc-context-source-names (lower-global-shared-view ctx))
-                lit
-                (lower-global-shared-view scrut-ty))
-              (lower-global-shared-view scrut-ty)))]
-        (match (lower-state-fresh-label eq-state "match_arm")
-          [(LowerLabel.Label body-label-state body-label)
-            (match (lower-state-fresh-label body-label-state "match_next")
-              [(LowerLabel.Label next-label-state next-label)
-                (let
-                  [body-start : LowerState
-                    (lower-state-finish-block
-                      (lower-state-emit
-                        next-label-state
-                        (ir.CompilerIrInstr.Branch
-                          (ir.CompilerIrValue.Var eq-var)
-                          body-label
-                          next-label))
-                      body-label)]
-                  (match (lower-tail-expr
-                    (lower-global-shared-view ctx)
-                    body-start
-                    env
-                    type-env
-                    body
-                    (lower-global-shared-view ret-ty)
-                    sret-var)
-                    [(ResultLowerState.Ok body-state)
-                      (lower-tail-match-arms
-                        ctx
-                        (lower-state-finish-block body-state next-label)
-                        env
-                        type-env
-                        scrut-var
-                        scrut-ty
-                        rest
-                        ret-ty
-                        sret-var)]
-                    [(ResultLowerState.Err message)
-                      (ResultLowerState.Err message)]))])]))]))
-
-(define (lower-tail-match-catch-all
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [scrut-var : i64]
-  [scrut-ty : ast.AstType]
-  [arm : ast.AstMatchArm]
-  [ret-ty : ast.AstType]
-  [sret-var : i64]) : ResultLowerState
-  (match arm
-    [(ast.AstMatchArm.Arm pat body-box)
-      (let
-        [body : ast.AstExpr
-          (lower-context-expr-get (lower-global-shared-view ctx) body-box)]
-        (match (lower-bind-match-catch-all-pattern
-          (lower-global-shared-view ctx)
-          state
-          env
-          type-env
-          scrut-var
-          scrut-ty
-          pat)
-          [(ResultLowerEnv.Ok body-start body-env body-type-env)
-            (lower-tail-expr
-              ctx
-              body-start
-              body-env
-              body-type-env
-              body
-              ret-ty
-              sret-var)]
-          [(ResultLowerEnv.Err message) (ResultLowerState.Err message)]))]))
-
-(define (lower-tail-match-enum
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [scrut-var : i64]
-  [scrut-ty : ast.AstType]
-  [arms : ast.AstMatchArmList]
-  [ret-ty : ast.AstType]
-  [sret-var : i64]
-  [borrow-lifetime : tc_core.TcMaybeNameId]
-  [force-memory : bool]) : ResultLowerState
-  (let
-    [scrut-words : i64
-      (lower-type-register-words
-        (lower-global-shared-view ctx)
-        (lower-global-shared-view scrut-ty))]
-    (if (and (> scrut-words 0) (not force-memory))
-      (if (= scrut-words 2)
-        (match (lower-emit-word
-          state
-          (ir.CompilerIrValue.Var scrut-var)
-          0
-          (ast.AstType.I64))
-          [(LowerExpr.Expr tag-state tag-value _)
-            (match tag-value
-              [(ir.CompilerIrValue.Var tag-var)
-                (lower-tail-match-enum-arms
-                  ctx
-                  tag-state
-                  env
-                  type-env
-                  scrut-var
-                  scrut-ty
-                  tag-var
-                  arms
-                  ret-ty
-                  sret-var
-                  borrow-lifetime
-                  true
-                  false)]
-              [_
-                (ResultLowerState.Err
-                  (box
-                    (lower-diagnostic "lower: internal enum tag extract failed")))])])
-        (lower-tail-match-enum-arms
-          ctx
-          state
-          env
-          type-env
-          scrut-var
-          scrut-ty
-          scrut-var
-          arms
-          ret-ty
-          sret-var
-          borrow-lifetime
-          false
-          false))
-      (match (lower-load-at-offset
-        state
-        (ir.CompilerIrValue.Var scrut-var)
-        0
-        (ast.AstType.I64))
-        [(LowerExpr.Expr tag-state tag-value _)
-          (match tag-value
-            [(ir.CompilerIrValue.Var tag-var)
-              (lower-tail-match-enum-arms
-                ctx
-                tag-state
-                env
-                type-env
-                scrut-var
-                scrut-ty
-                tag-var
-                arms
-                ret-ty
-                sret-var
-                borrow-lifetime
-                false
-                false)]
-            [_
-              (ResultLowerState.Err
-                (box (lower-diagnostic "lower: internal enum tag load failed")))])]))))
-
-(define (lower-tail-match-enum-final-pattern
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [scrut-var : i64]
-  [scrut-ty : ast.AstType]
-  [arm : ast.AstMatchArm]
-  [pat : ast.AstPattern]
-  [body : ast.AstExpr]
-  [ret-ty : ast.AstType]
-  [sret-var : i64]
-  [borrow-lifetime : tc_core.TcMaybeNameId]
-  [scrut-reg-group? : bool]) : ResultLowerState
-  (match pat
-    [(ast.AstPattern.Wildcard)
-      (lower-tail-match-catch-all
-        ctx
-        state
-        env
-        type-env
-        scrut-var
-        scrut-ty
-        arm
-        ret-ty
-        sret-var)]
-    [(ast.AstPattern.Binding variant-name)
-      (lower-tail-match-variant-final
-        ctx
-        state
-        env
-        type-env
-        scrut-var
-        scrut-ty
-        variant-name
-        (ast.ast-pattern-list-new)
-        body
-        ret-ty
-        sret-var
-        borrow-lifetime
-        scrut-reg-group?)]
-    [(ast.AstPattern.Variant variant-name args-box)
-      (let
-        [args : ast.AstPatternList (deref args-box)]
-        (lower-tail-match-variant-final
-          ctx
-          state
-          env
-          type-env
-          scrut-var
-          scrut-ty
-          variant-name
-          args
-          body
-          ret-ty
-          sret-var
-          borrow-lifetime
-          scrut-reg-group?))]
-    [_
-      (ResultLowerState.Err
-        (box (lower-diagnostic "lower: unsupported enum match pattern")))]))
-
-(define (lower-tail-match-enum-branch-pattern
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [scrut-var : i64]
-  [scrut-ty : ast.AstType]
-  [tag-var : i64]
-  [arm : ast.AstMatchArm]
-  [pat : ast.AstPattern]
-  [body : ast.AstExpr]
-  [rest : ast.AstMatchArmList]
-  [ret-ty : ast.AstType]
-  [sret-var : i64]
-  [borrow-lifetime : tc_core.TcMaybeNameId]
-  [scrut-reg-group? : bool]
-  [total-enum-switch? : bool]) : ResultLowerState
-  (match pat
-    [(ast.AstPattern.Wildcard)
-      (lower-tail-match-catch-all
-        ctx
-        state
-        env
-        type-env
-        scrut-var
-        scrut-ty
-        arm
-        ret-ty
-        sret-var)]
-    [(ast.AstPattern.Binding variant-name)
-      (lower-tail-match-variant-arm
-        ctx
-        state
-        env
-        type-env
-        scrut-var
-        scrut-ty
-        tag-var
-        variant-name
-        (ast.ast-pattern-list-new)
-        body
-        rest
-        ret-ty
-        sret-var
-        borrow-lifetime
-        scrut-reg-group?
-        total-enum-switch?)]
-    [(ast.AstPattern.Variant variant-name args-box)
-      (let
-        [args : ast.AstPatternList (deref args-box)]
-        (lower-tail-match-variant-arm
-          ctx
-          state
-          env
-          type-env
-          scrut-var
-          scrut-ty
-          tag-var
-          variant-name
-          args
-          body
-          rest
-          ret-ty
-          sret-var
-          borrow-lifetime
-          scrut-reg-group?
-          total-enum-switch?))]
-    [_
-      (ResultLowerState.Err
-        (box (lower-diagnostic "lower: unsupported enum match pattern")))]))
-
-(define (lower-tail-match-enum-arms
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [scrut-var : i64]
-  [scrut-ty : ast.AstType]
-  [tag-var : i64]
-  [arms : ast.AstMatchArmList]
-  [ret-ty : ast.AstType]
-  [sret-var : i64]
-  [borrow-lifetime : tc_core.TcMaybeNameId]
-  [scrut-reg-group? : bool]
-  [total-enum-switch? : bool]) : ResultLowerState
-  (if (ast.ast-match-arm-list-empty? (& arms))
-    (ResultLowerState.Err (box (lower-diagnostic "lower: match with no arms")))
-    (let
-      [arm : ast.AstMatchArm
-        (ast.ast-match-arm-list-get (& arms) 0 (ast.ast-match-arm-fallback))]
-      [rest : ast.AstMatchArmList (ast.ast-match-arm-list-tail arms)]
-      (match (lower-global-shared-view arm)
-        [(ast.AstMatchArm.Arm pat body-box)
-          (let
-            [body : ast.AstExpr
-              (lower-context-expr-get (lower-global-shared-view ctx) body-box)]
-            (if (ast.ast-match-arm-list-empty? (& rest))
-              (lower-tail-match-enum-final-pattern
-                ctx
-                state
-                env
-                type-env
-                scrut-var
-                scrut-ty
-                arm
-                pat
-                body
-                ret-ty
-                sret-var
-                borrow-lifetime
-                scrut-reg-group?)
-              (lower-tail-match-enum-branch-pattern
-                ctx
-                state
-                env
-                type-env
-                scrut-var
-                scrut-ty
-                tag-var
-                arm
-                pat
-                body
-                rest
-                ret-ty
-                sret-var
-                borrow-lifetime
-                scrut-reg-group?
-                total-enum-switch?)))]))))
-
 ;; Per-match variant arm resolution memo. Each arm of one match re-runs the
 ;; same constructor/payload resolution chain (tc-env-key-name-text, scrutinee
 ;; type resolution, lower-variant-constructor-handle-id-or,
@@ -73612,242 +73068,6 @@
                 (set! (array-ref storage.variant-outcomes slot) result))])
           result)))))
 
-(define (lower-tail-match-variant-final
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [scrut-var : i64]
-  [scrut-ty : ast.AstType]
-  [variant-name-id : i64]
-  [args : ast.AstPatternList]
-  [body : ast.AstExpr]
-  [ret-ty : ast.AstType]
-  [sret-var : i64]
-  [borrow-lifetime : tc_core.TcMaybeNameId]
-  [scrut-reg-group? : bool]) : ResultLowerState
-  (let
-    [symbols : csym.CompilerSymbols (tc_core.tc-context-symbols-view ctx)]
-    (match (lower-variant-arm-resolution
-      (lower-global-shared-view ctx)
-      (lower-state-function-state state)
-      symbols
-      scrut-ty
-      variant-name-id)
-      [(LowerVariantArmResolution.Missing variant-name)
-        (ResultLowerState.Err
-          (box
-            (lower-diagnostic
-              (str_cat.str-cat "lower: unknown variant " variant-name))))]
-      [(LowerVariantArmResolution.FieldsErr message)
-        (ResultLowerState.Err (box (lower-diagnostic message)))]
-      [(LowerVariantArmResolution.Some
-          variant-name
-          resolved-scrut-ty
-          handle
-          resolved-fields
-          handle-name-id)
-        (if (lower-pattern-list-refutable-for-types?
-          (lower-global-shared-view ctx)
-          args
-          (lower-global-shared-view resolved-fields))
-          (ResultLowerState.Err
-            (box
-              (lower-diagnostic
-                "lower: refutable payload pattern in final match arm requires a trailing catch-all")))
-          (match (lower-bind-match-variant-payloads
-            (lower-global-shared-view ctx)
-            state
-            env
-            type-env
-            borrow-lifetime
-            (ir.CompilerIrValue.Var scrut-var)
-            args
-            resolved-fields
-            (lower-state-mode state)
-            (lower-enum-type-name-id-or
-              (lower-global-shared-view resolved-scrut-ty)
-              -1)
-            (lower-enum-type-name-or-empty resolved-scrut-ty)
-            variant-name
-            handle-name-id
-            0
-            8
-            (lower-state-current-label state)
-            scrut-reg-group?)
-            [(ResultLowerEnv.Ok body-start body-env body-type-env)
-              (lower-tail-expr
-                (lower-global-shared-view ctx)
-                body-start
-                body-env
-                body-type-env
-                body
-                ret-ty
-                sret-var)]
-            [(ResultLowerEnv.Err message) (ResultLowerState.Err message)]))])))
-
-(define (lower-tail-match-variant-body
-  [ctx : tc_core.TcContext]
-  [body-start : LowerState]
-  [next-label : i64]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [scrut-var : i64]
-  [scrut-ty : ast.AstType]
-  [tag-var : i64]
-  [variant-name : String]
-  [variant-name-id : i64]
-  [fields : ast.AstTypeList]
-  [args : ast.AstPatternList]
-  [body : ast.AstExpr]
-  [rest : ast.AstMatchArmList]
-  [ret-ty : ast.AstType]
-  [sret-var : i64]
-  [borrow-lifetime : tc_core.TcMaybeNameId]
-  [scrut-reg-group? : bool]
-  [total-enum-switch? : bool]) : ResultLowerState
-  (match (lower-bind-match-variant-payloads
-    (lower-global-shared-view ctx)
-    body-start
-    env
-    type-env
-    borrow-lifetime
-    (ir.CompilerIrValue.Var scrut-var)
-    args
-    fields
-    (lower-state-mode body-start)
-    (lower-enum-type-name-id-or (lower-global-shared-view scrut-ty) -1)
-    (lower-enum-type-name-or-empty (lower-global-shared-view scrut-ty))
-    variant-name
-    variant-name-id
-    0
-    8
-    next-label
-    scrut-reg-group?)
-    [(ResultLowerEnv.Ok bound-state body-env body-type-env)
-      (match (lower-tail-expr
-        (lower-global-shared-view ctx)
-        bound-state
-        body-env
-        body-type-env
-        body
-        (lower-global-shared-view ret-ty)
-        sret-var)
-        [(ResultLowerState.Ok body-state)
-          (lower-tail-match-enum-arms
-            ctx
-            (lower-state-finish-block body-state next-label)
-            env
-            type-env
-            scrut-var
-            scrut-ty
-            tag-var
-            rest
-            ret-ty
-            sret-var
-            borrow-lifetime
-            scrut-reg-group?
-            total-enum-switch?)]
-        [(ResultLowerState.Err message) (ResultLowerState.Err message)])]
-    [(ResultLowerEnv.Err message) (ResultLowerState.Err message)]))
-
-(define (lower-tail-match-variant-arm
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [scrut-var : i64]
-  [scrut-ty : ast.AstType]
-  [tag-var : i64]
-  [variant-name-id : i64]
-  [args : ast.AstPatternList]
-  [body : ast.AstExpr]
-  [rest : ast.AstMatchArmList]
-  [ret-ty : ast.AstType]
-  [sret-var : i64]
-  [borrow-lifetime : tc_core.TcMaybeNameId]
-  [scrut-reg-group? : bool]
-  [total-enum-switch? : bool]) : ResultLowerState
-  (let
-    [symbols : csym.CompilerSymbols (tc_core.tc-context-symbols-view ctx)]
-    (match (lower-variant-arm-resolution
-      (lower-global-shared-view ctx)
-      (lower-state-function-state state)
-      symbols
-      (lower-global-shared-view scrut-ty)
-      variant-name-id)
-      [(LowerVariantArmResolution.Missing variant-name)
-        (ResultLowerState.Err
-          (box
-            (lower-diagnostic
-              (str_cat.str-cat "lower: unknown variant " variant-name))))]
-      [(LowerVariantArmResolution.FieldsErr message)
-        (ResultLowerState.Err (box (lower-diagnostic message)))]
-      [(LowerVariantArmResolution.Some
-          variant-name
-          resolved-scrut-ty
-          handle
-          resolved-fields
-          handle-name-id)
-        (match (lower-state-alloc-var state)
-          [(LowerAlloc.Alloc eq-alloc eq-var)
-            (let
-              [next-total-enum-switch? : bool
-                (lower-total-enum-switch-next? total-enum-switch? (& rest))]
-              [eq-state : LowerState
-                (lower-state-emit
-                  eq-alloc
-                  (ir.CompilerIrInstr.BinOp
-                    eq-var
-                    ir.CompilerIrBinOp.Eq
-                    (ir.CompilerIrValue.Var tag-var)
-                    (ir.CompilerIrValue.I64
-                      (csym.compiler-registry-handle-child-index handle))
-                    (ast.AstType.I64)))]
-              (match (lower-state-fresh-label eq-state "match_arm")
-                [(LowerLabel.Label body-label-state body-label)
-                  (match (lower-state-fresh-label
-                    body-label-state
-                    (lower-enum-match-next-label-base
-                      next-total-enum-switch?
-                      rest))
-                    [(LowerLabel.Label next-label-state next-label)
-                      (let
-                        [body-start : LowerState
-                          (lower-state-finish-block
-                            (lower-state-emit
-                              next-label-state
-                              (if next-total-enum-switch?
-                                (ir.CompilerIrInstr.TotalEnumBranch
-                                  (ir.CompilerIrValue.Var eq-var)
-                                  body-label
-                                  next-label)
-                                (ir.CompilerIrInstr.Branch
-                                  (ir.CompilerIrValue.Var eq-var)
-                                  body-label
-                                  next-label)))
-                            body-label)]
-                        (lower-tail-match-variant-body
-                          (lower-global-shared-view ctx)
-                          body-start
-                          next-label
-                          env
-                          type-env
-                          scrut-var
-                          scrut-ty
-                          tag-var
-                          variant-name
-                          handle-name-id
-                          resolved-fields
-                          args
-                          body
-                          rest
-                          ret-ty
-                          sret-var
-                          borrow-lifetime
-                          scrut-reg-group?
-                          next-total-enum-switch?))])]))])])))
-
 (define (lower-borrowed-enum-match-scrutinee?
   [ctx : tc_core.TcContext]
   [type-env : tc_core.TcTypeEnv]
@@ -73930,107 +73150,16 @@
               scrut-value
               (lower-global-shared-view scrut-ty))
               [(LowerScrutineeHome.Home match-state scrut-var)
-                (match (tc_core.tc-type-strip-region
-                  (tc_core.tc-resolve-type
-                    (lower-global-shared-view ctx)
-                    (lower-global-shared-view scrut-ty)))
-                  [(ast.AstType.Enum _)
-                    (lower-tail-match-enum
-                      ctx
-                      match-state
-                      env
-                      type-env
-                      scrut-var
-                      scrut-ty
-                      arms
-                      ret-ty
-                      sret-var
-                      (tc_core.TcMaybeNameId.No)
-                      false)]
-                  [(ast.AstType.EnumArgs _ _)
-                    (lower-tail-match-enum
-                      ctx
-                      match-state
-                      env
-                      type-env
-                      scrut-var
-                      scrut-ty
-                      arms
-                      ret-ty
-                      sret-var
-                      (tc_core.TcMaybeNameId.No)
-                      false)]
-                  [(ast.AstType.Ref borrow-lifetime referent-box)
-                    (let
-                      [referent-ty : ast.AstType
-                        (tc_core.tc-type-strip-region
-                          (tc_core.tc-resolve-type
-                            (lower-global-shared-view ctx)
-                            (tc_core.tc-context-type-get
-                              (lower-global-shared-view ctx)
-                              referent-box)))]
-                      (match (lower-global-shared-view referent-ty)
-                        [(ast.AstType.Enum _)
-                          (lower-tail-match-enum
-                            ctx
-                            match-state
-                            env
-                            type-env
-                            scrut-var
-                            referent-ty
-                            arms
-                            ret-ty
-                            sret-var
-                            (tc_core.TcMaybeNameId.Some borrow-lifetime)
-                            true)]
-                        [(ast.AstType.EnumArgs _ _)
-                          (lower-tail-match-enum
-                            ctx
-                            match-state
-                            env
-                            type-env
-                            scrut-var
-                            referent-ty
-                            arms
-                            ret-ty
-                            sret-var
-                            (tc_core.TcMaybeNameId.Some borrow-lifetime)
-                            true)]
-                        [_
-                          (lower-tail-match-arms
-                            ctx
-                            match-state
-                            env
-                            type-env
-                            scrut-var
-                            scrut-ty
-                            arms
-                            ret-ty
-                            sret-var)]))]
-                  [(ast.AstType.VarArgs _ _)
-                    (lower-tail-match-enum
-                      ctx
-                      match-state
-                      env
-                      type-env
-                      scrut-var
-                      scrut-ty
-                      arms
-                      ret-ty
-                      sret-var
-                      (tc_core.TcMaybeNameId.No)
-                      false)]
-                  [_
-                    (lower-tail-match-arms
-                      ctx
-                      match-state
-                      env
-                      type-env
-                      scrut-var
-                      scrut-ty
-                      arms
-                      ret-ty
-                      sret-var)])])])]
+                (lower-match-tail-result
+                  (lower-match-dispatch
+                    ctx
+                    match-state
+                    env
+                    type-env
+                    scrut-var
+                    scrut-ty
+                    arms
+                    (LowerMatchCont.Tail ret-ty sret-var)))])])]
       [(ResultLowerExpr.Err message) (ResultLowerState.Err message)])))
 
 (define (lower-tail-expr

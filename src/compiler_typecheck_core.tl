@@ -60365,22 +60365,25 @@
                                   body
                                   definition-env
                                   (ctfe_support.ctfe-fuel-limit))]
-                              (match definition-result
-                                [(ctfe_support.ResultCtfe.Ok value _)
-                                  (begin
-                                    (tc-context-install-pools! ctx)
+                              ;; This probe runs the body on placeholder
+                              ;; operands (a `Var` per ordinary operand, empty
+                              ;; variadic lists), never on a caller's syntax, so
+                              ;; a failed run proves nothing about the macro:
+                              ;; its `comptime-error` or inspector rejection may
+                              ;; sit on the path real operands never take. Only
+                              ;; a completed run's produced type is checked here;
+                              ;; each expansion evaluates the real operands and
+                              ;; reports its own errors at the call.
+                              (begin
+                                (tc-context-install-pools! ctx)
+                                (match definition-result
+                                  [(ctfe_support.ResultCtfe.Ok value _)
                                     (tc-check-defmacro-produced-type
                                       ctx
                                       ret
-                                      value))]
-                                [(ctfe_support.ResultCtfe.Err diag)
-                                  (let
-                                    [diagnostic : cdiag.CompilerDiagnostic
-                                      (cdiag.compiler-diagnostic-box-shared-view
-                                        diag)]
-                                    (ResultTcUnit.Err
-                                      (cdiag.compiler-diagnostic-message
-                                        (& diagnostic))))])))))]
+                                      value)]
+                                  [(ctfe_support.ResultCtfe.Err _)
+                                    ResultTcUnit.Ok]))))))]
                     [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
                 [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
           [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]

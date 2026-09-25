@@ -2113,15 +2113,15 @@
           (cond
             [(=
                 (ci.intern-syntax-id-value op)
-                (cbi.compiler-builtin-ctfe-ref 219))
+                (cbi.compiler-builtin-ctfe "all"))
               (compiler-cfg-eval-list-all dispatch predicates)]
             [(=
                 (ci.intern-syntax-id-value op)
-                (cbi.compiler-builtin-ctfe-ref 220))
+                (cbi.compiler-builtin-ctfe "any"))
               (compiler-cfg-eval-list-any dispatch predicates)]
             [(=
                 (ci.intern-syntax-id-value op)
-                (cbi.compiler-builtin-ctfe-ref 155))
+                (cbi.compiler-builtin-ctfe "not"))
               (compiler-cfg-eval-not dispatch predicates)]
             [else
               (ResultCompilerCfg.Err
@@ -2156,15 +2156,15 @@
   (or
     (cbi.compiler-builtin-id-any4?
       name
-      (cbi.compiler-builtin-ctfe-ref 265)
-      (cbi.compiler-builtin-ctfe-ref 266)
-      (cbi.compiler-builtin-ctfe-ref 267)
-      (cbi.compiler-builtin-ctfe-ref 268))
+      (cbi.compiler-builtin-ctfe "defgeneric")
+      (cbi.compiler-builtin-ctfe "generic")
+      (cbi.compiler-builtin-ctfe "deftrait")
+      (cbi.compiler-builtin-ctfe "trait"))
     (cbi.compiler-builtin-id-any3?
       name
-      (cbi.compiler-builtin-ctfe-ref 269)
-      (cbi.compiler-builtin-ctfe-ref 270)
-      (cbi.compiler-builtin-ctfe-ref 271))))
+      (cbi.compiler-builtin-ctfe "interface")
+      (cbi.compiler-builtin-ctfe "impl")
+      (cbi.compiler-builtin-ctfe "where"))))
 
 (define (compiler-parse-removed-compressed-include-name) : String
   (str_cat.str-cat "include-str-comptime-" "lzss"))
@@ -4282,11 +4282,17 @@
             (cond
               ;; Macro output uses these non-lexer-spellable builtin IDs to
               ;; carry already-resolved aggregate types through quasiquotes.
-              [(= head-id (cbi.compiler-builtin-ctfe-ref 106))
+              [(=
+                  head-id
+                  (cbi.compiler-builtin-ctfe
+                    "__typelisp internal resolved struct type"))
                 (parse-ast-resolved-nominal-type dispatch pools rest true)]
-              [(= head-id (cbi.compiler-builtin-ctfe-ref 107))
+              [(=
+                  head-id
+                  (cbi.compiler-builtin-ctfe
+                    "__typelisp internal resolved enum type"))
                 (parse-ast-resolved-nominal-type dispatch pools rest false)]
-              [(= head-id (cbi.compiler-builtin-ctfe-ref 179))
+              [(= head-id (cbi.compiler-builtin-ctfe ":consume"))
                 (ResultAstType.Err
                   "parse: :consume has been removed; by-value parameters move non-Copy values")]
               [(= tag (compiler-parse-tag-ty-c-func))
@@ -4471,7 +4477,7 @@
         [(reader.SpannedSexprView.Sym key _)
           (if (=
             (ci.intern-syntax-id-value key)
-            (cbi.compiler-builtin-ctfe-ref 179))
+            (cbi.compiler-builtin-ctfe ":consume"))
             (match (reader.spanned-sexpr-view tail)
               [(reader.SpannedSexprView.Cons ty-node end _)
                 (match (reader.spanned-sexpr-view end)
@@ -4555,8 +4561,14 @@
             [tag : i64 (compiler-parse-dispatch-tag-id dispatch head-id)]
             (cond
               [(or
-                  (= head-id (cbi.compiler-builtin-ctfe-ref 106))
-                  (= head-id (cbi.compiler-builtin-ctfe-ref 107)))
+                  (=
+                    head-id
+                    (cbi.compiler-builtin-ctfe
+                      "__typelisp internal resolved struct type"))
+                  (=
+                    head-id
+                    (cbi.compiler-builtin-ctfe
+                      "__typelisp internal resolved enum type")))
                 unit]
               [(= tag (compiler-parse-tag-ty-func))
                 (compiler-parse-semantic-func-type-list-origins! dispatch rest)]
@@ -4629,7 +4641,7 @@
             [(reader.SexprView.Sym key)
               (if (=
                 (ci.intern-syntax-id-value key)
-                (cbi.compiler-builtin-ctfe-ref 179))
+                (cbi.compiler-builtin-ctfe ":consume"))
                 "parse: :consume has been removed; by-value parameters move non-Copy values"
                 (let
                   [key-text : String
@@ -4745,37 +4757,37 @@
   (let
     [name-id : i64 (ci.intern-syntax-id-value name)]
     (or
-      (= name-id (cbi.compiler-builtin-ctfe-ref 159))
-      (= name-id (cbi.compiler-builtin-ctfe-ref 160))
-      (= name-id (cbi.compiler-builtin-ctfe-ref 161))
-      (= name-id (cbi.compiler-builtin-ctfe-ref 162))
-      (= name-id (cbi.compiler-builtin-ctfe-ref 163))
-      (= name-id (cbi.compiler-builtin-ctfe-ref 164))
-      (= name-id (cbi.compiler-builtin-ctfe-ref 165))
-      (= name-id (cbi.compiler-builtin-ctfe-ref 166))
-      (= name-id (cbi.compiler-builtin-ctfe-ref 167))
-      (= name-id (cbi.compiler-builtin-ctfe-ref 168))
-      (= name-id (cbi.compiler-builtin-ctfe-ref 169))
-      (= name-id (cbi.compiler-builtin-ctfe-ref 170))
-      (= name-id (cbi.compiler-builtin-ctfe-ref 223))
-      (= name-id (cbi.compiler-builtin-ctfe-ref 173))
-      (= name-id (cbi.compiler-builtin-ctfe-ref 174))
-      (= name-id (cbi.compiler-builtin-ctfe-ref 125))
-      (= name-id (cbi.compiler-builtin-ctfe-ref 224))
-      (= name-id (cbi.compiler-builtin-ctfe-ref 225))
-      (= name-id (cbi.compiler-builtin-ctfe-ref 124))
-      (= name-id (cbi.compiler-builtin-ctfe-ref 226))
-      (= name-id (cbi.compiler-builtin-ctfe-ref 227))
-      (= name-id (cbi.compiler-builtin-ctfe-ref 171))
-      (= name-id (cbi.compiler-builtin-ctfe-ref 228))
-      (= name-id (cbi.compiler-builtin-ctfe-ref 229))
-      (= name-id (cbi.compiler-builtin-ctfe-ref 230))
-      (= name-id (cbi.compiler-builtin-ctfe-ref 231))
-      (= name-id (cbi.compiler-builtin-ctfe-ref 232))
-      (= name-id (cbi.compiler-builtin-ctfe-ref 233))
-      (= name-id (cbi.compiler-builtin-ctfe-ref 132))
-      (= name-id (cbi.compiler-builtin-ctfe-ref 281))
-      (= name-id (cbi.compiler-builtin-ctfe-ref 294)))))
+      (= name-id (cbi.compiler-builtin-ctfe "i64"))
+      (= name-id (cbi.compiler-builtin-ctfe "i32"))
+      (= name-id (cbi.compiler-builtin-ctfe "i16"))
+      (= name-id (cbi.compiler-builtin-ctfe "i8"))
+      (= name-id (cbi.compiler-builtin-ctfe "u64"))
+      (= name-id (cbi.compiler-builtin-ctfe "u32"))
+      (= name-id (cbi.compiler-builtin-ctfe "u16"))
+      (= name-id (cbi.compiler-builtin-ctfe "u8"))
+      (= name-id (cbi.compiler-builtin-ctfe "f64"))
+      (= name-id (cbi.compiler-builtin-ctfe "f32"))
+      (= name-id (cbi.compiler-builtin-ctfe "bool"))
+      (= name-id (cbi.compiler-builtin-ctfe "char"))
+      (= name-id (cbi.compiler-builtin-ctfe "string"))
+      (= name-id (cbi.compiler-builtin-ctfe "unit"))
+      (= name-id (cbi.compiler-builtin-ctfe "never"))
+      (= name-id (cbi.compiler-builtin-ctfe "array"))
+      (= name-id (cbi.compiler-builtin-ctfe "dyn-array"))
+      (= name-id (cbi.compiler-builtin-ctfe "function"))
+      (= name-id (cbi.compiler-builtin-ctfe "tuple"))
+      (= name-id (cbi.compiler-builtin-ctfe "struct"))
+      (= name-id (cbi.compiler-builtin-ctfe "enum"))
+      (= name-id (cbi.compiler-builtin-ctfe "str"))
+      (= name-id (cbi.compiler-builtin-ctfe "ptr"))
+      (= name-id (cbi.compiler-builtin-ctfe "mut-ptr"))
+      (= name-id (cbi.compiler-builtin-ctfe "ref"))
+      (= name-id (cbi.compiler-builtin-ctfe "mut-ref"))
+      (= name-id (cbi.compiler-builtin-ctfe "region"))
+      (= name-id (cbi.compiler-builtin-ctfe "type-var"))
+      (= name-id (cbi.compiler-builtin-ctfe "box"))
+      (= name-id (cbi.compiler-builtin-ctfe "slice"))
+      (= name-id (cbi.compiler-builtin-ctfe "c-function")))))
 
 (define (parse-ast-macro-type-kind-error
   [operand-name : String]
@@ -4890,7 +4902,7 @@
         [(reader.SexprView.Sym tag)
           (if (=
             (ci.intern-syntax-id-value tag)
-            (cbi.compiler-builtin-ctfe-ref 221))
+            (cbi.compiler-builtin-ctfe ":kind"))
             (match (reader.sexpr-view (compiler-parse-place-shared-view tail))
               [(reader.SexprView.Nil)
                 (ResultAstMacroTypeKindList.Err
@@ -4936,7 +4948,7 @@
           [(reader.SexprView.Sym suffix-name)
             (if (=
               (ci.intern-syntax-id-value suffix-name)
-              (cbi.compiler-builtin-ctfe-ref 222))
+              (cbi.compiler-builtin-ctfe "..."))
               (match (reader.sexpr-view suffix-rest)
                 [(reader.SexprView.Nil)
                   (ResultAstMacroParam.Ok
@@ -4967,7 +4979,7 @@
                       (if (and
                         (=
                           (ci.intern-syntax-id-value dots-name)
-                          (cbi.compiler-builtin-ctfe-ref 222))
+                          (cbi.compiler-builtin-ctfe "..."))
                         (match (reader.sexpr-view after-dots)
                           [(reader.SexprView.Nil) true]
                           [_ false]))
@@ -5143,7 +5155,7 @@
           (cond
             [(=
                 (ci.intern-syntax-id-value key)
-                (cbi.compiler-builtin-ctfe-ref 234))
+                (cbi.compiler-builtin-ctfe ":cleanup"))
               (match (reader.sexpr-view tail)
                 [(reader.SexprView.Cons cleanup-node end)
                   (match (reader.sexpr-view end)
@@ -5163,7 +5175,7 @@
                     "parse: malformed field :cleanup metadata")])]
             [(=
                 (ci.intern-syntax-id-value key)
-                (cbi.compiler-builtin-ctfe-ref 235))
+                (cbi.compiler-builtin-ctfe ":owned"))
               (match (reader.sexpr-view tail)
                 [(reader.SexprView.Nil)
                   (ResultAstFieldCleanup.Ok (ast.AstFieldCleanup.Owned))]
@@ -5192,7 +5204,7 @@
           (cond
             [(=
                 (ci.intern-syntax-id-value key)
-                (cbi.compiler-builtin-ctfe-ref 234))
+                (cbi.compiler-builtin-ctfe ":cleanup"))
               (match (reader.sexpr-view tail)
                 [(reader.SexprView.Cons cleanup-node end)
                   (match (reader.sexpr-view end)
@@ -5212,7 +5224,7 @@
                     "parse: malformed enum payload :cleanup metadata")])]
             [(=
                 (ci.intern-syntax-id-value key)
-                (cbi.compiler-builtin-ctfe-ref 235))
+                (cbi.compiler-builtin-ctfe ":owned"))
               (match (reader.sexpr-view tail)
                 [(reader.SexprView.Nil)
                   (ResultAstVariantPayloadCleanup.Ok
@@ -5320,7 +5332,7 @@
                 (ResultAstStructRepr.Ok (ast.AstStructRepr.C))
                 (if (=
                   (ci.intern-syntax-id-value name)
-                  (cbi.compiler-builtin-ctfe-ref 239))
+                  (cbi.compiler-builtin-ctfe "packed"))
                   (ResultAstStructRepr.Err "parse: packed repr is reserved")
                   (ResultAstStructRepr.Err
                     (str_cat.str-cat
@@ -5459,7 +5471,7 @@
               (cond
                 [(=
                     (ci.intern-syntax-id-value key)
-                    (cbi.compiler-builtin-ctfe-ref 236))
+                    (cbi.compiler-builtin-ctfe ":lifetimes"))
                   (if seen-field
                     (ResultAstStructDefParts.Err
                       "parse: defstruct metadata must appear before fields")
@@ -5488,7 +5500,7 @@
                           (ResultAstStructDefParts.Err message)])))]
                 [(=
                     (ci.intern-syntax-id-value key)
-                    (cbi.compiler-builtin-ctfe-ref 237))
+                    (cbi.compiler-builtin-ctfe ":repr"))
                   (if seen-field
                     (ResultAstStructDefParts.Err
                       "parse: defstruct metadata must appear before fields")
@@ -5519,7 +5531,7 @@
                           (ResultAstStructDefParts.Err message)])))]
                 [(=
                     (ci.intern-syntax-id-value key)
-                    (cbi.compiler-builtin-ctfe-ref 234))
+                    (cbi.compiler-builtin-ctfe ":cleanup"))
                   (if seen-field
                     (ResultAstStructDefParts.Err
                       "parse: defstruct metadata must appear before fields")
@@ -5548,7 +5560,7 @@
                           (ResultAstStructDefParts.Err message)])))]
                 [(=
                     (ci.intern-syntax-id-value key)
-                    (cbi.compiler-builtin-ctfe-ref 293))
+                    (cbi.compiler-builtin-ctfe ":must-use"))
                   (if seen-field
                     (ResultAstStructDefParts.Err
                       "parse: defstruct metadata must appear before fields")
@@ -5579,7 +5591,7 @@
                       "parse: defstruct metadata must appear before fields")
                     (if (=
                       (ci.intern-syntax-id-value key)
-                      (cbi.compiler-builtin-ctfe-ref 238))
+                      (cbi.compiler-builtin-ctfe ":packed"))
                       (ResultAstStructDefParts.Err
                         "parse: packed repr is reserved")
                       (ResultAstStructDefParts.Err
@@ -5742,7 +5754,7 @@
           (if (compiler-parse-metadata-key? dispatch name)
             (if (=
               (ci.intern-syntax-id-value name)
-              (cbi.compiler-builtin-ctfe-ref 234))
+              (cbi.compiler-builtin-ctfe ":cleanup"))
               (ResultAstVariantDef.Err
                 "parse: defenum metadata must appear before variants")
               (ResultAstVariantDef.Err
@@ -5771,11 +5783,11 @@
   (let
     [name-id : i64 (ci.intern-syntax-id-value name)]
     (cond
-      [(= name-id (cbi.compiler-builtin-ctfe-ref 240))
+      [(= name-id (cbi.compiler-builtin-ctfe "scalar"))
         (ResultAstDispatchIsa.Ok (ast.AstDispatchIsa.Scalar))]
-      [(= name-id (cbi.compiler-builtin-ctfe-ref 241))
+      [(= name-id (cbi.compiler-builtin-ctfe "avx2"))
         (ResultAstDispatchIsa.Ok (ast.AstDispatchIsa.Avx2))]
-      [(= name-id (cbi.compiler-builtin-ctfe-ref 242))
+      [(= name-id (cbi.compiler-builtin-ctfe "avx512"))
         (ResultAstDispatchIsa.Ok (ast.AstDispatchIsa.Avx512))]
       [else
         (ResultAstDispatchIsa.Err
@@ -5966,7 +5978,7 @@
                     "parse: defenum metadata must appear before variants")]
                 [(=
                     (ci.intern-syntax-id-value key)
-                    (cbi.compiler-builtin-ctfe-ref 236))
+                    (cbi.compiler-builtin-ctfe ":lifetimes"))
                   (if seen-lifetimes
                     (ResultAstEnumDefParts.Err
                       "parse: duplicate defenum :lifetimes metadata")
@@ -5989,7 +6001,7 @@
                         (ResultAstEnumDefParts.Err message)]))]
                 [(=
                     (ci.intern-syntax-id-value key)
-                    (cbi.compiler-builtin-ctfe-ref 234))
+                    (cbi.compiler-builtin-ctfe ":cleanup"))
                   (if seen-cleanup
                     (ResultAstEnumDefParts.Err
                       "parse: duplicate defenum :cleanup metadata")
@@ -6009,7 +6021,7 @@
                         (ResultAstEnumDefParts.Err message)]))]
                 [(=
                     (ci.intern-syntax-id-value key)
-                    (cbi.compiler-builtin-ctfe-ref 293))
+                    (cbi.compiler-builtin-ctfe ":must-use"))
                   (if (not (= (bit-and markers 1) 0))
                     (ResultAstEnumDefParts.Err
                       "parse: duplicate defenum :must-use metadata")
@@ -6289,7 +6301,7 @@
         [(reader.SpannedSexprView.Sym op _)
           (if (=
             (ci.intern-syntax-id-value op)
-            (cbi.compiler-builtin-ctfe-ref 243))
+            (cbi.compiler-builtin-ctfe "cfg"))
             (parse-ast-cfg-expr-maybe dispatch pools cfg-rest)
             (match (parse-ast-expr-with-pools dispatch pools head)
               [(ResultAstExpr.Ok parsed) (ResultAstMaybeExpr.SomeExpr parsed)]
@@ -6381,7 +6393,7 @@
         [(reader.SpannedSexprView.Sym op _)
           (if (=
             (ci.intern-syntax-id-value op)
-            (cbi.compiler-builtin-ctfe-ref 243))
+            (cbi.compiler-builtin-ctfe "cfg"))
             (parse-ast-cfg-expr-maybe dispatch pools cfg-rest)
             (match (parse-ast-expr-with-pools dispatch pools head)
               [(ResultAstExpr.Ok parsed) (ResultAstMaybeExpr.SomeExpr parsed)]
@@ -7410,15 +7422,15 @@
   [form-name : String]
   [name-id : i64]) : ResultAstReduceOp
   (cond
-    [(= name-id (cbi.compiler-builtin-ctfe-ref 262))
+    [(= name-id (cbi.compiler-builtin-ctfe "sum"))
       (ResultAstReduceOp.Ok (ast.AstReduceOp.Sum))]
-    [(= name-id (cbi.compiler-builtin-ctfe-ref 263))
+    [(= name-id (cbi.compiler-builtin-ctfe "min"))
       (ResultAstReduceOp.Ok (ast.AstReduceOp.Min))]
-    [(= name-id (cbi.compiler-builtin-ctfe-ref 264))
+    [(= name-id (cbi.compiler-builtin-ctfe "max"))
       (ResultAstReduceOp.Ok (ast.AstReduceOp.Max))]
-    [(= name-id (cbi.compiler-builtin-ctfe-ref 219))
+    [(= name-id (cbi.compiler-builtin-ctfe "all"))
       (ResultAstReduceOp.Ok (ast.AstReduceOp.All))]
-    [(= name-id (cbi.compiler-builtin-ctfe-ref 220))
+    [(= name-id (cbi.compiler-builtin-ctfe "any"))
       (ResultAstReduceOp.Ok (ast.AstReduceOp.Any))]
     [else
       (ResultAstReduceOp.Err
@@ -9053,7 +9065,9 @@
   (match (reader.spanned-sexpr-view (compiler-parse-place-shared-view head))
     [(reader.SpannedSexprView.Sym op _)
       (cond
-        [(= (ci.intern-syntax-id-value op) (cbi.compiler-builtin-ctfe-ref 213))
+        [(=
+            (ci.intern-syntax-id-value op)
+            (cbi.compiler-builtin-ctfe "__typelisp internal binary data"))
           (parse-ast-internal-binary-data dispatch pools rest)]
         [(=
             (compiler-parse-dispatch-tag
@@ -9204,7 +9218,7 @@
             [(reader.SpannedSexprView.Sym op _)
               (if (=
                 (ci.intern-syntax-id-value op)
-                (cbi.compiler-builtin-ctfe-ref 243))
+                (cbi.compiler-builtin-ctfe "cfg"))
                 (match (parse-ast-cfg-expr dispatch pools rest)
                   [(ResultAstExpr.Ok parsed)
                     (ResultAstExpr.Ok
@@ -9293,7 +9307,7 @@
             [next : ast.AstSpmdParamClassList out]
             (if (=
               (ci.intern-syntax-id-value name)
-              (cbi.compiler-builtin-ctfe-ref 244))
+              (cbi.compiler-builtin-ctfe "uniform"))
               (begin
                 (ast.ast-spmd-param-class-list-push
                   (&mut next)
@@ -9301,7 +9315,7 @@
                 (parse-ast-spmd-param-classes rest next))
               (if (=
                 (ci.intern-syntax-id-value name)
-                (cbi.compiler-builtin-ctfe-ref 245))
+                (cbi.compiler-builtin-ctfe "varying"))
                 (begin
                   (ast.ast-spmd-param-class-list-push
                     (&mut next)
@@ -9326,15 +9340,15 @@
               (cond
                 [(=
                     (ci.intern-syntax-id-value name)
-                    (cbi.compiler-builtin-ctfe-ref 173))
+                    (cbi.compiler-builtin-ctfe "unit"))
                   (ResultAstSpmdResultClass.Ok ast.AstSpmdResultClass.Unit)]
                 [(=
                     (ci.intern-syntax-id-value name)
-                    (cbi.compiler-builtin-ctfe-ref 244))
+                    (cbi.compiler-builtin-ctfe "uniform"))
                   (ResultAstSpmdResultClass.Ok ast.AstSpmdResultClass.Uniform)]
                 [(=
                     (ci.intern-syntax-id-value name)
-                    (cbi.compiler-builtin-ctfe-ref 245))
+                    (cbi.compiler-builtin-ctfe "varying"))
                   (ResultAstSpmdResultClass.Ok ast.AstSpmdResultClass.Varying)]
                 [else
                   (ResultAstSpmdResultClass.Err
@@ -9358,7 +9372,7 @@
             [(reader.SexprView.Sym name)
               (if (=
                 (ci.intern-syntax-id-value name)
-                (cbi.compiler-builtin-ctfe-ref 246))
+                (cbi.compiler-builtin-ctfe "none"))
                 (ResultAstSpmdIndexParam.Ok -1)
                 (ResultAstSpmdIndexParam.Err
                   "parse: :spmd-callable index-param expects none or a non-negative integer"))]
@@ -9391,7 +9405,7 @@
               (cond
                 [(=
                     (ci.intern-syntax-id-value key)
-                    (cbi.compiler-builtin-ctfe-ref 247))
+                    (cbi.compiler-builtin-ctfe "lanes"))
                   (if state.seen-lanes
                     (ResultAstSpmdSpecializationParseState.Err
                       "parse: duplicate :spmd-callable lanes field")
@@ -9427,7 +9441,7 @@
                           "parse: :spmd-callable lanes expects one integer")]))]
                 [(=
                     (ci.intern-syntax-id-value key)
-                    (cbi.compiler-builtin-ctfe-ref 248))
+                    (cbi.compiler-builtin-ctfe "args"))
                   (if state.seen-args
                     (ResultAstSpmdSpecializationParseState.Err
                       "parse: duplicate :spmd-callable args field")
@@ -9451,7 +9465,7 @@
                             state.seen-index-param))]))]
                 [(=
                     (ci.intern-syntax-id-value key)
-                    (cbi.compiler-builtin-ctfe-ref 249))
+                    (cbi.compiler-builtin-ctfe "result"))
                   (if state.seen-result
                     (ResultAstSpmdSpecializationParseState.Err
                       "parse: duplicate :spmd-callable result field")
@@ -9473,7 +9487,7 @@
                             state.seen-index-param))]))]
                 [(=
                     (ci.intern-syntax-id-value key)
-                    (cbi.compiler-builtin-ctfe-ref 250))
+                    (cbi.compiler-builtin-ctfe "index-param"))
                   (if state.seen-index-param
                     (ResultAstSpmdSpecializationParseState.Err
                       "parse: duplicate :spmd-callable index-param field")
@@ -9631,7 +9645,7 @@
             [(reader.SexprView.Sym name)
               (if (=
                 (ci.intern-syntax-id-value name)
-                (cbi.compiler-builtin-ctfe-ref 251))
+                (cbi.compiler-builtin-ctfe "specialization"))
                 (match (parse-ast-spmd-specialization
                   dispatch
                   fields
@@ -9797,7 +9811,7 @@
                   (cond
                     [(=
                         (ci.intern-syntax-id-value key)
-                        (cbi.compiler-builtin-ctfe-ref 252))
+                        (cbi.compiler-builtin-ctfe ":export-symbol"))
                       (if seen-export
                         (ResultAstDecl.Err
                           "parse: duplicate define :export-symbol metadata")
@@ -9819,7 +9833,7 @@
                             (ResultAstDecl.Err message)]))]
                     [(=
                         (ci.intern-syntax-id-value key)
-                        (cbi.compiler-builtin-ctfe-ref 253))
+                        (cbi.compiler-builtin-ctfe ":spmd-callable"))
                       (if seen-spmd-callable
                         (ResultAstDecl.Err
                           "parse: duplicate define :spmd-callable metadata")
@@ -10006,7 +10020,7 @@
         (string.string-length tail)))))
 
 (define (parse-ast-extern-varargs-open? [name-id : ci.InternSyntaxId]) : bool
-  (= (ci.intern-syntax-id-value name-id) (cbi.compiler-builtin-ctfe-ref 222)))
+  (= (ci.intern-syntax-id-value name-id) (cbi.compiler-builtin-ctfe "...")))
 
 (define (parse-ast-extern-varargs-tail-type
   [dispatch : sym_i64_env.SymI64Env]
@@ -10196,7 +10210,7 @@
                 (ResultAstExternAbi.Ok (ast.AstExternAbi.C))
                 (if (=
                   (ci.intern-syntax-id-value name)
-                  (cbi.compiler-builtin-ctfe-ref 254))
+                  (cbi.compiler-builtin-ctfe "c-varargs"))
                   (ResultAstExternAbi.Err
                     (parse-ast-extern-c-varargs-legacy-message))
                   (ResultAstExternAbi.Err
@@ -10210,7 +10224,7 @@
                     [(reader.SexprView.Int _ _)
                       (if (=
                         (ci.intern-syntax-id-value name)
-                        (cbi.compiler-builtin-ctfe-ref 254))
+                        (cbi.compiler-builtin-ctfe "c-varargs"))
                         (ResultAstExternAbi.Err
                           (parse-ast-extern-c-varargs-legacy-message))
                         (ResultAstExternAbi.Err
@@ -10303,7 +10317,7 @@
                 (cond
                   [(=
                       (ci.intern-syntax-id-value key)
-                      (cbi.compiler-builtin-ctfe-ref 255))
+                      (cbi.compiler-builtin-ctfe ":abi"))
                     (if seen-abi
                       (ResultAstExternParts.Err
                         "parse: duplicate extern :abi metadata")
@@ -10322,7 +10336,7 @@
                           (ResultAstExternParts.Err message)]))]
                   [(=
                       (ci.intern-syntax-id-value key)
-                      (cbi.compiler-builtin-ctfe-ref 256))
+                      (cbi.compiler-builtin-ctfe ":symbol"))
                     (if seen-symbol
                       (ResultAstExternParts.Err
                         "parse: duplicate extern :symbol metadata")
@@ -10341,7 +10355,7 @@
                           (ResultAstExternParts.Err message)]))]
                   [(=
                       (ci.intern-syntax-id-value key)
-                      (cbi.compiler-builtin-ctfe-ref 257))
+                      (cbi.compiler-builtin-ctfe ":link-lib"))
                     (match (parse-ast-extern-string-tail
                       dispatch
                       ":link-lib"
@@ -10364,7 +10378,7 @@
                         (ResultAstExternParts.Err message)])]
                   [(=
                       (ci.intern-syntax-id-value key)
-                      (cbi.compiler-builtin-ctfe-ref 258))
+                      (cbi.compiler-builtin-ctfe ":link-search"))
                     (match (parse-ast-extern-string-tail
                       dispatch
                       ":link-search"
@@ -10387,7 +10401,7 @@
                         (ResultAstExternParts.Err message)])]
                   [(=
                       (ci.intern-syntax-id-value key)
-                      (cbi.compiler-builtin-ctfe-ref 259))
+                      (cbi.compiler-builtin-ctfe ":link-arg"))
                     (match (parse-ast-extern-string-tail
                       dispatch
                       ":link-arg"
@@ -10460,7 +10474,7 @@
               (cond
                 [(=
                     (ci.intern-syntax-id-value key)
-                    (cbi.compiler-builtin-ctfe-ref 255))
+                    (cbi.compiler-builtin-ctfe ":abi"))
                   (if seen-abi
                     (ResultAstExternParts.Err
                       "parse: duplicate extern :abi metadata")
@@ -10485,7 +10499,7 @@
                         (ResultAstExternParts.Err message)]))]
                 [(=
                     (ci.intern-syntax-id-value key)
-                    (cbi.compiler-builtin-ctfe-ref 256))
+                    (cbi.compiler-builtin-ctfe ":symbol"))
                   (if seen-symbol
                     (ResultAstExternParts.Err
                       "parse: duplicate extern :symbol metadata")
@@ -10506,7 +10520,7 @@
                         (ResultAstExternParts.Err message)]))]
                 [(=
                     (ci.intern-syntax-id-value key)
-                    (cbi.compiler-builtin-ctfe-ref 257))
+                    (cbi.compiler-builtin-ctfe ":link-lib"))
                   (match (parse-ast-extern-string-tail
                     dispatch
                     ":link-lib"
@@ -10531,7 +10545,7 @@
                       (ResultAstExternParts.Err message)])]
                 [(=
                     (ci.intern-syntax-id-value key)
-                    (cbi.compiler-builtin-ctfe-ref 258))
+                    (cbi.compiler-builtin-ctfe ":link-search"))
                   (match (parse-ast-extern-string-tail
                     dispatch
                     ":link-search"
@@ -10556,7 +10570,7 @@
                       (ResultAstExternParts.Err message)])]
                 [(=
                     (ci.intern-syntax-id-value key)
-                    (cbi.compiler-builtin-ctfe-ref 259))
+                    (cbi.compiler-builtin-ctfe ":link-arg"))
                   (match (parse-ast-extern-string-tail
                     dispatch
                     ":link-arg"
@@ -10643,7 +10657,7 @@
                 (cond
                   [(=
                       (ci.intern-syntax-id-value key)
-                      (cbi.compiler-builtin-ctfe-ref 255))
+                      (cbi.compiler-builtin-ctfe ":abi"))
                     (if seen-abi
                       (ResultAstExternParts.Err
                         "parse: duplicate extern :abi metadata")
@@ -10667,7 +10681,7 @@
                           (ResultAstExternParts.Err message)]))]
                   [(=
                       (ci.intern-syntax-id-value key)
-                      (cbi.compiler-builtin-ctfe-ref 256))
+                      (cbi.compiler-builtin-ctfe ":symbol"))
                     (if seen-symbol
                       (ResultAstExternParts.Err
                         "parse: duplicate extern :symbol metadata")
@@ -10687,7 +10701,7 @@
                           (ResultAstExternParts.Err message)]))]
                   [(=
                       (ci.intern-syntax-id-value key)
-                      (cbi.compiler-builtin-ctfe-ref 257))
+                      (cbi.compiler-builtin-ctfe ":link-lib"))
                     (match (parse-ast-extern-string-tail
                       dispatch
                       ":link-lib"
@@ -10711,7 +10725,7 @@
                         (ResultAstExternParts.Err message)])]
                   [(=
                       (ci.intern-syntax-id-value key)
-                      (cbi.compiler-builtin-ctfe-ref 258))
+                      (cbi.compiler-builtin-ctfe ":link-search"))
                     (match (parse-ast-extern-string-tail
                       dispatch
                       ":link-search"
@@ -10735,7 +10749,7 @@
                         (ResultAstExternParts.Err message)])]
                   [(=
                       (ci.intern-syntax-id-value key)
-                      (cbi.compiler-builtin-ctfe-ref 259))
+                      (cbi.compiler-builtin-ctfe ":link-arg"))
                     (match (parse-ast-extern-string-tail
                       dispatch
                       ":link-arg"
@@ -11161,7 +11175,7 @@
                     [(reader.SpannedSexprView.Sym alias alias-span)
                       (if (=
                         (ci.intern-syntax-id-value as-name)
-                        (cbi.compiler-builtin-ctfe-ref 260))
+                        (cbi.compiler-builtin-ctfe "as"))
                         (begin
                           (compiler-parse-semantic-origin-push-components!
                             alias
@@ -11208,7 +11222,7 @@
                 [(reader.SpannedSexprView.Sym head _)
                   (if (=
                     (ci.intern-syntax-id-value head)
-                    (cbi.compiler-builtin-ctfe-ref 260))
+                    (cbi.compiler-builtin-ctfe "as"))
                     (parse-ast-import-alias
                       (ast.AstImportKind.Macro
                         call-expr
@@ -11411,7 +11425,7 @@
               [(reader.SpannedSexprView.Sym head _)
                 (if (=
                   (ci.intern-syntax-id-value head)
-                  (cbi.compiler-builtin-ctfe-ref 260))
+                  (cbi.compiler-builtin-ctfe "as"))
                   (parse-ast-import-alias
                     (ast.AstImportKind.Module)
                     module-name
@@ -11665,7 +11679,7 @@
                 (cond
                   [(=
                       (ci.intern-syntax-id-value key)
-                      (cbi.compiler-builtin-ctfe-ref 291))
+                      (cbi.compiler-builtin-ctfe ":ignore"))
                     (if seen-ignore
                       (ResultAstTestMetadataForms.Err
                         "parse: duplicate test :ignore metadata")
@@ -11701,7 +11715,7 @@
                             "parse: test :ignore metadata expects one string reason")]))]
                   [(=
                       (ci.intern-syntax-id-value key)
-                      (cbi.compiler-builtin-ctfe-ref 292))
+                      (cbi.compiler-builtin-ctfe ":slow"))
                     (if seen-slow
                       (ResultAstTestMetadataForms.Err
                         "parse: duplicate test :slow metadata")
@@ -11945,7 +11959,7 @@
             [(reader.SpannedSexprView.Sym head _)
               (if (=
                 (ci.intern-syntax-id-value head)
-                (cbi.compiler-builtin-ctfe-ref 243))
+                (cbi.compiler-builtin-ctfe "cfg"))
                 (match (reader.spanned-sexpr-view rest)
                   [(reader.SpannedSexprView.Cons pred decl-tail _)
                     (match (reader.spanned-sexpr-view decl-tail)
@@ -12256,7 +12270,7 @@
               (cond
                 [(=
                     (ci.intern-syntax-id-value head)
-                    (cbi.compiler-builtin-ctfe-ref 243))
+                    (cbi.compiler-builtin-ctfe "cfg"))
                   (match (reader.spanned-sexpr-view rest)
                     [(reader.SpannedSexprView.Cons _ decl-tail _)
                       (match (reader.spanned-sexpr-view decl-tail)
@@ -16309,36 +16323,36 @@
 
 (define (compiler-parse-macro-type-kind-expected-all-id [index : i64]) : i64
   (cond
-    [(= index 0) (cbi.compiler-builtin-ctfe-ref 159)]
-    [(= index 1) (cbi.compiler-builtin-ctfe-ref 160)]
-    [(= index 2) (cbi.compiler-builtin-ctfe-ref 161)]
-    [(= index 3) (cbi.compiler-builtin-ctfe-ref 162)]
-    [(= index 4) (cbi.compiler-builtin-ctfe-ref 163)]
-    [(= index 5) (cbi.compiler-builtin-ctfe-ref 164)]
-    [(= index 6) (cbi.compiler-builtin-ctfe-ref 165)]
-    [(= index 7) (cbi.compiler-builtin-ctfe-ref 166)]
-    [(= index 8) (cbi.compiler-builtin-ctfe-ref 167)]
-    [(= index 9) (cbi.compiler-builtin-ctfe-ref 168)]
-    [(= index 10) (cbi.compiler-builtin-ctfe-ref 169)]
-    [(= index 11) (cbi.compiler-builtin-ctfe-ref 170)]
-    [(= index 12) (cbi.compiler-builtin-ctfe-ref 223)]
-    [(= index 13) (cbi.compiler-builtin-ctfe-ref 173)]
-    [(= index 14) (cbi.compiler-builtin-ctfe-ref 174)]
-    [(= index 15) (cbi.compiler-builtin-ctfe-ref 125)]
-    [(= index 16) (cbi.compiler-builtin-ctfe-ref 224)]
-    [(= index 17) (cbi.compiler-builtin-ctfe-ref 225)]
-    [(= index 18) (cbi.compiler-builtin-ctfe-ref 124)]
-    [(= index 19) (cbi.compiler-builtin-ctfe-ref 226)]
-    [(= index 20) (cbi.compiler-builtin-ctfe-ref 227)]
-    [(= index 21) (cbi.compiler-builtin-ctfe-ref 171)]
-    [(= index 22) (cbi.compiler-builtin-ctfe-ref 228)]
-    [(= index 23) (cbi.compiler-builtin-ctfe-ref 229)]
-    [(= index 24) (cbi.compiler-builtin-ctfe-ref 230)]
-    [(= index 25) (cbi.compiler-builtin-ctfe-ref 231)]
-    [(= index 26) (cbi.compiler-builtin-ctfe-ref 232)]
-    [(= index 27) (cbi.compiler-builtin-ctfe-ref 233)]
-    [(= index 28) (cbi.compiler-builtin-ctfe-ref 132)]
-    [(= index 29) (cbi.compiler-builtin-ctfe-ref 281)]
+    [(= index 0) (cbi.compiler-builtin-ctfe "i64")]
+    [(= index 1) (cbi.compiler-builtin-ctfe "i32")]
+    [(= index 2) (cbi.compiler-builtin-ctfe "i16")]
+    [(= index 3) (cbi.compiler-builtin-ctfe "i8")]
+    [(= index 4) (cbi.compiler-builtin-ctfe "u64")]
+    [(= index 5) (cbi.compiler-builtin-ctfe "u32")]
+    [(= index 6) (cbi.compiler-builtin-ctfe "u16")]
+    [(= index 7) (cbi.compiler-builtin-ctfe "u8")]
+    [(= index 8) (cbi.compiler-builtin-ctfe "f64")]
+    [(= index 9) (cbi.compiler-builtin-ctfe "f32")]
+    [(= index 10) (cbi.compiler-builtin-ctfe "bool")]
+    [(= index 11) (cbi.compiler-builtin-ctfe "char")]
+    [(= index 12) (cbi.compiler-builtin-ctfe "string")]
+    [(= index 13) (cbi.compiler-builtin-ctfe "unit")]
+    [(= index 14) (cbi.compiler-builtin-ctfe "never")]
+    [(= index 15) (cbi.compiler-builtin-ctfe "array")]
+    [(= index 16) (cbi.compiler-builtin-ctfe "dyn-array")]
+    [(= index 17) (cbi.compiler-builtin-ctfe "function")]
+    [(= index 18) (cbi.compiler-builtin-ctfe "tuple")]
+    [(= index 19) (cbi.compiler-builtin-ctfe "struct")]
+    [(= index 20) (cbi.compiler-builtin-ctfe "enum")]
+    [(= index 21) (cbi.compiler-builtin-ctfe "str")]
+    [(= index 22) (cbi.compiler-builtin-ctfe "ptr")]
+    [(= index 23) (cbi.compiler-builtin-ctfe "mut-ptr")]
+    [(= index 24) (cbi.compiler-builtin-ctfe "ref")]
+    [(= index 25) (cbi.compiler-builtin-ctfe "mut-ref")]
+    [(= index 26) (cbi.compiler-builtin-ctfe "region")]
+    [(= index 27) (cbi.compiler-builtin-ctfe "type-var")]
+    [(= index 28) (cbi.compiler-builtin-ctfe "box")]
+    [(= index 29) (cbi.compiler-builtin-ctfe "slice")]
     [else 0]))
 
 (define (compiler-parse-macro-type-kind-all-order-ok?
@@ -16458,47 +16472,47 @@
         (parse-ast-macro-type-kind-known?
           (ci.intern-syntax-id-from-raw
             (ci.intern-generated-canonical-name "box"))))
-      (= source-all (cbi.compiler-builtin-ctfe-ref 219))
-      (not (= generated-all (cbi.compiler-builtin-ctfe-ref 219)))
-      (= source-dots (cbi.compiler-builtin-ctfe-ref 222))
-      (not (= generated-dots (cbi.compiler-builtin-ctfe-ref 222)))
-      (= (reader.stable-symbol-id "slice") (cbi.compiler-builtin-ctfe-ref 281))
+      (= source-all (cbi.compiler-builtin-ctfe "all"))
+      (not (= generated-all (cbi.compiler-builtin-ctfe "all")))
+      (= source-dots (cbi.compiler-builtin-ctfe "..."))
+      (not (= generated-dots (cbi.compiler-builtin-ctfe "...")))
+      (= (reader.stable-symbol-id "slice") (cbi.compiler-builtin-ctfe "slice"))
       (not
         (=
           (ci.intern-generated-canonical-name "slice")
-          (cbi.compiler-builtin-ctfe-ref 281)))
+          (cbi.compiler-builtin-ctfe "slice")))
       ;; One adversarial spelling per new fixed-name family proves that equal
       ;; rendered text does not confer parser syntax identity.
       (compiler-parse-fixed-source-id-only-ok?
         ":cleanup"
-        (cbi.compiler-builtin-ctfe-ref 234))
+        (cbi.compiler-builtin-ctfe ":cleanup"))
       (compiler-parse-fixed-source-id-only-ok?
         "scalar"
-        (cbi.compiler-builtin-ctfe-ref 240))
+        (cbi.compiler-builtin-ctfe "scalar"))
       (compiler-parse-fixed-source-id-only-ok?
         "cfg"
-        (cbi.compiler-builtin-ctfe-ref 243))
+        (cbi.compiler-builtin-ctfe "cfg"))
       (compiler-parse-fixed-source-id-only-ok?
         "sum"
-        (cbi.compiler-builtin-ctfe-ref 262))
+        (cbi.compiler-builtin-ctfe "sum"))
       (compiler-parse-fixed-source-id-only-ok?
         ":spmd-callable"
-        (cbi.compiler-builtin-ctfe-ref 253))
+        (cbi.compiler-builtin-ctfe ":spmd-callable"))
       (compiler-parse-fixed-source-id-only-ok?
         ":ignore"
-        (cbi.compiler-builtin-ctfe-ref 291))
+        (cbi.compiler-builtin-ctfe ":ignore"))
       (compiler-parse-fixed-source-id-only-ok?
         ":slow"
-        (cbi.compiler-builtin-ctfe-ref 292))
+        (cbi.compiler-builtin-ctfe ":slow"))
       (compiler-parse-fixed-source-id-only-ok?
         ":abi"
-        (cbi.compiler-builtin-ctfe-ref 255))
+        (cbi.compiler-builtin-ctfe ":abi"))
       (compiler-parse-fixed-source-id-only-ok?
         "as"
-        (cbi.compiler-builtin-ctfe-ref 260))
+        (cbi.compiler-builtin-ctfe "as"))
       (compiler-parse-fixed-source-id-only-ok?
         "defgeneric"
-        (cbi.compiler-builtin-ctfe-ref 265)))))
+        (cbi.compiler-builtin-ctfe "defgeneric")))))
 
 (define (compiler-parse-defmacro-tests-ok?) : bool
   (and

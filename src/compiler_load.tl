@@ -4449,7 +4449,7 @@
           (ast.AstExpr.Call
             (ast.ast-node-pool-context-expr-push
               pools
-              (ast.AstExpr.Var (cbi.compiler-builtin-ctfe-ref 29)))
+              (ast.AstExpr.Var (cbi.compiler-builtin-ctfe "expr-string")))
             args))))))
 
 (define (compiler-load-include-bin-def-with-pools

@@ -6723,50 +6723,6 @@
 (define (opt-unop-eq [a : ir.CompilerIrUnOp] [b : ir.CompilerIrUnOp]) : bool
   (= (opt-unop-tag a) (opt-unop-tag b)))
 
-(define (opt-mask-binop-tag [op : ir.CompilerIrMaskBinOp]) : i64
-  (match op
-    [(ir.CompilerIrMaskBinOp.And) 0]
-    [(ir.CompilerIrMaskBinOp.Or) 1]))
-
-(define (opt-mask-binop-eq
-  [a : ir.CompilerIrMaskBinOp]
-  [b : ir.CompilerIrMaskBinOp]) : bool
-  (= (opt-mask-binop-tag a) (opt-mask-binop-tag b)))
-
-(define (opt-vector-reduce-tag [op : ir.CompilerIrVectorReduceOp]) : i64
-  (match op
-    [(ir.CompilerIrVectorReduceOp.Sum) 0]
-    [(ir.CompilerIrVectorReduceOp.Min) 1]
-    [(ir.CompilerIrVectorReduceOp.Max) 2]))
-
-(define (opt-vector-reduce-eq
-  [a : ir.CompilerIrVectorReduceOp]
-  [b : ir.CompilerIrVectorReduceOp]) : bool
-  (= (opt-vector-reduce-tag a) (opt-vector-reduce-tag b)))
-
-(define (opt-vector-prefix-op-tag [op : ir.CompilerIrVectorPrefixOp]) : i64
-  (match op
-    [(ir.CompilerIrVectorPrefixOp.Sum) 0]
-    [(ir.CompilerIrVectorPrefixOp.Min) 1]
-    [(ir.CompilerIrVectorPrefixOp.Max) 2]
-    [(ir.CompilerIrVectorPrefixOp.All) 3]
-    [(ir.CompilerIrVectorPrefixOp.Any) 4]))
-
-(define (opt-vector-prefix-op-eq?
-  [a : ir.CompilerIrVectorPrefixOp]
-  [b : ir.CompilerIrVectorPrefixOp]) : bool
-  (= (opt-vector-prefix-op-tag a) (opt-vector-prefix-op-tag b)))
-
-(define (opt-mask-reduce-tag [op : ir.CompilerIrMaskReduceOp]) : i64
-  (match op
-    [(ir.CompilerIrMaskReduceOp.All) 0]
-    [(ir.CompilerIrMaskReduceOp.Any) 1]))
-
-(define (opt-mask-reduce-eq
-  [a : ir.CompilerIrMaskReduceOp]
-  [b : ir.CompilerIrMaskReduceOp]) : bool
-  (= (opt-mask-reduce-tag a) (opt-mask-reduce-tag b)))
-
 (define (opt-value-eq [a : ir.CompilerIrValue] [b : ir.CompilerIrValue]) : bool
   (match a
     [(ir.CompilerIrValue.Var ia)
@@ -7336,80 +7292,11 @@
           (hash.i64 name)
           (opt-lifetime-list-hash (deref lifetimes))))]))
 
-(define (opt-maybe-value-eq
-  [a : ir.CompilerIrMaybeValue]
-  [b : ir.CompilerIrMaybeValue]) : bool
-  (match a
-    [(ir.CompilerIrMaybeValue.No)
-      (match b
-        [(ir.CompilerIrMaybeValue.No) true]
-        [_ false])]
-    [(ir.CompilerIrMaybeValue.Some av)
-      (match b
-        [(ir.CompilerIrMaybeValue.Some bv) (opt-value-eq av bv)]
-        [_ false])]))
-
-(define (opt-value-seq-eq-from
-  [a : ir.CompilerIrValueSeq]
-  [b : ir.CompilerIrValueSeq]
-  [index : i64]) : bool
-  (if (>= index a.len)
-    true
-    (and
-      (opt-value-eq
-        (ir.compiler-ir-value-seq-ref (compiler-opt-global-shared-view a) index)
-        (ir.compiler-ir-value-seq-ref (compiler-opt-global-shared-view b) index))
-      (opt-value-seq-eq-from a b (+ index 1)))))
-
-(define (opt-value-seq-eq
-  [a : ir.CompilerIrValueSeq]
-  [b : ir.CompilerIrValueSeq]) : bool
-  (and (= a.len b.len) (opt-value-seq-eq-from a b 0)))
-
-(define (opt-call-args-array-eq
-  [a : (__tl_dyn-array ir.CompilerIrValue)]
-  [b : (__tl_dyn-array ir.CompilerIrValue)]
-  [index : i64]) : bool
-  (if (>= index (array-length a))
-    true
-    (and
-      (opt-value-eq
-        (compiler-opt-global-array-element-shared-view a index)
-        (compiler-opt-global-array-element-shared-view b index))
-      (opt-call-args-array-eq a b (+ index 1)))))
-
-(define (opt-call-args-eq
-  [a : ir.CompilerIrCallArgs]
-  [b : ir.CompilerIrCallArgs]) : bool
-  (match a
-    [(ir.CompilerIrCallArgs.Nil)
-      (match b
-        [(ir.CompilerIrCallArgs.Nil) true]
-        [_ false])]
-    [(ir.CompilerIrCallArgs.One av)
-      (match b
-        [(ir.CompilerIrCallArgs.One bv) (opt-value-eq av bv)]
-        [_ false])]
-    [(ir.CompilerIrCallArgs.Two aa ab)
-      (match b
-        [(ir.CompilerIrCallArgs.Two ba bb)
-          (and (opt-value-eq aa ba) (opt-value-eq ab bb))]
-        [_ false])]
-    [(ir.CompilerIrCallArgs.Array av)
-      (match b
-        [(ir.CompilerIrCallArgs.Array bv)
-          (and
-            (= (array-length av) (array-length bv))
-            (opt-call-args-array-eq av bv 0))]
-        [_ false])]
-    [(ir.CompilerIrCallArgs.Sret av ai)
-      (match b
-        [(ir.CompilerIrCallArgs.Sret bv bi)
-          (and
-            (= ai bi)
-            (= (array-length av) (array-length bv))
-            (opt-call-args-array-eq av bv 0))]
-        [_ false])]))
+(define (opt-zip-value-eq
+  [_type-segment-bases : i64]
+  [a : ir.CompilerIrValue]
+  [b : ir.CompilerIrValue]) : bool
+  (opt-value-eq a b))
 
 (define (opt-phi-input-eq
   [av : ir.CompilerIrValue]
@@ -7460,176 +7347,14 @@
               (opt-phi-input-eq av alabel bv blabel)
               (opt-phi-input-seq-eq at bt))))))))
 
-(define (opt-switch-case-eq
-  [a : ir.CompilerIrSwitchCase]
-  [b : ir.CompilerIrSwitchCase]) : bool
-  (match a
-    [(ir.CompilerIrSwitchCase.Case at alabel)
-      (match b
-        [(ir.CompilerIrSwitchCase.Case bt blabel)
-          (and (= at bt) (= alabel blabel))])]))
-
-(define (opt-switch-case-seq-eq
-  [a : ir.CompilerIrSwitchCaseSeq]
-  [b : ir.CompilerIrSwitchCaseSeq]) : bool
-  (if (not (= a.len b.len))
-    false
-    (let
-      [index : i64 0]
-      (begin
-        (while (< index a.len)
-          (begin
-            (unless
-              (opt-switch-case-eq
-                (ir.compiler-ir-switch-case-seq-ref a index)
-                (ir.compiler-ir-switch-case-seq-ref b index))
-              (return false))
-            (set! index (+ index 1))))
-        true))))
-
-(define (opt-c-abi-return-slot-eq
-  [type-segment-bases : i64]
-  [a : ir.CompilerIrCAbiReturnSlot]
-  [b : ir.CompilerIrCAbiReturnSlot]) : bool
-  (match a
-    [(ir.CompilerIrCAbiReturnSlot.Slot aty aoffset)
-      (match b
-        [(ir.CompilerIrCAbiReturnSlot.Slot bty boffset)
-          (and (= aoffset boffset) (opt-type-eq type-segment-bases aty bty))])]))
-
-(define (opt-c-abi-return-slot-seq-eq-from
-  [type-segment-bases : i64]
-  [a : (__tl_dyn-array ir.CompilerIrCAbiReturnSlot)]
-  [b : (__tl_dyn-array ir.CompilerIrCAbiReturnSlot)]
-  [index : i64]
-  [count : i64]) : bool
-  (if (>= index count)
-    true
-    (and
-      (opt-c-abi-return-slot-eq
-        type-segment-bases
-        (compiler-opt-global-array-element-shared-view a index)
-        (compiler-opt-global-array-element-shared-view b index))
-      (opt-c-abi-return-slot-seq-eq-from
-        type-segment-bases
-        a
-        b
-        (+ index 1)
-        count))))
-
-(define (opt-c-abi-return-slot-seq-eq
-  [type-segment-bases : i64]
-  [a : ir.CompilerIrCAbiReturnSlotSeq]
-  [b : ir.CompilerIrCAbiReturnSlotSeq]) : bool
-  (let
-    [count : i64 a.len]
-    (and
-      (= count b.len)
-      (opt-c-abi-return-slot-seq-eq-from
-        type-segment-bases
-        a.slots
-        b.slots
-        0
-        count))))
-
+;; Structural instruction equality. BinOp, VectorBinOp and VectorCompare compare
+;; their ops with opt-binop-eq, whose shift count tags lump every non-integer
+;; count type together; the rest go through compiler-ir-instr-zip-eq.
 (define (opt-instr-eq
   [type-segment-bases : i64]
   [a : ir.CompilerIrInstr]
   [b : ir.CompilerIrInstr]) : bool
-  (match a
-    [(ir.CompilerIrInstr.Mov ad av aty)
-      (match b
-        [(ir.CompilerIrInstr.Mov bd bv bty)
-          (and
-            (= ad bd)
-            (opt-value-eq av bv)
-            (opt-type-eq type-segment-bases aty bty))]
-        [_ false])]
-    [(ir.CompilerIrInstr.OwnRoot ad av aty)
-      (match b
-        [(ir.CompilerIrInstr.OwnRoot bd bv bty)
-          (and
-            (= ad bd)
-            (opt-value-eq av bv)
-            (opt-type-eq type-segment-bases aty bty))]
-        [_ false])]
-    [(ir.CompilerIrInstr.Alloc ad aty)
-      (match b
-        [(ir.CompilerIrInstr.Alloc bd bty)
-          (and (= ad bd) (opt-type-eq type-segment-bases aty bty))]
-        [_ false])]
-    [(ir.CompilerIrInstr.AddrOf ad av)
-      (match b
-        [(ir.CompilerIrInstr.AddrOf bd bv) (and (= ad bd) (= av bv))]
-        [_ false])]
-    [(ir.CompilerIrInstr.Gep ad abase aoffset aty)
-      (match b
-        [(ir.CompilerIrInstr.Gep bd bbase boffset bty)
-          (and
-            (= ad bd)
-            (opt-value-eq abase bbase)
-            (opt-value-eq aoffset boffset)
-            (opt-type-eq type-segment-bases aty bty))]
-        [_ false])]
-    [(ir.CompilerIrInstr.Load ad av aty)
-      (match b
-        [(ir.CompilerIrInstr.Load bd bv bty)
-          (and
-            (= ad bd)
-            (opt-value-eq av bv)
-            (opt-type-eq type-segment-bases aty bty))]
-        [_ false])]
-    [(ir.CompilerIrInstr.LoadOwned adst asrc aowner aty)
-      (match b
-        [(ir.CompilerIrInstr.LoadOwned bdst bsrc bowner bty)
-          (and
-            (= adst bdst)
-            (opt-value-eq asrc bsrc)
-            (= aowner bowner)
-            (opt-type-eq type-segment-bases aty bty))]
-        [_ false])]
-    [(ir.CompilerIrInstr.StorePtr aptr av aty)
-      (match b
-        [(ir.CompilerIrInstr.StorePtr bptr bv bty)
-          (and
-            (opt-value-eq aptr bptr)
-            (opt-value-eq av bv)
-            (opt-type-eq type-segment-bases aty bty))]
-        [_ false])]
-    [(ir.CompilerIrInstr.StoreOwned aptr av aty)
-      (match b
-        [(ir.CompilerIrInstr.StoreOwned bptr bv bty)
-          (and
-            (opt-value-eq aptr bptr)
-            (opt-value-eq av bv)
-            (opt-type-eq type-segment-bases aty bty))]
-        [_ false])]
-    [(ir.CompilerIrInstr.CopyBytes adst asrc asize)
-      (match b
-        [(ir.CompilerIrInstr.CopyBytes bdst bsrc bsize)
-          (and
-            (= asize bsize)
-            (opt-value-eq adst bdst)
-            (opt-value-eq asrc bsrc))]
-        [_ false])]
-    [(ir.CompilerIrInstr.Cast ad av afrom ato)
-      (match b
-        [(ir.CompilerIrInstr.Cast bd bv bfrom bto)
-          (and
-            (= ad bd)
-            (opt-value-eq av bv)
-            (opt-type-eq type-segment-bases afrom bfrom)
-            (opt-type-eq type-segment-bases ato bto))]
-        [_ false])]
-    [(ir.CompilerIrInstr.Bitcast ad av afrom ato)
-      (match b
-        [(ir.CompilerIrInstr.Bitcast bd bv bfrom bto)
-          (and
-            (= ad bd)
-            (opt-value-eq av bv)
-            (opt-type-eq type-segment-bases afrom bfrom)
-            (opt-type-eq type-segment-bases ato bto))]
-        [_ false])]
+  (match (compiler-opt-global-shared-view a)
     [(ir.CompilerIrInstr.BinOp ad aop al ar aty)
       (match b
         [(ir.CompilerIrInstr.BinOp bd bop bl br bty)
@@ -7638,32 +7363,6 @@
             (opt-binop-eq aop bop)
             (opt-value-eq al bl)
             (opt-value-eq ar br)
-            (opt-type-eq type-segment-bases aty bty))]
-        [_ false])]
-    [(ir.CompilerIrInstr.UnOp ad aop av aty)
-      (match b
-        [(ir.CompilerIrInstr.UnOp bd bop bv bty)
-          (and
-            (= ad bd)
-            (opt-unop-eq aop bop)
-            (opt-value-eq av bv)
-            (opt-type-eq type-segment-bases aty bty))]
-        [_ false])]
-    [(ir.CompilerIrInstr.LaneId ad alanes aty)
-      (match b
-        [(ir.CompilerIrInstr.LaneId bd blanes bty)
-          (and
-            (= ad bd)
-            (= alanes blanes)
-            (opt-type-eq type-segment-bases aty bty))]
-        [_ false])]
-    [(ir.CompilerIrInstr.Splat ad av alanes aty)
-      (match b
-        [(ir.CompilerIrInstr.Splat bd bv blanes bty)
-          (and
-            (= ad bd)
-            (opt-value-eq av bv)
-            (= alanes blanes)
             (opt-type-eq type-segment-bases aty bty))]
         [_ false])]
     [(ir.CompilerIrInstr.VectorBinOp payload-box)
@@ -7692,83 +7391,6 @@
                 (= alanes blanes)
                 (opt-type-eq type-segment-bases aty bty)))]
           [_ false]))]
-    [(ir.CompilerIrInstr.VectorPrefix payload-box)
-      (let
-        [ad (compiler-opt-box-field-shared-view payload-box dst)]
-        [aop (compiler-opt-box-field-shared-view payload-box op)]
-        [as (compiler-opt-box-field-shared-view payload-box src)]
-        [ac (compiler-opt-box-field-shared-view payload-box carry)]
-        [alanes (compiler-opt-box-field-shared-view payload-box lanes)]
-        [aty (compiler-opt-box-field-shared-view payload-box ty)]
-        (match b
-          [(ir.CompilerIrInstr.VectorPrefix other-payload-box)
-            (let
-              [bd (compiler-opt-box-field-shared-view other-payload-box dst)]
-              [bop (compiler-opt-box-field-shared-view other-payload-box op)]
-              [bs (compiler-opt-box-field-shared-view other-payload-box src)]
-              [bc (compiler-opt-box-field-shared-view other-payload-box carry)]
-              [blanes
-                (compiler-opt-box-field-shared-view other-payload-box lanes)]
-              [bty (compiler-opt-box-field-shared-view other-payload-box ty)]
-              (and
-                (= ad bd)
-                (opt-vector-prefix-op-eq? aop bop)
-                (opt-value-eq as bs)
-                (opt-value-eq ac bc)
-                (= alanes blanes)
-                (opt-type-eq type-segment-bases aty bty)))]
-          [_ false]))]
-    [(ir.CompilerIrInstr.GatherLoad payload-box)
-      (let
-        [ad (compiler-opt-box-field-shared-view payload-box dst)]
-        [abase (compiler-opt-box-field-shared-view payload-box base)]
-        [aindex-base
-          (compiler-opt-box-field-shared-view payload-box index-base)]
-        [aindex (compiler-opt-box-field-shared-view payload-box index)]
-        [alane-offset
-          (compiler-opt-box-field-shared-view payload-box lane-offset)]
-        [alanes (compiler-opt-box-field-shared-view payload-box lanes)]
-        [aty (compiler-opt-box-field-shared-view payload-box ty)]
-        (match b
-          [(ir.CompilerIrInstr.GatherLoad other-payload-box)
-            (let
-              [bd (compiler-opt-box-field-shared-view other-payload-box dst)]
-              [bbase
-                (compiler-opt-box-field-shared-view other-payload-box base)]
-              [bindex-base
-                (compiler-opt-box-field-shared-view
-                  other-payload-box
-                  index-base)]
-              [bindex
-                (compiler-opt-box-field-shared-view other-payload-box index)]
-              [blane-offset
-                (compiler-opt-box-field-shared-view
-                  other-payload-box
-                  lane-offset)]
-              [blanes
-                (compiler-opt-box-field-shared-view other-payload-box lanes)]
-              [bty (compiler-opt-box-field-shared-view other-payload-box ty)]
-              (and
-                (= ad bd)
-                (opt-value-eq abase bbase)
-                (opt-value-eq aindex-base bindex-base)
-                (opt-value-eq aindex bindex)
-                (if alane-offset
-                  blane-offset
-                  (not blane-offset))
-                (= alanes blanes)
-                (opt-type-eq type-segment-bases aty bty)))]
-          [_ false]))]
-    [(ir.CompilerIrInstr.VectorReduce ad aop av alanes aty)
-      (match b
-        [(ir.CompilerIrInstr.VectorReduce bd bop bv blanes bty)
-          (and
-            (= ad bd)
-            (opt-vector-reduce-eq aop bop)
-            (opt-value-eq av bv)
-            (= alanes blanes)
-            (opt-type-eq type-segment-bases aty bty))]
-        [_ false])]
     [(ir.CompilerIrInstr.VectorCompare payload-box)
       (let
         [ad (compiler-opt-box-field-shared-view payload-box dst)]
@@ -7795,402 +7417,13 @@
                 (= alanes blanes)
                 (opt-type-eq type-segment-bases aty bty)))]
           [_ false]))]
-    [(ir.CompilerIrInstr.MaskBinOp ad aop al ar alanes)
-      (match b
-        [(ir.CompilerIrInstr.MaskBinOp bd bop bl br blanes)
-          (and
-            (= ad bd)
-            (opt-mask-binop-eq aop bop)
-            (opt-value-eq al bl)
-            (opt-value-eq ar br)
-            (= alanes blanes))]
-        [_ false])]
-    [(ir.CompilerIrInstr.MaskNot ad av alanes)
-      (match b
-        [(ir.CompilerIrInstr.MaskNot bd bv blanes)
-          (and (= ad bd) (opt-value-eq av bv) (= alanes blanes))]
-        [_ false])]
-    [(ir.CompilerIrInstr.MaskReduce ad aop av alanes)
-      (match b
-        [(ir.CompilerIrInstr.MaskReduce bd bop bv blanes)
-          (and
-            (= ad bd)
-            (opt-mask-reduce-eq aop bop)
-            (opt-value-eq av bv)
-            (= alanes blanes))]
-        [_ false])]
-    [(ir.CompilerIrInstr.Select payload-box)
-      (let
-        [ad (compiler-opt-box-field-shared-view payload-box dst)]
-        [amask (compiler-opt-box-field-shared-view payload-box mask)]
-        [at (compiler-opt-box-field-shared-view payload-box on-true)]
-        [af (compiler-opt-box-field-shared-view payload-box on-false)]
-        [alanes (compiler-opt-box-field-shared-view payload-box lanes)]
-        [aty (compiler-opt-box-field-shared-view payload-box ty)]
-        (match b
-          [(ir.CompilerIrInstr.Select other-payload-box)
-            (let
-              [bd (compiler-opt-box-field-shared-view other-payload-box dst)]
-              [bmask
-                (compiler-opt-box-field-shared-view other-payload-box mask)]
-              [bt
-                (compiler-opt-box-field-shared-view other-payload-box on-true)]
-              [bf
-                (compiler-opt-box-field-shared-view other-payload-box on-false)]
-              [blanes
-                (compiler-opt-box-field-shared-view other-payload-box lanes)]
-              [bty (compiler-opt-box-field-shared-view other-payload-box ty)]
-              (and
-                (= ad bd)
-                (opt-value-eq amask bmask)
-                (opt-value-eq at bt)
-                (opt-value-eq af bf)
-                (= alanes blanes)
-                (opt-type-eq type-segment-bases aty bty)))]
-          [_ false]))]
-    [(ir.CompilerIrInstr.VectorLoad ad abase aindex alanes aty)
-      (match b
-        [(ir.CompilerIrInstr.VectorLoad bd bbase bindex blanes bty)
-          (and
-            (= ad bd)
-            (opt-value-eq abase bbase)
-            (opt-value-eq aindex bindex)
-            (= alanes blanes)
-            (opt-type-eq type-segment-bases aty bty))]
-        [_ false])]
-    [(ir.CompilerIrInstr.VectorStore payload-box)
-      (let
-        [abase (compiler-opt-box-field-shared-view payload-box base)]
-        [aindex (compiler-opt-box-field-shared-view payload-box index)]
-        [av (compiler-opt-box-field-shared-view payload-box value)]
-        [alanes (compiler-opt-box-field-shared-view payload-box lanes)]
-        [aty (compiler-opt-box-field-shared-view payload-box ty)]
-        (match b
-          [(ir.CompilerIrInstr.VectorStore other-payload-box)
-            (let
-              [bbase
-                (compiler-opt-box-field-shared-view other-payload-box base)]
-              [bindex
-                (compiler-opt-box-field-shared-view other-payload-box index)]
-              [bv (compiler-opt-box-field-shared-view other-payload-box value)]
-              [blanes
-                (compiler-opt-box-field-shared-view other-payload-box lanes)]
-              [bty (compiler-opt-box-field-shared-view other-payload-box ty)]
-              (and
-                (opt-value-eq abase bbase)
-                (opt-value-eq aindex bindex)
-                (opt-value-eq av bv)
-                (= alanes blanes)
-                (opt-type-eq type-segment-bases aty bty)))]
-          [_ false]))]
-    [(ir.CompilerIrInstr.PredicatedStore payload-box)
-      (let
-        [abase (compiler-opt-box-field-shared-view payload-box base)]
-        [aindex (compiler-opt-box-field-shared-view payload-box index)]
-        [av (compiler-opt-box-field-shared-view payload-box value)]
-        [amask (compiler-opt-box-field-shared-view payload-box mask)]
-        [alanes (compiler-opt-box-field-shared-view payload-box lanes)]
-        [aty (compiler-opt-box-field-shared-view payload-box ty)]
-        (match b
-          [(ir.CompilerIrInstr.PredicatedStore other-payload-box)
-            (let
-              [bbase
-                (compiler-opt-box-field-shared-view other-payload-box base)]
-              [bindex
-                (compiler-opt-box-field-shared-view other-payload-box index)]
-              [bv (compiler-opt-box-field-shared-view other-payload-box value)]
-              [bmask
-                (compiler-opt-box-field-shared-view other-payload-box mask)]
-              [blanes
-                (compiler-opt-box-field-shared-view other-payload-box lanes)]
-              [bty (compiler-opt-box-field-shared-view other-payload-box ty)]
-              (and
-                (opt-value-eq abase bbase)
-                (opt-value-eq aindex bindex)
-                (opt-value-eq av bv)
-                (opt-value-eq amask bmask)
-                (= alanes blanes)
-                (opt-type-eq type-segment-bases aty bty)))]
-          [_ false]))]
-    [(ir.CompilerIrInstr.PredicatedLoad payload-box)
-      (let
-        [ad (compiler-opt-box-field-shared-view payload-box dst)]
-        [abase (compiler-opt-box-field-shared-view payload-box base)]
-        [aindex (compiler-opt-box-field-shared-view payload-box index)]
-        [amask (compiler-opt-box-field-shared-view payload-box mask)]
-        [alanes (compiler-opt-box-field-shared-view payload-box lanes)]
-        [aty (compiler-opt-box-field-shared-view payload-box ty)]
-        (match b
-          [(ir.CompilerIrInstr.PredicatedLoad other-payload-box)
-            (let
-              [bd (compiler-opt-box-field-shared-view other-payload-box dst)]
-              [bbase
-                (compiler-opt-box-field-shared-view other-payload-box base)]
-              [bindex
-                (compiler-opt-box-field-shared-view other-payload-box index)]
-              [bmask
-                (compiler-opt-box-field-shared-view other-payload-box mask)]
-              [blanes
-                (compiler-opt-box-field-shared-view other-payload-box lanes)]
-              [bty (compiler-opt-box-field-shared-view other-payload-box ty)]
-              (and
-                (= ad bd)
-                (opt-value-eq abase bbase)
-                (opt-value-eq aindex bindex)
-                (opt-value-eq amask bmask)
-                (= alanes blanes)
-                (opt-type-eq type-segment-bases aty bty)))]
-          [_ false]))]
-    [(ir.CompilerIrInstr.VectorShuffle payload-box)
-      (let
-        [ad (compiler-opt-box-field-shared-view payload-box dst)]
-        [asource (compiler-opt-box-field-shared-view payload-box source)]
-        [aselector-low
-          (compiler-opt-box-field-shared-view payload-box selector-low)]
-        [aselector-high
-          (compiler-opt-box-field-shared-view payload-box selector-high)]
-        [aactive-lanes
-          (compiler-opt-box-field-shared-view payload-box active-lanes)]
-        [alanes (compiler-opt-box-field-shared-view payload-box lanes)]
-        [aty (compiler-opt-box-field-shared-view payload-box ty)]
-        (match b
-          [(ir.CompilerIrInstr.VectorShuffle other-payload-box)
-            (let
-              [bd (compiler-opt-box-field-shared-view other-payload-box dst)]
-              [bsource
-                (compiler-opt-box-field-shared-view other-payload-box source)]
-              [bselector-low
-                (compiler-opt-box-field-shared-view
-                  other-payload-box
-                  selector-low)]
-              [bselector-high
-                (compiler-opt-box-field-shared-view
-                  other-payload-box
-                  selector-high)]
-              [bactive-lanes
-                (compiler-opt-box-field-shared-view
-                  other-payload-box
-                  active-lanes)]
-              [blanes
-                (compiler-opt-box-field-shared-view other-payload-box lanes)]
-              [bty (compiler-opt-box-field-shared-view other-payload-box ty)]
-              (and
-                (= ad bd)
-                (opt-value-eq asource bsource)
-                (opt-value-eq aselector-low bselector-low)
-                (opt-maybe-value-eq aselector-high bselector-high)
-                (opt-value-eq aactive-lanes bactive-lanes)
-                (= alanes blanes)
-                (opt-type-eq type-segment-bases aty bty)))]
-          [_ false]))]
-    [(ir.CompilerIrInstr.TailMask ad aindex alength alanes)
-      (match b
-        [(ir.CompilerIrInstr.TailMask bd bindex blength blanes)
-          (and
-            (= ad bd)
-            (opt-value-eq aindex bindex)
-            (opt-value-eq alength blength)
-            (= alanes blanes))]
-        [_ false])]
-    [(ir.CompilerIrInstr.EntryArgc ad)
-      (match b
-        [(ir.CompilerIrInstr.EntryArgc bd) (= ad bd)]
-        [_ false])]
-    [(ir.CompilerIrInstr.EntryArgv ad)
-      (match b
-        [(ir.CompilerIrInstr.EntryArgv bd) (= ad bd)]
-        [_ false])]
-    [(ir.CompilerIrInstr.EntryEnvp ad)
-      (match b
-        [(ir.CompilerIrInstr.EntryEnvp bd) (= ad bd)]
-        [_ false])]
-    [(ir.CompilerIrInstr.CpuId ad aleaf asubleaf areg)
-      (match b
-        [(ir.CompilerIrInstr.CpuId bd bleaf bsubleaf breg)
-          (and
-            (= ad bd)
-            (opt-value-eq aleaf bleaf)
-            (opt-value-eq asubleaf bsubleaf)
-            (= areg breg))]
-        [_ false])]
-    [(ir.CompilerIrInstr.Xgetbv ad aindex)
-      (match b
-        [(ir.CompilerIrInstr.Xgetbv bd bindex)
-          (and (= ad bd) (opt-value-eq aindex bindex))]
-        [_ false])]
-    [(ir.CompilerIrInstr.Syscall ad aargs)
-      (match b
-        [(ir.CompilerIrInstr.Syscall bd bargs)
-          (and (= ad bd) (opt-call-args-eq aargs bargs))]
-        [_ false])]
-    [(ir.CompilerIrInstr.Call ad aname aargs aty)
-      (match b
-        [(ir.CompilerIrInstr.Call bd bname bargs bty)
-          (and
-            (= ad bd)
-            (ir.compiler-ir-symbol-eq? aname bname)
-            (opt-call-args-eq aargs bargs)
-            (opt-type-eq type-segment-bases aty bty))]
-        [_ false])]
-    [(ir.CompilerIrInstr.CallIndirect ad afunc aargs aty)
-      (match b
-        [(ir.CompilerIrInstr.CallIndirect bd bfunc bargs bty)
-          (and
-            (= ad bd)
-            (opt-value-eq afunc bfunc)
-            (opt-call-args-eq aargs bargs)
-            (opt-type-eq type-segment-bases aty bty))]
-        [_ false])]
-    [(ir.CompilerIrInstr.CallIndirectC ad afunc aargs aty)
-      (match b
-        [(ir.CompilerIrInstr.CallIndirectC bd bfunc bargs bty)
-          (and
-            (= ad bd)
-            (opt-value-eq afunc bfunc)
-            (opt-call-args-eq aargs bargs)
-            (opt-type-eq type-segment-bases aty bty))]
-        [_ false])]
-    [(ir.CompilerIrInstr.CallCAbiStoreResult payload-box)
-      (let
-        [abase (compiler-opt-box-field-shared-view payload-box base)]
-        [aname (compiler-opt-box-field-shared-view payload-box name)]
-        [aargs (compiler-opt-box-field-shared-view payload-box args)]
-        [aslots (compiler-opt-box-field-shared-view payload-box slots)]
-        (match b
-          [(ir.CompilerIrInstr.CallCAbiStoreResult other-payload-box)
-            (let
-              [bbase
-                (compiler-opt-box-field-shared-view other-payload-box base)]
-              [bname
-                (compiler-opt-box-field-shared-view other-payload-box name)]
-              [bargs
-                (compiler-opt-box-field-shared-view other-payload-box args)]
-              [bslots
-                (compiler-opt-box-field-shared-view other-payload-box slots)]
-              (and
-                (opt-value-eq abase bbase)
-                (ir.compiler-ir-symbol-eq? aname bname)
-                (opt-call-args-eq aargs bargs)
-                (opt-c-abi-return-slot-seq-eq type-segment-bases aslots bslots)))]
-          [_ false]))]
-    [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
-      (let
-        [abase (compiler-opt-box-field-shared-view payload-box base)]
-        [afunc (compiler-opt-box-field-shared-view payload-box callee)]
-        [aargs (compiler-opt-box-field-shared-view payload-box args)]
-        [aslots (compiler-opt-box-field-shared-view payload-box slots)]
-        (match b
-          [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult other-payload-box)
-            (let
-              [bbase
-                (compiler-opt-box-field-shared-view other-payload-box base)]
-              [bfunc
-                (compiler-opt-box-field-shared-view other-payload-box callee)]
-              [bargs
-                (compiler-opt-box-field-shared-view other-payload-box args)]
-              [bslots
-                (compiler-opt-box-field-shared-view other-payload-box slots)]
-              (and
-                (opt-value-eq abase bbase)
-                (opt-value-eq afunc bfunc)
-                (opt-call-args-eq aargs bargs)
-                (opt-c-abi-return-slot-seq-eq type-segment-bases aslots bslots)))]
-          [_ false]))]
-    [(ir.CompilerIrInstr.SpmdCall _) false]
-    [(ir.CompilerIrInstr.TailCall aname aargs aty)
-      (match b
-        [(ir.CompilerIrInstr.TailCall bname bargs bty)
-          (and
-            (ir.compiler-ir-symbol-eq? aname bname)
-            (opt-call-args-eq aargs bargs)
-            (opt-type-eq type-segment-bases aty bty))]
-        [_ false])]
-    [(ir.CompilerIrInstr.TailCallIndirect afunc aargs aty)
-      (match b
-        [(ir.CompilerIrInstr.TailCallIndirect bfunc bargs bty)
-          (and
-            (opt-value-eq afunc bfunc)
-            (opt-call-args-eq aargs bargs)
-            (opt-type-eq type-segment-bases aty bty))]
-        [_ false])]
-    [(ir.CompilerIrInstr.Store aname av aty)
-      (match b
-        [(ir.CompilerIrInstr.Store bname bv bty)
-          (and
-            (ir.compiler-ir-symbol-eq? aname bname)
-            (opt-value-eq av bv)
-            (opt-type-eq type-segment-bases aty bty))]
-        [_ false])]
-    [(ir.CompilerIrInstr.BoundsCheck aindex alength alabel)
-      (match b
-        [(ir.CompilerIrInstr.BoundsCheck bindex blength blabel)
-          (and
-            (opt-value-eq aindex bindex)
-            (opt-value-eq alength blength)
-            (= alabel blabel))]
-        [_ false])]
-    [(ir.CompilerIrInstr.Jump alabel)
-      (match b
-        [(ir.CompilerIrInstr.Jump blabel) (= alabel blabel)]
-        [_ false])]
-    [(ir.CompilerIrInstr.Branch av at bt)
-      (match b
-        [(ir.CompilerIrInstr.Branch bv af bf)
-          (and (= at af) (= bt bf) (opt-value-eq av bv))]
-        [_ false])]
-    [(ir.CompilerIrInstr.TotalEnumBranch av at bt)
-      (match b
-        [(ir.CompilerIrInstr.TotalEnumBranch bv af bf)
-          (and (= at af) (= bt bf) (opt-value-eq av bv))]
-        [_ false])]
-    [(ir.CompilerIrInstr.Return av)
-      (match b
-        [(ir.CompilerIrInstr.Return bv) (opt-maybe-value-eq av bv)]
-        [_ false])]
-    [(ir.CompilerIrInstr.Phi ad ainputs aty)
-      (match b
-        [(ir.CompilerIrInstr.Phi bd binputs bty)
-          (and
-            (= ad bd)
-            (opt-phi-input-seq-eq ainputs binputs)
-            (opt-type-eq type-segment-bases aty bty))]
-        [_ false])]
-    [(ir.CompilerIrInstr.Pack ad awords aty)
-      (match b
-        [(ir.CompilerIrInstr.Pack bd bwords bty)
-          (and
-            (= ad bd)
-            (opt-value-seq-eq awords bwords)
-            (opt-type-eq type-segment-bases aty bty))]
-        [_ false])]
-    [(ir.CompilerIrInstr.Word ad asrc ai aty)
-      (match b
-        [(ir.CompilerIrInstr.Word bd bsrc bi bty)
-          (and
-            (= ad bd)
-            (opt-value-eq asrc bsrc)
-            (= ai bi)
-            (opt-type-eq type-segment-bases aty bty))]
-        [_ false])]
-    [(ir.CompilerIrInstr.Switch av abase acases adefault)
-      (match b
-        [(ir.CompilerIrInstr.Switch bv bbase bcases bdefault)
-          (and
-            (opt-value-eq av bv)
-            (= abase bbase)
-            (opt-switch-case-seq-eq acases bcases)
-            (= adefault bdefault))]
-        [_ false])]
-    [(ir.CompilerIrInstr.TotalEnumSwitch av abase acases adefault atrap)
-      (match b
-        [(ir.CompilerIrInstr.TotalEnumSwitch bv bbase bcases bdefault btrap)
-          (and
-            (opt-value-eq av bv)
-            (= abase bbase)
-            (opt-switch-case-seq-eq acases bcases)
-            (= adefault bdefault)
-            (= atrap btrap))]
-        [_ false])]))
+    [_
+      (ir.compiler-ir-instr-zip-eq
+        a
+        b
+        opt-zip-value-eq
+        opt-type-eq
+        type-segment-bases)]))
 
 (define (opt-instr-seq-eq-from
   [type-segment-bases : i64]
@@ -8871,14 +8104,6 @@
       [(ir.CompilerIrValue.Var _) resolved]
       [_ value])))
 
-(define (opt-copy-subst-value-seq
-  [env : OptCopyEnv]
-  [values : ir.CompilerIrValueSeq]) : ir.CompilerIrValueSeq
-  (ir.compiler-ir-value-seq-map
-    values
-    opt-copy-resolve
-    (compiler-opt-global-shared-view env)))
-
 (define (opt-copy-subst-call-args
   [env : OptCopyEnv]
   [args : ir.CompilerIrCallArgs]) : ir.CompilerIrCallArgs
@@ -8904,285 +8129,60 @@
     opt-copy-resolve-spmd-value
     (compiler-opt-global-shared-view env)))
 
+;; Vector and mask values are private aggregates. Only propagate var-to-var
+;; identities through them: scalar literals recorded by the general copy
+;; environment are not valid SIMD constants.
+(define (opt-copy-resolve-use
+  [env : OptCopyEnv]
+  [role : ir.CompilerIrOperandRole]
+  [value : ir.CompilerIrValue]) : ir.CompilerIrValue
+  (match role
+    [(ir.CompilerIrOperandRole.Vector) (opt-copy-resolve-mask env value)]
+    [(ir.CompilerIrOperandRole.Mask) (opt-copy-resolve-mask env value)]
+    [_ (opt-copy-resolve env value)]))
+
+(define (opt-copy-resolve-vector-use
+  [env : OptCopyEnv]
+  [role : ir.CompilerIrOperandRole]
+  [value : ir.CompilerIrValue]) : ir.CompilerIrValue
+  (match role
+    [(ir.CompilerIrOperandRole.Vector) (opt-copy-resolve-mask env value)]
+    [(ir.CompilerIrOperandRole.Mask) (opt-copy-resolve-mask env value)]
+    [_ value]))
+
 ;; Rewrite the value-use operands of an instruction through the copy env. Phi
 ;; inputs and the raw var id of `CompilerIrInstr.AddrOf` are intentionally not rewritten.
 (define (opt-copy-subst-instr [env : OptCopyEnv] [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
   (match (compiler-opt-global-shared-view instr)
-    [(ir.CompilerIrInstr.Mov dst src ty)
-      (ir.CompilerIrInstr.Mov dst (opt-copy-resolve env src) ty)]
-    [(ir.CompilerIrInstr.OwnRoot dst src ty)
-      (ir.CompilerIrInstr.OwnRoot dst (opt-copy-resolve env src) ty)]
-    [(ir.CompilerIrInstr.Gep dst base offset ty)
-      (ir.CompilerIrInstr.Gep
-        dst
-        (opt-copy-resolve (compiler-opt-global-shared-view env) base)
-        (opt-copy-resolve env offset)
-        ty)]
-    [(ir.CompilerIrInstr.Load dst src ty)
-      (ir.CompilerIrInstr.Load dst (opt-copy-resolve env src) ty)]
-    [(ir.CompilerIrInstr.LoadOwned dst src owner ty) instr]
-    [(ir.CompilerIrInstr.StorePtr ptr value ty)
-      (ir.CompilerIrInstr.StorePtr
-        (opt-copy-resolve (compiler-opt-global-shared-view env) ptr)
-        (opt-copy-resolve env value)
-        ty)]
-    [(ir.CompilerIrInstr.StoreOwned ptr value ty)
-      (ir.CompilerIrInstr.StoreOwned
-        (opt-copy-resolve (compiler-opt-global-shared-view env) ptr)
-        (opt-copy-resolve env value)
-        ty)]
-    [(ir.CompilerIrInstr.CopyBytes dst src size)
-      (ir.CompilerIrInstr.CopyBytes
-        (opt-copy-resolve (compiler-opt-global-shared-view env) dst)
-        (opt-copy-resolve env src)
-        size)]
-    [(ir.CompilerIrInstr.Cast dst src from-ty to-ty)
-      (ir.CompilerIrInstr.Cast dst (opt-copy-resolve env src) from-ty to-ty)]
-    [(ir.CompilerIrInstr.Bitcast dst src from-ty to-ty)
-      (ir.CompilerIrInstr.Bitcast dst (opt-copy-resolve env src) from-ty to-ty)]
-    [(ir.CompilerIrInstr.BinOp dst op l r ty)
-      (ir.CompilerIrInstr.BinOp
-        dst
-        op
-        (opt-copy-resolve (compiler-opt-global-shared-view env) l)
-        (opt-copy-resolve env r)
-        ty)]
-    [(ir.CompilerIrInstr.UnOp dst op v ty)
-      (ir.CompilerIrInstr.UnOp dst op (opt-copy-resolve env v) ty)]
-    [(ir.CompilerIrInstr.Splat dst value lanes ty)
-      (ir.CompilerIrInstr.Splat dst (opt-copy-resolve env value) lanes ty)]
-    ;; Vector and mask values are private aggregates. Only propagate var-to-var
-    ;; identities through them: scalar literals recorded by the general copy
-    ;; environment are not valid SIMD constants.
-    [(ir.CompilerIrInstr.VectorBinOp payload-box)
-      (let
-        [dst (compiler-opt-box-field-shared-view payload-box dst)]
-        [op (compiler-opt-box-field-shared-view payload-box op)]
-        [lhs (compiler-opt-box-field-shared-view payload-box lhs)]
-        [rhs (compiler-opt-box-field-shared-view payload-box rhs)]
-        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
-        [ty (compiler-opt-box-field-shared-view payload-box ty)]
-        (ir.ir-instr-vector-bin-op
-          dst
-          op
-          (opt-copy-resolve-mask (compiler-opt-global-shared-view env) lhs)
-          (opt-copy-resolve-mask env rhs)
-          lanes
-          ty))]
-    [(ir.CompilerIrInstr.VectorPrefix payload-box)
-      (let
-        [dst (compiler-opt-box-field-shared-view payload-box dst)]
-        [op (compiler-opt-box-field-shared-view payload-box op)]
-        [src (compiler-opt-box-field-shared-view payload-box src)]
-        [carry (compiler-opt-box-field-shared-view payload-box carry)]
-        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
-        [ty (compiler-opt-box-field-shared-view payload-box ty)]
-        (ir.ir-instr-vector-prefix
-          dst
-          op
-          (opt-copy-resolve-mask env src)
-          carry
-          lanes
-          ty))]
-    [(ir.CompilerIrInstr.VectorReduce dst op src lanes ty)
-      (ir.CompilerIrInstr.VectorReduce
-        dst
-        op
-        (opt-copy-resolve-mask env src)
-        lanes
-        ty)]
-    [(ir.CompilerIrInstr.VectorCompare payload-box)
-      (let
-        [dst (compiler-opt-box-field-shared-view payload-box dst)]
-        [op (compiler-opt-box-field-shared-view payload-box op)]
-        [lhs (compiler-opt-box-field-shared-view payload-box lhs)]
-        [rhs (compiler-opt-box-field-shared-view payload-box rhs)]
-        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
-        [ty (compiler-opt-box-field-shared-view payload-box ty)]
-        (ir.ir-instr-vector-compare
-          dst
-          op
-          (opt-copy-resolve-mask (compiler-opt-global-shared-view env) lhs)
-          (opt-copy-resolve-mask env rhs)
-          lanes
-          ty))]
-    [(ir.CompilerIrInstr.MaskBinOp dst op lhs rhs lanes)
-      (ir.CompilerIrInstr.MaskBinOp
-        dst
-        op
-        (opt-copy-resolve-mask (compiler-opt-global-shared-view env) lhs)
-        (opt-copy-resolve-mask env rhs)
-        lanes)]
-    [(ir.CompilerIrInstr.MaskNot dst src lanes)
-      (ir.CompilerIrInstr.MaskNot dst (opt-copy-resolve-mask env src) lanes)]
-    [(ir.CompilerIrInstr.MaskReduce dst op src lanes)
-      (ir.CompilerIrInstr.MaskReduce
-        dst
-        op
-        (opt-copy-resolve-mask env src)
-        lanes)]
-    [(ir.CompilerIrInstr.Select payload-box)
-      (let
-        [dst (compiler-opt-box-field-shared-view payload-box dst)]
-        [mask (compiler-opt-box-field-shared-view payload-box mask)]
-        [on-true (compiler-opt-box-field-shared-view payload-box on-true)]
-        [on-false (compiler-opt-box-field-shared-view payload-box on-false)]
-        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
-        [ty (compiler-opt-box-field-shared-view payload-box ty)]
-        (ir.ir-instr-select
-          dst
-          (opt-copy-resolve-mask (compiler-opt-global-shared-view env) mask)
-          (opt-copy-resolve-mask (compiler-opt-global-shared-view env) on-true)
-          (opt-copy-resolve-mask env on-false)
-          lanes
-          ty))]
+    [(ir.CompilerIrInstr.LoadOwned _ _ _ _) instr]
+    ;; Phi inputs belong to predecessor edges and are not block-local copies.
+    [(ir.CompilerIrInstr.Phi _ _ _) instr]
+    ;; The scalar operands of these SIMD forms keep their vars, and a shuffle,
+    ;; a gather and a tail mask keep all of theirs.
+    [(ir.CompilerIrInstr.VectorPrefix _)
+      (ir.compiler-ir-instr-map-uses
+        instr
+        opt-copy-resolve-vector-use
+        (compiler-opt-global-shared-view env))]
+    [(ir.CompilerIrInstr.VectorStore _)
+      (ir.compiler-ir-instr-map-uses
+        instr
+        opt-copy-resolve-vector-use
+        (compiler-opt-global-shared-view env))]
+    [(ir.CompilerIrInstr.PredicatedStore _)
+      (ir.compiler-ir-instr-map-uses
+        instr
+        opt-copy-resolve-vector-use
+        (compiler-opt-global-shared-view env))]
+    [(ir.CompilerIrInstr.PredicatedLoad _)
+      (ir.compiler-ir-instr-map-uses
+        instr
+        opt-copy-resolve-vector-use
+        (compiler-opt-global-shared-view env))]
     [(ir.CompilerIrInstr.VectorLoad _ _ _ _ _) instr]
-    [(ir.CompilerIrInstr.VectorStore payload-box)
-      (let
-        [base (compiler-opt-box-field-shared-view payload-box base)]
-        [index (compiler-opt-box-field-shared-view payload-box index)]
-        [value (compiler-opt-box-field-shared-view payload-box value)]
-        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
-        [ty (compiler-opt-box-field-shared-view payload-box ty)]
-        (ir.ir-instr-vector-store
-          base
-          index
-          (opt-copy-resolve-mask env value)
-          lanes
-          ty))]
-    [(ir.CompilerIrInstr.PredicatedStore payload-box)
-      (let
-        [base (compiler-opt-box-field-shared-view payload-box base)]
-        [index (compiler-opt-box-field-shared-view payload-box index)]
-        [value (compiler-opt-box-field-shared-view payload-box value)]
-        [mask (compiler-opt-box-field-shared-view payload-box mask)]
-        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
-        [ty (compiler-opt-box-field-shared-view payload-box ty)]
-        (ir.ir-instr-predicated-store
-          base
-          index
-          (opt-copy-resolve-mask (compiler-opt-global-shared-view env) value)
-          (opt-copy-resolve-mask env mask)
-          lanes
-          ty))]
-    [(ir.CompilerIrInstr.PredicatedLoad payload-box)
-      (let
-        [dst (compiler-opt-box-field-shared-view payload-box dst)]
-        [base (compiler-opt-box-field-shared-view payload-box base)]
-        [index (compiler-opt-box-field-shared-view payload-box index)]
-        [mask (compiler-opt-box-field-shared-view payload-box mask)]
-        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
-        [ty (compiler-opt-box-field-shared-view payload-box ty)]
-        (ir.ir-instr-predicated-load
-          dst
-          base
-          index
-          (opt-copy-resolve-mask env mask)
-          lanes
-          ty))]
     [(ir.CompilerIrInstr.GatherLoad _) instr]
     [(ir.CompilerIrInstr.VectorShuffle _) instr]
     [(ir.CompilerIrInstr.TailMask _ _ _ _) instr]
-    [(ir.CompilerIrInstr.EntryArgc _) instr]
-    [(ir.CompilerIrInstr.EntryArgv _) instr]
-    [(ir.CompilerIrInstr.EntryEnvp _) instr]
-    [(ir.CompilerIrInstr.CpuId dst leaf subleaf reg-index)
-      (ir.CompilerIrInstr.CpuId
-        dst
-        (opt-copy-resolve (compiler-opt-global-shared-view env) leaf)
-        (opt-copy-resolve env subleaf)
-        reg-index)]
-    [(ir.CompilerIrInstr.Xgetbv dst index)
-      (ir.CompilerIrInstr.Xgetbv dst (opt-copy-resolve env index))]
-    [(ir.CompilerIrInstr.Syscall dst args)
-      (ir.CompilerIrInstr.Syscall dst (opt-copy-subst-call-args env args))]
-    [(ir.CompilerIrInstr.Call dst name args ty)
-      (ir.CompilerIrInstr.Call dst name (opt-copy-subst-call-args env args) ty)]
-    [(ir.CompilerIrInstr.CallIndirect dst func args ty)
-      (ir.CompilerIrInstr.CallIndirect
-        dst
-        (opt-copy-resolve (compiler-opt-global-shared-view env) func)
-        (opt-copy-subst-call-args env args)
-        ty)]
-    [(ir.CompilerIrInstr.CallIndirectC dst func args ty)
-      (ir.CompilerIrInstr.CallIndirectC
-        dst
-        (opt-copy-resolve (compiler-opt-global-shared-view env) func)
-        (opt-copy-subst-call-args env args)
-        ty)]
-    [(ir.CompilerIrInstr.CallCAbiStoreResult payload-box)
-      (let
-        [base (compiler-opt-box-field-shared-view payload-box base)]
-        [name (compiler-opt-box-field-shared-view payload-box name)]
-        [args (compiler-opt-box-field-shared-view payload-box args)]
-        [slots (compiler-opt-box-field-shared-view payload-box slots)]
-        (ir.ir-instr-call-cabi-store-result
-          (opt-copy-resolve (compiler-opt-global-shared-view env) base)
-          name
-          (opt-copy-subst-call-args env args)
-          slots))]
-    [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
-      (let
-        [base (compiler-opt-box-field-shared-view payload-box base)]
-        [func (compiler-opt-box-field-shared-view payload-box callee)]
-        [args (compiler-opt-box-field-shared-view payload-box args)]
-        [slots (compiler-opt-box-field-shared-view payload-box slots)]
-        (ir.ir-instr-call-indirect-cabi-store-result
-          (opt-copy-resolve (compiler-opt-global-shared-view env) base)
-          (opt-copy-resolve (compiler-opt-global-shared-view env) func)
-          (opt-copy-subst-call-args env args)
-          slots))]
-    [(ir.CompilerIrInstr.SpmdCall payload-box)
-      (let
-        [callee (compiler-opt-box-field-shared-view payload-box callee)]
-        [backend (compiler-opt-box-field-shared-view payload-box backend)]
-        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
-        [active-mask
-          (compiler-opt-box-field-shared-view payload-box active-mask)]
-        [args (compiler-opt-box-field-shared-view payload-box args)]
-        [result (compiler-opt-box-field-shared-view payload-box result)]
-        (ir.ir-instr-spmd-call-with-origin
-          callee
-          backend
-          lanes
-          (opt-copy-resolve-mask
-            (compiler-opt-global-shared-view env)
-            active-mask)
-          (opt-copy-subst-spmd-call-args env args)
-          result
-          (clone (compiler-opt-box-field-shared-view payload-box origin))))]
-    [(ir.CompilerIrInstr.TailCall name args ty)
-      (ir.CompilerIrInstr.TailCall name (opt-copy-subst-call-args env args) ty)]
-    [(ir.CompilerIrInstr.Store name value ty)
-      (ir.CompilerIrInstr.Store name (opt-copy-resolve env value) ty)]
-    [(ir.CompilerIrInstr.BoundsCheck index length ok-label)
-      (ir.CompilerIrInstr.BoundsCheck
-        (opt-copy-resolve (compiler-opt-global-shared-view env) index)
-        (opt-copy-resolve env length)
-        ok-label)]
-    [(ir.CompilerIrInstr.Branch cond a b)
-      (ir.CompilerIrInstr.Branch (opt-copy-resolve env cond) a b)]
-    [(ir.CompilerIrInstr.TotalEnumBranch cond a b)
-      (ir.CompilerIrInstr.TotalEnumBranch (opt-copy-resolve env cond) a b)]
-    [(ir.CompilerIrInstr.Return maybe)
-      (match maybe
-        [(ir.CompilerIrMaybeValue.Some value)
-          (ir.CompilerIrInstr.Return
-            (ir.CompilerIrMaybeValue.Some (opt-copy-resolve env value)))]
-        [(ir.CompilerIrMaybeValue.No) instr])]
-    ;; `CompilerIrInstr.AddrOf` takes the address of a storage slot named by a raw var id,
-    ;; not a value, so its operand must not be copy-substituted.
-    [(ir.CompilerIrInstr.AddrOf _ _) instr]
-    ;; `CompilerIrInstr.Alloc`/`CompilerIrInstr.Jump` have no value operands; `CompilerIrInstr.Phi` inputs
-    ;; belong to predecessor edges and are not block-local copies.
-    [(ir.CompilerIrInstr.Alloc _ _) instr]
-    [(ir.CompilerIrInstr.LaneId _ _ _) instr]
-    [(ir.CompilerIrInstr.Jump _) instr]
-    [(ir.CompilerIrInstr.Phi _ _ _) instr]
-    ;; Register-group ops carry value operands -- substitute copies into
-    ;; the packed words / the extracted source group.
-    [(ir.CompilerIrInstr.Pack dst words ty)
-      (ir.CompilerIrInstr.Pack dst (opt-copy-subst-value-seq env words) ty)]
     [(ir.CompilerIrInstr.Word dst src index ty)
       (let
         [resolved-src : ir.CompilerIrValue
@@ -9198,29 +8198,11 @@
               [(ir.CompilerIrMaybeValue.No)
                 (ir.CompilerIrInstr.Word dst resolved-src index ty)])]
           [_ (ir.CompilerIrInstr.Word dst resolved-src index ty)]))]
-    [(ir.CompilerIrInstr.TailCallIndirect func args ty)
-      (ir.CompilerIrInstr.TailCallIndirect
-        (opt-copy-resolve (compiler-opt-global-shared-view env) func)
-        (opt-copy-subst-call-args env args)
-        ty)]
-    [(ir.CompilerIrInstr.Switch index base cases default-label)
-      (ir.CompilerIrInstr.Switch
-        (opt-copy-resolve env index)
-        base
-        cases
-        default-label)]
-    [(ir.CompilerIrInstr.TotalEnumSwitch
-        index
-        base
-        cases
-        default-label
-        trap-label)
-      (ir.CompilerIrInstr.TotalEnumSwitch
-        (opt-copy-resolve env index)
-        base
-        cases
-        default-label
-        trap-label)]))
+    [_
+      (ir.compiler-ir-instr-map-uses
+        instr
+        opt-copy-resolve-use
+        (compiler-opt-global-shared-view env))]))
 
 ;; Update the copy env after an instruction. A `Mov dst src` (with `src` already
 ;; substituted) records a copy when `src` is a safe, non-self source. Every other
@@ -13338,9 +12320,6 @@
 (defenum OptSsaRenameState
   (State OptSsaRenameBlocks OptSsaBlockOuts i64))
 
-(defenum OptSsaDstResult
-  (Result i64 OptSsaRenameEnv i64))
-
 (defenum OptSsaInstrResult
   (Result ir.CompilerIrInstr OptSsaRenameEnv i64))
 
@@ -13502,32 +12481,7 @@
   [representations : ir.CompilerIrRepresentationIndex]
   [facts : OptSsaFacts]
   [instr : ir.CompilerIrInstr]) : OptSsaFacts
-  (match instr
-    [(ir.CompilerIrInstr.Mov dst _ ty)
-      (opt-ssa-facts-add-def-ty type-segment-bases representations facts dst ty)]
-    [(ir.CompilerIrInstr.Load dst _ ty)
-      (opt-ssa-facts-add-def-ty type-segment-bases representations facts dst ty)]
-    [(ir.CompilerIrInstr.LoadOwned dst _ _ ty)
-      (opt-ssa-facts-add-def-ty type-segment-bases representations facts dst ty)]
-    [(ir.CompilerIrInstr.Cast dst _ _ ty)
-      (opt-ssa-facts-add-def-ty type-segment-bases representations facts dst ty)]
-    [(ir.CompilerIrInstr.Bitcast dst _ _ ty)
-      (opt-ssa-facts-add-def-ty type-segment-bases representations facts dst ty)]
-    [(ir.CompilerIrInstr.BinOp dst op _ _ ty)
-      (opt-ssa-facts-add-def-ty
-        type-segment-bases
-        representations
-        facts
-        dst
-        (ir.compiler-ir-binop-result-type op ty))]
-    [(ir.CompilerIrInstr.UnOp dst _ _ ty)
-      (opt-ssa-facts-add-def-ty type-segment-bases representations facts dst ty)]
-    [(ir.CompilerIrInstr.Call dst _ _ ty)
-      (opt-ssa-facts-add-def-ty type-segment-bases representations facts dst ty)]
-    [(ir.CompilerIrInstr.CallIndirect dst _ _ ty)
-      (opt-ssa-facts-add-def-ty type-segment-bases representations facts dst ty)]
-    [(ir.CompilerIrInstr.CallIndirectC dst _ _ ty)
-      (opt-ssa-facts-add-def-ty type-segment-bases representations facts dst ty)]
+  (match (compiler-opt-global-shared-view instr)
     [(ir.CompilerIrInstr.SpmdCall payload-box)
       (let
         [result (compiler-opt-box-field-shared-view payload-box result)]
@@ -13546,8 +12500,6 @@
                 (opt-ssa-facts-add-def-bad facts dst)]
               [(ir.CompilerIrSpmdValueClass.Mask)
                 (opt-ssa-facts-add-def-bad facts dst)])]))]
-    [(ir.CompilerIrInstr.Phi dst _ ty)
-      (opt-ssa-facts-add-def-ty type-segment-bases representations facts dst ty)]
     [(ir.CompilerIrInstr.EntryArgc dst)
       (opt-ssa-facts-add-def-ty
         type-segment-bases
@@ -13557,55 +12509,33 @@
         (ast.AstType.I64))]
     [(ir.CompilerIrInstr.AddrOf dst src)
       (opt-ssa-facts-bad-var (opt-ssa-facts-add-def-bad facts dst) src)]
-    [(ir.CompilerIrInstr.Alloc dst _) (opt-ssa-facts-add-def-bad facts dst)]
-    [(ir.CompilerIrInstr.Gep dst _ _ _) (opt-ssa-facts-add-def-bad facts dst)]
-    [(ir.CompilerIrInstr.LaneId dst _ _) (opt-ssa-facts-add-def-bad facts dst)]
-    [(ir.CompilerIrInstr.Splat dst _ _ _) (opt-ssa-facts-add-def-bad facts dst)]
-    [(ir.CompilerIrInstr.VectorBinOp payload-box)
-      (let
-        [dst (deref payload-box).dst]
-        (opt-ssa-facts-add-def-bad facts dst))]
-    [(ir.CompilerIrInstr.VectorPrefix payload-box)
-      (let
-        [dst (deref payload-box).dst]
-        (opt-ssa-facts-add-def-bad facts dst))]
+    ;; Vector-unit results are never SSA candidates, even the reductions and
+    ;; lanes-0 selects that state a scalar type.
     [(ir.CompilerIrInstr.VectorReduce dst _ _ _ _)
       (opt-ssa-facts-add-def-bad facts dst)]
-    [(ir.CompilerIrInstr.VectorCompare payload-box)
-      (let
-        [dst (deref payload-box).dst]
-        (opt-ssa-facts-add-def-bad facts dst))]
-    [(ir.CompilerIrInstr.MaskBinOp dst _ _ _ _)
-      (opt-ssa-facts-add-def-bad facts dst)]
-    [(ir.CompilerIrInstr.MaskNot dst _ _) (opt-ssa-facts-add-def-bad facts dst)]
     [(ir.CompilerIrInstr.MaskReduce dst _ _ _)
       (opt-ssa-facts-add-def-bad facts dst)]
     [(ir.CompilerIrInstr.Select payload-box)
-      (let
-        [dst (deref payload-box).dst]
-        (opt-ssa-facts-add-def-bad facts dst))]
-    [(ir.CompilerIrInstr.VectorLoad dst _ _ _ _)
-      (opt-ssa-facts-add-def-bad facts dst)]
-    [(ir.CompilerIrInstr.PredicatedLoad payload-box)
-      (let
-        [dst (deref payload-box).dst]
-        (opt-ssa-facts-add-def-bad facts dst))]
-    [(ir.CompilerIrInstr.GatherLoad payload-box)
-      (let
-        [dst (deref payload-box).dst]
-        (opt-ssa-facts-add-def-bad facts dst))]
-    [(ir.CompilerIrInstr.VectorShuffle payload-box)
-      (let
-        [dst (deref payload-box).dst]
-        (opt-ssa-facts-add-def-bad facts dst))]
-    [(ir.CompilerIrInstr.TailMask dst _ _ _)
-      (opt-ssa-facts-add-def-bad facts dst)]
-    [(ir.CompilerIrInstr.EntryArgv dst) (opt-ssa-facts-add-def-bad facts dst)]
-    [(ir.CompilerIrInstr.EntryEnvp dst) (opt-ssa-facts-add-def-bad facts dst)]
-    [(ir.CompilerIrInstr.CpuId dst _ _ _) (opt-ssa-facts-add-def-bad facts dst)]
-    [(ir.CompilerIrInstr.Xgetbv dst _) (opt-ssa-facts-add-def-bad facts dst)]
-    [(ir.CompilerIrInstr.Syscall dst _) (opt-ssa-facts-add-def-bad facts dst)]
-    [_ facts]))
+      (opt-ssa-facts-add-def-bad
+        facts
+        (compiler-opt-box-field-shared-view payload-box dst))]
+    [(ir.CompilerIrInstr.OwnRoot _ _ _) facts]
+    [(ir.CompilerIrInstr.Pack _ _ _) facts]
+    [(ir.CompilerIrInstr.Word _ _ _ _) facts]
+    ;; Every other def has the type it states, or is bad without one.
+    [_
+      (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
+        [(option_i64.None) facts]
+        [(option_i64.Some dst)
+          (match (ir.compiler-ir-instr-dst-type instr)
+            [(ast.AstMaybeType.Some ty)
+              (opt-ssa-facts-add-def-ty
+                type-segment-bases
+                representations
+                facts
+                dst
+                ty)]
+            [(ast.AstMaybeType.No) (opt-ssa-facts-add-def-bad facts dst)])])]))
 
 (define (opt-ssa-facts-add-instr-seq-from
   [type-segment-bases : i64]
@@ -14384,30 +13314,6 @@
         [(option_i64.None) value])]
     [_ value]))
 
-(define (opt-ssa-rewrite-maybe-value
-  [env : OptSsaRenameEnv]
-  [value : ir.CompilerIrMaybeValue]) : ir.CompilerIrMaybeValue
-  (match value
-    [(ir.CompilerIrMaybeValue.No) (ir.CompilerIrMaybeValue.No)]
-    [(ir.CompilerIrMaybeValue.Some inner)
-      (ir.CompilerIrMaybeValue.Some (opt-ssa-rewrite-value env inner))]))
-
-(define (opt-ssa-rewrite-value-seq
-  [env : OptSsaRenameEnv]
-  [values : ir.CompilerIrValueSeq]) : ir.CompilerIrValueSeq
-  (ir.compiler-ir-value-seq-map
-    values
-    opt-ssa-rewrite-value
-    (compiler-opt-global-shared-view env)))
-
-(define (opt-ssa-rewrite-call-args
-  [env : OptSsaRenameEnv]
-  [args : ir.CompilerIrCallArgs]) : ir.CompilerIrCallArgs
-  (ir.compiler-ir-call-args-map
-    args
-    opt-ssa-rewrite-value
-    (compiler-opt-global-shared-view env)))
-
 (define (opt-ssa-rewrite-spmd-value
   [env : OptSsaRenameEnv]
   [_class : ir.CompilerIrSpmdValueClass]
@@ -14422,651 +13328,113 @@
     opt-ssa-rewrite-spmd-value
     (compiler-opt-global-shared-view env)))
 
-(define (opt-ssa-rename-dst
+(define (opt-ssa-rewrite-use
+  [env : OptSsaRenameEnv]
+  [_next-var : i64]
+  [_role : ir.CompilerIrOperandRole]
+  [value : ir.CompilerIrValue]) : ir.CompilerIrValue
+  (opt-ssa-rewrite-value env value))
+
+(define (opt-ssa-renamed-def
+  [_env : OptSsaRenameEnv]
+  [next-var : i64]
+  [_dst : i64]) : i64
+  next-var)
+
+(define (opt-ssa-rename-uses
+  [env : OptSsaRenameEnv]
+  [next-var : i64]
+  [instr : ir.CompilerIrInstr]) : OptSsaInstrResult
+  (OptSsaInstrResult.Result
+    (ir.compiler-ir-instr-map-uses
+      instr
+      opt-ssa-rewrite-use
+      (compiler-opt-global-shared-view env)
+      next-var)
+    env
+    next-var))
+
+;; Rewrite the uses of `instr`, which defines `dst`, then rename `dst` to the
+;; next fresh var when it is an SSA candidate.
+(define (opt-ssa-rename-def
   [facts : OptSsaFacts]
   [env : OptSsaRenameEnv]
   [next-var : i64]
-  [dst : i64]) : OptSsaDstResult
+  [instr : ir.CompilerIrInstr]
+  [dst : i64]) : OptSsaInstrResult
   (if (opt-ssa-candidate? facts dst)
-    (OptSsaDstResult.Result
-      next-var
-      (opt-ssa-env-bind env dst next-var)
-      (+ next-var 1))
-    (OptSsaDstResult.Result dst env next-var)))
+    (let
+      [out : ir.CompilerIrInstr
+        (ir.compiler-ir-instr-map
+          instr
+          opt-ssa-rewrite-use
+          opt-ssa-renamed-def
+          _
+          _
+          (compiler-opt-global-shared-view env)
+          next-var)]
+      (OptSsaInstrResult.Result
+        out
+        (opt-ssa-env-bind env dst next-var)
+        (+ next-var 1)))
+    (opt-ssa-rename-uses env next-var instr)))
 
+;; Only the scalar defs below take a fresh name; the other defs keep theirs,
+;; and existing phis stay as they are (opt-ssa-rewrite-preexisting-phi-inputs
+;; renames their inputs per edge).
 (define (opt-ssa-rename-instr
   [facts : OptSsaFacts]
   [env : OptSsaRenameEnv]
   [next-var : i64]
   [instr : ir.CompilerIrInstr]) : OptSsaInstrResult
   (match (compiler-opt-global-shared-view instr)
-    [(ir.CompilerIrInstr.Mov dst src ty)
-      (let
-        [out-src : ir.CompilerIrValue
-          (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) src)]
-        (match (opt-ssa-rename-dst facts env next-var dst)
-          [(OptSsaDstResult.Result out-dst next-env out-next)
-            (OptSsaInstrResult.Result
-              (ir.CompilerIrInstr.Mov out-dst out-src ty)
-              next-env
-              out-next)]))]
-    [(ir.CompilerIrInstr.OwnRoot dst src ty)
-      (let
-        [out-src : ir.CompilerIrValue
-          (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) src)]
-        (match (opt-ssa-rename-dst facts env next-var dst)
-          [(OptSsaDstResult.Result out-dst next-env out-next)
-            (OptSsaInstrResult.Result
-              (ir.CompilerIrInstr.OwnRoot out-dst out-src ty)
-              next-env
-              out-next)]))]
-    [(ir.CompilerIrInstr.Load dst src ty)
-      (let
-        [out-src : ir.CompilerIrValue
-          (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) src)]
-        (match (opt-ssa-rename-dst facts env next-var dst)
-          [(OptSsaDstResult.Result out-dst next-env out-next)
-            (OptSsaInstrResult.Result
-              (ir.CompilerIrInstr.Load out-dst out-src ty)
-              next-env
-              out-next)]))]
+    [(ir.CompilerIrInstr.Mov dst _ _)
+      (opt-ssa-rename-def facts env next-var instr dst)]
+    [(ir.CompilerIrInstr.OwnRoot dst _ _)
+      (opt-ssa-rename-def facts env next-var instr dst)]
+    [(ir.CompilerIrInstr.Load dst _ _)
+      (opt-ssa-rename-def facts env next-var instr dst)]
     [(ir.CompilerIrInstr.LoadOwned dst src owner ty)
       (let
-        [out-src : ir.CompilerIrValue
-          (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) src)]
         [out-owner : i64
           (match (opt-ssa-env-lookup env owner)
             [(option_i64.Some current) current]
             [(option_i64.None) owner])]
-        (match (opt-ssa-rename-dst facts env next-var dst)
-          [(OptSsaDstResult.Result out-dst next-env out-next)
-            (OptSsaInstrResult.Result
-              (ir.CompilerIrInstr.LoadOwned out-dst out-src out-owner ty)
-              next-env
-              out-next)]))]
-    [(ir.CompilerIrInstr.Cast dst src from-ty to-ty)
-      (let
-        [out-src : ir.CompilerIrValue
-          (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) src)]
-        (match (opt-ssa-rename-dst facts env next-var dst)
-          [(OptSsaDstResult.Result out-dst next-env out-next)
-            (OptSsaInstrResult.Result
-              (ir.CompilerIrInstr.Cast out-dst out-src from-ty to-ty)
-              next-env
-              out-next)]))]
-    [(ir.CompilerIrInstr.Bitcast dst src from-ty to-ty)
-      (let
-        [out-src : ir.CompilerIrValue
-          (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) src)]
-        (match (opt-ssa-rename-dst facts env next-var dst)
-          [(OptSsaDstResult.Result out-dst next-env out-next)
-            (OptSsaInstrResult.Result
-              (ir.CompilerIrInstr.Bitcast out-dst out-src from-ty to-ty)
-              next-env
-              out-next)]))]
-    [(ir.CompilerIrInstr.BinOp dst op lhs rhs ty)
-      (let
-        [out-lhs : ir.CompilerIrValue
-          (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) lhs)]
-        [out-rhs : ir.CompilerIrValue
-          (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) rhs)]
-        (match (opt-ssa-rename-dst facts env next-var dst)
-          [(OptSsaDstResult.Result out-dst next-env out-next)
-            (OptSsaInstrResult.Result
-              (ir.CompilerIrInstr.BinOp out-dst op out-lhs out-rhs ty)
-              next-env
-              out-next)]))]
-    [(ir.CompilerIrInstr.UnOp dst op src ty)
-      (let
-        [out-src : ir.CompilerIrValue
-          (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) src)]
-        (match (opt-ssa-rename-dst facts env next-var dst)
-          [(OptSsaDstResult.Result out-dst next-env out-next)
-            (OptSsaInstrResult.Result
-              (ir.CompilerIrInstr.UnOp out-dst op out-src ty)
-              next-env
-              out-next)]))]
-    [(ir.CompilerIrInstr.Call dst name args ty)
-      (let
-        [out-args : ir.CompilerIrCallArgs
-          (opt-ssa-rewrite-call-args (compiler-opt-global-shared-view env) args)]
-        (match (opt-ssa-rename-dst facts env next-var dst)
-          [(OptSsaDstResult.Result out-dst next-env out-next)
-            (OptSsaInstrResult.Result
-              (ir.CompilerIrInstr.Call out-dst name out-args ty)
-              next-env
-              out-next)]))]
-    [(ir.CompilerIrInstr.CallIndirect dst func args ty)
-      (let
-        [out-func : ir.CompilerIrValue
-          (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) func)]
-        [out-args : ir.CompilerIrCallArgs
-          (opt-ssa-rewrite-call-args (compiler-opt-global-shared-view env) args)]
-        (match (opt-ssa-rename-dst facts env next-var dst)
-          [(OptSsaDstResult.Result out-dst next-env out-next)
-            (OptSsaInstrResult.Result
-              (ir.CompilerIrInstr.CallIndirect out-dst out-func out-args ty)
-              next-env
-              out-next)]))]
-    [(ir.CompilerIrInstr.CallIndirectC dst func args ty)
-      (let
-        [out-func : ir.CompilerIrValue
-          (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) func)]
-        [out-args : ir.CompilerIrCallArgs
-          (opt-ssa-rewrite-call-args (compiler-opt-global-shared-view env) args)]
-        (match (opt-ssa-rename-dst facts env next-var dst)
-          [(OptSsaDstResult.Result out-dst next-env out-next)
-            (OptSsaInstrResult.Result
-              (ir.CompilerIrInstr.CallIndirectC out-dst out-func out-args ty)
-              next-env
-              out-next)]))]
-    [(ir.CompilerIrInstr.CallCAbiStoreResult payload-box)
-      (let
-        [base (compiler-opt-box-field-shared-view payload-box base)]
-        [name (compiler-opt-box-field-shared-view payload-box name)]
-        [args (compiler-opt-box-field-shared-view payload-box args)]
-        [slots (compiler-opt-box-field-shared-view payload-box slots)]
-        (OptSsaInstrResult.Result
-          (ir.ir-instr-call-cabi-store-result
-            (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) base)
-            name
-            (opt-ssa-rewrite-call-args
-              (compiler-opt-global-shared-view env)
-              args)
-            slots)
+        (opt-ssa-rename-def
+          facts
           env
-          next-var))]
-    [(ir.CompilerIrInstr.GatherLoad payload-box)
-      (let
-        [dst (compiler-opt-box-field-shared-view payload-box dst)]
-        [base (compiler-opt-box-field-shared-view payload-box base)]
-        [index-base (compiler-opt-box-field-shared-view payload-box index-base)]
-        [index (compiler-opt-box-field-shared-view payload-box index)]
-        [lane-offset
-          (compiler-opt-box-field-shared-view payload-box lane-offset)]
-        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
-        [ty (compiler-opt-box-field-shared-view payload-box ty)]
-        (OptSsaInstrResult.Result
-          (ir.ir-instr-gather-load
-            dst
-            (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) base)
-            (opt-ssa-rewrite-value
-              (compiler-opt-global-shared-view env)
-              index-base)
-            (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) index)
-            lane-offset
-            lanes
-            ty)
-          env
-          next-var))]
-    [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
-      (let
-        [base (compiler-opt-box-field-shared-view payload-box base)]
-        [func (compiler-opt-box-field-shared-view payload-box callee)]
-        [args (compiler-opt-box-field-shared-view payload-box args)]
-        [slots (compiler-opt-box-field-shared-view payload-box slots)]
-        (OptSsaInstrResult.Result
-          (ir.ir-instr-call-indirect-cabi-store-result
-            (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) base)
-            (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) func)
-            (opt-ssa-rewrite-call-args
-              (compiler-opt-global-shared-view env)
-              args)
-            slots)
-          env
-          next-var))]
+          next-var
+          (ir.CompilerIrInstr.LoadOwned dst src out-owner ty)
+          dst))]
+    [(ir.CompilerIrInstr.Cast dst _ _ _)
+      (opt-ssa-rename-def facts env next-var instr dst)]
+    [(ir.CompilerIrInstr.Bitcast dst _ _ _)
+      (opt-ssa-rename-def facts env next-var instr dst)]
+    [(ir.CompilerIrInstr.BinOp dst _ _ _ _)
+      (opt-ssa-rename-def facts env next-var instr dst)]
+    [(ir.CompilerIrInstr.UnOp dst _ _ _)
+      (opt-ssa-rename-def facts env next-var instr dst)]
+    [(ir.CompilerIrInstr.Call dst _ _ _)
+      (opt-ssa-rename-def facts env next-var instr dst)]
+    [(ir.CompilerIrInstr.CallIndirect dst _ _ _)
+      (opt-ssa-rename-def facts env next-var instr dst)]
+    [(ir.CompilerIrInstr.CallIndirectC dst _ _ _)
+      (opt-ssa-rename-def facts env next-var instr dst)]
     [(ir.CompilerIrInstr.SpmdCall payload-box)
-      (let
-        [callee (compiler-opt-box-field-shared-view payload-box callee)]
-        [backend (compiler-opt-box-field-shared-view payload-box backend)]
-        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
-        [active-mask
-          (compiler-opt-box-field-shared-view payload-box active-mask)]
-        [args (compiler-opt-box-field-shared-view payload-box args)]
-        [result (compiler-opt-box-field-shared-view payload-box result)]
-        (match (compiler-opt-global-shared-view result)
-          [(ir.CompilerIrSpmdCallResult.Unit)
-            (OptSsaInstrResult.Result
-              (ir.ir-instr-spmd-call-with-origin
-                callee
-                backend
-                lanes
-                (opt-ssa-rewrite-value
-                  (compiler-opt-global-shared-view env)
-                  active-mask)
-                (opt-ssa-rewrite-spmd-call-args
-                  (compiler-opt-global-shared-view env)
-                  args)
-                result
-                (clone (compiler-opt-box-field-shared-view payload-box origin)))
-              env
-              next-var)]
-          [(ir.CompilerIrSpmdCallResult.Value dst class ty)
-            (let
-              [out-mask : ir.CompilerIrValue
-                (opt-ssa-rewrite-value
-                  (compiler-opt-global-shared-view env)
-                  active-mask)]
-              [out-args : ir.CompilerIrSpmdCallArgSeq
-                (opt-ssa-rewrite-spmd-call-args
-                  (compiler-opt-global-shared-view env)
-                  args)]
-              (match (opt-ssa-rename-dst facts env next-var dst)
-                [(OptSsaDstResult.Result out-dst next-env out-next)
-                  (OptSsaInstrResult.Result
-                    (ir.ir-instr-spmd-call-with-origin
-                      callee
-                      backend
-                      lanes
-                      out-mask
-                      out-args
-                      (ir.CompilerIrSpmdCallResult.Value out-dst class ty)
-                      (clone
-                        (compiler-opt-box-field-shared-view payload-box origin)))
-                    next-env
-                    out-next)]))]))]
+      (match (compiler-opt-box-field-shared-view payload-box result)
+        [(ir.CompilerIrSpmdCallResult.Unit)
+          (opt-ssa-rename-uses env next-var instr)]
+        [(ir.CompilerIrSpmdCallResult.Value dst _ _)
+          (opt-ssa-rename-def facts env next-var instr dst)])]
     [(ir.CompilerIrInstr.EntryArgc dst)
-      (match (opt-ssa-rename-dst facts env next-var dst)
-        [(OptSsaDstResult.Result out-dst next-env out-next)
-          (OptSsaInstrResult.Result
-            (ir.CompilerIrInstr.EntryArgc out-dst)
-            next-env
-            out-next)])]
-    [(ir.CompilerIrInstr.Gep dst base offset ty)
-      (OptSsaInstrResult.Result
-        (ir.CompilerIrInstr.Gep
-          dst
-          (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) base)
-          (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) offset)
-          ty)
-        env
-        next-var)]
-    [(ir.CompilerIrInstr.StorePtr ptr value ty)
-      (OptSsaInstrResult.Result
-        (ir.CompilerIrInstr.StorePtr
-          (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) ptr)
-          (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) value)
-          ty)
-        env
-        next-var)]
-    [(ir.CompilerIrInstr.StoreOwned ptr value ty)
-      (OptSsaInstrResult.Result
-        (ir.CompilerIrInstr.StoreOwned
-          (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) ptr)
-          (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) value)
-          ty)
-        env
-        next-var)]
-    [(ir.CompilerIrInstr.CopyBytes dst src size)
-      (OptSsaInstrResult.Result
-        (ir.CompilerIrInstr.CopyBytes
-          (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) dst)
-          (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) src)
-          size)
-        env
-        next-var)]
-    [(ir.CompilerIrInstr.BoundsCheck index length ok-label)
-      (OptSsaInstrResult.Result
-        (ir.CompilerIrInstr.BoundsCheck
-          (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) index)
-          (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) length)
-          ok-label)
-        env
-        next-var)]
-    [(ir.CompilerIrInstr.Splat dst value lanes ty)
-      (OptSsaInstrResult.Result
-        (ir.CompilerIrInstr.Splat
-          dst
-          (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) value)
-          lanes
-          ty)
-        env
-        next-var)]
-    [(ir.CompilerIrInstr.VectorBinOp payload-box)
-      (let
-        [dst (compiler-opt-box-field-shared-view payload-box dst)]
-        [op (compiler-opt-box-field-shared-view payload-box op)]
-        [lhs (compiler-opt-box-field-shared-view payload-box lhs)]
-        [rhs (compiler-opt-box-field-shared-view payload-box rhs)]
-        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
-        [ty (compiler-opt-box-field-shared-view payload-box ty)]
-        (OptSsaInstrResult.Result
-          (ir.ir-instr-vector-bin-op
-            dst
-            op
-            (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) lhs)
-            (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) rhs)
-            lanes
-            ty)
-          env
-          next-var))]
-    [(ir.CompilerIrInstr.VectorPrefix payload-box)
-      (let
-        [dst (compiler-opt-box-field-shared-view payload-box dst)]
-        [op (compiler-opt-box-field-shared-view payload-box op)]
-        [src (compiler-opt-box-field-shared-view payload-box src)]
-        [carry (compiler-opt-box-field-shared-view payload-box carry)]
-        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
-        [ty (compiler-opt-box-field-shared-view payload-box ty)]
-        (OptSsaInstrResult.Result
-          (ir.ir-instr-vector-prefix
-            dst
-            op
-            (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) src)
-            (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) carry)
-            lanes
-            ty)
-          env
-          next-var))]
-    [(ir.CompilerIrInstr.VectorReduce dst op src lanes ty)
-      (OptSsaInstrResult.Result
-        (ir.CompilerIrInstr.VectorReduce
-          dst
-          op
-          (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) src)
-          lanes
-          ty)
-        env
-        next-var)]
-    [(ir.CompilerIrInstr.VectorCompare payload-box)
-      (let
-        [dst (compiler-opt-box-field-shared-view payload-box dst)]
-        [op (compiler-opt-box-field-shared-view payload-box op)]
-        [lhs (compiler-opt-box-field-shared-view payload-box lhs)]
-        [rhs (compiler-opt-box-field-shared-view payload-box rhs)]
-        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
-        [ty (compiler-opt-box-field-shared-view payload-box ty)]
-        (OptSsaInstrResult.Result
-          (ir.ir-instr-vector-compare
-            dst
-            op
-            (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) lhs)
-            (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) rhs)
-            lanes
-            ty)
-          env
-          next-var))]
-    [(ir.CompilerIrInstr.MaskBinOp dst op lhs rhs lanes)
-      (OptSsaInstrResult.Result
-        (ir.CompilerIrInstr.MaskBinOp
-          dst
-          op
-          (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) lhs)
-          (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) rhs)
-          lanes)
-        env
-        next-var)]
-    [(ir.CompilerIrInstr.MaskNot dst src lanes)
-      (OptSsaInstrResult.Result
-        (ir.CompilerIrInstr.MaskNot
-          dst
-          (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) src)
-          lanes)
-        env
-        next-var)]
-    [(ir.CompilerIrInstr.MaskReduce dst op src lanes)
-      (OptSsaInstrResult.Result
-        (ir.CompilerIrInstr.MaskReduce
-          dst
-          op
-          (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) src)
-          lanes)
-        env
-        next-var)]
-    [(ir.CompilerIrInstr.Select payload-box)
-      (let
-        [dst (compiler-opt-box-field-shared-view payload-box dst)]
-        [mask (compiler-opt-box-field-shared-view payload-box mask)]
-        [on-true (compiler-opt-box-field-shared-view payload-box on-true)]
-        [on-false (compiler-opt-box-field-shared-view payload-box on-false)]
-        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
-        [ty (compiler-opt-box-field-shared-view payload-box ty)]
-        (OptSsaInstrResult.Result
-          (ir.ir-instr-select
-            dst
-            (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) mask)
-            (opt-ssa-rewrite-value
-              (compiler-opt-global-shared-view env)
-              on-true)
-            (opt-ssa-rewrite-value
-              (compiler-opt-global-shared-view env)
-              on-false)
-            lanes
-            ty)
-          env
-          next-var))]
-    [(ir.CompilerIrInstr.VectorLoad dst base index lanes ty)
-      (OptSsaInstrResult.Result
-        (ir.CompilerIrInstr.VectorLoad
-          dst
-          (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) base)
-          (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) index)
-          lanes
-          ty)
-        env
-        next-var)]
-    [(ir.CompilerIrInstr.VectorStore payload-box)
-      (let
-        [base (compiler-opt-box-field-shared-view payload-box base)]
-        [index (compiler-opt-box-field-shared-view payload-box index)]
-        [value (compiler-opt-box-field-shared-view payload-box value)]
-        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
-        [ty (compiler-opt-box-field-shared-view payload-box ty)]
-        (OptSsaInstrResult.Result
-          (ir.ir-instr-vector-store
-            (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) base)
-            (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) index)
-            (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) value)
-            lanes
-            ty)
-          env
-          next-var))]
-    [(ir.CompilerIrInstr.PredicatedStore payload-box)
-      (let
-        [base (compiler-opt-box-field-shared-view payload-box base)]
-        [index (compiler-opt-box-field-shared-view payload-box index)]
-        [value (compiler-opt-box-field-shared-view payload-box value)]
-        [mask (compiler-opt-box-field-shared-view payload-box mask)]
-        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
-        [ty (compiler-opt-box-field-shared-view payload-box ty)]
-        (OptSsaInstrResult.Result
-          (ir.ir-instr-predicated-store
-            (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) base)
-            (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) index)
-            (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) value)
-            (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) mask)
-            lanes
-            ty)
-          env
-          next-var))]
-    [(ir.CompilerIrInstr.PredicatedLoad payload-box)
-      (let
-        [dst (compiler-opt-box-field-shared-view payload-box dst)]
-        [base (compiler-opt-box-field-shared-view payload-box base)]
-        [index (compiler-opt-box-field-shared-view payload-box index)]
-        [mask (compiler-opt-box-field-shared-view payload-box mask)]
-        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
-        [ty (compiler-opt-box-field-shared-view payload-box ty)]
-        (OptSsaInstrResult.Result
-          (ir.ir-instr-predicated-load
-            dst
-            (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) base)
-            (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) index)
-            (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) mask)
-            lanes
-            ty)
-          env
-          next-var))]
-    [(ir.CompilerIrInstr.VectorShuffle payload-box)
-      (let
-        [dst (compiler-opt-box-field-shared-view payload-box dst)]
-        [source (compiler-opt-box-field-shared-view payload-box source)]
-        [selector-low
-          (compiler-opt-box-field-shared-view payload-box selector-low)]
-        [selector-high
-          (compiler-opt-box-field-shared-view payload-box selector-high)]
-        [active-lanes
-          (compiler-opt-box-field-shared-view payload-box active-lanes)]
-        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
-        [ty (compiler-opt-box-field-shared-view payload-box ty)]
-        (OptSsaInstrResult.Result
-          (ir.ir-instr-vector-shuffle
-            dst
-            (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) source)
-            (opt-ssa-rewrite-value
-              (compiler-opt-global-shared-view env)
-              selector-low)
-            (opt-ssa-rewrite-maybe-value
-              (compiler-opt-global-shared-view env)
-              selector-high)
-            (opt-ssa-rewrite-value
-              (compiler-opt-global-shared-view env)
-              active-lanes)
-            lanes
-            ty)
-          env
-          next-var))]
-    [(ir.CompilerIrInstr.TailMask dst index length lanes)
-      (OptSsaInstrResult.Result
-        (ir.CompilerIrInstr.TailMask
-          dst
-          (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) index)
-          (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) length)
-          lanes)
-        env
-        next-var)]
-    [(ir.CompilerIrInstr.CpuId dst leaf subleaf reg-index)
-      (OptSsaInstrResult.Result
-        (ir.CompilerIrInstr.CpuId
-          dst
-          (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) leaf)
-          (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) subleaf)
-          reg-index)
-        env
-        next-var)]
-    [(ir.CompilerIrInstr.Xgetbv dst index)
-      (OptSsaInstrResult.Result
-        (ir.CompilerIrInstr.Xgetbv
-          dst
-          (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) index))
-        env
-        next-var)]
-    [(ir.CompilerIrInstr.Syscall dst args)
-      (OptSsaInstrResult.Result
-        (ir.CompilerIrInstr.Syscall
-          dst
-          (opt-ssa-rewrite-call-args (compiler-opt-global-shared-view env) args))
-        env
-        next-var)]
-    [(ir.CompilerIrInstr.Store name value ty)
-      (OptSsaInstrResult.Result
-        (ir.CompilerIrInstr.Store
-          name
-          (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) value)
-          ty)
-        env
-        next-var)]
-    [(ir.CompilerIrInstr.Branch cond true-label false-label)
-      (OptSsaInstrResult.Result
-        (ir.CompilerIrInstr.Branch
-          (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) cond)
-          true-label
-          false-label)
-        env
-        next-var)]
-    [(ir.CompilerIrInstr.TotalEnumBranch cond true-label false-label)
-      (OptSsaInstrResult.Result
-        (ir.CompilerIrInstr.TotalEnumBranch
-          (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) cond)
-          true-label
-          false-label)
-        env
-        next-var)]
-    [(ir.CompilerIrInstr.Return maybe)
-      (OptSsaInstrResult.Result
-        (ir.CompilerIrInstr.Return
-          (opt-ssa-rewrite-maybe-value
-            (compiler-opt-global-shared-view env)
-            maybe))
-        env
-        next-var)]
-    [(ir.CompilerIrInstr.TailCall name args ty)
-      (OptSsaInstrResult.Result
-        (ir.CompilerIrInstr.TailCall
-          name
-          (opt-ssa-rewrite-call-args (compiler-opt-global-shared-view env) args)
-          ty)
-        env
-        next-var)]
-    [(ir.CompilerIrInstr.Alloc _ _)
-      (OptSsaInstrResult.Result instr env next-var)]
-    [(ir.CompilerIrInstr.AddrOf _ _)
-      (OptSsaInstrResult.Result instr env next-var)]
-    [(ir.CompilerIrInstr.LaneId _ _ _)
-      (OptSsaInstrResult.Result instr env next-var)]
-    [(ir.CompilerIrInstr.EntryArgv _)
-      (OptSsaInstrResult.Result instr env next-var)]
-    [(ir.CompilerIrInstr.EntryEnvp _)
-      (OptSsaInstrResult.Result instr env next-var)]
-    [(ir.CompilerIrInstr.Jump _) (OptSsaInstrResult.Result instr env next-var)]
+      (opt-ssa-rename-def facts env next-var instr dst)]
+    [(ir.CompilerIrInstr.Pack dst _ _)
+      (opt-ssa-rename-def facts env next-var instr dst)]
+    [(ir.CompilerIrInstr.Word dst _ _ _)
+      (opt-ssa-rename-def facts env next-var instr dst)]
     [(ir.CompilerIrInstr.Phi _ _ _)
       (OptSsaInstrResult.Result instr env next-var)]
-    ;; SSA-rename register-group ops -- rewrite operands with the current
-    ;; env, then rename the dst.
-    [(ir.CompilerIrInstr.Pack dst words ty)
-      (let
-        [out-words : ir.CompilerIrValueSeq
-          (opt-ssa-rewrite-value-seq
-            (compiler-opt-global-shared-view env)
-            words)]
-        (match (opt-ssa-rename-dst facts env next-var dst)
-          [(OptSsaDstResult.Result out-dst next-env out-next)
-            (OptSsaInstrResult.Result
-              (ir.CompilerIrInstr.Pack out-dst out-words ty)
-              next-env
-              out-next)]))]
-    [(ir.CompilerIrInstr.Word dst src index ty)
-      (let
-        [out-src : ir.CompilerIrValue
-          (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) src)]
-        (match (opt-ssa-rename-dst facts env next-var dst)
-          [(OptSsaDstResult.Result out-dst next-env out-next)
-            (OptSsaInstrResult.Result
-              (ir.CompilerIrInstr.Word out-dst out-src index ty)
-              next-env
-              out-next)]))]
-    [(ir.CompilerIrInstr.TailCallIndirect func args ty)
-      (OptSsaInstrResult.Result
-        (ir.CompilerIrInstr.TailCallIndirect
-          (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) func)
-          (opt-ssa-rewrite-call-args (compiler-opt-global-shared-view env) args)
-          ty)
-        env
-        next-var)]
-    [(ir.CompilerIrInstr.Switch index base cases default-label)
-      (OptSsaInstrResult.Result
-        (ir.CompilerIrInstr.Switch
-          (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) index)
-          base
-          cases
-          default-label)
-        env
-        next-var)]
-    [(ir.CompilerIrInstr.TotalEnumSwitch
-        index
-        base
-        cases
-        default-label
-        trap-label)
-      (OptSsaInstrResult.Result
-        (ir.CompilerIrInstr.TotalEnumSwitch
-          (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) index)
-          base
-          cases
-          default-label
-          trap-label)
-        env
-        next-var)]))
+    [_ (opt-ssa-rename-uses env next-var instr)]))
 
 (define (opt-ssa-rename-instr-seq-from
   [facts : OptSsaFacts]
@@ -16887,48 +15255,38 @@
     original
     resolved))
 
-(define (opt-global-copy-subst-call-args
+;; SIMD payloads may only receive var-to-var identities. The global resolver's
+;; mask form rejects scalar literals while retaining the same
+;; instruction-position and dominance checks as scalar copy propagation. This
+;; lets the second sweep forward the Movs produced by vector CSE without
+;; confusing scalar values with private vector/mask aggregates.
+(define (opt-global-copy-resolve-use
   [facts : OptGlobalCopyFactTable]
   [doms : OptDomInfo]
   [use-block-id : i64]
   [use-pos : i64]
-  [args : ir.CompilerIrCallArgs]) : ir.CompilerIrCallArgs
-  (ir.compiler-ir-call-args-map
-    args
-    opt-global-copy-resolve
-    (compiler-opt-global-shared-view facts)
-    (compiler-opt-global-shared-view doms)
-    use-block-id
-    use-pos))
-
-(define (opt-global-copy-resolve-spmd-value
-  [facts : OptGlobalCopyFactTable]
-  [doms : OptDomInfo]
-  [use-block-id : i64]
-  [use-pos : i64]
-  [class : ir.CompilerIrSpmdValueClass]
+  [role : ir.CompilerIrOperandRole]
   [value : ir.CompilerIrValue]) : ir.CompilerIrValue
-  (match class
-    [(ir.CompilerIrSpmdValueClass.Uniform)
-      (opt-global-copy-resolve facts doms use-block-id use-pos value)]
-    [(ir.CompilerIrSpmdValueClass.Varying)
+  (match role
+    [(ir.CompilerIrOperandRole.Vector)
       (opt-global-copy-resolve-mask facts doms use-block-id use-pos value)]
-    [(ir.CompilerIrSpmdValueClass.Mask)
-      (opt-global-copy-resolve-mask facts doms use-block-id use-pos value)]))
+    [(ir.CompilerIrOperandRole.Mask)
+      (opt-global-copy-resolve-mask facts doms use-block-id use-pos value)]
+    [_ (opt-global-copy-resolve facts doms use-block-id use-pos value)]))
 
-(define (opt-global-copy-subst-spmd-call-args
+(define (opt-global-copy-resolve-vector-use
   [facts : OptGlobalCopyFactTable]
   [doms : OptDomInfo]
   [use-block-id : i64]
   [use-pos : i64]
-  [args : ir.CompilerIrSpmdCallArgSeq]) : ir.CompilerIrSpmdCallArgSeq
-  (ir.compiler-ir-spmd-call-args-map
-    args
-    opt-global-copy-resolve-spmd-value
-    (compiler-opt-global-shared-view facts)
-    (compiler-opt-global-shared-view doms)
-    use-block-id
-    use-pos))
+  [role : ir.CompilerIrOperandRole]
+  [value : ir.CompilerIrValue]) : ir.CompilerIrValue
+  (match role
+    [(ir.CompilerIrOperandRole.Vector)
+      (opt-global-copy-resolve-mask facts doms use-block-id use-pos value)]
+    [(ir.CompilerIrOperandRole.Mask)
+      (opt-global-copy-resolve-mask facts doms use-block-id use-pos value)]
+    [_ value]))
 
 ;; A phi input is read on its named predecessor edge. Resolve a copy using the
 ;; predecessor as the use block and a position after its final instruction.
@@ -16987,85 +15345,45 @@
   [pos : i64]
   [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
   (match (compiler-opt-global-shared-view instr)
-    [(ir.CompilerIrInstr.Mov dst src ty)
-      (ir.CompilerIrInstr.Mov
-        dst
-        (opt-global-copy-resolve facts doms block-id pos src)
-        ty)]
-    [(ir.CompilerIrInstr.OwnRoot dst src ty)
-      (ir.CompilerIrInstr.OwnRoot
-        dst
-        (opt-global-copy-resolve facts doms block-id pos src)
-        ty)]
-    [(ir.CompilerIrInstr.Gep dst base offset ty)
-      (ir.CompilerIrInstr.Gep
-        dst
-        (opt-global-copy-resolve
-          (compiler-opt-global-shared-view facts)
-          (compiler-opt-global-shared-view doms)
-          block-id
-          pos
-          base)
-        (opt-global-copy-resolve facts doms block-id pos offset)
-        ty)]
-    [(ir.CompilerIrInstr.Load dst src ty)
-      (ir.CompilerIrInstr.Load
-        dst
-        (opt-global-copy-resolve facts doms block-id pos src)
-        ty)]
-    [(ir.CompilerIrInstr.LoadOwned dst src owner ty) instr]
-    [(ir.CompilerIrInstr.StorePtr ptr value ty)
-      (ir.CompilerIrInstr.StorePtr
-        (opt-global-copy-resolve
-          (compiler-opt-global-shared-view facts)
-          (compiler-opt-global-shared-view doms)
-          block-id
-          pos
-          ptr)
-        (opt-global-copy-resolve facts doms block-id pos value)
-        ty)]
-    [(ir.CompilerIrInstr.StoreOwned ptr value ty)
-      (ir.CompilerIrInstr.StoreOwned
-        (opt-global-copy-resolve
-          (compiler-opt-global-shared-view facts)
-          (compiler-opt-global-shared-view doms)
-          block-id
-          pos
-          ptr)
-        (opt-global-copy-resolve facts doms block-id pos value)
-        ty)]
-    [(ir.CompilerIrInstr.CopyBytes dst src size)
-      (ir.CompilerIrInstr.CopyBytes
-        (opt-global-copy-resolve
-          (compiler-opt-global-shared-view facts)
-          (compiler-opt-global-shared-view doms)
-          block-id
-          pos
-          dst)
-        (opt-global-copy-resolve facts doms block-id pos src)
-        size)]
-    [(ir.CompilerIrInstr.BoundsCheck index length ok-label)
-      (ir.CompilerIrInstr.BoundsCheck
-        (opt-global-copy-resolve
-          (compiler-opt-global-shared-view facts)
-          (compiler-opt-global-shared-view doms)
-          block-id
-          pos
-          index)
-        (opt-global-copy-resolve facts doms block-id pos length)
-        ok-label)]
-    [(ir.CompilerIrInstr.Cast dst src from-ty to-ty)
-      (ir.CompilerIrInstr.Cast
-        dst
-        (opt-global-copy-resolve facts doms block-id pos src)
-        from-ty
-        to-ty)]
-    [(ir.CompilerIrInstr.Bitcast dst src from-ty to-ty)
-      (ir.CompilerIrInstr.Bitcast
-        dst
-        (opt-global-copy-resolve facts doms block-id pos src)
-        from-ty
-        to-ty)]
+    [(ir.CompilerIrInstr.LoadOwned _ _ _ _) instr]
+    ;; The scalar operands of these SIMD forms keep their vars, and a shuffle,
+    ;; a gather and a tail mask keep all of theirs.
+    [(ir.CompilerIrInstr.VectorPrefix _)
+      (ir.compiler-ir-instr-map-uses
+        instr
+        opt-global-copy-resolve-vector-use
+        (compiler-opt-global-shared-view facts)
+        (compiler-opt-global-shared-view doms)
+        block-id
+        pos)]
+    [(ir.CompilerIrInstr.VectorStore _)
+      (ir.compiler-ir-instr-map-uses
+        instr
+        opt-global-copy-resolve-vector-use
+        (compiler-opt-global-shared-view facts)
+        (compiler-opt-global-shared-view doms)
+        block-id
+        pos)]
+    [(ir.CompilerIrInstr.PredicatedStore _)
+      (ir.compiler-ir-instr-map-uses
+        instr
+        opt-global-copy-resolve-vector-use
+        (compiler-opt-global-shared-view facts)
+        (compiler-opt-global-shared-view doms)
+        block-id
+        pos)]
+    [(ir.CompilerIrInstr.PredicatedLoad _)
+      (ir.compiler-ir-instr-map-uses
+        instr
+        opt-global-copy-resolve-vector-use
+        (compiler-opt-global-shared-view facts)
+        (compiler-opt-global-shared-view doms)
+        block-id
+        pos)]
+    [(ir.CompilerIrInstr.VectorLoad _ _ _ _ _) instr]
+    [(ir.CompilerIrInstr.GatherLoad _) instr]
+    [(ir.CompilerIrInstr.VectorShuffle _) instr]
+    [(ir.CompilerIrInstr.TailMask _ _ _ _) instr]
     [(ir.CompilerIrInstr.BinOp dst op lhs rhs ty)
       (let
         [resolved-lhs : ir.CompilerIrValue
@@ -17086,325 +15404,6 @@
             (compiler-opt-global-shared-view resolved-rhs))
           resolved-rhs
           ty))]
-    [(ir.CompilerIrInstr.UnOp dst op src ty)
-      (ir.CompilerIrInstr.UnOp
-        dst
-        op
-        (opt-global-copy-resolve facts doms block-id pos src)
-        ty)]
-    [(ir.CompilerIrInstr.Splat dst src lanes ty)
-      (ir.CompilerIrInstr.Splat
-        dst
-        (opt-global-copy-resolve facts doms block-id pos src)
-        lanes
-        ty)]
-    [(ir.CompilerIrInstr.Call dst name args ty)
-      (ir.CompilerIrInstr.Call
-        dst
-        name
-        (opt-global-copy-subst-call-args facts doms block-id pos args)
-        ty)]
-    [(ir.CompilerIrInstr.CallIndirect dst func args ty)
-      (ir.CompilerIrInstr.CallIndirect
-        dst
-        (opt-global-copy-resolve
-          (compiler-opt-global-shared-view facts)
-          (compiler-opt-global-shared-view doms)
-          block-id
-          pos
-          func)
-        (opt-global-copy-subst-call-args facts doms block-id pos args)
-        ty)]
-    [(ir.CompilerIrInstr.CallIndirectC dst func args ty)
-      (ir.CompilerIrInstr.CallIndirectC
-        dst
-        (opt-global-copy-resolve
-          (compiler-opt-global-shared-view facts)
-          (compiler-opt-global-shared-view doms)
-          block-id
-          pos
-          func)
-        (opt-global-copy-subst-call-args facts doms block-id pos args)
-        ty)]
-    [(ir.CompilerIrInstr.CallCAbiStoreResult payload-box)
-      (let
-        [base (compiler-opt-box-field-shared-view payload-box base)]
-        [name (compiler-opt-box-field-shared-view payload-box name)]
-        [args (compiler-opt-box-field-shared-view payload-box args)]
-        [slots (compiler-opt-box-field-shared-view payload-box slots)]
-        (ir.ir-instr-call-cabi-store-result
-          (opt-global-copy-resolve
-            (compiler-opt-global-shared-view facts)
-            (compiler-opt-global-shared-view doms)
-            block-id
-            pos
-            base)
-          name
-          (opt-global-copy-subst-call-args facts doms block-id pos args)
-          slots))]
-    [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
-      (let
-        [base (compiler-opt-box-field-shared-view payload-box base)]
-        [func (compiler-opt-box-field-shared-view payload-box callee)]
-        [args (compiler-opt-box-field-shared-view payload-box args)]
-        [slots (compiler-opt-box-field-shared-view payload-box slots)]
-        (ir.ir-instr-call-indirect-cabi-store-result
-          (opt-global-copy-resolve
-            (compiler-opt-global-shared-view facts)
-            (compiler-opt-global-shared-view doms)
-            block-id
-            pos
-            base)
-          (opt-global-copy-resolve
-            (compiler-opt-global-shared-view facts)
-            (compiler-opt-global-shared-view doms)
-            block-id
-            pos
-            func)
-          (opt-global-copy-subst-call-args facts doms block-id pos args)
-          slots))]
-    [(ir.CompilerIrInstr.SpmdCall payload-box)
-      (let
-        [callee (compiler-opt-box-field-shared-view payload-box callee)]
-        [backend (compiler-opt-box-field-shared-view payload-box backend)]
-        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
-        [active-mask
-          (compiler-opt-box-field-shared-view payload-box active-mask)]
-        [args (compiler-opt-box-field-shared-view payload-box args)]
-        [result (compiler-opt-box-field-shared-view payload-box result)]
-        (ir.ir-instr-spmd-call-with-origin
-          callee
-          backend
-          lanes
-          (opt-global-copy-resolve-mask
-            (compiler-opt-global-shared-view facts)
-            (compiler-opt-global-shared-view doms)
-            block-id
-            pos
-            active-mask)
-          (opt-global-copy-subst-spmd-call-args facts doms block-id pos args)
-          result
-          (clone (compiler-opt-box-field-shared-view payload-box origin))))]
-    [(ir.CompilerIrInstr.TailCall name args ty)
-      (ir.CompilerIrInstr.TailCall
-        name
-        (opt-global-copy-subst-call-args facts doms block-id pos args)
-        ty)]
-    [(ir.CompilerIrInstr.Store name value ty)
-      (ir.CompilerIrInstr.Store
-        name
-        (opt-global-copy-resolve facts doms block-id pos value)
-        ty)]
-    [(ir.CompilerIrInstr.Branch cond true-label false-label)
-      (ir.CompilerIrInstr.Branch
-        (opt-global-copy-resolve facts doms block-id pos cond)
-        true-label
-        false-label)]
-    [(ir.CompilerIrInstr.TotalEnumBranch cond true-label false-label)
-      (ir.CompilerIrInstr.TotalEnumBranch
-        (opt-global-copy-resolve facts doms block-id pos cond)
-        true-label
-        false-label)]
-    [(ir.CompilerIrInstr.Return maybe)
-      (match maybe
-        [(ir.CompilerIrMaybeValue.Some value)
-          (ir.CompilerIrInstr.Return
-            (ir.CompilerIrMaybeValue.Some
-              (opt-global-copy-resolve facts doms block-id pos value)))]
-        [(ir.CompilerIrMaybeValue.No) instr])]
-    [(ir.CompilerIrInstr.EntryArgc _) instr]
-    [(ir.CompilerIrInstr.EntryArgv _) instr]
-    [(ir.CompilerIrInstr.EntryEnvp _) instr]
-    [(ir.CompilerIrInstr.CpuId dst leaf subleaf reg-index)
-      (ir.CompilerIrInstr.CpuId
-        dst
-        (opt-global-copy-resolve
-          (compiler-opt-global-shared-view facts)
-          (compiler-opt-global-shared-view doms)
-          block-id
-          pos
-          leaf)
-        (opt-global-copy-resolve facts doms block-id pos subleaf)
-        reg-index)]
-    [(ir.CompilerIrInstr.Xgetbv dst index)
-      (ir.CompilerIrInstr.Xgetbv
-        dst
-        (opt-global-copy-resolve facts doms block-id pos index))]
-    [(ir.CompilerIrInstr.Syscall dst args)
-      (ir.CompilerIrInstr.Syscall
-        dst
-        (opt-global-copy-subst-call-args facts doms block-id pos args))]
-    ;; SIMD payloads may only receive var-to-var identities. The global
-    ;; resolver's mask form rejects scalar literals while retaining the same
-    ;; instruction-position and dominance checks as scalar copy propagation.
-    ;; This lets the second sweep forward the Movs produced by vector CSE
-    ;; without confusing scalar values with private vector/mask aggregates.
-    [(ir.CompilerIrInstr.VectorBinOp payload-box)
-      (let
-        [dst (compiler-opt-box-field-shared-view payload-box dst)]
-        [op (compiler-opt-box-field-shared-view payload-box op)]
-        [lhs (compiler-opt-box-field-shared-view payload-box lhs)]
-        [rhs (compiler-opt-box-field-shared-view payload-box rhs)]
-        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
-        [ty (compiler-opt-box-field-shared-view payload-box ty)]
-        (ir.ir-instr-vector-bin-op
-          dst
-          op
-          (opt-global-copy-resolve-mask
-            (compiler-opt-global-shared-view facts)
-            (compiler-opt-global-shared-view doms)
-            block-id
-            pos
-            lhs)
-          (opt-global-copy-resolve-mask facts doms block-id pos rhs)
-          lanes
-          ty))]
-    [(ir.CompilerIrInstr.VectorPrefix payload-box)
-      (let
-        [dst (compiler-opt-box-field-shared-view payload-box dst)]
-        [op (compiler-opt-box-field-shared-view payload-box op)]
-        [src (compiler-opt-box-field-shared-view payload-box src)]
-        [carry (compiler-opt-box-field-shared-view payload-box carry)]
-        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
-        [ty (compiler-opt-box-field-shared-view payload-box ty)]
-        (ir.ir-instr-vector-prefix
-          dst
-          op
-          (opt-global-copy-resolve-mask facts doms block-id pos src)
-          carry
-          lanes
-          ty))]
-    [(ir.CompilerIrInstr.VectorReduce dst op src lanes ty)
-      (ir.CompilerIrInstr.VectorReduce
-        dst
-        op
-        (opt-global-copy-resolve-mask facts doms block-id pos src)
-        lanes
-        ty)]
-    [(ir.CompilerIrInstr.VectorCompare payload-box)
-      (let
-        [dst (compiler-opt-box-field-shared-view payload-box dst)]
-        [op (compiler-opt-box-field-shared-view payload-box op)]
-        [lhs (compiler-opt-box-field-shared-view payload-box lhs)]
-        [rhs (compiler-opt-box-field-shared-view payload-box rhs)]
-        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
-        [ty (compiler-opt-box-field-shared-view payload-box ty)]
-        (ir.ir-instr-vector-compare
-          dst
-          op
-          (opt-global-copy-resolve-mask
-            (compiler-opt-global-shared-view facts)
-            (compiler-opt-global-shared-view doms)
-            block-id
-            pos
-            lhs)
-          (opt-global-copy-resolve-mask facts doms block-id pos rhs)
-          lanes
-          ty))]
-    [(ir.CompilerIrInstr.MaskBinOp dst op lhs rhs lanes)
-      (ir.CompilerIrInstr.MaskBinOp
-        dst
-        op
-        (opt-global-copy-resolve-mask
-          (compiler-opt-global-shared-view facts)
-          (compiler-opt-global-shared-view doms)
-          block-id
-          pos
-          lhs)
-        (opt-global-copy-resolve-mask facts doms block-id pos rhs)
-        lanes)]
-    [(ir.CompilerIrInstr.MaskNot dst src lanes)
-      (ir.CompilerIrInstr.MaskNot
-        dst
-        (opt-global-copy-resolve-mask facts doms block-id pos src)
-        lanes)]
-    [(ir.CompilerIrInstr.MaskReduce dst op src lanes)
-      (ir.CompilerIrInstr.MaskReduce
-        dst
-        op
-        (opt-global-copy-resolve-mask facts doms block-id pos src)
-        lanes)]
-    [(ir.CompilerIrInstr.Select payload-box)
-      (let
-        [dst (compiler-opt-box-field-shared-view payload-box dst)]
-        [mask (compiler-opt-box-field-shared-view payload-box mask)]
-        [on-true (compiler-opt-box-field-shared-view payload-box on-true)]
-        [on-false (compiler-opt-box-field-shared-view payload-box on-false)]
-        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
-        [ty (compiler-opt-box-field-shared-view payload-box ty)]
-        (ir.ir-instr-select
-          dst
-          (opt-global-copy-resolve-mask
-            (compiler-opt-global-shared-view facts)
-            (compiler-opt-global-shared-view doms)
-            block-id
-            pos
-            mask)
-          (opt-global-copy-resolve-mask
-            (compiler-opt-global-shared-view facts)
-            (compiler-opt-global-shared-view doms)
-            block-id
-            pos
-            on-true)
-          (opt-global-copy-resolve-mask facts doms block-id pos on-false)
-          lanes
-          ty))]
-    [(ir.CompilerIrInstr.VectorLoad _ _ _ _ _) instr]
-    [(ir.CompilerIrInstr.VectorStore payload-box)
-      (let
-        [base (compiler-opt-box-field-shared-view payload-box base)]
-        [index (compiler-opt-box-field-shared-view payload-box index)]
-        [value (compiler-opt-box-field-shared-view payload-box value)]
-        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
-        [ty (compiler-opt-box-field-shared-view payload-box ty)]
-        (ir.ir-instr-vector-store
-          base
-          index
-          (opt-global-copy-resolve-mask facts doms block-id pos value)
-          lanes
-          ty))]
-    [(ir.CompilerIrInstr.PredicatedStore payload-box)
-      (let
-        [base (compiler-opt-box-field-shared-view payload-box base)]
-        [index (compiler-opt-box-field-shared-view payload-box index)]
-        [value (compiler-opt-box-field-shared-view payload-box value)]
-        [mask (compiler-opt-box-field-shared-view payload-box mask)]
-        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
-        [ty (compiler-opt-box-field-shared-view payload-box ty)]
-        (ir.ir-instr-predicated-store
-          base
-          index
-          (opt-global-copy-resolve-mask
-            (compiler-opt-global-shared-view facts)
-            (compiler-opt-global-shared-view doms)
-            block-id
-            pos
-            value)
-          (opt-global-copy-resolve-mask facts doms block-id pos mask)
-          lanes
-          ty))]
-    [(ir.CompilerIrInstr.PredicatedLoad payload-box)
-      (let
-        [dst (compiler-opt-box-field-shared-view payload-box dst)]
-        [base (compiler-opt-box-field-shared-view payload-box base)]
-        [index (compiler-opt-box-field-shared-view payload-box index)]
-        [mask (compiler-opt-box-field-shared-view payload-box mask)]
-        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
-        [ty (compiler-opt-box-field-shared-view payload-box ty)]
-        (ir.ir-instr-predicated-load
-          dst
-          base
-          index
-          (opt-global-copy-resolve-mask facts doms block-id pos mask)
-          lanes
-          ty))]
-    [(ir.CompilerIrInstr.GatherLoad _) instr]
-    [(ir.CompilerIrInstr.VectorShuffle _) instr]
-    [(ir.CompilerIrInstr.TailMask _ _ _ _) instr]
-    [(ir.CompilerIrInstr.AddrOf _ _) instr]
-    [(ir.CompilerIrInstr.Alloc _ _) instr]
-    [(ir.CompilerIrInstr.LaneId _ _ _) instr]
-    [(ir.CompilerIrInstr.Jump _) instr]
     [(ir.CompilerIrInstr.Phi dst inputs ty)
       (ir.CompilerIrInstr.Phi
         dst
@@ -17428,34 +15427,14 @@
               (ir.CompilerIrInstr.Mov dst value ty)]
             [(ir.CompilerIrMaybeValue.No) instr])]
         [_ instr])]
-    [(ir.CompilerIrInstr.TailCallIndirect func args ty)
-      (ir.CompilerIrInstr.TailCallIndirect
-        (opt-global-copy-resolve
-          (compiler-opt-global-shared-view facts)
-          (compiler-opt-global-shared-view doms)
-          block-id
-          pos
-          func)
-        (opt-global-copy-subst-call-args facts doms block-id pos args)
-        ty)]
-    [(ir.CompilerIrInstr.Switch index base cases default-label)
-      (ir.CompilerIrInstr.Switch
-        (opt-global-copy-resolve facts doms block-id pos index)
-        base
-        cases
-        default-label)]
-    [(ir.CompilerIrInstr.TotalEnumSwitch
-        index
-        base
-        cases
-        default-label
-        trap-label)
-      (ir.CompilerIrInstr.TotalEnumSwitch
-        (opt-global-copy-resolve facts doms block-id pos index)
-        base
-        cases
-        default-label
-        trap-label)]))
+    [_
+      (ir.compiler-ir-instr-map-uses
+        instr
+        opt-global-copy-resolve-use
+        (compiler-opt-global-shared-view facts)
+        (compiler-opt-global-shared-view doms)
+        block-id
+        pos)]))
 
 ;; 1:1 rewrite: the output has exactly the input's length, so it is built
 ;; straight into a right-sized dense array instead of a cons spine that
@@ -50851,21 +48830,11 @@
         env
         (ir.compiler-ir-block-seq-to-list seq))]))
 
-(define (opt-sccp-rewrite-maybe-value
+(define (opt-sccp-rewrite-use
   [env : OptSccpEnv]
-  [value : ir.CompilerIrMaybeValue]) : ir.CompilerIrMaybeValue
-  (match value
-    [(ir.CompilerIrMaybeValue.No) (ir.CompilerIrMaybeValue.No)]
-    [(ir.CompilerIrMaybeValue.Some inner)
-      (ir.CompilerIrMaybeValue.Some (opt-sccp-rewrite-value env inner))]))
-
-(define (opt-sccp-rewrite-call-args
-  [env : OptSccpEnv]
-  [args : ir.CompilerIrCallArgs]) : ir.CompilerIrCallArgs
-  (ir.compiler-ir-call-args-map
-    args
-    opt-sccp-rewrite-value
-    (compiler-opt-global-shared-view env)))
+  [_role : ir.CompilerIrOperandRole]
+  [value : ir.CompilerIrValue]) : ir.CompilerIrValue
+  (opt-sccp-rewrite-value env value))
 
 (define (opt-sccp-rewrite-spmd-value
   [env : OptSccpEnv]
@@ -50881,30 +48850,6 @@
     opt-sccp-rewrite-spmd-value
     (compiler-opt-global-shared-view env)))
 
-(define (opt-sccp-rewrite-phi-inputs
-  [env : OptSccpEnv]
-  [inputs : ir.CompilerIrPhiInputSeq]) : ir.CompilerIrPhiInputSeq
-  (let
-    [phi-inputs-at-45967-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-45967-3.len 0)
-      (ir.compiler-ir-phi-input-seq-empty)
-      (let
-        [phi-input-at-45967-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-45967-3)
-            0)]
-        [value : ir.CompilerIrValue phi-input-at-45967-3.value]
-        [label : i64 phi-input-at-45967-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-45967-3.slots
-            (+ phi-inputs-at-45967-3.start 1)
-            (- phi-inputs-at-45967-3.len 1))]
-        (ir.compiler-ir-phi-input-seq-prepend
-          (opt-sccp-rewrite-value (compiler-opt-global-shared-view env) value)
-          label
-          (opt-sccp-rewrite-phi-inputs env rest))))))
-
 (define (opt-sccp-rewrite-scalar-def
   [env : OptSccpEnv]
   [dst : i64]
@@ -50918,51 +48863,45 @@
   (match (compiler-opt-global-shared-view instr)
     [(ir.CompilerIrInstr.LoadOwned dst src owner ty) instr]
     [(ir.CompilerIrInstr.OwnRoot _ _ _) instr]
-    [(ir.CompilerIrInstr.Mov dst value ty)
+    ;; Register-group ops carry no SCCP-constant operands to fold.
+    [(ir.CompilerIrInstr.Pack _ _ _) instr]
+    [(ir.CompilerIrInstr.Word _ _ _ _) instr]
+    [(ir.CompilerIrInstr.Mov dst _ ty)
       (opt-sccp-rewrite-scalar-def
         (compiler-opt-global-shared-view env)
         dst
         (compiler-opt-global-shared-view ty)
-        (ir.CompilerIrInstr.Mov dst (opt-sccp-rewrite-value env value) ty))]
-    [(ir.CompilerIrInstr.Gep dst base offset ty)
-      (ir.CompilerIrInstr.Gep
-        dst
-        (opt-sccp-rewrite-value (compiler-opt-global-shared-view env) base)
-        (opt-sccp-rewrite-value env offset)
-        ty)]
-    [(ir.CompilerIrInstr.Load dst src ty)
-      (ir.CompilerIrInstr.Load dst (opt-sccp-rewrite-value env src) ty)]
-    [(ir.CompilerIrInstr.StorePtr ptr value ty)
-      (ir.CompilerIrInstr.StorePtr
-        (opt-sccp-rewrite-value (compiler-opt-global-shared-view env) ptr)
-        (opt-sccp-rewrite-value env value)
-        ty)]
-    [(ir.CompilerIrInstr.StoreOwned ptr value ty)
-      (ir.CompilerIrInstr.StoreOwned
-        (opt-sccp-rewrite-value (compiler-opt-global-shared-view env) ptr)
-        (opt-sccp-rewrite-value env value)
-        ty)]
-    [(ir.CompilerIrInstr.CopyBytes dst src size)
-      (ir.CompilerIrInstr.CopyBytes
-        (opt-sccp-rewrite-value (compiler-opt-global-shared-view env) dst)
-        (opt-sccp-rewrite-value env src)
-        size)]
-    [(ir.CompilerIrInstr.Cast dst src from-ty to-ty)
+        (ir.compiler-ir-instr-map-uses
+          instr
+          opt-sccp-rewrite-use
+          (compiler-opt-global-shared-view env)))]
+    [(ir.CompilerIrInstr.Cast dst _ _ to-ty)
       (opt-sccp-rewrite-scalar-def
         (compiler-opt-global-shared-view env)
         dst
         (compiler-opt-global-shared-view to-ty)
-        (ir.CompilerIrInstr.Cast
-          dst
-          (opt-sccp-rewrite-value env src)
-          from-ty
-          to-ty))]
-    [(ir.CompilerIrInstr.Bitcast dst src from-ty to-ty)
-      (ir.CompilerIrInstr.Bitcast
+        (ir.compiler-ir-instr-map-uses
+          instr
+          opt-sccp-rewrite-use
+          (compiler-opt-global-shared-view env)))]
+    [(ir.CompilerIrInstr.UnOp dst _ _ ty)
+      (opt-sccp-rewrite-scalar-def
+        (compiler-opt-global-shared-view env)
         dst
-        (opt-sccp-rewrite-value env src)
-        from-ty
-        to-ty)]
+        (compiler-opt-global-shared-view ty)
+        (ir.compiler-ir-instr-map-uses
+          instr
+          opt-sccp-rewrite-use
+          (compiler-opt-global-shared-view env)))]
+    [(ir.CompilerIrInstr.Phi dst _ ty)
+      (opt-sccp-rewrite-scalar-def
+        (compiler-opt-global-shared-view env)
+        dst
+        (compiler-opt-global-shared-view ty)
+        (ir.compiler-ir-instr-map-uses
+          instr
+          opt-sccp-rewrite-use
+          (compiler-opt-global-shared-view env)))]
     [(ir.CompilerIrInstr.BinOp dst op lhs rhs ty)
       ;; sccp substitutes Const lattice values into operands, but a wide
       ;; (non-imm32) literal in the LEFT operand of a BinOp is never encodable,
@@ -51006,98 +48945,6 @@
               (compiler-opt-global-shared-view resolved-rhs))
             resolved-rhs
             ty)))]
-    [(ir.CompilerIrInstr.UnOp dst op value ty)
-      (opt-sccp-rewrite-scalar-def
-        (compiler-opt-global-shared-view env)
-        dst
-        (compiler-opt-global-shared-view ty)
-        (ir.CompilerIrInstr.UnOp dst op (opt-sccp-rewrite-value env value) ty))]
-    [(ir.CompilerIrInstr.Splat dst value lanes ty)
-      (ir.CompilerIrInstr.Splat dst (opt-sccp-rewrite-value env value) lanes ty)]
-    [(ir.CompilerIrInstr.Call dst name args ty)
-      (ir.CompilerIrInstr.Call
-        dst
-        name
-        (opt-sccp-rewrite-call-args env args)
-        ty)]
-    [(ir.CompilerIrInstr.CallIndirect dst callee args ty)
-      (ir.CompilerIrInstr.CallIndirect
-        dst
-        (opt-sccp-rewrite-value (compiler-opt-global-shared-view env) callee)
-        (opt-sccp-rewrite-call-args env args)
-        ty)]
-    [(ir.CompilerIrInstr.CallIndirectC dst callee args ty)
-      (ir.CompilerIrInstr.CallIndirectC
-        dst
-        (opt-sccp-rewrite-value (compiler-opt-global-shared-view env) callee)
-        (opt-sccp-rewrite-call-args env args)
-        ty)]
-    [(ir.CompilerIrInstr.CallCAbiStoreResult payload-box)
-      (let
-        [base (compiler-opt-box-field-shared-view payload-box base)]
-        [name (compiler-opt-box-field-shared-view payload-box name)]
-        [args (compiler-opt-box-field-shared-view payload-box args)]
-        [slots (compiler-opt-box-field-shared-view payload-box slots)]
-        (ir.ir-instr-call-cabi-store-result
-          (opt-sccp-rewrite-value (compiler-opt-global-shared-view env) base)
-          name
-          (opt-sccp-rewrite-call-args env args)
-          slots))]
-    [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
-      (let
-        [base (compiler-opt-box-field-shared-view payload-box base)]
-        [callee (compiler-opt-box-field-shared-view payload-box callee)]
-        [args (compiler-opt-box-field-shared-view payload-box args)]
-        [slots (compiler-opt-box-field-shared-view payload-box slots)]
-        (ir.ir-instr-call-indirect-cabi-store-result
-          (opt-sccp-rewrite-value (compiler-opt-global-shared-view env) base)
-          (opt-sccp-rewrite-value (compiler-opt-global-shared-view env) callee)
-          (opt-sccp-rewrite-call-args env args)
-          slots))]
-    [(ir.CompilerIrInstr.SpmdCall payload-box)
-      (let
-        [callee (compiler-opt-box-field-shared-view payload-box callee)]
-        [backend (compiler-opt-box-field-shared-view payload-box backend)]
-        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
-        [active-mask
-          (compiler-opt-box-field-shared-view payload-box active-mask)]
-        [args (compiler-opt-box-field-shared-view payload-box args)]
-        [result (compiler-opt-box-field-shared-view payload-box result)]
-        (ir.ir-instr-spmd-call-with-origin
-          callee
-          backend
-          lanes
-          (opt-sccp-rewrite-value
-            (compiler-opt-global-shared-view env)
-            active-mask)
-          (opt-sccp-rewrite-spmd-call-args env args)
-          result
-          (clone (compiler-opt-box-field-shared-view payload-box origin))))]
-    [(ir.CompilerIrInstr.TailCall name args ty)
-      (ir.CompilerIrInstr.TailCall
-        name
-        (opt-sccp-rewrite-call-args env args)
-        ty)]
-    [(ir.CompilerIrInstr.Store name value ty)
-      (ir.CompilerIrInstr.Store name (opt-sccp-rewrite-value env value) ty)]
-    [(ir.CompilerIrInstr.BoundsCheck index length ok-label)
-      (ir.CompilerIrInstr.BoundsCheck
-        (opt-sccp-rewrite-value (compiler-opt-global-shared-view env) index)
-        (opt-sccp-rewrite-value env length)
-        ok-label)]
-    [(ir.CompilerIrInstr.EntryArgc _) instr]
-    [(ir.CompilerIrInstr.EntryArgv _) instr]
-    [(ir.CompilerIrInstr.EntryEnvp _) instr]
-    [(ir.CompilerIrInstr.CpuId dst leaf subleaf reg-index)
-      (ir.CompilerIrInstr.CpuId
-        dst
-        (opt-sccp-rewrite-value (compiler-opt-global-shared-view env) leaf)
-        (opt-sccp-rewrite-value env subleaf)
-        reg-index)]
-    [(ir.CompilerIrInstr.Xgetbv dst index)
-      (ir.CompilerIrInstr.Xgetbv dst (opt-sccp-rewrite-value env index))]
-    [(ir.CompilerIrInstr.Syscall dst args)
-      (ir.CompilerIrInstr.Syscall dst (opt-sccp-rewrite-call-args env args))]
     [(ir.CompilerIrInstr.Branch cond true-label false-label)
       (let
         [rewritten-cond : ir.CompilerIrValue (opt-sccp-rewrite-value env cond)]
@@ -51120,228 +48967,11 @@
               rewritten-cond
               true-label
               false-label)]))]
-    [(ir.CompilerIrInstr.Return value)
-      (ir.CompilerIrInstr.Return (opt-sccp-rewrite-maybe-value env value))]
-    [(ir.CompilerIrInstr.Phi dst inputs ty)
-      (opt-sccp-rewrite-scalar-def
-        (compiler-opt-global-shared-view env)
-        dst
-        (compiler-opt-global-shared-view ty)
-        (ir.CompilerIrInstr.Phi dst (opt-sccp-rewrite-phi-inputs env inputs) ty))]
-    [(ir.CompilerIrInstr.VectorBinOp payload-box)
-      (let
-        [dst (compiler-opt-box-field-shared-view payload-box dst)]
-        [op (compiler-opt-box-field-shared-view payload-box op)]
-        [lhs (compiler-opt-box-field-shared-view payload-box lhs)]
-        [rhs (compiler-opt-box-field-shared-view payload-box rhs)]
-        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
-        [ty (compiler-opt-box-field-shared-view payload-box ty)]
-        (ir.ir-instr-vector-bin-op
-          dst
-          op
-          (opt-sccp-rewrite-value (compiler-opt-global-shared-view env) lhs)
-          (opt-sccp-rewrite-value env rhs)
-          lanes
-          ty))]
-    [(ir.CompilerIrInstr.VectorPrefix payload-box)
-      (let
-        [dst (compiler-opt-box-field-shared-view payload-box dst)]
-        [op (compiler-opt-box-field-shared-view payload-box op)]
-        [src (compiler-opt-box-field-shared-view payload-box src)]
-        [carry (compiler-opt-box-field-shared-view payload-box carry)]
-        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
-        [ty (compiler-opt-box-field-shared-view payload-box ty)]
-        (ir.ir-instr-vector-prefix
-          dst
-          op
-          (opt-sccp-rewrite-value (compiler-opt-global-shared-view env) src)
-          (opt-sccp-rewrite-value env carry)
-          lanes
-          ty))]
-    [(ir.CompilerIrInstr.GatherLoad payload-box)
-      (let
-        [dst (compiler-opt-box-field-shared-view payload-box dst)]
-        [base (compiler-opt-box-field-shared-view payload-box base)]
-        [index-base (compiler-opt-box-field-shared-view payload-box index-base)]
-        [index (compiler-opt-box-field-shared-view payload-box index)]
-        [lane-offset
-          (compiler-opt-box-field-shared-view payload-box lane-offset)]
-        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
-        [ty (compiler-opt-box-field-shared-view payload-box ty)]
-        (ir.ir-instr-gather-load
-          dst
-          (opt-sccp-rewrite-value (compiler-opt-global-shared-view env) base)
-          (opt-sccp-rewrite-value
-            (compiler-opt-global-shared-view env)
-            index-base)
-          (opt-sccp-rewrite-value env index)
-          lane-offset
-          lanes
-          ty))]
-    [(ir.CompilerIrInstr.VectorReduce dst op src lanes ty)
-      (ir.CompilerIrInstr.VectorReduce
-        dst
-        op
-        (opt-sccp-rewrite-value env src)
-        lanes
-        ty)]
-    [(ir.CompilerIrInstr.VectorCompare payload-box)
-      (let
-        [dst (compiler-opt-box-field-shared-view payload-box dst)]
-        [op (compiler-opt-box-field-shared-view payload-box op)]
-        [lhs (compiler-opt-box-field-shared-view payload-box lhs)]
-        [rhs (compiler-opt-box-field-shared-view payload-box rhs)]
-        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
-        [ty (compiler-opt-box-field-shared-view payload-box ty)]
-        (ir.ir-instr-vector-compare
-          dst
-          op
-          (opt-sccp-rewrite-value (compiler-opt-global-shared-view env) lhs)
-          (opt-sccp-rewrite-value env rhs)
-          lanes
-          ty))]
-    [(ir.CompilerIrInstr.MaskBinOp dst op lhs rhs lanes)
-      (ir.CompilerIrInstr.MaskBinOp
-        dst
-        op
-        (opt-sccp-rewrite-value (compiler-opt-global-shared-view env) lhs)
-        (opt-sccp-rewrite-value env rhs)
-        lanes)]
-    [(ir.CompilerIrInstr.MaskNot dst src lanes)
-      (ir.CompilerIrInstr.MaskNot dst (opt-sccp-rewrite-value env src) lanes)]
-    [(ir.CompilerIrInstr.MaskReduce dst op src lanes)
-      (ir.CompilerIrInstr.MaskReduce
-        dst
-        op
-        (opt-sccp-rewrite-value env src)
-        lanes)]
-    [(ir.CompilerIrInstr.Select payload-box)
-      (let
-        [dst (compiler-opt-box-field-shared-view payload-box dst)]
-        [mask (compiler-opt-box-field-shared-view payload-box mask)]
-        [true-value (compiler-opt-box-field-shared-view payload-box on-true)]
-        [false-value (compiler-opt-box-field-shared-view payload-box on-false)]
-        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
-        [ty (compiler-opt-box-field-shared-view payload-box ty)]
-        (ir.ir-instr-select
-          dst
-          (opt-sccp-rewrite-value (compiler-opt-global-shared-view env) mask)
-          (opt-sccp-rewrite-value
-            (compiler-opt-global-shared-view env)
-            true-value)
-          (opt-sccp-rewrite-value env false-value)
-          lanes
-          ty))]
-    [(ir.CompilerIrInstr.VectorLoad dst base index lanes ty)
-      (ir.CompilerIrInstr.VectorLoad
-        dst
-        (opt-sccp-rewrite-value (compiler-opt-global-shared-view env) base)
-        (opt-sccp-rewrite-value env index)
-        lanes
-        ty)]
-    [(ir.CompilerIrInstr.VectorStore payload-box)
-      (let
-        [base (compiler-opt-box-field-shared-view payload-box base)]
-        [index (compiler-opt-box-field-shared-view payload-box index)]
-        [value (compiler-opt-box-field-shared-view payload-box value)]
-        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
-        [ty (compiler-opt-box-field-shared-view payload-box ty)]
-        (ir.ir-instr-vector-store
-          (opt-sccp-rewrite-value (compiler-opt-global-shared-view env) base)
-          (opt-sccp-rewrite-value (compiler-opt-global-shared-view env) index)
-          (opt-sccp-rewrite-value env value)
-          lanes
-          ty))]
-    [(ir.CompilerIrInstr.PredicatedStore payload-box)
-      (let
-        [base (compiler-opt-box-field-shared-view payload-box base)]
-        [index (compiler-opt-box-field-shared-view payload-box index)]
-        [value (compiler-opt-box-field-shared-view payload-box value)]
-        [mask (compiler-opt-box-field-shared-view payload-box mask)]
-        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
-        [ty (compiler-opt-box-field-shared-view payload-box ty)]
-        (ir.ir-instr-predicated-store
-          (opt-sccp-rewrite-value (compiler-opt-global-shared-view env) base)
-          (opt-sccp-rewrite-value (compiler-opt-global-shared-view env) index)
-          (opt-sccp-rewrite-value (compiler-opt-global-shared-view env) value)
-          (opt-sccp-rewrite-value env mask)
-          lanes
-          ty))]
-    [(ir.CompilerIrInstr.PredicatedLoad payload-box)
-      (let
-        [dst (compiler-opt-box-field-shared-view payload-box dst)]
-        [base (compiler-opt-box-field-shared-view payload-box base)]
-        [index (compiler-opt-box-field-shared-view payload-box index)]
-        [mask (compiler-opt-box-field-shared-view payload-box mask)]
-        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
-        [ty (compiler-opt-box-field-shared-view payload-box ty)]
-        (ir.ir-instr-predicated-load
-          dst
-          (opt-sccp-rewrite-value (compiler-opt-global-shared-view env) base)
-          (opt-sccp-rewrite-value (compiler-opt-global-shared-view env) index)
-          (opt-sccp-rewrite-value env mask)
-          lanes
-          ty))]
-    [(ir.CompilerIrInstr.VectorShuffle payload-box)
-      (let
-        [dst (compiler-opt-box-field-shared-view payload-box dst)]
-        [source (compiler-opt-box-field-shared-view payload-box source)]
-        [selector-low
-          (compiler-opt-box-field-shared-view payload-box selector-low)]
-        [selector-high
-          (compiler-opt-box-field-shared-view payload-box selector-high)]
-        [active-lanes
-          (compiler-opt-box-field-shared-view payload-box active-lanes)]
-        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
-        [ty (compiler-opt-box-field-shared-view payload-box ty)]
-        (ir.ir-instr-vector-shuffle
-          dst
-          (opt-sccp-rewrite-value (compiler-opt-global-shared-view env) source)
-          (opt-sccp-rewrite-value
-            (compiler-opt-global-shared-view env)
-            selector-low)
-          (opt-sccp-rewrite-maybe-value
-            (compiler-opt-global-shared-view env)
-            selector-high)
-          (opt-sccp-rewrite-value env active-lanes)
-          lanes
-          ty))]
-    [(ir.CompilerIrInstr.TailMask dst index length lanes)
-      (ir.CompilerIrInstr.TailMask
-        dst
-        (opt-sccp-rewrite-value (compiler-opt-global-shared-view env) index)
-        (opt-sccp-rewrite-value env length)
-        lanes)]
-    [(ir.CompilerIrInstr.Alloc _ _) instr]
-    [(ir.CompilerIrInstr.AddrOf _ _) instr]
-    [(ir.CompilerIrInstr.LaneId _ _ _) instr]
-    [(ir.CompilerIrInstr.Jump _) instr]
-    ;; Register-group ops carry no SCCP-constant operands to fold.
-    [(ir.CompilerIrInstr.Pack _ _ _) instr]
-    [(ir.CompilerIrInstr.Word _ _ _ _) instr]
-    [(ir.CompilerIrInstr.TailCallIndirect callee args ty)
-      (ir.CompilerIrInstr.TailCallIndirect
-        (opt-sccp-rewrite-value (compiler-opt-global-shared-view env) callee)
-        (opt-sccp-rewrite-call-args env args)
-        ty)]
-    [(ir.CompilerIrInstr.Switch index base cases default-label)
-      (ir.CompilerIrInstr.Switch
-        (opt-sccp-rewrite-value env index)
-        base
-        cases
-        default-label)]
-    [(ir.CompilerIrInstr.TotalEnumSwitch
-        index
-        base
-        cases
-        default-label
-        trap-label)
-      (ir.CompilerIrInstr.TotalEnumSwitch
-        (opt-sccp-rewrite-value env index)
-        base
-        cases
-        default-label
-        trap-label)]))
+    [_
+      (ir.compiler-ir-instr-map-uses
+        instr
+        opt-sccp-rewrite-use
+        (compiler-opt-global-shared-view env))]))
 
 ;; Constant propagation can decide a bounds check outright. Only the in-range
 ;; case is dropped: an out-of-range literal keeps its check so the trap still
@@ -116596,21 +114226,15 @@
           (OptInlineCensus census.refcount addrtaken census.hotcount)))]
     [(option_i64.None) census]))
 
-(define (opt-inline-census-value
+(define (opt-inline-census-use
   [index : (& index OptFunctionIndex)]
+  [_role : ir.CompilerIrOperandRole]
   [census : OptInlineCensus]
   [value : ir.CompilerIrValue]) : OptInlineCensus
   (match value
     [(ir.CompilerIrValue.Function name)
       (opt-inline-census-add-address index census name)]
     [_ census]))
-
-(define (opt-inline-census-use
-  [index : (& index OptFunctionIndex)]
-  [_role : ir.CompilerIrOperandRole]
-  [census : OptInlineCensus]
-  [value : ir.CompilerIrValue]) : OptInlineCensus
-  (opt-inline-census-value index census value))
 
 (define (opt-inline-census-uses
   [index : (& index OptFunctionIndex)]
@@ -142762,8 +140386,9 @@
                       hoists-local
                       (+ index 1))))])]))]))
 
-(define (opt-global-cell-subst-value
+(define (opt-global-cell-subst-use
   [plan : opt_i64_i64_map.Map]
+  [_role : ir.CompilerIrOperandRole]
   [v : ir.CompilerIrValue]) : ir.CompilerIrValue
   (match (compiler-opt-global-shared-view v)
     [(ir.CompilerIrValue.Global name)
@@ -142772,433 +140397,30 @@
         [(opt_i64_i64_map.LookupMissing) v])]
     [_ v]))
 
-(define (opt-global-cell-subst-args
-  [plan : opt_i64_i64_map.Map]
-  [args : ir.CompilerIrCallArgs]) : ir.CompilerIrCallArgs
-  (ir.compiler-ir-call-args-map
-    args
-    opt-global-cell-subst-value
-    (compiler-opt-global-shared-view plan)))
-
-(define (opt-global-cell-subst-spmd-value
-  [plan : opt_i64_i64_map.Map]
-  [_class : ir.CompilerIrSpmdValueClass]
-  [value : ir.CompilerIrValue]) : ir.CompilerIrValue
-  (opt-global-cell-subst-value plan value))
-
-(define (opt-global-cell-subst-spmd-args
-  [plan : opt_i64_i64_map.Map]
-  [args : ir.CompilerIrSpmdCallArgSeq]) : ir.CompilerIrSpmdCallArgSeq
-  (ir.compiler-ir-spmd-call-args-map
-    args
-    opt-global-cell-subst-spmd-value
-    (compiler-opt-global-shared-view plan)))
-
-(define (opt-global-cell-subst-maybe
-  [plan : opt_i64_i64_map.Map]
-  [maybe : ir.CompilerIrMaybeValue]) : ir.CompilerIrMaybeValue
-  (match (compiler-opt-global-shared-view maybe)
-    [(ir.CompilerIrMaybeValue.No) maybe]
-    [(ir.CompilerIrMaybeValue.Some value)
-      (ir.CompilerIrMaybeValue.Some (opt-global-cell-subst-value plan value))]))
-
-(define (opt-global-cell-subst-phi
-  [plan : opt_i64_i64_map.Map]
-  [inputs : ir.CompilerIrPhiInputSeq]) : ir.CompilerIrPhiInputSeq
-  (let
-    [phi-inputs-at-128207-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-128207-3.len 0)
-      (ir.compiler-ir-phi-input-seq-empty)
-      (let
-        [phi-input-at-128207-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-128207-3)
-            0)]
-        [value : ir.CompilerIrValue phi-input-at-128207-3.value]
-        [label : i64 phi-input-at-128207-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-128207-3.slots
-            (+ phi-inputs-at-128207-3.start 1)
-            (- phi-inputs-at-128207-3.len 1))]
-        (ir.compiler-ir-phi-input-seq-prepend
-          (opt-global-cell-subst-value
-            (compiler-opt-global-shared-view plan)
-            value)
-          label
-          (opt-global-cell-subst-phi plan rest))))))
-
-;; Rewrite planned global-ref operands to their entry-loaded SSA vars. Covers
-;; every operand position (arm-for-arm, no wildcard) even though a missed ref
-;; would only lose the optimization, never soundness: any `@G` left behind
-;; still loads the same cell value under (a)+(b)+(c). Entry-block Mov sources
-;; are exempt (see the pass header).
+;; Rewrite planned global-ref operands to their entry-loaded SSA vars. A
+;; missed ref would only lose the optimization, never soundness: any `@G` left
+;; behind still loads the same cell value under (a)+(b)+(c). Entry-block Mov
+;; sources are exempt (see the pass header), and LoadOwned and Pack operands
+;; are left as they are.
 (define (opt-global-cell-rewrite-instr
   [plan : opt_i64_i64_map.Map]
   [entry? : bool]
   [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
   (match (compiler-opt-global-shared-view instr)
-    [(ir.CompilerIrInstr.Mov dst src ty)
+    [(ir.CompilerIrInstr.Mov _ _ _)
       (if entry?
         instr
-        (ir.CompilerIrInstr.Mov dst (opt-global-cell-subst-value plan src) ty))]
-    [(ir.CompilerIrInstr.OwnRoot dst src ty)
-      (ir.CompilerIrInstr.OwnRoot dst (opt-global-cell-subst-value plan src) ty)]
-    [(ir.CompilerIrInstr.Alloc _ _) instr]
-    [(ir.CompilerIrInstr.AddrOf _ _) instr]
-    [(ir.CompilerIrInstr.Gep dst base offset ty)
-      (ir.CompilerIrInstr.Gep
-        dst
-        (opt-global-cell-subst-value
-          (compiler-opt-global-shared-view plan)
-          base)
-        (opt-global-cell-subst-value plan offset)
-        ty)]
-    [(ir.CompilerIrInstr.Load dst src ty)
-      (ir.CompilerIrInstr.Load dst (opt-global-cell-subst-value plan src) ty)]
-    [(ir.CompilerIrInstr.LoadOwned dst src owner ty) instr]
-    [(ir.CompilerIrInstr.StorePtr dst src ty)
-      (ir.CompilerIrInstr.StorePtr
-        (opt-global-cell-subst-value (compiler-opt-global-shared-view plan) dst)
-        (opt-global-cell-subst-value plan src)
-        ty)]
-    [(ir.CompilerIrInstr.StoreOwned dst src ty)
-      (ir.CompilerIrInstr.StoreOwned
-        (opt-global-cell-subst-value (compiler-opt-global-shared-view plan) dst)
-        (opt-global-cell-subst-value plan src)
-        ty)]
-    [(ir.CompilerIrInstr.CopyBytes dst src size)
-      (ir.CompilerIrInstr.CopyBytes
-        (opt-global-cell-subst-value (compiler-opt-global-shared-view plan) dst)
-        (opt-global-cell-subst-value plan src)
-        size)]
-    [(ir.CompilerIrInstr.BoundsCheck idx length msg)
-      (ir.CompilerIrInstr.BoundsCheck
-        (opt-global-cell-subst-value (compiler-opt-global-shared-view plan) idx)
-        (opt-global-cell-subst-value plan length)
-        msg)]
-    [(ir.CompilerIrInstr.Cast dst src from-ty to-ty)
-      (ir.CompilerIrInstr.Cast
-        dst
-        (opt-global-cell-subst-value plan src)
-        from-ty
-        to-ty)]
-    [(ir.CompilerIrInstr.Bitcast dst src from-ty to-ty)
-      (ir.CompilerIrInstr.Bitcast
-        dst
-        (opt-global-cell-subst-value plan src)
-        from-ty
-        to-ty)]
-    [(ir.CompilerIrInstr.BinOp dst op lhs rhs ty)
-      (ir.CompilerIrInstr.BinOp
-        dst
-        op
-        (opt-global-cell-subst-value (compiler-opt-global-shared-view plan) lhs)
-        (opt-global-cell-subst-value plan rhs)
-        ty)]
-    [(ir.CompilerIrInstr.UnOp dst op src ty)
-      (ir.CompilerIrInstr.UnOp dst op (opt-global-cell-subst-value plan src) ty)]
-    [(ir.CompilerIrInstr.LaneId _ _ _) instr]
-    [(ir.CompilerIrInstr.Splat dst value lanes ty)
-      (ir.CompilerIrInstr.Splat
-        dst
-        (opt-global-cell-subst-value plan value)
-        lanes
-        ty)]
-    [(ir.CompilerIrInstr.VectorBinOp payload-box)
-      (let
-        [payload (deref payload-box)]
-        (ir.ir-instr-vector-bin-op
-          payload.dst
-          payload.op
-          (opt-global-cell-subst-value
-            (compiler-opt-global-shared-view plan)
-            payload.lhs)
-          (opt-global-cell-subst-value plan payload.rhs)
-          payload.lanes
-          payload.ty))]
-    [(ir.CompilerIrInstr.VectorPrefix payload-box)
-      (let
-        [payload (deref payload-box)]
-        (ir.ir-instr-vector-prefix
-          payload.dst
-          payload.op
-          (opt-global-cell-subst-value
-            (compiler-opt-global-shared-view plan)
-            payload.src)
-          (opt-global-cell-subst-value plan payload.carry)
-          payload.lanes
-          payload.ty))]
-    [(ir.CompilerIrInstr.VectorReduce dst op src lanes ty)
-      (ir.CompilerIrInstr.VectorReduce
-        dst
-        op
-        (opt-global-cell-subst-value plan src)
-        lanes
-        ty)]
-    [(ir.CompilerIrInstr.VectorCompare payload-box)
-      (let
-        [payload (deref payload-box)]
-        (ir.ir-instr-vector-compare
-          payload.dst
-          payload.op
-          (opt-global-cell-subst-value
-            (compiler-opt-global-shared-view plan)
-            payload.lhs)
-          (opt-global-cell-subst-value plan payload.rhs)
-          payload.lanes
-          payload.ty))]
-    [(ir.CompilerIrInstr.MaskBinOp dst op lhs rhs lanes)
-      (ir.CompilerIrInstr.MaskBinOp
-        dst
-        op
-        (opt-global-cell-subst-value (compiler-opt-global-shared-view plan) lhs)
-        (opt-global-cell-subst-value plan rhs)
-        lanes)]
-    [(ir.CompilerIrInstr.MaskNot dst src lanes)
-      (ir.CompilerIrInstr.MaskNot
-        dst
-        (opt-global-cell-subst-value plan src)
-        lanes)]
-    [(ir.CompilerIrInstr.MaskReduce dst op src lanes)
-      (ir.CompilerIrInstr.MaskReduce
-        dst
-        op
-        (opt-global-cell-subst-value plan src)
-        lanes)]
-    [(ir.CompilerIrInstr.Select payload-box)
-      (let
-        [payload (deref payload-box)]
-        (ir.ir-instr-select
-          payload.dst
-          (opt-global-cell-subst-value
-            (compiler-opt-global-shared-view plan)
-            payload.mask)
-          (opt-global-cell-subst-value
-            (compiler-opt-global-shared-view plan)
-            payload.on-true)
-          (opt-global-cell-subst-value plan payload.on-false)
-          payload.lanes
-          payload.ty))]
-    [(ir.CompilerIrInstr.VectorLoad dst base idx lanes ty)
-      (ir.CompilerIrInstr.VectorLoad
-        dst
-        (opt-global-cell-subst-value
-          (compiler-opt-global-shared-view plan)
-          base)
-        (opt-global-cell-subst-value plan idx)
-        lanes
-        ty)]
-    [(ir.CompilerIrInstr.VectorStore payload-box)
-      (let
-        [payload (deref payload-box)]
-        (ir.ir-instr-vector-store
-          (opt-global-cell-subst-value
-            (compiler-opt-global-shared-view plan)
-            payload.base)
-          (opt-global-cell-subst-value
-            (compiler-opt-global-shared-view plan)
-            payload.index)
-          (opt-global-cell-subst-value plan payload.value)
-          payload.lanes
-          payload.ty))]
-    [(ir.CompilerIrInstr.PredicatedStore payload-box)
-      (let
-        [payload (deref payload-box)]
-        (ir.ir-instr-predicated-store
-          (opt-global-cell-subst-value
-            (compiler-opt-global-shared-view plan)
-            payload.base)
-          (opt-global-cell-subst-value
-            (compiler-opt-global-shared-view plan)
-            payload.index)
-          (opt-global-cell-subst-value
-            (compiler-opt-global-shared-view plan)
-            payload.value)
-          (opt-global-cell-subst-value plan payload.mask)
-          payload.lanes
-          payload.ty))]
-    [(ir.CompilerIrInstr.PredicatedLoad payload-box)
-      (let
-        [payload (deref payload-box)]
-        (ir.ir-instr-predicated-load
-          payload.dst
-          (opt-global-cell-subst-value
-            (compiler-opt-global-shared-view plan)
-            payload.base)
-          (opt-global-cell-subst-value
-            (compiler-opt-global-shared-view plan)
-            payload.index)
-          (opt-global-cell-subst-value plan payload.mask)
-          payload.lanes
-          payload.ty))]
-    [(ir.CompilerIrInstr.GatherLoad payload-box)
-      (let
-        [payload (deref payload-box)]
-        (ir.ir-instr-gather-load
-          payload.dst
-          (opt-global-cell-subst-value
-            (compiler-opt-global-shared-view plan)
-            payload.base)
-          (opt-global-cell-subst-value
-            (compiler-opt-global-shared-view plan)
-            payload.index-base)
-          (opt-global-cell-subst-value plan payload.index)
-          payload.lane-offset
-          payload.lanes
-          payload.ty))]
-    [(ir.CompilerIrInstr.VectorShuffle payload-box)
-      (let
-        [payload (deref payload-box)]
-        (ir.ir-instr-vector-shuffle
-          payload.dst
-          (opt-global-cell-subst-value
-            (compiler-opt-global-shared-view plan)
-            payload.source)
-          (opt-global-cell-subst-value
-            (compiler-opt-global-shared-view plan)
-            payload.selector-low)
-          (opt-global-cell-subst-maybe
-            (compiler-opt-global-shared-view plan)
-            payload.selector-high)
-          (opt-global-cell-subst-value plan payload.active-lanes)
-          payload.lanes
-          payload.ty))]
-    [(ir.CompilerIrInstr.TailMask dst idx length lanes)
-      (ir.CompilerIrInstr.TailMask
-        dst
-        (opt-global-cell-subst-value (compiler-opt-global-shared-view plan) idx)
-        (opt-global-cell-subst-value plan length)
-        lanes)]
-    [(ir.CompilerIrInstr.EntryArgc _) instr]
-    [(ir.CompilerIrInstr.EntryArgv _) instr]
-    [(ir.CompilerIrInstr.EntryEnvp _) instr]
-    [(ir.CompilerIrInstr.CpuId dst leaf subleaf reg-index)
-      (ir.CompilerIrInstr.CpuId
-        dst
-        (opt-global-cell-subst-value
-          (compiler-opt-global-shared-view plan)
-          leaf)
-        (opt-global-cell-subst-value plan subleaf)
-        reg-index)]
-    [(ir.CompilerIrInstr.Xgetbv dst idx)
-      (ir.CompilerIrInstr.Xgetbv dst (opt-global-cell-subst-value plan idx))]
-    [(ir.CompilerIrInstr.Syscall dst args)
-      (ir.CompilerIrInstr.Syscall dst (opt-global-cell-subst-args plan args))]
-    [(ir.CompilerIrInstr.Call dst name args ty)
-      (ir.CompilerIrInstr.Call
-        dst
-        name
-        (opt-global-cell-subst-args plan args)
-        ty)]
-    [(ir.CompilerIrInstr.CallCAbiStoreResult payload-box)
-      (let
-        [payload (deref payload-box)]
-        (ir.ir-instr-call-cabi-store-result
-          (opt-global-cell-subst-value
-            (compiler-opt-global-shared-view plan)
-            payload.base)
-          payload.name
-          (opt-global-cell-subst-args plan payload.args)
-          payload.slots))]
-    [(ir.CompilerIrInstr.SpmdCall payload-box)
-      (let
-        [payload (deref payload-box)]
-        (ir.ir-instr-spmd-call-with-origin
-          payload.callee
-          payload.backend
-          payload.lanes
-          (opt-global-cell-subst-value
-            (compiler-opt-global-shared-view plan)
-            payload.active-mask)
-          (opt-global-cell-subst-spmd-args plan payload.args)
-          payload.result
-          (clone payload.origin)))]
-    [(ir.CompilerIrInstr.CallIndirect dst func args ty)
-      (ir.CompilerIrInstr.CallIndirect
-        dst
-        (opt-global-cell-subst-value
-          (compiler-opt-global-shared-view plan)
-          func)
-        (opt-global-cell-subst-args plan args)
-        ty)]
-    [(ir.CompilerIrInstr.CallIndirectC dst func args ty)
-      (ir.CompilerIrInstr.CallIndirectC
-        dst
-        (opt-global-cell-subst-value
-          (compiler-opt-global-shared-view plan)
-          func)
-        (opt-global-cell-subst-args plan args)
-        ty)]
-    [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
-      (let
-        [payload (deref payload-box)]
-        (ir.ir-instr-call-indirect-cabi-store-result
-          (opt-global-cell-subst-value
-            (compiler-opt-global-shared-view plan)
-            payload.base)
-          (opt-global-cell-subst-value
-            (compiler-opt-global-shared-view plan)
-            payload.callee)
-          (opt-global-cell-subst-args plan payload.args)
-          payload.slots))]
-    [(ir.CompilerIrInstr.TailCall name args ty)
-      (ir.CompilerIrInstr.TailCall
-        name
-        (opt-global-cell-subst-args plan args)
-        ty)]
-    [(ir.CompilerIrInstr.Store name value ty)
-      (ir.CompilerIrInstr.Store
-        name
-        (opt-global-cell-subst-value plan value)
-        ty)]
-    [(ir.CompilerIrInstr.Jump _) instr]
-    [(ir.CompilerIrInstr.Branch cond true-label false-label)
-      (ir.CompilerIrInstr.Branch
-        (opt-global-cell-subst-value plan cond)
-        true-label
-        false-label)]
-    [(ir.CompilerIrInstr.TotalEnumBranch cond true-label false-label)
-      (ir.CompilerIrInstr.TotalEnumBranch
-        (opt-global-cell-subst-value plan cond)
-        true-label
-        false-label)]
-    [(ir.CompilerIrInstr.Return maybe)
-      (ir.CompilerIrInstr.Return (opt-global-cell-subst-maybe plan maybe))]
-    [(ir.CompilerIrInstr.Phi dst inputs ty)
-      (ir.CompilerIrInstr.Phi dst (opt-global-cell-subst-phi plan inputs) ty)]
+        (ir.compiler-ir-instr-map-uses
+          instr
+          opt-global-cell-subst-use
+          (compiler-opt-global-shared-view plan)))]
+    [(ir.CompilerIrInstr.LoadOwned _ _ _ _) instr]
     [(ir.CompilerIrInstr.Pack _ _ _) instr]
-    [(ir.CompilerIrInstr.Word dst src index ty)
-      (ir.CompilerIrInstr.Word
-        dst
-        (opt-global-cell-subst-value plan src)
-        index
-        ty)]
-    [(ir.CompilerIrInstr.TailCallIndirect func args ty)
-      (ir.CompilerIrInstr.TailCallIndirect
-        (opt-global-cell-subst-value
-          (compiler-opt-global-shared-view plan)
-          func)
-        (opt-global-cell-subst-args plan args)
-        ty)]
-    [(ir.CompilerIrInstr.Switch idx default-label cases trap-label)
-      (ir.CompilerIrInstr.Switch
-        (opt-global-cell-subst-value plan idx)
-        default-label
-        cases
-        trap-label)]
-    [(ir.CompilerIrInstr.TotalEnumSwitch
-        idx
-        default-label
-        cases
-        trap-label
-        final-label)
-      (ir.CompilerIrInstr.TotalEnumSwitch
-        (opt-global-cell-subst-value plan idx)
-        default-label
-        cases
-        trap-label
-        final-label)]))
+    [_
+      (ir.compiler-ir-instr-map-uses
+        instr
+        opt-global-cell-subst-use
+        (compiler-opt-global-shared-view plan))]))
 
 (define (opt-global-cell-rewrite-seq
   [plan : opt_i64_i64_map.Map]

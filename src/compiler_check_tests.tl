@@ -104,8 +104,7 @@
                   (cdiag.compiler-diagnostic-fix-title
                     (cdiag.compiler-diagnostic-place-shared-view fix))
                   "Replace misspelled name")
-                (match (cdiag.compiler-diagnostic-fix-applicability
-                  (cdiag.compiler-diagnostic-place-shared-view fix))
+                (match (cdiag.compiler-diagnostic-fix-applicability fix)
                   [cdiag.CompilerDiagnosticMachineApplicable true]
                   [_ false])
                 (= edits.len 1)
@@ -125,9 +124,7 @@
                       (cdiag.compiler-diagnostic-text-edit-replacement
                         (cdiag.compiler-diagnostic-place-shared-view edit))
                       "render-value")
-                    (match (compiler-check-fix-test-apply
-                      source
-                      (cdiag.compiler-diagnostic-place-shared-view edit))
+                    (match (compiler-check-fix-test-apply source edit)
                       [(cdiag.CompilerDiagnosticSomeString updated)
                         (and
                           (string.eq
@@ -170,10 +167,7 @@
           (cdiag.compiler-diagnostic-list-first
             (cdiag.compiler-diagnostic-place-shared-view diagnostics))]
         (and
-          (=
-            (cdiag.compiler-diagnostic-list-count
-              (cdiag.compiler-diagnostic-place-shared-view diagnostics))
-            1)
+          (= (cdiag.compiler-diagnostic-list-count diagnostics) 1)
           (string.eq (cdiag.compiler-diagnostic-message diagnostic) message)
           (string.eq (cdiag.compiler-diagnostic-path diagnostic) path)
           (= (cdiag.compiler-diagnostic-line diagnostic) line)
@@ -262,10 +256,7 @@
         [fixes : cdiag.CompilerDiagnosticFixSeq
           (cdiag.compiler-diagnostic-fixes diagnostic)]
         (and
-          (=
-            (cdiag.compiler-diagnostic-list-count
-              (cdiag.compiler-diagnostic-place-shared-view diagnostics))
-            1)
+          (= (cdiag.compiler-diagnostic-list-count diagnostics) 1)
           (string.eq
             (cdiag.compiler-diagnostic-message diagnostic)
             "typecheck: unbound name io.emti")
@@ -278,8 +269,7 @@
                 (cdiag.compiler-diagnostic-place-shared-view fix))]
             (and
               (string.eq
-                (cdiag.compiler-diagnostic-fix-title
-                  (cdiag.compiler-diagnostic-place-shared-view fix))
+                (cdiag.compiler-diagnostic-fix-title fix)
                 "Replace misspelled name")
               (= edits.len 1)
               (string.eq
@@ -306,10 +296,7 @@
           (cdiag.compiler-diagnostic-list-first
             (cdiag.compiler-diagnostic-place-shared-view diagnostics))]
         (and
-          (=
-            (cdiag.compiler-diagnostic-list-count
-              (cdiag.compiler-diagnostic-place-shared-view diagnostics))
-            1)
+          (= (cdiag.compiler-diagnostic-list-count diagnostics) 1)
           (string.eq
             (cdiag.compiler-diagnostic-message diagnostic)
             "typecheck: unbound name io.missing")
@@ -364,10 +351,7 @@
             (cdiag.compiler-diagnostic-place-shared-view diagnostics)
             2)]
         (and
-          (=
-            (cdiag.compiler-diagnostic-list-count
-              (cdiag.compiler-diagnostic-place-shared-view diagnostics))
-            3)
+          (= (cdiag.compiler-diagnostic-list-count diagnostics) 3)
           (string.eq
             (cdiag.compiler-diagnostic-message first)
             "typecheck: unbound name unknown-one")
@@ -402,10 +386,7 @@
             (cdiag.compiler-diagnostic-place-shared-view diagnostics)
             2)]
         (and
-          (=
-            (cdiag.compiler-diagnostic-list-count
-              (cdiag.compiler-diagnostic-place-shared-view diagnostics))
-            3)
+          (= (cdiag.compiler-diagnostic-list-count diagnostics) 3)
           (string.eq
             (cdiag.compiler-diagnostic-message first)
             "parse: malformed define")
@@ -437,7 +418,7 @@
           (tc_core.tc-global-shared-view source)))
       (compiler-check-parser-recovery-result-ok?
         (compiler_check_core.compiler-check-package-source-with-roots-and-cfg
-          (tc_core.tc-global-shared-view path)
+          path
           source
           (svec.new)
           "."
@@ -461,10 +442,7 @@
           (cdiag.compiler-diagnostic-list-first
             (cdiag.compiler-diagnostic-place-shared-view diagnostics))]
         (and
-          (=
-            (cdiag.compiler-diagnostic-list-count
-              (cdiag.compiler-diagnostic-place-shared-view diagnostics))
-            1)
+          (= (cdiag.compiler-diagnostic-list-count diagnostics) 1)
           (string.eq
             (cdiag.compiler-diagnostic-message first)
             "typecheck: unbound name unknown-origin")))]))
@@ -611,7 +589,7 @@
           [import-read : i64
             (semantic_index.compiler-semantic-source-index-find-record
               (& index)
-              (tc_core.tc-global-shared-view path)
+              path
               "imported-value"
               semantic_index.CompilerSemanticRecordRole.Use
               -1)]

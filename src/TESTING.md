@@ -122,6 +122,19 @@ requires `typecheck.env.unbound_finalizers` to be positive (the fixture reaches
 the path) and every `typecheck.env.unbound_scans` row to be zero. Before #7868
 that program performed 12 scans.
 
+`tc-check-defmacro` also evaluates a context-free macro body once at its
+definition, on placeholder operands: a `Var` per ordinary operand and an empty
+list per variadic. Only a completed run's produced type is checked there. A
+failed run is not an error, because the placeholder path can be exactly the
+`comptime-error` arm or out-of-range inspector call that no real call takes. The
+typecheck self-test's `defmacro-probe-error` rows and
+`macro_untaken_comptime_error` native row put such arms before and after the
+taken arm for expression and `Decls` macros, and require a taken arm to still
+report the author's message. The package fixture's `package-first` pair repeats
+the operand-count guard and puts rejecting arms before and after the selected
+arms on the dependency route, which `verify-package-native-tlci.sh` runs
+natively and through forced-source CTFE.
+
 ## Vector reduction source ownership
 
 The backend smoke checks AVX2 i64 min/max with both ordinary and explicit

@@ -24,6 +24,41 @@
       (define (package-unsafe-answer [value : i64]) : i64
         value))))
 
+;; The definition probe sees an empty operand list. Real literal operands leave
+;; errors before and after the selected match arms untaken on both native and
+;; forced-source dependency routes.
+(defmacro (package-first [values : i64 ...]) : i64
+  (if (= (comptime.expr-list-length values) 0)
+    (comptime.comptime-error "package-first expects an operand")
+    (let
+      [value : Expr (comptime.expr-list-nth values 0)]
+      (match value
+        [(comptime.Expr.Var _name)
+          (comptime.comptime-error "package-first rejects identifiers")]
+        [_
+          (match value
+            [(comptime.Expr.Int _number) value]
+            [_
+              (comptime.comptime-error
+                "package-first expects an integer literal")])]))))
+
+(defmacro (package-first-decls [values : i64 ...]) : Decls
+  (if (= (comptime.expr-list-length values) 0)
+    (comptime.comptime-error "package-first-decls expects an operand")
+    (let
+      [value : Expr (comptime.expr-list-nth values 0)]
+      (match value
+        [(comptime.Expr.Var _name)
+          (comptime.comptime-error "package-first-decls rejects identifiers")]
+        [_
+          (match value
+            [(comptime.Expr.Int _number)
+              `(define (package-first-answer) : i64
+                ,value)]
+            [_
+              (comptime.comptime-error
+                "package-first-decls expects an integer literal")])]))))
+
 ;; Keep one intentionally unsupported producer shape in the catalog. Its first
 ;; native attempt learns the mapping-generation shell and its second call must
 ;; bypass both dispatch and host-session setup before deterministic source CTFE.

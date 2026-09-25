@@ -162,7 +162,7 @@
       (let
         [owner-context : spec.SpecOwnerContext
           (spec.spec-owner-context-new
-            (owned_view.compiler-owned-shared-view pools)
+            pools
             (owned_view.compiler-owned-shared-view intern-state))]
         [generated-result : spec.ResultGenProgramWithPaths
           (spec.gen-normalize-program-with-paths-and-pools-and-intern-state
@@ -171,8 +171,7 @@
             ""
             owner-context)]
         (begin
-          (ast.ast-node-pool-context-install!
-            (owned_view.compiler-owned-shared-view pools))
+          (ast.ast-node-pool-context-install! pools)
           (ci.intern-compat-state-install!
             (owned_view.compiler-owned-shared-view intern-state))
           (match generated-result
@@ -182,7 +181,7 @@
                 job-state
                 generated
                 generated-paths
-                (owned_view.compiler-owned-shared-view pools)
+                pools
                 stdlib-roots
                 (typecheck-compiler-source-language-cfgs)
                 (owned_view.compiler-owned-shared-view intern-state))
@@ -238,7 +237,7 @@
         (let
           [owner-context : spec.SpecOwnerContext
             (spec.spec-owner-context-new
-              (owned_view.compiler-owned-shared-view pools)
+              pools
               (owned_view.compiler-owned-shared-view intern-state))]
           [generated-result : spec.ResultGenProgramWithPaths
             (spec.gen-normalize-program-with-paths-and-pools-and-intern-state
@@ -247,8 +246,7 @@
               ""
               owner-context)]
           (begin
-            (ast.ast-node-pool-context-install!
-              (owned_view.compiler-owned-shared-view pools))
+            (ast.ast-node-pool-context-install! pools)
             ;; Publish generated IDs before legacy macro/symbol consumers run.
             (ci.intern-compat-state-install!
               (owned_view.compiler-owned-shared-view intern-state))
@@ -261,24 +259,23 @@
                       job-state
                       generated
                       generated-paths
-                      (owned_view.compiler-owned-shared-view pools)
+                      pools
                       (owned_view.compiler-owned-shared-view stdlib-roots)
                       cfgs
                       (owned_view.compiler-owned-shared-view intern-state))]
                   (begin
-                    (ast.ast-node-pool-context-capture-active!
-                      (owned_view.compiler-owned-shared-view pools))
+                    (ast.ast-node-pool-context-capture-active! pools)
                     (ci.intern-compat-state-capture-from-globals!
                       (&mut intern-state))
                     (match macro-result
                       [(tc_core.ResultMacroExpand.Ok expanded expanded-paths)
                         (if (spec.compiler-specialize-needed-with-pools
                           (owned_view.compiler-owned-shared-view expanded)
-                          (owned_view.compiler-owned-shared-view pools))
+                          pools)
                           (let
                             [owner-context : spec.SpecOwnerContext
                               (spec.spec-owner-context-new
-                                (owned_view.compiler-owned-shared-view pools)
+                                pools
                                 (owned_view.compiler-owned-shared-view
                                   intern-state))]
                             [normalized-result : spec.ResultGenProgramWithPaths
@@ -293,8 +290,7 @@
                             (begin
                               ;; Publish explicit normalization mutations before
                               ;; matching either result or entering legacy phases.
-                              (ast.ast-node-pool-context-install!
-                                (owned_view.compiler-owned-shared-view pools))
+                              (ast.ast-node-pool-context-install! pools)
                               (ci.intern-compat-state-install!
                                 (owned_view.compiler-owned-shared-view
                                   intern-state))

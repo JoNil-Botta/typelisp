@@ -17987,7 +17987,7 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 14)
+          (cbi.compiler-builtin-ctfe "string-append")
           (tc-fn2
             (ast.AstType.String)
             (ast.AstType.String)
@@ -17996,7 +17996,7 @@
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 14)
+          (cbi.compiler-builtin-ctfe "string-append")
           (tc-fn2
             (ast.AstType.String)
             (ast.AstType.String)
@@ -18005,7 +18005,7 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 15)
+          (cbi.compiler-builtin-ctfe "string-concat")
           (tc-fn2
             (ast.AstType.String)
             (ast.AstType.String)
@@ -18014,7 +18014,7 @@
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 15)
+          (cbi.compiler-builtin-ctfe "string-concat")
           (tc-fn2
             (ast.AstType.String)
             (ast.AstType.String)
@@ -18023,109 +18023,109 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 7)
+          (cbi.compiler-builtin-ctfe "string-length")
           (tc-fn1 (ast.AstType.String) (ast.AstType.I64))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 8)
+          (cbi.compiler-builtin-ctfe "length")
           (tc-fn1 (ast.AstType.String) (ast.AstType.I64))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 10)
+          (cbi.compiler-builtin-ctfe "string-ref")
           (tc-fn2 (ast.AstType.String) (ast.AstType.I64) (ast.AstType.Char))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 11)
+          (cbi.compiler-builtin-ctfe "char-at")
           (tc-fn2 (ast.AstType.String) (ast.AstType.I64) (ast.AstType.Char))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 4)
+          (cbi.compiler-builtin-ctfe "string-eq")
           (tc-fn2 (ast.AstType.String) (ast.AstType.String) (ast.AstType.Bool))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 5)
+          (cbi.compiler-builtin-ctfe "string=?")
           (tc-fn2 (ast.AstType.String) (ast.AstType.String) (ast.AstType.Bool))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 13)
+          (cbi.compiler-builtin-ctfe ">int")
           (tc-fn1 (ast.AstType.String) (ast.AstType.I64))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 105)
+          (cbi.compiler-builtin-ctfe ">int")
           (tc-fn1 (ast.AstType.String) (ast.AstType.I64))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 16)
+          (cbi.compiler-builtin-ctfe "int->string")
           (tc-fn1 (ast.AstType.I64) (ast.AstType.String))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 16)
+          (cbi.compiler-builtin-ctfe "int->string")
           (tc-fn1 (ast.AstType.I64) (ast.AstType.String))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 27)
+          (cbi.compiler-builtin-ctfe "expr-bool")
           (tc-fn1 (ast.AstType.Bool) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 27)
+          (cbi.compiler-builtin-ctfe "expr-bool")
           (tc-fn1 (ast.AstType.Bool) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 28)
+          (cbi.compiler-builtin-ctfe "expr-int")
           (tc-fn1 (ast.AstType.I64) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 28)
+          (cbi.compiler-builtin-ctfe "expr-int")
           (tc-fn1 (ast.AstType.I64) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 29)
+          (cbi.compiler-builtin-ctfe "expr-string")
           (tc-fn1 (ast.AstType.String) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 30)
+          (cbi.compiler-builtin-ctfe "expr-var")
           (tc-fn1 (ast.AstType.String) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 30)
+          (cbi.compiler-builtin-ctfe "expr-var")
           (tc-fn1 (ast.AstType.String) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 31)
+          (cbi.compiler-builtin-ctfe "expr-struct-get")
           (tc-fn2
             (tc-global-shared-view expr)
             (ast.AstType.String)
@@ -18134,7 +18134,7 @@
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 31)
+          (cbi.compiler-builtin-ctfe "expr-struct-get")
           (tc-fn2
             (tc-global-shared-view expr)
             (ast.AstType.String)
@@ -18143,7 +18143,7 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 32)
+          (cbi.compiler-builtin-ctfe "expr-tuple-ref")
           (tc-fn2
             (tc-global-shared-view expr)
             (ast.AstType.I64)
@@ -18152,7 +18152,7 @@
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 32)
+          (cbi.compiler-builtin-ctfe "expr-tuple-ref")
           (tc-fn2
             (tc-global-shared-view expr)
             (ast.AstType.I64)
@@ -18161,7 +18161,7 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 33)
+          (cbi.compiler-builtin-ctfe "expr-struct-set")
           (tc-fn3
             (tc-global-shared-view expr)
             (ast.AstType.String)
@@ -18171,7 +18171,7 @@
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 33)
+          (cbi.compiler-builtin-ctfe "expr-struct-set")
           (tc-fn3
             (tc-global-shared-view expr)
             (ast.AstType.String)
@@ -18181,19 +18181,19 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 94)
+          (cbi.compiler-builtin-ctfe "expr-mut-borrow")
           (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 94)
+          (cbi.compiler-builtin-ctfe "expr-mut-borrow")
           (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 95)
+          (cbi.compiler-builtin-ctfe "expr-call")
           (tc-fn2
             (tc-global-shared-view expr)
             (ast.AstType.ExprList)
@@ -18202,7 +18202,7 @@
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 95)
+          (cbi.compiler-builtin-ctfe "expr-call")
           (tc-fn2
             (tc-global-shared-view expr)
             (ast.AstType.ExprList)
@@ -18211,7 +18211,7 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 98)
+          (cbi.compiler-builtin-ctfe "expr-mut-call0")
           (tc-fn2
             (tc-global-shared-view expr)
             (tc-global-shared-view expr)
@@ -18220,7 +18220,7 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 99)
+          (cbi.compiler-builtin-ctfe "expr-mut-call1")
           (tc-fn3
             (tc-global-shared-view expr)
             (tc-global-shared-view expr)
@@ -18230,7 +18230,7 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 100)
+          (cbi.compiler-builtin-ctfe "expr-mut-call2")
           (tc-fn4
             (tc-global-shared-view expr)
             (tc-global-shared-view expr)
@@ -18241,19 +18241,19 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 96)
+          (cbi.compiler-builtin-ctfe "expr-list-empty")
           (tc-fn0 (ast.AstType.ExprList))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 96)
+          (cbi.compiler-builtin-ctfe "expr-list-empty")
           (tc-fn0 (ast.AstType.ExprList))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 97)
+          (cbi.compiler-builtin-ctfe "expr-list-cons")
           (tc-fn2
             (tc-global-shared-view expr)
             (ast.AstType.ExprList)
@@ -18262,7 +18262,7 @@
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 97)
+          (cbi.compiler-builtin-ctfe "expr-list-cons")
           (tc-fn2
             (tc-global-shared-view expr)
             (ast.AstType.ExprList)
@@ -18271,7 +18271,7 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 35)
+          (cbi.compiler-builtin-ctfe "expr-if")
           (tc-fn3
             (tc-global-shared-view expr)
             (tc-global-shared-view expr)
@@ -18281,7 +18281,7 @@
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 35)
+          (cbi.compiler-builtin-ctfe "expr-if")
           (tc-fn3
             (tc-global-shared-view expr)
             (tc-global-shared-view expr)
@@ -18291,19 +18291,19 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 36)
+          (cbi.compiler-builtin-ctfe "pattern-wildcard")
           (tc-fn0 (tc-global-shared-view pattern))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 37)
+          (cbi.compiler-builtin-ctfe "pattern-binding")
           (tc-fn1 (ast.AstType.String) (tc-global-shared-view pattern))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 38)
+          (cbi.compiler-builtin-ctfe "pattern-variant")
           (tc-fn2
             (ast.AstType.String)
             (tc-global-shared-view pattern-list)
@@ -18312,13 +18312,13 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 39)
+          (cbi.compiler-builtin-ctfe "pattern-list-empty")
           (tc-fn0 (tc-global-shared-view pattern-list))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 40)
+          (cbi.compiler-builtin-ctfe "pattern-list-cons")
           (tc-fn2
             (tc-global-shared-view pattern)
             (tc-global-shared-view pattern-list)
@@ -18327,13 +18327,13 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 90)
+          (cbi.compiler-builtin-ctfe "pattern-list-bindings")
           (tc-fn2 (ast.AstType.String) (ast.AstType.I64) pattern-list)))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 41)
+          (cbi.compiler-builtin-ctfe "match-arm")
           (tc-fn2
             pattern
             (tc-global-shared-view expr)
@@ -18342,13 +18342,13 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 42)
+          (cbi.compiler-builtin-ctfe "match-arm-list-empty")
           (tc-fn0 (tc-global-shared-view match-arm-list))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 43)
+          (cbi.compiler-builtin-ctfe "match-arm-list-cons")
           (tc-fn2
             match-arm
             (tc-global-shared-view match-arm-list)
@@ -18357,7 +18357,7 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 44)
+          (cbi.compiler-builtin-ctfe "expr-match")
           (tc-fn2
             (tc-global-shared-view expr)
             match-arm-list
@@ -18366,55 +18366,55 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 45)
+          (cbi.compiler-builtin-ctfe "expr-type")
           (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 45)
+          (cbi.compiler-builtin-ctfe "expr-type")
           (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 289)
+          (cbi.compiler-builtin-ctfe "type-expr")
           (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 289)
+          (cbi.compiler-builtin-ctfe "type-expr")
           (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 34)
+          (cbi.compiler-builtin-ctfe "expr-splice")
           (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 46)
+          (cbi.compiler-builtin-ctfe "type-info")
           (tc-fn1 (tc-global-shared-view expr) type-info)))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 47)
+          (cbi.compiler-builtin-ctfe "module-name")
           (tc-fn1 (ast.AstType.String) (ast.AstType.String))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 48)
+          (cbi.compiler-builtin-ctfe "module-export-macro?")
           (tc-fn2 (ast.AstType.String) (ast.AstType.String) (ast.AstType.Bool))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 49)
+          (cbi.compiler-builtin-ctfe "module-hook")
           (tc-fn2
             (ast.AstType.String)
             (ast.AstType.String)
@@ -18423,7 +18423,7 @@
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 49)
+          (cbi.compiler-builtin-ctfe "module-hook")
           (tc-fn2
             (ast.AstType.String)
             (ast.AstType.String)
@@ -18432,13 +18432,13 @@
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 216)
+          (cbi.compiler-builtin-ctfe "module-value?")
           (tc-fn2 (ast.AstType.String) (ast.AstType.String) (ast.AstType.Bool))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 217)
+          (cbi.compiler-builtin-ctfe "module-value-type")
           (tc-fn2
             (ast.AstType.String)
             (ast.AstType.String)
@@ -18447,7 +18447,7 @@
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 285)
+          (cbi.compiler-builtin-ctfe "module-value-expr")
           (tc-fn2
             (ast.AstType.String)
             (ast.AstType.String)
@@ -18456,7 +18456,7 @@
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 286)
+          (cbi.compiler-builtin-ctfe "function-shared-borrow-returns-string?")
           (tc-fn2
             (tc-global-shared-view expr)
             (tc-global-shared-view expr)
@@ -18465,7 +18465,7 @@
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 287)
+          (cbi.compiler-builtin-ctfe "expr-shared-call1")
           (tc-fn2
             (tc-global-shared-view expr)
             (tc-global-shared-view expr)
@@ -18474,73 +18474,73 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 218)
+          (cbi.compiler-builtin-ctfe "reference-element-type")
           (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 218)
+          (cbi.compiler-builtin-ctfe "reference-element-type")
           (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 17)
+          (cbi.compiler-builtin-ctfe "comptime-error")
           (tc-fn1 (ast.AstType.String) (ast.AstType.Never))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 17)
+          (cbi.compiler-builtin-ctfe "comptime-error")
           (tc-fn1 (ast.AstType.String) (ast.AstType.Never))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 71)
+          (cbi.compiler-builtin-ctfe "type-kind")
           (tc-fn1 (tc-global-shared-view expr) (ast.AstType.String))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 72)
+          (cbi.compiler-builtin-ctfe "type-key")
           (tc-fn1 (tc-global-shared-view expr) (ast.AstType.String))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 210)
+          (cbi.compiler-builtin-ctfe "type-cleanup-owning?")
           (tc-fn1 (tc-global-shared-view expr) (ast.AstType.Bool))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 211)
+          (cbi.compiler-builtin-ctfe "type-cleanup-function")
           (tc-fn1 (tc-global-shared-view expr) (ast.AstType.String))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 73)
+          (cbi.compiler-builtin-ctfe "type-nominal-module")
           (tc-fn1 (tc-global-shared-view expr) (ast.AstType.String))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 74)
+          (cbi.compiler-builtin-ctfe "type-nominal-name")
           (tc-fn1 (tc-global-shared-view expr) (ast.AstType.String))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 75)
+          (cbi.compiler-builtin-ctfe "struct-field-count")
           (tc-fn1 (tc-global-shared-view expr) (ast.AstType.I64))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 76)
+          (cbi.compiler-builtin-ctfe "struct-field-name")
           (tc-fn2
             (tc-global-shared-view expr)
             (ast.AstType.I64)
@@ -18549,7 +18549,7 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 77)
+          (cbi.compiler-builtin-ctfe "struct-field-type")
           (tc-fn2
             (tc-global-shared-view expr)
             (ast.AstType.I64)
@@ -18558,13 +18558,13 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 78)
+          (cbi.compiler-builtin-ctfe "enum-variant-count")
           (tc-fn1 (tc-global-shared-view expr) (ast.AstType.I64))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 79)
+          (cbi.compiler-builtin-ctfe "enum-variant-name")
           (tc-fn2
             (tc-global-shared-view expr)
             (ast.AstType.I64)
@@ -18573,7 +18573,7 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 80)
+          (cbi.compiler-builtin-ctfe "enum-variant-payload-count")
           (tc-fn2
             (tc-global-shared-view expr)
             (ast.AstType.I64)
@@ -18582,7 +18582,7 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 81)
+          (cbi.compiler-builtin-ctfe "enum-variant-payload-type")
           (tc-fn3
             (tc-global-shared-view expr)
             (ast.AstType.I64)
@@ -18592,43 +18592,43 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 82)
+          (cbi.compiler-builtin-ctfe "array-element-type")
           (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 214)
+          (cbi.compiler-builtin-ctfe "box-element-type")
           (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 214)
+          (cbi.compiler-builtin-ctfe "box-element-type")
           (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 83)
+          (cbi.compiler-builtin-ctfe "array-length")
           (tc-fn1 (tc-global-shared-view expr) (ast.AstType.I64))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 84)
+          (cbi.compiler-builtin-ctfe "array-dynamic?")
           (tc-fn1 (tc-global-shared-view expr) (ast.AstType.Bool))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 85)
+          (cbi.compiler-builtin-ctfe "tuple-element-count")
           (tc-fn1 (tc-global-shared-view expr) (ast.AstType.I64))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 86)
+          (cbi.compiler-builtin-ctfe "tuple-element-type")
           (tc-fn2
             (tc-global-shared-view expr)
             (ast.AstType.I64)
@@ -18637,13 +18637,13 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 87)
+          (cbi.compiler-builtin-ctfe "function-param-count")
           (tc-fn1 (tc-global-shared-view expr) (ast.AstType.I64))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 88)
+          (cbi.compiler-builtin-ctfe "function-param-type")
           (tc-fn2
             (tc-global-shared-view expr)
             (ast.AstType.I64)
@@ -18652,97 +18652,97 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 89)
+          (cbi.compiler-builtin-ctfe "function-return-type")
           (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 19)
+          (cbi.compiler-builtin-ctfe "expr-bool?")
           (tc-fn1 (tc-global-shared-view expr) (ast.AstType.Bool))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 19)
+          (cbi.compiler-builtin-ctfe "expr-bool?")
           (tc-fn1 (tc-global-shared-view expr) (ast.AstType.Bool))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 20)
+          (cbi.compiler-builtin-ctfe "expr-bool-value")
           (tc-fn1 (tc-global-shared-view expr) (ast.AstType.Bool))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 20)
+          (cbi.compiler-builtin-ctfe "expr-bool-value")
           (tc-fn1 (tc-global-shared-view expr) (ast.AstType.Bool))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 21)
+          (cbi.compiler-builtin-ctfe "expr-if?")
           (tc-fn1 (tc-global-shared-view expr) (ast.AstType.Bool))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 21)
+          (cbi.compiler-builtin-ctfe "expr-if?")
           (tc-fn1 (tc-global-shared-view expr) (ast.AstType.Bool))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 22)
+          (cbi.compiler-builtin-ctfe "expr-if-cond")
           (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 22)
+          (cbi.compiler-builtin-ctfe "expr-if-cond")
           (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 23)
+          (cbi.compiler-builtin-ctfe "expr-if-then")
           (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 23)
+          (cbi.compiler-builtin-ctfe "expr-if-then")
           (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 24)
+          (cbi.compiler-builtin-ctfe "expr-if-else")
           (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 24)
+          (cbi.compiler-builtin-ctfe "expr-if-else")
           (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 51)
+          (cbi.compiler-builtin-ctfe "expr-list-length")
           (tc-fn1 (ast.AstType.ExprList) (ast.AstType.I64))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 51)
+          (cbi.compiler-builtin-ctfe "expr-list-length")
           (tc-fn1 (ast.AstType.ExprList) (ast.AstType.I64))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 54)
+          (cbi.compiler-builtin-ctfe "expr-list-nth")
           (tc-fn2
             (ast.AstType.ExprList)
             (ast.AstType.I64)
@@ -18751,7 +18751,7 @@
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 54)
+          (cbi.compiler-builtin-ctfe "expr-list-nth")
           (tc-fn2
             (ast.AstType.ExprList)
             (ast.AstType.I64)
@@ -18760,43 +18760,43 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 25)
+          (cbi.compiler-builtin-ctfe "expr-clause-first")
           (tc-fn1 (tc-global-shared-view clause) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 25)
+          (cbi.compiler-builtin-ctfe "expr-clause-first")
           (tc-fn1 (tc-global-shared-view clause) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 26)
+          (cbi.compiler-builtin-ctfe "expr-clause-second")
           (tc-fn1 (tc-global-shared-view clause) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 26)
+          (cbi.compiler-builtin-ctfe "expr-clause-second")
           (tc-fn1 (tc-global-shared-view clause) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 56)
+          (cbi.compiler-builtin-ctfe "expr-clause-list-length")
           (tc-fn1 (tc-global-shared-view clause-list) (ast.AstType.I64))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 56)
+          (cbi.compiler-builtin-ctfe "expr-clause-list-length")
           (tc-fn1 (tc-global-shared-view clause-list) (ast.AstType.I64))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 59)
+          (cbi.compiler-builtin-ctfe "expr-clause-list-nth")
           (tc-fn2
             (tc-global-shared-view clause-list)
             (ast.AstType.I64)
@@ -18805,49 +18805,49 @@
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 59)
+          (cbi.compiler-builtin-ctfe "expr-clause-list-nth")
           (tc-fn2 (tc-global-shared-view clause-list) (ast.AstType.I64) clause)))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 60)
+          (cbi.compiler-builtin-ctfe "expr-clause-list->expr-list")
           (tc-fn1 (tc-global-shared-view clause-list) (ast.AstType.ExprList))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 60)
+          (cbi.compiler-builtin-ctfe "expr-clause-list->expr-list")
           (tc-fn1 clause-list (ast.AstType.ExprList))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 61)
+          (cbi.compiler-builtin-ctfe "expr-binding-clause-name")
           (tc-fn1 (tc-global-shared-view binding-clause) (ast.AstType.String))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 61)
+          (cbi.compiler-builtin-ctfe "expr-binding-clause-name")
           (tc-fn1 (tc-global-shared-view binding-clause) (ast.AstType.String))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 62)
+          (cbi.compiler-builtin-ctfe "expr-binding-clause-has-type?")
           (tc-fn1 (tc-global-shared-view binding-clause) (ast.AstType.Bool))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 62)
+          (cbi.compiler-builtin-ctfe "expr-binding-clause-has-type?")
           (tc-fn1 (tc-global-shared-view binding-clause) (ast.AstType.Bool))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 63)
+          (cbi.compiler-builtin-ctfe "expr-binding-clause-type")
           (tc-fn1
             (tc-global-shared-view binding-clause)
             (tc-global-shared-view expr))))
@@ -18855,7 +18855,7 @@
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 63)
+          (cbi.compiler-builtin-ctfe "expr-binding-clause-type")
           (tc-fn1
             (tc-global-shared-view binding-clause)
             (tc-global-shared-view expr))))
@@ -18863,7 +18863,7 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 64)
+          (cbi.compiler-builtin-ctfe "expr-binding-clause-init")
           (tc-fn1
             (tc-global-shared-view binding-clause)
             (tc-global-shared-view expr))))
@@ -18871,25 +18871,25 @@
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 64)
+          (cbi.compiler-builtin-ctfe "expr-binding-clause-init")
           (tc-fn1 (tc-global-shared-view binding-clause) expr)))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 66)
+          (cbi.compiler-builtin-ctfe "expr-binding-clause-list-length")
           (tc-fn1 (tc-global-shared-view binding-clause-list) (ast.AstType.I64))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 66)
+          (cbi.compiler-builtin-ctfe "expr-binding-clause-list-length")
           (tc-fn1 (tc-global-shared-view binding-clause-list) (ast.AstType.I64))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 69)
+          (cbi.compiler-builtin-ctfe "expr-binding-clause-list-nth")
           (tc-fn2
             (tc-global-shared-view binding-clause-list)
             (ast.AstType.I64)
@@ -18898,7 +18898,7 @@
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 69)
+          (cbi.compiler-builtin-ctfe "expr-binding-clause-list-nth")
           (tc-fn2
             (tc-global-shared-view binding-clause-list)
             (ast.AstType.I64)
@@ -18907,7 +18907,7 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 70)
+          (cbi.compiler-builtin-ctfe "expr-binding-clause-list->expr-list")
           (tc-fn1
             (tc-global-shared-view binding-clause-list)
             (ast.AstType.ExprList))))
@@ -18915,7 +18915,7 @@
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 70)
+          (cbi.compiler-builtin-ctfe "expr-binding-clause-list->expr-list")
           (tc-fn1 binding-clause-list (ast.AstType.ExprList))))
       out)))
 
@@ -73558,7 +73558,7 @@
             (tc-macro-state-structural-session state)
             (ast.ast-expr-segment-bases-get expr-bases func)
             (tc-global-shared-view bound))
-          (cbi.compiler-builtin-ctfe-ref 210))
+          (cbi.compiler-builtin-ctfe "type-cleanup-owning?"))
         (= args.len 1)
         (tc-macro-abstract-param-var?
           state
@@ -73652,50 +73652,50 @@
   [call-id : i64]) : bool
   (cond
     [(or
-        (= call-id (cbi.compiler-builtin-ctfe-ref 46))
-        (= call-id (cbi.compiler-builtin-ctfe-ref 71))
-        (= call-id (cbi.compiler-builtin-ctfe-ref 72))
-        (= call-id (cbi.compiler-builtin-ctfe-ref 210))
-        (= call-id (cbi.compiler-builtin-ctfe-ref 289)))
+        (= call-id (cbi.compiler-builtin-ctfe "type-info"))
+        (= call-id (cbi.compiler-builtin-ctfe "type-kind"))
+        (= call-id (cbi.compiler-builtin-ctfe "type-key"))
+        (= call-id (cbi.compiler-builtin-ctfe "type-cleanup-owning?"))
+        (= call-id (cbi.compiler-builtin-ctfe "type-expr")))
       true]
     [(or
-        (= call-id (cbi.compiler-builtin-ctfe-ref 73))
-        (= call-id (cbi.compiler-builtin-ctfe-ref 74)))
+        (= call-id (cbi.compiler-builtin-ctfe "type-nominal-module"))
+        (= call-id (cbi.compiler-builtin-ctfe "type-nominal-name")))
       (tc-macro-abstract-mask-allows? state (bit-or (shl 1 19) (shl 1 20)))]
     [(or
-        (= call-id (cbi.compiler-builtin-ctfe-ref 2))
-        (= call-id (cbi.compiler-builtin-ctfe-ref 75))
-        (= call-id (cbi.compiler-builtin-ctfe-ref 76))
-        (= call-id (cbi.compiler-builtin-ctfe-ref 77)))
+        (= call-id (cbi.compiler-builtin-ctfe "offset-of"))
+        (= call-id (cbi.compiler-builtin-ctfe "struct-field-count"))
+        (= call-id (cbi.compiler-builtin-ctfe "struct-field-name"))
+        (= call-id (cbi.compiler-builtin-ctfe "struct-field-type")))
       (tc-macro-abstract-mask-allows? state (shl 1 19))]
     [(or
-        (= call-id (cbi.compiler-builtin-ctfe-ref 78))
-        (= call-id (cbi.compiler-builtin-ctfe-ref 79))
-        (= call-id (cbi.compiler-builtin-ctfe-ref 80))
-        (= call-id (cbi.compiler-builtin-ctfe-ref 81)))
+        (= call-id (cbi.compiler-builtin-ctfe "enum-variant-count"))
+        (= call-id (cbi.compiler-builtin-ctfe "enum-variant-name"))
+        (= call-id (cbi.compiler-builtin-ctfe "enum-variant-payload-count"))
+        (= call-id (cbi.compiler-builtin-ctfe "enum-variant-payload-type")))
       (tc-macro-abstract-mask-allows? state (shl 1 20))]
     [(or
-        (= call-id (cbi.compiler-builtin-ctfe-ref 82))
-        (= call-id (cbi.compiler-builtin-ctfe-ref 84)))
+        (= call-id (cbi.compiler-builtin-ctfe "array-element-type"))
+        (= call-id (cbi.compiler-builtin-ctfe "array-dynamic?")))
       (tc-macro-abstract-mask-allows? state (bit-or (shl 1 15) (shl 1 16)))]
-    [(= call-id (cbi.compiler-builtin-ctfe-ref 214))
+    [(= call-id (cbi.compiler-builtin-ctfe "box-element-type"))
       (tc-macro-abstract-mask-allows? state (shl 1 28))]
-    [(= call-id (cbi.compiler-builtin-ctfe-ref 218))
+    [(= call-id (cbi.compiler-builtin-ctfe "reference-element-type"))
       (tc-macro-abstract-mask-allows? state (bit-or (shl 1 24) (shl 1 25)))]
     [(or
-        (= call-id (cbi.compiler-builtin-ctfe-ref 85))
-        (= call-id (cbi.compiler-builtin-ctfe-ref 86)))
+        (= call-id (cbi.compiler-builtin-ctfe "tuple-element-count"))
+        (= call-id (cbi.compiler-builtin-ctfe "tuple-element-type")))
       (tc-macro-abstract-mask-allows? state (shl 1 18))]
     [(or
-        (= call-id (cbi.compiler-builtin-ctfe-ref 87))
-        (= call-id (cbi.compiler-builtin-ctfe-ref 88))
-        (= call-id (cbi.compiler-builtin-ctfe-ref 89)))
+        (= call-id (cbi.compiler-builtin-ctfe "function-param-count"))
+        (= call-id (cbi.compiler-builtin-ctfe "function-param-type"))
+        (= call-id (cbi.compiler-builtin-ctfe "function-return-type")))
       (tc-macro-abstract-mask-allows? state (shl 1 17))]
     ;; Kind `array` does not imply a fixed length.
-    [(= call-id (cbi.compiler-builtin-ctfe-ref 83)) false]
+    [(= call-id (cbi.compiler-builtin-ctfe "array-length")) false]
     ;; No kind proves cleanup ownership, but the true branch of the exact
     ;; `type-cleanup-owning?` predicate does.
-    [(= call-id (cbi.compiler-builtin-ctfe-ref 211))
+    [(= call-id (cbi.compiler-builtin-ctfe "type-cleanup-function"))
       (=
         (bit-and
           (__tl-project-field
@@ -73708,38 +73708,40 @@
 (define (tc-macro-abstract-required [call-id : i64]) : String
   (cond
     [(or
-        (= call-id (cbi.compiler-builtin-ctfe-ref 73))
-        (= call-id (cbi.compiler-builtin-ctfe-ref 74)))
+        (= call-id (cbi.compiler-builtin-ctfe "type-nominal-module"))
+        (= call-id (cbi.compiler-builtin-ctfe "type-nominal-name")))
       "struct or enum"]
     [(or
-        (= call-id (cbi.compiler-builtin-ctfe-ref 2))
-        (= call-id (cbi.compiler-builtin-ctfe-ref 75))
-        (= call-id (cbi.compiler-builtin-ctfe-ref 76))
-        (= call-id (cbi.compiler-builtin-ctfe-ref 77)))
+        (= call-id (cbi.compiler-builtin-ctfe "offset-of"))
+        (= call-id (cbi.compiler-builtin-ctfe "struct-field-count"))
+        (= call-id (cbi.compiler-builtin-ctfe "struct-field-name"))
+        (= call-id (cbi.compiler-builtin-ctfe "struct-field-type")))
       "struct"]
     [(or
-        (= call-id (cbi.compiler-builtin-ctfe-ref 78))
-        (= call-id (cbi.compiler-builtin-ctfe-ref 79))
-        (= call-id (cbi.compiler-builtin-ctfe-ref 80))
-        (= call-id (cbi.compiler-builtin-ctfe-ref 81)))
+        (= call-id (cbi.compiler-builtin-ctfe "enum-variant-count"))
+        (= call-id (cbi.compiler-builtin-ctfe "enum-variant-name"))
+        (= call-id (cbi.compiler-builtin-ctfe "enum-variant-payload-count"))
+        (= call-id (cbi.compiler-builtin-ctfe "enum-variant-payload-type")))
       "enum"]
     [(or
-        (= call-id (cbi.compiler-builtin-ctfe-ref 82))
-        (= call-id (cbi.compiler-builtin-ctfe-ref 84)))
+        (= call-id (cbi.compiler-builtin-ctfe "array-element-type"))
+        (= call-id (cbi.compiler-builtin-ctfe "array-dynamic?")))
       "array"]
-    [(= call-id (cbi.compiler-builtin-ctfe-ref 83)) "fixed array shape"]
-    [(= call-id (cbi.compiler-builtin-ctfe-ref 214)) "box"]
-    [(= call-id (cbi.compiler-builtin-ctfe-ref 218)) "reference"]
+    [(= call-id (cbi.compiler-builtin-ctfe "array-length")) "fixed array shape"]
+    [(= call-id (cbi.compiler-builtin-ctfe "box-element-type")) "box"]
+    [(= call-id (cbi.compiler-builtin-ctfe "reference-element-type"))
+      "reference"]
     [(or
-        (= call-id (cbi.compiler-builtin-ctfe-ref 85))
-        (= call-id (cbi.compiler-builtin-ctfe-ref 86)))
+        (= call-id (cbi.compiler-builtin-ctfe "tuple-element-count"))
+        (= call-id (cbi.compiler-builtin-ctfe "tuple-element-type")))
       "tuple"]
     [(or
-        (= call-id (cbi.compiler-builtin-ctfe-ref 87))
-        (= call-id (cbi.compiler-builtin-ctfe-ref 88))
-        (= call-id (cbi.compiler-builtin-ctfe-ref 89)))
+        (= call-id (cbi.compiler-builtin-ctfe "function-param-count"))
+        (= call-id (cbi.compiler-builtin-ctfe "function-param-type"))
+        (= call-id (cbi.compiler-builtin-ctfe "function-return-type")))
       "function"]
-    [(= call-id (cbi.compiler-builtin-ctfe-ref 211)) "cleanup-owning type"]
+    [(= call-id (cbi.compiler-builtin-ctfe "type-cleanup-function"))
+      "cleanup-owning type"]
     [else "a stronger type-kind bound"]))
 
 (define (tc-macro-abstract-check-current-call
@@ -73811,7 +73813,7 @@
             (tc-macro-state-structural-session state)
             (ast.ast-expr-segment-bases-get expr-bases func)
             (tc-global-shared-view bound))
-          (cbi.compiler-builtin-ctfe-ref 71))
+          (cbi.compiler-builtin-ctfe "type-kind"))
         (= args.len 1)
         (tc-macro-abstract-param-var?
           state
@@ -101639,30 +101641,30 @@
 
 (define (macro-binop-symbol-id [op : ast.AstBinOp]) : i64
   (match op
-    [(ast.AstBinOp.Add) (cbi.compiler-builtin-ctfe-ref 137)]
-    [(ast.AstBinOp.Sub) (cbi.compiler-builtin-ctfe-ref 138)]
-    [(ast.AstBinOp.Mul) (cbi.compiler-builtin-ctfe-ref 139)]
-    [(ast.AstBinOp.Div) (cbi.compiler-builtin-ctfe-ref 140)]
-    [(ast.AstBinOp.Mod) (cbi.compiler-builtin-ctfe-ref 141)]
-    [(ast.AstBinOp.Eq) (cbi.compiler-builtin-ctfe-ref 142)]
-    [(ast.AstBinOp.Ne) (cbi.compiler-builtin-ctfe-ref 143)]
-    [(ast.AstBinOp.Lt) (cbi.compiler-builtin-ctfe-ref 144)]
-    [(ast.AstBinOp.Le) (cbi.compiler-builtin-ctfe-ref 145)]
-    [(ast.AstBinOp.Gt) (cbi.compiler-builtin-ctfe-ref 146)]
-    [(ast.AstBinOp.Ge) (cbi.compiler-builtin-ctfe-ref 147)]
-    [(ast.AstBinOp.And) (cbi.compiler-builtin-ctfe-ref 148)]
-    [(ast.AstBinOp.Or) (cbi.compiler-builtin-ctfe-ref 149)]
-    [(ast.AstBinOp.BitAnd) (cbi.compiler-builtin-ctfe-ref 150)]
-    [(ast.AstBinOp.BitOr) (cbi.compiler-builtin-ctfe-ref 151)]
-    [(ast.AstBinOp.BitXor) (cbi.compiler-builtin-ctfe-ref 152)]
-    [(ast.AstBinOp.Shl) (cbi.compiler-builtin-ctfe-ref 153)]
-    [(ast.AstBinOp.Shr) (cbi.compiler-builtin-ctfe-ref 154)]))
+    [(ast.AstBinOp.Add) (cbi.compiler-builtin-ctfe "+")]
+    [(ast.AstBinOp.Sub) (cbi.compiler-builtin-ctfe "-")]
+    [(ast.AstBinOp.Mul) (cbi.compiler-builtin-ctfe "*")]
+    [(ast.AstBinOp.Div) (cbi.compiler-builtin-ctfe "/")]
+    [(ast.AstBinOp.Mod) (cbi.compiler-builtin-ctfe "%")]
+    [(ast.AstBinOp.Eq) (cbi.compiler-builtin-ctfe "=")]
+    [(ast.AstBinOp.Ne) (cbi.compiler-builtin-ctfe "!=")]
+    [(ast.AstBinOp.Lt) (cbi.compiler-builtin-ctfe "<")]
+    [(ast.AstBinOp.Le) (cbi.compiler-builtin-ctfe "<=")]
+    [(ast.AstBinOp.Gt) (cbi.compiler-builtin-ctfe ">")]
+    [(ast.AstBinOp.Ge) (cbi.compiler-builtin-ctfe ">=")]
+    [(ast.AstBinOp.And) (cbi.compiler-builtin-ctfe "and")]
+    [(ast.AstBinOp.Or) (cbi.compiler-builtin-ctfe "or")]
+    [(ast.AstBinOp.BitAnd) (cbi.compiler-builtin-ctfe "bit-and")]
+    [(ast.AstBinOp.BitOr) (cbi.compiler-builtin-ctfe "bit-or")]
+    [(ast.AstBinOp.BitXor) (cbi.compiler-builtin-ctfe "bit-xor")]
+    [(ast.AstBinOp.Shl) (cbi.compiler-builtin-ctfe "shl")]
+    [(ast.AstBinOp.Shr) (cbi.compiler-builtin-ctfe "shr")]))
 
 (define (macro-unop-symbol-id [op : ast.AstUnOp]) : i64
   (match op
-    [(ast.AstUnOp.Neg) (cbi.compiler-builtin-ctfe-ref 138)]
-    [(ast.AstUnOp.Not) (cbi.compiler-builtin-ctfe-ref 155)]
-    [(ast.AstUnOp.BitNot) (cbi.compiler-builtin-ctfe-ref 156)]))
+    [(ast.AstUnOp.Neg) (cbi.compiler-builtin-ctfe "-")]
+    [(ast.AstUnOp.Not) (cbi.compiler-builtin-ctfe "not")]
+    [(ast.AstUnOp.BitNot) (cbi.compiler-builtin-ctfe "bit-not")]))
 
 (define (macro-lifetime-list-to-spanned-sexpr
   [items : ast.AstLifetimeList]
@@ -101864,55 +101866,55 @@
   (match ty
     [(ast.AstType.I64)
       (ResultMacroSexpr.Ok
-        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 159) span))]
+        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "i64") span))]
     [(ast.AstType.I32)
       (ResultMacroSexpr.Ok
-        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 160) span))]
+        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "i32") span))]
     [(ast.AstType.I16)
       (ResultMacroSexpr.Ok
-        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 161) span))]
+        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "i16") span))]
     [(ast.AstType.I8)
       (ResultMacroSexpr.Ok
-        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 162) span))]
+        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "i8") span))]
     [(ast.AstType.U64)
       (ResultMacroSexpr.Ok
-        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 163) span))]
+        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "u64") span))]
     [(ast.AstType.U32)
       (ResultMacroSexpr.Ok
-        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 164) span))]
+        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "u32") span))]
     [(ast.AstType.U16)
       (ResultMacroSexpr.Ok
-        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 165) span))]
+        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "u16") span))]
     [(ast.AstType.U8)
       (ResultMacroSexpr.Ok
-        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 166) span))]
+        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "u8") span))]
     [(ast.AstType.F64)
       (ResultMacroSexpr.Ok
-        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 167) span))]
+        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "f64") span))]
     [(ast.AstType.F32)
       (ResultMacroSexpr.Ok
-        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 168) span))]
+        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "f32") span))]
     [(ast.AstType.Bool)
       (ResultMacroSexpr.Ok
-        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 169) span))]
+        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "bool") span))]
     [(ast.AstType.Char)
       (ResultMacroSexpr.Ok
-        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 170) span))]
+        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "char") span))]
     [(ast.AstType.String)
       (ResultMacroSexpr.Ok
-        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 158) span))]
+        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "String") span))]
     [(ast.AstType.Str)
       (ResultMacroSexpr.Ok
-        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 171) span))]
+        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "str") span))]
     [(ast.AstType.Bytes)
       (ResultMacroSexpr.Ok
-        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 172) span))]
+        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "bytes") span))]
     [(ast.AstType.Unit)
       (ResultMacroSexpr.Ok
-        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 173) span))]
+        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "unit") span))]
     [(ast.AstType.Never)
       (ResultMacroSexpr.Ok
-        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 174) span))]
+        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "never") span))]
     [(ast.AstType.Expr)
       (ResultMacroSexpr.Ok
         (macro-spanned-symbol-id cbi.compiler-builtin-id-fix-Expr span))]
@@ -101937,7 +101939,7 @@
         [(ResultMacroSexpr.Ok selem)
           (ResultMacroSexpr.Ok
             (macro-form2-id
-              (cbi.compiler-builtin-ctfe-ref 109)
+              (cbi.compiler-builtin-ctfe "Array")
               selem
               (reader.SpannedSexpr.Int count (string.int->string count) span)
               span))]
@@ -101952,14 +101954,14 @@
     [(ast.AstType.Ptr inner)
       (macro-type-unary-sexpr-id
         session
-        (cbi.compiler-builtin-ctfe-ref 177)
+        (cbi.compiler-builtin-ctfe "Ptr")
         inner
         span
         origin)]
     [(ast.AstType.MutPtr inner)
       (macro-type-unary-sexpr-id
         session
-        (cbi.compiler-builtin-ctfe-ref 178)
+        (cbi.compiler-builtin-ctfe "MutPtr")
         inner
         span
         origin)]
@@ -101972,7 +101974,7 @@
         [(ResultMacroSexpr.Ok stail)
           (ResultMacroSexpr.Ok
             (reader.spanned-sexpr-list-prepend
-              (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 175) span)
+              (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "Tuple") span)
               stail
               span))]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
@@ -101996,7 +101998,7 @@
                       (reader.spanned-sexpr-builder-push
                         (reader.spanned-sexpr-builder-new)
                         (macro-spanned-symbol-id
-                          (cbi.compiler-builtin-ctfe-ref 176)
+                          (cbi.compiler-builtin-ctfe "->")
                           span))
                       sargs)
                     sret)
@@ -102029,14 +102031,14 @@
     [(ast.AstType.Struct name)
       (ResultMacroSexpr.Ok
         (macro-resolved-nominal-type-sexpr
-          (cbi.compiler-builtin-ctfe-ref 106)
+          (cbi.compiler-builtin-ctfe "__typelisp internal resolved struct type")
           name
           (ast.ast-lifetime-list-new)
           span))]
     [(ast.AstType.Enum name)
       (ResultMacroSexpr.Ok
         (macro-resolved-nominal-type-sexpr
-          (cbi.compiler-builtin-ctfe-ref 107)
+          (cbi.compiler-builtin-ctfe "__typelisp internal resolved enum type")
           name
           (ast.ast-lifetime-list-new)
           span))]
@@ -102053,14 +102055,14 @@
     [(ast.AstType.StructArgs name lifetimes)
       (ResultMacroSexpr.Ok
         (macro-resolved-nominal-type-sexpr
-          (cbi.compiler-builtin-ctfe-ref 106)
+          (cbi.compiler-builtin-ctfe "__typelisp internal resolved struct type")
           name
           (ast.ast-lifetime-list-box-shared-view lifetimes)
           span))]
     [(ast.AstType.EnumArgs name lifetimes)
       (ResultMacroSexpr.Ok
         (macro-resolved-nominal-type-sexpr
-          (cbi.compiler-builtin-ctfe-ref 107)
+          (cbi.compiler-builtin-ctfe "__typelisp internal resolved enum type")
           name
           (ast.ast-lifetime-list-box-shared-view lifetimes)
           span))]
@@ -102078,9 +102080,9 @@
         [(ResultMacroSexpr.Ok sinner)
           (ResultMacroSexpr.Ok
             (if (= region cbi.compiler-builtin-id-fix-empty)
-              (macro-form1-id (cbi.compiler-builtin-ctfe-ref 110) sinner span)
+              (macro-form1-id (cbi.compiler-builtin-ctfe "&") sinner span)
               (macro-form2-id
-                (cbi.compiler-builtin-ctfe-ref 110)
+                (cbi.compiler-builtin-ctfe "&")
                 (macro-spanned-symbol-id region span)
                 sinner
                 span)))]
@@ -102094,9 +102096,9 @@
         [(ResultMacroSexpr.Ok sinner)
           (ResultMacroSexpr.Ok
             (if (= region cbi.compiler-builtin-id-fix-empty)
-              (macro-form1-id (cbi.compiler-builtin-ctfe-ref 111) sinner span)
+              (macro-form1-id (cbi.compiler-builtin-ctfe "&mut") sinner span)
               (macro-form2-id
-                (cbi.compiler-builtin-ctfe-ref 111)
+                (cbi.compiler-builtin-ctfe "&mut")
                 (macro-spanned-symbol-id region span)
                 sinner
                 span)))]
@@ -102110,7 +102112,7 @@
         [(ResultMacroSexpr.Ok sinner)
           (ResultMacroSexpr.Ok
             (macro-form2-id
-              (cbi.compiler-builtin-ctfe-ref 112)
+              (cbi.compiler-builtin-ctfe "in")
               (macro-spanned-symbol-id region span)
               sinner
               span))]
@@ -102165,7 +102167,7 @@
             (macro-form3-id
               name-id
               sexpr
-              (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 120) span)
+              (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe ":") span)
               sty
               span))]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
@@ -102180,14 +102182,14 @@
     [(ast.AstLiteral.Bool value)
       (macro-spanned-symbol-id
         (if value
-          (cbi.compiler-builtin-ctfe-ref 208)
-          (cbi.compiler-builtin-ctfe-ref 209))
+          (cbi.compiler-builtin-ctfe "true")
+          (cbi.compiler-builtin-ctfe "false"))
         span)]
     [(ast.AstLiteral.Char c) (reader.SpannedSexpr.Char c span)]
     [(ast.AstLiteral.String string-id)
       (reader.SpannedSexpr.Str (ci.intern-id-from-renderable string-id) span)]
     [(ast.AstLiteral.Unit)
-      (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 173) span)]))
+      (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "unit") span)]))
 
 (define (macro-pattern-list-to-spanned-sexpr
   [session : cis.InternStructuralSessionHandle]
@@ -102250,7 +102252,7 @@
           span))]
     [(ast.AstPattern.Wildcard)
       (ResultMacroSexpr.Ok
-        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 180) span))]
+        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "_") span))]
     [(ast.AstPattern.Literal lit)
       (ResultMacroSexpr.Ok (macro-literal-to-spanned-sexpr lit span))]
     [(ast.AstPattern.Variant name args-box)
@@ -102280,7 +102282,7 @@
         [(ResultMacroSexpr.Ok patterns)
           (ResultMacroSexpr.Ok
             (reader.spanned-sexpr-list-prepend
-              (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 124) span)
+              (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "tuple") span)
               patterns
               span))]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
@@ -102293,7 +102295,7 @@
         [(ResultMacroSexpr.Ok patterns)
           (ResultMacroSexpr.Ok
             (reader.spanned-sexpr-list-prepend
-              (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 125) span)
+              (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "array") span)
               patterns
               span))]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
@@ -102414,7 +102416,7 @@
                             "typed-let-binding")
                           span)
                         (macro-spanned-symbol-id
-                          (cbi.compiler-builtin-ctfe-ref 120)
+                          (cbi.compiler-builtin-ctfe ":")
                           span)
                         sty
                         svalue
@@ -102580,8 +102582,8 @@
           (ResultMacroSexpr.Ok
             (macro-spanned-symbol-id
               (if value
-                (cbi.compiler-builtin-ctfe-ref 208)
-                (cbi.compiler-builtin-ctfe-ref 209))
+                (cbi.compiler-builtin-ctfe "true")
+                (cbi.compiler-builtin-ctfe "false"))
               span))]
         [(ast.AstLiteral.Char c)
           (ResultMacroSexpr.Ok (reader.SpannedSexpr.Char c span))]
@@ -102592,7 +102594,7 @@
               span))]
         [(ast.AstLiteral.Unit)
           (ResultMacroSexpr.Ok
-            (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 173) span))])]
+            (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "unit") span))])]
     [(ast.AstExpr.Var name)
       (ResultMacroSexpr.Ok
         (macro-spanned-symbol-id
@@ -102621,7 +102623,7 @@
     [(ast.AstExpr.If cond-box then-box else-box)
       (macro-expr-list-with-head-symbol-id
         session
-        (cbi.compiler-builtin-ctfe-ref 121)
+        (cbi.compiler-builtin-ctfe "if")
         (ast.ast-expr-cons
           cond-box
           (ast.ast-expr-cons
@@ -102632,28 +102634,28 @@
     [(ast.AstExpr.Begin exprs)
       (macro-expr-list-with-head-symbol-id
         session
-        (cbi.compiler-builtin-ctfe-ref 122)
+        (cbi.compiler-builtin-ctfe "begin")
         exprs
         span
         origin)]
     [(ast.AstExpr.Unsafe exprs)
       (macro-expr-list-with-head-symbol-id
         session
-        (cbi.compiler-builtin-ctfe-ref 123)
+        (cbi.compiler-builtin-ctfe "unsafe")
         exprs
         span
         origin)]
     [(ast.AstExpr.Tuple exprs)
       (macro-expr-list-with-head-symbol-id
         session
-        (cbi.compiler-builtin-ctfe-ref 124)
+        (cbi.compiler-builtin-ctfe "tuple")
         exprs
         span
         origin)]
     [(ast.AstExpr.Array exprs)
       (macro-expr-list-with-head-symbol-id
         session
-        (cbi.compiler-builtin-ctfe-ref 125)
+        (cbi.compiler-builtin-ctfe "array")
         exprs
         span
         origin)]
@@ -102667,28 +102669,28 @@
     [(ast.AstExpr.Quote inner-box)
       (macro-expr-list-with-head-symbol-id
         session
-        (cbi.compiler-builtin-ctfe-ref 126)
+        (cbi.compiler-builtin-ctfe "quote")
         (ast.ast-expr-cons inner-box (ast.ast-expr-list-new))
         span
         origin)]
     [(ast.AstExpr.Quasiquote inner-box)
       (macro-expr-list-with-head-symbol-id
         session
-        (cbi.compiler-builtin-ctfe-ref 127)
+        (cbi.compiler-builtin-ctfe "quasiquote")
         (ast.ast-expr-cons inner-box (ast.ast-expr-list-new))
         span
         origin)]
     [(ast.AstExpr.Unquote inner-box)
       (macro-expr-list-with-head-symbol-id
         session
-        (cbi.compiler-builtin-ctfe-ref 128)
+        (cbi.compiler-builtin-ctfe "unquote")
         (ast.ast-expr-cons inner-box (ast.ast-expr-list-new))
         span
         origin)]
     [(ast.AstExpr.UnquoteSplicing inner-box)
       (macro-expr-list-with-head-symbol-id
         session
-        (cbi.compiler-builtin-ctfe-ref 129)
+        (cbi.compiler-builtin-ctfe "unquote-splicing")
         (ast.ast-expr-cons inner-box (ast.ast-expr-list-new))
         span
         origin)]
@@ -102725,7 +102727,7 @@
                   (ResultMacroSexpr.Ok
                     (reader.spanned-sexpr-list-prepend
                       (macro-spanned-symbol-id
-                        (cbi.compiler-builtin-ctfe-ref 181)
+                        (cbi.compiler-builtin-ctfe "let")
                         span)
                       stail
                       span))]
@@ -102742,7 +102744,7 @@
             [(ResultMacroSexpr.Ok sbody)
               (ResultMacroSexpr.Ok
                 (macro-form2-id
-                  (cbi.compiler-builtin-ctfe-ref 113)
+                  (cbi.compiler-builtin-ctfe "while")
                   scond
                   sbody
                   span))]
@@ -102770,7 +102772,7 @@
                           (reader.spanned-sexpr-builder-push
                             (reader.spanned-sexpr-builder-new)
                             (macro-spanned-symbol-id
-                              (cbi.compiler-builtin-ctfe-ref 182)
+                              (cbi.compiler-builtin-ctfe "match")
                               span))
                           sscrutinee)
                         sarms)
@@ -102782,7 +102784,7 @@
         [(ResultMacroSexpr.Ok svalue)
           (ResultMacroSexpr.Ok
             (macro-form2-id
-              (cbi.compiler-builtin-ctfe-ref 157)
+              (cbi.compiler-builtin-ctfe "set!")
               (macro-spanned-symbol-id
                 (macro-output-source-identity-id-at session name "expr-set")
                 span)
@@ -102826,7 +102828,7 @@
             [(ResultMacroSexpr.Ok sindex)
               (ResultMacroSexpr.Ok
                 (macro-form2-id
-                  (cbi.compiler-builtin-ctfe-ref 115)
+                  (cbi.compiler-builtin-ctfe "array-ref")
                   sarray
                   sindex
                   span))]
@@ -102893,7 +102895,7 @@
             [(ResultMacroSexpr.Ok sindex)
               (ResultMacroSexpr.Ok
                 (macro-form2-id
-                  (cbi.compiler-builtin-ctfe-ref 185)
+                  (cbi.compiler-builtin-ctfe "array-take!")
                   sarray
                   sindex
                   span))]
@@ -102914,7 +102916,7 @@
             [(ResultMacroSexpr.Ok sreplacement)
               (ResultMacroSexpr.Ok
                 (macro-form2-id
-                  (cbi.compiler-builtin-ctfe-ref 284)
+                  (cbi.compiler-builtin-ctfe "expr-replace")
                   splace
                   sreplacement
                   span))]
@@ -102948,7 +102950,7 @@
             [(ResultMacroSexpr.Ok sindex)
               (ResultMacroSexpr.Ok
                 (macro-form2-id
-                  (cbi.compiler-builtin-ctfe-ref 117)
+                  (cbi.compiler-builtin-ctfe "string-ref")
                   sstring
                   sindex
                   span))]
@@ -102980,7 +102982,7 @@
                       [index : i64
                         (ast.ast-tuple-set-index-from-field-id field)]
                       (macro-form2-id
-                        (cbi.compiler-builtin-ctfe-ref 188)
+                        (cbi.compiler-builtin-ctfe "tuple-ref")
                         sreceiver
                         (reader.SpannedSexpr.Int
                           index
@@ -102994,7 +102996,7 @@
                       span))]
                 (ResultMacroSexpr.Ok
                   (macro-form2-id
-                    (cbi.compiler-builtin-ctfe-ref 157)
+                    (cbi.compiler-builtin-ctfe "set!")
                     starget
                     svalue
                     span)))]
@@ -103015,11 +103017,9 @@
             [(ResultMacroSexpr.Ok sty)
               (ResultMacroSexpr.Ok
                 (macro-form3-id
-                  (cbi.compiler-builtin-ctfe-ref 186)
+                  (cbi.compiler-builtin-ctfe "cast")
                   sinner
-                  (macro-spanned-symbol-id
-                    (cbi.compiler-builtin-ctfe-ref 120)
-                    span)
+                  (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe ":") span)
                   sty
                   span))]
             [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
@@ -103039,11 +103039,9 @@
             [(ResultMacroSexpr.Ok sty)
               (ResultMacroSexpr.Ok
                 (macro-form3-id
-                  (cbi.compiler-builtin-ctfe-ref 187)
+                  (cbi.compiler-builtin-ctfe "ann")
                   sinner
-                  (macro-spanned-symbol-id
-                    (cbi.compiler-builtin-ctfe-ref 120)
-                    span)
+                  (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe ":") span)
                   sty
                   span))]
             [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
@@ -103054,8 +103052,8 @@
           (let
             [head-id : i64
               (if mutable
-                (cbi.compiler-builtin-ctfe-ref 111)
-                (cbi.compiler-builtin-ctfe-ref 110))]
+                (cbi.compiler-builtin-ctfe "&mut")
+                (cbi.compiler-builtin-ctfe "&"))]
             (match (ast.ast-borrow-lifetime-from-id lifetime-id)
               [(ast.AstBorrowLifetime.Inferred)
                 (ResultMacroSexpr.Ok (macro-form1-id head-id splace span))]
@@ -103071,19 +103069,19 @@
       (match (macro-child-to-spanned-sexpr session inner-id span origin)
         [(ResultMacroSexpr.Ok sinner)
           (ResultMacroSexpr.Ok
-            (macro-form1-id (cbi.compiler-builtin-ctfe-ref 130) sinner span))]
+            (macro-form1-id (cbi.compiler-builtin-ctfe "return") sinner span))]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.Try inner-id)
       (match (macro-child-to-spanned-sexpr session inner-id span origin)
         [(ResultMacroSexpr.Ok sinner)
           (ResultMacroSexpr.Ok
-            (macro-form1-id (cbi.compiler-builtin-ctfe-ref 131) sinner span))]
+            (macro-form1-id (cbi.compiler-builtin-ctfe "try") sinner span))]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.Box inner-id)
       (match (macro-child-to-spanned-sexpr session inner-id span origin)
         [(ResultMacroSexpr.Ok sinner)
           (ResultMacroSexpr.Ok
-            (macro-form1-id (cbi.compiler-builtin-ctfe-ref 132) sinner span))]
+            (macro-form1-id (cbi.compiler-builtin-ctfe "box") sinner span))]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.BoxGet inner-id)
       (match (macro-child-to-spanned-sexpr session inner-id span origin)
@@ -103108,7 +103106,7 @@
             [(ResultMacroSexpr.Ok svalue)
               (ResultMacroSexpr.Ok
                 (macro-form2-id
-                  (cbi.compiler-builtin-ctfe-ref 157)
+                  (cbi.compiler-builtin-ctfe "set!")
                   (macro-form1-id (ci.intern "__tl_box-get") sreceiver span)
                   svalue
                   span))]
@@ -103119,7 +103117,7 @@
         [(ResultMacroSexpr.Ok stuple)
           (ResultMacroSexpr.Ok
             (macro-form2-id
-              (cbi.compiler-builtin-ctfe-ref 188)
+              (cbi.compiler-builtin-ctfe "tuple-ref")
               stuple
               (reader.SpannedSexpr.Int index (string.int->string index) span)
               span))]
@@ -103129,17 +103127,15 @@
         [(ast.AstMaybeType.No)
           (ResultMacroSexpr.Ok
             (reader.spanned-sexpr-list1
-              (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 118) span)
+              (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "init") span)
               span))]
         [(ast.AstMaybeType.Some ty)
           (match (macro-type-to-spanned-sexpr session ty span origin)
             [(ResultMacroSexpr.Ok sty)
               (ResultMacroSexpr.Ok
                 (macro-form2-id
-                  (cbi.compiler-builtin-ctfe-ref 118)
-                  (macro-spanned-symbol-id
-                    (cbi.compiler-builtin-ctfe-ref 120)
-                    span)
+                  (cbi.compiler-builtin-ctfe "init")
+                  (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe ":") span)
                   sty
                   span))]
             [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])])]
@@ -103151,7 +103147,7 @@
         origin)
         [(ResultMacroSexpr.Ok sty)
           (ResultMacroSexpr.Ok
-            (macro-form1-id (cbi.compiler-builtin-ctfe-ref 135) sty span))]
+            (macro-form1-id (cbi.compiler-builtin-ctfe "type") sty span))]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.PtrNull ty-id)
       (match (macro-type-to-spanned-sexpr
@@ -103162,36 +103158,36 @@
         [(ResultMacroSexpr.Ok sty)
           (ResultMacroSexpr.Ok
             (macro-form2-id
-              (cbi.compiler-builtin-ctfe-ref 119)
-              (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 120) span)
+              (cbi.compiler-builtin-ctfe "ptr-null")
+              (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe ":") span)
               sty
               span))]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.PtrNullCheck ptr-id)
       (macro-child-form1-id
         session
-        (cbi.compiler-builtin-ctfe-ref 189)
+        (cbi.compiler-builtin-ctfe "ptr-null?")
         ptr-id
         span
         origin)]
     [(ast.AstExpr.PtrAddrOf place-id)
       (macro-child-form1-id
         session
-        (cbi.compiler-builtin-ctfe-ref 190)
+        (cbi.compiler-builtin-ctfe "ptr-addr-of")
         place-id
         span
         origin)]
     [(ast.AstExpr.PtrRead ptr-id)
       (macro-child-form1-id
         session
-        (cbi.compiler-builtin-ctfe-ref 191)
+        (cbi.compiler-builtin-ctfe "ptr-read")
         ptr-id
         span
         origin)]
     [(ast.AstExpr.PtrWrite ptr-id value-id)
       (macro-child-form2-id
         session
-        (cbi.compiler-builtin-ctfe-ref 192)
+        (cbi.compiler-builtin-ctfe "ptr-write!")
         ptr-id
         value-id
         span
@@ -103199,7 +103195,7 @@
     [(ast.AstExpr.PtrOffset ptr-id offset-id)
       (macro-child-form2-id
         session
-        (cbi.compiler-builtin-ctfe-ref 193)
+        (cbi.compiler-builtin-ctfe "ptr-offset")
         ptr-id
         offset-id
         span
@@ -103207,7 +103203,7 @@
     [(ast.AstExpr.PtrCast ptr-id ty-id)
       (macro-child-type-form3-id
         session
-        (cbi.compiler-builtin-ctfe-ref 194)
+        (cbi.compiler-builtin-ctfe "ptr-cast")
         ptr-id
         (ast.ty-node-get ty-id)
         span
@@ -103215,14 +103211,14 @@
     [(ast.AstExpr.PtrToInt ptr-id)
       (macro-child-form1-id
         session
-        (cbi.compiler-builtin-ctfe-ref 195)
+        (cbi.compiler-builtin-ctfe "ptr->int")
         ptr-id
         span
         origin)]
     [(ast.AstExpr.IntToPtr value-id ty-id)
       (macro-child-type-form3-id
         session
-        (cbi.compiler-builtin-ctfe-ref 196)
+        (cbi.compiler-builtin-ctfe "int->ptr")
         value-id
         (ast.ty-node-get ty-id)
         span
@@ -103230,14 +103226,14 @@
     [(ast.AstExpr.StringData value-id)
       (macro-child-form1-id
         session
-        (cbi.compiler-builtin-ctfe-ref 197)
+        (cbi.compiler-builtin-ctfe "string-data")
         value-id
         span
         origin)]
     [(ast.AstExpr.StringFromBytes ptr-id len-id)
       (macro-child-form2-id
         session
-        (cbi.compiler-builtin-ctfe-ref 198)
+        (cbi.compiler-builtin-ctfe "string-from-bytes")
         ptr-id
         len-id
         span
@@ -103252,7 +103248,7 @@
     [(ast.AstExpr.BinaryData bytes)
       (ResultMacroSexpr.Ok
         (macro-form1-id
-          (cbi.compiler-builtin-ctfe-ref 213)
+          (cbi.compiler-builtin-ctfe "__typelisp internal binary data")
           (reader.SpannedSexpr.Str
             (ci.intern-id-from-renderable
               (ci.intern-generated-canonical-name bytes))
@@ -103260,17 +103256,17 @@
           span))]
     [(ast.AstExpr.ProgramArgc)
       (ResultMacroSexpr.Ok
-        (macro-form0-id (cbi.compiler-builtin-ctfe-ref 200) span))]
+        (macro-form0-id (cbi.compiler-builtin-ctfe "program-argc") span))]
     [(ast.AstExpr.ProgramArgv)
       (ResultMacroSexpr.Ok
-        (macro-form0-id (cbi.compiler-builtin-ctfe-ref 201) span))]
+        (macro-form0-id (cbi.compiler-builtin-ctfe "program-argv") span))]
     [(ast.AstExpr.ProgramEnvp)
       (ResultMacroSexpr.Ok
-        (macro-form0-id (cbi.compiler-builtin-ctfe-ref 202) span))]
+        (macro-form0-id (cbi.compiler-builtin-ctfe "program-envp") span))]
     [(ast.AstExpr.CpuIdEax leaf-id subleaf-id)
       (macro-child-form2-id
         session
-        (cbi.compiler-builtin-ctfe-ref 203)
+        (cbi.compiler-builtin-ctfe "cpuid-eax")
         leaf-id
         subleaf-id
         span
@@ -103278,7 +103274,7 @@
     [(ast.AstExpr.CpuIdEbx leaf-id subleaf-id)
       (macro-child-form2-id
         session
-        (cbi.compiler-builtin-ctfe-ref 204)
+        (cbi.compiler-builtin-ctfe "cpuid-ebx")
         leaf-id
         subleaf-id
         span
@@ -103286,7 +103282,7 @@
     [(ast.AstExpr.CpuIdEcx leaf-id subleaf-id)
       (macro-child-form2-id
         session
-        (cbi.compiler-builtin-ctfe-ref 205)
+        (cbi.compiler-builtin-ctfe "cpuid-ecx")
         leaf-id
         subleaf-id
         span
@@ -103294,7 +103290,7 @@
     [(ast.AstExpr.CpuIdEdx leaf-id subleaf-id)
       (macro-child-form2-id
         session
-        (cbi.compiler-builtin-ctfe-ref 206)
+        (cbi.compiler-builtin-ctfe "cpuid-edx")
         leaf-id
         subleaf-id
         span
@@ -103302,14 +103298,14 @@
     [(ast.AstExpr.Xgetbv index-id)
       (macro-child-form1-id
         session
-        (cbi.compiler-builtin-ctfe-ref 207)
+        (cbi.compiler-builtin-ctfe "xgetbv")
         index-id
         span
         origin)]
     [(ast.AstExpr.Syscall args)
       (macro-expr-list-with-head-symbol-id
         session
-        (cbi.compiler-builtin-ctfe-ref 136)
+        (cbi.compiler-builtin-ctfe "syscall")
         args
         span
         origin)]
@@ -105078,7 +105074,7 @@
                 source-head-id)]
             [count : i64 args.len]
             (cond
-              [(= source-head-id (cbi.compiler-builtin-ctfe-ref 122))
+              [(= source-head-id (cbi.compiler-builtin-ctfe "begin"))
                 (macro-hygiene-output-decl-list-env (& args) 0 env)]
               [(= tag (parser.compiler-parse-tag-decl-module))
                 (macro-hygiene-output-decl-list-env (& args) 1 env)]

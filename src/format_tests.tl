@@ -1,14 +1,12 @@
 ;; format_tests.tl - White-box tests for the formatter: token and CST shape,
-;; rule rendering fixtures, and the fmt CLI diff and error paths.
+;; rule rendering fixtures, and the fmt CLI error paths.
 (import compiler_owned_view as owned_view)
-(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.vector)
 (import (vector.vector String) as fmt_svec)
 (import format_tokens as tokens)
 (import format_rules)
-(import format_render_buf as fmt_buf)
 (import format_cli_core as fcli)
 (import format_cst as cst)
 (import format_rules as rules)
@@ -57,128 +55,6 @@
     (fmt-malformed-int-error? "(define x 0b2)"))
     unit
     (io.panic "fmt number literal diagnostics changed")))
-
-(test
-  fmt-check-diff-renders-a-unified-hunk
-  (let
-    [diff : String
-      (fcli.fmt-unified-diff "t.tl" "(a)\n(b   c)\n(d)\n" "(a)\n(b c)\n(d)\n")]
-    (if (string.eq
-      diff
-      "--- a/t.tl\n+++ b/t.tl\n@@ -1,4 +1,4 @@\n (a)\n-(b   c)\n+(b c)\n (d)\n \n")
-      unit
-      (io.panic (string.copy diff)))))
-
-;; A file that is already formatted must not reach the diff path at all, but the
-;; renderer still has to be total: with no differing lines the prefix consumes
-;; everything and both `-` and `+` runs are empty.
-(test
-  fmt-check-diff-of-identical-text-has-no-changed-lines
-  (let
-    [diff : String (fcli.fmt-unified-diff "t.tl" "(a)\n(b)\n" "(a)\n(b)\n")]
-    (if (and
-      (not (string.contains (& diff) "-("))
-      (not (string.contains (& diff) "+(")))
-      unit
-      (io.panic (string.copy diff)))))
-
-(test
-  fmt-check-diff-splits-distant-changes-into-separate-hunks
-  (let
-    [diff : String
-      (fcli.fmt-unified-diff
-        "t.tl"
-        "(a)\n(b   c)\n(c)\n(d)\n(e)\n(f)\n(g)\n(h)\n(i)\n(j   k)\n(l)\n(m)\n(n)\n"
-        "(a)\n(b c)\n(c)\n(d)\n(e)\n(f)\n(g)\n(h)\n(i)\n(j k)\n(l)\n(m)\n(n)\n")]
-    (if (string.eq
-      diff
-      "--- a/t.tl\n+++ b/t.tl\n@@ -1,5 +1,5 @@\n (a)\n-(b   c)\n+(b c)\n (c)\n (d)\n (e)\n@@ -7,8 +7,8 @@\n (g)\n (h)\n (i)\n-(j   k)\n+(j k)\n (l)\n (m)\n (n)\n \n")
-      unit
-      (io.panic (string.copy diff)))))
-
-(test
-  fmt-check-diff-resynchronizes-after-an-inserted-line
-  (let
-    [diff : String
-      (fcli.fmt-unified-diff
-        "t.tl"
-        "(a)\n(b)\n(c)\n(d)\n(e)\n"
-        "(a)\n(b)\n(inserted)\n(c)\n(d)\n(e)\n")]
-    (if (and
-      (string.contains (& diff) "+(inserted)\n")
-      (not (string.contains (& diff) "-(c)\n"))
-      (not (string.contains (& diff) "+(c)\n")))
-      unit
-      (io.panic (string.copy diff)))))
-
-(define (fmt-diff-large-fixture [formatted : bool]) : String
-  (let
-    [buf : fmt_buf.FmtRenderBuf (fmt_buf.fmt-render-buf-new)]
-    [index : i64 0]
-    (begin
-      (while (< index 4096)
-        (begin
-          (fmt_buf.fmt-render-buf-append
-            (&mut buf)
-            (if (and (not formatted) (or (= index 8) (= index 4088)))
-              (str_cat.str-cat
-                "(define  value-"
-                (string.int->string index)
-                "  0)\n")
-              (str_cat.str-cat
-                "(define value-"
-                (string.int->string index)
-                " 0)\n")))
-          (set! index (+ index 1))))
-      (fmt_buf.fmt-render-buf-string buf))))
-
-(test
-  fmt-check-diff-output-is-bounded-by-changes-not-distance
-  (let
-    [diff : String
-      (fcli.fmt-unified-diff
-        "large.tl"
-        (fmt-diff-large-fixture false)
-        (fmt-diff-large-fixture true))]
-    (if (and
-      (< (string.string-length diff) 4096)
-      (string.contains (& diff) "-(define  value-8  0)\n")
-      (string.contains (& diff) "-(define  value-4088  0)\n")
-      (not (string.contains (& diff) "value-2048")))
-      unit
-      (io.panic (string.copy diff)))))
-
-(define (fmt-diff-long-replacement-fixture [prefix : String]) : String
-  (let
-    [buf : fmt_buf.FmtRenderBuf (fmt_buf.fmt-render-buf-new)]
-    [index : i64 0]
-    (begin
-      (while (< index 70)
-        (begin
-          (fmt_buf.fmt-render-buf-append
-            (&mut buf)
-            (str_cat.str-cat
-              (owned_view.compiler-owned-shared-view prefix)
-              (string.int->string index)
-              "\n"))
-          (set! index (+ index 1))))
-      (fmt_buf.fmt-render-buf-append (&mut buf) "tail\n")
-      (fmt_buf.fmt-render-buf-string buf))))
-
-(test
-  fmt-check-diff-resynchronizes-after-a-long-replacement
-  (let
-    [diff : String
-      (fcli.fmt-unified-diff
-        "long.tl"
-        (fmt-diff-long-replacement-fixture "old-")
-        (fmt-diff-long-replacement-fixture "new-"))]
-    (if (and
-      (string.contains (& diff) " tail\n")
-      (not (string.contains (& diff) "-tail\n"))
-      (not (string.contains (& diff) "+tail\n")))
-      unit
-      (io.panic (string.copy diff)))))
 
 (define (fmt-list-count [items : cst.FormatCstList]) : i64
   items.len)

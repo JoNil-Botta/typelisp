@@ -1,4 +1,4 @@
-;; SWB-FIX-1 runtime coverage: the `fmt-diff-line-eq?` shape from
+;; SWB-FIX-1 runtime coverage: the `fmt-diff-line-eq?` shape formerly in
 ;; src/format_cli_core.tl. A short-circuiting range guard is followed by a call
 ;; that needs the frame:
 ;;

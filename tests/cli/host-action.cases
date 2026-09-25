@@ -747,10 +747,27 @@ file fmt-changed.tl
     x))
 end-file
 sh cp "{{dir}}/fmt-changed.tl" "{{dir}}/fmt-changed.expected"
-run fmt --check "{{dir}}/fmt-changed.tl"
+# The canonical form has no final newline, so the old trailing empty line is
+# removed and the last formatted line is the final segment.
+file fmt-check-changed.expected-stderr
+fmt: would reformat fmt-changed.tl
+--- a/fmt-changed.tl
++++ b/fmt-changed.tl
+@@ -1,4 +1,4 @@
+ (define (main) : i64
+-  (let ([x : i64 42])
+-    x))
+-
++  (let
++    [x : i64 42]
++    x))
+end-file
+cwd {{dir}}
+run fmt --check fmt-changed.tl
 exit nonzero
 stdout empty
-stderr contains fmt: would reformat
+same "{{dir}}/fmt-check-changed.expected-stderr" "{{stderr}}"
+cwd -
 same "{{dir}}/fmt-changed.tl" "{{dir}}/fmt-changed.expected"
 step fmt-missing
 run fmt "{{dir}}/missing.tl"

@@ -3179,7 +3179,7 @@
       empty-seen
       (tc_core.tc-global-shared-view roots)
       cfgs
-      (tc_core.tc-global-shared-view pools))
+      pools)
       [(tc_core.ResultMacroMaterializeImport.Ok _ _ first-seen)
         ;; A second traversal from an independent seen set must reuse A's
         ;; program/surface caches. The selected compatibility session is
@@ -3194,7 +3194,7 @@
           empty-seen
           (tc_core.tc-global-shared-view roots)
           cfgs
-          (tc_core.tc-global-shared-view pools))
+          pools)
           [(tc_core.ResultMacroMaterializeImport.Ok _ _ _)
             (match (tc_core.macro-materialize-generated-import
               (tc_core.tc-global-shared-view state)
@@ -3206,7 +3206,7 @@
               empty-seen
               (tc_core.tc-global-shared-view roots)
               cfgs
-              (tc_core.tc-global-shared-view pools))
+              pools)
               [(tc_core.ResultMacroMaterializeImport.Ok _ _ _)
                 (match (tc_core.macro-materialize-generated-import
                   (tc_core.tc-global-shared-view state)
@@ -3425,7 +3425,7 @@
         (tc_core.tc-global-shared-view roots)
         ast.AstMaybeModuleName.No
         cfgs
-        (tc_core.tc-global-shared-view pools))
+        pools)
         [(load.ResultCompilerLoadWithPaths.Ok decls paths modules _)
           (tc_api.typecheck-compiler-program-with-paths-cache-and-load-state-and-prefix-cache-state-and-pools
             (tc_core.tc-global-shared-view state-a)
@@ -3436,7 +3436,7 @@
             (tc_core.tc-global-shared-view roots)
             cfgs
             "typecheck-generated-import-state-threading"
-            (tc_core.tc-global-shared-view pools))]
+            pools)]
         [(load.ResultCompilerLoadWithPaths.Err diag)
           (tc_core.ResultCompilerTypecheck.Err
             (diagnostic.compiler-diagnostic-list-box-single diag))])]

@@ -2416,7 +2416,7 @@
         program
         paths
         (tc_core.tc-global-shared-view stdlib-roots)
-        (tc_core.tc-global-shared-view cfgs)
+        cfgs
         (tc_api.compiler-typecheck-prefix-cache-scope
           "typecheck-prefix-smoke"
           stdlib-roots
@@ -2553,7 +2553,7 @@
         (ast.ast-program decls)
         paths
         (tc_core.tc-global-shared-view stdlib-roots)
-        (tc_core.tc-global-shared-view cfgs)
+        cfgs
         (tc_api.compiler-typecheck-prefix-cache-scope
           "typecheck-prefix-smoke"
           stdlib-roots
@@ -2571,7 +2571,7 @@
       entry-path
       (sym_i64_env.sym-i64-empty)
       (tc_core.tc-global-shared-view stdlib-roots)
-      (tc_core.tc-global-shared-view cfgs))
+      cfgs)
     stdlib-roots
     cfgs))
 
@@ -2638,18 +2638,18 @@
             entry-a
             (sym_i64_env.sym-i64-empty)
             (tc_core.tc-global-shared-view roots)
-            (tc_core.tc-global-shared-view cfgs))]
+            cfgs)]
         [loaded-b : load.ResultCompilerLoadWithPaths
           (load.compiler-load-file-with-paths-and-roots-cfg
             entry-b
             (sym_i64_env.sym-i64-empty)
             (tc_core.tc-global-shared-view roots)
-            (tc_core.tc-global-shared-view cfgs))]
+            cfgs)]
         (begin
           (if (compiler-typecheck-smoke-prefix-cache-loaded-check
             loaded-a
             (tc_core.tc-global-shared-view roots)
-            (tc_core.tc-global-shared-view cfgs))
+            cfgs)
             unit
             (set! ok false))
           (tc_core.compiler-typecheck-reset-file-state!)
@@ -2698,18 +2698,18 @@
             entry-a
             (sym_i64_env.sym-i64-empty)
             (tc_core.tc-global-shared-view roots)
-            (tc_core.tc-global-shared-view cfgs))]
+            cfgs)]
         [loaded-b : load.ResultCompilerLoadWithPaths
           (load.compiler-load-file-with-paths-and-roots-cfg
             entry-b
             (sym_i64_env.sym-i64-empty)
             (tc_core.tc-global-shared-view roots)
-            (tc_core.tc-global-shared-view cfgs))]
+            cfgs)]
         (begin
           (if (compiler-typecheck-smoke-prefix-cache-loaded-check
             loaded-a
             (tc_core.tc-global-shared-view roots)
-            (tc_core.tc-global-shared-view cfgs))
+            cfgs)
             unit
             (set! ok false))
           (tc_core.compiler-typecheck-reset-file-state!)
@@ -2767,7 +2767,7 @@
       (if (compiler-typecheck-smoke-prefix-cache-file-check
         root-then-named
         (tc_core.tc-global-shared-view roots)
-        (tc_core.tc-global-shared-view cfgs))
+        cfgs)
         unit
         (set! ok false))
       (tc_api.compiler-typecheck-reset-load-session!)
@@ -3107,13 +3107,13 @@
         (tc_core.tc-global-shared-view entry)
         (sym_i64_env.sym-i64-empty)
         (tc_core.tc-global-shared-view roots)
-        (tc_core.tc-global-shared-view cfgs))
+        cfgs)
         [(load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
           (match (tc_api.typecheck-compiler-program-with-paths-cache
             (ast.ast-program decls)
             paths
             (tc_core.tc-global-shared-view roots)
-            (tc_core.tc-global-shared-view cfgs)
+            cfgs
             (tc_api.compiler-typecheck-prefix-cache-scope
               "typecheck-generated-import-call-site"
               roots
@@ -3176,9 +3176,9 @@
       owner-id
       ""
       cbi.compiler-builtin-id-fix-empty
-      (tc_core.tc-global-shared-view empty-seen)
+      empty-seen
       (tc_core.tc-global-shared-view roots)
-      (tc_core.tc-global-shared-view cfgs)
+      cfgs
       (tc_core.tc-global-shared-view pools))
       [(tc_core.ResultMacroMaterializeImport.Ok _ _ first-seen)
         ;; A second traversal from an independent seen set must reuse A's
@@ -3191,34 +3191,34 @@
           owner-id
           ""
           cbi.compiler-builtin-id-fix-empty
-          (tc_core.tc-global-shared-view empty-seen)
+          empty-seen
           (tc_core.tc-global-shared-view roots)
-          (tc_core.tc-global-shared-view cfgs)
+          cfgs
           (tc_core.tc-global-shared-view pools))
           [(tc_core.ResultMacroMaterializeImport.Ok _ _ _)
             (match (tc_core.macro-materialize-generated-import
               (tc_core.tc-global-shared-view state)
-              (tc_core.tc-global-shared-view generated-import)
+              generated-import
               (tc_core.tc-global-shared-view entry)
               owner-id
               ""
               cbi.compiler-builtin-id-fix-empty
-              (tc_core.tc-global-shared-view empty-seen)
+              empty-seen
               (tc_core.tc-global-shared-view roots)
-              (tc_core.tc-global-shared-view cfgs)
+              cfgs
               (tc_core.tc-global-shared-view pools))
               [(tc_core.ResultMacroMaterializeImport.Ok _ _ _)
                 (match (tc_core.macro-materialize-generated-import
                   (tc_core.tc-global-shared-view state)
                   missing-import
-                  (tc_core.tc-global-shared-view entry)
+                  entry
                   owner-id
                   ""
                   cbi.compiler-builtin-id-fix-empty
-                  (tc_core.tc-global-shared-view first-seen)
-                  (tc_core.tc-global-shared-view roots)
-                  (tc_core.tc-global-shared-view cfgs)
-                  (tc_core.tc-global-shared-view pools))
+                  first-seen
+                  roots
+                  cfgs
+                  pools)
                   [(tc_core.ResultMacroMaterializeImport.Err diag)
                     (begin
                       (if (compiler-typecheck-smoke-generated-import-location-ok?
@@ -3315,7 +3315,7 @@
         (tc_core.tc-global-shared-view state-b))]
     [interleaved : CompilerTypecheckGeneratedImportStateSnapshot
       (compiler-typecheck-smoke-generated-import-state-run
-        (tc_core.tc-global-shared-view state-a)
+        state-a
         generated-import
         missing-import
         pools)]
@@ -3430,11 +3430,11 @@
           (tc_api.typecheck-compiler-program-with-paths-cache-and-load-state-and-prefix-cache-state-and-pools
             (tc_core.tc-global-shared-view state-a)
             (tc_core.tc-global-shared-view prefix-cache-a)
-            (tc_core.tc-global-shared-view job-state-a)
+            job-state-a
             (ast.ast-program decls)
             (ast.ast-decl-path-list-with-modules paths modules)
             (tc_core.tc-global-shared-view roots)
-            (tc_core.tc-global-shared-view cfgs)
+            cfgs
             "typecheck-generated-import-state-threading"
             (tc_core.tc-global-shared-view pools))]
         [(load.ResultCompilerLoadWithPaths.Err diag)
@@ -3450,15 +3450,15 @@
           (tc_api.typecheck-compiler-program-with-paths-cache-and-load-state-and-prefix-cache-state-and-pools
             (tc_core.tc-global-shared-view state-a)
             (tc_core.tc-global-shared-view prefix-cache-a)
-            (tc_core.tc-global-shared-view job-state-a)
+            job-state-a
             bad-program
             (ast.ast-decl-root-path-cons
               "target/tc_state_controlled_failure.tl"
               (ast.ast-decl-path-list-new))
-            (tc_core.tc-global-shared-view roots)
-            (tc_core.tc-global-shared-view cfgs)
+            roots
+            cfgs
             "typecheck-controlled-failure-state-threading"
-            (tc_core.tc-global-shared-view pools))]
+            pools)]
         [(parser.ResultAstProgramDiagnostic.Err diag)
           (tc_core.ResultCompilerTypecheck.Err
             (diagnostic.compiler-diagnostic-list-box-single diag))])]
@@ -3537,9 +3537,8 @@
           items))]
     [cfgs : sym_i64_env.SymI64Env (parser.compiler-cfg-empty)]
     (begin
-      (load.compiler-load-test-mkdir (tc_core.tc-global-shared-view base))
-      (load.compiler-load-test-mkdir
-        (tc_core.tc-global-shared-view stdlib-root))
+      (load.compiler-load-test-mkdir base)
+      (load.compiler-load-test-mkdir stdlib-root)
       (compiler-typecheck-smoke-write-text dep "(define value : i64 42)")
       (compiler-typecheck-smoke-write-text
         (tc_core.tc-global-shared-view entry)
@@ -3562,7 +3561,7 @@
     [roots : svec.Vec (svec.new)]
     [cfgs : sym_i64_env.SymI64Env (parser.compiler-cfg-empty)]
     (begin
-      (load.compiler-load-test-mkdir (tc_core.tc-global-shared-view dir))
+      (load.compiler-load-test-mkdir dir)
       (compiler-typecheck-smoke-write-text
         (tc_core.tc-global-shared-view dep)
         "(define imported : i64 true)")
@@ -3572,19 +3571,19 @@
 (import dep)
 (define (main) : i64 0)")
       (match (load.compiler-load-file-with-paths-and-roots-cfg
-        (tc_core.tc-global-shared-view entry)
+        entry
         (sym_i64_env.sym-i64-empty)
         (tc_core.tc-global-shared-view roots)
-        (tc_core.tc-global-shared-view cfgs))
+        cfgs)
         [(load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
           (match (tc_api.typecheck-compiler-program-with-paths-cache
             (ast.ast-program decls)
             paths
             (tc_core.tc-global-shared-view roots)
-            (tc_core.tc-global-shared-view cfgs)
+            cfgs
             (tc_api.compiler-typecheck-prefix-cache-scope
               "typecheck-specialized-import-path-smoke"
-              (tc_core.tc-global-shared-view roots)
+              roots
               cfgs))
             [(tc_core.ResultCompilerTypecheck.Err diag)
               (let
@@ -3643,7 +3642,7 @@
             (ast.ast-program decls)
             (ast.ast-decl-path-list-with-modules paths modules)
             roots
-            (tc_core.tc-global-shared-view cfgs)
+            cfgs
             "typecheck-macro-transitive-dependency-state"
             pools)]
         [(load.ResultCompilerLoadWithPaths.Err diag)
@@ -3684,7 +3683,7 @@
           (and
             (string.eq
               (diagnostic.compiler-diagnostic-path (__tl-box-place diag))
-              (tc_core.tc-global-shared-view missing))
+              missing)
             (string.eq
               (diagnostic.compiler-diagnostic-message (__tl-box-place diag))
               (str_cat.str-cat "compiler-load: cannot read import " missing)))]
@@ -3713,7 +3712,7 @@
           (compiler-typecheck-smoke-prefix-cache-file-check
             (tc_core.tc-global-shared-view entry)
             (tc_core.tc-global-shared-view roots)
-            (tc_core.tc-global-shared-view cfgs))]
+            cfgs)]
         [_reset : unit (tc_api.compiler-typecheck-reset-load-session!)]
         [state-ok : bool
           (compiler-typecheck-smoke-macro-dependency-state-check
@@ -3746,7 +3745,7 @@
     [macro-state : tc_core.TcMacroState
       (tc_core.tc-job-state-macro-state (tc_core.tc-serial-job-state))]
     [ctfe-state : ctfe.CompilerCtfeMacroState
-      (tc_core.tc-macro-ctfe-state (tc_core.tc-global-shared-view macro-state))]
+      (tc_core.tc-macro-ctfe-state macro-state)]
     (begin
       (compiler-typecheck-smoke-write-text
         provider
@@ -3756,21 +3755,20 @@
         (compiler-typecheck-smoke-surface-macro-entry-source))
       (tc_api.compiler-typecheck-reset-load-session!)
       (match (load.compiler-load-file-with-paths-and-roots-cfg
-        (tc_core.tc-global-shared-view entry)
+        entry
         (sym_i64_env.sym-i64-empty)
         roots
         cfgs)
         [(load.ResultCompilerLoadWithPaths.Ok _ _ _ _)
           (begin
             (tc_core.tc-macro-state-bind-source-names!
-              (tc_core.tc-global-shared-view macro-state)
+              macro-state
               (ci.intern-source-name-session-capture-active-handle))
-            (ctfe.ctfe-module-macro-export-reset-for-state!
-              (tc_core.tc-global-shared-view ctfe-state))
+            (ctfe.ctfe-module-macro-export-reset-for-state! ctfe-state)
             (let
               [names : tc_core.TcNameIdList
                 (tc_core.macro-collect-surface-summary-macro-names
-                  (tc_core.tc-global-shared-view macro-state)
+                  macro-state
                   (load.compiler-load-surface-summaries)
                   (tc_core.TcNameIdList.Nil))]
               ;; The provider stays a lazy surface summary (aliased dotted
@@ -3786,7 +3784,7 @@
               [generated-hook-id : i64 (ci.intern-generated-name "hook")]
               [retained : tc_core.MacroMaybeDecl
                 (tc_core.macro-surface-call-decl-in-module
-                  (tc_core.tc-global-shared-view macro-state)
+                  macro-state
                   provider-id
                   hook-id)]
               [before-reset : bool
@@ -3809,7 +3807,7 @@
                       provider-id
                       (ci.intern "wide")))
                   (match (tc_core.macro-surface-call-decl-in-module
-                    (tc_core.tc-global-shared-view macro-state)
+                    macro-state
                     provider-id
                     (ci.intern "wide"))
                     [(tc_core.MacroMaybeDecl.No) true]
@@ -3834,30 +3832,29 @@
                     (tc_core.macro-surface-module-has-macro?
                       generated-provider-id))
                   (match (tc_core.macro-surface-call-decl-in-module
-                    (tc_core.tc-global-shared-view macro-state)
+                    macro-state
                     provider-id
                     hook-id)
                     [(tc_core.MacroMaybeDecl.Some _ _ _ _ _ _) true]
                     [(tc_core.MacroMaybeDecl.No) false])
                   (match (tc_core.macro-surface-call-decl-in-module
-                    (tc_core.tc-global-shared-view macro-state)
+                    macro-state
                     generated-provider-id
                     generated-hook-id)
                     [(tc_core.MacroMaybeDecl.Some _ _ _ _ _ _) false]
                     [(tc_core.MacroMaybeDecl.No) true])
                   (ctfe.ctfe-module-macro-export-id-for-state?
-                    (tc_core.tc-global-shared-view ctfe-state)
+                    ctfe-state
                     provider-id
                     hook-id)
                   (not
                     (ctfe.ctfe-module-macro-export-id-for-state?
-                      (tc_core.tc-global-shared-view ctfe-state)
+                      ctfe-state
                       provider-id
                       non-macro-id)))]
               (begin
                 (load.compiler-load-surface-summaries-reset!)
-                (tc_core.macro-surface-call-decl-cache-reset!
-                  (tc_core.tc-global-shared-view macro-state))
+                (tc_core.macro-surface-call-decl-cache-reset! macro-state)
                 (and
                   before-reset
                   ;; The selected signature owns its parameter payload even after
@@ -3887,7 +3884,7 @@
                     (tc_core.macro-surface-macro-in-module? provider-id hook-id))
                   (not (tc_core.macro-surface-module-has-macro? provider-id))
                   (match (tc_core.macro-surface-call-decl-in-module
-                    (tc_core.tc-global-shared-view macro-state)
+                    macro-state
                     provider-id
                     hook-id)
                     [(tc_core.MacroMaybeDecl.Some _ _ _ _ _ _) false]
@@ -3898,13 +3895,10 @@
   [path : String]
   [source : String]) : bool
   (let
-    [path-id : i64
-      (load.compiler-load-parse-context-name-id
-        (tc_core.tc-global-shared-view path))]
+    [path-id : i64 (load.compiler-load-parse-context-name-id path)]
     [fallback-id : i64
       (load.compiler-load-parse-context-name-id
-        (load.compiler-load-canonical-module-id-from-path
-          (tc_core.tc-global-shared-view path)))]
+        (load.compiler-load-canonical-module-id-from-path path))]
     (match (parser.parse-ast-source-diagnostic
       (tc_core.tc-global-shared-view path)
       source)
@@ -3912,7 +3906,7 @@
         (match (load.compiler-load-surface-summary-build
           (tc_core.tc-global-shared-view path)
           path-id
-          (load.compiler-load-dirname (tc_core.tc-global-shared-view path))
+          (load.compiler-load-dirname path)
           program
           fallback-id
           false)
@@ -4278,7 +4272,7 @@
   [name : String]) : i64
   (compiler_symbols.compiler-symbol-module-key-id-by-id
     (compiler-typecheck-smoke-required-parsed-id
-      (tc_core.tc-global-shared-view ctx)
+      ctx
       "typecheck smoke: missing module id: "
       module)
     (compiler-typecheck-smoke-required-parsed-id
@@ -4299,11 +4293,11 @@
   (begin
     (tc_core.tc-source-dotted-alias-key-cache-reset!)
     (match (tc_core.tc-source-name-lookup-key-with-field-check
-      (tc_core.tc-global-shared-view entry-ctx)
-      (tc_core.tc-global-shared-view env)
+      entry-ctx
+      env
       "helper.value"
       (compiler-typecheck-smoke-required-parsed-id
-        (tc_core.tc-global-shared-view entry-ctx)
+        entry-ctx
         "typecheck smoke: missing dotted lookup id: "
         "helper.value")
       true)
@@ -4311,18 +4305,18 @@
         (let
           [module-id : i64
             (compiler-typecheck-smoke-required-parsed-id
-              (tc_core.tc-global-shared-view entry-ctx)
+              entry-ctx
               "typecheck smoke: missing entry module id: "
               "entry.module")]
           [name-id : i64
             (compiler-typecheck-smoke-required-parsed-id
-              (tc_core.tc-global-shared-view entry-ctx)
+              entry-ctx
               "typecheck smoke: missing dotted lookup id: "
               "helper.value")]
           (and
             (string.eq key "helper.module/value")
             (compiler-typecheck-smoke-qualified-cache-id?
-              (tc_core.tc-global-shared-view entry-ctx)
+              entry-ctx
               (tc_core.tc-source-dotted-alias-key-cache-get module-id name-id)
               "helper.module"
               "value")
@@ -4343,11 +4337,11 @@
   (begin
     (tc_core.tc-source-dotted-full-path-key-cache-reset!)
     (match (tc_core.tc-source-name-lookup-key-with-field-check
-      (tc_core.tc-global-shared-view full-ctx)
-      (tc_core.tc-global-shared-view env)
+      full-ctx
+      env
       "helper.module.value"
       (compiler-typecheck-smoke-required-parsed-id
-        (tc_core.tc-global-shared-view full-ctx)
+        full-ctx
         "typecheck smoke: missing full dotted lookup id: "
         "helper.module.value")
       true)
@@ -4355,18 +4349,18 @@
         (let
           [module-id : i64
             (compiler-typecheck-smoke-required-parsed-id
-              (tc_core.tc-global-shared-view full-ctx)
+              full-ctx
               "typecheck smoke: missing full entry module id: "
               "full.entry")]
           [name-id : i64
             (compiler-typecheck-smoke-required-parsed-id
-              (tc_core.tc-global-shared-view full-ctx)
+              full-ctx
               "typecheck smoke: missing full dotted lookup id: "
               "helper.module.value")]
           (and
             (string.eq key "helper.module/value")
             (compiler-typecheck-smoke-qualified-cache-id?
-              (tc_core.tc-global-shared-view full-ctx)
+              full-ctx
               (tc_core.tc-source-dotted-full-path-key-cache-get
                 module-id
                 name-id)
@@ -4396,7 +4390,7 @@
             [(tc_core.ResultCompilerTypecheckChecked.Ok _ ctx env _)
               (compiler-typecheck-smoke-lazy-import-full-path-cache-checked?
                 (tc_core.tc-context-with-module-id
-                  (tc_core.tc-global-shared-view ctx)
+                  ctx
                   "full.entry"
                   (compiler-typecheck-smoke-required-parsed-id
                     ctx
@@ -4603,7 +4597,7 @@
               (and
                 (=
                   (tc_core.tc-source-dotted-alias-key-cache-get-for-state
-                    (tc_core.tc-global-shared-view state-a)
+                    state-a
                     table-a
                     generation-a
                     module-id
@@ -4664,7 +4658,7 @@
                 [stale-generation-miss : bool
                   (=
                     (tc_core.tc-source-dotted-full-path-key-cache-get-for-state
-                      (tc_core.tc-global-shared-view state-b)
+                      state-b
                       table-b
                       (+ generation-b 1)
                       module-id
@@ -5251,7 +5245,7 @@
               (let
                 [entry-ctx : tc_core.TcContext
                   (tc_core.tc-context-with-module-id
-                    (tc_core.tc-global-shared-view ctx)
+                    ctx
                     "entry.module"
                     (compiler-typecheck-smoke-required-parsed-id
                       ctx
@@ -5262,81 +5256,80 @@
                   (= (tc_core.tc-lazy-import-summary-backed-stub-count) 1)
                   (not
                     (tc_core.tc-name-bound-id?
-                      (tc_core.tc-global-shared-view env)
+                      env
                       (compiler-typecheck-smoke-module-key-id
-                        (tc_core.tc-global-shared-view entry-ctx)
+                        entry-ctx
                         "helper"
                         "value")))
                   (tc_core.tc-name-bound-id?
-                    (tc_core.tc-global-shared-view env)
+                    env
                     (compiler-typecheck-smoke-module-key-id
-                      (tc_core.tc-global-shared-view entry-ctx)
+                      entry-ctx
                       "helper.module"
                       "value"))
                   (match (tc_core.tc-lookup-dotted-source-visible
-                    (tc_core.tc-global-shared-view entry-ctx)
-                    (tc_core.tc-global-shared-view env)
+                    entry-ctx
+                    env
                     "helper.value"
                     (compiler-typecheck-smoke-required-parsed-id
-                      (tc_core.tc-global-shared-view entry-ctx)
+                      entry-ctx
                       "typecheck smoke: missing helper.value id: "
                       "helper.value"))
                     [(tc_core.ResultTcType.Ok _) true]
                     [(tc_core.ResultTcType.Err _) false])
                   (compiler-typecheck-smoke-lazy-import-explicit-alias-cache-ok?
-                    (tc_core.tc-global-shared-view entry-ctx)
-                    (tc_core.tc-global-shared-view env))
+                    entry-ctx
+                    env)
                   (match (tc_core.tc-lookup-dotted-source-visible
-                    (tc_core.tc-global-shared-view entry-ctx)
-                    (tc_core.tc-global-shared-view env)
+                    entry-ctx
+                    env
                     "helper.get"
                     (compiler-typecheck-smoke-required-parsed-id
-                      (tc_core.tc-global-shared-view entry-ctx)
+                      entry-ctx
                       "typecheck smoke: missing helper.get id: "
                       "helper.get"))
                     [(tc_core.ResultTcType.Ok _) true]
                     [(tc_core.ResultTcType.Err _) false])
                   (match (tc_core.tc-lookup-dotted-source-visible
-                    (tc_core.tc-global-shared-view entry-ctx)
-                    (tc_core.tc-global-shared-view env)
+                    entry-ctx
+                    env
                     "helper.Choice.Full"
                     (compiler-typecheck-smoke-required-parsed-id
-                      (tc_core.tc-global-shared-view entry-ctx)
+                      entry-ctx
                       "typecheck smoke: missing helper.Choice.Full id: "
                       "helper.Choice.Full"))
                     [(tc_core.ResultTcType.Ok _) true]
                     [(tc_core.ResultTcType.Err _) false])
                   (match (tc_core.tc-dotted-type-name-lookup-key-from-id
-                    (tc_core.tc-global-shared-view entry-ctx)
+                    entry-ctx
                     "helper.Item"
                     (compiler-typecheck-smoke-required-parsed-id
-                      (tc_core.tc-global-shared-view entry-ctx)
+                      entry-ctx
                       "typecheck smoke: missing helper.Item id: "
                       "helper.Item"))
                     [(tc_core.ResultTcString.Ok key)
                       (string.eq key "helper.module/Item")]
                     [(tc_core.ResultTcString.Err _) false])
                   (match (tc_core.tc-module-local-env-id
-                    (tc_core.tc-global-shared-view entry-ctx)
+                    entry-ctx
                     env
                     "entry.module"
-                    (tc_core.tc-context-module-id
-                      (tc_core.tc-global-shared-view entry-ctx)))
+                    (tc_core.tc-context-module-id entry-ctx))
                     [(tc_core.ResultTcEnv.Ok local-env)
                       (and
                         (not
                           (tc_core.tc-name-bound-id?
-                            (tc_core.tc-global-shared-view local-env)
+                            local-env
                             (compiler-typecheck-smoke-module-key-id
-                              (tc_core.tc-global-shared-view entry-ctx)
+                              entry-ctx
                               "helper"
                               "value")))
                         (match (tc_core.tc-lookup-dotted-source-visible
-                          (tc_core.tc-global-shared-view entry-ctx)
+                          entry-ctx
                           local-env
                           "helper.value"
                           (compiler-typecheck-smoke-required-parsed-id
-                            (tc_core.tc-global-shared-view entry-ctx)
+                            entry-ctx
                             "typecheck smoke: missing helper.value id: "
                             "helper.value"))
                           [(tc_core.ResultTcType.Ok _) true]
@@ -6214,9 +6207,7 @@
         (tc_core.tc-macro-state-source-names macro-a)
         (tc_core.tc-global-shared-view body-a))]
     [hygiene-a : tc_core.MacroHygieneEnv
-      (tc_core.macro-hygiene-env-empty
-        macro-a
-        (tc_core.tc-context-pools (tc_core.tc-global-shared-view ctx-a)))]
+      (tc_core.macro-hygiene-env-empty macro-a (tc_core.tc-context-pools ctx-a))]
     [macro-a-handle : ci.InternSourceNameSessionHandle
       (tc_core.tc-macro-state-source-names macro-a)]
     [macro-b-handle : ci.InternSourceNameSessionHandle
@@ -6225,7 +6216,7 @@
       (tc_core.tc-macro-state-source-names
         (tc_core.tc-job-state-macro-state body-a.job-state))]
     [ctx-a-handle : ci.InternSourceNameSessionHandle
-      (tc_core.tc-context-source-names (tc_core.tc-global-shared-view ctx-a))]
+      (tc_core.tc-context-source-names ctx-a)]
     [hygiene-a-handle : ci.InternSourceNameSessionHandle
       (tc_core.tc-macro-state-source-names hygiene-a.state)]
     [session-a : cis.InternStructuralSessionHandle

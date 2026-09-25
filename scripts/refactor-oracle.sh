@@ -20,9 +20,13 @@
 # Default mode is linux-x86_64 --opt-level 2, plus avx2/avx512 for tests/spmd.
 # --full adds opt levels 0 and 1, the windows-x86_64 target, and the scalar
 # SPMD mode. Output lands in target/exp/refactor-oracle unless --out is given.
+# The run holds a scripts/refactor-capped.sh slot, --jobs defaults to 4, and
+# each compile is capped at 4G and 10 minutes.
 set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+[ -n "${TL_REFACTOR_CAPPED:-}" ] || exec "$ROOT/scripts/refactor-capped.sh" "$0" "$@"
+capped() { "$ROOT/scripts/refactor-capped.sh" "$@"; }
 
 if [ "${1:-}" = "--job" ]; then
     # --job <compiler> <stdlib> <tree> <outdir> <verb> <target> <opt> <mode> <file>
@@ -38,10 +42,10 @@ if [ "${1:-}" = "--job" ]; then
         if [ "$mode" != default ]; then
             set -- "$@" --backend-mode "$mode"
         fi
-        (cd "$tree" && "$compiler" compile "$file" -o "$dest/$key.s" "$@") \
+        (cd "$tree" && capped --mem 4G --timeout 600 "$compiler" compile "$file" -o "$dest/$key.s" "$@") \
             > "$dest/$key.out" 2> "$dest/$key.err" || rc=$?
     else
-        (cd "$tree" && "$compiler" check "$file" --target "$target" --stdlib-root "$stdlib") \
+        (cd "$tree" && capped --mem 4G --timeout 600 "$compiler" check "$file" --target "$target" --stdlib-root "$stdlib") \
             > "$dest/$key.out" 2> "$dest/$key.err" || rc=$?
     fi
     echo "$rc" > "$dest/$key.rc"
@@ -55,12 +59,12 @@ if [ "${1:-}" = "--job" ]; then
 fi
 
 if [ "$#" -lt 3 ]; then
-    sed -n '4,20p' "$0" >&2
+    sed -n '4,22p' "$0" >&2
     exit 2
 fi
 BASE=$1 HEAD=$2 BASE_TREE=$3
 shift 3
-FULL=0 JOBS=$(nproc 2>/dev/null || echo 8) OUT="$ROOT/target/exp/refactor-oracle" SELF=1
+FULL=0 JOBS=4 OUT="$ROOT/target/exp/refactor-oracle" SELF=1
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --full) FULL=1 ;;
@@ -130,7 +134,7 @@ if [ "$SELF" -eq 1 ]; then
         (
             cd "$BASE_TREE"
             rc=0
-            "$c" compile src/main.tl -o "$OUT/$side/self/main.s" --target linux-x86_64 \
+            capped --mem 6G --timeout 1200 "$c" compile src/main.tl -o "$OUT/$side/self/main.s" --target linux-x86_64 \
                 --stdlib-root stdlib --stdlib-root src --opt-level 2 \
                 > "$OUT/$side/self/main.out" 2> "$OUT/$side/self/main.err" || rc=$?
             echo "$rc" > "$OUT/$side/self/main.rc"

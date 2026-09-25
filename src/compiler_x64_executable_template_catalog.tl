@@ -1,6 +1,5 @@
 ;; compiler_x64_executable_template_catalog.tl - Reviewed x86-64 template rows.
 (import compiler_x64_executable_template as x64)
-(import compiler_owned_view as owned_view)
 (import stdlib.hash)
 (import stdlib.io)
 (import stdlib.string)

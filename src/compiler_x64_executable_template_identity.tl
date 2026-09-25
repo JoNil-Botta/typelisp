@@ -1,5 +1,4 @@
 ;; Canonical semantic identity for compiler-owned x86-64 templates.
-(import compiler_owned_view as owned_view)
 (import compiler_x64_executable_template as x64)
 (import compiler_x64_executable_template_catalog as catalog)
 (import compiler_x64_executable_template_evidence as evidence)

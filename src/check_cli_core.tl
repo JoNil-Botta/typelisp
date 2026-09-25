@@ -113,14 +113,6 @@
               target
               cfg-names))]))))
 
-(define (selfhost-check-doctest-report [report : doc_test.DocTestRunReport]) : i64
-  (if (doc_test.doc-test-run-report-ok?
-    (owned_view.compiler-owned-shared-view report))
-    0
-    (begin
-      (io.print-error (doc_test.doc-test-run-report-render report))
-      1)))
-
 (define (selfhost-check-print-passed) : i64
   (begin
     (io.print-format "{}" "Type checking passed!\n")
@@ -130,7 +122,7 @@
   [input-path : String]
   [stdlib-roots : cli_svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]) : i64
-  (selfhost-check-doctest-report
+  (doc_test.doc-test-report-status
     (doc_test.doc-test-typecheck-file-with-roots-and-cfg
       input-path
       stdlib-roots
@@ -142,7 +134,7 @@
   [manifest-dir : String]
   [deps : compiler_load.CompilerPkgDeps]
   [cfgs : sym_i64_env.SymI64Env]) : i64
-  (selfhost-check-doctest-report
+  (doc_test.doc-test-report-status
     (doc_test.doc-test-typecheck-package-paths-with-roots-and-cfg
       paths
       stdlib-roots

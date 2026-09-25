@@ -4859,22 +4859,6 @@
         (tltest-stdlib-env-fixture-path target)
         (process.env-empty)))))
 
-(define (tltest-run-harness-output
-  [source : String]
-  [bin-path : String]
-  [target : compiler_backend.CompilerBackendTarget]) : process.ResultProcessOutput
-  (if (tltest-stdlib-env-fixture-source? source)
-    (process.output
-      (build_run_core.source-tool-command-for-target
-        target
-        (process.command-with-env-list
-          (process.command bin-path (process.args-empty))
-          (tltest-stdlib-env-fixture-env target))))
-    (build_run_core.source-tool-run-executable
-      bin-path
-      target
-      (process.args-empty))))
-
 (define (tltest-stdlib-env-fixture-self-test?) : bool
   (and
     (tltest-stdlib-env-fixture-source? "stdlib/env.tl")
@@ -4918,21 +4902,20 @@
   [inline-harness : bool]
   [temp-dir : String]) : i64
   (let
-    [asm-path : String
-      (build_run_core.source-tool-asm-path
-        (owned_view.compiler-owned-shared-view temp-dir)
-        (owned_view.compiler-owned-shared-view source))]
-    [obj-path : String
-      (build_run_core.source-tool-obj-path
-        (owned_view.compiler-owned-shared-view temp-dir)
-        (owned_view.compiler-owned-shared-view source)
-        target)]
-    [bin-path : String
-      (build_run_core.source-tool-temp-bin-path
-        (owned_view.compiler-owned-shared-view temp-dir)
+    [files : build_run_core.SourceToolTempFiles
+      (build_run_core.source-tool-temp-files
+        temp-dir
         (owned_view.compiler-owned-shared-view source)
         target)]
     [legacy-roots : cli_svec.Vec (clone roots)]
+    ;; Generated inline harnesses reserve status 1 for recoverable assertion
+    ;; failures, so a harness that cannot be built, cannot start, or aborts or
+    ;; traps maps to status 2. Integration programs keep their historical 0/1
+    ;; normalization.
+    [failed : i64
+      (if inline-harness
+        2
+        1)]
     (match (lower.lower-compiler-program-with-decl-paths-mode-cache-and-state
       lower-state
       entry-path
@@ -4946,89 +4929,55 @@
         legacy-roots
         (tltest-cfgs target)))
       [(lower.ResultCompilerLower.Ok ir spans)
-        (match (build_run_core.source-tool-lowered-object-or-assembly-and-link-with-mode
-          (owned_view.compiler-owned-shared-view source)
-          ir
-          spans
-          target
-          opt-level
-          backend-mode
-          (build_run_core.source-tool-link-inputs-empty)
-          (owned_view.compiler-owned-shared-view asm-path)
-          (owned_view.compiler-owned-shared-view obj-path)
-          (owned_view.compiler-owned-shared-view bin-path)
-          "test: failed to write assembly artifact")
-          [(build_run_core.SourceToolCommandStatus.Err message)
+        (match (build_run_core.source-tool-link-and-run
+          (build_run_core.SourceToolLinkRequest
+            (owned_view.compiler-owned-shared-view source)
+            (build_run_core.SourceToolProgram.Lowered ir spans)
+            target
+            opt-level
+            backend-mode
+            (build_run_core.source-tool-link-inputs-empty)
+            (owned_view.compiler-owned-shared-view files)
+            "test: failed to write assembly artifact")
+          (process.args-empty)
+          (if (tltest-stdlib-env-fixture-source? source)
+            (tltest-stdlib-env-fixture-env target)
+            (process.env-empty))
+          false)
+          [(build_run_core.SourceToolRunOutcome.LinkFailed message)
             (begin
               (io.print-error message)
-              (build_run_core.source-tool-clean-temp
-                temp-dir
-                asm-path
-                obj-path
-                bin-path
-                true)
-              (if inline-harness
-                2
-                1))]
-          [(build_run_core.SourceToolCommandStatus.Ok)
+              (build_run_core.source-tool-clean-temp-files files true)
+              failed)]
+          [(build_run_core.SourceToolRunOutcome.Ran output)
+            (let
+              [status : i64 (process.output-status output)]
+              (begin
+                (driver.compiler-driver-reset-analysis-state!)
+                (build_run_core.source-tool-forward-output
+                  (owned_view.compiler-owned-shared-view output))
+                (if (or (= status 0) (and inline-harness (= status 1)))
+                  unit
+                  (tltest-report-child-status output))
+                (build_run_core.source-tool-clean-temp-files files true)
+                (cond
+                  [(= status 0) 0]
+                  [(and inline-harness (= status 1)) 1]
+                  [else failed])))]
+          ;; Keep the artifacts of a harness that would not start.
+          [(build_run_core.SourceToolRunOutcome.SpawnFailed error)
             (begin
               (driver.compiler-driver-reset-analysis-state!)
-              (match (tltest-run-harness-output
-                source
-                (owned_view.compiler-owned-shared-view bin-path)
-                target)
-                [(process.OkProcessOutput output)
-                  (let
-                    [status : i64 (process.output-status output)]
-                    (begin
-                      (build_run_core.source-tool-forward-output
-                        (owned_view.compiler-owned-shared-view output))
-                      (if (or (= status 0) (and inline-harness (= status 1)))
-                        unit
-                        (tltest-report-child-status output))
-                      (build_run_core.source-tool-clean-temp
-                        temp-dir
-                        asm-path
-                        obj-path
-                        bin-path
-                        true)
-                      ;; Generated inline harnesses reserve status 1 for
-                      ;; recoverable assertion failures. A hard abort or trap
-                      ;; is a harness failure and maps to status 2. Integration
-                      ;; programs retain their historical 0/1 normalization.
-                      (if inline-harness
-                        (if (= status 0)
-                          0
-                          (if (= status 1)
-                            1
-                            2))
-                        (if (= status 0)
-                          0
-                          1))))]
-                [(process.ErrProcessOutput error)
-                  (begin
-                    (io.print-error
-                      (tltest-run-executable-error-message
-                        bin-path
-                        temp-dir
-                        error))
-                    (if inline-harness
-                      2
-                      1))]))])]
+              (io.print-error
+                (tltest-run-executable-error-message files.bin files.dir error))
+              failed)])]
       [(lower.ResultCompilerLower.Err diag)
         (begin
           (io.print-error
             (driver.compiler-driver-render-source-diagnostic
               (tltest-diagnostic-with-source-fallback source (deref diag))))
-          (build_run_core.source-tool-clean-temp
-            temp-dir
-            asm-path
-            obj-path
-            bin-path
-            true)
-          (if inline-harness
-            2
-            1))])))
+          (build_run_core.source-tool-clean-temp-files files true)
+          failed)])))
 
 (define (tltest-run-harness-in-temp
   [source : String]

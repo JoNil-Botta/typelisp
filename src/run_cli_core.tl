@@ -225,29 +225,6 @@
               opt-level
               link-inputs)))))))
 
-(define (run-cli-typecheck-doctests
-  [source : String]
-  [stdlib-roots : cli_svec.Vec]) : i64
-  (match (io.try-read-file (& source))
-    [(io.ErrIoBytes _) 0]
-    [(io.OkIoBytes contents)
-      (let
-        [text : String (byte_buf.to-string contents)]
-        [reports : (__tl_dyn-array doc_test.DocTestRunReport)
-          (__tl_make-array
-            (doc_test.doc-test-typecheck-source-with-roots
-              source
-              text
-              stdlib-roots))]
-        (if (doc_test.doc-test-run-report-ok?
-          (owned_view.compiler-owned-array-element-shared-view reports 0))
-          0
-          (begin
-            (io.print-error
-              (doc_test.doc-test-run-report-render
-                (owned_view.compiler-owned-array-element-shared-view reports 0)))
-            1)))]))
-
 (define (run-cli-run-source-with-doctests
   [source : String]
   [target : backend.CompilerBackendTarget]
@@ -263,7 +240,7 @@
     [cfgs-cell : (__tl_dyn-array build_run_core.SourceToolCfgNames)
       (__tl_make-array cfgs)]
     [doctest-status : i64
-      (run-cli-typecheck-doctests
+      (doc_test.doc-test-typecheck-file-status
         (string.copy (& source))
         (owned_view.compiler-owned-array-element-shared-view
           stdlib-roots-cell

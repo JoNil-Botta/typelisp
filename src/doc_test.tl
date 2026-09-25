@@ -1526,18 +1526,6 @@
       false)
     false))
 
-(define (doc-test-assemble-and-link-captured
-  [target : backend.CompilerBackendTarget]
-  [asm-path : String]
-  [obj-path : String]
-  [bin-path : String]) : build_run_core.SourceToolCommandStatus
-  (build_run_core.source-tool-assemble-and-link
-    target
-    asm-path
-    obj-path
-    bin-path
-    (build_run_core.source-tool-link-inputs-empty)))
-
 (define (doc-test-emit-runnable-assembly
   [path : String]
   [example : DocTestExample]
@@ -1616,132 +1604,6 @@
   (DocTestMaybeFailure.Some
     (DocTestRunFailure.Failure path source-line index message)))
 
-(define (doc-test-run-runnable-process-output
-  [path : String]
-  [source-line : i64]
-  [index : i64]
-  [expectation : DocTestExpectation]
-  [target : backend.CompilerBackendTarget]
-  [temp-dir : String]
-  [asm-path : String]
-  [obj-path : String]
-  [bin-path : String]) : DocTestMaybeFailure
-  (match (build_run_core.source-tool-run-executable
-    (owned_view.compiler-owned-shared-view bin-path)
-    target
-    (process.args-empty))
-    [(process.OkProcessOutput output)
-      (begin
-        (build_run_core.source-tool-clean-temp
-          temp-dir
-          asm-path
-          obj-path
-          bin-path
-          true)
-        (if (doc-test-runnable-output-matches?
-          (owned_view.compiler-owned-shared-view expectation)
-          target
-          output)
-          (DocTestMaybeFailure.No)
-          (doc-test-runnable-failure
-            path
-            source-line
-            index
-            (doc-test-runnable-mismatch-message index expectation target output))))]
-    [(process.ErrProcessOutput error)
-      (begin
-        (build_run_core.source-tool-clean-temp
-          temp-dir
-          asm-path
-          obj-path
-          bin-path
-          true)
-        (doc-test-runnable-failure
-          path
-          source-line
-          index
-          (doc-test-runnable-exec-message index (process.error-message error))))]))
-
-(define (doc-test-link-and-run-runnable
-  [path : String]
-  [source-line : i64]
-  [index : i64]
-  [expectation : DocTestExpectation]
-  [target : backend.CompilerBackendTarget]
-  [temp-dir : String]
-  [asm-path : String]
-  [obj-path : String]
-  [bin-path : String]) : DocTestMaybeFailure
-  (match (doc-test-assemble-and-link-captured
-    target
-    (owned_view.compiler-owned-shared-view asm-path)
-    (owned_view.compiler-owned-shared-view obj-path)
-    (owned_view.compiler-owned-shared-view bin-path))
-    [(build_run_core.SourceToolCommandStatus.Err message)
-      (begin
-        (build_run_core.source-tool-clean-temp
-          temp-dir
-          asm-path
-          obj-path
-          bin-path
-          true)
-        (doc-test-runnable-failure
-          path
-          source-line
-          index
-          (doc-test-runnable-build-message index message)))]
-    [(build_run_core.SourceToolCommandStatus.Ok)
-      (doc-test-run-runnable-process-output
-        path
-        source-line
-        index
-        expectation
-        target
-        temp-dir
-        asm-path
-        obj-path
-        bin-path)]))
-
-(define (doc-test-write-link-and-run-runnable
-  [path : String]
-  [source-line : i64]
-  [index : i64]
-  [expectation : DocTestExpectation]
-  [target : backend.CompilerBackendTarget]
-  [temp-dir : String]
-  [asm-path : String]
-  [obj-path : String]
-  [bin-path : String]
-  [asm : String]) : DocTestMaybeFailure
-  (match (build_run_core.source-tool-write-file
-    (owned_view.compiler-owned-shared-view asm-path)
-    asm
-    "doctest: failed to write assembly artifact")
-    [(build_run_core.SourceToolCommandStatus.Err message)
-      (begin
-        (build_run_core.source-tool-clean-temp
-          temp-dir
-          asm-path
-          obj-path
-          bin-path
-          true)
-        (doc-test-runnable-failure
-          path
-          source-line
-          index
-          (doc-test-runnable-build-message index message)))]
-    [(build_run_core.SourceToolCommandStatus.Ok)
-      (doc-test-link-and-run-runnable
-        path
-        source-line
-        index
-        expectation
-        target
-        temp-dir
-        asm-path
-        obj-path
-        bin-path)]))
-
 (define (doc-test-run-runnable-output
   [path : String]
   [example : DocTestExample]
@@ -1761,50 +1623,57 @@
       (doc-test-example-virtual-path
         (owned_view.compiler-owned-shared-view path)
         index)]
-    [asm-path : String
-      (build_run_core.source-tool-asm-path
-        (owned_view.compiler-owned-shared-view temp-dir)
-        (owned_view.compiler-owned-shared-view virtual-path))]
-    [obj-path : String
-      (build_run_core.source-tool-obj-path
-        (owned_view.compiler-owned-shared-view temp-dir)
-        (owned_view.compiler-owned-shared-view virtual-path)
-        target)]
-    [bin-path : String
-      (build_run_core.source-tool-temp-bin-path
-        (owned_view.compiler-owned-shared-view temp-dir)
-        virtual-path
-        target)]
-    (match (doc-test-emit-runnable-assembly
-      (owned_view.compiler-owned-shared-view path)
-      example
-      stdlib-roots
-      target)
-      [(build_run_core.ResultSourceToolString.Err message)
-        (begin
-          (build_run_core.source-tool-clean-temp
-            temp-dir
-            asm-path
-            obj-path
-            bin-path
-            true)
-          (doc-test-runnable-failure
-            path
-            source-line
-            index
-            (doc-test-runnable-compile-message index message)))]
-      [(build_run_core.ResultSourceToolString.Ok asm)
-        (doc-test-write-link-and-run-runnable
-          path
-          source-line
-          index
-          expectation
-          target
-          temp-dir
-          asm-path
-          obj-path
-          bin-path
-          asm)])))
+    [files : build_run_core.SourceToolTempFiles
+      (build_run_core.source-tool-temp-files temp-dir virtual-path target)]
+    [message : DocTestMaybeString
+      (match (doc-test-emit-runnable-assembly
+        (owned_view.compiler-owned-shared-view path)
+        example
+        stdlib-roots
+        target)
+        [(build_run_core.ResultSourceToolString.Err message)
+          (DocTestMaybeString.Some
+            (doc-test-runnable-compile-message index message))]
+        [(build_run_core.ResultSourceToolString.Ok asm)
+          (match (build_run_core.source-tool-link-and-run
+            (build_run_core.SourceToolLinkRequest
+              ""
+              (build_run_core.SourceToolProgram.Assembly asm)
+              target
+              (opt.compiler-optimize-default-level)
+              (backend.CompilerBackendMode.Scalar)
+              (build_run_core.source-tool-link-inputs-empty)
+              (owned_view.compiler-owned-shared-view files)
+              "doctest: failed to write assembly artifact")
+            (process.args-empty)
+            (process.env-empty)
+            false)
+            [(build_run_core.SourceToolRunOutcome.LinkFailed message)
+              (DocTestMaybeString.Some
+                (doc-test-runnable-build-message index message))]
+            [(build_run_core.SourceToolRunOutcome.Ran output)
+              (if (doc-test-runnable-output-matches?
+                (owned_view.compiler-owned-shared-view expectation)
+                target
+                output)
+                (DocTestMaybeString.No)
+                (DocTestMaybeString.Some
+                  (doc-test-runnable-mismatch-message
+                    index
+                    expectation
+                    target
+                    output)))]
+            [(build_run_core.SourceToolRunOutcome.SpawnFailed error)
+              (DocTestMaybeString.Some
+                (doc-test-runnable-exec-message
+                  index
+                  (process.error-message error)))])])]
+    (begin
+      (build_run_core.source-tool-clean-temp-files files true)
+      (match message
+        [(DocTestMaybeString.No) (DocTestMaybeFailure.No)]
+        [(DocTestMaybeString.Some text)
+          (doc-test-runnable-failure path source-line index text)]))))
 
 (define (doc-test-run-runnable-example-with-roots
   [path : String]
@@ -2452,6 +2321,29 @@
 
 ;; Exit status for a report: 0 when every example passed (or there were none),
 ;; 1 otherwise. Callers turn this directly into a process exit code.
+;; The exit status of a doctest run that another command (check, compile, build,
+;; run) performs on its inputs: a failing report is printed to stderr.
+(define (doc-test-report-status [report : DocTestRunReport]) : i64
+  (if (doc-test-run-report-ok? (owned_view.compiler-owned-shared-view report))
+    0
+    (begin
+      (io.print-error (doc-test-run-report-render report))
+      1)))
+
+;; Typecheck the doctests of the source file at `path` for another command; an
+;; unreadable file has none (the command reports it).
+(define (doc-test-typecheck-file-status
+  [path : String]
+  [stdlib-roots : doc_svec.Vec]) : i64
+  (match (io.try-read-file (& path))
+    [(io.ErrIoBytes _) 0]
+    [(io.OkIoBytes contents)
+      (doc-test-report-status
+        (doc-test-typecheck-source-with-roots
+          path
+          (byte_buf.to-string contents)
+          stdlib-roots))]))
+
 (define (doc-test-run-report-status [report : DocTestRunReport]) : i64
   (if (doc-test-run-report-ok? report)
     0

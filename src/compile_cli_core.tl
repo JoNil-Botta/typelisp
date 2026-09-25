@@ -602,26 +602,6 @@
       [(ResultCompileCliConfig.Ok config) (CompileCliAction.Run config)]
       [(ResultCompileCliConfig.Err message) (CompileCliAction.Error message)])))
 
-(define (compile-cli-typecheck-doctests
-  [input-path : String]
-  [stdlib-roots : cli_svec.Vec]) : i64
-  (match (io.try-read-file (& input-path))
-    [(io.ErrIoBytes _) 0]
-    [(io.OkIoBytes contents)
-      (let
-        [source : String (byte_buf.to-string contents)]
-        [report : doc_test.DocTestRunReport
-          (doc_test.doc-test-typecheck-source-with-roots
-            input-path
-            source
-            stdlib-roots)]
-        (if (doc_test.doc-test-run-report-ok?
-          (owned_view.compiler-owned-shared-view report))
-          0
-          (begin
-            (io.print-error (doc_test.doc-test-run-report-render report))
-            1)))]))
-
 (define (compile-cli-print-ir-verification-error [message : String]) : unit
   (io.print-error
     (str_cat.str-cat "compile: IR verification failed: " message "\n")))
@@ -743,7 +723,7 @@
       unit)
     (let
       [doctest-status : i64
-        (compile-cli-typecheck-doctests
+        (doc_test.doc-test-typecheck-file-status
           (owned_view.compiler-owned-shared-view input-path)
           (owned_view.compiler-owned-shared-view stdlib-roots))]
       (if (= doctest-status 0)
@@ -1032,7 +1012,7 @@
       unit)
     (let
       [doctest-status : i64
-        (compile-cli-typecheck-doctests
+        (doc_test.doc-test-typecheck-file-status
           (owned_view.compiler-owned-shared-view input-path)
           (owned_view.compiler-owned-shared-view stdlib-roots))]
       (if (= doctest-status 0)

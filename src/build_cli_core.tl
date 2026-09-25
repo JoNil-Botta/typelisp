@@ -7013,11 +7013,12 @@
             (deref diag)))
         1)]
     [(compiler_driver_core.ResultCompilerDriverPackagePaths.Ok paths)
-      (build-doctest-typecheck-package-paths
-        (build-package-doctest-paths owner paths)
-        stdlib-roots
-        manifest-dir
-        deps)]))
+      (doc_test.doc-test-report-status
+        (doc_test.doc-test-typecheck-package-paths-with-roots
+          (build-package-doctest-paths owner paths)
+          stdlib-roots
+          manifest-dir
+          deps))]))
 
 (define (build-inline-test-typecheck-package-sources
   [manifest-path : String]
@@ -8287,38 +8288,6 @@
       producer-identity
       announce)))
 
-(define (build-doctest-report [report : doc_test.DocTestRunReport]) : i64
-  (if (doc_test.doc-test-run-report-ok?
-    (owned_view.compiler-owned-shared-view report))
-    0
-    (begin
-      (io.print-error (doc_test.doc-test-run-report-render report))
-      1)))
-
-(define (build-doctest-typecheck-file
-  [source : String]
-  [stdlib-roots : cli_svec.Vec]) : i64
-  (match (io.try-read-file (& source))
-    [(io.ErrIoBytes _) 0]
-    [(io.OkIoBytes contents)
-      (build-doctest-report
-        (doc_test.doc-test-typecheck-source-with-roots
-          source
-          (byte_buf.to-string contents)
-          stdlib-roots))]))
-
-(define (build-doctest-typecheck-package-paths
-  [paths : ast.AstDeclPathList]
-  [stdlib-roots : cli_svec.Vec]
-  [manifest-dir : String]
-  [deps : load.CompilerPkgDeps]) : i64
-  (build-doctest-report
-    (doc_test.doc-test-typecheck-package-paths-with-roots
-      paths
-      stdlib-roots
-      manifest-dir
-      deps)))
-
 (define (build-doctest-build-source
   [source : String]
   [output : String]
@@ -8330,7 +8299,7 @@
   [link-inputs : build_run_core.SourceToolLinkInputs]) : i64
   (let
     [doctest-status : i64
-      (build-doctest-typecheck-file
+      (doc_test.doc-test-typecheck-file-status
         (owned_view.compiler-owned-shared-view source)
         (owned_view.compiler-owned-shared-view stdlib-roots))]
     (if (= doctest-status 0)

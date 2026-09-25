@@ -4230,7 +4230,7 @@
     [intern-state : spec_ci.InternCompatState
       (spec_ci.intern-compat-state-capture-active)]
     (begin
-      (ast.ast-node-pool-context-install! (ast.ast-place-shared-view pools))
+      (ast.ast-node-pool-context-install! pools)
       (spec_ci.intern-compat-state-install!
         (spec_ci.intern-global-shared-view intern-state))
       (let
@@ -4256,7 +4256,7 @@
     [intern-state : spec_ci.InternCompatState
       (spec_ci.intern-compat-state-capture-active)]
     (begin
-      (ast.ast-node-pool-context-install! (ast.ast-place-shared-view pools))
+      (ast.ast-node-pool-context-install! pools)
       (spec_ci.intern-compat-state-install!
         (spec_ci.intern-global-shared-view intern-state))
       (let
@@ -4278,10 +4278,7 @@
 (define (gen-normalize-program [program : ast.AstProgram]) : ResultGenProgram
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
-    [result : ResultGenProgram
-      (gen-normalize-program-with-pools
-        program
-        (ast.ast-place-shared-view pools))]
+    [result : ResultGenProgram (gen-normalize-program-with-pools program pools)]
     (begin
       (ast.ast-node-pool-context-install! pools)
       result)))
@@ -4985,11 +4982,9 @@
     [intern-state : spec_ci.InternCompatState
       (spec_ci.intern-compat-state-capture-active)]
     [owner : SpecOwnerContext
-      (spec-owner-context-new
-        (ast.ast-place-shared-view pools)
-        (spec-place-shared-view intern-state))]
+      (spec-owner-context-new pools (spec-place-shared-view intern-state))]
     (begin
-      (ast.ast-node-pool-context-install! (ast.ast-place-shared-view pools))
+      (ast.ast-node-pool-context-install! pools)
       (spec_ci.intern-compat-state-install!
         (spec-place-shared-view intern-state))
       (let
@@ -8561,10 +8556,10 @@
       (spec_ci.intern-compat-state-capture-active)]
     [owner : SpecOwnerContext
       (spec-owner-context-new
-        (ast.ast-place-shared-view pools)
+        pools
         (spec_ci.intern-global-shared-view intern-state))]
     (begin
-      (ast.ast-node-pool-context-install! (ast.ast-place-shared-view pools))
+      (ast.ast-node-pool-context-install! pools)
       (spec_ci.intern-compat-state-install!
         (spec_ci.intern-global-shared-view intern-state))
       (let
@@ -10273,7 +10268,7 @@
     [intern-state : spec_ci.InternCompatState
       (spec_ci.intern-compat-state-capture-active)]
     (begin
-      (ast.ast-node-pool-context-install! (ast.ast-place-shared-view pools))
+      (ast.ast-node-pool-context-install! pools)
       (spec_ci.intern-compat-state-install!
         (spec_ci.intern-global-shared-view intern-state))
       (let
@@ -10298,7 +10293,7 @@
     [intern-state : spec_ci.InternCompatState
       (spec_ci.intern-compat-state-capture-active)]
     (begin
-      (ast.ast-node-pool-context-install! (ast.ast-place-shared-view pools))
+      (ast.ast-node-pool-context-install! pools)
       (spec_ci.intern-compat-state-install!
         (spec_ci.intern-global-shared-view intern-state))
       (let
@@ -10318,9 +10313,7 @@
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [result : ResultSpecProgram
-      (compiler-specialize-program-with-pools
-        program
-        (ast.ast-place-shared-view pools))]
+      (compiler-specialize-program-with-pools program pools)]
     (begin
       (ast.ast-node-pool-context-install! pools)
       result)))
@@ -10336,7 +10329,7 @@
         program
         paths
         fallback-path
-        (ast.ast-place-shared-view pools))]
+        pools)]
     (begin
       (ast.ast-node-pool-context-install! pools)
       result)))
@@ -10717,12 +10710,9 @@
     [pools : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new-with-capacities 8 8)]
     [intern-state : spec_ci.InternCompatState (spec_ci.intern-compat-state-new)]
-    [owner : SpecOwnerContext
-      (spec-owner-context-new (ast.ast-place-shared-view pools) intern-state)]
+    [owner : SpecOwnerContext (spec-owner-context-new pools intern-state)]
     [slice-i64 : ast.AstType
-      (ast.ast-ty-slice-with-pools
-        (ast.ast-place-shared-view pools)
-        ast.AstType.I64)]
+      (ast.ast-ty-slice-with-pools pools ast.AstType.I64)]
     [slice-t : ast.AstType
       (ast.ast-ty-slice-with-pools
         pools
@@ -10799,20 +10789,13 @@
     [intern-b : spec_ci.InternCompatState (spec_ci.intern-compat-state-new)]
     [owner-a : SpecOwnerContext
       (spec-owner-context-new
-        (ast.ast-place-shared-view pools-a)
+        pools-a
         (spec_ci.intern-global-shared-view intern-a))]
-    [owner-b : SpecOwnerContext
-      (spec-owner-context-new (ast.ast-place-shared-view pools-b) intern-b)]
+    [owner-b : SpecOwnerContext (spec-owner-context-new pools-b intern-b)]
     [array-a : ast.AstType
-      (ast.ast-ty-array-with-pools
-        (ast.ast-place-shared-view pools-a)
-        (ast.AstType.I64)
-        7)]
+      (ast.ast-ty-array-with-pools pools-a (ast.AstType.I64) 7)]
     [array-b : ast.AstType
-      (ast.ast-ty-array-with-pools
-        (ast.ast-place-shared-view pools-b)
-        (ast.AstType.I64)
-        7)]
+      (ast.ast-ty-array-with-pools pools-b (ast.AstType.I64) 7)]
     [nested-a : ast.AstType (ast.ast-ty-ptr-with-pools pools-a array-a)]
     [nested-b : ast.AstType (ast.ast-ty-ptr-with-pools pools-b array-b)]
     [values-a : SpecValueList

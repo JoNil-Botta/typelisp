@@ -17987,7 +17987,7 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 14)
+          (cbi.compiler-builtin-ctfe "string-append")
           (tc-fn2
             (ast.AstType.String)
             (ast.AstType.String)
@@ -17996,7 +17996,7 @@
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 14)
+          (cbi.compiler-builtin-ctfe "string-append")
           (tc-fn2
             (ast.AstType.String)
             (ast.AstType.String)
@@ -18005,7 +18005,7 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 15)
+          (cbi.compiler-builtin-ctfe "string-concat")
           (tc-fn2
             (ast.AstType.String)
             (ast.AstType.String)
@@ -18014,7 +18014,7 @@
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 15)
+          (cbi.compiler-builtin-ctfe "string-concat")
           (tc-fn2
             (ast.AstType.String)
             (ast.AstType.String)
@@ -18023,109 +18023,109 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 7)
+          (cbi.compiler-builtin-ctfe "string-length")
           (tc-fn1 (ast.AstType.String) (ast.AstType.I64))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 8)
+          (cbi.compiler-builtin-ctfe "length")
           (tc-fn1 (ast.AstType.String) (ast.AstType.I64))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 10)
+          (cbi.compiler-builtin-ctfe "string-ref")
           (tc-fn2 (ast.AstType.String) (ast.AstType.I64) (ast.AstType.Char))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 11)
+          (cbi.compiler-builtin-ctfe "char-at")
           (tc-fn2 (ast.AstType.String) (ast.AstType.I64) (ast.AstType.Char))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 4)
+          (cbi.compiler-builtin-ctfe "string-eq")
           (tc-fn2 (ast.AstType.String) (ast.AstType.String) (ast.AstType.Bool))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 5)
+          (cbi.compiler-builtin-ctfe "string=?")
           (tc-fn2 (ast.AstType.String) (ast.AstType.String) (ast.AstType.Bool))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 13)
+          (cbi.compiler-builtin-ctfe ">int")
           (tc-fn1 (ast.AstType.String) (ast.AstType.I64))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 105)
+          (cbi.compiler-builtin-ctfe ">int")
           (tc-fn1 (ast.AstType.String) (ast.AstType.I64))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 16)
+          (cbi.compiler-builtin-ctfe "int->string")
           (tc-fn1 (ast.AstType.I64) (ast.AstType.String))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 16)
+          (cbi.compiler-builtin-ctfe "int->string")
           (tc-fn1 (ast.AstType.I64) (ast.AstType.String))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 27)
+          (cbi.compiler-builtin-ctfe "expr-bool")
           (tc-fn1 (ast.AstType.Bool) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 27)
+          (cbi.compiler-builtin-ctfe "expr-bool")
           (tc-fn1 (ast.AstType.Bool) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 28)
+          (cbi.compiler-builtin-ctfe "expr-int")
           (tc-fn1 (ast.AstType.I64) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 28)
+          (cbi.compiler-builtin-ctfe "expr-int")
           (tc-fn1 (ast.AstType.I64) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 29)
+          (cbi.compiler-builtin-ctfe "expr-string")
           (tc-fn1 (ast.AstType.String) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 30)
+          (cbi.compiler-builtin-ctfe "expr-var")
           (tc-fn1 (ast.AstType.String) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 30)
+          (cbi.compiler-builtin-ctfe "expr-var")
           (tc-fn1 (ast.AstType.String) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 31)
+          (cbi.compiler-builtin-ctfe "expr-struct-get")
           (tc-fn2
             (tc-global-shared-view expr)
             (ast.AstType.String)
@@ -18134,7 +18134,7 @@
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 31)
+          (cbi.compiler-builtin-ctfe "expr-struct-get")
           (tc-fn2
             (tc-global-shared-view expr)
             (ast.AstType.String)
@@ -18143,7 +18143,7 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 32)
+          (cbi.compiler-builtin-ctfe "expr-tuple-ref")
           (tc-fn2
             (tc-global-shared-view expr)
             (ast.AstType.I64)
@@ -18152,7 +18152,7 @@
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 32)
+          (cbi.compiler-builtin-ctfe "expr-tuple-ref")
           (tc-fn2
             (tc-global-shared-view expr)
             (ast.AstType.I64)
@@ -18161,7 +18161,7 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 33)
+          (cbi.compiler-builtin-ctfe "expr-struct-set")
           (tc-fn3
             (tc-global-shared-view expr)
             (ast.AstType.String)
@@ -18171,7 +18171,7 @@
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 33)
+          (cbi.compiler-builtin-ctfe "expr-struct-set")
           (tc-fn3
             (tc-global-shared-view expr)
             (ast.AstType.String)
@@ -18181,19 +18181,19 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 94)
+          (cbi.compiler-builtin-ctfe "expr-mut-borrow")
           (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 94)
+          (cbi.compiler-builtin-ctfe "expr-mut-borrow")
           (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 95)
+          (cbi.compiler-builtin-ctfe "expr-call")
           (tc-fn2
             (tc-global-shared-view expr)
             (ast.AstType.ExprList)
@@ -18202,7 +18202,7 @@
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 95)
+          (cbi.compiler-builtin-ctfe "expr-call")
           (tc-fn2
             (tc-global-shared-view expr)
             (ast.AstType.ExprList)
@@ -18211,7 +18211,7 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 98)
+          (cbi.compiler-builtin-ctfe "expr-mut-call0")
           (tc-fn2
             (tc-global-shared-view expr)
             (tc-global-shared-view expr)
@@ -18220,7 +18220,7 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 99)
+          (cbi.compiler-builtin-ctfe "expr-mut-call1")
           (tc-fn3
             (tc-global-shared-view expr)
             (tc-global-shared-view expr)
@@ -18230,7 +18230,7 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 100)
+          (cbi.compiler-builtin-ctfe "expr-mut-call2")
           (tc-fn4
             (tc-global-shared-view expr)
             (tc-global-shared-view expr)
@@ -18241,19 +18241,19 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 96)
+          (cbi.compiler-builtin-ctfe "expr-list-empty")
           (tc-fn0 (ast.AstType.ExprList))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 96)
+          (cbi.compiler-builtin-ctfe "expr-list-empty")
           (tc-fn0 (ast.AstType.ExprList))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 97)
+          (cbi.compiler-builtin-ctfe "expr-list-cons")
           (tc-fn2
             (tc-global-shared-view expr)
             (ast.AstType.ExprList)
@@ -18262,7 +18262,7 @@
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 97)
+          (cbi.compiler-builtin-ctfe "expr-list-cons")
           (tc-fn2
             (tc-global-shared-view expr)
             (ast.AstType.ExprList)
@@ -18271,7 +18271,7 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 35)
+          (cbi.compiler-builtin-ctfe "expr-if")
           (tc-fn3
             (tc-global-shared-view expr)
             (tc-global-shared-view expr)
@@ -18281,7 +18281,7 @@
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 35)
+          (cbi.compiler-builtin-ctfe "expr-if")
           (tc-fn3
             (tc-global-shared-view expr)
             (tc-global-shared-view expr)
@@ -18291,19 +18291,19 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 36)
+          (cbi.compiler-builtin-ctfe "pattern-wildcard")
           (tc-fn0 (tc-global-shared-view pattern))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 37)
+          (cbi.compiler-builtin-ctfe "pattern-binding")
           (tc-fn1 (ast.AstType.String) (tc-global-shared-view pattern))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 38)
+          (cbi.compiler-builtin-ctfe "pattern-variant")
           (tc-fn2
             (ast.AstType.String)
             (tc-global-shared-view pattern-list)
@@ -18312,13 +18312,13 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 39)
+          (cbi.compiler-builtin-ctfe "pattern-list-empty")
           (tc-fn0 (tc-global-shared-view pattern-list))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 40)
+          (cbi.compiler-builtin-ctfe "pattern-list-cons")
           (tc-fn2
             (tc-global-shared-view pattern)
             (tc-global-shared-view pattern-list)
@@ -18327,13 +18327,13 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 90)
+          (cbi.compiler-builtin-ctfe "pattern-list-bindings")
           (tc-fn2 (ast.AstType.String) (ast.AstType.I64) pattern-list)))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 41)
+          (cbi.compiler-builtin-ctfe "match-arm")
           (tc-fn2
             pattern
             (tc-global-shared-view expr)
@@ -18342,13 +18342,13 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 42)
+          (cbi.compiler-builtin-ctfe "match-arm-list-empty")
           (tc-fn0 (tc-global-shared-view match-arm-list))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 43)
+          (cbi.compiler-builtin-ctfe "match-arm-list-cons")
           (tc-fn2
             match-arm
             (tc-global-shared-view match-arm-list)
@@ -18357,7 +18357,7 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 44)
+          (cbi.compiler-builtin-ctfe "expr-match")
           (tc-fn2
             (tc-global-shared-view expr)
             match-arm-list
@@ -18366,55 +18366,55 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 45)
+          (cbi.compiler-builtin-ctfe "expr-type")
           (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 45)
+          (cbi.compiler-builtin-ctfe "expr-type")
           (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 289)
+          (cbi.compiler-builtin-ctfe "type-expr")
           (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 289)
+          (cbi.compiler-builtin-ctfe "type-expr")
           (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 34)
+          (cbi.compiler-builtin-ctfe "expr-splice")
           (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 46)
+          (cbi.compiler-builtin-ctfe "type-info")
           (tc-fn1 (tc-global-shared-view expr) type-info)))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 47)
+          (cbi.compiler-builtin-ctfe "module-name")
           (tc-fn1 (ast.AstType.String) (ast.AstType.String))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 48)
+          (cbi.compiler-builtin-ctfe "module-export-macro?")
           (tc-fn2 (ast.AstType.String) (ast.AstType.String) (ast.AstType.Bool))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 49)
+          (cbi.compiler-builtin-ctfe "module-hook")
           (tc-fn2
             (ast.AstType.String)
             (ast.AstType.String)
@@ -18423,7 +18423,7 @@
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 49)
+          (cbi.compiler-builtin-ctfe "module-hook")
           (tc-fn2
             (ast.AstType.String)
             (ast.AstType.String)
@@ -18432,13 +18432,13 @@
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 216)
+          (cbi.compiler-builtin-ctfe "module-value?")
           (tc-fn2 (ast.AstType.String) (ast.AstType.String) (ast.AstType.Bool))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 217)
+          (cbi.compiler-builtin-ctfe "module-value-type")
           (tc-fn2
             (ast.AstType.String)
             (ast.AstType.String)
@@ -18447,7 +18447,7 @@
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 285)
+          (cbi.compiler-builtin-ctfe "module-value-expr")
           (tc-fn2
             (ast.AstType.String)
             (ast.AstType.String)
@@ -18456,7 +18456,7 @@
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 286)
+          (cbi.compiler-builtin-ctfe "function-shared-borrow-returns-string?")
           (tc-fn2
             (tc-global-shared-view expr)
             (tc-global-shared-view expr)
@@ -18465,7 +18465,7 @@
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 287)
+          (cbi.compiler-builtin-ctfe "expr-shared-call1")
           (tc-fn2
             (tc-global-shared-view expr)
             (tc-global-shared-view expr)
@@ -18474,73 +18474,73 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 218)
+          (cbi.compiler-builtin-ctfe "reference-element-type")
           (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 218)
+          (cbi.compiler-builtin-ctfe "reference-element-type")
           (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 17)
+          (cbi.compiler-builtin-ctfe "comptime-error")
           (tc-fn1 (ast.AstType.String) (ast.AstType.Never))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 17)
+          (cbi.compiler-builtin-ctfe "comptime-error")
           (tc-fn1 (ast.AstType.String) (ast.AstType.Never))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 71)
+          (cbi.compiler-builtin-ctfe "type-kind")
           (tc-fn1 (tc-global-shared-view expr) (ast.AstType.String))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 72)
+          (cbi.compiler-builtin-ctfe "type-key")
           (tc-fn1 (tc-global-shared-view expr) (ast.AstType.String))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 210)
+          (cbi.compiler-builtin-ctfe "type-cleanup-owning?")
           (tc-fn1 (tc-global-shared-view expr) (ast.AstType.Bool))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 211)
+          (cbi.compiler-builtin-ctfe "type-cleanup-function")
           (tc-fn1 (tc-global-shared-view expr) (ast.AstType.String))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 73)
+          (cbi.compiler-builtin-ctfe "type-nominal-module")
           (tc-fn1 (tc-global-shared-view expr) (ast.AstType.String))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 74)
+          (cbi.compiler-builtin-ctfe "type-nominal-name")
           (tc-fn1 (tc-global-shared-view expr) (ast.AstType.String))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 75)
+          (cbi.compiler-builtin-ctfe "struct-field-count")
           (tc-fn1 (tc-global-shared-view expr) (ast.AstType.I64))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 76)
+          (cbi.compiler-builtin-ctfe "struct-field-name")
           (tc-fn2
             (tc-global-shared-view expr)
             (ast.AstType.I64)
@@ -18549,7 +18549,7 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 77)
+          (cbi.compiler-builtin-ctfe "struct-field-type")
           (tc-fn2
             (tc-global-shared-view expr)
             (ast.AstType.I64)
@@ -18558,13 +18558,13 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 78)
+          (cbi.compiler-builtin-ctfe "enum-variant-count")
           (tc-fn1 (tc-global-shared-view expr) (ast.AstType.I64))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 79)
+          (cbi.compiler-builtin-ctfe "enum-variant-name")
           (tc-fn2
             (tc-global-shared-view expr)
             (ast.AstType.I64)
@@ -18573,7 +18573,7 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 80)
+          (cbi.compiler-builtin-ctfe "enum-variant-payload-count")
           (tc-fn2
             (tc-global-shared-view expr)
             (ast.AstType.I64)
@@ -18582,7 +18582,7 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 81)
+          (cbi.compiler-builtin-ctfe "enum-variant-payload-type")
           (tc-fn3
             (tc-global-shared-view expr)
             (ast.AstType.I64)
@@ -18592,43 +18592,43 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 82)
+          (cbi.compiler-builtin-ctfe "array-element-type")
           (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 214)
+          (cbi.compiler-builtin-ctfe "box-element-type")
           (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 214)
+          (cbi.compiler-builtin-ctfe "box-element-type")
           (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 83)
+          (cbi.compiler-builtin-ctfe "array-length")
           (tc-fn1 (tc-global-shared-view expr) (ast.AstType.I64))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 84)
+          (cbi.compiler-builtin-ctfe "array-dynamic?")
           (tc-fn1 (tc-global-shared-view expr) (ast.AstType.Bool))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 85)
+          (cbi.compiler-builtin-ctfe "tuple-element-count")
           (tc-fn1 (tc-global-shared-view expr) (ast.AstType.I64))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 86)
+          (cbi.compiler-builtin-ctfe "tuple-element-type")
           (tc-fn2
             (tc-global-shared-view expr)
             (ast.AstType.I64)
@@ -18637,13 +18637,13 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 87)
+          (cbi.compiler-builtin-ctfe "function-param-count")
           (tc-fn1 (tc-global-shared-view expr) (ast.AstType.I64))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 88)
+          (cbi.compiler-builtin-ctfe "function-param-type")
           (tc-fn2
             (tc-global-shared-view expr)
             (ast.AstType.I64)
@@ -18652,97 +18652,97 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 89)
+          (cbi.compiler-builtin-ctfe "function-return-type")
           (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 19)
+          (cbi.compiler-builtin-ctfe "expr-bool?")
           (tc-fn1 (tc-global-shared-view expr) (ast.AstType.Bool))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 19)
+          (cbi.compiler-builtin-ctfe "expr-bool?")
           (tc-fn1 (tc-global-shared-view expr) (ast.AstType.Bool))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 20)
+          (cbi.compiler-builtin-ctfe "expr-bool-value")
           (tc-fn1 (tc-global-shared-view expr) (ast.AstType.Bool))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 20)
+          (cbi.compiler-builtin-ctfe "expr-bool-value")
           (tc-fn1 (tc-global-shared-view expr) (ast.AstType.Bool))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 21)
+          (cbi.compiler-builtin-ctfe "expr-if?")
           (tc-fn1 (tc-global-shared-view expr) (ast.AstType.Bool))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 21)
+          (cbi.compiler-builtin-ctfe "expr-if?")
           (tc-fn1 (tc-global-shared-view expr) (ast.AstType.Bool))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 22)
+          (cbi.compiler-builtin-ctfe "expr-if-cond")
           (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 22)
+          (cbi.compiler-builtin-ctfe "expr-if-cond")
           (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 23)
+          (cbi.compiler-builtin-ctfe "expr-if-then")
           (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 23)
+          (cbi.compiler-builtin-ctfe "expr-if-then")
           (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 24)
+          (cbi.compiler-builtin-ctfe "expr-if-else")
           (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 24)
+          (cbi.compiler-builtin-ctfe "expr-if-else")
           (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 51)
+          (cbi.compiler-builtin-ctfe "expr-list-length")
           (tc-fn1 (ast.AstType.ExprList) (ast.AstType.I64))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 51)
+          (cbi.compiler-builtin-ctfe "expr-list-length")
           (tc-fn1 (ast.AstType.ExprList) (ast.AstType.I64))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 54)
+          (cbi.compiler-builtin-ctfe "expr-list-nth")
           (tc-fn2
             (ast.AstType.ExprList)
             (ast.AstType.I64)
@@ -18751,7 +18751,7 @@
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 54)
+          (cbi.compiler-builtin-ctfe "expr-list-nth")
           (tc-fn2
             (ast.AstType.ExprList)
             (ast.AstType.I64)
@@ -18760,43 +18760,43 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 25)
+          (cbi.compiler-builtin-ctfe "expr-clause-first")
           (tc-fn1 (tc-global-shared-view clause) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 25)
+          (cbi.compiler-builtin-ctfe "expr-clause-first")
           (tc-fn1 (tc-global-shared-view clause) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 26)
+          (cbi.compiler-builtin-ctfe "expr-clause-second")
           (tc-fn1 (tc-global-shared-view clause) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 26)
+          (cbi.compiler-builtin-ctfe "expr-clause-second")
           (tc-fn1 (tc-global-shared-view clause) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 56)
+          (cbi.compiler-builtin-ctfe "expr-clause-list-length")
           (tc-fn1 (tc-global-shared-view clause-list) (ast.AstType.I64))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 56)
+          (cbi.compiler-builtin-ctfe "expr-clause-list-length")
           (tc-fn1 (tc-global-shared-view clause-list) (ast.AstType.I64))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 59)
+          (cbi.compiler-builtin-ctfe "expr-clause-list-nth")
           (tc-fn2
             (tc-global-shared-view clause-list)
             (ast.AstType.I64)
@@ -18805,49 +18805,49 @@
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 59)
+          (cbi.compiler-builtin-ctfe "expr-clause-list-nth")
           (tc-fn2 (tc-global-shared-view clause-list) (ast.AstType.I64) clause)))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 60)
+          (cbi.compiler-builtin-ctfe "expr-clause-list->expr-list")
           (tc-fn1 (tc-global-shared-view clause-list) (ast.AstType.ExprList))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 60)
+          (cbi.compiler-builtin-ctfe "expr-clause-list->expr-list")
           (tc-fn1 clause-list (ast.AstType.ExprList))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 61)
+          (cbi.compiler-builtin-ctfe "expr-binding-clause-name")
           (tc-fn1 (tc-global-shared-view binding-clause) (ast.AstType.String))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 61)
+          (cbi.compiler-builtin-ctfe "expr-binding-clause-name")
           (tc-fn1 (tc-global-shared-view binding-clause) (ast.AstType.String))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 62)
+          (cbi.compiler-builtin-ctfe "expr-binding-clause-has-type?")
           (tc-fn1 (tc-global-shared-view binding-clause) (ast.AstType.Bool))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 62)
+          (cbi.compiler-builtin-ctfe "expr-binding-clause-has-type?")
           (tc-fn1 (tc-global-shared-view binding-clause) (ast.AstType.Bool))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 63)
+          (cbi.compiler-builtin-ctfe "expr-binding-clause-type")
           (tc-fn1
             (tc-global-shared-view binding-clause)
             (tc-global-shared-view expr))))
@@ -18855,7 +18855,7 @@
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 63)
+          (cbi.compiler-builtin-ctfe "expr-binding-clause-type")
           (tc-fn1
             (tc-global-shared-view binding-clause)
             (tc-global-shared-view expr))))
@@ -18863,7 +18863,7 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 64)
+          (cbi.compiler-builtin-ctfe "expr-binding-clause-init")
           (tc-fn1
             (tc-global-shared-view binding-clause)
             (tc-global-shared-view expr))))
@@ -18871,25 +18871,25 @@
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 64)
+          (cbi.compiler-builtin-ctfe "expr-binding-clause-init")
           (tc-fn1 (tc-global-shared-view binding-clause) expr)))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 66)
+          (cbi.compiler-builtin-ctfe "expr-binding-clause-list-length")
           (tc-fn1 (tc-global-shared-view binding-clause-list) (ast.AstType.I64))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 66)
+          (cbi.compiler-builtin-ctfe "expr-binding-clause-list-length")
           (tc-fn1 (tc-global-shared-view binding-clause-list) (ast.AstType.I64))))
       (set!
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 69)
+          (cbi.compiler-builtin-ctfe "expr-binding-clause-list-nth")
           (tc-fn2
             (tc-global-shared-view binding-clause-list)
             (ast.AstType.I64)
@@ -18898,7 +18898,7 @@
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 69)
+          (cbi.compiler-builtin-ctfe "expr-binding-clause-list-nth")
           (tc-fn2
             (tc-global-shared-view binding-clause-list)
             (ast.AstType.I64)
@@ -18907,7 +18907,7 @@
         out
         (tc-bind-id
           out
-          (cbi.compiler-builtin-ctfe-ref 70)
+          (cbi.compiler-builtin-ctfe "expr-binding-clause-list->expr-list")
           (tc-fn1
             (tc-global-shared-view binding-clause-list)
             (ast.AstType.ExprList))))
@@ -18915,7 +18915,7 @@
         out
         (tc-bind-comptime-helper-aliases
           out
-          (cbi.compiler-builtin-ctfe-ref 70)
+          (cbi.compiler-builtin-ctfe "expr-binding-clause-list->expr-list")
           (tc-fn1 binding-clause-list (ast.AstType.ExprList))))
       out)))
 
@@ -49303,6 +49303,18 @@
         (not (tc-string-list-contains bound name)))]
     [_ false]))
 
+(define (tc-ref-closure-no-free-use?
+  [expr-bases : i64]
+  [expr : ast.AstExpr]
+  [name : String]
+  [bound : TcStringList]) : bool
+  (not
+    (tc-expr-uses-free-name?
+      expr-bases
+      (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
+      name
+      bound)))
+
 (define (tc-ref-closure-local-uses-ok?
   [expr-bases : i64]
   [expr : ast.AstExpr]
@@ -49316,24 +49328,6 @@
         (and
           (string.eq (tc-env-key-name-text var-name) name)
           (not (tc-string-list-contains bound name))))]
-    [(ast.AstExpr.Binary _ left-box right-box)
-      (let
-        [left : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases left-box)]
-        [right : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases right-box)]
-        (and
-          (tc-ref-closure-local-uses-ok?
-            expr-bases
-            left
-            (tc-global-shared-view name)
-            (tc-global-shared-view bound))
-          (tc-ref-closure-local-uses-ok? expr-bases right name bound)))]
-    [(ast.AstExpr.Unary _ inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-ref-closure-local-uses-ok? expr-bases inner name bound))]
     [(ast.AstExpr.Call func-box args)
       (let
         [func : ast.AstExpr
@@ -49351,28 +49345,6 @@
               (tc-global-shared-view name)
               (tc-global-shared-view bound))
             (tc-ref-closure-expr-list-local-uses-ok? expr-bases args name bound))))]
-    [(ast.AstExpr.BracketClause items)
-      (tc-ref-closure-expr-list-local-uses-ok? expr-bases items name bound)]
-    [(ast.AstExpr.If cond-box then-box else-box)
-      (let
-        [cond : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases cond-box)]
-        [then-branch : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases then-box)]
-        [else-branch : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases else-box)]
-        (and
-          (tc-ref-closure-local-uses-ok?
-            expr-bases
-            cond
-            (tc-global-shared-view name)
-            (tc-global-shared-view bound))
-          (tc-ref-closure-local-uses-ok?
-            expr-bases
-            then-branch
-            (tc-global-shared-view name)
-            (tc-global-shared-view bound))
-          (tc-ref-closure-local-uses-ok? expr-bases else-branch name bound)))]
     [(ast.AstExpr.Let let-box)
       (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-box)
@@ -49402,144 +49374,6 @@
                 body
                 name
                 (tc-param-list-add-bound-names params bound))))])]
-    [(ast.AstExpr.Tuple exprs)
-      (tc-ref-closure-expr-list-local-uses-ok? expr-bases exprs name bound)]
-    [(ast.AstExpr.TupleRef tuple-box _)
-      (let
-        [tuple : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases tuple-box)]
-        (tc-ref-closure-local-uses-ok? expr-bases tuple name bound))]
-    [(ast.AstExpr.Array exprs)
-      (tc-ref-closure-expr-list-local-uses-ok? expr-bases exprs name bound)]
-    [(ast.AstExpr.DynArray exprs)
-      (tc-ref-closure-expr-list-local-uses-ok? expr-bases exprs name bound)]
-    [(ast.AstExpr.FixedMakeArray _ len-box)
-      (let
-        [len : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases len-box)]
-        (tc-ref-closure-local-uses-ok? expr-bases len name bound))]
-    [(ast.AstExpr.MakeArray _ len-box)
-      (let
-        [len : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases len-box)]
-        (tc-ref-closure-local-uses-ok? expr-bases len name bound))]
-    [(ast.AstExpr.ArrayRef array-box index-box)
-      (let
-        [array : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases array-box)]
-        [index : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases index-box)]
-        (and
-          (tc-ref-closure-local-uses-ok?
-            expr-bases
-            array
-            (tc-global-shared-view name)
-            (tc-global-shared-view bound))
-          (tc-ref-closure-local-uses-ok? expr-bases index name bound)))]
-    [(ast.AstExpr.ArraySet array-box index-box value-box)
-      (let
-        [array : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases array-box)]
-        [index : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases index-box)]
-        [value : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        (and
-          (tc-ref-closure-local-uses-ok?
-            expr-bases
-            array
-            (tc-global-shared-view name)
-            (tc-global-shared-view bound))
-          (tc-ref-closure-local-uses-ok?
-            expr-bases
-            index
-            (tc-global-shared-view name)
-            (tc-global-shared-view bound))
-          (tc-ref-closure-local-uses-ok? expr-bases value name bound)))]
-    [(ast.AstExpr.ArrayTake array-box live-box index-box)
-      (let
-        [array : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases array-box)]
-        [live : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases live-box)]
-        [index : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases index-box)]
-        (and
-          (tc-ref-closure-local-uses-ok?
-            expr-bases
-            array
-            (tc-global-shared-view name)
-            (tc-global-shared-view bound))
-          (tc-ref-closure-local-uses-ok?
-            expr-bases
-            live
-            (tc-global-shared-view name)
-            (tc-global-shared-view bound))
-          (tc-ref-closure-local-uses-ok? expr-bases index name bound)))]
-    [(ast.AstExpr.FixedArrayTake array-box index-box)
-      (and
-        (tc-ref-closure-local-uses-ok?
-          expr-bases
-          (ast.ast-expr-segment-bases-get expr-bases array-box)
-          (tc-global-shared-view name)
-          (tc-global-shared-view bound))
-        (tc-ref-closure-local-uses-ok?
-          expr-bases
-          (ast.ast-expr-segment-bases-get expr-bases index-box)
-          name
-          bound))]
-    [(ast.AstExpr.Replace place-box replacement-box)
-      (and
-        (tc-ref-closure-local-uses-ok?
-          expr-bases
-          (ast.ast-expr-segment-bases-get expr-bases place-box)
-          (tc-global-shared-view name)
-          (tc-global-shared-view bound))
-        (tc-ref-closure-local-uses-ok?
-          expr-bases
-          (ast.ast-expr-segment-bases-get expr-bases replacement-box)
-          name
-          bound))]
-    [(ast.AstExpr.ArrayPush array-box value-box)
-      (let
-        [array : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases array-box)]
-        [value : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        (and
-          (tc-ref-closure-local-uses-ok?
-            expr-bases
-            array
-            (tc-global-shared-view name)
-            (tc-global-shared-view bound))
-          (tc-ref-closure-local-uses-ok? expr-bases value name bound)))]
-    [(ast.AstExpr.StringRef str-box index-box)
-      (let
-        [str : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases str-box)]
-        [index : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases index-box)]
-        (and
-          (tc-ref-closure-local-uses-ok?
-            expr-bases
-            str
-            (tc-global-shared-view name)
-            (tc-global-shared-view bound))
-          (tc-ref-closure-local-uses-ok? expr-bases index name bound)))]
-    [(ast.AstExpr.While cond-box body-box)
-      (let
-        [cond : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases cond-box)]
-        [body : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases body-box)]
-        (and
-          (tc-ref-closure-local-uses-ok?
-            expr-bases
-            cond
-            (tc-global-shared-view name)
-            (tc-global-shared-view bound))
-          (tc-ref-closure-local-uses-ok? expr-bases body name bound)))]
-    [(ast.AstExpr.Begin exprs)
-      (tc-ref-closure-expr-list-local-uses-ok? expr-bases exprs name bound)]
-    [(ast.AstExpr.Unsafe exprs)
-      (tc-ref-closure-expr-list-local-uses-ok? expr-bases exprs name bound)]
     [(ast.AstExpr.Set var-name value-box)
       (let
         [value : ast.AstExpr
@@ -49552,49 +49386,6 @@
                 (tc-string-list-contains
                   (tc-global-shared-view bound)
                   (tc-global-shared-view name)))))
-          (tc-ref-closure-local-uses-ok? expr-bases value name bound)))]
-    [(ast.AstExpr.Ann inner-box _)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-ref-closure-local-uses-ok? expr-bases inner name bound))]
-    [(ast.AstExpr.Cast inner-box _)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-ref-closure-local-uses-ok? expr-bases inner name bound))]
-    [(ast.AstExpr.Borrow _ _ place-box)
-      (let
-        [place : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases place-box)]
-        (tc-ref-closure-local-uses-ok? expr-bases place name bound))]
-    [(ast.AstExpr.Box inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-ref-closure-local-uses-ok? expr-bases inner name bound))]
-    [(ast.AstExpr.BoxGet inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-ref-closure-local-uses-ok? expr-bases inner name bound))]
-    [(ast.AstExpr.BoxTake inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-ref-closure-local-uses-ok? expr-bases inner name bound))]
-    [(ast.AstExpr.BoxSet inner-box value-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        [value : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        (and
-          (tc-ref-closure-local-uses-ok?
-            expr-bases
-            inner
-            (tc-global-shared-view name)
-            (tc-global-shared-view bound))
           (tc-ref-closure-local-uses-ok? expr-bases value name bound)))]
     [(ast.AstExpr.Match match-box)
       (match (__tl-box-place match-box)
@@ -49786,76 +49577,6 @@
                 (tc-global-shared-view name)
                 index-bound)
               (tc-ref-closure-local-uses-ok? expr-bases body name body-bound)))])]
-    [(ast.AstExpr.SpmdBroadcast value-box lane-box)
-      (let
-        [value : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        [lane : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases lane-box)]
-        (and
-          (tc-ref-closure-local-uses-ok?
-            expr-bases
-            value
-            (tc-global-shared-view name)
-            (tc-global-shared-view bound))
-          (tc-ref-closure-local-uses-ok? expr-bases lane name bound)))]
-    [(ast.AstExpr.SpmdShuffle value-box lane-box)
-      (let
-        [value : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        [lane : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases lane-box)]
-        (and
-          (tc-ref-closure-local-uses-ok?
-            expr-bases
-            value
-            (tc-global-shared-view name)
-            (tc-global-shared-view bound))
-          (tc-ref-closure-local-uses-ok? expr-bases lane name bound)))]
-    [(ast.AstExpr.StructGet receiver-box _)
-      (let
-        [receiver : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases receiver-box)]
-        (tc-ref-closure-local-uses-ok? expr-bases receiver name bound))]
-    [(ast.AstExpr.StructSet receiver-box _ value-box)
-      (let
-        [receiver : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases receiver-box)]
-        [value : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        (and
-          (tc-ref-closure-local-uses-ok?
-            expr-bases
-            receiver
-            (tc-global-shared-view name)
-            (tc-global-shared-view bound))
-          (tc-ref-closure-local-uses-ok? expr-bases value name bound)))]
-    [(ast.AstExpr.WithRegion _ body)
-      (tc-ref-closure-expr-list-local-uses-ok? expr-bases body name bound)]
-    [(ast.AstExpr.WithEscape scratch-box body)
-      (let
-        [scratch : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases scratch-box)]
-        (and
-          (tc-ref-closure-local-uses-ok?
-            expr-bases
-            scratch
-            (tc-global-shared-view name)
-            (tc-global-shared-view bound))
-          (tc-ref-closure-expr-list-local-uses-ok? expr-bases body name bound)))]
-    [(ast.AstExpr.WithScratch body)
-      (tc-ref-closure-expr-list-local-uses-ok? expr-bases body name bound)]
-    [(ast.AstExpr.InArena arena-box body)
-      (let
-        [arena : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases arena-box)]
-        (and
-          (tc-ref-closure-local-uses-ok?
-            expr-bases
-            arena
-            (tc-global-shared-view name)
-            (tc-global-shared-view bound))
-          (tc-ref-closure-expr-list-local-uses-ok? expr-bases body name bound)))]
     [(ast.AstExpr.WithResource wr-box)
       (match (__tl-box-place wr-box)
         [(ast.AstWithResource.WithResource bindings body)
@@ -49870,176 +49591,24 @@
               body
               name
               (tc-resource-binding-list-add-bound-names bindings bound)))])]
-    [(ast.AstExpr.Comptime inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-ref-closure-local-uses-ok? expr-bases inner name bound))]
-    [(ast.AstExpr.Quote inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-ref-closure-local-uses-ok? expr-bases inner name bound))]
-    [(ast.AstExpr.Quasiquote inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-ref-closure-local-uses-ok? expr-bases inner name bound))]
-    [(ast.AstExpr.Unquote inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-ref-closure-local-uses-ok? expr-bases inner name bound))]
-    [(ast.AstExpr.UnquoteSplicing inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-ref-closure-local-uses-ok? expr-bases inner name bound))]
-    [(ast.AstExpr.Try inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-ref-closure-local-uses-ok? expr-bases inner name bound))]
-    [(ast.AstExpr.Return inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-ref-closure-local-uses-ok? expr-bases inner name bound))]
-    [(ast.AstExpr.PtrNullCheck inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-ref-closure-local-uses-ok? expr-bases inner name bound))]
-    [(ast.AstExpr.PtrRead ptr-box)
-      (let
-        [ptr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases ptr-box)]
-        (tc-ref-closure-local-uses-ok? expr-bases ptr name bound))]
-    [(ast.AstExpr.PtrWrite ptr-box value-box)
-      (let
-        [ptr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases ptr-box)]
-        [value : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        (and
-          (tc-ref-closure-local-uses-ok?
-            expr-bases
-            ptr
-            (tc-global-shared-view name)
-            (tc-global-shared-view bound))
-          (tc-ref-closure-local-uses-ok? expr-bases value name bound)))]
-    [(ast.AstExpr.PtrOffset ptr-box offset-box)
-      (let
-        [ptr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases ptr-box)]
-        [offset : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases offset-box)]
-        (and
-          (tc-ref-closure-local-uses-ok?
-            expr-bases
-            ptr
-            (tc-global-shared-view name)
-            (tc-global-shared-view bound))
-          (tc-ref-closure-local-uses-ok? expr-bases offset name bound)))]
-    [(ast.AstExpr.PtrCast ptr-box _)
-      (let
-        [ptr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases ptr-box)]
-        (tc-ref-closure-local-uses-ok? expr-bases ptr name bound))]
-    [(ast.AstExpr.PtrToInt ptr-box)
-      (let
-        [ptr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases ptr-box)]
-        (tc-ref-closure-local-uses-ok? expr-bases ptr name bound))]
-    [(ast.AstExpr.IntToPtr value-box _)
-      (let
-        [value : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        (tc-ref-closure-local-uses-ok? expr-bases value name bound))]
-    [(ast.AstExpr.StringData str-box)
-      (let
-        [str : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases str-box)]
-        (tc-ref-closure-local-uses-ok? expr-bases str name bound))]
-    [(ast.AstExpr.StringFromBytes ptr-box len-box)
-      (let
-        [ptr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases ptr-box)]
-        [len : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases len-box)]
-        (and
-          (tc-ref-closure-local-uses-ok?
-            expr-bases
-            ptr
-            (tc-global-shared-view name)
-            (tc-global-shared-view bound))
-          (tc-ref-closure-local-uses-ok? expr-bases len name bound)))]
-    [(ast.AstExpr.ArrayData array-box)
-      (let
-        [array : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases array-box)]
-        (tc-ref-closure-local-uses-ok? expr-bases array name bound))]
-    [(ast.AstExpr.BinaryData _) true]
-    [(ast.AstExpr.SpmdProgramIndex) true]
-    [(ast.AstExpr.SpmdProgramCount) true]
-    [(ast.AstExpr.CpuIdEax leaf-box subleaf-box)
-      (let
-        [leaf : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases leaf-box)]
-        [subleaf : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases subleaf-box)]
-        (and
-          (tc-ref-closure-local-uses-ok?
-            expr-bases
-            leaf
-            (tc-global-shared-view name)
-            (tc-global-shared-view bound))
-          (tc-ref-closure-local-uses-ok? expr-bases subleaf name bound)))]
-    [(ast.AstExpr.CpuIdEbx leaf-box subleaf-box)
-      (let
-        [leaf : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases leaf-box)]
-        [subleaf : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases subleaf-box)]
-        (and
-          (tc-ref-closure-local-uses-ok?
-            expr-bases
-            leaf
-            (tc-global-shared-view name)
-            (tc-global-shared-view bound))
-          (tc-ref-closure-local-uses-ok? expr-bases subleaf name bound)))]
-    [(ast.AstExpr.CpuIdEcx leaf-box subleaf-box)
-      (let
-        [leaf : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases leaf-box)]
-        [subleaf : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases subleaf-box)]
-        (and
-          (tc-ref-closure-local-uses-ok?
-            expr-bases
-            leaf
-            (tc-global-shared-view name)
-            (tc-global-shared-view bound))
-          (tc-ref-closure-local-uses-ok? expr-bases subleaf name bound)))]
-    [(ast.AstExpr.CpuIdEdx leaf-box subleaf-box)
-      (let
-        [leaf : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases leaf-box)]
-        [subleaf : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases subleaf-box)]
-        (and
-          (tc-ref-closure-local-uses-ok?
-            expr-bases
-            leaf
-            (tc-global-shared-view name)
-            (tc-global-shared-view bound))
-          (tc-ref-closure-local-uses-ok? expr-bases subleaf name bound)))]
-    [(ast.AstExpr.Xgetbv index-box)
-      (let
-        [index : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases index-box)]
-        (tc-ref-closure-local-uses-ok? expr-bases index name bound))]
-    [(ast.AstExpr.Syscall args)
-      (tc-ref-closure-expr-list-local-uses-ok? expr-bases args name bound)]
+    ;; These forms may not use the name at all.
+    [(ast.AstExpr.Spanned _ _)
+      (tc-ref-closure-no-free-use? expr-bases expr name bound)]
+    [(ast.AstExpr.MacroExpansion _ _ _)
+      (tc-ref-closure-no-free-use? expr-bases expr name bound)]
+    [(ast.AstExpr.PtrAddrOf _)
+      (tc-ref-closure-no-free-use? expr-bases expr name bound)]
+    [(ast.AstExpr.ForOwnedState _)
+      (tc-ref-closure-no-free-use? expr-bases expr name bound)]
+    [(ast.AstExpr.ForOwnedStep _)
+      (tc-ref-closure-no-free-use? expr-bases expr name bound)]
     [_
-      (not
-        (tc-expr-uses-free-name?
-          expr-bases
-          (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
-          name
-          bound))]))
+      (tc-ref-closure-expr-list-local-uses-ok?
+        expr-bases
+        (ast.ast-expr-child-ids
+          (ast.ast-expr-unspan-with-segment-bases expr-bases expr))
+        name
+        bound)]))
 
 (define (tc-reference-closure-escape-message) : String
   "typecheck: reference-capturing closure value would escape lexical scope")
@@ -53008,222 +52577,17 @@
     [(ResultTcUnit.Ok) (tc-spmd-scan-body-no-nested-spmd expr-bases right)]
     [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))
 
-(define (tc-spmd-scan-body-no-nested-triple
-  [expr-bases : i64]
-  [first : ast.AstExpr]
-  [second : ast.AstExpr]
-  [third : ast.AstExpr]) : ResultTcUnit
-  (match (tc-spmd-scan-body-no-nested-pair expr-bases first second)
-    [(ResultTcUnit.Ok) (tc-spmd-scan-body-no-nested-spmd expr-bases third)]
-    [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))
-
-(define (tc-spmd-scan-body-no-nested-let-bindings
-  [expr-bases : i64]
-  [bindings : ast.AstLetBindingList]) : ResultTcUnit
-  (tc-spmd-scan-body-no-nested-let-bindings-at expr-bases (& bindings) 0))
-
-(define (tc-spmd-scan-body-no-nested-let-bindings-at
-  [expr-bases : i64]
-  [bindings : (& bindings ast.AstLetBindingList)]
-  [index : i64]) : ResultTcUnit
-  (if (>= index (ast.ast-let-binding-list-len bindings))
-    ResultTcUnit.Ok
-    (match (ast.ast-let-binding-list-get
-      bindings
-      index
-      (ast.ast-let-binding-fallback))
-      [(ast.AstLetBinding.Binding _ _ init-box)
-        (let
-          [init : ast.AstExpr
-            (ast.ast-expr-segment-bases-get expr-bases init-box)]
-          (match (tc-spmd-scan-body-no-nested-spmd expr-bases init)
-            [(ResultTcUnit.Ok)
-              (tc-spmd-scan-body-no-nested-let-bindings-at
-                expr-bases
-                bindings
-                (+ index 1))]
-            [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))])))
-
-(define (tc-spmd-scan-body-no-nested-resource-bindings
-  [expr-bases : i64]
-  [bindings : ast.AstResourceBindingList]) : ResultTcUnit
-  (tc-spmd-scan-body-no-nested-resource-bindings-at expr-bases (& bindings) 0))
-
-(define (tc-spmd-scan-body-no-nested-resource-bindings-at
-  [expr-bases : i64]
-  [bindings : (& bindings ast.AstResourceBindingList)]
-  [index : i64]) : ResultTcUnit
-  (if (>= index (ast.ast-resource-binding-list-len bindings))
-    ResultTcUnit.Ok
-    (match (ast.ast-resource-binding-list-get
-      bindings
-      index
-      (ast.ast-resource-binding-fallback))
-      [(ast.AstResourceBinding.Binding _ init-box cleanup-box _)
-        (let
-          [init : ast.AstExpr
-            (ast.ast-expr-segment-bases-get expr-bases init-box)]
-          [cleanup : ast.AstExpr
-            (ast.ast-expr-segment-bases-get expr-bases cleanup-box)]
-          (match (tc-spmd-scan-body-no-nested-pair expr-bases init cleanup)
-            [(ResultTcUnit.Ok)
-              (tc-spmd-scan-body-no-nested-resource-bindings-at
-                expr-bases
-                bindings
-                (+ index 1))]
-            [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))])))
-
-(define (tc-spmd-scan-body-no-nested-arms
-  [expr-bases : i64]
-  [arms : ast.AstMatchArmList]) : ResultTcUnit
-  (tc-spmd-scan-body-no-nested-arms-at expr-bases (& arms) 0))
-
-(define (tc-spmd-scan-body-no-nested-arms-at
-  [expr-bases : i64]
-  [arms : (& arms ast.AstMatchArmList)]
-  [index : i64]) : ResultTcUnit
-  (if (>= index arms.len)
-    ResultTcUnit.Ok
-    (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
-      [(ast.AstMatchArm.Arm _ body-box)
-        (let
-          [body : ast.AstExpr
-            (ast.ast-expr-segment-bases-get expr-bases body-box)]
-          (match (tc-spmd-scan-body-no-nested-spmd expr-bases body)
-            [(ResultTcUnit.Ok)
-              (tc-spmd-scan-body-no-nested-arms-at expr-bases arms (+ index 1))]
-            [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))])))
-
 (define (tc-spmd-scan-body-no-nested-spmd
   [expr-bases : i64]
   [expr : ast.AstExpr]) : ResultTcUnit
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
-    [(ast.AstExpr.Binary _ left-box right-box)
-      (tc-spmd-scan-body-no-nested-pair
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases left-box)
-        (ast.ast-expr-segment-bases-get expr-bases right-box))]
-    [(ast.AstExpr.Unary _ inner-box)
-      (tc-spmd-scan-body-no-nested-spmd
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases inner-box))]
-    [(ast.AstExpr.Call func-box args)
-      (match (tc-spmd-scan-body-no-nested-spmd
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases func-box))
-        [(ResultTcUnit.Ok) (tc-spmd-scan-body-no-nested-list expr-bases args)]
-        [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
-    [(ast.AstExpr.If cond-box then-box else-box)
-      (tc-spmd-scan-body-no-nested-triple
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases cond-box)
-        (ast.ast-expr-segment-bases-get expr-bases then-box)
-        (ast.ast-expr-segment-bases-get expr-bases else-box))]
-    [(ast.AstExpr.Let let-box)
-      (match (__tl-box-place let-box)
-        [(ast.AstLet.Let bindings body-box)
-          (match (tc-spmd-scan-body-no-nested-let-bindings expr-bases bindings)
-            [(ResultTcUnit.Ok)
-              (tc-spmd-scan-body-no-nested-spmd
-                expr-bases
-                (ast.ast-expr-segment-bases-get expr-bases body-box))]
-            [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])])]
-    [(ast.AstExpr.Lambda lambda-box)
-      (match (__tl-box-place lambda-box)
-        [(ast.AstLambda.Lambda _ _ body-box)
-          (tc-spmd-scan-body-no-nested-spmd
-            expr-bases
-            (ast.ast-expr-segment-bases-get expr-bases body-box))])]
-    [(ast.AstExpr.Tuple exprs)
-      (tc-spmd-scan-body-no-nested-list expr-bases exprs)]
+  (match (ast.ast-expr-unspan-with-segment-bases
+    expr-bases
+    (tc-global-shared-view expr))
     [(ast.AstExpr.TupleRef tuple-box index-box)
       (tc-spmd-scan-body-no-nested-pair
         expr-bases
         (ast.ast-expr-segment-bases-get expr-bases tuple-box)
         (ast.ast-expr-segment-bases-get expr-bases index-box))]
-    [(ast.AstExpr.Array exprs)
-      (tc-spmd-scan-body-no-nested-list expr-bases exprs)]
-    [(ast.AstExpr.DynArray exprs)
-      (tc-spmd-scan-body-no-nested-list expr-bases exprs)]
-    [(ast.AstExpr.FixedMakeArray _ len-box)
-      (tc-spmd-scan-body-no-nested-spmd
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases len-box))]
-    [(ast.AstExpr.MakeArray _ len-box)
-      (tc-spmd-scan-body-no-nested-spmd
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases len-box))]
-    [(ast.AstExpr.ArrayRef array-box index-box)
-      (tc-spmd-scan-body-no-nested-pair
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases array-box)
-        (ast.ast-expr-segment-bases-get expr-bases index-box))]
-    [(ast.AstExpr.ArraySet array-box index-box value-box)
-      (tc-spmd-scan-body-no-nested-triple
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases array-box)
-        (ast.ast-expr-segment-bases-get expr-bases index-box)
-        (ast.ast-expr-segment-bases-get expr-bases value-box))]
-    [(ast.AstExpr.ArrayTake array-box live-box index-box)
-      (tc-spmd-scan-body-no-nested-triple
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases array-box)
-        (ast.ast-expr-segment-bases-get expr-bases live-box)
-        (ast.ast-expr-segment-bases-get expr-bases index-box))]
-    [(ast.AstExpr.FixedArrayTake array-box index-box)
-      (tc-spmd-scan-body-no-nested-pair
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases array-box)
-        (ast.ast-expr-segment-bases-get expr-bases index-box))]
-    [(ast.AstExpr.Replace place-box replacement-box)
-      (tc-spmd-scan-body-no-nested-pair
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases place-box)
-        (ast.ast-expr-segment-bases-get expr-bases replacement-box))]
-    [(ast.AstExpr.ArrayPush array-box value-box)
-      (tc-spmd-scan-body-no-nested-pair
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases array-box)
-        (ast.ast-expr-segment-bases-get expr-bases value-box))]
-    [(ast.AstExpr.StringRef str-box index-box)
-      (tc-spmd-scan-body-no-nested-pair
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases str-box)
-        (ast.ast-expr-segment-bases-get expr-bases index-box))]
-    [(ast.AstExpr.While cond-box body-box)
-      (tc-spmd-scan-body-no-nested-pair
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases cond-box)
-        (ast.ast-expr-segment-bases-get expr-bases body-box))]
-    [(ast.AstExpr.Begin exprs)
-      (tc-spmd-scan-body-no-nested-list expr-bases exprs)]
-    [(ast.AstExpr.Unsafe exprs)
-      (tc-spmd-scan-body-no-nested-list expr-bases exprs)]
-    [(ast.AstExpr.Set _ value-box)
-      (tc-spmd-scan-body-no-nested-spmd
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases value-box))]
-    [(ast.AstExpr.Ann inner-box _)
-      (tc-spmd-scan-body-no-nested-spmd
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases inner-box))]
-    [(ast.AstExpr.Cast inner-box _)
-      (tc-spmd-scan-body-no-nested-spmd
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases inner-box))]
-    [(ast.AstExpr.Borrow _ _ place-box)
-      (tc-spmd-scan-body-no-nested-spmd
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases place-box))]
-    [(ast.AstExpr.Match match-box)
-      (match (__tl-box-place match-box)
-        [(ast.AstMatch.Match scrutinee-box arms)
-          (match (tc-spmd-scan-body-no-nested-spmd
-            expr-bases
-            (ast.ast-expr-segment-bases-get expr-bases scrutinee-box))
-            [(ResultTcUnit.Ok)
-              (tc-spmd-scan-body-no-nested-arms expr-bases arms)]
-            [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])])]
     [(ast.AstExpr.Foreach _)
       (ResultTcUnit.Err
         "typecheck: nested foreach inside spmd-scan is not supported")]
@@ -53236,167 +52600,24 @@
     [(ast.AstExpr.SpmdCompact _)
       (ResultTcUnit.Err
         "typecheck: nested spmd-compact inside spmd-scan is not supported")]
-    [(ast.AstExpr.SpmdBroadcast value-box lane-box)
-      (tc-spmd-scan-body-no-nested-pair
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases value-box)
-        (ast.ast-expr-segment-bases-get expr-bases lane-box))]
-    [(ast.AstExpr.SpmdShuffle value-box lane-box)
-      (tc-spmd-scan-body-no-nested-pair
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases value-box)
-        (ast.ast-expr-segment-bases-get expr-bases lane-box))]
     [(ast.AstExpr.SpmdProgramIndex)
       (ResultTcUnit.Err
         "typecheck: program-index is not supported inside spmd-scan body")]
     [(ast.AstExpr.SpmdProgramCount)
       (ResultTcUnit.Err
         "typecheck: program-count is not supported inside spmd-scan body")]
-    [(ast.AstExpr.StructGet receiver-box _)
-      (tc-spmd-scan-body-no-nested-spmd
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases receiver-box))]
-    [(ast.AstExpr.StructSet receiver-box _ value-box)
-      (tc-spmd-scan-body-no-nested-pair
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases receiver-box)
-        (ast.ast-expr-segment-bases-get expr-bases value-box))]
-    [(ast.AstExpr.WithRegion _ body)
-      (tc-spmd-scan-body-no-nested-list expr-bases body)]
-    [(ast.AstExpr.WithEscape scratch-box body)
-      (match (tc-spmd-scan-body-no-nested-spmd
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases scratch-box))
-        [(ResultTcUnit.Ok) (tc-spmd-scan-body-no-nested-list expr-bases body)]
-        [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
-    [(ast.AstExpr.WithScratch body)
-      (tc-spmd-scan-body-no-nested-list expr-bases body)]
-    [(ast.AstExpr.InArena arena-box body)
-      (match (tc-spmd-scan-body-no-nested-spmd
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases arena-box))
-        [(ResultTcUnit.Ok) (tc-spmd-scan-body-no-nested-list expr-bases body)]
-        [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
-    [(ast.AstExpr.WithResource wr-box)
-      (match (__tl-box-place wr-box)
-        [(ast.AstWithResource.WithResource bindings body)
-          (match (tc-spmd-scan-body-no-nested-resource-bindings
-            expr-bases
-            bindings)
-            [(ResultTcUnit.Ok)
-              (tc-spmd-scan-body-no-nested-list expr-bases body)]
-            [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])])]
-    [(ast.AstExpr.Box inner-box)
-      (tc-spmd-scan-body-no-nested-spmd
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases inner-box))]
-    [(ast.AstExpr.BoxGet inner-box)
-      (tc-spmd-scan-body-no-nested-spmd
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases inner-box))]
-    [(ast.AstExpr.BoxTake inner-box)
-      (tc-spmd-scan-body-no-nested-spmd
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases inner-box))]
-    [(ast.AstExpr.BoxSet inner-box value-box)
-      (tc-spmd-scan-body-no-nested-pair
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases inner-box)
-        (ast.ast-expr-segment-bases-get expr-bases value-box))]
-    [(ast.AstExpr.Comptime inner-box)
-      (tc-spmd-scan-body-no-nested-spmd
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases inner-box))]
     [(ast.AstExpr.Quote _) ResultTcUnit.Ok]
     [(ast.AstExpr.Quasiquote _) ResultTcUnit.Ok]
-    [(ast.AstExpr.Unquote inner-box)
-      (tc-spmd-scan-body-no-nested-spmd
+    [(ast.AstExpr.PtrAddrOf _) ResultTcUnit.Ok]
+    [(ast.AstExpr.Spanned _ _) ResultTcUnit.Ok]
+    [(ast.AstExpr.MacroExpansion _ _ _) ResultTcUnit.Ok]
+    [(ast.AstExpr.ForOwnedState _) ResultTcUnit.Ok]
+    [(ast.AstExpr.ForOwnedStep _) ResultTcUnit.Ok]
+    [_
+      (tc-spmd-scan-body-no-nested-list
         expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases inner-box))]
-    [(ast.AstExpr.UnquoteSplicing inner-box)
-      (tc-spmd-scan-body-no-nested-spmd
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases inner-box))]
-    [(ast.AstExpr.BracketClause items)
-      (tc-spmd-scan-body-no-nested-list expr-bases items)]
-    [(ast.AstExpr.Try inner-box)
-      (tc-spmd-scan-body-no-nested-spmd
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases inner-box))]
-    [(ast.AstExpr.Return inner-box)
-      (tc-spmd-scan-body-no-nested-spmd
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases inner-box))]
-    [(ast.AstExpr.PtrNullCheck inner-box)
-      (tc-spmd-scan-body-no-nested-spmd
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases inner-box))]
-    [(ast.AstExpr.PtrRead ptr-box)
-      (tc-spmd-scan-body-no-nested-spmd
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases ptr-box))]
-    [(ast.AstExpr.PtrWrite ptr-box value-box)
-      (tc-spmd-scan-body-no-nested-pair
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases ptr-box)
-        (ast.ast-expr-segment-bases-get expr-bases value-box))]
-    [(ast.AstExpr.PtrOffset ptr-box offset-box)
-      (tc-spmd-scan-body-no-nested-pair
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases ptr-box)
-        (ast.ast-expr-segment-bases-get expr-bases offset-box))]
-    [(ast.AstExpr.PtrCast ptr-box _)
-      (tc-spmd-scan-body-no-nested-spmd
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases ptr-box))]
-    [(ast.AstExpr.PtrToInt ptr-box)
-      (tc-spmd-scan-body-no-nested-spmd
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases ptr-box))]
-    [(ast.AstExpr.IntToPtr value-box _)
-      (tc-spmd-scan-body-no-nested-spmd
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases value-box))]
-    [(ast.AstExpr.StringData str-box)
-      (tc-spmd-scan-body-no-nested-spmd
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases str-box))]
-    [(ast.AstExpr.StringFromBytes ptr-box len-box)
-      (tc-spmd-scan-body-no-nested-pair
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases ptr-box)
-        (ast.ast-expr-segment-bases-get expr-bases len-box))]
-    [(ast.AstExpr.ArrayData array-box)
-      (tc-spmd-scan-body-no-nested-spmd
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases array-box))]
-    [(ast.AstExpr.CpuIdEax leaf-box subleaf-box)
-      (tc-spmd-scan-body-no-nested-pair
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases leaf-box)
-        (ast.ast-expr-segment-bases-get expr-bases subleaf-box))]
-    [(ast.AstExpr.CpuIdEbx leaf-box subleaf-box)
-      (tc-spmd-scan-body-no-nested-pair
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases leaf-box)
-        (ast.ast-expr-segment-bases-get expr-bases subleaf-box))]
-    [(ast.AstExpr.CpuIdEcx leaf-box subleaf-box)
-      (tc-spmd-scan-body-no-nested-pair
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases leaf-box)
-        (ast.ast-expr-segment-bases-get expr-bases subleaf-box))]
-    [(ast.AstExpr.CpuIdEdx leaf-box subleaf-box)
-      (tc-spmd-scan-body-no-nested-pair
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases leaf-box)
-        (ast.ast-expr-segment-bases-get expr-bases subleaf-box))]
-    [(ast.AstExpr.Xgetbv index-box)
-      (tc-spmd-scan-body-no-nested-spmd
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases index-box))]
-    [(ast.AstExpr.Syscall args)
-      (tc-spmd-scan-body-no-nested-list expr-bases args)]
-    [_ ResultTcUnit.Ok]))
+        (ast.ast-expr-child-ids
+          (ast.ast-expr-unspan-with-segment-bases expr-bases expr)))]))
 
 (define (tc-spmd-check-scan-body
   [ctx : TcContext]
@@ -54095,7 +53316,7 @@
   [spmd-env : TcSpmdEnv]
   [expr : ast.AstExpr]
   [expr-ty : ast.AstType]) : ResultTcSpmdExprInfo
-  (match expr
+  (match (tc-global-shared-view expr)
     [(ast.AstExpr.Spanned inner-box _)
       (let
         [inner : ast.AstExpr
@@ -54132,12 +53353,8 @@
         (ast.ast-for-owned-step-done-name (& payload))
         (ast.ast-for-owned-step-body (& payload))
         expr-ty)]
-    [(ast.AstExpr.Literal _)
-      (tc-spmd-finish expr-ty TcSpmdClass.Uniform spmd-env)]
     [(ast.AstExpr.SpmdProgramIndex)
       (tc-spmd-finish expr-ty TcSpmdClass.Varying spmd-env)]
-    [(ast.AstExpr.SpmdProgramCount)
-      (tc-spmd-finish expr-ty TcSpmdClass.Uniform spmd-env)]
     [(ast.AstExpr.Var name)
       (if (tc-dotted-place-name-id? ctx env name)
         (match (tc-dotted-local-field-expr-id-after-check
@@ -54157,9 +53374,6 @@
             (tc-spmd-finish-ctx ctx expr-ty class spmd-env)]
           [(TcSpmdLookup.Missing)
             (tc-spmd-finish-ctx ctx expr-ty TcSpmdClass.Uniform spmd-env)]))]
-    [(ast.AstExpr.TypeLiteral _)
-      (tc-spmd-finish expr-ty TcSpmdClass.Uniform spmd-env)]
-    [(ast.AstExpr.Init _) (tc-spmd-finish expr-ty TcSpmdClass.Uniform spmd-env)]
     [(ast.AstExpr.Ann inner-box _)
       (let
         [inner : ast.AstExpr
@@ -54182,39 +53396,6 @@
                 (tc-spmd-finish-ctx ctx expr-ty class next-spmd-env)])]
           [(ResultTcSpmdExprInfo.Err message)
             (ResultTcSpmdExprInfo.Err message)]))]
-    [(ast.AstExpr.Unary _ inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (match (tc-spmd-expr ctx expr-bases env spmd-env inner)
-          [(ResultTcSpmdExprInfo.Ok info)
-            (match info
-              [(TcSpmdExprInfo _ class next-spmd-env)
-                (tc-spmd-finish expr-ty class next-spmd-env)])]
-          [(ResultTcSpmdExprInfo.Err message)
-            (ResultTcSpmdExprInfo.Err message)]))]
-    [(ast.AstExpr.Binary _ left-box right-box)
-      (let
-        [left : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases left-box)]
-        [right : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases right-box)]
-        (match (tc-spmd-expr ctx expr-bases env spmd-env left)
-          [(ResultTcSpmdExprInfo.Ok left-info)
-            (match left-info
-              [(TcSpmdExprInfo _ left-class left-env)
-                (match (tc-spmd-expr ctx expr-bases env left-env right)
-                  [(ResultTcSpmdExprInfo.Ok right-info)
-                    (match right-info
-                      [(TcSpmdExprInfo _ right-class right-env)
-                        (tc-spmd-finish
-                          expr-ty
-                          (tc-spmd-merge-class left-class right-class)
-                          right-env)])]
-                  [(ResultTcSpmdExprInfo.Err message)
-                    (ResultTcSpmdExprInfo.Err message)])])]
-          [(ResultTcSpmdExprInfo.Err message)
-            (ResultTcSpmdExprInfo.Err message)]))]
     [(ast.AstExpr.Call func-box args)
       (let
         [func : ast.AstExpr
@@ -54224,14 +53405,6 @@
           (tc-global-shared-view func))
           (tc-spmd-array-length-call ctx expr-bases env spmd-env expr-ty args)
           (tc-spmd-atomic-call ctx expr-bases env spmd-env expr-ty func args)))]
-    [(ast.AstExpr.BracketClause items)
-      (match (tc-spmd-expr-list ctx expr-bases env spmd-env items)
-        [(ResultTcSpmdExprListInfo.Ok info)
-          (match info
-            [(TcSpmdExprListInfo class next-env)
-              (tc-spmd-finish expr-ty class next-env)])]
-        [(ResultTcSpmdExprListInfo.Err message)
-          (ResultTcSpmdExprInfo.Err message)])]
     [(ast.AstExpr.If cond-box then-branch-box else-branch-box)
       (let
         [cond : ast.AstExpr
@@ -54318,61 +53491,6 @@
                 (ResultTcSpmdExprInfo.Err message)]))])]
     [(ast.AstExpr.Lambda _)
       (tc-spmd-finish expr-ty TcSpmdClass.Uniform spmd-env)]
-    [(ast.AstExpr.Tuple exprs)
-      (match (tc-spmd-expr-list ctx expr-bases env spmd-env exprs)
-        [(ResultTcSpmdExprListInfo.Ok info)
-          (match info
-            [(TcSpmdExprListInfo class next-spmd-env)
-              (tc-spmd-finish expr-ty class next-spmd-env)])]
-        [(ResultTcSpmdExprListInfo.Err message)
-          (ResultTcSpmdExprInfo.Err message)])]
-    [(ast.AstExpr.TupleRef tuple-box _)
-      (let
-        [tuple : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases tuple-box)]
-        (match (tc-spmd-expr ctx expr-bases env spmd-env tuple)
-          [(ResultTcSpmdExprInfo.Ok info)
-            (match info
-              [(TcSpmdExprInfo _ class next-spmd-env)
-                (tc-spmd-finish expr-ty class next-spmd-env)])]
-          [(ResultTcSpmdExprInfo.Err message)
-            (ResultTcSpmdExprInfo.Err message)]))]
-    [(ast.AstExpr.Array exprs)
-      (match (tc-spmd-expr-list ctx expr-bases env spmd-env exprs)
-        [(ResultTcSpmdExprListInfo.Ok info)
-          (match info
-            [(TcSpmdExprListInfo class next-spmd-env)
-              (tc-spmd-finish expr-ty class next-spmd-env)])]
-        [(ResultTcSpmdExprListInfo.Err message)
-          (ResultTcSpmdExprInfo.Err message)])]
-    [(ast.AstExpr.DynArray exprs)
-      (match (tc-spmd-expr-list ctx expr-bases env spmd-env exprs)
-        [(ResultTcSpmdExprListInfo.Ok info)
-          (match info
-            [(TcSpmdExprListInfo class next-spmd-env)
-              (tc-spmd-finish expr-ty class next-spmd-env)])]
-        [(ResultTcSpmdExprListInfo.Err message)
-          (ResultTcSpmdExprInfo.Err message)])]
-    [(ast.AstExpr.FixedMakeArray _ len-box)
-      (let
-        [len : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases len-box)]
-        (match (tc-spmd-expr ctx expr-bases env spmd-env len)
-          [(ResultTcSpmdExprInfo.Ok info)
-            (match info
-              [(TcSpmdExprInfo _ class next-spmd-env)
-                (tc-spmd-finish expr-ty class next-spmd-env)])]
-          [(ResultTcSpmdExprInfo.Err message)
-            (ResultTcSpmdExprInfo.Err message)]))]
-    [(ast.AstExpr.MakeArray _ len-box)
-      (let
-        [len : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases len-box)]
-        (match (tc-spmd-expr ctx expr-bases env spmd-env len)
-          [(ResultTcSpmdExprInfo.Ok info)
-            (match info
-              [(TcSpmdExprInfo _ class next-spmd-env)
-                (tc-spmd-finish expr-ty class next-spmd-env)])]
-          [(ResultTcSpmdExprInfo.Err message)
-            (ResultTcSpmdExprInfo.Err message)]))]
     [(ast.AstExpr.ArrayRef array-box index-box)
       (let
         [array : ast.AstExpr
@@ -54579,27 +53697,6 @@
                                 expr-ty
                                 TcSpmdClass.Uniform
                                 value-env)]))])]
-                  [(ResultTcSpmdExprInfo.Err message)
-                    (ResultTcSpmdExprInfo.Err message)])])]
-          [(ResultTcSpmdExprInfo.Err message)
-            (ResultTcSpmdExprInfo.Err message)]))]
-    [(ast.AstExpr.StringRef str-box index-box)
-      (let
-        [str : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases str-box)]
-        [index : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases index-box)]
-        (match (tc-spmd-expr ctx expr-bases env spmd-env str)
-          [(ResultTcSpmdExprInfo.Ok str-info)
-            (match str-info
-              [(TcSpmdExprInfo _ str-class str-env)
-                (match (tc-spmd-expr ctx expr-bases env str-env index)
-                  [(ResultTcSpmdExprInfo.Ok index-info)
-                    (match index-info
-                      [(TcSpmdExprInfo _ index-class index-env)
-                        (tc-spmd-finish
-                          expr-ty
-                          (tc-spmd-merge-class str-class index-class)
-                          index-env)])]
                   [(ResultTcSpmdExprInfo.Err message)
                     (ResultTcSpmdExprInfo.Err message)])])]
           [(ResultTcSpmdExprInfo.Err message)
@@ -54874,83 +53971,6 @@
                     (ResultTcSpmdExprInfo.Err message)])])]
           [(ResultTcSpmdExprInfo.Err message)
             (ResultTcSpmdExprInfo.Err message)]))]
-    [(ast.AstExpr.Borrow _ _ place-box)
-      (let
-        [place : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases place-box)]
-        (match (tc-spmd-expr ctx expr-bases env spmd-env place)
-          [(ResultTcSpmdExprInfo.Ok info)
-            (match info
-              [(TcSpmdExprInfo _ class next-spmd-env)
-                (tc-spmd-finish expr-ty class next-spmd-env)])]
-          [(ResultTcSpmdExprInfo.Err message)
-            (ResultTcSpmdExprInfo.Err message)]))]
-    [(ast.AstExpr.StructGet receiver-box _)
-      (let
-        [receiver : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases receiver-box)]
-        (match (tc-spmd-expr ctx expr-bases env spmd-env receiver)
-          [(ResultTcSpmdExprInfo.Ok info)
-            (match info
-              [(TcSpmdExprInfo _ class next-spmd-env)
-                (tc-spmd-finish expr-ty class next-spmd-env)])]
-          [(ResultTcSpmdExprInfo.Err message)
-            (ResultTcSpmdExprInfo.Err message)]))]
-    [(ast.AstExpr.Box inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (match (tc-spmd-expr ctx expr-bases env spmd-env inner)
-          [(ResultTcSpmdExprInfo.Ok info)
-            (match info
-              [(TcSpmdExprInfo _ class next-spmd-env)
-                (tc-spmd-finish expr-ty class next-spmd-env)])]
-          [(ResultTcSpmdExprInfo.Err message)
-            (ResultTcSpmdExprInfo.Err message)]))]
-    [(ast.AstExpr.BoxGet inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (match (tc-spmd-expr ctx expr-bases env spmd-env inner)
-          [(ResultTcSpmdExprInfo.Ok info)
-            (match info
-              [(TcSpmdExprInfo _ class next-spmd-env)
-                (tc-spmd-finish expr-ty class next-spmd-env)])]
-          [(ResultTcSpmdExprInfo.Err message)
-            (ResultTcSpmdExprInfo.Err message)]))]
-    [(ast.AstExpr.BoxTake inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (match (tc-spmd-expr ctx expr-bases env spmd-env inner)
-          [(ResultTcSpmdExprInfo.Ok info)
-            (match info
-              [(TcSpmdExprInfo _ class next-spmd-env)
-                (tc-spmd-finish expr-ty class next-spmd-env)])]
-          [(ResultTcSpmdExprInfo.Err message)
-            (ResultTcSpmdExprInfo.Err message)]))]
-    [(ast.AstExpr.BoxSet inner-box value-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        [value : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        (match (tc-spmd-expr ctx expr-bases env spmd-env inner)
-          [(ResultTcSpmdExprInfo.Ok info)
-            (match info
-              [(TcSpmdExprInfo _ inner-class inner-env)
-                (match (tc-spmd-expr ctx expr-bases env inner-env value)
-                  [(ResultTcSpmdExprInfo.Ok value-info)
-                    (match value-info
-                      [(TcSpmdExprInfo _ value-class next-spmd-env)
-                        (tc-spmd-finish
-                          expr-ty
-                          (tc-spmd-merge-class inner-class value-class)
-                          next-spmd-env)])]
-                  [(ResultTcSpmdExprInfo.Err message)
-                    (ResultTcSpmdExprInfo.Err message)])])]
-          [(ResultTcSpmdExprInfo.Err message)
-            (ResultTcSpmdExprInfo.Err message)]))]
     [(ast.AstExpr.WithRegion region body)
       (tc-spmd-begin-list
         ctx
@@ -54970,17 +53990,6 @@
     [(ast.AstExpr.WithResource _)
       (ResultTcSpmdExprInfo.Err
         "typecheck: resource with is not implemented yet")]
-    [(ast.AstExpr.Comptime inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (match (tc-spmd-expr ctx expr-bases env spmd-env inner)
-          [(ResultTcSpmdExprInfo.Ok info)
-            (match info
-              [(TcSpmdExprInfo _ class next-spmd-env)
-                (tc-spmd-finish expr-ty class next-spmd-env)])]
-          [(ResultTcSpmdExprInfo.Err message)
-            (ResultTcSpmdExprInfo.Err message)]))]
     [(ast.AstExpr.Quote _)
       (tc-spmd-finish expr-ty TcSpmdClass.Uniform spmd-env)]
     [(ast.AstExpr.Quasiquote _)
@@ -55003,162 +54012,6 @@
     [(ast.AstExpr.Continue)
       (ResultTcSpmdExprInfo.Err
         "typecheck: continue inside foreach is not supported")]
-    [(ast.AstExpr.PtrNull _)
-      (tc-spmd-finish expr-ty TcSpmdClass.Uniform spmd-env)]
-    [(ast.AstExpr.PtrNullCheck inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (match (tc-spmd-expr ctx expr-bases env spmd-env inner)
-          [(ResultTcSpmdExprInfo.Ok info)
-            (match info
-              [(TcSpmdExprInfo _ class next-spmd-env)
-                (tc-spmd-finish expr-ty class next-spmd-env)])]
-          [(ResultTcSpmdExprInfo.Err message)
-            (ResultTcSpmdExprInfo.Err message)]))]
-    [(ast.AstExpr.PtrAddrOf place-box)
-      (let
-        [place : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases place-box)]
-        (match (tc-spmd-expr ctx expr-bases env spmd-env place)
-          [(ResultTcSpmdExprInfo.Ok info)
-            (match info
-              [(TcSpmdExprInfo _ class next-spmd-env)
-                (tc-spmd-finish expr-ty class next-spmd-env)])]
-          [(ResultTcSpmdExprInfo.Err message)
-            (ResultTcSpmdExprInfo.Err message)]))]
-    [(ast.AstExpr.PtrRead ptr-box)
-      (let
-        [ptr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases ptr-box)]
-        (match (tc-spmd-expr ctx expr-bases env spmd-env ptr)
-          [(ResultTcSpmdExprInfo.Ok info)
-            (match info
-              [(TcSpmdExprInfo _ class next-spmd-env)
-                (tc-spmd-finish expr-ty class next-spmd-env)])]
-          [(ResultTcSpmdExprInfo.Err message)
-            (ResultTcSpmdExprInfo.Err message)]))]
-    [(ast.AstExpr.PtrWrite ptr-box value-box)
-      (let
-        [ptr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases ptr-box)]
-        [value : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        (match (tc-spmd-expr ctx expr-bases env spmd-env ptr)
-          [(ResultTcSpmdExprInfo.Ok ptr-info)
-            (match ptr-info
-              [(TcSpmdExprInfo _ ptr-class ptr-env)
-                (match (tc-spmd-expr ctx expr-bases env ptr-env value)
-                  [(ResultTcSpmdExprInfo.Ok value-info)
-                    (match value-info
-                      [(TcSpmdExprInfo _ value-class value-env)
-                        (tc-spmd-finish
-                          expr-ty
-                          (tc-spmd-merge-class ptr-class value-class)
-                          value-env)])]
-                  [(ResultTcSpmdExprInfo.Err message)
-                    (ResultTcSpmdExprInfo.Err message)])])]
-          [(ResultTcSpmdExprInfo.Err message)
-            (ResultTcSpmdExprInfo.Err message)]))]
-    [(ast.AstExpr.PtrOffset ptr-box offset-box)
-      (let
-        [ptr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases ptr-box)]
-        [offset : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases offset-box)]
-        (match (tc-spmd-expr ctx expr-bases env spmd-env ptr)
-          [(ResultTcSpmdExprInfo.Ok ptr-info)
-            (match ptr-info
-              [(TcSpmdExprInfo _ ptr-class ptr-env)
-                (match (tc-spmd-expr ctx expr-bases env ptr-env offset)
-                  [(ResultTcSpmdExprInfo.Ok offset-info)
-                    (match offset-info
-                      [(TcSpmdExprInfo _ offset-class offset-env)
-                        (tc-spmd-finish
-                          expr-ty
-                          (tc-spmd-merge-class ptr-class offset-class)
-                          offset-env)])]
-                  [(ResultTcSpmdExprInfo.Err message)
-                    (ResultTcSpmdExprInfo.Err message)])])]
-          [(ResultTcSpmdExprInfo.Err message)
-            (ResultTcSpmdExprInfo.Err message)]))]
-    [(ast.AstExpr.PtrCast ptr-box _)
-      (let
-        [ptr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases ptr-box)]
-        (match (tc-spmd-expr ctx expr-bases env spmd-env ptr)
-          [(ResultTcSpmdExprInfo.Ok info)
-            (match info
-              [(TcSpmdExprInfo _ class next-spmd-env)
-                (tc-spmd-finish expr-ty class next-spmd-env)])]
-          [(ResultTcSpmdExprInfo.Err message)
-            (ResultTcSpmdExprInfo.Err message)]))]
-    [(ast.AstExpr.PtrToInt ptr-box)
-      (let
-        [ptr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases ptr-box)]
-        (match (tc-spmd-expr ctx expr-bases env spmd-env ptr)
-          [(ResultTcSpmdExprInfo.Ok info)
-            (match info
-              [(TcSpmdExprInfo _ class next-spmd-env)
-                (tc-spmd-finish expr-ty class next-spmd-env)])]
-          [(ResultTcSpmdExprInfo.Err message)
-            (ResultTcSpmdExprInfo.Err message)]))]
-    [(ast.AstExpr.IntToPtr value-box _)
-      (let
-        [value : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        (match (tc-spmd-expr ctx expr-bases env spmd-env value)
-          [(ResultTcSpmdExprInfo.Ok info)
-            (match info
-              [(TcSpmdExprInfo _ class next-spmd-env)
-                (tc-spmd-finish expr-ty class next-spmd-env)])]
-          [(ResultTcSpmdExprInfo.Err message)
-            (ResultTcSpmdExprInfo.Err message)]))]
-    [(ast.AstExpr.StringData str-box)
-      (let
-        [str : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases str-box)]
-        (match (tc-spmd-expr ctx expr-bases env spmd-env str)
-          [(ResultTcSpmdExprInfo.Ok info)
-            (match info
-              [(TcSpmdExprInfo _ class next-spmd-env)
-                (tc-spmd-finish expr-ty class next-spmd-env)])]
-          [(ResultTcSpmdExprInfo.Err message)
-            (ResultTcSpmdExprInfo.Err message)]))]
-    [(ast.AstExpr.StringFromBytes ptr-box len-box)
-      (let
-        [ptr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases ptr-box)]
-        [len : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases len-box)]
-        (match (tc-spmd-expr ctx expr-bases env spmd-env ptr)
-          [(ResultTcSpmdExprInfo.Ok ptr-info)
-            (match ptr-info
-              [(TcSpmdExprInfo _ ptr-class ptr-env)
-                (match (tc-spmd-expr ctx expr-bases env ptr-env len)
-                  [(ResultTcSpmdExprInfo.Ok len-info)
-                    (match len-info
-                      [(TcSpmdExprInfo _ len-class len-env)
-                        (tc-spmd-finish
-                          expr-ty
-                          (tc-spmd-merge-class ptr-class len-class)
-                          len-env)])]
-                  [(ResultTcSpmdExprInfo.Err message)
-                    (ResultTcSpmdExprInfo.Err message)])])]
-          [(ResultTcSpmdExprInfo.Err message)
-            (ResultTcSpmdExprInfo.Err message)]))]
-    [(ast.AstExpr.ArrayData array-box)
-      (let
-        [array : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases array-box)]
-        (match (tc-spmd-expr ctx expr-bases env spmd-env array)
-          [(ResultTcSpmdExprInfo.Ok info)
-            (match info
-              [(TcSpmdExprInfo _ class next-spmd-env)
-                (tc-spmd-finish expr-ty class next-spmd-env)])]
-          [(ResultTcSpmdExprInfo.Err message)
-            (ResultTcSpmdExprInfo.Err message)]))]
-    [(ast.AstExpr.BinaryData _)
-      (tc-spmd-finish expr-ty TcSpmdClass.Uniform spmd-env)]
-    [(ast.AstExpr.ProgramArgc)
-      (tc-spmd-finish expr-ty TcSpmdClass.Uniform spmd-env)]
-    [(ast.AstExpr.ProgramArgv)
-      (tc-spmd-finish expr-ty TcSpmdClass.Uniform spmd-env)]
-    [(ast.AstExpr.ProgramEnvp)
-      (tc-spmd-finish expr-ty TcSpmdClass.Uniform spmd-env)]
     [(ast.AstExpr.CpuIdEax leaf-box subleaf-box)
       (let
         [leaf : ast.AstExpr
@@ -55187,17 +54040,6 @@
         [subleaf : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases subleaf-box)]
         (tc-spmd-cpuid-like ctx expr-bases env spmd-env expr-ty leaf subleaf))]
-    [(ast.AstExpr.Xgetbv index-box)
-      (let
-        [index : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases index-box)]
-        (match (tc-spmd-expr ctx expr-bases env spmd-env index)
-          [(ResultTcSpmdExprInfo.Ok info)
-            (match info
-              [(TcSpmdExprInfo _ class next-spmd-env)
-                (tc-spmd-finish expr-ty class next-spmd-env)])]
-          [(ResultTcSpmdExprInfo.Err message)
-            (ResultTcSpmdExprInfo.Err message)]))]
     [(ast.AstExpr.Syscall args)
       (match (tc-spmd-expr-list ctx expr-bases env spmd-env args)
         [(ResultTcSpmdExprListInfo.Ok args-info)
@@ -55209,6 +54051,19 @@
                 [(ResultTcUnit.Ok)
                   (tc-spmd-finish expr-ty TcSpmdClass.Uniform args-env)]
                 [(ResultTcUnit.Err message) (ResultTcSpmdExprInfo.Err message)])])]
+        [(ResultTcSpmdExprListInfo.Err message)
+          (ResultTcSpmdExprInfo.Err message)])]
+    [_
+      (match (tc-spmd-expr-list
+        ctx
+        expr-bases
+        env
+        spmd-env
+        (ast.ast-expr-child-ids expr))
+        [(ResultTcSpmdExprListInfo.Ok info)
+          (match info
+            [(TcSpmdExprListInfo class next-spmd-env)
+              (tc-spmd-finish expr-ty class next-spmd-env)])]
         [(ResultTcSpmdExprListInfo.Err message)
           (ResultTcSpmdExprInfo.Err message)])]))
 
@@ -55560,78 +54415,13 @@
   [expr : ast.AstExpr]
   [names : TcStringList]
   [bound : TcStringList]) : bool
-  (match expr
-    [(ast.AstExpr.Spanned inner-box _)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-uses-free-names? expr-bases inner names bound))]
-    [(ast.AstExpr.MacroExpansion inner-box _ _)
-      (tc-expr-uses-free-names?
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases inner-box)
-        names
-        bound)]
-    [(ast.AstExpr.Literal _) false]
+  (match (tc-global-shared-view expr)
     [(ast.AstExpr.Var var-name)
       (let
         [text : String (tc-env-key-name-text var-name)]
         (and
           (tc-string-list-contains names (tc-global-shared-view text))
           (not (tc-string-list-contains bound text))))]
-    [(ast.AstExpr.Binary _ left-box right-box)
-      (let
-        [left : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases left-box)]
-        [right : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases right-box)]
-        (or
-          (tc-expr-uses-free-names?
-            expr-bases
-            left
-            (tc-global-shared-view names)
-            (tc-global-shared-view bound))
-          (tc-expr-uses-free-names? expr-bases right names bound)))]
-    [(ast.AstExpr.Unary _ inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-uses-free-names? expr-bases inner names bound))]
-    [(ast.AstExpr.Call func-box args)
-      (let
-        [func : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases func-box)]
-        (or
-          (tc-expr-uses-free-names?
-            expr-bases
-            func
-            (tc-global-shared-view names)
-            (tc-global-shared-view bound))
-          (tc-expr-list-uses-free-names? expr-bases args names bound)))]
-    [(ast.AstExpr.BracketClause items)
-      (tc-expr-list-uses-free-names? expr-bases items names bound)]
-    [(ast.AstExpr.TypeLiteral _) false]
-    [(ast.AstExpr.Init _) false]
-    [(ast.AstExpr.If cond-box then-branch-box else-branch-box)
-      (let
-        [cond : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases cond-box)]
-        [then-branch : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases then-branch-box)]
-        [else-branch : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases else-branch-box)]
-        (or
-          (tc-expr-uses-free-names?
-            expr-bases
-            cond
-            (tc-global-shared-view names)
-            (tc-global-shared-view bound))
-          (tc-expr-uses-free-names?
-            expr-bases
-            then-branch
-            (tc-global-shared-view names)
-            (tc-global-shared-view bound))
-          (tc-expr-uses-free-names? expr-bases else-branch names bound)))]
     [(ast.AstExpr.Let let-box)
       (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-box)
@@ -55660,140 +54450,6 @@
               body
               names
               (tc-param-list-add-bound-names params bound)))])]
-    [(ast.AstExpr.Tuple exprs)
-      (tc-expr-list-uses-free-names? expr-bases exprs names bound)]
-    [(ast.AstExpr.TupleRef tuple-box _)
-      (let
-        [tuple : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases tuple-box)]
-        (tc-expr-uses-free-names? expr-bases tuple names bound))]
-    [(ast.AstExpr.Array exprs)
-      (tc-expr-list-uses-free-names? expr-bases exprs names bound)]
-    [(ast.AstExpr.DynArray exprs)
-      (tc-expr-list-uses-free-names? expr-bases exprs names bound)]
-    [(ast.AstExpr.FixedMakeArray _ len-box)
-      (let
-        [len : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases len-box)]
-        (tc-expr-uses-free-names? expr-bases len names bound))]
-    [(ast.AstExpr.MakeArray _ len-box)
-      (let
-        [len : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases len-box)]
-        (tc-expr-uses-free-names? expr-bases len names bound))]
-    [(ast.AstExpr.ArrayRef array-box index-box)
-      (let
-        [array : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases array-box)]
-        [index : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases index-box)]
-        (or
-          (tc-expr-uses-free-names?
-            expr-bases
-            array
-            (tc-global-shared-view names)
-            (tc-global-shared-view bound))
-          (tc-expr-uses-free-names? expr-bases index names bound)))]
-    [(ast.AstExpr.ArraySet array-box index-box value-box)
-      (let
-        [array : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases array-box)]
-        [index : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases index-box)]
-        [value : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        (or
-          (tc-expr-uses-free-names?
-            expr-bases
-            array
-            (tc-global-shared-view names)
-            (tc-global-shared-view bound))
-          (tc-expr-uses-free-names?
-            expr-bases
-            index
-            (tc-global-shared-view names)
-            (tc-global-shared-view bound))
-          (tc-expr-uses-free-names? expr-bases value names bound)))]
-    [(ast.AstExpr.ArrayTake array-box live-box index-box)
-      (let
-        [array : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases array-box)]
-        [live : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases live-box)]
-        [index : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases index-box)]
-        (or
-          (tc-expr-uses-free-names?
-            expr-bases
-            array
-            (tc-global-shared-view names)
-            (tc-global-shared-view bound))
-          (tc-expr-uses-free-names?
-            expr-bases
-            live
-            (tc-global-shared-view names)
-            (tc-global-shared-view bound))
-          (tc-expr-uses-free-names? expr-bases index names bound)))]
-    [(ast.AstExpr.FixedArrayTake array-box index-box)
-      (or
-        (tc-expr-uses-free-names?
-          expr-bases
-          (ast.ast-expr-segment-bases-get expr-bases array-box)
-          (tc-global-shared-view names)
-          (tc-global-shared-view bound))
-        (tc-expr-uses-free-names?
-          expr-bases
-          (ast.ast-expr-segment-bases-get expr-bases index-box)
-          names
-          bound))]
-    [(ast.AstExpr.Replace place-box replacement-box)
-      (or
-        (tc-expr-uses-free-names?
-          expr-bases
-          (ast.ast-expr-segment-bases-get expr-bases place-box)
-          (tc-global-shared-view names)
-          (tc-global-shared-view bound))
-        (tc-expr-uses-free-names?
-          expr-bases
-          (ast.ast-expr-segment-bases-get expr-bases replacement-box)
-          names
-          bound))]
-    [(ast.AstExpr.ArrayPush array-box value-box)
-      (let
-        [array : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases array-box)]
-        [value : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        (or
-          (tc-expr-uses-free-names?
-            expr-bases
-            array
-            (tc-global-shared-view names)
-            (tc-global-shared-view bound))
-          (tc-expr-uses-free-names? expr-bases value names bound)))]
-    [(ast.AstExpr.StringRef str-box index-box)
-      (let
-        [str : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases str-box)]
-        [index : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases index-box)]
-        (or
-          (tc-expr-uses-free-names?
-            expr-bases
-            str
-            (tc-global-shared-view names)
-            (tc-global-shared-view bound))
-          (tc-expr-uses-free-names? expr-bases index names bound)))]
-    [(ast.AstExpr.While cond-box body-box)
-      (let
-        [cond : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases cond-box)]
-        [body : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases body-box)]
-        (or
-          (tc-expr-uses-free-names?
-            expr-bases
-            cond
-            (tc-global-shared-view names)
-            (tc-global-shared-view bound))
-          (tc-expr-uses-free-names? expr-bases body names bound)))]
     [(ast.AstExpr.ForOwnedState payload)
       (let
         [source-name : i64 (ast.ast-for-owned-state-source-name (& payload))]
@@ -55852,10 +54508,6 @@
             (ast.ast-expr-segment-bases-get expr-bases body)
             names
             (tc-for-owned-add-bound-name expr-bases binding-name bound))))]
-    [(ast.AstExpr.Begin exprs)
-      (tc-expr-list-uses-free-names? expr-bases exprs names bound)]
-    [(ast.AstExpr.Unsafe exprs)
-      (tc-expr-list-uses-free-names? expr-bases exprs names bound)]
     [(ast.AstExpr.Set var-name value-box)
       (let
         [value : ast.AstExpr
@@ -55868,49 +54520,6 @@
                 (tc-global-shared-view names)
                 (tc-global-shared-view text))
               (not (tc-string-list-contains (tc-global-shared-view bound) text))))
-          (tc-expr-uses-free-names? expr-bases value names bound)))]
-    [(ast.AstExpr.Ann inner-box _)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-uses-free-names? expr-bases inner names bound))]
-    [(ast.AstExpr.Cast inner-box _)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-uses-free-names? expr-bases inner names bound))]
-    [(ast.AstExpr.Borrow _ _ place-box)
-      (let
-        [place : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases place-box)]
-        (tc-expr-uses-free-names? expr-bases place names bound))]
-    [(ast.AstExpr.Box inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-uses-free-names? expr-bases inner names bound))]
-    [(ast.AstExpr.BoxGet inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-uses-free-names? expr-bases inner names bound))]
-    [(ast.AstExpr.BoxTake inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-uses-free-names? expr-bases inner names bound))]
-    [(ast.AstExpr.BoxSet inner-box value-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        [value : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        (or
-          (tc-expr-uses-free-names?
-            expr-bases
-            inner
-            (tc-global-shared-view names)
-            (tc-global-shared-view bound))
           (tc-expr-uses-free-names? expr-bases value names bound)))]
     [(ast.AstExpr.Match match-box)
       (match (__tl-box-place match-box)
@@ -56098,76 +54707,6 @@
                 (tc-global-shared-view names)
                 keep-bound)
               (tc-expr-uses-free-names? expr-bases body names body-bound)))])]
-    [(ast.AstExpr.SpmdBroadcast value-box lane-box)
-      (let
-        [value : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        [lane : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases lane-box)]
-        (or
-          (tc-expr-uses-free-names?
-            expr-bases
-            value
-            (tc-global-shared-view names)
-            (tc-global-shared-view bound))
-          (tc-expr-uses-free-names? expr-bases lane names bound)))]
-    [(ast.AstExpr.SpmdShuffle value-box lane-box)
-      (let
-        [value : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        [lane : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases lane-box)]
-        (or
-          (tc-expr-uses-free-names?
-            expr-bases
-            value
-            (tc-global-shared-view names)
-            (tc-global-shared-view bound))
-          (tc-expr-uses-free-names? expr-bases lane names bound)))]
-    [(ast.AstExpr.StructGet receiver-box _)
-      (let
-        [receiver : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases receiver-box)]
-        (tc-expr-uses-free-names? expr-bases receiver names bound))]
-    [(ast.AstExpr.StructSet receiver-box _ value-box)
-      (let
-        [receiver : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases receiver-box)]
-        [value : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        (or
-          (tc-expr-uses-free-names?
-            expr-bases
-            receiver
-            (tc-global-shared-view names)
-            (tc-global-shared-view bound))
-          (tc-expr-uses-free-names? expr-bases value names bound)))]
-    [(ast.AstExpr.WithRegion _ body)
-      (tc-expr-list-uses-free-names? expr-bases body names bound)]
-    [(ast.AstExpr.WithEscape scratch-box body)
-      (let
-        [scratch : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases scratch-box)]
-        (or
-          (tc-expr-uses-free-names?
-            expr-bases
-            scratch
-            (tc-global-shared-view names)
-            (tc-global-shared-view bound))
-          (tc-expr-list-uses-free-names? expr-bases body names bound)))]
-    [(ast.AstExpr.WithScratch body)
-      (tc-expr-list-uses-free-names? expr-bases body names bound)]
-    [(ast.AstExpr.InArena arena-box body)
-      (let
-        [arena : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases arena-box)]
-        (or
-          (tc-expr-uses-free-names?
-            expr-bases
-            arena
-            (tc-global-shared-view names)
-            (tc-global-shared-view bound))
-          (tc-expr-list-uses-free-names? expr-bases body names bound)))]
     [(ast.AstExpr.WithResource wr-box)
       (match (__tl-box-place wr-box)
         [(ast.AstWithResource.WithResource bindings body)
@@ -56182,182 +54721,12 @@
               body
               names
               (tc-resource-binding-list-add-bound-names bindings bound)))])]
-    [(ast.AstExpr.TypeLiteral _) false]
-    [(ast.AstExpr.Init _) false]
-    [(ast.AstExpr.Comptime inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-uses-free-names? expr-bases inner names bound))]
-    [(ast.AstExpr.Quote inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-uses-free-names? expr-bases inner names bound))]
-    [(ast.AstExpr.Quasiquote inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-uses-free-names? expr-bases inner names bound))]
-    [(ast.AstExpr.Unquote inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-uses-free-names? expr-bases inner names bound))]
-    [(ast.AstExpr.UnquoteSplicing inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-uses-free-names? expr-bases inner names bound))]
-    [(ast.AstExpr.Try inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-uses-free-names? expr-bases inner names bound))]
-    [(ast.AstExpr.Return inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-uses-free-names? expr-bases inner names bound))]
-    [(ast.AstExpr.Break) false]
-    [(ast.AstExpr.Continue) false]
-    [(ast.AstExpr.PtrNull _) false]
-    [(ast.AstExpr.PtrNullCheck inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-uses-free-names? expr-bases inner names bound))]
-    [(ast.AstExpr.PtrAddrOf place-box)
-      (let
-        [place : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases place-box)]
-        (tc-expr-uses-free-names? expr-bases place names bound))]
-    [(ast.AstExpr.PtrRead ptr-box)
-      (let
-        [ptr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases ptr-box)]
-        (tc-expr-uses-free-names? expr-bases ptr names bound))]
-    [(ast.AstExpr.PtrWrite ptr-box value-box)
-      (let
-        [ptr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases ptr-box)]
-        [value : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        (or
-          (tc-expr-uses-free-names?
-            expr-bases
-            ptr
-            (tc-global-shared-view names)
-            (tc-global-shared-view bound))
-          (tc-expr-uses-free-names? expr-bases value names bound)))]
-    [(ast.AstExpr.PtrOffset ptr-box offset-box)
-      (let
-        [ptr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases ptr-box)]
-        [offset : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases offset-box)]
-        (or
-          (tc-expr-uses-free-names?
-            expr-bases
-            ptr
-            (tc-global-shared-view names)
-            (tc-global-shared-view bound))
-          (tc-expr-uses-free-names? expr-bases offset names bound)))]
-    [(ast.AstExpr.PtrCast ptr-box _)
-      (let
-        [ptr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases ptr-box)]
-        (tc-expr-uses-free-names? expr-bases ptr names bound))]
-    [(ast.AstExpr.PtrToInt ptr-box)
-      (let
-        [ptr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases ptr-box)]
-        (tc-expr-uses-free-names? expr-bases ptr names bound))]
-    [(ast.AstExpr.IntToPtr value-box _)
-      (let
-        [value : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        (tc-expr-uses-free-names? expr-bases value names bound))]
-    [(ast.AstExpr.StringData str-box)
-      (let
-        [str : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases str-box)]
-        (tc-expr-uses-free-names? expr-bases str names bound))]
-    [(ast.AstExpr.StringFromBytes ptr-box len-box)
-      (let
-        [ptr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases ptr-box)]
-        [len : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases len-box)]
-        (or
-          (tc-expr-uses-free-names?
-            expr-bases
-            ptr
-            (tc-global-shared-view names)
-            (tc-global-shared-view bound))
-          (tc-expr-uses-free-names? expr-bases len names bound)))]
-    [(ast.AstExpr.ArrayData array-box)
-      (let
-        [array : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases array-box)]
-        (tc-expr-uses-free-names? expr-bases array names bound))]
-    [(ast.AstExpr.BinaryData _) false]
-    [(ast.AstExpr.SpmdProgramIndex) false]
-    [(ast.AstExpr.SpmdProgramCount) false]
-    [(ast.AstExpr.ProgramArgc) false]
-    [(ast.AstExpr.ProgramArgv) false]
-    [(ast.AstExpr.ProgramEnvp) false]
-    [(ast.AstExpr.CpuIdEax leaf-box subleaf-box)
-      (let
-        [leaf : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases leaf-box)]
-        [subleaf : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases subleaf-box)]
-        (or
-          (tc-expr-uses-free-names?
-            expr-bases
-            leaf
-            (tc-global-shared-view names)
-            (tc-global-shared-view bound))
-          (tc-expr-uses-free-names? expr-bases subleaf names bound)))]
-    [(ast.AstExpr.CpuIdEbx leaf-box subleaf-box)
-      (let
-        [leaf : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases leaf-box)]
-        [subleaf : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases subleaf-box)]
-        (or
-          (tc-expr-uses-free-names?
-            expr-bases
-            leaf
-            (tc-global-shared-view names)
-            (tc-global-shared-view bound))
-          (tc-expr-uses-free-names? expr-bases subleaf names bound)))]
-    [(ast.AstExpr.CpuIdEcx leaf-box subleaf-box)
-      (let
-        [leaf : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases leaf-box)]
-        [subleaf : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases subleaf-box)]
-        (or
-          (tc-expr-uses-free-names?
-            expr-bases
-            leaf
-            (tc-global-shared-view names)
-            (tc-global-shared-view bound))
-          (tc-expr-uses-free-names? expr-bases subleaf names bound)))]
-    [(ast.AstExpr.CpuIdEdx leaf-box subleaf-box)
-      (let
-        [leaf : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases leaf-box)]
-        [subleaf : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases subleaf-box)]
-        (or
-          (tc-expr-uses-free-names?
-            expr-bases
-            leaf
-            (tc-global-shared-view names)
-            (tc-global-shared-view bound))
-          (tc-expr-uses-free-names? expr-bases subleaf names bound)))]
-    [(ast.AstExpr.Xgetbv index-box)
-      (let
-        [index : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases index-box)]
-        (tc-expr-uses-free-names? expr-bases index names bound))]
-    [(ast.AstExpr.Syscall args)
-      (tc-expr-list-uses-free-names? expr-bases args names bound)]))
+    [_
+      (tc-expr-list-uses-free-names?
+        expr-bases
+        (ast.ast-expr-child-ids expr)
+        names
+        bound)]))
 
 ;; The id rule for a dot-free target text: the source-name id of an env key,
 ;; or -1 when the key's display can never equal the target. Pool ids render
@@ -56763,124 +55132,13 @@
   [target-1 : i64]
   [target-2 : i64]
   [bound : TcNameIdList]) : bool
-  (match expr
-    [(ast.AstExpr.Spanned inner-box _)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-uses-free-source-id?
-          session
-          expr-bases
-          inner
-          target-1
-          target-2
-          bound))]
-    [(ast.AstExpr.MacroExpansion inner-box _ _)
-      (tc-expr-uses-free-source-id?
-        session
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases inner-box)
-        target-1
-        target-2
-        bound)]
-    [(ast.AstExpr.Literal _) false]
+  (match (tc-global-shared-view expr)
     [(ast.AstExpr.Var var-name)
       (let
         [sid : i64 (tc-env-key-source-id-or-neg session var-name)]
         (if (or (= sid target-1) (= sid target-2))
           (not (tc-name-id-list-contains bound sid))
           false))]
-    [(ast.AstExpr.Binary _ left-box right-box)
-      (let
-        [left : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases left-box)]
-        [right : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases right-box)]
-        (or
-          (tc-expr-uses-free-source-id?
-            session
-            expr-bases
-            left
-            target-1
-            target-2
-            bound)
-          (tc-expr-uses-free-source-id?
-            session
-            expr-bases
-            right
-            target-1
-            target-2
-            bound)))]
-    [(ast.AstExpr.Unary _ inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-uses-free-source-id?
-          session
-          expr-bases
-          inner
-          target-1
-          target-2
-          bound))]
-    [(ast.AstExpr.Call func-box args)
-      (let
-        [func : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases func-box)]
-        (or
-          (tc-expr-uses-free-source-id?
-            session
-            expr-bases
-            func
-            target-1
-            target-2
-            bound)
-          (tc-expr-list-uses-free-source-id?
-            session
-            expr-bases
-            args
-            target-1
-            target-2
-            bound)))]
-    [(ast.AstExpr.BracketClause items)
-      (tc-expr-list-uses-free-source-id?
-        session
-        expr-bases
-        items
-        target-1
-        target-2
-        bound)]
-    [(ast.AstExpr.TypeLiteral _) false]
-    [(ast.AstExpr.Init _) false]
-    [(ast.AstExpr.If cond-box then-branch-box else-branch-box)
-      (let
-        [cond : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases cond-box)]
-        [then-branch : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases then-branch-box)]
-        [else-branch : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases else-branch-box)]
-        (or
-          (tc-expr-uses-free-source-id?
-            session
-            expr-bases
-            cond
-            target-1
-            target-2
-            bound)
-          (tc-expr-uses-free-source-id?
-            session
-            expr-bases
-            then-branch
-            target-1
-            target-2
-            bound)
-          (tc-expr-uses-free-source-id?
-            session
-            expr-bases
-            else-branch
-            target-1
-            target-2
-            bound)))]
     [(ast.AstExpr.Let let-box)
       (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-box)
@@ -56918,236 +55176,6 @@
               target-1
               target-2
               (tc-param-list-add-bound-source-ids session params bound)))])]
-    [(ast.AstExpr.Tuple exprs)
-      (tc-expr-list-uses-free-source-id?
-        session
-        expr-bases
-        exprs
-        target-1
-        target-2
-        bound)]
-    [(ast.AstExpr.TupleRef tuple-box _)
-      (let
-        [tuple : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases tuple-box)]
-        (tc-expr-uses-free-source-id?
-          session
-          expr-bases
-          tuple
-          target-1
-          target-2
-          bound))]
-    [(ast.AstExpr.Array exprs)
-      (tc-expr-list-uses-free-source-id?
-        session
-        expr-bases
-        exprs
-        target-1
-        target-2
-        bound)]
-    [(ast.AstExpr.DynArray exprs)
-      (tc-expr-list-uses-free-source-id?
-        session
-        expr-bases
-        exprs
-        target-1
-        target-2
-        bound)]
-    [(ast.AstExpr.FixedMakeArray _ len-box)
-      (let
-        [len : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases len-box)]
-        (tc-expr-uses-free-source-id?
-          session
-          expr-bases
-          len
-          target-1
-          target-2
-          bound))]
-    [(ast.AstExpr.MakeArray _ len-box)
-      (let
-        [len : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases len-box)]
-        (tc-expr-uses-free-source-id?
-          session
-          expr-bases
-          len
-          target-1
-          target-2
-          bound))]
-    [(ast.AstExpr.ArrayRef array-box index-box)
-      (let
-        [array : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases array-box)]
-        [index : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases index-box)]
-        (or
-          (tc-expr-uses-free-source-id?
-            session
-            expr-bases
-            array
-            target-1
-            target-2
-            bound)
-          (tc-expr-uses-free-source-id?
-            session
-            expr-bases
-            index
-            target-1
-            target-2
-            bound)))]
-    [(ast.AstExpr.ArraySet array-box index-box value-box)
-      (let
-        [array : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases array-box)]
-        [index : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases index-box)]
-        [value : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        (or
-          (tc-expr-uses-free-source-id?
-            session
-            expr-bases
-            array
-            target-1
-            target-2
-            bound)
-          (tc-expr-uses-free-source-id?
-            session
-            expr-bases
-            index
-            target-1
-            target-2
-            bound)
-          (tc-expr-uses-free-source-id?
-            session
-            expr-bases
-            value
-            target-1
-            target-2
-            bound)))]
-    [(ast.AstExpr.ArrayTake array-box live-box index-box)
-      (let
-        [array : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases array-box)]
-        [live : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases live-box)]
-        [index : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases index-box)]
-        (or
-          (tc-expr-uses-free-source-id?
-            session
-            expr-bases
-            array
-            target-1
-            target-2
-            bound)
-          (tc-expr-uses-free-source-id?
-            session
-            expr-bases
-            live
-            target-1
-            target-2
-            bound)
-          (tc-expr-uses-free-source-id?
-            session
-            expr-bases
-            index
-            target-1
-            target-2
-            bound)))]
-    [(ast.AstExpr.FixedArrayTake array-box index-box)
-      (or
-        (tc-expr-uses-free-source-id?
-          session
-          expr-bases
-          (ast.ast-expr-segment-bases-get expr-bases array-box)
-          target-1
-          target-2
-          bound)
-        (tc-expr-uses-free-source-id?
-          session
-          expr-bases
-          (ast.ast-expr-segment-bases-get expr-bases index-box)
-          target-1
-          target-2
-          bound))]
-    [(ast.AstExpr.Replace place-box replacement-box)
-      (or
-        (tc-expr-uses-free-source-id?
-          session
-          expr-bases
-          (ast.ast-expr-segment-bases-get expr-bases place-box)
-          target-1
-          target-2
-          bound)
-        (tc-expr-uses-free-source-id?
-          session
-          expr-bases
-          (ast.ast-expr-segment-bases-get expr-bases replacement-box)
-          target-1
-          target-2
-          bound))]
-    [(ast.AstExpr.ArrayPush array-box value-box)
-      (let
-        [array : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases array-box)]
-        [value : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        (or
-          (tc-expr-uses-free-source-id?
-            session
-            expr-bases
-            array
-            target-1
-            target-2
-            bound)
-          (tc-expr-uses-free-source-id?
-            session
-            expr-bases
-            value
-            target-1
-            target-2
-            bound)))]
-    [(ast.AstExpr.StringRef str-box index-box)
-      (let
-        [str : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases str-box)]
-        [index : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases index-box)]
-        (or
-          (tc-expr-uses-free-source-id?
-            session
-            expr-bases
-            str
-            target-1
-            target-2
-            bound)
-          (tc-expr-uses-free-source-id?
-            session
-            expr-bases
-            index
-            target-1
-            target-2
-            bound)))]
-    [(ast.AstExpr.While cond-box body-box)
-      (let
-        [cond : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases cond-box)]
-        [body : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases body-box)]
-        (or
-          (tc-expr-uses-free-source-id?
-            session
-            expr-bases
-            cond
-            target-1
-            target-2
-            bound)
-          (tc-expr-uses-free-source-id?
-            session
-            expr-bases
-            body
-            target-1
-            target-2
-            bound)))]
     [(ast.AstExpr.ForOwnedState payload)
       (let
         [source-name : i64 (ast.ast-for-owned-state-source-name (& payload))]
@@ -57229,22 +55257,6 @@
               expr-bases
               binding-name
               bound))))]
-    [(ast.AstExpr.Begin exprs)
-      (tc-expr-list-uses-free-source-id?
-        session
-        expr-bases
-        exprs
-        target-1
-        target-2
-        bound)]
-    [(ast.AstExpr.Unsafe exprs)
-      (tc-expr-list-uses-free-source-id?
-        session
-        expr-bases
-        exprs
-        target-1
-        target-2
-        bound)]
     [(ast.AstExpr.Set var-name value-box)
       (let
         [value : ast.AstExpr
@@ -57254,93 +55266,6 @@
           (if (or (= sid target-1) (= sid target-2))
             (not (tc-name-id-list-contains bound sid))
             false)
-          (tc-expr-uses-free-source-id?
-            session
-            expr-bases
-            value
-            target-1
-            target-2
-            bound)))]
-    [(ast.AstExpr.Ann inner-box _)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-uses-free-source-id?
-          session
-          expr-bases
-          inner
-          target-1
-          target-2
-          bound))]
-    [(ast.AstExpr.Cast inner-box _)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-uses-free-source-id?
-          session
-          expr-bases
-          inner
-          target-1
-          target-2
-          bound))]
-    [(ast.AstExpr.Borrow _ _ place-box)
-      (let
-        [place : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases place-box)]
-        (tc-expr-uses-free-source-id?
-          session
-          expr-bases
-          place
-          target-1
-          target-2
-          bound))]
-    [(ast.AstExpr.Box inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-uses-free-source-id?
-          session
-          expr-bases
-          inner
-          target-1
-          target-2
-          bound))]
-    [(ast.AstExpr.BoxGet inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-uses-free-source-id?
-          session
-          expr-bases
-          inner
-          target-1
-          target-2
-          bound))]
-    [(ast.AstExpr.BoxTake inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-uses-free-source-id?
-          session
-          expr-bases
-          inner
-          target-1
-          target-2
-          bound))]
-    [(ast.AstExpr.BoxSet inner-box value-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        [value : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        (or
-          (tc-expr-uses-free-source-id?
-            session
-            expr-bases
-            inner
-            target-1
-            target-2
-            bound)
           (tc-expr-uses-free-source-id?
             session
             expr-bases
@@ -57588,134 +55513,6 @@
                 target-1
                 target-2
                 body-bound)))])]
-    [(ast.AstExpr.SpmdBroadcast value-box lane-box)
-      (let
-        [value : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        [lane : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases lane-box)]
-        (or
-          (tc-expr-uses-free-source-id?
-            session
-            expr-bases
-            value
-            target-1
-            target-2
-            bound)
-          (tc-expr-uses-free-source-id?
-            session
-            expr-bases
-            lane
-            target-1
-            target-2
-            bound)))]
-    [(ast.AstExpr.SpmdShuffle value-box lane-box)
-      (let
-        [value : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        [lane : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases lane-box)]
-        (or
-          (tc-expr-uses-free-source-id?
-            session
-            expr-bases
-            value
-            target-1
-            target-2
-            bound)
-          (tc-expr-uses-free-source-id?
-            session
-            expr-bases
-            lane
-            target-1
-            target-2
-            bound)))]
-    [(ast.AstExpr.StructGet receiver-box _)
-      (let
-        [receiver : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases receiver-box)]
-        (tc-expr-uses-free-source-id?
-          session
-          expr-bases
-          receiver
-          target-1
-          target-2
-          bound))]
-    [(ast.AstExpr.StructSet receiver-box _ value-box)
-      (let
-        [receiver : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases receiver-box)]
-        [value : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        (or
-          (tc-expr-uses-free-source-id?
-            session
-            expr-bases
-            receiver
-            target-1
-            target-2
-            bound)
-          (tc-expr-uses-free-source-id?
-            session
-            expr-bases
-            value
-            target-1
-            target-2
-            bound)))]
-    [(ast.AstExpr.WithRegion _ body)
-      (tc-expr-list-uses-free-source-id?
-        session
-        expr-bases
-        body
-        target-1
-        target-2
-        bound)]
-    [(ast.AstExpr.WithEscape scratch-box body)
-      (let
-        [scratch : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases scratch-box)]
-        (or
-          (tc-expr-uses-free-source-id?
-            session
-            expr-bases
-            scratch
-            target-1
-            target-2
-            bound)
-          (tc-expr-list-uses-free-source-id?
-            session
-            expr-bases
-            body
-            target-1
-            target-2
-            bound)))]
-    [(ast.AstExpr.WithScratch body)
-      (tc-expr-list-uses-free-source-id?
-        session
-        expr-bases
-        body
-        target-1
-        target-2
-        bound)]
-    [(ast.AstExpr.InArena arena-box body)
-      (let
-        [arena : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases arena-box)]
-        (or
-          (tc-expr-uses-free-source-id?
-            session
-            expr-bases
-            arena
-            target-1
-            target-2
-            bound)
-          (tc-expr-list-uses-free-source-id?
-            session
-            expr-bases
-            body
-            target-1
-            target-2
-            bound)))]
     [(ast.AstExpr.WithResource wr-box)
       (match (__tl-box-place wr-box)
         [(ast.AstWithResource.WithResource bindings body)
@@ -57737,337 +55534,11 @@
                 session
                 bindings
                 bound)))])]
-    [(ast.AstExpr.TypeLiteral _) false]
-    [(ast.AstExpr.Init _) false]
-    [(ast.AstExpr.Comptime inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-uses-free-source-id?
-          session
-          expr-bases
-          inner
-          target-1
-          target-2
-          bound))]
-    [(ast.AstExpr.Quote inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-uses-free-source-id?
-          session
-          expr-bases
-          inner
-          target-1
-          target-2
-          bound))]
-    [(ast.AstExpr.Quasiquote inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-uses-free-source-id?
-          session
-          expr-bases
-          inner
-          target-1
-          target-2
-          bound))]
-    [(ast.AstExpr.Unquote inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-uses-free-source-id?
-          session
-          expr-bases
-          inner
-          target-1
-          target-2
-          bound))]
-    [(ast.AstExpr.UnquoteSplicing inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-uses-free-source-id?
-          session
-          expr-bases
-          inner
-          target-1
-          target-2
-          bound))]
-    [(ast.AstExpr.Try inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-uses-free-source-id?
-          session
-          expr-bases
-          inner
-          target-1
-          target-2
-          bound))]
-    [(ast.AstExpr.Return inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-uses-free-source-id?
-          session
-          expr-bases
-          inner
-          target-1
-          target-2
-          bound))]
-    [(ast.AstExpr.Break) false]
-    [(ast.AstExpr.Continue) false]
-    [(ast.AstExpr.PtrNull _) false]
-    [(ast.AstExpr.PtrNullCheck inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-uses-free-source-id?
-          session
-          expr-bases
-          inner
-          target-1
-          target-2
-          bound))]
-    [(ast.AstExpr.PtrAddrOf place-box)
-      (let
-        [place : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases place-box)]
-        (tc-expr-uses-free-source-id?
-          session
-          expr-bases
-          place
-          target-1
-          target-2
-          bound))]
-    [(ast.AstExpr.PtrRead ptr-box)
-      (let
-        [ptr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases ptr-box)]
-        (tc-expr-uses-free-source-id?
-          session
-          expr-bases
-          ptr
-          target-1
-          target-2
-          bound))]
-    [(ast.AstExpr.PtrWrite ptr-box value-box)
-      (let
-        [ptr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases ptr-box)]
-        [value : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        (or
-          (tc-expr-uses-free-source-id?
-            session
-            expr-bases
-            ptr
-            target-1
-            target-2
-            bound)
-          (tc-expr-uses-free-source-id?
-            session
-            expr-bases
-            value
-            target-1
-            target-2
-            bound)))]
-    [(ast.AstExpr.PtrOffset ptr-box offset-box)
-      (let
-        [ptr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases ptr-box)]
-        [offset : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases offset-box)]
-        (or
-          (tc-expr-uses-free-source-id?
-            session
-            expr-bases
-            ptr
-            target-1
-            target-2
-            bound)
-          (tc-expr-uses-free-source-id?
-            session
-            expr-bases
-            offset
-            target-1
-            target-2
-            bound)))]
-    [(ast.AstExpr.PtrCast ptr-box _)
-      (let
-        [ptr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases ptr-box)]
-        (tc-expr-uses-free-source-id?
-          session
-          expr-bases
-          ptr
-          target-1
-          target-2
-          bound))]
-    [(ast.AstExpr.PtrToInt ptr-box)
-      (let
-        [ptr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases ptr-box)]
-        (tc-expr-uses-free-source-id?
-          session
-          expr-bases
-          ptr
-          target-1
-          target-2
-          bound))]
-    [(ast.AstExpr.IntToPtr value-box _)
-      (let
-        [value : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        (tc-expr-uses-free-source-id?
-          session
-          expr-bases
-          value
-          target-1
-          target-2
-          bound))]
-    [(ast.AstExpr.StringData str-box)
-      (let
-        [str : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases str-box)]
-        (tc-expr-uses-free-source-id?
-          session
-          expr-bases
-          str
-          target-1
-          target-2
-          bound))]
-    [(ast.AstExpr.StringFromBytes ptr-box len-box)
-      (let
-        [ptr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases ptr-box)]
-        [len : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases len-box)]
-        (or
-          (tc-expr-uses-free-source-id?
-            session
-            expr-bases
-            ptr
-            target-1
-            target-2
-            bound)
-          (tc-expr-uses-free-source-id?
-            session
-            expr-bases
-            len
-            target-1
-            target-2
-            bound)))]
-    [(ast.AstExpr.ArrayData array-box)
-      (let
-        [array : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases array-box)]
-        (tc-expr-uses-free-source-id?
-          session
-          expr-bases
-          array
-          target-1
-          target-2
-          bound))]
-    [(ast.AstExpr.BinaryData _) false]
-    [(ast.AstExpr.SpmdProgramIndex) false]
-    [(ast.AstExpr.SpmdProgramCount) false]
-    [(ast.AstExpr.ProgramArgc) false]
-    [(ast.AstExpr.ProgramArgv) false]
-    [(ast.AstExpr.ProgramEnvp) false]
-    [(ast.AstExpr.CpuIdEax leaf-box subleaf-box)
-      (let
-        [leaf : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases leaf-box)]
-        [subleaf : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases subleaf-box)]
-        (or
-          (tc-expr-uses-free-source-id?
-            session
-            expr-bases
-            leaf
-            target-1
-            target-2
-            bound)
-          (tc-expr-uses-free-source-id?
-            session
-            expr-bases
-            subleaf
-            target-1
-            target-2
-            bound)))]
-    [(ast.AstExpr.CpuIdEbx leaf-box subleaf-box)
-      (let
-        [leaf : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases leaf-box)]
-        [subleaf : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases subleaf-box)]
-        (or
-          (tc-expr-uses-free-source-id?
-            session
-            expr-bases
-            leaf
-            target-1
-            target-2
-            bound)
-          (tc-expr-uses-free-source-id?
-            session
-            expr-bases
-            subleaf
-            target-1
-            target-2
-            bound)))]
-    [(ast.AstExpr.CpuIdEcx leaf-box subleaf-box)
-      (let
-        [leaf : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases leaf-box)]
-        [subleaf : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases subleaf-box)]
-        (or
-          (tc-expr-uses-free-source-id?
-            session
-            expr-bases
-            leaf
-            target-1
-            target-2
-            bound)
-          (tc-expr-uses-free-source-id?
-            session
-            expr-bases
-            subleaf
-            target-1
-            target-2
-            bound)))]
-    [(ast.AstExpr.CpuIdEdx leaf-box subleaf-box)
-      (let
-        [leaf : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases leaf-box)]
-        [subleaf : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases subleaf-box)]
-        (or
-          (tc-expr-uses-free-source-id?
-            session
-            expr-bases
-            leaf
-            target-1
-            target-2
-            bound)
-          (tc-expr-uses-free-source-id?
-            session
-            expr-bases
-            subleaf
-            target-1
-            target-2
-            bound)))]
-    [(ast.AstExpr.Xgetbv index-box)
-      (let
-        [index : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases index-box)]
-        (tc-expr-uses-free-source-id?
-          session
-          expr-bases
-          index
-          target-1
-          target-2
-          bound))]
-    [(ast.AstExpr.Syscall args)
+    [_
       (tc-expr-list-uses-free-source-id?
         session
         expr-bases
-        args
+        (ast.ast-expr-child-ids expr)
         target-1
         target-2
         bound)]))
@@ -58223,71 +55694,7 @@
   [expr : ast.AstExpr]
   [name : String]
   [bound : TcStringList]) : bool
-  (match expr
-    [(ast.AstExpr.Spanned inner-box _)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-sets-free-name? expr-bases inner name bound))]
-    [(ast.AstExpr.MacroExpansion inner-box _ _)
-      (tc-expr-sets-free-name?
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases inner-box)
-        name
-        bound)]
-    [(ast.AstExpr.Literal _) false]
-    [(ast.AstExpr.Var _) false]
-    [(ast.AstExpr.Binary _ left-box right-box)
-      (let
-        [left : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases left-box)]
-        [right : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases right-box)]
-        (or
-          (tc-expr-sets-free-name?
-            expr-bases
-            left
-            (tc-global-shared-view name)
-            (tc-global-shared-view bound))
-          (tc-expr-sets-free-name? expr-bases right name bound)))]
-    [(ast.AstExpr.Unary _ inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-sets-free-name? expr-bases inner name bound))]
-    [(ast.AstExpr.Call func-box args)
-      (let
-        [func : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases func-box)]
-        (or
-          (tc-expr-sets-free-name?
-            expr-bases
-            func
-            (tc-global-shared-view name)
-            (tc-global-shared-view bound))
-          (tc-expr-list-sets-free-name? expr-bases args name bound)))]
-    [(ast.AstExpr.BracketClause items)
-      (tc-expr-list-sets-free-name? expr-bases items name bound)]
-    [(ast.AstExpr.If cond-box then-branch-box else-branch-box)
-      (let
-        [cond : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases cond-box)]
-        [then-branch : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases then-branch-box)]
-        [else-branch : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases else-branch-box)]
-        (or
-          (tc-expr-sets-free-name?
-            expr-bases
-            cond
-            (tc-global-shared-view name)
-            (tc-global-shared-view bound))
-          (tc-expr-sets-free-name?
-            expr-bases
-            then-branch
-            (tc-global-shared-view name)
-            (tc-global-shared-view bound))
-          (tc-expr-sets-free-name? expr-bases else-branch name bound)))]
+  (match (tc-global-shared-view expr)
     [(ast.AstExpr.Let let-box)
       (match (ast.ast-let-box-shared-view let-box)
         [(ast.AstLet.Let bindings body-box)
@@ -58316,58 +55723,6 @@
               body
               name
               (tc-param-list-add-bound-names params bound)))])]
-    [(ast.AstExpr.Tuple exprs)
-      (tc-expr-list-sets-free-name? expr-bases exprs name bound)]
-    [(ast.AstExpr.TupleRef tuple-box _)
-      (let
-        [tuple : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases tuple-box)]
-        (tc-expr-sets-free-name? expr-bases tuple name bound))]
-    [(ast.AstExpr.Array exprs)
-      (tc-expr-list-sets-free-name? expr-bases exprs name bound)]
-    [(ast.AstExpr.DynArray exprs)
-      (tc-expr-list-sets-free-name? expr-bases exprs name bound)]
-    [(ast.AstExpr.FixedMakeArray _ len-box)
-      (let
-        [len : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases len-box)]
-        (tc-expr-sets-free-name? expr-bases len name bound))]
-    [(ast.AstExpr.MakeArray _ len-box)
-      (let
-        [len : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases len-box)]
-        (tc-expr-sets-free-name? expr-bases len name bound))]
-    [(ast.AstExpr.ArrayRef array-box index-box)
-      (let
-        [array : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases array-box)]
-        [index : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases index-box)]
-        (or
-          (tc-expr-sets-free-name?
-            expr-bases
-            array
-            (tc-global-shared-view name)
-            (tc-global-shared-view bound))
-          (tc-expr-sets-free-name? expr-bases index name bound)))]
-    [(ast.AstExpr.ArraySet array-box index-box value-box)
-      (let
-        [array : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases array-box)]
-        [index : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases index-box)]
-        [value : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        (or
-          (tc-expr-sets-free-name?
-            expr-bases
-            array
-            (tc-global-shared-view name)
-            (tc-global-shared-view bound))
-          (tc-expr-sets-free-name?
-            expr-bases
-            index
-            (tc-global-shared-view name)
-            (tc-global-shared-view bound))
-          (tc-expr-sets-free-name? expr-bases value name bound)))]
     [(ast.AstExpr.Replace place-box replacement-box)
       (let
         [place : ast.AstExpr
@@ -58394,76 +55749,6 @@
             (tc-global-shared-view name)
             (tc-global-shared-view bound))
           (tc-expr-sets-free-name? expr-bases replacement name bound)))]
-    [(ast.AstExpr.ArrayTake array-box live-box index-box)
-      (let
-        [array : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases array-box)]
-        [live : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases live-box)]
-        [index : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases index-box)]
-        (or
-          (tc-expr-sets-free-name?
-            expr-bases
-            array
-            (tc-global-shared-view name)
-            (tc-global-shared-view bound))
-          (tc-expr-sets-free-name?
-            expr-bases
-            live
-            (tc-global-shared-view name)
-            (tc-global-shared-view bound))
-          (tc-expr-sets-free-name? expr-bases index name bound)))]
-    [(ast.AstExpr.FixedArrayTake array-box index-box)
-      (or
-        (tc-expr-sets-free-name?
-          expr-bases
-          (ast.ast-expr-segment-bases-get expr-bases array-box)
-          (tc-global-shared-view name)
-          (tc-global-shared-view bound))
-        (tc-expr-sets-free-name?
-          expr-bases
-          (ast.ast-expr-segment-bases-get expr-bases index-box)
-          name
-          bound))]
-    [(ast.AstExpr.ArrayPush array-box value-box)
-      (let
-        [array : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases array-box)]
-        [value : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        (or
-          (tc-expr-sets-free-name?
-            expr-bases
-            array
-            (tc-global-shared-view name)
-            (tc-global-shared-view bound))
-          (tc-expr-sets-free-name? expr-bases value name bound)))]
-    [(ast.AstExpr.StringRef str-box index-box)
-      (let
-        [str : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases str-box)]
-        [index : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases index-box)]
-        (or
-          (tc-expr-sets-free-name?
-            expr-bases
-            str
-            (tc-global-shared-view name)
-            (tc-global-shared-view bound))
-          (tc-expr-sets-free-name? expr-bases index name bound)))]
-    [(ast.AstExpr.While cond-box body-box)
-      (let
-        [cond : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases cond-box)]
-        [body : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases body-box)]
-        (or
-          (tc-expr-sets-free-name?
-            expr-bases
-            cond
-            (tc-global-shared-view name)
-            (tc-global-shared-view bound))
-          (tc-expr-sets-free-name? expr-bases body name bound)))]
     [(ast.AstExpr.ForOwnedState payload)
       (let
         [source-name : i64 (ast.ast-for-owned-state-source-name (& payload))]
@@ -58522,10 +55807,6 @@
             (ast.ast-expr-segment-bases-get expr-bases body)
             name
             (tc-for-owned-add-bound-name expr-bases binding-name bound))))]
-    [(ast.AstExpr.Begin exprs)
-      (tc-expr-list-sets-free-name? expr-bases exprs name bound)]
-    [(ast.AstExpr.Unsafe exprs)
-      (tc-expr-list-sets-free-name? expr-bases exprs name bound)]
     [(ast.AstExpr.Set var-name value-box)
       (let
         [value : ast.AstExpr
@@ -58537,49 +55818,6 @@
               (tc-string-list-contains
                 (tc-global-shared-view bound)
                 (tc-global-shared-view name))))
-          (tc-expr-sets-free-name? expr-bases value name bound)))]
-    [(ast.AstExpr.Ann inner-box _)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-sets-free-name? expr-bases inner name bound))]
-    [(ast.AstExpr.Cast inner-box _)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-sets-free-name? expr-bases inner name bound))]
-    [(ast.AstExpr.Borrow _ _ place-box)
-      (let
-        [place : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases place-box)]
-        (tc-expr-sets-free-name? expr-bases place name bound))]
-    [(ast.AstExpr.Box inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-sets-free-name? expr-bases inner name bound))]
-    [(ast.AstExpr.BoxGet inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-sets-free-name? expr-bases inner name bound))]
-    [(ast.AstExpr.BoxTake inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-sets-free-name? expr-bases inner name bound))]
-    [(ast.AstExpr.BoxSet inner-box value-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        [value : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        (or
-          (tc-expr-sets-free-name?
-            expr-bases
-            inner
-            (tc-global-shared-view name)
-            (tc-global-shared-view bound))
           (tc-expr-sets-free-name? expr-bases value name bound)))]
     [(ast.AstExpr.Match match-box)
       (match (__tl-box-place match-box)
@@ -58767,76 +56005,6 @@
                 (tc-global-shared-view name)
                 keep-bound)
               (tc-expr-sets-free-name? expr-bases body name body-bound)))])]
-    [(ast.AstExpr.SpmdBroadcast value-box lane-box)
-      (let
-        [value : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        [lane : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases lane-box)]
-        (or
-          (tc-expr-sets-free-name?
-            expr-bases
-            value
-            (tc-global-shared-view name)
-            (tc-global-shared-view bound))
-          (tc-expr-sets-free-name? expr-bases lane name bound)))]
-    [(ast.AstExpr.SpmdShuffle value-box lane-box)
-      (let
-        [value : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        [lane : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases lane-box)]
-        (or
-          (tc-expr-sets-free-name?
-            expr-bases
-            value
-            (tc-global-shared-view name)
-            (tc-global-shared-view bound))
-          (tc-expr-sets-free-name? expr-bases lane name bound)))]
-    [(ast.AstExpr.StructGet receiver-box _)
-      (let
-        [receiver : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases receiver-box)]
-        (tc-expr-sets-free-name? expr-bases receiver name bound))]
-    [(ast.AstExpr.StructSet receiver-box _ value-box)
-      (let
-        [receiver : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases receiver-box)]
-        [value : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        (or
-          (tc-expr-sets-free-name?
-            expr-bases
-            receiver
-            (tc-global-shared-view name)
-            (tc-global-shared-view bound))
-          (tc-expr-sets-free-name? expr-bases value name bound)))]
-    [(ast.AstExpr.WithRegion _ body)
-      (tc-expr-list-sets-free-name? expr-bases body name bound)]
-    [(ast.AstExpr.WithEscape scratch-box body)
-      (let
-        [scratch : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases scratch-box)]
-        (or
-          (tc-expr-sets-free-name?
-            expr-bases
-            scratch
-            (tc-global-shared-view name)
-            (tc-global-shared-view bound))
-          (tc-expr-list-sets-free-name? expr-bases body name bound)))]
-    [(ast.AstExpr.WithScratch body)
-      (tc-expr-list-sets-free-name? expr-bases body name bound)]
-    [(ast.AstExpr.InArena arena-box body)
-      (let
-        [arena : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases arena-box)]
-        (or
-          (tc-expr-sets-free-name?
-            expr-bases
-            arena
-            (tc-global-shared-view name)
-            (tc-global-shared-view bound))
-          (tc-expr-list-sets-free-name? expr-bases body name bound)))]
     [(ast.AstExpr.WithResource wr-box)
       (match (__tl-box-place wr-box)
         [(ast.AstWithResource.WithResource bindings body)
@@ -58851,182 +56019,12 @@
               body
               name
               (tc-resource-binding-list-add-bound-names bindings bound)))])]
-    [(ast.AstExpr.TypeLiteral _) false]
-    [(ast.AstExpr.Init _) false]
-    [(ast.AstExpr.Comptime inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-sets-free-name? expr-bases inner name bound))]
-    [(ast.AstExpr.Quote inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-sets-free-name? expr-bases inner name bound))]
-    [(ast.AstExpr.Quasiquote inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-sets-free-name? expr-bases inner name bound))]
-    [(ast.AstExpr.Unquote inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-sets-free-name? expr-bases inner name bound))]
-    [(ast.AstExpr.UnquoteSplicing inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-sets-free-name? expr-bases inner name bound))]
-    [(ast.AstExpr.Try inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-sets-free-name? expr-bases inner name bound))]
-    [(ast.AstExpr.Return inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-sets-free-name? expr-bases inner name bound))]
-    [(ast.AstExpr.Break) false]
-    [(ast.AstExpr.Continue) false]
-    [(ast.AstExpr.PtrNull _) false]
-    [(ast.AstExpr.PtrNullCheck inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-expr-sets-free-name? expr-bases inner name bound))]
-    [(ast.AstExpr.PtrAddrOf place-box)
-      (let
-        [place : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases place-box)]
-        (tc-expr-sets-free-name? expr-bases place name bound))]
-    [(ast.AstExpr.PtrRead ptr-box)
-      (let
-        [ptr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases ptr-box)]
-        (tc-expr-sets-free-name? expr-bases ptr name bound))]
-    [(ast.AstExpr.PtrWrite ptr-box value-box)
-      (let
-        [ptr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases ptr-box)]
-        [value : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        (or
-          (tc-expr-sets-free-name?
-            expr-bases
-            ptr
-            (tc-global-shared-view name)
-            (tc-global-shared-view bound))
-          (tc-expr-sets-free-name? expr-bases value name bound)))]
-    [(ast.AstExpr.PtrOffset ptr-box offset-box)
-      (let
-        [ptr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases ptr-box)]
-        [offset : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases offset-box)]
-        (or
-          (tc-expr-sets-free-name?
-            expr-bases
-            ptr
-            (tc-global-shared-view name)
-            (tc-global-shared-view bound))
-          (tc-expr-sets-free-name? expr-bases offset name bound)))]
-    [(ast.AstExpr.PtrCast ptr-box _)
-      (let
-        [ptr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases ptr-box)]
-        (tc-expr-sets-free-name? expr-bases ptr name bound))]
-    [(ast.AstExpr.PtrToInt ptr-box)
-      (let
-        [ptr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases ptr-box)]
-        (tc-expr-sets-free-name? expr-bases ptr name bound))]
-    [(ast.AstExpr.IntToPtr value-box _)
-      (let
-        [value : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        (tc-expr-sets-free-name? expr-bases value name bound))]
-    [(ast.AstExpr.StringData str-box)
-      (let
-        [str : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases str-box)]
-        (tc-expr-sets-free-name? expr-bases str name bound))]
-    [(ast.AstExpr.StringFromBytes ptr-box len-box)
-      (let
-        [ptr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases ptr-box)]
-        [len : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases len-box)]
-        (or
-          (tc-expr-sets-free-name?
-            expr-bases
-            ptr
-            (tc-global-shared-view name)
-            (tc-global-shared-view bound))
-          (tc-expr-sets-free-name? expr-bases len name bound)))]
-    [(ast.AstExpr.ArrayData array-box)
-      (let
-        [array : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases array-box)]
-        (tc-expr-sets-free-name? expr-bases array name bound))]
-    [(ast.AstExpr.BinaryData _) false]
-    [(ast.AstExpr.SpmdProgramIndex) false]
-    [(ast.AstExpr.SpmdProgramCount) false]
-    [(ast.AstExpr.ProgramArgc) false]
-    [(ast.AstExpr.ProgramArgv) false]
-    [(ast.AstExpr.ProgramEnvp) false]
-    [(ast.AstExpr.CpuIdEax leaf-box subleaf-box)
-      (let
-        [leaf : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases leaf-box)]
-        [subleaf : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases subleaf-box)]
-        (or
-          (tc-expr-sets-free-name?
-            expr-bases
-            leaf
-            (tc-global-shared-view name)
-            (tc-global-shared-view bound))
-          (tc-expr-sets-free-name? expr-bases subleaf name bound)))]
-    [(ast.AstExpr.CpuIdEbx leaf-box subleaf-box)
-      (let
-        [leaf : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases leaf-box)]
-        [subleaf : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases subleaf-box)]
-        (or
-          (tc-expr-sets-free-name?
-            expr-bases
-            leaf
-            (tc-global-shared-view name)
-            (tc-global-shared-view bound))
-          (tc-expr-sets-free-name? expr-bases subleaf name bound)))]
-    [(ast.AstExpr.CpuIdEcx leaf-box subleaf-box)
-      (let
-        [leaf : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases leaf-box)]
-        [subleaf : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases subleaf-box)]
-        (or
-          (tc-expr-sets-free-name?
-            expr-bases
-            leaf
-            (tc-global-shared-view name)
-            (tc-global-shared-view bound))
-          (tc-expr-sets-free-name? expr-bases subleaf name bound)))]
-    [(ast.AstExpr.CpuIdEdx leaf-box subleaf-box)
-      (let
-        [leaf : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases leaf-box)]
-        [subleaf : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases subleaf-box)]
-        (or
-          (tc-expr-sets-free-name?
-            expr-bases
-            leaf
-            (tc-global-shared-view name)
-            (tc-global-shared-view bound))
-          (tc-expr-sets-free-name? expr-bases subleaf name bound)))]
-    [(ast.AstExpr.Xgetbv index-box)
-      (let
-        [index : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases index-box)]
-        (tc-expr-sets-free-name? expr-bases index name bound))]
-    [(ast.AstExpr.Syscall args)
-      (tc-expr-list-sets-free-name? expr-bases args name bound)]))
+    [_
+      (tc-expr-list-sets-free-name?
+        expr-bases
+        (ast.ast-expr-child-ids expr)
+        name
+        bound)]))
 
 (define (tc-name-is-free-cleanup-owner?
   [owners : TcStringList]
@@ -71887,52 +68885,10 @@
   [template? : bool]
   [expr : ast.AstExpr]) : ResultTcUnit
   (match (tc-global-shared-view expr)
-    [(ast.AstExpr.Spanned inner-box _)
-      (tc-comptime-purity-node-mode
-        ctx
-        expr-bases
-        env
-        bound
-        chain
-        seen
-        template?
-        inner-box)]
-    [(ast.AstExpr.MacroExpansion inner-box _ _)
-      (tc-comptime-purity-node-mode
-        ctx
-        expr-bases
-        env
-        bound
-        chain
-        seen
-        template?
-        inner-box)]
-    [(ast.AstExpr.Literal _) ResultTcUnit.Ok]
     [(ast.AstExpr.Var name)
       (if template?
         ResultTcUnit.Ok
         (tc-comptime-purity-var ctx expr-bases env bound chain seen expr name))]
-    [(ast.AstExpr.Binary _ left right)
-      (tc-comptime-purity-node2-mode
-        ctx
-        expr-bases
-        env
-        bound
-        chain
-        seen
-        template?
-        left
-        right)]
-    [(ast.AstExpr.Unary _ inner)
-      (tc-comptime-purity-node-mode
-        ctx
-        expr-bases
-        env
-        bound
-        chain
-        seen
-        template?
-        inner)]
     [(ast.AstExpr.Call func args)
       (match (tc-macro-abstract-check-current-call
         (tc-context-macro-state ctx)
@@ -72013,156 +68969,6 @@
             seen
             template?
             body)])]
-    [(ast.AstExpr.Tuple exprs)
-      (tc-comptime-purity-expr-list-mode
-        ctx
-        expr-bases
-        env
-        bound
-        chain
-        seen
-        template?
-        exprs)]
-    [(ast.AstExpr.TupleRef tuple _)
-      (tc-comptime-purity-node-mode
-        ctx
-        expr-bases
-        env
-        bound
-        chain
-        seen
-        template?
-        tuple)]
-    [(ast.AstExpr.Array exprs)
-      (tc-comptime-purity-expr-list-mode
-        ctx
-        expr-bases
-        env
-        bound
-        chain
-        seen
-        template?
-        exprs)]
-    [(ast.AstExpr.DynArray exprs)
-      (tc-comptime-purity-expr-list-mode
-        ctx
-        expr-bases
-        env
-        bound
-        chain
-        seen
-        template?
-        exprs)]
-    [(ast.AstExpr.FixedMakeArray _ len)
-      (tc-comptime-purity-node-mode
-        ctx
-        expr-bases
-        env
-        bound
-        chain
-        seen
-        template?
-        len)]
-    [(ast.AstExpr.MakeArray _ len)
-      (tc-comptime-purity-node-mode
-        ctx
-        expr-bases
-        env
-        bound
-        chain
-        seen
-        template?
-        len)]
-    [(ast.AstExpr.ArrayRef array index)
-      (tc-comptime-purity-node2-mode
-        ctx
-        expr-bases
-        env
-        bound
-        chain
-        seen
-        template?
-        array
-        index)]
-    [(ast.AstExpr.ArraySet array index value)
-      (tc-comptime-purity-node3-mode
-        ctx
-        expr-bases
-        env
-        bound
-        chain
-        seen
-        template?
-        array
-        index
-        value)]
-    [(ast.AstExpr.ArrayTake array live index)
-      (tc-comptime-purity-node3-mode
-        ctx
-        expr-bases
-        env
-        bound
-        chain
-        seen
-        template?
-        array
-        live
-        index)]
-    [(ast.AstExpr.FixedArrayTake array index)
-      (tc-comptime-purity-node2-mode
-        ctx
-        expr-bases
-        env
-        bound
-        chain
-        seen
-        template?
-        array
-        index)]
-    [(ast.AstExpr.Replace place replacement)
-      (tc-comptime-purity-node2-mode
-        ctx
-        expr-bases
-        env
-        bound
-        chain
-        seen
-        template?
-        place
-        replacement)]
-    [(ast.AstExpr.ArrayPush array value)
-      (tc-comptime-purity-node2-mode
-        ctx
-        expr-bases
-        env
-        bound
-        chain
-        seen
-        template?
-        array
-        value)]
-    [(ast.AstExpr.StringRef str index)
-      (tc-comptime-purity-node2-mode
-        ctx
-        expr-bases
-        env
-        bound
-        chain
-        seen
-        template?
-        str
-        index)]
-    [(ast.AstExpr.While cond body)
-      (tc-comptime-purity-node2-mode
-        ctx
-        expr-bases
-        env
-        bound
-        chain
-        seen
-        template?
-        cond
-        body)]
     [(ast.AstExpr.ForOwnedState payload)
       (match (tc-comptime-purity-node-mode
         ctx
@@ -72216,16 +69022,6 @@
             template?
             (ast.ast-for-owned-step-body (& payload)))]
         [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
-    [(ast.AstExpr.Begin exprs)
-      (tc-comptime-purity-expr-list-mode
-        ctx
-        expr-bases
-        env
-        bound
-        chain
-        seen
-        template?
-        exprs)]
     [(ast.AstExpr.Unsafe exprs)
       (if template?
         (tc-comptime-purity-expr-list-mode
@@ -72238,46 +69034,6 @@
           true
           exprs)
         (tc-comptime-purity-error expr-bases expr chain "unsafe" "unsafe block"))]
-    [(ast.AstExpr.Set _ value)
-      (tc-comptime-purity-node-mode
-        ctx
-        expr-bases
-        env
-        bound
-        chain
-        seen
-        template?
-        value)]
-    [(ast.AstExpr.Ann inner _)
-      (tc-comptime-purity-node-mode
-        ctx
-        expr-bases
-        env
-        bound
-        chain
-        seen
-        template?
-        inner)]
-    [(ast.AstExpr.Cast inner _)
-      (tc-comptime-purity-node-mode
-        ctx
-        expr-bases
-        env
-        bound
-        chain
-        seen
-        template?
-        inner)]
-    [(ast.AstExpr.Borrow _ _ place)
-      (tc-comptime-purity-node-mode
-        ctx
-        expr-bases
-        env
-        bound
-        chain
-        seen
-        template?
-        place)]
     [(ast.AstExpr.Match match-box)
       (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrut arms)
@@ -72434,111 +69190,6 @@
                       body)]
                   [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
             [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])])]
-    [(ast.AstExpr.SpmdBroadcast value lane)
-      (tc-comptime-purity-node2-mode
-        ctx
-        expr-bases
-        env
-        bound
-        chain
-        seen
-        template?
-        value
-        lane)]
-    [(ast.AstExpr.SpmdShuffle value lane)
-      (tc-comptime-purity-node2-mode
-        ctx
-        expr-bases
-        env
-        bound
-        chain
-        seen
-        template?
-        value
-        lane)]
-    [(ast.AstExpr.StructGet receiver _)
-      (tc-comptime-purity-node-mode
-        ctx
-        expr-bases
-        env
-        bound
-        chain
-        seen
-        template?
-        receiver)]
-    [(ast.AstExpr.StructSet receiver _ value)
-      (tc-comptime-purity-node2-mode
-        ctx
-        expr-bases
-        env
-        bound
-        chain
-        seen
-        template?
-        receiver
-        value)]
-    [(ast.AstExpr.WithRegion _ body)
-      (tc-comptime-purity-expr-list-mode
-        ctx
-        expr-bases
-        env
-        bound
-        chain
-        seen
-        template?
-        body)]
-    [(ast.AstExpr.WithEscape scratch body)
-      (match (tc-comptime-purity-node-mode
-        ctx
-        expr-bases
-        env
-        (tc-global-shared-view bound)
-        (tc-global-shared-view chain)
-        (tc-global-shared-view seen)
-        template?
-        scratch)
-        [(ResultTcUnit.Ok)
-          (tc-comptime-purity-expr-list-mode
-            ctx
-            expr-bases
-            env
-            bound
-            chain
-            seen
-            template?
-            body)]
-        [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
-    [(ast.AstExpr.WithScratch body)
-      (tc-comptime-purity-expr-list-mode
-        ctx
-        expr-bases
-        env
-        bound
-        chain
-        seen
-        template?
-        body)]
-    [(ast.AstExpr.InArena arena body)
-      (match (tc-comptime-purity-node-mode
-        ctx
-        expr-bases
-        env
-        (tc-global-shared-view bound)
-        (tc-global-shared-view chain)
-        (tc-global-shared-view seen)
-        template?
-        arena)
-        [(ResultTcUnit.Ok)
-          (tc-comptime-purity-expr-list-mode
-            ctx
-            expr-bases
-            env
-            bound
-            chain
-            seen
-            template?
-            body)]
-        [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
     [(ast.AstExpr.WithResource wr-box)
       (match (__tl-box-place wr-box)
         [(ast.AstWithResource.WithResource bindings body)
@@ -72562,69 +69213,6 @@
                 template?
                 body)]
             [(ResultTcStringList.Err message) (ResultTcUnit.Err message)])])]
-    [(ast.AstExpr.Box inner)
-      (tc-comptime-purity-node-mode
-        ctx
-        expr-bases
-        env
-        bound
-        chain
-        seen
-        template?
-        inner)]
-    [(ast.AstExpr.BoxGet inner)
-      (tc-comptime-purity-node-mode
-        ctx
-        expr-bases
-        env
-        bound
-        chain
-        seen
-        template?
-        inner)]
-    [(ast.AstExpr.BoxTake inner)
-      (tc-comptime-purity-node-mode
-        ctx
-        expr-bases
-        env
-        bound
-        chain
-        seen
-        template?
-        inner)]
-    [(ast.AstExpr.BoxSet inner value)
-      (match (tc-comptime-purity-node-mode
-        ctx
-        expr-bases
-        env
-        (tc-global-shared-view bound)
-        (tc-global-shared-view chain)
-        (tc-global-shared-view seen)
-        template?
-        inner)
-        [(ResultTcUnit.Ok)
-          (tc-comptime-purity-node-mode
-            ctx
-            expr-bases
-            env
-            bound
-            chain
-            seen
-            template?
-            value)]
-        [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
-    [(ast.AstExpr.TypeLiteral _) ResultTcUnit.Ok]
-    [(ast.AstExpr.Init _) ResultTcUnit.Ok]
-    [(ast.AstExpr.Comptime inner)
-      (tc-comptime-purity-node-mode
-        ctx
-        expr-bases
-        env
-        bound
-        chain
-        seen
-        template?
-        inner)]
     [(ast.AstExpr.Quote _) ResultTcUnit.Ok]
     [(ast.AstExpr.Quasiquote inner)
       (tc-comptime-purity-node-mode
@@ -72656,38 +69244,6 @@
         seen
         false
         inner)]
-    [(ast.AstExpr.BracketClause items)
-      (tc-comptime-purity-expr-list-mode
-        ctx
-        expr-bases
-        env
-        bound
-        chain
-        seen
-        template?
-        items)]
-    [(ast.AstExpr.Try inner)
-      (tc-comptime-purity-node-mode
-        ctx
-        expr-bases
-        env
-        bound
-        chain
-        seen
-        template?
-        inner)]
-    [(ast.AstExpr.Return inner)
-      (tc-comptime-purity-node-mode
-        ctx
-        expr-bases
-        env
-        bound
-        chain
-        seen
-        template?
-        inner)]
-    [(ast.AstExpr.Break) ResultTcUnit.Ok]
-    [(ast.AstExpr.Continue) ResultTcUnit.Ok]
     [(ast.AstExpr.PtrNull _)
       (tc-comptime-purity-reject-or-template-ok
         expr-bases
@@ -72842,9 +69398,6 @@
         "__tl_array-data"
         "unsafe FFI bridge"
         array)]
-    [(ast.AstExpr.BinaryData _) ResultTcUnit.Ok]
-    [(ast.AstExpr.SpmdProgramIndex) ResultTcUnit.Ok]
-    [(ast.AstExpr.SpmdProgramCount) ResultTcUnit.Ok]
     [(ast.AstExpr.ProgramArgc)
       (tc-comptime-purity-reject-or-template-ok
         expr-bases
@@ -72954,7 +69507,17 @@
           expr
           chain
           "syscall"
-          "host syscall"))]))
+          "host syscall"))]
+    [_
+      (tc-comptime-purity-expr-list-mode
+        ctx
+        expr-bases
+        env
+        bound
+        chain
+        seen
+        template?
+        (ast.ast-expr-child-ids expr))]))
 
 (define (tc-comptime-purity-var
   [ctx : TcContext]
@@ -73558,7 +70121,7 @@
             (tc-macro-state-structural-session state)
             (ast.ast-expr-segment-bases-get expr-bases func)
             (tc-global-shared-view bound))
-          (cbi.compiler-builtin-ctfe-ref 210))
+          (cbi.compiler-builtin-ctfe "type-cleanup-owning?"))
         (= args.len 1)
         (tc-macro-abstract-param-var?
           state
@@ -73652,50 +70215,50 @@
   [call-id : i64]) : bool
   (cond
     [(or
-        (= call-id (cbi.compiler-builtin-ctfe-ref 46))
-        (= call-id (cbi.compiler-builtin-ctfe-ref 71))
-        (= call-id (cbi.compiler-builtin-ctfe-ref 72))
-        (= call-id (cbi.compiler-builtin-ctfe-ref 210))
-        (= call-id (cbi.compiler-builtin-ctfe-ref 289)))
+        (= call-id (cbi.compiler-builtin-ctfe "type-info"))
+        (= call-id (cbi.compiler-builtin-ctfe "type-kind"))
+        (= call-id (cbi.compiler-builtin-ctfe "type-key"))
+        (= call-id (cbi.compiler-builtin-ctfe "type-cleanup-owning?"))
+        (= call-id (cbi.compiler-builtin-ctfe "type-expr")))
       true]
     [(or
-        (= call-id (cbi.compiler-builtin-ctfe-ref 73))
-        (= call-id (cbi.compiler-builtin-ctfe-ref 74)))
+        (= call-id (cbi.compiler-builtin-ctfe "type-nominal-module"))
+        (= call-id (cbi.compiler-builtin-ctfe "type-nominal-name")))
       (tc-macro-abstract-mask-allows? state (bit-or (shl 1 19) (shl 1 20)))]
     [(or
-        (= call-id (cbi.compiler-builtin-ctfe-ref 2))
-        (= call-id (cbi.compiler-builtin-ctfe-ref 75))
-        (= call-id (cbi.compiler-builtin-ctfe-ref 76))
-        (= call-id (cbi.compiler-builtin-ctfe-ref 77)))
+        (= call-id (cbi.compiler-builtin-ctfe "offset-of"))
+        (= call-id (cbi.compiler-builtin-ctfe "struct-field-count"))
+        (= call-id (cbi.compiler-builtin-ctfe "struct-field-name"))
+        (= call-id (cbi.compiler-builtin-ctfe "struct-field-type")))
       (tc-macro-abstract-mask-allows? state (shl 1 19))]
     [(or
-        (= call-id (cbi.compiler-builtin-ctfe-ref 78))
-        (= call-id (cbi.compiler-builtin-ctfe-ref 79))
-        (= call-id (cbi.compiler-builtin-ctfe-ref 80))
-        (= call-id (cbi.compiler-builtin-ctfe-ref 81)))
+        (= call-id (cbi.compiler-builtin-ctfe "enum-variant-count"))
+        (= call-id (cbi.compiler-builtin-ctfe "enum-variant-name"))
+        (= call-id (cbi.compiler-builtin-ctfe "enum-variant-payload-count"))
+        (= call-id (cbi.compiler-builtin-ctfe "enum-variant-payload-type")))
       (tc-macro-abstract-mask-allows? state (shl 1 20))]
     [(or
-        (= call-id (cbi.compiler-builtin-ctfe-ref 82))
-        (= call-id (cbi.compiler-builtin-ctfe-ref 84)))
+        (= call-id (cbi.compiler-builtin-ctfe "array-element-type"))
+        (= call-id (cbi.compiler-builtin-ctfe "array-dynamic?")))
       (tc-macro-abstract-mask-allows? state (bit-or (shl 1 15) (shl 1 16)))]
-    [(= call-id (cbi.compiler-builtin-ctfe-ref 214))
+    [(= call-id (cbi.compiler-builtin-ctfe "box-element-type"))
       (tc-macro-abstract-mask-allows? state (shl 1 28))]
-    [(= call-id (cbi.compiler-builtin-ctfe-ref 218))
+    [(= call-id (cbi.compiler-builtin-ctfe "reference-element-type"))
       (tc-macro-abstract-mask-allows? state (bit-or (shl 1 24) (shl 1 25)))]
     [(or
-        (= call-id (cbi.compiler-builtin-ctfe-ref 85))
-        (= call-id (cbi.compiler-builtin-ctfe-ref 86)))
+        (= call-id (cbi.compiler-builtin-ctfe "tuple-element-count"))
+        (= call-id (cbi.compiler-builtin-ctfe "tuple-element-type")))
       (tc-macro-abstract-mask-allows? state (shl 1 18))]
     [(or
-        (= call-id (cbi.compiler-builtin-ctfe-ref 87))
-        (= call-id (cbi.compiler-builtin-ctfe-ref 88))
-        (= call-id (cbi.compiler-builtin-ctfe-ref 89)))
+        (= call-id (cbi.compiler-builtin-ctfe "function-param-count"))
+        (= call-id (cbi.compiler-builtin-ctfe "function-param-type"))
+        (= call-id (cbi.compiler-builtin-ctfe "function-return-type")))
       (tc-macro-abstract-mask-allows? state (shl 1 17))]
     ;; Kind `array` does not imply a fixed length.
-    [(= call-id (cbi.compiler-builtin-ctfe-ref 83)) false]
+    [(= call-id (cbi.compiler-builtin-ctfe "array-length")) false]
     ;; No kind proves cleanup ownership, but the true branch of the exact
     ;; `type-cleanup-owning?` predicate does.
-    [(= call-id (cbi.compiler-builtin-ctfe-ref 211))
+    [(= call-id (cbi.compiler-builtin-ctfe "type-cleanup-function"))
       (=
         (bit-and
           (__tl-project-field
@@ -73708,38 +70271,40 @@
 (define (tc-macro-abstract-required [call-id : i64]) : String
   (cond
     [(or
-        (= call-id (cbi.compiler-builtin-ctfe-ref 73))
-        (= call-id (cbi.compiler-builtin-ctfe-ref 74)))
+        (= call-id (cbi.compiler-builtin-ctfe "type-nominal-module"))
+        (= call-id (cbi.compiler-builtin-ctfe "type-nominal-name")))
       "struct or enum"]
     [(or
-        (= call-id (cbi.compiler-builtin-ctfe-ref 2))
-        (= call-id (cbi.compiler-builtin-ctfe-ref 75))
-        (= call-id (cbi.compiler-builtin-ctfe-ref 76))
-        (= call-id (cbi.compiler-builtin-ctfe-ref 77)))
+        (= call-id (cbi.compiler-builtin-ctfe "offset-of"))
+        (= call-id (cbi.compiler-builtin-ctfe "struct-field-count"))
+        (= call-id (cbi.compiler-builtin-ctfe "struct-field-name"))
+        (= call-id (cbi.compiler-builtin-ctfe "struct-field-type")))
       "struct"]
     [(or
-        (= call-id (cbi.compiler-builtin-ctfe-ref 78))
-        (= call-id (cbi.compiler-builtin-ctfe-ref 79))
-        (= call-id (cbi.compiler-builtin-ctfe-ref 80))
-        (= call-id (cbi.compiler-builtin-ctfe-ref 81)))
+        (= call-id (cbi.compiler-builtin-ctfe "enum-variant-count"))
+        (= call-id (cbi.compiler-builtin-ctfe "enum-variant-name"))
+        (= call-id (cbi.compiler-builtin-ctfe "enum-variant-payload-count"))
+        (= call-id (cbi.compiler-builtin-ctfe "enum-variant-payload-type")))
       "enum"]
     [(or
-        (= call-id (cbi.compiler-builtin-ctfe-ref 82))
-        (= call-id (cbi.compiler-builtin-ctfe-ref 84)))
+        (= call-id (cbi.compiler-builtin-ctfe "array-element-type"))
+        (= call-id (cbi.compiler-builtin-ctfe "array-dynamic?")))
       "array"]
-    [(= call-id (cbi.compiler-builtin-ctfe-ref 83)) "fixed array shape"]
-    [(= call-id (cbi.compiler-builtin-ctfe-ref 214)) "box"]
-    [(= call-id (cbi.compiler-builtin-ctfe-ref 218)) "reference"]
+    [(= call-id (cbi.compiler-builtin-ctfe "array-length")) "fixed array shape"]
+    [(= call-id (cbi.compiler-builtin-ctfe "box-element-type")) "box"]
+    [(= call-id (cbi.compiler-builtin-ctfe "reference-element-type"))
+      "reference"]
     [(or
-        (= call-id (cbi.compiler-builtin-ctfe-ref 85))
-        (= call-id (cbi.compiler-builtin-ctfe-ref 86)))
+        (= call-id (cbi.compiler-builtin-ctfe "tuple-element-count"))
+        (= call-id (cbi.compiler-builtin-ctfe "tuple-element-type")))
       "tuple"]
     [(or
-        (= call-id (cbi.compiler-builtin-ctfe-ref 87))
-        (= call-id (cbi.compiler-builtin-ctfe-ref 88))
-        (= call-id (cbi.compiler-builtin-ctfe-ref 89)))
+        (= call-id (cbi.compiler-builtin-ctfe "function-param-count"))
+        (= call-id (cbi.compiler-builtin-ctfe "function-param-type"))
+        (= call-id (cbi.compiler-builtin-ctfe "function-return-type")))
       "function"]
-    [(= call-id (cbi.compiler-builtin-ctfe-ref 211)) "cleanup-owning type"]
+    [(= call-id (cbi.compiler-builtin-ctfe "type-cleanup-function"))
+      "cleanup-owning type"]
     [else "a stronger type-kind bound"]))
 
 (define (tc-macro-abstract-check-current-call
@@ -73811,7 +70376,7 @@
             (tc-macro-state-structural-session state)
             (ast.ast-expr-segment-bases-get expr-bases func)
             (tc-global-shared-view bound))
-          (cbi.compiler-builtin-ctfe-ref 71))
+          (cbi.compiler-builtin-ctfe "type-kind"))
         (= args.len 1)
         (tc-macro-abstract-param-var?
           state
@@ -101639,30 +98204,30 @@
 
 (define (macro-binop-symbol-id [op : ast.AstBinOp]) : i64
   (match op
-    [(ast.AstBinOp.Add) (cbi.compiler-builtin-ctfe-ref 137)]
-    [(ast.AstBinOp.Sub) (cbi.compiler-builtin-ctfe-ref 138)]
-    [(ast.AstBinOp.Mul) (cbi.compiler-builtin-ctfe-ref 139)]
-    [(ast.AstBinOp.Div) (cbi.compiler-builtin-ctfe-ref 140)]
-    [(ast.AstBinOp.Mod) (cbi.compiler-builtin-ctfe-ref 141)]
-    [(ast.AstBinOp.Eq) (cbi.compiler-builtin-ctfe-ref 142)]
-    [(ast.AstBinOp.Ne) (cbi.compiler-builtin-ctfe-ref 143)]
-    [(ast.AstBinOp.Lt) (cbi.compiler-builtin-ctfe-ref 144)]
-    [(ast.AstBinOp.Le) (cbi.compiler-builtin-ctfe-ref 145)]
-    [(ast.AstBinOp.Gt) (cbi.compiler-builtin-ctfe-ref 146)]
-    [(ast.AstBinOp.Ge) (cbi.compiler-builtin-ctfe-ref 147)]
-    [(ast.AstBinOp.And) (cbi.compiler-builtin-ctfe-ref 148)]
-    [(ast.AstBinOp.Or) (cbi.compiler-builtin-ctfe-ref 149)]
-    [(ast.AstBinOp.BitAnd) (cbi.compiler-builtin-ctfe-ref 150)]
-    [(ast.AstBinOp.BitOr) (cbi.compiler-builtin-ctfe-ref 151)]
-    [(ast.AstBinOp.BitXor) (cbi.compiler-builtin-ctfe-ref 152)]
-    [(ast.AstBinOp.Shl) (cbi.compiler-builtin-ctfe-ref 153)]
-    [(ast.AstBinOp.Shr) (cbi.compiler-builtin-ctfe-ref 154)]))
+    [(ast.AstBinOp.Add) (cbi.compiler-builtin-ctfe "+")]
+    [(ast.AstBinOp.Sub) (cbi.compiler-builtin-ctfe "-")]
+    [(ast.AstBinOp.Mul) (cbi.compiler-builtin-ctfe "*")]
+    [(ast.AstBinOp.Div) (cbi.compiler-builtin-ctfe "/")]
+    [(ast.AstBinOp.Mod) (cbi.compiler-builtin-ctfe "%")]
+    [(ast.AstBinOp.Eq) (cbi.compiler-builtin-ctfe "=")]
+    [(ast.AstBinOp.Ne) (cbi.compiler-builtin-ctfe "!=")]
+    [(ast.AstBinOp.Lt) (cbi.compiler-builtin-ctfe "<")]
+    [(ast.AstBinOp.Le) (cbi.compiler-builtin-ctfe "<=")]
+    [(ast.AstBinOp.Gt) (cbi.compiler-builtin-ctfe ">")]
+    [(ast.AstBinOp.Ge) (cbi.compiler-builtin-ctfe ">=")]
+    [(ast.AstBinOp.And) (cbi.compiler-builtin-ctfe "and")]
+    [(ast.AstBinOp.Or) (cbi.compiler-builtin-ctfe "or")]
+    [(ast.AstBinOp.BitAnd) (cbi.compiler-builtin-ctfe "bit-and")]
+    [(ast.AstBinOp.BitOr) (cbi.compiler-builtin-ctfe "bit-or")]
+    [(ast.AstBinOp.BitXor) (cbi.compiler-builtin-ctfe "bit-xor")]
+    [(ast.AstBinOp.Shl) (cbi.compiler-builtin-ctfe "shl")]
+    [(ast.AstBinOp.Shr) (cbi.compiler-builtin-ctfe "shr")]))
 
 (define (macro-unop-symbol-id [op : ast.AstUnOp]) : i64
   (match op
-    [(ast.AstUnOp.Neg) (cbi.compiler-builtin-ctfe-ref 138)]
-    [(ast.AstUnOp.Not) (cbi.compiler-builtin-ctfe-ref 155)]
-    [(ast.AstUnOp.BitNot) (cbi.compiler-builtin-ctfe-ref 156)]))
+    [(ast.AstUnOp.Neg) (cbi.compiler-builtin-ctfe "-")]
+    [(ast.AstUnOp.Not) (cbi.compiler-builtin-ctfe "not")]
+    [(ast.AstUnOp.BitNot) (cbi.compiler-builtin-ctfe "bit-not")]))
 
 (define (macro-lifetime-list-to-spanned-sexpr
   [items : ast.AstLifetimeList]
@@ -101864,55 +98429,55 @@
   (match ty
     [(ast.AstType.I64)
       (ResultMacroSexpr.Ok
-        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 159) span))]
+        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "i64") span))]
     [(ast.AstType.I32)
       (ResultMacroSexpr.Ok
-        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 160) span))]
+        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "i32") span))]
     [(ast.AstType.I16)
       (ResultMacroSexpr.Ok
-        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 161) span))]
+        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "i16") span))]
     [(ast.AstType.I8)
       (ResultMacroSexpr.Ok
-        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 162) span))]
+        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "i8") span))]
     [(ast.AstType.U64)
       (ResultMacroSexpr.Ok
-        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 163) span))]
+        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "u64") span))]
     [(ast.AstType.U32)
       (ResultMacroSexpr.Ok
-        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 164) span))]
+        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "u32") span))]
     [(ast.AstType.U16)
       (ResultMacroSexpr.Ok
-        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 165) span))]
+        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "u16") span))]
     [(ast.AstType.U8)
       (ResultMacroSexpr.Ok
-        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 166) span))]
+        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "u8") span))]
     [(ast.AstType.F64)
       (ResultMacroSexpr.Ok
-        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 167) span))]
+        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "f64") span))]
     [(ast.AstType.F32)
       (ResultMacroSexpr.Ok
-        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 168) span))]
+        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "f32") span))]
     [(ast.AstType.Bool)
       (ResultMacroSexpr.Ok
-        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 169) span))]
+        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "bool") span))]
     [(ast.AstType.Char)
       (ResultMacroSexpr.Ok
-        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 170) span))]
+        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "char") span))]
     [(ast.AstType.String)
       (ResultMacroSexpr.Ok
-        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 158) span))]
+        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "String") span))]
     [(ast.AstType.Str)
       (ResultMacroSexpr.Ok
-        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 171) span))]
+        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "str") span))]
     [(ast.AstType.Bytes)
       (ResultMacroSexpr.Ok
-        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 172) span))]
+        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "bytes") span))]
     [(ast.AstType.Unit)
       (ResultMacroSexpr.Ok
-        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 173) span))]
+        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "unit") span))]
     [(ast.AstType.Never)
       (ResultMacroSexpr.Ok
-        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 174) span))]
+        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "never") span))]
     [(ast.AstType.Expr)
       (ResultMacroSexpr.Ok
         (macro-spanned-symbol-id cbi.compiler-builtin-id-fix-Expr span))]
@@ -101937,7 +98502,7 @@
         [(ResultMacroSexpr.Ok selem)
           (ResultMacroSexpr.Ok
             (macro-form2-id
-              (cbi.compiler-builtin-ctfe-ref 109)
+              (cbi.compiler-builtin-ctfe "Array")
               selem
               (reader.SpannedSexpr.Int count (string.int->string count) span)
               span))]
@@ -101952,14 +98517,14 @@
     [(ast.AstType.Ptr inner)
       (macro-type-unary-sexpr-id
         session
-        (cbi.compiler-builtin-ctfe-ref 177)
+        (cbi.compiler-builtin-ctfe "Ptr")
         inner
         span
         origin)]
     [(ast.AstType.MutPtr inner)
       (macro-type-unary-sexpr-id
         session
-        (cbi.compiler-builtin-ctfe-ref 178)
+        (cbi.compiler-builtin-ctfe "MutPtr")
         inner
         span
         origin)]
@@ -101972,7 +98537,7 @@
         [(ResultMacroSexpr.Ok stail)
           (ResultMacroSexpr.Ok
             (reader.spanned-sexpr-list-prepend
-              (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 175) span)
+              (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "Tuple") span)
               stail
               span))]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
@@ -101996,7 +98561,7 @@
                       (reader.spanned-sexpr-builder-push
                         (reader.spanned-sexpr-builder-new)
                         (macro-spanned-symbol-id
-                          (cbi.compiler-builtin-ctfe-ref 176)
+                          (cbi.compiler-builtin-ctfe "->")
                           span))
                       sargs)
                     sret)
@@ -102029,14 +98594,14 @@
     [(ast.AstType.Struct name)
       (ResultMacroSexpr.Ok
         (macro-resolved-nominal-type-sexpr
-          (cbi.compiler-builtin-ctfe-ref 106)
+          (cbi.compiler-builtin-ctfe "__typelisp internal resolved struct type")
           name
           (ast.ast-lifetime-list-new)
           span))]
     [(ast.AstType.Enum name)
       (ResultMacroSexpr.Ok
         (macro-resolved-nominal-type-sexpr
-          (cbi.compiler-builtin-ctfe-ref 107)
+          (cbi.compiler-builtin-ctfe "__typelisp internal resolved enum type")
           name
           (ast.ast-lifetime-list-new)
           span))]
@@ -102053,14 +98618,14 @@
     [(ast.AstType.StructArgs name lifetimes)
       (ResultMacroSexpr.Ok
         (macro-resolved-nominal-type-sexpr
-          (cbi.compiler-builtin-ctfe-ref 106)
+          (cbi.compiler-builtin-ctfe "__typelisp internal resolved struct type")
           name
           (ast.ast-lifetime-list-box-shared-view lifetimes)
           span))]
     [(ast.AstType.EnumArgs name lifetimes)
       (ResultMacroSexpr.Ok
         (macro-resolved-nominal-type-sexpr
-          (cbi.compiler-builtin-ctfe-ref 107)
+          (cbi.compiler-builtin-ctfe "__typelisp internal resolved enum type")
           name
           (ast.ast-lifetime-list-box-shared-view lifetimes)
           span))]
@@ -102078,9 +98643,9 @@
         [(ResultMacroSexpr.Ok sinner)
           (ResultMacroSexpr.Ok
             (if (= region cbi.compiler-builtin-id-fix-empty)
-              (macro-form1-id (cbi.compiler-builtin-ctfe-ref 110) sinner span)
+              (macro-form1-id (cbi.compiler-builtin-ctfe "&") sinner span)
               (macro-form2-id
-                (cbi.compiler-builtin-ctfe-ref 110)
+                (cbi.compiler-builtin-ctfe "&")
                 (macro-spanned-symbol-id region span)
                 sinner
                 span)))]
@@ -102094,9 +98659,9 @@
         [(ResultMacroSexpr.Ok sinner)
           (ResultMacroSexpr.Ok
             (if (= region cbi.compiler-builtin-id-fix-empty)
-              (macro-form1-id (cbi.compiler-builtin-ctfe-ref 111) sinner span)
+              (macro-form1-id (cbi.compiler-builtin-ctfe "&mut") sinner span)
               (macro-form2-id
-                (cbi.compiler-builtin-ctfe-ref 111)
+                (cbi.compiler-builtin-ctfe "&mut")
                 (macro-spanned-symbol-id region span)
                 sinner
                 span)))]
@@ -102110,7 +98675,7 @@
         [(ResultMacroSexpr.Ok sinner)
           (ResultMacroSexpr.Ok
             (macro-form2-id
-              (cbi.compiler-builtin-ctfe-ref 112)
+              (cbi.compiler-builtin-ctfe "in")
               (macro-spanned-symbol-id region span)
               sinner
               span))]
@@ -102165,7 +98730,7 @@
             (macro-form3-id
               name-id
               sexpr
-              (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 120) span)
+              (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe ":") span)
               sty
               span))]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
@@ -102180,14 +98745,14 @@
     [(ast.AstLiteral.Bool value)
       (macro-spanned-symbol-id
         (if value
-          (cbi.compiler-builtin-ctfe-ref 208)
-          (cbi.compiler-builtin-ctfe-ref 209))
+          (cbi.compiler-builtin-ctfe "true")
+          (cbi.compiler-builtin-ctfe "false"))
         span)]
     [(ast.AstLiteral.Char c) (reader.SpannedSexpr.Char c span)]
     [(ast.AstLiteral.String string-id)
       (reader.SpannedSexpr.Str (ci.intern-id-from-renderable string-id) span)]
     [(ast.AstLiteral.Unit)
-      (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 173) span)]))
+      (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "unit") span)]))
 
 (define (macro-pattern-list-to-spanned-sexpr
   [session : cis.InternStructuralSessionHandle]
@@ -102250,7 +98815,7 @@
           span))]
     [(ast.AstPattern.Wildcard)
       (ResultMacroSexpr.Ok
-        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 180) span))]
+        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "_") span))]
     [(ast.AstPattern.Literal lit)
       (ResultMacroSexpr.Ok (macro-literal-to-spanned-sexpr lit span))]
     [(ast.AstPattern.Variant name args-box)
@@ -102280,7 +98845,7 @@
         [(ResultMacroSexpr.Ok patterns)
           (ResultMacroSexpr.Ok
             (reader.spanned-sexpr-list-prepend
-              (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 124) span)
+              (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "tuple") span)
               patterns
               span))]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
@@ -102293,7 +98858,7 @@
         [(ResultMacroSexpr.Ok patterns)
           (ResultMacroSexpr.Ok
             (reader.spanned-sexpr-list-prepend
-              (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 125) span)
+              (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "array") span)
               patterns
               span))]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
@@ -102414,7 +98979,7 @@
                             "typed-let-binding")
                           span)
                         (macro-spanned-symbol-id
-                          (cbi.compiler-builtin-ctfe-ref 120)
+                          (cbi.compiler-builtin-ctfe ":")
                           span)
                         sty
                         svalue
@@ -102580,8 +99145,8 @@
           (ResultMacroSexpr.Ok
             (macro-spanned-symbol-id
               (if value
-                (cbi.compiler-builtin-ctfe-ref 208)
-                (cbi.compiler-builtin-ctfe-ref 209))
+                (cbi.compiler-builtin-ctfe "true")
+                (cbi.compiler-builtin-ctfe "false"))
               span))]
         [(ast.AstLiteral.Char c)
           (ResultMacroSexpr.Ok (reader.SpannedSexpr.Char c span))]
@@ -102592,7 +99157,7 @@
               span))]
         [(ast.AstLiteral.Unit)
           (ResultMacroSexpr.Ok
-            (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 173) span))])]
+            (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "unit") span))])]
     [(ast.AstExpr.Var name)
       (ResultMacroSexpr.Ok
         (macro-spanned-symbol-id
@@ -102621,7 +99186,7 @@
     [(ast.AstExpr.If cond-box then-box else-box)
       (macro-expr-list-with-head-symbol-id
         session
-        (cbi.compiler-builtin-ctfe-ref 121)
+        (cbi.compiler-builtin-ctfe "if")
         (ast.ast-expr-cons
           cond-box
           (ast.ast-expr-cons
@@ -102632,28 +99197,28 @@
     [(ast.AstExpr.Begin exprs)
       (macro-expr-list-with-head-symbol-id
         session
-        (cbi.compiler-builtin-ctfe-ref 122)
+        (cbi.compiler-builtin-ctfe "begin")
         exprs
         span
         origin)]
     [(ast.AstExpr.Unsafe exprs)
       (macro-expr-list-with-head-symbol-id
         session
-        (cbi.compiler-builtin-ctfe-ref 123)
+        (cbi.compiler-builtin-ctfe "unsafe")
         exprs
         span
         origin)]
     [(ast.AstExpr.Tuple exprs)
       (macro-expr-list-with-head-symbol-id
         session
-        (cbi.compiler-builtin-ctfe-ref 124)
+        (cbi.compiler-builtin-ctfe "tuple")
         exprs
         span
         origin)]
     [(ast.AstExpr.Array exprs)
       (macro-expr-list-with-head-symbol-id
         session
-        (cbi.compiler-builtin-ctfe-ref 125)
+        (cbi.compiler-builtin-ctfe "array")
         exprs
         span
         origin)]
@@ -102667,28 +99232,28 @@
     [(ast.AstExpr.Quote inner-box)
       (macro-expr-list-with-head-symbol-id
         session
-        (cbi.compiler-builtin-ctfe-ref 126)
+        (cbi.compiler-builtin-ctfe "quote")
         (ast.ast-expr-cons inner-box (ast.ast-expr-list-new))
         span
         origin)]
     [(ast.AstExpr.Quasiquote inner-box)
       (macro-expr-list-with-head-symbol-id
         session
-        (cbi.compiler-builtin-ctfe-ref 127)
+        (cbi.compiler-builtin-ctfe "quasiquote")
         (ast.ast-expr-cons inner-box (ast.ast-expr-list-new))
         span
         origin)]
     [(ast.AstExpr.Unquote inner-box)
       (macro-expr-list-with-head-symbol-id
         session
-        (cbi.compiler-builtin-ctfe-ref 128)
+        (cbi.compiler-builtin-ctfe "unquote")
         (ast.ast-expr-cons inner-box (ast.ast-expr-list-new))
         span
         origin)]
     [(ast.AstExpr.UnquoteSplicing inner-box)
       (macro-expr-list-with-head-symbol-id
         session
-        (cbi.compiler-builtin-ctfe-ref 129)
+        (cbi.compiler-builtin-ctfe "unquote-splicing")
         (ast.ast-expr-cons inner-box (ast.ast-expr-list-new))
         span
         origin)]
@@ -102725,7 +99290,7 @@
                   (ResultMacroSexpr.Ok
                     (reader.spanned-sexpr-list-prepend
                       (macro-spanned-symbol-id
-                        (cbi.compiler-builtin-ctfe-ref 181)
+                        (cbi.compiler-builtin-ctfe "let")
                         span)
                       stail
                       span))]
@@ -102742,7 +99307,7 @@
             [(ResultMacroSexpr.Ok sbody)
               (ResultMacroSexpr.Ok
                 (macro-form2-id
-                  (cbi.compiler-builtin-ctfe-ref 113)
+                  (cbi.compiler-builtin-ctfe "while")
                   scond
                   sbody
                   span))]
@@ -102770,7 +99335,7 @@
                           (reader.spanned-sexpr-builder-push
                             (reader.spanned-sexpr-builder-new)
                             (macro-spanned-symbol-id
-                              (cbi.compiler-builtin-ctfe-ref 182)
+                              (cbi.compiler-builtin-ctfe "match")
                               span))
                           sscrutinee)
                         sarms)
@@ -102782,7 +99347,7 @@
         [(ResultMacroSexpr.Ok svalue)
           (ResultMacroSexpr.Ok
             (macro-form2-id
-              (cbi.compiler-builtin-ctfe-ref 157)
+              (cbi.compiler-builtin-ctfe "set!")
               (macro-spanned-symbol-id
                 (macro-output-source-identity-id-at session name "expr-set")
                 span)
@@ -102826,7 +99391,7 @@
             [(ResultMacroSexpr.Ok sindex)
               (ResultMacroSexpr.Ok
                 (macro-form2-id
-                  (cbi.compiler-builtin-ctfe-ref 115)
+                  (cbi.compiler-builtin-ctfe "array-ref")
                   sarray
                   sindex
                   span))]
@@ -102893,7 +99458,7 @@
             [(ResultMacroSexpr.Ok sindex)
               (ResultMacroSexpr.Ok
                 (macro-form2-id
-                  (cbi.compiler-builtin-ctfe-ref 185)
+                  (cbi.compiler-builtin-ctfe "array-take!")
                   sarray
                   sindex
                   span))]
@@ -102914,7 +99479,7 @@
             [(ResultMacroSexpr.Ok sreplacement)
               (ResultMacroSexpr.Ok
                 (macro-form2-id
-                  (cbi.compiler-builtin-ctfe-ref 284)
+                  (cbi.compiler-builtin-ctfe "expr-replace")
                   splace
                   sreplacement
                   span))]
@@ -102948,7 +99513,7 @@
             [(ResultMacroSexpr.Ok sindex)
               (ResultMacroSexpr.Ok
                 (macro-form2-id
-                  (cbi.compiler-builtin-ctfe-ref 117)
+                  (cbi.compiler-builtin-ctfe "string-ref")
                   sstring
                   sindex
                   span))]
@@ -102980,7 +99545,7 @@
                       [index : i64
                         (ast.ast-tuple-set-index-from-field-id field)]
                       (macro-form2-id
-                        (cbi.compiler-builtin-ctfe-ref 188)
+                        (cbi.compiler-builtin-ctfe "tuple-ref")
                         sreceiver
                         (reader.SpannedSexpr.Int
                           index
@@ -102994,7 +99559,7 @@
                       span))]
                 (ResultMacroSexpr.Ok
                   (macro-form2-id
-                    (cbi.compiler-builtin-ctfe-ref 157)
+                    (cbi.compiler-builtin-ctfe "set!")
                     starget
                     svalue
                     span)))]
@@ -103015,11 +99580,9 @@
             [(ResultMacroSexpr.Ok sty)
               (ResultMacroSexpr.Ok
                 (macro-form3-id
-                  (cbi.compiler-builtin-ctfe-ref 186)
+                  (cbi.compiler-builtin-ctfe "cast")
                   sinner
-                  (macro-spanned-symbol-id
-                    (cbi.compiler-builtin-ctfe-ref 120)
-                    span)
+                  (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe ":") span)
                   sty
                   span))]
             [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
@@ -103039,11 +99602,9 @@
             [(ResultMacroSexpr.Ok sty)
               (ResultMacroSexpr.Ok
                 (macro-form3-id
-                  (cbi.compiler-builtin-ctfe-ref 187)
+                  (cbi.compiler-builtin-ctfe "ann")
                   sinner
-                  (macro-spanned-symbol-id
-                    (cbi.compiler-builtin-ctfe-ref 120)
-                    span)
+                  (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe ":") span)
                   sty
                   span))]
             [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
@@ -103054,8 +99615,8 @@
           (let
             [head-id : i64
               (if mutable
-                (cbi.compiler-builtin-ctfe-ref 111)
-                (cbi.compiler-builtin-ctfe-ref 110))]
+                (cbi.compiler-builtin-ctfe "&mut")
+                (cbi.compiler-builtin-ctfe "&"))]
             (match (ast.ast-borrow-lifetime-from-id lifetime-id)
               [(ast.AstBorrowLifetime.Inferred)
                 (ResultMacroSexpr.Ok (macro-form1-id head-id splace span))]
@@ -103071,19 +99632,19 @@
       (match (macro-child-to-spanned-sexpr session inner-id span origin)
         [(ResultMacroSexpr.Ok sinner)
           (ResultMacroSexpr.Ok
-            (macro-form1-id (cbi.compiler-builtin-ctfe-ref 130) sinner span))]
+            (macro-form1-id (cbi.compiler-builtin-ctfe "return") sinner span))]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.Try inner-id)
       (match (macro-child-to-spanned-sexpr session inner-id span origin)
         [(ResultMacroSexpr.Ok sinner)
           (ResultMacroSexpr.Ok
-            (macro-form1-id (cbi.compiler-builtin-ctfe-ref 131) sinner span))]
+            (macro-form1-id (cbi.compiler-builtin-ctfe "try") sinner span))]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.Box inner-id)
       (match (macro-child-to-spanned-sexpr session inner-id span origin)
         [(ResultMacroSexpr.Ok sinner)
           (ResultMacroSexpr.Ok
-            (macro-form1-id (cbi.compiler-builtin-ctfe-ref 132) sinner span))]
+            (macro-form1-id (cbi.compiler-builtin-ctfe "box") sinner span))]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.BoxGet inner-id)
       (match (macro-child-to-spanned-sexpr session inner-id span origin)
@@ -103108,7 +99669,7 @@
             [(ResultMacroSexpr.Ok svalue)
               (ResultMacroSexpr.Ok
                 (macro-form2-id
-                  (cbi.compiler-builtin-ctfe-ref 157)
+                  (cbi.compiler-builtin-ctfe "set!")
                   (macro-form1-id (ci.intern "__tl_box-get") sreceiver span)
                   svalue
                   span))]
@@ -103119,7 +99680,7 @@
         [(ResultMacroSexpr.Ok stuple)
           (ResultMacroSexpr.Ok
             (macro-form2-id
-              (cbi.compiler-builtin-ctfe-ref 188)
+              (cbi.compiler-builtin-ctfe "tuple-ref")
               stuple
               (reader.SpannedSexpr.Int index (string.int->string index) span)
               span))]
@@ -103129,17 +99690,15 @@
         [(ast.AstMaybeType.No)
           (ResultMacroSexpr.Ok
             (reader.spanned-sexpr-list1
-              (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 118) span)
+              (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "init") span)
               span))]
         [(ast.AstMaybeType.Some ty)
           (match (macro-type-to-spanned-sexpr session ty span origin)
             [(ResultMacroSexpr.Ok sty)
               (ResultMacroSexpr.Ok
                 (macro-form2-id
-                  (cbi.compiler-builtin-ctfe-ref 118)
-                  (macro-spanned-symbol-id
-                    (cbi.compiler-builtin-ctfe-ref 120)
-                    span)
+                  (cbi.compiler-builtin-ctfe "init")
+                  (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe ":") span)
                   sty
                   span))]
             [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])])]
@@ -103151,7 +99710,7 @@
         origin)
         [(ResultMacroSexpr.Ok sty)
           (ResultMacroSexpr.Ok
-            (macro-form1-id (cbi.compiler-builtin-ctfe-ref 135) sty span))]
+            (macro-form1-id (cbi.compiler-builtin-ctfe "type") sty span))]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.PtrNull ty-id)
       (match (macro-type-to-spanned-sexpr
@@ -103162,36 +99721,36 @@
         [(ResultMacroSexpr.Ok sty)
           (ResultMacroSexpr.Ok
             (macro-form2-id
-              (cbi.compiler-builtin-ctfe-ref 119)
-              (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 120) span)
+              (cbi.compiler-builtin-ctfe "ptr-null")
+              (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe ":") span)
               sty
               span))]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.PtrNullCheck ptr-id)
       (macro-child-form1-id
         session
-        (cbi.compiler-builtin-ctfe-ref 189)
+        (cbi.compiler-builtin-ctfe "ptr-null?")
         ptr-id
         span
         origin)]
     [(ast.AstExpr.PtrAddrOf place-id)
       (macro-child-form1-id
         session
-        (cbi.compiler-builtin-ctfe-ref 190)
+        (cbi.compiler-builtin-ctfe "ptr-addr-of")
         place-id
         span
         origin)]
     [(ast.AstExpr.PtrRead ptr-id)
       (macro-child-form1-id
         session
-        (cbi.compiler-builtin-ctfe-ref 191)
+        (cbi.compiler-builtin-ctfe "ptr-read")
         ptr-id
         span
         origin)]
     [(ast.AstExpr.PtrWrite ptr-id value-id)
       (macro-child-form2-id
         session
-        (cbi.compiler-builtin-ctfe-ref 192)
+        (cbi.compiler-builtin-ctfe "ptr-write!")
         ptr-id
         value-id
         span
@@ -103199,7 +99758,7 @@
     [(ast.AstExpr.PtrOffset ptr-id offset-id)
       (macro-child-form2-id
         session
-        (cbi.compiler-builtin-ctfe-ref 193)
+        (cbi.compiler-builtin-ctfe "ptr-offset")
         ptr-id
         offset-id
         span
@@ -103207,7 +99766,7 @@
     [(ast.AstExpr.PtrCast ptr-id ty-id)
       (macro-child-type-form3-id
         session
-        (cbi.compiler-builtin-ctfe-ref 194)
+        (cbi.compiler-builtin-ctfe "ptr-cast")
         ptr-id
         (ast.ty-node-get ty-id)
         span
@@ -103215,14 +99774,14 @@
     [(ast.AstExpr.PtrToInt ptr-id)
       (macro-child-form1-id
         session
-        (cbi.compiler-builtin-ctfe-ref 195)
+        (cbi.compiler-builtin-ctfe "ptr->int")
         ptr-id
         span
         origin)]
     [(ast.AstExpr.IntToPtr value-id ty-id)
       (macro-child-type-form3-id
         session
-        (cbi.compiler-builtin-ctfe-ref 196)
+        (cbi.compiler-builtin-ctfe "int->ptr")
         value-id
         (ast.ty-node-get ty-id)
         span
@@ -103230,14 +99789,14 @@
     [(ast.AstExpr.StringData value-id)
       (macro-child-form1-id
         session
-        (cbi.compiler-builtin-ctfe-ref 197)
+        (cbi.compiler-builtin-ctfe "string-data")
         value-id
         span
         origin)]
     [(ast.AstExpr.StringFromBytes ptr-id len-id)
       (macro-child-form2-id
         session
-        (cbi.compiler-builtin-ctfe-ref 198)
+        (cbi.compiler-builtin-ctfe "string-from-bytes")
         ptr-id
         len-id
         span
@@ -103252,7 +99811,7 @@
     [(ast.AstExpr.BinaryData bytes)
       (ResultMacroSexpr.Ok
         (macro-form1-id
-          (cbi.compiler-builtin-ctfe-ref 213)
+          (cbi.compiler-builtin-ctfe "__typelisp internal binary data")
           (reader.SpannedSexpr.Str
             (ci.intern-id-from-renderable
               (ci.intern-generated-canonical-name bytes))
@@ -103260,17 +99819,17 @@
           span))]
     [(ast.AstExpr.ProgramArgc)
       (ResultMacroSexpr.Ok
-        (macro-form0-id (cbi.compiler-builtin-ctfe-ref 200) span))]
+        (macro-form0-id (cbi.compiler-builtin-ctfe "program-argc") span))]
     [(ast.AstExpr.ProgramArgv)
       (ResultMacroSexpr.Ok
-        (macro-form0-id (cbi.compiler-builtin-ctfe-ref 201) span))]
+        (macro-form0-id (cbi.compiler-builtin-ctfe "program-argv") span))]
     [(ast.AstExpr.ProgramEnvp)
       (ResultMacroSexpr.Ok
-        (macro-form0-id (cbi.compiler-builtin-ctfe-ref 202) span))]
+        (macro-form0-id (cbi.compiler-builtin-ctfe "program-envp") span))]
     [(ast.AstExpr.CpuIdEax leaf-id subleaf-id)
       (macro-child-form2-id
         session
-        (cbi.compiler-builtin-ctfe-ref 203)
+        (cbi.compiler-builtin-ctfe "cpuid-eax")
         leaf-id
         subleaf-id
         span
@@ -103278,7 +99837,7 @@
     [(ast.AstExpr.CpuIdEbx leaf-id subleaf-id)
       (macro-child-form2-id
         session
-        (cbi.compiler-builtin-ctfe-ref 204)
+        (cbi.compiler-builtin-ctfe "cpuid-ebx")
         leaf-id
         subleaf-id
         span
@@ -103286,7 +99845,7 @@
     [(ast.AstExpr.CpuIdEcx leaf-id subleaf-id)
       (macro-child-form2-id
         session
-        (cbi.compiler-builtin-ctfe-ref 205)
+        (cbi.compiler-builtin-ctfe "cpuid-ecx")
         leaf-id
         subleaf-id
         span
@@ -103294,7 +99853,7 @@
     [(ast.AstExpr.CpuIdEdx leaf-id subleaf-id)
       (macro-child-form2-id
         session
-        (cbi.compiler-builtin-ctfe-ref 206)
+        (cbi.compiler-builtin-ctfe "cpuid-edx")
         leaf-id
         subleaf-id
         span
@@ -103302,14 +99861,14 @@
     [(ast.AstExpr.Xgetbv index-id)
       (macro-child-form1-id
         session
-        (cbi.compiler-builtin-ctfe-ref 207)
+        (cbi.compiler-builtin-ctfe "xgetbv")
         index-id
         span
         origin)]
     [(ast.AstExpr.Syscall args)
       (macro-expr-list-with-head-symbol-id
         session
-        (cbi.compiler-builtin-ctfe-ref 136)
+        (cbi.compiler-builtin-ctfe "syscall")
         args
         span
         origin)]
@@ -105078,7 +101637,7 @@
                 source-head-id)]
             [count : i64 args.len]
             (cond
-              [(= source-head-id (cbi.compiler-builtin-ctfe-ref 122))
+              [(= source-head-id (cbi.compiler-builtin-ctfe "begin"))
                 (macro-hygiene-output-decl-list-env (& args) 0 env)]
               [(= tag (parser.compiler-parse-tag-decl-module))
                 (macro-hygiene-output-decl-list-env (& args) 1 env)]
@@ -120136,74 +116695,12 @@
         (ast.ast-expr-list-get exprs index 0))
       (macro-exprs-use-macro-at? ctx expr-bases decls exprs (+ index 1)))))
 
-(define (macro-arms-use-macro?
-  [ctx : TcContext]
-  [expr-bases : i64]
-  [decls : ast.AstDeclList]
-  [arms : ast.AstMatchArmList]) : bool
-  (macro-arms-use-macro-at? ctx expr-bases decls (& arms) 0))
-
-(define (macro-arms-use-macro-at?
-  [ctx : TcContext]
-  [expr-bases : i64]
-  [decls : ast.AstDeclList]
-  [arms : (& arms ast.AstMatchArmList)]
-  [index : i64]) : bool
-  (if (>= index arms.len)
-    false
-    (or
-      (match (ast.ast-match-arm-list-get
-        arms
-        index
-        (ast.ast-match-arm-fallback))
-        [(ast.AstMatchArm.Arm _ body-box)
-          (macro-node-uses-macro?
-            ctx
-            expr-bases
-            (tc-global-shared-view decls)
-            body-box)])
-      (macro-arms-use-macro-at? ctx expr-bases decls arms (+ index 1)))))
-
-(define (macro-bindings-use-macro?
-  [ctx : TcContext]
-  [expr-bases : i64]
-  [decls : ast.AstDeclList]
-  [bindings : ast.AstLetBindingList]) : bool
-  (macro-bindings-use-macro-at? ctx expr-bases decls (& bindings) 0))
-
-(define (macro-bindings-use-macro-at?
-  [ctx : TcContext]
-  [expr-bases : i64]
-  [decls : ast.AstDeclList]
-  [bindings : (& bindings ast.AstLetBindingList)]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-let-binding-list-len bindings))
-    false
-    (or
-      (match (ast.ast-let-binding-list-get
-        bindings
-        index
-        (ast.ast-let-binding-fallback))
-        [(ast.AstLetBinding.Binding _ _ init-box)
-          (macro-node-uses-macro?
-            ctx
-            expr-bases
-            (tc-global-shared-view decls)
-            init-box)])
-      (macro-bindings-use-macro-at? ctx expr-bases decls bindings (+ index 1)))))
-
 (define (macro-expr-uses-macro?
   [ctx : TcContext]
   [expr-bases : i64]
   [decls : ast.AstDeclList]
   [expr : ast.AstExpr]) : bool
   (match (tc-global-shared-view expr)
-    [(ast.AstExpr.Spanned inner-box _)
-      (macro-node-uses-macro? ctx expr-bases decls inner-box)]
-    [(ast.AstExpr.MacroExpansion inner-box _ _)
-      (macro-node-uses-macro? ctx expr-bases decls inner-box)]
-    [(ast.AstExpr.Literal _) false]
-    [(ast.AstExpr.Var _) false]
     [(ast.AstExpr.Call func-box args)
       (let
         [func : ast.AstExpr
@@ -120220,196 +116717,32 @@
             (tc-global-shared-view decls)
             func)
           (macro-exprs-use-macro? ctx expr-bases decls args)))]
-    [(ast.AstExpr.BracketClause items)
-      (macro-exprs-use-macro? ctx expr-bases decls items)]
-    [(ast.AstExpr.Binary _ l r)
-      (or
-        (macro-node-uses-macro? ctx expr-bases (tc-global-shared-view decls) l)
-        (macro-node-uses-macro? ctx expr-bases decls r))]
-    [(ast.AstExpr.Unary _ i) (macro-node-uses-macro? ctx expr-bases decls i)]
-    [(ast.AstExpr.If c t e)
-      (or
-        (macro-node-uses-macro? ctx expr-bases (tc-global-shared-view decls) c)
-        (macro-node-uses-macro? ctx expr-bases (tc-global-shared-view decls) t)
-        (macro-node-uses-macro? ctx expr-bases decls e))]
-    [(ast.AstExpr.Let let-box)
-      (match (__tl-box-place let-box)
-        [(ast.AstLet.Let bindings body)
-          (or
-            (macro-bindings-use-macro?
-              ctx
-              expr-bases
-              (tc-global-shared-view decls)
-              bindings)
-            (macro-node-uses-macro? ctx expr-bases decls body))])]
-    [(ast.AstExpr.Lambda lambda-box)
-      (match (__tl-box-place lambda-box)
-        [(ast.AstLambda.Lambda _ _ body)
-          (macro-node-uses-macro? ctx expr-bases decls body)])]
-    [(ast.AstExpr.Tuple exprs)
-      (macro-exprs-use-macro? ctx expr-bases decls exprs)]
     [(ast.AstExpr.TupleRef a b)
       (or
         (macro-node-uses-macro? ctx expr-bases (tc-global-shared-view decls) a)
         (macro-node-uses-macro? ctx expr-bases decls b))]
-    [(ast.AstExpr.Array exprs)
-      (macro-exprs-use-macro? ctx expr-bases decls exprs)]
-    [(ast.AstExpr.DynArray exprs)
-      (macro-exprs-use-macro? ctx expr-bases decls exprs)]
-    [(ast.AstExpr.FixedMakeArray _ len)
-      (macro-node-uses-macro? ctx expr-bases decls len)]
-    [(ast.AstExpr.MakeArray _ len)
-      (macro-node-uses-macro? ctx expr-bases decls len)]
-    [(ast.AstExpr.ArrayRef a i)
-      (or
-        (macro-node-uses-macro? ctx expr-bases (tc-global-shared-view decls) a)
-        (macro-node-uses-macro? ctx expr-bases decls i))]
-    [(ast.AstExpr.ArraySet a i v)
-      (or
-        (macro-node-uses-macro? ctx expr-bases (tc-global-shared-view decls) a)
-        (macro-node-uses-macro? ctx expr-bases (tc-global-shared-view decls) i)
-        (macro-node-uses-macro? ctx expr-bases decls v))]
-    [(ast.AstExpr.ArrayTake a l i)
-      (or
-        (macro-node-uses-macro? ctx expr-bases (tc-global-shared-view decls) a)
-        (macro-node-uses-macro? ctx expr-bases (tc-global-shared-view decls) l)
-        (macro-node-uses-macro? ctx expr-bases decls i))]
-    [(ast.AstExpr.FixedArrayTake a i)
-      (or
-        (macro-node-uses-macro? ctx expr-bases (tc-global-shared-view decls) a)
-        (macro-node-uses-macro? ctx expr-bases decls i))]
-    [(ast.AstExpr.Replace place replacement)
-      (or
-        (macro-node-uses-macro?
-          ctx
-          expr-bases
-          (tc-global-shared-view decls)
-          place)
-        (macro-node-uses-macro? ctx expr-bases decls replacement))]
-    [(ast.AstExpr.ArrayPush a v)
-      (or
-        (macro-node-uses-macro? ctx expr-bases (tc-global-shared-view decls) a)
-        (macro-node-uses-macro? ctx expr-bases decls v))]
-    [(ast.AstExpr.StringRef a b)
-      (or
-        (macro-node-uses-macro? ctx expr-bases (tc-global-shared-view decls) a)
-        (macro-node-uses-macro? ctx expr-bases decls b))]
-    [(ast.AstExpr.While c b)
-      (or
-        (macro-node-uses-macro? ctx expr-bases (tc-global-shared-view decls) c)
-        (macro-node-uses-macro? ctx expr-bases decls b))]
-    [(ast.AstExpr.Begin exprs)
-      (macro-exprs-use-macro? ctx expr-bases decls exprs)]
-    [(ast.AstExpr.Unsafe exprs)
-      (macro-exprs-use-macro? ctx expr-bases decls exprs)]
-    [(ast.AstExpr.Set _ rhs) (macro-node-uses-macro? ctx expr-bases decls rhs)]
-    [(ast.AstExpr.Ann i _) (macro-node-uses-macro? ctx expr-bases decls i)]
-    [(ast.AstExpr.Cast i _) (macro-node-uses-macro? ctx expr-bases decls i)]
-    [(ast.AstExpr.Borrow _ _ i) (macro-node-uses-macro? ctx expr-bases decls i)]
-    [(ast.AstExpr.Match match-box)
-      (match (__tl-box-place match-box)
-        [(ast.AstMatch.Match scrut arms)
-          (or
-            (macro-node-uses-macro?
-              ctx
-              expr-bases
-              (tc-global-shared-view decls)
-              scrut)
-            (macro-arms-use-macro? ctx expr-bases decls arms))])]
-    [(ast.AstExpr.Foreach fe-box)
-      (match (__tl-box-place fe-box)
-        [(ast.AstForeach.Foreach _ _ s e b)
-          (or
-            (macro-node-uses-macro?
-              ctx
-              expr-bases
-              (tc-global-shared-view decls)
-              s)
-            (macro-node-uses-macro?
-              ctx
-              expr-bases
-              (tc-global-shared-view decls)
-              e)
-            (macro-node-uses-macro? ctx expr-bases decls b))])]
-    [(ast.AstExpr.StructGet i _)
-      (macro-node-uses-macro? ctx expr-bases decls i)]
-    [(ast.AstExpr.StructSet i _ v)
-      (or
-        (macro-node-uses-macro? ctx expr-bases (tc-global-shared-view decls) i)
-        (macro-node-uses-macro? ctx expr-bases decls v))]
-    [(ast.AstExpr.WithEscape i exprs)
-      (or
-        (macro-node-uses-macro? ctx expr-bases (tc-global-shared-view decls) i)
-        (macro-exprs-use-macro? ctx expr-bases decls exprs))]
-    [(ast.AstExpr.WithScratch exprs)
-      (macro-exprs-use-macro? ctx expr-bases decls exprs)]
-    [(ast.AstExpr.InArena i exprs)
-      (or
-        (macro-node-uses-macro? ctx expr-bases (tc-global-shared-view decls) i)
-        (macro-exprs-use-macro? ctx expr-bases decls exprs))]
-    [(ast.AstExpr.Box i) (macro-node-uses-macro? ctx expr-bases decls i)]
-    [(ast.AstExpr.BoxGet i) (macro-node-uses-macro? ctx expr-bases decls i)]
-    [(ast.AstExpr.BoxTake i) (macro-node-uses-macro? ctx expr-bases decls i)]
-    [(ast.AstExpr.BoxSet i v)
-      (or
-        (macro-node-uses-macro? ctx expr-bases (tc-global-shared-view decls) i)
-        (macro-node-uses-macro? ctx expr-bases decls v))]
-    [(ast.AstExpr.Comptime i) (macro-node-uses-macro? ctx expr-bases decls i)]
-    [(ast.AstExpr.Try i) (macro-node-uses-macro? ctx expr-bases decls i)]
-    [(ast.AstExpr.Return i) (macro-node-uses-macro? ctx expr-bases decls i)]
-    [(ast.AstExpr.PtrNullCheck i)
-      (macro-node-uses-macro? ctx expr-bases decls i)]
-    [(ast.AstExpr.PtrRead i) (macro-node-uses-macro? ctx expr-bases decls i)]
-    [(ast.AstExpr.PtrWrite a b)
-      (or
-        (macro-node-uses-macro? ctx expr-bases (tc-global-shared-view decls) a)
-        (macro-node-uses-macro? ctx expr-bases decls b))]
-    [(ast.AstExpr.PtrOffset a b)
-      (or
-        (macro-node-uses-macro? ctx expr-bases (tc-global-shared-view decls) a)
-        (macro-node-uses-macro? ctx expr-bases decls b))]
-    [(ast.AstExpr.PtrCast i _) (macro-node-uses-macro? ctx expr-bases decls i)]
-    [(ast.AstExpr.PtrToInt i) (macro-node-uses-macro? ctx expr-bases decls i)]
-    [(ast.AstExpr.IntToPtr i _) (macro-node-uses-macro? ctx expr-bases decls i)]
-    [(ast.AstExpr.StringData i) (macro-node-uses-macro? ctx expr-bases decls i)]
-    [(ast.AstExpr.StringFromBytes a b)
-      (or
-        (macro-node-uses-macro? ctx expr-bases (tc-global-shared-view decls) a)
-        (macro-node-uses-macro? ctx expr-bases decls b))]
-    [(ast.AstExpr.ArrayData i) (macro-node-uses-macro? ctx expr-bases decls i)]
-    [(ast.AstExpr.BinaryData _) false]
-    [(ast.AstExpr.SpmdProgramIndex) false]
-    [(ast.AstExpr.SpmdProgramCount) false]
-    [(ast.AstExpr.CpuIdEax a b)
-      (or
-        (macro-node-uses-macro? ctx expr-bases (tc-global-shared-view decls) a)
-        (macro-node-uses-macro? ctx expr-bases decls b))]
-    [(ast.AstExpr.CpuIdEbx a b)
-      (or
-        (macro-node-uses-macro? ctx expr-bases (tc-global-shared-view decls) a)
-        (macro-node-uses-macro? ctx expr-bases decls b))]
-    [(ast.AstExpr.CpuIdEcx a b)
-      (or
-        (macro-node-uses-macro? ctx expr-bases (tc-global-shared-view decls) a)
-        (macro-node-uses-macro? ctx expr-bases decls b))]
-    [(ast.AstExpr.CpuIdEdx a b)
-      (or
-        (macro-node-uses-macro? ctx expr-bases (tc-global-shared-view decls) a)
-        (macro-node-uses-macro? ctx expr-bases decls b))]
-    [(ast.AstExpr.Xgetbv i) (macro-node-uses-macro? ctx expr-bases decls i)]
-    [(ast.AstExpr.Syscall exprs)
-      (macro-exprs-use-macro? ctx expr-bases decls exprs)]
-    [(ast.AstExpr.TypeLiteral _) false]
-    [(ast.AstExpr.Init _) false]
-    [(ast.AstExpr.PtrNull _) false]
-    [(ast.AstExpr.PtrAddrOf place)
-      (macro-node-uses-macro? ctx expr-bases decls place)]
-    [(ast.AstExpr.SpmdProgramIndex) false]
-    [(ast.AstExpr.SpmdProgramCount) false]
-    [(ast.AstExpr.ProgramArgc) false]
-    [(ast.AstExpr.ProgramArgv) false]
-    [(ast.AstExpr.ProgramEnvp) false]
-    [_ true]))
+    ;; These forms are conservatively assumed to use a macro.
+    [(ast.AstExpr.Break) true]
+    [(ast.AstExpr.Continue) true]
+    [(ast.AstExpr.SpmdReduce _) true]
+    [(ast.AstExpr.SpmdScan _) true]
+    [(ast.AstExpr.SpmdCompact _) true]
+    [(ast.AstExpr.SpmdBroadcast _ _) true]
+    [(ast.AstExpr.SpmdShuffle _ _) true]
+    [(ast.AstExpr.WithRegion _ _) true]
+    [(ast.AstExpr.WithResource _) true]
+    [(ast.AstExpr.Quote _) true]
+    [(ast.AstExpr.Quasiquote _) true]
+    [(ast.AstExpr.Unquote _) true]
+    [(ast.AstExpr.UnquoteSplicing _) true]
+    [(ast.AstExpr.ForOwnedState _) true]
+    [(ast.AstExpr.ForOwnedStep _) true]
+    [_
+      (macro-exprs-use-macro?
+        ctx
+        expr-bases
+        decls
+        (ast.ast-expr-child-ids expr))]))
 
 (define (macro-decl-uses-macro?
   [ctx : TcContext]

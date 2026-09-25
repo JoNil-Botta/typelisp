@@ -7375,6 +7375,49 @@
       [(AstExpr.MacroExpansion a provenance name)
         (AstExpr.MacroExpansion (,e ,@x a) provenance name)])))
 
+;; The expression-child schema as two functions, for walkers that treat a
+;; node's expression children uniformly: `ast-expr-child-ids` lists them in
+;; payload order, and `ast-expr-with-child-ids` rebuilds the node with them
+;; replaced by `ids` in the same order, keeping every other payload field.
+;; Type and pattern children are not included, and absent for-owned slots are
+;; neither listed nor replaced. A walker keeps the arms it has rules for and
+;; hands every other node to its list form over these ids, so each schema
+;; expansion is compiled once here rather than once per walker.
+(define (ast-expr-child-ids [expr : AstExpr]) : AstExprList
+  (let
+    [ids : AstExprList (ast-expr-list-new)]
+    (begin
+      (ast-expr-for-each-child
+        expr
+        ast-expr-list-push
+        ast-child-unit
+        ast-child-unit
+        ast-child-unit
+        (&mut ids))
+      ids)))
+
+(defmacro (ast-expr-take-child-id [ids : Expr] [next : Expr] [_replaced : Expr]) : Expr
+  `(begin
+    (set! ,next (+ ,next 1))
+    (ast-expr-list-get ,ids (- ,next 1) -1)))
+
+(defmacro (ast-child-keep [_ids : Expr] [_next : Expr] [value : Expr]) : Expr
+  value)
+
+(define (ast-expr-with-child-ids [expr : AstExpr] [ids : (& ids AstExprList)]) : AstExpr
+  (let
+    [next : i64 0]
+    (ast-expr-map-children
+      expr
+      ast-expr-take-child-id
+      ast-child-keep
+      ast-child-keep
+      ast-child-keep
+      ast-child-keep
+      ast-child-keep
+      ids
+      next)))
+
 ;; `ast-expr-children-eq?` is structural equality of two nodes: the same
 ;; variant, equal scalar payloads, and children equal pairwise by the hooks,
 ;; which receive both children (`on-literal` compares literals). It is pure:

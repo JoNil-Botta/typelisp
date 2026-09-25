@@ -31,176 +31,87 @@
   (Ok SelfhostCheckConfig)
   (Err String))
 
-(define (selfhost-check-flag? [value : String]) : bool
-  (and (> (string.string-length value) 0) (= (string.string-ref value 0) '-')))
-
-(define (selfhost-check-config-finish
-  [input-path : String]
-  [has-input : bool]
-  [manifest-path : String]
-  [has-manifest : bool]
-  [stdlib-roots : cli_svec.Vec]
-  [target : target_cfg.CompilerTargetCfg]
-  [cfg-names : cli_svec.Vec]) : ResultSelfhostCheckConfig
-  (if has-input
-    (if has-manifest
-      (ResultSelfhostCheckConfig.Err
-        "selfhost-check: cannot combine input path with --manifest-path")
-      (ResultSelfhostCheckConfig.Ok
-        (SelfhostCheckConfig.File input-path stdlib-roots target cfg-names)))
-    (ResultSelfhostCheckConfig.Ok
-      (SelfhostCheckConfig.Package
-        manifest-path
-        has-manifest
-        stdlib-roots
-        target
-        cfg-names))))
-
-(define (selfhost-check-parse-args
-  [idx : i64]
-  [count : i64]
-  [input-path : String]
-  [has-input : bool]
-  [manifest-path : String]
-  [has-manifest : bool]
-  [stdlib-roots : cli_svec.Vec]
-  [target : target_cfg.CompilerTargetCfg]
-  [has-target : bool]
-  [cfg-names : cli_svec.Vec]) : ResultSelfhostCheckConfig
-  (if (>= idx count)
-    (selfhost-check-config-finish
-      input-path
-      has-input
-      manifest-path
-      has-manifest
-      stdlib-roots
-      target
-      cfg-names)
-    (let
-      [current : String (io.arg idx)]
-      (match (cli_option.cli-common-option-parse
-        (owned_view.compiler-owned-shared-view current)
-        idx
-        count
-        (bit-or
-          cli_option.cli-common-option-stdlib-root
-          (bit-or
-            cli_option.cli-common-option-cfg
-            cli_option.cli-common-option-target)))
-        [(cli_option.CliCommonOption.Missing kind)
-          (ResultSelfhostCheckConfig.Err
-            (cli_option.cli-common-option-missing-message "selfhost-check" kind))]
-        [(cli_option.CliCommonOption.Value kind value next-idx)
-          (match kind
-            [(cli_option.CliCommonOptionKind.StdlibRoot)
-              (selfhost-check-parse-args
-                next-idx
-                count
-                input-path
-                has-input
-                manifest-path
-                has-manifest
-                (let
-                  [next-roots : cli_svec.Vec stdlib-roots]
-                  (begin
-                    (cli_svec.push-ref! (&mut next-roots) value)
-                    next-roots))
-                target
-                has-target
-                cfg-names)]
-            [(cli_option.CliCommonOptionKind.Cfg)
-              (selfhost-check-parse-args
-                next-idx
-                count
-                input-path
-                has-input
-                manifest-path
-                has-manifest
-                stdlib-roots
-                target
-                has-target
-                (let
-                  [next-cfg-names : cli_svec.Vec cfg-names]
-                  (begin
-                    (cli_svec.push-ref! (&mut next-cfg-names) value)
-                    next-cfg-names)))]
-            [(cli_option.CliCommonOptionKind.Target)
-              (if has-target
-                (ResultSelfhostCheckConfig.Err
-                  "selfhost-check: --target was provided more than once")
-                (match (target_cfg.compiler-target-cfg-parse value)
-                  [(target_cfg.ResultCompilerTargetCfg.Ok parsed-target)
-                    (selfhost-check-parse-args
-                      next-idx
-                      count
-                      input-path
-                      has-input
-                      manifest-path
-                      has-manifest
-                      stdlib-roots
-                      parsed-target
-                      true
-                      cfg-names)]
-                  [(target_cfg.ResultCompilerTargetCfg.Err message)
-                    (ResultSelfhostCheckConfig.Err
-                      (str_cat.str-cat "selfhost-check: " message))]))]
-            [(cli_option.CliCommonOptionKind.OptLevel)
-              (ResultSelfhostCheckConfig.Err
-                "selfhost-check: internal unsupported common option")])]
-        [(cli_option.CliCommonOption.NotCommon)
-          (cond
-            [(string.eq current "--manifest-path")
-              (if (>= (+ idx 1) count)
-                (ResultSelfhostCheckConfig.Err
-                  "selfhost-check: --manifest-path requires a value")
-                (if has-manifest
-                  (ResultSelfhostCheckConfig.Err
-                    "selfhost-check: duplicate --manifest-path")
-                  (selfhost-check-parse-args
-                    (+ idx 2)
-                    count
-                    input-path
-                    has-input
-                    (io.arg (+ idx 1))
-                    true
-                    stdlib-roots
-                    target
-                    has-target
-                    cfg-names)))]
-            [(selfhost-check-flag?
-                (owned_view.compiler-owned-shared-view current))
-              (ResultSelfhostCheckConfig.Err
-                (str_cat.str-cat "selfhost-check: unknown flag " current))]
-            [has-input
-              (ResultSelfhostCheckConfig.Err
-                (str_cat.str-cat "selfhost-check: unexpected argument " current))]
-            [else
-              (selfhost-check-parse-args
-                (+ idx 1)
-                count
-                current
-                true
-                manifest-path
-                has-manifest
-                stdlib-roots
-                target
-                has-target
-                cfg-names)])]))))
-
 ;; Parse the `check` config from arguments starting at `start`. `count` is
 ;; `(arg-count)`.
 (define (selfhost-check-config-from [start : i64] [count : i64]) : ResultSelfhostCheckConfig
-  (selfhost-check-parse-args
-    start
-    count
-    ""
-    false
-    ""
-    false
-    (cli_svec.new)
-    (target_cfg.compiler-target-cfg-default)
-    false
-    (cli_svec.new)))
+  (let
+    [args : cli_option.CliArgs
+      (cli_option.cli-args
+        "selfhost-check"
+        "--stdlib-root <dir> --cfg <name> --target <target> --manifest-path <file>"
+        start
+        count)]
+    [input-path : String ""]
+    [has-input : bool false]
+    [manifest-path : String ""]
+    [has-manifest : bool false]
+    [stdlib-roots : cli_svec.Vec (cli_svec.new)]
+    [target : target_cfg.CompilerTargetCfg
+      (target_cfg.compiler-target-cfg-default)]
+    [has-target : bool false]
+    [cfg-names : cli_svec.Vec (cli_svec.new)]
+    (begin
+      (while (cli_option.cli-args-next! (&mut args))
+        (cond
+          [(string.eq args.name "--stdlib-root")
+            (cli_svec.push-ref!
+              (&mut stdlib-roots)
+              (cli_option.cli-args-value (& args)))]
+          [(string.eq args.name "--cfg")
+            (cli_svec.push-ref!
+              (&mut cfg-names)
+              (cli_option.cli-args-value (& args)))]
+          [(string.eq args.name "--target")
+            (if has-target
+              (cli_option.cli-args-fail!
+                (&mut args)
+                "selfhost-check: --target was provided more than once")
+              (match (target_cfg.compiler-target-cfg-parse
+                (cli_option.cli-args-value (& args)))
+                [(target_cfg.ResultCompilerTargetCfg.Ok parsed-target)
+                  (begin
+                    (set! target parsed-target)
+                    (set! has-target true))]
+                [(target_cfg.ResultCompilerTargetCfg.Err message)
+                  (cli_option.cli-args-fail!
+                    (&mut args)
+                    (str_cat.str-cat "selfhost-check: " message))]))]
+          [(string.eq args.name "--manifest-path")
+            (if has-manifest
+              (cli_option.cli-args-fail!
+                (&mut args)
+                "selfhost-check: duplicate --manifest-path")
+              (begin
+                (set! manifest-path (cli_option.cli-args-value (& args)))
+                (set! has-manifest true)))]
+          [(cli_option.cli-flag? args.arg)
+            (cli_option.cli-args-fail-arg!
+              (&mut args)
+              "selfhost-check: unknown flag ")]
+          [has-input
+            (cli_option.cli-args-fail-arg!
+              (&mut args)
+              "selfhost-check: unexpected argument ")]
+          [else
+            (begin
+              (set! input-path (string.copy (& args.arg)))
+              (set! has-input true))]))
+      (cond
+        [args.failed (ResultSelfhostCheckConfig.Err args.error)]
+        [(and has-input has-manifest)
+          (ResultSelfhostCheckConfig.Err
+            "selfhost-check: cannot combine input path with --manifest-path")]
+        [has-input
+          (ResultSelfhostCheckConfig.Ok
+            (SelfhostCheckConfig.File input-path stdlib-roots target cfg-names))]
+        [else
+          (ResultSelfhostCheckConfig.Ok
+            (SelfhostCheckConfig.Package
+              manifest-path
+              has-manifest
+              stdlib-roots
+              target
+              cfg-names))]))))
 
 (define (selfhost-check-doctest-report [report : doc_test.DocTestRunReport]) : i64
   (if (doc_test.doc-test-run-report-ok?

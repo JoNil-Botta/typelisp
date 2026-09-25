@@ -9,6 +9,7 @@
 (import stdlib.fs)
 (import build_cli_core)
 (import build_run_core as build_run)
+(import cli_option_core as cli_option)
 (import compiler_backend as backend)
 (import compiler_load as load)
 (import stdlib.string)
@@ -22,9 +23,6 @@
 (defenum ResultCleanConfig
   (Ok CleanConfig)
   (Err String))
-
-(define (clean-flag? [value : String]) : bool
-  (and (> (string.string-length value) 0) (= (string.string-ref value 0) '-')))
 
 (define (clean-string-prefix-at?
   [text : String]
@@ -614,94 +612,63 @@
           1)]
       [(CompilerLoadSomePath path) (clean-experiments-from-path path dry-run)])))
 
-(define (clean-parse-options
-  [idx : i64]
-  [count : i64]
-  [source : String]
-  [has-source : bool]
-  [manifest : String]
-  [has-manifest : bool]
-  [experiments : bool]
-  [dry-run : bool]) : ResultCleanConfig
-  (if (>= idx count)
+(define (clean-config-from [idx : i64] [count : i64]) : ResultCleanConfig
+  (let
+    [args : cli_option.CliArgs
+      (cli_option.cli-args
+        "clean"
+        "--dry-run --experiments --manifest-path <file>"
+        idx
+        count)]
+    [source : String ""]
+    [has-source : bool false]
+    [manifest : String ""]
+    [has-manifest : bool false]
+    [experiments : bool false]
+    [dry-run : bool false]
     (begin
-      (when
-        (and has-source has-manifest)
-        (return
-          (ResultCleanConfig.Err
-            "clean: cannot combine a source file with --manifest-path")))
-      (when
-        (and has-source experiments)
-        (return
-          (ResultCleanConfig.Err
-            "clean: cannot combine a source file with --experiments")))
+      (while (cli_option.cli-args-next! (&mut args))
+        (cond
+          [(string.eq args.name "--dry-run") (set! dry-run true)]
+          [(string.eq args.name "--experiments")
+            (if experiments
+              (cli_option.cli-args-fail!
+                (&mut args)
+                "clean: --experiments was provided more than once")
+              (set! experiments true))]
+          [(string.eq args.name "--manifest-path")
+            (if has-manifest
+              (cli_option.cli-args-fail!
+                (&mut args)
+                "clean: --manifest-path was provided more than once")
+              (begin
+                (set! manifest (cli_option.cli-args-value (& args)))
+                (set! has-manifest true)))]
+          [(cli_option.cli-flag? args.arg)
+            (cli_option.cli-args-fail-arg! (&mut args) "clean: unknown flag ")]
+          [has-source
+            (cli_option.cli-args-fail!
+              (&mut args)
+              "clean: accepts only one source file")]
+          [else
+            (begin
+              (set! source (string.copy (& args.arg)))
+              (set! has-source true))]))
       (cond
+        [args.failed (ResultCleanConfig.Err args.error)]
+        [(and has-source has-manifest)
+          (ResultCleanConfig.Err
+            "clean: cannot combine a source file with --manifest-path")]
+        [(and has-source experiments)
+          (ResultCleanConfig.Err
+            "clean: cannot combine a source file with --experiments")]
         [has-source (ResultCleanConfig.Ok (CleanConfig.Source source dry-run))]
         [experiments
           (ResultCleanConfig.Ok
             (CleanConfig.Experiments manifest has-manifest dry-run))]
         [else
           (ResultCleanConfig.Ok
-            (CleanConfig.Package manifest has-manifest dry-run))]))
-    (let
-      [current : String (io.arg idx)]
-      (cond
-        [(string.eq current "--dry-run")
-          (clean-parse-options
-            (+ idx 1)
-            count
-            source
-            has-source
-            manifest
-            has-manifest
-            experiments
-            true)]
-        [(string.eq current "--experiments")
-          (if experiments
-            (ResultCleanConfig.Err
-              "clean: --experiments was provided more than once")
-            (clean-parse-options
-              (+ idx 1)
-              count
-              source
-              has-source
-              manifest
-              has-manifest
-              true
-              dry-run))]
-        [(string.eq current "--manifest-path")
-          (if (>= (+ idx 1) count)
-            (ResultCleanConfig.Err "clean: --manifest-path requires a value")
-            (if has-manifest
-              (ResultCleanConfig.Err
-                "clean: --manifest-path was provided more than once")
-              (clean-parse-options
-                (+ idx 2)
-                count
-                source
-                has-source
-                (io.arg (+ idx 1))
-                true
-                experiments
-                dry-run)))]
-        [(clean-flag? (owned_view.compiler-owned-shared-view current))
-          (ResultCleanConfig.Err
-            (str_cat.str-cat "clean: unknown flag " current))]
-        [has-source
-          (ResultCleanConfig.Err "clean: accepts only one source file")]
-        [else
-          (clean-parse-options
-            (+ idx 1)
-            count
-            current
-            true
-            manifest
-            has-manifest
-            experiments
-            dry-run)]))))
-
-(define (clean-config-from [idx : i64] [count : i64]) : ResultCleanConfig
-  (clean-parse-options idx count "" false "" false false false))
+            (CleanConfig.Package manifest has-manifest dry-run))]))))
 
 (define (clean-run-from [idx : i64] [count : i64]) : i64
   (match (clean-config-from idx count)

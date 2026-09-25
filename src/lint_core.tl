@@ -4501,7 +4501,7 @@
       exprs
       (+ index 1)
       (lint-copy-on-update-expr
-        (ast.ast-node-get (ast.ast-expr-list-get exprs index 0))
+        (ast.ast-expr-list-get exprs index 0)
         state
         (lint-no-span)))))
 
@@ -4523,10 +4523,7 @@
       [(ast.AstLetBinding.Binding name maybe-ty init)
         (let
           [after-init : LintCopyOnUpdateState
-            (lint-copy-on-update-expr
-              (ast.ast-node-get init)
-              state
-              (lint-no-effect-span-id init))]
+            (lint-copy-on-update-expr init state (lint-no-effect-span-id init))]
           [type-name : String
             (lint-copy-on-update-local-type-from-binding
               (owned_view.compiler-owned-shared-view after-init)
@@ -4544,7 +4541,7 @@
 
 (define (lint-copy-on-update-let
   [bindings : ast.AstLetBindingList]
-  [body : ast.AstExpr]
+  [body : i64]
   [state : LintCopyOnUpdateState]
   [span : ast.AstSourceSpan]) : LintCopyOnUpdateState
   (let
@@ -4575,10 +4572,7 @@
       [(ast.AstMatchArm.Arm _ body)
         (lint-copy-on-update-match-arms-at
           arms
-          (lint-copy-on-update-expr
-            (ast.ast-node-get body)
-            state
-            (lint-no-span))
+          (lint-copy-on-update-expr body state (lint-no-span))
           (+ index 1))])))
 
 (define (lint-copy-on-update-resource-bindings
@@ -4600,47 +4594,38 @@
         (lint-copy-on-update-resource-bindings-at
           bindings
           (lint-copy-on-update-expr
-            (ast.ast-node-get cleanup)
-            (lint-copy-on-update-expr
-              (ast.ast-node-get init)
-              state
-              (lint-no-effect-span-id init))
+            cleanup
+            (lint-copy-on-update-expr init state (lint-no-effect-span-id init))
             (lint-no-effect-span-id cleanup))
           (+ index 1))])))
 
+;; AstExpr child schema hook: walk an expression child under the enclosing
+;; span, threading `state`.
+(defmacro (lint-copy-on-update-child!
+  [state : Expr]
+  [span : Expr]
+  [child : Expr]) : Expr
+  `(set! ,state (lint-copy-on-update-expr ,child ,state ,span)))
+
 (define (lint-copy-on-update-expr
-  [expr : ast.AstExpr]
+  [node-id : i64]
   [state : LintCopyOnUpdateState]
   [span : ast.AstSourceSpan]) : LintCopyOnUpdateState
-  (match expr
+  ;; The arms below track locals and set! targets, walk list items and match
+  ;; arms without an enclosing span, and name the forms this rule does not
+  ;; descend into; every other variant's expression children are walked
+  ;; through the AstExpr child list.
+  (match (ast.ast-node-get node-id)
     [(ast.AstExpr.Spanned inner _)
-      (lint-copy-on-update-expr
-        (ast.ast-node-get inner)
-        state
-        (lint-no-effect-span-id inner))]
-    [(ast.AstExpr.Binary _ left right)
-      (lint-copy-on-update-expr
-        (ast.ast-node-get right)
-        (lint-copy-on-update-expr (ast.ast-node-get left) state span)
-        span)]
-    [(ast.AstExpr.Unary _ inner)
-      (lint-copy-on-update-expr (ast.ast-node-get inner) state span)]
+      (lint-copy-on-update-expr inner state (lint-no-effect-span-id inner))]
     [(ast.AstExpr.Call callee args)
       (lint-copy-on-update-expr-list
         args
-        (lint-copy-on-update-expr (ast.ast-node-get callee) state span))]
-    [(ast.AstExpr.If cond then-branch else-branch)
-      (lint-copy-on-update-expr
-        (ast.ast-node-get else-branch)
-        (lint-copy-on-update-expr
-          (ast.ast-node-get then-branch)
-          (lint-copy-on-update-expr (ast.ast-node-get cond) state span)
-          span)
-        span)]
+        (lint-copy-on-update-expr callee state span))]
     [(ast.AstExpr.Let let-box)
       (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body)
-          (lint-copy-on-update-let bindings (ast.ast-node-get body) state span)])]
+          (lint-copy-on-update-let bindings body state span)])]
     [(ast.AstExpr.Lambda lambda-box)
       (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda params _ body)
@@ -4655,69 +4640,14 @@
                   (owned_view.compiler-owned-shared-view outer-locals))
                 state.findings)]
             [with-body : LintCopyOnUpdateState
-              (lint-copy-on-update-expr
-                (ast.ast-node-get body)
-                with-params
-                span)]
+              (lint-copy-on-update-expr body with-params span)]
             (lint-copy-on-update-state-with
               (owned_view.compiler-owned-shared-view with-body)
               outer-locals
               with-body.findings))])]
     [(ast.AstExpr.Tuple exprs) (lint-copy-on-update-expr-list exprs state)]
-    [(ast.AstExpr.TupleRef tuple _)
-      (lint-copy-on-update-expr (ast.ast-node-get tuple) state span)]
     [(ast.AstExpr.Array exprs) (lint-copy-on-update-expr-list exprs state)]
     [(ast.AstExpr.DynArray exprs) (lint-copy-on-update-expr-list exprs state)]
-    [(ast.AstExpr.FixedMakeArray _ len)
-      (lint-copy-on-update-expr (ast.ast-node-get len) state span)]
-    [(ast.AstExpr.MakeArray _ len)
-      (lint-copy-on-update-expr (ast.ast-node-get len) state span)]
-    [(ast.AstExpr.ArrayRef array index)
-      (lint-copy-on-update-expr
-        (ast.ast-node-get index)
-        (lint-copy-on-update-expr (ast.ast-node-get array) state span)
-        span)]
-    [(ast.AstExpr.ArraySet array index value)
-      (lint-copy-on-update-expr
-        (ast.ast-node-get value)
-        (lint-copy-on-update-expr
-          (ast.ast-node-get index)
-          (lint-copy-on-update-expr (ast.ast-node-get array) state span)
-          span)
-        span)]
-    [(ast.AstExpr.ArrayTake array live index)
-      (lint-copy-on-update-expr
-        (ast.ast-node-get index)
-        (lint-copy-on-update-expr
-          (ast.ast-node-get live)
-          (lint-copy-on-update-expr (ast.ast-node-get array) state span)
-          span)
-        span)]
-    [(ast.AstExpr.FixedArrayTake array index)
-      (lint-copy-on-update-expr
-        (ast.ast-node-get index)
-        (lint-copy-on-update-expr (ast.ast-node-get array) state span)
-        span)]
-    [(ast.AstExpr.Replace place replacement)
-      (lint-copy-on-update-expr
-        (ast.ast-node-get replacement)
-        (lint-copy-on-update-expr (ast.ast-node-get place) state span)
-        span)]
-    [(ast.AstExpr.ArrayPush array value)
-      (lint-copy-on-update-expr
-        (ast.ast-node-get value)
-        (lint-copy-on-update-expr (ast.ast-node-get array) state span)
-        span)]
-    [(ast.AstExpr.StringRef text index)
-      (lint-copy-on-update-expr
-        (ast.ast-node-get index)
-        (lint-copy-on-update-expr (ast.ast-node-get text) state span)
-        span)]
-    [(ast.AstExpr.While cond body)
-      (lint-copy-on-update-expr
-        (ast.ast-node-get body)
-        (lint-copy-on-update-expr (ast.ast-node-get cond) state span)
-        span)]
     [(ast.AstExpr.Begin exprs) (lint-copy-on-update-expr-list exprs state)]
     [(ast.AstExpr.Unsafe exprs) (lint-copy-on-update-expr-list exprs state)]
     [(ast.AstExpr.Set target value)
@@ -4725,28 +4655,22 @@
         target
         (ast.ast-node-get value)
         span
-        (lint-copy-on-update-expr (ast.ast-node-get value) state span))]
-    [(ast.AstExpr.Ann inner _)
-      (lint-copy-on-update-expr (ast.ast-node-get inner) state span)]
-    [(ast.AstExpr.Cast inner _)
-      (lint-copy-on-update-expr (ast.ast-node-get inner) state span)]
-    [(ast.AstExpr.Borrow _ _ place)
-      (lint-copy-on-update-expr (ast.ast-node-get place) state span)]
+        (lint-copy-on-update-expr value state span))]
     [(ast.AstExpr.Match match-box)
       (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrutinee arms)
           (lint-copy-on-update-match-arms
             arms
-            (lint-copy-on-update-expr (ast.ast-node-get scrutinee) state span))])]
+            (lint-copy-on-update-expr scrutinee state span))])]
     [(ast.AstExpr.Foreach fe-box)
       (match (__tl-box-place fe-box)
         [(ast.AstForeach.Foreach name ty start end body)
           (let
             [after-range : LintCopyOnUpdateState
               (lint-copy-on-update-expr
-                (ast.ast-node-get end)
+                end
                 (lint-copy-on-update-expr
-                  (ast.ast-node-get start)
+                  start
                   (owned_view.compiler-owned-shared-view state)
                   span)
                 span)]
@@ -4761,62 +4685,69 @@
                   (lint-copy-on-update-struct-name-from-type state.shapes ty))
                 after-range.findings)]
             [with-body : LintCopyOnUpdateState
-              (lint-copy-on-update-expr (ast.ast-node-get body) with-local span)]
+              (lint-copy-on-update-expr body with-local span)]
             (lint-copy-on-update-state-with
               (owned_view.compiler-owned-shared-view with-body)
               outer-locals
               with-body.findings))])]
-    [(ast.AstExpr.StructGet receiver _)
-      (lint-copy-on-update-expr (ast.ast-node-get receiver) state span)]
-    [(ast.AstExpr.StructSet receiver _ value)
-      (lint-copy-on-update-expr
-        (ast.ast-node-get value)
-        (lint-copy-on-update-expr (ast.ast-node-get receiver) state span)
-        span)]
     [(ast.AstExpr.WithRegion _ body) (lint-copy-on-update-expr-list body state)]
     [(ast.AstExpr.WithEscape scratch body)
       (lint-copy-on-update-expr-list
         body
-        (lint-copy-on-update-expr (ast.ast-node-get scratch) state span))]
+        (lint-copy-on-update-expr scratch state span))]
     [(ast.AstExpr.WithScratch body) (lint-copy-on-update-expr-list body state)]
     [(ast.AstExpr.InArena arena body)
       (lint-copy-on-update-expr-list
         body
-        (lint-copy-on-update-expr (ast.ast-node-get arena) state span))]
+        (lint-copy-on-update-expr arena state span))]
     [(ast.AstExpr.WithResource wr-box)
       (match (__tl-box-place wr-box)
         [(ast.AstWithResource.WithResource bindings body)
           (lint-copy-on-update-expr-list
             body
             (lint-copy-on-update-resource-bindings bindings state))])]
-    [(ast.AstExpr.Box inner)
-      (lint-copy-on-update-expr (ast.ast-node-get inner) state span)]
-    [(ast.AstExpr.BoxGet inner)
-      (lint-copy-on-update-expr (ast.ast-node-get inner) state span)]
-    [(ast.AstExpr.BoxTake inner)
-      (lint-copy-on-update-expr (ast.ast-node-get inner) state span)]
-    [(ast.AstExpr.BoxSet inner value)
-      (lint-copy-on-update-expr
-        (ast.ast-node-get value)
-        (lint-copy-on-update-expr (ast.ast-node-get inner) state span)
-        span)]
-    [(ast.AstExpr.Comptime inner)
-      (lint-copy-on-update-expr (ast.ast-node-get inner) state span)]
     [(ast.AstExpr.Quote _) state]
     [(ast.AstExpr.Quasiquote _) state]
-    [(ast.AstExpr.Unquote inner)
-      (lint-copy-on-update-expr (ast.ast-node-get inner) state span)]
-    [(ast.AstExpr.UnquoteSplicing inner)
-      (lint-copy-on-update-expr (ast.ast-node-get inner) state span)]
     [(ast.AstExpr.BracketClause items)
       (lint-copy-on-update-expr-list items state)]
-    [(ast.AstExpr.Try inner)
-      (lint-copy-on-update-expr (ast.ast-node-get inner) state span)]
-    [(ast.AstExpr.Return inner)
-      (lint-copy-on-update-expr (ast.ast-node-get inner) state span)]
-    [(ast.AstExpr.Break) state]
-    [(ast.AstExpr.Continue) state]
-    [_ state]))
+    [(ast.AstExpr.MacroExpansion _ _ _) state]
+    [(ast.AstExpr.SpmdReduce _) state]
+    [(ast.AstExpr.SpmdScan _) state]
+    [(ast.AstExpr.SpmdCompact _) state]
+    [(ast.AstExpr.SpmdBroadcast _ _) state]
+    [(ast.AstExpr.SpmdShuffle _ _) state]
+    [(ast.AstExpr.PtrNullCheck _) state]
+    [(ast.AstExpr.PtrAddrOf _) state]
+    [(ast.AstExpr.PtrRead _) state]
+    [(ast.AstExpr.PtrWrite _ _) state]
+    [(ast.AstExpr.PtrOffset _ _) state]
+    [(ast.AstExpr.PtrCast _ _) state]
+    [(ast.AstExpr.PtrToInt _) state]
+    [(ast.AstExpr.IntToPtr _ _) state]
+    [(ast.AstExpr.StringData _) state]
+    [(ast.AstExpr.StringFromBytes _ _) state]
+    [(ast.AstExpr.ArrayData _) state]
+    [(ast.AstExpr.CpuIdEax _ _) state]
+    [(ast.AstExpr.CpuIdEbx _ _) state]
+    [(ast.AstExpr.CpuIdEcx _ _) state]
+    [(ast.AstExpr.CpuIdEdx _ _) state]
+    [(ast.AstExpr.Xgetbv _) state]
+    [(ast.AstExpr.Syscall _) state]
+    [(ast.AstExpr.ForOwnedState _) state]
+    [(ast.AstExpr.ForOwnedStep _) state]
+    [_
+      (let
+        [next : LintCopyOnUpdateState state]
+        (begin
+          (ast.ast-expr-children-for-each
+            (ast.ast-node-get node-id)
+            lint-copy-on-update-child!
+            ast.ast-child-unit
+            ast.ast-child-unit
+            ast.ast-child-unit
+            next
+            span)
+          next))]))
 
 (define (lint-copy-on-update-field-names [fields : ast.AstFieldDefList]) : LintNameSet
   (lint-copy-on-update-field-names-at (& fields) 0 (lint-name-set-empty)))
@@ -4900,14 +4831,14 @@
     [(ast.AstDecl.Def decl-meta _ _ body)
       (__tl-project-field
         (lint-copy-on-update-expr
-          (ast.ast-node-get body)
+          body
           (LintCopyOnUpdateState shapes (lint-copy-on-update-locals-empty) acc)
           (lint-no-span))
         findings)]
     [(ast.AstDecl.DefFn decl-meta _ params _ body _)
       (__tl-project-field
         (lint-copy-on-update-expr
-          (ast.ast-node-get body)
+          body
           (LintCopyOnUpdateState
             (owned_view.compiler-owned-shared-view shapes)
             (lint-copy-on-update-param-locals
@@ -4920,7 +4851,7 @@
     [(ast.AstDecl.DefMacro decl-meta _ params _ body)
       (__tl-project-field
         (lint-copy-on-update-expr
-          (ast.ast-node-get body)
+          body
           (LintCopyOnUpdateState
             (owned_view.compiler-owned-shared-view shapes)
             (lint-copy-on-update-macro-param-locals
@@ -4933,7 +4864,7 @@
     [(ast.AstDecl.Test _ body _ _)
       (__tl-project-field
         (lint-copy-on-update-expr
-          (ast.ast-node-get body)
+          body
           (LintCopyOnUpdateState shapes (lint-copy-on-update-locals-empty) acc)
           (lint-no-span))
         findings)]

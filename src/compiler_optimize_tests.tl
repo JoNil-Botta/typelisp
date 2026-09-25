@@ -9734,7 +9734,7 @@
         (ir.compiler-ir-instr-seq-empty))]))
 
 (define (opt-load-sink-instr-dst? [instr : ir.CompilerIrInstr] [dst : i64]) : bool
-  (= (opt.opt-gvn-instr-dst instr) dst))
+  (= (ir.compiler-ir-instr-dst instr) dst))
 
 ;; `dsts` names the expected definition at each index, using -1 for the
 ;; terminator.

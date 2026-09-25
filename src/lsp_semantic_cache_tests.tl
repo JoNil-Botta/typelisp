@@ -152,8 +152,7 @@
                 (& state.documents)
                 index
                 (lsp.lsp-document-fallback))]
-            [snapshot : lsp_vector_families.LspSemanticSnapshot
-              (lsp.lsp-global-shared-view doc.semantic)]
+            [snapshot : lsp_vector_families.LspSemanticSnapshot doc.semantic]
             (begin
               (if snapshot.present
                 (set!
@@ -311,7 +310,7 @@
       [cold-query : lsp.LspWorkspaceSemanticQuery
         (lsp.lsp-workspace-semantic-query
           (& cold-state)
-          (lsp.lsp-global-shared-view roots)
+          roots
           (lsp.lsp-global-shared-view canonical-key))]
       [cold-records : i64
         (lsp-workspace-semantic-test-retained-records (& cold-state))]
@@ -326,7 +325,7 @@
       [warm-query : lsp.LspWorkspaceSemanticQuery
         (lsp.lsp-workspace-semantic-query
           (& warm-state)
-          (lsp.lsp-global-shared-view roots)
+          roots
           (lsp.lsp-global-shared-view canonical-key))]
       [warm-records : i64
         (lsp-workspace-semantic-test-retained-records (& warm-state))]
@@ -352,20 +351,20 @@
           (= cold-query.len 3)
           (lsp-workspace-semantic-smoke-fact-at?
             (& cold-query)
-            (lsp.lsp-global-shared-view shared-path)
+            shared-path
             compiler_semantic_index.CompilerSemanticRecordRole.Definition)
           (lsp-workspace-semantic-smoke-fact-at?
             (& cold-query)
-            (lsp.lsp-global-shared-view open-path)
+            open-path
             compiler_semantic_index.CompilerSemanticRecordRole.Use)
           (lsp-workspace-semantic-smoke-fact-at?
             (& cold-query)
-            (lsp.lsp-global-shared-view closed-path)
+            closed-path
             compiler_semantic_index.CompilerSemanticRecordRole.Use)
           (not
             (lsp-workspace-semantic-smoke-fact-at?
               (& cold-query)
-              (lsp.lsp-global-shared-view noise-path)
+              noise-path
               compiler_semantic_index.CompilerSemanticRecordRole.Definition))
           (= warm-source-checks 0)
           (= warm-owners 4)
@@ -473,7 +472,7 @@
       [query : lsp.LspWorkspaceSemanticQuery
         (lsp.lsp-workspace-semantic-query
           (& cold-state)
-          (lsp.lsp-global-shared-view roots)
+          roots
           "missing-canonical-key")]
       [cold-owners : i64
         (lsp-workspace-semantic-test-retained-owners (& cold-state))]
@@ -570,10 +569,7 @@
           (& doc.semantic.index)
           (& definition))]
       [query : lsp.LspWorkspaceSemanticQuery
-        (lsp.lsp-workspace-semantic-query
-          (& cold-state)
-          (lsp.lsp-global-shared-view roots)
-          canonical-key)]
+        (lsp.lsp-workspace-semantic-query (& cold-state) roots canonical-key)]
       [negative : bool
         (if (= cold-state.semantic-cache.len 1)
           (not

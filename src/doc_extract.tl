@@ -445,7 +445,7 @@
       (DocDeclInfo
         kind
         (string.substring
-          (owned_view.compiler-owned-shared-view src)
+          src
           name-idx
           (-
             (doc-decl-symbol-end
@@ -652,10 +652,7 @@
                         line-start
                         n)]
                     [signature : String
-                      (string.substring
-                        (owned_view.compiler-owned-shared-view src)
-                        line-start
-                        (- form-end line-start))]
+                      (string.substring src line-start (- form-end line-start))]
                     (begin
                       (if pending-has
                         (match (doc-decl-info
@@ -844,8 +841,7 @@
             6)
           (return (io.panic "doc-extract: item count smoke mismatch")))
         (unless
-          (doc-extract-smoke-items-ok?
-            (owned_view.compiler-owned-shared-view items))
+          (doc-extract-smoke-items-ok? items)
           (return (io.panic "doc-extract: item doc smoke mismatch")))
         (unless
           (doc-extract-declaration-smoke-ok?)
@@ -867,9 +863,7 @@
                 (return (io.panic "doc-extract: legacy item count mismatch")))
               (unless
                 (doc-item-ok?
-                  (doc-item-list-ref
-                    (owned_view.compiler-owned-shared-view legacy-items)
-                    0)
+                  (doc-item-list-ref legacy-items 0)
                   1
                   "legacy"
                   "legacy item"

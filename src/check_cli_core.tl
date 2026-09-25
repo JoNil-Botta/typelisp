@@ -101,8 +101,7 @@
                 manifest-path
                 has-manifest
                 (let
-                  [next-roots : cli_svec.Vec
-                    (owned_view.compiler-owned-shared-view stdlib-roots)]
+                  [next-roots : cli_svec.Vec stdlib-roots]
                   (begin
                     (cli_svec.push-ref! (&mut next-roots) value)
                     next-roots))
@@ -121,8 +120,7 @@
                 target
                 has-target
                 (let
-                  [next-cfg-names : cli_svec.Vec
-                    (owned_view.compiler-owned-shared-view cfg-names)]
+                  [next-cfg-names : cli_svec.Vec cfg-names]
                   (begin
                     (cli_svec.push-ref! (&mut next-cfg-names) value)
                     next-cfg-names)))]
@@ -265,7 +263,7 @@
   (let
     [check-cfgs : sym_i64_env.SymI64Env
       (target_cfg.compiler-target-cfgs-with-names
-        (owned_view.compiler-owned-shared-view target)
+        target
         (owned_view.compiler-owned-shared-view cfg-names))]
     (match (compiler_check_core.compiler-check-file-with-roots-and-cfg
       (owned_view.compiler-owned-shared-view input-path)
@@ -280,7 +278,7 @@
                 (owned_view.compiler-owned-shared-view input-path)
                 (owned_view.compiler-owned-shared-view stdlib-roots)
                 (target_cfg.compiler-target-cfgs-with-names
-                  (owned_view.compiler-owned-shared-view target)
+                  target
                   (owned_view.compiler-owned-shared-view cfg-names))
                 "typecheck-prefix-inline-check")]
             (if (= inline-test-status 0)
@@ -299,8 +297,7 @@
       [(compiler_check_core.ResultCompilerCheck.Err diag advisories)
         (begin
           (compiler_driver_core.compiler-driver-print-advisories (& advisories))
-          (selfhost-check-report-diagnostics
-            (owned_view.compiler-owned-box-shared-view diag))
+          (selfhost-check-report-diagnostics (deref diag))
           1)])))
 
 (define (selfhost-check-package-kind-entry?
@@ -366,7 +363,7 @@
         [_reset-file-state : unit
           (compiler_driver_core.compiler-driver-reset-file-state!)]
         (match (compiler_check_core.compiler-check-package-entry-file-with-roots-and-cfg
-          (owned_view.compiler-owned-shared-view entry-path)
+          entry-path
           (owned_view.compiler-owned-shared-view stdlib-roots)
           (owned_view.compiler-owned-shared-view manifest-dir)
           (owned_view.compiler-owned-shared-view manifest.deps)
@@ -395,7 +392,7 @@
                     (ci.intern-persistent-arena-reset!))]
                 [inline-test-status : i64
                   (test_cli_core.tltest-inline-typecheck-package-sources-with-cfg
-                    (owned_view.compiler-owned-shared-view source-set.sources)
+                    source-set.sources
                     (owned_view.compiler-owned-shared-view stdlib-roots)
                     (owned_view.compiler-owned-shared-view manifest-dir)
                     name

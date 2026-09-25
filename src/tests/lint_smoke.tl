@@ -167,8 +167,7 @@
     (let
       [pools : ast.AstNodePoolContext
         (ast.ast-node-pool-context-capture-active)]
-      [_install : unit
-        (ast.ast-node-pool-context-install! (ast.ast-global-shared-view pools))]
+      [_install : unit (ast.ast-node-pool-context-install! pools)]
       [policy-result : i64
         (lint_policy_core_tests.compiler-lint-policy-self-test)]
       [core-result : i64 (lint_core_tests.compiler-lint-self-test)]

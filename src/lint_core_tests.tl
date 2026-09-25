@@ -69,33 +69,17 @@
       (lint_core.lint-name-set-add
         (owned_view.compiler-owned-shared-view duplicate)
         "two")]
-    [many0 : lint_core.LintNameSet
-      (lint_core.lint-name-set-add
-        (owned_view.compiler-owned-shared-view two)
-        "three")]
-    [many1 : lint_core.LintNameSet
-      (lint_core.lint-name-set-add
-        (owned_view.compiler-owned-shared-view many0)
-        "four")]
+    [many0 : lint_core.LintNameSet (lint_core.lint-name-set-add two "three")]
+    [many1 : lint_core.LintNameSet (lint_core.lint-name-set-add many0 "four")]
     [many : lint_core.LintNameSet (lint_core.lint-name-set-add many1 "five")]
     (and
       (= (lint_core.lint-name-set-count empty) 0)
       (= (lint_core.lint-name-set-count one) 1)
       (= (lint_core.lint-name-set-count duplicate) 1)
-      (=
-        (lint_core.lint-name-set-count
-          (owned_view.compiler-owned-shared-view many))
-        5)
-      (lint_core.lint-name-set-contains?
-        (owned_view.compiler-owned-shared-view many)
-        "one")
-      (lint_core.lint-name-set-contains?
-        (owned_view.compiler-owned-shared-view many)
-        "five")
-      (not
-        (lint_core.lint-name-set-contains?
-          (owned_view.compiler-owned-shared-view many)
-          "missing"))
+      (= (lint_core.lint-name-set-count many) 5)
+      (lint_core.lint-name-set-contains? many "one")
+      (lint_core.lint-name-set-contains? many "five")
+      (not (lint_core.lint-name-set-contains? many "missing"))
       (string.eq
         (lint_core.lint-name-set-get
           (owned_view.compiler-owned-shared-view many)
@@ -847,13 +831,11 @@
         (ast.ast-expr-let shadowing-let-bindings vx))]
     [begin-inner-let : i64
       (ast.ast-expr-let
-        (ast.ast-global-shared-view outer-let-bindings)
+        outer-let-bindings
         (ast.ast-node-push
           (ast.AstExpr.Begin
             (ast.ast-expr-cons
-              (ast.ast-expr-let
-                (ast.ast-global-shared-view inner-let-bindings)
-                vx)
+              (ast.ast-expr-let inner-let-bindings vx)
               (ast.ast-expr-cons vx (ast.ast-expr-list-new))))))]
     [spanned : i64
       (lint-test-source-view ladder3 (ast.ast-source-span 7 3 9 4))]

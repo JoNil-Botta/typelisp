@@ -15,7 +15,8 @@ Summary:
     Inspect a TypeLisp comptime image.
 ")
 
-(define (tlci-inspect-classification-name [image : tlci_core.TlciImage]) : String
+(define (tlci-inspect-classification-name
+  [image : (& image tlci_core.TlciImage)]) : String
   (match (tlci_core.tlci-image-classify image)
     [(tlci_core.TlciImageClassification.MetadataOnly) "metadata-only"]
     [(tlci_core.TlciImageClassification.CodeBearing) "code-bearing"]))
@@ -90,7 +91,8 @@ Summary:
             (set! index (+ index 1)))))
       out)))
 
-(define (tlci-inspect-spmd-callables [items : tlci_core.TlciSpmdCallables]) : String
+(define (tlci-inspect-spmd-callables
+  [items : (& items tlci_core.TlciSpmdCallables)]) : String
   (let
     [count : i64 (tlci_core.tlci-spmd-callables-len items)]
     [index : i64 0]
@@ -114,7 +116,8 @@ Summary:
             (set! index (+ index 1)))))
       out)))
 
-(define (tlci-inspect-spmd-section [metadata : tlci_core.TlciMetadata]) : String
+(define (tlci-inspect-spmd-section
+  [metadata : (& metadata tlci_core.TlciMetadata)]) : String
   (if (string.eq metadata.version (tlci_core.tlci-metadata-version-v2-current))
     (str_cat.str-cat
       "spmd-callables:\n"
@@ -150,7 +153,7 @@ Summary:
 
 (define (tlci-inspect-surface-section
   [name : String]
-  [rodata : (__tl_dyn-array u8)]
+  [rodata : (& rodata (__tl_dyn-array u8))]
   [kind : i64]) : String
   (match (tlci_core.tlci-aux-find rodata kind)
     [(tlci_core.ResultTlciAuxLookup.Missing)
@@ -178,11 +181,11 @@ Summary:
   (str_cat.str-cat
     (tlci-inspect-surface-section
       "surface-package-identity"
-      (owned_view.compiler-owned-shared-view rodata)
+      rodata
       tlci_core.tlci-aux-kind-package-identity)
     (tlci-inspect-surface-section
       "surface-frontend-ast"
-      (owned_view.compiler-owned-shared-view rodata)
+      rodata
       tlci_core.tlci-aux-kind-frontend-ast)
     (tlci-inspect-surface-section
       "surface-frontend-facts"
@@ -213,8 +216,7 @@ Summary:
       (string.int->string host-platform)
       ")\n"
       "image-classification: "
-      (tlci-inspect-classification-name
-        (owned_view.compiler-owned-shared-view image))
+      (tlci-inspect-classification-name image)
       "\n"
       "callback-abi-version: "
       (string.int->string image.callback-abi-version)
@@ -242,8 +244,7 @@ Summary:
       "package-version: "
       (owned_view.compiler-owned-shared-view metadata.package-version)
       "\n"
-      (tlci-inspect-spmd-section
-        (owned_view.compiler-owned-shared-view metadata))
+      (tlci-inspect-spmd-section metadata)
       "sections:\n"
       (tlci-inspect-section-line
         "compiler-build-hash"

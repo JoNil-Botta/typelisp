@@ -390,7 +390,7 @@
 (define (lint-policy-validate-group-names
   [groups : (& groups LintPolicyGroups)]
   [index-map : (& index-map lint_policy_string_i64_map.Map)]
-  [valid : (__tl_dyn-array bool)]
+  [valid : (&mut valid (__tl_dyn-array bool))]
   [diagnostics : LintPolicyDiagnostics]) : LintPolicyDiagnostics
   (let
     [index : i64 0]
@@ -429,10 +429,10 @@
                       LintPolicyDiagnosticKind.DuplicateGroup
                       (owned_view.compiler-owned-shared-view group.name)
                       group.layer
-                      (owned_view.compiler-owned-shared-view group.origin)
+                      group.origin
                       (str_cat.str-cat
                         "duplicate lint group definition: "
-                        (owned_view.compiler-owned-shared-view group.name))))))
+                        group.name)))))
               unit)
             (set! index (+ index 1)))))
       out)))
@@ -441,7 +441,7 @@
   [rules : (& rules lint_core.LintRuleList)]
   [groups : (& groups LintPolicyGroups)]
   [index-map : (& index-map lint_policy_string_i64_map.Map)]
-  [valid : (__tl_dyn-array bool)]
+  [valid : (&mut valid (__tl_dyn-array bool))]
   [diagnostics : LintPolicyDiagnostics]) : LintPolicyDiagnostics
   (let
     [group-index : i64 0]
@@ -570,12 +570,10 @@
                                     (owned_view.compiler-owned-shared-view
                                       group.name)
                                     group.layer
-                                    (owned_view.compiler-owned-shared-view
-                                      group.origin)
+                                    group.origin
                                     (str_cat.str-cat
                                       "cyclic lint group definition: "
-                                      (owned_view.compiler-owned-shared-view
-                                        group.name)))))))
+                                      group.name))))))
                           (set! cycle-here true)
                           (set! done true)
                           (when (= current cycle-root) (set! propagating false))))))])
@@ -592,10 +590,10 @@
                     LintPolicyDiagnosticKind.InvalidGroupReference
                     (owned_view.compiler-owned-shared-view group.name)
                     group.layer
-                    (owned_view.compiler-owned-shared-view group.origin)
+                    group.origin
                     (str_cat.str-cat
                       "lint group depends on an invalid group: "
-                      (owned_view.compiler-owned-shared-view group.name)))))))
+                      group.name))))))
           (set! (array-ref colors current) 2)
           (LintPolicyGroupGraphWalk out cycle-root propagating))))))
 
@@ -647,7 +645,7 @@
         (lint-policy-validate-group-names
           groups
           index-map
-          (owned_view.compiler-owned-shared-view valid)
+          (&mut valid)
           diagnostics))
       (set!
         diagnostics
@@ -655,7 +653,7 @@
           rules
           groups
           index-map
-          (owned_view.compiler-owned-shared-view valid)
+          (&mut valid)
           diagnostics))
       (set!
         diagnostics
@@ -1020,7 +1018,7 @@
           state.trace
           (lint-policy-trace-entry
             assignment-index
-            (owned_view.compiler-owned-shared-view current.rule-id)
+            current.rule-id
             current.level
             assignment
             LintPolicyTraceOutcome.Rejected
@@ -1283,10 +1281,8 @@
       (+ 8 member-count (* groups.len 3) (* assignments.len (+ rule-count 2)))]
     [validation : LintPolicyGroupValidation
       (lint-policy-validate-groups rules groups diagnostic-capacity)]
-    [valid-groups : (__tl_dyn-array bool)
-      (owned_view.compiler-owned-shared-view validation.valid)]
-    [group-index-map : lint_policy_string_i64_map.Map
-      (owned_view.compiler-owned-shared-view validation.index-map)]
+    [valid-groups : (__tl_dyn-array bool) validation.valid]
+    [group-index-map : lint_policy_string_i64_map.Map validation.index-map]
     [diagnostics : LintPolicyDiagnostics
       (lint-policy-validate-assignments
         rules
@@ -1431,7 +1427,7 @@
   (lint-policy-level-enabled? finding.decision.level))
 
 (define (lint-policy-legacy-assignment-add
-  [slots : (__tl_dyn-array LintPolicyAssignment)]
+  [slots : (&mut slots (__tl_dyn-array LintPolicyAssignment))]
   [len : i64]
   [name : String]
   [reason : String]) : i64
@@ -1465,7 +1461,7 @@
         (set!
           len
           (lint-policy-legacy-assignment-add
-            (owned_view.compiler-owned-shared-view slots)
+            (&mut slots)
             len
             (lint_core.lint-rule-deprecated-string-concat-id)
             "--deprecated-string-concat at-least-warn"))
@@ -1474,7 +1470,7 @@
         (set!
           len
           (lint-policy-legacy-assignment-add
-            (owned_view.compiler-owned-shared-view slots)
+            (&mut slots)
             len
             (lint_core.lint-rule-redundant-function-name-id)
             "--redundant-function-name at-least-warn"))
@@ -1484,28 +1480,28 @@
           (set!
             len
             (lint-policy-legacy-assignment-add
-              (owned_view.compiler-owned-shared-view slots)
+              (&mut slots)
               len
               (lint_core.lint-rule-global-name-case-id)
               "--name-case expands global-name-case at-least-warn"))
           (set!
             len
             (lint-policy-legacy-assignment-add
-              (owned_view.compiler-owned-shared-view slots)
+              (&mut slots)
               len
               (lint_core.lint-rule-function-name-case-id)
               "--name-case expands function-name-case at-least-warn"))
           (set!
             len
             (lint-policy-legacy-assignment-add
-              (owned_view.compiler-owned-shared-view slots)
+              (&mut slots)
               len
               (lint_core.lint-rule-local-name-case-id)
               "--name-case expands local-name-case at-least-warn"))
           (set!
             len
             (lint-policy-legacy-assignment-add
-              (owned_view.compiler-owned-shared-view slots)
+              (&mut slots)
               len
               (lint_core.lint-rule-type-name-case-id)
               "--name-case expands type-name-case at-least-warn")))

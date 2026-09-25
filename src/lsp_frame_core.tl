@@ -840,9 +840,7 @@
     [capabilities-key : String "capabilities"]
     [general-key : String "general"]
     [encodings-key : String "positionEncodings"]
-    (match (json.object-get
-      (owned_view.compiler-owned-shared-view message)
-      (& params-key))
+    (match (json.object-get message (& params-key))
       [(json.JsonFound params)
         (match (json.object-get params (& capabilities-key))
           [(json.JsonFound capabilities)
@@ -852,8 +850,7 @@
                   [(json.JsonFound encodings)
                     (match encodings
                       [(json.JsonArray items)
-                        (if (lsp-position-encodings-offer-utf8?
-                          (owned_view.compiler-owned-box-shared-view items))
+                        (if (lsp-position-encodings-offer-utf8? (deref items))
                           true
                           false)]
                       [_ false])]
@@ -892,8 +889,7 @@
             (match cfg-value
               [(json.JsonArray items-box)
                 (let
-                  [items : json.JsonSeq
-                    (owned_view.compiler-owned-box-shared-view items-box)]
+                  [items : json.JsonSeq (deref items-box)]
                   [index : i64 0]
                   (while (and
                     (= (string.string-length error) 0)
@@ -920,9 +916,7 @@
     [params-key : String "params"]
     [options-key : String "initializationOptions"]
     [typelisp-key : String "typelisp"]
-    (match (json.object-get
-      (owned_view.compiler-owned-shared-view message)
-      (& params-key))
+    (match (json.object-get message (& params-key))
       [(json.JsonMissing)
         (LspInitializeLanguageConfig.Ok
           (target_cfg.compiler-target-cfg-host)
@@ -1166,7 +1160,8 @@
 (define (lsp-diagnostic-uris-single [uri : String]) : lsp_vector_families.LspDiagnosticUris
   (lsp-diagnostic-uris-add (lsp-diagnostic-uris-empty) uri))
 
-(define (lsp-diagnostic-uris-len [uris : lsp_vector_families.LspDiagnosticUris]) : i64
+(define (lsp-diagnostic-uris-len
+  [uris : (& uris lsp_vector_families.LspDiagnosticUris)]) : i64
   uris.len)
 
 (define (lsp-diagnostic-uris-get
@@ -1178,9 +1173,7 @@
   [uris : lsp_vector_families.LspDiagnosticUris]
   [uri : String]
   [index : i64]) : bool
-  (if (>=
-    index
-    (lsp-diagnostic-uris-len (owned_view.compiler-owned-shared-view uris)))
+  (if (>= index (lsp-diagnostic-uris-len uris))
     false
     (if (string.eq
       (lsp-diagnostic-uris-get
@@ -1203,8 +1196,7 @@
     (owned_view.compiler-owned-shared-view uri))
     uris
     (let
-      [n : i64
-        (lsp-diagnostic-uris-len (owned_view.compiler-owned-shared-view uris))]
+      [n : i64 (lsp-diagnostic-uris-len uris)]
       [slots : (__tl_dyn-array String) uris.slots]
       (begin
         (if (< n (array-length slots))
@@ -1251,9 +1243,7 @@
       (= (lsp-diagnostic-uris-len empty) 0)
       (= (lsp-diagnostic-uris-len one) 1)
       (= (lsp-diagnostic-uris-len duplicate) 1)
-      (=
-        (lsp-diagnostic-uris-len (owned_view.compiler-owned-shared-view many))
-        5)
+      (= (lsp-diagnostic-uris-len many) 5)
       (lsp-diagnostic-uris-contains?
         (owned_view.compiler-owned-shared-view many)
         "one")
@@ -1434,7 +1424,7 @@
   [version : i64]
   [diagnostic-uris : lsp_vector_families.LspDiagnosticUris]) : lsp_document_vec.Vec
   (let
-    [docs : lsp_document_vec.Vec (owned_view.compiler-owned-shared-view docs)]
+    [docs : lsp_document_vec.Vec docs]
     [index : i64 (lsp-documents-find-index docs uri)]
     [cached-diagnostic-uris : lsp_vector_families.LspDiagnosticUris
       (lsp-cache-diagnostic-uris-copy diagnostic-uris)]
@@ -1539,7 +1529,7 @@
   [uri : String]
   [check-cache : lsp_vector_families.LspCheckCache]) : lsp_document_vec.Vec
   (let
-    [docs : lsp_document_vec.Vec (owned_view.compiler-owned-shared-view docs)]
+    [docs : lsp_document_vec.Vec docs]
     (begin
       (lsp-documents-set-check-cache! (&mut docs) uri check-cache)
       docs)))
@@ -1550,9 +1540,9 @@
   [version : i64]
   [semantic-index : compiler_semantic_index.CompilerSemanticSourceIndex]) : lsp_document_vec.Vec
   (let
-    [docs : lsp_document_vec.Vec (owned_view.compiler-owned-shared-view docs)]
+    [docs : lsp_document_vec.Vec docs]
     [semantic-index : compiler_semantic_index.CompilerSemanticSourceIndex
-      (owned_view.compiler-owned-shared-view semantic-index)]
+      semantic-index]
     [index : i64 (lsp-documents-find-index docs uri)]
     (if (>= index 0)
       (let
@@ -1613,7 +1603,7 @@
 
 (define (lsp-documents-remove-index [docs : lsp_document_vec.Vec] [index : i64]) : lsp_document_vec.Vec
   (let
-    [docs : lsp_document_vec.Vec (owned_view.compiler-owned-shared-view docs)]
+    [docs : lsp_document_vec.Vec docs]
     (if (if (>= index 0)
       (< index (lsp_document_vec.len (& docs)))
       false)
@@ -1629,7 +1619,9 @@
     [index : i64 (lsp-documents-find-index docs uri)]
     (lsp-documents-remove-index docs index)))
 
-(define (lsp-documents-lookup [docs : lsp_document_vec.Vec] [uri : String]) : LspDocumentLookup
+(define (lsp-documents-lookup
+  [docs : (& docs lsp_document_vec.Vec)]
+  [uri : String]) : LspDocumentLookup
   (let
     [index : i64 (lsp-documents-find-index docs uri)]
     (if (>= index 0)
@@ -1696,14 +1688,14 @@
     (lsp-diagnostic-uris-empty)))
 
 (define (lsp-documents-smoke-missing?
-  [docs : lsp_document_vec.Vec]
+  [docs : (& docs lsp_document_vec.Vec)]
   [uri : String]) : bool
   (match (lsp-documents-lookup docs uri)
     [(LspDocumentLookup.Found _ _ _) false]
     [(LspDocumentLookup.Missing) true]))
 
 (define (lsp-documents-smoke-text-eq?
-  [docs : lsp_document_vec.Vec]
+  [docs : (& docs lsp_document_vec.Vec)]
   [uri : String]
   [expected-text : String]) : bool
   (match (lsp-documents-lookup docs uri)
@@ -1711,7 +1703,7 @@
     [(LspDocumentLookup.Missing) false]))
 
 (define (lsp-documents-smoke-check-cache-ok?
-  [docs : lsp_document_vec.Vec]
+  [docs : (& docs lsp_document_vec.Vec)]
   [uri : String]) : bool
   (let
     [idx : i64 (lsp-documents-find-index docs uri)]
@@ -1763,7 +1755,7 @@
             (lsp-diagnostic-uris-empty))]
         (if (not
           (lsp-documents-smoke-check-cache-ok?
-            (owned_view.compiler-owned-shared-view preserved-docs)
+            preserved-docs
             (owned_view.compiler-owned-shared-view uri)))
           false
           (let
@@ -1812,19 +1804,16 @@
       (and
         (= (lsp_document_vec.len (& docs)) 17)
         (lsp-documents-smoke-text-eq?
-          (owned_view.compiler-owned-shared-view docs)
+          docs
           "file:///doc00.tl"
           "file:///doc00.tl")
         (lsp-documents-smoke-text-eq?
-          (owned_view.compiler-owned-shared-view docs)
+          docs
           "file:///doc01.tl"
           "file:///doc01.tl")
+        (lsp-documents-smoke-text-eq? docs "file:///doc10.tl" "updated")
         (lsp-documents-smoke-text-eq?
-          (owned_view.compiler-owned-shared-view docs)
-          "file:///doc10.tl"
-          "updated")
-        (lsp-documents-smoke-text-eq?
-          (owned_view.compiler-owned-shared-view docs)
+          docs
           "file:///doc16.tl"
           "file:///doc16.tl")
         (= (lsp_document_vec.len (& empty-docs)) 0)
@@ -2013,9 +2002,9 @@
                       second-state.documents)]
                   [second-ok : bool
                     (lsp-semantic-smoke-query-ok?
-                      (owned_view.compiler-owned-shared-view second-docs)
-                      (owned_view.compiler-owned-shared-view uri)
-                      (owned_view.compiler-owned-shared-view path)
+                      second-docs
+                      uri
+                      path
                       version
                       true)]
                   (begin
@@ -2224,7 +2213,7 @@
                               [close-ok : bool
                                 (and
                                   (lsp-documents-smoke-missing?
-                                    (owned_view.compiler-owned-shared-view docs)
+                                    docs
                                     (owned_view.compiler-owned-shared-view uri))
                                   (=
                                     (compiler_semantic_index.compiler-semantic-source-index-live-owner-count)
@@ -2650,9 +2639,7 @@
           (owned_view.compiler-owned-shared-view root.uri))
         0)
         unit
-        (lsp-workspace-roots-push!
-          roots
-          (owned_view.compiler-owned-shared-view root)))]))
+        (lsp-workspace-roots-push! roots root))]))
 
 (define (lsp-workspace-roots-add-folder-items!
   [roots : (&mut roots lsp_vector_families.LspWorkspaceRoots)]
@@ -2678,9 +2665,7 @@
     [roots : lsp_vector_families.LspWorkspaceRoots (lsp-workspace-roots-new)]
     [params-key : String "params"]
     (begin
-      (match (json.object-get
-        (owned_view.compiler-owned-shared-view message)
-        (& params-key))
+      (match (json.object-get message (& params-key))
         [(json.JsonMissing) unit]
         [(json.JsonFound params)
           (let
@@ -2695,12 +2680,10 @@
                     [(json.JsonArray items)
                       (lsp-workspace-roots-add-folder-items!
                         (&mut roots)
-                        (owned_view.compiler-owned-box-shared-view items))]
+                        (deref items))]
                     [_ unit])])
               (if (= (lsp-workspace-roots-len (& roots)) 0)
-                (match (lsp-json-string-field
-                  (owned_view.compiler-owned-shared-view params)
-                  "rootUri")
+                (match (lsp-json-string-field params "rootUri")
                   [(LspJsonText.Missing) unit]
                   [(LspJsonText.Ok uri)
                     (lsp-workspace-roots-add-uri! (&mut roots) uri)])
@@ -2729,7 +2712,7 @@
 (define (lsp-source-for-compiler-span
   [fallback-path : String]
   [fallback-text : String]
-  [span : cdiag.CompilerDiagnosticSpan]) : String
+  [span : (& span cdiag.CompilerDiagnosticSpan)]) : String
   (let
     [path : String (cdiag.compiler-diagnostic-span-path span)]
     (if (or (string.eq path "") (string.eq path fallback-path))
@@ -2755,10 +2738,7 @@
   [span : cdiag.CompilerDiagnosticSpan]) : json.Json
   (let
     [text : String
-      (lsp-source-for-compiler-span
-        fallback-path
-        fallback-text
-        (owned_view.compiler-owned-shared-view span))]
+      (lsp-source-for-compiler-span fallback-path fallback-text span)]
     [start-line : i64 (cdiag.compiler-diagnostic-span-start-line span)]
     [start-col : i64 (cdiag.compiler-diagnostic-span-start-col span)]
     [raw-end-line : i64 (cdiag.compiler-diagnostic-span-end-line span)]
@@ -2782,7 +2762,7 @@
 
 (define (lsp-diagnostic-related-uri
   [fallback-path : String]
-  [span : cdiag.CompilerDiagnosticSpan]) : String
+  [span : (& span cdiag.CompilerDiagnosticSpan)]) : String
   (let
     [path : String (cdiag.compiler-diagnostic-span-path span)]
     (lsp-resolved-path-to-file-uri
@@ -2809,7 +2789,7 @@
         (json.JsonString
           (lsp-diagnostic-related-uri
             (owned_view.compiler-owned-shared-view fallback-path)
-            (owned_view.compiler-owned-shared-view span)))
+            span))
         "range"
         (lsp-range-from-compiler-span fallback-path fallback-text span))
       "message"
@@ -2965,7 +2945,7 @@
       (lsp-source-for-compiler-span
         (owned_view.compiler-owned-shared-view fallback-path)
         (owned_view.compiler-owned-shared-view fallback-text)
-        (owned_view.compiler-owned-shared-view span))]
+        span)]
     [labels : cdiag.CompilerDiagnosticLabelList
       (cdiag.compiler-diagnostic-secondary-spans diag)]
     [range : json.Json
@@ -2983,7 +2963,8 @@
             (lsp-diagnostic-related-information-list path text labels))
           (lsp-diagnostic-message-tail message))))))
 
-(define (lsp-compiler-diagnostic-kind [diag : cdiag.CompilerDiagnostic]) : String
+(define (lsp-compiler-diagnostic-kind
+  [diag : (& diag cdiag.CompilerDiagnostic)]) : String
   (if (string.eq
     (cdiag.compiler-diagnostic-code-or-empty diag)
     (cdiag.compiler-diagnostic-code-parse))
@@ -3004,7 +2985,7 @@
       (lsp-source-for-compiler-span
         (owned_view.compiler-owned-shared-view fallback-path)
         (owned_view.compiler-owned-shared-view fallback-text)
-        (owned_view.compiler-owned-shared-view span))]
+        span)]
     [labels : cdiag.CompilerDiagnosticLabelList
       (cdiag.compiler-diagnostic-secondary-spans diag)]
     [range : json.Json
@@ -3141,7 +3122,7 @@
 (define (lsp-diagnostic-uri
   [root-uri : String]
   [root-path : String]
-  [diag : cdiag.CompilerDiagnostic]) : String
+  [diag : (& diag cdiag.CompilerDiagnostic)]) : String
   (let
     [diag-path : String (cdiag.compiler-diagnostic-path diag)]
     (if (or (string.eq diag-path "") (string.eq diag-path root-path))
@@ -3175,11 +3156,7 @@
   (let
     ;; Dense construction appends first-seen URIs. Walk backward to preserve
     ;; the stale-clear wire order of the former prepend-built list.
-    [index : i64
-      (-
-        (lsp-diagnostic-uris-len
-          (owned_view.compiler-owned-shared-view old-uris))
-        1)]
+    [index : i64 (- (lsp-diagnostic-uris-len old-uris) 1)]
     (while (>= index 0)
       (let
         [old-uri : String
@@ -3195,7 +3172,7 @@
           (set! index (- index 1)))))))
 
 (define (lsp-clear-stale-diagnostics
-  [docs : lsp_document_vec.Vec]
+  [docs : (& docs lsp_document_vec.Vec)]
   [uri : String]
   [next-diagnostic-uris : lsp_vector_families.LspDiagnosticUris]) : unit
   (match (lsp-documents-lookup docs uri)
@@ -3206,7 +3183,7 @@
     [(LspDocumentLookup.Missing) unit]))
 
 (define (lsp-clear-close-diagnostics
-  [docs : lsp_document_vec.Vec]
+  [docs : (& docs lsp_document_vec.Vec)]
   [uri : String]) : unit
   (match (lsp-documents-lookup docs (owned_view.compiler-owned-shared-view uri))
     [(LspDocumentLookup.Found _ _ old-diagnostic-uris)
@@ -3340,7 +3317,7 @@
               (lsp-diagnostic-uri
                 (owned_view.compiler-owned-shared-view uri)
                 (owned_view.compiler-owned-shared-view fallback-path)
-                (owned_view.compiler-owned-shared-view diag))
+                diag)
               uri)
               (set!
                 out
@@ -3458,16 +3435,16 @@
         version
         (owned_view.compiler-owned-shared-view diagnostics)
         0
-        (owned_view.compiler-owned-shared-view lint-diags))]
+        lint-diags)]
     (begin
       (lsp-publish-diagnostics
         (owned_view.compiler-owned-shared-view uri)
         uri-diags)
       (LspAnalyzeResult
         (lsp-publish-external-diagnostic-groups
-          (owned_view.compiler-owned-shared-view uri)
-          (owned_view.compiler-owned-shared-view path)
-          (owned_view.compiler-owned-shared-view text)
+          uri
+          path
+          text
           version
           (owned_view.compiler-owned-shared-view diagnostics)
           diagnostics
@@ -3488,7 +3465,7 @@
       (match (compiler_semantic_index.compiler-check-source-index-with-roots-and-cfg
         (owned_view.compiler-owned-shared-view path)
         (owned_view.compiler-owned-shared-view text)
-        (owned_view.compiler-owned-shared-view stdlib-roots)
+        stdlib-roots
         (lsp-language-cfgs))
         [(compiler_semantic_index.ResultCompilerCheckWithSemanticIndex.Partial
             diagnostics
@@ -3547,8 +3524,7 @@
           [(compiler_semantic_index.ResultCompilerCheckWithSemanticIndex.Err
               diag)
             (let
-              [diagnostics : cdiag.CompilerDiagnosticList
-                (owned_view.compiler-owned-box-shared-view diag)]
+              [diagnostics : cdiag.CompilerDiagnosticList (deref diag)]
               [first-diag : cdiag.CompilerDiagnostic
                 (cdiag.compiler-diagnostic-list-first
                   (owned_view.compiler-owned-shared-view diagnostics))]
@@ -3563,7 +3539,7 @@
                   version
                   (owned_view.compiler-owned-shared-view diagnostics)
                   0
-                  (owned_view.compiler-owned-shared-view lint-diags))]
+                  lint-diags)]
               (begin
                 (lsp-publish-diagnostics
                   (owned_view.compiler-owned-shared-view uri)
@@ -3588,9 +3564,7 @@
       [(json.JsonFound value)
         (match value
           [(json.JsonArray items)
-            (match (json.list-get-index
-              (owned_view.compiler-owned-box-shared-view items)
-              0)
+            (match (json.list-get-index (deref items) 0)
               [(json.JsonFound first) (lsp-json-string-field first "text")]
               [(json.JsonMissing) LspJsonText.Missing])]
           [_ LspJsonText.Missing])]
@@ -3625,10 +3599,10 @@
                         (owned_view.compiler-owned-shared-view path)
                         (owned_view.compiler-owned-shared-view text)
                         version
-                        (owned_view.compiler-owned-shared-view stdlib-roots))]
+                        stdlib-roots)]
                     (begin
                       (lsp-clear-stale-diagnostics
-                        (owned_view.compiler-owned-shared-view docs)
+                        docs
                         (owned_view.compiler-owned-shared-view uri)
                         (owned_view.compiler-owned-shared-view
                           analysis.diagnostic-uris))
@@ -3638,14 +3612,12 @@
                             (lsp-documents-set-versioned
                               docs
                               (owned_view.compiler-owned-shared-view uri)
-                              (owned_view.compiler-owned-shared-view path)
-                              (owned_view.compiler-owned-shared-view text)
+                              path
+                              text
                               version
-                              (owned_view.compiler-owned-shared-view
-                                analysis.diagnostic-uris))
+                              analysis.diagnostic-uris)
                             (owned_view.compiler-owned-shared-view uri)
-                            (owned_view.compiler-owned-shared-view
-                              analysis.check-cache))]
+                            analysis.check-cache)]
                         [semantic-docs : lsp_document_vec.Vec
                           (if analysis.semantic-present
                             (lsp-documents-set-semantic-index
@@ -3690,10 +3662,10 @@
                             (owned_view.compiler-owned-shared-view path)
                             (owned_view.compiler-owned-shared-view text)
                             version
-                            (owned_view.compiler-owned-shared-view stdlib-roots))]
+                            stdlib-roots)]
                         (begin
                           (lsp-clear-stale-diagnostics
-                            (owned_view.compiler-owned-shared-view docs)
+                            docs
                             (owned_view.compiler-owned-shared-view uri)
                             (owned_view.compiler-owned-shared-view
                               analysis.diagnostic-uris))
@@ -3703,14 +3675,12 @@
                                 (lsp-documents-set-versioned
                                   docs
                                   (owned_view.compiler-owned-shared-view uri)
-                                  (owned_view.compiler-owned-shared-view path)
-                                  (owned_view.compiler-owned-shared-view text)
+                                  path
+                                  text
                                   version
-                                  (owned_view.compiler-owned-shared-view
-                                    analysis.diagnostic-uris))
+                                  analysis.diagnostic-uris)
                                 (owned_view.compiler-owned-shared-view uri)
-                                (owned_view.compiler-owned-shared-view
-                                  analysis.check-cache))]
+                                analysis.check-cache)]
                             [semantic-docs : lsp_document_vec.Vec
                               (if analysis.semantic-present
                                 (lsp-documents-set-semantic-index
@@ -3722,9 +3692,7 @@
                             (LspDocumentHandleResult.Continue semantic-docs))))]
                     [(LspUriPath.Err message)
                       (begin
-                        (lsp-publish-uri-diagnostic
-                          (owned_view.compiler-owned-shared-view uri)
-                          (owned_view.compiler-owned-shared-view message))
+                        (lsp-publish-uri-diagnostic uri message)
                         (LspDocumentHandleResult.Continue docs))])]
                 [(LspJsonText.Missing)
                   (let
@@ -3740,16 +3708,15 @@
                         [analysis : LspAnalyzeResult
                           (lsp-analyze-document
                             (owned_view.compiler-owned-shared-view uri)
-                            (owned_view.compiler-owned-shared-view doc.path)
-                            (owned_view.compiler-owned-shared-view doc.text)
+                            doc.path
+                            doc.text
                             doc.version
-                            (owned_view.compiler-owned-shared-view stdlib-roots))]
+                            stdlib-roots)]
                         [updated-docs : lsp_document_vec.Vec
                           (lsp-documents-set-check-cache
                             docs
                             (owned_view.compiler-owned-shared-view uri)
-                            (owned_view.compiler-owned-shared-view
-                              analysis.check-cache))]
+                            analysis.check-cache)]
                         [semantic-docs : lsp_document_vec.Vec
                           (if analysis.semantic-present
                             (lsp-documents-set-semantic-index
@@ -3771,12 +3738,9 @@
           [(LspJsonText.Ok uri)
             (begin
               (lsp-clear-close-diagnostics
-                (owned_view.compiler-owned-shared-view docs)
+                docs
                 (owned_view.compiler-owned-shared-view uri))
-              (LspDocumentHandleResult.Continue
-                (lsp-documents-remove
-                  (owned_view.compiler-owned-shared-view docs)
-                  uri)))]
+              (LspDocumentHandleResult.Continue (lsp-documents-remove docs uri)))]
           [(LspJsonText.Missing) (LspDocumentHandleResult.Continue docs)])]
       [(json.JsonMissing) (LspDocumentHandleResult.Continue docs)])))
 
@@ -3835,11 +3799,7 @@
         (owned_view.compiler-owned-shared-view right)
         "end"
         "line")]
-    [right-end-char : i64
-      (lsp-code-action-range-field
-        (owned_view.compiler-owned-shared-view right)
-        "end"
-        "character")]
+    [right-end-char : i64 (lsp-code-action-range-field right "end" "character")]
     (if (or
       (< left-start-line 0)
       (< left-start-char 0)
@@ -3903,9 +3863,7 @@
       [(json.JsonFound only)
         (match only
           [(json.JsonArray items)
-            (lsp-code-action-array-has-quickfix?
-              (owned_view.compiler-owned-box-shared-view items)
-              0)]
+            (lsp-code-action-array-has-quickfix? (deref items) 0)]
           [_ false])])))
 
 (define (lsp-code-action-data-matches?
@@ -4068,7 +4026,7 @@
     (fs.path-normalize (& selected))))
 
 (define (lsp-code-action-document-for-path
-  [docs : lsp_document_vec.Vec]
+  [docs : (& docs lsp_document_vec.Vec)]
   [path : String]) : LspCodeActionDocument
   (let
     [wanted : String (fs.path-normalize (& path))]
@@ -4091,9 +4049,9 @@
       result)))
 
 (define (lsp-code-action-all-edits-open?
-  [docs : lsp_document_vec.Vec]
+  [docs : (& docs lsp_document_vec.Vec)]
   [fallback-path : String]
-  [edits : cdiag.CompilerDiagnosticTextEditSeq]) : bool
+  [edits : (& edits cdiag.CompilerDiagnosticTextEditSeq)]) : bool
   (let
     [slots : (__tl_dyn-array cdiag.CompilerDiagnosticTextEdit) edits.slots]
     [count : i64 edits.len]
@@ -4110,9 +4068,7 @@
             (lsp-code-action-path
               (cdiag.compiler-diagnostic-span-path span)
               (owned_view.compiler-owned-shared-view fallback-path))]
-          (match (lsp-code-action-document-for-path
-            (owned_view.compiler-owned-shared-view docs)
-            path)
+          (match (lsp-code-action-document-for-path docs path)
             [(LspCodeActionDocument.Found _ _ version)
               (if (>= version 0)
                 (set! index (+ index 1))
@@ -4194,7 +4150,7 @@
     (lsp-json-array edits)))
 
 (define (lsp-code-action-document-changes-from
-  [docs : lsp_document_vec.Vec]
+  [docs : (& docs lsp_document_vec.Vec)]
   [fallback-path : String]
   [edits : cdiag.CompilerDiagnosticTextEditSeq]
   [index : i64]
@@ -4224,13 +4180,13 @@
           acc)]
       (lsp-code-action-document-changes-from
         docs
-        (owned_view.compiler-owned-shared-view fallback-path)
+        fallback-path
         edits
         (+ index 1)
         next))))
 
 (define (lsp-code-action-workspace-edit
-  [docs : lsp_document_vec.Vec]
+  [docs : (& docs lsp_document_vec.Vec)]
   [fallback-path : String]
   [edits : cdiag.CompilerDiagnosticTextEditSeq]) : json.Json
   (lsp-json-object1
@@ -4263,7 +4219,7 @@
             (lsp-json-member "edit" edit (json.member-list-empty))))))))
 
 (define (lsp-code-action-compiler-fixes-from
-  [docs : lsp_document_vec.Vec]
+  [docs : (& docs lsp_document_vec.Vec)]
   [fallback-path : String]
   [diagnostic : json.Json]
   [fixes : cdiag.CompilerDiagnosticFixSeq]
@@ -4286,15 +4242,15 @@
         (if (and
           machine-applicable
           (lsp-code-action-all-edits-open?
-            (owned_view.compiler-owned-shared-view docs)
+            docs
             (owned_view.compiler-owned-shared-view fallback-path)
-            (owned_view.compiler-owned-shared-view edits)))
+            edits))
           (lsp-json-list-cons
             (lsp-code-action
               (cdiag.compiler-diagnostic-fix-title fix)
               (owned_view.compiler-owned-shared-view diagnostic)
               (lsp-code-action-workspace-edit
-                (owned_view.compiler-owned-shared-view docs)
+                docs
                 (owned_view.compiler-owned-shared-view fallback-path)
                 edits))
             acc)
@@ -4308,7 +4264,7 @@
         next))))
 
 (define (lsp-code-action-compiler-diagnostics
-  [docs : lsp_document_vec.Vec]
+  [docs : (& docs lsp_document_vec.Vec)]
   [uri : String]
   [path : String]
   [version : i64]
@@ -4334,10 +4290,8 @@
             (lsp-diagnostic-uri
               (owned_view.compiler-owned-shared-view uri)
               (owned_view.compiler-owned-shared-view path)
-              (owned_view.compiler-owned-shared-view diagnostic))]
-          [diagnostic-kind : String
-            (lsp-compiler-diagnostic-kind
-              (owned_view.compiler-owned-shared-view diagnostic))]
+              diagnostic)]
+          [diagnostic-kind : String (lsp-compiler-diagnostic-kind diagnostic)]
           [diagnostic-fixes : cdiag.CompilerDiagnosticFixSeq
             (cdiag.compiler-diagnostic-fixes (& diagnostic))]
           (begin
@@ -4347,7 +4301,7 @@
                 (owned_view.compiler-owned-shared-view context-diagnostics)
                 (owned_view.compiler-owned-shared-view request-range)
                 version
-                (owned_view.compiler-owned-shared-view diagnostic-kind)
+                diagnostic-kind
                 cursor
                 0)
                 [(LspJsonValue.Missing) unit]
@@ -4355,7 +4309,7 @@
                   (set!
                     out
                     (lsp-code-action-compiler-fixes-from
-                      (owned_view.compiler-owned-shared-view docs)
+                      docs
                       (owned_view.compiler-owned-shared-view path)
                       context-diagnostic
                       diagnostic-fixes
@@ -4365,7 +4319,7 @@
       out)))
 
 (define (lsp-code-action-compiler
-  [docs : lsp_document_vec.Vec]
+  [docs : (& docs lsp_document_vec.Vec)]
   [uri : String]
   [path : String]
   [text : String]
@@ -4376,8 +4330,8 @@
   [acc : json.JsonSeq]) : json.JsonSeq
   (match (compiler_check_core.compiler-check-source-with-roots-and-cfg
     (owned_view.compiler-owned-shared-view path)
-    (owned_view.compiler-owned-shared-view text)
-    (owned_view.compiler-owned-shared-view stdlib-roots)
+    text
+    stdlib-roots
     (lsp-language-cfgs))
     [(compiler_check_core.ResultCompilerCheck.Ok _ _) acc]
     [(compiler_check_core.ResultCompilerCheck.Err diagnostic-box _)
@@ -4480,7 +4434,7 @@
           (json.list-empty))))))
 
 (define (lsp-code-action-lint-from
-  [docs : lsp_document_vec.Vec]
+  [docs : (& docs lsp_document_vec.Vec)]
   [uri : String]
   [path : String]
   [text : String]
@@ -4527,7 +4481,7 @@
                   (cdiag.compiler-diagnostic-fixes (& lint-diagnostic))]
                 [with-fixes : json.JsonSeq
                   (lsp-code-action-compiler-fixes-from
-                    (owned_view.compiler-owned-shared-view docs)
+                    docs
                     (owned_view.compiler-owned-shared-view path)
                     (owned_view.compiler-owned-shared-view diagnostic)
                     fixes
@@ -4544,13 +4498,13 @@
                       (owned_view.compiler-owned-shared-view uri)
                       version
                       (owned_view.compiler-owned-shared-view text)
-                      (owned_view.compiler-owned-shared-view finding)))
+                      finding))
                   with-fixes))]))]
       (lsp-code-action-lint-from
         docs
-        (owned_view.compiler-owned-shared-view uri)
-        (owned_view.compiler-owned-shared-view path)
-        (owned_view.compiler-owned-shared-view text)
+        uri
+        path
+        text
         version
         findings
         request-range
@@ -4561,7 +4515,7 @@
 (define (lsp-code-action-respond
   [id : json.Json]
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]
+  [docs : (& docs lsp_document_vec.Vec)]
   [stdlib-roots : lsp_svec.Vec]) : unit
   (let
     [text-document-key : String "textDocument"]
@@ -4640,7 +4594,7 @@
                               [compiler-actions : json.JsonSeq
                                 (if has-compiler
                                   (lsp-code-action-compiler
-                                    (owned_view.compiler-owned-shared-view docs)
+                                    docs
                                     (owned_view.compiler-owned-shared-view uri)
                                     (owned_view.compiler-owned-shared-view
                                       doc.path)
@@ -4662,8 +4616,7 @@
                                       doc.path)
                                     (owned_view.compiler-owned-shared-view
                                       doc.text)
-                                    (owned_view.compiler-owned-shared-view
-                                      stdlib-roots)
+                                    stdlib-roots
                                     (lsp-language-cfgs))
                                   (lint.lint-findings-empty))]
                               [actions : json.JsonSeq
@@ -4683,7 +4636,7 @@
 (define (lsp-handle-code-action
   [id : json.Json]
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]
+  [docs : (& docs lsp_document_vec.Vec)]
   [stdlib-roots : lsp_svec.Vec]) : unit
   (lsp-code-action-respond id params docs stdlib-roots))
 
@@ -6619,15 +6572,13 @@
           (owned_view.compiler-owned-shared-view span)
           true)
         "end"
-        (lsp-semantic-span-position
-          (owned_view.compiler-owned-shared-view span)
-          false)))))
+        (lsp-semantic-span-position span false)))))
 
 (define (lsp-definition-respond
   [id : json.Json]
   [uri : String]
   [position : json.Json]
-  [docs : lsp_document_vec.Vec]
+  [docs : (& docs lsp_document_vec.Vec)]
   [stdlib-roots : lsp_svec.Vec]) : unit
   (let
     [doc-index : i64 (lsp-documents-find-index docs uri)]
@@ -6672,7 +6623,7 @@
 (define (lsp-handle-definition
   [id : json.Json]
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]
+  [docs : (& docs lsp_document_vec.Vec)]
   [stdlib-roots : lsp_svec.Vec]) : unit
   (let
     [td-key : String "textDocument"]
@@ -6796,7 +6747,7 @@
     [_ false]))
 
 (define (lsp-signature-named-parameter-owner?
-  [record : compiler_semantic_index.CompilerSemanticRecord]) : bool
+  [record : (& record compiler_semantic_index.CompilerSemanticRecord)]) : bool
   (and
     (= record.symbol.local-ordinal -1)
     (match record.kind
@@ -6811,15 +6762,14 @@
 ;; uses type-only labels for every parameter rather than mixing confidence.
 (define (lsp-signature-parameter-names
   [index : (& index compiler_semantic_index.CompilerSemanticSourceIndex)]
-  [definition : compiler_semantic_index.CompilerSemanticRecord]
+  [definition : (& definition compiler_semantic_index.CompilerSemanticRecord)]
   [components : (& components lsp_svec.Vec)]) : lsp_svec.Vec
   (let
     [names : lsp_svec.Vec (lsp_svec.new)]
     [parameter-count : i64 (- (lsp_svec.len components) 1)]
     [record-index : i64 0]
     [found : i64 0]
-    [valid : bool
-      (lsp-signature-named-parameter-owner? (lsp-global-shared-view definition))]
+    [valid : bool (lsp-signature-named-parameter-owner? definition)]
     [owner : compiler_semantic_index.CompilerSemanticSymbolId definition.symbol]
     [definition-span : compiler_semantic_index.CompilerSemanticSpan
       definition.span]
@@ -6958,7 +6908,7 @@
       (lsp-json-member
         "label"
         (json.JsonString label)
-        (if (string.eq (lsp-global-shared-view definition.documentation) "")
+        (if (string.eq definition.documentation "")
           (lsp-json-member "parameters" parameters (json.member-list-empty))
           (lsp-json-member
             "documentation"
@@ -6979,10 +6929,7 @@
         context.head-start
         (- context.head-end context.head-start))]
     [names : lsp_svec.Vec
-      (lsp-signature-parameter-names
-        index
-        (lsp-global-shared-view definition)
-        components)]
+      (lsp-signature-parameter-names index definition components)]
     [labels : lsp_svec.Vec
       (lsp-signature-parameter-labels components (& names))]
     [result-label : String (lsp_svec.get components parameter-count "")]
@@ -7039,15 +6986,15 @@
                   (> (lsp_svec.len (& components)) 0))
                   (lsp-signature-help-result
                     (& doc.semantic.index)
-                    (lsp-global-shared-view doc.text)
+                    doc.text
                     context
-                    (lsp-global-shared-view definition)
+                    definition
                     (& components))
                   json.JsonNull))])])]))
 
 (define (lsp-signature-help-uri-result
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]
+  [docs : (& docs lsp_document_vec.Vec)]
   [uri : String]) : json.Json
   (let
     [doc-index : i64 (lsp-documents-find-index docs uri)]
@@ -7070,7 +7017,7 @@
 
 (define (lsp-signature-help-document-result
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : json.Json
+  [docs : (& docs lsp_document_vec.Vec)]) : json.Json
   (let
     [text-document-key : String "textDocument"]
     (match (json.object-get
@@ -7085,7 +7032,7 @@
 (define (lsp-signature-help-respond
   [id : json.Json]
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : unit
+  [docs : (& docs lsp_document_vec.Vec)]) : unit
   (lsp-write-response id (lsp-signature-help-document-result params docs)))
 
 (define (lsp-signature-type-components-smoke-ok?) : bool
@@ -7429,7 +7376,7 @@
     [rank : i64
       (lsp-completion-match-rank
         (owned_view.compiler-owned-shared-view binding.display-name)
-        (owned_view.compiler-owned-shared-view prefix))]
+        prefix)]
     (if (or (< rank 0) (not binding.editable))
       unit
       (let
@@ -7445,7 +7392,7 @@
               binding.kind
               (owned_view.compiler-owned-shared-view
                 binding.definition-span.path)
-              (owned_view.compiler-owned-shared-view current-path))
+              current-path)
             (lsp-completion-namespace-rank (& binding.namespace))
             (lsp-completion-symbol-kind (& binding.kind))
             (string.copy (& binding.display-name))
@@ -7613,7 +7560,7 @@
     [rank : i64
       (lsp-completion-match-rank
         (owned_view.compiler-owned-shared-view record.display-name)
-        (owned_view.compiler-owned-shared-view prefix))]
+        prefix)]
     (if (or (< rank 0) (not record.editable))
       unit
       (lsp-completion-results-insert!
@@ -7652,7 +7599,7 @@
     [rank : i64
       (lsp-completion-match-rank
         (owned_view.compiler-owned-shared-view decl.name)
-        (owned_view.compiler-owned-shared-view prefix))]
+        prefix)]
     (if (< rank 0)
       unit
       (lsp-completion-results-insert!
@@ -7679,7 +7626,7 @@
             (string.int->string decl.name-line)
             ":"
             (string.int->string decl.name-col)
-            (lsp-str3 ":" (owned_view.compiler-owned-shared-view decl.kind) ""))
+            (lsp-str3 ":" decl.kind ""))
           (string.copy (& decl.name)))))))
 
 (define (lsp-completion-first-module-segment [text : String]) : String
@@ -7757,9 +7704,7 @@
                     (string.copy (& segment))))
                 unit))
             unit)
-          (if (string.eq
-            (owned_view.compiler-owned-shared-view source.module)
-            (string.copy (& context.receiver)))
+          (if (string.eq source.module (string.copy (& context.receiver)))
             (let
               [decls : lsp_decl_vec.Vec source.decls]
               [decl-index : i64 0]
@@ -8182,7 +8127,7 @@
                 record
                 (owned_view.compiler-owned-shared-view prefix)
                 3
-                (owned_view.compiler-owned-shared-view owner.display-name))
+                owner.display-name)
               unit)
             (set! record-index (+ record-index 1))))))))
 
@@ -8434,10 +8379,7 @@
       (lsp-line-col-at-offset
         (owned_view.compiler-owned-shared-view text)
         context.replace-start)]
-    [end : LspLineCol
-      (lsp-line-col-at-offset
-        (owned_view.compiler-owned-shared-view text)
-        context.replace-end)]
+    [end : LspLineCol (lsp-line-col-at-offset text context.replace-end)]
     (lsp-json-object2
       "range"
       (lsp-json-object2
@@ -8500,11 +8442,7 @@
         (& (array-ref results.slots index))
         (owned_view.compiler-owned-shared-view text)
         context)
-      (lsp-completion-items-json
-        results
-        (owned_view.compiler-owned-shared-view text)
-        context
-        (+ index 1)))))
+      (lsp-completion-items-json results text context (+ index 1)))))
 
 (define (lsp-completion-empty-result) : json.Json
   (lsp-json-object2
@@ -8536,14 +8474,12 @@
   [state : lsp_vector_families.LspServerState]) : json.Json
   (match (lsp-get-semantic-document
     (owned_view.compiler-owned-shared-view params)
-    (owned_view.compiler-owned-shared-view state.documents))
+    state.documents)
     [(LspSemanticDocumentLookup.Missing) (lsp-completion-empty-result)]
     [(LspSemanticDocumentLookup.Found doc)
       (let
         [position-key : String "position"]
-        (match (json.object-get
-          (owned_view.compiler-owned-shared-view params)
-          (& position-key))
+        (match (json.object-get params (& position-key))
           [(json.JsonMissing) (lsp-completion-empty-result)]
           [(json.JsonFound position)
             (if (not
@@ -8556,15 +8492,12 @@
                   "character")))
               (lsp-completion-empty-result)
               (match (lsp-completion-context-at-position
-                (owned_view.compiler-owned-shared-view doc.text)
+                doc.text
                 (lsp-json-int-field-default
                   (owned_view.compiler-owned-shared-view position)
                   "line"
                   -1)
-                (lsp-json-int-field-default
-                  (owned_view.compiler-owned-shared-view position)
-                  "character"
-                  -1))
+                (lsp-json-int-field-default position "character" -1))
                 [(LspCompletionContextLookup.Missing)
                   (lsp-completion-empty-result)]
                 [(LspCompletionContextLookup.Found context)
@@ -8594,9 +8527,7 @@
               (arena.tl_arena_set scratch))]
           [params-key : String "params"]
           (begin
-            (match (json.object-get
-              (owned_view.compiler-owned-shared-view message)
-              (& params-key))
+            (match (json.object-get message (& params-key))
               [(json.JsonMissing)
                 (lsp-write-response id (lsp-completion-empty-result))]
               [(json.JsonFound params)
@@ -8824,12 +8755,10 @@
   [id : json.Json]
   [uri : String]
   [range : json.Json]
-  [docs : lsp_document_vec.Vec]
+  [docs : (& docs lsp_document_vec.Vec)]
   [stdlib-roots : lsp_svec.Vec]
   [job-state : tc.TcJobState]) : unit
-  (match (lsp-documents-lookup
-    (owned_view.compiler-owned-shared-view docs)
-    (owned_view.compiler-owned-shared-view uri))
+  (match (lsp-documents-lookup docs uri)
     [(LspDocumentLookup.Found path text _)
       (let
         [start-line : i64
@@ -8881,7 +8810,7 @@
 (define (lsp-handle-inlay
   [id : json.Json]
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]
+  [docs : (& docs lsp_document_vec.Vec)]
   [stdlib-roots : lsp_svec.Vec]
   [job-state : tc.TcJobState]) : unit
   (let
@@ -8916,7 +8845,7 @@
     [end : LspLineCol
       (lsp-line-col-at-offset
         (owned_view.compiler-owned-shared-view text)
-        (string.string-length (owned_view.compiler-owned-shared-view text)))]
+        (string.string-length text))]
     (lsp-json-object2
       "range"
       (lsp-json-object2
@@ -8930,7 +8859,7 @@
 (define (lsp-formatting-respond
   [id : json.Json]
   [uri : String]
-  [docs : lsp_document_vec.Vec]) : unit
+  [docs : (& docs lsp_document_vec.Vec)]) : unit
   (match (lsp-documents-lookup docs uri)
     [(LspDocumentLookup.Found _ text _)
       (match (format_rules.format-rules-render-source-width-result
@@ -8941,9 +8870,7 @@
             id
             (lsp-json-array
               (lsp-json-list-cons
-                (lsp-formatting-edit
-                  (owned_view.compiler-owned-shared-view text)
-                  formatted)
+                (lsp-formatting-edit text formatted)
                 (json.list-empty))))]
         [(format_rules.ResultFormatString.Err _)
           (lsp-write-response id (lsp-json-array (json.list-empty)))])]
@@ -8955,13 +8882,12 @@
     (owned_view.compiler-owned-shared-view text)
     80)
     [(format_rules.ResultFormatString.Ok formatted) formatted]
-    [(format_rules.ResultFormatString.Err _)
-      (owned_view.compiler-owned-shared-view text)]))
+    [(format_rules.ResultFormatString.Err _) text]))
 
 (define (lsp-handle-formatting
   [id : json.Json]
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : unit
+  [docs : (& docs lsp_document_vec.Vec)]) : unit
   (let
     [td-key : String "textDocument"]
     (match (json.object-get params (& td-key))
@@ -9146,8 +9072,7 @@
 
 ;; Return a formatted error message, or empty string if valid.
 (define (lsp-validate-forms-error [text : String]) : String
-  (match (lsp-validate-forms-result
-    (owned_view.compiler-owned-shared-view text))
+  (match (lsp-validate-forms-result text)
     [(LspValidationResult.Valid) ""]
     [(LspValidationResult.Invalid line col msg ctx)
       (lsp-validation-error-message line col msg ctx)]))
@@ -9236,11 +9161,11 @@
                       (set! done true)))]
                 [(reader.ResultSpannedSexpr.Ok sexpr)
                   (match (parser.parse-ast-decl-maybe
-                    (owned_view.compiler-owned-shared-view dispatch)
+                    dispatch
                     (owned_view.compiler-owned-shared-view sexpr))
                     [(parser.ResultAstMaybeDecl.Err msg)
                       (match (parser.parse-ast-expr
-                        (owned_view.compiler-owned-shared-view dispatch)
+                        dispatch
                         (owned_view.compiler-owned-shared-view sexpr))
                         [(parser.ResultAstExpr.Err _)
                           (let
@@ -9262,7 +9187,7 @@
                         [(parser.ResultAstExpr.Ok _) unit])]
                     [(parser.ResultAstMaybeDecl.NoDecl)
                       (match (parser.parse-ast-expr
-                        (owned_view.compiler-owned-shared-view dispatch)
+                        dispatch
                         (owned_view.compiler-owned-shared-view sexpr))
                         [(parser.ResultAstExpr.Err msg)
                           (let
@@ -9640,7 +9565,7 @@
   [id : json.Json]
   [uri : String]
   [position : json.Json]
-  [docs : lsp_document_vec.Vec]) : unit
+  [docs : (& docs lsp_document_vec.Vec)]) : unit
   (let
     [doc-index : i64 (lsp-documents-find-index docs uri)]
     (if (< doc-index 0)
@@ -9672,7 +9597,7 @@
                     (lsp-semantic-hover-body
                       (owned_view.compiler-owned-shared-view definition))
                     definition.documentation)
-                  (owned_view.compiler-owned-shared-view text)
+                  text
                   cursor-span.start-byte
                   cursor-span.end-byte)))]
           [(LspSemanticSymbolQuery.Missing)
@@ -9706,7 +9631,7 @@
                       id
                       (lsp-hover-result
                         builtin
-                        (owned_view.compiler-owned-shared-view text)
+                        text
                         symbol-start
                         (+ symbol-start (string.string-length symbol))))))]
               [_ (lsp-write-response id json.JsonNull)])])))))
@@ -9714,7 +9639,7 @@
 (define (lsp-handle-hover
   [id : json.Json]
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : unit
+  [docs : (& docs lsp_document_vec.Vec)]) : unit
   (let
     [td-key : String "textDocument"]
     (match (json.object-get
@@ -9836,7 +9761,7 @@
 (define (lsp-document-link-respond
   [id : json.Json]
   [uri : String]
-  [docs : lsp_document_vec.Vec]
+  [docs : (& docs lsp_document_vec.Vec)]
   [stdlib-roots : lsp_svec.Vec]) : unit
   (match (lsp-documents-lookup docs uri)
     [(LspDocumentLookup.Found path text _)
@@ -9849,7 +9774,7 @@
 (define (lsp-handle-document-link
   [id : json.Json]
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]
+  [docs : (& docs lsp_document_vec.Vec)]
   [stdlib-roots : lsp_svec.Vec]) : unit
   (let
     [td-key : String "textDocument"]
@@ -9866,9 +9791,7 @@
 (define (lsp-maybe-write-method-not-found [message : json.Json]) : unit
   (let
     [key : String "id"]
-    (match (json.object-get
-      (owned_view.compiler-owned-shared-view message)
-      (& key))
+    (match (json.object-get message (& key))
       [(json.JsonFound id) (lsp-write-error id -32601 "Method not found")]
       [(json.JsonMissing) unit])))
 
@@ -9925,8 +9848,7 @@
 
 (define (lsp-scan-decls [text : String]) : lsp_decl_vec.Vec
   (let
-    [n : i64
-      (string.string-length (owned_view.compiler-owned-shared-view text))]
+    [n : i64 (string.string-length text)]
     [i : i64 0]
     [depth : i64 0]
     [result : lsp_decl_vec.Vec (lsp_decl_vec.with-capacity 16)]
@@ -9934,8 +9856,7 @@
     (begin
       (while (< i n)
         (let
-          [c : char
-            (string.string-ref (owned_view.compiler-owned-shared-view text) i)]
+          [c : char (string.string-ref text i)]
           (cond
             [(= c ';')
               (set!
@@ -10161,7 +10082,7 @@
     ;; arena, so server-state arena swaps transfer this value without copying.
     doc.semantic))
 
-(define (lsp-documents-copy [docs : lsp_document_vec.Vec]) : lsp_document_vec.Vec
+(define (lsp-documents-copy [docs : (& docs lsp_document_vec.Vec)]) : lsp_document_vec.Vec
   (let
     [count : i64 (lsp_document_vec.len (& docs))]
     [copy : lsp_document_vec.Vec (lsp_document_vec.with-capacity count)]
@@ -10182,7 +10103,7 @@
     (string.copy (& root.path))))
 
 (define (lsp-workspace-roots-copy
-  [roots : lsp_vector_families.LspWorkspaceRoots]) : lsp_vector_families.LspWorkspaceRoots
+  [roots : (& roots lsp_vector_families.LspWorkspaceRoots)]) : lsp_vector_families.LspWorkspaceRoots
   (let
     [copy : lsp_vector_families.LspWorkspaceRoots (lsp-workspace-roots-new)]
     [index : i64 0]
@@ -10208,7 +10129,7 @@
     (lsp-decls-copy source.decls)))
 
 (define (lsp-workspace-sources-copy
-  [sources : lsp_vector_families.LspWorkspaceSources]) : lsp_vector_families.LspWorkspaceSources
+  [sources : (& sources lsp_vector_families.LspWorkspaceSources)]) : lsp_vector_families.LspWorkspaceSources
   (let
     [copy : lsp_vector_families.LspWorkspaceSources (lsp-workspace-sources-new)]
     [index : i64 0]
@@ -10223,7 +10144,7 @@
       copy)))
 
 (define (lsp-workspace-index-copy
-  [index : lsp_vector_families.LspWorkspaceIndex]) : lsp_vector_families.LspWorkspaceIndex
+  [index : (& index lsp_vector_families.LspWorkspaceIndex)]) : lsp_vector_families.LspWorkspaceIndex
   (lsp_vector_families.LspWorkspaceIndex
     (lsp-workspace-roots-copy index.roots)
     (lsp-workspace-sources-copy index.sources)))
@@ -10344,9 +10265,7 @@
             index)]
         [affected : bool
           (or
-            (string.eq
-              entry.path
-              (owned_view.compiler-owned-shared-view normalized))
+            (string.eq entry.path normalized)
             (<= entry.index.owner-arena 0)
             (compiler_semantic_index.compiler-semantic-source-index-contains-path?
               (& entry.index)
@@ -10470,7 +10389,7 @@
 
 (define (lsp-workspace-index-add-path!
   [index : (&mut index lsp_vector_families.LspWorkspaceIndex)]
-  [docs : lsp_document_vec.Vec]
+  [docs : (& docs lsp_document_vec.Vec)]
   [root : lsp_vector_families.LspWorkspaceRootLookup]
   [path : String]) : unit
   (let
@@ -10492,7 +10411,7 @@
 
 (define (lsp-workspace-index-build-root!
   [index : (&mut index lsp_vector_families.LspWorkspaceIndex)]
-  [docs : lsp_document_vec.Vec]
+  [docs : (& docs lsp_document_vec.Vec)]
   [root : lsp_vector_families.LspWorkspaceRoot]) : unit
   (match (package_source_core.package-source-discover-root-for
     "lsp"
@@ -10505,7 +10424,7 @@
           (begin
             (lsp-workspace-index-add-path!
               index
-              (owned_view.compiler-owned-shared-view docs)
+              docs
               (lsp_vector_families.LspWorkspaceRootLookup.Found
                 (owned_view.compiler-owned-shared-view root))
               (lsp_svec.get (& paths) path-index ""))
@@ -10513,7 +10432,7 @@
 
 (define (lsp-workspace-index-add-rootless-overlays!
   [index : (&mut index lsp_vector_families.LspWorkspaceIndex)]
-  [docs : lsp_document_vec.Vec]) : unit
+  [docs : (& docs lsp_document_vec.Vec)]) : unit
   (let
     [doc-index : i64 0]
     (while (< doc-index (lsp_document_vec.len (& docs)))
@@ -10541,7 +10460,7 @@
 
 (define (lsp-workspace-index-build-sources!
   [index : (&mut index lsp_vector_families.LspWorkspaceIndex)]
-  [docs : lsp_document_vec.Vec]) : unit
+  [docs : (& docs lsp_document_vec.Vec)]) : unit
   (let
     [root-index : i64 0]
     (begin
@@ -10549,12 +10468,10 @@
         (begin
           (lsp-workspace-index-build-root!
             index
-            (owned_view.compiler-owned-shared-view docs)
+            docs
             (lsp-workspace-roots-get (& index.roots) root-index))
           (set! root-index (+ root-index 1))))
-      (lsp-workspace-index-add-rootless-overlays!
-        index
-        (owned_view.compiler-owned-shared-view docs)))))
+      (lsp-workspace-index-add-rootless-overlays! index docs))))
 
 (define (lsp-server-state-copy-in-current
   [state : lsp_vector_families.LspServerState]) : lsp_vector_families.LspServerState
@@ -10609,8 +10526,7 @@
 
 (define (lsp-server-state-destroy! [state : lsp_vector_families.LspServerState]) : unit
   (let
-    [state : lsp_vector_families.LspServerState
-      (owned_view.compiler-owned-shared-view state)]
+    [state : lsp_vector_families.LspServerState state]
     [owner : i64 state.owner-arena]
     (begin
       (lsp-documents-release-all! (&mut state.documents))
@@ -10630,7 +10546,7 @@
 ;; negotiated rendering choice.
 (define (lsp-workspace-semantic-context-key
   [workspace : (& workspace lsp_vector_families.LspWorkspaceIndex)]
-  [stdlib-roots : lsp_svec.Vec]) : String
+  [stdlib-roots : (& stdlib-roots lsp_svec.Vec)]) : String
   (let
     [cfg-names : lsp_svec.Vec (lsp-global-shared-view lsp-language-cfg-names)]
     [key : String
@@ -10717,7 +10633,7 @@
 
 (define (lsp-workspace-semantic-index-overlay-mismatch?
   [index : (& index compiler_semantic_index.CompilerSemanticSourceIndex)]
-  [docs : lsp_document_vec.Vec]) : bool
+  [docs : (& docs lsp_document_vec.Vec)]) : bool
   (let
     [doc-index : i64 0]
     [mismatch : bool false]
@@ -10773,15 +10689,13 @@
 (define (lsp-workspace-semantic-cache-refresh-source!
   [cache : (&mut cache lsp_vector_families.LspWorkspaceSemanticCache)]
   [source : lsp_vector_families.LspWorkspaceSource]
-  [docs : lsp_document_vec.Vec]
+  [docs : (& docs lsp_document_vec.Vec)]
   [stdlib-roots : lsp_svec.Vec]) : i64
   (match (io.try-read-file (& source.path))
     [(io.ErrIoBytes _)
       (let
         [existing : i64
-          (lsp-workspace-semantic-cache-find-uri
-            cache
-            (lsp-global-shared-view source.uri))]
+          (lsp-workspace-semantic-cache-find-uri cache source.uri)]
         (begin
           (if (>= existing 0)
             (lsp-workspace-semantic-cache-remove-index! cache existing)
@@ -10793,7 +10707,7 @@
         [fingerprint : i64
           (lsp-workspace-semantic-source-fingerprint
             (lsp-global-shared-view text))]
-        [source-len : i64 (string.string-length (lsp-global-shared-view text))]
+        [source-len : i64 (string.string-length text)]
         [existing : i64
           (lsp-workspace-semantic-cache-find-uri
             cache
@@ -10824,7 +10738,7 @@
                 (lsp-workspace-semantic-cache-remove-index! cache existing)
                 (lsp-workspace-semantic-cache-install!
                   cache
-                  (lsp-global-shared-view source)
+                  source
                   fingerprint
                   source-len
                   (compiler_semantic_index.compiler-semantic-source-index-empty))
@@ -10876,13 +10790,11 @@
 (define (lsp-workspace-semantic-cache-refresh!
   [cache : (&mut cache lsp_vector_families.LspWorkspaceSemanticCache)]
   [workspace : (& workspace lsp_vector_families.LspWorkspaceIndex)]
-  [docs : lsp_document_vec.Vec]
+  [docs : (& docs lsp_document_vec.Vec)]
   [stdlib-roots : lsp_svec.Vec]) : i64
   (let
     [context-key : String
-      (lsp-workspace-semantic-context-key
-        workspace
-        (lsp-global-shared-view stdlib-roots))]
+      (lsp-workspace-semantic-context-key workspace stdlib-roots)]
     [source-index : i64 0]
     [source-checks : i64 0]
     (begin
@@ -10947,7 +10859,7 @@
                   (lsp-workspace-semantic-cache-refresh-source!
                     cache
                     source
-                    (lsp-global-shared-view docs)
+                    docs
                     (lsp-global-shared-view stdlib-roots)))))
             (set! source-index (+ source-index 1)))))
       source-checks)))
@@ -10970,7 +10882,7 @@
       (lsp-workspace-semantic-cache-refresh!
         (&mut draft.semantic-cache)
         (& draft.workspace)
-        (lsp-global-shared-view draft.documents)
+        draft.documents
         stdlib-roots)]
     [next : lsp_vector_families.LspServerState
       (lsp-server-state-finish-swap state draft owner previous)]
@@ -11004,7 +10916,7 @@
 
 (define (lsp-workspace-semantic-facts-contain?
   [facts : (& facts LspWorkspaceSemanticQuery)]
-  [candidate : lsp_vector_families.LspWorkspaceSemanticFact]) : bool
+  [candidate : (& candidate lsp_vector_families.LspWorkspaceSemanticFact)]) : bool
   (let
     [index : i64 0]
     [found : bool false]
@@ -11063,9 +10975,7 @@
 (define (lsp-workspace-semantic-facts-insert!
   [facts : (&mut facts LspWorkspaceSemanticQuery)]
   [candidate : lsp_vector_families.LspWorkspaceSemanticFact]) : unit
-  (if (lsp-workspace-semantic-facts-contain?
-    facts
-    (lsp-global-shared-view candidate))
+  (if (lsp-workspace-semantic-facts-contain? facts candidate)
     unit
     (begin
       (if (>= facts.len (array-length facts.slots))
@@ -11233,7 +11143,7 @@
 ;; unavailable open/negative entries are reported as CurrentlyIncomplete.
 (define (lsp-workspace-semantic-query
   [state : (& state lsp_vector_families.LspServerState)]
-  [stdlib-roots : lsp_svec.Vec]
+  [stdlib-roots : (& stdlib-roots lsp_svec.Vec)]
   [canonical-key : String]) : LspWorkspaceSemanticQuery
   (let
     [facts : LspWorkspaceSemanticQuery
@@ -11309,8 +11219,7 @@
                           [fingerprint : i64
                             (lsp-workspace-semantic-source-fingerprint
                               (lsp-global-shared-view text))]
-                          [source-len : i64
-                            (string.string-length (lsp-global-shared-view text))]
+                          [source-len : i64 (string.string-length text)]
                           (if (or
                             (not (= fingerprint entry.source-fingerprint))
                             (not (= source-len entry.source-len)))
@@ -11351,7 +11260,7 @@
       (> span.utf16-end-col 0))))
 
 (define (lsp-workspace-semantic-fact-definition?
-  [fact : lsp_vector_families.LspWorkspaceSemanticFact]) : bool
+  [fact : (& fact lsp_vector_families.LspWorkspaceSemanticFact)]) : bool
   (match fact.role
     [(compiler_semantic_index.CompilerSemanticRecordRole.Definition) true]
     [(compiler_semantic_index.CompilerSemanticRecordRole.Use) false]))
@@ -11366,7 +11275,7 @@
       "start"
       (lsp-semantic-span-position (lsp-global-shared-view fact.span) true)
       "end"
-      (lsp-semantic-span-position (lsp-global-shared-view fact.span) false))))
+      (lsp-semantic-span-position fact.span false))))
 
 (define (lsp-reference-result-json
   [query : (& query LspWorkspaceSemanticQuery)]
@@ -11385,9 +11294,7 @@
                 (lsp-global-shared-view fact))
               (or
                 include-declaration
-                (not
-                  (lsp-workspace-semantic-fact-definition?
-                    (lsp-global-shared-view fact)))))
+                (not (lsp-workspace-semantic-fact-definition? fact))))
               (set!
                 locations
                 (lsp-json-list-cons (lsp-reference-location fact) locations))
@@ -11484,7 +11391,7 @@
                 [edit-span : compiler_semantic_index.CompilerSemanticSpan
                   (lsp-rename-effective-span
                     (lsp-global-shared-view record-span)
-                    (lsp-global-shared-view record.display-name)
+                    record.display-name
                     (lsp-global-shared-view source-text))]
                 [width : i64 (- edit-span.end-byte edit-span.start-byte)]
                 (begin
@@ -11561,10 +11468,8 @@
   [surface-name : String]) : bool
   (string.eq
     (lsp-rename-span-text
-      (lsp-rename-fact-surface-span
-        (lsp-global-shared-view fact)
-        (lsp-global-shared-view text))
-      (lsp-global-shared-view text))
+      (lsp-rename-fact-surface-span fact (lsp-global-shared-view text))
+      text)
     surface-name))
 
 (define (lsp-rename-module-kind?
@@ -11594,9 +11499,7 @@
   [new-name : String]) : String
   (let
     [start : i64
-      (lsp-rename-path-leaf-start
-        (lsp-global-shared-view path)
-        (lsp-global-shared-view old-name))]
+      (lsp-rename-path-leaf-start (lsp-global-shared-view path) old-name)]
     (if (< start 0)
       ""
       (lsp-str3 (string.substring path 0 start) new-name ".tl"))))
@@ -11645,8 +11548,7 @@
               (lsp-workspace-semantic-facts-get query index)]
             (begin
               (if (and
-                (lsp-workspace-semantic-fact-definition?
-                  (lsp-global-shared-view fact))
+                (lsp-workspace-semantic-fact-definition? fact)
                 (lsp-rename-module-kind? (& fact.kind))
                 (>=
                   (lsp-rename-path-leaf-start
@@ -11659,13 +11561,13 @@
                   [(LspRenameSourceLookup.Found text)
                     (if (lsp-rename-fact-selected?
                       (lsp-global-shared-view fact)
-                      (lsp-global-shared-view text)
+                      text
                       (lsp-global-shared-view target.surface-name))
                       (let
                         [candidate : String
                           (lsp-rename-module-new-path
                             (lsp-global-shared-view fact.span.path)
-                            (lsp-global-shared-view target.surface-name)
+                            target.surface-name
                             (lsp-global-shared-view new-name))]
                         (cond
                           [(= (string.string-length old-path) 0)
@@ -11749,7 +11651,7 @@
             name))))))
 
 (define (lsp-rename-valid-new-name-for-target?
-  [target : LspRenameTarget]
+  [target : (& target LspRenameTarget)]
   [name : String]) : bool
   (and
     (lsp-rename-valid-new-name? (lsp-global-shared-view name))
@@ -11857,11 +11759,10 @@
                   (if (lsp-rename-fact-selected?
                     (lsp-global-shared-view fact)
                     (lsp-global-shared-view text)
-                    (lsp-global-shared-view target.surface-name))
+                    target.surface-name)
                     (begin
                       (set! selected (+ selected 1))
-                      (if (lsp-workspace-semantic-fact-definition?
-                        (lsp-global-shared-view fact))
+                      (if (lsp-workspace-semantic-fact-definition? fact)
                         (set! definitions (+ definitions 1))
                         unit)
                       (cond
@@ -11877,7 +11778,7 @@
                               (lsp-rename-fact-surface-span
                                 (lsp-global-shared-view fact)
                                 (lsp-global-shared-view text))
-                              (lsp-global-shared-view text)))
+                              text))
                           (set!
                             error
                             "Rename occurrence has an invalid source range")]
@@ -11885,8 +11786,8 @@
                             check-collisions
                             (lsp-rename-fact-collision?
                               state
-                              (lsp-global-shared-view fact)
-                              (lsp-global-shared-view target.canonical-key)
+                              fact
+                              target.canonical-key
                               (lsp-global-shared-view new-name)))
                           (set!
                             error
@@ -11912,7 +11813,7 @@
       "start"
       (lsp-semantic-span-position (lsp-global-shared-view span) true)
       "end"
-      (lsp-semantic-span-position (lsp-global-shared-view span) false))
+      (lsp-semantic-span-position span false))
     "newText"
     (json.JsonString new-name)))
 
@@ -11990,12 +11891,10 @@
                       (if (lsp-rename-fact-selected?
                         (lsp-global-shared-view fact)
                         (lsp-global-shared-view text)
-                        (lsp-global-shared-view target.surface-name))
+                        target.surface-name)
                         (let
                           [span : compiler_semantic_index.CompilerSemanticSpan
-                            (lsp-rename-fact-surface-span
-                              (lsp-global-shared-view fact)
-                              (lsp-global-shared-view text))]
+                            (lsp-rename-fact-surface-span fact text)]
                           (if (and
                             (= span.start-byte previous-start)
                             (= span.end-byte previous-end))
@@ -12007,7 +11906,7 @@
                                 edits
                                 (lsp-json-list-cons
                                   (lsp-rename-text-edit
-                                    (lsp-global-shared-view span)
+                                    span
                                     (lsp-global-shared-view new-name))
                                   edits)))))
                         unit)])
@@ -12113,9 +12012,7 @@
         (lsp-global-shared-view target.edit-span)
         true)
       "end"
-      (lsp-semantic-span-position
-        (lsp-global-shared-view target.edit-span)
-        false))
+      (lsp-semantic-span-position target.edit-span false))
     "placeholder"
     (json.JsonString target.surface-name)))
 
@@ -12128,18 +12025,12 @@
     [_install : unit
       (unsafe
         (arena.tl_arena_set owner))]
-    [docs : lsp_document_vec.Vec
-      (lsp-documents-copy
-        (owned_view.compiler-owned-shared-view state.documents))]
+    [docs : lsp_document_vec.Vec (lsp-documents-copy state.documents)]
     [workspace : lsp_vector_families.LspWorkspaceIndex
       (lsp_vector_families.LspWorkspaceIndex
-        (lsp-initialize-workspace-roots
-          (owned_view.compiler-owned-shared-view message))
+        (lsp-initialize-workspace-roots message)
         (lsp-workspace-sources-new))]
-    [_build : unit
-      (lsp-workspace-index-build-sources!
-        (&mut workspace)
-        (owned_view.compiler-owned-shared-view docs))]
+    [_build : unit (lsp-workspace-index-build-sources! (&mut workspace) docs)]
     [semantic-cache : lsp_vector_families.LspWorkspaceSemanticCache
       (lsp-workspace-semantic-cache-copy
         (owned_view.compiler-owned-shared-view state.semantic-cache))]
@@ -12292,7 +12183,7 @@
 ;; are already URI-deduplicated by the index, and this final guard also keeps a
 ;; malformed duplicate summary from producing two protocol results.
 (define (lsp-workspace-symbol-candidate-same?
-  [left : LspWorkspaceSymbolCandidate]
+  [left : (& left LspWorkspaceSymbolCandidate)]
   [right : LspWorkspaceSymbolCandidate]) : bool
   (let
     [left-row : lsp_vector_families.LspWorkspaceDeclRow left.row]
@@ -12307,7 +12198,7 @@
 
 (define (lsp-workspace-symbol-results-contain?
   [results : (& results LspWorkspaceSymbolResults)]
-  [candidate : LspWorkspaceSymbolCandidate]) : bool
+  [candidate : (& candidate LspWorkspaceSymbolCandidate)]) : bool
   (let
     [index : i64 0]
     [found : bool false]
@@ -12315,7 +12206,7 @@
       (while (and (< index results.len) (not found))
         (begin
           (if (lsp-workspace-symbol-candidate-same?
-            (owned_view.compiler-owned-shared-view candidate)
+            candidate
             (lsp-workspace-symbol-results-get results index))
             (set! found true)
             unit)
@@ -12328,9 +12219,7 @@
 (define (lsp-workspace-symbol-results-insert!
   [results : (&mut results LspWorkspaceSymbolResults)]
   [candidate : LspWorkspaceSymbolCandidate]) : unit
-  (if (lsp-workspace-symbol-results-contain?
-    results
-    (owned_view.compiler-owned-shared-view candidate))
+  (if (lsp-workspace-symbol-results-contain? results candidate)
     unit
     (let
       [len : i64 results.len]
@@ -12402,7 +12291,7 @@
                           source.module
                           source.explicit-module
                           source.overlay
-                          (owned_view.compiler-owned-shared-view decl))))
+                          decl)))
                     unit)
                   (set! decl-index (+ decl-index 1)))))
             (set! source-index (+ source-index 1)))))
@@ -12410,7 +12299,7 @@
 
 (define (lsp-workspace-index-refresh-path!
   [index : (&mut index lsp_vector_families.LspWorkspaceIndex)]
-  [docs : lsp_document_vec.Vec]
+  [docs : (& docs lsp_document_vec.Vec)]
   [path : String]
   [deleted : bool]) : unit
   (let
@@ -12471,7 +12360,7 @@
 
 (define (lsp-workspace-index-refresh-documents!
   [index : (&mut index lsp_vector_families.LspWorkspaceIndex)]
-  [docs : lsp_document_vec.Vec]) : unit
+  [docs : (& docs lsp_document_vec.Vec)]) : unit
   (let
     [doc-index : i64 0]
     (while (< doc-index (lsp_document_vec.len (& docs)))
@@ -12480,11 +12369,7 @@
           (lsp_document_vec.get (& docs) doc-index (lsp-document-fallback))]
         (begin
           (if (> (string.string-length doc.path) 0)
-            (lsp-workspace-index-refresh-path!
-              index
-              (owned_view.compiler-owned-shared-view docs)
-              doc.path
-              false)
+            (lsp-workspace-index-refresh-path! index docs doc.path false)
             unit)
           (set! doc-index (+ doc-index 1)))))))
 
@@ -12506,15 +12391,14 @@
                 (arena.tl_arena_set owner))]
             [docs : lsp_document_vec.Vec (lsp-documents-copy next-documents)]
             [workspace : lsp_vector_families.LspWorkspaceIndex
-              (lsp-workspace-index-copy
-                (owned_view.compiler-owned-shared-view state.workspace))]
+              (lsp-workspace-index-copy state.workspace)]
             [semantic-cache : lsp_vector_families.LspWorkspaceSemanticCache
               (lsp-workspace-semantic-cache-copy
                 (owned_view.compiler-owned-shared-view state.semantic-cache))]
             [_refresh : unit
               (lsp-workspace-index-refresh-path!
                 (&mut workspace)
-                (owned_view.compiler-owned-shared-view docs)
+                docs
                 (owned_view.compiler-owned-shared-view path)
                 deleted)]
             [_invalidate : unit
@@ -12552,16 +12436,13 @@
             (arena.tl_arena_set owner))]
         [docs : lsp_document_vec.Vec (lsp-documents-copy next-documents)]
         [workspace : lsp_vector_families.LspWorkspaceIndex
-          (lsp-workspace-index-copy
-            (owned_view.compiler-owned-shared-view state.workspace))]
+          (lsp-workspace-index-copy state.workspace)]
         [semantic-cache : lsp_vector_families.LspWorkspaceSemanticCache
           (lsp-workspace-semantic-cache-copy
             (owned_view.compiler-owned-shared-view state.semantic-cache))]
         [_refresh : unit
           (if refresh-documents
-            (lsp-workspace-index-refresh-documents!
-              (&mut workspace)
-              (owned_view.compiler-owned-shared-view docs))
+            (lsp-workspace-index-refresh-documents! (&mut workspace) docs)
             unit)]
         [_invalidate : unit
           (if refresh-documents
@@ -12583,7 +12464,7 @@
   [workspace : (&mut workspace lsp_vector_families.LspWorkspaceIndex)]
   [semantic-cache
     : (&mut semantic-cache lsp_vector_families.LspWorkspaceSemanticCache)]
-  [docs : lsp_document_vec.Vec]
+  [docs : (& docs lsp_document_vec.Vec)]
   [items : json.JsonSeq]) : unit
   (let
     [index : i64 0]
@@ -12611,14 +12492,9 @@
                           (owned_view.compiler-owned-shared-view path))
                         (lsp-workspace-index-refresh-path!
                           workspace
-                          (owned_view.compiler-owned-shared-view docs)
+                          docs
                           path
-                          (=
-                            (lsp-json-int-field-default
-                              (owned_view.compiler-owned-shared-view change)
-                              "type"
-                              2)
-                            3)))
+                          (= (lsp-json-int-field-default change "type" 2) 3)))
                       unit)])])])
         (set! index (+ index 1))))))
 
@@ -12636,18 +12512,16 @@
         (owned_view.compiler-owned-shared-view state))]
     [changes-key : String "changes"]
     [_refresh : unit
-      (match (json.object-get
-        (owned_view.compiler-owned-shared-view params)
-        (& changes-key))
+      (match (json.object-get params (& changes-key))
         [(json.JsonMissing) unit]
         [(json.JsonFound changes)
-          (match (owned_view.compiler-owned-shared-view changes)
+          (match changes
             [(json.JsonArray items)
               (lsp-watched-files-refresh-items!
                 (&mut draft.workspace)
                 (&mut draft.semantic-cache)
-                (owned_view.compiler-owned-shared-view draft.documents)
-                (owned_view.compiler-owned-box-shared-view items))]
+                draft.documents
+                (deref items))]
             [_ unit])])]
     (lsp-server-state-finish-swap state draft owner previous)))
 
@@ -12679,7 +12553,7 @@
 
 (define (lsp-workspace-index-recover-live-paths!
   [workspace : (&mut workspace lsp_vector_families.LspWorkspaceIndex)]
-  [docs : lsp_document_vec.Vec]
+  [docs : (& docs lsp_document_vec.Vec)]
   [paths : lsp_svec.Vec]) : unit
   (let
     [index : i64 0]
@@ -12687,14 +12561,14 @@
       (begin
         (lsp-workspace-index-refresh-path!
           workspace
-          (owned_view.compiler-owned-shared-view docs)
+          docs
           (lsp_svec.get (& paths) index "")
           false)
         (set! index (+ index 1))))))
 
 (define (lsp-workspace-index-remove-root!
   [workspace : (&mut workspace lsp_vector_families.LspWorkspaceIndex)]
-  [docs : lsp_document_vec.Vec]
+  [docs : (& docs lsp_document_vec.Vec)]
   [root : lsp_vector_families.LspWorkspaceRoot]) : unit
   (let
     [paths : lsp_svec.Vec (lsp_svec.new)]
@@ -12717,7 +12591,7 @@
 
 (define (lsp-workspace-index-adopt-rootless-overlays!
   [workspace : (&mut workspace lsp_vector_families.LspWorkspaceIndex)]
-  [docs : lsp_document_vec.Vec]
+  [docs : (& docs lsp_document_vec.Vec)]
   [root : lsp_vector_families.LspWorkspaceRoot]) : unit
   (let
     [paths : lsp_svec.Vec (lsp_svec.new)]
@@ -12731,19 +12605,16 @@
             (if (and
               (string.eq source.root-uri "")
               (package_source_core.package-source-path-location-eligible-for-root?
-                (owned_view.compiler-owned-shared-view root.path)
+                root.path
                 (owned_view.compiler-owned-shared-view source.path)))
               (lsp_svec.push-ref! (&mut paths) (string.copy (& source.path)))
               unit)
             (set! source-index (+ source-index 1)))))
-      (lsp-workspace-index-recover-live-paths!
-        workspace
-        (owned_view.compiler-owned-shared-view docs)
-        paths))))
+      (lsp-workspace-index-recover-live-paths! workspace docs paths))))
 
 (define (lsp-workspace-index-add-root!
   [workspace : (&mut workspace lsp_vector_families.LspWorkspaceIndex)]
-  [docs : lsp_document_vec.Vec]
+  [docs : (& docs lsp_document_vec.Vec)]
   [root : lsp_vector_families.LspWorkspaceRoot]) : unit
   (if (>=
     (lsp-workspace-roots-find-uri
@@ -12757,18 +12628,15 @@
         (owned_view.compiler-owned-shared-view root))
       (lsp-workspace-index-adopt-rootless-overlays!
         workspace
-        (owned_view.compiler-owned-shared-view docs)
+        docs
         (owned_view.compiler-owned-shared-view root))
       ;; Discover only the added root. URI de-duplication preserves the first
       ;; root in client order when roots overlap.
-      (lsp-workspace-index-build-root!
-        workspace
-        (owned_view.compiler-owned-shared-view docs)
-        (owned_view.compiler-owned-shared-view root)))))
+      (lsp-workspace-index-build-root! workspace docs root))))
 
 (define (lsp-workspace-folders-remove-items!
   [workspace : (&mut workspace lsp_vector_families.LspWorkspaceIndex)]
-  [docs : lsp_document_vec.Vec]
+  [docs : (& docs lsp_document_vec.Vec)]
   [items : json.JsonSeq]) : unit
   (let
     [index : i64 0]
@@ -12787,15 +12655,12 @@
                 (match (lsp-workspace-root-from-uri uri)
                   [(lsp_vector_families.LspWorkspaceRootLookup.Missing) unit]
                   [(lsp_vector_families.LspWorkspaceRootLookup.Found root)
-                    (lsp-workspace-index-remove-root!
-                      workspace
-                      (owned_view.compiler-owned-shared-view docs)
-                      root)])])])
+                    (lsp-workspace-index-remove-root! workspace docs root)])])])
         (set! index (+ index 1))))))
 
 (define (lsp-workspace-folders-add-items!
   [workspace : (&mut workspace lsp_vector_families.LspWorkspaceIndex)]
-  [docs : lsp_document_vec.Vec]
+  [docs : (& docs lsp_document_vec.Vec)]
   [items : json.JsonSeq]) : unit
   (let
     [index : i64 0]
@@ -12814,15 +12679,12 @@
                 (match (lsp-workspace-root-from-uri uri)
                   [(lsp_vector_families.LspWorkspaceRootLookup.Missing) unit]
                   [(lsp_vector_families.LspWorkspaceRootLookup.Found root)
-                    (lsp-workspace-index-add-root!
-                      workspace
-                      (owned_view.compiler-owned-shared-view docs)
-                      root)])])])
+                    (lsp-workspace-index-add-root! workspace docs root)])])])
         (set! index (+ index 1))))))
 
 (define (lsp-workspace-folders-apply-event!
   [workspace : (&mut workspace lsp_vector_families.LspWorkspaceIndex)]
-  [docs : lsp_document_vec.Vec]
+  [docs : (& docs lsp_document_vec.Vec)]
   [event : json.Json]) : unit
   (let
     [removed-key : String "removed"]
@@ -12833,24 +12695,16 @@
         (& removed-key))
         [(json.JsonMissing) unit]
         [(json.JsonFound removed)
-          (match (owned_view.compiler-owned-shared-view removed)
+          (match removed
             [(json.JsonArray items)
-              (lsp-workspace-folders-remove-items!
-                workspace
-                (owned_view.compiler-owned-shared-view docs)
-                (owned_view.compiler-owned-box-shared-view items))]
+              (lsp-workspace-folders-remove-items! workspace docs (deref items))]
             [_ unit])])
-      (match (json.object-get
-        (owned_view.compiler-owned-shared-view event)
-        (& added-key))
+      (match (json.object-get event (& added-key))
         [(json.JsonMissing) unit]
         [(json.JsonFound added)
-          (match (owned_view.compiler-owned-shared-view added)
+          (match added
             [(json.JsonArray items)
-              (lsp-workspace-folders-add-items!
-                workspace
-                (owned_view.compiler-owned-shared-view docs)
-                (owned_view.compiler-owned-box-shared-view items))]
+              (lsp-workspace-folders-add-items! workspace docs (deref items))]
             [_ unit])]))))
 
 (define (lsp-server-state-did-change-workspace-folders
@@ -12867,14 +12721,12 @@
         (owned_view.compiler-owned-shared-view state))]
     [event-key : String "event"]
     [_update : unit
-      (match (json.object-get
-        (owned_view.compiler-owned-shared-view params)
-        (& event-key))
+      (match (json.object-get params (& event-key))
         [(json.JsonMissing) unit]
         [(json.JsonFound event)
           (lsp-workspace-folders-apply-event!
             (&mut draft.workspace)
-            (owned_view.compiler-owned-shared-view draft.documents)
+            draft.documents
             event)])]
     [_invalidate : unit
       (lsp-workspace-semantic-cache-release-all! (&mut draft.semantic-cache))]
@@ -13156,10 +13008,7 @@
                           tokens
                           (owned_view.compiler-owned-shared-view text)
                           start
-                          (+
-                            start
-                            (string.string-length
-                              (owned_view.compiler-owned-shared-view spelling)))
+                          (+ start (string.string-length spelling))
                           lsp-semantic-token-type-keyword
                           0
                           0)]
@@ -13169,27 +13018,17 @@
                           tokens
                           (owned_view.compiler-owned-shared-view text)
                           start
-                          (+
-                            start
-                            (string.string-length
-                              (owned_view.compiler-owned-shared-view spelling)))
+                          (+ start (string.string-length spelling))
                           lsp-semantic-token-type-operator
                           0
                           0)]
                       [else unit])
-                    (if (and
-                      (= head-position 2)
-                      (string.eq
-                        (owned_view.compiler-owned-shared-view spelling)
-                        "else"))
+                    (if (and (= head-position 2) (string.eq spelling "else"))
                       (lsp-semantic-token-add-split-span!
                         tokens
                         (owned_view.compiler-owned-shared-view text)
                         start
-                        (+
-                          start
-                          (string.string-length
-                            (owned_view.compiler-owned-shared-view spelling)))
+                        (+ start (string.string-length spelling))
                         lsp-semantic-token-type-keyword
                         0
                         0)
@@ -13261,16 +13100,11 @@
             [source : ast.AstSourceSpan span.source]
             [exact-editable? : bool
               (lsp-semantic-record-exact-editable? (& record))]
-            [path-match? : bool
-              (string.eq
-                (owned_view.compiler-owned-shared-view span.path)
-                doc.path)]
+            [path-match? : bool (string.eq span.path doc.path)]
             [single-line? : bool
               (=
-                (ast.ast-source-span-start-line
-                  (owned_view.compiler-owned-shared-view source))
-                (ast.ast-source-span-end-line
-                  (owned_view.compiler-owned-shared-view source)))]
+                (ast.ast-source-span-start-line source)
+                (ast.ast-source-span-end-line source))]
             (begin
               (if (and
                 exact-editable?
@@ -13285,8 +13119,7 @@
                     span.start-byte
                     span.end-byte
                     (lsp-semantic-token-type-for-kind record.kind)
-                    (lsp-semantic-token-modifiers-for-record
-                      (owned_view.compiler-owned-shared-view record))
+                    (lsp-semantic-token-modifiers-for-record record)
                     3))
                 unit)
               (set! record-index (+ record-index 1))))))]
@@ -13506,8 +13339,7 @@
     [uri : String doc.uri]
     [scanned : lsp_decl_vec.Vec
       (lsp-scan-decls (owned_view.compiler-owned-shared-view text))]
-    [slots : (__tl_dyn-array lsp_vector_families.LspDocument)
-      (owned_view.compiler-owned-shared-view docs.slots)]
+    [slots : (__tl_dyn-array lsp_vector_families.LspDocument) docs.slots]
     [idx : i64 (lsp-documents-find-index docs uri)]
     (begin
       (if (>= idx 0)
@@ -13555,7 +13387,7 @@
         (lsp-decls-to-name-list decls (+ idx 1))))))
 
 (define (lsp-decl-selection-range-json
-  [entry : lsp_vector_families.LspDeclEntry]) : json.Json
+  [entry : (& entry lsp_vector_families.LspDeclEntry)]) : json.Json
   (lsp-json-object2
     "start"
     (lsp-position entry.name-line entry.name-col)
@@ -13577,8 +13409,7 @@
         "uri"
         (json.JsonString row.uri)
         "range"
-        (lsp-decl-selection-range-json
-          (owned_view.compiler-owned-shared-view decl)))
+        (lsp-decl-selection-range-json decl))
       "containerName"
       (json.JsonString row.module))))
 
@@ -13641,11 +13472,9 @@
     "kind"
     (lsp-json-number entry.symbol-kind)
     "range"
-    (lsp-decl-entry-form-range-json
-      (owned_view.compiler-owned-shared-view entry))
+    (lsp-decl-entry-form-range-json entry)
     "selectionRange"
-    (lsp-decl-selection-range-json
-      (owned_view.compiler-owned-shared-view entry))))
+    (lsp-decl-selection-range-json entry)))
 
 (define (lsp-decls-to-document-symbol-list
   [decls : lsp_decl_vec.Vec]
@@ -13669,9 +13498,7 @@
   [id : json.Json]
   [params : json.Json]
   [docs : lsp_document_vec.Vec]) : unit
-  (match (lsp-get-document-decls
-    (owned_view.compiler-owned-shared-view params)
-    (owned_view.compiler-owned-shared-view docs))
+  (match (lsp-get-document-decls params docs)
     [(LspDocumentDeclsLookup.Found _ _ _ decls)
       (lsp-write-response id (lsp-document-symbols-json decls))]
     [(LspDocumentDeclsLookup.Missing)
@@ -13822,7 +13649,7 @@
 ;; Helper: get offset from LspDeclEntry start position
 (define (lsp-offset-from-entry-start
   [text : String]
-  [entry : lsp_vector_families.LspDeclEntry]) : i64
+  [entry : (& entry lsp_vector_families.LspDeclEntry)]) : i64
   (lsp-offset-at-position
     text
     (- entry.form-start-line 1)
@@ -13837,7 +13664,7 @@
     [source-start : i64
       (lsp-offset-from-entry-start
         (owned_view.compiler-owned-shared-view text)
-        (owned_view.compiler-owned-shared-view source))]
+        source)]
     [source-end : i64
       (lsp-offset-from-entry-end
         (owned_view.compiler-owned-shared-view text)
@@ -13845,7 +13672,7 @@
     [dest-start : i64
       (lsp-offset-from-entry-start
         (owned_view.compiler-owned-shared-view text)
-        (owned_view.compiler-owned-shared-view dest))]
+        dest)]
     [dest-end : i64
       (lsp-offset-from-entry-end
         (owned_view.compiler-owned-shared-view text)
@@ -13889,13 +13716,13 @@
     [start : i64
       (lsp-offset-from-entry-start
         (owned_view.compiler-owned-shared-view text)
-        (owned_view.compiler-owned-shared-view entry))]
+        entry)]
     [end : i64 (lsp-offset-from-entry-end text entry)]
     (and (>= offset start) (< offset end))))
 
 (define (lsp-decl-index-at-position
   [text : String]
-  [decls : lsp_decl_vec.Vec]
+  [decls : (& decls lsp_decl_vec.Vec)]
   [line : i64]
   [col : i64]) : i64
   (if (or (< line 0) (< col 0))
@@ -13932,9 +13759,7 @@
   [decls : lsp_decl_vec.Vec]) : String
   (let
     [pos-key : String "position"]
-    (match (json.object-get
-      (owned_view.compiler-owned-shared-view params)
-      (& pos-key))
+    (match (json.object-get params (& pos-key))
       [(json.JsonFound position)
         (let
           [line : i64
@@ -13942,17 +13767,8 @@
               (owned_view.compiler-owned-shared-view position)
               "line"
               0)]
-          [col : i64
-            (lsp-json-int-field-default
-              (owned_view.compiler-owned-shared-view position)
-              "character"
-              0)]
-          [idx : i64
-            (lsp-decl-index-at-position
-              text
-              (owned_view.compiler-owned-shared-view decls)
-              line
-              col)]
+          [col : i64 (lsp-json-int-field-default position "character" 0)]
+          [idx : i64 (lsp-decl-index-at-position text decls line col)]
           (if (= idx -1)
             ""
             (__tl-project-field
@@ -13977,7 +13793,7 @@
 
 (define (lsp-structural-move-name [params : json.Json] [text : String]) : String
   (lsp-structural-move-name-with-decls
-    (owned_view.compiler-owned-shared-view params)
+    params
     (owned_view.compiler-owned-shared-view text)
     (lsp-scan-decls text)))
 
@@ -14032,7 +13848,7 @@
 
 (define (lsp-nearest-decl-index
   [text : String]
-  [decls : lsp_decl_vec.Vec]
+  [decls : (& decls lsp_decl_vec.Vec)]
   [offset : i64]) : i64
   (let
     [i : i64 0]
@@ -14047,7 +13863,7 @@
           [start : i64
             (lsp-offset-from-entry-start
               (owned_view.compiler-owned-shared-view text)
-              (owned_view.compiler-owned-shared-view entry))]
+              entry)]
           [end : i64
             (lsp-offset-from-entry-end
               (owned_view.compiler-owned-shared-view text)
@@ -14063,7 +13879,7 @@
       best)))
 
 (define (lsp-decl-entry-form-range-json
-  [entry : lsp_vector_families.LspDeclEntry]) : json.Json
+  [entry : (& entry lsp_vector_families.LspDeclEntry)]) : json.Json
   (lsp-json-object2
     "start"
     (lsp-position entry.form-start-line entry.form-start-col)
@@ -14084,7 +13900,7 @@
     [nearest-index : i64
       (lsp-nearest-decl-index
         (owned_view.compiler-owned-shared-view text)
-        (owned_view.compiler-owned-shared-view decls)
+        decls
         offset)]
     [nearest-line : i64 -1]
     [nearest-col : i64 -1]
@@ -14103,10 +13919,7 @@
             (set!
               nearest-kind
               (owned_view.compiler-owned-shared-view entry.kind))
-            (set!
-              nearest-range
-              (lsp-decl-entry-form-range-json
-                (owned_view.compiler-owned-shared-view entry)))))
+            (set! nearest-range (lsp-decl-entry-form-range-json entry))))
         unit)
       (lsp-json-object
         (lsp-json-member
@@ -14202,7 +14015,7 @@
       (>= (lsp-common-prefix-len needle name) 2))))
 
 (define (lsp-decls-to-similar-name-list
-  [decls : lsp_decl_vec.Vec]
+  [decls : (& decls lsp_decl_vec.Vec)]
   [idx : i64]
   [needle : String]) : json.JsonSeq
   (if (>= idx (lsp_decl_vec.len (& decls)))
@@ -14233,11 +14046,7 @@
         (json.JsonString (owned_view.compiler-owned-shared-view name))
         (lsp-json-member
           "similarNames"
-          (lsp-json-array
-            (lsp-decls-to-similar-name-list
-              (owned_view.compiler-owned-shared-view decls)
-              0
-              name))
+          (lsp-json-array (lsp-decls-to-similar-name-list decls 0 name))
           (lsp-json-member
             "allNames"
             (lsp-json-array
@@ -14301,8 +14110,7 @@
 (define (lsp-diagnostic-uris-copy
   [uris : lsp_vector_families.LspDiagnosticUris]) : lsp_vector_families.LspDiagnosticUris
   (let
-    [n : i64
-      (lsp-diagnostic-uris-len (owned_view.compiler-owned-shared-view uris))]
+    [n : i64 (lsp-diagnostic-uris-len uris)]
     [slots : (__tl_dyn-array String) (__tl_make-array String n)]
     [index : i64 0]
     (begin
@@ -14387,10 +14195,10 @@
   [params : json.Json]
   [docs : lsp_document_vec.Vec]
   [formatted : String]) : LspDocumentHandleResult
-  (match (lsp-tl-request-uri (owned_view.compiler-owned-shared-view params))
+  (match (lsp-tl-request-uri params)
     [(LspJsonText.Ok uri)
       (match (lsp-documents-lookup
-        (owned_view.compiler-owned-shared-view docs)
+        docs
         (owned_view.compiler-owned-shared-view uri))
         [(LspDocumentLookup.Found path _ diagnostic-uris)
           (lsp-tl-save-known-and-continue
@@ -14472,8 +14280,8 @@
       (let
         [name : String
           (lsp-structural-move-name-with-decls
-            (owned_view.compiler-owned-shared-view params)
-            (owned_view.compiler-owned-shared-view text)
+            params
+            text
             (owned_view.compiler-owned-shared-view decls))]
         (begin
           (lsp-write-declaration-not-found-error id decls name)
@@ -14576,35 +14384,25 @@
   [name : String]
   [destination : String]) : LspDocumentHandleResult
   (match (lsp-structural-move-after-destination-text
-    (owned_view.compiler-owned-shared-view text)
-    (owned_view.compiler-owned-shared-view decls)
+    text
+    decls
     (owned_view.compiler-owned-shared-view name)
     (owned_view.compiler-owned-shared-view destination))
     [(LspEditResult.Ok result)
       (lsp-write-structural-edit-success id params docs result)]
     [(LspEditResult.Err message)
       (cond
-        [(string.eq
-            (owned_view.compiler-owned-shared-view message)
-            "Declaration not found")
+        [(string.eq message "Declaration not found")
           (begin
-            (lsp-write-declaration-not-found-error
-              id
-              (owned_view.compiler-owned-shared-view decls)
-              name)
+            (lsp-write-declaration-not-found-error id decls name)
             (LspDocumentHandleResult.Continue docs))]
-        [(string.eq
-            (owned_view.compiler-owned-shared-view message)
-            "Destination declaration not found")
+        [(string.eq message "Destination declaration not found")
           (begin
             (lsp-write-declaration-context-error
               id
-              (owned_view.compiler-owned-shared-view decls)
+              decls
               (owned_view.compiler-owned-shared-view destination)
-              (lsp-str3
-                "Destination declaration '"
-                (owned_view.compiler-owned-shared-view destination)
-                "' not found"))
+              (lsp-str3 "Destination declaration '" destination "' not found"))
             (LspDocumentHandleResult.Continue docs))]
         [else
           (begin
@@ -14620,19 +14418,16 @@
   [name : String]
   [direction : String]) : LspDocumentHandleResult
   (match (lsp-structural-move-direction-text
-    (owned_view.compiler-owned-shared-view text)
-    (owned_view.compiler-owned-shared-view decls)
+    text
+    decls
     (owned_view.compiler-owned-shared-view name)
-    (owned_view.compiler-owned-shared-view direction))
+    direction)
     [(LspEditResult.Ok result)
       (lsp-write-structural-edit-success id params docs result)]
     [(LspEditResult.Err message)
       (if (string.eq message "Declaration not found")
         (begin
-          (lsp-write-declaration-not-found-error
-            id
-            (owned_view.compiler-owned-shared-view decls)
-            name)
+          (lsp-write-declaration-not-found-error id decls name)
           (LspDocumentHandleResult.Continue docs))
         (begin
           (lsp-write-error id -32600 message)
@@ -14703,9 +14498,7 @@
     (owned_view.compiler-owned-shared-view params)
     (owned_view.compiler-owned-shared-view docs))
     [(LspDocumentDeclsLookup.Found path text _ decls)
-      (match (lsp-json-string-field
-        (owned_view.compiler-owned-shared-view params)
-        "name")
+      (match (lsp-json-string-field params "name")
         [(LspJsonText.Ok name)
           (let
             [i : i64 0]
@@ -14902,9 +14695,7 @@
             (if (lsp-check-cache-valid?
               (owned_view.compiler-owned-shared-view check-cache))
               (begin
-                (lsp-write-check-cache-response
-                  id
-                  (owned_view.compiler-owned-shared-view check-cache))
+                (lsp-write-check-cache-response id check-cache)
                 (LspDocumentHandleResult.Continue docs))
               (lsp-run-check-and-respond
                 id
@@ -15149,10 +14940,7 @@
     (begin
       (while (and (< cursor limit) (<= cursor target))
         (let
-          [current : char
-            (string.string-ref
-              (owned_view.compiler-owned-shared-view text)
-              cursor)]
+          [current : char (string.string-ref text cursor)]
           (cond
             [(lsp-ws? current)
               (set!
@@ -15220,11 +15008,7 @@
                     cursor
                     (if (and
                       (< (+ cursor 1) limit)
-                      (=
-                        (string.string-ref
-                          (owned_view.compiler-owned-shared-view text)
-                          (+ cursor 1))
-                        '@'))
+                      (= (string.string-ref text (+ cursor 1)) '@'))
                       2
                       1))]
                 [datum-start : i64
@@ -15240,7 +15024,7 @@
                 (if (and (>= target datum-start) (< target datum-end))
                   (return
                     (lsp-symbol-in-quoted-data-range?
-                      (owned_view.compiler-owned-shared-view text)
+                      text
                       datum-start
                       datum-end
                       target
@@ -15269,7 +15053,7 @@
                     (let
                       [head : String
                         (string.substring
-                          (owned_view.compiler-owned-shared-view text)
+                          text
                           head-start
                           (- head-end head-start))]
                       [child-quoted : bool
@@ -15285,7 +15069,7 @@
                           [else quoted])]
                       (return
                         (lsp-symbol-in-quoted-data-range?
-                          (owned_view.compiler-owned-shared-view text)
+                          text
                           head-end
                           form-end
                           target
@@ -15936,8 +15720,7 @@
                 -32600
                 (lsp-str2
                   "newText is not valid form(s): "
-                  (lsp-validate-forms-error
-                    (owned_view.compiler-owned-shared-view new-text))))
+                  (lsp-validate-forms-error new-text)))
               (LspDocumentHandleResult.Continue docs))
             (let
               [n : i64 (lsp_decl_vec.len (& decls))]
@@ -16125,7 +15908,7 @@
                           (lsp-handle-code-action
                             id
                             params
-                            (owned_view.compiler-owned-shared-view docs)
+                            docs
                             (owned_view.compiler-owned-shared-view stdlib-roots))]
                         [(json.JsonMissing)
                           (lsp-write-response
@@ -16155,7 +15938,7 @@
                           (lsp-handle-definition
                             id
                             params
-                            (owned_view.compiler-owned-shared-view docs)
+                            docs
                             (owned_view.compiler-owned-shared-view stdlib-roots))]
                         [(json.JsonMissing)
                           (lsp-write-response id json.JsonNull)]))]
@@ -16229,9 +16012,7 @@
             unit)
           (if (and
             (not handled)
-            (string.eq
-              (owned_view.compiler-owned-shared-view method)
-              "textDocument/signatureHelp"))
+            (string.eq method "textDocument/signatureHelp"))
             (begin
               (set! handled true)
               (let
@@ -16246,10 +16027,7 @@
                         (owned_view.compiler-owned-shared-view message)
                         (& params-key))
                         [(json.JsonFound params)
-                          (lsp-signature-help-respond
-                            id
-                            params
-                            (owned_view.compiler-owned-shared-view docs))]
+                          (lsp-signature-help-respond id params docs)]
                         [(json.JsonMissing)
                           (lsp-write-response id json.JsonNull)]))]
                   [(json.JsonMissing) unit]))
@@ -16276,9 +16054,9 @@
                           (lsp-handle-inlay
                             id
                             params
-                            (owned_view.compiler-owned-shared-view docs)
+                            docs
                             (owned_view.compiler-owned-shared-view stdlib-roots)
-                            (owned_view.compiler-owned-shared-view job-state))]
+                            job-state)]
                         [(json.JsonMissing)
                           (lsp-write-response
                             id
@@ -16304,10 +16082,7 @@
                         (owned_view.compiler-owned-shared-view message)
                         (& params-key))
                         [(json.JsonFound params)
-                          (lsp-handle-formatting
-                            id
-                            params
-                            (owned_view.compiler-owned-shared-view docs))]
+                          (lsp-handle-formatting id params docs)]
                         [(json.JsonMissing)
                           (lsp-write-response
                             id
@@ -16333,10 +16108,7 @@
                         (owned_view.compiler-owned-shared-view message)
                         (& params-key))
                         [(json.JsonFound params)
-                          (lsp-handle-hover
-                            id
-                            params
-                            (owned_view.compiler-owned-shared-view docs))]
+                          (lsp-handle-hover id params docs)]
                         [(json.JsonMissing)
                           (lsp-write-response id json.JsonNull)]))]
                   [(json.JsonMissing) unit]))
@@ -16363,7 +16135,7 @@
                           (lsp-handle-document-link
                             id
                             params
-                            (owned_view.compiler-owned-shared-view docs)
+                            docs
                             (owned_view.compiler-owned-shared-view stdlib-roots))]
                         [(json.JsonMissing)
                           (lsp-write-response
@@ -16437,9 +16209,7 @@
                   (set! result tool-result))))
             unit)
           result))]
-    [(LspJsonText.Missing)
-      (LspDocumentHandleResult.Continue
-        (owned_view.compiler-owned-shared-view docs))]))
+    [(LspJsonText.Missing) (LspDocumentHandleResult.Continue docs)]))
 
 (define (lsp-tool-method-mutates-document? [method : String]) : bool
   (or
@@ -16522,9 +16292,7 @@
   [stdlib-roots : lsp_svec.Vec]) : LspHandleResult
   (let
     [params-key : String "params"]
-    (match (json.object-get
-      (owned_view.compiler-owned-shared-view message)
-      (& params-key))
+    (match (json.object-get message (& params-key))
       [(json.JsonMissing) (LspHandleResult.Continue state)]
       [(json.JsonFound params)
         (cond
@@ -16544,9 +16312,7 @@
   [id : json.Json]
   [params : json.Json]
   [state : (& state lsp_vector_families.LspServerState)]) : unit
-  (match (lsp-json-string-field
-    (owned_view.compiler-owned-shared-view params)
-    "query")
+  (match (lsp-json-string-field params "query")
     [(LspJsonText.Missing)
       (lsp-write-error id -32602 "workspace/symbol requires a string query")]
     [(LspJsonText.Ok query)
@@ -16558,9 +16324,7 @@
   [id : json.Json]
   [params : json.Json]
   [state : (& state lsp_vector_families.LspServerState)]) : unit
-  (match (lsp-json-string-field
-    (owned_view.compiler-owned-shared-view params)
-    "name")
+  (match (lsp-json-string-field params "name")
     [(LspJsonText.Missing) (lsp-write-error id -32600 "Missing name parameter")]
     [(LspJsonText.Ok name)
       (if (= (string.string-length name) 0)
@@ -16606,7 +16370,7 @@
     [query : LspWorkspaceSemanticQuery
       (lsp-workspace-semantic-query
         (& state)
-        (lsp-global-shared-view stdlib-roots)
+        stdlib-roots
         (lsp-global-shared-view canonical-key))]
     (if (= query.completeness 1)
       (let
@@ -16772,7 +16536,7 @@
         (cond
           [(not
               (lsp-rename-valid-new-name-for-target?
-                (lsp-global-shared-view target)
+                target
                 (lsp-global-shared-view new-name)))
             (lsp-write-error
               id
@@ -16801,8 +16565,8 @@
                       (lsp-rename-workspace-edit
                         state
                         query
-                        (lsp-global-shared-view target)
-                        (lsp-global-shared-view new-name)
+                        target
+                        new-name
                         module-move))]
                   [(LspRenameValidation.Err message)
                     (lsp-write-error id -32803 message)])])])])))
@@ -16838,10 +16602,7 @@
                 "line"
                 -1)]
             [character : i64
-              (lsp-json-int-field-default
-                (lsp-global-shared-view position)
-                "character"
-                -1)]
+              (lsp-json-int-field-default position "character" -1)]
             (match (lsp-offset-at-position-checked
               (string.copy (& doc.text))
               line
@@ -16861,7 +16622,7 @@
                       [query : LspWorkspaceSemanticQuery
                         (lsp-workspace-semantic-query
                           (& state)
-                          (lsp-global-shared-view stdlib-roots)
+                          stdlib-roots
                           (lsp-global-shared-view target.canonical-key))]
                       (if (= query.completeness 1)
                         (let
@@ -16872,7 +16633,7 @@
                           [refreshed-query : LspWorkspaceSemanticQuery
                             (lsp-workspace-semantic-query
                               (& refreshed)
-                              (lsp-global-shared-view stdlib-roots)
+                              stdlib-roots
                               (lsp-global-shared-view target.canonical-key))]
                           (begin
                             (lsp-rename-write-result!
@@ -16960,9 +16721,7 @@
               (arena.tl_arena_set scratch))]
           [params-key : String "params"]
           [next : lsp_vector_families.LspServerState
-            (match (json.object-get
-              (lsp-global-shared-view message)
-              (& params-key))
+            (match (json.object-get message (& params-key))
               [(json.JsonMissing)
                 (begin
                   (lsp-write-error id -32602 "Rename requires params")
@@ -17003,9 +16762,7 @@
               (arena.tl_arena_set scratch))]
           [params-key : String "params"]
           (begin
-            (match (json.object-get
-              (owned_view.compiler-owned-shared-view message)
-              (& params-key))
+            (match (json.object-get message (& params-key))
               [(json.JsonMissing)
                 (if (string.eq method "workspace/symbol")
                   (lsp-write-error
@@ -17043,9 +16800,7 @@
               (arena.tl_arena_set scratch))]
           [params-key : String "params"]
           (begin
-            (match (json.object-get
-              (owned_view.compiler-owned-shared-view message)
-              (& params-key))
+            (match (json.object-get message (& params-key))
               [(json.JsonMissing) (lsp-write-response id json.JsonNull)]
               [(json.JsonFound params)
                 (lsp-handle-semantic-tokens-with-params!
@@ -17100,10 +16855,10 @@
           (let
             [document-result : LspDocumentHandleResult
               (lsp-handle-document-message
-                (owned_view.compiler-owned-shared-view message)
+                message
                 (owned_view.compiler-owned-shared-view state.documents)
-                (owned_view.compiler-owned-shared-view stdlib-roots)
-                (owned_view.compiler-owned-shared-view job-state))]
+                stdlib-roots
+                job-state)]
             (cond
               [(lsp-tool-method-mutates-document?
                   (owned_view.compiler-owned-shared-view method))
@@ -17311,7 +17066,7 @@
                     message
                     (owned_view.compiler-owned-shared-view state)
                     (owned_view.compiler-owned-shared-view stdlib-roots)
-                    (owned_view.compiler-owned-shared-view job-state))
+                    job-state)
                     [(LspHandleResult.Continue next-state)
                       (set! state next-state)]
                     [(LspHandleResult.Exit next-state)
@@ -17505,7 +17260,9 @@
               stderr-path
               status-path)))))))
 
-(define (lsp-transcript-batch-id-seen? [ids : lsp_svec.Vec] [case-id : String]) : bool
+(define (lsp-transcript-batch-id-seen?
+  [ids : (& ids lsp_svec.Vec)]
+  [case-id : String]) : bool
   (let
     [i : i64 0]
     [seen : bool false]
@@ -17520,8 +17277,7 @@
 
 (define (lsp-transcript-batch-validate [text : String]) : String
   (let
-    [n : i64
-      (string.string-length (owned_view.compiler-owned-shared-view text))]
+    [n : i64 (string.string-length text)]
     [first-end : i64
       (lsp-transcript-batch-line-end
         (owned_view.compiler-owned-shared-view text)
@@ -17580,7 +17336,7 @@
                     [status-path : String entry.status-path]
                     (cond
                       [(lsp-transcript-batch-id-seen?
-                          (owned_view.compiler-owned-shared-view ids)
+                          ids
                           (owned_view.compiler-owned-shared-view case-id))
                         (set!
                           error
@@ -17589,13 +17345,13 @@
                             case-id))]
                       [(or
                           (lsp-transcript-batch-id-seen?
-                            (owned_view.compiler-owned-shared-view result-paths)
+                            result-paths
                             (owned_view.compiler-owned-shared-view stdout-path))
                           (lsp-transcript-batch-id-seen?
-                            (owned_view.compiler-owned-shared-view result-paths)
+                            result-paths
                             (owned_view.compiler-owned-shared-view stderr-path))
                           (lsp-transcript-batch-id-seen?
-                            (owned_view.compiler-owned-shared-view result-paths)
+                            result-paths
                             (owned_view.compiler-owned-shared-view status-path))
                           (string.eq stdout-path stderr-path)
                           (string.eq stdout-path status-path)
@@ -17666,36 +17422,29 @@
               line-number)
               [(ResultLspTranscriptBatchEntry.Err message)
                 (begin
-                  (io.print-error
-                    (owned_view.compiler-owned-shared-view message))
+                  (io.print-error message)
                   (io.print-error "\n")
                   (set! status 2))]
               [(ResultLspTranscriptBatchEntry.Ok entry)
                 (let
                   [input : String
-                    (byte_buf.to-string
-                      (io.read-file
-                        (owned_view.compiler-owned-shared-view entry.input-path)))]
+                    (byte_buf.to-string (io.read-file entry.input-path))]
                   [result : LspTranscriptResult
                     (lsp-frame-run-transcript
                       (& input)
                       (owned_view.compiler-owned-shared-view stdlib-roots)
                       prefix-cache-stats)]
                   (begin
+                    (lsp-write-file-text entry.stdout-path result.stdout)
+                    (lsp-write-file-text entry.stderr-path result.stderr)
                     (lsp-write-file-text
-                      (owned_view.compiler-owned-shared-view entry.stdout-path)
-                      (owned_view.compiler-owned-shared-view result.stdout))
-                    (lsp-write-file-text
-                      (owned_view.compiler-owned-shared-view entry.stderr-path)
-                      (owned_view.compiler-owned-shared-view result.stderr))
-                    (lsp-write-file-text
-                      (owned_view.compiler-owned-shared-view entry.status-path)
+                      entry.status-path
                       (str_cat.str-cat (string.int->string result.status) "\n"))
                     (io.print-format
                       "{}"
                       (lsp-str3
                         "lsp-transcript-batch-result\t"
-                        (owned_view.compiler-owned-shared-view entry.case-id)
+                        entry.case-id
                         "\n"))))])
             (set! cursor next)
             (set! line-number (+ line-number 1)))))
@@ -17821,9 +17570,7 @@
               (set! found true)
               (let
                 [kind : String entry.kind]
-                [n2 : i64
-                  (string.string-length
-                    (owned_view.compiler-owned-shared-view text))]
+                [n2 : i64 (string.string-length text)]
                 (if (or (string.eq kind "function") (string.eq kind "macro"))
                   (let
                     [form-start-off : i64
@@ -17848,11 +17595,7 @@
                         n2)]
                     (if (and
                       (< after-kw2 n2)
-                      (=
-                        (string.string-ref
-                          (owned_view.compiler-owned-shared-view text)
-                          after-kw2)
-                        '('))
+                      (= (string.string-ref text after-kw2) '('))
                       (let
                         [body-start-off : i64
                           (lsp-find-body-start-offset
@@ -17934,9 +17677,7 @@
                 (set! found true)
                 (let
                   [kind : String entry.kind]
-                  [n2 : i64
-                    (string.string-length
-                      (owned_view.compiler-owned-shared-view text))]
+                  [n2 : i64 (string.string-length text)]
                   (if (or (string.eq kind "function") (string.eq kind "macro"))
                     (let
                       [form-start-off : i64
@@ -17961,11 +17702,7 @@
                           n2)]
                       (if (and
                         (< after-kw2 n2)
-                        (=
-                          (string.string-ref
-                            (owned_view.compiler-owned-shared-view text)
-                            after-kw2)
-                          '('))
+                        (= (string.string-ref text after-kw2) '('))
                         (let
                           [body-start-off : i64
                             (lsp-find-body-start-offset
@@ -17988,7 +17725,7 @@
                               body-end-off)]
                           [body-text : String
                             (string.substring
-                              (owned_view.compiler-owned-shared-view text)
+                              text
                               body-start-off
                               (- body-end-off body-start-off))]
                           [replaced-body : String
@@ -18369,7 +18106,7 @@
     [idx : i64
       (lsp-decl-index-at-position
         (owned_view.compiler-owned-shared-view text)
-        (owned_view.compiler-owned-shared-view decls)
+        decls
         line
         col)]
     (if (= idx -1)
@@ -18380,7 +18117,7 @@
         [start : i64
           (lsp-offset-from-entry-start
             (owned_view.compiler-owned-shared-view text)
-            (owned_view.compiler-owned-shared-view entry))]
+            entry)]
         [end : i64
           (lsp-offset-from-entry-end
             (owned_view.compiler-owned-shared-view text)
@@ -18442,7 +18179,7 @@
               [(LspPathParam.Ok path-items)
                 (lsp-write-structural-edit-result
                   id
-                  (owned_view.compiler-owned-shared-view params)
+                  params
                   docs
                   (lsp-replace-form-by-path-with-decls
                     text
@@ -18463,9 +18200,9 @@
                     (owned_view.compiler-owned-shared-view params)
                     docs
                     (lsp-replace-form-at-position-from-params-with-decls
-                      (owned_view.compiler-owned-shared-view text)
-                      (owned_view.compiler-owned-shared-view decls)
-                      (owned_view.compiler-owned-shared-view params)
+                      text
+                      decls
+                      params
                       new-text))
                   (lsp-write-structural-edit-result
                     id
@@ -18482,9 +18219,9 @@
                   (owned_view.compiler-owned-shared-view params)
                   docs
                   (lsp-replace-form-at-position-from-params-with-decls
-                    (owned_view.compiler-owned-shared-view text)
-                    (owned_view.compiler-owned-shared-view decls)
-                    (owned_view.compiler-owned-shared-view params)
+                    text
+                    decls
+                    params
                     new-text))]))]
         [(LspJsonText.Missing)
           (begin
@@ -18585,7 +18322,7 @@
     [start : i64
       (lsp-offset-from-entry-start
         (owned_view.compiler-owned-shared-view text)
-        (owned_view.compiler-owned-shared-view entry))]
+        entry)]
     [end : i64
       (lsp-offset-from-entry-end
         (owned_view.compiler-owned-shared-view text)
@@ -18636,8 +18373,7 @@
         (match value
           [(json.JsonArray items)
             (let
-              [path-items : json.JsonSeq
-                (owned_view.compiler-owned-box-shared-view items)]
+              [path-items : json.JsonSeq (deref items)]
               (if (=
                 (json.list-count
                   (owned_view.compiler-owned-shared-view path-items))
@@ -18821,7 +18557,7 @@
                 [start : i64
                   (lsp-offset-from-entry-start
                     (owned_view.compiler-owned-shared-view text)
-                    (owned_view.compiler-owned-shared-view entry))]
+                    entry)]
                 [end : i64
                   (lsp-offset-from-entry-end
                     (owned_view.compiler-owned-shared-view text)
@@ -18829,10 +18565,7 @@
                 (if (or
                   (< start 0)
                   (<= end start)
-                  (>
-                    end
-                    (string.string-length
-                      (owned_view.compiler-owned-shared-view text))))
+                  (> end (string.string-length text)))
                   (LspPathLookup.Err "Declaration range is invalid")
                   (if (<=
                     (json.list-count
@@ -18840,7 +18573,7 @@
                     1)
                     (LspPathLookup.Found start end name)
                     (lsp-lookup-form-path-tail
-                      (owned_view.compiler-owned-shared-view text)
+                      text
                       (json.list-rest path)
                       start
                       end))))))]
@@ -18923,7 +18656,7 @@
     [idx : i64
       (lsp-decl-index-at-position
         (owned_view.compiler-owned-shared-view text)
-        (owned_view.compiler-owned-shared-view decls)
+        decls
         line
         col)]
     (if (= idx -1)
@@ -18934,7 +18667,7 @@
         [start : i64
           (lsp-offset-from-entry-start
             (owned_view.compiler-owned-shared-view text)
-            (owned_view.compiler-owned-shared-view entry))]
+            entry)]
         [end : i64
           (lsp-offset-from-entry-end
             (owned_view.compiler-owned-shared-view text)
@@ -18976,7 +18709,7 @@
         [start : i64
           (lsp-offset-from-entry-start
             (owned_view.compiler-owned-shared-view text)
-            (owned_view.compiler-owned-shared-view entry))]
+            entry)]
         [end : i64
           (lsp-offset-from-entry-end
             (owned_view.compiler-owned-shared-view text)
@@ -19015,7 +18748,7 @@
     [idx : i64
       (lsp-decl-index-at-position
         (owned_view.compiler-owned-shared-view text)
-        (owned_view.compiler-owned-shared-view decls)
+        decls
         line
         col)]
     (if (= idx -1)
@@ -19076,9 +18809,9 @@
                 new-text))))]
       [(LspJsonText.Missing)
         (lsp-insert-after-position-from-params-with-decls
-          (owned_view.compiler-owned-shared-view text)
-          (owned_view.compiler-owned-shared-view decls)
-          (owned_view.compiler-owned-shared-view params)
+          text
+          decls
+          params
           new-text)])))
 
 ;; tl/delete - Delete the form by name, with position fallback
@@ -19100,9 +18833,9 @@
               (owned_view.compiler-owned-shared-view params)
               docs
               (lsp-delete-form-at-position-from-params-with-decls
-                (owned_view.compiler-owned-shared-view text)
-                (owned_view.compiler-owned-shared-view decls)
-                (owned_view.compiler-owned-shared-view params)))
+                text
+                decls
+                params))
             (lsp-write-structural-edit-result
               id
               params
@@ -19116,7 +18849,7 @@
             (lsp-delete-form-at-position-from-params-with-decls
               text
               decls
-              (owned_view.compiler-owned-shared-view params)))])]
+              params))])]
     [(LspDocumentDeclsLookup.Missing)
       (begin
         (lsp-write-error id -32600 "Document not found")
@@ -19139,11 +18872,7 @@
             id
             (owned_view.compiler-owned-shared-view params)
             docs
-            (lsp-insert-after-text-with-decls
-              text
-              (owned_view.compiler-owned-shared-view params)
-              new-text
-              decls))]
+            (lsp-insert-after-text-with-decls text params new-text decls))]
         [(LspJsonText.Missing)
           (begin
             (lsp-write-error id -32600 "Missing newText parameter")
@@ -19275,10 +19004,7 @@
           (if (not
             (lsp-text-is-valid-forms
               (owned_view.compiler-owned-shared-view new-body)))
-            (lsp-write-replace-body-validation-error
-              id
-              docs
-              (owned_view.compiler-owned-shared-view new-body))
+            (lsp-write-replace-body-validation-error id docs new-body)
             (if (lsp-json-has-field?
               (owned_view.compiler-owned-shared-view params)
               "path")
@@ -19383,28 +19109,21 @@
         [(LspJsonText.Ok name)
           (if (= (string.string-length name) 0)
             (lsp-write-read-form-result
-              (owned_view.compiler-owned-shared-view id)
+              id
               (owned_view.compiler-owned-shared-view params)
-              (lsp-read-form-at-position-from-params
-                (owned_view.compiler-owned-shared-view text)
-                (owned_view.compiler-owned-shared-view params))
-              (owned_view.compiler-owned-shared-view docs))
+              (lsp-read-form-at-position-from-params text params)
+              docs)
             (lsp-write-read-form-result
-              (owned_view.compiler-owned-shared-view id)
-              (owned_view.compiler-owned-shared-view params)
-              (lsp-read-form-by-name-with-decls
-                (owned_view.compiler-owned-shared-view text)
-                name
-                decls)
-              (owned_view.compiler-owned-shared-view docs)))]
+              id
+              params
+              (lsp-read-form-by-name-with-decls text name decls)
+              docs))]
         [(LspJsonText.Missing)
           (lsp-write-read-form-result
-            (owned_view.compiler-owned-shared-view id)
+            id
             (owned_view.compiler-owned-shared-view params)
-            (lsp-read-form-at-position-from-params
-              (owned_view.compiler-owned-shared-view text)
-              (owned_view.compiler-owned-shared-view params))
-            (owned_view.compiler-owned-shared-view docs))])]
+            (lsp-read-form-at-position-from-params text params)
+            docs)])]
     [(LspDocumentDeclsLookup.Missing)
       (begin
         (lsp-write-error id -32600 "Document not found")
@@ -19412,7 +19131,7 @@
 
 (define (lsp-structural-move-after-destination-text
   [text : String]
-  [decls : lsp_decl_vec.Vec]
+  [decls : (& decls lsp_decl_vec.Vec)]
   [name : String]
   [destination : String]) : LspEditResult
   (let
@@ -19433,7 +19152,7 @@
 
 (define (lsp-structural-move-direction-text
   [text : String]
-  [decls : lsp_decl_vec.Vec]
+  [decls : (& decls lsp_decl_vec.Vec)]
   [name : String]
   [direction : String]) : LspEditResult
   (let
@@ -19467,7 +19186,7 @@
           [first-start : i64
             (lsp-offset-from-entry-start
               (owned_view.compiler-owned-shared-view text)
-              (owned_view.compiler-owned-shared-view first-entry))]
+              first-entry)]
           [first-end : i64
             (lsp-offset-from-entry-end
               (owned_view.compiler-owned-shared-view text)
@@ -19475,7 +19194,7 @@
           [second-start : i64
             (lsp-offset-from-entry-start
               (owned_view.compiler-owned-shared-view text)
-              (owned_view.compiler-owned-shared-view second-entry))]
+              second-entry)]
           [second-end : i64
             (lsp-offset-from-entry-end
               (owned_view.compiler-owned-shared-view text)
@@ -19513,19 +19232,13 @@
         [(LspJsonText.Ok destination)
           (lsp-structural-move-after-destination-text
             text
-            (owned_view.compiler-owned-shared-view decls)
+            decls
             name
             destination)]
         [(LspJsonText.Missing)
-          (match (lsp-json-string-field
-            (owned_view.compiler-owned-shared-view params)
-            "direction")
+          (match (lsp-json-string-field params "direction")
             [(LspJsonText.Ok direction)
-              (lsp-structural-move-direction-text
-                text
-                (owned_view.compiler-owned-shared-view decls)
-                name
-                direction)]
+              (lsp-structural-move-direction-text text decls name direction)]
             [(LspJsonText.Missing)
               (LspEditResult.Err "Missing direction or destination parameter")])]))))
 
@@ -19545,8 +19258,7 @@
             (if (lsp-json-has-field?
               (owned_view.compiler-owned-shared-view params)
               "path")
-              (match (lsp-json-path-field
-                (owned_view.compiler-owned-shared-view params))
+              (match (lsp-json-path-field params)
                 [(LspPathParam.Ok path-items)
                   (lsp-replace-form-by-path-with-decls
                     text
@@ -19611,8 +19323,7 @@
             (if (lsp-json-has-field?
               (owned_view.compiler-owned-shared-view params)
               "path")
-              (match (lsp-json-path-field
-                (owned_view.compiler-owned-shared-view params))
+              (match (lsp-json-path-field params)
                 [(LspPathParam.Ok path-items)
                   (lsp-replace-body-by-path-with-decls
                     text
@@ -19623,7 +19334,7 @@
               (let
                 [name : String
                   (lsp-structural-move-name-with-decls
-                    (owned_view.compiler-owned-shared-view params)
+                    params
                     (owned_view.compiler-owned-shared-view text)
                     (owned_view.compiler-owned-shared-view decls))]
                 (if (= (string.string-length name) 0)
@@ -19643,7 +19354,7 @@
                 (let
                   [name : String
                     (lsp-structural-move-name-with-decls
-                      (owned_view.compiler-owned-shared-view params)
+                      params
                       (owned_view.compiler-owned-shared-view text)
                       (owned_view.compiler-owned-shared-view decls))]
                   (if (= (string.string-length name) 0)
@@ -19784,7 +19495,7 @@
     "method")
     [(LspJsonText.Ok method)
       (match (lsp-batch-apply-edit
-        (owned_view.compiler-owned-shared-view method)
+        method
         (owned_view.compiler-owned-shared-view operation)
         (owned_view.compiler-owned-shared-view text))
         [(LspEditResult.Ok next-text)
@@ -19817,7 +19528,7 @@
         (owned_view.compiler-owned-shared-view text))
         [(LspBatchOpResult.Ok next-text result-json)
           (match (lsp-batch-run-operations
-            (json.list-rest (owned_view.compiler-owned-shared-view ops))
+            (json.list-rest ops)
             (+ index 1)
             next-text)
             [(LspBatchRunResult.Ok final-text tail-results)
@@ -19917,16 +19628,11 @@
         [(LspDocumentLookup.Found path text diagnostic-uris)
           (let
             [operations-key : String "operations"]
-            (match (json.object-get
-              (owned_view.compiler-owned-shared-view params)
-              (& operations-key))
+            (match (json.object-get params (& operations-key))
               [(json.JsonFound operations)
-                (match (owned_view.compiler-owned-shared-view operations)
+                (match operations
                   [(json.JsonArray items)
-                    (match (lsp-batch-run-operations
-                      (owned_view.compiler-owned-box-shared-view items)
-                      0
-                      text)
+                    (match (lsp-batch-run-operations (deref items) 0 text)
                       [(LspBatchRunResult.Ok edited-text results)
                         (let
                           [formatted : String

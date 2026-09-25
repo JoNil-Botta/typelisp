@@ -1,19 +1,10 @@
-;; CB-3 runtime coverage: the three shapes the widened recorder exists for, in
-;; one program. All six cells are length-equal and reset in one straight-line
-;; region, which is what makes their lengths comparable in one epoch.
-;;
-;; `chk-single` is the shape that refused `cfg-stack-node`: one store passes a
-;; dominating `keys[v]` check, and the other writes the literal 0, which the
-;; lowering hides behind a `mov` -- CB-1 read that store as an unchecked value
-;; and refused the whole array. `chk-multi` writes a MULTIPLY ASSIGNED value the
-;; same dominating check governs, which CB-1's one-definition rule refused and
-;; no loop bound rescues. `chk-copy` writes a value LOADED out of `chk-single`
-;; with no check on it anywhere, so only `chk-single`'s own content fact can
-;; admit it -- a fact a strictly earlier round of the walk had to establish.
-;;
-;; With all three admitted, the load-side checks in `chk-walk` -- `marks[e]` for
-;; `e` drawn from each array -- are the ones CB-3 retires, and the zero fill is
-;; covered by the dominating `marks[0]` check, which proves `len >= 1`.
+;; Runtime coverage for element-content shapes, in one program. All six cells
+;; are length-equal and reset in one straight-line region. `chk-single` has one
+;; store behind a dominating `keys[v]` check and one literal-0 store the
+;; lowering hides behind a `mov`; `chk-multi` writes a MULTIPLY ASSIGNED value
+;; the same dominating check governs; `chk-copy` writes a value LOADED out of
+;; `chk-single` with no check on it anywhere. `chk-walk` then indexes `marks`
+;; with elements drawn from each array.
 ;;
 ;; The answer must be identical at every optimization level, and every index
 ;; must stay in range.
@@ -63,7 +54,7 @@
       count)))
 
 ;; Clause (b). `slot` is assigned once outside the loop and once inside it, so
-;; it has more than one definition and CB-1 refuses it; the `keys[slot]` check
+;; it has more than one definition; the `keys[slot]` check
 ;; earlier in the same straight-line run governs the store, and nothing
 ;; reassigns `slot` between the two.
 (define (chk-many-fill
@@ -86,8 +77,8 @@
           (set! i (+ i 1))))
       count)))
 
-;; Clause (c). Nothing checks the stored value here: it is admitted only
-;; because `chk-single` already carries a content fact for this family.
+;; Clause (c). Nothing checks the stored value here: it is loaded out of
+;; `chk-single`, whose elements are all in range for this family.
 (define (chk-copy-fill
   [copy-vec : (&mut copy i64vec.Vec)]
   [single-vec : (& single i64vec.Vec)]

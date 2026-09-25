@@ -1,13 +1,9 @@
-;; CB-1 runtime coverage: the CSR shape the content-bounds summary exists for.
-;; `cb-edges` is a module-global Vec of a DIFFERENT length from the family
-;; `cb-keys`/`cb-marks`, and every element ever written into it is a value that
-;; passed a `cb-keys` bounds check one instruction earlier -- so the whole
-;; program guarantees `content(cb-edges) subset [0, len(cb-keys) - 1]`, and
-;; `cb-marks` is length-equal to `cb-keys`. The load-side check
-;; `marks[edges[i]]` inside `cb-walk` is therefore the one CB-1 retires: the
-;; zero fill is covered by the dominating `marks[0]` check, which proves
-;; `len(cb-marks) >= 1`. The four cells are reset in one straight-line region,
-;; which is what makes the lengths of one epoch comparable.
+;; Runtime coverage for a CSR walk. `cb-edges` is a module-global Vec of a
+;; DIFFERENT length from the family `cb-keys`/`cb-marks`, and every element
+;; ever written into it is a value that passed a `cb-keys` bounds check one
+;; instruction earlier, so the load-side check `marks[edges[i]]` inside
+;; `cb-walk` always passes. The four cells are reset in one straight-line
+;; region.
 ;;
 ;; The answer must be identical at every optimization level, and every index
 ;; must stay in range.

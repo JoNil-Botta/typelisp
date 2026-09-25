@@ -1072,33 +1072,6 @@
   [b : ir.CompilerIrValue]) : CompilerLiveI64Set
   (compiler-live-value-vars-into (compiler-live-value-vars b) a))
 
-(define (compiler-live-values3-vars
-  [a : ir.CompilerIrValue]
-  [b : ir.CompilerIrValue]
-  [c : ir.CompilerIrValue]) : CompilerLiveI64Set
-  (compiler-live-value-vars-into (compiler-live-values2-vars b c) a))
-
-(define (compiler-live-values4-vars
-  [a : ir.CompilerIrValue]
-  [b : ir.CompilerIrValue]
-  [c : ir.CompilerIrValue]
-  [d : ir.CompilerIrValue]) : CompilerLiveI64Set
-  (compiler-live-value-vars-into (compiler-live-values3-vars b c d) a))
-
-(define (compiler-live-value-seq-vars-from
-  [values : ir.CompilerIrValueSeq]
-  [index : i64]) : CompilerLiveI64Set
-  (if (>= index values.len)
-    (compiler-live-set-empty)
-    (compiler-live-value-vars-into
-      (compiler-live-value-seq-vars-from
-        (compiler-live-shared-view values)
-        (+ index 1))
-      (ir.compiler-ir-value-seq-ref values index))))
-
-(define (compiler-live-value-seq-vars [values : ir.CompilerIrValueSeq]) : CompilerLiveI64Set
-  (compiler-live-value-seq-vars-from values 0))
-
 (define (compiler-live-call-args-array-vars
   [values : (__tl_dyn-array ir.CompilerIrValue)]
   [index : i64]) : CompilerLiveI64Set
@@ -1134,31 +1107,6 @@
 (define (compiler-live-spmd-call-args-vars [args : ir.CompilerIrSpmdCallArgSeq]) : CompilerLiveI64Set
   (compiler-live-spmd-call-args-seq-vars args 0))
 
-(define (compiler-live-maybe-value-vars [value : ir.CompilerIrMaybeValue]) : CompilerLiveI64Set
-  (match value
-    [(ir.CompilerIrMaybeValue.No) (compiler-live-set-empty)]
-    [(ir.CompilerIrMaybeValue.Some inner) (compiler-live-value-vars inner)]))
-
-(define (compiler-live-phi-input-vars [inputs : ir.CompilerIrPhiInputSeq]) : CompilerLiveI64Set
-  (let
-    [phi-inputs-at-1155-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-1155-3.len 0)
-      (compiler-live-set-empty)
-      (let
-        [phi-input-at-1155-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-1155-3)
-            0)]
-        [value : ir.CompilerIrValue phi-input-at-1155-3.value]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-1155-3.slots
-            (+ phi-inputs-at-1155-3.start 1)
-            (- phi-inputs-at-1155-3.len 1))]
-        (compiler-live-value-vars-into
-          (compiler-live-phi-input-vars rest)
-          value)))))
-
 (define (compiler-live-switch-case-successors
   [set : CompilerLiveLabelSet]
   [cases : ir.CompilerIrSwitchCaseSeq]) : CompilerLiveLabelSet
@@ -1174,153 +1122,22 @@
           (set! index (+ index 1))))
       out)))
 
+(define (compiler-live-use-vars-into
+  [_role : ir.CompilerIrOperandRole]
+  [set : CompilerLiveI64Set]
+  [value : ir.CompilerIrValue]) : CompilerLiveI64Set
+  (compiler-live-value-vars-into set value))
+
+;; The vars `instr` reads: its uses, Pack words and phi inputs included, and
+;; AddrOf's storage var.
 (define (compiler-live-instr-uses [instr : ir.CompilerIrInstr]) : CompilerLiveI64Set
-  (match instr
-    [(ir.CompilerIrInstr.Mov _ src _) (compiler-live-value-vars src)]
-    [(ir.CompilerIrInstr.OwnRoot _ src _) (compiler-live-value-vars src)]
-    [(ir.CompilerIrInstr.Alloc _ _) (compiler-live-set-empty)]
+  (match (compiler-live-shared-view instr)
     [(ir.CompilerIrInstr.AddrOf _ src) (compiler-live-set1 src)]
-    [(ir.CompilerIrInstr.Gep _ base offset _)
-      (compiler-live-values2-vars base offset)]
-    [(ir.CompilerIrInstr.Load _ src _) (compiler-live-value-vars src)]
-    ;; `owner` is optimizer evidence, not a runtime operand. Optimizer DCE
-    ;; preserves its definition explicitly; machine liveness must model only
-    ;; the address that the emitted load actually reads.
-    [(ir.CompilerIrInstr.LoadOwned _ src _ _) (compiler-live-value-vars src)]
-    [(ir.CompilerIrInstr.StorePtr dst src _)
-      (compiler-live-values2-vars dst src)]
-    [(ir.CompilerIrInstr.StoreOwned dst src _)
-      (compiler-live-values2-vars dst src)]
-    [(ir.CompilerIrInstr.CopyBytes dst src _)
-      (compiler-live-values2-vars dst src)]
-    [(ir.CompilerIrInstr.BoundsCheck index length _)
-      (compiler-live-values2-vars index length)]
-    [(ir.CompilerIrInstr.Cast _ src _ _) (compiler-live-value-vars src)]
-    [(ir.CompilerIrInstr.Bitcast _ src _ _) (compiler-live-value-vars src)]
-    [(ir.CompilerIrInstr.BinOp _ _ lhs rhs _)
-      (compiler-live-values2-vars lhs rhs)]
-    [(ir.CompilerIrInstr.UnOp _ _ src _) (compiler-live-value-vars src)]
-    [(ir.CompilerIrInstr.LaneId _ _ _) (compiler-live-set-empty)]
-    [(ir.CompilerIrInstr.Splat _ value _ _) (compiler-live-value-vars value)]
-    [(ir.CompilerIrInstr.VectorBinOp payload-box)
-      (let
-        [lhs (compiler-live-box-field-shared-view payload-box lhs)]
-        [rhs (compiler-live-box-field-shared-view payload-box rhs)]
-        (compiler-live-values2-vars lhs rhs))]
-    [(ir.CompilerIrInstr.VectorPrefix payload-box)
-      (let
-        [src (compiler-live-box-field-shared-view payload-box src)]
-        [carry (compiler-live-box-field-shared-view payload-box carry)]
-        (compiler-live-values2-vars src carry))]
-    [(ir.CompilerIrInstr.VectorReduce _ _ src _ _)
-      (compiler-live-value-vars src)]
-    [(ir.CompilerIrInstr.VectorCompare payload-box)
-      (let
-        [lhs (compiler-live-box-field-shared-view payload-box lhs)]
-        [rhs (compiler-live-box-field-shared-view payload-box rhs)]
-        (compiler-live-values2-vars lhs rhs))]
-    [(ir.CompilerIrInstr.MaskBinOp _ _ lhs rhs _)
-      (compiler-live-values2-vars lhs rhs)]
-    [(ir.CompilerIrInstr.MaskNot _ src _) (compiler-live-value-vars src)]
-    [(ir.CompilerIrInstr.MaskReduce _ _ src _) (compiler-live-value-vars src)]
-    [(ir.CompilerIrInstr.Select payload-box)
-      (let
-        [mask (compiler-live-box-field-shared-view payload-box mask)]
-        [on-true (compiler-live-box-field-shared-view payload-box on-true)]
-        [on-false (compiler-live-box-field-shared-view payload-box on-false)]
-        (compiler-live-values3-vars mask on-true on-false))]
-    [(ir.CompilerIrInstr.VectorLoad _ base index _ _)
-      (compiler-live-values2-vars base index)]
-    [(ir.CompilerIrInstr.VectorStore payload-box)
-      (let
-        [base (compiler-live-box-field-shared-view payload-box base)]
-        [index (compiler-live-box-field-shared-view payload-box index)]
-        [value (compiler-live-box-field-shared-view payload-box value)]
-        (compiler-live-values3-vars base index value))]
-    [(ir.CompilerIrInstr.PredicatedStore payload-box)
-      (let
-        [base (compiler-live-box-field-shared-view payload-box base)]
-        [index (compiler-live-box-field-shared-view payload-box index)]
-        [value (compiler-live-box-field-shared-view payload-box value)]
-        [mask (compiler-live-box-field-shared-view payload-box mask)]
-        (compiler-live-values4-vars base index value mask))]
-    [(ir.CompilerIrInstr.PredicatedLoad payload-box)
-      (let
-        [base (compiler-live-box-field-shared-view payload-box base)]
-        [index (compiler-live-box-field-shared-view payload-box index)]
-        [mask (compiler-live-box-field-shared-view payload-box mask)]
-        (compiler-live-values3-vars base index mask))]
-    [(ir.CompilerIrInstr.GatherLoad payload-box)
-      (let
-        [base (compiler-live-box-field-shared-view payload-box base)]
-        [index-base
-          (compiler-live-box-field-shared-view payload-box index-base)]
-        [index (compiler-live-box-field-shared-view payload-box index)]
-        (compiler-live-values3-vars base index-base index))]
-    [(ir.CompilerIrInstr.VectorShuffle payload-box)
-      (let
-        [source (compiler-live-box-field-shared-view payload-box source)]
-        [selector-low
-          (compiler-live-box-field-shared-view payload-box selector-low)]
-        [selector-high
-          (compiler-live-box-field-shared-view payload-box selector-high)]
-        [active-lanes
-          (compiler-live-box-field-shared-view payload-box active-lanes)]
-        (compiler-live-set-union
-          (compiler-live-values3-vars source selector-low active-lanes)
-          (compiler-live-maybe-value-vars selector-high)))]
-    [(ir.CompilerIrInstr.TailMask _ index len _)
-      (compiler-live-values2-vars index len)]
-    [(ir.CompilerIrInstr.EntryArgc _) (compiler-live-set-empty)]
-    [(ir.CompilerIrInstr.EntryArgv _) (compiler-live-set-empty)]
-    [(ir.CompilerIrInstr.EntryEnvp _) (compiler-live-set-empty)]
-    [(ir.CompilerIrInstr.CpuId _ leaf subleaf _)
-      (compiler-live-values2-vars leaf subleaf)]
-    [(ir.CompilerIrInstr.Xgetbv _ index) (compiler-live-value-vars index)]
-    [(ir.CompilerIrInstr.Syscall _ args) (compiler-live-call-args-vars args)]
-    [(ir.CompilerIrInstr.Call _ _ args _) (compiler-live-call-args-vars args)]
-    [(ir.CompilerIrInstr.CallIndirect _ func args _)
-      (compiler-live-value-vars-into (compiler-live-call-args-vars args) func)]
-    [(ir.CompilerIrInstr.CallIndirectC _ func args _)
-      (compiler-live-value-vars-into (compiler-live-call-args-vars args) func)]
-    [(ir.CompilerIrInstr.CallCAbiStoreResult payload-box)
-      (let
-        [base (compiler-live-box-field-shared-view payload-box base)]
-        [args (compiler-live-box-field-shared-view payload-box args)]
-        (compiler-live-value-vars-into (compiler-live-call-args-vars args) base))]
-    [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
-      (let
-        [base (compiler-live-box-field-shared-view payload-box base)]
-        [func (compiler-live-box-field-shared-view payload-box callee)]
-        [args (compiler-live-box-field-shared-view payload-box args)]
-        (compiler-live-value-vars-into
-          (compiler-live-value-vars-into
-            (compiler-live-call-args-vars args)
-            base)
-          func))]
-    [(ir.CompilerIrInstr.SpmdCall payload-box)
-      (let
-        [active-mask
-          (compiler-live-box-field-shared-view payload-box active-mask)]
-        [args (compiler-live-box-field-shared-view payload-box args)]
-        (compiler-live-value-vars-into
-          (compiler-live-spmd-call-args-vars args)
-          active-mask))]
-    [(ir.CompilerIrInstr.TailCall _ args _) (compiler-live-call-args-vars args)]
-    [(ir.CompilerIrInstr.Store _ value _) (compiler-live-value-vars value)]
-    [(ir.CompilerIrInstr.Branch cond _ _) (compiler-live-value-vars cond)]
-    [(ir.CompilerIrInstr.TotalEnumBranch cond _ _)
-      (compiler-live-value-vars cond)]
-    [(ir.CompilerIrInstr.Return value) (compiler-live-maybe-value-vars value)]
-    [(ir.CompilerIrInstr.Phi _ inputs _) (compiler-live-phi-input-vars inputs)]
-    [(ir.CompilerIrInstr.Pack _ words _) (compiler-live-value-seq-vars words)]
-    [(ir.CompilerIrInstr.Word _ src _ _) (compiler-live-value-vars src)]
-    [(ir.CompilerIrInstr.Jump _) (compiler-live-set-empty)]
-    [(ir.CompilerIrInstr.TailCallIndirect func args _)
-      (compiler-live-value-vars-into (compiler-live-call-args-vars args) func)]
-    [(ir.CompilerIrInstr.Switch index _ _ _) (compiler-live-value-vars index)]
-    [(ir.CompilerIrInstr.TotalEnumSwitch index _ _ _ _)
-      (compiler-live-value-vars index)]))
+    [_
+      (ir.compiler-ir-instr-fold-uses
+        instr
+        (compiler-live-set-empty)
+        compiler-live-use-vars-into)]))
 
 ;; ---------------------------------------------------------------------------
 ;; Direct per-instruction var-id extraction.
@@ -1334,70 +1151,14 @@
 ;; allocation and the word scan are both pure overhead.
 ;;
 ;; These entry points hand the ids over directly:
-;;   * `compiler-live-instr-def-var` -- the single defined var, or -1.
+;;   * `ir.compiler-ir-instr-dst` -- the single defined var, or -1.
 ;;   * `compiler-live-instr-use-ids-into!` -- the DISTINCT used var ids written
 ;;     into a caller-owned scratch array, or -1 when they do not fit.
-;; Both are exact mirrors of `compiler-live-instr-defs` / `-uses`: same arms,
-;; same operands, same de-duplication, so `{ids} == set` element-wise. Order is
-;; operand order rather than the set's ascending id order, which is why
-;; order-sensitive consumers (remat's var renumbering) keep the bitset.
+;; Both mirror `compiler-live-instr-defs` / `-uses`: same operands, same
+;; de-duplication, so `{ids} == set` element-wise. Order is operand order rather
+;; than the set's ascending id order, which is why order-sensitive consumers
+;; (remat's var renumbering) keep the bitset.
 ;; ---------------------------------------------------------------------------
-;; The single var an instruction defines, or -1. Mirrors compiler-live-instr-defs
-;; arm for arm (compiler_regalloc's compiler-reg-instr-def-var is the same
-;; function over the same arms, kept there for the def census).
-(define (compiler-live-instr-def-var [instr : ir.CompilerIrInstr]) : i64
-  (match instr
-    [(ir.CompilerIrInstr.Mov dst _ _) dst]
-    [(ir.CompilerIrInstr.OwnRoot dst _ _) dst]
-    [(ir.CompilerIrInstr.Alloc dst _) dst]
-    [(ir.CompilerIrInstr.AddrOf dst _) dst]
-    [(ir.CompilerIrInstr.Gep dst _ _ _) dst]
-    [(ir.CompilerIrInstr.Load dst _ _) dst]
-    [(ir.CompilerIrInstr.LoadOwned dst _ _ _) dst]
-    [(ir.CompilerIrInstr.Cast dst _ _ _) dst]
-    [(ir.CompilerIrInstr.Bitcast dst _ _ _) dst]
-    [(ir.CompilerIrInstr.BinOp dst _ _ _ _) dst]
-    [(ir.CompilerIrInstr.UnOp dst _ _ _) dst]
-    [(ir.CompilerIrInstr.LaneId dst _ _) dst]
-    [(ir.CompilerIrInstr.Splat dst _ _ _) dst]
-    [(ir.CompilerIrInstr.VectorBinOp payload-box)
-      (compiler-live-box-field-shared-view payload-box dst)]
-    [(ir.CompilerIrInstr.VectorPrefix payload-box)
-      (compiler-live-box-field-shared-view payload-box dst)]
-    [(ir.CompilerIrInstr.VectorReduce dst _ _ _ _) dst]
-    [(ir.CompilerIrInstr.VectorCompare payload-box)
-      (compiler-live-box-field-shared-view payload-box dst)]
-    [(ir.CompilerIrInstr.MaskBinOp dst _ _ _ _) dst]
-    [(ir.CompilerIrInstr.MaskNot dst _ _) dst]
-    [(ir.CompilerIrInstr.MaskReduce dst _ _ _) dst]
-    [(ir.CompilerIrInstr.Select payload-box)
-      (compiler-live-box-field-shared-view payload-box dst)]
-    [(ir.CompilerIrInstr.VectorLoad dst _ _ _ _) dst]
-    [(ir.CompilerIrInstr.PredicatedLoad payload-box)
-      (compiler-live-box-field-shared-view payload-box dst)]
-    [(ir.CompilerIrInstr.GatherLoad payload-box)
-      (compiler-live-box-field-shared-view payload-box dst)]
-    [(ir.CompilerIrInstr.VectorShuffle payload-box)
-      (compiler-live-box-field-shared-view payload-box dst)]
-    [(ir.CompilerIrInstr.TailMask dst _ _ _) dst]
-    [(ir.CompilerIrInstr.EntryArgc dst) dst]
-    [(ir.CompilerIrInstr.EntryArgv dst) dst]
-    [(ir.CompilerIrInstr.EntryEnvp dst) dst]
-    [(ir.CompilerIrInstr.CpuId dst _ _ _) dst]
-    [(ir.CompilerIrInstr.Xgetbv dst _) dst]
-    [(ir.CompilerIrInstr.Syscall dst _) dst]
-    [(ir.CompilerIrInstr.Call dst _ _ _) dst]
-    [(ir.CompilerIrInstr.CallIndirect dst _ _ _) dst]
-    [(ir.CompilerIrInstr.CallIndirectC dst _ _ _) dst]
-    [(ir.CompilerIrInstr.SpmdCall payload-box)
-      (match (compiler-live-box-field-shared-view payload-box result)
-        [(ir.CompilerIrSpmdCallResult.Unit) -1]
-        [(ir.CompilerIrSpmdCallResult.Value dst _ _) dst])]
-    [(ir.CompilerIrInstr.Phi dst _ _) dst]
-    [(ir.CompilerIrInstr.Pack dst _ _) dst]
-    [(ir.CompilerIrInstr.Word dst _ _ _) dst]
-    [_ -1]))
-
 ;; Append `id` to `out[0..n)` unless it is already there (the bitset de-dups,
 ;; so `x = x + x` must yield one id, not two). Negative ids are dropped exactly
 ;; as compiler-live-set-builder-insert! drops them. Returns the new count, or
@@ -1545,15 +1306,14 @@
 
 ;; Write the distinct used var ids of `instr` into `out`, returning the count,
 ;; or -1 when they do not fit (caller falls back to compiler-live-instr-uses).
-;; Arm for arm this is compiler-live-instr-uses with `compiler-live-set*`
-;; replaced by `push!`.
+;; The ids are those of compiler-live-instr-uses. This per-instruction hot path
+;; keeps its own match instead of compiler-ir-instr-fold-uses, whose inlined
+;; operand loops would give every call a larger frame.
 (define (compiler-live-instr-use-ids-into!
   [instr : ir.CompilerIrInstr]
   [out : (&mut out (__tl_dyn-array i64))]) : i64
   (match instr
     [(ir.CompilerIrInstr.Mov _ src _)
-      (compiler-live-use-ids-add-value! out 0 src)]
-    [(ir.CompilerIrInstr.OwnRoot _ src _)
       (compiler-live-use-ids-add-value! out 0 src)]
     [(ir.CompilerIrInstr.Alloc _ _) 0]
     [(ir.CompilerIrInstr.AddrOf _ src) (compiler-live-use-ids-push! out 0 src)]
@@ -1563,8 +1323,6 @@
         (compiler-live-use-ids-add-value! out 0 base)
         offset)]
     [(ir.CompilerIrInstr.Load _ src _)
-      (compiler-live-use-ids-add-value! out 0 src)]
-    [(ir.CompilerIrInstr.LoadOwned _ src _ _)
       (compiler-live-use-ids-add-value! out 0 src)]
     [(ir.CompilerIrInstr.StorePtr dst src _)
       (compiler-live-use-ids-add-value!
@@ -1851,7 +1609,7 @@
 
 (define (compiler-live-instr-defs [instr : ir.CompilerIrInstr]) : CompilerLiveI64Set
   (let
-    [dst : i64 (compiler-live-instr-def-var instr)]
+    [dst : i64 (ir.compiler-ir-instr-dst instr)]
     (if (< dst 0)
       (compiler-live-set-empty)
       (compiler-live-set1 dst))))
@@ -2032,7 +1790,7 @@
       (while (< index phi-end)
         (let
           [def-var : i64
-            (compiler-live-instr-def-var
+            (ir.compiler-ir-instr-dst
               (ir.compiler-ir-instr-seq-ref instrs index))]
           (begin
             (when
@@ -2082,7 +1840,7 @@
           [def-var : i64
             (if (< index phi-end)
               (- 0 1)
-              (compiler-live-instr-def-var (compiler-live-shared-view instr)))]
+              (ir.compiler-ir-instr-dst (compiler-live-shared-view instr)))]
           (begin
             (if (< id-count 0)
               ;; Wider than the extraction buffer: take the bitset path, which
@@ -2499,7 +2257,7 @@
               (compiler-live-shared-view instr))
             (compiler-live-instr-use-ids! (compiler-live-shared-view instr)))]
         [def-var : i64
-          (compiler-live-instr-def-var (compiler-live-shared-view instr))]
+          (ir.compiler-ir-instr-dst (compiler-live-shared-view instr))]
         (begin
           ;; The final point is already a stored immutable set. Reuse it
           ;; rather than copying scratch once more at every block boundary.

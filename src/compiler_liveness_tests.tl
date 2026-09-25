@@ -216,7 +216,7 @@
       (live.compiler-live-instr-uses (clone instr))]
     [defs : live.CompilerLiveI64Set
       (live.compiler-live-instr-defs (clone instr))]
-    [def-var : i64 (live.compiler-live-instr-def-var (clone instr))]
+    [def-var : i64 (ir.compiler-ir-instr-dst (clone instr))]
     [ids : (__tl_dyn-array i64) (live.compiler-live-instr-ids)]
     [id-count : i64 (live.compiler-live-instr-use-ids! instr)]
     [index : i64 0]
@@ -718,41 +718,16 @@
       (live.compiler-live-set-eq? use-def.uses (live.compiler-live-set2 10 11))
       (live.compiler-live-set-eq? use-def.defs (compiler-live-set5 0 1 2 3 4)))))
 
-;; Capability forms are normally erased immediately after LICM, but their
-;; fail-safe machine semantics must still have complete use/def metadata.
-;; `owner` is proof-only on LoadOwned and therefore is intentionally not live.
-(define (compiler-live-owned-capability-use-def-ok?) : bool
+;; StoreOwned defines nothing and reads both its address and its value.
+(define (compiler-live-store-owned-use-def-ok?) : bool
   (let
-    [ty : ast.AstType (ast.AstType.String)]
-    [root : ir.CompilerIrInstr
-      (ir.CompilerIrInstr.OwnRoot 51 (ir.CompilerIrValue.Var 50) (clone ty))]
-    [load : ir.CompilerIrInstr
-      (ir.CompilerIrInstr.LoadOwned
-        52
-        (ir.CompilerIrValue.Var 60)
-        51
-        (clone ty))]
     [store : ir.CompilerIrInstr
       (ir.CompilerIrInstr.StoreOwned
         (ir.CompilerIrValue.Var 70)
         (ir.CompilerIrValue.Var 71)
-        ty)]
+        (ast.AstType.String))]
     (and
-      (= (live.compiler-live-instr-def-var (clone root)) 51)
-      (live.compiler-live-set-eq?
-        (live.compiler-live-instr-defs (clone root))
-        (live.compiler-live-set1 51))
-      (live.compiler-live-set-eq?
-        (live.compiler-live-instr-uses root)
-        (live.compiler-live-set1 50))
-      (= (live.compiler-live-instr-def-var (clone load)) 52)
-      (live.compiler-live-set-eq?
-        (live.compiler-live-instr-defs (clone load))
-        (live.compiler-live-set1 52))
-      (live.compiler-live-set-eq?
-        (live.compiler-live-instr-uses load)
-        (live.compiler-live-set1 60))
-      (= (live.compiler-live-instr-def-var (clone store)) -1)
+      (= (ir.compiler-ir-instr-dst (clone store)) -1)
       (live.compiler-live-set-eq?
         (live.compiler-live-instr-defs (clone store))
         (live.compiler-live-set-empty))
@@ -1011,7 +986,7 @@
     (compiler-live-use-def-ok?)
     (compiler-live-parallel-phi-use-def-ok?)
     (compiler-live-memory-use-def-ok?)
-    (compiler-live-owned-capability-use-def-ok?)
+    (compiler-live-store-owned-use-def-ok?)
     (compiler-live-vector-mask-use-def-ok?)
     (compiler-live-straight-ok?)
     (compiler-live-branch-ok?)

@@ -30,7 +30,6 @@
 (import cli_option_core as cli_option)
 (import compiler_allocation_profile as allocation_profile)
 (import compiler_cfg_core as cfg_core)
-(import compiler_check_core)
 (import compiler_backend as backend)
 (import compiler_diagnostic as cdiag)
 (import compiler_load as load)
@@ -43,6 +42,7 @@
 (import doc_test)
 (import test_cli_core)
 (import stdlib.string)
+(import source_text_core as source_text)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.text_buf)
 (import sym_i64_env)
@@ -78,113 +78,36 @@
 (define compile-cli-trace-passes-requested : bool
   false)
 
-(defstruct CompileCliCfgNames
-  (slots (__tl_dyn-array String))
-  (len i64))
-
-(define (compile-cli-cfg-names-with-capacity [capacity : i64]) : CompileCliCfgNames
+(define (compile-cli-cfg-names-to-env [names : (& names cli_svec.Vec)]) : sym_i64_env.SymI64Env
   (let
-    [cap : i64
-      (if (< capacity 1)
-        1
-        capacity)]
-    (CompileCliCfgNames (__tl_make-array String cap) 0)))
-
-(define (compile-cli-cfg-names-empty) : CompileCliCfgNames
-  (compile-cli-cfg-names-with-capacity 4))
-
-(define (compile-cli-cfg-names-copy-range!
-  [dst : (&mut dst (__tl_dyn-array String))]
-  [src : (& src (__tl_dyn-array String))]
-  [index : i64]
-  [count : i64]) : unit
-  (let
-    [i : i64 index]
-    (while (< i count)
-      (begin
-        (set! (array-ref dst i) (array-ref src i))
-        (set! i (+ i 1))))))
-
-(define (compile-cli-cfg-names-grow! [names : (&mut names CompileCliCfgNames)]) : unit
-  (let
-    [count : i64 names.len]
-    [old-cap : i64 (array-length names.slots)]
-    [new-cap : i64
-      (if (< old-cap 1)
-        1
-        (* old-cap 2))]
-    [bigger : (__tl_dyn-array String) (__tl_make-array String new-cap)]
+    [env : sym_i64_env.SymI64Env (cfg_core.compiler-cfg-empty)]
+    [index : i64 0]
     (begin
-      (compile-cli-cfg-names-copy-range! (&mut bigger) (& names.slots) 0 count)
-      (set! names.slots bigger))))
-
-(define (compile-cli-cfg-names-push!
-  [names : (&mut names CompileCliCfgNames)]
-  [name : String]) : unit
-  (begin
-    (if (< names.len (array-length names.slots))
-      unit
-      (compile-cli-cfg-names-grow! names))
-    (let
-      [index : i64 names.len]
-      (begin
-        (set! (array-ref names.slots index) name)
-        (set! names.len (+ index 1))))))
-
-(define (compile-cli-cfg-names-get
-  [names : (& names CompileCliCfgNames)]
-  [index : i64]) : String
-  (if (if (>= index 0)
-    (< index names.len)
-    false)
-    (array-ref names.slots index)
-    ""))
-
-(define (compile-cli-cfg-names-add [names : CompileCliCfgNames] [name : String]) : CompileCliCfgNames
-  (let
-    [next : CompileCliCfgNames names]
-    (begin
-      (compile-cli-cfg-names-push! (&mut next) name)
-      next)))
-
-(define (compile-cli-cfg-names-to-env-from
-  [names : (& names CompileCliCfgNames)]
-  [index : i64]
-  [env : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
-  (if (>= index names.len)
-    env
-    (compile-cli-cfg-names-to-env-from
-      names
-      (+ index 1)
-      (cfg_core.compiler-cfg-enable env (compile-cli-cfg-names-get names index)))))
-
-(define (compile-cli-cfg-names-to-env [names : (& names CompileCliCfgNames)]) : sym_i64_env.SymI64Env
-  (compile-cli-cfg-names-to-env-from (& names) 0 (cfg_core.compiler-cfg-empty)))
-
-(define (compile-cli-cfg-names-to-env-with-intern-state-from
-  [names : (& names CompileCliCfgNames)]
-  [index : i64]
-  [env : sym_i64_env.SymI64Env]
-  [intern-state : (&mut intern-state ci.InternCompatState)]) : sym_i64_env.SymI64Env
-  (if (>= index names.len)
-    env
-    (compile-cli-cfg-names-to-env-with-intern-state-from
-      names
-      (+ index 1)
-      (cfg_core.compiler-cfg-enable-with-intern-state
-        env
-        (compile-cli-cfg-names-get names index)
-        intern-state)
-      intern-state)))
+      (while (< index (cli_svec.len names))
+        (begin
+          (set!
+            env
+            (cfg_core.compiler-cfg-enable env (cli_svec.get names index "")))
+          (set! index (+ index 1))))
+      env)))
 
 (define (compile-cli-cfg-names-to-env-with-intern-state
-  [names : CompileCliCfgNames]
+  [names : cli_svec.Vec]
   [intern-state : (&mut intern-state ci.InternCompatState)]) : sym_i64_env.SymI64Env
-  (compile-cli-cfg-names-to-env-with-intern-state-from
-    (& names)
-    0
-    (cfg_core.compiler-cfg-empty)
-    intern-state))
+  (let
+    [env : sym_i64_env.SymI64Env (cfg_core.compiler-cfg-empty)]
+    [index : i64 0]
+    (begin
+      (while (< index (cli_svec.len (& names)))
+        (begin
+          (set!
+            env
+            (cfg_core.compiler-cfg-enable-with-intern-state
+              env
+              (cli_svec.get (& names) index "")
+              intern-state))
+          (set! index (+ index 1))))
+      env)))
 
 (defenum CompileCliConfig
   (Config
@@ -195,7 +118,7 @@
     bool
     backend.CompilerBackendTarget
     cli_svec.Vec
-    CompileCliCfgNames
+    cli_svec.Vec
     backend.CompilerBackendMode
     i64))
 
@@ -205,7 +128,7 @@
     bool
     backend.CompilerBackendTarget
     cli_svec.Vec
-    CompileCliCfgNames
+    cli_svec.Vec
     backend.CompilerBackendMode
     i64
     bool
@@ -223,13 +146,7 @@
 (defenum CompileCliAction
   (Run CompileCliConfig)
   (Batch CompileCliBatchConfig)
-  (Check String cli_svec.Vec)
-  (Help)
   (Error String))
-
-(defenum ResultCompileCliCheckConfig
-  (Ok String cli_svec.Vec)
-  (Err String))
 
 (defenum ResultCompileCliTarget
   (Ok backend.CompilerBackendTarget)
@@ -238,19 +155,10 @@
 (define (compile-cli-path-separator? [c : char]) : bool
   (or (= c '/') (= c '\\')))
 
-(define (compile-cli-flag? [value : String]) : bool
-  (and (> (string.string-length value) 0) (= (string.string-ref value 0) '-')))
-
 (define (compile-cli-after-pass? [value : String]) : bool
   (and
     (> (string.string-length value) 6)
-    (string.eq (string.substring value 0 6) "after-")))
-
-(define (compile-cli-usage) : String
-  "Usage:\n  typelisp check <file.tl> [--stdlib-root <dir>...]\n  typelisp compile <file.tl> [-o <file>] [--debug|-g|--backtrace] [--emit-ir | --dump-ir [after-<pass>]] [--verify-ir] [--trace-passes] [--pic] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [--profile-allocations]\n  typelisp compile --batch <input-output-list> [--debug|-g|--backtrace] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [--prefix-cache-stats] [--profile-allocations]\n  typelisp compile --batch <artifact-list> --windows-coff-plan <result-plan> --target windows-x86_64 [--debug|-g|--backtrace] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [--prefix-cache-stats] [--profile-allocations]")
-
-(define (compile-cli-message-with-usage [message : String]) : String
-  (str_cat.str-cat message "\n\n" (compile-cli-usage)))
+    (source_text.starts-with? value "after-")))
 
 (define (compile-cli-default-output-with-extension
   [input-path : String]
@@ -323,826 +231,300 @@
           value
           "'. Expected scalar, avx2, or avx512"))]))
 
-(define (compile-cli-parse-common-option
-  [kind : cli_option.CliCommonOptionKind]
-  [value : String]
-  [next-idx : i64]
-  [count : i64]
-  [input-path : String]
-  [output-path : String]
-  [has-output : bool]
-  [has-target : bool]
-  [target : backend.CompilerBackendTarget]
-  [stdlib-roots : cli_svec.Vec]
-  [cfgs : CompileCliCfgNames]
-  [emit-ir : bool]
-  [pic : bool]
-  [has-opt-level : bool]
-  [opt-level : i64]
-  [backend-mode : backend.CompilerBackendMode]) : ResultCompileCliConfig
-  (match kind
-    [(cli_option.CliCommonOptionKind.StdlibRoot)
-      (compile-cli-parse-options
-        next-idx
-        count
-        input-path
-        output-path
-        has-output
-        has-target
-        target
-        (let
-          [next-roots : cli_svec.Vec stdlib-roots]
-          (begin
-            (cli_svec.push-ref! (&mut next-roots) value)
-            next-roots))
-        cfgs
-        emit-ir
-        pic
-        has-opt-level
-        opt-level
-        backend-mode)]
-    [(cli_option.CliCommonOptionKind.Cfg)
-      (compile-cli-parse-options
-        next-idx
-        count
-        input-path
-        output-path
-        has-output
-        has-target
-        target
-        stdlib-roots
-        (compile-cli-cfg-names-add cfgs value)
-        emit-ir
-        pic
-        has-opt-level
-        opt-level
-        backend-mode)]
-    [(cli_option.CliCommonOptionKind.Target)
-      (if has-target
-        (ResultCompileCliConfig.Err
-          "compile: --target was provided more than once")
-        (match (compile-cli-target value)
-          [(ResultCompileCliTarget.Ok parsed-target)
-            (compile-cli-parse-options
-              next-idx
-              count
-              input-path
-              output-path
-              has-output
-              true
-              parsed-target
-              stdlib-roots
-              cfgs
-              emit-ir
-              pic
-              has-opt-level
-              opt-level
-              backend-mode)]
-          [(ResultCompileCliTarget.Err message)
-            (ResultCompileCliConfig.Err message)]))]
-    [(cli_option.CliCommonOptionKind.OptLevel)
-      (if has-opt-level
-        (ResultCompileCliConfig.Err
-          "compile: --opt-level was provided more than once")
-        (match (opt.compiler-optimize-parse-level
-          (owned_view.compiler-owned-shared-view value))
-          [(opt.ResultCompilerOptimizeLevel.Ok parsed-level)
-            (compile-cli-parse-options
-              next-idx
-              count
-              input-path
-              output-path
-              has-output
-              has-target
-              target
-              stdlib-roots
-              cfgs
-              emit-ir
-              pic
-              true
-              parsed-level
-              backend-mode)]
-          [(opt.ResultCompilerOptimizeLevel.Err)
-            (ResultCompileCliConfig.Err (compile-cli-invalid-opt-level value))]))]))
+;; Options `compile` and `compile --batch` share.
+(defstruct CompileCliOptions
+  (target backend.CompilerBackendTarget)
+  (has-target bool)
+  (stdlib-roots cli_svec.Vec)
+  (cfgs cli_svec.Vec)
+  (opt-level i64)
+  (has-opt-level bool)
+  (backend-mode backend.CompilerBackendMode))
 
-(define (compile-cli-parse-options
-  [idx : i64]
-  [count : i64]
-  [input-path : String]
-  [output-path : String]
-  [has-output : bool]
-  [has-target : bool]
-  [target : backend.CompilerBackendTarget]
-  [stdlib-roots : cli_svec.Vec]
-  [cfgs : CompileCliCfgNames]
-  [emit-ir : bool]
-  [pic : bool]
-  [has-opt-level : bool]
-  [opt-level : i64]
-  [backend-mode : backend.CompilerBackendMode]) : ResultCompileCliConfig
-  (if (>= idx count)
-    (if (and emit-ir pic)
-      (ResultCompileCliConfig.Err
-        "compile: --pic cannot be combined with --emit-ir")
-      (ResultCompileCliConfig.Ok
-        (CompileCliConfig.Config
-          (owned_view.compiler-owned-shared-view input-path)
-          (if (and emit-ir (not has-output))
-            (compile-cli-default-ir-output input-path)
-            output-path)
-          emit-ir
-          pic
-          has-target
-          target
-          stdlib-roots
-          cfgs
-          backend-mode
-          opt-level)))
-    (let
-      [current : String (io.arg idx)]
-      (match (cli_option.cli-common-option-parse
-        (owned_view.compiler-owned-shared-view current)
-        idx
-        count
-        cli_option.cli-common-option-all)
-        [(cli_option.CliCommonOption.Missing kind)
-          (ResultCompileCliConfig.Err
-            (cli_option.cli-common-option-missing-message "compile" kind))]
-        [(cli_option.CliCommonOption.Value kind value next-idx)
-          (compile-cli-parse-common-option
-            kind
-            value
-            next-idx
-            count
-            input-path
-            output-path
-            has-output
-            has-target
-            target
-            stdlib-roots
-            cfgs
-            emit-ir
-            pic
-            has-opt-level
-            opt-level
-            backend-mode)]
-        [(cli_option.CliCommonOption.NotCommon)
-          (cond
-            [(or
-                (string.eq current "--debug")
-                (string.eq current "-g")
-                (string.eq current "--backtrace"))
+(define (compile-cli-options) : CompileCliOptions
+  (CompileCliOptions
+    (backend.CompilerBackendTarget.Linux)
+    false
+    (cli_svec.new)
+    (cli_svec.new)
+    (opt.compiler-optimize-default-level)
+    false
+    (backend.CompilerBackendMode.Scalar)))
+
+;; Apply an option both compile modes accept. False when the current option
+;; is another one.
+(define (compile-cli-common-option!
+  [options : (&mut options CompileCliOptions)]
+  [args : (&mut args cli_option.CliArgs)]) : bool
+  (cond
+    [(string.eq args.name "--stdlib-root")
+      (begin
+        (cli_svec.push-ref!
+          (&mut options.stdlib-roots)
+          (cli_option.cli-args-value args))
+        true)]
+    [(string.eq args.name "--cfg")
+      (begin
+        (cli_svec.push-ref!
+          (&mut options.cfgs)
+          (cli_option.cli-args-value args))
+        true)]
+    [(string.eq args.name "--target")
+      (begin
+        (if options.has-target
+          (cli_option.cli-args-fail!
+            args
+            "compile: --target was provided more than once")
+          (match (compile-cli-target (cli_option.cli-args-value args))
+            [(ResultCompileCliTarget.Ok parsed-target)
               (begin
-                (ir.compiler-debug-info-set-enabled! true)
-                (compile-cli-parse-options
-                  (+ idx 1)
-                  count
-                  input-path
-                  output-path
-                  has-output
-                  has-target
-                  target
-                  stdlib-roots
-                  cfgs
-                  emit-ir
-                  pic
-                  has-opt-level
-                  opt-level
-                  backend-mode))]
-            [(string.eq current "-o")
-              (if (>= (+ idx 1) count)
-                (ResultCompileCliConfig.Err "compile: -o requires a value")
-                (if has-output
-                  (ResultCompileCliConfig.Err
-                    "compile: -o was provided more than once")
-                  (compile-cli-parse-options
-                    (+ idx 2)
-                    count
-                    input-path
-                    (io.arg (+ idx 1))
-                    true
-                    has-target
-                    target
-                    stdlib-roots
-                    cfgs
-                    emit-ir
-                    pic
-                    has-opt-level
-                    opt-level
-                    backend-mode)))]
-            [(string.eq current "--backend-mode")
-              (if (>= (+ idx 1) count)
-                (ResultCompileCliConfig.Err
-                  "compile: --backend-mode requires a value")
-                (match (compile-cli-backend-mode (io.arg (+ idx 1)))
-                  [(ResultCompileCliBackendMode.Ok parsed-mode)
-                    (compile-cli-parse-options
-                      (+ idx 2)
-                      count
-                      input-path
-                      output-path
-                      has-output
-                      has-target
-                      target
-                      stdlib-roots
-                      cfgs
-                      emit-ir
-                      pic
-                      has-opt-level
-                      opt-level
-                      parsed-mode)]
-                  [(ResultCompileCliBackendMode.Err message)
-                    (ResultCompileCliConfig.Err message)]))]
-            [(string.eq current "--pic")
-              (compile-cli-parse-options
-                (+ idx 1)
-                count
-                input-path
-                output-path
-                has-output
-                has-target
-                target
-                stdlib-roots
-                cfgs
-                emit-ir
-                true
-                has-opt-level
-                opt-level
-                backend-mode)]
-            [(string.eq current "--emit-ir")
-              (if emit-ir
-                (ResultCompileCliConfig.Err
-                  "compile: IR output was requested more than once")
-                (compile-cli-parse-options
-                  (+ idx 1)
-                  count
-                  input-path
-                  output-path
-                  has-output
-                  has-target
-                  target
-                  stdlib-roots
-                  cfgs
-                  true
-                  pic
-                  has-opt-level
-                  opt-level
-                  backend-mode))]
-            [(string.eq current "--dump-ir")
-              (if emit-ir
-                (ResultCompileCliConfig.Err
-                  "compile: IR output was requested more than once")
-                (let
-                  [has-pass : bool
-                    (and
-                      (< (+ idx 1) count)
-                      (compile-cli-after-pass? (io.arg (+ idx 1))))]
-                  [next-idx : i64
-                    (if has-pass
-                      (+ idx 2)
-                      (+ idx 1))]
-                  (begin
-                    (set! compile-cli-dump-ir-requested true)
-                    (set!
-                      compile-cli-dump-ir-pass
-                      (if has-pass
-                        (let
-                          [value : String (io.arg (+ idx 1))]
-                          (string.substring
-                            value
-                            6
-                            (- (string.string-length value) 6)))
-                        ""))
-                    (compile-cli-parse-options
-                      next-idx
-                      count
-                      input-path
-                      output-path
-                      has-output
-                      has-target
-                      target
-                      stdlib-roots
-                      cfgs
-                      true
-                      pic
-                      has-opt-level
-                      opt-level
-                      backend-mode))))]
-            [(string.eq current "--verify-ir")
-              (if compile-cli-verify-ir-requested
-                (ResultCompileCliConfig.Err
-                  "compile: --verify-ir was provided more than once")
-                (begin
-                  (set! compile-cli-verify-ir-requested true)
-                  (compile-cli-parse-options
-                    (+ idx 1)
-                    count
-                    input-path
-                    output-path
-                    has-output
-                    has-target
-                    target
-                    stdlib-roots
-                    cfgs
-                    emit-ir
-                    pic
-                    has-opt-level
-                    opt-level
-                    backend-mode)))]
-            [(string.eq current "--trace-passes")
-              (if compile-cli-trace-passes-requested
-                (ResultCompileCliConfig.Err
-                  "compile: --trace-passes was provided more than once")
-                (begin
-                  (set! compile-cli-trace-passes-requested true)
-                  (compile-cli-parse-options
-                    (+ idx 1)
-                    count
-                    input-path
-                    output-path
-                    has-output
-                    has-target
-                    target
-                    stdlib-roots
-                    cfgs
-                    emit-ir
-                    pic
-                    has-opt-level
-                    opt-level
-                    backend-mode)))]
-            [(string.eq current "--profile-allocations")
-              (if compile-cli-allocation-profile-requested
-                (ResultCompileCliConfig.Err
-                  "compile: --profile-allocations was provided more than once")
-                (begin
-                  (set! compile-cli-allocation-profile-requested true)
-                  (compile-cli-parse-options
-                    (+ idx 1)
-                    count
-                    input-path
-                    output-path
-                    has-output
-                    has-target
-                    target
-                    stdlib-roots
-                    cfgs
-                    emit-ir
-                    pic
-                    has-opt-level
-                    opt-level
-                    backend-mode)))]
-            [else
-              (if (compile-cli-flag?
-                (owned_view.compiler-owned-shared-view current))
-                (ResultCompileCliConfig.Err
-                  (str_cat.str-cat "compile: unknown flag " current))
-                (ResultCompileCliConfig.Err
-                  (str_cat.str-cat "compile: unexpected argument " current)))])]))))
-
-(define (compile-cli-batch-parse-common-option
-  [kind : cli_option.CliCommonOptionKind]
-  [value : String]
-  [next-idx : i64]
-  [count : i64]
-  [batch-path : String]
-  [has-target : bool]
-  [target : backend.CompilerBackendTarget]
-  [stdlib-roots : cli_svec.Vec]
-  [cfgs : CompileCliCfgNames]
-  [has-opt-level : bool]
-  [opt-level : i64]
-  [backend-mode : backend.CompilerBackendMode]
-  [prefix-cache-stats : bool]
-  [has-windows-coff-plan : bool]
-  [windows-coff-plan-path : String]) : ResultCompileCliBatchConfig
-  (match kind
-    [(cli_option.CliCommonOptionKind.StdlibRoot)
-      (compile-cli-batch-parse-options
-        next-idx
-        count
-        batch-path
-        has-target
-        target
-        (let
-          [next-roots : cli_svec.Vec stdlib-roots]
-          (begin
-            (cli_svec.push-ref! (&mut next-roots) value)
-            next-roots))
-        cfgs
-        has-opt-level
-        opt-level
-        backend-mode
-        prefix-cache-stats
-        has-windows-coff-plan
-        windows-coff-plan-path)]
-    [(cli_option.CliCommonOptionKind.Cfg)
-      (compile-cli-batch-parse-options
-        next-idx
-        count
-        batch-path
-        has-target
-        target
-        stdlib-roots
-        (compile-cli-cfg-names-add cfgs value)
-        has-opt-level
-        opt-level
-        backend-mode
-        prefix-cache-stats
-        has-windows-coff-plan
-        windows-coff-plan-path)]
-    [(cli_option.CliCommonOptionKind.Target)
-      (if has-target
-        (ResultCompileCliBatchConfig.Err
-          "compile: --target was provided more than once")
-        (match (compile-cli-target value)
-          [(ResultCompileCliTarget.Ok parsed-target)
-            (compile-cli-batch-parse-options
-              next-idx
-              count
-              batch-path
-              true
-              parsed-target
-              stdlib-roots
-              cfgs
-              has-opt-level
-              opt-level
-              backend-mode
-              prefix-cache-stats
-              has-windows-coff-plan
-              windows-coff-plan-path)]
-          [(ResultCompileCliTarget.Err message)
-            (ResultCompileCliBatchConfig.Err message)]))]
-    [(cli_option.CliCommonOptionKind.OptLevel)
-      (if has-opt-level
-        (ResultCompileCliBatchConfig.Err
-          "compile: --opt-level was provided more than once")
-        (match (opt.compiler-optimize-parse-level
-          (owned_view.compiler-owned-shared-view value))
-          [(opt.ResultCompilerOptimizeLevel.Ok parsed-level)
-            (compile-cli-batch-parse-options
-              next-idx
-              count
-              batch-path
-              has-target
-              target
-              stdlib-roots
-              cfgs
-              true
-              parsed-level
-              backend-mode
-              prefix-cache-stats
-              has-windows-coff-plan
-              windows-coff-plan-path)]
-          [(opt.ResultCompilerOptimizeLevel.Err)
-            (ResultCompileCliBatchConfig.Err
-              (compile-cli-invalid-opt-level value))]))]))
-
-(define (compile-cli-batch-parse-options
-  [idx : i64]
-  [count : i64]
-  [batch-path : String]
-  [has-target : bool]
-  [target : backend.CompilerBackendTarget]
-  [stdlib-roots : cli_svec.Vec]
-  [cfgs : CompileCliCfgNames]
-  [has-opt-level : bool]
-  [opt-level : i64]
-  [backend-mode : backend.CompilerBackendMode]
-  [prefix-cache-stats : bool]
-  [has-windows-coff-plan : bool]
-  [windows-coff-plan-path : String]) : ResultCompileCliBatchConfig
-  (if (>= idx count)
-    (if (and
-      has-windows-coff-plan
-      (or
-        (not has-target)
-        (not (backend.compiler-backend-target-windows? target))))
-      (ResultCompileCliBatchConfig.Err
-        "compile: --windows-coff-plan requires --target windows-x86_64")
-      (if (and
-        has-windows-coff-plan
-        (string.eq batch-path windows-coff-plan-path))
-        (ResultCompileCliBatchConfig.Err
-          "compile: --windows-coff-plan result path must differ from the batch input")
-        (ResultCompileCliBatchConfig.Ok
-          (CompileCliBatchConfig.Config
-            batch-path
-            has-target
-            target
-            stdlib-roots
-            cfgs
-            backend-mode
-            opt-level
-            prefix-cache-stats
-            has-windows-coff-plan
-            windows-coff-plan-path))))
-    (let
-      [current : String (io.arg idx)]
-      (match (cli_option.cli-common-option-parse
-        (owned_view.compiler-owned-shared-view current)
-        idx
-        count
-        cli_option.cli-common-option-all)
-        [(cli_option.CliCommonOption.Missing kind)
-          (ResultCompileCliBatchConfig.Err
-            (cli_option.cli-common-option-missing-message "compile" kind))]
-        [(cli_option.CliCommonOption.Value kind value next-idx)
-          (compile-cli-batch-parse-common-option
-            kind
-            value
-            next-idx
-            count
-            batch-path
-            has-target
-            target
-            stdlib-roots
-            cfgs
-            has-opt-level
-            opt-level
-            backend-mode
-            prefix-cache-stats
-            has-windows-coff-plan
-            windows-coff-plan-path)]
-        [(cli_option.CliCommonOption.NotCommon)
+                (set! options.target parsed-target)
+                (set! options.has-target true))]
+            [(ResultCompileCliTarget.Err message)
+              (cli_option.cli-args-fail! args message)]))
+        true)]
+    [(string.eq args.name "--opt-level")
+      (let
+        [value : String (cli_option.cli-args-value args)]
+        [level : i64 (cli_option.cli-option-opt-level (& value))]
+        (begin
           (cond
-            [(or
-                (string.eq current "--debug")
-                (string.eq current "-g")
-                (string.eq current "--backtrace"))
-              (begin
-                (ir.compiler-debug-info-set-enabled! true)
-                (compile-cli-batch-parse-options
-                  (+ idx 1)
-                  count
-                  batch-path
-                  has-target
-                  target
-                  stdlib-roots
-                  cfgs
-                  has-opt-level
-                  opt-level
-                  backend-mode
-                  prefix-cache-stats
-                  has-windows-coff-plan
-                  windows-coff-plan-path))]
-            [(string.eq current "-o")
-              (ResultCompileCliBatchConfig.Err
-                "compile: --batch reads output paths from the batch file")]
-            [(string.eq current "--emit-ir")
-              (ResultCompileCliBatchConfig.Err
-                "compile: --batch does not support --emit-ir")]
-            [(string.eq current "--pic")
-              (ResultCompileCliBatchConfig.Err
-                "compile: --batch does not support --pic")]
-            [(string.eq current "--backend-mode")
-              (if (>= (+ idx 1) count)
-                (ResultCompileCliBatchConfig.Err
-                  "compile: --backend-mode requires a value")
-                (match (compile-cli-backend-mode (io.arg (+ idx 1)))
-                  [(ResultCompileCliBackendMode.Ok parsed-mode)
-                    (compile-cli-batch-parse-options
-                      (+ idx 2)
-                      count
-                      batch-path
-                      has-target
-                      target
-                      stdlib-roots
-                      cfgs
-                      has-opt-level
-                      opt-level
-                      parsed-mode
-                      prefix-cache-stats
-                      has-windows-coff-plan
-                      windows-coff-plan-path)]
-                  [(ResultCompileCliBackendMode.Err message)
-                    (ResultCompileCliBatchConfig.Err message)]))]
-            [(string.eq current "--prefix-cache-stats")
-              (compile-cli-batch-parse-options
-                (+ idx 1)
-                count
-                batch-path
-                has-target
-                target
-                stdlib-roots
-                cfgs
-                has-opt-level
-                opt-level
-                backend-mode
-                true
-                has-windows-coff-plan
-                windows-coff-plan-path)]
-            [(string.eq current "--windows-coff-plan")
-              (if has-windows-coff-plan
-                (ResultCompileCliBatchConfig.Err
-                  "compile: --windows-coff-plan was provided more than once")
-                (if (>= (+ idx 1) count)
-                  (ResultCompileCliBatchConfig.Err
-                    "compile: --windows-coff-plan requires a result path")
-                  (let
-                    [plan-path : String (io.arg (+ idx 1))]
-                    (if (compile-cli-flag?
-                      (owned_view.compiler-owned-shared-view plan-path))
-                      (ResultCompileCliBatchConfig.Err
-                        "compile: --windows-coff-plan requires a result path")
-                      (compile-cli-batch-parse-options
-                        (+ idx 2)
-                        count
-                        batch-path
-                        has-target
-                        target
-                        stdlib-roots
-                        cfgs
-                        has-opt-level
-                        opt-level
-                        backend-mode
-                        prefix-cache-stats
-                        true
-                        plan-path)))))]
-            [(string.eq current "--profile-allocations")
-              (if compile-cli-allocation-profile-requested
-                (ResultCompileCliBatchConfig.Err
-                  "compile: --profile-allocations was provided more than once")
-                (begin
-                  (set! compile-cli-allocation-profile-requested true)
-                  (compile-cli-batch-parse-options
-                    (+ idx 1)
-                    count
-                    batch-path
-                    has-target
-                    target
-                    stdlib-roots
-                    cfgs
-                    has-opt-level
-                    opt-level
-                    backend-mode
-                    prefix-cache-stats
-                    has-windows-coff-plan
-                    windows-coff-plan-path)))]
+            [options.has-opt-level
+              (cli_option.cli-args-fail!
+                args
+                "compile: --opt-level was provided more than once")]
+            [(< level 0)
+              (cli_option.cli-args-fail!
+                args
+                (compile-cli-invalid-opt-level value))]
             [else
-              (if (compile-cli-flag?
-                (owned_view.compiler-owned-shared-view current))
-                (ResultCompileCliBatchConfig.Err
-                  (str_cat.str-cat "compile: unknown flag " current))
-                (ResultCompileCliBatchConfig.Err
-                  (str_cat.str-cat "compile: unexpected argument " current)))])]))))
+              (begin
+                (set! options.opt-level level)
+                (set! options.has-opt-level true))])
+          true))]
+    [(string.eq args.name "--debug")
+      (begin
+        (ir.compiler-debug-info-set-enabled! true)
+        true)]
+    [(string.eq args.name "--backend-mode")
+      (begin
+        (match (compile-cli-backend-mode (cli_option.cli-args-value args))
+          [(ResultCompileCliBackendMode.Ok parsed-mode)
+            (set! options.backend-mode parsed-mode)]
+          [(ResultCompileCliBackendMode.Err message)
+            (cli_option.cli-args-fail! args message)])
+        true)]
+    [(string.eq args.name "--profile-allocations")
+      (begin
+        (if compile-cli-allocation-profile-requested
+          (cli_option.cli-args-fail!
+            args
+            "compile: --profile-allocations was provided more than once")
+          (set! compile-cli-allocation-profile-requested true))
+        true)]
+    [else false]))
+
+(define (compile-cli-unknown-argument! [args : (&mut args cli_option.CliArgs)]) : unit
+  (if (cli_option.cli-flag? args.arg)
+    (cli_option.cli-args-fail-arg! args "compile: unknown flag ")
+    (cli_option.cli-args-fail-arg! args "compile: unexpected argument ")))
 
 (define (compile-cli-config-from [input-idx : i64] [count : i64]) : ResultCompileCliConfig
-  (if (>= input-idx count)
-    (ResultCompileCliConfig.Err "compile: expected source path")
-    (let
-      [input-path : String (io.arg input-idx)]
-      (if (compile-cli-flag? (owned_view.compiler-owned-shared-view input-path))
-        (ResultCompileCliConfig.Err
-          "compile: expected source path before flags")
-        (compile-cli-parse-options
-          (+ input-idx 1)
-          count
-          (owned_view.compiler-owned-shared-view input-path)
-          (compile-cli-default-output input-path)
-          false
-          false
-          (backend.CompilerBackendTarget.Linux)
-          (cli_svec.new)
-          (compile-cli-cfg-names-empty)
-          false
-          false
-          false
-          (opt.compiler-optimize-default-level)
-          (backend.CompilerBackendMode.Scalar))))))
-
-(define (compile-cli-command-config [count : i64]) : ResultCompileCliConfig
-  (compile-cli-config-from 2 count))
+  (cond
+    [(>= input-idx count)
+      (ResultCompileCliConfig.Err "compile: expected source path")]
+    [(cli_option.cli-flag? (io.arg input-idx))
+      (ResultCompileCliConfig.Err "compile: expected source path before flags")]
+    [else
+      (let
+        [input-path : String (io.arg input-idx)]
+        [args : cli_option.CliArgs
+          (cli_option.cli-args
+            "compile"
+            "--stdlib-root <dir> --cfg <name> --target <target> --opt-level <0|1|2>
+             --debug|-g|--backtrace --backend-mode <mode> --profile-allocations
+             -o <file> --pic --emit-ir --dump-ir --verify-ir --trace-passes"
+            (+ input-idx 1)
+            count)]
+        [options : CompileCliOptions (compile-cli-options)]
+        [output-path : String
+          (compile-cli-default-output (string.copy (& input-path)))]
+        [has-output : bool false]
+        [emit-ir : bool false]
+        [pic : bool false]
+        (begin
+          (while (cli_option.cli-args-next! (&mut args))
+            (unless
+              (compile-cli-common-option! (&mut options) (&mut args))
+              (cond
+                [(string.eq args.name "-o")
+                  (if has-output
+                    (cli_option.cli-args-fail!
+                      (&mut args)
+                      "compile: -o was provided more than once")
+                    (begin
+                      (set! output-path (cli_option.cli-args-value (& args)))
+                      (set! has-output true)))]
+                [(string.eq args.name "--pic") (set! pic true)]
+                [(and
+                    emit-ir
+                    (or
+                      (string.eq args.name "--emit-ir")
+                      (string.eq args.name "--dump-ir")))
+                  (cli_option.cli-args-fail!
+                    (&mut args)
+                    "compile: IR output was requested more than once")]
+                [(string.eq args.name "--emit-ir") (set! emit-ir true)]
+                [(string.eq args.name "--dump-ir")
+                  (begin
+                    (set! compile-cli-dump-ir-requested true)
+                    (set! compile-cli-dump-ir-pass "")
+                    ;; An optional `after-<pass>` value selects the dump point.
+                    (when
+                      (and
+                        (< args.next count)
+                        (compile-cli-after-pass? (io.arg args.next)))
+                      (let
+                        [value : String (io.arg args.next)]
+                        (begin
+                          (set!
+                            compile-cli-dump-ir-pass
+                            (string.substring
+                              value
+                              6
+                              (- (string.string-length value) 6)))
+                          (set! args.next (+ args.next 1)))))
+                    (set! emit-ir true))]
+                [(string.eq args.name "--verify-ir")
+                  (if compile-cli-verify-ir-requested
+                    (cli_option.cli-args-fail!
+                      (&mut args)
+                      "compile: --verify-ir was provided more than once")
+                    (set! compile-cli-verify-ir-requested true))]
+                [(string.eq args.name "--trace-passes")
+                  (if compile-cli-trace-passes-requested
+                    (cli_option.cli-args-fail!
+                      (&mut args)
+                      "compile: --trace-passes was provided more than once")
+                    (set! compile-cli-trace-passes-requested true))]
+                [else (compile-cli-unknown-argument! (&mut args))])))
+          (cond
+            [args.failed (ResultCompileCliConfig.Err args.error)]
+            [(and emit-ir pic)
+              (ResultCompileCliConfig.Err
+                "compile: --pic cannot be combined with --emit-ir")]
+            [else
+              (ResultCompileCliConfig.Ok
+                (CompileCliConfig.Config
+                  (string.copy (& input-path))
+                  (if (and emit-ir (not has-output))
+                    (compile-cli-default-ir-output input-path)
+                    output-path)
+                  emit-ir
+                  pic
+                  options.has-target
+                  options.target
+                  options.stdlib-roots
+                  options.cfgs
+                  options.backend-mode
+                  options.opt-level))])))]))
 
 (define (compile-cli-batch-config-from [batch-path-idx : i64] [count : i64]) : ResultCompileCliBatchConfig
-  (if (>= batch-path-idx count)
+  (if (or
+    (>= batch-path-idx count)
+    (cli_option.cli-flag? (io.arg batch-path-idx)))
     (ResultCompileCliBatchConfig.Err "compile: --batch requires a list file")
     (let
       [batch-path : String (io.arg batch-path-idx)]
-      (if (compile-cli-flag? (owned_view.compiler-owned-shared-view batch-path))
-        (ResultCompileCliBatchConfig.Err
-          "compile: --batch requires a list file")
-        (compile-cli-batch-parse-options
+      [args : cli_option.CliArgs
+        (cli_option.cli-args
+          "compile"
+          "--stdlib-root <dir> --cfg <name> --target <target> --opt-level <0|1|2>
+           --debug|-g|--backtrace --backend-mode <mode> --profile-allocations
+           -o --emit-ir --pic --prefix-cache-stats --windows-coff-plan"
           (+ batch-path-idx 1)
-          count
-          batch-path
-          false
-          (backend.CompilerBackendTarget.Linux)
-          (cli_svec.new)
-          (compile-cli-cfg-names-empty)
-          false
-          (opt.compiler-optimize-default-level)
-          (backend.CompilerBackendMode.Scalar)
-          false
-          false
-          "")))))
+          count)]
+      [options : CompileCliOptions (compile-cli-options)]
+      [prefix-cache-stats : bool false]
+      [has-windows-coff-plan : bool false]
+      [windows-coff-plan-path : String ""]
+      (begin
+        (while (cli_option.cli-args-next! (&mut args))
+          (unless
+            (compile-cli-common-option! (&mut options) (&mut args))
+            (cond
+              [(string.eq args.name "-o")
+                (cli_option.cli-args-fail!
+                  (&mut args)
+                  "compile: --batch reads output paths from the batch file")]
+              [(string.eq args.name "--emit-ir")
+                (cli_option.cli-args-fail!
+                  (&mut args)
+                  "compile: --batch does not support --emit-ir")]
+              [(string.eq args.name "--pic")
+                (cli_option.cli-args-fail!
+                  (&mut args)
+                  "compile: --batch does not support --pic")]
+              [(string.eq args.name "--prefix-cache-stats")
+                (set! prefix-cache-stats true)]
+              ;; The result path is taken by hand: a duplicate is reported
+              ;; before a missing path, and a flag is no path.
+              [(string.eq args.name "--windows-coff-plan")
+                (cond
+                  [has-windows-coff-plan
+                    (cli_option.cli-args-fail!
+                      (&mut args)
+                      "compile: --windows-coff-plan was provided more than once")]
+                  [(or
+                      (>= args.next count)
+                      (cli_option.cli-flag? (io.arg args.next)))
+                    (cli_option.cli-args-fail!
+                      (&mut args)
+                      "compile: --windows-coff-plan requires a result path")]
+                  [else
+                    (begin
+                      (set! windows-coff-plan-path (io.arg args.next))
+                      (set! has-windows-coff-plan true)
+                      (set! args.next (+ args.next 1)))])]
+              [else (compile-cli-unknown-argument! (&mut args))])))
+        (cond
+          [args.failed (ResultCompileCliBatchConfig.Err args.error)]
+          [(and
+              has-windows-coff-plan
+              (or
+                (not options.has-target)
+                (not (backend.compiler-backend-target-windows? options.target))))
+            (ResultCompileCliBatchConfig.Err
+              "compile: --windows-coff-plan requires --target windows-x86_64")]
+          [(and
+              has-windows-coff-plan
+              (string.eq batch-path windows-coff-plan-path))
+            (ResultCompileCliBatchConfig.Err
+              "compile: --windows-coff-plan result path must differ from the batch input")]
+          [else
+            (ResultCompileCliBatchConfig.Ok
+              (CompileCliBatchConfig.Config
+                batch-path
+                options.has-target
+                options.target
+                options.stdlib-roots
+                options.cfgs
+                options.backend-mode
+                options.opt-level
+                prefix-cache-stats
+                has-windows-coff-plan
+                windows-coff-plan-path))])))))
 
-(define (compile-cli-command-action [count : i64]) : CompileCliAction
+;; `compile-cli-run` serves only `typelisp compile`.
+(define (compile-cli-dispatch [count : i64]) : CompileCliAction
   (if (and (> count 2) (string.eq (io.arg 2) "--batch"))
     (match (compile-cli-batch-config-from 3 count)
       [(ResultCompileCliBatchConfig.Ok config) (CompileCliAction.Batch config)]
       [(ResultCompileCliBatchConfig.Err message)
         (CompileCliAction.Error message)])
-    (match (compile-cli-command-config count)
+    (match (compile-cli-config-from 2 count)
       [(ResultCompileCliConfig.Ok config) (CompileCliAction.Run config)]
       [(ResultCompileCliConfig.Err message) (CompileCliAction.Error message)])))
-
-(define (compile-cli-check-parse-options
-  [idx : i64]
-  [count : i64]
-  [input-path : String]
-  [stdlib-roots : cli_svec.Vec]) : ResultCompileCliCheckConfig
-  (if (>= idx count)
-    (ResultCompileCliCheckConfig.Ok input-path stdlib-roots)
-    (let
-      [current : String (io.arg idx)]
-      (match (cli_option.cli-common-option-parse
-        (owned_view.compiler-owned-shared-view current)
-        idx
-        count
-        cli_option.cli-common-option-stdlib-root)
-        [(cli_option.CliCommonOption.Missing kind)
-          (ResultCompileCliCheckConfig.Err
-            (cli_option.cli-common-option-missing-message "Error" kind))]
-        [(cli_option.CliCommonOption.Value _ value next-idx)
-          (compile-cli-check-parse-options
-            next-idx
-            count
-            input-path
-            (let
-              [next-roots : cli_svec.Vec stdlib-roots]
-              (begin
-                (cli_svec.push-ref! (&mut next-roots) value)
-                next-roots)))]
-        [(cli_option.CliCommonOption.NotCommon)
-          (begin
-            (io.print-error (str_cat.str-cat "Warning: unknown flag: " current))
-            (compile-cli-check-parse-options
-              (+ idx 1)
-              count
-              input-path
-              stdlib-roots))]))))
-
-(define (compile-cli-check-config-from
-  [input-idx : i64]
-  [count : i64]
-  [missing-message : String]) : ResultCompileCliCheckConfig
-  (if (>= input-idx count)
-    (ResultCompileCliCheckConfig.Err missing-message)
-    (compile-cli-check-parse-options
-      (+ input-idx 1)
-      count
-      (io.arg input-idx)
-      (cli_svec.new))))
-
-(define (compile-cli-top-level-check-config [count : i64]) : ResultCompileCliCheckConfig
-  (compile-cli-check-config-from
-    2
-    count
-    (compile-cli-message-with-usage "Error: missing file argument")))
-
-(define (compile-cli-dispatch [count : i64]) : CompileCliAction
-  (if (< count 2)
-    (CompileCliAction.Error
-      (compile-cli-message-with-usage "typelisp: expected command"))
-    (let
-      [command : String (io.arg 1)]
-      (cond
-        [(or
-            (string.eq command "help")
-            (string.eq command "--help")
-            (string.eq command "-h"))
-          (CompileCliAction.Help)]
-        [(string.eq command "compile") (compile-cli-command-action count)]
-        [(string.eq command "check")
-          (match (compile-cli-top-level-check-config count)
-            [(ResultCompileCliCheckConfig.Ok input-path roots)
-              (CompileCliAction.Check input-path roots)]
-            [(ResultCompileCliCheckConfig.Err message)
-              (CompileCliAction.Error message)])]
-        [else
-          (CompileCliAction.Error
-            (compile-cli-message-with-usage
-              (str_cat.str-cat "Unknown command: " command)))]))))
-
-(define (compile-cli-typecheck-doctests
-  [input-path : String]
-  [stdlib-roots : cli_svec.Vec]) : i64
-  (match (io.try-read-file (& input-path))
-    [(io.ErrIoBytes _) 0]
-    [(io.OkIoBytes contents)
-      (let
-        [source : String (byte_buf.to-string contents)]
-        [report : doc_test.DocTestRunReport
-          (doc_test.doc-test-typecheck-source-with-roots
-            input-path
-            source
-            stdlib-roots)]
-        (if (doc_test.doc-test-run-report-ok?
-          (owned_view.compiler-owned-shared-view report))
-          0
-          (begin
-            (io.print-error (doc_test.doc-test-run-report-render report))
-            1)))]))
 
 (define (compile-cli-print-ir-verification-error [message : String]) : unit
   (io.print-error
@@ -1235,7 +617,7 @@
   [has-target : bool]
   [target : backend.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
-  [cfgs : CompileCliCfgNames]
+  [cfgs : cli_svec.Vec]
   [backend-mode : backend.CompilerBackendMode]
   [opt-level : i64]
   [inline-preflight : bool]) : i64
@@ -1265,7 +647,7 @@
       unit)
     (let
       [doctest-status : i64
-        (compile-cli-typecheck-doctests
+        (doc_test.doc-test-typecheck-file-status
           (owned_view.compiler-owned-shared-view input-path)
           (owned_view.compiler-owned-shared-view stdlib-roots))]
       (if (= doctest-status 0)
@@ -1529,7 +911,7 @@
   [assembly-path : String]
   [force-assembly : bool]
   [stdlib-roots : cli_svec.Vec]
-  [cfgs : CompileCliCfgNames]
+  [cfgs : cli_svec.Vec]
   [backend-mode : backend.CompilerBackendMode]
   [opt-level : i64]) : ResultCompileCliWindowsBatchEntry
   (begin
@@ -1554,7 +936,7 @@
       unit)
     (let
       [doctest-status : i64
-        (compile-cli-typecheck-doctests
+        (doc_test.doc-test-typecheck-file-status
           (owned_view.compiler-owned-shared-view input-path)
           (owned_view.compiler-owned-shared-view stdlib-roots))]
       (if (= doctest-status 0)
@@ -1617,7 +999,7 @@
   [stride : i64]
   [target : backend.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
-  [cfgs : (& cfgs CompileCliCfgNames)]
+  [cfgs : (& cfgs cli_svec.Vec)]
   [ran-preflight : bool]) : i64
   (if (>= index (cli_svec.len entries))
     (if ran-preflight
@@ -1686,7 +1068,7 @@
   [entries : (& entries cli_svec.Vec)]
   [target : backend.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
-  [cfgs : (& cfgs CompileCliCfgNames)]) : i64
+  [cfgs : (& cfgs cli_svec.Vec)]) : i64
   (compile-cli-run-batch-inline-tests-from
     (& entries)
     0
@@ -1700,7 +1082,7 @@
   [entries : (& entries cli_svec.Vec)]
   [target : backend.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
-  [cfgs : (& cfgs CompileCliCfgNames)]) : i64
+  [cfgs : (& cfgs cli_svec.Vec)]) : i64
   (compile-cli-run-batch-inline-tests-from
     (& entries)
     0
@@ -1709,29 +1091,6 @@
     stdlib-roots
     cfgs
     false))
-
-(define (compile-cli-batch-line-end [text : String] [start : i64] [n : i64]) : i64
-  (let
-    [i : i64 start]
-    [done : bool false]
-    (begin
-      (while (and (not done) (< i n))
-        (let
-          [c : char (string.string-ref text i)]
-          (if (or (= c '\n') (= c '\r'))
-            (set! done true)
-            (set! i (+ i 1)))))
-      i)))
-
-(define (compile-cli-batch-next-line [text : String] [line-end : i64] [n : i64]) : i64
-  (if (>= line-end n)
-    n
-    (if (and
-      (= (string.string-ref text line-end) '\r')
-      (< (+ line-end 1) n)
-      (= (string.string-ref text (+ line-end 1)) '\n'))
-      (+ line-end 2)
-      (+ line-end 1))))
 
 (define (compile-cli-batch-find-separator
   [text : String]
@@ -1767,16 +1126,8 @@
   (if (>= start n)
     0
     (let
-      [line-end : i64
-        (compile-cli-batch-line-end
-          (owned_view.compiler-owned-shared-view text)
-          start
-          n)]
-      [next-start : i64
-        (compile-cli-batch-next-line
-          (owned_view.compiler-owned-shared-view text)
-          line-end
-          n)]
+      [line-end : i64 (source_text.line-end text start)]
+      [next-start : i64 (source_text.next-line-start text line-end)]
       (if (= start line-end)
         (compile-cli-batch-parse-entries-into!
           text
@@ -1838,16 +1189,8 @@
   (if (>= start n)
     0
     (let
-      [line-end : i64
-        (compile-cli-batch-line-end
-          (owned_view.compiler-owned-shared-view text)
-          start
-          n)]
-      [next-start : i64
-        (compile-cli-batch-next-line
-          (owned_view.compiler-owned-shared-view text)
-          line-end
-          n)]
+      [line-end : i64 (source_text.line-end text start)]
+      [next-start : i64 (source_text.next-line-start text line-end)]
       (if (= start line-end)
         (compile-cli-windows-batch-parse-entries-into!
           text
@@ -1975,7 +1318,7 @@
   [has-target : bool]
   [target : backend.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
-  [cfgs : CompileCliCfgNames]
+  [cfgs : cli_svec.Vec]
   [backend-mode : backend.CompilerBackendMode]
   [opt-level : i64]
   [previous-compat-arena : i64]) : i64
@@ -2161,7 +1504,7 @@
   [has-target : bool]
   [target : backend.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
-  [cfgs : CompileCliCfgNames]
+  [cfgs : cli_svec.Vec]
   [backend-mode : backend.CompilerBackendMode]
   [opt-level : i64]) : i64
   (begin
@@ -2184,7 +1527,7 @@
   [entries : (& entries cli_svec.Vec)]
   [index : i64]
   [stdlib-roots : cli_svec.Vec]
-  [cfgs : CompileCliCfgNames]
+  [cfgs : cli_svec.Vec]
   [backend-mode : backend.CompilerBackendMode]
   [opt-level : i64]
   [previous-compat-arena : i64]
@@ -2375,7 +1718,7 @@
   [entries : cli_svec.Vec]
   [result-plan-path : String]
   [stdlib-roots : cli_svec.Vec]
-  [cfgs : CompileCliCfgNames]
+  [cfgs : cli_svec.Vec]
   [backend-mode : backend.CompilerBackendMode]
   [opt-level : i64]) : i64
   (let
@@ -2406,7 +1749,7 @@
   [has-target : bool]
   [target : backend.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
-  [cfgs : CompileCliCfgNames]
+  [cfgs : cli_svec.Vec]
   [backend-mode : backend.CompilerBackendMode]
   [opt-level : i64]) : i64
   (match (compile-cli-batch-parse-entries-from
@@ -2455,7 +1798,7 @@
   [result-plan-path : String]
   [target : backend.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
-  [cfgs : CompileCliCfgNames]
+  [cfgs : cli_svec.Vec]
   [backend-mode : backend.CompilerBackendMode]
   [opt-level : i64]) : i64
   (match (compile-cli-windows-batch-parse-entries-from
@@ -2623,43 +1966,6 @@
                   unit)
                 status))]))]
     [(CompileCliAction.Batch config) (compile-cli-run-batch config)]
-    [(CompileCliAction.Check input-path stdlib-roots)
-      (match (compiler_check_core.compiler-check-file-with-roots
-        (owned_view.compiler-owned-shared-view input-path)
-        (owned_view.compiler-owned-shared-view stdlib-roots))
-        [(compiler_check_core.ResultCompilerCheck.Ok _ advisories)
-          (begin
-            (compiler_driver_core.compiler-driver-print-advisories
-              (& advisories))
-            (let
-              [inline-test-status : i64
-                (test_cli_core.tltest-inline-typecheck-file-with-cfg
-                  (owned_view.compiler-owned-shared-view input-path)
-                  (owned_view.compiler-owned-shared-view stdlib-roots)
-                  (compiler_check_core.compiler-check-language-cfgs)
-                  "typecheck-prefix-inline-compile-check")]
-              (if (= inline-test-status 0)
-                (let
-                  [doctest-status : i64
-                    (compile-cli-typecheck-doctests input-path stdlib-roots)]
-                  (if (= doctest-status 0)
-                    (begin
-                      (io.print-format "{}" "Type checking passed!\n")
-                      0)
-                    doctest-status))
-                inline-test-status)))]
-        [(compiler_check_core.ResultCompilerCheck.Err diag advisories)
-          (begin
-            (compiler_driver_core.compiler-driver-print-advisories
-              (& advisories))
-            (io.print-error
-              (compiler_driver_core.compiler-driver-render-source-diagnostic
-                (cdiag.compiler-diagnostic-list-first (deref diag))))
-            1)])]
-    [(CompileCliAction.Help)
-      (begin
-        (io.print-error (compile-cli-usage))
-        0)]
     [(CompileCliAction.Error message)
       (begin
         (io.print-error message)

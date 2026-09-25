@@ -12,6 +12,7 @@
 (import (vector.vector doc_render.DocModule core) as doc_module_vec)
 (import stdlib.byte_buf_core as byte_buf)
 (import stdlib.string)
+(import source_text_core as source_text)
 (import stdlib.str_cat_runtime as str_cat)
 
 (define (doc-html-escape-one [text : (& text str)] [idx : i64]) : String
@@ -340,20 +341,6 @@
               start)]))
       start)))
 
-(define (doc-html-syntax-line-end [source : String] [start : i64]) : i64
-  (let
-    [i : i64 start]
-    [n : i64 (string.string-length source)]
-    [done : bool false]
-    (begin
-      (while (and (not done) (< i n))
-        (if (or
-          (= (string.string-ref source i) '\n')
-          (= (string.string-ref source i) '\r'))
-          (set! done true)
-          (set! i (+ i 1))))
-      i)))
-
 (define (doc-html-syntax-list-member? [items : String] [token : String]) : bool
   (let
     [needle : String (str_cat.str-cat "|" token "|")]
@@ -503,10 +490,7 @@
           (cond
             [(= c ';')
               (let
-                [end : i64
-                  (doc-html-syntax-line-end
-                    (owned_view.compiler-owned-shared-view source)
-                    i)]
+                [end : i64 (source_text.line-end source i)]
                 [line : String (string.substring source i (- end i))]
                 [class-name : String
                   (if (and
@@ -1041,6 +1025,6 @@
   [rendered : Expr]
   [needle : Expr]
   [message : Expr]) : Expr
-  `(if (doc_extract.doc-string-contains? ,rendered ,needle)
+  `(if (stdlib.string.contains ,rendered ,needle)
     true
     (io.panic ,message)))

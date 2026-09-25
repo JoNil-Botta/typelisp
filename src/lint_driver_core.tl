@@ -21,10 +21,12 @@
 (import compiler_typecheck_core as tc)
 (import compiler_intern as ci)
 (import compiler_parse_core as parser)
+(import cli_option_core as cli_option)
 (import lint_core)
 (import lint_policy_core as lint_policy)
 (import package_source_core)
 (import stdlib.string)
+(import source_text_core as source_text)
 (import sym_i64_env)
 
 ;; Parsed lint CLI config: input paths, stdlib roots, whether `--check`
@@ -42,8 +44,6 @@
   (target_cfg.compiler-target-cfg-default))
 (define selfhost-lint-language-cfg-names : lint_svec.Vec
   (lint_svec.new))
-(define selfhost-lint-cli-has-target : bool
-  false)
 (define selfhost-lint-flat-output : bool
   false)
 
@@ -71,7 +71,6 @@
       selfhost-lint-language-target
       (target_cfg.compiler-target-cfg-default))
     (set! selfhost-lint-language-cfg-names (lint_svec.new))
-    (set! selfhost-lint-cli-has-target false)
     (set! selfhost-lint-flat-output false)))
 
 (define (selfhost-lint-language-cfgs) : sym_i64_env.SymI64Env
@@ -80,300 +79,118 @@
     (unsafe
       (ptr-read (ptr-addr-of selfhost-lint-language-cfg-names)))))
 
-(define (selfhost-lint-flag? [value : String]) : bool
-  (and (> (string.string-length value) 0) (= (string.string-ref value 0) '-')))
-
-(define (selfhost-lint-config-finish
-  [input-paths : lint_svec.Vec]
-  [manifest-path : String]
-  [has-manifest : bool]
-  [stdlib-roots : lint_svec.Vec]
-  [enforcing : bool]
-  [deprecated-string-concat : bool]
-  [redundant-function-name : bool]
-  [prefer-dotted-field : bool]
-  [name-case : bool]) : ResultSelfhostLintConfig
-  (if (lint_svec.is-empty? (& input-paths))
-    (ResultSelfhostLintConfig.Ok
-      (SelfhostLintConfig.Package
-        manifest-path
-        has-manifest
-        stdlib-roots
-        enforcing
-        deprecated-string-concat
-        redundant-function-name
-        prefer-dotted-field
-        name-case))
-    (if has-manifest
-      (ResultSelfhostLintConfig.Err
-        "selfhost-lint: cannot combine input paths with --manifest-path")
-      (ResultSelfhostLintConfig.Ok
-        (SelfhostLintConfig.File
-          input-paths
-          stdlib-roots
-          enforcing
-          deprecated-string-concat
-          redundant-function-name
-          prefer-dotted-field
-          name-case)))))
-
-(define (selfhost-lint-parse-options
-  [idx : i64]
-  [count : i64]
-  [input-paths : lint_svec.Vec]
-  [manifest-path : String]
-  [has-manifest : bool]
-  [stdlib-roots : lint_svec.Vec]
-  [enforcing : bool]
-  [deprecated-string-concat : bool]
-  [redundant-function-name : bool]
-  [prefer-dotted-field : bool]
-  [name-case : bool]) : ResultSelfhostLintConfig
-  (if (>= idx count)
-    (selfhost-lint-config-finish
-      input-paths
-      manifest-path
-      has-manifest
-      stdlib-roots
-      enforcing
-      deprecated-string-concat
-      redundant-function-name
-      prefer-dotted-field
-      name-case)
-    (let
-      [current : String (io.arg idx)]
-      (cond
-        [(string.eq current "--check")
-          (selfhost-lint-parse-options
-            (+ idx 1)
-            count
-            input-paths
-            manifest-path
-            has-manifest
-            stdlib-roots
-            true
-            deprecated-string-concat
-            redundant-function-name
-            prefer-dotted-field
-            name-case)]
-        [(string.eq current "--deprecated-string-concat")
-          (selfhost-lint-parse-options
-            (+ idx 1)
-            count
-            input-paths
-            manifest-path
-            has-manifest
-            stdlib-roots
-            enforcing
-            true
-            redundant-function-name
-            prefer-dotted-field
-            name-case)]
-        [(string.eq current "--redundant-function-name")
-          (selfhost-lint-parse-options
-            (+ idx 1)
-            count
-            input-paths
-            manifest-path
-            has-manifest
-            stdlib-roots
-            enforcing
-            deprecated-string-concat
-            true
-            prefer-dotted-field
-            name-case)]
-        [(string.eq current "--prefer-dotted-field")
-          (selfhost-lint-parse-options
-            (+ idx 1)
-            count
-            input-paths
-            manifest-path
-            has-manifest
-            stdlib-roots
-            enforcing
-            deprecated-string-concat
-            redundant-function-name
-            true
-            name-case)]
-        [(string.eq current "--name-case")
-          (selfhost-lint-parse-options
-            (+ idx 1)
-            count
-            input-paths
-            manifest-path
-            has-manifest
-            stdlib-roots
-            enforcing
-            deprecated-string-concat
-            redundant-function-name
-            prefer-dotted-field
-            true)]
-        [(string.eq current "--format")
-          (if (>= (+ idx 1) count)
-            (ResultSelfhostLintConfig.Err
-              "selfhost-lint: --format requires a value")
+;; Parse the `lint` config from arguments starting at `start`.
+(define (selfhost-lint-config-from [start : i64] [count : i64]) : ResultSelfhostLintConfig
+  (let
+    [args : cli_option.CliArgs
+      (begin
+        (selfhost-lint-language-config-reset!)
+        (cli_option.cli-args
+          "selfhost-lint"
+          "--check --deprecated-string-concat --redundant-function-name
+           --prefer-dotted-field --name-case --format <rich|flat> --cfg <name>
+           --target <target> --stdlib-root <dir> --manifest-path <file>"
+          start
+          count))]
+    [input-paths : lint_svec.Vec (lint_svec.new)]
+    [manifest-path : String ""]
+    [has-manifest : bool false]
+    [has-target : bool false]
+    [stdlib-roots : lint_svec.Vec (lint_svec.new)]
+    [enforcing : bool false]
+    [deprecated-string-concat : bool false]
+    [redundant-function-name : bool false]
+    [prefer-dotted-field : bool false]
+    [name-case : bool false]
+    (begin
+      (while (cli_option.cli-args-next! (&mut args))
+        (cond
+          [(string.eq args.name "--check") (set! enforcing true)]
+          [(string.eq args.name "--deprecated-string-concat")
+            (set! deprecated-string-concat true)]
+          [(string.eq args.name "--redundant-function-name")
+            (set! redundant-function-name true)]
+          [(string.eq args.name "--prefer-dotted-field")
+            (set! prefer-dotted-field true)]
+          [(string.eq args.name "--name-case") (set! name-case true)]
+          [(string.eq args.name "--format")
             (let
-              [format : String (io.arg (+ idx 1))]
+              [format : String (cli_option.cli-args-value (& args))]
               (cond
                 [(string.eq format "flat")
-                  (begin
-                    (set! selfhost-lint-flat-output true)
-                    (selfhost-lint-parse-options
-                      (+ idx 2)
-                      count
-                      input-paths
-                      manifest-path
-                      has-manifest
-                      stdlib-roots
-                      enforcing
-                      deprecated-string-concat
-                      redundant-function-name
-                      prefer-dotted-field
-                      name-case))]
+                  (set! selfhost-lint-flat-output true)]
                 [(string.eq format "rich")
-                  (begin
-                    (set! selfhost-lint-flat-output false)
-                    (selfhost-lint-parse-options
-                      (+ idx 2)
-                      count
-                      input-paths
-                      manifest-path
-                      has-manifest
-                      stdlib-roots
-                      enforcing
-                      deprecated-string-concat
-                      redundant-function-name
-                      prefer-dotted-field
-                      name-case))]
+                  (set! selfhost-lint-flat-output false)]
                 [else
-                  (ResultSelfhostLintConfig.Err
+                  (cli_option.cli-args-fail!
+                    (&mut args)
                     (str_cat.str-cat
                       "selfhost-lint: unsupported --format "
                       format
-                      " (expected rich or flat)"))])))]
-        [(string.eq current "--cfg")
-          (if (>= (+ idx 1) count)
-            (ResultSelfhostLintConfig.Err
-              "selfhost-lint: --cfg requires a value")
-            (begin
-              (lint_svec.push-ref!
-                (&mut selfhost-lint-language-cfg-names)
-                (io.arg (+ idx 1)))
-              (selfhost-lint-parse-options
-                (+ idx 2)
-                count
-                input-paths
-                manifest-path
-                has-manifest
-                stdlib-roots
-                enforcing
-                deprecated-string-concat
-                redundant-function-name
-                prefer-dotted-field
-                name-case)))]
-        [(string.eq current "--target")
-          (if (>= (+ idx 1) count)
-            (ResultSelfhostLintConfig.Err
-              "selfhost-lint: --target requires a value")
-            (if selfhost-lint-cli-has-target
-              (ResultSelfhostLintConfig.Err
+                      " (expected rich or flat)"))]))]
+          [(string.eq args.name "--cfg")
+            (lint_svec.push-ref!
+              (&mut selfhost-lint-language-cfg-names)
+              (cli_option.cli-args-value (& args)))]
+          [(string.eq args.name "--target")
+            (if has-target
+              (cli_option.cli-args-fail!
+                (&mut args)
                 "selfhost-lint: --target was provided more than once")
-              (match (target_cfg.compiler-target-cfg-parse (io.arg (+ idx 1)))
+              (match (target_cfg.compiler-target-cfg-parse
+                (cli_option.cli-args-value (& args)))
                 [(target_cfg.ResultCompilerTargetCfg.Ok parsed-target)
                   (begin
                     (set! selfhost-lint-language-target parsed-target)
-                    (set! selfhost-lint-cli-has-target true)
-                    (selfhost-lint-parse-options
-                      (+ idx 2)
-                      count
-                      input-paths
-                      manifest-path
-                      has-manifest
-                      stdlib-roots
-                      enforcing
-                      deprecated-string-concat
-                      redundant-function-name
-                      prefer-dotted-field
-                      name-case))]
+                    (set! has-target true))]
                 [(target_cfg.ResultCompilerTargetCfg.Err message)
-                  (ResultSelfhostLintConfig.Err
-                    (str_cat.str-cat "selfhost-lint: " message))])))]
-        [(string.eq current "--stdlib-root")
-          (if (>= (+ idx 1) count)
-            (ResultSelfhostLintConfig.Err
-              "selfhost-lint: --stdlib-root requires a value")
-            (selfhost-lint-parse-options
-              (+ idx 2)
-              count
-              input-paths
+                  (cli_option.cli-args-fail!
+                    (&mut args)
+                    (str_cat.str-cat "selfhost-lint: " message))]))]
+          [(string.eq args.name "--stdlib-root")
+            (lint_svec.push-ref!
+              (&mut stdlib-roots)
+              (cli_option.cli-args-value (& args)))]
+          [(string.eq args.name "--manifest-path")
+            (if has-manifest
+              (cli_option.cli-args-fail!
+                (&mut args)
+                "selfhost-lint: duplicate --manifest-path")
+              (begin
+                (set! manifest-path (cli_option.cli-args-value (& args)))
+                (set! has-manifest true)))]
+          [(cli_option.cli-flag? args.arg)
+            (cli_option.cli-args-fail-arg!
+              (&mut args)
+              "selfhost-lint: unknown flag ")]
+          [else
+            (lint_svec.push-ref! (&mut input-paths) (string.copy (& args.arg)))]))
+      (cond
+        [args.failed (ResultSelfhostLintConfig.Err args.error)]
+        [(lint_svec.is-empty? (& input-paths))
+          (ResultSelfhostLintConfig.Ok
+            (SelfhostLintConfig.Package
               manifest-path
               has-manifest
-              (let
-                [next-roots : lint_svec.Vec stdlib-roots]
-                (begin
-                  (lint_svec.push-ref! (&mut next-roots) (io.arg (+ idx 1)))
-                  next-roots))
+              stdlib-roots
               enforcing
               deprecated-string-concat
               redundant-function-name
               prefer-dotted-field
               name-case))]
-        [(string.eq current "--manifest-path")
-          (if (>= (+ idx 1) count)
-            (ResultSelfhostLintConfig.Err
-              "selfhost-lint: --manifest-path requires a value")
-            (if has-manifest
-              (ResultSelfhostLintConfig.Err
-                "selfhost-lint: duplicate --manifest-path")
-              (selfhost-lint-parse-options
-                (+ idx 2)
-                count
-                input-paths
-                (io.arg (+ idx 1))
-                true
-                stdlib-roots
-                enforcing
-                deprecated-string-concat
-                redundant-function-name
-                prefer-dotted-field
-                name-case)))]
-        [(selfhost-lint-flag? (owned_view.compiler-owned-shared-view current))
+        [has-manifest
           (ResultSelfhostLintConfig.Err
-            (str_cat.str-cat "selfhost-lint: unknown flag " current))]
+            "selfhost-lint: cannot combine input paths with --manifest-path")]
         [else
-          (selfhost-lint-parse-options
-            (+ idx 1)
-            count
-            (let
-              [next-paths : lint_svec.Vec input-paths]
-              (begin
-                (lint_svec.push-ref! (&mut next-paths) current)
-                next-paths))
-            manifest-path
-            has-manifest
-            stdlib-roots
-            enforcing
-            deprecated-string-concat
-            redundant-function-name
-            prefer-dotted-field
-            name-case)]))))
-
-;; Parse the `lint` config from arguments starting at `start`.
-(define (selfhost-lint-config-from [start : i64] [count : i64]) : ResultSelfhostLintConfig
-  (begin
-    (selfhost-lint-language-config-reset!)
-    (selfhost-lint-parse-options
-      start
-      count
-      (lint_svec.new)
-      ""
-      false
-      (lint_svec.new)
-      false
-      false
-      false
-      false
-      false)))
+          (ResultSelfhostLintConfig.Ok
+            (SelfhostLintConfig.File
+              input-paths
+              stdlib-roots
+              enforcing
+              deprecated-string-concat
+              redundant-function-name
+              prefer-dotted-field
+              name-case))]))))
 
 ;; Convert a finding to the common diagnostic model. The diagnostic code is
 ;; deliberately the lint suppression key printed by `lint-allow`.
@@ -459,32 +276,6 @@
     (- (lint_core.lint-findings-count items) 1)
     0))
 
-(define (selfhost-lint-space? [c : char]) : bool
-  (or (= c ' ') (= c '\t') (= c '\n') (= c '\r')))
-
-(define (selfhost-lint-prefix-at?
-  [source : String]
-  [start : i64]
-  [needle : String]) : bool
-  (let
-    [source-len : i64 (string.string-length source)]
-    [needle-len : i64 (string.string-length needle)]
-    (if (< start 0)
-      false
-      (if (> (+ start needle-len) source-len)
-        false
-        (let
-          [ok : bool true]
-          [idx : i64 0]
-          (begin
-            (while (and ok (< idx needle-len))
-              (if (=
-                (string.string-ref source (+ start idx))
-                (string.string-ref needle idx))
-                (set! idx (+ idx 1))
-                (set! ok false)))
-            ok))))))
-
 (define (selfhost-lint-form-delim? [source : String] [idx : i64]) : bool
   (let
     [source-len : i64 (string.string-length source)]
@@ -492,7 +283,7 @@
       true
       (let
         [c : char (string.string-ref source idx)]
-        (or (selfhost-lint-space? c) (= c ')'))))))
+        (or (source_text.source-text-space? c) (= c ')'))))))
 
 (define (selfhost-lint-line-start-index [source : String] [target-line : i64]) : i64
   (let
@@ -521,61 +312,6 @@
       (ast.ast-source-span-start-line span))
     (- (ast.ast-source-span-start-col span) 1)))
 
-(define (selfhost-lint-skip-line [source : String] [idx : i64] [n : i64]) : i64
-  (let
-    [j : i64 idx]
-    (begin
-      (while (and (< j n) (not (= (string.string-ref source j) '\n')))
-        (set! j (+ j 1)))
-      (if (< j n)
-        (+ j 1)
-        j))))
-
-(define (selfhost-lint-skip-string [source : String] [idx : i64] [n : i64]) : i64
-  (let
-    [j : i64 (+ idx 1)]
-    [done : bool false]
-    (begin
-      (while (and (< j n) (not done))
-        (let
-          [c : char (string.string-ref source j)]
-          (if (= c '\\')
-            (set! j (+ j 2))
-            (if (= c '"')
-              (begin
-                (set! done true)
-                (set! j (+ j 1)))
-              (set! j (+ j 1))))))
-      j)))
-
-(define (selfhost-lint-apostrophe-char-escape? [c : char]) : bool
-  (or (= c 'n') (= c 't') (= c 'r') (= c '0') (= c '\\') (= c '\'')))
-
-(define (selfhost-lint-skip-apostrophe-char-literal
-  [source : String]
-  [idx : i64]
-  [n : i64]) : i64
-  (if (< (+ idx 1) n)
-    (let
-      [payload : char (string.string-ref source (+ idx 1))]
-      (cond
-        [(= payload '\\')
-          (if (and
-            (< (+ idx 3) n)
-            (selfhost-lint-apostrophe-char-escape?
-              (string.string-ref source (+ idx 2)))
-            (= (string.string-ref source (+ idx 3)) '\''))
-            (+ idx 4)
-            (+ idx 1))]
-        [(or (= payload '\'') (= payload '\n') (= payload '\r')) (+ idx 1)]
-        [else
-          (if (and
-            (< (+ idx 2) n)
-            (= (string.string-ref source (+ idx 2)) '\''))
-            (+ idx 3)
-            (+ idx 1))]))
-    (+ idx 1)))
-
 (define (selfhost-lint-skip-ws-comments [source : String] [idx : i64] [n : i64]) : i64
   (let
     [j : i64 idx]
@@ -585,20 +321,14 @@
         (let
           [c : char (string.string-ref source j)]
           (cond
-            [(selfhost-lint-space? c) (set! j (+ j 1))]
-            [(= c ';')
-              (set!
-                j
-                (selfhost-lint-skip-line
-                  (owned_view.compiler-owned-shared-view source)
-                  j
-                  n))]
+            [(source_text.source-text-space? c) (set! j (+ j 1))]
+            [(= c ';') (set! j (source_text.source-text-skip-line source j n))]
             [else (set! done true)])))
       j)))
 
 (define (selfhost-lint-source-form-delim? [c : char]) : bool
   (or
-    (selfhost-lint-space? c)
+    (source_text.source-text-space? c)
     (= c '(')
     (= c ')')
     (= c '[')
@@ -628,27 +358,11 @@
         (let
           [c : char (string.string-ref source j)]
           (cond
-            [(= c ';')
-              (set!
-                j
-                (selfhost-lint-skip-line
-                  (owned_view.compiler-owned-shared-view source)
-                  j
-                  n))]
+            [(= c ';') (set! j (source_text.source-text-skip-line source j n))]
             [(= c '"')
-              (set!
-                j
-                (selfhost-lint-skip-string
-                  (owned_view.compiler-owned-shared-view source)
-                  j
-                  n))]
+              (set! j (source_text.source-text-skip-string source j n))]
             [(= c '\'')
-              (set!
-                j
-                (selfhost-lint-skip-apostrophe-char-literal
-                  (owned_view.compiler-owned-shared-view source)
-                  j
-                  n))]
+              (set! j (source_text.source-text-skip-char-literal source j n))]
             [(or (= c '(') (= c '['))
               (begin
                 (set! depth (+ depth 1))
@@ -677,8 +391,8 @@
         (cond
           [(or (= c '(') (= c '['))
             (selfhost-lint-skip-source-group source j n)]
-          [(= c '"') (selfhost-lint-skip-string source j n)]
-          [(= c '\'') (selfhost-lint-skip-apostrophe-char-literal source j n)]
+          [(= c '"') (source_text.source-text-skip-string source j n)]
+          [(= c '\'') (source_text.source-text-skip-char-literal source j n)]
           [else (selfhost-lint-skip-atom source j n)])))))
 
 (define (selfhost-lint-begin-source-form-count
@@ -693,10 +407,7 @@
     [needle : String "(begin"]
     [needle-len : i64 (string.string-length needle)]
     (if (and
-      (selfhost-lint-prefix-at?
-        (owned_view.compiler-owned-shared-view source)
-        start
-        needle)
+      (string.is-string-prefix-at source needle start)
       (selfhost-lint-form-delim?
         (owned_view.compiler-owned-shared-view source)
         (+ start needle-len)))
@@ -752,10 +463,7 @@
       (while (and (< idx source-len) (not stop))
         (if (= (string.string-ref source idx) '\n')
           (set! stop true)
-          (if (selfhost-lint-prefix-at?
-            (owned_view.compiler-owned-shared-view source)
-            idx
-            (owned_view.compiler-owned-shared-view needle))
+          (if (string.is-string-prefix-at source needle idx)
             (begin
               (set! found true)
               (set! stop true))
@@ -793,10 +501,7 @@
             line)]
         [idx : i64 (+ line-start (- col 1))]
         (and
-          (selfhost-lint-prefix-at?
-            (owned_view.compiler-owned-shared-view source)
-            idx
-            (owned_view.compiler-owned-shared-view needle))
+          (string.is-string-prefix-at source needle idx)
           (selfhost-lint-form-delim?
             source
             (+ idx (string.string-length needle))))))))
@@ -2127,7 +1832,7 @@
   (str_cat.str-cat (selfhost-lint-dead-qualified-ref-prefix) key "\n" fallback))
 
 (define (selfhost-lint-dead-qualified-ref? [ref : String]) : bool
-  (selfhost-lint-prefix-at? ref 0 (selfhost-lint-dead-qualified-ref-prefix)))
+  (string.is-string-prefix-at ref (selfhost-lint-dead-qualified-ref-prefix) 0))
 
 (define (selfhost-lint-dead-qualified-ref-separator [ref : String]) : i64
   (string.index-of-byte
@@ -2167,7 +1872,7 @@
     name))
 
 (define (selfhost-lint-dead-source-root? [root : String]) : bool
-  (selfhost-lint-prefix-at? root 0 (selfhost-lint-dead-source-root-prefix)))
+  (string.is-string-prefix-at root (selfhost-lint-dead-source-root-prefix) 0))
 
 (define (selfhost-lint-dead-source-root-separator [root : String]) : i64
   (string.index-of-byte
@@ -2878,10 +2583,7 @@
     [i : i64 idx]
     (begin
       (while (and (< found 0) (< i source-len))
-        (if (selfhost-lint-prefix-at?
-          (owned_view.compiler-owned-shared-view source)
-          i
-          (owned_view.compiler-owned-shared-view needle))
+        (if (string.is-string-prefix-at source needle i)
           (set! found i)
           (set! i (+ i 1))))
       found)))

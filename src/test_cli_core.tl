@@ -36,6 +36,7 @@
 (import compiler_typecheck_api)
 (import compiler_typecheck_core as tc_core)
 (import stdlib.string)
+(import source_text_core as source_text)
 (import stdlib.str_cat_runtime as str_cat)
 (import sym_i64_env)
 
@@ -371,36 +372,6 @@
 (define (tltest-invalid-opt-level [value : String]) : String
   (str_cat.str-cat "test: invalid --opt-level " value "; expected 0, 1, or 2"))
 
-(define (tltest-batch-line-end [text : String] [start : i64] [n : i64]) : i64
-  (let
-    [i : i64 start]
-    [keep : bool true]
-    (begin
-      (while keep
-        (if (< i n)
-          (if (or
-            (= (string.string-ref text i) '\n')
-            (= (string.string-ref text i) '\r'))
-            (set! keep false)
-            (set! i (+ i 1)))
-          (set! keep false)))
-      i)))
-
-(define (tltest-batch-next-line-start
-  [text : String]
-  [line-end : i64]
-  [n : i64]) : i64
-  (begin
-    (unless (< line-end n) (return line-end))
-    (let
-      [c : char (string.string-ref text line-end)]
-      (begin
-        (unless (= c '\r') (return (+ line-end 1)))
-        (unless (< (+ line-end 1) n) (return (+ line-end 1)))
-        (if (= (string.string-ref text (+ line-end 1)) '\n')
-          (+ line-end 2)
-          (+ line-end 1))))))
-
 (define (tltest-batch-paths-from-text-from
   [text : String]
   [start : i64]
@@ -409,16 +380,8 @@
   (if (>= start n)
     paths
     (let
-      [line-end : i64
-        (tltest-batch-line-end
-          (owned_view.compiler-owned-shared-view text)
-          start
-          n)]
-      [next-start : i64
-        (tltest-batch-next-line-start
-          (owned_view.compiler-owned-shared-view text)
-          line-end
-          n)]
+      [line-end : i64 (source_text.line-end text start)]
+      [next-start : i64 (source_text.next-line-start text line-end)]
       (if (= start line-end)
         (tltest-batch-paths-from-text-from text next-start n paths)
         (tltest-batch-paths-from-text-from
@@ -525,480 +488,210 @@
                 opt-level
                 test-mode))))])))
 
-(define (tltest-target-valid? [value : String]) : bool
-  (match (build_run_core.source-tool-target value)
-    [(build_run_core.ResultSourceToolTarget.Ok _) true]
-    [(build_run_core.ResultSourceToolTarget.Err _) false]))
-
 (define (tltest-check-mode? [mode : TestMode]) : bool
   (match mode
     [(TestMode.Check) true]
     [(TestMode.Run) false]))
 
-(define (tltest-parse-common-option
-  [kind : cli_option.CliCommonOptionKind]
-  [value : String]
-  [next-idx : i64]
-  [count : i64]
-  [source : String]
-  [has-source : bool]
-  [manifest-path : String]
-  [has-manifest : bool]
-  [target : String]
-  [mode : compiler_backend.CompilerBackendMode]
-  [roots : cli_svec.Vec]
-  [has-opt-level : bool]
-  [opt-level : i64]
-  [test-mode : TestMode]
-  [batch-list : TestMaybeString]) : ResultTestConfig
-  (match kind
-    [(cli_option.CliCommonOptionKind.StdlibRoot)
-      (tltest-parse-options
-        next-idx
-        count
-        source
-        has-source
-        manifest-path
-        has-manifest
-        target
-        mode
-        (let
-          [next-roots : cli_svec.Vec roots]
-          (begin
-            (cli_svec.push-ref! (&mut next-roots) value)
-            next-roots))
-        has-opt-level
-        opt-level
-        test-mode
-        batch-list)]
-    [(cli_option.CliCommonOptionKind.Target)
-      (if (tltest-target-valid? (owned_view.compiler-owned-shared-view value))
-        (tltest-parse-options
-          next-idx
-          count
+;; Parse the `test` config from arguments starting at `start` (the index of the
+;; first argument after any subcommand name). `count` is `(arg-count)`.
+(define (tltest-config-from [start : i64] [count : i64]) : ResultTestConfig
+  (let
+    [args : cli_option.CliArgs
+      (cli_option.cli-args
+        "test"
+        "--stdlib-root <dir> --cfg <name> --target <target> --opt-level <0|1|2>
+         --check --list --filter <substring> --exact <name> --include-ignored
+         --include-slow --shuffle --seed <u64> --backend-mode <mode>
+         --manifest-path <file> --batch <file> --prefix-cache-stats"
+        start
+        count)]
+    [source : String ""]
+    [has-source : bool false]
+    [manifest-path : String ""]
+    [has-manifest : bool false]
+    [target : String (build_run_core.source-tool-default-target-name)]
+    [mode : compiler_backend.CompilerBackendMode
+      (compiler_backend.CompilerBackendMode.Scalar)]
+    [roots : cli_svec.Vec (cli_svec.new)]
+    [has-opt-level : bool false]
+    [opt-level : i64 (compiler_optimize.compiler-optimize-default-level)]
+    [test-mode : TestMode TestMode.Run]
+    [batch-list : TestMaybeString (TestMaybeString.No)]
+    (begin
+      (set! tltest-prefix-cache-stats false)
+      (set! tltest-list-only false)
+      (set! tltest-name-filter-set false)
+      (set! tltest-name-filter "")
+      (set! tltest-name-exact-set false)
+      (set! tltest-name-exact "")
+      (set! tltest-include-ignored false)
+      (set! tltest-include-slow false)
+      (set! tltest-shuffle false)
+      (set! tltest-seed-set false)
+      (set! tltest-seed (cast 0 : u64))
+      (tltest-user-cfg-reset!)
+      (while (cli_option.cli-args-next! (&mut args))
+        (cond
+          [(string.eq args.name "--stdlib-root")
+            (cli_svec.push-ref!
+              (&mut roots)
+              (cli_option.cli-args-value (& args)))]
+          [(string.eq args.name "--target")
+            (let
+              [value : String (cli_option.cli-args-value (& args))]
+              (match (build_run_core.source-tool-target (string.copy (& value)))
+                [(build_run_core.ResultSourceToolTarget.Ok _)
+                  (set! target value)]
+                [(build_run_core.ResultSourceToolTarget.Err _)
+                  (cli_option.cli-args-fail!
+                    (&mut args)
+                    (tltest-unknown-target value))]))]
+          [(string.eq args.name "--opt-level")
+            (let
+              [value : String (cli_option.cli-args-value (& args))]
+              [level : i64 (cli_option.cli-option-opt-level (& value))]
+              (cond
+                [has-opt-level
+                  (cli_option.cli-args-fail!
+                    (&mut args)
+                    "test: --opt-level was provided more than once")]
+                [(< level 0)
+                  (cli_option.cli-args-fail!
+                    (&mut args)
+                    (tltest-invalid-opt-level value))]
+                [else
+                  (begin
+                    (set! has-opt-level true)
+                    (set! opt-level level))]))]
+          [(string.eq args.name "--cfg")
+            (let
+              [value : String (cli_option.cli-args-value (& args))]
+              (if (= (string.string-length value) 0)
+                (cli_option.cli-args-fail!
+                  (&mut args)
+                  "test: --cfg requires a non-empty value")
+                (tltest-user-cfg-push! value)))]
+          [(string.eq args.name "--check")
+            (if tltest-list-only
+              (cli_option.cli-args-fail!
+                (&mut args)
+                "test: cannot combine --check with --list")
+              (set! test-mode TestMode.Check))]
+          [(string.eq args.name "--list")
+            (cond
+              [tltest-list-only
+                (cli_option.cli-args-fail! (&mut args) "test: duplicate --list")]
+              [(tltest-check-mode? test-mode)
+                (cli_option.cli-args-fail!
+                  (&mut args)
+                  "test: cannot combine --check with --list")]
+              [else (set! tltest-list-only true)])]
+          [(or (string.eq args.name "--filter") (string.eq args.name "--exact"))
+            (let
+              [value : String (cli_option.cli-args-value (& args))]
+              (cond
+                [(tltest-selection-set?)
+                  (cli_option.cli-args-fail!
+                    (&mut args)
+                    "test: --filter and --exact are mutually exclusive and may appear only once")]
+                [(string.eq args.name "--filter")
+                  (if (= (string.string-length value) 0)
+                    (cli_option.cli-args-fail!
+                      (&mut args)
+                      "test: --filter requires a non-empty value")
+                    (begin
+                      (set! tltest-name-filter-set true)
+                      (set! tltest-name-filter value)))]
+                [(= (string.string-length value) 0)
+                  (cli_option.cli-args-fail!
+                    (&mut args)
+                    "test: --exact requires a non-empty value")]
+                [else
+                  (begin
+                    (set! tltest-name-exact-set true)
+                    (set! tltest-name-exact value))]))]
+          [(string.eq args.name "--include-ignored")
+            (if tltest-include-ignored
+              (cli_option.cli-args-fail!
+                (&mut args)
+                "test: duplicate --include-ignored")
+              (set! tltest-include-ignored true))]
+          [(string.eq args.name "--include-slow")
+            (if tltest-include-slow
+              (cli_option.cli-args-fail!
+                (&mut args)
+                "test: duplicate --include-slow")
+              (set! tltest-include-slow true))]
+          [(string.eq args.name "--shuffle")
+            (if tltest-shuffle
+              (cli_option.cli-args-fail!
+                (&mut args)
+                "test: duplicate --shuffle")
+              (set! tltest-shuffle true))]
+          [(string.eq args.name "--seed")
+            (if tltest-seed-set
+              (cli_option.cli-args-fail! (&mut args) "test: duplicate --seed")
+              (match (tltest-parse-seed (cli_option.cli-args-value (& args)))
+                [(ResultTestSeed.Err message)
+                  (cli_option.cli-args-fail! (&mut args) message)]
+                [(ResultTestSeed.Ok seed)
+                  (begin
+                    (set! tltest-seed-set true)
+                    (set! tltest-seed seed))]))]
+          [(string.eq args.name "--backend-mode")
+            ;; The shared source-tool parser owns the accepted spellings, so
+            ;; `test` cannot drift from build and run.
+            (match (build_run_core.source-tool-backend-mode
+              "test"
+              (cli_option.cli-args-value (& args)))
+              [(build_run_core.ResultSourceToolBackendMode.Ok selected-mode)
+                (set! mode selected-mode)]
+              [(build_run_core.ResultSourceToolBackendMode.Err message)
+                (cli_option.cli-args-fail! (&mut args) message)])]
+          [(string.eq args.name "--manifest-path")
+            (if has-manifest
+              (cli_option.cli-args-fail!
+                (&mut args)
+                "test: duplicate --manifest-path")
+              (begin
+                (set! manifest-path (cli_option.cli-args-value (& args)))
+                (set! has-manifest true)))]
+          [(string.eq args.name "--batch")
+            (match batch-list
+              [(TestMaybeString.Some _)
+                (cli_option.cli-args-fail!
+                  (&mut args)
+                  "test: duplicate --batch")]
+              [(TestMaybeString.No)
+                (set!
+                  batch-list
+                  (TestMaybeString.Some (cli_option.cli-args-value (& args))))])]
+          [(string.eq args.name "--prefix-cache-stats")
+            (set! tltest-prefix-cache-stats true)]
+          [(cli_option.cli-flag? args.arg)
+            (cli_option.cli-args-fail-arg! (&mut args) "test: unknown flag ")]
+          [has-source
+            (cli_option.cli-args-fail!
+              (&mut args)
+              "test: accepts only one source file")]
+          [else
+            (begin
+              (set! source (string.copy (& args.arg)))
+              (set! has-source true))]))
+      (if args.failed
+        (ResultTestConfig.Err args.error)
+        (tltest-config-finish
           source
           has-source
           manifest-path
           has-manifest
-          value
+          target
           mode
           roots
-          has-opt-level
           opt-level
           test-mode
-          batch-list)
-        (ResultTestConfig.Err (tltest-unknown-target value)))]
-    [(cli_option.CliCommonOptionKind.OptLevel)
-      (if has-opt-level
-        (ResultTestConfig.Err "test: --opt-level was provided more than once")
-        (match (compiler_optimize.compiler-optimize-parse-level
-          (owned_view.compiler-owned-shared-view value))
-          [(compiler_optimize.ResultCompilerOptimizeLevel.Ok parsed-level)
-            (tltest-parse-options
-              next-idx
-              count
-              source
-              has-source
-              manifest-path
-              has-manifest
-              target
-              mode
-              roots
-              true
-              parsed-level
-              test-mode
-              batch-list)]
-          [(compiler_optimize.ResultCompilerOptimizeLevel.Err)
-            (ResultTestConfig.Err (tltest-invalid-opt-level value))]))]
-    [(cli_option.CliCommonOptionKind.Cfg)
-      (if (= (string.string-length value) 0)
-        (ResultTestConfig.Err "test: --cfg requires a non-empty value")
-        (begin
-          (tltest-user-cfg-push! value)
-          (tltest-parse-options
-            next-idx
-            count
-            source
-            has-source
-            manifest-path
-            has-manifest
-            target
-            mode
-            roots
-            has-opt-level
-            opt-level
-            test-mode
-            batch-list)))]))
-
-(define (tltest-parse-options
-  [idx : i64]
-  [count : i64]
-  [source : String]
-  [has-source : bool]
-  [manifest-path : String]
-  [has-manifest : bool]
-  [target : String]
-  [mode : compiler_backend.CompilerBackendMode]
-  [roots : cli_svec.Vec]
-  [has-opt-level : bool]
-  [opt-level : i64]
-  [test-mode : TestMode]
-  [batch-list : TestMaybeString]) : ResultTestConfig
-  (if (>= idx count)
-    (tltest-config-finish
-      source
-      has-source
-      manifest-path
-      has-manifest
-      target
-      mode
-      roots
-      opt-level
-      test-mode
-      batch-list)
-    (let
-      [current : String (io.arg idx)]
-      (match (cli_option.cli-common-option-parse
-        (owned_view.compiler-owned-shared-view current)
-        idx
-        count
-        cli_option.cli-common-option-all)
-        [(cli_option.CliCommonOption.Missing kind)
-          (ResultTestConfig.Err
-            (cli_option.cli-common-option-missing-message "test" kind))]
-        [(cli_option.CliCommonOption.Value kind value next-idx)
-          (tltest-parse-common-option
-            kind
-            value
-            next-idx
-            count
-            source
-            has-source
-            manifest-path
-            has-manifest
-            target
-            mode
-            roots
-            has-opt-level
-            opt-level
-            test-mode
-            batch-list)]
-        [(cli_option.CliCommonOption.NotCommon)
-          (cond
-            [(string.eq current "--check")
-              (if tltest-list-only
-                (ResultTestConfig.Err
-                  "test: cannot combine --check with --list")
-                (tltest-parse-options
-                  (+ idx 1)
-                  count
-                  source
-                  has-source
-                  manifest-path
-                  has-manifest
-                  target
-                  mode
-                  roots
-                  has-opt-level
-                  opt-level
-                  TestMode.Check
-                  batch-list))]
-            [(string.eq current "--list")
-              (if tltest-list-only
-                (ResultTestConfig.Err "test: duplicate --list")
-                (if (tltest-check-mode? test-mode)
-                  (ResultTestConfig.Err
-                    "test: cannot combine --check with --list")
-                  (begin
-                    (set! tltest-list-only true)
-                    (tltest-parse-options
-                      (+ idx 1)
-                      count
-                      source
-                      has-source
-                      manifest-path
-                      has-manifest
-                      target
-                      mode
-                      roots
-                      has-opt-level
-                      opt-level
-                      test-mode
-                      batch-list))))]
-            [(string.eq current "--filter")
-              (if (>= (+ idx 1) count)
-                (ResultTestConfig.Err "test: --filter requires a value")
-                (if (tltest-selection-set?)
-                  (ResultTestConfig.Err
-                    "test: --filter and --exact are mutually exclusive and may appear only once")
-                  (let
-                    [value : String (io.arg (+ idx 1))]
-                    (if (= (string.string-length value) 0)
-                      (ResultTestConfig.Err
-                        "test: --filter requires a non-empty value")
-                      (begin
-                        (set! tltest-name-filter-set true)
-                        (set! tltest-name-filter value)
-                        (tltest-parse-options
-                          (+ idx 2)
-                          count
-                          source
-                          has-source
-                          manifest-path
-                          has-manifest
-                          target
-                          mode
-                          roots
-                          has-opt-level
-                          opt-level
-                          test-mode
-                          batch-list))))))]
-            [(string.eq current "--exact")
-              (if (>= (+ idx 1) count)
-                (ResultTestConfig.Err "test: --exact requires a value")
-                (if (tltest-selection-set?)
-                  (ResultTestConfig.Err
-                    "test: --filter and --exact are mutually exclusive and may appear only once")
-                  (let
-                    [value : String (io.arg (+ idx 1))]
-                    (if (= (string.string-length value) 0)
-                      (ResultTestConfig.Err
-                        "test: --exact requires a non-empty value")
-                      (begin
-                        (set! tltest-name-exact-set true)
-                        (set! tltest-name-exact value)
-                        (tltest-parse-options
-                          (+ idx 2)
-                          count
-                          source
-                          has-source
-                          manifest-path
-                          has-manifest
-                          target
-                          mode
-                          roots
-                          has-opt-level
-                          opt-level
-                          test-mode
-                          batch-list))))))]
-            [(string.eq current "--include-ignored")
-              (if tltest-include-ignored
-                (ResultTestConfig.Err "test: duplicate --include-ignored")
-                (begin
-                  (set! tltest-include-ignored true)
-                  (tltest-parse-options
-                    (+ idx 1)
-                    count
-                    source
-                    has-source
-                    manifest-path
-                    has-manifest
-                    target
-                    mode
-                    roots
-                    has-opt-level
-                    opt-level
-                    test-mode
-                    batch-list)))]
-            [(string.eq current "--include-slow")
-              (if tltest-include-slow
-                (ResultTestConfig.Err "test: duplicate --include-slow")
-                (begin
-                  (set! tltest-include-slow true)
-                  (tltest-parse-options
-                    (+ idx 1)
-                    count
-                    source
-                    has-source
-                    manifest-path
-                    has-manifest
-                    target
-                    mode
-                    roots
-                    has-opt-level
-                    opt-level
-                    test-mode
-                    batch-list)))]
-            [(string.eq current "--shuffle")
-              (if tltest-shuffle
-                (ResultTestConfig.Err "test: duplicate --shuffle")
-                (begin
-                  (set! tltest-shuffle true)
-                  (tltest-parse-options
-                    (+ idx 1)
-                    count
-                    source
-                    has-source
-                    manifest-path
-                    has-manifest
-                    target
-                    mode
-                    roots
-                    has-opt-level
-                    opt-level
-                    test-mode
-                    batch-list)))]
-            [(string.eq current "--seed")
-              (if (>= (+ idx 1) count)
-                (ResultTestConfig.Err "test: --seed requires a value")
-                (if tltest-seed-set
-                  (ResultTestConfig.Err "test: duplicate --seed")
-                  (match (tltest-parse-seed (io.arg (+ idx 1)))
-                    [(ResultTestSeed.Err message)
-                      (ResultTestConfig.Err message)]
-                    [(ResultTestSeed.Ok seed)
-                      (begin
-                        (set! tltest-seed-set true)
-                        (set! tltest-seed seed)
-                        (tltest-parse-options
-                          (+ idx 2)
-                          count
-                          source
-                          has-source
-                          manifest-path
-                          has-manifest
-                          target
-                          mode
-                          roots
-                          has-opt-level
-                          opt-level
-                          test-mode
-                          batch-list))])))]
-            [(string.eq current "--backend-mode")
-              (if (>= (+ idx 1) count)
-                (ResultTestConfig.Err "test: --backend-mode requires a value")
-                (let
-                  [value : String (io.arg (+ idx 1))]
-                  ;; The shared source-tool parser owns the accepted
-                  ;; spellings, so `test` cannot drift from build and run.
-                  (match (build_run_core.source-tool-backend-mode "test" value)
-                    [(build_run_core.ResultSourceToolBackendMode.Ok
-                        selected-mode)
-                      (tltest-parse-options
-                        (+ idx 2)
-                        count
-                        source
-                        has-source
-                        manifest-path
-                        has-manifest
-                        target
-                        selected-mode
-                        roots
-                        has-opt-level
-                        opt-level
-                        test-mode
-                        batch-list)]
-                    [(build_run_core.ResultSourceToolBackendMode.Err message)
-                      (ResultTestConfig.Err message)])))]
-            [(string.eq current "--manifest-path")
-              (if (>= (+ idx 1) count)
-                (ResultTestConfig.Err "test: --manifest-path requires a value")
-                (if has-manifest
-                  (ResultTestConfig.Err "test: duplicate --manifest-path")
-                  (tltest-parse-options
-                    (+ idx 2)
-                    count
-                    source
-                    has-source
-                    (io.arg (+ idx 1))
-                    true
-                    target
-                    mode
-                    roots
-                    has-opt-level
-                    opt-level
-                    test-mode
-                    batch-list)))]
-            [(string.eq current "--batch")
-              (if (>= (+ idx 1) count)
-                (ResultTestConfig.Err "test: --batch requires a value")
-                (match batch-list
-                  [(TestMaybeString.Some _)
-                    (ResultTestConfig.Err "test: duplicate --batch")]
-                  [(TestMaybeString.No)
-                    (tltest-parse-options
-                      (+ idx 2)
-                      count
-                      source
-                      has-source
-                      manifest-path
-                      has-manifest
-                      target
-                      mode
-                      roots
-                      has-opt-level
-                      opt-level
-                      test-mode
-                      (TestMaybeString.Some (io.arg (+ idx 1))))]))]
-            [(string.eq current "--prefix-cache-stats")
-              (begin
-                (set! tltest-prefix-cache-stats true)
-                (tltest-parse-options
-                  (+ idx 1)
-                  count
-                  source
-                  has-source
-                  manifest-path
-                  has-manifest
-                  target
-                  mode
-                  roots
-                  has-opt-level
-                  opt-level
-                  test-mode
-                  batch-list))]
-            [(build_run_core.source-tool-flag?
-                (owned_view.compiler-owned-shared-view current))
-              (ResultTestConfig.Err
-                (str_cat.str-cat "test: unknown flag " current))]
-            [has-source
-              (ResultTestConfig.Err "test: accepts only one source file")]
-            [else
-              (tltest-parse-options
-                (+ idx 1)
-                count
-                current
-                true
-                manifest-path
-                has-manifest
-                target
-                mode
-                roots
-                has-opt-level
-                opt-level
-                test-mode
-                batch-list)])]))))
-
-;; Parse the `test` config from arguments starting at `start` (the index of the
-;; first argument after any subcommand name). `count` is `(arg-count)`.
-(define (tltest-config-from [start : i64] [count : i64]) : ResultTestConfig
-  (begin
-    (set! tltest-prefix-cache-stats false)
-    (set! tltest-list-only false)
-    (set! tltest-name-filter-set false)
-    (set! tltest-name-filter "")
-    (set! tltest-name-exact-set false)
-    (set! tltest-name-exact "")
-    (set! tltest-include-ignored false)
-    (set! tltest-include-slow false)
-    (set! tltest-shuffle false)
-    (set! tltest-seed-set false)
-    (set! tltest-seed (cast 0 : u64))
-    (tltest-user-cfg-reset!)
-    (tltest-parse-options
-      start
-      count
-      ""
-      false
-      ""
-      false
-      (build_run_core.source-tool-default-target-name)
-      (compiler_backend.CompilerBackendMode.Scalar)
-      (cli_svec.new)
-      false
-      (compiler_optimize.compiler-optimize-default-level)
-      TestMode.Run
-      (TestMaybeString.No))))
+          batch-list)))))
 
 (define (tltest-decl-list-count [items : ast.AstDeclList]) : i64
   (let
@@ -5129,22 +4822,6 @@
         (tltest-stdlib-env-fixture-path target)
         (process.env-empty)))))
 
-(define (tltest-run-harness-output
-  [source : String]
-  [bin-path : String]
-  [target : compiler_backend.CompilerBackendTarget]) : process.ResultProcessOutput
-  (if (tltest-stdlib-env-fixture-source? source)
-    (process.output
-      (build_run_core.source-tool-command-for-target
-        target
-        (process.command-with-env-list
-          (process.command bin-path (process.args-empty))
-          (tltest-stdlib-env-fixture-env target))))
-    (build_run_core.source-tool-run-executable
-      bin-path
-      target
-      (process.args-empty))))
-
 (define (tltest-stdlib-env-fixture-self-test?) : bool
   (and
     (tltest-stdlib-env-fixture-source? "stdlib/env.tl")
@@ -5188,21 +4865,20 @@
   [inline-harness : bool]
   [temp-dir : String]) : i64
   (let
-    [asm-path : String
-      (build_run_core.source-tool-asm-path
-        (owned_view.compiler-owned-shared-view temp-dir)
-        (owned_view.compiler-owned-shared-view source))]
-    [obj-path : String
-      (build_run_core.source-tool-obj-path
-        (owned_view.compiler-owned-shared-view temp-dir)
-        (owned_view.compiler-owned-shared-view source)
-        target)]
-    [bin-path : String
-      (build_run_core.source-tool-temp-bin-path
-        (owned_view.compiler-owned-shared-view temp-dir)
+    [files : build_run_core.SourceToolTempFiles
+      (build_run_core.source-tool-temp-files
+        temp-dir
         (owned_view.compiler-owned-shared-view source)
         target)]
     [legacy-roots : cli_svec.Vec (clone roots)]
+    ;; Generated inline harnesses reserve status 1 for recoverable assertion
+    ;; failures, so a harness that cannot be built, cannot start, or aborts or
+    ;; traps maps to status 2. Integration programs keep their historical 0/1
+    ;; normalization.
+    [failed : i64
+      (if inline-harness
+        2
+        1)]
     (match (lower.lower-compiler-program-with-decl-paths-mode-cache-and-state
       lower-state
       entry-path
@@ -5216,89 +4892,55 @@
         legacy-roots
         (tltest-cfgs target)))
       [(lower.ResultCompilerLower.Ok ir spans)
-        (match (build_run_core.source-tool-lowered-object-or-assembly-and-link-with-mode
-          (owned_view.compiler-owned-shared-view source)
-          ir
-          spans
-          target
-          opt-level
-          backend-mode
-          (build_run_core.source-tool-link-inputs-empty)
-          (owned_view.compiler-owned-shared-view asm-path)
-          (owned_view.compiler-owned-shared-view obj-path)
-          (owned_view.compiler-owned-shared-view bin-path)
-          "test: failed to write assembly artifact")
-          [(build_run_core.SourceToolCommandStatus.Err message)
+        (match (build_run_core.source-tool-link-and-run
+          (build_run_core.SourceToolLinkRequest
+            (owned_view.compiler-owned-shared-view source)
+            (build_run_core.SourceToolProgram.Lowered ir spans)
+            target
+            opt-level
+            backend-mode
+            (build_run_core.source-tool-link-inputs-empty)
+            (owned_view.compiler-owned-shared-view files)
+            "test: failed to write assembly artifact")
+          (process.args-empty)
+          (if (tltest-stdlib-env-fixture-source? source)
+            (tltest-stdlib-env-fixture-env target)
+            (process.env-empty))
+          false)
+          [(build_run_core.SourceToolRunOutcome.LinkFailed message)
             (begin
               (io.print-error message)
-              (build_run_core.source-tool-clean-temp
-                temp-dir
-                asm-path
-                obj-path
-                bin-path
-                true)
-              (if inline-harness
-                2
-                1))]
-          [(build_run_core.SourceToolCommandStatus.Ok)
+              (build_run_core.source-tool-clean-temp-files files true)
+              failed)]
+          [(build_run_core.SourceToolRunOutcome.Ran output)
+            (let
+              [status : i64 (process.output-status output)]
+              (begin
+                (driver.compiler-driver-reset-analysis-state!)
+                (build_run_core.source-tool-forward-output
+                  (owned_view.compiler-owned-shared-view output))
+                (if (or (= status 0) (and inline-harness (= status 1)))
+                  unit
+                  (tltest-report-child-status output))
+                (build_run_core.source-tool-clean-temp-files files true)
+                (cond
+                  [(= status 0) 0]
+                  [(and inline-harness (= status 1)) 1]
+                  [else failed])))]
+          ;; Keep the artifacts of a harness that would not start.
+          [(build_run_core.SourceToolRunOutcome.SpawnFailed error)
             (begin
               (driver.compiler-driver-reset-analysis-state!)
-              (match (tltest-run-harness-output
-                source
-                (owned_view.compiler-owned-shared-view bin-path)
-                target)
-                [(process.OkProcessOutput output)
-                  (let
-                    [status : i64 (process.output-status output)]
-                    (begin
-                      (build_run_core.source-tool-forward-output
-                        (owned_view.compiler-owned-shared-view output))
-                      (if (or (= status 0) (and inline-harness (= status 1)))
-                        unit
-                        (tltest-report-child-status output))
-                      (build_run_core.source-tool-clean-temp
-                        temp-dir
-                        asm-path
-                        obj-path
-                        bin-path
-                        true)
-                      ;; Generated inline harnesses reserve status 1 for
-                      ;; recoverable assertion failures. A hard abort or trap
-                      ;; is a harness failure and maps to status 2. Integration
-                      ;; programs retain their historical 0/1 normalization.
-                      (if inline-harness
-                        (if (= status 0)
-                          0
-                          (if (= status 1)
-                            1
-                            2))
-                        (if (= status 0)
-                          0
-                          1))))]
-                [(process.ErrProcessOutput error)
-                  (begin
-                    (io.print-error
-                      (tltest-run-executable-error-message
-                        bin-path
-                        temp-dir
-                        error))
-                    (if inline-harness
-                      2
-                      1))]))])]
+              (io.print-error
+                (tltest-run-executable-error-message files.bin files.dir error))
+              failed)])]
       [(lower.ResultCompilerLower.Err diag)
         (begin
           (io.print-error
             (driver.compiler-driver-render-source-diagnostic
               (tltest-diagnostic-with-source-fallback source (deref diag))))
-          (build_run_core.source-tool-clean-temp
-            temp-dir
-            asm-path
-            obj-path
-            bin-path
-            true)
-          (if inline-harness
-            2
-            1))])))
+          (build_run_core.source-tool-clean-temp-files files true)
+          failed)])))
 
 (define (tltest-run-harness-in-temp
   [source : String]
@@ -5503,14 +5145,6 @@
         (string.string-length text)
         true))))
 
-(define (tltest-string-prefix? [text : String] [prefix : String]) : bool
-  (let
-    [text-len : i64 (string.string-length text)]
-    [prefix-len : i64 (string.string-length prefix)]
-    (if (> prefix-len text-len)
-      false
-      (string.eq (string.substring text 0 prefix-len) prefix))))
-
 (define (tltest-package-tests-prefix [manifest-dir : String]) : String
   (str_cat.str-cat
     (compiler_load.compiler-load-normalize-path
@@ -5518,7 +5152,7 @@
     "/"))
 
 (define (tltest-package-test-source? [source : String] [tests-prefix : String]) : bool
-  (tltest-string-prefix?
+  (source_text.starts-with?
     (compiler_load.compiler-load-normalize-path source)
     tests-prefix))
 
@@ -5539,7 +5173,7 @@
   [manifest-managed : bool]) : bool
   (and
     manifest-managed
-    (tltest-string-prefix?
+    (source_text.starts-with?
       normalized
       (tltest-package-tests-subdir-prefix tests-prefix "integration"))))
 
@@ -5560,47 +5194,47 @@
       (tltest-package-manifest-managed-integration-source?
         (owned_view.compiler-owned-shared-view normalized)
         (owned_view.compiler-owned-shared-view tests-prefix))
-      (tltest-string-prefix?
-        (owned_view.compiler-owned-shared-view normalized)
+      (source_text.starts-with?
+        normalized
         (tltest-package-tests-subdir-prefix
           (owned_view.compiler-owned-shared-view tests-prefix)
           "diagnostics"))
-      (tltest-string-prefix?
-        (owned_view.compiler-owned-shared-view normalized)
+      (source_text.starts-with?
+        normalized
         (tltest-package-tests-subdir-prefix
           (owned_view.compiler-owned-shared-view tests-prefix)
           "format_golden"))
-      (tltest-string-prefix?
-        (owned_view.compiler-owned-shared-view normalized)
+      (source_text.starts-with?
+        normalized
         (tltest-package-tests-subdir-prefix
           (owned_view.compiler-owned-shared-view tests-prefix)
           "golden"))
-      (tltest-string-prefix?
-        (owned_view.compiler-owned-shared-view normalized)
+      (source_text.starts-with?
+        normalized
         (tltest-package-tests-subdir-prefix
           (owned_view.compiler-owned-shared-view tests-prefix)
           "inline"))
-      (tltest-string-prefix?
-        (owned_view.compiler-owned-shared-view normalized)
+      (source_text.starts-with?
+        normalized
         (tltest-package-tests-subdir-prefix
           (owned_view.compiler-owned-shared-view tests-prefix)
           "no-libc"))
-      (tltest-string-prefix?
-        (owned_view.compiler-owned-shared-view normalized)
+      (source_text.starts-with?
+        normalized
         (tltest-package-tests-subdir-prefix
           (owned_view.compiler-owned-shared-view tests-prefix)
           "public-tools"))
-      (tltest-string-prefix?
-        (owned_view.compiler-owned-shared-view normalized)
+      (source_text.starts-with?
+        normalized
         (tltest-package-tests-subdir-prefix
           (owned_view.compiler-owned-shared-view tests-prefix)
           "safety"))
-      (tltest-string-prefix?
-        (owned_view.compiler-owned-shared-view normalized)
+      (source_text.starts-with?
+        normalized
         (tltest-package-tests-subdir-prefix
           (owned_view.compiler-owned-shared-view tests-prefix)
           "spmd"))
-      (tltest-string-prefix?
+      (source_text.starts-with?
         normalized
         (tltest-package-tests-subdir-prefix tests-prefix "tlci")))))
 

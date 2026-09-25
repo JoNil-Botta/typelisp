@@ -43,6 +43,7 @@
 (import compiler_backend as backend)
 (import build_run_core)
 (import stdlib.string)
+(import source_text_core as source_text)
 (import sym_i64_env)
 
 (defenum ReplTypeCommand
@@ -108,23 +109,14 @@
     (= (string.string-ref line 0) '.')
     false))
 
-(define (repl-space? [c : char]) : bool
-  (or (= c ' ') (= c '\t') (= c '\n') (= c '\r')))
-
-(define (repl-string-prefix? [text : String] [prefix : String]) : bool
-  (let
-    [text-len : i64 (string.string-length text)]
-    [prefix-len : i64 (string.string-length prefix)]
-    (if (> prefix-len text-len)
-      false
-      (string.eq (string.substring text 0 prefix-len) prefix))))
-
 (define (repl-trim-left-from [text : String] [start : i64]) : String
   (let
     [i : i64 start]
     [len : i64 (string.string-length text)]
     (begin
-      (while (and (< i len) (repl-space? (string.string-ref text i)))
+      (while (and
+        (< i len)
+        (source_text.source-text-space? (string.string-ref text i)))
         (set! i (+ i 1)))
       (if (< i len)
         (string.substring text i (- len i))
@@ -166,19 +158,19 @@
   (repl-trim-right-line-ending (repl-trim-leading-utf8-bom text)))
 
 (define (repl-type-command [line : String]) : ReplTypeCommand
-  (if (repl-string-prefix? (owned_view.compiler-owned-shared-view line) ".type")
+  (if (source_text.starts-with? line ".type")
     (if (= (string.string-length line) 5)
       (ReplTypeCommand.Expr "")
-      (if (repl-space? (string.string-ref line 5))
+      (if (source_text.source-text-space? (string.string-ref line 5))
         (ReplTypeCommand.Expr (repl-trim-left-from line 5))
         (ReplTypeCommand.No)))
     (ReplTypeCommand.No)))
 
 (define (repl-load-command [line : String]) : ReplLoadCommand
-  (if (repl-string-prefix? (owned_view.compiler-owned-shared-view line) ".load")
+  (if (source_text.starts-with? line ".load")
     (if (= (string.string-length line) 5)
       (ReplLoadCommand.Path "")
-      (if (repl-space? (string.string-ref line 5))
+      (if (source_text.source-text-space? (string.string-ref line 5))
         (ReplLoadCommand.Path (repl-trim-left-from line 5))
         (ReplLoadCommand.No)))
     (ReplLoadCommand.No)))
@@ -620,7 +612,7 @@
                   (owned_view.compiler-owned-shared-view source-path)
                   (build_run_core.source-tool-default-target)
                   (cli_svec.new)
-                  (build_run_core.source-tool-cfg-names-empty)
+                  (cli_svec.new)
                   (process.args-empty)
                   (opt.compiler-optimize-default-level)
                   (backend.CompilerBackendMode.Scalar)
@@ -762,33 +754,6 @@
       (+ idx 1)
       (repl-skip-char-literal text (+ idx 1) len))))
 
-(define (repl-apostrophe-char-escape? [c : char]) : bool
-  (or (= c 'n') (= c 't') (= c 'r') (= c '0') (= c '\\') (= c '\'')))
-
-(define (repl-skip-apostrophe-char-literal
-  [text : String]
-  [idx : i64]
-  [len : i64]) : i64
-  (if (< (+ idx 1) len)
-    (let
-      [payload : char (string.string-ref text (+ idx 1))]
-      (cond
-        [(= payload '\\')
-          (if (and
-            (< (+ idx 3) len)
-            (repl-apostrophe-char-escape? (string.string-ref text (+ idx 2)))
-            (= (string.string-ref text (+ idx 3)) '\''))
-            (+ idx 4)
-            (+ idx 1))]
-        [(or (= payload '\'') (= payload '\n') (= payload '\r')) (+ idx 1)]
-        [else
-          (if (and
-            (< (+ idx 2) len)
-            (= (string.string-ref text (+ idx 2)) '\''))
-            (+ idx 3)
-            (+ idx 1))]))
-    (+ idx 1)))
-
 (define (repl-input-complete-loop
   [text : String]
   [idx : i64]
@@ -861,7 +826,7 @@
         [(= c '\'')
           (repl-input-complete-loop
             (owned_view.compiler-owned-shared-view text)
-            (repl-skip-apostrophe-char-literal text idx len)
+            (source_text.source-text-skip-char-literal text idx len)
             len
             parens
             brackets

@@ -1,18 +1,12 @@
-;; CB-2 runtime coverage: the scatter-fill shape the induction store class
-;; exists for. `ind-scatter` is a module-global Vec of a DIFFERENT length from
-;; the family `ind-keys`/`ind-marks`, and the only value ever written into it is
-;; the LOOP COUNTER of `ind-fill` -- a multiply-assigned variable, which is
-;; exactly what CB-1's one-definition rule refuses. The counter is nevertheless
-;; in range for the family every time the store runs: it is seeded at 0, stepped
-;; by 1, and the loop's own condition `i < count` is tested before the store on
-;; every path into it, with `count` proved `<u len(ind-keys)` by the
-;; `keys[count]` store one statement earlier. So the whole program guarantees
-;; `content(ind-scatter) subset [0, len(ind-keys) - 1]`, and `ind-marks` is
-;; length-equal to `ind-keys`. The load-side check `marks[scatter[j]]` inside
-;; `ind-walk` is therefore the one CB-2 retires; the zero fill is covered by the
-;; dominating `marks[0]` check, which proves `len(ind-marks) >= 1`. The four
-;; cells are reset in one straight-line region, which is what makes the lengths
-;; of one epoch comparable.
+;; Runtime coverage for a scatter fill. `ind-scatter` is a module-global Vec of
+;; a DIFFERENT length from the family `ind-keys`/`ind-marks`, and the only value
+;; ever written into it is the LOOP COUNTER of `ind-fill`, a multiply-assigned
+;; variable that is in range for the family every time the store runs: it is
+;; seeded at 0, stepped by 1, and the loop's condition `i < count` is tested
+;; before the store, with `count` checked by the `keys[count]` store one
+;; statement earlier. The load-side check `marks[scatter[j]]` inside `ind-walk`
+;; therefore always passes. The four cells are reset in one straight-line
+;; region.
 ;;
 ;; The answer must be identical at every optimization level, and every index
 ;; must stay in range.

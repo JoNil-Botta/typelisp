@@ -1,12 +1,9 @@
 ;; The negative twin of content_bounds_induction: the SAME shape fed a corpus
 ;; that drives the loop counter's BOUND to the array length. With `bump` = 1 the
 ;; count handed to `ind-fill` is `n`, which is out of range for `ab-keys`, and
-;; the `keys[count]` store -- the very check CB-2 reads to tie the loop bound to
-;; the family -- is the one that fires. CB-2 changes nothing about that run: it
-;; retires no store-side check, so the abort site and message must be
-;; byte-identical to the base compiler's at every optimization level. The
-;; load-side check CB-2 does retire could not have been the one to fire; the
-;; program stops at the bound's own check before the counter is ever stored.
+;; the `keys[count]` store check is the one that fires. The abort site and
+;; message must be the same at every optimization level; the program stops at
+;; the bound's own check before the counter is ever stored.
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.vector)

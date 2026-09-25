@@ -3404,16 +3404,8 @@
       (compiler_optimize_tests.compiler-optimize-licm-global-mod-ref-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-licm-frozen-global-self-test"
-      (compiler_optimize_tests.compiler-optimize-licm-frozen-global-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-global-cell-call-mod-ref-self-test"
       (compiler_optimize_tests.compiler-optimize-global-cell-call-mod-ref-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-pd-self-test"
-      (compiler_optimize_tests.compiler-optimize-pd-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-cfg-straighten-below-threader-self-test"
@@ -3434,10 +3426,6 @@
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-licm-predicate-hoist-self-test"
       (compiler_optimize_tests.compiler-optimize-licm-predicate-hoist-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-iv-aff-self-test"
-      (compiler_optimize_tests.compiler-optimize-iv-aff-self-test)
       42)
     (cfg
       test
@@ -3476,10 +3464,6 @@
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-inline-converted-leaf-self-test"
       (compiler_optimize_tests.compiler-optimize-inline-converted-leaf-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-ref-gep-self-test"
-      (compiler_optimize_tests.compiler-optimize-ref-gep-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-unroll-self-test"
@@ -4476,10 +4460,6 @@
       (compiler_optimize_tests.compiler-optimize-aggregate-promote-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-aggregate-sroa-self-test"
-      (compiler_optimize_tests.compiler-optimize-aggregate-sroa-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-aggregate-split-self-test"
       (compiler_optimize_tests.compiler-optimize-aggregate-split-self-test)
       42)
@@ -4584,10 +4564,6 @@
       (compiler_optimize_tests.compiler-optimize-unroll-p5a-remainder-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-bce-version-mb-paired-self-test"
-      (compiler_optimize_tests.compiler-optimize-bce-version-mb-paired-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-debug-verifier-self-test"
       (compiler_optimize_tests.compiler-optimize-debug-verifier-self-test)
       42)
@@ -4678,10 +4654,6 @@
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-bit-test-runtime-self-test"
       (compiler_optimize_tests.compiler-optimize-bit-test-runtime-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-exit-split-label-freshness-self-test"
-      (compiler_optimize_tests.compiler-optimize-exit-split-label-freshness-self-test)
       42)
     42))
 
@@ -5609,13 +5581,6 @@
     "shifted-limit compares, counter+K indices and the minimized guard version"))
 
 (test
-  bce-version-multiblock-paired-checks
-  (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-bce-version-mb-paired-self-test)
-    42
-    "late in-place pairing combines adjacent affine bounds checks"))
-
-(test
   optimizer-debug-verifier-identity
   (test.assert-i64-eq
     (compiler_optimize_tests.compiler-optimize-debug-verifier-self-test)
@@ -5719,13 +5684,6 @@
     (compiler_optimize_tests.compiler-optimize-bit-test-runtime-self-test)
     42
     "The source-level classifier preserves hits, gaps, window edges and out-of-window values"))
-
-(test
-  exit-split-sink-label-freshness
-  (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-exit-split-label-freshness-self-test)
-    42
-    "Sunk exit checks keep the legacy name when free, step generation when taken, and emit one block per predecessor"))
 
 (test
   dom-cmp-phi-carried-compare

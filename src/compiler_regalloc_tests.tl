@@ -13558,37 +13558,6 @@
         [_ false])]
     [_ false]))
 
-(define (compiler-reg-owned-root-var-type-ok?) : bool
-  (let
-    [func : ir.CompilerIrFunction
-      (ir.CompilerIrFunction.Function
-        (ir.compiler-ir-test-symbol "owned_root_var_type")
-        (ir.compiler-ir-param-seq-prepend
-          (ir.CompilerIrParam.Param "source" (ast.AstType.String) 0)
-          (ir.compiler-ir-param-seq-empty))
-        (ast.AstType.Unit)
-        2
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "entry")
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.OwnRoot
-                1
-                (ir.CompilerIrValue.Var 0)
-                (ast.AstType.String))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
-                (ir.compiler-ir-instr-seq-empty))))
-          ir.CompilerIrBlockList.Nil)
-        ir.CompilerIrFunctionAbi.Ordinary)]
-    [types : reg.CompilerRegVarTypes (reg.compiler-reg-function-var-types func)]
-    (match (reg.compiler-reg-var-types-lookup types 1)
-      [(reg.CompilerRegMaybeType.Some ty)
-        (match ty
-          [(ast.AstType.String) true]
-          [_ false])]
-      [(reg.CompilerRegMaybeType.No) false])))
-
 (define (compiler-reg-early-scratch-test-function) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
     (ir.compiler-ir-test-symbol "early_scratch_literal_divmod")
@@ -21397,9 +21366,6 @@
     (compiler-regalloc-self-test-require!
       "compiler-reg-group-pair-widening-ok?"
       (cfg test (compiler-reg-group-pair-widening-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-owned-root-var-type-ok?"
-      (compiler-reg-owned-root-var-type-ok?))
     (compiler-regalloc-self-test-require!
       "compiler-reg-early-scratch-model-ok?"
       (compiler-reg-early-scratch-model-ok?))

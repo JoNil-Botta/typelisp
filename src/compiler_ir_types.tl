@@ -1034,14 +1034,7 @@
   (Alloc i64 ast.AstType)
   (AddrOf i64 i64)
   (Gep i64 CompilerIrValue CompilerIrValue ast.AstType)
-  ;; Checked internal by-value ownership boundary. This is a physical move,
-  ;; but `dst` starts a private ownership tree in the receiving function.
-  (OwnRoot i64 CompilerIrValue ast.AstType)
   (Load i64 CompilerIrValue ast.AstType)
-  ;; Load an owning handle through an explicitly checked ownership edge.
-  ;; `dst` belongs to the same ownership tree as `owner`; unlike `Load`, this
-  ;; capability is never inferred from `ty` or address shape alone.
-  (LoadOwned i64 CompilerIrValue i64 ast.AstType)
   ;; Checked non-Copy move into an owned aggregate field/path. This is the
   ;; actual typed store, not a second proof-only record; raw/unsafe writes use
   ;; StorePtr and cannot establish an ownership edge.
@@ -1493,9 +1486,9 @@
 ;;          TotalEnumSwitch trap label, the BoundsCheck success label and phi
 ;;          predecessor labels.
 ;;   slot   a raw var id that is neither a def nor a value use: AddrOf's
-;;          storage var and LoadOwned's owner evidence. No operand macro reads
-;;          or rewrites a slot; a pass that treats one as a read (liveness) or
-;;          renames it (var renumbering) matches those variants first.
+;;          storage var. No operand macro reads or rewrites a slot; a pass
+;;          that treats one as a read (liveness) or renames it (var
+;;          renumbering) matches AddrOf first.
 ;;   fixed  everything else is copied unchanged: ops, lane counts, sizes,
 ;;          symbols (callees, Store names), switch bases, the SPMD backend and
 ;;          origin descriptor.
@@ -1577,9 +1570,7 @@
     [(CompilerIrInstr.Alloc dst _) dst]
     [(CompilerIrInstr.AddrOf dst _) dst]
     [(CompilerIrInstr.Gep dst _ _ _) dst]
-    [(CompilerIrInstr.OwnRoot dst _ _) dst]
     [(CompilerIrInstr.Load dst _ _) dst]
-    [(CompilerIrInstr.LoadOwned dst _ _ _) dst]
     [(CompilerIrInstr.StoreOwned _ _ _) -1]
     [(CompilerIrInstr.StorePtr _ _ _) -1]
     [(CompilerIrInstr.CopyBytes _ _ _) -1]
@@ -1652,9 +1643,7 @@
     [(CompilerIrInstr.Alloc _ _) (ast.AstMaybeType.No)]
     [(CompilerIrInstr.AddrOf _ _) (ast.AstMaybeType.No)]
     [(CompilerIrInstr.Gep _ _ _ _) (ast.AstMaybeType.No)]
-    [(CompilerIrInstr.OwnRoot _ _ ty) (ast.AstMaybeType.Some ty)]
     [(CompilerIrInstr.Load _ _ ty) (ast.AstMaybeType.Some ty)]
-    [(CompilerIrInstr.LoadOwned _ _ _ ty) (ast.AstMaybeType.Some ty)]
     [(CompilerIrInstr.StoreOwned _ _ _) (ast.AstMaybeType.No)]
     [(CompilerIrInstr.StorePtr _ _ _) (ast.AstMaybeType.No)]
     [(CompilerIrInstr.CopyBytes _ _ _) (ast.AstMaybeType.No)]
@@ -2281,11 +2270,7 @@
         (begin
           (compiler-ir-use-step value ,address base ,@tail)
           (compiler-ir-use-step value ,scalar offset ,@tail))]
-      [(compiler_ir_types.CompilerIrInstr.OwnRoot _ src _)
-        (compiler-ir-use-step value ,scalar src ,@tail)]
       [(compiler_ir_types.CompilerIrInstr.Load _ src _)
-        (compiler-ir-use-step value ,address src ,@tail)]
-      [(compiler_ir_types.CompilerIrInstr.LoadOwned _ src _ _)
         (compiler-ir-use-step value ,address src ,@tail)]
       [(compiler_ir_types.CompilerIrInstr.StoreOwned ptr value _)
         (begin
@@ -2550,21 +2535,10 @@
           (compiler-ir-map-use value ,address base ,@use-tail)
           (compiler-ir-map-use value ,scalar offset ,@use-tail)
           (compiler-ir-map-field ty ,@type-tail))]
-      [(compiler_ir_types.CompilerIrInstr.OwnRoot dst src ty)
-        (compiler_ir_types.CompilerIrInstr.OwnRoot
-          (compiler-ir-map-field dst ,@def-tail)
-          (compiler-ir-map-use value ,scalar src ,@use-tail)
-          (compiler-ir-map-field ty ,@type-tail))]
       [(compiler_ir_types.CompilerIrInstr.Load dst src ty)
         (compiler_ir_types.CompilerIrInstr.Load
           (compiler-ir-map-field dst ,@def-tail)
           (compiler-ir-map-use value ,address src ,@use-tail)
-          (compiler-ir-map-field ty ,@type-tail))]
-      [(compiler_ir_types.CompilerIrInstr.LoadOwned dst src owner ty)
-        (compiler_ir_types.CompilerIrInstr.LoadOwned
-          (compiler-ir-map-field dst ,@def-tail)
-          (compiler-ir-map-use value ,address src ,@use-tail)
-          owner
           (compiler-ir-map-field ty ,@type-tail))]
       [(compiler_ir_types.CompilerIrInstr.StoreOwned ptr value ty)
         (compiler_ir_types.CompilerIrInstr.StoreOwned
@@ -2930,9 +2904,7 @@
     [(compiler_ir_types.CompilerIrInstr.Alloc _ _) unit]
     [(compiler_ir_types.CompilerIrInstr.AddrOf _ _) unit]
     [(compiler_ir_types.CompilerIrInstr.Gep _ _ _ _) unit]
-    [(compiler_ir_types.CompilerIrInstr.OwnRoot _ _ _) unit]
     [(compiler_ir_types.CompilerIrInstr.Load _ _ _) unit]
-    [(compiler_ir_types.CompilerIrInstr.LoadOwned _ _ _ _) unit]
     [(compiler_ir_types.CompilerIrInstr.StoreOwned _ _ _) unit]
     [(compiler_ir_types.CompilerIrInstr.StorePtr _ _ _) unit]
     [(compiler_ir_types.CompilerIrInstr.CopyBytes _ _ _) unit]
@@ -3347,33 +3319,12 @@
                 (compiler-ir-zip-use value a-offset b-offset ,@value-tail)
                 (compiler-ir-zip-type a-ty b-ty ,@type-tail))]
             [_ false])]
-        [(compiler_ir_types.CompilerIrInstr.OwnRoot a-dst a-src a-ty)
-          (match zip-b
-            [(compiler_ir_types.CompilerIrInstr.OwnRoot b-dst b-src b-ty)
-              (and
-                (= a-dst b-dst)
-                (compiler-ir-zip-use value a-src b-src ,@value-tail)
-                (compiler-ir-zip-type a-ty b-ty ,@type-tail))]
-            [_ false])]
         [(compiler_ir_types.CompilerIrInstr.Load a-dst a-src a-ty)
           (match zip-b
             [(compiler_ir_types.CompilerIrInstr.Load b-dst b-src b-ty)
               (and
                 (= a-dst b-dst)
                 (compiler-ir-zip-use value a-src b-src ,@value-tail)
-                (compiler-ir-zip-type a-ty b-ty ,@type-tail))]
-            [_ false])]
-        [(compiler_ir_types.CompilerIrInstr.LoadOwned a-dst a-src a-owner a-ty)
-          (match zip-b
-            [(compiler_ir_types.CompilerIrInstr.LoadOwned
-                b-dst
-                b-src
-                b-owner
-                b-ty)
-              (and
-                (= a-dst b-dst)
-                (compiler-ir-zip-use value a-src b-src ,@value-tail)
-                (= a-owner b-owner)
                 (compiler-ir-zip-type a-ty b-ty ,@type-tail))]
             [_ false])]
         [(compiler_ir_types.CompilerIrInstr.StoreOwned a-ptr a-value a-ty)
@@ -5545,10 +5496,8 @@
   [fallback : i64]) : i64
   (match instr
     [(CompilerIrInstr.Mov dst _ _) dst]
-    [(CompilerIrInstr.OwnRoot dst _ _) dst]
     [(CompilerIrInstr.Gep dst _ _ _) dst]
     [(CompilerIrInstr.Load dst _ _) dst]
-    [(CompilerIrInstr.LoadOwned dst _ _ _) dst]
     [(CompilerIrInstr.Cast dst _ _ _) dst]
     [(CompilerIrInstr.Bitcast dst _ _ _) dst]
     [(CompilerIrInstr.BinOp dst _ _ _ _) dst]
@@ -7452,22 +7401,6 @@
           type-segment-bases
           source
           ty))]
-    [(CompilerIrInstr.LoadOwned dst source owner ty)
-      (str_cat.str-cat
-        (compiler-ir-dst-render dst)
-        "load_owned "
-        (compiler-ir-value-render source)
-        ", owner %"
-        (string.int->string owner)
-        " : "
-        (compiler-ir-type-render structural-session type-segment-bases ty))]
-    [(CompilerIrInstr.OwnRoot dst source ty)
-      (str_cat.str-cat
-        (compiler-ir-dst-render dst)
-        "own_root "
-        (compiler-ir-value-render source)
-        " : "
-        (compiler-ir-type-render structural-session type-segment-bases ty))]
     [(CompilerIrInstr.StoreOwned ptr value ty)
       (str_cat.str-cat
         "  store_owned "
@@ -8474,8 +8407,6 @@
     [(CompilerIrInstr.Select _) CompilerIrEffect.Pure]
     [(CompilerIrInstr.TailMask _ _ _ _) CompilerIrEffect.Pure]
     [(CompilerIrInstr.Load _ _ _) CompilerIrEffect.MemoryRead]
-    [(CompilerIrInstr.LoadOwned _ _ _ _) CompilerIrEffect.MemoryRead]
-    [(CompilerIrInstr.OwnRoot _ _ _) CompilerIrEffect.Pure]
     [(CompilerIrInstr.StoreOwned _ _ _) CompilerIrEffect.MemoryWrite]
     [(CompilerIrInstr.VectorLoad _ _ _ _ _) CompilerIrEffect.MemoryRead]
     [(CompilerIrInstr.PredicatedLoad _) CompilerIrEffect.MemoryRead]
@@ -10986,10 +10917,6 @@
     [(CompilerIrInstr.Gep _ _ _ ty)
       (compiler-ir-representation-collect-one-type type-segment-bases index ty)]
     [(CompilerIrInstr.Load _ _ ty)
-      (compiler-ir-representation-collect-one-type type-segment-bases index ty)]
-    [(CompilerIrInstr.LoadOwned _ _ _ ty)
-      (compiler-ir-representation-collect-one-type type-segment-bases index ty)]
-    [(CompilerIrInstr.OwnRoot _ _ ty)
       (compiler-ir-representation-collect-one-type type-segment-bases index ty)]
     [(CompilerIrInstr.StoreOwned _ _ ty)
       (compiler-ir-representation-collect-one-type type-segment-bases index ty)]

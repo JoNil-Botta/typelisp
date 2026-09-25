@@ -1129,9 +1129,7 @@
   (compiler-live-value-vars-into set value))
 
 ;; The vars `instr` reads: its uses, Pack words and phi inputs included, and
-;; AddrOf's storage var. LoadOwned's `owner` is optimizer evidence, not a
-;; runtime operand. Optimizer DCE preserves its definition explicitly; machine
-;; liveness must model only the address that the emitted load actually reads.
+;; AddrOf's storage var.
 (define (compiler-live-instr-uses [instr : ir.CompilerIrInstr]) : CompilerLiveI64Set
   (match (compiler-live-shared-view instr)
     [(ir.CompilerIrInstr.AddrOf _ src) (compiler-live-set1 src)]
@@ -1317,8 +1315,6 @@
   (match instr
     [(ir.CompilerIrInstr.Mov _ src _)
       (compiler-live-use-ids-add-value! out 0 src)]
-    [(ir.CompilerIrInstr.OwnRoot _ src _)
-      (compiler-live-use-ids-add-value! out 0 src)]
     [(ir.CompilerIrInstr.Alloc _ _) 0]
     [(ir.CompilerIrInstr.AddrOf _ src) (compiler-live-use-ids-push! out 0 src)]
     [(ir.CompilerIrInstr.Gep _ base offset _)
@@ -1327,8 +1323,6 @@
         (compiler-live-use-ids-add-value! out 0 base)
         offset)]
     [(ir.CompilerIrInstr.Load _ src _)
-      (compiler-live-use-ids-add-value! out 0 src)]
-    [(ir.CompilerIrInstr.LoadOwned _ src _ _)
       (compiler-live-use-ids-add-value! out 0 src)]
     [(ir.CompilerIrInstr.StorePtr dst src _)
       (compiler-live-use-ids-add-value!

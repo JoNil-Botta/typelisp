@@ -3041,11 +3041,9 @@
   [set : opt_i64_i64_map.Map]
   [instr : ir.CompilerIrInstr]) : opt_i64_i64_map.Map
   (match (compiler-opt-global-shared-view instr)
-    ;; AddrOf's raw slot and LoadOwned's owner are var uses too; missing one
-    ;; would let DCE drop the definition that feeds it.
+    ;; AddrOf's raw slot is a var use too; missing it would let DCE drop the
+    ;; definition that feeds it.
     [(ir.CompilerIrInstr.AddrOf _ src) (opt-used-add set src)]
-    [(ir.CompilerIrInstr.LoadOwned _ src owner _)
-      (opt-used-add (opt-collect-value-uses set src) owner)]
     [_
       (let
         [out : opt_i64_i64_map.Map set]
@@ -3267,17 +3265,9 @@
           base)
         (opt-collect-value-uses-array items offset))]
     [(ir.CompilerIrInstr.Mov _ src _) (opt-collect-value-uses-array items src)]
-    [(ir.CompilerIrInstr.OwnRoot _ src _)
-      (opt-collect-value-uses-array items src)]
     [(ir.CompilerIrInstr.Call _ _ args _)
       (opt-collect-call-args-uses-array items args)]
     [(ir.CompilerIrInstr.Load _ src _) (opt-collect-value-uses-array items src)]
-    [(ir.CompilerIrInstr.LoadOwned _ src owner _)
-      (begin
-        (opt-collect-value-uses-array
-          (compiler-opt-global-shared-view items)
-          src)
-        (opt-used-array-add items owner))]
     [(ir.CompilerIrInstr.StorePtr ptr value _)
       (begin
         (opt-collect-value-uses-array
@@ -3610,10 +3600,6 @@
     [(ir.CompilerIrInstr.Cast _ src _ _)
       (opt-uncount-value-uses-array items src)]
     [(ir.CompilerIrInstr.Load _ src _) (opt-uncount-value-uses-array items src)]
-    [(ir.CompilerIrInstr.LoadOwned _ src owner _)
-      (begin
-        (opt-uncount-value-uses-array items src)
-        (opt-used-array-dec items owner))]
     [(ir.CompilerIrInstr.BinOp _ _ lhs rhs _)
       (begin
         (opt-uncount-value-uses-array items lhs)
@@ -3894,8 +3880,6 @@
     [(ir.CompilerIrInstr.Cast dst _ _ _)
       (not (opt-used-array-contains items dst))]
     [(ir.CompilerIrInstr.Load dst _ _)
-      (not (opt-used-array-contains items dst))]
-    [(ir.CompilerIrInstr.LoadOwned dst _ _ _)
       (not (opt-used-array-contains items dst))]
     [(ir.CompilerIrInstr.BinOp dst op lhs rhs ty)
       (begin
@@ -4573,7 +4557,7 @@
       [(option_i64.Some _) true]
       [(option_i64.None) false])))
 
-;; LoadOwned, the indirect calls and the register-group ops are not scanned.
+;; The indirect calls and the register-group ops are not scanned.
 (define (opt-aggregate-instr-has-pointer?
   [instr : ir.CompilerIrInstr]
   [base : i64]
@@ -4581,7 +4565,6 @@
   (match (compiler-opt-global-shared-view instr)
     [(ir.CompilerIrInstr.AddrOf _ src)
       (opt-aggregate-raw-var-is-pointer? base ptrs src)]
-    [(ir.CompilerIrInstr.LoadOwned _ _ _ _) false]
     [(ir.CompilerIrInstr.CallIndirect _ _ _ _) false]
     [(ir.CompilerIrInstr.CallIndirectC _ _ _ _) false]
     [(ir.CompilerIrInstr.Pack _ _ _) false]
@@ -5374,9 +5357,9 @@
 ;; and compares that against the function-wide use count that
 ;; `opt-collect-blocks-uses-array` reports. A use in any instruction form this
 ;; pass does not rewrite -- a phi input, a store of the pointer itself, a
-;; compare, a cast, an indirect call, an `own_root`/`store_owned` ownership edge
-;; -- makes the two counts differ and refuses the candidate, so the pass never
-;; has to enumerate the instruction set to stay safe.
+;; compare, a cast, an indirect call, a `store_owned` ownership edge -- makes
+;; the two counts differ and refuses the candidate, so the pass never has to
+;; enumerate the instruction set to stay safe.
 ;;
 ;; ACCESSES. A whole-word `load` / `store_ptr` at a literal byte offset that is
 ;; a multiple of 8 inside the allocation, whose type is one of the 8-byte
@@ -5390,14 +5373,14 @@
 ;; HANDLES. The stack-promotion classifier's "handle-shaped" note
 ;; (`opt-aggregate-stack-promote-type?`) means "a fixed Struct/Enum/Tuple", not
 ;; "holds an owning handle": this language has no implicit destructor walk, and
-;; every ownership edge is an explicit `own_root` / `store_owned` / `load_owned`
-;; instruction or an explicit destroy CALL. The rule this pass states is
-;; therefore: an ownership-edge instruction that touches the allocation refuses
-;; it (it is not one of the recognized forms, so the use-count check above
-;; rejects it), and an explicit destroy call is a call argument, which the
-;; call-argument clause below refuses. The split neither duplicates nor drops a
-;; word -- every word write survives exactly once and every read reads the same
-;; value -- so no walk over the aggregate changes.
+;; every ownership edge is an explicit `store_owned` instruction or an explicit
+;; destroy CALL. The rule this pass states is therefore: an ownership-edge
+;; instruction that touches the allocation refuses it (it is not one of the
+;; recognized forms, so the use-count check above rejects it), and an explicit
+;; destroy call is a call argument, which the call-argument clause below
+;; refuses. The split neither duplicates nor drops a word -- every word write
+;; survives exactly once and every read reads the same value -- so no walk over
+;; the aggregate changes.
 ;;
 ;; CALL ARGUMENTS. Refused (`escape:call`), and the reason is measured rather
 ;; than conservative -- see opt-aggregate-split-refuse-args! for the rows. The
@@ -7981,14 +7964,6 @@
             (opt-value-eq av bv)
             (opt-type-eq type-segment-bases aty bty))]
         [_ false])]
-    [(ir.CompilerIrInstr.OwnRoot ad av aty)
-      (match b
-        [(ir.CompilerIrInstr.OwnRoot bd bv bty)
-          (and
-            (= ad bd)
-            (opt-value-eq av bv)
-            (opt-type-eq type-segment-bases aty bty))]
-        [_ false])]
     [(ir.CompilerIrInstr.Alloc ad aty)
       (match b
         [(ir.CompilerIrInstr.Alloc bd bty)
@@ -8013,15 +7988,6 @@
           (and
             (= ad bd)
             (opt-value-eq av bv)
-            (opt-type-eq type-segment-bases aty bty))]
-        [_ false])]
-    [(ir.CompilerIrInstr.LoadOwned adst asrc aowner aty)
-      (match b
-        [(ir.CompilerIrInstr.LoadOwned bdst bsrc bowner bty)
-          (and
-            (= adst bdst)
-            (opt-value-eq asrc bsrc)
-            (= aowner bowner)
             (opt-type-eq type-segment-bases aty bty))]
         [_ false])]
     [(ir.CompilerIrInstr.StorePtr aptr av aty)
@@ -9404,8 +9370,6 @@
   (match (compiler-opt-global-shared-view instr)
     [(ir.CompilerIrInstr.Mov dst src ty)
       (ir.CompilerIrInstr.Mov dst (opt-copy-resolve env src) ty)]
-    [(ir.CompilerIrInstr.OwnRoot dst src ty)
-      (ir.CompilerIrInstr.OwnRoot dst (opt-copy-resolve env src) ty)]
     [(ir.CompilerIrInstr.Gep dst base offset ty)
       (ir.CompilerIrInstr.Gep
         dst
@@ -9414,7 +9378,6 @@
         ty)]
     [(ir.CompilerIrInstr.Load dst src ty)
       (ir.CompilerIrInstr.Load dst (opt-copy-resolve env src) ty)]
-    [(ir.CompilerIrInstr.LoadOwned dst src owner ty) instr]
     [(ir.CompilerIrInstr.StorePtr ptr value ty)
       (ir.CompilerIrInstr.StorePtr
         (opt-copy-resolve (compiler-opt-global-shared-view env) ptr)
@@ -9742,8 +9705,6 @@
           e1))]
     [(ir.CompilerIrInstr.Pack dst words _)
       (opt-copy-update-pack-env env dst words)]
-    ;; OwnRoot leaves the facts about its dst in place.
-    [(ir.CompilerIrInstr.OwnRoot _ _ _) env]
     [(ir.CompilerIrInstr.StorePtr _ _ _) (OptCopyEnv.Nil)]
     [(ir.CompilerIrInstr.StoreOwned _ _ _) (OptCopyEnv.Nil)]
     [(ir.CompilerIrInstr.CopyBytes _ _ _) (OptCopyEnv.Nil)]
@@ -12409,11 +12370,9 @@
     [(ir.CompilerIrInstr.Alloc dst _) (option_i64.Some dst)]
     [(ir.CompilerIrInstr.Gep dst _ _ _) (option_i64.Some dst)]
     [(ir.CompilerIrInstr.Mov dst _ _) (option_i64.Some dst)]
-    [(ir.CompilerIrInstr.OwnRoot dst _ _) (option_i64.Some dst)]
     [(ir.CompilerIrInstr.Call dst _ _ _) (option_i64.Some dst)]
     [(ir.CompilerIrInstr.BinOp dst _ _ _ _) (option_i64.Some dst)]
     [(ir.CompilerIrInstr.Load dst _ _) (option_i64.Some dst)]
-    [(ir.CompilerIrInstr.LoadOwned dst _ _ _) (option_i64.Some dst)]
     [(ir.CompilerIrInstr.Branch _ _ _) (option_i64.None)]
     [(ir.CompilerIrInstr.StorePtr _ _ _) (option_i64.None)]
     [(ir.CompilerIrInstr.StoreOwned _ _ _) (option_i64.None)]
@@ -12514,9 +12473,7 @@
     [(ir.CompilerIrInstr.Alloc _ _) (OptInstrTarget.Plain)]
     [(ir.CompilerIrInstr.AddrOf _ _) (OptInstrTarget.Plain)]
     [(ir.CompilerIrInstr.Gep _ _ _ _) (OptInstrTarget.Plain)]
-    [(ir.CompilerIrInstr.OwnRoot _ _ _) (OptInstrTarget.Plain)]
     [(ir.CompilerIrInstr.Load _ _ _) (OptInstrTarget.Plain)]
-    [(ir.CompilerIrInstr.LoadOwned _ _ _ _) (OptInstrTarget.Plain)]
     [(ir.CompilerIrInstr.StoreOwned _ _ _) (OptInstrTarget.Plain)]
     [(ir.CompilerIrInstr.StorePtr _ _ _) (OptInstrTarget.Plain)]
     [(ir.CompilerIrInstr.CopyBytes _ _ _) (OptInstrTarget.Plain)]
@@ -13116,10 +13073,6 @@
   (match (compiler-opt-global-shared-view instr)
     [(ir.CompilerIrInstr.AddrOf _ src)
       (opt-verify-var-use defs doms src block-id pos)]
-    [(ir.CompilerIrInstr.LoadOwned _ src owner _)
-      (opt-verify-two
-        (opt-verify-value-use defs doms src block-id pos)
-        (opt-verify-var-use defs doms owner block-id pos))]
     [(ir.CompilerIrInstr.StoreOwned ptr value ty)
       (if (not (opt-owned-handle-type? ty))
         (ResultCompilerOptimizeVerify.Err
@@ -14102,7 +14055,6 @@
       (opt-ssa-facts-add-def-bad
         facts
         (compiler-opt-box-field-shared-view payload-box dst))]
-    [(ir.CompilerIrInstr.OwnRoot _ _ _) facts]
     [(ir.CompilerIrInstr.Pack _ _ _) facts]
     [(ir.CompilerIrInstr.Word _ _ _ _) facts]
     ;; Every other def has the type it states, or is bad without one.
@@ -14957,22 +14909,8 @@
   (match (compiler-opt-global-shared-view instr)
     [(ir.CompilerIrInstr.Mov dst _ _)
       (opt-ssa-rename-def facts env next-var instr dst)]
-    [(ir.CompilerIrInstr.OwnRoot dst _ _)
-      (opt-ssa-rename-def facts env next-var instr dst)]
     [(ir.CompilerIrInstr.Load dst _ _)
       (opt-ssa-rename-def facts env next-var instr dst)]
-    [(ir.CompilerIrInstr.LoadOwned dst src owner ty)
-      (let
-        [out-owner : i64
-          (match (opt-ssa-env-lookup env owner)
-            [(option_i64.Some current) current]
-            [(option_i64.None) owner])]
-        (opt-ssa-rename-def
-          facts
-          env
-          next-var
-          (ir.CompilerIrInstr.LoadOwned dst src out-owner ty)
-          dst))]
     [(ir.CompilerIrInstr.Cast dst _ _ _)
       (opt-ssa-rename-def facts env next-var instr dst)]
     [(ir.CompilerIrInstr.Bitcast dst _ _ _)
@@ -16879,7 +16817,6 @@
   [pos : i64]
   [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
   (match (compiler-opt-global-shared-view instr)
-    [(ir.CompilerIrInstr.LoadOwned _ _ _ _) instr]
     ;; The scalar operands of these SIMD forms keep their vars, and a shuffle,
     ;; a gather and a tail mask keep all of theirs.
     [(ir.CompilerIrInstr.VectorPrefix _)
@@ -19620,7 +19557,6 @@
 (define (opt-loop-rotation-guard-instr? [instr : ir.CompilerIrInstr]) : bool
   (match instr
     [(ir.CompilerIrInstr.Mov _ _ _) true]
-    [(ir.CompilerIrInstr.OwnRoot _ _ _) true]
     [(ir.CompilerIrInstr.Cast _ _ _ _) true]
     [(ir.CompilerIrInstr.Bitcast _ _ _ _) true]
     [(ir.CompilerIrInstr.BinOp _ op _ _ _) (not (opt-binop-traps? op))]
@@ -23009,8 +22945,6 @@
   (match instr
     [(ir.CompilerIrInstr.Mov dst _ ty) (opt-licm-type-env-bind types dst ty)]
     [(ir.CompilerIrInstr.Load dst _ ty) (opt-licm-type-env-bind types dst ty)]
-    [(ir.CompilerIrInstr.LoadOwned dst _ _ ty)
-      (opt-licm-type-env-bind types dst ty)]
     [(ir.CompilerIrInstr.Call dst _ _ ty) (opt-licm-type-env-bind types dst ty)]
     [(ir.CompilerIrInstr.CallIndirect dst _ _ ty)
       (opt-licm-type-env-bind types dst ty)]
@@ -23308,13 +23242,6 @@
   (match instr
     [(ir.CompilerIrInstr.Alloc dst _)
       (opt-licm-root-env-bind! env dst (OptLicmRoot.Fresh dst))]
-    [(ir.CompilerIrInstr.OwnRoot dst src _)
-      (begin
-        (opt-licm-root-env-bind! env dst (OptLicmRoot.Fresh dst))
-        (match src
-          [(ir.CompilerIrValue.Var source)
-            (opt-licm-root-env-bind! env source (OptLicmRoot.Fresh dst))]
-          [_ unit]))]
     ;; The address of an allocated object designates that object. Without this
     ;; arm every address-taken local was unrooted, so a write through one fell
     ;; into the unrooted store summary (killing every descriptor proof in the
@@ -23337,8 +23264,6 @@
     ;; A descriptor-data Load may be rebound by
     ;; opt-licm-provenance-state-instr immediately after this update.
     [(ir.CompilerIrInstr.Load dst _ _) (opt-licm-root-env-remove! env dst)]
-    [(ir.CompilerIrInstr.LoadOwned dst _ owner _)
-      (opt-licm-root-env-copy! env dst (ir.CompilerIrValue.Var owner))]
     [(ir.CompilerIrInstr.Call dst name args _)
       (if (ir.compiler-ir-symbol-eq? name cbi.compiler-builtin-id-tl-alloc)
         (opt-licm-root-env-bind! env dst (OptLicmRoot.Fresh dst))
@@ -24279,14 +24204,6 @@
             offset
             ty))]
       [(ir.CompilerIrInstr.Load dst src load-ty)
-        (opt-licm-provenance-classify-load
-          type-segment-bases
-          types
-          invalid
-          dst
-          src
-          load-ty)]
-      [(ir.CompilerIrInstr.LoadOwned dst src _ load-ty)
         (opt-licm-provenance-classify-load
           type-segment-bases
           types
@@ -25305,7 +25222,7 @@
   (sources OptValueSources)
   ;; Declared global types, for a header-typed global's element type.
   (cells OptGlobalCellSummary)
-  ;; var -> the Gep, Load, LoadOwned, Mov or BinOp defining it.
+  ;; var -> the Gep, Load, Mov or BinOp defining it.
   (defs (__tl_dyn-array OptBoolBranchDef))
   ;; `index <u len` rows keyed by the index var after copy resolution: CSR
   ;; offsets over `frame + 1` slots, the bounding length, and the dense id of
@@ -25379,7 +25296,6 @@
           (match (compiler-opt-global-shared-view instr)
             [(ir.CompilerIrInstr.Gep dst _ _ _) dst]
             [(ir.CompilerIrInstr.Load dst _ _) dst]
-            [(ir.CompilerIrInstr.LoadOwned dst _ _ _) dst]
             [(ir.CompilerIrInstr.Mov dst _ _) dst]
             [(ir.CompilerIrInstr.BinOp dst _ _ _ _) dst]
             [_ (- 0 1)])]
@@ -25816,12 +25732,6 @@
         [(OptBoolBranchDef.Some (ir.CompilerIrInstr.Load _ src load-ty) _)
           (if (opt-licm-array-header-type? type-segment-bases load-ty)
             ;; The loaded word is a handle, not the data pointer or length.
-            (- 0 1)
-            (opt-licm-deref-slot-owner type-segment-bases types facts src data?))]
-        [(OptBoolBranchDef.Some
-            (ir.CompilerIrInstr.LoadOwned _ src _ load-ty)
-            _)
-          (if (opt-licm-array-header-type? type-segment-bases load-ty)
             (- 0 1)
             (opt-licm-deref-slot-owner type-segment-bases types facts src data?))]
         [_ (- 0 1)])]
@@ -29059,8 +28969,6 @@
     [(ir.CompilerIrInstr.Gep _ base offset _)
       (opt-licm-seed-values? loop-defs base offset)]
     [(ir.CompilerIrInstr.Load _ src _) (opt-licm-seed-value? loop-defs src)]
-    [(ir.CompilerIrInstr.LoadOwned _ src owner _)
-      (opt-licm-seed-values? loop-defs src (ir.CompilerIrValue.Var owner))]
     [_ false]))
 
 (define (opt-licm-seed-instr-seq-from?
@@ -29466,14 +29374,12 @@
 (define (opt-licm-unswitch-instr-supported? [instr : ir.CompilerIrInstr]) : bool
   (match instr
     [(ir.CompilerIrInstr.Mov _ _ _) true]
-    [(ir.CompilerIrInstr.OwnRoot _ _ _) true]
     [(ir.CompilerIrInstr.Cast _ _ _ _) true]
     [(ir.CompilerIrInstr.Bitcast _ _ _ _) true]
     [(ir.CompilerIrInstr.BinOp _ _ _ _ _) true]
     [(ir.CompilerIrInstr.UnOp _ _ _ _) true]
     [(ir.CompilerIrInstr.Gep _ _ _ _) true]
     [(ir.CompilerIrInstr.Load _ _ _) true]
-    [(ir.CompilerIrInstr.LoadOwned _ _ _ _) true]
     [(ir.CompilerIrInstr.StorePtr _ _ _) true]
     [(ir.CompilerIrInstr.StoreOwned _ _ _) true]
     [(ir.CompilerIrInstr.BoundsCheck _ _ _) true]
@@ -30341,17 +30247,6 @@
         ty)]
     [(ir.CompilerIrInstr.Load dst src ty)
       (ir.CompilerIrInstr.Load
-        (opt-bce-mb-remap-dst (compiler-opt-global-shared-view remap) dst)
-        (opt-unroll-subst-value remap src)
-        ty)]
-    [(ir.CompilerIrInstr.LoadOwned dst src owner ty)
-      (ir.CompilerIrInstr.LoadOwned
-        (opt-bce-mb-remap-dst (compiler-opt-global-shared-view remap) dst)
-        (opt-unroll-subst-value (compiler-opt-global-shared-view remap) src)
-        (opt-bce-mb-remap-dst remap owner)
-        ty)]
-    [(ir.CompilerIrInstr.OwnRoot dst src ty)
-      (ir.CompilerIrInstr.OwnRoot
         (opt-bce-mb-remap-dst (compiler-opt-global-shared-view remap) dst)
         (opt-unroll-subst-value remap src)
         ty)]
@@ -49658,14 +49553,8 @@
       (opt-sccp-env-fill-unknown! (&mut slots) n 0)
       (OptSccpEnv.Env n slots))))
 
-;; Destination var bound by `opt-sccp-process-instr`, or -1 for instructions that
-;; bind nothing. MUST mirror the binding arms of opt-sccp-process-instr so the
-;; environment array is sized to cover every var the analysis can bind.
-(define (opt-sccp-instr-dst [instr : ir.CompilerIrInstr]) : i64
-  (match (compiler-opt-global-shared-view instr)
-    [(ir.CompilerIrInstr.OwnRoot _ _ _) (- 0 1)]
-    [_ (ir.compiler-ir-instr-dst instr)]))
-
+;; The environment array is sized to cover every var opt-sccp-process-instr
+;; can bind: each instruction's `compiler-ir-instr-dst`.
 (define (opt-sccp-max-var-instr-seq
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]
@@ -49674,7 +49563,7 @@
     acc
     (let
       [dst : i64
-        (opt-sccp-instr-dst (ir.compiler-ir-instr-seq-ref instrs index))]
+        (ir.compiler-ir-instr-dst (ir.compiler-ir-instr-seq-ref instrs index))]
       (opt-sccp-max-var-instr-seq
         instrs
         (+ index 1)
@@ -50075,8 +49964,6 @@
       (opt-sccp-mark-switch-targets
         (opt-sccp-state-mark-executable state default-label)
         cases)]
-    ;; OwnRoot binds nothing (see opt-sccp-instr-dst).
-    [(ir.CompilerIrInstr.OwnRoot _ _ _) state]
     ;; Every other def is Overdefined, register-group dsts included: left
     ;; Unknown, a branch on a Word-extracted enum tag marked NO successor
     ;; executable and SCCP folded match arms away at -O2.
@@ -50368,8 +50255,6 @@
 
 (define (opt-sccp-rewrite-instr [env : OptSccpEnv] [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
   (match (compiler-opt-global-shared-view instr)
-    [(ir.CompilerIrInstr.LoadOwned dst src owner ty) instr]
-    [(ir.CompilerIrInstr.OwnRoot _ _ _) instr]
     ;; Register-group ops carry no SCCP-constant operands to fold.
     [(ir.CompilerIrInstr.Pack _ _ _) instr]
     [(ir.CompilerIrInstr.Word _ _ _ _) instr]
@@ -66396,8 +66281,6 @@
         ty)]
     [(ir.CompilerIrInstr.Load dst src ty)
       (opt-loop-bce-update-load type-segment-bases state sources dst src ty)]
-    [(ir.CompilerIrInstr.LoadOwned dst src ty-owner ty)
-      (opt-loop-bce-update-load type-segment-bases state sources dst src ty)]
     [(ir.CompilerIrInstr.Cast dst src from-ty to-ty)
       (opt-loop-bce-state-bind-expr
         (compiler-opt-global-shared-view state)
@@ -68522,16 +68405,6 @@
         (opt-scan-note-value-uses items generation offset))]
     [(ir.CompilerIrInstr.Load _ src _)
       (opt-scan-note-value-uses items generation src)]
-    [(ir.CompilerIrInstr.LoadOwned _ src owner _)
-      (begin
-        (opt-scan-note-value-uses
-          (compiler-opt-global-shared-view items)
-          generation
-          src)
-        (opt-scan-note-value-uses
-          items
-          generation
-          (ir.CompilerIrValue.Var owner)))]
     [(ir.CompilerIrInstr.StorePtr ptr value _)
       (begin
         (opt-scan-note-value-uses
@@ -70181,7 +70054,6 @@
     [(ir.CompilerIrInstr.UnOp _ _ _ _) true]
     [(ir.CompilerIrInstr.Gep _ _ _ _) true]
     [(ir.CompilerIrInstr.Load _ _ _) true]
-    [(ir.CompilerIrInstr.LoadOwned _ _ _ _) true]
     ;; Store-free SIMD gang bodies have the same long-trip compute/load shape
     ;; as scalar reductions and scans. Keep vector stores and predicated memory
     ;; operations excluded alongside scalar StorePtr.
@@ -71399,7 +71271,6 @@
 (define (opt-unroll-body-fill-instr-ok? [instr : ir.CompilerIrInstr]) : bool
   (match (compiler-opt-global-shared-view instr)
     [(ir.CompilerIrInstr.Load _ _ _) false]
-    [(ir.CompilerIrInstr.LoadOwned _ _ _ _) false]
     [(ir.CompilerIrInstr.StorePtr _ _ _) true]
     [(ir.CompilerIrInstr.StoreOwned _ _ _) true]
     [_ (opt-unroll-body-instr-ok? instr)]))
@@ -71640,7 +71511,6 @@
     [(ir.CompilerIrInstr.Gep _ _ _ elem-ty)
       (opt-unroll-word-merge-type? elem-ty)]
     [(ir.CompilerIrInstr.Load _ _ ty) (opt-unroll-word-merge-type? ty)]
-    [(ir.CompilerIrInstr.LoadOwned _ _ _ ty) (opt-unroll-word-merge-type? ty)]
     [(ir.CompilerIrInstr.StorePtr _ _ ty) (opt-unroll-word-merge-type? ty)]
     [(ir.CompilerIrInstr.StoreOwned _ _ ty) (opt-unroll-word-merge-type? ty)]
     [(ir.CompilerIrInstr.BinOp _ _ _ _ ty) (opt-unroll-word-merge-type? ty)]
@@ -71672,7 +71542,6 @@
           last
           (match (& instr)
             [(ir.CompilerIrInstr.Load _ _ _) (+ loads 1)]
-            [(ir.CompilerIrInstr.LoadOwned _ _ _ _) (+ loads 1)]
             [_ loads])
           (match instr
             [(ir.CompilerIrInstr.StorePtr _ _ _) (+ stores 1)]
@@ -72279,17 +72148,6 @@
         (ir.CompilerIrInstr.Load
           (opt-unroll-clone-dst (&mut remap) cell dst)
           new-src
-          ty))]
-    [(ir.CompilerIrInstr.LoadOwned dst src owner ty)
-      (let
-        [new-src : ir.CompilerIrValue
-          (opt-unroll-subst-value (compiler-opt-global-shared-view remap) src)]
-        [new-owner : i64
-          (opt-bce-mb-remap-dst (compiler-opt-global-shared-view remap) owner)]
-        (ir.CompilerIrInstr.LoadOwned
-          (opt-unroll-clone-dst (&mut remap) cell dst)
-          new-src
-          new-owner
           ty))]
     [(ir.CompilerIrInstr.LaneId dst lanes ty)
       (ir.CompilerIrInstr.LaneId
@@ -76108,12 +75966,6 @@
         ty)]
     [(ir.CompilerIrInstr.Load dst src ty)
       (ir.CompilerIrInstr.Load dst (opt-unroll-subst-value remap src) ty)]
-    [(ir.CompilerIrInstr.LoadOwned dst src owner ty)
-      (ir.CompilerIrInstr.LoadOwned
-        dst
-        (opt-unroll-subst-value (compiler-opt-global-shared-view remap) src)
-        (opt-bce-mb-remap-dst remap owner)
-        ty)]
     [(ir.CompilerIrInstr.LaneId dst lanes ty)
       (ir.CompilerIrInstr.LaneId dst lanes ty)]
     [(ir.CompilerIrInstr.Splat dst value lanes ty)
@@ -80588,14 +80440,12 @@
 (define (opt-bce-version-body-instr-ok? [instr : ir.CompilerIrInstr]) : bool
   (match instr
     [(ir.CompilerIrInstr.Mov _ _ _) true]
-    [(ir.CompilerIrInstr.OwnRoot _ _ _) true]
     [(ir.CompilerIrInstr.Cast _ _ _ _) true]
     [(ir.CompilerIrInstr.Bitcast _ _ _ _) true]
     [(ir.CompilerIrInstr.BinOp _ _ _ _ _) true]
     [(ir.CompilerIrInstr.UnOp _ _ _ _) true]
     [(ir.CompilerIrInstr.Gep _ _ _ _) true]
     [(ir.CompilerIrInstr.Load _ _ _) true]
-    [(ir.CompilerIrInstr.LoadOwned _ _ _ _) true]
     [(ir.CompilerIrInstr.StorePtr _ _ _) true]
     [(ir.CompilerIrInstr.StoreOwned _ _ _) true]
     [(ir.CompilerIrInstr.BoundsCheck _ _ _) true]
@@ -94916,17 +94766,6 @@
         (opt-bce-mb-remap-dst (compiler-opt-global-shared-view remap) dst)
         (opt-unroll-subst-value remap src)
         ty)]
-    [(ir.CompilerIrInstr.LoadOwned dst src owner ty)
-      (ir.CompilerIrInstr.LoadOwned
-        (opt-bce-mb-remap-dst (compiler-opt-global-shared-view remap) dst)
-        (opt-unroll-subst-value (compiler-opt-global-shared-view remap) src)
-        (opt-bce-mb-remap-dst remap owner)
-        ty)]
-    [(ir.CompilerIrInstr.OwnRoot dst src ty)
-      (ir.CompilerIrInstr.OwnRoot
-        (opt-bce-mb-remap-dst (compiler-opt-global-shared-view remap) dst)
-        (opt-unroll-subst-value remap src)
-        ty)]
     [(ir.CompilerIrInstr.StorePtr ptr value ty)
       (ir.CompilerIrInstr.StorePtr
         (opt-unroll-subst-value (compiler-opt-global-shared-view remap) ptr)
@@ -98008,14 +97847,12 @@
 (define (opt-unroll-mb-body-instr-ok? [instr : ir.CompilerIrInstr]) : bool
   (match instr
     [(ir.CompilerIrInstr.Mov _ _ _) true]
-    [(ir.CompilerIrInstr.OwnRoot _ _ _) true]
     [(ir.CompilerIrInstr.Cast _ _ _ _) true]
     [(ir.CompilerIrInstr.Bitcast _ _ _ _) true]
     [(ir.CompilerIrInstr.BinOp _ _ _ _ _) true]
     [(ir.CompilerIrInstr.UnOp _ _ _ _) true]
     [(ir.CompilerIrInstr.Gep _ _ _ _) true]
     [(ir.CompilerIrInstr.Load _ _ _) true]
-    [(ir.CompilerIrInstr.LoadOwned _ _ _ _) true]
     [(ir.CompilerIrInstr.StorePtr _ _ _) true]
     [(ir.CompilerIrInstr.StoreOwned _ _ _) true]
     [_ false]))
@@ -98557,17 +98394,6 @@
         ty)]
     [(ir.CompilerIrInstr.Load dst src ty)
       (ir.CompilerIrInstr.Load
-        (opt-bce-mb-remap-dst (compiler-opt-global-shared-view remap) dst)
-        (opt-unroll-subst-value remap src)
-        ty)]
-    [(ir.CompilerIrInstr.LoadOwned dst src owner ty)
-      (ir.CompilerIrInstr.LoadOwned
-        (opt-bce-mb-remap-dst (compiler-opt-global-shared-view remap) dst)
-        (opt-unroll-subst-value (compiler-opt-global-shared-view remap) src)
-        (opt-bce-mb-remap-dst remap owner)
-        ty)]
-    [(ir.CompilerIrInstr.OwnRoot dst src ty)
-      (ir.CompilerIrInstr.OwnRoot
         (opt-bce-mb-remap-dst (compiler-opt-global-shared-view remap) dst)
         (opt-unroll-subst-value remap src)
         ty)]
@@ -101496,8 +101322,6 @@
     [(ir.CompilerIrInstr.Gep _ base offset _)
       (or (opt-value-is-var? base var) (opt-value-is-var? offset var))]
     [(ir.CompilerIrInstr.Load _ src _) (opt-value-is-var? src var)]
-    [(ir.CompilerIrInstr.LoadOwned _ src owner _)
-      (or (opt-value-is-var? src var) (= owner var))]
     [(ir.CompilerIrInstr.Cast _ src _ _) (opt-value-is-var? src var)]
     [(ir.CompilerIrInstr.Bitcast _ src _ _) (opt-value-is-var? src var)]
     [(ir.CompilerIrInstr.UnOp _ _ src _) (opt-value-is-var? src var)]
@@ -101662,7 +101486,6 @@
   (match instr
     [(ir.CompilerIrInstr.Gep _ _ _ _) true]
     [(ir.CompilerIrInstr.Load _ _ _) true]
-    [(ir.CompilerIrInstr.LoadOwned _ _ _ _) true]
     [(ir.CompilerIrInstr.BinOp _ _ _ _ _) true]
     [(ir.CompilerIrInstr.BoundsCheck _ _ _) true]
     [(ir.CompilerIrInstr.Mov _ _ _) true]
@@ -114151,7 +113974,8 @@
   [lits : (&mut lits (__tl_dyn-array i64))]
   [instr : ir.CompilerIrInstr]) : unit
   (let
-    [dst : i64 (opt-sccp-instr-dst (compiler-opt-global-shared-view instr))]
+    [dst : i64
+      (ir.compiler-ir-instr-dst (compiler-opt-global-shared-view instr))]
     (if (or (< dst 0) (>= dst (array-length lits)))
       unit
       (let
@@ -117446,10 +117270,8 @@
 (define (opt-inline-body-instr-op-ok? [instr : ir.CompilerIrInstr]) : bool
   (match instr
     [(ir.CompilerIrInstr.Mov _ _ _) true]
-    [(ir.CompilerIrInstr.OwnRoot _ _ _) true]
     [(ir.CompilerIrInstr.Gep _ _ _ _) true]
     [(ir.CompilerIrInstr.Load _ _ _) true]
-    [(ir.CompilerIrInstr.LoadOwned _ _ _ _) true]
     [(ir.CompilerIrInstr.Cast _ _ _ _) true]
     [(ir.CompilerIrInstr.Bitcast _ _ _ _) true]
     [(ir.CompilerIrInstr.BinOp _ _ _ _ _) true]
@@ -117541,10 +117363,8 @@
 (define (opt-inline-body-instr-ok? [instr : ir.CompilerIrInstr] [np : i64]) : bool
   (match instr
     [(ir.CompilerIrInstr.Mov dst _ _) (>= dst np)]
-    [(ir.CompilerIrInstr.OwnRoot dst _ _) (>= dst np)]
     [(ir.CompilerIrInstr.Gep dst _ _ _) (>= dst np)]
     [(ir.CompilerIrInstr.Load dst _ _) (>= dst np)]
-    [(ir.CompilerIrInstr.LoadOwned dst _ _ _) (>= dst np)]
     [(ir.CompilerIrInstr.Cast dst _ _ _) (>= dst np)]
     [(ir.CompilerIrInstr.Bitcast dst _ _ _) (>= dst np)]
     [(ir.CompilerIrInstr.BinOp dst _ _ _ _) (>= dst np)]
@@ -119078,7 +118898,6 @@
     [(ir.CompilerIrInstr.Mov _ _ _) true]
     [(ir.CompilerIrInstr.Gep _ _ _ _) true]
     [(ir.CompilerIrInstr.Load _ _ _) true]
-    [(ir.CompilerIrInstr.LoadOwned _ _ _ _) true]
     [(ir.CompilerIrInstr.Cast _ _ _ _) true]
     [(ir.CompilerIrInstr.Bitcast _ _ _ _) true]
     [(ir.CompilerIrInstr.BinOp _ _ _ _ _) true]
@@ -119487,11 +119306,6 @@
       (ir.CompilerIrInstr.AddrOf
         (opt-inline-rebase-var dst np base)
         (opt-inline-rebase-var src np base))]
-    [(ir.CompilerIrInstr.OwnRoot dst src ty)
-      (ir.CompilerIrInstr.OwnRoot
-        (opt-inline-rebase-var dst np base)
-        (opt-inline-remap-value src sa np base)
-        (clone ty))]
     [(ir.CompilerIrInstr.Gep dst b o ty)
       (ir.CompilerIrInstr.Gep
         (opt-inline-rebase-var dst np base)
@@ -119503,31 +119317,6 @@
         (opt-inline-rebase-var dst np base)
         (opt-inline-remap-value src sa np base)
         (clone ty))]
-    [(ir.CompilerIrInstr.LoadOwned dst src owner ty)
-      (let
-        [new-src : ir.CompilerIrValue
-          (opt-inline-remap-value
-            src
-            (compiler-opt-global-shared-view sa)
-            np
-            base)]
-        [new-owner-value : ir.CompilerIrValue
-          (opt-inline-remap-value (ir.CompilerIrValue.Var owner) sa np base)]
-        (match new-owner-value
-          [(ir.CompilerIrValue.Var new-owner)
-            (ir.CompilerIrInstr.LoadOwned
-              (opt-inline-rebase-var dst np base)
-              new-src
-              new-owner
-              (clone ty))]
-          [_
-            ;; A parameter can be replaced with a literal/global operand at
-            ;; the call site. Such a value cannot carry an inspectable owner
-            ;; identity, so preserve the load and fail closed on provenance.
-            (ir.CompilerIrInstr.Load
-              (opt-inline-rebase-var dst np base)
-              new-src
-              (clone ty))]))]
     [(ir.CompilerIrInstr.Cast dst src from to)
       (ir.CompilerIrInstr.Cast
         (opt-inline-rebase-var dst np base)
@@ -130520,10 +130309,6 @@
                       (opt-loop-bce-alias-resolve state.aliases src-var))
                     ok)]
                 [_ (OptLoopBceCleanScan.Scan invalid ok)]))]
-          [(ir.CompilerIrInstr.OwnRoot dst _ _)
-            (OptLoopBceCleanScan.Scan
-              (opt-loop-bce-state-invalidate-def state dst)
-              ok)]
           [(ir.CompilerIrInstr.Alloc dst _)
             (OptLoopBceCleanScan.Scan
               (opt-loop-bce-state-bind-alias
@@ -130545,18 +130330,6 @@
                   ty))
               ok)]
           [(ir.CompilerIrInstr.Load dst src ty)
-            (OptLoopBceCleanScan.Scan
-              (let
-                [sources (opt-value-sources-new)]
-                (opt-loop-bce-update-load
-                  type-segment-bases
-                  state
-                  sources
-                  dst
-                  src
-                  ty))
-              ok)]
-          [(ir.CompilerIrInstr.LoadOwned dst src _ ty)
             (OptLoopBceCleanScan.Scan
               (let
                 [sources (opt-value-sources-new)]
@@ -131170,8 +130943,6 @@
               [(OptMaybeLicmRoot.No) (opt-licm-root-env-remove! roots dst)]
               [(OptMaybeLicmRoot.Some root)
                 (opt-licm-root-env-bind! roots dst root)])]
-          [(ir.CompilerIrInstr.LoadOwned _ _ owner _)
-            (opt-licm-root-env-copy! roots dst (ir.CompilerIrValue.Var owner))]
           [(ir.CompilerIrInstr.Call _ name _ _)
             (if (ir.compiler-ir-symbol-eq?
               name
@@ -131386,20 +131157,6 @@
     ;; The data pointer read out of a slot address, or out of a
     ;; descriptor-typed var directly (offset 0 is the same word).
     [(ir.CompilerIrInstr.Load _ src _)
-      (if (or
-        (=
-          (opt-call-memory-element-kind
-            elements
-            (compiler-opt-global-shared-view src))
-          (opt-call-memory-element-kind-data-slot))
-        (opt-call-memory-element-header-base?
-          type-segment-bases
-          sources
-          types
-          src))
-        (opt-call-memory-element-kind-buffer)
-        0)]
-    [(ir.CompilerIrInstr.LoadOwned _ src _ _)
       (if (or
         (=
           (opt-call-memory-element-kind
@@ -142216,8 +141973,8 @@
 ;; Rewrite planned global-ref operands to their entry-loaded SSA vars. A
 ;; missed ref would only lose the optimization, never soundness: any `@G` left
 ;; behind still loads the same cell value under (a)+(b)+(c). Entry-block Mov
-;; sources are exempt (see the pass header), and LoadOwned and Pack operands
-;; are left as they are.
+;; sources are exempt (see the pass header), and Pack operands are left as they
+;; are.
 (define (opt-global-cell-rewrite-instr
   [plan : opt_i64_i64_map.Map]
   [entry? : bool]
@@ -142227,7 +141984,6 @@
       (if entry?
         instr
         (opt-rewrite-operands (OptOperandRewrite.GlobalCell plan) instr))]
-    [(ir.CompilerIrInstr.LoadOwned _ _ _ _) instr]
     [(ir.CompilerIrInstr.Pack _ _ _) instr]
     [_ (opt-rewrite-operands (OptOperandRewrite.GlobalCell plan) instr)]))
 
@@ -142479,7 +142235,6 @@
       [(ir.CompilerIrInstr.Store name _ _)
         (OptRemapSpanKey.SomeKey
           (ir.CompilerSourceSpansInstrKey.Store function name))]
-      [(ir.CompilerIrInstr.OwnRoot _ _ _) (OptRemapSpanKey.NoKey)]
       [(ir.CompilerIrInstr.CallIndirect _ _ _ _) (OptRemapSpanKey.NoKey)]
       [(ir.CompilerIrInstr.CallIndirectC _ _ _ _) (OptRemapSpanKey.NoKey)]
       [_
@@ -143439,8 +143194,6 @@
         (opt-alias-update-gep base dst source)]
       [(ir.CompilerIrInstr.Mov dst value _)
         (opt-alias-update-copy base dst value)]
-      [(ir.CompilerIrInstr.OwnRoot dst value _)
-        (opt-alias-update-copy base dst value)]
       [(ir.CompilerIrInstr.Cast dst value _ _)
         (opt-alias-update-copy base dst value)]
       [(ir.CompilerIrInstr.Bitcast dst value _ _)
@@ -143453,8 +143206,6 @@
           (opt-alias-mark-unique base dst epoch)
           base)]
       [(ir.CompilerIrInstr.Load dst _ _) (opt-alias-mark-may-alias base dst)]
-      [(ir.CompilerIrInstr.LoadOwned dst _ _ _)
-        (opt-alias-mark-may-alias base dst)]
       [(ir.CompilerIrInstr.EntryArgv dst) (opt-alias-mark-may-alias base dst)]
       [(ir.CompilerIrInstr.EntryEnvp dst) (opt-alias-mark-may-alias base dst)]
       [(ir.CompilerIrInstr.AddrOf dst _) (opt-alias-mark-may-alias base dst)]

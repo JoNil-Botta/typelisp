@@ -29,9 +29,6 @@
   (Ok)
   (Err String))
 
-(define fmt-cli-has-target : bool
-  false)
-
 (define (fmt-write-error-message [path : String] [error : io.IoError]) : String
   (str_cat.str-cat "fmt: failed to write " path ": " (io.error-message error)))
 
@@ -161,115 +158,62 @@
       unit
       (io.panic (string.copy diff)))))
 
-(define (fmt-flag? [value : String]) : bool
-  (and (> (string.string-length value) 0) (= (string.string-ref value 0) '-')))
-
-(define (fmt-config-finish
-  [check : bool]
-  [paths : fmt_svec.Vec]
-  [manifest-path : String]
-  [has-manifest : bool]) : ResultFmtConfig
-  (if (fmt_svec.is-empty? (& paths))
-    (ResultFmtConfig.Ok (FmtConfig.Package check manifest-path has-manifest))
-    (if has-manifest
-      (ResultFmtConfig.Err
-        "fmt: cannot combine input paths with --manifest-path")
-      (ResultFmtConfig.Ok (FmtConfig.File check paths)))))
-
-(define (fmt-parse-args
-  [idx : i64]
-  [count : i64]
-  [check : bool]
-  [paths : fmt_svec.Vec]
-  [manifest-path : String]
-  [has-manifest : bool]) : ResultFmtConfig
-  (if (>= idx count)
-    (fmt-config-finish check paths manifest-path has-manifest)
-    (let
-      [current : String (io.arg idx)]
-      (match (cli_option.cli-common-option-parse
-        (owned_view.compiler-owned-shared-view current)
-        idx
-        count
-        (bit-or
-          cli_option.cli-common-option-stdlib-root
-          (bit-or
-            cli_option.cli-common-option-cfg
-            cli_option.cli-common-option-target)))
-        [(cli_option.CliCommonOption.Missing kind)
-          (ResultFmtConfig.Err
-            (cli_option.cli-common-option-missing-message "fmt" kind))]
-        [(cli_option.CliCommonOption.Value kind value next-idx)
-          (match kind
-            [(cli_option.CliCommonOptionKind.Target)
-              (if fmt-cli-has-target
-                (ResultFmtConfig.Err
-                  "fmt: --target was provided more than once")
-                (match (target_cfg.compiler-target-cfg-parse value)
-                  [(target_cfg.ResultCompilerTargetCfg.Ok _)
-                    (begin
-                      (set! fmt-cli-has-target true)
-                      (fmt-parse-args
-                        next-idx
-                        count
-                        check
-                        paths
-                        manifest-path
-                        has-manifest))]
-                  [(target_cfg.ResultCompilerTargetCfg.Err message)
-                    (ResultFmtConfig.Err (str_cat.str-cat "fmt: " message))]))]
-            [_
-              ;; Formatting is CST-based and intentionally retains every cfg
-              ;; branch; these options are accepted for source-tool CLI parity.
-              (fmt-parse-args
-                next-idx
-                count
-                check
-                paths
-                manifest-path
-                has-manifest)])]
-        [(cli_option.CliCommonOption.NotCommon)
-          (cond
-            [(string.eq current "--check")
-              (fmt-parse-args
-                (+ idx 1)
-                count
-                true
-                paths
-                manifest-path
-                has-manifest)]
-            [(string.eq current "--manifest-path")
-              (if (>= (+ idx 1) count)
-                (ResultFmtConfig.Err "fmt: --manifest-path requires a value")
-                (if has-manifest
-                  (ResultFmtConfig.Err "fmt: duplicate --manifest-path")
-                  (fmt-parse-args
-                    (+ idx 2)
-                    count
-                    check
-                    paths
-                    (io.arg (+ idx 1))
-                    true)))]
-            [(fmt-flag? (owned_view.compiler-owned-shared-view current))
-              (ResultFmtConfig.Err
-                (str_cat.str-cat "fmt: unknown flag " current))]
-            [else
-              (let
-                [out : fmt_svec.Vec paths]
-                (begin
-                  (fmt_svec.push-ref! (&mut out) current)
-                  (fmt-parse-args
-                    (+ idx 1)
-                    count
-                    check
-                    out
-                    manifest-path
-                    has-manifest)))])]))))
-
 (define (fmt-config-from [start : i64] [count : i64]) : ResultFmtConfig
-  (begin
-    (set! fmt-cli-has-target false)
-    (fmt-parse-args start count false (fmt_svec.new) "" false)))
+  (let
+    [args : cli_option.CliArgs
+      (cli_option.cli-args
+        "fmt"
+        "--stdlib-root <dir> --cfg <name> --target <target> --check --manifest-path <file>"
+        start
+        count)]
+    [check : bool false]
+    [paths : fmt_svec.Vec (fmt_svec.new)]
+    [manifest-path : String ""]
+    [has-manifest : bool false]
+    [has-target : bool false]
+    (begin
+      (while (cli_option.cli-args-next! (&mut args))
+        (cond
+          [(string.eq args.name "--target")
+            (if has-target
+              (cli_option.cli-args-fail!
+                (&mut args)
+                "fmt: --target was provided more than once")
+              (match (target_cfg.compiler-target-cfg-parse
+                (cli_option.cli-args-value (& args)))
+                [(target_cfg.ResultCompilerTargetCfg.Ok _)
+                  (set! has-target true)]
+                [(target_cfg.ResultCompilerTargetCfg.Err message)
+                  (cli_option.cli-args-fail!
+                    (&mut args)
+                    (str_cat.str-cat "fmt: " message))]))]
+          ;; Formatting is CST-based and intentionally retains every cfg
+          ;; branch; these options are accepted for source-tool CLI parity.
+          [(or
+              (string.eq args.name "--stdlib-root")
+              (string.eq args.name "--cfg"))
+            unit]
+          [(string.eq args.name "--check") (set! check true)]
+          [(string.eq args.name "--manifest-path")
+            (if has-manifest
+              (cli_option.cli-args-fail!
+                (&mut args)
+                "fmt: duplicate --manifest-path")
+              (begin
+                (set! manifest-path (cli_option.cli-args-value (& args)))
+                (set! has-manifest true)))]
+          [(cli_option.cli-flag? args.arg)
+            (cli_option.cli-args-fail-arg! (&mut args) "fmt: unknown flag ")]
+          [else (fmt_svec.push-ref! (&mut paths) (string.copy (& args.arg)))]))
+      (cond
+        [args.failed (ResultFmtConfig.Err args.error)]
+        [(fmt_svec.is-empty? (& paths))
+          (ResultFmtConfig.Ok
+            (FmtConfig.Package check manifest-path has-manifest))]
+        [has-manifest
+          (ResultFmtConfig.Err
+            "fmt: cannot combine input paths with --manifest-path")]
+        [else (ResultFmtConfig.Ok (FmtConfig.File check paths))]))))
 
 ;; --- unified diff for --check -----------------------------------------------
 ;;

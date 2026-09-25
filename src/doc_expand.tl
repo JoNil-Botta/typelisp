@@ -3,6 +3,7 @@
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.io)
 (import stdlib.string)
+(import source_text_core as source_text)
 (import stdlib.vector)
 (import sym_i64_env)
 (import (vector.vector String) as doc_svec)
@@ -1181,7 +1182,7 @@
     (begin
       (while (and (< i n) (= found n))
         (begin
-          (if (doc_extract.doc-string-prefix-at? text prefix i)
+          (if (string.is-string-prefix-at text prefix i)
             (set! found i)
             unit)
           (set! i (+ i 1))))
@@ -1197,7 +1198,7 @@
         (owned_view.compiler-owned-shared-view text)
         line-start
         line-end)]
-    (if (doc_extract.doc-string-prefix-at? text "```" first)
+    (if (string.is-string-prefix-at text "```" first)
       first
       line-end)))
 
@@ -1212,7 +1213,7 @@
         line-start
         line-end)]
     (if (< fence line-end)
-      (doc_extract.doc-string-contains?
+      (string.contains
         (string.substring text fence (- line-end fence))
         "test=ignore")
       false)))
@@ -1224,11 +1225,7 @@
     (begin
       (while (and (< pos n) (= found n))
         (let
-          [line-end : i64
-            (doc_extract.doc-line-end
-              (owned_view.compiler-owned-shared-view text)
-              pos
-              n)]
+          [line-end : i64 (source_text.line-end text pos)]
           (begin
             (if (doc-expand-ignored-fence-line?
               (owned_view.compiler-owned-shared-view text)
@@ -1236,35 +1233,18 @@
               line-end)
               (set! found pos)
               unit)
-            (set!
-              pos
-              (doc_extract.doc-next-line-start
-                (owned_view.compiler-owned-shared-view text)
-                line-end
-                n)))))
+            (set! pos (source_text.next-line-start text line-end)))))
       found)))
 
 (define (doc-expand-skip-fence [text : String] [cursor : i64] [n : i64]) : i64
   (let
-    [open-end : i64
-      (doc_extract.doc-line-end
-        (owned_view.compiler-owned-shared-view text)
-        cursor
-        n)]
-    [pos : i64
-      (doc_extract.doc-next-line-start
-        (owned_view.compiler-owned-shared-view text)
-        open-end
-        n)]
+    [open-end : i64 (source_text.line-end text cursor)]
+    [pos : i64 (source_text.next-line-start text open-end)]
     [done : bool false]
     (begin
       (while (and (< pos n) (not done))
         (let
-          [line-end : i64
-            (doc_extract.doc-line-end
-              (owned_view.compiler-owned-shared-view text)
-              pos
-              n)]
+          [line-end : i64 (source_text.line-end text pos)]
           (if (<
             (doc-expand-fence-line-start
               (owned_view.compiler-owned-shared-view text)
@@ -1272,19 +1252,9 @@
               line-end)
             line-end)
             (begin
-              (set!
-                pos
-                (doc_extract.doc-next-line-start
-                  (owned_view.compiler-owned-shared-view text)
-                  line-end
-                  n))
+              (set! pos (source_text.next-line-start text line-end))
               (set! done true))
-            (set!
-              pos
-              (doc_extract.doc-next-line-start
-                (owned_view.compiler-owned-shared-view text)
-                line-end
-                n)))))
+            (set! pos (source_text.next-line-start text line-end)))))
       pos)))
 
 (define (doc-import-forms-from-doc-text [doc-text : String]) : DocImportFormScan
@@ -1323,10 +1293,7 @@
                 [form : String (string.substring doc-text start (- end start))]
                 (begin
                   (doc-import-form-list-push-unique! (&mut forms) form)
-                  (if (doc_extract.doc-string-prefix-at?
-                    doc-text
-                    "(import ("
-                    start)
+                  (if (string.is-string-prefix-at doc-text "(import (" start)
                     (set! has-macro true)
                     unit)
                   (set! cursor end)))
@@ -1636,15 +1603,11 @@
                 [rendered : String
                   (doc_render.doc-render-module-graph-markdown modules)]
                 (if (and
-                  (doc_extract.doc-string-contains?
-                    rendered
-                    "doc.generated.fixture.box\\_i64")
-                  (doc_extract.doc-string-contains?
-                    rendered
-                    "(import (boxmod i64) as ibox)")
-                  (doc_extract.doc-string-contains? rendered "### Box")
-                  (doc_extract.doc-string-contains? rendered "### Status")
-                  (doc_extract.doc-string-contains? rendered "### new"))
+                  (string.contains rendered "doc.generated.fixture.box\\_i64")
+                  (string.contains rendered "(import (boxmod i64) as ibox)")
+                  (string.contains rendered "### Box")
+                  (string.contains rendered "### Status")
+                  (string.contains rendered "### new"))
                   42
                   (io.panic "doc-expand: generated module docs smoke mismatch")))]
             [(ResultDocExpandedModules.Err message)

@@ -39797,7 +39797,7 @@
             call-value
             scalar-ty
             result-ty))
-        (match (lower-reserve-heap-storage
+        (match (lower-reserve-inline-storage
           state
           size
           (lower-global-shared-view result-ty))
@@ -39825,7 +39825,7 @@
                   (lower-global-shared-view result-ty))
                   (ResultLowerExpr.Ok
                     (LowerExpr.Expr state call-value result-ty))
-                  (match (lower-reserve-heap-storage
+                  (match (lower-reserve-inline-storage
                     state
                     size
                     (lower-global-shared-view result-ty))
@@ -40007,7 +40007,7 @@
                         (lower-state-mode args-state)
                         result-ty))))]
               [else
-                (match (lower-reserve-heap-storage
+                (match (lower-reserve-inline-storage
                   args-state
                   size
                   (lower-global-shared-view result-ty))
@@ -40050,15 +40050,20 @@
                   (lower-state-mode args-state)
                   result-ty))))]
         [(LowerCAbiAggregate.Sret size)
-          ;; Reserve the sret buffer typed as a scalar pointer (U64), NOT
-          ;; the aggregate result type. A register-resident result type would make
-          ;; the backend classify the hidden sret pointer as a 2-word register
-          ;; group, shifting every real argument by one slot (and reading an
-          ;; undefined second word). Typing it U64 keeps the hidden pointer in a
-          ;; single integer register, and it survives copy-propagation (there is
-          ;; no copy to fold). The result materialization below reads the 2 words
-          ;; back from the buffer using `result-ty` explicitly.
-          (match (lower-reserve-heap-storage args-state size (ast.AstType.U64))
+          ;; The sret buffer is caller frame storage, as for an internal sret
+          ;; result (#7990). Its address is an `addr_of` value, which is a
+          ;; single pointer word even when `result-ty` is a register group, so
+          ;; the backend never splits the hidden argument into two registers.
+          ;; The call marks it as the sret argument: colouring keeps the slot
+          ;; live through every use of the call's result, and a loop-carried
+          ;; result is snapshotted at its assignment, so a later execution of
+          ;; this call never overwrites a result that is still live. The
+          ;; result materialization below reads the value back through `base`
+          ;; using `result-ty` explicitly.
+          (match (lower-reserve-inline-storage
+            args-state
+            size
+            (lower-global-shared-view result-ty))
             [(LowerExpr.Expr base-state base _)
               (match (lower-state-alloc-var base-state)
                 [(LowerAlloc.Alloc allocated var-id)
@@ -40185,7 +40190,7 @@
                     (lower-state-mode state)
                     result-ty))))]
           [else
-            (match (lower-reserve-heap-storage
+            (match (lower-reserve-inline-storage
               state
               size
               (lower-global-shared-view result-ty))
@@ -40220,10 +40225,12 @@
             origin
             (lower-c-abi-unsupported-message (lower-state-mode state) result-ty))))]
     [(LowerCAbiAggregate.Sret size)
-      ;; Reserve the sret buffer typed as a scalar pointer (U64) -- see
-      ;; lower-direct-c-abi-call -- so a register-resident result type does not make
-      ;; the backend classify the hidden sret pointer as a 2-register group arg.
-      (match (lower-reserve-heap-storage state size (ast.AstType.U64))
+      ;; Caller frame storage addressed by one pointer word -- see
+      ;; lower-direct-c-abi-call.
+      (match (lower-reserve-inline-storage
+        state
+        size
+        (lower-global-shared-view result-ty))
         [(LowerExpr.Expr base-state base _)
           (match (lower-state-alloc-var base-state)
             [(LowerAlloc.Alloc allocated var-id)

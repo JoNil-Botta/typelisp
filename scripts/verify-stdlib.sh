@@ -195,6 +195,8 @@ atomic.tl
 args.tl
 byte_buf.tl
 byte_buf_core.tl
+byte_le.tl
+byte_reader.tl
 clone.tl
 comptime.tl
 concurrency_registry.tl

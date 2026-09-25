@@ -1292,79 +1292,156 @@
       (set! (array-ref slots 1) b)
       (CompilerIrSpmdCallArgSeq slots 2))))
 
-(define (compiler-ir-spmd-call-arg-builder-with-capacity [capacity : i64]) : CompilerIrSpmdCallArgBuilder
-  (CompilerIrSpmdCallArgBuilder
-    (__tl_make-array
-      CompilerIrSpmdCallArg
-      (compiler-ir-builder-capacity capacity))
-    0))
-
-(define (compiler-ir-spmd-call-arg-builder-copy-range!
-  [dst : (&mut dst (__tl_dyn-array CompilerIrSpmdCallArg))]
-  [src : (& src (__tl_dyn-array CompilerIrSpmdCallArg))]
-  [count : i64]) : unit
+;; The growable `{slots, len}` builders behind the IR sequences share one
+;; implementation. `(compiler-ir-dense-builder T Builder Seq prefix to-seq
+;; snapshot)` declares, for a builder struct over element type `T`:
+;;   prefix-with-capacity  at least one slot (compiler-ir-builder-capacity)
+;;   prefix-copy-range!    copy the first `count` slots
+;;   prefix-grow!          double the storage, one slot from empty
+;;   prefix-push!          append one element
+;; and, by the bare-name options:
+;;   to-seq    `share`: prefix-to-seq hands the builder's storage to `Seq`;
+;;             `exact`: it reuses the storage only when full and otherwise
+;;             copies into exact-size storage; `exact-offset` is `exact` for a
+;;             `Seq` with a `start` field (set to 0); `_` declares none.
+;;   snapshot  `snapshot` or `snapshot-seq` declares prefix-<name>, an
+;;             exact-size copy of the live prefix that leaves the builder
+;;             usable; `_` declares none.
+;; Reads through the resulting sequences stay the unchecked
+;; compiler-ir-array-shared-view accessors each family defines.
+(defmacro (compiler-ir-dense-builder
+  [T : type (:kind struct enum)]
+  [builder-type : type (:kind struct)]
+  [seq-type : type (:kind struct)]
+  [prefix : Expr]
+  [to-seq : Expr]
+  [snapshot : Expr]) : Decls
   (let
-    [index : i64 0]
-    (while (< index count)
-      (begin
-        (set! (array-ref dst index) (array-ref src index))
-        (set! index (+ index 1))))))
+    [prefix-text : String
+      (match prefix
+        [(Expr.Var value) value]
+        [_
+          (comptime-error
+            "compiler-ir-dense-builder: prefix must be a bare name")])]
+    [to-seq-shape : String
+      (match to-seq
+        [(Expr.Var value) value]
+        [_
+          (comptime-error
+            "compiler-ir-dense-builder: to-seq must be a bare name")])]
+    [snapshot-suffix : String
+      (match snapshot
+        [(Expr.Var value) value]
+        [_
+          (comptime-error
+            "compiler-ir-dense-builder: snapshot must be a bare name")])]
+    [builder : Expr (comptime.expr-var (type-nominal-name builder-type))]
+    [seq : Expr (comptime.expr-var (type-nominal-name seq-type))]
+    [with-capacity-name : Expr
+      (comptime.expr-var (comptime.string-append prefix-text "-with-capacity"))]
+    [copy-range-name : Expr
+      (comptime.expr-var (comptime.string-append prefix-text "-copy-range!"))]
+    [grow-name : Expr
+      (comptime.expr-var (comptime.string-append prefix-text "-grow!"))]
+    [push-name : Expr
+      (comptime.expr-var (comptime.string-append prefix-text "-push!"))]
+    [to-seq-name : Expr
+      (comptime.expr-var (comptime.string-append prefix-text "-to-seq"))]
+    [snapshot-name : Expr
+      (comptime.expr-var
+        (comptime.string-append
+          (comptime.string-append prefix-text "-")
+          snapshot-suffix))]
+    [offset? : bool
+      (match to-seq-shape
+        ["exact-offset" true]
+        [_ false])]
+    [seq-of-builder : Expr
+      (if offset?
+        `(,seq builder.slots 0 builder.len)
+        `(,seq builder.slots builder.len))]
+    [seq-of-slots : Expr
+      (if offset?
+        `(,seq slots 0 builder.len)
+        `(,seq slots builder.len))]
+    [exact-copy : Expr
+      `(let
+        [slots : (__tl_dyn-array ,T) (__tl_make-array ,T builder.len)]
+        (begin
+          (,copy-range-name (&mut slots) (& builder.slots) builder.len)
+          ,seq-of-slots))]
+    [to-seq-decls : ExprList
+      (match to-seq-shape
+        ["share"
+          (match `(begin
+            (define (,to-seq-name [builder : ,builder-type]) : ,seq-type
+              ,seq-of-builder))
+            [(Expr.Begin decls) decls]
+            [_ (expr-list-empty)])]
+        ["_" (expr-list-empty)]
+        [_
+          (match `(begin
+            (define (,to-seq-name [builder : ,builder-type]) : ,seq-type
+              (if (= builder.len (array-length builder.slots))
+                ,seq-of-builder
+                ,exact-copy)))
+            [(Expr.Begin decls) decls]
+            [_ (expr-list-empty)])])]
+    [snapshot-decls : ExprList
+      (match snapshot-suffix
+        ["_" (expr-list-empty)]
+        [_
+          (match `(begin
+            (define (,snapshot-name [builder : (& builder ,builder-type)]) : ,seq-type
+              ,exact-copy))
+            [(Expr.Begin decls) decls]
+            [_ (expr-list-empty)])])]
+    `(begin
+      (define (,with-capacity-name [capacity : i64]) : ,builder-type
+        (,builder
+          (__tl_make-array ,T (compiler-ir-builder-capacity capacity))
+          0))
+      (define (,copy-range-name
+        [dst : (&mut dst (__tl_dyn-array ,T))]
+        [src : (& src (__tl_dyn-array ,T))]
+        [count : i64]) : unit
+        (let
+          [index : i64 0]
+          (while (< index count)
+            (begin
+              (set! (array-ref dst index) (array-ref src index))
+              (set! index (+ index 1))))))
+      (define (,grow-name [builder : (&mut builder ,builder-type)]) : unit
+        (let
+          [old-cap : i64 (array-length builder.slots)]
+          [new-cap : i64
+            (if (< old-cap 1)
+              1
+              (* old-cap 2))]
+          [bigger : (__tl_dyn-array ,T) (__tl_make-array ,T new-cap)]
+          (begin
+            (,copy-range-name (&mut bigger) (& builder.slots) builder.len)
+            (set! builder.slots bigger))))
+      (define (,push-name [builder : (&mut builder ,builder-type)] [item : ,T]) : unit
+        (begin
+          (if (< builder.len (array-length builder.slots))
+            unit
+            (,grow-name builder))
+          (let
+            [index : i64 builder.len]
+            (begin
+              (set! (array-ref builder.slots index) item)
+              (set! builder.len (+ index 1))))))
+      ,@to-seq-decls
+      ,@snapshot-decls)))
 
-(define (compiler-ir-spmd-call-arg-builder-grow!
-  [builder : (&mut builder CompilerIrSpmdCallArgBuilder)]) : unit
-  (let
-    [old-cap : i64 (array-length builder.slots)]
-    [new-cap : i64
-      (if (< old-cap 1)
-        1
-        (* old-cap 2))]
-    [bigger : (__tl_dyn-array CompilerIrSpmdCallArg)
-      (__tl_make-array CompilerIrSpmdCallArg new-cap)]
-    (begin
-      (compiler-ir-spmd-call-arg-builder-copy-range!
-        (&mut bigger)
-        (& builder.slots)
-        builder.len)
-      (set! builder.slots bigger))))
-
-(define (compiler-ir-spmd-call-arg-builder-push!
-  [builder : (&mut builder CompilerIrSpmdCallArgBuilder)]
-  [arg : CompilerIrSpmdCallArg]) : unit
-  (begin
-    (if (< builder.len (array-length builder.slots))
-      unit
-      (compiler-ir-spmd-call-arg-builder-grow! builder))
-    (let
-      [index : i64 builder.len]
-      (begin
-        (set! (array-ref builder.slots index) arg)
-        (set! builder.len (+ index 1))))))
-
-(define (compiler-ir-spmd-call-arg-builder-to-seq
-  [builder : CompilerIrSpmdCallArgBuilder]) : CompilerIrSpmdCallArgSeq
-  (if (= builder.len (array-length builder.slots))
-    (CompilerIrSpmdCallArgSeq builder.slots builder.len)
-    (let
-      [slots : (__tl_dyn-array CompilerIrSpmdCallArg)
-        (__tl_make-array CompilerIrSpmdCallArg builder.len)]
-      (begin
-        (compiler-ir-spmd-call-arg-builder-copy-range!
-          (&mut slots)
-          (& builder.slots)
-          builder.len)
-        (CompilerIrSpmdCallArgSeq slots builder.len)))))
-
-(define (compiler-ir-spmd-call-arg-builder-snapshot
-  [builder : (& builder CompilerIrSpmdCallArgBuilder)]) : CompilerIrSpmdCallArgSeq
-  (let
-    [slots : (__tl_dyn-array CompilerIrSpmdCallArg)
-      (__tl_make-array CompilerIrSpmdCallArg builder.len)]
-    (begin
-      (compiler-ir-spmd-call-arg-builder-copy-range!
-        (&mut slots)
-        (& builder.slots)
-        builder.len)
-      (CompilerIrSpmdCallArgSeq slots builder.len))))
+(compiler-ir-dense-builder
+  CompilerIrSpmdCallArg
+  CompilerIrSpmdCallArgBuilder
+  CompilerIrSpmdCallArgSeq
+  compiler-ir-spmd-call-arg-builder
+  exact
+  snapshot)
 
 (define (compiler-ir-spmd-call-arg-seq-append
   [args : CompilerIrSpmdCallArgSeq]
@@ -2070,7 +2147,7 @@
       `(let
         [spmd-args ,args]
         [spmd-slots spmd-args.slots]
-        [spmd-out (__tl_make-array CompilerIrSpmdCallArg spmd-args.len)]
+        [spmd-out (compiler-ir-spmd-call-arg-storage spmd-args.len)]
         [spmd-index : i64 0]
         (begin
           (while (< spmd-index spmd-args.len)
@@ -2159,7 +2236,7 @@
   `(let
     [return-slots ,slots]
     [slot-items return-slots.slots]
-    [slot-out (__tl_make-array CompilerIrCAbiReturnSlot return-slots.len)]
+    [slot-out (compiler-ir-c-abi-return-slot-storage return-slots.len)]
     [slot-index : i64 0]
     (begin
       (while (< slot-index return-slots.len)
@@ -3910,46 +3987,13 @@
 ;; whole program and also requires each same-program call to carry exactly its
 ;; callee's descriptor. Every message names the function or call it is about and
 ;; one mismatched field; none renders IR.
-(define (compiler-ir-spmd-private-param-seq-with-capacity [capacity : i64]) : CompilerIrSpmdPrivateParamSeq
-  (CompilerIrSpmdPrivateParamSeq
-    (__tl_make-array
-      CompilerIrSpmdPrivateParam
-      (compiler-ir-builder-capacity capacity))
-    0))
-
-(define (compiler-ir-spmd-private-param-copy-range!
-  [dst : (&mut dst (__tl_dyn-array CompilerIrSpmdPrivateParam))]
-  [src : (& src (__tl_dyn-array CompilerIrSpmdPrivateParam))]
-  [count : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index count)
-      (begin
-        (set! (array-ref dst index) (array-ref src index))
-        (set! index (+ index 1))))))
-
-(define (compiler-ir-spmd-private-param-seq-push!
-  [seq : (&mut seq CompilerIrSpmdPrivateParamSeq)]
-  [param : CompilerIrSpmdPrivateParam]) : unit
-  (begin
-    (if (< seq.len (array-length seq.slots))
-      unit
-      (let
-        [bigger : (__tl_dyn-array CompilerIrSpmdPrivateParam)
-          (__tl_make-array
-            CompilerIrSpmdPrivateParam
-            (* 2 (compiler-ir-builder-capacity (array-length seq.slots))))]
-        (begin
-          (compiler-ir-spmd-private-param-copy-range!
-            (&mut bigger)
-            (& seq.slots)
-            seq.len)
-          (set! seq.slots bigger))))
-    (let
-      [index : i64 seq.len]
-      (begin
-        (set! (array-ref seq.slots index) param)
-        (set! seq.len (+ index 1))))))
+(compiler-ir-dense-builder
+  CompilerIrSpmdPrivateParam
+  CompilerIrSpmdPrivateParamSeq
+  CompilerIrSpmdPrivateParamSeq
+  compiler-ir-spmd-private-param-seq
+  _
+  _)
 
 (define (compiler-ir-spmd-private-param-seq-ref
   [seq : CompilerIrSpmdPrivateParamSeq]
@@ -5404,67 +5448,13 @@
   [index : i64]) : CompilerIrSwitchCase
   (compiler-ir-array-shared-view cases.slots index))
 
-(define (compiler-ir-switch-case-builder-with-capacity [capacity : i64]) : CompilerIrSwitchCaseBuilder
-  (CompilerIrSwitchCaseBuilder
-    (__tl_make-array
-      CompilerIrSwitchCase
-      (compiler-ir-builder-capacity capacity))
-    0))
-
-(define (compiler-ir-switch-case-builder-copy-range!
-  [dst : (&mut dst (__tl_dyn-array CompilerIrSwitchCase))]
-  [src : (& src (__tl_dyn-array CompilerIrSwitchCase))]
-  [count : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index count)
-      (begin
-        (set! (array-ref dst index) (array-ref src index))
-        (set! index (+ index 1))))))
-
-(define (compiler-ir-switch-case-builder-grow!
-  [builder : (&mut builder CompilerIrSwitchCaseBuilder)]) : unit
-  (let
-    [old-cap : i64 (array-length builder.slots)]
-    [new-cap : i64
-      (if (< old-cap 1)
-        1
-        (* old-cap 2))]
-    [bigger : (__tl_dyn-array CompilerIrSwitchCase)
-      (__tl_make-array CompilerIrSwitchCase new-cap)]
-    (begin
-      (compiler-ir-switch-case-builder-copy-range!
-        (&mut bigger)
-        (& builder.slots)
-        builder.len)
-      (set! builder.slots bigger))))
-
-(define (compiler-ir-switch-case-builder-push!
-  [builder : (&mut builder CompilerIrSwitchCaseBuilder)]
-  [case : CompilerIrSwitchCase]) : unit
-  (begin
-    (if (< builder.len (array-length builder.slots))
-      unit
-      (compiler-ir-switch-case-builder-grow! builder))
-    (let
-      [index : i64 builder.len]
-      (begin
-        (set! (array-ref builder.slots index) case)
-        (set! builder.len (+ index 1))))))
-
-(define (compiler-ir-switch-case-builder-to-seq
-  [builder : CompilerIrSwitchCaseBuilder]) : CompilerIrSwitchCaseSeq
-  (if (= builder.len (array-length builder.slots))
-    (CompilerIrSwitchCaseSeq builder.slots builder.len)
-    (let
-      [slots : (__tl_dyn-array CompilerIrSwitchCase)
-        (__tl_make-array CompilerIrSwitchCase builder.len)]
-      (begin
-        (compiler-ir-switch-case-builder-copy-range!
-          (&mut slots)
-          (& builder.slots)
-          builder.len)
-        (CompilerIrSwitchCaseSeq slots builder.len)))))
+(compiler-ir-dense-builder
+  CompilerIrSwitchCase
+  CompilerIrSwitchCaseBuilder
+  CompilerIrSwitchCaseSeq
+  compiler-ir-switch-case-builder
+  exact
+  _)
 
 (define (compiler-ir-instr-seq-empty) : CompilerIrInstrSeq
   (CompilerIrInstrSeq (__tl_make-array CompilerIrInstr 0) 0))
@@ -5909,51 +5899,13 @@
     1
     capacity))
 
-(define (compiler-ir-value-builder-with-capacity [capacity : i64]) : CompilerIrValueBuilder
-  (CompilerIrValueBuilder
-    (__tl_make-array CompilerIrValue (compiler-ir-builder-capacity capacity))
-    0))
-
-(define (compiler-ir-value-builder-copy-range!
-  [dst : (&mut dst (__tl_dyn-array CompilerIrValue))]
-  [src : (& src (__tl_dyn-array CompilerIrValue))]
-  [count : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index count)
-      (begin
-        (set! (array-ref dst index) (array-ref src index))
-        (set! index (+ index 1))))))
-
-(define (compiler-ir-value-builder-grow!
-  [builder : (&mut builder CompilerIrValueBuilder)]) : unit
-  (let
-    [old-cap : i64 (array-length builder.slots)]
-    [new-cap : i64
-      (if (< old-cap 1)
-        1
-        (* old-cap 2))]
-    [bigger : (__tl_dyn-array CompilerIrValue)
-      (__tl_make-array CompilerIrValue new-cap)]
-    (begin
-      (compiler-ir-value-builder-copy-range!
-        (&mut bigger)
-        (& builder.slots)
-        builder.len)
-      (set! builder.slots bigger))))
-
-(define (compiler-ir-value-builder-push!
-  [builder : (&mut builder CompilerIrValueBuilder)]
-  [value : CompilerIrValue]) : unit
-  (begin
-    (if (< builder.len (array-length builder.slots))
-      unit
-      (compiler-ir-value-builder-grow! builder))
-    (let
-      [index : i64 builder.len]
-      (begin
-        (set! (array-ref builder.slots index) value)
-        (set! builder.len (+ index 1))))))
+(compiler-ir-dense-builder
+  CompilerIrValue
+  CompilerIrValueBuilder
+  CompilerIrValueSeq
+  compiler-ir-value-builder
+  exact
+  snapshot)
 
 (define (compiler-ir-value-builder-append-seq!
   [builder : (&mut builder CompilerIrValueBuilder)]
@@ -5968,31 +5920,6 @@
             (compiler-ir-global-shared-view values)
             index))
         (set! index (+ index 1))))))
-
-(define (compiler-ir-value-builder-to-seq [builder : CompilerIrValueBuilder]) : CompilerIrValueSeq
-  (if (= builder.len (array-length builder.slots))
-    (CompilerIrValueSeq builder.slots builder.len)
-    (let
-      [slots : (__tl_dyn-array CompilerIrValue)
-        (__tl_make-array CompilerIrValue builder.len)]
-      (begin
-        (compiler-ir-value-builder-copy-range!
-          (&mut slots)
-          (& builder.slots)
-          builder.len)
-        (CompilerIrValueSeq slots builder.len)))))
-
-(define (compiler-ir-value-builder-snapshot
-  [builder : (& builder CompilerIrValueBuilder)]) : CompilerIrValueSeq
-  (let
-    [slots : (__tl_dyn-array CompilerIrValue)
-      (__tl_make-array CompilerIrValue builder.len)]
-    (begin
-      (compiler-ir-value-builder-copy-range!
-        (&mut slots)
-        (& builder.slots)
-        builder.len)
-      (CompilerIrValueSeq slots builder.len))))
 
 (define (compiler-ir-value-seq-prepend
   [value : CompilerIrValue]
@@ -6027,51 +5954,13 @@
       (compiler-ir-value-builder-append-seq! (&mut builder) tail)
       (compiler-ir-value-builder-to-seq builder))))
 
-(define (compiler-ir-phi-input-builder-with-capacity [capacity : i64]) : CompilerIrPhiInputBuilder
-  (CompilerIrPhiInputBuilder
-    (__tl_make-array CompilerIrPhiInput (compiler-ir-builder-capacity capacity))
-    0))
-
-(define (compiler-ir-phi-input-builder-copy-range!
-  [dst : (&mut dst (__tl_dyn-array CompilerIrPhiInput))]
-  [src : (& src (__tl_dyn-array CompilerIrPhiInput))]
-  [count : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index count)
-      (begin
-        (set! (array-ref dst index) (array-ref src index))
-        (set! index (+ index 1))))))
-
-(define (compiler-ir-phi-input-builder-grow!
-  [builder : (&mut builder CompilerIrPhiInputBuilder)]) : unit
-  (let
-    [old-cap : i64 (array-length builder.slots)]
-    [new-cap : i64
-      (if (< old-cap 1)
-        1
-        (* old-cap 2))]
-    [bigger : (__tl_dyn-array CompilerIrPhiInput)
-      (__tl_make-array CompilerIrPhiInput new-cap)]
-    (begin
-      (compiler-ir-phi-input-builder-copy-range!
-        (&mut bigger)
-        (& builder.slots)
-        builder.len)
-      (set! builder.slots bigger))))
-
-(define (compiler-ir-phi-input-builder-push!
-  [builder : (&mut builder CompilerIrPhiInputBuilder)]
-  [input : CompilerIrPhiInput]) : unit
-  (begin
-    (if (< builder.len (array-length builder.slots))
-      unit
-      (compiler-ir-phi-input-builder-grow! builder))
-    (let
-      [index : i64 builder.len]
-      (begin
-        (set! (array-ref builder.slots index) input)
-        (set! builder.len (+ index 1))))))
+(compiler-ir-dense-builder
+  CompilerIrPhiInput
+  CompilerIrPhiInputBuilder
+  CompilerIrPhiInputSeq
+  compiler-ir-phi-input-builder
+  exact-offset
+  _)
 
 (define (compiler-ir-phi-input-builder-append-seq!
   [builder : (&mut builder CompilerIrPhiInputBuilder)]
@@ -6087,24 +5976,13 @@
             index))
         (set! index (+ index 1))))))
 
-(define (compiler-ir-phi-input-builder-to-seq
-  [builder : CompilerIrPhiInputBuilder]) : CompilerIrPhiInputSeq
-  (if (= builder.len (array-length builder.slots))
-    (CompilerIrPhiInputSeq builder.slots 0 builder.len)
-    (let
-      [slots : (__tl_dyn-array CompilerIrPhiInput)
-        (__tl_make-array CompilerIrPhiInput builder.len)]
-      (begin
-        (compiler-ir-phi-input-builder-copy-range!
-          (&mut slots)
-          (& builder.slots)
-          builder.len)
-        (CompilerIrPhiInputSeq slots 0 builder.len)))))
-
-(define (compiler-ir-instr-builder-with-capacity [capacity : i64]) : CompilerIrInstrBuilder
-  (let
-    [cap : i64 (compiler-ir-builder-capacity capacity)]
-    (CompilerIrInstrBuilder (__tl_make-array CompilerIrInstr cap) 0)))
+(compiler-ir-dense-builder
+  CompilerIrInstr
+  CompilerIrInstrBuilder
+  CompilerIrInstrSeq
+  compiler-ir-instr-builder
+  share
+  _)
 
 (define (compiler-ir-instr-builder-new) : CompilerIrInstrBuilder
   ;; Seed for the common small block: optimizer IR blocks are short
@@ -6113,47 +5991,6 @@
   ;; functions of a self-compile. Capacity is invisible to the final IR
   ;; (the escape clone right-sizes every seq).
   (compiler-ir-instr-builder-with-capacity 8))
-
-(define (compiler-ir-instr-builder-copy-range!
-  [dst : (&mut dst (__tl_dyn-array CompilerIrInstr))]
-  [src : (& src (__tl_dyn-array CompilerIrInstr))]
-  [count : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index count)
-      (begin
-        (set! (array-ref dst index) (array-ref src index))
-        (set! index (+ index 1))))))
-
-(define (compiler-ir-instr-builder-grow!
-  [builder : (&mut builder CompilerIrInstrBuilder)]) : unit
-  (let
-    [old-cap : i64 (array-length builder.slots)]
-    [new-cap : i64
-      (if (< old-cap 1)
-        1
-        (* old-cap 2))]
-    [bigger : (__tl_dyn-array CompilerIrInstr)
-      (__tl_make-array CompilerIrInstr new-cap)]
-    (begin
-      (compiler-ir-instr-builder-copy-range!
-        (&mut bigger)
-        (& builder.slots)
-        builder.len)
-      (set! builder.slots bigger))))
-
-(define (compiler-ir-instr-builder-push!
-  [builder : (&mut builder CompilerIrInstrBuilder)]
-  [instr : CompilerIrInstr]) : unit
-  (begin
-    (if (< builder.len (array-length builder.slots))
-      unit
-      (compiler-ir-instr-builder-grow! builder))
-    (let
-      [index : i64 builder.len]
-      (begin
-        (set! (array-ref builder.slots index) instr)
-        (set! builder.len (+ index 1))))))
 
 (define (compiler-ir-instr-builder-append-seq-range!
   [builder : (&mut builder CompilerIrInstrBuilder)]
@@ -6169,13 +6006,13 @@
           (compiler-ir-instr-seq-ref instrs index))
         (set! index (+ index 1))))))
 
-(define (compiler-ir-instr-builder-to-seq [builder : CompilerIrInstrBuilder]) : CompilerIrInstrSeq
-  (CompilerIrInstrSeq builder.slots builder.len))
-
-(define (compiler-ir-block-builder-with-capacity [capacity : i64]) : CompilerIrBlockBuilder
-  (let
-    [cap : i64 (compiler-ir-builder-capacity capacity)]
-    (CompilerIrBlockBuilder (__tl_make-array CompilerIrBlock cap) 0)))
+(compiler-ir-dense-builder
+  CompilerIrBlock
+  CompilerIrBlockBuilder
+  CompilerIrBlockSeq
+  compiler-ir-block-builder
+  _
+  _)
 
 (define (compiler-ir-block-builder-new) : CompilerIrBlockBuilder
   ;; Seed for the common small function: most lowered functions have four
@@ -6183,47 +6020,6 @@
   ;; transient padding of the old 8 slot seed. Capacity is invisible to the
   ;; final IR (the escape clone right-sizes every seq).
   (compiler-ir-block-builder-with-capacity 4))
-
-(define (compiler-ir-block-builder-copy-range!
-  [dst : (&mut dst (__tl_dyn-array CompilerIrBlock))]
-  [src : (& src (__tl_dyn-array CompilerIrBlock))]
-  [count : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index count)
-      (begin
-        (set! (array-ref dst index) (array-ref src index))
-        (set! index (+ index 1))))))
-
-(define (compiler-ir-block-builder-grow!
-  [builder : (&mut builder CompilerIrBlockBuilder)]) : unit
-  (let
-    [old-cap : i64 (array-length builder.slots)]
-    [new-cap : i64
-      (if (< old-cap 1)
-        1
-        (* old-cap 2))]
-    [bigger : (__tl_dyn-array CompilerIrBlock)
-      (__tl_make-array CompilerIrBlock new-cap)]
-    (begin
-      (compiler-ir-block-builder-copy-range!
-        (&mut bigger)
-        (& builder.slots)
-        builder.len)
-      (set! builder.slots bigger))))
-
-(define (compiler-ir-block-builder-push!
-  [builder : (&mut builder CompilerIrBlockBuilder)]
-  [block : CompilerIrBlock]) : unit
-  (begin
-    (if (< builder.len (array-length builder.slots))
-      unit
-      (compiler-ir-block-builder-grow! builder))
-    (let
-      [index : i64 builder.len]
-      (begin
-        (set! (array-ref builder.slots index) block)
-        (set! builder.len (+ index 1))))))
 
 (define (compiler-ir-block-builder-append-list!
   [builder : (&mut builder CompilerIrBlockBuilder)]
@@ -6249,115 +6045,24 @@
 (define (compiler-ir-block-builder-to-list [builder : CompilerIrBlockBuilder]) : CompilerIrBlockList
   (CompilerIrBlockList.Array (CompilerIrBlockSeq builder.slots builder.len)))
 
-(define (compiler-ir-param-builder-with-capacity [capacity : i64]) : CompilerIrParamBuilder
-  (let
-    [cap : i64 (compiler-ir-builder-capacity capacity)]
-    (CompilerIrParamBuilder (__tl_make-array CompilerIrParam cap) 0)))
+(compiler-ir-dense-builder
+  CompilerIrParam
+  CompilerIrParamBuilder
+  CompilerIrParamSeq
+  compiler-ir-param-builder
+  share
+  snapshot)
 
-(define (compiler-ir-param-builder-copy-range!
-  [dst : (&mut dst (__tl_dyn-array CompilerIrParam))]
-  [src : (& src (__tl_dyn-array CompilerIrParam))]
-  [count : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index count)
-      (begin
-        (set! (array-ref dst index) (array-ref src index))
-        (set! index (+ index 1))))))
-
-(define (compiler-ir-param-builder-grow!
-  [builder : (&mut builder CompilerIrParamBuilder)]) : unit
-  (let
-    [old-cap : i64 (array-length builder.slots)]
-    [new-cap : i64
-      (if (< old-cap 1)
-        1
-        (* old-cap 2))]
-    [bigger : (__tl_dyn-array CompilerIrParam)
-      (__tl_make-array CompilerIrParam new-cap)]
-    (begin
-      (compiler-ir-param-builder-copy-range!
-        (&mut bigger)
-        (& builder.slots)
-        builder.len)
-      (set! builder.slots bigger))))
-
-(define (compiler-ir-param-builder-push!
-  [builder : (&mut builder CompilerIrParamBuilder)]
-  [param : CompilerIrParam]) : unit
-  (begin
-    (if (< builder.len (array-length builder.slots))
-      unit
-      (compiler-ir-param-builder-grow! builder))
-    (let
-      [index : i64 builder.len]
-      (begin
-        (set! (array-ref builder.slots index) param)
-        (set! builder.len (+ index 1))))))
-
-(define (compiler-ir-param-builder-to-seq [builder : CompilerIrParamBuilder]) : CompilerIrParamSeq
-  (CompilerIrParamSeq builder.slots builder.len))
-
-(define (compiler-ir-param-builder-snapshot
-  [builder : (& builder CompilerIrParamBuilder)]) : CompilerIrParamSeq
-  (let
-    [slots : (__tl_dyn-array CompilerIrParam)
-      (__tl_make-array CompilerIrParam builder.len)]
-    (begin
-      (compiler-ir-param-builder-copy-range!
-        (&mut slots)
-        (& builder.slots)
-        builder.len)
-      (CompilerIrParamSeq slots builder.len))))
-
-(define (compiler-ir-function-builder-with-capacity [capacity : i64]) : CompilerIrFunctionBuilder
-  (let
-    [cap : i64 (compiler-ir-builder-capacity capacity)]
-    (CompilerIrFunctionBuilder (__tl_make-array CompilerIrFunction cap) 0)))
+(compiler-ir-dense-builder
+  CompilerIrFunction
+  CompilerIrFunctionBuilder
+  CompilerIrFunctionSeq
+  compiler-ir-function-builder
+  share
+  snapshot)
 
 (define (compiler-ir-function-builder-new) : CompilerIrFunctionBuilder
   (compiler-ir-function-builder-with-capacity 8))
-
-(define (compiler-ir-function-builder-copy-range!
-  [dst : (&mut dst (__tl_dyn-array CompilerIrFunction))]
-  [src : (& src (__tl_dyn-array CompilerIrFunction))]
-  [count : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index count)
-      (begin
-        (set! (array-ref dst index) (array-ref src index))
-        (set! index (+ index 1))))))
-
-(define (compiler-ir-function-builder-grow!
-  [builder : (&mut builder CompilerIrFunctionBuilder)]) : unit
-  (let
-    [old-cap : i64 (array-length builder.slots)]
-    [new-cap : i64
-      (if (< old-cap 1)
-        1
-        (* old-cap 2))]
-    [bigger : (__tl_dyn-array CompilerIrFunction)
-      (__tl_make-array CompilerIrFunction new-cap)]
-    (begin
-      (compiler-ir-function-builder-copy-range!
-        (&mut bigger)
-        (& builder.slots)
-        builder.len)
-      (set! builder.slots bigger))))
-
-(define (compiler-ir-function-builder-push!
-  [builder : (&mut builder CompilerIrFunctionBuilder)]
-  [func : CompilerIrFunction]) : unit
-  (begin
-    (if (< builder.len (array-length builder.slots))
-      unit
-      (compiler-ir-function-builder-grow! builder))
-    (let
-      [index : i64 builder.len]
-      (begin
-        (set! (array-ref builder.slots index) func)
-        (set! builder.len (+ index 1))))))
 
 (define (compiler-ir-function-builder-append-seq!
   [builder : (&mut builder CompilerIrFunctionBuilder)]
@@ -6379,23 +6084,6 @@
     (begin
       (compiler-ir-function-builder-append-seq! (&mut builder) functions)
       builder)))
-
-(define (compiler-ir-function-builder-to-seq
-  [builder : CompilerIrFunctionBuilder]) : CompilerIrFunctionSeq
-  (CompilerIrFunctionSeq builder.slots builder.len))
-
-(define (compiler-ir-function-builder-snapshot
-  [builder : (& builder CompilerIrFunctionBuilder)]) : CompilerIrFunctionSeq
-  (let
-    [count : i64 builder.len]
-    [slots : (__tl_dyn-array CompilerIrFunction)
-      (__tl_make-array CompilerIrFunction count)]
-    (begin
-      (compiler-ir-function-builder-copy-range!
-        (&mut slots)
-        (& builder.slots)
-        count)
-      (CompilerIrFunctionSeq slots count))))
 
 (define (compiler-ir-function-seq1 [func : CompilerIrFunction]) : CompilerIrFunctionSeq
   (let
@@ -6419,51 +6107,13 @@
 (define (compiler-ir-global-seq-empty) : CompilerIrGlobalSeq
   (CompilerIrGlobalSeq (__tl_make-array CompilerIrGlobal 0) 0))
 
-(define (compiler-ir-global-builder-with-capacity [capacity : i64]) : CompilerIrGlobalBuilder
-  (let
-    [cap : i64 (compiler-ir-builder-capacity capacity)]
-    (CompilerIrGlobalBuilder (__tl_make-array CompilerIrGlobal cap) 0)))
-
-(define (compiler-ir-global-builder-copy-range!
-  [dst : (&mut dst (__tl_dyn-array CompilerIrGlobal))]
-  [src : (& src (__tl_dyn-array CompilerIrGlobal))]
-  [count : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index count)
-      (begin
-        (set! (array-ref dst index) (array-ref src index))
-        (set! index (+ index 1))))))
-
-(define (compiler-ir-global-builder-grow!
-  [builder : (&mut builder CompilerIrGlobalBuilder)]) : unit
-  (let
-    [old-cap : i64 (array-length builder.slots)]
-    [new-cap : i64
-      (if (< old-cap 1)
-        1
-        (* old-cap 2))]
-    [bigger : (__tl_dyn-array CompilerIrGlobal)
-      (__tl_make-array CompilerIrGlobal new-cap)]
-    (begin
-      (compiler-ir-global-builder-copy-range!
-        (&mut bigger)
-        (& builder.slots)
-        builder.len)
-      (set! builder.slots bigger))))
-
-(define (compiler-ir-global-builder-push!
-  [builder : (&mut builder CompilerIrGlobalBuilder)]
-  [global : CompilerIrGlobal]) : unit
-  (begin
-    (if (< builder.len (array-length builder.slots))
-      unit
-      (compiler-ir-global-builder-grow! builder))
-    (let
-      [index : i64 builder.len]
-      (begin
-        (set! (array-ref builder.slots index) global)
-        (set! builder.len (+ index 1))))))
+(compiler-ir-dense-builder
+  CompilerIrGlobal
+  CompilerIrGlobalBuilder
+  CompilerIrGlobalSeq
+  compiler-ir-global-builder
+  share
+  snapshot-seq)
 
 (define (compiler-ir-global-builder-from-seq [globals : CompilerIrGlobalSeq]) : CompilerIrGlobalBuilder
   (let
@@ -6476,21 +6126,6 @@
         globals.len)
       (set! builder.len globals.len)
       builder)))
-
-(define (compiler-ir-global-builder-to-seq [builder : CompilerIrGlobalBuilder]) : CompilerIrGlobalSeq
-  (CompilerIrGlobalSeq builder.slots builder.len))
-
-(define (compiler-ir-global-builder-snapshot-seq
-  [builder : (& builder CompilerIrGlobalBuilder)]) : CompilerIrGlobalSeq
-  (let
-    [slots : (__tl_dyn-array CompilerIrGlobal)
-      (__tl_make-array CompilerIrGlobal builder.len)]
-    (begin
-      (compiler-ir-global-builder-copy-range!
-        (&mut slots)
-        (& builder.slots)
-        builder.len)
-      (CompilerIrGlobalSeq slots builder.len))))
 
 (define (compiler-ir-extern-seq-empty) : CompilerIrExternSeq
   (CompilerIrExternSeq (__tl_make-array CompilerIrExtern 0) 0))
@@ -6532,51 +6167,13 @@
   [index : i64]) : CompilerIrGlobal
   (compiler-ir-array-shared-view globals.slots index))
 
-(define (compiler-ir-extern-builder-with-capacity [capacity : i64]) : CompilerIrExternBuilder
-  (let
-    [cap : i64 (compiler-ir-builder-capacity capacity)]
-    (CompilerIrExternBuilder (__tl_make-array CompilerIrExtern cap) 0)))
-
-(define (compiler-ir-extern-builder-copy-range!
-  [dst : (&mut dst (__tl_dyn-array CompilerIrExtern))]
-  [src : (& src (__tl_dyn-array CompilerIrExtern))]
-  [count : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index count)
-      (begin
-        (set! (array-ref dst index) (array-ref src index))
-        (set! index (+ index 1))))))
-
-(define (compiler-ir-extern-builder-grow!
-  [builder : (&mut builder CompilerIrExternBuilder)]) : unit
-  (let
-    [old-cap : i64 (array-length builder.slots)]
-    [new-cap : i64
-      (if (< old-cap 1)
-        1
-        (* old-cap 2))]
-    [bigger : (__tl_dyn-array CompilerIrExtern)
-      (__tl_make-array CompilerIrExtern new-cap)]
-    (begin
-      (compiler-ir-extern-builder-copy-range!
-        (&mut bigger)
-        (& builder.slots)
-        builder.len)
-      (set! builder.slots bigger))))
-
-(define (compiler-ir-extern-builder-push!
-  [builder : (&mut builder CompilerIrExternBuilder)]
-  [extern : CompilerIrExtern]) : unit
-  (begin
-    (if (< builder.len (array-length builder.slots))
-      unit
-      (compiler-ir-extern-builder-grow! builder))
-    (let
-      [index : i64 builder.len]
-      (begin
-        (set! (array-ref builder.slots index) extern)
-        (set! builder.len (+ index 1))))))
+(compiler-ir-dense-builder
+  CompilerIrExtern
+  CompilerIrExternBuilder
+  CompilerIrExternSeq
+  compiler-ir-extern-builder
+  _
+  snapshot-seq)
 
 (define (compiler-ir-extern-builder-from-seq [externs : CompilerIrExternSeq]) : CompilerIrExternBuilder
   (let
@@ -6589,18 +6186,6 @@
         externs.len)
       (set! builder.len externs.len)
       builder)))
-
-(define (compiler-ir-extern-builder-snapshot-seq
-  [builder : (& builder CompilerIrExternBuilder)]) : CompilerIrExternSeq
-  (let
-    [slots : (__tl_dyn-array CompilerIrExtern)
-      (__tl_make-array CompilerIrExtern builder.len)]
-    (begin
-      (compiler-ir-extern-builder-copy-range!
-        (&mut slots)
-        (& builder.slots)
-        builder.len)
-      (CompilerIrExternSeq slots builder.len))))
 
 (define (compiler-ir-extern-seq-count [externs : CompilerIrExternSeq]) : i64
   externs.len)

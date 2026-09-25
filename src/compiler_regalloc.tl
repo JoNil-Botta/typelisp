@@ -1867,17 +1867,15 @@
             (compiler-reg-var-type-array-set! present types id ty)])
         (set! position (+ position 1))))))
 
-;; Every instruction's stated destination type (compiler-ir-instr-dst-type),
-;; and the byte-pointer address type of AddrOf and Gep. SEL-1: a scalar Select
-;; (`lanes` 0, the if-conversion result) is typed like the Mov/BinOp it
-;; replaced; untyped, it was not register-eligible and could not coalesce with
-;; the phi it feeds, so every if-converted loop carry was homed on the stack.
-;; Indirect-call results are not typed here.
 (define (compiler-reg-instr-def-type-array!
   [instr : ir.CompilerIrInstr]
   [present : (&mut present (__tl_dyn-array i64))]
   [types : (&mut types (__tl_dyn-array ast.AstType))]) : unit
-  (match (compiler-reg-global-shared-view instr)
+  (match instr
+    [(ir.CompilerIrInstr.Mov dst _ ty)
+      (compiler-reg-var-type-array-set! present types dst ty)]
+    [(ir.CompilerIrInstr.OwnRoot dst _ ty)
+      (compiler-reg-var-type-array-set! present types dst ty)]
     [(ir.CompilerIrInstr.AddrOf dst _)
       (compiler-reg-var-type-array-set!
         present
@@ -1890,18 +1888,58 @@
         types
         dst
         (compiler-reg-addr-of-result-type))]
-    [(ir.CompilerIrInstr.CallIndirect _ _ _ _) unit]
-    [(ir.CompilerIrInstr.CallIndirectC _ _ _ _) unit]
-    [_
-      (match (ir.compiler-ir-instr-dst-type
-        (compiler-reg-global-shared-view instr))
-        [(ast.AstMaybeType.No) unit]
-        [(ast.AstMaybeType.Some ty)
-          (compiler-reg-var-type-array-set!
-            present
-            types
-            (ir.compiler-ir-instr-dst instr)
-            ty)])]))
+    [(ir.CompilerIrInstr.Load dst _ ty)
+      (compiler-reg-var-type-array-set! present types dst ty)]
+    [(ir.CompilerIrInstr.LoadOwned dst _ _ ty)
+      (compiler-reg-var-type-array-set! present types dst ty)]
+    [(ir.CompilerIrInstr.Cast dst _ _ to-ty)
+      (compiler-reg-var-type-array-set! present types dst to-ty)]
+    [(ir.CompilerIrInstr.Bitcast dst _ _ to-ty)
+      (compiler-reg-var-type-array-set! present types dst to-ty)]
+    [(ir.CompilerIrInstr.BinOp dst op _ _ ty)
+      (compiler-reg-var-type-array-set!
+        present
+        types
+        dst
+        (ir.compiler-ir-binop-result-type op ty))]
+    [(ir.CompilerIrInstr.UnOp dst _ _ ty)
+      (compiler-reg-var-type-array-set! present types dst ty)]
+    [(ir.CompilerIrInstr.VectorReduce dst _ _ _ elem-ty)
+      (compiler-reg-var-type-array-set! present types dst elem-ty)]
+    [(ir.CompilerIrInstr.MaskReduce dst _ _ _)
+      (compiler-reg-var-type-array-set! present types dst (ast.AstType.Bool))]
+    [(ir.CompilerIrInstr.Call dst _ _ ty)
+      (compiler-reg-var-type-array-set! present types dst ty)]
+    [(ir.CompilerIrInstr.SpmdCall payload-box)
+      (let
+        [result (compiler-reg-box-field-shared-view payload-box result)]
+        (match result
+          [(ir.CompilerIrSpmdCallResult.Unit) unit]
+          [(ir.CompilerIrSpmdCallResult.Value dst _ ty)
+            (compiler-reg-var-type-array-set! present types dst ty)]))]
+    [(ir.CompilerIrInstr.Phi dst _ ty)
+      (compiler-reg-var-type-array-set! present types dst ty)]
+    [(ir.CompilerIrInstr.Pack dst _ ty)
+      (compiler-reg-var-type-array-set! present types dst ty)]
+    [(ir.CompilerIrInstr.Word dst _ _ ty)
+      (compiler-reg-var-type-array-set! present types dst ty)]
+    ;; SEL-1. A SCALAR select (`lanes` 0, the if-conversion result) defines a
+    ;; plain typed value like the Mov/BinOp it replaced, and it was the one
+    ;; scalar def this table did not record. Without a type the value is not
+    ;; register-eligible and cannot coalesce with the phi it feeds, so every
+    ;; if-converted loop carry -- `running = max(running, end)` spelled as
+    ;; `cmov` -- was homed on the stack: `cmovg %rsi, %r12; movq %r12, -40(%rsp)`
+    ;; and `movq -40(%rsp), %r11` on the back edge, four instructions where the
+    ;; cmov alone would do. Vector selects keep their own (vector) tables.
+    [(ir.CompilerIrInstr.Select payload-box)
+      (let
+        [dst (compiler-reg-box-field-shared-view payload-box dst)]
+        [lanes (compiler-reg-box-field-shared-view payload-box lanes)]
+        [ty (compiler-reg-box-field-shared-view payload-box ty)]
+        (if (= lanes 0)
+          (compiler-reg-var-type-array-set! present types dst ty)
+          unit))]
+    [_ unit]))
 
 (define (compiler-reg-instr-seq-types-array!
   [instrs : ir.CompilerIrInstrSeq]

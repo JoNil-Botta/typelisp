@@ -1243,6 +1243,48 @@
     [(ir.CompilerIrCallArgs.Sret values _)
       (compiler-live-use-ids-add-value-array! out n values 0)]))
 
+;; Walk dense value slots in place; no transient chain is materialized.
+(define (compiler-live-use-ids-add-value-seq-from!
+  [out : (&mut out (__tl_dyn-array i64))]
+  [n : i64]
+  [seq : ir.CompilerIrValueSeq]
+  [index : i64]) : i64
+  (if (>= index seq.len)
+    n
+    (compiler-live-use-ids-add-value-seq-from!
+      out
+      (compiler-live-use-ids-add-value!
+        out
+        n
+        (compiler-live-array-element-shared-view seq.slots index))
+      seq
+      (+ index 1))))
+
+(define (compiler-live-use-ids-add-value-seq!
+  [out : (&mut out (__tl_dyn-array i64))]
+  [n : i64]
+  [values : ir.CompilerIrValueSeq]) : i64
+  (compiler-live-use-ids-add-value-seq-from! out n values 0))
+
+(define (compiler-live-use-ids-add-phi-inputs!
+  [out : (&mut out (__tl_dyn-array i64))]
+  [n : i64]
+  [inputs : ir.CompilerIrPhiInputSeq]) : i64
+  (if (<= inputs.len 0)
+    n
+    (let
+      [input : ir.CompilerIrPhiInput
+        (ir.compiler-ir-phi-input-seq-ref (compiler-live-shared-view inputs) 0)]
+      [rest : ir.CompilerIrPhiInputSeq
+        (ir.CompilerIrPhiInputSeq
+          inputs.slots
+          (+ inputs.start 1)
+          (- inputs.len 1))]
+      (compiler-live-use-ids-add-phi-inputs!
+        out
+        (compiler-live-use-ids-add-value! out n input.value)
+        rest))))
+
 (define (compiler-live-use-ids-add-spmd-args-seq!
   [out : (&mut out (__tl_dyn-array i64))]
   [n : i64]
@@ -1264,24 +1306,154 @@
   [args : ir.CompilerIrSpmdCallArgSeq]) : i64
   (compiler-live-use-ids-add-spmd-args-seq! out n args 0))
 
-(define (compiler-live-use-ids-add-use!
-  [out : (&mut out (__tl_dyn-array i64))]
-  [_role : ir.CompilerIrOperandRole]
-  [n : i64]
-  [value : ir.CompilerIrValue]) : i64
-  (compiler-live-use-ids-add-value! out n value))
-
 ;; Write the distinct used var ids of `instr` into `out`, returning the count,
 ;; or -1 when they do not fit (caller falls back to compiler-live-instr-uses).
-;; The ids are those of compiler-live-instr-uses in operand order, except that
-;; the indirect and C-ABI calls and SpmdCall write their arguments before the
-;; callee, result base and active mask, and VectorShuffle writes its active
-;; lane count before the high selector.
+;; The ids are those of compiler-live-instr-uses. This per-instruction hot path
+;; keeps its own match instead of compiler-ir-instr-fold-uses, whose inlined
+;; operand loops would give every call a larger frame.
 (define (compiler-live-instr-use-ids-into!
   [instr : ir.CompilerIrInstr]
   [out : (&mut out (__tl_dyn-array i64))]) : i64
-  (match (compiler-live-shared-view instr)
+  (match instr
+    [(ir.CompilerIrInstr.Mov _ src _)
+      (compiler-live-use-ids-add-value! out 0 src)]
+    [(ir.CompilerIrInstr.OwnRoot _ src _)
+      (compiler-live-use-ids-add-value! out 0 src)]
+    [(ir.CompilerIrInstr.Alloc _ _) 0]
     [(ir.CompilerIrInstr.AddrOf _ src) (compiler-live-use-ids-push! out 0 src)]
+    [(ir.CompilerIrInstr.Gep _ base offset _)
+      (compiler-live-use-ids-add-value!
+        out
+        (compiler-live-use-ids-add-value! out 0 base)
+        offset)]
+    [(ir.CompilerIrInstr.Load _ src _)
+      (compiler-live-use-ids-add-value! out 0 src)]
+    [(ir.CompilerIrInstr.LoadOwned _ src _ _)
+      (compiler-live-use-ids-add-value! out 0 src)]
+    [(ir.CompilerIrInstr.StorePtr dst src _)
+      (compiler-live-use-ids-add-value!
+        out
+        (compiler-live-use-ids-add-value! out 0 dst)
+        src)]
+    [(ir.CompilerIrInstr.StoreOwned dst src _)
+      (compiler-live-use-ids-add-value!
+        out
+        (compiler-live-use-ids-add-value! out 0 dst)
+        src)]
+    [(ir.CompilerIrInstr.CopyBytes dst src _)
+      (compiler-live-use-ids-add-value!
+        out
+        (compiler-live-use-ids-add-value! out 0 dst)
+        src)]
+    [(ir.CompilerIrInstr.BoundsCheck index length _)
+      (compiler-live-use-ids-add-value!
+        out
+        (compiler-live-use-ids-add-value! out 0 index)
+        length)]
+    [(ir.CompilerIrInstr.Cast _ src _ _)
+      (compiler-live-use-ids-add-value! out 0 src)]
+    [(ir.CompilerIrInstr.Bitcast _ src _ _)
+      (compiler-live-use-ids-add-value! out 0 src)]
+    [(ir.CompilerIrInstr.BinOp _ _ lhs rhs _)
+      (compiler-live-use-ids-add-value!
+        out
+        (compiler-live-use-ids-add-value! out 0 lhs)
+        rhs)]
+    [(ir.CompilerIrInstr.UnOp _ _ src _)
+      (compiler-live-use-ids-add-value! out 0 src)]
+    [(ir.CompilerIrInstr.LaneId _ _ _) 0]
+    [(ir.CompilerIrInstr.Splat _ value _ _)
+      (compiler-live-use-ids-add-value! out 0 value)]
+    [(ir.CompilerIrInstr.VectorBinOp payload-box)
+      (let
+        [payload : ir.CompilerIrInstrVectorBinOpPayload (deref payload-box)]
+        (compiler-live-use-ids-add-value!
+          out
+          (compiler-live-use-ids-add-value! out 0 payload.lhs)
+          payload.rhs))]
+    [(ir.CompilerIrInstr.VectorPrefix payload-box)
+      (let
+        [payload : ir.CompilerIrInstrVectorPrefixPayload (deref payload-box)]
+        (compiler-live-use-ids-add-value!
+          out
+          (compiler-live-use-ids-add-value! out 0 payload.src)
+          payload.carry))]
+    [(ir.CompilerIrInstr.VectorReduce _ _ src _ _)
+      (compiler-live-use-ids-add-value! out 0 src)]
+    [(ir.CompilerIrInstr.VectorCompare payload-box)
+      (let
+        [payload : ir.CompilerIrInstrVectorComparePayload (deref payload-box)]
+        (compiler-live-use-ids-add-value!
+          out
+          (compiler-live-use-ids-add-value! out 0 payload.lhs)
+          payload.rhs))]
+    [(ir.CompilerIrInstr.MaskBinOp _ _ lhs rhs _)
+      (compiler-live-use-ids-add-value!
+        out
+        (compiler-live-use-ids-add-value! out 0 lhs)
+        rhs)]
+    [(ir.CompilerIrInstr.MaskNot _ src _)
+      (compiler-live-use-ids-add-value! out 0 src)]
+    [(ir.CompilerIrInstr.MaskReduce _ _ src _)
+      (compiler-live-use-ids-add-value! out 0 src)]
+    [(ir.CompilerIrInstr.Select payload-box)
+      (let
+        [payload : ir.CompilerIrInstrSelectPayload (deref payload-box)]
+        (compiler-live-use-ids-add-value!
+          out
+          (compiler-live-use-ids-add-value!
+            out
+            (compiler-live-use-ids-add-value! out 0 payload.mask)
+            payload.on-true)
+          payload.on-false))]
+    [(ir.CompilerIrInstr.VectorLoad _ base index _ _)
+      (compiler-live-use-ids-add-value!
+        out
+        (compiler-live-use-ids-add-value! out 0 base)
+        index)]
+    [(ir.CompilerIrInstr.VectorStore payload-box)
+      (let
+        [payload : ir.CompilerIrInstrVectorStorePayload (deref payload-box)]
+        (compiler-live-use-ids-add-value!
+          out
+          (compiler-live-use-ids-add-value!
+            out
+            (compiler-live-use-ids-add-value! out 0 payload.base)
+            payload.index)
+          payload.value))]
+    [(ir.CompilerIrInstr.PredicatedStore payload-box)
+      (let
+        [payload : ir.CompilerIrInstrPredicatedStorePayload (deref payload-box)]
+        (compiler-live-use-ids-add-value!
+          out
+          (compiler-live-use-ids-add-value!
+            out
+            (compiler-live-use-ids-add-value!
+              out
+              (compiler-live-use-ids-add-value! out 0 payload.base)
+              payload.index)
+            payload.value)
+          payload.mask))]
+    [(ir.CompilerIrInstr.PredicatedLoad payload-box)
+      (let
+        [payload : ir.CompilerIrInstrPredicatedLoadPayload (deref payload-box)]
+        (compiler-live-use-ids-add-value!
+          out
+          (compiler-live-use-ids-add-value!
+            out
+            (compiler-live-use-ids-add-value! out 0 payload.base)
+            payload.index)
+          payload.mask))]
+    [(ir.CompilerIrInstr.GatherLoad payload-box)
+      (let
+        [payload : ir.CompilerIrInstrGatherLoadPayload (deref payload-box)]
+        (compiler-live-use-ids-add-value!
+          out
+          (compiler-live-use-ids-add-value!
+            out
+            (compiler-live-use-ids-add-value! out 0 payload.base)
+            payload.index-base)
+          payload.index))]
     [(ir.CompilerIrInstr.VectorShuffle payload-box)
       (let
         [payload : ir.CompilerIrInstrVectorShufflePayload (deref payload-box)]
@@ -1295,6 +1467,25 @@
               payload.selector-low)
             payload.active-lanes)
           payload.selector-high))]
+    [(ir.CompilerIrInstr.TailMask _ index len _)
+      (compiler-live-use-ids-add-value!
+        out
+        (compiler-live-use-ids-add-value! out 0 index)
+        len)]
+    [(ir.CompilerIrInstr.EntryArgc _) 0]
+    [(ir.CompilerIrInstr.EntryArgv _) 0]
+    [(ir.CompilerIrInstr.EntryEnvp _) 0]
+    [(ir.CompilerIrInstr.CpuId _ leaf subleaf _)
+      (compiler-live-use-ids-add-value!
+        out
+        (compiler-live-use-ids-add-value! out 0 leaf)
+        subleaf)]
+    [(ir.CompilerIrInstr.Xgetbv _ index)
+      (compiler-live-use-ids-add-value! out 0 index)]
+    [(ir.CompilerIrInstr.Syscall _ args)
+      (compiler-live-use-ids-add-call-args! out 0 args)]
+    [(ir.CompilerIrInstr.Call _ _ args _)
+      (compiler-live-use-ids-add-call-args! out 0 args)]
     [(ir.CompilerIrInstr.CallIndirect _ func args _)
       (compiler-live-use-ids-add-value!
         out
@@ -1331,19 +1522,32 @@
           out
           (compiler-live-use-ids-add-spmd-args! out 0 payload.args)
           payload.active-mask))]
+    [(ir.CompilerIrInstr.TailCall _ args _)
+      (compiler-live-use-ids-add-call-args! out 0 args)]
+    [(ir.CompilerIrInstr.Store _ value _)
+      (compiler-live-use-ids-add-value! out 0 value)]
+    [(ir.CompilerIrInstr.Branch cond _ _)
+      (compiler-live-use-ids-add-value! out 0 cond)]
+    [(ir.CompilerIrInstr.TotalEnumBranch cond _ _)
+      (compiler-live-use-ids-add-value! out 0 cond)]
+    [(ir.CompilerIrInstr.Return value)
+      (compiler-live-use-ids-add-maybe-value! out 0 value)]
+    [(ir.CompilerIrInstr.Phi _ inputs _)
+      (compiler-live-use-ids-add-phi-inputs! out 0 inputs)]
+    [(ir.CompilerIrInstr.Pack _ words _)
+      (compiler-live-use-ids-add-value-seq! out 0 words)]
+    [(ir.CompilerIrInstr.Word _ src _ _)
+      (compiler-live-use-ids-add-value! out 0 src)]
+    [(ir.CompilerIrInstr.Jump _) 0]
     [(ir.CompilerIrInstr.TailCallIndirect func args _)
       (compiler-live-use-ids-add-value!
         out
         (compiler-live-use-ids-add-call-args! out 0 args)
         func)]
-    [_
-      (let
-        [count : i64 0]
-        (ir.compiler-ir-instr-fold-uses
-          instr
-          count
-          compiler-live-use-ids-add-use!
-          out))]))
+    [(ir.CompilerIrInstr.Switch index _ _ _)
+      (compiler-live-use-ids-add-value! out 0 index)]
+    [(ir.CompilerIrInstr.TotalEnumSwitch index _ _ _ _)
+      (compiler-live-use-ids-add-value! out 0 index)]))
 
 ;; Edge-precise counterpart of compiler-live-instr-use-ids-into!: a phi's inputs
 ;; are edge uses, so the phi point itself uses nothing.

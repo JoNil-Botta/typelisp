@@ -87053,51 +87053,35 @@
 
 (define (compiler-backend-object-use-ref
   [site : String]
+  [ty : compiler_ast_types.AstMaybeType]
   [program-index : CompilerBackendProgramIndex]
   [_role : compiler_ir_types.CompilerIrOperandRole]
   [parts : object_target.CompilerBackendObjectTargetParts]
   [value : compiler_ir_types.CompilerIrValue]) : object_target.CompilerBackendObjectTargetParts
-  (compiler-backend-object-value-ref parts site value program-index))
-
-(define (compiler-backend-object-typed-use-ref
-  [site : String]
-  [ty : compiler_ast_types.AstType]
-  [program-index : CompilerBackendProgramIndex]
-  [_role : compiler_ir_types.CompilerIrOperandRole]
-  [parts : object_target.CompilerBackendObjectTargetParts]
-  [value : compiler_ir_types.CompilerIrValue]) : object_target.CompilerBackendObjectTargetParts
-  (compiler-backend-object-value-ref-with-type
-    parts
-    site
-    value
-    ty
-    program-index))
+  (match ty
+    [(compiler_ast_types.AstMaybeType.Some use-ty)
+      (compiler-backend-object-value-ref-with-type
+        parts
+        site
+        value
+        use-ty
+        program-index)]
+    [(compiler_ast_types.AstMaybeType.No)
+      (compiler-backend-object-value-ref parts site value program-index)]))
 
 ;; The references of an instruction the object emitter only discovers
-;; references for: each use, in operand order, references the symbol it names.
+;; references for: each use, in operand order, references the symbol it names,
+;; read as a `ty` value when `ty` is given.
 (define (compiler-backend-object-uses-ref
   [parts : object_target.CompilerBackendObjectTargetParts]
   [site : String]
   [instr : compiler_ir_types.CompilerIrInstr]
+  [ty : compiler_ast_types.AstMaybeType]
   [program-index : CompilerBackendProgramIndex]) : object_target.CompilerBackendObjectTargetParts
   (compiler_ir_types.compiler-ir-instr-fold-uses
     instr
     parts
     compiler-backend-object-use-ref
-    (compiler-backend-global-shared-view site)
-    (compiler-backend-global-shared-view program-index)))
-
-;; compiler-backend-object-uses-ref with every use read as a `ty` value.
-(define (compiler-backend-object-typed-uses-ref
-  [parts : object_target.CompilerBackendObjectTargetParts]
-  [site : String]
-  [instr : compiler_ir_types.CompilerIrInstr]
-  [ty : compiler_ast_types.AstType]
-  [program-index : CompilerBackendProgramIndex]) : object_target.CompilerBackendObjectTargetParts
-  (compiler_ir_types.compiler-ir-instr-fold-uses
-    instr
-    parts
-    compiler-backend-object-typed-use-ref
     (compiler-backend-global-shared-view site)
     (compiler-backend-global-shared-view ty)
     (compiler-backend-global-shared-view program-index)))
@@ -87561,39 +87545,42 @@
         from-ty
         (compiler-backend-global-shared-view program-index))]
     [(compiler_ir_types.CompilerIrInstr.Splat _ _ _ elem-ty)
-      (compiler-backend-object-typed-uses-ref
+      (compiler-backend-object-uses-ref
         parts
         function
         instr
-        elem-ty
+        (compiler_ast_types.AstMaybeType.Some elem-ty)
         program-index)]
     [(compiler_ir_types.CompilerIrInstr.VectorBinOp payload-box)
-      (compiler-backend-object-typed-uses-ref
+      (compiler-backend-object-uses-ref
         parts
         function
         instr
-        (compiler-backend-box-field-shared-view payload-box ty)
+        (compiler_ast_types.AstMaybeType.Some
+          (compiler-backend-box-field-shared-view payload-box ty))
         program-index)]
     [(compiler_ir_types.CompilerIrInstr.VectorPrefix payload-box)
-      (compiler-backend-object-typed-uses-ref
+      (compiler-backend-object-uses-ref
         parts
         function
         instr
-        (compiler-backend-box-field-shared-view payload-box ty)
+        (compiler_ast_types.AstMaybeType.Some
+          (compiler-backend-box-field-shared-view payload-box ty))
         program-index)]
     [(compiler_ir_types.CompilerIrInstr.VectorReduce _ _ _ _ elem-ty)
-      (compiler-backend-object-typed-uses-ref
+      (compiler-backend-object-uses-ref
         parts
         function
         instr
-        elem-ty
+        (compiler_ast_types.AstMaybeType.Some elem-ty)
         program-index)]
     [(compiler_ir_types.CompilerIrInstr.VectorCompare payload-box)
-      (compiler-backend-object-typed-uses-ref
+      (compiler-backend-object-uses-ref
         parts
         function
         instr
-        (compiler-backend-box-field-shared-view payload-box ty)
+        (compiler_ast_types.AstMaybeType.Some
+          (compiler-backend-box-field-shared-view payload-box ty))
         program-index)]
     [(compiler_ir_types.CompilerIrInstr.Select payload-box)
       (let
@@ -87753,7 +87740,13 @@
         default-label
         trap-label
         program-index)]
-    [_ (compiler-backend-object-uses-ref parts function instr program-index)]))
+    [_
+      (compiler-backend-object-uses-ref
+        parts
+        function
+        instr
+        (compiler_ast_types.AstMaybeType.No)
+        program-index)]))
 
 (define (compiler-backend-object-instr-seq
   [type-segment-bases : i64]
@@ -88776,21 +88769,36 @@
     [(compiler_ir_types.CompilerIrValue.RuntimeGlobal _) false]
     [_ true]))
 
-(define (compiler-backend-object-semantic-use-supported?
-  [_role : compiler_ir_types.CompilerIrOperandRole]
-  [supported : bool]
-  [value : compiler_ir_types.CompilerIrValue]) : bool
-  (and supported (compiler-backend-object-semantic-value-supported? value)))
-
-;; Every use of `instr` is a value the object emitter can lower.
-(define (compiler-backend-object-semantic-uses-supported?
-  [instr : compiler_ir_types.CompilerIrInstr]) : bool
+(define (compiler-backend-object-semantic-call-args-array-supported?
+  [values : (__tl_dyn-array compiler_ir_types.CompilerIrValue)]) : bool
   (let
+    [index : i64 0]
+    [count : i64 (array-length values)]
     [supported : bool true]
-    (compiler_ir_types.compiler-ir-instr-fold-uses
-      instr
-      supported
-      compiler-backend-object-semantic-use-supported?)))
+    (begin
+      (while (and supported (< index count))
+        (begin
+          (set!
+            supported
+            (compiler-backend-object-semantic-value-supported?
+              (compiler-backend-global-array-element-shared-view values index)))
+          (set! index (+ index 1))))
+      supported)))
+
+(define (compiler-backend-object-semantic-call-args-supported?
+  [args : compiler_ir_types.CompilerIrCallArgs]) : bool
+  (match args
+    [(compiler_ir_types.CompilerIrCallArgs.Nil) true]
+    [(compiler_ir_types.CompilerIrCallArgs.One value)
+      (compiler-backend-object-semantic-value-supported? value)]
+    [(compiler_ir_types.CompilerIrCallArgs.Two lhs rhs)
+      (and
+        (compiler-backend-object-semantic-value-supported? lhs)
+        (compiler-backend-object-semantic-value-supported? rhs))]
+    [(compiler_ir_types.CompilerIrCallArgs.Array values)
+      (compiler-backend-object-semantic-call-args-array-supported? values)]
+    [(compiler_ir_types.CompilerIrCallArgs.Sret values _)
+      (compiler-backend-object-semantic-call-args-array-supported? values)]))
 
 (define (compiler-backend-object-semantic-call-supported?
   [backend-state : CompilerBackendState]
@@ -88814,18 +88822,19 @@
 (define (compiler-backend-object-instr-semantically-supported?
   [backend-state : CompilerBackendState]
   [instr : compiler_ir_types.CompilerIrInstr]) : bool
-  (match (compiler-backend-global-shared-view instr)
-    [(compiler_ir_types.CompilerIrInstr.LoadOwned _ _ _ _)
-      (compiler-backend-object-semantic-uses-supported? instr)]
-    [(compiler_ir_types.CompilerIrInstr.OwnRoot _ _ _)
-      (compiler-backend-object-semantic-uses-supported? instr)]
-    [(compiler_ir_types.CompilerIrInstr.Mov _ _ _)
-      (compiler-backend-object-semantic-uses-supported? instr)]
-    [(compiler_ir_types.CompilerIrInstr.BinOp _ op _ _ ty)
+  (match instr
+    [(compiler_ir_types.CompilerIrInstr.LoadOwned _ src _ _)
+      (compiler-backend-object-semantic-value-supported? src)]
+    [(compiler_ir_types.CompilerIrInstr.OwnRoot _ src _)
+      (compiler-backend-object-semantic-value-supported? src)]
+    [(compiler_ir_types.CompilerIrInstr.Mov _ src _)
+      (compiler-backend-object-semantic-value-supported? src)]
+    [(compiler_ir_types.CompilerIrInstr.BinOp _ op lhs rhs ty)
       (and
         (compiler-backend-object-semantic-binop-supported? op ty)
-        (compiler-backend-object-semantic-uses-supported? instr))]
-    [(compiler_ir_types.CompilerIrInstr.UnOp _ op _ ty)
+        (compiler-backend-object-semantic-value-supported? lhs)
+        (compiler-backend-object-semantic-value-supported? rhs))]
+    [(compiler_ir_types.CompilerIrInstr.UnOp _ op src ty)
       (and
         ;; The legacy object-only path has no production XMM-home plan. Its
         ;; float-negation placeholder loads/stores GP bits around a hard-wired
@@ -88833,26 +88842,33 @@
         ;; #7205 removes this exclusion only after scalar SSE unary operations
         ;; are emitted from the shared post-regalloc machine program.
         (not (compiler-backend-float-type? ty))
-        (compiler-backend-object-semantic-uses-supported? instr)
+        (compiler-backend-object-semantic-value-supported? src)
         (match op
           [(compiler_ir_types.CompilerIrUnOp.Sqrt) false]
           [(compiler_ir_types.CompilerIrUnOp.BitLength) false]
           [_ true]))]
-    [(compiler_ir_types.CompilerIrInstr.Call _ name _ _)
+    [(compiler_ir_types.CompilerIrInstr.Call _ name args _)
       (and
         (compiler-backend-object-semantic-call-supported? backend-state name)
-        (compiler-backend-object-semantic-uses-supported? instr))]
-    [(compiler_ir_types.CompilerIrInstr.CallIndirectC _ _ _ _)
-      (compiler-backend-object-semantic-uses-supported? instr)]
-    [(compiler_ir_types.CompilerIrInstr.Store _ _ _)
-      (compiler-backend-object-semantic-uses-supported? instr)]
+        (compiler-backend-object-semantic-call-args-supported? args))]
+    [(compiler_ir_types.CompilerIrInstr.CallIndirectC _ callee args _)
+      (and
+        (compiler-backend-object-semantic-value-supported? callee)
+        (compiler-backend-object-semantic-call-args-supported? args))]
+    [(compiler_ir_types.CompilerIrInstr.Store _ value _)
+      (compiler-backend-object-semantic-value-supported? value)]
     [(compiler_ir_types.CompilerIrInstr.Jump _) true]
-    [(compiler_ir_types.CompilerIrInstr.Return _)
-      (compiler-backend-object-semantic-uses-supported? instr)]
-    [(compiler_ir_types.CompilerIrInstr.Gep _ _ _ _)
-      (compiler-backend-object-semantic-uses-supported? instr)]
-    [(compiler_ir_types.CompilerIrInstr.Load _ _ _)
-      (compiler-backend-object-semantic-uses-supported? instr)]
+    [(compiler_ir_types.CompilerIrInstr.Return maybe)
+      (match maybe
+        [(compiler_ir_types.CompilerIrMaybeValue.No) true]
+        [(compiler_ir_types.CompilerIrMaybeValue.Some value)
+          (compiler-backend-object-semantic-value-supported? value)])]
+    [(compiler_ir_types.CompilerIrInstr.Gep _ base offset _)
+      (and
+        (compiler-backend-object-semantic-value-supported? base)
+        (compiler-backend-object-semantic-value-supported? offset))]
+    [(compiler_ir_types.CompilerIrInstr.Load _ src _)
+      (compiler-backend-object-semantic-value-supported? src)]
     [_ false]))
 
 (define (compiler-backend-object-instrs-semantically-supported?

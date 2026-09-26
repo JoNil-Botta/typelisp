@@ -120435,8 +120435,9 @@
               capture-result)
               [(Err diag) (Err diag)]
               [(Ok operands count base-env syntax-pools)
-                (ctfe_support.ctfe-result-hygiene-free-reset-for-state!
-                  (tc-context-ctfe-macro-state ctx))
+                (ctfe_support.ctfe-begin-macro-expansion!
+                  (tc-context-ctfe-macro-state ctx)
+                  (tc-context-module-id ctx))
                 (macro-result-provenance-reset-with-captured-body!
                   (tc-context-ctfe-macro-state ctx)
                   (macro-binding-prefix-transformer?
@@ -120675,8 +120676,9 @@
   [expanded-args : ast.AstExprList]
   [env : ctfe_support.CtfeEnv]) : ResultMacroValueEnv
   (begin
-    (ctfe_support.ctfe-result-hygiene-free-reset-for-state!
-      (tc-context-ctfe-macro-state ctx))
+    (ctfe_support.ctfe-begin-macro-expansion!
+      (tc-context-ctfe-macro-state ctx)
+      (tc-context-module-id ctx))
     (macro-result-provenance-reset-with-captured-body!
       (tc-context-ctfe-macro-state ctx)
       captured-body?)
@@ -120783,8 +120785,9 @@
       ;; Both routes publish per-transformer syntax metadata. Reset before
       ;; native dispatch as well as before an interpreted fallback so an
       ;; earlier expansion cannot leak either marker into this result.
-      (ctfe_support.ctfe-result-hygiene-free-reset-for-state!
-        (tc-context-ctfe-macro-state ctx))
+      (ctfe_support.ctfe-begin-macro-expansion!
+        (tc-context-ctfe-macro-state ctx)
+        (tc-context-module-id ctx))
       (macro-result-provenance-reset-with-captured-body!
         (tc-context-ctfe-macro-state ctx)
         (macro-binding-prefix-transformer?

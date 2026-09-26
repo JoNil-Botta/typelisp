@@ -611,6 +611,7 @@
   compiler-comptime-host-callback-module-name
   compiler-comptime-host-callback-module-hook
   compiler-comptime-host-callback-type-kind
+  ;; Also handles the zero-operand expansion module query (selector 3).
   compiler-comptime-host-callback-type-key
   compiler-comptime-host-callback-struct-field-count
   compiler-comptime-host-callback-struct-field-name

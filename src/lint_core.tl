@@ -2313,16 +2313,22 @@
     (lint-name-qualified-by-separator? name qualifier '/')))
 
 ;; The import the unused-import walker looks for. A reference uses it when it
-;; is qualified by the import's alias or by its full module name.
+;; is qualified by the import's alias or by its full module name. A selected
+;; item (`bare`) is bound unqualified, so a bare reference to its alias is a
+;; use too; a module alias is never a value, so its bare spelling is not.
 (defstruct LintImportRef
   (alias String)
-  (module-name String))
+  (module-name String)
+  (bare bool))
 
 (define (lint-name-uses-import? [name : String] [import-ref : LintImportRef]) : bool
-  (if (lint-name-qualified-by?
-    (owned_view.compiler-owned-shared-view name)
-    import-ref.alias)
-    true
+  (or
+    (and
+      import-ref.bare
+      (string.eq (owned_view.compiler-owned-shared-view name) import-ref.alias))
+    (lint-name-qualified-by?
+      (owned_view.compiler-owned-shared-view name)
+      import-ref.alias)
     (lint-name-qualified-by? name import-ref.module-name)))
 
 (define (lint-name-id-uses-import? [name : i64] [import-ref : LintImportRef]) : bool
@@ -3880,12 +3886,15 @@
       false
       (= (string.string-ref name 0) '_'))))
 
+;; A wildcard import binds every item of its module unqualified, and the
+;; importing file alone does not say which of its bare names those are, so
+;; the unused-import rule cannot attribute a use to it.
 (define (lint-import-kind-lintable?
   [kind : ast.AstImportKind]
   [_ : ast.AstMaybeModuleName]) : bool
   (match kind
     [(ast.AstImportKind.Module) true]
-    [(ast.AstImportKind.ModuleAll) true]
+    [(ast.AstImportKind.ModuleAll) false]
     [(ast.AstImportKind.ModuleItem _) true]
     [(ast.AstImportKind.Macro _ _) false]
     [(ast.AstImportKind.MacroDecls _ _) false]))
@@ -3935,14 +3944,16 @@
       "\\stdlib/string.tl")
     (lint-string-has-suffix? module-name "/stdlib\\string.tl")))
 
+;; `subject` names what was imported: `module alias a`, `item x`, or
+;; `item x as a` when a selected item is renamed.
 (define (lint-unused-import-finding
   [module-name : String]
-  [alias : String]
+  [subject : String]
   [span : ast.AstSourceSpan]) : LintFinding
   (LintFinding
     (str_cat.str-cat
-      "unused import: module alias "
-      alias
+      "unused import: "
+      subject
       " from "
       module-name
       " is never referenced")
@@ -4050,6 +4061,19 @@
                           (__tl-box-place span))
                         acc)
                       acc)]))])]
+        [(ast.AstImportKind.ModuleItem item)
+          (match maybe-alias
+            [(ast.AstMaybeImportAlias.No) acc]
+            [(ast.AstMaybeImportAlias.Some alias)
+              (if (and
+                (string.eq (ci.intern-str alias) (ci.intern-str item))
+                (lint-import-span-has-explicit-alias?
+                  source
+                  (__tl-box-place span)))
+                (lint-findings-add
+                  (lint-redundant-import-alias-finding (__tl-box-place span))
+                  acc)
+                acc)])]
         [_ acc])]))
 
 (define (lint-unused-import-add-if-needed
@@ -4074,27 +4098,52 @@
               (match maybe-alias
                 [(ast.AstMaybeImportAlias.No) acc]
                 [(ast.AstMaybeImportAlias.Some alias)
-                  (if (lint-underscore-prefixed? (ci.intern-str alias))
-                    acc
-                    (if (or
-                      (lint-decl-list-uses-import?
-                        (owned_view.compiler-owned-shared-view all-decls)
-                        (LintImportRef
-                          (ci.intern-str alias)
-                          (ci.intern-str module-name)))
-                      (and
-                        (lint-stdlib-string-module-name?
-                          (ci.intern-str module-name))
-                        (lint-decl-list-has-stdlib-string-bare-use?
-                          (owned_view.compiler-owned-shared-view all-decls)
-                          current-module-id)))
+                  (let
+                    [item? : bool
+                      (match kind
+                        [(ast.AstImportKind.ModuleItem _) true]
+                        [_ false])]
+                    (if (lint-underscore-prefixed? (ci.intern-str alias))
                       acc
-                      (lint-findings-add
-                        (lint-unused-import-finding
-                          (ci.intern-str module-name)
-                          (ci.intern-str alias)
-                          (__tl-box-place span))
-                        acc)))])]))])))
+                      (if (or
+                        (lint-decl-list-uses-import?
+                          (owned_view.compiler-owned-shared-view all-decls)
+                          (LintImportRef
+                            (ci.intern-str alias)
+                            (ci.intern-str module-name)
+                            item?))
+                        ;; The catalogued bare stdlib.string helpers come
+                        ;; with the module import, not with a selected item.
+                        (and
+                          (not item?)
+                          (lint-stdlib-string-module-name?
+                            (ci.intern-str module-name))
+                          (lint-decl-list-has-stdlib-string-bare-use?
+                            (owned_view.compiler-owned-shared-view all-decls)
+                            current-module-id)))
+                        acc
+                        (lint-findings-add
+                          (lint-unused-import-finding
+                            (ci.intern-str module-name)
+                            (match kind
+                              [(ast.AstImportKind.ModuleItem item)
+                                (if (string.eq
+                                  (ci.intern-str item)
+                                  (ci.intern-str alias))
+                                  (str_cat.str-cat
+                                    "item "
+                                    (ci.intern-str alias))
+                                  (str_cat.str-cat
+                                    "item "
+                                    (ci.intern-str item)
+                                    " as "
+                                    (ci.intern-str alias)))]
+                              [_
+                                (str_cat.str-cat
+                                  "module alias "
+                                  (ci.intern-str alias))])
+                            (__tl-box-place span))
+                          acc))))])]))])))
 
 (define (lint-unused-imports-in-decl-list
   [source : String]

@@ -8964,149 +8964,131 @@
   [type-segment-bases : i64]
   [table : OptExprTable]
   [instr : ir.CompilerIrInstr]) : OptCseResult
-  (match (compiler-opt-global-shared-view instr)
+  (match (opt-expr-def (compiler-opt-global-shared-view instr))
+    [(OptMaybeExprDef.Some key dst ty)
+      (let
+        [t1 : OptExprTable (opt-expr-invalidate-var table dst)]
+        (match (opt-expr-lookup
+          type-segment-bases
+          (compiler-opt-global-shared-view t1)
+          (compiler-opt-global-shared-view key))
+          [(ir.CompilerIrMaybeValue.Some earlier)
+            (OptCseResult.Result t1 (ir.CompilerIrInstr.Mov dst earlier ty))]
+          [(ir.CompilerIrMaybeValue.No)
+            (OptCseResult.Result (OptExprTable.Cons key dst (box t1)) instr)]))]
+    [(OptMaybeExprDef.No)
+      (match (compiler-opt-global-shared-view instr)
+        ;; Calls and shuffles clear all available expressions, as do the stores
+        ;; and control flow below.
+        [(ir.CompilerIrInstr.Syscall _ _)
+          (OptCseResult.Result (OptExprTable.Nil) instr)]
+        [(ir.CompilerIrInstr.Call _ _ _ _)
+          (OptCseResult.Result (OptExprTable.Nil) instr)]
+        [(ir.CompilerIrInstr.CallIndirect _ _ _ _)
+          (OptCseResult.Result (OptExprTable.Nil) instr)]
+        [(ir.CompilerIrInstr.CallIndirectC _ _ _ _)
+          (OptCseResult.Result (OptExprTable.Nil) instr)]
+        [(ir.CompilerIrInstr.SpmdCall payload-box)
+          (OptCseResult.Result (OptExprTable.Nil) instr)]
+        [(ir.CompilerIrInstr.VectorShuffle _)
+          (OptCseResult.Result (OptExprTable.Nil) instr)]
+        [(ir.CompilerIrInstr.BoundsCheck _ _ _)
+          (OptCseResult.Result table instr)]
+        ;; Other defining instructions (register-group ops included)
+        ;; invalidate their dst and keep the instruction; the rest clear the
+        ;; table.
+        [_
+          (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
+            [(option_i64.Some dst)
+              (OptCseResult.Result (opt-expr-invalidate-var table dst) instr)]
+            [(option_i64.None)
+              (OptCseResult.Result (OptExprTable.Nil) instr)])])]))
+
+;; The pure expression `instr` computes, keyed as the block-local CSE and the
+;; dominator GVN look it up: its key, its dst, and the type of the `Mov` that
+;; replaces a recomputation.
+(defenum OptMaybeExprDef
+  (No)
+  (Some OptExprKey i64 ast.AstType))
+
+(define (opt-expr-def [instr : ir.CompilerIrInstr]) : OptMaybeExprDef
+  (match instr
     [(ir.CompilerIrInstr.BinOp dst op l r ty)
-      (let
-        [t1 : OptExprTable (opt-expr-invalidate-var table dst)]
-        [key : OptExprKey
-          (OptExprKey.BinKey
-            (compiler-opt-global-shared-view op)
-            l
-            r
-            (compiler-opt-global-shared-view ty))]
-        (match (opt-expr-lookup
-          type-segment-bases
-          (compiler-opt-global-shared-view t1)
-          (compiler-opt-global-shared-view key))
-          [(ir.CompilerIrMaybeValue.Some earlier)
-            (OptCseResult.Result
-              t1
-              (ir.CompilerIrInstr.Mov
-                dst
-                earlier
-                (ir.compiler-ir-binop-result-type op ty)))]
-          [(ir.CompilerIrMaybeValue.No)
-            (OptCseResult.Result (OptExprTable.Cons key dst (box t1)) instr)]))]
+      (OptMaybeExprDef.Some
+        (OptExprKey.BinKey
+          (compiler-opt-global-shared-view op)
+          l
+          r
+          (compiler-opt-global-shared-view ty))
+        dst
+        (ir.compiler-ir-binop-result-type op ty))]
     [(ir.CompilerIrInstr.UnOp dst op v ty)
-      (let
-        [t1 : OptExprTable (opt-expr-invalidate-var table dst)]
-        [key : OptExprKey
-          (OptExprKey.UnKey op v (compiler-opt-global-shared-view ty))]
-        (match (opt-expr-lookup
-          type-segment-bases
-          (compiler-opt-global-shared-view t1)
-          (compiler-opt-global-shared-view key))
-          [(ir.CompilerIrMaybeValue.Some earlier)
-            (OptCseResult.Result t1 (ir.CompilerIrInstr.Mov dst earlier ty))]
-          [(ir.CompilerIrMaybeValue.No)
-            (OptCseResult.Result (OptExprTable.Cons key dst (box t1)) instr)]))]
+      (OptMaybeExprDef.Some
+        (OptExprKey.UnKey op v (compiler-opt-global-shared-view ty))
+        dst
+        ty)]
     [(ir.CompilerIrInstr.CpuId dst leaf subleaf reg-index)
-      (let
-        [t1 : OptExprTable (opt-expr-invalidate-var table dst)]
-        [key : OptExprKey (OptExprKey.CpuIdKey leaf subleaf reg-index)]
-        (match (opt-expr-lookup
-          type-segment-bases
-          (compiler-opt-global-shared-view t1)
-          (compiler-opt-global-shared-view key))
-          [(ir.CompilerIrMaybeValue.Some earlier)
-            (OptCseResult.Result
-              t1
-              (ir.CompilerIrInstr.Mov dst earlier (ast.AstType.I64)))]
-          [(ir.CompilerIrMaybeValue.No)
-            (OptCseResult.Result (OptExprTable.Cons key dst (box t1)) instr)]))]
+      (OptMaybeExprDef.Some
+        (OptExprKey.CpuIdKey leaf subleaf reg-index)
+        dst
+        (ast.AstType.I64))]
     [(ir.CompilerIrInstr.Xgetbv dst index)
-      (let
-        [t1 : OptExprTable (opt-expr-invalidate-var table dst)]
-        [key : OptExprKey (OptExprKey.XgetbvKey index)]
-        (match (opt-expr-lookup
-          type-segment-bases
-          (compiler-opt-global-shared-view t1)
-          (compiler-opt-global-shared-view key))
-          [(ir.CompilerIrMaybeValue.Some earlier)
-            (OptCseResult.Result
-              t1
-              (ir.CompilerIrInstr.Mov dst earlier (ast.AstType.I64)))]
-          [(ir.CompilerIrMaybeValue.No)
-            (OptCseResult.Result (OptExprTable.Cons key dst (box t1)) instr)]))]
+      (OptMaybeExprDef.Some
+        (OptExprKey.XgetbvKey index)
+        dst
+        (ast.AstType.I64))]
     [(ir.CompilerIrInstr.Splat dst value lanes ty)
-      (let
-        [t1 : OptExprTable (opt-expr-invalidate-var table dst)]
-        [key : OptExprKey
-          (OptExprKey.SplatKey value lanes (compiler-opt-global-shared-view ty))]
-        (match (opt-expr-lookup
-          type-segment-bases
-          (compiler-opt-global-shared-view t1)
-          (compiler-opt-global-shared-view key))
-          [(ir.CompilerIrMaybeValue.Some earlier)
-            (OptCseResult.Result t1 (ir.CompilerIrInstr.Mov dst earlier ty))]
-          [(ir.CompilerIrMaybeValue.No)
-            (OptCseResult.Result (OptExprTable.Cons key dst (box t1)) instr)]))]
+      (OptMaybeExprDef.Some
+        (OptExprKey.SplatKey value lanes (compiler-opt-global-shared-view ty))
+        dst
+        ty)]
     [(ir.CompilerIrInstr.VectorBinOp payload-box)
       (let
-        [dst (compiler-opt-box-field-shared-view payload-box dst)]
-        [op (compiler-opt-box-field-shared-view payload-box op)]
-        [lhs (compiler-opt-box-field-shared-view payload-box lhs)]
-        [rhs (compiler-opt-box-field-shared-view payload-box rhs)]
-        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
         [ty (compiler-opt-box-field-shared-view payload-box ty)]
-        [t1 : OptExprTable (opt-expr-invalidate-var table dst)]
-        [key : OptExprKey
+        (OptMaybeExprDef.Some
           (OptExprKey.VectorBinKey
-            op
-            lhs
-            rhs
-            lanes
-            (compiler-opt-global-shared-view ty))]
-        (match (opt-expr-lookup
-          type-segment-bases
-          (compiler-opt-global-shared-view t1)
-          (compiler-opt-global-shared-view key))
-          [(ir.CompilerIrMaybeValue.Some earlier)
-            (OptCseResult.Result t1 (ir.CompilerIrInstr.Mov dst earlier ty))]
-          [(ir.CompilerIrMaybeValue.No)
-            (OptCseResult.Result (OptExprTable.Cons key dst (box t1)) instr)]))]
+            (compiler-opt-box-field-shared-view payload-box op)
+            (compiler-opt-box-field-shared-view payload-box lhs)
+            (compiler-opt-box-field-shared-view payload-box rhs)
+            (compiler-opt-box-field-shared-view payload-box lanes)
+            (compiler-opt-global-shared-view ty))
+          (compiler-opt-box-field-shared-view payload-box dst)
+          ty))]
     [(ir.CompilerIrInstr.VectorCompare payload-box)
-      (let
-        [dst (compiler-opt-box-field-shared-view payload-box dst)]
-        [op (compiler-opt-box-field-shared-view payload-box op)]
-        [lhs (compiler-opt-box-field-shared-view payload-box lhs)]
-        [rhs (compiler-opt-box-field-shared-view payload-box rhs)]
-        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
-        [ty (compiler-opt-box-field-shared-view payload-box ty)]
-        [t1 : OptExprTable (opt-expr-invalidate-var table dst)]
-        [key : OptExprKey (OptExprKey.VectorCompareKey op lhs rhs lanes ty)]
-        (match (opt-expr-lookup
-          type-segment-bases
-          (compiler-opt-global-shared-view t1)
-          (compiler-opt-global-shared-view key))
-          [(ir.CompilerIrMaybeValue.Some earlier)
-            (OptCseResult.Result
-              t1
-              (ir.CompilerIrInstr.Mov dst earlier (ast.AstType.Bool)))]
-          [(ir.CompilerIrMaybeValue.No)
-            (OptCseResult.Result (OptExprTable.Cons key dst (box t1)) instr)]))]
-    ;; Calls and shuffles clear all available expressions, as do the stores
-    ;; and control flow below.
-    [(ir.CompilerIrInstr.Syscall _ _)
-      (OptCseResult.Result (OptExprTable.Nil) instr)]
-    [(ir.CompilerIrInstr.Call _ _ _ _)
-      (OptCseResult.Result (OptExprTable.Nil) instr)]
-    [(ir.CompilerIrInstr.CallIndirect _ _ _ _)
-      (OptCseResult.Result (OptExprTable.Nil) instr)]
-    [(ir.CompilerIrInstr.CallIndirectC _ _ _ _)
-      (OptCseResult.Result (OptExprTable.Nil) instr)]
-    [(ir.CompilerIrInstr.SpmdCall payload-box)
-      (OptCseResult.Result (OptExprTable.Nil) instr)]
-    [(ir.CompilerIrInstr.VectorShuffle _)
-      (OptCseResult.Result (OptExprTable.Nil) instr)]
-    [(ir.CompilerIrInstr.BoundsCheck _ _ _) (OptCseResult.Result table instr)]
-    ;; Other defining instructions (register-group ops included) invalidate
-    ;; their dst and keep the instruction; the rest clear the table.
-    [_
-      (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
-        [(option_i64.Some dst)
-          (OptCseResult.Result (opt-expr-invalidate-var table dst) instr)]
-        [(option_i64.None) (OptCseResult.Result (OptExprTable.Nil) instr)])]))
+      (OptMaybeExprDef.Some
+        (OptExprKey.VectorCompareKey
+          (compiler-opt-box-field-shared-view payload-box op)
+          (compiler-opt-box-field-shared-view payload-box lhs)
+          (compiler-opt-box-field-shared-view payload-box rhs)
+          (compiler-opt-box-field-shared-view payload-box lanes)
+          (compiler-opt-box-field-shared-view payload-box ty))
+        (compiler-opt-box-field-shared-view payload-box dst)
+        (ast.AstType.Bool))]
+    [_ (OptMaybeExprDef.No)]))
+
+;; Whether every value operand of `key` has a single source.
+(define (opt-gvn-key-stable?
+  [sources : (& sources OptValueSources)]
+  [key : OptExprKey]) : bool
+  (match key
+    [(OptExprKey.BinKey _ l r _)
+      (and (opt-gvn-value-stable? sources l) (opt-gvn-value-stable? sources r))]
+    [(OptExprKey.UnKey _ v _) (opt-gvn-value-stable? sources v)]
+    [(OptExprKey.CpuIdKey leaf subleaf _)
+      (and
+        (opt-gvn-value-stable? sources leaf)
+        (opt-gvn-value-stable? sources subleaf))]
+    [(OptExprKey.XgetbvKey index) (opt-gvn-value-stable? sources index)]
+    [(OptExprKey.WordKey source _ _) (opt-gvn-value-stable? sources source)]
+    [(OptExprKey.SplatKey value _ _) (opt-gvn-value-stable? sources value)]
+    [(OptExprKey.VectorBinKey _ lhs rhs _ _)
+      (and
+        (opt-gvn-value-stable? sources lhs)
+        (opt-gvn-value-stable? sources rhs))]
+    [(OptExprKey.VectorCompareKey _ lhs rhs _ _)
+      (and
+        (opt-gvn-value-stable? sources lhs)
+        (opt-gvn-value-stable? sources rhs))]))
 
 ;; --- block-local copy propagation -------------------------------------------
 ;;
@@ -12564,31 +12546,6 @@
   [set : (&mut set (__tl_dyn-array bool))]) : bool
   (opt-verify-param-def-set-from params set 0))
 
-;; Whole-function definition multiplicity, shared by transformations that
-;; substitute one value for a vreg. Count parameters and every defining opcode
-;; through the verifier's canonical destination classifier; loop-only scalar
-;; classifiers omit indirect calls, selects and other legitimate definitions.
-(define (opt-def-counts-instrs!
-  [defs : (&mut defs (__tl_dyn-array i64))]
-  [instrs : ir.CompilerIrInstrSeq]) : unit
-  (let
-    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
-    [index : i64 0]
-    (begin
-      (while (< index count)
-        (let
-          [dst : i64
-            (match (opt-instr-def-var
-              (ir.compiler-ir-instr-seq-ref instrs index))
-              [(option_i64.Some var) var]
-              [(option_i64.None) (- 0 1)])]
-          (begin
-            (if (and (>= dst 0) (< dst (array-length defs)))
-              (set! (array-ref defs dst) (+ (array-ref defs dst) 1))
-              unit)
-            (set! index (+ index 1)))))
-      unit)))
-
 ;; A parameter is defined once, at entry.
 (define (opt-def-counts-params!
   [defs : (&mut defs (__tl_dyn-array i64))]
@@ -12610,46 +12567,36 @@
           (set! at (+ at 1))))
       unit)))
 
+;; Whole-function definition multiplicity, shared by transformations that
+;; substitute one value for a vreg. Count parameters and every defining opcode
+;; through the verifier's canonical destination classifier; loop-only scalar
+;; classifiers omit indirect calls, selects and other legitimate definitions.
 (define (opt-def-counts-blocks!
   [defs : (&mut defs (__tl_dyn-array i64))]
   [blocks : ir.CompilerIrBlockList]) : unit
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) unit]
-    [(ir.CompilerIrBlockList.Array seq)
-      (opt-def-counts-blocks! defs (ir.compiler-ir-block-seq-to-list seq))]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (begin
-        (match block
-          [(ir.CompilerIrBlock.Block _ instrs)
-            (opt-def-counts-instrs! defs instrs)])
-        (opt-def-counts-blocks! defs (deref rest)))]))
+  (opt-blocks-visit blocks opt-def-counts-instr! defs))
 
-(define (opt-verify-instr-def-seq-from
-  [instrs : ir.CompilerIrInstrSeq]
-  [index : i64]
-  [set : (&mut set (__tl_dyn-array bool))]) : bool
-  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-    true
-    (match (opt-instr-def-var (ir.compiler-ir-instr-seq-ref instrs index))
-      [(option_i64.Some var)
-        (and
-          (opt-var-set-add-unique! set var)
-          (opt-verify-instr-def-seq-from instrs (+ index 1) set))]
-      [(option_i64.None) (opt-verify-instr-def-seq-from instrs (+ index 1) set)])))
+(define (opt-def-counts-instr!
+  [defs : (&mut defs (__tl_dyn-array i64))]
+  [instr : ir.CompilerIrInstr]) : unit
+  (match (opt-instr-def-var instr)
+    [(option_i64.Some dst)
+      (if (and (>= dst 0) (< dst (array-length defs)))
+        (set! (array-ref defs dst) (+ (array-ref defs dst) 1))
+        unit)]
+    [(option_i64.None) unit]))
 
 (define (opt-verify-block-def-set
   [blocks : ir.CompilerIrBlockList]
   [set : (&mut set (__tl_dyn-array bool))]) : bool
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) true]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (and
-            (opt-verify-instr-def-seq-from instrs 0 set)
-            (opt-verify-block-def-set (deref rest) set))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (opt-verify-block-def-set (ir.compiler-ir-block-seq-to-list seq) set)]))
+  (opt-blocks-every? blocks opt-verify-instr-def! set))
+
+(define (opt-verify-instr-def!
+  [set : (&mut set (__tl_dyn-array bool))]
+  [instr : ir.CompilerIrInstr]) : bool
+  (match (opt-instr-def-var instr)
+    [(option_i64.Some var) (opt-var-set-add-unique! set var)]
+    [(option_i64.None) true]))
 
 (define (opt-verify-single-defs?
   [params : ir.CompilerIrParamSeq]
@@ -50943,20 +50890,10 @@
 (define (opt-bit-test-facts-scan-blocks!
   [facts : OptBitTestCompareFacts]
   [blocks : ir.CompilerIrBlockList]) : unit
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) unit]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (begin
-            (opt-bit-test-facts-scan-seq!
-              (compiler-opt-global-shared-view facts)
-              instrs)
-            (opt-bit-test-facts-scan-blocks! facts (deref rest)))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (opt-bit-test-facts-scan-blocks!
-        facts
-        (ir.compiler-ir-block-seq-to-list seq))]))
+  (opt-blocks-visit-seq
+    blocks
+    opt-bit-test-facts-scan-seq!
+    (compiler-opt-global-shared-view facts)))
 
 (define (opt-bit-test-facts-build
   [frame : i64]
@@ -51879,8 +51816,8 @@
     defs))
 
 (define (opt-gvn-affine-defs-instr
-  [defs : OptGvnAffineDefs]
   [sources : (& sources OptValueSources)]
+  [defs : OptGvnAffineDefs]
   [instr : ir.CompilerIrInstr]) : OptGvnAffineDefs
   (match instr
     [(ir.CompilerIrInstr.BinOp dst op l r ty)
@@ -51916,47 +51853,11 @@
           [else defs]))]
     [_ defs]))
 
-(define (opt-gvn-affine-defs-instr-seq-from
-  [defs : OptGvnAffineDefs]
-  [sources : (& sources OptValueSources)]
-  [slots : (__tl_dyn-array ir.CompilerIrInstr)]
-  [index : i64]
-  [count : i64]) : OptGvnAffineDefs
-  (if (>= index count)
-    defs
-    (opt-gvn-affine-defs-instr-seq-from
-      (opt-gvn-affine-defs-instr
-        defs
-        sources
-        (compiler-opt-global-array-element-shared-view slots index))
-      sources
-      slots
-      (+ index 1)
-      count)))
-
 (define (opt-gvn-affine-defs-blocks
   [defs : OptGvnAffineDefs]
   [sources : (& sources OptValueSources)]
   [blocks : ir.CompilerIrBlockList]) : OptGvnAffineDefs
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) defs]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (opt-gvn-affine-defs-blocks
-            (opt-gvn-affine-defs-instr-seq-from
-              defs
-              sources
-              instrs.slots
-              0
-              (ir.compiler-ir-instr-seq-count instrs))
-            sources
-            (deref rest))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (opt-gvn-affine-defs-blocks
-        defs
-        sources
-        (ir.compiler-ir-block-seq-to-list seq))]))
+  (opt-blocks-fold blocks defs opt-gvn-affine-defs-instr sources))
 
 (defstruct OptGvnMap
   (buckets (__tl_dyn-array OptGvnBucket))
@@ -52072,46 +51973,24 @@
   [acc : OptValueSources]) : OptValueSources
   (opt-gvn-sources-params-from params acc 0))
 
-(define (opt-gvn-sources-instr-seq-from
-  [slots : (__tl_dyn-array ir.CompilerIrInstr)]
-  [index : i64]
-  [count : i64]
-  [acc : OptValueSources]) : OptValueSources
-  (let
-    [out : OptValueSources acc]
-    [i : i64 index]
-    (begin
-      (while (< i count)
-        (let
-          [instr : ir.CompilerIrInstr
-            (compiler-opt-global-array-element-shared-view slots i)]
-          [dst : i64
-            (ir.compiler-ir-instr-dst (compiler-opt-global-shared-view instr))]
-          (begin
-            (when
-              (opt-gvn-record-candidate? instr)
-              (set! out (opt-gvn-defs-add out (- 0 1))))
-            (when (!= dst (- 0 1)) (set! out (opt-gvn-defs-add out dst)))
-            (set! i (+ i 1)))))
-      out)))
-
 (define (opt-gvn-sources-blocks
   [blocks : ir.CompilerIrBlockList]
   [acc : OptValueSources]) : OptValueSources
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) acc]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (opt-gvn-sources-blocks
-            (deref rest)
-            (opt-gvn-sources-instr-seq-from
-              instrs.slots
-              0
-              (ir.compiler-ir-instr-seq-count instrs)
-              acc))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (opt-gvn-sources-blocks (ir.compiler-ir-block-seq-to-list seq) acc)]))
+  (opt-blocks-fold blocks acc opt-gvn-sources-instr))
+
+(define (opt-gvn-sources-instr
+  [acc : OptValueSources]
+  [instr : ir.CompilerIrInstr]) : OptValueSources
+  (let
+    [out : OptValueSources acc]
+    [dst : i64
+      (ir.compiler-ir-instr-dst (compiler-opt-global-shared-view instr))]
+    (begin
+      (when
+        (opt-gvn-record-candidate? instr)
+        (set! out (opt-gvn-defs-add out (- 0 1))))
+      (when (!= dst (- 0 1)) (set! out (opt-gvn-defs-add out dst)))
+      out)))
 
 ;; Candidate count shares the map's -1 no-destination sentinel. Var ids are
 ;; non-negative, so stability queries never observe this reserved entry.
@@ -52130,50 +52009,6 @@
   (match (opt-cfg-index-id doms.index label)
     [(option_i64.Some id) id]
     [(option_i64.None) (- 0 1)]))
-
-(define (opt-gvn-recordable-instr?
-  [instr : ir.CompilerIrInstr]
-  [sources : (& sources OptValueSources)]) : bool
-  (match instr
-    [(ir.CompilerIrInstr.BinOp dst _ l r _)
-      (and
-        (opt-gvn-stable-var? sources dst)
-        (opt-gvn-value-stable? sources l)
-        (opt-gvn-value-stable? sources r))]
-    [(ir.CompilerIrInstr.UnOp dst _ v _)
-      (and (opt-gvn-stable-var? sources dst) (opt-gvn-value-stable? sources v))]
-    [(ir.CompilerIrInstr.CpuId dst leaf subleaf _)
-      (and
-        (opt-gvn-stable-var? sources dst)
-        (opt-gvn-value-stable? sources leaf)
-        (opt-gvn-value-stable? sources subleaf))]
-    [(ir.CompilerIrInstr.Xgetbv dst index)
-      (and
-        (opt-gvn-stable-var? sources dst)
-        (opt-gvn-value-stable? sources index))]
-    [(ir.CompilerIrInstr.Splat dst value _ _)
-      (and
-        (opt-gvn-stable-var? sources dst)
-        (opt-gvn-value-stable? sources value))]
-    [(ir.CompilerIrInstr.VectorBinOp payload-box)
-      (let
-        [dst (compiler-opt-box-field-shared-view payload-box dst)]
-        [lhs (compiler-opt-box-field-shared-view payload-box lhs)]
-        [rhs (compiler-opt-box-field-shared-view payload-box rhs)]
-        (and
-          (opt-gvn-stable-var? sources dst)
-          (opt-gvn-value-stable? sources lhs)
-          (opt-gvn-value-stable? sources rhs)))]
-    [(ir.CompilerIrInstr.VectorCompare payload-box)
-      (let
-        [dst (compiler-opt-box-field-shared-view payload-box dst)]
-        [lhs (compiler-opt-box-field-shared-view payload-box lhs)]
-        [rhs (compiler-opt-box-field-shared-view payload-box rhs)]
-        (and
-          (opt-gvn-stable-var? sources dst)
-          (opt-gvn-value-stable? sources lhs)
-          (opt-gvn-value-stable? sources rhs)))]
-    [_ false]))
 
 (define (opt-gvn-bucket-capacity [count : i64]) : i64
   (opt-global-fact-bucket-capacity count))
@@ -52320,95 +52155,18 @@
   [sources : (& sources OptValueSources)]
   [table : OptGvnMap]
   [changes : OptGvnScopeChanges]) : OptGvnScopeChanges
-  (let
-    [recordable? : bool
-      (opt-gvn-recordable-instr?
-        (compiler-opt-global-shared-view instr)
-        sources)]
-    (match instr
-      [(ir.CompilerIrInstr.BinOp dst op l r ty)
-        (if recordable?
-          (opt-gvn-table-push!
-            type-segment-bases
-            table
-            (OptGvnEntry.Entry (OptExprKey.BinKey op l r ty) dst def-block-id)
-            changes)
-          changes)]
-      [(ir.CompilerIrInstr.UnOp dst op v ty)
-        (if recordable?
-          (opt-gvn-table-push!
-            type-segment-bases
-            table
-            (OptGvnEntry.Entry (OptExprKey.UnKey op v ty) dst def-block-id)
-            changes)
-          changes)]
-      [(ir.CompilerIrInstr.CpuId dst leaf subleaf reg-index)
-        (if recordable?
-          (opt-gvn-table-push!
-            type-segment-bases
-            table
-            (OptGvnEntry.Entry
-              (OptExprKey.CpuIdKey leaf subleaf reg-index)
-              dst
-              def-block-id)
-            changes)
-          changes)]
-      [(ir.CompilerIrInstr.Xgetbv dst index)
-        (if recordable?
-          (opt-gvn-table-push!
-            type-segment-bases
-            table
-            (OptGvnEntry.Entry (OptExprKey.XgetbvKey index) dst def-block-id)
-            changes)
-          changes)]
-      [(ir.CompilerIrInstr.Splat dst value lanes ty)
-        (if recordable?
-          (opt-gvn-table-push!
-            type-segment-bases
-            table
-            (OptGvnEntry.Entry
-              (OptExprKey.SplatKey value lanes ty)
-              dst
-              def-block-id)
-            changes)
-          changes)]
-      [(ir.CompilerIrInstr.VectorBinOp payload-box)
-        (let
-          [dst (compiler-opt-box-field-shared-view payload-box dst)]
-          [op (compiler-opt-box-field-shared-view payload-box op)]
-          [lhs (compiler-opt-box-field-shared-view payload-box lhs)]
-          [rhs (compiler-opt-box-field-shared-view payload-box rhs)]
-          [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
-          [ty (compiler-opt-box-field-shared-view payload-box ty)]
-          (if recordable?
-            (opt-gvn-table-push!
-              type-segment-bases
-              table
-              (OptGvnEntry.Entry
-                (OptExprKey.VectorBinKey op lhs rhs lanes ty)
-                dst
-                def-block-id)
-              changes)
-            changes))]
-      [(ir.CompilerIrInstr.VectorCompare payload-box)
-        (let
-          [dst (compiler-opt-box-field-shared-view payload-box dst)]
-          [op (compiler-opt-box-field-shared-view payload-box op)]
-          [lhs (compiler-opt-box-field-shared-view payload-box lhs)]
-          [rhs (compiler-opt-box-field-shared-view payload-box rhs)]
-          [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
-          [ty (compiler-opt-box-field-shared-view payload-box ty)]
-          (if recordable?
-            (opt-gvn-table-push!
-              type-segment-bases
-              table
-              (OptGvnEntry.Entry
-                (OptExprKey.VectorCompareKey op lhs rhs lanes ty)
-                dst
-                def-block-id)
-              changes)
-            changes))]
-      [_ changes])))
+  (match (opt-expr-def instr)
+    [(OptMaybeExprDef.Some key dst _)
+      (if (and
+        (opt-gvn-stable-var? sources dst)
+        (opt-gvn-key-stable? sources (compiler-opt-global-shared-view key)))
+        (opt-gvn-table-push!
+          type-segment-bases
+          table
+          (OptGvnEntry.Entry key dst def-block-id)
+          changes)
+        changes)]
+    [(OptMaybeExprDef.No) changes]))
 
 (define (opt-gvn-record-scope-instr-seq-from
   [type-segment-bases : i64]
@@ -52485,151 +52243,31 @@
   [table : OptGvnMap]
   [sources : (& sources OptValueSources)]
   [instr : ir.CompilerIrInstr]) : OptMaybeInstr
-  (match instr
-    [(ir.CompilerIrInstr.BinOp dst op l r ty)
-      (if (and
-        (opt-gvn-value-stable? sources (compiler-opt-global-shared-view l))
-        (opt-gvn-value-stable? sources (compiler-opt-global-shared-view r)))
+  (match (opt-expr-def (compiler-opt-global-shared-view instr))
+    [(OptMaybeExprDef.Some key dst ty)
+      (if (opt-gvn-key-stable? sources (compiler-opt-global-shared-view key))
         (let
           [earlier : i64
             (opt-gvn-lookup
               type-segment-bases
               (compiler-opt-global-shared-view table)
-              (OptExprKey.BinKey
-                (compiler-opt-global-shared-view op)
-                (compiler-opt-global-shared-view l)
-                (compiler-opt-global-shared-view r)
-                (compiler-opt-global-shared-view ty)))]
-          (if (and (not (= earlier (- 0 1))) (not (= earlier dst)))
-            (OptMaybeInstr.Some
-              (ir.CompilerIrInstr.Mov
-                dst
-                (ir.CompilerIrValue.Var earlier)
-                (ir.compiler-ir-binop-result-type op ty)))
-            (opt-gvn-reassociate-maybe type-segment-bases table dst op l r ty)))
-        (OptMaybeInstr.No))]
-    [(ir.CompilerIrInstr.UnOp dst op v ty)
-      (if (opt-gvn-value-stable? sources (compiler-opt-global-shared-view v))
-        (let
-          [earlier : i64
-            (opt-gvn-lookup
-              type-segment-bases
-              table
-              (OptExprKey.UnKey op v (compiler-opt-global-shared-view ty)))]
+              key)]
           (if (and (not (= earlier (- 0 1))) (not (= earlier dst)))
             (OptMaybeInstr.Some
               (ir.CompilerIrInstr.Mov dst (ir.CompilerIrValue.Var earlier) ty))
-            (OptMaybeInstr.No)))
-        (OptMaybeInstr.No))]
-    [(ir.CompilerIrInstr.CpuId dst leaf subleaf reg-index)
-      (if (and
-        (opt-gvn-value-stable? sources (compiler-opt-global-shared-view leaf))
-        (opt-gvn-value-stable?
-          sources
-          (compiler-opt-global-shared-view subleaf)))
-        (let
-          [earlier : i64
-            (opt-gvn-lookup
-              type-segment-bases
-              table
-              (OptExprKey.CpuIdKey leaf subleaf reg-index))]
-          (if (and (not (= earlier (- 0 1))) (not (= earlier dst)))
-            (OptMaybeInstr.Some
-              (ir.CompilerIrInstr.Mov
-                dst
-                (ir.CompilerIrValue.Var earlier)
-                (ast.AstType.I64)))
-            (OptMaybeInstr.No)))
-        (OptMaybeInstr.No))]
-    [(ir.CompilerIrInstr.Xgetbv dst index)
-      (if (opt-gvn-value-stable?
-        sources
-        (compiler-opt-global-shared-view index))
-        (let
-          [earlier : i64
-            (opt-gvn-lookup
-              type-segment-bases
-              table
-              (OptExprKey.XgetbvKey index))]
-          (if (and (not (= earlier (- 0 1))) (not (= earlier dst)))
-            (OptMaybeInstr.Some
-              (ir.CompilerIrInstr.Mov
-                dst
-                (ir.CompilerIrValue.Var earlier)
-                (ast.AstType.I64)))
-            (OptMaybeInstr.No)))
-        (OptMaybeInstr.No))]
-    [(ir.CompilerIrInstr.Splat dst value lanes ty)
-      (if (opt-gvn-value-stable?
-        sources
-        (compiler-opt-global-shared-view value))
-        (let
-          [earlier : i64
-            (opt-gvn-lookup
-              type-segment-bases
-              table
-              (OptExprKey.SplatKey
-                value
-                lanes
-                (compiler-opt-global-shared-view ty)))]
-          (if (and (not (= earlier (- 0 1))) (not (= earlier dst)))
-            (OptMaybeInstr.Some
-              (ir.CompilerIrInstr.Mov dst (ir.CompilerIrValue.Var earlier) ty))
-            (OptMaybeInstr.No)))
-        (OptMaybeInstr.No))]
-    [(ir.CompilerIrInstr.VectorBinOp payload-box)
-      (let
-        [dst (compiler-opt-box-field-shared-view payload-box dst)]
-        [op (compiler-opt-box-field-shared-view payload-box op)]
-        [lhs (compiler-opt-box-field-shared-view payload-box lhs)]
-        [rhs (compiler-opt-box-field-shared-view payload-box rhs)]
-        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
-        [ty (compiler-opt-box-field-shared-view payload-box ty)]
-        (if (and
-          (opt-gvn-value-stable? sources (compiler-opt-global-shared-view lhs))
-          (opt-gvn-value-stable? sources (compiler-opt-global-shared-view rhs)))
-          (let
-            [earlier : i64
-              (opt-gvn-lookup
-                type-segment-bases
-                table
-                (OptExprKey.VectorBinKey
-                  op
-                  lhs
-                  rhs
-                  lanes
-                  (compiler-opt-global-shared-view ty)))]
-            (if (and (not (= earlier (- 0 1))) (not (= earlier dst)))
-              (OptMaybeInstr.Some
-                (ir.CompilerIrInstr.Mov dst (ir.CompilerIrValue.Var earlier) ty))
-              (OptMaybeInstr.No)))
-          (OptMaybeInstr.No)))]
-    [(ir.CompilerIrInstr.VectorCompare payload-box)
-      (let
-        [dst (compiler-opt-box-field-shared-view payload-box dst)]
-        [op (compiler-opt-box-field-shared-view payload-box op)]
-        [lhs (compiler-opt-box-field-shared-view payload-box lhs)]
-        [rhs (compiler-opt-box-field-shared-view payload-box rhs)]
-        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
-        [ty (compiler-opt-box-field-shared-view payload-box ty)]
-        (if (and
-          (opt-gvn-value-stable? sources (compiler-opt-global-shared-view lhs))
-          (opt-gvn-value-stable? sources (compiler-opt-global-shared-view rhs)))
-          (let
-            [earlier : i64
-              (opt-gvn-lookup
-                type-segment-bases
-                table
-                (OptExprKey.VectorCompareKey op lhs rhs lanes ty))]
-            (if (and (not (= earlier (- 0 1))) (not (= earlier dst)))
-              (OptMaybeInstr.Some
-                (ir.CompilerIrInstr.Mov
+            (match instr
+              [(ir.CompilerIrInstr.BinOp _ op l r bin-ty)
+                (opt-gvn-reassociate-maybe
+                  type-segment-bases
+                  table
                   dst
-                  (ir.CompilerIrValue.Var earlier)
-                  (ast.AstType.Bool)))
-              (OptMaybeInstr.No)))
-          (OptMaybeInstr.No)))]
-    [_ (OptMaybeInstr.No)]))
+                  op
+                  l
+                  r
+                  bin-ty)]
+              [_ (OptMaybeInstr.No)])))
+        (OptMaybeInstr.No))]
+    [(OptMaybeExprDef.No) (OptMaybeInstr.No)]))
 
 (define (opt-gvn-seq-rewrite-changed?
   [type-segment-bases : i64]
@@ -111581,26 +111219,7 @@
 (define (opt-dce-late-literal-mark-blocks!
   [lits : (&mut lits (__tl_dyn-array i64))]
   [blocks : ir.CompilerIrBlockList]) : unit
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) unit]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (begin
-        (match block
-          [(ir.CompilerIrBlock.Block _ instrs)
-            (let
-              [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
-              [pos : i64 0]
-              (while (< pos count)
-                (begin
-                  (opt-dce-late-literal-mark!
-                    lits
-                    (ir.compiler-ir-instr-seq-ref instrs pos))
-                  (set! pos (+ pos 1)))))])
-        (opt-dce-late-literal-mark-blocks! lits (deref rest)))]
-    [(ir.CompilerIrBlockList.Array seq)
-      (opt-dce-late-literal-mark-blocks!
-        lits
-        (ir.compiler-ir-block-seq-to-list seq))]))
+  (opt-blocks-visit blocks opt-dce-late-literal-mark! lits))
 
 (define (opt-dce-late-literal-cond?
   [lits : (& lits (__tl_dyn-array i64))]
@@ -111640,18 +111259,7 @@
 (define (opt-dce-late-literal-branch-blocks?
   [lits : (& lits (__tl_dyn-array i64))]
   [blocks : ir.CompilerIrBlockList]) : bool
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) false]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (if (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (opt-dce-late-literal-branch-instrs? lits instrs)])
-        true
-        (opt-dce-late-literal-branch-blocks? lits (deref rest)))]
-    [(ir.CompilerIrBlockList.Array seq)
-      (opt-dce-late-literal-branch-blocks?
-        lits
-        (ir.compiler-ir-block-seq-to-list seq))]))
+  (opt-blocks-any-seq? blocks opt-dce-late-literal-branch-instrs? lits))
 
 ;; Does this function branch on a value a `Mov` of a bool literal defines? One
 ;; dense array and two linear scans, with no IR allocated: a function without

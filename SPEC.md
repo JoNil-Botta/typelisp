@@ -4190,7 +4190,7 @@ An ordinary move-only local can be replaced without an implicit cleanup:
 
 The old box storage is reclaimed with its arena. The compiler's
 [`compiler-typecheck-move-ordinary-overwrite-source` and
-`compiler-typecheck-move-cleanup-overwrite-source` regression fixtures](src/compiler_typecheck.tl)
+`compiler-typecheck-move-cleanup-overwrite-source` regression fixtures](src/tests/compiler_typecheck_tests.tl)
 check ordinary field replacement and rejection of initialized cleanup-owning
 replacement, respectively. The right-hand-side move checks and live-borrow
 restrictions still apply to either kind of assignment.

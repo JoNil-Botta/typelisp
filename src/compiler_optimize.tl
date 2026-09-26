@@ -1120,9 +1120,9 @@
 
 ;; Time `body` as the `phase` row of one function's arena escape.
 (defmacro (compiler-opt-profile-escape-stage
-  [phase : Expr]
-  [level : Expr]
-  [name : Expr]
+  [_phase : Expr]
+  [_level : Expr]
+  [_name : Expr]
   [body : Expr]) : Expr
   `(let
     [start-ms : i64 (cfg compile-profile (profile.now-ms) 0)]
@@ -1131,9 +1131,9 @@
       (cfg
         compile-profile
         (compiler-opt-profile-escape-finish
-          ,phase
-          ,level
-          (compiler-opt-global-shared-view ,name)
+          ,_phase
+          ,_level
+          (compiler-opt-global-shared-view ,_name)
           start-ms)
         unit)
       result)))

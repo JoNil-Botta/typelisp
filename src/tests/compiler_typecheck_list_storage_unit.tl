@@ -7,6 +7,12 @@
 (import stdlib.io)
 (import stdlib.string)
 
+(define (tc-string-list-len [items : tc_core.TcStringList]) : i64
+  (match items
+    [(tc_core.TcStringList.Nil) 0]
+    [(tc_core.TcStringList.One _) 1]
+    [(tc_core.TcStringList.Dense _ _ len) len]))
+
 (define (compiler-typecheck-list-storage-unit-tests-ok?) : bool
   (let
     [string-root : tc_core.TcStringList
@@ -86,18 +92,12 @@
             unit)
           (set! index (+ index 1))))
       (and
-        (= (tc_core.tc-string-list-len string-root) 1)
-        (= (tc_core.tc-string-list-len string-base) 2)
-        (=
-          (tc_core.tc-string-list-len
-            (tc_core.tc-global-shared-view string-left))
-          3)
-        (=
-          (tc_core.tc-string-list-len
-            (tc_core.tc-global-shared-view string-right))
-          3)
-        (= (tc_core.tc-string-list-len growth-sibling) 3)
-        (= (tc_core.tc-string-list-len string-deep) 258)
+        (= (tc-string-list-len string-root) 1)
+        (= (tc-string-list-len string-base) 2)
+        (= (tc-string-list-len (tc_core.tc-global-shared-view string-left)) 3)
+        (= (tc-string-list-len (tc_core.tc-global-shared-view string-right)) 3)
+        (= (tc-string-list-len growth-sibling) 3)
+        (= (tc-string-list-len string-deep) 258)
         (string.eq
           (tc_core.tc-string-list-head
             (tc_core.tc-global-shared-view string-left))

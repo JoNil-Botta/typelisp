@@ -1845,7 +1845,17 @@
       (ci.intern-compat-state-str (compiler-backend-state-intern state) id)
       "")))
 
-(defstruct CompilerBackendProgramIndex
+;; The program's function and extern lookup tables, built once per program in
+;; the arena that is current when the index is built. `self` holds the
+;; table's own address, so a borrow of it is one load (see
+;; compiler-backend-program-tables). `representations` is read by offset, so it
+;; stays ahead of the hashmap fields, whose comptime layout is not reliable in
+;; every compilation root.
+(defstruct CompilerBackendProgramTables
+  (self u64)
+  ;; Shared pre-optimization nominal representation capability. It positively
+  ;; distinguishes one-word handles, register groups, and unresolved forms.
+  (representations compiler_ir_types.CompilerIrRepresentationIndex)
   (functions backend_i64_i64_map.Map)
   (function-names (__tl_dyn-array String))
   (function-signatures (__tl_dyn-array CompilerBackendMaybeSignature))
@@ -1860,10 +1870,12 @@
   (extern-references backend_i64_i64_map.Map)
   (extern-link-references backend_i64_i64_map.Map)
   (extern-link-symbols (__tl_dyn-array i64))
-  (extern-provided (__tl_dyn-array bool))
-  ;; Shared pre-optimization nominal representation capability. It positively
-  ;; distinguishes one-word handles, register groups, and unresolved forms.
-  (representations compiler_ir_types.CompilerIrRepresentationIndex)
+  (extern-provided (__tl_dyn-array bool)))
+
+;; A program index is a Copy handle: the address of its tables plus the
+;; capabilities every emission path reads directly.
+(defstruct CompilerBackendProgramIndex
+  (tables u64)
   ;; Explicit type-reader handle for this backend job. It is snapshotted from
   ;; the job's pools once and then travels with the already-ubiquitous index.
   (type-segment-bases i64)
@@ -1873,6 +1885,28 @@
   ;; Exact backend job owner.  All emission paths use this capability rather
   ;; than consulting the active compatibility intern table.
   (backend-state CompilerBackendState))
+
+(define (compiler-backend-program-tables
+  [index : (& index CompilerBackendProgramIndex)]) : (&
+    index
+    CompilerBackendProgramTables)
+  (unsafe
+    (ptr-read
+      (int->ptr index.tables : (Ptr (& index CompilerBackendProgramTables))))))
+
+;; By-value shallow view for the helpers that take the representations by value.
+(define (compiler-backend-program-index-representations
+  [index : CompilerBackendProgramIndex]) : compiler_ir_types.CompilerIrRepresentationIndex
+  (unsafe
+    (ptr-read
+      (int->ptr
+        (+
+          index.tables
+          (cast
+            (comptime
+              (offset-of (type CompilerBackendProgramTables) representations))
+            : u64))
+        : (Ptr compiler_ir_types.CompilerIrRepresentationIndex)))))
 
 (define (compiler-backend-symbol-text-index
   [index : CompilerBackendProgramIndex]
@@ -15523,9 +15557,10 @@
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [mask : i64]) : i64
   (let
-    [present : (__tl_dyn-array i64) assignments.present]
+    [present : (__tl_dyn-array i64)
+      (compiler_regalloc.compiler-reg-assignment-table-present assignments)]
     [items : (__tl_dyn-array compiler_regalloc.CompilerRegLocation)
-      assignments.items]
+      (compiler_regalloc.compiler-reg-assignment-table-items assignments)]
     [index : i64 0]
     [out : i64 mask]
     (begin
@@ -19166,9 +19201,11 @@
           name)
           [(backend_i64_i64_map.LookupFound slot)
             (let
+              [tables : (& index CompilerBackendProgramTables)
+                (compiler-backend-program-tables index)]
               [indexed-name : String
                 (compiler-backend-global-array-element-shared-view
-                  index.function-names
+                  tables.function-names
                   slot)]
               (if (compiler-backend-compact-function-symbol? indexed-name)
                 (str_cat.str-cat "_tl_f" (string.int->string slot) "")
@@ -26075,7 +26112,7 @@
         (let
           [out : compiler_regalloc.CompilerRegAssignmentTable
             (compiler_regalloc.compiler-reg-assignment-table-copy-with-capacity
-              (& assignments)
+              assignments
               (+ vars n))]
           [i : i64 0]
           (begin
@@ -40603,22 +40640,33 @@
         type-segment-bases
         functions
         externs)]
-    (CompilerBackendProgramIndex
-      function-ids
-      function-names
-      function-signatures
-      extern-signature-ids
-      extern-names
-      extern-signatures
-      extern-call-infos
-      extern-reference-ids
-      extern-link-references
-      extern-link-symbols
-      extern-provided
-      representations
-      type-segment-bases
-      profile-state
-      backend-state)))
+    [tables : (Box CompilerBackendProgramTables)
+      (box
+        (CompilerBackendProgramTables
+          0
+          representations
+          function-ids
+          function-names
+          function-signatures
+          extern-signature-ids
+          extern-names
+          extern-signatures
+          extern-call-infos
+          extern-reference-ids
+          extern-link-references
+          extern-link-symbols
+          extern-provided))]
+    [address : u64
+      (unsafe
+        (ptr-read (ptr-cast (ptr-addr-of tables) : (Ptr u64))))]
+    (begin
+      (unsafe
+        (ptr-write! (int->ptr address : (MutPtr u64)) address))
+      (CompilerBackendProgramIndex
+        address
+        type-segment-bases
+        profile-state
+        backend-state))))
 
 (define (compiler-backend-program-index-build-with-profile-state
   [type-segment-bases : i64]
@@ -40660,7 +40708,7 @@
     [_
       (match (compiler_ir_types.compiler-ir-representation-index-kind
         type-segment-bases
-        index.representations
+        (compiler-backend-program-index-representations index)
         ty)
         [(compiler_ir_types.CompilerIrRepresentationKind.RegisterGroup count _)
           count]
@@ -40962,7 +41010,7 @@
     [_
       (match (compiler_ir_types.compiler-ir-representation-index-kind
         type-segment-bases
-        index.representations
+        (compiler-backend-program-index-representations index)
         ty)
         [(compiler_ir_types.CompilerIrRepresentationKind.RegisterGroup _ mask)
           mask]
@@ -41036,11 +41084,13 @@
   [index : CompilerBackendProgramIndex]
   [name : i64]) : backend_i64_i64_map.Lookup
   (let
+    [tables : (& index CompilerBackendProgramTables)
+      (compiler-backend-program-tables index)]
     [name-id : i64 (compiler_ir_types.compiler-ir-symbol-id name)]
     [slot : i64
       (if (< name-id 0)
         -1
-        (backend_i64_i64_map.get-value-or (& index.functions) name-id -1))]
+        (backend_i64_i64_map.get-value-or (& tables.functions) name-id -1))]
     (if (< slot 0)
       (backend_i64_i64_map.LookupMissing)
       (backend_i64_i64_map.LookupFound slot))))
@@ -41049,12 +41099,14 @@
   [index : CompilerBackendProgramIndex]
   [name : i64]) : backend_i64_i64_map.Lookup
   (let
+    [tables : (& index CompilerBackendProgramTables)
+      (compiler-backend-program-tables index)]
     [name-id : i64 (compiler_ir_types.compiler-ir-symbol-id name)]
     [slot : i64
       (if (< name-id 0)
         -1
         (backend_i64_i64_map.get-value-or
-          (& index.extern-signatures)
+          (& tables.extern-signatures)
           name-id
           -1))]
     (if (< slot 0)
@@ -41065,17 +41117,19 @@
   [index : CompilerBackendProgramIndex]
   [name : i64]) : backend_i64_i64_map.Lookup
   (let
+    [tables : (& index CompilerBackendProgramTables)
+      (compiler-backend-program-tables index)]
     [name-id : i64 (compiler_ir_types.compiler-ir-symbol-id name)]
     [logical-slot : i64
       (if (< name-id 0)
         -1
         (backend_i64_i64_map.get-value-or
-          (& index.extern-references)
+          (& tables.extern-references)
           name-id
           -1))]
     (if (>= logical-slot 0)
       (backend_i64_i64_map.LookupFound logical-slot)
-      (match (backend_i64_i64_map.get (& index.extern-link-references) name-id)
+      (match (backend_i64_i64_map.get (& tables.extern-link-references) name-id)
         [(backend_i64_i64_map.LookupFound slot)
           (backend_i64_i64_map.LookupFound slot)]
         [(backend_i64_i64_map.LookupMissing)
@@ -41084,12 +41138,15 @@
 (define (compiler-backend-index-extern-call-info
   [index : CompilerBackendProgramIndex]
   [name : i64]) : i64
-  (match (compiler-backend-index-extern-reference-slot
-    (compiler-backend-global-shared-view index)
-    name)
-    [(backend_i64_i64_map.LookupFound slot)
-      (array-ref index.extern-call-infos slot)]
-    [(backend_i64_i64_map.LookupMissing) 0]))
+  (let
+    [tables : (& index CompilerBackendProgramTables)
+      (compiler-backend-program-tables index)]
+    (match (compiler-backend-index-extern-reference-slot
+      (compiler-backend-global-shared-view index)
+      name)
+      [(backend_i64_i64_map.LookupFound slot)
+        (array-ref tables.extern-call-infos slot)]
+      [(backend_i64_i64_map.LookupMissing) 0])))
 
 (define (compiler-backend-extern-call-info-c-abi? [info : i64]) : bool
   (= (% info 2) 1))
@@ -41104,41 +41161,51 @@
   [index : CompilerBackendProgramIndex]
   [name-id : i64]) : CompilerBackendMaybeSignature
   (let
+    [tables : (& index CompilerBackendProgramTables)
+      (compiler-backend-program-tables index)]
     [slot : i64
-      (backend_i64_i64_map.get-value-or (& index.functions) name-id -1)]
+      (backend_i64_i64_map.get-value-or (& tables.functions) name-id -1)]
     (if (>= slot 0)
-      (array-ref index.function-signatures slot)
+      (array-ref tables.function-signatures slot)
       (CompilerBackendMaybeSignature.No))))
 
 (define (compiler-backend-index-function-signature
   [index : CompilerBackendProgramIndex]
   [name : i64]) : CompilerBackendMaybeSignature
-  (match (compiler-backend-index-function-slot
-    (compiler-backend-global-shared-view index)
-    name)
-    [(backend_i64_i64_map.LookupFound slot)
-      (array-ref index.function-signatures slot)]
-    [(backend_i64_i64_map.LookupMissing) (CompilerBackendMaybeSignature.No)]))
+  (let
+    [tables : (& index CompilerBackendProgramTables)
+      (compiler-backend-program-tables index)]
+    (match (compiler-backend-index-function-slot
+      (compiler-backend-global-shared-view index)
+      name)
+      [(backend_i64_i64_map.LookupFound slot)
+        (array-ref tables.function-signatures slot)]
+      [(backend_i64_i64_map.LookupMissing) (CompilerBackendMaybeSignature.No)])))
 
 (define (compiler-backend-index-extern-signature-id
   [index : CompilerBackendProgramIndex]
   [name-id : i64]) : CompilerBackendMaybeSignature
   (let
+    [tables : (& index CompilerBackendProgramTables)
+      (compiler-backend-program-tables index)]
     [slot : i64
-      (backend_i64_i64_map.get-value-or (& index.extern-signatures) name-id -1)]
+      (backend_i64_i64_map.get-value-or (& tables.extern-signatures) name-id -1)]
     (if (>= slot 0)
-      (array-ref index.extern-signature-values slot)
+      (array-ref tables.extern-signature-values slot)
       (CompilerBackendMaybeSignature.No))))
 
 (define (compiler-backend-index-extern-signature
   [index : CompilerBackendProgramIndex]
   [name : i64]) : CompilerBackendMaybeSignature
-  (match (compiler-backend-index-extern-signature-slot
-    (compiler-backend-global-shared-view index)
-    name)
-    [(backend_i64_i64_map.LookupFound slot)
-      (array-ref index.extern-signature-values slot)]
-    [(backend_i64_i64_map.LookupMissing) (CompilerBackendMaybeSignature.No)]))
+  (let
+    [tables : (& index CompilerBackendProgramTables)
+      (compiler-backend-program-tables index)]
+    (match (compiler-backend-index-extern-signature-slot
+      (compiler-backend-global-shared-view index)
+      name)
+      [(backend_i64_i64_map.LookupFound slot)
+        (array-ref tables.extern-signature-values slot)]
+      [(backend_i64_i64_map.LookupMissing) (CompilerBackendMaybeSignature.No)])))
 
 (define (compiler-backend-index-signature
   [index : CompilerBackendProgramIndex]
@@ -41154,7 +41221,10 @@
 (define (compiler-backend-index-function-defines-id?
   [index : CompilerBackendProgramIndex]
   [name-id : i64]) : bool
-  (backend_i64_i64_map.contains? (& index.functions) name-id))
+  (let
+    [tables : (& index CompilerBackendProgramTables)
+      (compiler-backend-program-tables index)]
+    (backend_i64_i64_map.contains? (& tables.functions) name-id)))
 
 (define (compiler-backend-index-function-defines?
   [index : CompilerBackendProgramIndex]
@@ -41166,7 +41236,10 @@
 (define (compiler-backend-index-extern-references-id?
   [index : CompilerBackendProgramIndex]
   [name-id : i64]) : bool
-  (backend_i64_i64_map.contains? (& index.extern-references) name-id))
+  (let
+    [tables : (& index CompilerBackendProgramTables)
+      (compiler-backend-program-tables index)]
+    (backend_i64_i64_map.contains? (& tables.extern-references) name-id)))
 
 (define (compiler-backend-index-extern-references?
   [index : CompilerBackendProgramIndex]
@@ -41178,10 +41251,13 @@
 (define (compiler-backend-index-extern-link-symbol-id
   [index : CompilerBackendProgramIndex]
   [name-id : i64]) : i64
-  (match (backend_i64_i64_map.get (& index.extern-references) name-id)
-    [(backend_i64_i64_map.LookupFound slot)
-      (array-ref index.extern-link-symbols slot)]
-    [(backend_i64_i64_map.LookupMissing) name-id]))
+  (let
+    [tables : (& index CompilerBackendProgramTables)
+      (compiler-backend-program-tables index)]
+    (match (backend_i64_i64_map.get (& tables.extern-references) name-id)
+      [(backend_i64_i64_map.LookupFound slot)
+        (array-ref tables.extern-link-symbols slot)]
+      [(backend_i64_i64_map.LookupMissing) name-id])))
 
 (define (compiler-backend-index-extern-link-symbol
   [index : CompilerBackendProgramIndex]
@@ -41193,20 +41269,26 @@
 (define (compiler-backend-index-extern-provided-id?
   [index : CompilerBackendProgramIndex]
   [name-id : i64]) : bool
-  (match (backend_i64_i64_map.get (& index.extern-signatures) name-id)
-    [(backend_i64_i64_map.LookupFound slot)
-      (array-ref index.extern-provided slot)]
-    [(backend_i64_i64_map.LookupMissing) false]))
+  (let
+    [tables : (& index CompilerBackendProgramTables)
+      (compiler-backend-program-tables index)]
+    (match (backend_i64_i64_map.get (& tables.extern-signatures) name-id)
+      [(backend_i64_i64_map.LookupFound slot)
+        (array-ref tables.extern-provided slot)]
+      [(backend_i64_i64_map.LookupMissing) false])))
 
 (define (compiler-backend-index-extern-provided?
   [index : CompilerBackendProgramIndex]
   [name : i64]) : bool
-  (match (compiler-backend-index-extern-signature-slot
-    (compiler-backend-global-shared-view index)
-    name)
-    [(backend_i64_i64_map.LookupFound slot)
-      (array-ref index.extern-provided slot)]
-    [(backend_i64_i64_map.LookupMissing) false]))
+  (let
+    [tables : (& index CompilerBackendProgramTables)
+      (compiler-backend-program-tables index)]
+    (match (compiler-backend-index-extern-signature-slot
+      (compiler-backend-global-shared-view index)
+      name)
+      [(backend_i64_i64_map.LookupFound slot)
+        (array-ref tables.extern-provided slot)]
+      [(backend_i64_i64_map.LookupMissing) false])))
 
 (define (compiler-backend-symbol-validation-error [message : String]) : ResultCompilerBackendSymbolValidation
   (ResultCompilerBackendSymbolValidation.Err
@@ -68362,9 +68444,10 @@
         vars)]
     [event-count : i64 (+ instr-count 1)]
     [heads : (__tl_dyn-array i64) (__tl_make-array i64 event-count)]
-    [present : (__tl_dyn-array i64) assignment-index.present]
+    [present : (__tl_dyn-array i64)
+      (compiler_regalloc.compiler-reg-assignment-table-present assignment-index)]
     [items : (__tl_dyn-array compiler_regalloc.CompilerRegLocation)
-      assignment-index.items]
+      (compiler_regalloc.compiler-reg-assignment-table-items assignment-index)]
     [limit : i64 (array-length present)]
     [max-events : i64
       (compiler-backend-scavenge-occupancy-event-capacity
@@ -68465,8 +68548,7 @@
   (= (bit-and occupied-mask (compiler-backend-scavenge-reg-bit reg)) 0))
 
 (define (compiler-backend-var-register-home-index
-  [assignment-index
-    : (& assignment-index compiler_regalloc.CompilerRegAssignmentTable)]
+  [assignment-index : compiler_regalloc.CompilerRegAssignmentTable]
   [var : i64]) : String
   (compiler_abi.compiler-abi-register-spelling
     (compiler_regalloc.compiler-reg-assignment-table-primary-register-home
@@ -68480,9 +68562,10 @@
 (define (compiler-backend-scavenge-assignment-mask
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]) : i64
   (let
-    [present : (__tl_dyn-array i64) assignments.present]
+    [present : (__tl_dyn-array i64)
+      (compiler_regalloc.compiler-reg-assignment-table-present assignments)]
     [items : (__tl_dyn-array compiler_regalloc.CompilerRegLocation)
-      assignments.items]
+      (compiler_regalloc.compiler-reg-assignment-table-items assignments)]
     [var : i64 0]
     [mask : i64 0]
     (begin
@@ -68514,9 +68597,10 @@
 (define (compiler-backend-assignments-have-register-home?
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]) : bool
   (let
-    [present : (__tl_dyn-array i64) assignments.present]
+    [present : (__tl_dyn-array i64)
+      (compiler_regalloc.compiler-reg-assignment-table-present assignments)]
     [items : (__tl_dyn-array compiler_regalloc.CompilerRegLocation)
-      assignments.items]
+      (compiler_regalloc.compiler-reg-assignment-table-items assignments)]
     [var : i64 0]
     [found : bool false]
     (begin
@@ -78178,8 +78262,7 @@
             (compiler_regalloc.compiler-reg-cold-call-rewrite-function-with-representations
               type-segment-bases
               early-exit-func
-              (compiler-backend-global-shared-view
-                program-index.representations))
+              (compiler-backend-program-index-representations program-index))
             (compiler_regalloc.CompilerRegColdCallRewrite.Rewrite
               early-exit-func
               (- 0 1)))]
@@ -78250,12 +78333,10 @@
           (if scalar-plan?
             (compiler_regalloc.compiler-reg-function-var-types-with-representations-and-metrics
               (compiler-backend-global-shared-view walk-func)
-              (compiler-backend-global-shared-view
-                program-index.representations)
+              (compiler-backend-program-index-representations program-index)
               (compiler-backend-state-metrics program-index.backend-state))
             (compiler_regalloc.compiler-reg-var-types-empty-with-representations
-              (compiler-backend-global-shared-view
-                program-index.representations)))]
+              (compiler-backend-program-index-representations program-index)))]
         [reg-plan : compiler_regalloc.CompilerRegPlan
           (if (compiler-backend-mode-scalar? mode)
             (if scalar-registers-enabled
@@ -78269,8 +78350,7 @@
                   program-index.backend-state))
               (compiler_regalloc.compiler-reg-plan-function-stack-only-with-representations-and-metrics-and-advisory-sink
                 (compiler-backend-global-shared-view walk-func)
-                (compiler-backend-global-shared-view
-                  program-index.representations)
+                (compiler-backend-program-index-representations program-index)
                 (compiler-backend-state-metrics program-index.backend-state)
                 (compiler-backend-state-advisory-sink
                   program-index.backend-state)))
@@ -78279,8 +78359,7 @@
                 type-segment-bases
                 fn-abi
                 (compiler-backend-global-shared-view walk-func)
-                (compiler-backend-global-shared-view
-                  program-index.representations)
+                (compiler-backend-program-index-representations program-index)
                 (compiler-backend-state-metrics program-index.backend-state)
                 (compiler-backend-state-advisory-sink
                   program-index.backend-state))
@@ -78288,8 +78367,7 @@
                 type-segment-bases
                 fn-abi
                 (compiler-backend-global-shared-view walk-func)
-                (compiler-backend-global-shared-view
-                  program-index.representations)
+                (compiler-backend-program-index-representations program-index)
                 (compiler-backend-state-metrics program-index.backend-state)
                 (compiler-backend-state-advisory-sink
                   program-index.backend-state))))]
@@ -83034,6 +83112,8 @@
           ;; double from there.
           [edge-capacity : i64 (+ function-count 16)]
           [state : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+          [tables : (& program-index CompilerBackendProgramTables)
+            (compiler-backend-program-tables program-index)]
           (begin
             (set! (array-ref state compiler-backend-iag-state-function) -1)
             (set! (array-ref state compiler-backend-iag-state-cursor) 0)
@@ -83056,7 +83136,8 @@
                 (__tl_make-array i64 edge-capacity)
                 (__tl_make-array i64 edge-capacity)
                 state
-                program-index.functions))))))))
+                (owned_view.compiler-owned-reference-shared-view
+                  (& tables.functions))))))))))
 
 ;; Runs on the rows the shared walk filled: seed, close over the call graph,
 ;; apply the safety rule and publish. Also the ONLY publisher, so a program
@@ -89706,8 +89787,8 @@
                   [types : compiler_regalloc.CompilerRegVarTypes
                     (compiler_regalloc.compiler-reg-function-var-types-with-representations-and-metrics
                       func
-                      (compiler-backend-global-shared-view
-                        program-index.representations)
+                      (compiler-backend-program-index-representations
+                        program-index)
                       (compiler-backend-state-metrics
                         program-index.backend-state))]
                   (compiler-backend-object-blocks-abi-eligibility
@@ -103121,8 +103202,14 @@
     [a-stage : String (compiler-backend-current-phi-planned-stage state-a)]
     [b-stage : String (compiler-backend-current-phi-planned-stage state-b)]
     (and
-      (= (array-length index-a.present) 1)
-      (= (array-length index-b.present) 4)
+      (=
+        (array-length
+          (compiler_regalloc.compiler-reg-assignment-table-present index-a))
+        1)
+      (=
+        (array-length
+          (compiler_regalloc.compiler-reg-assignment-table-present index-b))
+        4)
       (not
         (compiler-backend-function-state-bool?
           function-a

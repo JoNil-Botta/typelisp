@@ -330,14 +330,14 @@
 (define (compiler-backend-scavenge-occupied-mask-for-instr
   [starts : (& starts (__tl_dyn-array i64))]
   [ends : (& ends (__tl_dyn-array i64))]
-  [assignment-index
-    : (& assignment-index compiler_regalloc.CompilerRegAssignmentTable)]
+  [assignment-index : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]
   [point : i64]) : i64
   (let
-    [present : (__tl_dyn-array i64) assignment-index.present]
+    [present : (__tl_dyn-array i64)
+      (compiler_regalloc.compiler-reg-assignment-table-present assignment-index)]
     [items : (__tl_dyn-array compiler_regalloc.CompilerRegLocation)
-      assignment-index.items]
+      (compiler_regalloc.compiler-reg-assignment-table-items assignment-index)]
     [limit : i64 (array-length present)]
     [v : i64 0]
     [mask : i64 0]
@@ -9833,37 +9833,42 @@
         0)
       (compiler_regalloc.compiler-reg-type-register-group?
         bases
-        (owned_view.compiler-owned-shared-view index.representations)
+        (compiler_backend.compiler-backend-program-index-representations index)
         (owned_view.compiler-owned-shared-view ref))
       (compiler_regalloc.compiler-reg-type-register-group?
         bases
-        (owned_view.compiler-owned-shared-view index.representations)
+        (compiler_backend.compiler-backend-program-index-representations index)
         mut-ref)
       (not
         (compiler_regalloc.compiler-reg-type-register-group?
           bases
-          (owned_view.compiler-owned-shared-view index.representations)
+          (compiler_backend.compiler-backend-program-index-representations
+            index)
           ordinary-ref))
       (not
         (compiler_regalloc.compiler-reg-type-register-group?
           bases
-          (owned_view.compiler-owned-shared-view index.representations)
+          (compiler_backend.compiler-backend-program-index-representations
+            index)
           bare-slice))
       (not
         (compiler_regalloc.compiler-reg-type-register-group-has-sse?
           bases
-          (owned_view.compiler-owned-shared-view index.representations)
+          (compiler_backend.compiler-backend-program-index-representations
+            index)
           (owned_view.compiler-owned-shared-view ref)))
       (not
         (compiler_regalloc.compiler-reg-type-register-group-word-sse?
           bases
-          (owned_view.compiler-owned-shared-view index.representations)
+          (compiler_backend.compiler-backend-program-index-representations
+            index)
           (owned_view.compiler-owned-shared-view ref)
           0))
       (not
         (compiler_regalloc.compiler-reg-type-register-group-word-sse?
           bases
-          index.representations
+          (compiler_backend.compiler-backend-program-index-representations
+            index)
           ref
           1)))))
 
@@ -11369,7 +11374,7 @@
         [(compiler_ast_types.AstMaybeNominalKey.Some _) false]
         [(compiler_ast_types.AstMaybeNominalKey.None) true])
       (match (compiler_ir_types.compiler-ir-representation-index-kind-for-key
-        (owned_view.compiler-owned-shared-view index.representations)
+        (compiler_backend.compiler-backend-program-index-representations index)
         plain-key)
         [(compiler_ir_types.CompilerIrRepresentationKind.RegisterGroup
             count
@@ -11377,7 +11382,7 @@
           (and (= count 2) (= mask 2))]
         [_ false])
       (match (compiler_ir_types.compiler-ir-representation-index-kind-for-key
-        (owned_view.compiler-owned-shared-view index.representations)
+        (compiler_backend.compiler-backend-program-index-representations index)
         qualified-key)
         [(compiler_ir_types.CompilerIrRepresentationKind.RegisterGroup
             count
@@ -11385,7 +11390,7 @@
           (and (= count 2) (= mask 2))]
         [_ false])
       (match (compiler_ir_types.compiler-ir-representation-index-kind-for-key
-        (owned_view.compiler-owned-shared-view index.representations)
+        (compiler_backend.compiler-backend-program-index-representations index)
         opaque-key)
         [(compiler_ir_types.CompilerIrRepresentationKind.Unknown) true]
         [_ false])
@@ -11469,60 +11474,64 @@
         0)
       (compiler_regalloc.compiler-reg-type-register-group?
         bases
-        (owned_view.compiler-owned-shared-view index.representations)
+        (compiler_backend.compiler-backend-program-index-representations index)
         (owned_view.compiler-owned-shared-view struct-plain))
       (compiler_regalloc.compiler-reg-type-register-group?
         bases
-        (owned_view.compiler-owned-shared-view index.representations)
+        (compiler_backend.compiler-backend-program-index-representations index)
         (owned_view.compiler-owned-shared-view struct-args-root))
       (compiler_regalloc.compiler-reg-type-register-group?
         bases
-        (owned_view.compiler-owned-shared-view index.representations)
+        (compiler_backend.compiler-backend-program-index-representations index)
         (owned_view.compiler-owned-shared-view enum-qualified))
       (compiler_regalloc.compiler-reg-type-register-group?
         bases
-        (owned_view.compiler-owned-shared-view index.representations)
+        (compiler_backend.compiler-backend-program-index-representations index)
         enum-args-qualified)
       (compiler_regalloc.compiler-reg-type-register-group?
         bases
-        (owned_view.compiler-owned-shared-view index.representations)
+        (compiler_backend.compiler-backend-program-index-representations index)
         region-qualified)
       (not
         (compiler_regalloc.compiler-reg-type-register-group?
           bases
-          (owned_view.compiler-owned-shared-view index.representations)
+          (compiler_backend.compiler-backend-program-index-representations
+            index)
           (owned_view.compiler-owned-shared-view opaque-struct)))
       (compiler_regalloc.compiler-reg-type-register-group-word-sse?
         bases
-        (owned_view.compiler-owned-shared-view index.representations)
+        (compiler_backend.compiler-backend-program-index-representations index)
         struct-plain
         1)
       (compiler_regalloc.compiler-reg-type-register-group-word-sse?
         bases
-        (owned_view.compiler-owned-shared-view index.representations)
+        (compiler_backend.compiler-backend-program-index-representations index)
         struct-args-root
         1)
       (compiler_regalloc.compiler-reg-type-register-group-word-sse?
         bases
-        (owned_view.compiler-owned-shared-view index.representations)
+        (compiler_backend.compiler-backend-program-index-representations index)
         (owned_view.compiler-owned-shared-view enum-qualified)
         1)
       (not
         (compiler_regalloc.compiler-reg-type-register-group-word-sse?
           bases
-          (owned_view.compiler-owned-shared-view index.representations)
+          (compiler_backend.compiler-backend-program-index-representations
+            index)
           enum-qualified
           0))
       (not
         (compiler_regalloc.compiler-reg-type-register-group-word-sse?
           bases
-          (owned_view.compiler-owned-shared-view index.representations)
+          (compiler_backend.compiler-backend-program-index-representations
+            index)
           (owned_view.compiler-owned-shared-view opaque-struct)
           0))
       (not
         (compiler_regalloc.compiler-reg-type-register-group-word-sse?
           bases
-          index.representations
+          (compiler_backend.compiler-backend-program-index-representations
+            index)
           opaque-struct
           1)))))
 
@@ -45287,8 +45296,7 @@ g:
   [masks : (& masks (__tl_dyn-array i64))]
   [starts : (& starts (__tl_dyn-array i64))]
   [ends : (& ends (__tl_dyn-array i64))]
-  [assignment-index
-    : (& assignment-index compiler_regalloc.CompilerRegAssignmentTable)]
+  [assignment-index : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]
   [point : i64]) : bool
   (let

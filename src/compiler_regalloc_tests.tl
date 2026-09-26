@@ -17136,9 +17136,10 @@
       shared-query-ok)))
 
 (define (compiler-reg-test-assignment-table-count
-  [assignments : (& assignments reg.CompilerRegAssignmentTable)]) : i64
+  [assignments : reg.CompilerRegAssignmentTable]) : i64
   (let
-    [present : (__tl_dyn-array i64) assignments.present]
+    [present : (__tl_dyn-array i64)
+      (reg.compiler-reg-assignment-table-present assignments)]
     [index : i64 0]
     [count : i64 0]
     (begin
@@ -17169,7 +17170,9 @@
       (= (compiler-reg-test-assignment-table-count base) 1)
       (= (compiler-reg-test-assignment-table-count successor) 1)
       (= (compiler-reg-test-assignment-table-count expanded) 2)
-      (>= (array-length expanded.present) 10)
+      (>=
+        (array-length (reg.compiler-reg-assignment-table-present expanded))
+        10)
       (reg.compiler-reg-location-register?
         (reg.compiler-reg-assignment-table-lookup base 2)
         cabi.compiler-reg-id-r12)

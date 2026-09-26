@@ -1562,7 +1562,7 @@
     (hash.i64 init-id)))
 
 (define (tc-checked-let-binding-fact-key-eq?
-  [fact : TcCheckedLetBindingFact]
+  [fact : (& fact TcCheckedLetBindingFact)]
   [declaration-ordinal : i64]
   [body-id : i64]
   [binding-ordinal : i64]
@@ -1715,7 +1715,7 @@
               [fact : TcCheckedLetBindingFact
                 (tc-global-array-element-shared-view data.facts cursor)]
               (if (tc-checked-let-binding-fact-key-eq?
-                (tc-global-shared-view fact)
+                fact
                 declaration-ordinal
                 body-id
                 binding-ordinal
@@ -1798,7 +1798,7 @@
               [fact : TcCheckedLetBindingFact
                 (tc-global-array-element-shared-view data.facts cursor)]
               (if (tc-checked-let-binding-fact-key-eq?
-                (tc-global-shared-view fact)
+                fact
                 declaration-ordinal
                 body-id
                 binding-ordinal
@@ -3779,7 +3779,7 @@
   (tc-global-array-element-shared-view items.slots index))
 
 (define (tc-repr-c-field-layout-list-set!
-  [items : TcReprCFieldLayoutList]
+  [items : (& items TcReprCFieldLayoutList)]
   [index : i64]
   [value : TcReprCFieldLayout]) : unit
   (set! (array-ref items.slots index) value))
@@ -3823,7 +3823,7 @@
   (tc-global-array-element-shared-view items.slots index))
 
 (define (tc-inline-payload-layout-list-set!
-  [items : TcInlinePayloadLayoutList]
+  [items : (& items TcInlinePayloadLayoutList)]
   [index : i64]
   [value : TcInlinePayloadLayout]) : unit
   (set! (array-ref items.slots index) value))
@@ -3845,7 +3845,7 @@
   (tc-global-array-element-shared-view items.slots index))
 
 (define (tc-inline-variant-layout-list-set!
-  [items : TcInlineVariantLayoutList]
+  [items : (& items TcInlineVariantLayoutList)]
   [index : i64]
   [value : TcInlineVariantLayout]) : unit
   (set! (array-ref items.slots index) value))
@@ -3965,7 +3965,7 @@
   (tc-global-shared-view tc-prefix-snapshot-serial-test-cache-state))
 
 (define (tc-prefix-snapshot-cache-provenance-from-job
-  [load-state : cload.CompilerLoadSessionState]
+  [load-state : (& load-state cload.CompilerLoadSessionState)]
   [pools : ast.AstNodePoolContext]
   [source-names : ci.InternSourceNameSessionHandle]) : TcPrefixSnapshotCacheProvenance
   (let
@@ -4370,7 +4370,7 @@
 
 (define (tc-context-type-module-id-for-path-owner
   [dotted-modules : sym_i64_env.SymI64Env]
-  [path : String]
+  [path : (& path str)]
   [path-owner-id : i64]) : i64
   (let
     [exact : i64
@@ -8357,7 +8357,7 @@
 (cfg
   compile-profile
   (define (compiler-tc-resolution-profile-note-input
-    [ty : ast.AstType]
+    [ty : (& ty ast.AstType)]
     [needs-resolution : bool]) : unit
     (begin
       (set!
@@ -12104,7 +12104,7 @@
     [(= name-id (tc-region-marker-id)) TcTypeEnvScopedMarkerKind.Region]
     [(= name-id (tc-signature-lifetime-marker-id))
       TcTypeEnvScopedMarkerKind.Other]
-    [(tc-cleanup-owner-marker-entry? name-id (tc-global-shared-view ty))
+    [(tc-cleanup-owner-marker-entry? name-id ty)
       TcTypeEnvScopedMarkerKind.CleanupOwner]
     [(tc-ordinary-arena-owner-marker-entry? name-id (tc-global-shared-view ty))
       TcTypeEnvScopedMarkerKind.OrdinaryArenaOwner]
@@ -14537,7 +14537,7 @@
     (string.string-length prefix)
     (- (string.string-length name) (string.string-length prefix))))
 
-(define (tc-hygiene-template-name? [name : String]) : bool
+(define (tc-hygiene-template-name? [name : (& name str)]) : bool
   (tc-hygiene-string-prefix? name (tc-hygiene-template-prefix)))
 
 ;; Pool ids and the structural families partition the id space: every
@@ -18509,10 +18509,7 @@
               direct-call-target)
             (ResultTcType.Ok ty))]
         [(ResultTcTypeUnsafe.Err message)
-          (match (tc-dotted-alias-variant-handle
-            ctx
-            (tc-global-shared-view name)
-            name-id)
+          (match (tc-dotted-alias-variant-handle ctx name name-id)
             [(option_i64.Some handle)
               (tc-variant-constructor-type-for-handle ctx handle)]
             [(option_i64.None)
@@ -18813,7 +18810,7 @@
       (string.copy (& (__tl-project-field (array-ref nodes index) value)))
       (__tl-project-field (array-ref nodes index) parent))))
 
-(define (tc-string-list-empty? [items : TcStringList]) : bool
+(define (tc-string-list-empty? [items : (& items TcStringList)]) : bool
   (match items
     [(TcStringList.Nil) true]
     [_ false]))
@@ -19345,7 +19342,7 @@
       [_ false])
     false))
 
-(define (tc-cleanup-owner-marker-entry? [key : i64] [ty : ast.AstType]) : bool
+(define (tc-cleanup-owner-marker-entry? [key : i64] [ty : (& ty ast.AstType)]) : bool
   (if (= key (tc-cleanup-owner-marker-id))
     (match ty
       [(ast.AstType.Var _) true]
@@ -19525,7 +19522,7 @@
       true
       (tc-lifetime-list-contains-at? items name (+ index 1)))))
 
-(define (tc-lifetime-list-duplicates? [items : ast.AstLifetimeList]) : bool
+(define (tc-lifetime-list-duplicates? [items : (& items ast.AstLifetimeList)]) : bool
   (tc-lifetime-list-duplicates-at? (& items) 0))
 
 (define (tc-lifetime-list-contains-after?
@@ -21256,7 +21253,7 @@
                   next-out)))]
           [(ResultTcElidedType.Err message) (ResultTcElidedParams.Err message)])])))
 
-(define (tc-elided-param-type-list [params : ast.AstParamList]) : ast.AstTypeList
+(define (tc-elided-param-type-list [params : (& params ast.AstParamList)]) : ast.AstTypeList
   (tc-elided-param-type-list-at (& params) 0))
 
 (define (tc-elided-param-type-list-at
@@ -21281,8 +21278,7 @@
     [(ResultTcElidedParams.Ok inputs)
       (let
         [input-params : ast.AstParamList inputs.params]
-        [input-types : ast.AstTypeList
-          (tc-elided-param-type-list (tc-global-shared-view input-params))]
+        [input-types : ast.AstTypeList (tc-elided-param-type-list input-params)]
         [lifetime : TcMaybeNameId
           (tc-signature-single-input-lifetime type-bases input-types)]
         (match (tc-elide-output-type type-bases ret lifetime)
@@ -22043,7 +22039,7 @@
     (not (tc-hygiene-local-name? name))
     (>= (tc-qualified-name-last-slash name) 0)))
 
-(define (tc-name-first-char [name : String] [needle : char]) : i64
+(define (tc-name-first-char [name : (& name str)] [needle : char]) : i64
   (let
     [i : i64 0]
     [n : i64 (string.string-length name)]
@@ -22054,7 +22050,7 @@
           (set! i (+ i 1))))
       -1)))
 
-(define (tc-name-first-dot [name : String]) : i64
+(define (tc-name-first-dot [name : (& name str)]) : i64
   (tc-name-first-char name '.'))
 
 ;; Variant taking the already-interned `name-id` so the hot name-resolution
@@ -22150,7 +22146,7 @@
 (define (tc-current-module-source-lookup-key
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [_name : String]
+  [_name : (& _name str)]
   [name-id : i64]) : TcMaybeString
   (match (tc-current-module-source-lookup-key-id ctx env name-id)
     [(TcMaybeNameId.Some key-id)
@@ -22298,7 +22294,7 @@
 ;; the first dot.
 (define (tc-source-leading-segment-wins-over-exact-from-id?
   [env : TcTypeEnv]
-  [_name : String]
+  [_name : (& _name str)]
   [name-id : i64]
   [first-dot : i64]) : bool
   (if (or (<= first-dot 0) (< name-id 0) (>= name-id (ci.intern-capacity)))
@@ -22848,7 +22844,7 @@
 (define (tc-normalize-dotted-local-field-expr-list!
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [exprs : ast.AstExprList]) : ResultTcUnit
+  [exprs : (& exprs ast.AstExprList)]) : ResultTcUnit
   (tc-normalize-dotted-local-field-expr-list-at! ctx env (& exprs) 0))
 
 (define (tc-normalize-dotted-local-field-expr-list-at!
@@ -23457,7 +23453,7 @@
         -1
         -2)]))
 
-(define (tc-module-decl-index-seq-matches? [decls : ast.AstDeclList]) : bool
+(define (tc-module-decl-index-seq-matches? [decls : (& decls ast.AstDeclList)]) : bool
   (let
     [count : i64 decls.len]
     (if (not (= (array-length tc-module-decl-index-seq) count))
@@ -23475,7 +23471,7 @@
                 (set! i (+ i 1)))))
           true)))))
 
-(define (tc-module-decl-index-ensure! [decls : ast.AstDeclList]) : unit
+(define (tc-module-decl-index-ensure! [decls : (& decls ast.AstDeclList)]) : unit
   (begin
     (when
       (and
@@ -23493,7 +23489,7 @@
         ;; declaration and import positions, so in-place declaration rewrites
         ;; that preserve the shape cannot change it.
         (when
-          (tc-module-decl-index-seq-matches? (tc-global-shared-view decls))
+          (tc-module-decl-index-seq-matches? decls)
           (begin
             (set! tc-module-decl-index-maybe-stale false)
             (set! tc-module-decl-index-generation (ci.intern-generation))
@@ -23646,8 +23642,7 @@
   [target-module-id : i64]
   [current-module-id : i64]) : bool
   (let
-    [_ensure : unit
-      (tc-module-decl-index-ensure! (tc-global-shared-view decls))]
+    [_ensure : unit (tc-module-decl-index-ensure! decls)]
     [_unused-module-id : i64 current-module-id]
     [slot : i64 (tc-module-decl-index-slot target-module-id)]
     (if (< slot 0)
@@ -23730,7 +23725,7 @@
   8192)
 
 (define (tc-source-dotted-alias-key-cache-ensure-for-state!
-  [state : TcSourceKeyCacheState]
+  [state : (& state TcSourceKeyCacheState)]
   [table-id : i64]
   [generation : i64]) : unit
   (if (and
@@ -23750,7 +23745,7 @@
         (set! (array-ref state.control 2) 1)))))
 
 (define (tc-source-dotted-full-path-key-cache-ensure-for-state!
-  [state : TcSourceKeyCacheState]
+  [state : (& state TcSourceKeyCacheState)]
   [table-id : i64]
   [generation : i64]) : unit
   (if (and
@@ -23770,7 +23765,7 @@
         (set! (array-ref state.control 5) 1)))))
 
 (define (tc-source-qualified-variant-key-cache-ensure-for-state!
-  [state : TcSourceKeyCacheState]
+  [state : (& state TcSourceKeyCacheState)]
   [table-id : i64]
   [generation : i64]
   [registry-id : i64]) : unit
@@ -23822,7 +23817,7 @@
   [name-id : i64]) : i64
   (begin
     (tc-source-dotted-alias-key-cache-ensure-for-state!
-      (tc-global-shared-view state)
+      state
       table-id
       generation)
     (let
@@ -23844,7 +23839,7 @@
   [name-id : i64]) : i64
   (begin
     (tc-source-dotted-full-path-key-cache-ensure-for-state!
-      (tc-global-shared-view state)
+      state
       table-id
       generation)
     (let
@@ -23868,7 +23863,7 @@
   [name-id : i64]) : i64
   (begin
     (tc-source-qualified-variant-key-cache-ensure-for-state!
-      (tc-global-shared-view state)
+      state
       table-id
       generation
       registry-id)
@@ -23893,7 +23888,7 @@
   [name-id : i64]) : i64
   (begin
     (tc-source-qualified-variant-key-cache-ensure-for-state!
-      (tc-global-shared-view state)
+      state
       table-id
       generation
       registry-id)
@@ -23917,7 +23912,7 @@
   [value : i64]) : unit
   (begin
     (tc-source-dotted-alias-key-cache-ensure-for-state!
-      (tc-global-shared-view state)
+      state
       table-id
       generation)
     (let
@@ -23936,7 +23931,7 @@
   [value : i64]) : unit
   (begin
     (tc-source-dotted-full-path-key-cache-ensure-for-state!
-      (tc-global-shared-view state)
+      state
       table-id
       generation)
     (let
@@ -23960,7 +23955,7 @@
   [handle : i64]) : unit
   (begin
     (tc-source-qualified-variant-key-cache-ensure-for-state!
-      (tc-global-shared-view state)
+      state
       table-id
       generation
       registry-id)
@@ -24603,7 +24598,7 @@
 
 (define (tc-source-dotted-alias-key
   [ctx : TcContext]
-  [name : String]
+  [name : (& name str)]
   [name-id : i64]
   [first-dot : i64]
   [current-module-id : i64]) : TcMaybeString
@@ -24737,7 +24732,7 @@
 
 (define (tc-source-dotted-full-path-key-from-id
   [ctx : TcContext]
-  [_name : String]
+  [_name : (& _name str)]
   [name-id : i64]
   [current-module-id : i64]) : TcMaybeString
   (let
@@ -24866,7 +24861,7 @@
         [current-module-id : i64 (tc-context-module-id ctx)]
         (match (tc-source-dotted-alias-key
           ctx
-          (tc-global-shared-view name)
+          name
           name-id
           first-dot
           current-module-id)
@@ -24874,7 +24869,7 @@
           [(TcMaybeString.No)
             (match (tc-source-dotted-full-path-key-from-id
               ctx
-              (tc-global-shared-view name)
+              name
               name-id
               current-module-id)
               [(TcMaybeString.Some key) (ResultTcString.Ok key)]
@@ -25185,18 +25180,14 @@
       (if (< first-dot 0)
         (if (tc-source-name-bound-exact-id? env name-id)
           (ResultTcString.Ok name)
-          (match (tc-current-module-source-lookup-key
-            ctx
-            env
-            (tc-global-shared-view name)
-            name-id)
+          (match (tc-current-module-source-lookup-key ctx env name name-id)
             [(TcMaybeString.Some key) (ResultTcString.Ok key)]
             [(TcMaybeString.No) (ResultTcString.Ok name)]))
         (if (and
           check-local-field
           (tc-source-leading-segment-wins-over-exact-from-id?
             env
-            (tc-global-shared-view name)
+            name
             name-id
             first-dot))
           (ResultTcString.Ok name)
@@ -25211,7 +25202,7 @@
                 [current-module-id : i64 (tc-context-module-id ctx)]
                 (match (tc-source-dotted-alias-key
                   ctx
-                  (tc-global-shared-view name)
+                  name
                   name-id
                   first-dot
                   current-module-id)
@@ -25226,7 +25217,7 @@
                       [(ResultTcString.Err _)
                         (match (tc-source-dotted-full-path-key-from-id
                           ctx
-                          (tc-global-shared-view name)
+                          name
                           name-id
                           current-module-id)
                           [(TcMaybeString.Some key) (ResultTcString.Ok key)]
@@ -25270,7 +25261,7 @@
           check-local-field
           (tc-source-leading-segment-wins-over-exact-from-id?
             env
-            (tc-global-shared-view name)
+            name
             name-id
             first-dot))
           (TcNameLookup.Ok name name-id)
@@ -25286,7 +25277,7 @@
                 [current-module-id : i64 (tc-context-module-id ctx)]
                 (match (tc-source-dotted-alias-key
                   ctx
-                  (tc-global-shared-view name)
+                  name
                   name-id
                   first-dot
                   current-module-id)
@@ -25311,7 +25302,7 @@
                       [(option_i64.None)
                         (match (tc-source-dotted-full-path-key-from-id
                           ctx
-                          (tc-global-shared-view name)
+                          name
                           name-id
                           current-module-id)
                           [(TcMaybeString.Some key)
@@ -25325,7 +25316,7 @@
                             (match (tc-dotted-alias-flat-variant-key-id
                               ctx
                               env
-                              (tc-global-shared-view name)
+                              name
                               name-id)
                               [(option_i64.Some flat-key-id)
                                 (TcNameLookup.Ok name flat-key-id)]
@@ -25993,7 +25984,7 @@
 ;; `current.module.Type` from the context's module id and the parsed base id.
 (define (tc-current-module-dotted-name-id
   [ctx : TcContext]
-  [name : String]
+  [name : (& name str)]
   [name-id : i64]) : i64
   (let
     [module : String (tc-context-module ctx)]
@@ -26042,7 +26033,7 @@
 
 (define (tc-dotted-type-symbol-key-id
   [ctx : TcContext]
-  [name : String]
+  [name : (& name str)]
   [name-id : i64]) : option_i64.Option
   (let
     [first-dot : i64
@@ -26123,7 +26114,7 @@
 
 (define (tc-dotted-unique-nominal-type-id
   [ctx : TcContext]
-  [name : String]
+  [name : (& name str)]
   [name-id : i64]) : option_i64.Option
   (let
     [first-dot : i64
@@ -26151,14 +26142,11 @@
     [module : String (tc-context-module ctx)]
     [module-id : i64 (tc-context-module-id ctx)]
     [current-dotted-id : i64
-      (tc-current-module-dotted-name-id
-        ctx
-        (tc-global-shared-view name)
-        name-id)]
+      (tc-current-module-dotted-name-id ctx name name-id)]
     [direct-source-key : option_i64.Option
       (if (>= current-dotted-id 0)
         option_i64.None
-        (tc-dotted-type-symbol-key-id ctx (tc-global-shared-view name) name-id))]
+        (tc-dotted-type-symbol-key-id ctx name name-id))]
     [source-result : ResultTcString
       (if (>= current-dotted-id 0)
         (ResultTcString.Ok (tc-nominal-name-id-display current-dotted-id))
@@ -26185,10 +26173,7 @@
                   name-id
                   (tc-dotted-resolved-key-id-or ctx name-id name-id))]
               [(ResultTcString.Err _)
-                (match (tc-dotted-unique-nominal-type-id
-                  ctx
-                  (tc-global-shared-view name)
-                  name-id)
+                (match (tc-dotted-unique-nominal-type-id ctx name name-id)
                   [(option_i64.Some unique-id) unique-id]
                   [(option_i64.None) name-id])])]))]
     [in-current-module : bool
@@ -26302,9 +26287,7 @@
     (begin
       (cfg
         compile-profile
-        (compiler-tc-resolution-profile-note-input
-          (tc-global-shared-view ty)
-          needs-resolution))
+        (compiler-tc-resolution-profile-note-input ty needs-resolution))
       (if needs-resolution
         (tc-resolve-type-rebuild ctx ty)
         ty))))
@@ -26331,25 +26314,19 @@
       (begin
         (cfg
           compile-profile
-          (compiler-tc-resolution-profile-note-input
-            (tc-global-shared-view ty)
-            true))
+          (compiler-tc-resolution-profile-note-input ty true))
         (tc-resolve-type-rebuild ctx ty))]
     [(ast.AstType.Var _)
       (begin
         (cfg
           compile-profile
-          (compiler-tc-resolution-profile-note-input
-            (tc-global-shared-view ty)
-            true))
+          (compiler-tc-resolution-profile-note-input ty true))
         (tc-resolve-type-rebuild ctx ty))]
     [_
       (begin
         (cfg
           compile-profile
-          (compiler-tc-resolution-profile-note-input
-            (tc-global-shared-view ty)
-            false))
+          (compiler-tc-resolution-profile-note-input ty false))
         ty)]))
 
 (define (tc-resolve-type-rebuild [ctx : TcContext] [ty : ast.AstType]) : ast.AstType
@@ -26616,14 +26593,11 @@
     [module : String (tc-context-module ctx)]
     [module-id : i64 (tc-context-module-id ctx)]
     [current-dotted-id : i64
-      (tc-current-module-dotted-name-id
-        ctx
-        (tc-global-shared-view name)
-        name-id)]
+      (tc-current-module-dotted-name-id ctx name name-id)]
     [direct-source-key : option_i64.Option
       (if (>= current-dotted-id 0)
         option_i64.None
-        (tc-dotted-type-symbol-key-id ctx (tc-global-shared-view name) name-id))]
+        (tc-dotted-type-symbol-key-id ctx name name-id))]
     [source-result : ResultTcString
       (if (>= current-dotted-id 0)
         (ResultTcString.Ok (tc-nominal-name-id-display current-dotted-id))
@@ -27109,7 +27083,7 @@
 
 (define (tc-source-param-list-policy-ok
   [ctx : TcContext]
-  [params : ast.AstParamList]) : ResultTcUnit
+  [params : (& params ast.AstParamList)]) : ResultTcUnit
   (tc-source-param-list-policy-ok-at ctx (& params) 0))
 
 (define (tc-source-param-list-policy-ok-at
@@ -28918,9 +28892,7 @@
               [signature-ret : ast.AstType signature.ret]
               [body : ast.AstExpr
                 (ast.ast-expr-segment-bases-get expr-bases body-box)]
-              (match (tc-source-param-list-policy-ok
-                ctx
-                (tc-global-shared-view signature-params))
+              (match (tc-source-param-list-policy-ok ctx signature-params)
                 [(ResultTcUnit.Ok)
                   (match (tc-source-type-policy-ok
                     ctx
@@ -28974,7 +28946,7 @@
             (tc-source-default-aggregate-layout-finite-ok ctx name)]
           [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
       [(ast.AstDecl.DefEnumLifetimes decl-meta name lifetimes _ variants)
-        (if (tc-lifetime-list-duplicates? (tc-global-shared-view lifetimes))
+        (if (tc-lifetime-list-duplicates? lifetimes)
           (ResultTcUnit.Err "typecheck: duplicate lifetime parameter")
           (match (tc-source-variant-list-lifetimes-policy-ok
             ctx
@@ -29003,7 +28975,7 @@
           repr
           cleanup
           fields)
-        (if (tc-lifetime-list-duplicates? (tc-global-shared-view lifetimes))
+        (if (tc-lifetime-list-duplicates? lifetimes)
           (ResultTcUnit.Err "typecheck: duplicate lifetime parameter")
           (match (tc-source-field-list-lifetimes-policy-ok ctx lifetimes fields)
             [(ResultTcUnit.Ok)
@@ -29018,10 +28990,7 @@
                 (tc-source-default-struct-layout-finite-ok ctx name repr))]
             [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
       [(ast.AstDecl.DefDispatch decl-meta _ variants)
-        (if (!=
-          (tc-dispatch-variant-list-scalar-count
-            (tc-global-shared-view variants))
-          1)
+        (if (!= (tc-dispatch-variant-list-scalar-count variants) 1)
           (ResultTcUnit.Err
             "typecheck: defdispatch requires exactly one scalar variant")
           (if (tc-dispatch-variant-list-duplicate-isa? variants)
@@ -29058,7 +29027,7 @@
   (Ok)
   (Err (Box cdiag.CompilerDiagnostic)))
 
-(define (tc-source-decl-shape-origin-message? [message : String]) : bool
+(define (tc-source-decl-shape-origin-message? [message : (& message str)]) : bool
   (or
     (string.eq
       message
@@ -29132,8 +29101,7 @@
               [(ResultTcUnit.Err message)
                 (ResultTcSourcePolicyDiagnostic.Err
                   (box
-                    (if (tc-source-decl-shape-origin-message?
-                      (tc-global-shared-view message))
+                    (if (tc-source-decl-shape-origin-message? message)
                       (tc-typecheck-diag-with-path
                         (tc-context-expr-bases ctx)
                         (& decls)
@@ -30944,13 +30912,13 @@
 (define (tc-atomic-pointer-name? [name : String]) : bool
   (cbi.compiler-builtin-typecheck-atomic-pointer-name? name))
 
-(define (tc-atomic-load-name? [name : String]) : bool
+(define (tc-atomic-load-name? [name : (& name str)]) : bool
   (or (string.eq name "atomic-load") (string.eq name "volatile-load")))
 
-(define (tc-atomic-store-name? [name : String]) : bool
+(define (tc-atomic-store-name? [name : (& name str)]) : bool
   (or (string.eq name "atomic-store!") (string.eq name "volatile-store!")))
 
-(define (tc-atomic-cas-name? [name : String]) : bool
+(define (tc-atomic-cas-name? [name : (& name str)]) : bool
   (string.eq name "atomic-cas!"))
 
 (define (tc-atomic-elem-type? [ty : ast.AstType]) : bool
@@ -30978,7 +30946,7 @@
   [ctx : TcContext]
   [name : String]
   [ptr-ty : ast.AstType]) : ResultTcType
-  (if (tc-atomic-load-name? (tc-global-shared-view name))
+  (if (tc-atomic-load-name? name)
     (match (tc-raw-pointer-elem
       (tc-resolve-type ctx ptr-ty)
       (str_cat.str-cat
@@ -31059,7 +31027,7 @@
               (tc-global-shared-view elem)
               (tc-atomic-value-mismatch-message (tc-global-shared-view name)))
               [(ResultTcUnit.Ok)
-                (if (tc-atomic-store-name? (tc-global-shared-view name))
+                (if (tc-atomic-store-name? name)
                   (ResultTcType.Ok (ast.AstType.Unit))
                   (if (string.eq name "atomic-add!")
                     (ResultTcType.Ok (ast.AstType.Unit))
@@ -31112,7 +31080,7 @@
       [value : ast.AstExpr
         (tc-context-expr-get ctx (ast.ast-expr-list-get (& tail0) 0 0))]
       [tail1 : ast.AstExprList (ast.ast-expr-list-tail-from-ref (& tail0) 1)]
-      (if (tc-atomic-cas-name? (tc-global-shared-view name))
+      (if (tc-atomic-cas-name? name)
         (if (> tail1.len 0)
           (tc-atomic-cas-call
             ctx
@@ -31125,7 +31093,7 @@
             "typecheck: atomic-cas! expects exactly three arguments"))
         (tc-atomic-two-arg-call ctx env name ptr value tail1)))
     (ResultTcType.Err
-      (if (tc-atomic-cas-name? (tc-global-shared-view name))
+      (if (tc-atomic-cas-name? name)
         "typecheck: atomic-cas! expects exactly three arguments"
         (tc-atomic-update-arity-message name)))))
 
@@ -31141,13 +31109,13 @@
           [ptr : ast.AstExpr
             (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
           [tail0 : ast.AstExprList (ast.ast-expr-list-tail-from-ref (& args) 1)]
-          (if (tc-atomic-load-name? (tc-global-shared-view name))
+          (if (tc-atomic-load-name? name)
             (tc-atomic-one-arg-call ctx env name ptr tail0)
             (tc-atomic-nonload-call ctx env name ptr tail0)))
         (ResultTcType.Err
-          (if (tc-atomic-load-name? (tc-global-shared-view name))
+          (if (tc-atomic-load-name? name)
             (tc-atomic-load-arity-message name)
-            (if (tc-atomic-cas-name? (tc-global-shared-view name))
+            (if (tc-atomic-cas-name? name)
               "typecheck: atomic-cas! expects exactly three arguments"
               (tc-atomic-update-arity-message name)))))]
     [(ResultTcUnit.Err message) (ResultTcType.Err message)]))
@@ -32149,7 +32117,7 @@
 (define (tc-type-env-scoped-carrier-bind-params
   [ctx : TcContext]
   [carrier : TcTypeEnvScopedCarrier]
-  [params : ast.AstParamList]) : TcTypeEnvScopedCarrier
+  [params : (& params ast.AstParamList)]) : TcTypeEnvScopedCarrier
   (tc-type-env-scoped-carrier-bind-params-at
     ctx
     carrier
@@ -32183,7 +32151,7 @@
 (define (tc-bind-macro-params
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [params : ast.AstMacroParamList]) : TcTypeEnv
+  [params : (& params ast.AstMacroParamList)]) : TcTypeEnv
   (tc-bind-macro-params-at ctx env (& params) 0))
 
 (define (tc-bind-macro-params-at
@@ -32379,7 +32347,7 @@
           (tc-dispatch-variant-list-duplicate-isa-from? variants (+ index 1)))])))
 
 (define (tc-dispatch-variant-list-duplicate-isa?
-  [variants : ast.AstDispatchVariantList]) : bool
+  [variants : (& variants ast.AstDispatchVariantList)]) : bool
   (tc-dispatch-variant-list-duplicate-isa-from? (& variants) 0))
 
 (define (tc-dispatch-variant-list-scalar-count-from
@@ -32403,7 +32371,7 @@
               [_ 0])))])))
 
 (define (tc-dispatch-variant-list-scalar-count
-  [variants : ast.AstDispatchVariantList]) : i64
+  [variants : (& variants ast.AstDispatchVariantList)]) : i64
   (tc-dispatch-variant-list-scalar-count-from (& variants) 0 0))
 
 (define (tc-dispatch-symbol-key-id [ctx : TcContext] [name : i64]) : i64
@@ -32526,13 +32494,10 @@
   [ctx : TcContext]
   [name : i64]
   [variants : ast.AstDispatchVariantList]) : ResultTcType
-  (if (!=
-    (tc-dispatch-variant-list-scalar-count (tc-global-shared-view variants))
-    1)
+  (if (!= (tc-dispatch-variant-list-scalar-count variants) 1)
     (ResultTcType.Err
       "typecheck: defdispatch requires exactly one scalar variant")
-    (if (tc-dispatch-variant-list-duplicate-isa?
-      (tc-global-shared-view variants))
+    (if (tc-dispatch-variant-list-duplicate-isa? variants)
       (ResultTcType.Err "typecheck: duplicate defdispatch ISA variant")
       (tc-dispatch-variant-signatures ctx name variants ast.AstMaybeType.No))))
 
@@ -33556,7 +33521,9 @@
   [target-module : i64]) : i64
   (csym.compiler-composite-pair-key-id alias-key target-module))
 
-(define (tc-import-alias-materialized? [seen : tc_i64_i64_map.Map] [key : i64]) : bool
+(define (tc-import-alias-materialized?
+  [seen : (& seen tc_i64_i64_map.Map)]
+  [key : i64]) : bool
   (match (tc_i64_i64_map.get (& seen) key)
     [(tc_i64_i64_map.LookupFound _) true]
     [(tc_i64_i64_map.LookupMissing) false]))
@@ -33662,9 +33629,7 @@
                     alias)]
                 [seen-key : i64
                   (tc-import-alias-materialized-key-id alias-key target-module)]
-                (if (tc-import-alias-materialized?
-                  (tc-global-shared-view seen-aliases)
-                  seen-key)
+                (if (tc-import-alias-materialized? seen-aliases seen-key)
                   unit
                   (begin
                     (tc_i64_i64_map.insert-ref! (&mut seen-aliases) seen-key 1)
@@ -33705,9 +33670,7 @@
                     alias)]
                 [seen-key : i64
                   (tc-import-alias-materialized-key-id alias-key target-module)]
-                (if (tc-import-alias-materialized?
-                  (tc-global-shared-view seen-aliases)
-                  seen-key)
+                (if (tc-import-alias-materialized? seen-aliases seen-key)
                   unit
                   (begin
                     (tc_i64_i64_map.insert-ref! (&mut seen-aliases) seen-key 1)
@@ -33961,7 +33924,7 @@
 
 (define (tc-module-local-root-shadow-names-note!
   [session : cis.InternStructuralSessionHandle]
-  [decls : ast.AstDeclList]
+  [decls : (& decls ast.AstDeclList)]
   [seen : (&mut seen tc_i64_i64_map.Map)]) : unit
   (let
     [slot : i64 (tc-module-decl-index-slot cbi.compiler-builtin-id-fix-empty)]
@@ -34221,8 +34184,7 @@
   [target-module-id : i64]
   [_module : String]) : ResultTcEnv
   (let
-    [_ensure : unit
-      (tc-module-decl-index-ensure! (tc-global-shared-view decls))]
+    [_ensure : unit (tc-module-decl-index-ensure! decls)]
     [slot : i64 (tc-module-decl-index-slot target-module-id)]
     [root-slot : i64
       (tc-module-decl-index-slot cbi.compiler-builtin-id-fix-empty)]
@@ -34243,7 +34205,7 @@
         [_root-shadows : unit
           (tc-module-local-root-shadow-names-note!
             (tc-context-structural-session ctx)
-            (tc-global-shared-view decls)
+            decls
             (&mut seen))]
         [message : String ""]
         [ok : bool true]
@@ -35023,7 +34985,7 @@
         [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
     [(ResultTcType.Err message) (ResultTcType.Err message)]))
 
-(define (tc-type-list-len [types : ast.AstTypeList]) : i64
+(define (tc-type-list-len [types : (& types ast.AstTypeList)]) : i64
   (ast.ast-type-list-len (& types)))
 
 ;; Flow each tuple element into its expected element type so contextual
@@ -35097,7 +35059,7 @@
   [expected-elems : ast.AstTypeList]) : ResultTcType
   (if (=
     (tc-expr-list-len (tc-global-shared-view exprs))
-    (tc-type-list-len (tc-global-shared-view expected-elems)))
+    (tc-type-list-len expected-elems))
     (match (tc-ensure-cleanup-resource-not-stored-list
       ctx
       env
@@ -35120,7 +35082,7 @@
 (define (tc-begin-list-with-expected
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [exprs : ast.AstExprList]
+  [exprs : (& exprs ast.AstExprList)]
   [expected : ast.AstType]) : ResultTcType
   (tc-begin-list-with-expected-at ctx env (& exprs) 0 expected))
 
@@ -35426,12 +35388,7 @@
         [(ast.AstLet.Let bindings body-box)
           (let
             [body : ast.AstExpr (tc-context-expr-get ctx body-box)]
-            (match (tc-let-bindings-for-body
-              ctx
-              env
-              (tc-global-shared-view bindings)
-              body-box
-              body)
+            (match (tc-let-bindings-for-body ctx env bindings body-box body)
               [(ResultTcEnv.Ok next-env)
                 (match (tc-expr-with-expected-or-actual-id
                   ctx
@@ -35565,7 +35522,7 @@
             allow-mut-by-value-borrow
             (tc-expr ctx env expr))))]))
 
-(define (tc-expr-scoped-bindings? [expr : ast.AstExpr]) : bool
+(define (tc-expr-scoped-bindings? [expr : (& expr ast.AstExpr)]) : bool
   (match expr
     [(ast.AstExpr.Let _) true]
     [(ast.AstExpr.While _ _) true]
@@ -35586,7 +35543,7 @@
   [allow-mut-by-value-borrow : bool]) : ResultTcType
   (if (and
     (tc-type-env-scoped-runtime-active? env)
-    (tc-expr-scoped-bindings? (tc-global-shared-view expr)))
+    (tc-expr-scoped-bindings? expr))
     (let
       [saved : TcTypeEnvScopedRuntimeSave (tc-type-env-scoped-runtime-save env)]
       [result : ResultTcType
@@ -35778,7 +35735,7 @@
 
 (define (tc-body-type-fact-list-types
   [state : TcBodyState]
-  [exprs : ast.AstExprList]) : ResultTcTypeList
+  [exprs : (& exprs ast.AstExprList)]) : ResultTcTypeList
   (if (__tl-project-field (tc-body-state-data-value state) type-facts-consuming)
     (let
       [out : ast.AstTypeList (ast.ast-type-list-new)]
@@ -35792,9 +35749,7 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [exprs : ast.AstExprList]) : ResultTcTypeList
-  (match (tc-body-type-fact-list-types
-    (tc-context-body-state ctx)
-    (tc-global-shared-view exprs))
+  (match (tc-body-type-fact-list-types (tc-context-body-state ctx) exprs)
     [(ResultTcTypeList.Ok types)
       (begin
         (cfg
@@ -36375,7 +36330,7 @@
 (define (tc-call-arity-message-prefix) : String
   "typecheck: call arity mismatch: ")
 
-(define (tc-call-arity-message? [message : String]) : bool
+(define (tc-call-arity-message? [message : (& message str)]) : bool
   (tc-diag-string-prefix? message (tc-call-arity-message-prefix)))
 
 (define (tc-call-expr? [expr : ast.AstExpr]) : bool
@@ -36389,7 +36344,7 @@
   [message : String]) : ResultTcType
   (if (and
     (tc-call-expr? inner)
-    (tc-call-arity-message? (tc-global-shared-view message))
+    (tc-call-arity-message? message)
     (not (tc-encoded-error? message)))
     (ResultTcType.Err (tc-located-error span message))
     (ResultTcType.Err message)))
@@ -36414,7 +36369,7 @@
 (define (tc-unbound-name-message-prefix) : String
   "typecheck: unbound name ")
 
-(define (tc-unbound-name-message? [message : String]) : bool
+(define (tc-unbound-name-message? [message : (& message str)]) : bool
   (tc-diag-string-prefix? message (tc-unbound-name-message-prefix)))
 
 (define (tc-unbound-suggestion-scope-module-id
@@ -36438,7 +36393,7 @@
 ;; live in stdlib modules. Keep this catalog beside the typecheck suggestion
 ;; policy so a missing import can be diagnosed without loading or parsing
 ;; unrelated stdlib modules on an error path.
-(define (tc-unbound-stdlib-provider [name : String]) : String
+(define (tc-unbound-stdlib-provider [name : (& name str)]) : String
   (cond
     [(or
         (string.eq name "print-error")
@@ -36470,7 +36425,7 @@
 
 ;; Removed public spellings can still receive migration help without becoming
 ;; compatibility aliases or pretending that an import makes them available.
-(define (tc-unbound-migration-help [name : String]) : String
+(define (tc-unbound-migration-help [name : (& name str)]) : String
   (if (string.eq name "string->int")
     "string->int was removed — add (import stdlib.string) and use string.>int"
     ""))
@@ -36478,7 +36433,7 @@
 (define (tc-unbound-suggestion-max-distance [name-len : i64]) : i64
   (cond [(<= name-len 4) 1] [(<= name-len 12) 2] [else 3]))
 
-(define (tc-unbound-suggestion-candidate-name? [name : String]) : bool
+(define (tc-unbound-suggestion-candidate-name? [name : (& name str)]) : bool
   (let
     [n : i64 (string.string-length name)]
     [i : i64 0]
@@ -36907,8 +36862,7 @@
   [wanted : String]
   [wanted-id : i64]) : String
   (let
-    [wanted-separator : i64
-      (tc-name-first-char (tc-global-shared-view wanted) '.')]
+    [wanted-separator : i64 (tc-name-first-char wanted '.')]
     [wanted-qualified : bool (>= wanted-separator 0)]
     [wanted-qualifier : String
       (if wanted-qualified
@@ -36951,9 +36905,7 @@
           [candidate-id : i64 (array-ref visible.ids candidate-index)]
           [candidate : String (ci.intern-str candidate-id)]
           [candidate-len : i64 (string.string-length candidate)]
-          [suggestable : bool
-            (tc-unbound-suggestion-candidate-name?
-              (tc-global-shared-view candidate))]
+          [suggestable : bool (tc-unbound-suggestion-candidate-name? candidate)]
           (begin
             (if (and
               (not (= candidate-id wanted-id))
@@ -37018,13 +36970,11 @@
   [name : String]
   [name-id : i64]) : TcUnboundSuggestion
   (let
-    [migration : String
-      (tc-unbound-migration-help (tc-global-shared-view name))]
+    [migration : String (tc-unbound-migration-help name)]
     (if (> (string.string-length migration) 0)
       (TcUnboundSuggestion.Help migration)
       (let
-        [provider : String
-          (tc-unbound-stdlib-provider (tc-global-shared-view name))]
+        [provider : String (tc-unbound-stdlib-provider name)]
         (if (> (string.string-length provider) 0)
           (TcUnboundSuggestion.Help (tc-unbound-import-help name provider))
           (let
@@ -37058,7 +37008,7 @@
             message
             clean-start
             (- (string.string-length message) clean-start))]
-        (if (tc-unbound-name-message? (tc-global-shared-view clean-message))
+        (if (tc-unbound-name-message? clean-message)
           (match tc-unbound-suggestion-snapshot
             [(TcUnboundSuggestionSnapshot.Some
                 module-qualified
@@ -37174,9 +37124,7 @@
   [span : ast.AstSourceSpan]
   [message : String]) : ResultTcType
   (cond
-    [(and
-        (tc-unbound-name-message? (tc-global-shared-view message))
-        (not (tc-encoded-error? message)))
+    [(and (tc-unbound-name-message? message) (not (tc-encoded-error? message)))
       (match (tc-global-shared-view inner)
         [(ast.AstExpr.Var name-id)
           (begin
@@ -38250,7 +38198,7 @@
 
 (define (tc-call-type-list-has-immutable-ref-formal?
   [ctx : TcContext]
-  [types : ast.AstTypeList]) : bool
+  [types : (& types ast.AstTypeList)]) : bool
   (tc-call-type-list-has-immutable-ref-formal-at? ctx (& types) 0))
 
 (define (tc-call-type-list-has-immutable-ref-formal-at?
@@ -39269,7 +39217,7 @@
 (define (tc-call-varargs-tail-args
   [func : ast.AstExpr]
   [args : ast.AstExprList]
-  [params : ast.AstTypeList]) : ResultTcExprList
+  [params : (& params ast.AstTypeList)]) : ResultTcExprList
   (tc-call-varargs-tail-args-at func (& args) (& params) 0))
 
 (define (tc-call-varargs-tail-args-at
@@ -39370,7 +39318,7 @@
   [args : ast.AstExprList]
   [params : ast.AstTypeList]
   [abi : ast.AstExternAbi]) : ResultTcTypeList
-  (match (tc-call-varargs-tail-args func args (tc-global-shared-view params))
+  (match (tc-call-varargs-tail-args func args params)
     [(ResultTcExprList.Ok tail-args)
       (if (ast.ast-extern-abi-c-varargs-open? (tc-global-shared-view abi))
         (match (tc-call-open-varargs-tail-types ctx env tail-args)
@@ -39412,9 +39360,9 @@
     [(TcMaybeExternAbi.No)
       (tc-call-function-type-normal ctx env func args params ret)]))
 
-(define (tc-thread-name-last-dot [name : String]) : i64
+(define (tc-thread-name-last-dot [name : (& name str)]) : i64
   (let
-    [first : i64 (tc-name-first-dot (tc-global-shared-view name))]
+    [first : i64 (tc-name-first-dot name)]
     (if (< first 0)
       -1
       (let
@@ -39439,7 +39387,7 @@
   (if (tc-name-qualified? name)
     (tc-qualified-name-base name)
     (let
-      [dot : i64 (tc-thread-name-last-dot (tc-global-shared-view name))]
+      [dot : i64 (tc-thread-name-last-dot name)]
       (if (and (>= dot 0) (< dot (- (string.string-length name) 1)))
         (string.substring
           name
@@ -39489,7 +39437,7 @@
     (tc-thread-generated-name? (tc-global-shared-view name) "Handle")
     (and
       (not (tc-name-qualified? (& name)))
-      (>= (tc-thread-name-last-dot (tc-global-shared-view name)) 0)
+      (>= (tc-thread-name-last-dot name) 0)
       (string.eq (tc-thread-source-name-base name) "Handle"))))
 
 (define (tc-spawn-string-name? [name : String]) : bool
@@ -40428,7 +40376,7 @@
           [(or
               (= key (tc-region-marker-id))
               (= key (tc-default-boundary-id))
-              (tc-cleanup-owner-marker-entry? key (tc-global-shared-view ty))
+              (tc-cleanup-owner-marker-entry? key ty)
               (tc-ordinary-arena-owner-marker-entry?
                 key
                 (tc-global-shared-view ty))
@@ -40547,7 +40495,7 @@
           [(or
               (= key (tc-region-marker-id))
               (= key (tc-default-boundary-id))
-              (tc-cleanup-owner-marker-entry? key (tc-global-shared-view ty))
+              (tc-cleanup-owner-marker-entry? key ty)
               (tc-ordinary-arena-owner-marker-entry?
                 key
                 (tc-global-shared-view ty))
@@ -40882,8 +40830,8 @@
                   (tc-check-thread-spawn-args-with-message
                     ctx
                     env
-                    (tc-global-shared-view args)
-                    (tc-global-shared-view params)
+                    args
+                    params
                     allow-region-args
                     constructor-target
                     (TcArityMessage.Detailed
@@ -40945,10 +40893,7 @@
   [allow-region-args : bool]
   [constructor-target : ast.AstMaybeType]
   [arity-msg : TcArityMessage]) : ResultTcUnit
-  (match (tc-normalize-dotted-local-field-expr-list!
-    ctx
-    env
-    (tc-global-shared-view args))
+  (match (tc-normalize-dotted-local-field-expr-list! ctx env args)
     [(ResultTcUnit.Ok)
       (tc-check-call-args-with-message-at
         ctx
@@ -40965,15 +40910,12 @@
 (define (tc-check-thread-spawn-args-with-message
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [args : ast.AstExprList]
-  [params : ast.AstTypeList]
+  [args : (& args ast.AstExprList)]
+  [params : (& params ast.AstTypeList)]
   [allow-region-args : bool]
   [constructor-target : ast.AstMaybeType]
   [arity-msg : TcArityMessage]) : ResultTcUnit
-  (match (tc-normalize-dotted-local-field-expr-list!
-    ctx
-    env
-    (tc-global-shared-view args))
+  (match (tc-normalize-dotted-local-field-expr-list! ctx env args)
     [(ResultTcUnit.Ok)
       (tc-check-call-args-with-message-at
         ctx
@@ -41202,7 +41144,7 @@
 ;; expression typing therefore runs first, preserving dotted-name normalization,
 ;; diagnostics, facts, and every safe-call path. Only its specific unsafe-value
 ;; rejection may be retried as a syntactically direct call target.
-(define (tc-unsafe-callable-value-error? [message : String]) : bool
+(define (tc-unsafe-callable-value-error? [message : (& message str)]) : bool
   (string.contains
     message
     " is an unsafe callable and cannot be used as a plain function value"))
@@ -41237,7 +41179,7 @@
   (match (tc-expr ctx env (tc-global-shared-view func))
     [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
     [(ResultTcType.Err message)
-      (if (tc-unsafe-callable-value-error? (tc-global-shared-view message))
+      (if (tc-unsafe-callable-value-error? message)
         (tc-call-target-direct-name ctx env func message)
         (ResultTcType.Err message))]))
 
@@ -41250,7 +41192,7 @@
     (match (tc-expr-id ctx env func-id)
       [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
       [(ResultTcType.Err message)
-        (if (tc-unsafe-callable-value-error? (tc-global-shared-view message))
+        (if (tc-unsafe-callable-value-error? message)
           (let
             [result : ResultTcType
               (tc-call-target-direct-name ctx env func message)]
@@ -43819,7 +43761,7 @@
       (if (or
         (= key (tc-region-marker-id))
         (= key (tc-default-boundary-id))
-        (tc-cleanup-owner-marker-entry? key (tc-global-shared-view ty))
+        (tc-cleanup-owner-marker-entry? key ty)
         (tc-ordinary-arena-owner-marker-entry? key (tc-global-shared-view ty))
         (tc-atomic-arena-owner-marker-entry? key (tc-global-shared-view ty)))
         (tc-type-env-scoped-lambda-captures-reference-scan
@@ -44823,7 +44765,7 @@
 (define (tc-let-bindings-for-body
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [bindings : ast.AstLetBindingList]
+  [bindings : (& bindings ast.AstLetBindingList)]
   [body-id : i64]
   [body : ast.AstExpr]) : ResultTcEnv
   (tc-let-bindings-for-body-at ctx env (& bindings) body-id body 0))
@@ -45052,7 +44994,7 @@
 (define (tc-resource-bindings
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [bindings : ast.AstResourceBindingList]) : ResultTcEnv
+  [bindings : (& bindings ast.AstResourceBindingList)]) : ResultTcEnv
   (tc-resource-bindings-at ctx env (& bindings) 0))
 
 (define (tc-resource-bindings-at
@@ -45111,7 +45053,7 @@
 (define (tc-begin-list
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [exprs : ast.AstExprList]) : ResultTcType
+  [exprs : (& exprs ast.AstExprList)]) : ResultTcType
   (tc-begin-list-at ctx env (& exprs) 0))
 
 (define (tc-begin-list-at
@@ -45543,7 +45485,7 @@
 
 (define (tc-spmd-imported-callable-has-varying-result-at?
   [callables : (& callables ast.AstImportedSpmdCallableList)]
-  [signature : String]
+  [signature : (& signature str)]
   [index : i64]) : bool
   (if (>= index (ast.ast-imported-spmd-callable-list-len callables))
     false
@@ -45581,7 +45523,7 @@
         (cond
           [(tc-spmd-imported-callable-has-varying-result-at?
               callables
-              (tc-global-shared-view signature)
+              signature
               0)
             TcSpmdClass.Varying]
           [(tc-spmd-imported-callable-has-specialization-at?
@@ -45622,7 +45564,7 @@
               (ResultTcSpmdExprInfo.Err message)])])]
     [(ResultTcSpmdExprInfo.Err message) (ResultTcSpmdExprInfo.Err message)]))
 
-(define (tc-spmd-atomic-public-symbol? [symbol : String]) : bool
+(define (tc-spmd-atomic-public-symbol? [symbol : (& symbol str)]) : bool
   (or
     (string.eq symbol "tl_atomic_i64_load")
     (string.eq symbol "tl_atomic_i64_store")
@@ -45647,7 +45589,7 @@
 (define (tc-spmd-atomic-name-candidate? [name : String]) : bool
   (or
     (tc-spmd-atomic-public-name? (tc-global-shared-view name))
-    (tc-spmd-atomic-public-symbol? (tc-global-shared-view name))
+    (tc-spmd-atomic-public-symbol? name)
     (and
       (tc-name-qualified? name)
       (tc-spmd-atomic-public-name? (tc-qualified-name-base name)))))
@@ -45722,8 +45664,7 @@
                   [symbol : String
                     (ast.ast-extern-metadata-symbol
                       (ast.ast-extern-metadata-box-shared-view metadata))]
-                  (if (tc-spmd-atomic-public-symbol?
-                    (tc-global-shared-view symbol))
+                  (if (tc-spmd-atomic-public-symbol? symbol)
                     (TcMaybeString.Some symbol)
                     (TcMaybeString.No)))]
               [(ast.AstExternKind.Value) (TcMaybeString.No)])]
@@ -49544,7 +49485,7 @@
 (define (tc-let-binding-list-uses-free-source-id?
   [session : cis.InternStructuralSessionHandle]
   [expr-bases : i64]
-  [bindings : ast.AstLetBindingList]
+  [bindings : (& bindings ast.AstLetBindingList)]
   [target-1 : i64]
   [target-2 : i64]
   [bound : TcNameIdList]) : bool
@@ -49597,7 +49538,7 @@
 (define (tc-resource-binding-list-uses-free-source-id?
   [session : cis.InternStructuralSessionHandle]
   [expr-bases : i64]
-  [bindings : ast.AstResourceBindingList]
+  [bindings : (& bindings ast.AstResourceBindingList)]
   [target-1 : i64]
   [target-2 : i64]
   [bound : TcNameIdList]) : bool
@@ -49850,7 +49791,7 @@
               (tc-let-binding-list-uses-free-source-id?
                 session
                 expr-bases
-                (tc-global-shared-view bindings)
+                bindings
                 target-1
                 target-2
                 bound)
@@ -50221,7 +50162,7 @@
             (tc-resource-binding-list-uses-free-source-id?
               session
               expr-bases
-              (tc-global-shared-view bindings)
+              bindings
               target-1
               target-2
               bound)
@@ -51123,7 +51064,7 @@
           [(or
               (= key (tc-region-marker-id))
               (= key (tc-default-boundary-id))
-              (tc-cleanup-owner-marker-entry? key (tc-global-shared-view ty))
+              (tc-cleanup-owner-marker-entry? key ty)
               (tc-ordinary-arena-owner-marker-entry?
                 key
                 (tc-global-shared-view ty))
@@ -51335,7 +51276,7 @@
       (tc-program-enum-index-bind-name! positions module-id name position)]
     [_ unit]))
 
-(define (tc-program-enum-index-ensure! [decls : ast.AstDeclList]) : unit
+(define (tc-program-enum-index-ensure! [decls : (& decls ast.AstDeclList)]) : unit
   (if (and
     tc-program-enum-index-ready
     (= tc-program-enum-index-decl-count decls.len)
@@ -51401,8 +51342,7 @@
     [(ast.AstProgram.Program decls-box)
       (let
         [decls : ast.AstDeclList (ast.ast-decl-list-box-shared-view decls-box)]
-        [_ensure : unit
-          (tc-program-enum-index-ensure! (tc-global-shared-view decls))]
+        [_ensure : unit (tc-program-enum-index-ensure! decls)]
         (match (tc_i64_i64_map.get
           (& tc-program-enum-index-positions)
           (csym.compiler-symbol-name-id-key enum-name-id))
@@ -51956,7 +51896,7 @@
   [ctx : TcContext]
   [handle : i64]
   [struct-name-id : i64]
-  [_ : String]) : ResultTcStructDecl
+  [_ : (& _ str)]) : ResultTcStructDecl
   (if (and
     (csym.compiler-symbols-handle-found? handle)
     (=
@@ -52012,7 +51952,7 @@
           (tc-nominal-name-id-display enum-name-id))))))
 
 (define (tc-inline-aggregate-cycle-stack-render [stack : TcStringList]) : String
-  (if (tc-string-list-empty? (tc-global-shared-view stack))
+  (if (tc-string-list-empty? stack)
     ""
     (let
       [head : String (tc-string-list-head (tc-global-shared-view stack))]
@@ -52172,11 +52112,7 @@
           (if (=
             (csym.compiler-symbol-handle-kind handle)
             (csym.compiler-symbol-kind-defstruct))
-            (match (tc-struct-decl-at-handle
-              ctx
-              handle
-              name-id
-              (tc-global-shared-view name))
+            (match (tc-struct-decl-at-handle ctx handle name-id name)
               [(ResultTcStructDecl.Ok decl)
                 (match decl
                   [(TcStructDecl _ _ fields)
@@ -52397,7 +52333,7 @@
             (begin
               (cfg compile-profile (tc-lp-note 4))
               (tc-inline-payload-layout-list-set!
-                (tc-global-shared-view layout)
+                layout
                 index
                 (TcInlinePayloadLayout.Payload index ty offset))
               (tc-inline-aggregate-payloads-layout-at
@@ -52477,11 +52413,7 @@
     (tc-global-shared-view struct-name))
     (ResultTcInlineAggregateLayout.Err
       (tc-inline-aggregate-cycle-message struct-name stack))
-    (match (tc-struct-decl-at-handle
-      ctx
-      handle
-      struct-name-id
-      (tc-global-shared-view struct-name))
+    (match (tc-struct-decl-at-handle ctx handle struct-name-id struct-name)
       [(ResultTcStructDecl.Ok decl)
         (match decl
           [(TcStructDecl _ _ fields)
@@ -52558,7 +52490,7 @@
                   (begin
                     (cfg compile-profile (tc-lp-note 6))
                     (tc-inline-variant-layout-list-set!
-                      (tc-global-shared-view layout)
+                      layout
                       index
                       (TcInlineVariantLayout.Variant
                         variant-name
@@ -53557,7 +53489,7 @@
                 (begin
                   (cfg compile-profile (tc-lp-note 0))
                   (tc-repr-c-field-layout-list-set!
-                    (tc-global-shared-view layout)
+                    layout
                     index
                     (TcReprCFieldLayout.Field
                       (tc-env-key-name-text (ci.intern-syntax-id-value name))
@@ -56626,7 +56558,7 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [scrut-ty : ast.AstType]
-  [arms : ast.AstMatchArmList]
+  [arms : (& arms ast.AstMatchArmList)]
   [expected : ast.AstType]) : ResultTcType
   (let
     [arms-ref : (& arms ast.AstMatchArmList) (& arms)]
@@ -56781,7 +56713,7 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [scrut-ty : ast.AstType]
-  [arms : ast.AstMatchArmList]) : ResultTcType
+  [arms : (& arms ast.AstMatchArmList)]) : ResultTcType
   (let
     [arms-ref : (& arms ast.AstMatchArmList) (& arms)]
     (if (= arms-ref.len 0)
@@ -56891,7 +56823,7 @@
           [variant-name : String (ci.intern-str variant-name-id)]
           (match (tc-dotted-alias-variant-handle
             ctx
-            (tc-global-shared-view variant-name)
+            variant-name
             variant-name-id)
             [(option_i64.Some handle) handle]
             [(option_i64.None)
@@ -56963,7 +56895,7 @@
   [variant-id : i64]) : String
   (cond
     [(< variant-id 0)
-      (if (>= (tc-name-first-dot (tc-global-shared-view variant-name)) 0)
+      (if (>= (tc-name-first-dot variant-name) 0)
         variant-name
         (tc-qualified-variant-name enum-name variant-name))]
     [(tc-name-qualified-id? (tc-context-structural-session ctx) variant-id)
@@ -57006,7 +56938,7 @@
 (define (tc-dotted-alias-flat-variant-key-id
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [_name : String]
+  [_name : (& _name str)]
   [name-id : i64]) : option_i64.Option
   (let
     [alias-id : i64 (ci.intern-leading-dot-id name-id)]
@@ -57135,7 +57067,7 @@
 
 (define (tc-dotted-alias-variant-handle
   [ctx : TcContext]
-  [_variant-name : String]
+  [_variant-name : (& _variant-name str)]
   [variant-name-id : i64]) : option_i64.Option
   (match (tc-dotted-alias-variant-key-id ctx "" variant-name-id)
     [(option_i64.Some key-id)
@@ -58156,7 +58088,7 @@
             (ResultTcUnit.Err
               (tc-match-missing-variant-message (tc-env-key-name-text name)))))])))
 
-(define (tc-match-arms-have-catchall? [arms : ast.AstMatchArmList]) : bool
+(define (tc-match-arms-have-catchall? [arms : (& arms ast.AstMatchArmList)]) : bool
   (tc-match-arms-have-catchall-at? (& arms) 0))
 
 (define (tc-match-arms-have-catchall-at?
@@ -58197,7 +58129,9 @@
             arms
             (+ index 1)))])))
 
-(define (tc-match-arms-cover-bool? [arms : ast.AstMatchArmList] [want : bool]) : bool
+(define (tc-match-arms-cover-bool?
+  [arms : (& arms ast.AstMatchArmList)]
+  [want : bool]) : bool
   (tc-match-arms-cover-bool-at? (& arms) want 0))
 
 (define (tc-match-arms-cover-bool-at?
@@ -58380,9 +58314,9 @@
     [_ scrut-ty]))
 
 (define (tc-match-bool-exhaustive-ok [arms : ast.AstMatchArmList]) : ResultTcUnit
-  (if (tc-match-arms-have-catchall? (tc-global-shared-view arms))
+  (if (tc-match-arms-have-catchall? arms)
     ResultTcUnit.Ok
-    (if (tc-match-arms-cover-bool? (tc-global-shared-view arms) true)
+    (if (tc-match-arms-cover-bool? arms true)
       (if (tc-match-arms-cover-bool? arms false)
         ResultTcUnit.Ok
         (ResultTcUnit.Err "typecheck: match missing arm for false"))
@@ -58438,11 +58372,7 @@
       (tc-global-shared-view coverage-ty)
       (tc-global-shared-view arms))
       [(ResultTcUnit.Ok)
-        (match (tc-check-match-arm-types
-          ctx
-          env
-          scrut-ty
-          (tc-global-shared-view arms))
+        (match (tc-check-match-arm-types ctx env scrut-ty arms)
           [(ResultTcType.Ok result-ty)
             (match (tc-match-exhaustiveness-ok ctx coverage-ty arms)
               [(ResultTcUnit.Ok) (ResultTcType.Ok result-ty)]
@@ -58468,7 +58398,7 @@
           ctx
           env
           scrut-ty
-          (tc-global-shared-view arms)
+          arms
           expected)
           [(ResultTcType.Ok result-ty)
             (match (tc-match-exhaustiveness-ok ctx coverage-ty arms)
@@ -58519,7 +58449,7 @@
     [(ast.AstReduceOp.All) "typecheck: spmd-reduce all requires a bool type"]
     [(ast.AstReduceOp.Any) "typecheck: spmd-reduce any requires a bool type"]))
 
-(define (tc-scan-op-type-ok? [op : ast.AstReduceOp] [ty : ast.AstType]) : bool
+(define (tc-scan-op-type-ok? [op : ast.AstReduceOp] [ty : (& ty ast.AstType)]) : bool
   (match op
     [(ast.AstReduceOp.Sum)
       (match ty
@@ -58831,7 +58761,7 @@
   [value : ast.AstExpr]) : ResultTcType
   (let
     [resolved-prefix-ty : ast.AstType (tc-resolve-type ctx prefix-ty)]
-    (if (tc-scan-op-type-ok? op (tc-global-shared-view resolved-prefix-ty))
+    (if (tc-scan-op-type-ok? op resolved-prefix-ty)
       (match (tc-expr-with-expected-or-actual
         ctx
         env
@@ -60211,9 +60141,9 @@
   [env : TcTypeEnv]
   [bindings : ast.AstResourceBindingList]
   [body : ast.AstExprList]) : ResultTcType
-  (match (tc-resource-bindings ctx env (tc-global-shared-view bindings))
+  (match (tc-resource-bindings ctx env bindings)
     [(ResultTcEnv.Ok body-env)
-      (match (tc-begin-list ctx body-env (tc-global-shared-view body))
+      (match (tc-begin-list ctx body-env body)
         [(ResultTcType.Ok body-ty)
           (if (tc-expr-list-result-uses-cleanup-owner?
             (tc-context-expr-bases ctx)
@@ -60232,13 +60162,9 @@
   [bindings : ast.AstResourceBindingList]
   [body : ast.AstExprList]
   [expected : ast.AstType]) : ResultTcType
-  (match (tc-resource-bindings ctx env (tc-global-shared-view bindings))
+  (match (tc-resource-bindings ctx env bindings)
     [(ResultTcEnv.Ok body-env)
-      (match (tc-begin-list-with-expected
-        ctx
-        body-env
-        (tc-global-shared-view body)
-        expected)
+      (match (tc-begin-list-with-expected ctx body-env body expected)
         [(ResultTcType.Ok body-ty)
           (if (tc-expr-list-result-uses-cleanup-owner?
             (tc-context-expr-bases ctx)
@@ -61078,10 +61004,7 @@
                 [(TcMaybeString.No) (ResultTcType.Ok ty)]
                 [(TcMaybeString.Some message) (ResultTcType.Err message)]))]
           [(ResultTcTypeUnsafe.Err message)
-            (match (tc-dotted-alias-variant-handle
-              ctx
-              (tc-global-shared-view name-text)
-              name)
+            (match (tc-dotted-alias-variant-handle ctx name-text name)
               [(option_i64.Some handle)
                 (tc-variant-constructor-type-for-handle ctx handle)]
               [(option_i64.None)
@@ -61472,12 +61395,7 @@
         [(ast.AstLet.Let bindings body-box)
           (let
             [body : ast.AstExpr (tc-context-expr-get ctx body-box)]
-            (match (tc-let-bindings-for-body
-              ctx
-              env
-              (tc-global-shared-view bindings)
-              body-box
-              body)
+            (match (tc-let-bindings-for-body ctx env bindings body-box body)
               [(ResultTcEnv.Ok next-env)
                 (match (tc-expr-id ctx next-env body-box)
                   [(ResultTcType.Ok body-ty)
@@ -62328,7 +62246,7 @@
 (define (tc-expr [ctx : TcContext] [env : TcTypeEnv] [expr : ast.AstExpr]) : ResultTcType
   (if (and
     (tc-type-env-scoped-runtime-active? env)
-    (tc-expr-scoped-bindings? (tc-global-shared-view expr)))
+    (tc-expr-scoped-bindings? expr))
     (let
       [saved : TcTypeEnvScopedRuntimeSave (tc-type-env-scoped-runtime-save env)]
       [result : ResultTcType (tc-expr-inner ctx env expr)]
@@ -62693,7 +62611,7 @@
   (tc-string-list-cons chain name))
 
 (define (tc-comptime-purity-chain-render [chain : TcStringList]) : String
-  (if (tc-string-list-empty? (tc-global-shared-view chain))
+  (if (tc-string-list-empty? chain)
     ""
     (let
       [head : String (tc-string-list-head (tc-global-shared-view chain))]
@@ -62746,7 +62664,7 @@
 
 (define (tc-comptime-purity-banned-qualified?
   [ctx : TcContext]
-  [_ : String]
+  [_ : (& _ str)]
   [name-id : i64]) : bool
   (let
     [source-id : i64
@@ -63913,10 +63831,7 @@
           (tc-global-shared-view bound)
           (tc-global-shared-view name))
         ResultTcUnit.Ok]
-      [(tc-comptime-purity-banned-qualified?
-          ctx
-          (tc-global-shared-view name)
-          name-id)
+      [(tc-comptime-purity-banned-qualified? ctx name name-id)
         (tc-comptime-purity-error
           expr-bases
           expr
@@ -64438,9 +64353,7 @@
     [found : bool false]
     [done : bool false]
     (begin
-      (while (and
-        (not done)
-        (not (tc-string-list-empty? (tc-global-shared-view cursor))))
+      (while (and (not done) (not (tc-string-list-empty? cursor)))
         (let
           [item : String (tc-string-list-head (tc-global-shared-view cursor))]
           (begin
@@ -65070,7 +64983,7 @@
     body))
 
 (define (tc-macro-param-list-needs-call-context?
-  [params : ast.AstMacroParamList]) : bool
+  [params : (& params ast.AstMacroParamList)]) : bool
   (tc-macro-param-list-needs-call-context-at? (& params) 0))
 
 (define (tc-macro-param-list-needs-call-context-at?
@@ -65114,7 +65027,7 @@
       (tc-bind-macro-params
         ctx
         (tc-macro-helper-env-cached (tc-context-macro-state ctx) top-env)
-        (tc-global-shared-view params))]
+        params)]
     [expr-result : ResultTcType
       (tc-expr ctx macro-env (tc-global-shared-view body))]
     (match expr-result
@@ -65145,8 +65058,7 @@
                     [(ResultTcUnit.Ok)
                       (let
                         [needs-context? : bool
-                          (tc-macro-param-list-needs-call-context?
-                            (tc-global-shared-view params))]
+                          (tc-macro-param-list-needs-call-context? params)]
                         [uses-expr-type? : bool
                           (macro-expr-uses-expr-type?
                             (tc-context-expr-bases ctx)
@@ -67592,7 +67504,9 @@
 ;; references share the variable syntax but are not places; ordinary value
 ;; globals are permanent places and are classified separately below so ownership
 ;; transfer from them can be rejected without ever marking the global moved.
-(define (tc-move-params-locals [params : ast.AstParamList] [acc : TcMovedSet]) : TcMovedSet
+(define (tc-move-params-locals
+  [params : (& params ast.AstParamList)]
+  [acc : TcMovedSet]) : TcMovedSet
   (tc-move-params-locals-at (& params) 0 acc))
 
 (define (tc-move-params-locals-at
@@ -67624,7 +67538,7 @@
 
 (define (tc-param-storage-seed-params
   [_ctx : TcContext]
-  [_params : ast.AstParamList]
+  [_params : (& _params ast.AstParamList)]
   [moved : TcMovedSet]) : TcMovedSet
   ;; Every runtime by-value parameter is owned callee storage. The backend's
   ;; ABI materialization supplies a private value representation, so no
@@ -69632,9 +69546,7 @@
   [moved : TcMovedSet]
   [exprs : ast.AstExprList]
   [types : ast.AstTypeList]) : TcMoveResult
-  (if (tc-call-type-list-has-immutable-ref-formal?
-    ctx
-    (tc-global-shared-view types))
+  (if (tc-call-type-list-has-immutable-ref-formal? ctx types)
     (tc-move-check-exprs-with-types-auto
       ctx
       expr-bases
@@ -72596,7 +72508,7 @@
               (tc-bind-params ctx env (tc-global-shared-view params))]
             [lambda-locals : TcMovedSet
               (tc-move-params-locals
-                (tc-global-shared-view params)
+                params
                 (tc-moved-clone (tc-global-shared-view locals)))]
             (match (tc-move-check-expr-id
               ctx
@@ -72606,7 +72518,7 @@
               (tc-moved-empty)
               (tc-param-storage-seed-params
                 ctx
-                (tc-global-shared-view params)
+                params
                 (tc-moved-clone (tc-global-shared-view moved)))
               body-box)
               [(TcMoveResult.Ok lambda-moved)
@@ -74245,12 +74157,11 @@
   [ctx : TcContext]
   [expr-bases : i64]
   [env : TcTypeEnv]
-  [params : ast.AstParamList]
+  [params : (& params ast.AstParamList)]
   [body-id : i64]
   [return-ty : ast.AstType]) : ResultTcUnit
   (let
-    [locals : TcMovedSet
-      (tc-move-params-locals (tc-global-shared-view params) (tc-moved-empty))]
+    [locals : TcMovedSet (tc-move-params-locals params (tc-moved-empty))]
     [body : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases body-id)]
     (match (tc-move-check-expr-id
       ctx
@@ -75311,7 +75222,7 @@
           [(= key (tc-default-boundary-id)) locals]
           [(or
               (= key (tc-region-marker-id))
-              (tc-cleanup-owner-marker-entry? key (tc-global-shared-view ty))
+              (tc-cleanup-owner-marker-entry? key ty)
               (tc-ordinary-arena-owner-marker-entry?
                 key
                 (tc-global-shared-view ty))
@@ -75376,7 +75287,7 @@
           [(= key (tc-default-boundary-id)) false]
           [(or
               (= key (tc-region-marker-id))
-              (tc-cleanup-owner-marker-entry? key (tc-global-shared-view ty))
+              (tc-cleanup-owner-marker-entry? key ty)
               (tc-ordinary-arena-owner-marker-entry?
                 key
                 (tc-global-shared-view ty))
@@ -75446,7 +75357,7 @@
           [(= key (tc-default-boundary-id)) false]
           [(or
               (= key (tc-region-marker-id))
-              (tc-cleanup-owner-marker-entry? key (tc-global-shared-view ty))
+              (tc-cleanup-owner-marker-entry? key ty)
               (tc-ordinary-arena-owner-marker-entry?
                 key
                 (tc-global-shared-view ty))
@@ -75577,7 +75488,7 @@
           [(= key (tc-default-boundary-id)) false]
           [(or
               (= key (tc-region-marker-id))
-              (tc-cleanup-owner-marker-entry? key (tc-global-shared-view ty))
+              (tc-cleanup-owner-marker-entry? key ty)
               (tc-ordinary-arena-owner-marker-entry?
                 key
                 (tc-global-shared-view ty))
@@ -75659,8 +75570,7 @@
         (tc-global-shared-view body))]
     [lambda-env : TcTypeEnv
       (tc-bind-params ctx env (tc-global-shared-view params))]
-    [lambda-locals : TcMovedSet
-      (tc-move-params-locals (tc-global-shared-view params) capture-locals)]
+    [lambda-locals : TcMovedSet (tc-move-params-locals params capture-locals)]
     (match (tc-move-check-expr-id
       ctx
       expr-bases
@@ -79765,9 +79675,7 @@
         (let
           [borrowed-with-uses : TcMovedSet
             (tc-borrow-check-propagate-lending-uses checked-borrowed borrowed)]
-          (if (tc-call-type-list-has-immutable-ref-formal?
-            ctx
-            (tc-global-shared-view types))
+          (if (tc-call-type-list-has-immutable-ref-formal? ctx types)
             (match (tc-borrow-check-auto-borrowed-call-args
               ctx
               expr-bases
@@ -81978,7 +81886,7 @@
           [(= key (tc-default-boundary-id)) borrowed]
           [(or
               (= key (tc-region-marker-id))
-              (tc-cleanup-owner-marker-entry? key (tc-global-shared-view ty))
+              (tc-cleanup-owner-marker-entry? key ty)
               (tc-ordinary-arena-owner-marker-entry?
                 key
                 (tc-global-shared-view ty))
@@ -86712,9 +86620,7 @@
         state
         macro-live-prescan-expr-type-names
         (if has-defmacro
-          (macro-collect-expr-type-macro-names
-            expr-bases
-            (tc-global-shared-view decls))
+          (macro-collect-expr-type-macro-names expr-bases decls)
           (TcNameIdList.Nil)))
       (tc-macro-walk-set!
         state
@@ -86808,7 +86714,7 @@
             macro-live-prescan-expr-type-names
             (macro-collect-expr-type-macro-names-in
               expr-bases
-              (tc-global-shared-view decls)
+              decls
               module-id
               (tc-macro-walk-field state macro-live-prescan-expr-type-names)))
           (tc-macro-walk-set!
@@ -87799,8 +87705,8 @@
 
 (define (macro-definition-paths-index!
   [ctx : TcContext]
-  [decls : ast.AstDeclList]
-  [paths : ast.AstDeclPathList]) : unit
+  [decls : (& decls ast.AstDeclList)]
+  [paths : (& paths ast.AstDeclPathList)]) : unit
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
     [index : i64 0]
@@ -87920,7 +87826,7 @@
     [name : String
       (macro-output-symbol-text-id session name-id (tc-global-shared-view site))]
     [source-name : String
-      (if (tc-hygiene-template-name? (tc-global-shared-view name))
+      (if (tc-hygiene-template-name? name)
         (tc-hygiene-template-base name)
         (tc-hygiene-global-symbol-name name))]
     [source-name-id : i64 (macro-output-syntax-id-at session name-id site)]
@@ -88943,7 +88849,7 @@
 (define (macro-segmented-clone-fixpoint-step
   [state : TcJobState]
   [pools : ast.AstNodePoolContext]
-  [names : clone_support.CloneNameSet]) : clone_support.CloneNameSet
+  [names : (& names clone_support.CloneNameSet)]) : clone_support.CloneNameSet
   (let
     [out : clone_support.CloneNameSet
       (clone_support.clone-name-set-with-capacity
@@ -89000,10 +88906,7 @@
       (while (not done)
         (let
           [next : clone_support.CloneNameSet
-            (macro-segmented-clone-fixpoint-step
-              state
-              pools
-              (tc-global-shared-view names))]
+            (macro-segmented-clone-fixpoint-step state pools names)]
           (if (=
             (clone_support.clone-name-set-len next)
             (clone_support.clone-name-set-len names))
@@ -89227,7 +89130,7 @@
 (define (macro-segmented-module-local-root-shadow-note-at!
   [session : cis.InternStructuralSessionHandle]
   [seen : (&mut seen tc_i64_i64_map.Map)]
-  [decls : ast.AstDeclList]
+  [decls : (& decls ast.AstDeclList)]
   [index : i64]
   [cur-module-id : i64]) : i64
   ;; A segment row stays installed for this complete call. The initial branch
@@ -89272,7 +89175,7 @@
             (macro-segmented-module-local-root-shadow-note-at!
               session
               seen
-              (tc-global-shared-view prefix)
+              prefix
               prefix-index
               cur-module-id))
           (set! prefix-index (- prefix-index 1))))
@@ -89290,7 +89193,7 @@
                   (macro-segmented-module-local-root-shadow-note-at!
                     session
                     seen
-                    (tc-global-shared-view decls)
+                    decls
                     node-index
                     cur-module-id))
                 (set! node-index (+ node-index 1))))
@@ -91358,8 +91261,8 @@
   [ctx : TcContext]
   [definition-module : String]
   [definition-module-id : i64]
-  [params : ast.AstMacroParamList]
-  [args : ast.AstExprList]) : bool
+  [params : (& params ast.AstMacroParamList)]
+  [args : (& args ast.AstExprList)]) : bool
   (macro-generated-identity-shortcut-safe-params-at?
     ctx
     definition-module
@@ -93266,7 +93169,7 @@
   [pools : ast.AstNodePoolContext]
   [value : ctfe_support.CompilerCtfeValue]
   [hygiene : MacroHygieneContext]
-  [params : ast.AstMacroParamList]
+  [params : (& params ast.AstMacroParamList)]
   [depth : i64]) : ctfe_support.CompilerCtfeValue
   (match (tc-global-shared-view value)
     [(ctfe_support.CompilerCtfeValue.Expr node produced)
@@ -94044,7 +93947,7 @@
 
 (define (macro-collect-expr-type-macro-names-in
   [expr-bases : i64]
-  [decls : ast.AstDeclList]
+  [decls : (& decls ast.AstDeclList)]
   [module-id : i64]
   [acc : TcNameIdList]) : TcNameIdList
   ;; Index cursor rather than `ast-decl-list-step`, as in
@@ -94082,7 +93985,7 @@
 
 (define (macro-collect-expr-type-macro-names
   [expr-bases : i64]
-  [decls : ast.AstDeclList]) : TcNameIdList
+  [decls : (& decls ast.AstDeclList)]) : TcNameIdList
   (macro-collect-expr-type-macro-names-in
     expr-bases
     decls
@@ -95224,7 +95127,7 @@
 
 (define (macro-hygiene-produced-eval-start!
   [state : TcMacroState]
-  [env : ctfe_support.CtfeEnv]) : unit
+  [env : (& env ctfe_support.CtfeEnv)]) : unit
   (macro-hygiene-produced-eval-start-with-pools!
     state
     (ctfe_support.ctfe-env-syntax-pool-context env)))
@@ -97681,8 +97584,7 @@
   [alias-id : i64]
   [_module-id : i64]) : TcMaybeNameId
   (let
-    [_ensure : unit
-      (tc-module-decl-index-ensure! (tc-global-shared-view decls))]
+    [_ensure : unit (tc-module-decl-index-ensure! decls)]
     [slot : i64 (tc-module-decl-index-slot current-module-id)]
     [decl-offset : i64 decls.offset]
     [result : TcMaybeNameId (TcMaybeNameId.No)]
@@ -97897,7 +97799,7 @@
             (set! data.unqualified-values (__tl_make-array i64 65536))
             (tc-macro-import-index-state-data-set! state data)))))))
 
-(define (macro-decl-list-slots-data-addr [decls : ast.AstDeclList]) : i64
+(define (macro-decl-list-slots-data-addr [decls : (& decls ast.AstDeclList)]) : i64
   (cast
     (unsafe
       (ptr->int (ptr-cast (__tl_array-data decls.slots) : (Ptr u8))))
@@ -98326,7 +98228,7 @@
 ;; only memoization -- never correctness -- degrades.
 (define (macro-flat-import-target-cache-build!
   [state : TcMacroState]
-  [decls : ast.AstDeclList]) : unit
+  [decls : (& decls ast.AstDeclList)]) : unit
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
     [decl-offset : i64 decls.offset]
@@ -98422,9 +98324,7 @@
     (macro-flat-import-target-cache-ensure! state)
     (if (= (tc-macro-import-index-control state 19) 1)
       unit
-      (macro-flat-import-target-cache-build!
-        state
-        (tc-global-shared-view decls)))
+      (macro-flat-import-target-cache-build! state decls))
     (match (macro-flat-import-target-cache-get state current-module-id)
       [(MacroFlatImportTargetCacheLookup.Hit targets) targets]
       [(MacroFlatImportTargetCacheLookup.Missing)
@@ -98618,7 +98518,7 @@
 
 (define (macro-alias-cache-index-range!
   [state : TcMacroState]
-  [decls : ast.AstDeclList]
+  [decls : (& decls ast.AstDeclList)]
   [start : i64]
   [count : i64]
   [start-module-id : i64]) : i64
@@ -98670,7 +98570,7 @@
 ;; generic segmented iterator result for every declaration.
 (define (macro-alias-cache-index-reverse-range!
   [state : TcMacroState]
-  [decls : ast.AstDeclList]
+  [decls : (& decls ast.AstDeclList)]
   [start : i64]
   [start-module-id : i64]) : i64
   (let
@@ -98724,7 +98624,7 @@
 ;; to the exact scan, so only memoization -- never correctness -- degrades.
 (define (macro-alias-cache-build!
   [state : TcMacroState]
-  [decls : ast.AstDeclList]) : unit
+  [decls : (& decls ast.AstDeclList)]) : unit
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
     (begin
@@ -98734,7 +98634,7 @@
         10
         (macro-alias-cache-index-range!
           state
-          (tc-global-shared-view decls)
+          decls
           0
           count
           cbi.compiler-builtin-id-fix-empty))
@@ -98764,7 +98664,7 @@
         cur-module-id
         (macro-alias-cache-index-reverse-range!
           state
-          (tc-global-shared-view prefix)
+          prefix
           (- (ast.ast-decl-list-len (& prefix)) 1)
           cur-module-id))
       (while (> node-address 0)
@@ -98777,7 +98677,7 @@
               cur-module-id
               (macro-alias-cache-index-range!
                 state
-                (tc-global-shared-view decls)
+                decls
                 node-index
                 (ast.ast-decl-list-len (& decls))
                 cur-module-id))
@@ -98798,7 +98698,7 @@
 ;; retain the exact fallback below.
 (define (macro-alias-cache-adopt-larger-view!
   [state : TcMacroState]
-  [decls : ast.AstDeclList]) : unit
+  [decls : (& decls ast.AstDeclList)]) : unit
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
     (if (and
@@ -98806,7 +98706,7 @@
       (> count (tc-macro-import-index-control state 7)))
       (if (=
         (tc-macro-import-index-control state 9)
-        (macro-decl-list-slots-data-addr (tc-global-shared-view decls)))
+        (macro-decl-list-slots-data-addr decls))
         (begin
           (tc-macro-import-index-control-set!
             state
@@ -98833,8 +98733,8 @@
     (macro-alias-cache-ensure! state)
     (if (= (tc-macro-import-index-control state 4) 1)
       unit
-      (macro-alias-cache-build! state (tc-global-shared-view decls)))
-    (macro-alias-cache-adopt-larger-view! state (tc-global-shared-view decls))
+      (macro-alias-cache-build! state decls))
+    (macro-alias-cache-adopt-larger-view! state decls)
     (let
       [cached : i64
         (macro-alias-cache-get state current-module-id qualifier-id)]
@@ -100528,7 +100428,7 @@
   [fallback-module : String]
   [fallback-module-id : i64]
   [expected : ast.AstType]
-  [args : ast.AstExprList]) : ResultMacroCheck
+  [args : (& args ast.AstExprList)]) : ResultMacroCheck
   (if (tc-macro-type-param-kind? (tc-global-shared-view expected))
     (macro-check-variadic-operands-at
       ctx
@@ -100988,7 +100888,7 @@
         fallback-module
         fallback-module-id
         ty
-        (tc-global-shared-view args))
+        args)
         [(ResultMacroCheck.Ok)
           (ResultMacroCapturedValue.Ok
             (macro-captured-expr-list-value
@@ -101038,7 +100938,7 @@
 ;; code can inspect without evaluating. Keep its literal node in the active
 ;; CTFE pool instead of passing a transient macro-expansion proxy variable.
 ;; Other expressions retain their original node and hygiene unchanged.
-(define (macro-private-place-bridge-name? [macro-name : String]) : bool
+(define (macro-private-place-bridge-name? [macro-name : (& macro-name str)]) : bool
   (or
     (string.eq macro-name "stdlib.core_macros/__tl-project-field")
     (string.eq macro-name "stdlib.core_macros/__tl-project-set-field")
@@ -101901,7 +101801,7 @@
 (cfg
   embedded-stdlib-tlci
   (define (macro-tlci-resolved-catalog-open?
-    [catalog : MacroTlciResolvedCatalog]) : bool
+    [catalog : (& catalog MacroTlciResolvedCatalog)]) : bool
     (match catalog
       [(MacroTlciResolvedCatalog.Dependency _) true]
       [(MacroTlciResolvedCatalog.Embedded _)
@@ -101910,7 +101810,7 @@
 (cfg
   embedded-stdlib-tlci
   (define (macro-tlci-resolved-catalog-dependency?
-    [catalog : MacroTlciResolvedCatalog]) : bool
+    [catalog : (& catalog MacroTlciResolvedCatalog)]) : bool
     (match catalog
       [(MacroTlciResolvedCatalog.Dependency _) true]
       [(MacroTlciResolvedCatalog.Embedded _) false])))
@@ -101919,7 +101819,7 @@
   embedded-stdlib-tlci
   (define (macro-dependency-tlci-note-if!
     [state : TcMacroState]
-    [catalog : MacroTlciResolvedCatalog]
+    [catalog : (& catalog MacroTlciResolvedCatalog)]
     [counter : i64]) : unit
     (if (macro-tlci-resolved-catalog-dependency? catalog)
       (tc-dependency-tlci-route-counter-add! state counter 1)
@@ -102392,8 +102292,7 @@
     [prepared-operands : (__tl_dyn-array ctfe_support.CompilerCtfeValue)]
     [prepared-count : i64]
     [prepared : bool]) : MacroNativeStdlibTlciResult
-    (if (not
-      (macro-tlci-resolved-catalog-open? (tc-global-shared-view catalog)))
+    (if (not (macro-tlci-resolved-catalog-open? catalog))
       MacroNativeStdlibTlciResult.No
       (let
         [count : i64
@@ -102414,7 +102313,7 @@
                 (begin
                   (macro-dependency-tlci-note-if!
                     route-state
-                    (tc-global-shared-view catalog)
+                    catalog
                     tc-dependency-tlci-parameter-name-lookups)
                   (match (ctfe_support.ctfe-env-lookup-id env pname)
                     [(ctfe_support.CtfeMaybeValue.Some value)
@@ -102441,13 +102340,12 @@
                 (ctfe_support.ctfe-env-macro-state env))
               (cfg
                 compile-profile
-                (if (macro-tlci-resolved-catalog-dependency?
-                  (tc-global-shared-view catalog))
+                (if (macro-tlci-resolved-catalog-dependency? catalog)
                   unit
                   (compiler-tc-stdlib-tlci-entry-invoke-start!)))
               (macro-dependency-tlci-note-if!
                 route-state
-                (tc-global-shared-view catalog)
+                catalog
                 tc-dependency-tlci-native-dispatches)
               (let
                 [dispatch-result : tlci_loader_support.ResultTlciMacroDispatch
@@ -102458,8 +102356,7 @@
                 (begin
                   (cfg
                     compile-profile
-                    (if (macro-tlci-resolved-catalog-dependency?
-                      (tc-global-shared-view catalog))
+                    (if (macro-tlci-resolved-catalog-dependency? catalog)
                       unit
                       (compiler-tc-stdlib-tlci-entry-invoke-finish!)))
                   (match dispatch-result
@@ -102523,7 +102420,7 @@
                                 (cfg
                                   compile-profile
                                   (if (macro-tlci-resolved-catalog-dependency?
-                                    (tc-global-shared-view catalog))
+                                    catalog)
                                     unit
                                     (begin
                                       (set!
@@ -102569,7 +102466,7 @@
                                     (begin
                                       (macro-dependency-tlci-note-if!
                                         route-state
-                                        (tc-global-shared-view catalog)
+                                        catalog
                                         tc-dependency-tlci-native-expr-results)
                                       (if prepared
                                         (macro-dependency-tlci-note-if!
@@ -102606,7 +102503,7 @@
                                   (cfg
                                     compile-profile
                                     (if (macro-tlci-resolved-catalog-dependency?
-                                      (tc-global-shared-view catalog))
+                                      catalog)
                                       unit
                                       (set!
                                         compiler-tc-macro-stdlib-tlci-shell-learns
@@ -102615,7 +102512,7 @@
                                           1))))
                                   (macro-dependency-tlci-note-if!
                                     route-state
-                                    (tc-global-shared-view catalog)
+                                    catalog
                                     tc-dependency-tlci-shell-learns)
                                   (macro-dependency-tlci-note-if!
                                     route-state
@@ -102777,7 +102674,7 @@
 (cfg
   embedded-stdlib-tlci
   (define (macro-note-embedded-tlci-resolved-fallback!
-    [catalog : MacroTlciResolvedCatalog]) : unit
+    [catalog : (& catalog MacroTlciResolvedCatalog)]) : unit
     (if (macro-tlci-resolved-catalog-dependency? catalog)
       unit
       (cfg
@@ -102988,8 +102885,7 @@
                           (MacroDirectStdlibTlciResult.Err (box diag)))]
                       [(MacroNativeStdlibTlciResult.Shell)
                         (begin
-                          (macro-note-embedded-tlci-resolved-fallback!
-                            (tc-global-shared-view catalog))
+                          (macro-note-embedded-tlci-resolved-fallback! catalog)
                           (macro-dependency-tlci-note-if!
                             (tc-context-macro-state ctx)
                             catalog
@@ -103074,7 +102970,7 @@
 
 (define (macro-adopt-transformer-env-pools!
   [ctx : TcContext]
-  [env : ctfe_support.CtfeEnv]) : unit
+  [env : (& env ctfe_support.CtfeEnv)]) : unit
   ;; CTFE syntax builders append through the transformer's retained syntax
   ;; context. Publish that newer state through the caller-owned cells before
   ;; hygiene reads the active pool boundary.
@@ -103214,9 +103110,7 @@
             fallback-module-id
             macro-name-id
             (tc-global-shared-view params)))
-        (macro-hygiene-produced-eval-start!
-          (tc-context-macro-state ctx)
-          (tc-global-shared-view env))
+        (macro-hygiene-produced-eval-start! (tc-context-macro-state ctx) env)
         (cfg compile-profile (compiler-tc-walk-native-dispatch-start!))
         (cfg compile-profile (compiler-tc-macro-profile-start))
         (match (let
@@ -103235,9 +103129,7 @@
             native-result))
           [(MacroNativeStdlibTlciResult.Value value)
             (begin
-              (macro-adopt-transformer-env-pools!
-                ctx
-                (tc-global-shared-view env))
+              (macro-adopt-transformer-env-pools! ctx env)
               (cfg
                 compile-profile
                 (compiler-tc-macro-profile-finish
@@ -104373,8 +104265,7 @@
     (tc-global-shared-view call-expr))
     [(ResultMacroExpr.Ok expanded)
       (ResultMacroExpr.Ok
-        (if (macro-private-place-bridge-name?
-          (tc-global-shared-view macro-name))
+        (if (macro-private-place-bridge-name? macro-name)
           ;; These private one-epoch source bridges only materialize parser AST
           ;; operations. Keeping their expansion transparent avoids treating an
           ;; implementation spelling as a user-facing diagnostic frame and
@@ -105121,7 +105012,7 @@
               (macro-match-arms-first-fire-index
                 (tc-context-macro-state ctx)
                 (tc-context-expr-bases ctx)
-                (tc-global-shared-view arms))]
+                arms)]
             (match (macro-expand-node
               ctx
               env
@@ -106777,7 +106668,7 @@
                                               definition-module
                                               declaration-id
                                               call-ctx.shared)
-                                            (tc-global-shared-view params)
+                                            params
                                             1)
                                           (tc-global-shared-view call-expr)
                                           parse-dispatch)
@@ -106952,8 +106843,8 @@
                                       (macro-decl-module-display
                                         definition-module)
                                       definition-module
-                                      (tc-global-shared-view params)
-                                      (tc-global-shared-view expanded-args))]
+                                      params
+                                      expanded-args)]
                                   [shortcut-catalog : MacroGeneratedModuleCatalogEntry
                                     (if shortcut-safe?
                                       (macro-generated-module-memo-get-catalog
@@ -107054,7 +106945,7 @@
                                                     definition-module
                                                     declaration-id
                                                     call-ctx.shared)
-                                                  (tc-global-shared-view params)
+                                                  params
                                                   1)
                                                 (tc-global-shared-view
                                                   call-expr)
@@ -107841,7 +107732,7 @@
             name-text)))]
     [_ (TcMaybeString.No)]))
 
-(define (macro-call-callee-last-dot [name : String]) : i64
+(define (macro-call-callee-last-dot [name : (& name str)]) : i64
   (let
     [i : i64 0]
     [last-dot : i64 -1]
@@ -107864,7 +107755,7 @@
         (tc-hygiene-global-call-name name)
         name)]
     [source : String lookup]
-    [last-dot : i64 (macro-call-callee-last-dot (tc-global-shared-view source))]
+    [last-dot : i64 (macro-call-callee-last-dot source)]
     [n : i64 (string.string-length source)]
     (if (and (>= last-dot 0) (< last-dot (- n 1)))
       (string.substring source (+ last-dot 1) (- n (+ last-dot 1)))
@@ -108173,7 +108064,7 @@
 (define (macro-match-arms-first-fire-index
   [state : TcMacroState]
   [expr-bases : i64]
-  [arms : ast.AstMatchArmList]) : i64
+  [arms : (& arms ast.AstMatchArmList)]) : i64
   (macro-match-arms-first-fire-index-at state expr-bases (& arms) 0))
 
 (define (macro-match-arms-first-fire-index-at
@@ -109387,10 +109278,7 @@
                 (tc-context-source-names cur-ctx)
                 (tc-context-body-state cur-ctx))]
             [_definition-paths : unit
-              (macro-definition-paths-index!
-                next-ctx
-                (tc-global-shared-view next-decls)
-                next-paths)]
+              (macro-definition-paths-index! next-ctx next-decls next-paths)]
             (begin
               (tc-macro-walk-set! state macro-expand-active-module "")
               (macro-expand-set-macro-names!
@@ -110783,8 +110671,8 @@
                             [_definition-paths : unit
                               (macro-definition-paths-index!
                                 ctx
-                                (tc-global-shared-view active-decls)
-                                (tc-global-shared-view active-paths))]
+                                active-decls
+                                active-paths)]
                             (match (tc-stdlib-comptime-surface-ok-for-macro ctx)
                               [(ResultTcUnit.Ok)
                                 (match (tc-build-top-env ctx active-program)
@@ -110999,7 +110887,7 @@
 ;; back into a filesystem request. File-backed modules still use the loader's
 ;; source-path/summary authority check, even when their module name is seen.
 (define (macro-materialize-provided-module?
-  [load-state : cload.CompilerLoadSessionState]
+  [load-state : (& load-state cload.CompilerLoadSessionState)]
   [expected : ast.AstMaybeModuleName]
   [seen : sym_i64_env.SymI64Env]) : bool
   (match expected
@@ -111107,7 +110995,7 @@
                   (tc-global-shared-view resolved)
                   expected)]
               (match (if (macro-materialize-provided-module?
-                (tc-global-shared-view load-state)
+                load-state
                 expected
                 seen)
                 (cload.ResultCompilerLoadWithPaths.Ok
@@ -112207,7 +112095,7 @@
         (tc-type-env-scoped-carrier-bind-params
           ctx
           (tc-type-env-scoped-carrier-from-env global-env)
-          (tc-global-shared-view registered-params))
+          registered-params)
         (tc-global-shared-view resolved-ret))]
     [env : TcTypeEnv
       (tc-type-env-scoped-carrier-env (tc-global-shared-view carrier))]
@@ -112273,7 +112161,7 @@
                         ctx
                         (tc-context-expr-bases ctx)
                         env
-                        (tc-global-shared-view registered-params)
+                        registered-params
                         body-box
                         resolved-ret)
                         [(ResultTcUnit.Ok)
@@ -113355,8 +113243,8 @@
 ;; operations. Every site remains a semantic error for an unsupported V, but
 ;; one macro request should report the identical capability failure only once.
 (define (tc-generated-hashmap-clone-diagnostic?
-  [module : String]
-  [message : String]) : bool
+  [module : (& module str)]
+  [message : (& message str)]) : bool
   (and
     (tc-diag-string-prefix? module "stdlib.hashmap.generated.")
     (tc-diag-string-prefix? message "typecheck: clone unsupported type ")))
@@ -113416,7 +113304,9 @@
       (tc-decl-poison-name module-id (ast.ast-decl-box-shared-view inner))]
     [_ TcMaybePoisonName.No]))
 
-(define (tc-poison-name-list-bind [env : TcTypeEnv] [names : TcPoisonNameList]) : TcTypeEnv
+(define (tc-poison-name-list-bind
+  [env : TcTypeEnv]
+  [names : (& names TcPoisonNameList)]) : TcTypeEnv
   (if (= names.len 0)
     env
     (let
@@ -113652,12 +113542,12 @@
                                 cur-global-env
                                 (tc-poison-name-list-bind
                                   (tc-hygiene-global-env next-local-env)
-                                  (tc-global-shared-view poison-names)))
+                                  poison-names))
                               (set!
                                 cur-local-env
                                 (tc-poison-name-list-bind
                                   next-local-env-copy
-                                  (tc-global-shared-view poison-names))))]
+                                  poison-names)))]
                           [(ResultTcModuleLocalEnv.Err message)
                             (begin
                               (cfg
@@ -113727,7 +113617,7 @@
                               [resolved-type-module-id : i64
                                 (tc-context-type-module-id-for-path-owner
                                   dotted-modules
-                                  (tc-global-shared-view decl-path)
+                                  decl-path
                                   path-owner-id)]
                               (begin
                                 (set! type-module-cache-valid true)
@@ -113818,8 +113708,8 @@
                                       (& decl-diag))]
                                   [hashmap-clone : bool
                                     (tc-generated-hashmap-clone-diagnostic?
-                                      (tc-global-shared-view cur-module)
-                                      (tc-global-shared-view diag-message))]
+                                      cur-module
+                                      diag-message)]
                                   [duplicate-hashmap-clone : bool
                                     (and
                                       hashmap-clone
@@ -113886,7 +113776,7 @@
     (tc-prefix-snapshot-cache-prepare-for-job!
       prefix-cache
       (tc-prefix-snapshot-cache-provenance-from-job
-        (tc-global-shared-view load-state)
+        load-state
         pools
         source-names))
     (tc-nominal-owner-cache-reset-for-job! body-state.job-state)

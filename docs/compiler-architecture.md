@@ -513,6 +513,27 @@ The encoder does not select exports from package declarations or publish an
 archive. Its inline oracle test compares all seven payloads in a maintained
 LLVM AMD64 fixture, including the empty-export support objects.
 
+Embedded link policy is read by `src/linker_coff_directive_reader.tl`. The
+object reader passes a section header summary (object identity, section
+number, name, characteristics, relocation and line-number counts) and the
+bounds of the section data in the object bytes. The reader admits only a
+`.drectve` section with `IMAGE_SCN_LNK_INFO` and no relocations or line numbers.
+It tokenizes whitespace-separated options whose payloads may contain quoted
+segments. Quote bytes are dropped. A backslash before a quote, adjacent quotes,
+quotes in an option name, and NUL are rejected, as is non-ASCII text without a
+UTF-8 BOM, because a host ANSI code page is never consulted. With a BOM, every
+token must be strict UTF-8. The only admitted options are `/DEFAULTLIB`,
+`/NODEFAULTLIB`, `/INCLUDE`, `/EXPORT`, `/ALTERNATENAME`, `/FAILIFMISMATCH`,
+`/DELAYLOAD` (file name only), `/DELAY:UNLOAD` and `/DELAY:NOBIND`, matched
+ASCII case-insensitively. Each becomes an ordered typed record carrying its
+exact byte range and written spelling. Any other option, including response
+files and output, search-path, section-layout and security directives, fails
+closed with the object, section, byte range and admitted alternatives. Byte,
+option and token counts are bounded by caller limits. Reading is pure: default
+library order and suppression, forced roots, aliases and mismatch keys belong
+to #7102, exports to #7125, delay loads to #7094, and the external-link
+preflight to #7423. Directive text is never forwarded to another tool.
+
 The fresh-artifact pipeline prepares the runtime once for checked-surface
 capture, then passes that same result to artifact finishing. Finishers accept
 bytes and text, not AST/IR inputs; they cannot lower again or regenerate side

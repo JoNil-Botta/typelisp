@@ -1978,7 +1978,6 @@
     (compiler-builtin-load-ctfe-id! insert-missing 182 "match")
     (compiler-builtin-load-ctfe-id! insert-missing 183 "struct-get")
     (compiler-builtin-load-ctfe-id! insert-missing 184 "array-set!")
-    (compiler-builtin-load-ctfe-id! insert-missing 185 "array-take!")
     (compiler-builtin-load-ctfe-id! insert-missing 186 "cast")
     (compiler-builtin-load-ctfe-id! insert-missing 187 "ann")
     (compiler-builtin-load-ctfe-id! insert-missing 188 "tuple-ref")

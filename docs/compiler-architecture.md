@@ -383,7 +383,7 @@ that call site as a structured related location.
 Write authority over globals (SPEC §4.4.2) is enforced in the move checker's
 write arms, so other nodes pay nothing. Each write-capable arm of
 `tc-move-check-expr` (plain and dotted `set!`, field/tuple/element/`deref`
-writes, `replace!`, `array-take!`, the private dynamic-array push/take, and
+writes, `replace!`, the private dynamic-array push/take, and
 mutable `Borrow`) calls `tc-move-foreign-global-place-check` or
 `tc-move-foreign-global-set-check` before its own rules. The check resolves the
 projection root through the same symbol-handle path as the global-move rule and

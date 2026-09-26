@@ -1013,9 +1013,6 @@
   ;; second operand is a parallel bool liveness bitmap; the result is `(Tuple
   ;; bool T)` whose payload is meaningful only when its leading flag is true.
   (ArrayTake i64 i64 i64)
-  ;; Public checked mem::take-style operation for fixed-array places. The old
-  ;; element is returned and the selected slot is immediately reinitialized.
-  (FixedArrayTake i64 i64)
   (ArrayPush i64 i64)
   (StringRef i64 i64)
   (While i64 i64)
@@ -6743,9 +6740,6 @@
 (define (ast-expr-array-take [target : i64] [live : i64] [index : i64]) : i64
   (ast-node-push (AstExpr.ArrayTake target live index)))
 
-(define (ast-expr-fixed-array-take [target : i64] [index : i64]) : i64
-  (ast-node-push (AstExpr.FixedArrayTake target index)))
-
 (define (ast-expr-replace [place : i64] [replacement : i64]) : i64
   (ast-node-push (AstExpr.Replace place replacement)))
 
@@ -7163,12 +7157,6 @@
   [live : i64]
   [index : i64]) : i64
   (ast-node-pool-context-expr-push pools (AstExpr.ArrayTake target live index)))
-
-(define (ast-expr-fixed-array-take-with-pools
-  [pools : AstNodePoolContext]
-  [target : i64]
-  [index : i64]) : i64
-  (ast-node-pool-context-expr-push pools (AstExpr.FixedArrayTake target index)))
 
 (define (ast-expr-replace-with-pools
   [pools : AstNodePoolContext]
@@ -9651,10 +9639,6 @@
         (ast-compaction-remap-expr-id remap target)
         (ast-compaction-remap-expr-id remap live)
         (ast-compaction-remap-expr-id remap index))]
-    [(AstExpr.FixedArrayTake target index)
-      (AstExpr.FixedArrayTake
-        (ast-compaction-remap-expr-id remap target)
-        (ast-compaction-remap-expr-id remap index))]
     [(AstExpr.Replace place replacement)
       (AstExpr.Replace
         (ast-compaction-remap-expr-id remap place)
@@ -10386,7 +10370,6 @@
     [(AstExpr.ArrayRef _ _) 14]
     [(AstExpr.ArraySet _ _ _) 15]
     [(AstExpr.ArrayTake _ _ _) 75]
-    [(AstExpr.FixedArrayTake _ _) 76]
     [(AstExpr.ArrayPush _ _) 41]
     [(AstExpr.StringRef _ _) 16]
     [(AstExpr.While _ _) 17]

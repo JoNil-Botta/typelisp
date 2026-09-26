@@ -82,7 +82,7 @@ dyn_array_reference_elements|tests/integration/dyn_array_reference_elements.tl|4
 array_qualified_macros|tests/integration/array_qualified_macros.tl|42|-|-|-
 fixed_array_core_ops|tests/integration/fixed_array_core_ops.tl|42|-|-|-
 array_stride_24byte|tests/integration/array_stride_24byte.tl|42|-|-|-
-fixed_array_take|tests/integration/fixed_array_take.tl|42|-|-|stdlib/string.tl
+replace_fixed_array_elements|tests/integration/replace_fixed_array_elements.tl|42|-|-|stdlib/string.tl stdlib/test.tl
 replace_places|tests/integration/replace_places.tl|42|-|-|stdlib/string.tl stdlib/test.tl stdlib/comptime.tl
 replace_large_values|tests/integration/replace_large_values.tl|42|-|-|stdlib/test.tl
 slice_whole_array|tests/integration/slice_whole_array.tl|42|-|-|-

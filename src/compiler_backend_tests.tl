@@ -797,39 +797,39 @@
   (and
     (not
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         "    call tl_atomic_i64_load_ptr\n"))
     (not
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         "    call tl_atomic_i64_store_ptr\n"))
     (not
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         "    call tl_atomic_i64_add_ptr\n"))
     (not
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         "    call tl_atomic_i64_fetch_add_ptr\n"))
     (not
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         "    call tl_atomic_i64_cas_ptr\n"))
     (not
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         "    call tl_atomic_i32_load_ptr\n"))
     (not
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         "    call tl_atomic_i32_store_ptr\n"))
     (not
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         "    call tl_atomic_i32_add_ptr\n"))
     (not
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         "    call tl_atomic_i32_fetch_add_ptr\n"))
     (not
       (compiler_backend.compiler-backend-string-contains?
@@ -983,15 +983,15 @@
   (and
     (not
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         "    call tl_volatile_i64_load_ptr\n"))
     (not
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         "    call tl_volatile_i64_store_ptr\n"))
     (not
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         "    call tl_volatile_i32_load_ptr\n"))
     (not
       (compiler_backend.compiler-backend-string-contains?
@@ -1018,10 +1018,7 @@
       (owned_view.compiler-owned-shared-view asm)
       "    movl %esi, (%rdi)\n"
       1)
-    (not
-      (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
-        "    xchgq "))
+    (not (compiler_backend.compiler-backend-string-contains? asm "    xchgq "))
     (not (compiler_backend.compiler-backend-string-contains? asm "    xchgl "))))
 
 (define (compiler-backend-volatile-intrinsic-windows-asm-ok? [asm : String]) : bool
@@ -1044,10 +1041,7 @@
       (owned_view.compiler-owned-shared-view asm)
       "    movl %edx, (%rcx)\n"
       1)
-    (not
-      (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
-        "    xchgq "))
+    (not (compiler_backend.compiler-backend-string-contains? asm "    xchgq "))
     (not (compiler_backend.compiler-backend-string-contains? asm "    xchgl "))))
 
 (define (compiler-backend-volatile-intrinsic-shape-ok?) : bool
@@ -1173,31 +1167,31 @@
 (define (compiler-backend-runtime-atomic-linux-wrapper-asm-ok? [asm : String]) : bool
   (and
     (compiler_backend.compiler-backend-string-contains?
-      (owned_view.compiler-owned-shared-view asm)
+      asm
       "tl_atomic_i64_load_ptr:\n    movq (%rdi), %rax\n    ret\n")
     (compiler_backend.compiler-backend-string-contains?
-      (owned_view.compiler-owned-shared-view asm)
+      asm
       "tl_atomic_i64_store_ptr:\n    xchgq %rsi, (%rdi)\n    ret\n")
     (compiler_backend.compiler-backend-string-contains?
-      (owned_view.compiler-owned-shared-view asm)
+      asm
       "tl_atomic_i64_add_ptr:\n    lock addq %rsi, (%rdi)\n    ret\n")
     (compiler_backend.compiler-backend-string-contains?
-      (owned_view.compiler-owned-shared-view asm)
+      asm
       "tl_atomic_i64_fetch_add_ptr:\n    movq %rsi, %rax\n    lock xaddq %rax, (%rdi)\n    ret\n")
     (compiler_backend.compiler-backend-string-contains?
-      (owned_view.compiler-owned-shared-view asm)
+      asm
       "tl_atomic_i64_cas_ptr:\n    movq %rsi, %rax\n    lock cmpxchgq %rdx, (%rdi)\n    ret\n")
     (compiler_backend.compiler-backend-string-contains?
-      (owned_view.compiler-owned-shared-view asm)
+      asm
       "tl_atomic_i32_load_ptr:\n    movl (%rdi), %eax\n    ret\n")
     (compiler_backend.compiler-backend-string-contains?
-      (owned_view.compiler-owned-shared-view asm)
+      asm
       "tl_atomic_i32_store_ptr:\n    xchgl %esi, (%rdi)\n    ret\n")
     (compiler_backend.compiler-backend-string-contains?
-      (owned_view.compiler-owned-shared-view asm)
+      asm
       "tl_atomic_i32_add_ptr:\n    lock addl %esi, (%rdi)\n    ret\n")
     (compiler_backend.compiler-backend-string-contains?
-      (owned_view.compiler-owned-shared-view asm)
+      asm
       "tl_atomic_i32_fetch_add_ptr:\n    movl %esi, %eax\n    lock xaddl %eax, (%rdi)\n    ret\n")
     (compiler_backend.compiler-backend-string-contains?
       asm
@@ -1206,31 +1200,31 @@
 (define (compiler-backend-runtime-atomic-windows-wrapper-asm-ok? [asm : String]) : bool
   (and
     (compiler_backend.compiler-backend-string-contains?
-      (owned_view.compiler-owned-shared-view asm)
+      asm
       "tl_atomic_i64_load_ptr:\n    movq (%rcx), %rax\n    ret\n")
     (compiler_backend.compiler-backend-string-contains?
-      (owned_view.compiler-owned-shared-view asm)
+      asm
       "tl_atomic_i64_store_ptr:\n    xchgq %rdx, (%rcx)\n    ret\n")
     (compiler_backend.compiler-backend-string-contains?
-      (owned_view.compiler-owned-shared-view asm)
+      asm
       "tl_atomic_i64_add_ptr:\n    lock addq %rdx, (%rcx)\n    ret\n")
     (compiler_backend.compiler-backend-string-contains?
-      (owned_view.compiler-owned-shared-view asm)
+      asm
       "tl_atomic_i64_fetch_add_ptr:\n    movq %rdx, %rax\n    lock xaddq %rax, (%rcx)\n    ret\n")
     (compiler_backend.compiler-backend-string-contains?
-      (owned_view.compiler-owned-shared-view asm)
+      asm
       "tl_atomic_i64_cas_ptr:\n    movq %rdx, %rax\n    lock cmpxchgq %r8, (%rcx)\n    ret\n")
     (compiler_backend.compiler-backend-string-contains?
-      (owned_view.compiler-owned-shared-view asm)
+      asm
       "tl_atomic_i32_load_ptr:\n    movl (%rcx), %eax\n    ret\n")
     (compiler_backend.compiler-backend-string-contains?
-      (owned_view.compiler-owned-shared-view asm)
+      asm
       "tl_atomic_i32_store_ptr:\n    xchgl %edx, (%rcx)\n    ret\n")
     (compiler_backend.compiler-backend-string-contains?
-      (owned_view.compiler-owned-shared-view asm)
+      asm
       "tl_atomic_i32_add_ptr:\n    lock addl %edx, (%rcx)\n    ret\n")
     (compiler_backend.compiler-backend-string-contains?
-      (owned_view.compiler-owned-shared-view asm)
+      asm
       "tl_atomic_i32_fetch_add_ptr:\n    movl %edx, %eax\n    lock xaddl %eax, (%rcx)\n    ret\n")
     (compiler_backend.compiler-backend-string-contains?
       asm
@@ -1286,14 +1280,14 @@
 (define (compiler-backend-runtime-tls-linux-wrapper-asm-ok? [asm : String]) : bool
   (and
     (compiler_backend.compiler-backend-string-contains?
-      (owned_view.compiler-owned-shared-view asm)
+      asm
       "    movq %fs:tl_current_arena@tpoff, %rax\n")
     (compiler_backend.compiler-backend-string-contains?
-      (owned_view.compiler-owned-shared-view asm)
+      asm
       "    movq %rdi, %fs:tl_current_arena@tpoff\n")
     (not
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         "    call tl_tls_current_arena_load\n"))
     (not
       (compiler_backend.compiler-backend-string-contains?
@@ -1303,14 +1297,14 @@
 (define (compiler-backend-runtime-tls-windows-wrapper-asm-ok? [asm : String]) : bool
   (and
     (compiler_backend.compiler-backend-string-contains?
-      (owned_view.compiler-owned-shared-view asm)
+      asm
       "    movq %gs:0x28, %rax\n")
     (compiler_backend.compiler-backend-string-contains?
-      (owned_view.compiler-owned-shared-view asm)
+      asm
       "    movq %rcx, %gs:0x28\n")
     (not
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         "    call tl_tls_current_arena_load\n"))
     (not
       (compiler_backend.compiler-backend-string-contains?
@@ -1412,65 +1406,50 @@
 
 (define (compiler-backend-smoke-function-symbol-ok? [asm : String]) : bool
   (or
-    (compiler_backend.compiler-backend-string-contains?
-      (owned_view.compiler-owned-shared-view asm)
-      ".globl _tl_inc")
+    (compiler_backend.compiler-backend-string-contains? asm ".globl _tl_inc")
     (compiler_backend.compiler-backend-string-contains? asm ".globl _tl_f")))
 
 (define (compiler-backend-smoke-function-call-ok? [asm : String]) : bool
   (or
-    (compiler_backend.compiler-backend-string-contains?
-      (owned_view.compiler-owned-shared-view asm)
-      "    call _tl_inc")
+    (compiler_backend.compiler-backend-string-contains? asm "    call _tl_inc")
     (compiler_backend.compiler-backend-string-contains? asm "    call _tl_f")))
 
 (define (compiler-backend-call-or-jmp-ok? [asm : String] [symbol : String]) : bool
   (or
-    (compiler_backend.compiler-backend-string-contains?
-      (owned_view.compiler-owned-shared-view asm)
-      (str_cat.str-cat
-        "    call "
-        (owned_view.compiler-owned-shared-view symbol)
-        "\n"))
-    (compiler_backend.compiler-backend-string-contains?
-      asm
-      (str_cat.str-cat "    jmp " symbol "\n"))))
+    (let
+      [bound-1
+        (str_cat.str-cat
+          "    call "
+          (owned_view.compiler-owned-shared-view symbol)
+          "\n")]
+      (compiler_backend.compiler-backend-string-contains? asm bound-1))
+    (let
+      [bound-2 (str_cat.str-cat "    jmp " symbol "\n")]
+      (compiler_backend.compiler-backend-string-contains? asm bound-2))))
 
 (define (compiler-backend-asm-ok? [asm : String]) : bool
   (and
     (compiler_backend.backend-and8
+      (compiler_backend.compiler-backend-string-contains? asm ".data\n")
+      (compiler_backend.compiler-backend-string-contains? asm ".text\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
-        ".data\n")
-      (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
-        ".text\n")
-      (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         ".globl _tl_start\n")
-      (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
-        "_tl_start:\n")
-      (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
-        "main:\n")
+      (compiler_backend.compiler-backend-string-contains? asm "_tl_start:\n")
+      (compiler_backend.compiler-backend-string-contains? asm "main:\n")
       (compiler-backend-smoke-function-symbol-ok?
         (owned_view.compiler-owned-shared-view asm))
       (or
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          "_tl_inc")
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          "_tl_f"))
+        (compiler_backend.compiler-backend-string-contains? asm "_tl_inc")
+        (compiler_backend.compiler-backend-string-contains? asm "_tl_f"))
       (compiler-backend-smoke-function-call-ok?
         (owned_view.compiler-owned-shared-view asm)))
     (compiler_backend.backend-and4
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         "    jge .Lf1_while_exit.2\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         "    jle .Lf1_if_else.4\n")
       (compiler_backend.compiler-backend-string-contains?
         asm
@@ -1494,30 +1473,32 @@
   [size : i64]) : bool
   (if (compiler_backend.compiler-backend-fast-alloc-supported-size? size)
     (and
-      (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
-        (str_cat.str-cat "    leaq " (string.int->string size) "(%rax), "))
-      (compiler_backend.compiler-backend-string-contains?
-        asm
-        (str_cat.str-cat
-          "_slow:\n    call .L_tl_alloc"
-          (string.int->string size)
-          "\n")))
+      (let
+        [bound-3
+          (str_cat.str-cat "    leaq " (string.int->string size) "(%rax), ")]
+        (compiler_backend.compiler-backend-string-contains? asm bound-3))
+      (let
+        [bound-4
+          (str_cat.str-cat
+            "_slow:\n    call .L_tl_alloc"
+            (string.int->string size)
+            "\n")]
+        (compiler_backend.compiler-backend-string-contains? asm bound-4)))
     false))
 
 (define (compiler-backend-string-contains-alloc-size?
   [asm : String]
   [size : i64]) : bool
   (or
-    (compiler_backend.compiler-backend-string-contains?
-      (owned_view.compiler-owned-shared-view asm)
-      (compiler-backend-alloc-generic-call-text size "%rdi"))
-    (compiler_backend.compiler-backend-string-contains?
-      (owned_view.compiler-owned-shared-view asm)
-      (compiler-backend-alloc-generic-call-text size "%rcx"))
-    (compiler_backend.compiler-backend-string-contains?
-      (owned_view.compiler-owned-shared-view asm)
-      (compiler-backend-alloc-fixed-call-text size))
+    (let
+      [bound-5 (compiler-backend-alloc-generic-call-text size "%rdi")]
+      (compiler_backend.compiler-backend-string-contains? asm bound-5))
+    (let
+      [bound-6 (compiler-backend-alloc-generic-call-text size "%rcx")]
+      (compiler_backend.compiler-backend-string-contains? asm bound-6))
+    (let
+      [bound-7 (compiler-backend-alloc-fixed-call-text size)]
+      (compiler_backend.compiler-backend-string-contains? asm bound-7))
     (compiler-backend-string-contains-inline-alloc-size? asm size)))
 
 (define (compiler-backend-alloc-call-count [asm : String]) : i64
@@ -2000,18 +1981,27 @@
       (compiler-backend-object-corrupt-call-abi-eligibility-ok?)
       (compiler_backend.backend-and4
         (not
-          (compiler_backend.compiler-backend-object-abi-type-supported?
-            (compiler_ast_types.AstType.F64)))
+          (let
+            [bound-8 (compiler_ast_types.AstType.F64)]
+            (compiler_backend.compiler-backend-object-abi-type-supported?
+              bound-8)))
         (not
-          (compiler_backend.compiler-backend-object-abi-type-supported?
-            (compiler_ast_types.AstType.Unit)))
+          (let
+            [bound-9 (compiler_ast_types.AstType.Unit)]
+            (compiler_backend.compiler-backend-object-abi-type-supported?
+              bound-9)))
         (not
-          (compiler_backend.compiler-backend-object-abi-type-supported?
-            (compiler_ast_types.AstType.String)))
+          (let
+            [bound-10 (compiler_ast_types.AstType.String)]
+            (compiler_backend.compiler-backend-object-abi-type-supported?
+              bound-10)))
         (not
-          (compiler_backend.compiler-backend-object-abi-type-supported?
-            (compiler_ast_types.AstType.Struct
-              (ci.intern "object_abi_aggregate"))))))))
+          (let
+            [bound-11
+              (compiler_ast_types.AstType.Struct
+                (ci.intern "object_abi_aggregate"))]
+            (compiler_backend.compiler-backend-object-abi-type-supported?
+              bound-11)))))))
 
 (define (compiler-backend-object-image-source) : String
   "(extern (foreign-call [arg0 : i64]) : i64 (:abi c) (:symbol \"foreign_exact\"))
@@ -2368,43 +2358,47 @@
             (& compiler_backend.compiler-backend-pic-image-base-label))]
         (and
           (compiler_backend.backend-and8
-            (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
-              (str_cat.str-cat
-                (owned_view.compiler-owned-shared-view base-label)
-                ":\n"
-                ""))
+            (let
+              [bound-12
+                (str_cat.str-cat
+                  (owned_view.compiler-owned-shared-view base-label)
+                  ":\n"
+                  "")]
+              (compiler_backend.compiler-backend-string-contains? asm bound-12))
             (>=
               (compiler_backend.compiler-backend-string-count
                 (owned_view.compiler-owned-shared-view asm)
                 "    .quad 0\n")
               2)
             (not
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
-                (str_cat.str-cat " - " base-label "\n")))
+              (let
+                [bound-13 (str_cat.str-cat " - " base-label "\n")]
+                (compiler_backend.compiler-backend-string-contains?
+                  asm
+                  bound-13)))
             (not
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
-                (compiler_backend.compiler-backend-pic-quad-pattern
-                  (owned_view.compiler-owned-shared-view data-label))))
+              (let
+                [bound-14
+                  (compiler_backend.compiler-backend-pic-quad-pattern
+                    data-label)]
+                (compiler_backend.compiler-backend-string-contains?
+                  asm
+                  bound-14)))
             (not
-              (compiler_backend.compiler-backend-string-contains?
-                asm
-                (compiler_backend.compiler-backend-pic-quad-pattern
-                  (owned_view.compiler-owned-shared-view fat-label))))
+              (let
+                [bound-15
+                  (compiler_backend.compiler-backend-pic-quad-pattern fat-label)]
+                (compiler_backend.compiler-backend-string-contains?
+                  asm
+                  bound-15)))
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view fixups)
+              fixups
               "typelisp-pic-fixups v1\n")
+            (compiler_backend.compiler-backend-string-contains? fixups "data ")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view fixups)
-              "data ")
-            (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view fixups)
+              fixups
               "rodata "))
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view fixups)
-            data-label)
+          (compiler_backend.compiler-backend-string-contains? fixups data-label)
           (compiler_backend.compiler-backend-string-contains? fixups fat-label)))]
     [(compiler_backend.ResultCompilerBackendPic.Err _) false]))
 
@@ -2413,10 +2407,13 @@
     (compiler-backend-pic-extern-source))
     [(compiler_backend.ResultCompilerBackendPic.Ok _) false]
     [(compiler_backend.ResultCompilerBackendPic.Err diag)
-      (compiler_backend.compiler-backend-string-contains?
-        (compiler_diagnostic.compiler-diagnostic-render
-          (compiler_diagnostic.compiler-diagnostic-box-shared-view diag))
-        "backend: --pic supports only internal references")]))
+      (let
+        [bound-16
+          (compiler_diagnostic.compiler-diagnostic-render
+            (compiler_diagnostic.compiler-diagnostic-box-shared-view diag))]
+        (compiler_backend.compiler-backend-string-contains?
+          bound-16
+          "backend: --pic supports only internal references"))]))
 
 (define (compiler-backend-pic-object-helper-ok?) : bool
   (let
@@ -3214,51 +3211,35 @@
 (define (compiler-backend-implicit-main-linux-entry-ok? [asm : String]) : bool
   (compiler_backend.backend-and8
     (compiler_backend.compiler-backend-string-contains?
-      (owned_view.compiler-owned-shared-view asm)
+      asm
       ".globl _tl_start\n")
+    (compiler_backend.compiler-backend-string-contains? asm "_tl_start:\n")
+    (compiler_backend.compiler-backend-string-contains? asm ".globl main\n")
+    (compiler_backend.compiler-backend-string-contains? asm "main:\n")
+    (compiler_backend.compiler-backend-string-contains? asm "    call main\n")
     (compiler_backend.compiler-backend-string-contains?
-      (owned_view.compiler-owned-shared-view asm)
-      "_tl_start:\n")
-    (compiler_backend.compiler-backend-string-contains?
-      (owned_view.compiler-owned-shared-view asm)
-      ".globl main\n")
-    (compiler_backend.compiler-backend-string-contains?
-      (owned_view.compiler-owned-shared-view asm)
-      "main:\n")
-    (compiler_backend.compiler-backend-string-contains?
-      (owned_view.compiler-owned-shared-view asm)
-      "    call main\n")
-    (compiler_backend.compiler-backend-string-contains?
-      (owned_view.compiler-owned-shared-view asm)
+      asm
       "    xorl %eax, %eax\n")
     (compiler_backend.compiler-backend-string-contains? asm ".text\n")
     true))
 
 (define (compiler-backend-implicit-main-linux-no-entry-ok? [asm : String]) : bool
   (and
-    (compiler_backend.compiler-backend-string-contains?
-      (owned_view.compiler-owned-shared-view asm)
-      ".text\n")
+    (compiler_backend.compiler-backend-string-contains? asm ".text\n")
     (not
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         ".globl _tl_start\n"))
     (not
-      (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
-        "_tl_start:\n"))
+      (compiler_backend.compiler-backend-string-contains? asm "_tl_start:\n"))
     (not (compiler_backend.compiler-backend-string-contains? asm "main:\n"))))
 
 (define (compiler-backend-implicit-main-windows-entry-ok? [asm : String]) : bool
   (compiler_backend.backend-and4
+    (compiler_backend.compiler-backend-string-contains? asm ".globl main\n")
+    (compiler_backend.compiler-backend-string-contains? asm "main:\n")
     (compiler_backend.compiler-backend-string-contains?
-      (owned_view.compiler-owned-shared-view asm)
-      ".globl main\n")
-    (compiler_backend.compiler-backend-string-contains?
-      (owned_view.compiler-owned-shared-view asm)
-      "main:\n")
-    (compiler_backend.compiler-backend-string-contains?
-      (owned_view.compiler-owned-shared-view asm)
+      asm
       "    xorl %eax, %eax\n")
     (not (compiler_backend.compiler-backend-string-contains? asm "\n_start:\n"))))
 
@@ -3302,22 +3283,20 @@
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           ".L_tl_str_data_l2_13861_13991:")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           ".L_tl_str_l2_13861_13991:")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    .string \"hi\"\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    .quad .L_tl_str_data_l2_13861_13991\n")
+        (compiler_backend.compiler-backend-string-contains? asm "    .quad 2\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          "    .quad 2\n")
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "_tl_greeting:\n    .quad .L_tl_str_l2_13861_13991\n")
         (compiler_backend.compiler-backend-string-contains?
           asm
@@ -3368,88 +3347,88 @@
         [ok : bool true]
         (begin
           (if (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".globl tl_string_eq\n")
             (set! ok false)
             unit)
           (if (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    call tl_string_eq\n")
             (set! ok false)
             unit)
           (if (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".extern tl_string_eq\n")
             (set! ok false)
             unit)
           (if (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".globl tl_string_to_int\n")
             (set! ok false)
             unit)
           (if (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "tl_string_to_int:\n")
             (set! ok false)
             unit)
           (if (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    call tl_string_to_int\n")
             (set! ok false)
             unit)
           (if (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".extern tl_string_to_int\n")
             (set! ok false)
             unit)
           (if (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".globl tl_int_to_string\n")
             (set! ok false)
             unit)
           (if (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    call tl_int_to_string\n")
             (set! ok false)
             unit)
           (if (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".extern tl_int_to_string\n")
             (set! ok false)
             unit)
           (if (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".globl tl_substring\n")
             (set! ok false)
             unit)
           (if (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    call tl_substring\n")
             (set! ok false)
             unit)
           (if (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".extern tl_substring\n")
             (set! ok false)
             unit)
           (if (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".globl tl_string_concat\n")
             (set! ok false)
             unit)
           (if (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    call tl_string_concat\n")
             (set! ok false)
             unit)
           (if (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".extern tl_string_concat\n")
             (set! ok false)
             unit)
-          (if (compiler_backend.compiler-backend-string-contains?
-            asm
-            (compiler-backend-todo-marker))
+          (if (let
+            [bound-17 (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm bound-17))
             (set! ok false)
             unit)
           ok))]
@@ -3517,42 +3496,42 @@
         (compiler_backend.backend-and4
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               ".globl tl_string_eq\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    call tl_string_eq\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               ".extern tl_string_eq\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               ".globl tl_string_to_int\n")))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    call tl_string_to_int\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".extern tl_string_to_int\n"))
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    call _tl_string_append\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "_tl_string_append\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    call tl_string_concat\n"))
         (not
-          (compiler_backend.compiler-backend-string-contains?
-            asm
-            (compiler-backend-todo-marker))))]
+          (let
+            [bound-18 (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm bound-18))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-windows-external-call-source) : String
@@ -3579,29 +3558,29 @@
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (compiler_backend.backend-and8
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           ".extern external_emit_string\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    call external_emit_string\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".globl external_emit_string\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "\nexternal_emit_string:\n"))
         true
         true
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".extern _write\n"))
         (not
-          (compiler_backend.compiler-backend-string-contains?
-            asm
-            (compiler-backend-todo-marker))))]
+          (let
+            [bound-19 (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm bound-19))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-varargs-ffi-common-source [symbol : String]) : String
@@ -3668,38 +3647,38 @@
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (compiler_backend.backend-and8
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           ".extern tl_cabi_color_make\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           ".extern tl_cabi_color_use\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    call tl_cabi_color_make\n")
         (or
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            (compiler-backend-alloc-generic-call-text 4 "%rdi"))
+          (let
+            [bound-20 (compiler-backend-alloc-generic-call-text 4 "%rdi")]
+            (compiler_backend.compiler-backend-string-contains? asm bound-20))
           (compiler-backend-string-contains-alloc-size?
             (owned_view.compiler-owned-shared-view asm)
             8))
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movl %r8d, (%r10)\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movl (%r10), %r8d\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    call tl_cabi_color_use\n")
         (and
           (not
-            (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
-              (compiler-backend-todo-marker)))
+            (let
+              [bound-21 (compiler-backend-todo-marker)]
+              (compiler_backend.compiler-backend-string-contains? asm bound-21)))
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movl %eax, (%r10)\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
@@ -3714,38 +3693,38 @@
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (compiler_backend.backend-and8
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           ".extern tl_cabi_color_make\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           ".extern tl_cabi_color_use\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    call tl_cabi_color_make\n")
         (or
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            (compiler-backend-alloc-generic-call-text 4 "%rcx"))
+          (let
+            [bound-22 (compiler-backend-alloc-generic-call-text 4 "%rcx")]
+            (compiler_backend.compiler-backend-string-contains? asm bound-22))
           (compiler-backend-string-contains-alloc-size?
             (owned_view.compiler-owned-shared-view asm)
             8))
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movl %r8d, (%r10)\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movl (%r10), %r8d\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    call tl_cabi_color_use\n")
         (and
           (not
-            (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
-              (compiler-backend-todo-marker)))
+            (let
+              [bound-23 (compiler-backend-todo-marker)]
+              (compiler_backend.compiler-backend-string-contains? asm bound-23)))
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movl %eax, (%r10)\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
@@ -3804,24 +3783,24 @@
       (compiler_backend.backend-and4
         (compiler_backend.backend-and4
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".extern tl_cabi_wide_make\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".extern tl_cabi_wide_make_ptr\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    call tl_cabi_wide_make\n")
           (compiler-backend-register-indirect-call?
             (owned_view.compiler-owned-shared-view asm)))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "unsupported windows-x86_64 C aggregate ABI"))
         (not
-          (compiler_backend.compiler-backend-string-contains?
-            asm
-            (compiler-backend-todo-marker)))
+          (let
+            [bound-24 (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm bound-24)))
         true)]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
@@ -3849,13 +3828,13 @@
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (compiler_backend.backend-and8
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           ".extern tl_cabi_wide_arg_score\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           ".extern tl_cabi_wide_arg_score_ptr\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    call tl_cabi_wide_arg_score\n")
         (compiler-backend-register-indirect-call?
           (owned_view.compiler-owned-shared-view asm))
@@ -3873,12 +3852,12 @@
             16))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "lower: unsupported windows-x86_64 C aggregate ABI"))
         (not
-          (compiler_backend.compiler-backend-string-contains?
-            asm
-            (compiler-backend-todo-marker))))]
+          (let
+            [bound-25 (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm bound-25))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-c-abi-win64-enum-aggregate-source) : String
@@ -3941,29 +3920,29 @@
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (compiler_backend.backend-and8
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           ".extern tl_win64_status_pick\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           ".extern tl_win64_small_score\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           ".extern tl_win64_wide_score\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           ".extern tl_win64_return_choice_make\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    call tl_win64_status_pick\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    call tl_win64_small_score\n")
         (compiler_backend.backend-and8
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    call tl_win64_wide_score\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    call tl_win64_return_choice_make\n")
           (compiler-backend-register-indirect-call?
             (owned_view.compiler-owned-shared-view asm))
@@ -3980,12 +3959,12 @@
             24)
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "unsupported windows-x86_64 C aggregate ABI"))
           (not
-            (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
-              (compiler-backend-todo-marker)))
+            (let
+              [bound-26 (compiler-backend-todo-marker)]
+              (compiler_backend.compiler-backend-string-contains? asm bound-26)))
           (= (compiler-backend-alloc-call-count asm) 2))
         true)]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
@@ -4016,46 +3995,46 @@
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (compiler_backend.backend-and8
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           ".extern tl_cabi_outer_use\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           ".extern tl_cabi_mixed_use\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           ".extern tl_cabi_vec2_use\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           ".extern tl_cabi_vec2_make\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    call tl_cabi_outer_use\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    call tl_cabi_mixed_use\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    call tl_cabi_vec2_use\n")
         (compiler_backend.backend-and4
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    call tl_cabi_vec2_make\n")
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "%xmm")
+          (compiler_backend.compiler-backend-string-contains? asm "%xmm")
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "unsupported linux-x86_64 C aggregate ABI"))
           (and
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "two-register aggregate return ABI"))
             (not
-              (compiler_backend.compiler-backend-string-contains?
-                asm
-                (compiler-backend-todo-marker))))))]
+              (let
+                [bound-27 (compiler-backend-todo-marker)]
+                (compiler_backend.compiler-backend-string-contains?
+                  asm
+                  bound-27))))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-c-abi-sysv-memory-aggregate-source) : String
@@ -4107,53 +4086,53 @@
             "main")]
         (compiler_backend.backend-and8
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".extern tl_cabi_wide_mem_score\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".extern tl_cabi_wide_mem_score_ptr\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".extern tl_cabi_wide_mem_make\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".extern tl_cabi_nested_mem_score\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    call tl_cabi_wide_mem_score\n")
           (compiler-backend-register-indirect-call?
             (owned_view.compiler-owned-shared-view asm))
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    call tl_cabi_wide_mem_make\n")
           (compiler_backend.backend-and8
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    call tl_cabi_nested_mem_score\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view body)
+              body
               "    movups (%r10), %xmm2\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view body)
+              body
               "    movups %xmm2, 0(%rsp)\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view body)
+              body
               "    movq 16(%r10), %xmm2\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view body)
+              body
               "    movq %xmm2, 16(%rsp)\n")
             (and
               (not
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view body)
+                  body
                   "    leaq 0(%rsp), %r10\n"))
               (not
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view body)
+                  body
                   "16(%r11)"))
               (not
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view body)
+                  body
                   "    subq $32, %rsp\n"))
               (not
                 (compiler_backend.compiler-backend-string-contains?
@@ -4161,12 +4140,14 @@
                   "    addq $32, %rsp\n")))
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "unsupported linux-x86_64 C aggregate ABI"))
             (not
-              (compiler_backend.compiler-backend-string-contains?
-                asm
-                (compiler-backend-todo-marker))))))]
+              (let
+                [bound-28 (compiler-backend-todo-marker)]
+                (compiler_backend.compiler-backend-string-contains?
+                  asm
+                  bound-28))))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-c-abi-sysv-two-register-return-source) : String
@@ -4199,40 +4180,40 @@
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (compiler_backend.backend-and8
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           ".extern tl_cabi_pair_i64_make\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           ".extern tl_cabi_pair_i64_make_ptr\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           ".extern tl_cabi_mix_if_make\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           ".extern tl_cabi_pair_f64_make\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    call tl_cabi_pair_i64_make\n")
         (compiler-backend-register-indirect-call?
           (owned_view.compiler-owned-shared-view asm))
         (compiler_backend.backend-and8
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq %rdx, 8(%r11)\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movsd %xmm0, 8(%r11)\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movsd %xmm1, 8(%r11)\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "two-register aggregate return ABI"))
           (not
-            (compiler_backend.compiler-backend-string-contains?
-              asm
-              (compiler-backend-todo-marker)))
+            (let
+              [bound-29 (compiler-backend-todo-marker)]
+              (compiler_backend.compiler-backend-string-contains? asm bound-29)))
           true
           true
           true)
@@ -4247,10 +4228,10 @@
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (compiler_backend.backend-and4
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".extern snprintf\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movb $1, %al\n")
           (compiler_backend.compiler-backend-string-contains?
             asm
@@ -4263,10 +4244,10 @@
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (compiler_backend.backend-and4
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".extern _snprintf\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq %xmm3, %r9\n")
           (compiler_backend.compiler-backend-string-contains?
             asm
@@ -4285,7 +4266,7 @@
 (define (compiler-backend-c-abi-call-result-store-bool-asm-ok? [asm : String]) : bool
   (and
     (compiler_backend.compiler-backend-string-contains?
-      (owned_view.compiler-owned-shared-view asm)
+      asm
       "    movzbq %al, %rax\n")
     (compiler_backend.compiler-backend-string-contains?
       asm
@@ -4296,7 +4277,7 @@
   (and
     (not
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         "    movzbq %al, %rax\n"))
     (compiler_backend.compiler-backend-string-contains?
       asm
@@ -4376,10 +4357,10 @@
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           ".extern tl_cabi_bool_return\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    call tl_cabi_bool_return\n")
         (compiler_backend.compiler-backend-string-contains?
           asm
@@ -4410,30 +4391,30 @@
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (compiler_backend.backend-and8
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           ".extern tl_test_raw_value\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           ".extern tl_test_raw_fn\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           ".extern tl_test_direct_fn\n")
         (compiler-backend-register-indirect-call?
           (owned_view.compiler-owned-shared-view asm))
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    call tl_test_direct_fn\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "tl_test_raw_fn(%rip)")
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    call tl_test_raw_fn\n"))
         (not
-          (compiler_backend.compiler-backend-string-contains?
-            asm
-            (compiler-backend-todo-marker))))]
+          (let
+            [bound-30 (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm bound-30))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-extern-value-fnptr-ok?) : bool
@@ -4456,10 +4437,10 @@
             "_tl_invoke")]
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view body)
+            body
             "_tl_callback(%rip)")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view body)
+            body
             "    call *(")
           (not
             (compiler_backend.compiler-backend-string-contains?
@@ -4600,11 +4581,11 @@
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    call *%r12\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq %r12, %rax\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -4622,34 +4603,34 @@
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq %rcx, %r10\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    call *%r10\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq %rcx, %rax\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq %rcx, %r12\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq %rcx, %r11\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    call *%rax\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    call *%r12\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    call *%r11\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -4675,30 +4656,30 @@
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq 16(%rbp), %r10\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    call *%r10\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq 16(%rbp), %rax\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq 16(%rbp), %r12\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq 16(%rbp), %r11\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    call *%rax\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    call *%r12\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -4848,31 +4829,29 @@
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq %rcx, %r10\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    call *%r10\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq %rcx, %rax\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq %rcx, %r13\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    call *%r13\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    call *%rax\n"))
         (not
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "    subq $"))
+          (compiler_backend.compiler-backend-string-contains? asm "    subq $"))
         (not
           (compiler_backend.compiler-backend-string-contains? asm "    addq $")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
@@ -4971,17 +4950,17 @@
     [result : bool
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq 0(%rsp), %r9\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq %rax, 0(%r9)\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq %rdx, 8(%r9)\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq 0(%rsp), %r11\n"))
         (not (compiler_backend.compiler-backend-string-contains? asm "(%r11)")))]
     [_restore : unit
@@ -5035,27 +5014,25 @@
     (compiler-backend-program-argv-entry-capture-source))
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (compiler_backend.backend-and8
+        (compiler_backend.compiler-backend-string-contains? asm "_tl_start:\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          "_tl_start:\n")
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq (%rsp), %rax\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq %rax, .L_tl_argc(%rip)\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    leaq 8(%rsp), %rax\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq %rax, .L_tl_argv(%rip)\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    call strlen\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".L_tl_arg_count:\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -5079,36 +5056,36 @@
         (and
           (compiler_backend.backend-and8
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               ".extern _u2eL_tl_arg\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    call _u2eL_tl_arg\n")
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 ".L_tl_arg:\n"))
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 ".L_tl_abort:\n"))
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 ".L_tl_arg_oob_msg:\n"))
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "    call .L_tl_abort\n"))
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "tl_alloc:\n"))
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               ".L_tl_argc:\n"))
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".L_tl_argv:\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
@@ -5121,30 +5098,30 @@
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (compiler_backend.backend-and8
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".extern _u2eL_tl_arg\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    call _u2eL_tl_arg\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               ".L_tl_arg:\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               ".L_tl_abort:\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               ".L_tl_arg_oob_msg:\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    call .L_tl_abort\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    .extern _write\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
@@ -5168,59 +5145,55 @@
       (and
         (compiler_backend.backend-and8
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".L_tl_str_data_l2_12961_16211:")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".L_tl_str_l2_12961_16211:")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    .string \"az\"\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    .quad .L_tl_str_data_l2_12961_16211\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    cmpq %r11, %rax\n"))
           ;; COLD-1: the passing check falls through; the abort stub is
           ;; out of line at the end of the function.
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    jae .Lf0_str_bounds_ok.0.cold\n.Lf0_str_bounds_ok.0:\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    call tl_oob_abort")
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "tl_oob_abort:\n")))
         (compiler_backend.backend-and4
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq 8(%r10), %r8\n")
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "(%r10)")
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "movzbq")
+          (compiler_backend.compiler-backend-string-contains? asm "(%r10)")
+          (compiler_backend.compiler-backend-string-contains? asm "movzbq")
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "movsbq (%r10)")))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq 8(%r10), %rax\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    jge .Lf0_str_bounds_ok"))
         (not
-          (compiler_backend.compiler-backend-string-contains?
-            asm
-            (compiler-backend-todo-marker))))]
+          (let
+            [bound-31 (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm bound-31))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-aggregate-ok?) : bool
@@ -5236,34 +5209,34 @@
               (owned_view.compiler-owned-shared-view asm)
               16))
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".globl _tl___enum_obj_Shape_Nothing\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq $1, (%r10)\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq $2, (%r10)\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    call _tl_Point\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    call _tl_Nothing\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    call _tl_Circle\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    call _tl_Pair\n")))
         (not
-          (compiler_backend.compiler-backend-string-contains?
-            asm
-            (compiler-backend-todo-marker))))]
+          (let
+            [bound-32 (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm bound-32))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-pack-immediate-word-shape-ok?) : bool
@@ -5295,20 +5268,20 @@
         [(compiler_backend.ResultCompilerBackend.Ok reg-asm)
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view stack-asm)
+              stack-asm
               "    movq $7, -16(%rbp)\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view stack-asm)
+              stack-asm
               "    movq $1, -24(%rbp)\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view reg-asm)
+              reg-asm
               "    movl $9, %r12d\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view reg-asm)
+              reg-asm
               "    movl $65, %r13d\n")
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view stack-asm)
+                stack-asm
                 "%rax"))
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -5316,7 +5289,7 @@
                 "%rdx"))
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view reg-asm)
+                reg-asm
                 "%rax"))
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -5380,32 +5353,32 @@
             (and
               (compiler_backend.backend-and8
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view gp-asm)
+                  gp-asm
                   "    movq %r12, %r8\n")
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view gp-asm)
+                  gp-asm
                   "    movq %r13, %r9\n")
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view gp-asm)
+                  gp-asm
                   "    movq %r8, -16(%rbp)\n")
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view gp-asm)
+                  gp-asm
                   "    movq %r9, -24(%rbp)\n")
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view xmm-asm)
+                  xmm-asm
                   "    movsd %xmm3, %xmm2\n")
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view xmm-asm)
+                  xmm-asm
                   "    movsd %xmm4, %xmm3\n")
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view xmm-asm)
+                  xmm-asm
                   "    movsd %xmm2, -16(%rbp)\n")
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view xmm-asm)
+                  xmm-asm
                   "    movsd %xmm3, -24(%rbp)\n"))
               (not
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view gp-asm)
+                  gp-asm
                   "%rax"))
               (not
                 (compiler_backend.compiler-backend-string-contains?
@@ -5413,7 +5386,7 @@
                   "%rdx"))
               (not
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view xmm-asm)
+                  xmm-asm
                   "%xmm0"))
               (not
                 (compiler_backend.compiler-backend-string-contains?
@@ -5451,26 +5424,20 @@
             (compiler-backend-string-contains-alloc-size?
               (owned_view.compiler-owned-shared-view asm)
               16))
+          (compiler_backend.compiler-backend-string-contains? asm "movq $7,")
+          (compiler_backend.compiler-backend-string-contains? asm "movq $1,")
+          (compiler_backend.compiler-backend-string-contains? asm "movq $2,")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "movq $7,")
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "movq $1,")
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "movq $2,")
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".L_tl_str_data_l2_13861_13991:")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    .quad 2\n")
           true)
         (not
-          (compiler_backend.compiler-backend-string-contains?
-            asm
-            (compiler-backend-todo-marker))))]
+          (let
+            [bound-33 (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm bound-33))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-aggregate-global-init-source) : String
@@ -5506,66 +5473,74 @@
         ;; IAG-1 inline aggregate global (e.g. `nested`) reserves its own byte
         ;; size; an 8-byte handle/scalar global reserves 8. Accept any of them.
         (or
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+          (let
+            [bound-34
+              (str_cat.str-cat
+                "    .comm "
+                (owned_view.compiler-owned-shared-view symbol)
+                ", 8, 8\n")]
+            (compiler_backend.compiler-backend-string-contains? asm bound-34))
+          (let
+            [bound-35
+              (str_cat.str-cat
+                "    .comm "
+                (owned_view.compiler-owned-shared-view symbol)
+                ", 16, 8\n")]
+            (compiler_backend.compiler-backend-string-contains? asm bound-35))
+          (let
+            [bound-36
+              (str_cat.str-cat
+                "    .comm "
+                (owned_view.compiler-owned-shared-view symbol)
+                ", 24, 8\n")]
+            (compiler_backend.compiler-backend-string-contains? asm bound-36)))
+        (let
+          [bound-37
             (str_cat.str-cat
-              "    .comm "
-              (owned_view.compiler-owned-shared-view symbol)
-              ", 8, 8\n"))
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            (str_cat.str-cat
-              "    .comm "
-              (owned_view.compiler-owned-shared-view symbol)
-              ", 16, 8\n"))
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            (str_cat.str-cat
-              "    .comm "
-              (owned_view.compiler-owned-shared-view symbol)
-              ", 24, 8\n")))
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          (str_cat.str-cat
-            "    call "
-            (owned_view.compiler-owned-shared-view init-symbol)
-            "\n"))
+              "    call "
+              (owned_view.compiler-owned-shared-view init-symbol)
+              "\n")]
+          (compiler_backend.compiler-backend-string-contains? asm bound-37))
         ;; The startup sequence installs the initializer result: a pointer
         ;; store for a boxed cell, or the IAG-1 byte copy for an inline
         ;; aggregate cell.
         (or
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            (str_cat.str-cat
-              "    movq %rax, "
-              (owned_view.compiler-owned-shared-view symbol)
-              "(%rip)\n"))
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            (str_cat.str-cat
-              "    movups (%rax), %xmm0\n    movups %xmm0, "
-              (owned_view.compiler-owned-shared-view symbol)
-              "(%rip)\n")))
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          (str_cat.str-cat init-symbol ":\n" "")))
+          (let
+            [bound-38
+              (str_cat.str-cat
+                "    movq %rax, "
+                (owned_view.compiler-owned-shared-view symbol)
+                "(%rip)\n")]
+            (compiler_backend.compiler-backend-string-contains? asm bound-38))
+          (let
+            [bound-39
+              (str_cat.str-cat
+                "    movups (%rax), %xmm0\n    movups %xmm0, "
+                (owned_view.compiler-owned-shared-view symbol)
+                "(%rip)\n")]
+            (compiler_backend.compiler-backend-string-contains? asm bound-39)))
+        (let
+          [bound-40 (str_cat.str-cat init-symbol ":\n" "")]
+          (compiler_backend.compiler-backend-string-contains? asm bound-40)))
       (or
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          (str_cat.str-cat
-            "    movq "
-            (owned_view.compiler-owned-shared-view symbol)
-            "(%rip), %rax\n"))
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          (str_cat.str-cat
-            "    movq "
-            (owned_view.compiler-owned-shared-view symbol)
-            "(%rip), %r10\n"))
+        (let
+          [bound-41
+            (str_cat.str-cat
+              "    movq "
+              (owned_view.compiler-owned-shared-view symbol)
+              "(%rip), %rax\n")]
+          (compiler_backend.compiler-backend-string-contains? asm bound-41))
+        (let
+          [bound-42
+            (str_cat.str-cat
+              "    movq "
+              (owned_view.compiler-owned-shared-view symbol)
+              "(%rip), %r10\n")]
+          (compiler_backend.compiler-backend-string-contains? asm bound-42))
         ;; A register-group global is read via its address.
-        (compiler_backend.compiler-backend-string-contains?
-          asm
-          (str_cat.str-cat "    leaq " symbol "(%rip), %r10\n"))))))
+        (let
+          [bound-43 (str_cat.str-cat "    leaq " symbol "(%rip), %r10\n")]
+          (compiler_backend.compiler-backend-string-contains? asm bound-43))))))
 
 (define (compiler-backend-aggregate-global-init-shape-ok?) : bool
   (match (compiler_backend.compiler-backend-emit-source
@@ -5589,22 +5564,22 @@
             (owned_view.compiler-owned-shared-view asm)
             "nested")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "_tl_start:\n")
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    js .L_tl_main_stack_abort\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               ".ascii \"typelisp runtime: 1 GiB main-stack mmap failed\\n\"\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               ".L_tl_main_stack_abort:\n    movq $1, %rax\n"))
           (not
-            (compiler_backend.compiler-backend-string-contains?
-              asm
-              (compiler-backend-todo-marker))))
+            (let
+              [bound-44 (compiler-backend-todo-marker)]
+              (compiler_backend.compiler-backend-string-contains? asm bound-44))))
         true)]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
@@ -5657,42 +5632,40 @@
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.backend-and8
+          (compiler_backend.compiler-backend-string-contains? asm "_tl_f")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "_tl_f")
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".L_tl_fn_desc___tl_lambda_main_0:\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    .quad .L_tl_fn_entry___tl_lambda_main_0\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".L_tl_fn_entry___tl_lambda_main_0:\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    call _tl_f")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    leaq .L_tl_fn_desc___tl_lambda_main_0(%rip), ")
           (compiler-backend-call-or-jmp-ok?
             (owned_view.compiler-owned-shared-view asm)
             "*(%r10)")
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movq (%r10), %rax\n")))
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq 8(%r10), %rdi\n")
         (not
           (compiler-backend-call-or-jmp-ok?
             (owned_view.compiler-owned-shared-view asm)
             "*(%r11)"))
         (not
-          (compiler_backend.compiler-backend-string-contains?
-            asm
-            (compiler-backend-todo-marker))))]
+          (let
+            [bound-45 (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm bound-45))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-closure-inferred-shape-ok?) : bool
@@ -5700,19 +5673,17 @@
     (compiler-backend-closure-inferred-source))
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (compiler_backend.backend-and4
+        (compiler_backend.compiler-backend-string-contains? asm "_tl_f")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          "_tl_f")
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    call _tl_f")
         (compiler-backend-call-or-jmp-ok?
           (owned_view.compiler-owned-shared-view asm)
           "*(%r10)")
         (not
-          (compiler_backend.compiler-backend-string-contains?
-            asm
-            (compiler-backend-todo-marker))))]
+          (let
+            [bound-46 (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm bound-46))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-closure-aggregate-return-shape-ok?) : bool
@@ -5726,56 +5697,50 @@
               (owned_view.compiler-owned-shared-view asm)
               ".globl _tl_f")
             4)
+          (compiler_backend.compiler-backend-string-contains? asm "_tl_f")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "_tl_f")
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    call _tl_f")
+          (compiler_backend.compiler-backend-string-contains? asm "main:\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "main:\n")
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".L_tl_fn_desc___tl_lambda_main_0:\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".L_tl_fn_desc___tl_lambda_main_1:\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".L_tl_fn_desc___tl_lambda_main_2:\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".L_tl_fn_desc___tl_lambda_main_3:\n"))
         (compiler_backend.backend-and8
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".L_tl_fn_entry___tl_lambda_main_0:\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".L_tl_fn_entry___tl_lambda_main_1:\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".L_tl_fn_entry___tl_lambda_main_2:\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".L_tl_fn_entry___tl_lambda_main_3:\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    .quad .L_tl_fn_entry___tl_lambda_main_0\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    .quad .L_tl_fn_entry___tl_lambda_main_1\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    .quad .L_tl_fn_entry___tl_lambda_main_2\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    .quad .L_tl_fn_entry___tl_lambda_main_3\n"))
         (compiler_backend.backend-and8
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "tl_alloc:\n")
+          (compiler_backend.compiler-backend-string-contains? asm "tl_alloc:\n")
           ;; sret ABI: only the heap-backed (Array) closure return
           ;; still allocates; Box/Pair/String returns use sret/static data.
           (>=
@@ -5794,7 +5759,7 @@
           (and
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "    movq (%r10), %rax\n"))
             (=
               (+
@@ -5806,9 +5771,9 @@
                   "    jmp *(%r11)\n"))
               0))
           (not
-            (compiler_backend.compiler-backend-string-contains?
-              asm
-              (compiler-backend-todo-marker)))
+            (let
+              [bound-47 (compiler-backend-todo-marker)]
+              (compiler_backend.compiler-backend-string-contains? asm bound-47)))
           true
           true
           true)
@@ -5861,18 +5826,12 @@
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (compiler_backend.backend-and4
         (or
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "_tl_score")
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "_tl_f"))
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          "_match_arm.")
+          (compiler_backend.compiler-backend-string-contains? asm "_tl_score")
+          (compiler_backend.compiler-backend-string-contains? asm "_tl_f"))
+        (compiler_backend.compiler-backend-string-contains? asm "_match_arm.")
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    call _tl_None\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -5885,9 +5844,7 @@
     (compiler-backend-never-branch-register-group-source))
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          "main:\n")
+        (compiler_backend.compiler-backend-string-contains? asm "main:\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
             asm
@@ -5903,27 +5860,23 @@
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (compiler_backend.backend-and8
         (or
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "_tl_calc")
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "_tl_f"))
+          (compiler_backend.compiler-backend-string-contains? asm "_tl_calc")
+          (compiler_backend.compiler-backend-string-contains? asm "_tl_f"))
         ;; FPO (M-G3 stage 2) makes frame refs rsp-relative; T1-6 (a) puts
         ;; this call-free leaf's frame in the red zone. Parameter identities
         ;; stay pinned at -8/-16 while lifetime coloring compacts the sum into
         ;; -32 and lets the later constant/product share -24.
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq %rdi, -8(%rsp)\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq %rsi, -16(%rsp)\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq %r8, -24(%rsp)\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    imulq -24(%rsp), %r8\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -5941,33 +5894,33 @@
         ;; T1-6 (a) red-zone frame slots. Without scalar-register web
         ;; coalescing, the stack-only path keeps the two copied operands at
         ;; -16/-24 while reusing the staging -8 slot for the sum.
+        (compiler_backend.compiler-backend-string-contains? asm "main:\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          "main:\n")
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movsd -8(%rsp), %xmm2\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    addsd -24(%rsp), %xmm2\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movsd %xmm2, -8(%rsp)\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movsd -8(%rsp), %xmm0\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    addsd %xmm1, %xmm0\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movsd -16(%rsp), %xmm0\n"))
         (not
-          (compiler_backend.compiler-backend-string-contains?
-            (compiler-backend-asm-function-body asm "main")
-            "%xmm3")))]
+          (let
+            [bound-48 (compiler-backend-asm-function-body asm "main")]
+            (compiler_backend.compiler-backend-string-contains?
+              bound-48
+              "%xmm3"))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-test-global-builder-push!
@@ -6318,24 +6271,24 @@
     [a-shape-ok : bool
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view a1)
+          a1
           "    call _tl_side_effect\n")
         ;; The unified greedy keeps the call-spanning value in a callee-saved
         ;; register and rematerialises the cold immediates after the call, so
         ;; there should be no caller-saved %r9 save/restore wrapper around it.
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view a1)
+            a1
             "    movq %r9, %rax\n    movq %rax, -"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view a1)
+            a1
             "(%rbp), %r9\n"))
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view a1)
+          a1
           "    movq %r12, _tl_g5(%rip)\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view a1)
+          a1
           "    movq %r12, _tl_g5b(%rip)\n")
         ;; %rbp is now the 6th callee-saved register (M-G3 stage 2), so the
         ;; call-spanning var 4 is homed in %rbp; var 6 remains rematerialised
@@ -6345,10 +6298,10 @@
         ;; %r9 the use-site rewrite pipeline reserved. Same two instructions,
         ;; one fewer constraint on the scavenger.
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view a1)
+          a1
           "    movl $4, %ebp\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view a1)
+          a1
           "    movl $6, %r8d\n"))]
     (and
       (match a1-result
@@ -6523,19 +6476,14 @@
           (compiler_backend.compiler-backend-string-contains?
             asm
             "#t _tl_f0 _tl_stack_only_branch_storage\n")
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view body)
-            frame)
+          (compiler_backend.compiler-backend-string-contains? body frame)
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view body)
+              body
               uncolored-frame))
           ;; The stack-only policy is unchanged: compaction must not smuggle
           ;; scalar allocation or callee-saved homes into opt0/opt1.
-          (not
-            (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view body)
-              "%r12"))
+          (not (compiler_backend.compiler-backend-string-contains? body "%r12"))
           (not (compiler_backend.compiler-backend-string-contains? body "%r13"))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
@@ -6555,14 +6503,15 @@
       1)))
 
 (define (compiler-backend-compare-self-operand? [body : String] [reg : String]) : bool
-  (compiler_backend.compiler-backend-string-contains?
-    body
-    (str_cat.str-cat
-      "    cmpq "
-      (owned_view.compiler-owned-shared-view reg)
-      ", "
-      reg
-      "\n")))
+  (let
+    [bound-49
+      (str_cat.str-cat
+        "    cmpq "
+        (owned_view.compiler-owned-shared-view reg)
+        ", "
+        reg
+        "\n")]
+    (compiler_backend.compiler-backend-string-contains? body bound-49)))
 
 (define (compiler-backend-immediate-lhs-r9-compare-win64-ok?) : bool
   (let
@@ -6596,11 +6545,11 @@
             ;; `0 < %r9` is emitted as `%r9 > 0`; the zero compare now uses
             ;; the register self-test form and needs no scratch at all.
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    testq %r9, %r9\n")
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "    cmpq $0, %r9\n"))
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -6714,13 +6663,11 @@
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         ;; The chain became one bit test.
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          "    btq ")
+        (compiler_backend.compiler-backend-string-contains? asm "    btq ")
         ;; The mask reaches the emitter as its own `Mov`, spelled with the plain
         ;; `movq $imm` form -- it is materialized once where that Mov landed.
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq $146028910097")
         ;; ...and never as an operand materialization at the test itself, which
         ;; is what folding the literal into the shift used to emit per entry.
@@ -6790,15 +6737,15 @@
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (compiler_backend.compiler-backend-global-shared-view asm)
+          asm
           "    call tl_alloc\n")
         (compiler_backend.compiler-backend-string-contains?
-          (compiler_backend.compiler-backend-global-shared-view asm)
+          asm
           "    call tl_array_zero\n")
         ;; A declined hoist rematerializes at the loop use. The ordinary use
         ;; spelling is `movq`; `movabsq` is unique to the preheader injection.
         (compiler_backend.compiler-backend-string-contains?
-          (compiler_backend.compiler-backend-global-shared-view asm)
+          asm
           "    movq $4294967296")
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -6828,40 +6775,40 @@
           ;; derives its restores from that same plan) emits none either.
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view body)
+              body
               "    pushq "))
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view body)
+              body
               "    popq "))
           ;; The parameters are read straight out of their incoming ABI registers
           ;; instead of being copied to callee-saved homes in the prologue.
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view body)
+            body
             "    testq %rdi, %rdi\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view body)
+              body
               "    movq %rdi, %r12\n"))
           ;; Arm 1's %rsi/%rdx 2-cycle is broken through a scratch register
           ;; instead of being emitted as two moves that overwrite a source
           ;; before it is read: %rdx is staged into %r9, %rsi lands in %rdx, and
           ;; the staged copy lands in %rsi.
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view body)
+            body
             "    movq %rdx, %r9\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view body)
+            body
             "    movq %rsi, %rdx\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view body)
+            body
             "    movq %r9, %rsi\n")
           ;; Every arm still leaves through a jmp, not a call/ret pair.
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view body)
+            body
             "    jmp _tl_tc_arm_a\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view body)
+            body
             "    jmp _tl_tc_arm_b\n")
           (compiler_backend.compiler-backend-string-contains?
             body
@@ -6910,11 +6857,11 @@
           ;; `setcc`/`movzbq` pair survives and no site spends a `test`.
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view body)
+              body
               "    setl "))
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view body)
+              body
               "    movzbq "))
           (not
             (compiler_backend.compiler-backend-string-contains?
@@ -7024,17 +6971,11 @@
         [body : String (compiler-backend-asm-function-body asm "_tl_fr_lt")]
         (and
           (not (string.eq body ""))
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view body)
-            setcc)
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view body)
-            materialize)
+          (compiler_backend.compiler-backend-string-contains? body setcc)
+          (compiler_backend.compiler-backend-string-contains? body materialize)
           (if reused?
             (and
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view body)
-                jcc)
+              (compiler_backend.compiler-backend-string-contains? body jcc)
               (not
                 (compiler_backend.compiler-backend-string-contains?
                   body
@@ -7148,7 +7089,7 @@
             (and
               (not (string.eq body ""))
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view body)
+                body
                 "    sarq $3,")
               ;; The full regalloc path may spill either compare operand, so
               ;; its exact register choice is intentionally not asserted
@@ -7252,17 +7193,14 @@
   (let
     [marker : String (str_cat.str-cat label ":\n")]
     [start : i64
-      (compiler_backend.compiler-backend-string-find-from
-        (owned_view.compiler-owned-shared-view body)
-        (owned_view.compiler-owned-shared-view marker)
-        0)]
+      (compiler_backend.compiler-backend-string-find-from body marker 0)]
     (if (< start 0)
       ""
       (let
         [block-start : i64 (+ start (string.string-length marker))]
         [next : i64
           (compiler_backend.compiler-backend-string-find-from
-            (owned_view.compiler-owned-shared-view body)
+            body
             "\n."
             block-start)]
         [block-end : i64
@@ -7276,7 +7214,7 @@
     [body : String (compiler-backend-asm-function-body asm "_tl_kernel")]
     [marker : i64
       (compiler_backend.compiler-backend-string-find-from
-        (owned_view.compiler-owned-shared-view body)
+        body
         "__unroll_body:\n"
         0)]
     (if (< marker 0)
@@ -7639,10 +7577,10 @@
             shared-state)
           "    leaq -48(%rbp), %rsp\n    popq %r15\n    popq %r14\n    popq %r13\n    popq %r12\n    leave\n    jmp _tl_next\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view shared)
+          shared
           "    popq %rbx\n"))
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view shared)
+        shared
         "    leave\n    ret\n")
       (not (string.eq shared "")))))
 
@@ -7660,7 +7598,7 @@
     [push-count : i64
       (compiler_backend.compiler-backend-fill-push-csr-regs!
         assignments
-        (owned_view.compiler-owned-shared-view push-regs)
+        (&mut push-regs)
         backend-state)]
     [prologue : String
       (compiler_backend.compiler-backend-emit-function-entry-fpo-push
@@ -7712,17 +7650,11 @@
     ret
 ")
       (not
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view rebased)
-          "-32(%rbp)"))
+        (compiler_backend.compiler-backend-string-contains? rebased "-32(%rbp)"))
       (not
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view rebased)
-          "-40(%rbp)"))
+        (compiler_backend.compiler-backend-string-contains? rebased "-40(%rbp)"))
       (not
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view rebased)
-          "-48(%rbp)"))
+        (compiler_backend.compiler-backend-string-contains? rebased "-48(%rbp)"))
       (not
         (compiler_backend.compiler-backend-string-contains?
           rebased
@@ -7747,7 +7679,7 @@
     [push-count : i64
       (compiler_backend.compiler-backend-fill-push-csr-regs!
         assignments
-        (owned_view.compiler-owned-shared-view push-regs)
+        (&mut push-regs)
         backend-state)]
     [body : String
       "    movq -8(%rbp), %rax
@@ -7868,7 +7800,7 @@
     [push-count : i64
       (compiler_backend.compiler-backend-fill-push-csr-regs!
         assignments
-        (owned_view.compiler-owned-shared-view push-regs)
+        (&mut push-regs)
         backend-state)]
     [result : compiler_backend.CompilerBackendRspRebaseResult
       (compiler_backend.compiler-backend-rsp-rebase-full-result
@@ -7897,7 +7829,7 @@
     [push-count : i64
       (compiler_backend.compiler-backend-fill-push-csr-regs!
         assignments
-        (owned_view.compiler-owned-shared-view push-regs)
+        (&mut push-regs)
         backend-state)]
     [body : String (compiler-backend-csr-unused-save-body)]
     [untrimmed : compiler_backend.CompilerBackendRspRebaseResult
@@ -7954,19 +7886,17 @@
       trimmed.ok
       ;; Neither half of the pair survives, and the register is named nowhere.
       (not
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view trimmed-text)
-          "%r13"))
+        (compiler_backend.compiler-backend-string-contains? trimmed-text "%r13"))
       ;; The saves the classification set still deleted.
       (not
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view trimmed-text)
+          trimmed-text
           "(%rbp)"))
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view trimmed-text)
+        trimmed-text
         "    popq %r14\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view trimmed-text)
+        trimmed-text
         "    popq %r12\n")
       ;; ALIGNMENT. The frame adjustment follows the push count: two pushes are
       ;; an even run, so the 8-byte pad comes back and the prologue's total
@@ -8036,7 +7966,7 @@
     [push-count : i64
       (compiler_backend.compiler-backend-fill-push-csr-regs!
         assignments
-        (owned_view.compiler-owned-shared-view push-regs)
+        (&mut push-regs)
         backend-state)]
     [dead-prologue : String
       (compiler_backend.compiler-backend-emit-function-entry-fpo-push
@@ -8111,9 +8041,7 @@
     ret
 ")
       (not
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view dead-rebased)
-          "%rbp"))
+        (compiler_backend.compiler-backend-string-contains? dead-rebased "%rbp"))
       (not
         (compiler_backend.compiler-backend-string-contains?
           dead-rebased
@@ -8169,13 +8097,13 @@
           (compiler_backend.compiler-backend-string-contains? restore "popq"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view full-restore)
+            full-restore
             "popq"))
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view full-restore)
+          full-restore
           "    movq -64(%rbp), %rdi\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view full-restore)
+          full-restore
           "    movq -56(%rbp), %rsi\n")
         (compiler_backend.compiler-backend-string-contains?
           full-restore
@@ -8198,7 +8126,7 @@
     [push-count : i64
       (compiler_backend.compiler-backend-fill-push-csr-regs!
         assignments
-        (owned_view.compiler-owned-shared-view push-regs)
+        (&mut push-regs)
         backend-state)]
     [frame : i64
       (compiler_backend.compiler-backend-frame-size
@@ -8265,12 +8193,15 @@
             assignments
             backend-state)
           9)
-        (compiler_backend.compiler-backend-string-contains?
-          (compiler_backend.compiler-backend-emit-save-callee-regs
-            assignments
-            1
-            backend-state)
-          "    movq %rbp, -72(%rbp)\n")
+        (let
+          [bound-50
+            (compiler_backend.compiler-backend-emit-save-callee-regs
+              assignments
+              1
+              backend-state)]
+          (compiler_backend.compiler-backend-string-contains?
+            bound-50
+            "    movq %rbp, -72(%rbp)\n"))
         (=
           (compiler_backend.compiler-backend-string-count
             (owned_view.compiler-owned-shared-view prologue)
@@ -8282,20 +8213,20 @@
             "    .seh_pushreg %")
           8)
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view prologue)
+          prologue
           "    pushq %rbp\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view prologue)
+          prologue
           "    .seh_pushreg %rbp\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view prologue)
+          prologue
           "    .seh_stackalloc 88\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view prologue)
+          prologue
           "    .seh_endprologue\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view prologue)
+            prologue
             ".seh_setframe"))
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -8304,7 +8235,7 @@
         safe-result.ok
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view safe-rebased)
+            safe-rebased
             "(%rbp)"))
         (compiler_backend.compiler-backend-string-contains?
           safe-rebased
@@ -8427,7 +8358,7 @@
           (compiler_regalloc.compiler-reg-assignment-lookup planned 0)
           (compiler_abi.compiler-abi-xmm-register-id 6))
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view planned-save)
+          planned-save
           "    movdqu %xmm6, ")
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -8488,11 +8419,9 @@
           restore
           "    movdqu -240(%rbp), %xmm15\n    movdqu -96(%rbp), %xmm6\n    movq -32(%rbp), %r12\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view entry)
+          entry
           "    subq $240, %rsp\n")
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view entry)
-          save)
+        (compiler_backend.compiler-backend-string-contains? entry save)
         (compiler_backend.compiler-backend-string-contains?
           entry
           "    .seh_savexmm %xmm15, 0\n    .seh_endprologue\n")
@@ -8520,7 +8449,7 @@
           3)
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view empty-entry)
+            empty-entry
             "movdqu"))
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -8528,7 +8457,7 @@
             ".seh_savexmm"))
         (= large-frame 5024)
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view large-entry)
+          large-entry
           "    callq __chkstk\n")
         (compiler_backend.compiler-backend-string-contains?
           large-entry
@@ -8840,10 +8769,10 @@
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movq -24(%rbp), %r8\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movq %r8, -16(%rbp)\n")
             (not
               (compiler_backend.compiler-backend-string-contains? asm "%rax")))]
@@ -8860,10 +8789,10 @@
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movsd %xmm3, %xmm2\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movsd %xmm2, -16(%rbp)\n")
             (not
               (compiler_backend.compiler-backend-string-contains? asm "%xmm0")))]
@@ -9428,14 +9357,18 @@
         (compiler_ir_types.CompilerIrValue.Var 2)
         (owned_view.compiler-owned-shared-view dynamic-args)
         (compiler_ast_types.AstType.I64))]
+    [no-functions : compiler_ir_types.CompilerIrFunctionSeq
+      (compiler_ir_types.compiler-ir-function-seq-empty)]
+    [no-externs : compiler_ir_types.CompilerIrExternSeq
+      (compiler_ir_types.compiler-ir-extern-seq-empty)]
     [effective-dynamic-types : compiler_ast_types.AstTypeList
       (compiler_backend.compiler-backend-effective-normal-indirect-param-types
         bases
-        (owned_view.compiler-owned-shared-view dynamic-types)
+        dynamic-types
         (compiler_ir_types.CompilerIrValue.Var 2)
         dynamic-args
-        (compiler_ir_types.compiler-ir-function-seq-empty)
-        (compiler_ir_types.compiler-ir-extern-seq-empty)
+        no-functions
+        no-externs
         index)]
     [effective-dynamic-type : compiler_ast_types.AstType
       (compiler_ast_types.ast-type-segment-bases-get
@@ -9457,7 +9390,7 @@
         compiler_backend.CompilerBackendTarget.Linux
         (compiler_ir_types.CompilerIrCallArgs.One
           (compiler_ir_types.CompilerIrValue.Var 0))
-        (owned_view.compiler-owned-shared-view types)
+        types
         false
         0
         0
@@ -9498,7 +9431,7 @@
         compiler_backend.CompilerBackendTarget.Linux
         (compiler_ir_types.CompilerIrCallArgs.One
           (compiler_ir_types.CompilerIrValue.Var 0))
-        (owned_view.compiler-owned-shared-view types9)
+        types9
         false
         0
         0
@@ -9535,7 +9468,7 @@
         compiler_backend.CompilerBackendTarget.Linux
         (compiler_ir_types.CompilerIrCallArgs.One
           (compiler_ir_types.CompilerIrValue.Var 0))
-        (owned_view.compiler-owned-shared-view types11)
+        types11
         false
         0
         0
@@ -9626,68 +9559,68 @@
       (= stack-count9 2)
       (= stack-count11 2)
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm-text)
+        asm-text
         "    movq %r12, %r14\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm-text)
+        asm-text
         "    movups (%r14), %xmm11\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm-text)
+        asm-text
         "    movups %xmm11, 0(%rsp)\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm-text)
+        asm-text
         "    movq 16(%r14), %xmm11\n")
       (compiler_backend.compiler-backend-string-contains?
         asm-text
         "    movq %xmm11, 16(%rsp)\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm9-text)
+        asm9-text
         "    movb 8(%r14), %r14b\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm9-text)
+        asm9-text
         "    movb %r14b, 8(%rsp)\n")
       (not
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm9-text)
+          asm9-text
           "    movd 8(%r14),"))
       (not
         (compiler_backend.compiler-backend-string-contains?
           asm9-text
           "    movd %xmm11, 8(%rsp)"))
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm11-text)
+        asm11-text
         "    movq %r12, %r14\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm11-text)
+        asm11-text
         "    movw 8(%r14), %r14w\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm11-text)
+        asm11-text
         "    movw %r14w, 8(%rsp)\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm11-text)
+        asm11-text
         "    movq %r14, %xmm11\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm11-text)
+        asm11-text
         "    movq %xmm11, %r14\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm11-text)
+        asm11-text
         "    movb 10(%r14), %r14b\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm11-text)
+        asm11-text
         "    movb %r14b, 10(%rsp)\n")
       (not
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm11-text)
+          asm11-text
           "    movd 8(%r14),"))
       (not
         (compiler_backend.compiler-backend-string-contains?
           asm11-text
           "    movd 10(%r14),"))
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view param-text)
+        param-text
         "    movq %rdi, %r13\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view param-text)
+        param-text
         "    leaq 16(%rbp), %r12\n")
       (not
         (compiler_backend.compiler-backend-string-contains?
@@ -9704,19 +9637,19 @@
       (compiler_ast_types.ast-node-pool-context-new-with-capacities 4 16)]
     [elem-id : i64
       (compiler_ast_types.ast-node-pool-context-type-push
-        (owned_view.compiler-owned-shared-view pools)
+        pools
         (compiler_ast_types.AstType.I64))]
     [slice-id : i64
       (compiler_ast_types.ast-node-pool-context-type-push
-        (owned_view.compiler-owned-shared-view pools)
+        pools
         (compiler_ast_types.AstType.Slice elem-id))]
     [region-slice-id : i64
       (compiler_ast_types.ast-node-pool-context-type-push
-        (owned_view.compiler-owned-shared-view pools)
+        pools
         (compiler_ast_types.AstType.Region 9 slice-id))]
     [ordinary-id : i64
       (compiler_ast_types.ast-node-pool-context-type-push
-        (owned_view.compiler-owned-shared-view pools)
+        pools
         (compiler_ast_types.AstType.I64))]
     [ref : compiler_ast_types.AstType
       (compiler_ast_types.AstType.Ref 1 slice-id)]
@@ -9889,22 +9822,22 @@
   (let
     [incoming0 : i64
       (compiler_backend.compiler-backend-string-find-from
-        (owned_view.compiler-owned-shared-view body)
+        body
         "    movq %rdi, -8(%rsp)\n"
         0)]
     [incoming1 : i64
       (compiler_backend.compiler-backend-string-find-from
-        (owned_view.compiler-owned-shared-view body)
+        body
         "    movq %rsi, -16(%rsp)\n"
         0)]
     [outgoing0 : i64
       (compiler_backend.compiler-backend-string-find-from
-        (owned_view.compiler-owned-shared-view body)
+        body
         "    movq -8(%rsp), %rax\n"
         0)]
     [outgoing1 : i64
       (compiler_backend.compiler-backend-string-find-from
-        (owned_view.compiler-owned-shared-view body)
+        body
         "    movq -16(%rsp), %rdx\n"
         0)]
     (and
@@ -9921,22 +9854,22 @@
   (let
     [incoming0 : i64
       (compiler_backend.compiler-backend-string-find-from
-        (owned_view.compiler-owned-shared-view body)
+        body
         "    movq %rcx, 24(%rsp)\n"
         0)]
     [incoming1 : i64
       (compiler_backend.compiler-backend-string-find-from
-        (owned_view.compiler-owned-shared-view body)
+        body
         "    movq %rdx, 16(%rsp)\n"
         0)]
     [outgoing0 : i64
       (compiler_backend.compiler-backend-string-find-from
-        (owned_view.compiler-owned-shared-view body)
+        body
         "    movq 24(%rsp), %rax\n"
         0)]
     [outgoing1 : i64
       (compiler_backend.compiler-backend-string-find-from
-        (owned_view.compiler-owned-shared-view body)
+        body
         "    movq 16(%rsp), %rdx\n"
         0)]
     (and
@@ -10383,7 +10316,7 @@
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "$123, -8(%rbp)")
             (compiler_backend.compiler-backend-string-contains?
               asm
@@ -10507,7 +10440,7 @@
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "$123, %r12")
             (compiler_backend.compiler-backend-string-contains? asm "$42, %r13"))]
         [(compiler_backend.ResultCompilerBackend.Err _) false])
@@ -10523,13 +10456,13 @@
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "%r12, %rax")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "%rax, %r14")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "%r13, %rdx")
             (compiler_backend.compiler-backend-string-contains?
               asm
@@ -10987,12 +10920,12 @@
         (let
           [test-pos : i64
             (compiler_backend.compiler-backend-string-find-from
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    testq %r9, %r9\n"
               0)]
           [restore-pos : i64
             (compiler_backend.compiler-backend-string-find-from
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movq -64(%rbp), %r9\n"
               0)]
           [jump-pos : i64
@@ -11087,10 +11020,13 @@
           0
           ty))]
     (and
-      (compiler_backend.compiler-backend-symbol-list-contains-id?
-        (compiler_backend.compiler-backend-program-collections-functions
-          (owned_view.compiler-owned-shared-view worded))
-        (ci.intern "walked_fn"))
+      (let
+        [bound-51
+          (compiler_backend.compiler-backend-program-collections-functions
+            (owned_view.compiler-owned-shared-view worded))]
+        (compiler_backend.compiler-backend-symbol-list-contains-id?
+          bound-51
+          (ci.intern "walked_fn")))
       (compiler_backend.compiler-backend-string-list-contains?
         (compiler_backend.compiler-backend-program-collections-strings
           (owned_view.compiler-owned-shared-view worded))
@@ -11177,14 +11113,20 @@
               functions
               (compiler_ir_types.compiler-ir-extern-seq-empty)))]
         (and
-          (compiler_backend.compiler-backend-symbol-list-contains-id?
-            (compiler_backend.compiler-backend-program-collections-functions
-              (owned_view.compiler-owned-shared-view collections))
-            (ci.intern "call_fn"))
-          (compiler_backend.compiler-backend-symbol-list-contains-id?
-            (compiler_backend.compiler-backend-program-collections-functions
-              (owned_view.compiler-owned-shared-view collections))
-            (ci.intern "indirect_fn"))
+          (let
+            [bound-52
+              (compiler_backend.compiler-backend-program-collections-functions
+                (owned_view.compiler-owned-shared-view collections))]
+            (compiler_backend.compiler-backend-symbol-list-contains-id?
+              bound-52
+              (ci.intern "call_fn")))
+          (let
+            [bound-53
+              (compiler_backend.compiler-backend-program-collections-functions
+                (owned_view.compiler-owned-shared-view collections))]
+            (compiler_backend.compiler-backend-symbol-list-contains-id?
+              bound-53
+              (ci.intern "indirect_fn")))
           (compiler_backend.compiler-backend-string-list-contains?
             (compiler_backend.compiler-backend-program-collections-strings
               (owned_view.compiler-owned-shared-view collections))
@@ -11661,21 +11603,21 @@
                       [(compiler_backend.ResultCompilerBackend.Ok branch-asm)
                         (and
                           (compiler_backend.compiler-backend-string-contains?
-                            (owned_view.compiler-owned-shared-view add-asm)
+                            add-asm
                             "    leaq 5(%r12), %r13\n")
                           (not
                             (compiler_backend.compiler-backend-string-contains?
                               add-asm
                               "    addq $5, %rax\n"))
                           (compiler_backend.compiler-backend-string-contains?
-                            (owned_view.compiler-owned-shared-view mul-asm)
+                            mul-asm
                             "    leaq (%r12,%r12,2), %r13\n")
                           (not
                             (compiler_backend.compiler-backend-string-contains?
                               mul-asm
                               "    imulq $3, %rax\n"))
                           (compiler_backend.compiler-backend-string-contains?
-                            (owned_view.compiler-owned-shared-view shl-asm)
+                            shl-asm
                             "    shlq $2, %r13\n")
                           (not
                             (compiler_backend.compiler-backend-string-contains?
@@ -11685,11 +11627,11 @@
                             cmp-asm
                             "    cmpq $10, %r13\n    setl %r13b\n")
                           (compiler_backend.compiler-backend-string-contains?
-                            (owned_view.compiler-owned-shared-view branch-asm)
+                            branch-asm
                             "    testq %r12, %r12\n    jne ")
                           (not
                             (compiler_backend.compiler-backend-string-contains?
-                              (owned_view.compiler-owned-shared-view branch-asm)
+                              branch-asm
                               "    movq %r12, %rax\n"))
                           (not
                             (compiler_backend.compiler-backend-string-contains?
@@ -12950,7 +12892,7 @@
         "    subq $1, %rsi\n    testq %rdi, %rdi\n    jge .Lf\n    movq %rsi, %rax\n.Lf:\n")]
     (and
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view ge)
+        ge
         "    subq $1, %rsi\n    jns .La\n")
       (not (compiler_backend.compiler-backend-string-contains? ge "testq"))
       (compiler_backend.compiler-backend-string-contains?
@@ -13021,47 +12963,44 @@
             (text_buf.empty)
             (compiler-backend-cold-split-source))))]
     [ret-at : i64
-      (compiler_backend.compiler-backend-string-find-from
-        (owned_view.compiler-owned-shared-view out)
-        "    ret\n"
-        0)]
+      (compiler_backend.compiler-backend-string-find-from out "    ret\n" 0)]
     [bounds-stub-at : i64
       (compiler_backend.compiler-backend-string-find-from
-        (owned_view.compiler-owned-shared-view out)
+        out
         ".Lf0_bounds_ok.1.cold:\n    pushq %r9\n"
         0)]
     [div-stub-at : i64
       (compiler_backend.compiler-backend-string-find-from
-        (owned_view.compiler-owned-shared-view out)
+        out
         ".Lf0_bounds_ok.1.stub1.cold:\n    call tl_div_abort\n.Lf0_mixed.cold:\n"
         0)]
     [size-at : i64
       (compiler_backend.compiler-backend-string-find-from
-        (owned_view.compiler-owned-shared-view out)
+        out
         "    .size f, . - f\n"
         0)]
     (and
       ;; Named continuation: the passing check falls through.
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view out)
+        out
         "    cmpq %r9, %rdi\n    jae .Lf0_bounds_ok.1.cold\n.Lf0_bounds_ok.1:\n    testq %r8, %r8\n")
       ;; Numeric `1:` without a site label: named after the closest preceding
       ;; label, with `1:` kept in place.
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view out)
+        out
         "    je .Lf0_bounds_ok.1.stub1.cold\n1:\n    cmpq $0, %rax\n")
       ;; A guard whose skipped text holds a conditional jump is no stub; the
       ;; inner guard it skips is one, and still moves. A returning call in the
       ;; skipped text disqualifies it, and an ordinary branch is no guard:
       ;; both stay exactly as emitted.
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view out)
+        out
         "    jb .Lf0_mixed\n    testq %rcx, %rcx\n    je .Lf0_mixed.cold\n.Lf0_mixed:\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view out)
+        out
         "    jb .Lf0_calls\n    call helper\n    call tl_oob_abort\n.Lf0_calls:\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view out)
+        out
         "    jne .Lf0_keep\n    movq $1, %rax\n")
       ;; The stubs, descriptor data included, sit after the last hot
       ;; instruction and inside the function's `.size` range. The abort call
@@ -13069,16 +13008,11 @@
       ;; the descriptor, no jump back to the continuation, and no `.back`
       ;; label for one.
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view out)
+        out
         "    call tl_oob_abort_at\n    .balign 8\n.L_tl_abort_site_1_bounds:\n    .quad 7\n.Lf0_bounds_ok.1.stub1.cold:\n")
       (not
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view out)
-          "_bounds_end"))
-      (not
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view out)
-          ".back"))
+        (compiler_backend.compiler-backend-string-contains? out "_bounds_end"))
+      (not (compiler_backend.compiler-backend-string-contains? out ".back"))
       (> ret-at 0)
       (> bounds-stub-at ret-at)
       (> div-stub-at bounds-stub-at)
@@ -13366,7 +13300,7 @@
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    call _tl_consume_group\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -13458,21 +13392,21 @@
             [(compiler_backend.ResultCompilerBackend.Ok shift-asm)
               (and
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view chain-asm)
+                  chain-asm
                   "    imulq $3, %rax\n")
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view chain-asm)
+                  chain-asm
                   "    addq $7, %rax\n")
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view chain-asm)
+                  chain-asm
                   "    addq $11, %rax\n")
                 (not
                   (compiler_backend.compiler-backend-string-contains?
-                    (owned_view.compiler-owned-shared-view chain-asm)
+                    chain-asm
                     "    movq %rax, -8(%rbp)\n"))
                 (not
                   (compiler_backend.compiler-backend-string-contains?
-                    (owned_view.compiler-owned-shared-view chain-asm)
+                    chain-asm
                     "    movq %rax, -16(%rbp)\n"))
                 (not
                   (compiler_backend.compiler-backend-string-contains?
@@ -13500,27 +13434,27 @@
             [(compiler_backend.ResultCompilerBackend.Ok nonleading-asm)
               (and
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view direct-asm)
+                  direct-asm
                   "    call _tl_producer\n")
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view direct-asm)
+                  direct-asm
                   "    movq %rax, -8(%rbp)\n")
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view direct-asm)
+                  direct-asm
                   "    movq %rax, %rdi\n")
                 (not
                   (compiler_backend.compiler-backend-string-contains?
                     direct-asm
                     "    movq -8(%rbp), %rdi\n"))
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view indirect-asm)
+                  indirect-asm
                   "    movq %rax, %rsi\n")
                 (not
                   (compiler_backend.compiler-backend-string-contains?
                     indirect-asm
                     "    movq -8(%rbp), %rsi\n"))
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view nonleading-asm)
+                  nonleading-asm
                   "    movq -8(%rbp), %rsi\n")
                 (compiler-backend-call-arg-rax-group-consumer-not-forwardable?)
                 (not
@@ -13611,7 +13545,7 @@
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movl $4095, %eax\n")
           (compiler_backend.compiler-backend-string-contains? asm "    ret\n"))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])))
@@ -13662,26 +13596,30 @@
           [(compiler_backend.ResultCompilerBackend.Ok cmp-asm)
             (and
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view add-asm)
+                add-asm
                 "    addq -16(%rbp), %r8\n")
               (not
                 (compiler_backend.compiler-backend-string-contains?
                   add-asm
                   "    movq -16(%rbp), %r9\n"))
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view cmp-asm)
+                cmp-asm
                 "    cmpq -16(%rbp), %r8\n    setl %r8b\n")
               (not
                 (compiler_backend.compiler-backend-string-contains?
                   cmp-asm
                   "    movq -16(%rbp), %r9\n"))
               (string.eq
-                (compiler_backend.compiler-backend-binop-direct-mnemonic
-                  (compiler_ir_types.CompilerIrBinOp.And))
+                (let
+                  [bound-54 (compiler_ir_types.CompilerIrBinOp.And)]
+                  (compiler_backend.compiler-backend-binop-direct-mnemonic
+                    bound-54))
                 "and")
               (string.eq
-                (compiler_backend.compiler-backend-binop-direct-mnemonic
-                  (compiler_ir_types.CompilerIrBinOp.Or))
+                (let
+                  [bound-55 (compiler_ir_types.CompilerIrBinOp.Or)]
+                  (compiler_backend.compiler-backend-binop-direct-mnemonic
+                    bound-55))
                 "or"))]
           [(compiler_backend.ResultCompilerBackend.Err _) false])]
       [(compiler_backend.ResultCompilerBackend.Err _) false])))
@@ -13728,22 +13666,22 @@
           [(compiler_backend.ResultCompilerBackend.Ok spill-asm)
             (and
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view imm-asm)
+                imm-asm
                 "    cmpq $3, %r12\n")
               (not
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view imm-asm)
+                  imm-asm
                   "    movq %r12, %rax\n"))
               (not
                 (compiler_backend.compiler-backend-string-contains?
                   imm-asm
                   "    movl $3, %r11d\n"))
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view spill-asm)
+                spill-asm
                 "    cmpq -16(%rbp), %r12\n")
               (not
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view spill-asm)
+                  spill-asm
                   "    movq %r12, %rax\n"))
               (not
                 (compiler_backend.compiler-backend-string-contains?
@@ -13805,7 +13743,7 @@
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    cmpq %rcx, %r9\n")
         (not
           (compiler_backend.compiler-backend-string-contains? asm "-512(%rbp)")))]
@@ -13857,10 +13795,10 @@
         [(compiler_backend.ResultCompilerBackend.Ok xor-asm)
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view add-asm)
+              add-asm
               "    leaq (%r9,%rcx), %rdx\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view xor-asm)
+              xor-asm
               "    movq %r9, %rdx\n    xorq %rcx, %rdx\n")
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -13901,7 +13839,7 @@
           ;; `cmpq %rax, %rax` self-compare is emitted.
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    cmpq $0, %rax\n")
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -13945,7 +13883,7 @@
           ;; degenerate `cmpq %rax, %rax` self-compare is emitted.
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    cmpq %rax, -8(%rbp)\n")
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -15183,9 +15121,7 @@ g:
     (compiler-backend-fallthrough-program))
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          ".Lf0_done:\n")
+        (compiler_backend.compiler-backend-string-contains? asm ".Lf0_done:\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
             asm
@@ -15220,14 +15156,14 @@ g:
           [(compiler_backend.ResultCompilerBackend.Ok true-fallthrough)
             (and
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view false-fallthrough)
+                false-fallthrough
                 "    jne .Lbranch_then\n")
               (not
                 (compiler_backend.compiler-backend-string-contains?
                   false-fallthrough
                   "    jmp .Lbranch_else\n"))
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view true-fallthrough)
+                true-fallthrough
                 "    je .Lbranch_else\n")
               (not
                 (compiler_backend.compiler-backend-string-contains?
@@ -15264,7 +15200,7 @@ g:
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    testq %r13, %r13\n    sete %r13b\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
@@ -15286,7 +15222,7 @@ g:
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    testq %r13, %r13\n    setg %r13b\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
@@ -15308,7 +15244,7 @@ g:
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    testq $1, %r13\n    setne %r13b\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
@@ -15333,11 +15269,9 @@ g:
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    testq %r12, %r12\n")
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "    cmovne ")
+          (compiler_backend.compiler-backend-string-contains? asm "    cmovne ")
           (not
             (compiler_backend.compiler-backend-string-contains?
               asm
@@ -15359,7 +15293,7 @@ g:
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    cmovne %r8, %r13\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
@@ -15522,7 +15456,7 @@ g:
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (compiler_backend.compiler-backend-global-shared-view asm)
+            asm
             "(%r13,%rbp,1)")
           (not
             (compiler_backend.compiler-backend-string-contains?
@@ -15537,7 +15471,7 @@ g:
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (compiler_backend.compiler-backend-global-shared-view asm)
+            asm
             "(%rbp,%r13,8)")
           (not
             (compiler_backend.compiler-backend-string-contains?
@@ -15559,7 +15493,7 @@ g:
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (compiler_backend.compiler-backend-global-shared-view asm)
+            asm
             "    addq %r13, %r12\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
@@ -15573,7 +15507,7 @@ g:
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (compiler_backend.compiler-backend-global-shared-view asm)
+            asm
             "    leaq (%r12,%r13,8), %r12\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
@@ -15608,7 +15542,7 @@ g:
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (compiler_backend.compiler-backend-global-shared-view asm)
+            asm
             "    leaq (%r12,%rbp,8), %r12\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
@@ -15621,7 +15555,7 @@ g:
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (compiler_backend.compiler-backend-global-shared-view asm)
+            asm
             "    addq %rbp, %r12\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
@@ -15635,9 +15569,7 @@ g:
       (compiler_ast_types.AstType.U8))
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
-          (compiler_backend.compiler-backend-string-contains?
-            (compiler_backend.compiler-backend-global-shared-view asm)
-            "48(%rbp), ")
+          (compiler_backend.compiler-backend-string-contains? asm "48(%rbp), ")
           (compiler_backend.compiler-backend-string-contains? asm ", %r12\n"))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])
     ;; The displacement is the SIB form's own field at every spellable scale,
@@ -15663,13 +15595,16 @@ g:
         1
         "%r13")
       "    addq %r13, %r12\n")
-    (compiler_backend.compiler-backend-string-contains?
-      (compiler_backend.compiler-backend-gep-index-base-asm-disp
-        16
-        "%r12"
-        24
-        "%r13")
-      "    addq $16, %r12\n")))
+    (let
+      [bound-56
+        (compiler_backend.compiler-backend-gep-index-base-asm-disp
+          16
+          "%r12"
+          24
+          "%r13")]
+      (compiler_backend.compiler-backend-string-contains?
+        bound-56
+        "    addq $16, %r12\n"))))
 
 ;; SS-P5(b)/(c) fixtures. var 0 and var 1 are the comparison's operands (and,
 ;; in the `min` shape, the select's two arms); var 3 is the mask; var 4 is the
@@ -15742,16 +15677,11 @@ g:
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (compiler_backend.compiler-backend-global-shared-view asm)
+            asm
             "    movq %rcx, %r15\n    cmpq %rcx, %r13\n    cmovb %r13, %r15\n")
+          (not (compiler_backend.compiler-backend-string-contains? asm "setb"))
           (not
-            (compiler_backend.compiler-backend-string-contains?
-              (compiler_backend.compiler-backend-global-shared-view asm)
-              "setb"))
-          (not
-            (compiler_backend.compiler-backend-string-contains?
-              (compiler_backend.compiler-backend-global-shared-view asm)
-              "movzbq"))
+            (compiler_backend.compiler-backend-string-contains? asm "movzbq"))
           (not
             (compiler_backend.compiler-backend-string-contains?
               asm
@@ -15765,7 +15695,7 @@ g:
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (compiler_backend.compiler-backend-global-shared-view asm)
+            asm
             "    cmpq %rcx, %r13\n    cmovl %r13, %r15\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
@@ -15785,15 +15715,9 @@ g:
         (compiler_ir_types.compiler-ir-instr-seq-empty)))
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
-          (compiler_backend.compiler-backend-string-contains?
-            (compiler_backend.compiler-backend-global-shared-view asm)
-            "    setb ")
-          (compiler_backend.compiler-backend-string-contains?
-            (compiler_backend.compiler-backend-global-shared-view asm)
-            "    testq ")
-          (compiler_backend.compiler-backend-string-contains?
-            (compiler_backend.compiler-backend-global-shared-view asm)
-            "    cmovne ")
+          (compiler_backend.compiler-backend-string-contains? asm "    setb ")
+          (compiler_backend.compiler-backend-string-contains? asm "    testq ")
+          (compiler_backend.compiler-backend-string-contains? asm "    cmovne ")
           (not
             (compiler_backend.compiler-backend-string-contains?
               asm
@@ -15814,7 +15738,7 @@ g:
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (compiler_backend.compiler-backend-global-shared-view asm)
+            asm
             "    cmpq %rcx, %r13\n    cmovb %r13, %rcx\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
@@ -15839,7 +15763,7 @@ g:
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (compiler_backend.compiler-backend-global-shared-view asm)
+            asm
             "    cmovne %r13, %rcx\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
@@ -15870,10 +15794,10 @@ g:
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq -24(%rbp), %r8\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq %r8, -16(%rbp)\n")
           (not (compiler_backend.compiler-backend-string-contains? asm "%rax")))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])
@@ -15890,10 +15814,10 @@ g:
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movsd -24(%rbp), %xmm2\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movsd %xmm2, -16(%rbp)\n")
           (not (compiler_backend.compiler-backend-string-contains? asm "%xmm0")))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])
@@ -15915,7 +15839,7 @@ g:
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movsd -24(%rbp), %xmm3\n")
           (not (compiler_backend.compiler-backend-string-contains? asm "%xmm0")))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])))
@@ -16012,7 +15936,7 @@ g:
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    jle 1f\n    bsrq ")
             (compiler_backend.compiler-backend-string-contains? asm "\n2:\n"))]
         [(compiler_backend.ResultCompilerBackend.Err _) false])
@@ -16080,15 +16004,15 @@ g:
       (and
         (or
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    call _tl_callee")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    call _tl_f"))
         (not
           (or
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    call _tl_callee\n    movq %rax,")
             (compiler_backend.compiler-backend-string-contains?
               asm
@@ -16403,18 +16327,14 @@ g:
   [save : String]
   [restore : String]) : bool
   (and
+    (compiler_backend.compiler-backend-string-contains? asm save)
     (compiler_backend.compiler-backend-string-contains?
-      (owned_view.compiler-owned-shared-view asm)
-      save)
-    (compiler_backend.compiler-backend-string-contains?
-      (owned_view.compiler-owned-shared-view asm)
+      asm
       "    movsd -24(%rbp), %xmm2\n")
     (compiler_backend.compiler-backend-string-contains?
-      (owned_view.compiler-owned-shared-view asm)
+      asm
       "    movsd %xmm2, -16(%rbp)\n")
-    (compiler_backend.compiler-backend-string-contains?
-      (owned_view.compiler-owned-shared-view asm)
-      restore)
+    (compiler_backend.compiler-backend-string-contains? asm restore)
     (=
       (compiler_backend.compiler-backend-string-count
         (owned_view.compiler-owned-shared-view asm)
@@ -16457,12 +16377,12 @@ g:
                       (let
                         [placed-value : i64
                           (compiler_backend.compiler-backend-string-find-from
-                            (owned_view.compiler-owned-shared-view placed)
+                            placed
                             "    movsd .L_tl_f64_"
                             0)]
                         [placed-save : i64
                           (compiler_backend.compiler-backend-string-find-from
-                            (owned_view.compiler-owned-shared-view placed)
+                            placed
                             "    movdqu %xmm2, -128(%rbp)\n"
                             0)]
                         (and
@@ -16486,7 +16406,7 @@ g:
                             "    movdqu %xmm2, -128(%rbp)\n"
                             "    movdqu -128(%rbp), %xmm2\n")
                           (compiler_backend.compiler-backend-string-contains?
-                            (owned_view.compiler-owned-shared-view safe)
+                            safe
                             "    movsd -24(%rbp), %xmm2\n    movsd %xmm2, -16(%rbp)\n")
                           (not
                             (compiler_backend.compiler-backend-string-contains?
@@ -16529,13 +16449,13 @@ g:
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movdqu %xmm2, -128(%rbp)\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movsd -32(%rbp), %xmm2\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movsd %xmm2, -16(%rbp)\n")
             (compiler_backend.compiler-backend-string-contains?
               asm
@@ -16795,25 +16715,25 @@ g:
           ;; `1 < %r14` is emitted as `%r14 > 1`, so the false edge uses
           ;; the reversed predicate (`jle`) while retaining the phi-copy edge.
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    jle .Lphi_edge_exit\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    jl .Lphi_edge_entry_branch_true\n"))
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".Lphi_edge_entry_branch_true:\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movl $1, %r12d\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movq %rax, %r12\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               ".Lphi_edge_entry_branch_false:\n"))
           (compiler_backend.compiler-backend-string-contains?
             asm
@@ -16838,11 +16758,11 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq $1, -8(%rbp)\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movl $1, %eax\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -16926,21 +16846,21 @@ g:
             [(compiler_backend.ResultCompilerBackend.Ok reg-spill)
               (and
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view reg-reg)
+                  reg-reg
                   "    movq %r13, %r12\n")
                 (not
                   (compiler_backend.compiler-backend-string-contains?
                     reg-reg
                     "    movq %r13, %rax\n"))
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view spill-reg)
+                  spill-reg
                   "    movq -16(%rbp), %r12\n")
                 (not
                   (compiler_backend.compiler-backend-string-contains?
                     spill-reg
                     "    movq -16(%rbp), %rax\n"))
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view reg-spill)
+                  reg-spill
                   "    movq %r13, -8(%rbp)\n")
                 (not
                   (compiler_backend.compiler-backend-string-contains?
@@ -17056,15 +16976,15 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movl $7, %eax\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movl $7, %r14d\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq %r14, %r12\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -17167,18 +17087,18 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movl $7, %r14d\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq %r14, %rax\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq %r14, %r13\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movl $99, %ebx\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -17244,10 +17164,10 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movl $7, %r12d\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    jmp .L_tl_test_join\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -17362,15 +17282,15 @@ g:
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movl $7, %r12d\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movl $7, %r14d\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movq %r14, %r12\n"))
           (compiler_backend.compiler-backend-string-contains?
             asm
@@ -17440,16 +17360,16 @@ g:
               (and
                 (string.eq same-home "")
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view cycle)
+                  cycle
                   "    movq -8(%rbp), %r10\n")
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view cycle)
+                  cycle
                   "    movq %r10, -512(%rbp)\n")
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view cycle)
+                  cycle
                   "    movq -512(%rbp), %r10\n")
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view cycle)
+                  cycle
                   "    movq %r10, -16(%rbp)\n")
                 ;; The spilled mem->mem copy of the break stages through the
                 ;; scavenged GP register. It used to carry a pushq/popq bracket
@@ -17458,14 +17378,14 @@ g:
                 ;; assignment table, and no copy dst homes one), so the bracket is
                 ;; gone and the pair itself is what the shape asserts.
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view cycle)
+                  cycle
                   "    movq -16(%rbp), %r8\n")
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view cycle)
+                  cycle
                   "    movq %r8, -8(%rbp)\n")
                 (not
                   (compiler_backend.compiler-backend-string-contains?
-                    (owned_view.compiler-owned-shared-view cycle)
+                    cycle
                     "    pushq %r8\n"))
                 (not
                   (compiler_backend.compiler-backend-string-contains?
@@ -17537,20 +17457,20 @@ g:
         [(compiler_backend.ResultCompilerBackend.Ok cycle)
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view cycle)
+              cycle
               "    movq -8(%rbp), %r10\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view cycle)
+              cycle
               "    movq %r10, -512(%rbp)\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view cycle)
+              cycle
               "    movq -512(%rbp), %r10\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view cycle)
+              cycle
               "    movq %r10, -16(%rbp)\n")
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view cycle)
+                cycle
                 "    pushq %r8\n"))
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -17605,35 +17525,29 @@ g:
         [(compiler_backend.ResultCompilerBackend.Ok cycle)
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view cycle)
+              cycle
               "    movq %r12, -512(%rbp)\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view cycle)
+              cycle
               "    movq %r13, -520(%rbp)\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view cycle)
+              cycle
               "    movq %r14, %r12\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view cycle)
+              cycle
               "    movq %r15, %r13\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view cycle)
+              cycle
               "    movq -520(%rbp), %r15\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view cycle)
+              cycle
               "    movq -512(%rbp), %r14\n")
             (not
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view cycle)
-                "pushq"))
+              (compiler_backend.compiler-backend-string-contains? cycle "pushq"))
             (not
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view cycle)
-                "popq"))
+              (compiler_backend.compiler-backend-string-contains? cycle "popq"))
             (not
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view cycle)
-                "%rax"))
+              (compiler_backend.compiler-backend-string-contains? cycle "%rax"))
             (not
               (compiler_backend.compiler-backend-string-contains? cycle "%rdx")))]
         [(compiler_backend.ResultCompilerBackend.Err _) false])]
@@ -17751,26 +17665,26 @@ g:
           [(compiler_backend.ResultCompilerBackend.Ok cycle)
             (and
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view cycle)
+                cycle
                 "    movsd %xmm2, %xmm4\n")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view cycle)
+                cycle
                 "    movsd %xmm4, %xmm3\n")
               (not
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view cycle)
+                  cycle
                   "-512(%rbp)"))
               (not
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view cycle)
+                  cycle
                   "%rsp"))
               (not
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view cycle)
+                  cycle
                   "%xmm0"))
               (not
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view cycle)
+                  cycle
                   "%xmm14"))
               (not
                 (compiler_backend.compiler-backend-string-contains?
@@ -17791,7 +17705,7 @@ g:
           [(compiler_backend.ResultCompilerBackend.Ok fallback)
             (and
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view fallback)
+                fallback
                 "    movsd %xmm2, -512(%rbp)\n")
               (compiler_backend.compiler-backend-string-contains?
                 fallback
@@ -17811,14 +17725,12 @@ g:
           [(compiler_backend.ResultCompilerBackend.Ok cycle)
             (and
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view cycle)
+                cycle
                 "    movss %xmm2, %xmm4\n")
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view cycle)
-                "%xmm4")
+              (compiler_backend.compiler-backend-string-contains? cycle "%xmm4")
               (not
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view cycle)
+                  cycle
                   "-512(%rbp)"))
               (not
                 (compiler_backend.compiler-backend-string-contains?
@@ -17839,7 +17751,7 @@ g:
           [(compiler_backend.ResultCompilerBackend.Ok cycle)
             (and
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view cycle)
+                cycle
                 "-512(%rbp)")
               (not
                 (compiler_backend.compiler-backend-string-contains?
@@ -17860,24 +17772,24 @@ g:
           [(compiler_backend.ResultCompilerBackend.Ok cycle)
             (and
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view cycle)
+                cycle
                 "    movq %xmm2, -512(%rbp)\n")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view cycle)
+                cycle
                 "    movq %xmm3, -520(%rbp)\n")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view cycle)
+                cycle
                 "    movq -520(%rbp), %xmm5\n")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view cycle)
+                cycle
                 "    movq -512(%rbp), %xmm4\n")
               (not
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view cycle)
+                  cycle
                   "%rsp"))
               (not
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view cycle)
+                  cycle
                   "%xmm14"))
               (not
                 (compiler_backend.compiler-backend-string-contains?
@@ -17930,19 +17842,15 @@ g:
             [asm : String (str_cat.str-cat save-asm restore-asm)]
             (and
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "    movq %rdi, -512(%rbp)\n")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "    movq -512(%rbp), %rsi\n")
               (not
-                (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view asm)
-                  "pushq"))
+                (compiler_backend.compiler-backend-string-contains? asm "pushq"))
               (not
-                (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view asm)
-                  "popq"))
+                (compiler_backend.compiler-backend-string-contains? asm "popq"))
               (not
                 (compiler_backend.compiler-backend-string-contains? asm "%rsp"))))]
         [(compiler_backend.ResultCompilerBackend.Err _) false])]
@@ -17989,12 +17897,8 @@ g:
         (ci.intern-compat-state-capture-active)))
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            ", %rsi\n")
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            ", %rdx\n")
+          (compiler_backend.compiler-backend-string-contains? asm ", %rsi\n")
+          (compiler_backend.compiler-backend-string-contains? asm ", %rdx\n")
           (not (compiler_backend.compiler-backend-string-contains? asm "%rdi")))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])))
 
@@ -18084,12 +17988,8 @@ g:
         (ci.intern-compat-state-capture-active)))
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            ", %rdi\n")
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            ", %rsi\n")
+          (compiler_backend.compiler-backend-string-contains? asm ", %rdi\n")
+          (compiler_backend.compiler-backend-string-contains? asm ", %rsi\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
               asm
@@ -18141,16 +18041,20 @@ g:
       (compiler_backend.compiler-backend-outgoing-shadow-space
         (compiler_backend.CompilerBackendTarget.Windows))
       32)
-    (compiler_backend.compiler-backend-string-contains?
-      (compiler_backend.compiler-backend-target-entry-text
-        (compiler_backend.CompilerBackendTarget.Linux)
-        true)
-      "_tl_start")
-    (compiler_backend.compiler-backend-string-contains?
-      (compiler_backend.compiler-backend-target-entry-text
-        (compiler_backend.CompilerBackendTarget.Windows)
-        true)
-      ".globl main")
+    (let
+      [bound-57
+        (compiler_backend.compiler-backend-target-entry-text
+          (compiler_backend.CompilerBackendTarget.Linux)
+          true)]
+      (compiler_backend.compiler-backend-string-contains? bound-57 "_tl_start"))
+    (let
+      [bound-58
+        (compiler_backend.compiler-backend-target-entry-text
+          (compiler_backend.CompilerBackendTarget.Windows)
+          true)]
+      (compiler_backend.compiler-backend-string-contains?
+        bound-58
+        ".globl main"))
     (compiler-backend-target-linux-no-entry-ok?
       (owned_view.compiler-owned-shared-view src))
     (compiler-backend-target-linux-crt-entry-ok?)
@@ -18181,15 +18085,11 @@ g:
         false)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
-            (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
-              ".text\n")
-            (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
-              "main:\n")
+            (compiler_backend.compiler-backend-string-contains? asm ".text\n")
+            (compiler_backend.compiler-backend-string-contains? asm "main:\n")
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 ".globl _tl_start\n"))
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -18219,24 +18119,25 @@ g:
         true)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
+            (let
+              [bound-59
+                (compiler_backend.compiler-backend-target-entry-text-with-crt
+                  (compiler_backend.CompilerBackendTarget.Linux)
+                  true
+                  true)]
+              (compiler_backend.compiler-backend-string-contains?
+                bound-59
+                ".globl main"))
+            (compiler_backend.compiler-backend-string-contains? asm "main:\n")
             (compiler_backend.compiler-backend-string-contains?
-              (compiler_backend.compiler-backend-target-entry-text-with-crt
-                (compiler_backend.CompilerBackendTarget.Linux)
-                true
-                true)
-              ".globl main")
-            (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
-              "main:\n")
-            (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movq %rdi, .L_tl_argc(%rip)\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    call _tl___global_init_")
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 ".globl _tl_start\n"))
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -18259,20 +18160,20 @@ g:
         4800)]
     (and
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view win)
+        win
         "    movl $4800, %eax\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view win)
+        win
         "    callq __chkstk\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view win)
+        win
         "    subq %rax, %rsp\n")
       (not
         (compiler_backend.compiler-backend-string-contains?
           win
           "    subq $4800, %rsp\n"))
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view linux)
+        linux
         "    subq $4800, %rsp\n")
       (not
         (compiler_backend.compiler-backend-string-contains? linux "__chkstk")))))
@@ -18292,39 +18193,37 @@ g:
       (and
         (compiler_backend.backend-and8
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".globl main\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "\n_start:\n"))
           (not
-            (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
-              "syscall\n"))
+            (compiler_backend.compiler-backend-string-contains? asm "syscall\n"))
           ;; Win64 FPO rebases both local slots and the positive incoming
           ;; stack argument against the constant post-prologue %rsp.
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq %rcx, 88(%rsp)\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq %rdx, 80(%rsp)\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq %r8, 72(%rsp)\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq %r9, 64(%rsp)\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq 144(%rsp), %r8\n"))
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq %r10, 32(%rsp)\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq %r11, 32(%rsp)\n"))
         (compiler_backend.compiler-backend-string-contains?
           asm
@@ -18359,14 +18258,14 @@ g:
                     (and
                       (not (string.eq body ""))
                       (compiler_backend.compiler-backend-string-contains?
-                        (owned_view.compiler-owned-shared-view body)
+                        body
                         ".seh_stackalloc ")
                       (compiler_backend.compiler-backend-string-contains?
-                        (owned_view.compiler-owned-shared-view body)
+                        body
                         ".seh_endprologue\n")
                       (not
                         (compiler_backend.compiler-backend-string-contains?
-                          (owned_view.compiler-owned-shared-view body)
+                          body
                           ".seh_setframe"))
                       (not
                         (compiler_backend.compiler-backend-string-contains?
@@ -18389,109 +18288,109 @@ g:
           ;; it no longer inlines a kernel32 WriteFile for the OOM message.
           (compiler_backend.backend-and4
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               ".globl tl_alloc\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    call VirtualAlloc\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               ".L_tl_alloc_abort:\n    sub $32, %rsp\n    call tl_oom_abort\n")
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "    call _write\n")))]
         [no-process-runtime : bool
           (compiler_backend.backend-and4
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "    call _lseeki64\n"))
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "    call _read\n"))
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "tl_process_output:\n"))
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "tmpfile:\n")))]
         [string-runtime : bool
           (compiler_backend.backend-and8
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    call tl_substring\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    call tl_string_concat\n")
             (and
               (not
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view asm)
+                  asm
                   "tl_substring:\n"))
               (not
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view asm)
+                  asm
                   "tl_string_concat:\n"))
               (not
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view asm)
+                  asm
                   "tl_int_to_string:\n")))
             (and
               (not
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view asm)
+                  asm
                   "tl_string_eq:\n"))
               (not
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view asm)
+                  asm
                   "tl_string_to_int:\n")))
             (and
               (not
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view asm)
+                  asm
                   ".extern tl_substring\n"))
               (not
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view asm)
+                  asm
                   ".extern tl_string_concat\n"))
               (not
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view asm)
+                  asm
                   ".extern tl_int_to_string\n")))
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "tl_random_system_seed:\n"))
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 ".extern tl_random_system_seed\n"))
             (compiler_backend.compiler-backend-no-stdlib-forwarding-labels?
               (owned_view.compiler-owned-shared-view asm)))]
         [entry-shape : bool
           (compiler_backend.backend-and4
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movq %rcx, .L_tl_argc(%rip)\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    .extern VirtualAlloc\n")
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "syscall\n"))
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 ".globl _start\n")))]
         [private-file-handles : bool
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               ".L_tl_file_handle_next:\n"))]
         [driver-runtime : bool
           (compiler_backend.compiler-backend-windows-driver-runtime-ok?)]
@@ -18526,25 +18425,23 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.backend-and8
+          (compiler_backend.compiler-backend-string-contains? asm "tl_alloc:\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "tl_alloc:\n")
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    testq %rcx, %rcx\n    jnz .L_tl_alloc_win_size_ready\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    testq %rcx, %rcx\n    jg .L_tl_alloc_win_size_ready\n"))
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    jc .L_tl_alloc_enter_abort\n")
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               ".L_tl_region_reset_win_invalid:\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    sub $32, %rsp\n    call tl_region_abort\n"))
           ;; The allocator still delegates to the `tl_oom_abort`
           ;; runtime-prelude handler. The direct GetStdHandle/WriteFile paths
@@ -18552,32 +18449,30 @@ g:
           ;; before user code starts and an unhandled stack overflow.
           (compiler_backend.backend-and4
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               ".L_tl_alloc_abort:\n    sub $32, %rsp\n    call tl_oom_abort\n")
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 ".L_tl_win_write_abort"))
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               ".L_tl_main_stack_reservation_failed:\n    movl $-12, %ecx\n    call GetStdHandle\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    call WriteFile\n    movl $134, %ecx\n    call ExitProcess\n"))
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    push %r14\n    movq %rcx, %r12\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    push %r14\n    sub $8, %rsp\n    movq %rcx, %r12\n")))
         (not
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "syscall\n"))
+          (compiler_backend.compiler-backend-string-contains? asm "syscall\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    .extern _write\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -18608,34 +18503,26 @@ g:
       (and
         (compiler_backend.backend-and8
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    syscall\n")
+          (compiler_backend.compiler-backend-string-contains? asm ", %rax\n")
+          (compiler_backend.compiler-backend-string-contains? asm ", %rdi\n")
+          (compiler_backend.compiler-backend-string-contains? asm ", %rsi\n")
+          (compiler_backend.compiler-backend-string-contains? asm ", %rdx\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            ", %rax\n")
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            ", %rdi\n")
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            ", %rsi\n")
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            ", %rdx\n")
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq $231,")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq $42,")
           true)
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    pushq %rax\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    popq %rax\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -18729,7 +18616,7 @@ g:
         (compiler_ir_types.compiler-ir-symbol-id-text source-name)
         (compiler_ir_types.compiler-ir-symbol-id-text generated-name))
       (match (compiler_backend.compiler-backend-source-span-index-lookup
-        (owned_view.compiler-owned-shared-view index)
+        index
         source-name)
         [(compiler_ir_types.CompilerMaybeSourceSpan.Some span)
           (and
@@ -18954,7 +18841,7 @@ g:
           (and
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "tl_backtrace_map_data_begin"))
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -18968,13 +18855,13 @@ g:
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               ".section .typelisp_backtrace,\"a\",@progbits")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "tl_backtrace_string_data_begin:")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "tl_backtrace_map_data_end:")
             (compiler_backend.compiler-backend-string-contains?
               asm
@@ -18987,10 +18874,10 @@ g:
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               ".section .rdata$TLBT,\"dr\"")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               ".section .rdata$TLBS,\"dr\"")
             (compiler_backend.compiler-backend-string-contains?
               asm
@@ -19237,9 +19124,7 @@ g:
   [own : String]
   [other : String]) : bool
   (and
-    (compiler_backend.compiler-backend-string-contains?
-      (owned_view.compiler-owned-shared-view text)
-      own)
+    (compiler_backend.compiler-backend-string-contains? text own)
     (not (compiler_backend.compiler-backend-string-contains? text other))))
 
 (define (compiler-backend-explicit-state-install!
@@ -19794,10 +19679,13 @@ g:
     [duplicate-failed : bool
       (match duplicate-result
         [(compiler_backend.ResultCompilerBackendBuffer.Err diag)
-          (compiler_backend.compiler-backend-string-contains?
-            (compiler_diagnostic.compiler-diagnostic-message
-              (__tl-box-place diag))
-            "duplicate emitted function symbol")]
+          (let
+            [bound-60
+              (compiler_diagnostic.compiler-diagnostic-message
+                (__tl-box-place diag))]
+            (compiler_backend.compiler-backend-string-contains?
+              bound-60
+              "duplicate emitted function symbol"))]
         [(compiler_backend.ResultCompilerBackendBuffer.Ok _) false])]
     [duplicate-stream-retired : bool
       (and
@@ -19822,9 +19710,11 @@ g:
     [valid-ok : bool
       (match valid-result
         [(compiler_backend.ResultCompilerBackendBuffer.Ok buf)
-          (compiler_backend.compiler-backend-string-contains?
-            (text_buf.render buf)
-            "_tl_dup_abort")]
+          (let
+            [bound-61 (text_buf.render buf)]
+            (compiler_backend.compiler-backend-string-contains?
+              bound-61
+              "_tl_dup_abort"))]
         [(compiler_backend.ResultCompilerBackendBuffer.Err _) false])]
     (begin
       (ci.intern-compat-state-install! active-before)
@@ -20194,16 +20084,14 @@ g:
         [body : String (compiler-backend-asm-function-body asm "_tl_f0")]
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view body)
+            body
             "_switch_table")
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view body)
+              body
               "    cmpq $5"))
           (not
-            (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view body)
-              "    ja "))
+            (compiler_backend.compiler-backend-string-contains? body "    ja "))
           (not
             (compiler_backend.compiler-backend-string-contains?
               body
@@ -20221,16 +20109,14 @@ g:
             "main")]
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view body)
+            body
             "    jmp *.Lf0_entry_switch_table(,%r8,8)\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view body)
+              body
               "    cmpq $5"))
           (not
-            (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view body)
-              "    ja "))
+            (compiler_backend.compiler-backend-string-contains? body "    ja "))
           (not
             (compiler_backend.compiler-backend-string-contains?
               body
@@ -20241,7 +20127,7 @@ g:
               "    .quad .Lf0_")
             6)
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    .quad .Lf0_zero\n")
           (compiler_backend.compiler-backend-string-contains?
             asm
@@ -20256,11 +20142,11 @@ g:
         [body : String (compiler-backend-asm-function-body asm "main")]
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view body)
+            body
             "    jmp *.Lf0_entry_switch_table(,%r8,8)\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view body)
+              body
               "    cmpq $5"))
           (not
             (compiler_backend.compiler-backend-string-contains? body "    ja "))))]
@@ -20279,19 +20165,15 @@ g:
         [body : String (compiler-backend-asm-function-body asm "main")]
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view body)
+            body
             "    leaq .Lf0_entry_switch_table(%rip), ")
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view body)
-            "    jmp *(")
+          (compiler_backend.compiler-backend-string-contains? body "    jmp *(")
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view body)
+              body
               "    cmpq $5"))
           (not
-            (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view body)
-              "    ja "))
+            (compiler_backend.compiler-backend-string-contains? body "    ja "))
           (not
             (compiler_backend.compiler-backend-string-contains?
               body
@@ -20330,9 +20212,7 @@ g:
       (compiler-backend-spoofed-total-switch-test-program))
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "    cmpq $5")
+          (compiler_backend.compiler-backend-string-contains? asm "    cmpq $5")
           (compiler_backend.compiler-backend-string-contains? asm "    ja "))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])
     (match (compiler_backend.compiler-backend-emit-program-object-image-linux
@@ -20352,36 +20232,36 @@ g:
         ;; T1-6 (a): `main` is a call-free leaf, so the switch scrutinee
         ;; loads from a red-zone slot (-8(%rsp)).
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq -8(%rsp), %r8\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    cmpq $2, %r8\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    ja .Lf0_other\n")
         ;; Non-PIC Linux emits the absolute indexed dispatch (no table reg).
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    jmp *.Lf0_entry_switch_table(,%r8,8)\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    jmp *(%r11,%rax,8)\n"))
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    .section .rodata\n    .balign 8\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           ".Lf0_entry_switch_table:\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    .quad .Lf0_zero\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    .quad .Lf0_one\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    .quad .Lf0_two\n")
         (compiler_backend.compiler-backend-string-contains? asm ".text\n"))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
@@ -20448,20 +20328,20 @@ g:
         ;; T1-6 (a): `main` is a call-free leaf, so the switch scrutinee
         ;; loads from a red-zone slot (-8(%rsp)).
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq -8(%rsp), %r8\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    subq $4, %r8\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    cmpq $1, %r8\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    ja .Lf0_other\n")
         ;; Non-PIC Linux emits the absolute indexed dispatch (no table reg).
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    jmp *.Lf0_entry_switch_table(,%r8,8)\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -20560,25 +20440,25 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    ja .Lf0_entry_switch_default\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           ".Lf0_entry_switch_table:\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    .quad .Lf0_entry_switch_case_0\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    .quad .Lf0_entry_switch_case_1\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           ".Lf0_entry_switch_case_0:\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           ".Lf0_entry_switch_case_1:\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           ".Lf0_entry_switch_default:\n")
         (compiler_backend.compiler-backend-string-contains?
           asm
@@ -20654,33 +20534,33 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           ".Lf0_entry_switch_table:\n")
         ;; The negative key spells with `m`, in the table and at the block.
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    .quad .Lf0_entry_switch_case_m1\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           ".Lf0_entry_switch_case_m1:\n")
         ;; A non-negative key is spelled exactly as it always was.
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    .quad .Lf0_entry_switch_case_0\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           ".Lf0_entry_switch_case_0:\n")
         ;; Equal-magnitude signed keys remain distinct.
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    .quad .Lf0_entry_switch_case_1\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           ".Lf0_entry_switch_case_1:\n")
         ;; No `-` reaches a symbol name anywhere in the emission.
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "switch_case_-"))
         (compiler_backend.compiler-backend-string-contains?
           asm
@@ -20909,13 +20789,16 @@ g:
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
             (compiler_backend.backend-and4
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
-                (str_cat.str-cat
-                  "    .section .rodata\n"
-                  align
-                  (owned_view.compiler-owned-shared-view label)
-                  ":\n"))
+              (let
+                [bound-62
+                  (str_cat.str-cat
+                    "    .section .rodata\n"
+                    align
+                    (owned_view.compiler-owned-shared-view label)
+                    ":\n")]
+                (compiler_backend.compiler-backend-string-contains?
+                  asm
+                  bound-62))
               (=
                 (compiler_backend.compiler-backend-string-count
                   (owned_view.compiler-owned-shared-view asm)
@@ -20933,9 +20816,11 @@ g:
                     "(%rip), "))
                 2)
               (not
-                (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view asm)
-                  (str_cat.str-cat label ":\n" load))))
+                (let
+                  [bound-63 (str_cat.str-cat label ":\n" load)]
+                  (compiler_backend.compiler-backend-string-contains?
+                    asm
+                    bound-63))))
             (not
               (compiler_backend.compiler-backend-string-contains?
                 asm
@@ -21000,17 +20885,11 @@ g:
           (and
             (compiler_backend.backend-and4
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "    vzeroupper\n")
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
-                move)
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
-                op)
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
-                "%ymm"))
+              (compiler_backend.compiler-backend-string-contains? asm move)
+              (compiler_backend.compiler-backend-string-contains? asm op)
+              (compiler_backend.compiler-backend-string-contains? asm "%ymm"))
             (not
               (compiler_backend.compiler-backend-string-contains?
                 asm
@@ -21054,20 +20933,14 @@ g:
             (and
               (compiler_backend.backend-and8
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view asm)
+                  asm
                   "    vzeroupper\n")
+                (compiler_backend.compiler-backend-string-contains? asm move)
+                (compiler_backend.compiler-backend-string-contains? asm op)
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view asm)
-                  move)
-                (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view asm)
-                  op)
-                (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view asm)
-                  (owned_view.compiler-owned-shared-view broadcast))
-                (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view asm)
-                  "%ymm")
+                  asm
+                  broadcast)
+                (compiler_backend.compiler-backend-string-contains? asm "%ymm")
                 (not
                   (compiler_backend.compiler-backend-string-contains?
                     asm
@@ -21097,23 +20970,21 @@ g:
           (and
             (compiler_backend.backend-and8
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "    vpbroadcastq ")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "    vpmuludq ")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "    vpsllq $32, ")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "    vpaddq ")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "    vmovdqu ")
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
-                "%ymm")
+              (compiler_backend.compiler-backend-string-contains? asm "%ymm")
               (not
                 (compiler_backend.compiler-backend-string-contains?
                   asm
@@ -21262,10 +21133,7 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (string.eq asm "    vpbroadcastq -16(%rbp), %ymm6\n")
-        (not
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "%rax"))
+        (not (compiler_backend.compiler-backend-string-contains? asm "%rax"))
         (not (compiler_backend.compiler-backend-string-contains? asm "%xmm0")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
@@ -21300,10 +21168,7 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (string.eq asm "    vpbroadcastq -16(%rbp), %zmm6\n")
-        (not
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "%rax"))
+        (not (compiler_backend.compiler-backend-string-contains? asm "%rax"))
         (not (compiler_backend.compiler-backend-string-contains? asm "%xmm0")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
@@ -21341,10 +21206,7 @@ g:
           (string.eq
             asm
             "    movq %r12, %r8\n    vmovq %r8, %xmm2\n    vpbroadcastq %xmm2, %ymm6\n")
-          (not
-            (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
-              "%rax"))
+          (not (compiler_backend.compiler-backend-string-contains? asm "%rax"))
           (not (compiler_backend.compiler-backend-string-contains? asm "%xmm0")))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])
     (match (compiler_backend.compiler-backend-emit-avx2-splat
@@ -21473,32 +21335,39 @@ g:
       (compiler_diagnostic.compiler-diagnostic-at-start "" "")]
     (and
       (string.eq
-        (compiler_backend.compiler-backend-avx2-masked-move-mnemonic
-          (compiler_ast_types.AstType.I32))
+        (let
+          [bound-64 (compiler_ast_types.AstType.I32)]
+          (compiler_backend.compiler-backend-avx2-masked-move-mnemonic bound-64))
         "vpmaskmovd")
       (string.eq
-        (compiler_backend.compiler-backend-avx2-masked-move-mnemonic
-          (compiler_ast_types.AstType.U32))
+        (let
+          [bound-65 (compiler_ast_types.AstType.U32)]
+          (compiler_backend.compiler-backend-avx2-masked-move-mnemonic bound-65))
         "vpmaskmovd")
       (string.eq
-        (compiler_backend.compiler-backend-avx2-masked-move-mnemonic
-          (compiler_ast_types.AstType.I64))
+        (let
+          [bound-66 (compiler_ast_types.AstType.I64)]
+          (compiler_backend.compiler-backend-avx2-masked-move-mnemonic bound-66))
         "vpmaskmovq")
       (string.eq
-        (compiler_backend.compiler-backend-avx2-masked-move-mnemonic
-          (compiler_ast_types.AstType.U64))
+        (let
+          [bound-67 (compiler_ast_types.AstType.U64)]
+          (compiler_backend.compiler-backend-avx2-masked-move-mnemonic bound-67))
         "vpmaskmovq")
       (string.eq
-        (compiler_backend.compiler-backend-avx2-masked-move-mnemonic
-          (compiler_ast_types.AstType.F32))
+        (let
+          [bound-68 (compiler_ast_types.AstType.F32)]
+          (compiler_backend.compiler-backend-avx2-masked-move-mnemonic bound-68))
         "vmaskmovps")
       (string.eq
-        (compiler_backend.compiler-backend-avx2-masked-move-mnemonic
-          (compiler_ast_types.AstType.F64))
+        (let
+          [bound-69 (compiler_ast_types.AstType.F64)]
+          (compiler_backend.compiler-backend-avx2-masked-move-mnemonic bound-69))
         "vmaskmovpd")
       (string.eq
-        (compiler_backend.compiler-backend-avx2-masked-move-mnemonic
-          (compiler_ast_types.AstType.I16))
+        (let
+          [bound-70 (compiler_ast_types.AstType.I16)]
+          (compiler_backend.compiler-backend-avx2-masked-move-mnemonic bound-70))
         "")
       (match (compiler_backend.compiler-backend-emit-avx2-predicated-load
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -21570,10 +21439,10 @@ g:
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    vpmovmskb %ymm7, %r11d\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "_load_skip_15")
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -21597,10 +21466,10 @@ g:
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    vpmovmskb %ymm7, %r11d\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "_store_skip_15")
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -21697,22 +21566,18 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    vmovdqu %ymm6, %ymm14\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    vpslldq $8, %ymm14, %ymm0\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    vperm2i128 $0, %ymm14, %ymm14, %ymm0\n")
+        (compiler_backend.compiler-backend-string-contains? asm "    vpcmpgtq ")
+        (compiler_backend.compiler-backend-string-contains? asm "    vpandn ")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          "    vpcmpgtq ")
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          "    vpandn ")
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    vmovq %r14, %xmm0\n")
         (compiler_backend.compiler-backend-string-contains?
           asm
@@ -21742,10 +21607,10 @@ g:
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    vmovdqu -64(%rbp), %ymm7\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    vpbroadcastq -8(%rbp), %ymm0\n")
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -21770,13 +21635,13 @@ g:
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    vmovdqu -64(%rbp), %ymm7\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movq -8(%rbp), %r14\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    setne %r14b\n")
             (compiler_backend.compiler-backend-string-contains?
               asm
@@ -21802,24 +21667,21 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    vpslldq $1, %ymm14, %ymm0\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    vpslldq $8, %ymm14, %ymm0\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    vpbroadcastb %xmm0, %ymm0\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    setne %r14b\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    vpand %ymm0, %ymm14, %ymm14\n")
-        (not
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "%al"))
+        (not (compiler_backend.compiler-backend-string-contains? asm "%al"))
         (compiler_backend.compiler-backend-string-contains?
           asm
           "    vmovdqu %ymm14, -64(%rbp)\n"))]
@@ -21848,19 +21710,19 @@ g:
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    vmovdqu64 %zmm6, %zmm14\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    valignq $7, %zmm1, %zmm14, %zmm0\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    kshiftlw $4, %k7, %k7\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    vpminsq %zmm0, %zmm14, %zmm14{%k7}\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    vpbroadcastq %r14, %zmm0\n")
             (compiler_backend.compiler-backend-string-contains?
               asm
@@ -21884,13 +21746,13 @@ g:
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    valignd $15, %zmm1, %zmm14, %zmm0\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    valignd $8, %zmm1, %zmm14, %zmm0\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    vpmaxsd %zmm0, %zmm14, %zmm14{%k7}\n")
             (compiler_backend.compiler-backend-string-contains?
               asm
@@ -21953,32 +21815,32 @@ g:
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    kmovq %k2, %r13\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    notq %r13\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    shlq $32, %r14\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movq %rax, %r14\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    setne %r14b\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    andq %r14, %r13\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    kmovq %r13, %k7\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    kmovq %k7, -64(%rbp)\n")
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "    kmovq %k2, %rax\n"))
             (not
               (compiler_backend.compiler-backend-string-contains? asm "%zmm")))]
@@ -22001,19 +21863,19 @@ g:
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    kmovq -64(%rbp), %k7\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    kmovq %k7, %r13\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movq -8(%rbp), %r14\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    orq %r14, %r13\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    kmovq %r13, %k3\n")
             (not
               (compiler_backend.compiler-backend-string-contains? asm "%rax")))]
@@ -22072,10 +21934,10 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    vmovdqu -64(%rbp), %ymm14\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    vextracti128 $1, %ymm14, ")
         (compiler_backend.compiler-backend-string-contains? asm "    vmovq "))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
@@ -22095,10 +21957,10 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    vmovdqu64 -64(%rbp), %zmm14\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    vextracti64x4 $1, %zmm14, ")
         (compiler_backend.compiler-backend-string-contains? asm "    vmovq "))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
@@ -22172,12 +22034,10 @@ g:
         true)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
-            (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
-              scratch)
+            (compiler_backend.compiler-backend-string-contains? asm scratch)
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "vector spills are not implemented"))
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -22458,13 +22318,13 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    vmovdqu64 %zmm6, %zmm8\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    vmovdqu64 %zmm7, %zmm6\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    vmovdqu64 %zmm8, %zmm6{%k1}\n")
         (not (compiler_backend.compiler-backend-string-contains? asm "%zmm15")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
@@ -22519,18 +22379,15 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    vmovdqu8 (%r12), %zmm6{%k2}{z}\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    vpxord %zmm7, %zmm7, %zmm7\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    vpcmpub $4, %zmm7, %zmm6, %k1\n")
-        (not
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "%zmm14"))
+        (not (compiler_backend.compiler-backend-string-contains? asm "%zmm14"))
         (not (compiler_backend.compiler-backend-string-contains? asm "%zmm15")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
@@ -22567,31 +22424,25 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    vpxord %zmm6, %zmm6, %zmm6\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    pushq $1\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    vpbroadcastb (%rsp), %zmm7\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    addq $8, %rsp\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    vmovdqu8 %zmm7, %zmm6{%k1}\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    vmovdqu8 %zmm6, (%r12){%k2}\n")
-        (not
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "%edx"))
-        (not
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "%zmm14"))
+        (not (compiler_backend.compiler-backend-string-contains? asm "%edx"))
+        (not (compiler_backend.compiler-backend-string-contains? asm "%zmm14"))
         (not (compiler_backend.compiler-backend-string-contains? asm "%zmm15")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
@@ -22614,29 +22465,17 @@ g:
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
             (compiler_backend.backend-and8
+              (compiler_backend.compiler-backend-string-contains? asm move)
+              (compiler_backend.compiler-backend-string-contains? asm op)
+              (compiler_backend.compiler-backend-string-contains? asm "%zmm")
+              (compiler_backend.compiler-backend-string-contains? asm "%k")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
-                move)
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
-                op)
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
-                "%zmm")
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
-                "%k")
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "tail_mask_")
+              (compiler_backend.compiler-backend-string-contains? asm "}{z}")
+              (compiler_backend.compiler-backend-string-contains? asm mask-move)
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
-                "}{z}")
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
-                mask-move)
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 mask-shift))
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -22660,28 +22499,24 @@ g:
           (and
             (compiler_backend.backend-and8
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "    vpcmpq $1,")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "    kandw ")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "    kandnw ")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "    vpbroadcastq ")
+              (compiler_backend.compiler-backend-string-contains? asm "}{z}")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
-                "}{z}")
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "tail_mask_")
+              (compiler_backend.compiler-backend-string-contains? asm "%k")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
-                "%k")
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "    vmovdqu64 "))
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -22705,32 +22540,35 @@ g:
           (and
             (compiler_backend.backend-and8
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "    vpcmpq $1,")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "    kandw ")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "    kandnw ")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "    vpbroadcastq ")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "tail_mask_")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "lane_id_")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "    vpaddq ")
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
-                (str_cat.str-cat
-                  "    vmovdqa64 "
-                  (compiler_backend.compiler-backend-avx512-i64-lane-id-label)
-                  "(%rip), ")))
+              (let
+                [bound-71
+                  (str_cat.str-cat
+                    "    vmovdqa64 "
+                    (compiler_backend.compiler-backend-avx512-i64-lane-id-label)
+                    "(%rip), ")]
+                (compiler_backend.compiler-backend-string-contains?
+                  asm
+                  bound-71)))
             (not
               (compiler_backend.compiler-backend-string-contains?
                 asm
@@ -22753,32 +22591,35 @@ g:
           (and
             (compiler_backend.backend-and8
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "    vpcmpq $0,")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "    kandw ")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "    kandnw ")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "    vpbroadcastq ")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "tail_mask_")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "lane_id_")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "    vpandq ")
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
-                (str_cat.str-cat
-                  "    vmovdqa64 "
-                  (compiler_backend.compiler-backend-avx512-i64-lane-id-label)
-                  "(%rip), ")))
+              (let
+                [bound-72
+                  (str_cat.str-cat
+                    "    vmovdqa64 "
+                    (compiler_backend.compiler-backend-avx512-i64-lane-id-label)
+                    "(%rip), ")]
+                (compiler_backend.compiler-backend-string-contains?
+                  asm
+                  bound-72)))
             (not
               (compiler_backend.compiler-backend-string-contains?
                 asm
@@ -22801,29 +22642,25 @@ g:
           (and
             (compiler_backend.backend-and8
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "    vpcmpq $1,")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "    kandw ")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "    kandnw ")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "    vpbroadcastq ")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "    vmovdqu64 %zmm")
+              (compiler_backend.compiler-backend-string-contains? asm "{%k")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
-                "{%k")
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "tail_mask_")
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
-                "%k"))
+              (compiler_backend.compiler-backend-string-contains? asm "%k"))
             (not
               (compiler_backend.compiler-backend-string-contains?
                 asm
@@ -22913,27 +22750,15 @@ g:
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
             (compiler_backend.backend-and8
+              (compiler_backend.compiler-backend-string-contains? asm move)
+              (compiler_backend.compiler-backend-string-contains? asm op)
+              (compiler_backend.compiler-backend-string-contains? asm broadcast)
+              (compiler_backend.compiler-backend-string-contains? asm "%zmm")
+              (compiler_backend.compiler-backend-string-contains? asm "%k")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
-                move)
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
-                op)
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
-                broadcast)
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
-                "%zmm")
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
-                "%k")
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "tail_mask_")
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
-                "}{z}")
+              (compiler_backend.compiler-backend-string-contains? asm "}{z}")
               (not
                 (compiler_backend.compiler-backend-string-contains?
                   asm
@@ -22957,23 +22782,19 @@ g:
           (and
             (compiler_backend.backend-and8
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "    vpbroadcastq ")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "    vpmullq ")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "    vpaddq ")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "    vmovdqu64 ")
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
-                "%zmm")
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
-                "%k")
+              (compiler_backend.compiler-backend-string-contains? asm "%zmm")
+              (compiler_backend.compiler-backend-string-contains? asm "%k")
               (not
                 (compiler_backend.compiler-backend-string-contains?
                   asm
@@ -23047,28 +22868,20 @@ g:
           (and
             (compiler_backend.backend-and8
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "    vzeroupper\n")
+              (compiler_backend.compiler-backend-string-contains? asm extract)
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
-                extract)
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 horizontal)
+              (compiler_backend.compiler-backend-string-contains? asm op)
+              (compiler_backend.compiler-backend-string-contains? asm store)
+              (compiler_backend.compiler-backend-string-contains? asm "%ymm")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
-                op)
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
-                store)
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
-                "%ymm")
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "spmd_reduce_avx2")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "spmd_reduce_tail"))
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -23095,17 +22908,11 @@ g:
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "spmd_reduce_avx2_body")
-            (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
-              reduce-op)
-            (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
-              result-op)
-            (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
-              register)
+            (compiler_backend.compiler-backend-string-contains? asm reduce-op)
+            (compiler_backend.compiler-backend-string-contains? asm result-op)
+            (compiler_backend.compiler-backend-string-contains? asm register)
             (compiler_backend.compiler-backend-string-contains?
               asm
               "spmd_reduce_tail"))]
@@ -23138,17 +22945,12 @@ g:
     [body : String
       (compiler-backend-shuffle-asm-function-body src lower-mode backend-mode)]
     (and
-      (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view body)
-        loop-label)
+      (compiler_backend.compiler-backend-string-contains? body loop-label)
       (not
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view body)
+          body
           "vector_shuffle_"))
-      (not
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view body)
-          "vpermd"))
+      (not (compiler_backend.compiler-backend-string-contains? body "vpermd"))
       (not (compiler_backend.compiler-backend-string-contains? body "vpermq")))))
 
 (define (compiler-backend-varying-shuffle-vector-check?
@@ -23163,28 +22965,17 @@ g:
     [body : String
       (compiler-backend-shuffle-asm-function-body src lower-mode backend-mode)]
     (compiler_backend.backend-and8
+      (compiler_backend.compiler-backend-string-contains? body opcode)
+      (compiler_backend.compiler-backend-string-contains? body compare-op)
+      (compiler_backend.compiler-backend-string-contains? body reduce-op)
+      (compiler_backend.compiler-backend-string-contains? body extra)
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view body)
-        opcode)
-      (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view body)
-        compare-op)
-      (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view body)
-        reduce-op)
-      (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view body)
-        extra)
-      (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view body)
+        body
         "    call tl_oob_abort")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view body)
+        body
         "vector_shuffle_")
-      (not
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view body)
-          "_skip_"))
+      (not (compiler_backend.compiler-backend-string-contains? body "_skip_"))
       (> (string.string-length body) 0))))
 
 (define (compiler-backend-shuffle-vector-check-reduction-ok?) : bool
@@ -23331,25 +23122,19 @@ g:
       (ci.intern-compat-state-capture-active)))
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          compare)
+        (compiler_backend.compiler-backend-string-contains? asm compare)
         (not
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            ", %xmm6\n"))
+          (compiler_backend.compiler-backend-string-contains? asm ", %xmm6\n"))
         (not
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            ", %ymm6\n"))
+          (compiler_backend.compiler-backend-string-contains? asm ", %ymm6\n"))
         (if spilled
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    vmovdqu -64(%rbp), %ymm14\n")
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 ", -64(%rbp)\n")))
           true)
         (compiler_backend.compiler-backend-string-contains?
@@ -23545,26 +23330,16 @@ g:
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
             (compiler_backend.backend-and8
+              (compiler_backend.compiler-backend-string-contains? asm extract)
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
-                extract)
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 horizontal)
+              (compiler_backend.compiler-backend-string-contains? asm op)
+              (compiler_backend.compiler-backend-string-contains? asm store)
+              (compiler_backend.compiler-backend-string-contains? asm "%zmm")
+              (compiler_backend.compiler-backend-string-contains? asm "%ymm")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
-                op)
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
-                store)
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
-                "%zmm")
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
-                "%ymm")
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "spmd_reduce_avx2")
               true)
             (not
@@ -23678,19 +23453,15 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    vextracti64x4 $1, %zmm6, %ymm2\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    vextracti128 $1, %ymm2, %xmm3\n")
+        (compiler_backend.compiler-backend-string-contains? asm mnemonic)
+        (compiler_backend.compiler-backend-string-contains? asm last-shift)
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          mnemonic)
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          last-shift)
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    vmovq %xmm2, ")
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -23737,22 +23508,16 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    vextracti128 $1, %ymm6, %xmm2\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    vmovq %xmm2, -40(%rbp)\n")
+        (not (compiler_backend.compiler-backend-string-contains? asm "%xmm0"))
+        (not (compiler_backend.compiler-backend-string-contains? asm "%xmm1"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "%xmm0"))
-        (not
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "%xmm1"))
-        (not
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    vmovq %xmm0, %rax\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -23777,22 +23542,16 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    vextracti128 $1, %ymm6, %xmm2\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    vmovq %xmm2, %r12\n")
+        (not (compiler_backend.compiler-backend-string-contains? asm "%xmm0"))
+        (not (compiler_backend.compiler-backend-string-contains? asm "%xmm1"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "%xmm0"))
-        (not
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "%xmm1"))
-        (not
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    vmovq %xmm0, %rax\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -23816,26 +23575,17 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    vextracti64x4 $1, %zmm6, %ymm2\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    vmovq %xmm2, -40(%rbp)\n")
+        (not (compiler_backend.compiler-backend-string-contains? asm "%xmm0"))
+        (not (compiler_backend.compiler-backend-string-contains? asm "%xmm1"))
+        (not (compiler_backend.compiler-backend-string-contains? asm "%ymm0"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "%xmm0"))
-        (not
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "%xmm1"))
-        (not
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "%ymm0"))
-        (not
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    vmovq %xmm0, %rax\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -23860,26 +23610,17 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    vextracti64x4 $1, %zmm6, %ymm2\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    vmovq %xmm2, %r12\n")
+        (not (compiler_backend.compiler-backend-string-contains? asm "%xmm0"))
+        (not (compiler_backend.compiler-backend-string-contains? asm "%xmm1"))
+        (not (compiler_backend.compiler-backend-string-contains? asm "%ymm0"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "%xmm0"))
-        (not
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "%xmm1"))
-        (not
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "%ymm0"))
-        (not
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    vmovq %xmm0, %rax\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -23951,18 +23692,16 @@ g:
     true)
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
+        (compiler_backend.compiler-backend-string-contains? asm "    vmovdqu ")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          "    vmovdqu ")
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    vpaddq 32(%r8), %ymm6, %ymm7\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    vpaddq %ymm7, %ymm6, %ymm6\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    vpaddq 32(%rax), %ymm6, %ymm7\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -24029,11 +23768,11 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    vmovdqu64 %zmm8, %zmm7{%k1}\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    vmovdqu64 %zmm7, %zmm7\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -24052,14 +23791,14 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    kandw %k2, %k1, %k1\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    kandnw %k7, %k1, %k1\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    knotw %k1, %k1\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -24121,31 +23860,25 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq %r13, %rcx\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    subq %r12, %rcx\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movl $1, %r9d\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    shll %cl, %r9d\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    kmovw %r9d, %k1\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    kxorw %k1, %k1, %k1\n")
-        (not
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "%rax"))
-        (not
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "%eax"))
+        (not (compiler_backend.compiler-backend-string-contains? asm "%rax"))
+        (not (compiler_backend.compiler-backend-string-contains? asm "%eax"))
         (not
           (compiler_backend.compiler-backend-string-contains?
             asm
@@ -24215,21 +23948,20 @@ g:
         (and
           (compiler_backend.backend-and4
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    vpbroadcastq %xmm0, %ymm0\n")
+            (let
+              [bound-73
+                (str_cat.str-cat
+                  "    vpaddq "
+                  (compiler_backend.compiler-backend-avx2-i64-lane-id-label)
+                  "(%rip), %ymm0, %ymm0\n")]
+              (compiler_backend.compiler-backend-string-contains? asm bound-73))
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
-              (str_cat.str-cat
-                "    vpaddq "
-                (compiler_backend.compiler-backend-avx2-i64-lane-id-label)
-                "(%rip), %ymm0, %ymm0\n"))
-            (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    vpcmpgtq %ymm0, %ymm1, %ymm6\n")
             (not
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
-                "(%rsp)")))
+              (compiler_backend.compiler-backend-string-contains? asm "(%rsp)")))
           (not
             (compiler_backend.compiler-backend-string-contains?
               asm
@@ -24240,18 +23972,21 @@ g:
         (and
           (compiler_backend.backend-and4
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    subq $32, %rsp\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "_tail_skip_0")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movl $-1, ")
             (not
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
-                (compiler_backend.compiler-backend-avx2-i64-lane-id-label))))
+              (let
+                [bound-74
+                  (compiler_backend.compiler-backend-avx2-i64-lane-id-label)]
+                (compiler_backend.compiler-backend-string-contains?
+                  asm
+                  bound-74))))
           (not
             (compiler_backend.compiler-backend-string-contains?
               asm
@@ -24481,15 +24216,13 @@ g:
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    vpcmpq $0, %zmm7, %zmm6, %k7\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    kmovw %k7, -24(%rbp)\n")
             (not
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
-                "%ymm"))
+              (compiler_backend.compiler-backend-string-contains? asm "%ymm"))
             (not (compiler_backend.compiler-backend-string-contains? asm "%k0")))]
         [(compiler_backend.ResultCompilerBackend.Err _) false])]
     (begin
@@ -24513,25 +24246,25 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    kmovw -8(%rbp), %k7\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    kmovw %k7, %eax\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    kmovw -16(%rbp), %k7\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    kmovw %k7, %r10d\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    andl %r10d, %eax\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    kmovw %eax, %k7\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    kmovw %k7, -24(%rbp)\n")
         (not (compiler_backend.compiler-backend-string-contains? asm "%k0")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
@@ -24549,16 +24282,16 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    kmovw -8(%rbp), %k7\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    xorl $255, %eax\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    kmovw %eax, %k7\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    kmovw %k7, -24(%rbp)\n")
         (not (compiler_backend.compiler-backend-string-contains? asm "%k0")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
@@ -24577,10 +24310,10 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    kmovw -8(%rbp), %k7\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    kortestw %k7, %k7\n")
         (compiler_backend.compiler-backend-string-contains?
           asm
@@ -24614,19 +24347,19 @@ g:
         [(compiler_backend.ResultCompilerBackend.Ok store-asm)
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view load-asm)
+              load-asm
               "    kmovw -16(%rbp), %k7\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view load-asm)
+              load-asm
               "    vpcmpub $4, ")
             (compiler_backend.compiler-backend-string-contains?
               load-asm
               "    kmovw %k7, -24(%rbp)\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view store-asm)
+              store-asm
               "    kmovw -8(%rbp), %k7\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view store-asm)
+              store-asm
               "    kmovw -16(%rbp), %k7\n")
             (compiler_backend.compiler-backend-string-contains?
               store-asm
@@ -24770,9 +24503,7 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler-backend-avx512-mask-spill-plan-ok?)
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          "kmovw")
+        (compiler_backend.compiler-backend-string-contains? asm "kmovw")
         (not
           (compiler_backend.compiler-backend-string-contains?
             asm
@@ -24986,13 +24717,13 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    call _tl_side_effect\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    vmovdqu %ymm14, 16(%rsp)\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    vmovdqu 16(%rsp), %ymm14\n")
         (compiler_backend.compiler-backend-string-contains?
           asm
@@ -25069,20 +24800,21 @@ g:
     true)
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          (str_cat.str-cat
-            "    "
-            (owned_view.compiler-owned-shared-view mnemonic)
-            " (%r8), "))
-        (not
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "    vmovdqu (%r8), "))
+        (let
+          [bound-75
+            (str_cat.str-cat
+              "    "
+              (owned_view.compiler-owned-shared-view mnemonic)
+              " (%r8), ")]
+          (compiler_backend.compiler-backend-string-contains? asm bound-75))
         (not
           (compiler_backend.compiler-backend-string-contains?
             asm
-            (str_cat.str-cat "    " mnemonic " (%rax), "))))]
+            "    vmovdqu (%r8), "))
+        (not
+          (let
+            [bound-76 (str_cat.str-cat "    " mnemonic " (%rax), ")]
+            (compiler_backend.compiler-backend-string-contains? asm bound-76))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-vector-load-binop-does-not-fold?
@@ -25098,12 +24830,12 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    vmovdqu (%r8), ")
         (not
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            (str_cat.str-cat "    " mnemonic " (%r8), ")))
+          (let
+            [bound-77 (str_cat.str-cat "    " mnemonic " (%r8), ")]
+            (compiler_backend.compiler-backend-string-contains? asm bound-77)))
         (not
           (compiler_backend.compiler-backend-string-contains?
             asm
@@ -25292,18 +25024,20 @@ g:
               (owned_view.compiler-owned-shared-view asm)
               "vpermd")
             1)
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            (str_cat.str-cat
-              "    subq $"
-              (string.int->string stack-bytes)
-              ", %rsp\n"))
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            (str_cat.str-cat
-              "    addq $"
-              (string.int->string stack-bytes)
-              ", %rsp\n"))
+          (let
+            [bound-78
+              (str_cat.str-cat
+                "    subq $"
+                (string.int->string stack-bytes)
+                ", %rsp\n")]
+            (compiler_backend.compiler-backend-string-contains? asm bound-78))
+          (let
+            [bound-79
+              (str_cat.str-cat
+                "    addq $"
+                (string.int->string stack-bytes)
+                ", %rsp\n")]
+            (compiler_backend.compiler-backend-string-contains? asm bound-79))
           (=
             (compiler_backend.compiler-backend-string-count
               (owned_view.compiler-owned-shared-view asm)
@@ -25332,7 +25066,7 @@ g:
                 "movl $252579084")
               1)
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    vpsrld $2, %zmm0, %zmm0\n")
             (compiler_backend.compiler-backend-string-contains?
               asm
@@ -25349,7 +25083,7 @@ g:
                 "movl $252579084")
               0)
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    vpsrld $1, %ymm0, %ymm0\n")
             (compiler_backend.compiler-backend-string-contains?
               asm
@@ -25401,20 +25135,20 @@ g:
       (if avx512
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    vmovdqu8 -64(%rbp), %zmm14\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    vmovdqu8 -128(%rbp), %zmm15\n")
           (compiler_backend.compiler-backend-string-contains?
             asm
             "    addq $448, %rsp\n    vmovdqu8 %zmm14, -192(%rbp)\n"))
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    vmovdqu -64(%rbp), %ymm14\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    vmovdqu -128(%rbp), %ymm15\n")
           (compiler_backend.compiler-backend-string-contains?
             asm
@@ -25462,26 +25196,27 @@ g:
               "vpermq")
             1)
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    subq $128, %rsp\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    addq $128, %rsp\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    vpsrld $16, %ymm0, %ymm0\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    vpermq $216, %ymm1, %ymm8\n"))
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          (str_cat.str-cat
-            "    "
-            (owned_view.compiler-owned-shared-view widen)
-            " (%rsp), %ymm0\n"))
-        (compiler_backend.compiler-backend-string-contains?
-          asm
-          (str_cat.str-cat "    " widen " 16(%rsp), %ymm0\n")))]
+        (let
+          [bound-80
+            (str_cat.str-cat
+              "    "
+              (owned_view.compiler-owned-shared-view widen)
+              " (%rsp), %ymm0\n")]
+          (compiler_backend.compiler-backend-string-contains? asm bound-80))
+        (let
+          [bound-81 (str_cat.str-cat "    " widen " 16(%rsp), %ymm0\n")]
+          (compiler_backend.compiler-backend-string-contains? asm bound-81)))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-word-vector-shift-spill-ok? [avx512 : bool]) : bool
@@ -25514,20 +25249,20 @@ g:
       (if avx512
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    vmovdqu16 -64(%rbp), %zmm14\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    vpsllvw -128(%rbp), %zmm14, %zmm14\n")
           (compiler_backend.compiler-backend-string-contains?
             asm
             "    vmovdqu16 %zmm14, -192(%rbp)\n"))
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    vmovdqu -64(%rbp), %ymm14\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    vmovdqu -128(%rbp), %ymm15\n")
           (compiler_backend.compiler-backend-string-contains?
             asm
@@ -25785,7 +25520,7 @@ g:
   (let
     [start : i64
       (compiler_backend.compiler-backend-string-find-from
-        (owned_view.compiler-owned-shared-view body)
+        body
         "foreach_avx2_body"
         0)]
     (if (< start 0)
@@ -25793,7 +25528,7 @@ g:
       (let
         [tail : i64
           (compiler_backend.compiler-backend-string-find-from
-            (owned_view.compiler-owned-shared-view body)
+            body
             "foreach_tail"
             start)]
         (if (< tail 0)
@@ -25850,7 +25585,7 @@ g:
                         "    vmovdqu %ymm6")
                       1)
                     (compiler_backend.compiler-backend-string-contains?
-                      (owned_view.compiler-owned-shared-view body)
+                      body
                       "foreach_avx2_body")
                     (compiler_backend.compiler-backend-string-contains?
                       body
@@ -27474,26 +27209,26 @@ g:
     (and
       (compiler_backend.backend-and4
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view linux)
+          linux
           "    .globl tl_memchr\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view linux)
+          linux
           "tl_memchr:\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view linux)
+          linux
           "    cmpb %dl, (%rdi,%rax)\n")
         (compiler_backend.compiler-backend-string-contains?
           linux
           "    movq $-1, %rax\n"))
       (compiler_backend.backend-and4
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view windows)
+          windows
           "    .globl tl_memchr\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view windows)
+          windows
           "tl_memchr:\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view windows)
+          windows
           "    cmpb %r8b, (%rcx,%rax)\n")
         (compiler_backend.compiler-backend-string-contains?
           windows
@@ -27502,9 +27237,9 @@ g:
 (define (compiler-backend-runtime-global-symbol-ok?
   [asm : String]
   [name : String]) : bool
-  (compiler_backend.compiler-backend-string-contains?
-    asm
-    (str_cat.str-cat "    .globl " name "\n")))
+  (let
+    [bound-82 (str_cat.str-cat "    .globl " name "\n")]
+    (compiler_backend.compiler-backend-string-contains? asm bound-82)))
 
 (define (compiler-backend-runtime-common-global-symbols-ok? [asm : String]) : bool
   (and
@@ -27671,7 +27406,7 @@ g:
       (compiler_backend.compiler-backend-runtime-features plan)]
     (compiler_backend.compiler-backend-runtime-functions-for-target
       target
-      (& features))))
+      features)))
 
 (define (compiler-backend-runtime-global-inventory-target-ok?
   [target : compiler_backend.CompilerBackendTarget]) : bool
@@ -27699,35 +27434,33 @@ g:
         (compiler_backend.CompilerBackendTarget.Linux))]
     (and
       (compiler_backend.backend-and8
+        (compiler_backend.compiler-backend-string-contains? asm "tl_alloc:\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          "tl_alloc:\n")
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "tl_region_mark:\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "tl_region_reset:\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "tl_arena_make:\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "tl_arena_current:\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "tl_arena_set:\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "tl_arena_destroy:\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "tl_arena_poison_enable:\n"))
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         "tl_alloc_aligned:\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         "tl_arena_make_atomic:\n")
       (compiler_backend.backend-and4
         (=
@@ -27751,12 +27484,10 @@ g:
             "    movq $60, %rax\n    movq $134, %rdi\n    syscall\n")
           3))
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         "    movq $158, %rax\n    syscall\n")
       (not
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          "VirtualAlloc"))
+        (compiler_backend.compiler-backend-string-contains? asm "VirtualAlloc"))
       (not
         (compiler_backend.compiler-backend-string-contains? asm "VirtualFree")))))
 
@@ -27767,35 +27498,33 @@ g:
         (compiler_backend.CompilerBackendTarget.Windows))]
     (and
       (compiler_backend.backend-and8
+        (compiler_backend.compiler-backend-string-contains? asm "tl_alloc:\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          "tl_alloc:\n")
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "tl_region_mark:\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "tl_region_reset:\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "tl_arena_make:\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "tl_arena_current:\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "tl_arena_set:\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "tl_arena_destroy:\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "tl_arena_poison_enable:\n"))
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         "tl_alloc_aligned:\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         "tl_arena_make_atomic:\n")
       (compiler_backend.backend-and4
         (and
@@ -27822,7 +27551,7 @@ g:
             13))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    syscall\n"))
         (and
           (=
@@ -27831,33 +27560,31 @@ g:
               "    call WriteFile\n")
             2)
           (not
-            (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
-              "    ud2\n"))))
+            (compiler_backend.compiler-backend-string-contains? asm "    ud2\n"))))
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         ".L_tl_alloc_win_commit_to:\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         "    movq $0x2000, %r8\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         "    movq $0x1000, %r8\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         "    movq $0x4000, %r8\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         "tl_arena_poison_enable:\n    movq $1, .L_tl_arena_poison_enabled(%rip)\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         "    cmpq 64(%r8), %r10\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         "    movq %gs:0x28, %r8\n")
       (not
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    call _write\n"))
       (not
         (compiler_backend.compiler-backend-string-contains?
@@ -27875,32 +27602,32 @@ g:
     (and
       (compiler_backend.backend-and8
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view windows)
+          windows
           ".L_tl_arena_make_win_reserve_os_fail:\n    call GetLastError\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view windows)
+          windows
           ".L_tl_arena_make_win_initial_commit_os_fail:\n    call GetLastError\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view windows)
+          windows
           ".L_tl_arena_make_atomic_win_reserve_os_fail:\n    call GetLastError\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view windows)
+          windows
           ".L_tl_arena_make_atomic_win_initial_commit_os_fail:\n    call GetLastError\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view windows)
+          windows
           ".L_tl_alloc_win_commit_os_fail:\n    call GetLastError\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view windows)
+          windows
           ".L_tl_alloc_atomic_reserve_os_fail:\n    call GetLastError\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view windows)
+          windows
           ".L_tl_alloc_atomic_initial_commit_os_fail:\n    call GetLastError\n")
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view windows)
+            windows
             ".L_tl_alloc_reserve_os_fail:\n    call GetLastError\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view windows)
+            windows
             ".L_tl_alloc_initial_commit_os_fail:\n    call GetLastError\n")))
       (compiler_backend.backend-and4
         (and
@@ -27915,13 +27642,13 @@ g:
               "    call VirtualFree\n    movq -48(%rbp), %rax\n    movq -40(%rbp), %r8\n    movq %rax, 40(%rsp)\n")
             2)
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view windows)
+            windows
             ".L_tl_arena_make_win_initial_commit_os_fail:\n    call GetLastError\n    movl %eax, %eax\n    movq %rax, 40(%rsp)\n    movq %rbx, %rcx\n    xorq %rdx, %rdx\n    movq $0x8000, %r8\n    call VirtualFree\n    movq $0, 32(%rsp)\n    xorq %rcx, %rcx\n    movq $1, %rdx\n    movq $0x400000, %r8\n    movq %rsi, %r9\n    call tl_windows_allocation_abort\n"))
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view windows)
+          windows
           ".L_tl_alloc_win_commit_os_fail:\n    call GetLastError\n    movl %eax, %eax\n    movq %rax, 40(%rsp)\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view windows)
+          windows
           "    movq $2, %rdx\n    call tl_windows_allocation_abort\n")
         (and
           (not
@@ -27946,17 +27673,17 @@ g:
         (compiler_backend.CompilerBackendTarget.Linux))]
     (and
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         "    movq %r10, 0(%rax)\n    movq $0, 32(%rax)\n    movq %r9, 40(%rax)\n    movq $0, 48(%rax)\n    movq %rax, 56(%r9)\n    leaq 64(%rax), %r8\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         "    movq 56(%r12), %rbx\n    testq %rbx, %rbx\n    jnz .L_tl_arena_destroy_head_ready\n    movq %r12, %rbx\n.L_tl_arena_destroy_head_ready:\n.L_tl_arena_destroy_retired_ready:\n    movq 32(%r12), %r12\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         "    movq %rbx, 16(%r8)\n    movq %r8, 56(%r12)\n")
       (not
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq %r8, %fs:tl_current_arena@tpoff\n"))
       (compiler_backend.compiler-backend-string-contains?
         asm
@@ -27969,17 +27696,17 @@ g:
         (compiler_backend.CompilerBackendTarget.Windows))]
     (and
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         "    movq %r10, 0(%rax)\n    movq %r8, 40(%rax)\n    movq $0, 48(%rax)\n    movq %rax, 56(%r8)\n    movq %r8, %gs:0x28\n    movq -40(%rbp), %rdx\n    addq %rax, %rdx\n    movq %rdx, 64(%rax)\n    movq 8(%rax), %r8\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         "    movq 56(%r12), %rsi\n    testq %rsi, %rsi\n    jnz .L_tl_arena_destroy_win_head_ready\n    movq %r12, %rsi\n.L_tl_arena_destroy_win_head_ready:\n.L_tl_arena_destroy_win_retired_ready:\n    movq 32(%r12), %r12\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         "    movq %r12, 16(%r13)\n    movq %r13, 56(%r11)\n")
       (not
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq %r13, %gs:0x28\n"))
       (compiler_backend.compiler-backend-string-contains?
         asm
@@ -27992,10 +27719,10 @@ g:
         (compiler_backend.CompilerBackendTarget.Linux))]
     (and
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         "tl_arena_make_small:\n    movq $0x1000000, %rsi\n.L_tl_arena_make_sized:\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         "    movq $0, 48(%rax)\n    movq %rax, 56(%rax)\n")
       (compiler_backend.compiler-backend-string-contains?
         asm
@@ -28008,10 +27735,10 @@ g:
         (compiler_backend.CompilerBackendTarget.Windows))]
     (and
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         "tl_arena_make_small:\n    push %rbp\n    mov %rsp, %rbp\n    push %rbx\n    push %rsi\n    sub $48, %rsp\n    movq $0x1000000, %rsi\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         "    movq %rsi, 40(%rsp)\n    xorq %rcx, %rcx\n    movq %rsi, %rdx\n")
       (compiler_backend.compiler-backend-string-contains?
         asm
@@ -28092,7 +27819,7 @@ g:
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq (%r10), %r12\n")
           (not (compiler_backend.compiler-backend-string-contains? asm "%rax")))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])
@@ -28108,10 +27835,10 @@ g:
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq (%r10), %r8\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq %r8, -40(%rbp)\n")
           (not (compiler_backend.compiler-backend-string-contains? asm "%rax")))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])
@@ -28133,10 +27860,10 @@ g:
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq 8(%r10), %r8\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq %r8, -32(%rbp)\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
@@ -28161,10 +27888,10 @@ g:
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq (%r10,%r8,8), %r9\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq %r9, -40(%rbp)\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
@@ -28191,7 +27918,7 @@ g:
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movsd (%r10), %xmm3\n")
           (not (compiler_backend.compiler-backend-string-contains? asm "%xmm0")))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])
@@ -28207,10 +27934,10 @@ g:
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movsd (%r10), %xmm2\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movsd %xmm2, -40(%rbp)\n")
           (not (compiler_backend.compiler-backend-string-contains? asm "%xmm0")))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])))
@@ -28240,7 +27967,7 @@ g:
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movsd 8(%r10), %xmm3\n")
           (not (compiler_backend.compiler-backend-string-contains? asm "%xmm0")))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])
@@ -28262,10 +27989,10 @@ g:
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movsd 8(%r10), %xmm2\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movsd %xmm2, -32(%rbp)\n")
           (not (compiler_backend.compiler-backend-string-contains? asm "%xmm0")))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])
@@ -28292,7 +28019,7 @@ g:
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movsd (%r10,%r8,8), %xmm3\n")
           (not (compiler_backend.compiler-backend-string-contains? asm "%xmm0")))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])))
@@ -28317,18 +28044,15 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    leaq -16(%rbp), %r10\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq $7, (%r10)\n")
+        (not (compiler_backend.compiler-backend-string-contains? asm "%r12"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "%r12"))
-        (not
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq %rax, -24(%rbp)\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -28365,10 +28089,10 @@ g:
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    leaq -16(%rbp), %r8\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq %r8, -32(%rbp)\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
@@ -28389,7 +28113,7 @@ g:
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    leaq -16(%rbp), %rax\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
@@ -28426,10 +28150,10 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    leaq -16(%rbp), %r8\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq %r8, -24(%rbp)\n")
         (not (compiler_backend.compiler-backend-string-contains? asm "%rax")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
@@ -28453,29 +28177,26 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq -8(%rbp), %r10\n")
         ;; GAP2a folds the const gep displacement (+8) directly into every
         ;; CopyBytes chunk DST address, so explicit address staging disappears.
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movups %xmm2, 8(%r10)\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq -16(%rbp), %r9\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movups (%r9), %xmm2\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq 16(%r9), %r8\n")
+        (not (compiler_backend.compiler-backend-string-contains? asm "%xmm15"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "%xmm15"))
-        (not
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq %rax, -24(%rbp)\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -28502,27 +28223,24 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq -8(%rbp), %r10\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq -24(%rbp), %r8\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    leaq (%r10,%r8,8), %r10\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq -16(%rbp), %r9\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movups (%r9), %xmm2\n")
+        (not (compiler_backend.compiler-backend-string-contains? asm "%xmm15"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "%xmm15"))
-        (not
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq %rax, -32(%rbp)\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -28570,7 +28288,7 @@ g:
           ;; index, so no clobbering `movq %rsi, %rax` is emitted.
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    leaq (%rsi,%rax,8), %rax\n")
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -28614,24 +28332,24 @@ g:
             "    movq -8(%rbp), %r10\n")
           1)
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq (%r10), %r8\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq %r8, -32(%rbp)\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq 8(%r10), %r8\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq %r8, -48(%rbp)\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq (%r10), %rax\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq 8(%r10), %rax\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -28674,15 +28392,12 @@ g:
             "    movq -8(%rbp), %r10\n")
           1)
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movsd (%r10), %xmm2\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movsd 8(%r10), %xmm2\n")
-        (not
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "%xmm0"))
+        (not (compiler_backend.compiler-backend-string-contains? asm "%xmm0"))
         (not
           (compiler_backend.compiler-backend-string-contains?
             asm
@@ -28731,11 +28446,11 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    cmpq %r8, 8(%r10)\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq 8(%r10), %rax\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -28761,24 +28476,24 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq -8(%rbp), %r10\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq (%r10), %r10\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq (%r10), %r8\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq %r8, -24(%rbp)\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq (%r10), %rax\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq %rax, -16(%rbp)\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -28810,7 +28525,7 @@ g:
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movsd (%r10), %xmm3\n")
           (not (compiler_backend.compiler-backend-string-contains? asm "%xmm0")))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])
@@ -28831,10 +28546,10 @@ g:
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movsd (%r10), %xmm2\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movsd %xmm2, -24(%rbp)\n")
           (not (compiler_backend.compiler-backend-string-contains? asm "%xmm0")))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])))
@@ -28868,14 +28583,14 @@ g:
             "    movq -8(%rbp), %r10\n")
           1)
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq $1, (%r10)\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq $2, 8(%r10)\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq %rax, -24(%rbp)\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -28935,9 +28650,7 @@ g:
     5)
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          expected)
+        (compiler_backend.compiler-backend-string-contains? asm expected)
         (not
           (compiler_backend.compiler-backend-string-contains? asm "    leaq ")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
@@ -28981,7 +28694,7 @@ g:
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    leaq 8(%rsi), %rcx\n")
           (compiler_backend.compiler-backend-string-contains?
             asm
@@ -29007,7 +28720,7 @@ g:
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq %r12, (%r10)\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
@@ -29026,10 +28739,10 @@ g:
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq -16(%rbp), %r8\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq %r8, (%r10)\n")
           (not (compiler_backend.compiler-backend-string-contains? asm "%rax")))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])
@@ -29045,10 +28758,10 @@ g:
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movsd -16(%rbp), %xmm2\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movsd %xmm2, (%r10)\n")
           (not (compiler_backend.compiler-backend-string-contains? asm "%xmm0")))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])
@@ -29070,16 +28783,16 @@ g:
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq -8(%rbp), %r10\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq -24(%rbp), %r8\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq -16(%rbp), %r9\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq %r9, (%r10,%r8,8)\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
@@ -29121,14 +28834,12 @@ g:
         ;; base never reloaded over the index home.
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq -8(%rbp), %r")
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            ",%r9,8)\n")
+          (compiler_backend.compiler-backend-string-contains? asm ",%r9,8)\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movq %r9, %r"))
           (not
             (compiler_backend.compiler-backend-string-contains?
@@ -29210,13 +28921,13 @@ g:
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movq -8(%rbp), %r10\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movq -16(%rbp), ")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movq %r8, 8(%r10)\n")
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -29326,37 +29037,35 @@ g:
       (let
         [load-pos : i64
           (compiler_backend.compiler-backend-string-find-from
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movzbq "
             0)]
         [dst-base-pos : i64
           (compiler_backend.compiler-backend-string-find-from
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq -8(%rbp)"
             0)]
         [bad-rcx-pos : i64
           (compiler_backend.compiler-backend-string-find-from
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq %rcx, %r8\n    movb %cl, (%r12,%r8,1)"
             0)]
         [bad-r8-pos : i64
           (compiler_backend.compiler-backend-string-find-from
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq %r8, %r9\n    movb %r8b, (%r12,%r9,1)"
             0)]
         (compiler_backend.backend-and8
           (>= load-pos 0)
           (>= dst-base-pos 0)
           (< dst-base-pos load-pos)
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "    movb ")
+          (compiler_backend.compiler-backend-string-contains? asm "    movb ")
           (< bad-rcx-pos 0)
           (< bad-r8-pos 0)
           (not
-            (compiler_backend.compiler-backend-string-contains?
-              asm
-              (compiler-backend-todo-marker)))
+            (let
+              [bound-83 (compiler-backend-todo-marker)]
+              (compiler_backend.compiler-backend-string-contains? asm bound-83)))
           true))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
@@ -29407,20 +29116,20 @@ g:
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movzbq (%r12,%r8,1), %rcx\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movq %r8, %r9\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movq %r12, %r10\n"))
           (not
-            (compiler_backend.compiler-backend-string-contains?
-              asm
-              (compiler-backend-todo-marker))))]
+            (let
+              [bound-84 (compiler-backend-todo-marker)]
+              (compiler_backend.compiler-backend-string-contains? asm bound-84))))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])))
 
 (define (compiler-backend-gep-load-live-through-home-asm) : compiler_backend.ResultCompilerBackend
@@ -29554,22 +29263,22 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movl $5, %r9d\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq %r9, (")
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq -8(%rbp), %r9\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq -8(%rbp), %r10\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq 192(%r9), %rcx\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -29887,21 +29596,19 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (compiler_backend.backend-and8
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq %r9, %xmm4\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq %xmm4, %r9\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq %rcx, %xmm5\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq %xmm5, %rcx\n")
         (not
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "-512(%rbp)"))
+          (compiler_backend.compiler-backend-string-contains? asm "-512(%rbp)"))
         (not
           (compiler_backend.compiler-backend-string-contains? asm "-576(%rbp)"))
         true
@@ -29922,28 +29629,28 @@ g:
         ;; The base is materialised into a SCAVENGED register (%r9 here --
         ;; the preferred %r10 is occupied at this point), never a fixed one.
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq -8(%rbp), %r9\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq 192(%r9), %rcx\n")
         ;; Both borrowed registers are parked in free XMM registers ...
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq %r9, %xmm4\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq %xmm4, %r9\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq %rcx, %xmm5\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq %xmm5, %rcx\n")
         ;; ... and neither one is stored into the emergency frame region.
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq %r9, -512(%rbp)\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -29978,24 +29685,24 @@ g:
         (and
           (compiler_backend.backend-and4
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movups (%r13), %xmm2\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movups %xmm2, (%r12)\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movq 16(%r13), %r8\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movq %r8, 16(%r12)\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movq %r12, %r10\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movq %r13, %r11\n"))
           (not
             (compiler_backend.compiler-backend-string-contains? asm "%xmm15")))]
@@ -30116,23 +29823,23 @@ g:
         ;; in either cfg -- there is no scratch left to stage it through, so
         ;; neither staging spelling may appear.
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq %r9, -32(%rbp)\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq %r9, %rax\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq %r9, %r8\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq -8(%rbp), %r9\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq -16(%rbp), %r9\n"))
         (not (compiler_backend.compiler-backend-string-contains? asm "%xmm15")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
@@ -30263,40 +29970,38 @@ g:
   (match (compiler-backend-copy-bytes-run-protect-asm)
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          "%r9")
+        (compiler_backend.compiler-backend-string-contains? asm "%r9")
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq -8(%rbp), %r9\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq -16(%rbp), %r9\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq -24(%rbp), %r9\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq -32(%rbp), %r9\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq -40(%rbp), %r9\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq -48(%rbp), %r9\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq -56(%rbp), %r9\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq -64(%rbp), %r9\n"))
         (not (compiler_backend.compiler-backend-string-contains? asm "%xmm15")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
@@ -30383,11 +30088,11 @@ g:
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movl %r12d, _tl_g(%rip)\n")
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "    movq %r12, %rax\n"))
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -30406,10 +30111,10 @@ g:
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movq -8(%rbp), %r8\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movq %r8, _tl_g(%rip)\n")
             (not
               (compiler_backend.compiler-backend-string-contains? asm "%rax")))]
@@ -30426,10 +30131,10 @@ g:
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movsd -8(%rbp), %xmm2\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movsd %xmm2, _tl_g(%rip)\n")
             (not
               (compiler_backend.compiler-backend-string-contains? asm "%xmm0")))]
@@ -30626,10 +30331,10 @@ g:
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    leaq (%r13,%rax,1), %rax\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq 8(%rax), %rax\n")
           (not
             (compiler_backend.compiler-backend-string-contains? asm "(%rbp)")))]
@@ -30691,16 +30396,16 @@ g:
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    addq (%r12,%r8,8), %r14\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movq (%r12,%r8,8)"))
           (not
-            (compiler_backend.compiler-backend-string-contains?
-              asm
-              (compiler-backend-todo-marker))))]
+            (let
+              [bound-85 (compiler-backend-todo-marker)]
+              (compiler_backend.compiler-backend-string-contains? asm bound-85))))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])))
 
 ;; GAP8-B: the mirrored operand order. A COMMUTATIVE op whose LEFT operand is
@@ -30770,17 +30475,17 @@ g:
   (match (compiler-backend-gep-load-alu-commuted-asm op mem-on-lhs?)
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          (str_cat.str-cat "    " mnem "q (%r12,%r8,8), %r14\n"))
-        (not
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "    movq (%r12,%r8,8)"))
+        (let
+          [bound-86 (str_cat.str-cat "    " mnem "q (%r12,%r8,8), %r14\n")]
+          (compiler_backend.compiler-backend-string-contains? asm bound-86))
         (not
           (compiler_backend.compiler-backend-string-contains?
             asm
-            (compiler-backend-todo-marker))))]
+            "    movq (%r12,%r8,8)"))
+        (not
+          (let
+            [bound-87 (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm bound-87))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 ;; Sub is NOT commutative: `MEM - x` is not `x - MEM`, so the mirrored order
@@ -30792,7 +30497,7 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq (%r12,%r8,8)")
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -31027,12 +30732,10 @@ g:
           backend-state)
           [(compiler_backend.ResultCompilerBackend.Ok asm)
             (and
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
-                want)
+              (compiler_backend.compiler-backend-string-contains? asm want)
               (not
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view asm)
+                  asm
                   forbid-a))
               (not
                 (compiler_backend.compiler-backend-string-contains?
@@ -31073,9 +30776,7 @@ g:
           backend-state)
           [(compiler_backend.ResultCompilerBackend.Ok asm)
             (and
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
-                "(%r12,")
+              (compiler_backend.compiler-backend-string-contains? asm "(%r12,")
               (not
                 (compiler_backend.compiler-backend-string-contains?
                   asm
@@ -31110,13 +30811,16 @@ g:
         32
         "%rcx")
       "")
-    (compiler_backend.compiler-backend-string-contains?
-      (compiler_backend.compiler-backend-gep-index-base-asm-disp
-        24
-        "%rax"
-        32
-        "%rcx")
-      "    addq $24, %rax\n")))
+    (let
+      [bound-88
+        (compiler_backend.compiler-backend-gep-index-base-asm-disp
+          24
+          "%rax"
+          32
+          "%rcx")]
+      (compiler_backend.compiler-backend-string-contains?
+        bound-88
+        "    addq $24, %rax\n"))))
 
 ;; Consuming an ordinal with the wrong shape poisons the function (the
 ;; emit-function gate turns this into a hard backend error).
@@ -31213,7 +30917,7 @@ g:
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movzbq (%r12,%r8,1), %rcx\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
@@ -31316,7 +31020,7 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    cmpb $10, (%r12,%r8,1)\n")
         (not
           (compiler_backend.compiler-backend-string-contains? asm "    movzbq ")))]
@@ -31333,7 +31037,7 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    cmpw $300, (%r12,%r8,2)\n")
         (not
           (compiler_backend.compiler-backend-string-contains? asm "    movzwq ")))]
@@ -31355,11 +31059,11 @@ g:
         ;; WIDENING CAST's home (%r9) instead of the loaded value's own (%r13)
         ;; and retiring the separate re-extension. Both halves are asserted.
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movsbq (%r12,%r8,1), %r9\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movsbq %r13b, "))
         (not
           (compiler_backend.compiler-backend-string-contains? asm "    cmpb ")))]
@@ -31381,11 +31085,11 @@ g:
         ;; refusal leaves behind, so the surviving load writes the widening
         ;; cast's home %r9 and no `movzbq %r13b, %r9` follows it.
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movzbq (%r12,%r8,1), %r9\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movzbq %r13b, "))
         (not
           (compiler_backend.compiler-backend-string-contains? asm "    cmpb ")))]
@@ -31558,7 +31262,7 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    cmpq 8(%r12), %r14\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -31579,7 +31283,7 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq 8(%r12), %r13\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -31627,7 +31331,7 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    cmpq 8(%r12), %r14\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -31730,16 +31434,16 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    cmpq %r14, (%r13,%r8,8)\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq (%r13,%r8,8)"))
         (not
-          (compiler_backend.compiler-backend-string-contains?
-            asm
-            (compiler-backend-todo-marker))))]
+          (let
+            [bound-89 (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm bound-89))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 ;; The mirror: a spilled INDEX stages into the same home and the register-homed
@@ -31751,16 +31455,16 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    cmpq %r14, (%r12,%r13,8)\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq (%r12,%r13,8)"))
         (not
-          (compiler_backend.compiler-backend-string-contains?
-            asm
-            (compiler-backend-todo-marker))))]
+          (let
+            [bound-90 (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm bound-90))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 ;; Both components spilled would need two staging registers; the fold owns one,
@@ -31772,7 +31476,7 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    cmpq %r14, %r13\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -31816,7 +31520,7 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    cmpq (%r12,%r8,8), %r14\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -31837,7 +31541,7 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq (%r12,%r8,8), %r13\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -31860,7 +31564,7 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq (%r12,%r8,8), %r13\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -31908,15 +31612,15 @@ g:
       ;; exactly one memory operand, which is all x86 allows.
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq (%r12,%r8,8), %r13\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    cmpq 32(%rbp), %r13\n")
         (not
-          (compiler_backend.compiler-backend-string-contains?
-            asm
-            (compiler-backend-todo-marker))))]
+          (let
+            [bound-91 (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm bound-91))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 ;; M6-E must read scratch registers from the Branch's real plan slot when the
@@ -31946,14 +31650,14 @@ g:
         [body : String (compiler-backend-asm-function-body asm "_tl_probe")]
         (compiler_backend.backend-and4
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view body)
+            body
             "    cmpb $10, (")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view body)
+            body
             "    xorl %esi, %esi\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view body)
+              body
               "    movzbq "))
           (not
             (compiler_backend.compiler-backend-string-contains?
@@ -32015,19 +31719,17 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    cmpq %r14, _tl_m6i_gen(%rip)\n")
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          "    jl ")
-        (not
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "    movq _tl_m6i_gen(%rip)"))
+        (compiler_backend.compiler-backend-string-contains? asm "    jl ")
         (not
           (compiler_backend.compiler-backend-string-contains?
             asm
-            (compiler-backend-todo-marker))))]
+            "    movq _tl_m6i_gen(%rip)"))
+        (not
+          (let
+            [bound-92 (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm bound-92))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 ;; The mirror: the read is the compare's RIGHT operand, so the rip-relative
@@ -32039,11 +31741,9 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    cmpq _tl_m6i_gen(%rip), %r14\n")
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          "    jl ")
+        (compiler_backend.compiler-backend-string-contains? asm "    jl ")
         (not
           (compiler_backend.compiler-backend-string-contains?
             asm
@@ -32061,7 +31761,7 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    cmpq $7, _tl_m6i_gen(%rip)\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -32079,7 +31779,7 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq _tl_m6i_gen(%rip), %r13\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -32111,7 +31811,7 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq _tl_m6i_gen(%rip), %r13\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -32133,7 +31833,7 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq _tl_m6i_gen(%rip), %r13\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -32156,10 +31856,10 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq _tl_m6i_gen(%rip), %r13\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "_tl_m6i_gen(%rip)\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -32176,7 +31876,7 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    cmpq %r14, _tl_m6i_gen(%rip)\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -32258,7 +31958,7 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    leaq (,%r12,8), %rcx\n")
         (not (compiler_backend.compiler-backend-string-contains? asm "imulq")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
@@ -32270,7 +31970,7 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    shlq $5, %r12\n")
         (not (compiler_backend.compiler-backend-string-contains? asm "imulq")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
@@ -32282,9 +31982,7 @@ g:
   (match (compiler-backend-mul-pow2-test-asm factor dst-reg)
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          expected)
+        (compiler_backend.compiler-backend-string-contains? asm expected)
         (not (compiler_backend.compiler-backend-string-contains? asm "imulq")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
@@ -32419,34 +32117,34 @@ g:
         (and
           (compiler_backend.backend-and4
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movq .L_tl_argc(%rip), %r12\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movq .L_tl_argv(%rip), %r13\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movq .L_tl_envp(%rip), %r14\n")
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "    movq .L_tl_argc(%rip), %rax\n")))
           (compiler_backend.backend-and4
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "    movq .L_tl_argv(%rip), %rax\n"))
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "    movq .L_tl_envp(%rip), %rax\n"))
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "    movq %rax, %r12\n"))
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "    movq %rax, %r13\n")))
           (not
             (compiler_backend.compiler-backend-string-contains?
@@ -32491,10 +32189,10 @@ g:
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movq .L_tl_argc(%rip), %r11\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movq %r11, -8(%rbp)\n")
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -32511,10 +32209,10 @@ g:
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movq .L_tl_argv(%rip), %r11\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movq %r11, -16(%rbp)\n")
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -32531,14 +32229,14 @@ g:
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movq .L_tl_envp(%rip), %r11\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movq %r11, %r12\n")
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "    movq .L_tl_envp(%rip), %r12\n"))
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -32559,14 +32257,14 @@ g:
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movq .L_tl_argc(%rip), %r9\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movq %r9, -16(%rbp)\n")
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "    movq .L_tl_argc(%rip), %r11\n"))
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -32709,7 +32407,7 @@ g:
         compiler_abi.compiler-reg-id-rsi)]
     (and
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view win64-wrapper)
+        win64-wrapper
         "    movq %rcx, %rax\n    movq %rdx, %rcx\n    movq %rbx, %r14\n    cpuid\n")
       (not
         (compiler_backend.compiler-backend-string-contains?
@@ -32758,12 +32456,10 @@ g:
         swap
         "    movq %rax, %r9\n    movq %rcx, %rax\n    movq %r9, %rcx\n    movq %rbx, %r14\n    cpuid\n")
       (not
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view in-place)
-          ", %rcx\n"))
+        (compiler_backend.compiler-backend-string-contains? in-place ", %rcx\n"))
       (not
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view in-place)
+          in-place
           "    movq %rcx, %rax\n"))
       (compiler_backend.compiler-backend-string-contains?
         in-place
@@ -32970,16 +32666,16 @@ g:
         [(compiler_backend.ResultCompilerBackend.Ok widen-asm)
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view narrow-asm)
+              narrow-asm
               "    movsd %xmm2, %xmm3\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view narrow-asm)
+              narrow-asm
               "    cvtsd2ss %xmm3, %xmm3\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view widen-asm)
+              widen-asm
               "    movss %xmm2, %xmm3\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view widen-asm)
+              widen-asm
               "    cvtss2sd %xmm3, %xmm3\n")
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -33033,22 +32729,22 @@ g:
         [(compiler_backend.ResultCompilerBackend.Ok widen-asm)
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view narrow-asm)
+              narrow-asm
               "    movsd %xmm3, %xmm2\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view narrow-asm)
+              narrow-asm
               "    cvtsd2ss %xmm2, %xmm2\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view narrow-asm)
+              narrow-asm
               "    movss %xmm2, -16(%rbp)\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view widen-asm)
+              widen-asm
               "    movss %xmm3, %xmm2\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view widen-asm)
+              widen-asm
               "    cvtss2sd %xmm2, %xmm2\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view widen-asm)
+              widen-asm
               "    movsd %xmm2, -16(%rbp)\n")
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -33100,18 +32796,18 @@ g:
         [(compiler_backend.ResultCompilerBackend.Ok f32-asm)
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view f64-asm)
+              f64-asm
               "    cvtsi2sdq %r12, %xmm2\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view f32-asm)
+              f32-asm
               "    cvtsi2ssq %r12, %xmm2\n")
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view f64-asm)
+                f64-asm
                 "%rax"))
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view f32-asm)
+                f32-asm
                 "%rax"))
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -33162,20 +32858,20 @@ g:
         [(compiler_backend.ResultCompilerBackend.Ok f32-asm)
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view f64-asm)
+              f64-asm
               "    cvtsi2sdq %r12, %xmm2\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view f64-asm)
+              f64-asm
               "    movsd %xmm2, -16(%rbp)\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view f32-asm)
+              f32-asm
               "    cvtsi2ssq %r12, %xmm2\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view f32-asm)
+              f32-asm
               "    movss %xmm2, -16(%rbp)\n")
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view f64-asm)
+                f64-asm
                 "%rax"))
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -33183,7 +32879,7 @@ g:
                 "%xmm0"))
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view f32-asm)
+                f32-asm
                 "%rax"))
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -33230,32 +32926,32 @@ g:
         [(compiler_backend.ResultCompilerBackend.Ok f32-asm)
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view f64-asm)
+              f64-asm
               "    movq %r12, %r8\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view f64-asm)
+              f64-asm
               "    testq %r8, %r8\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view f64-asm)
+              f64-asm
               "    cvtsi2sdq %r8, %xmm2\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view f64-asm)
+              f64-asm
               "    addsd %xmm2, %xmm2\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view f64-asm)
+              f64-asm
               "    movsd %xmm2, -16(%rbp)\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view f32-asm)
+              f32-asm
               "    cvtsi2ssq %r8, %xmm2\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view f32-asm)
+              f32-asm
               "    addss %xmm2, %xmm2\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view f32-asm)
+              f32-asm
               "    movss %xmm2, -16(%rbp)\n")
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view f64-asm)
+                f64-asm
                 "%rax"))
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -33263,7 +32959,7 @@ g:
                 "%xmm0"))
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view f32-asm)
+                f32-asm
                 "%rax"))
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -33311,18 +33007,18 @@ g:
         [(compiler_backend.ResultCompilerBackend.Ok f32-asm)
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view f64-asm)
+              f64-asm
               "    cvttsd2siq %xmm2, %r12\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view f32-asm)
+              f32-asm
               "    cvttss2siq %xmm2, %r12\n")
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view f64-asm)
+                f64-asm
                 "%rax"))
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view f32-asm)
+                f32-asm
                 "%rax"))
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -33373,20 +33069,20 @@ g:
         [(compiler_backend.ResultCompilerBackend.Ok f32-asm)
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view f64-asm)
+              f64-asm
               "    cvttsd2siq %xmm3, %r8\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view f64-asm)
+              f64-asm
               "    movq %r8, -16(%rbp)\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view f32-asm)
+              f32-asm
               "    cvttss2siq %xmm3, %r8\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view f32-asm)
+              f32-asm
               "    movq %r8, -16(%rbp)\n")
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view f64-asm)
+                f64-asm
                 "%rax"))
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -33394,7 +33090,7 @@ g:
                 "%xmm0"))
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view f32-asm)
+                f32-asm
                 "%rax"))
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -33483,17 +33179,15 @@ g:
   (match result
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
+        (compiler_backend.compiler-backend-string-contains? asm load)
+        (let
+          [bound-93 (str_cat.str-cat "    ucomi" (clone op) " .L_tl_f")]
+          (compiler_backend.compiler-backend-string-contains? asm bound-93))
+        (let
+          [bound-94 (str_cat.str-cat "    sub" op " .L_tl_f")]
+          (compiler_backend.compiler-backend-string-contains? asm bound-94))
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          load)
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          (str_cat.str-cat "    ucomi" (clone op) " .L_tl_f"))
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          (str_cat.str-cat "    sub" op " .L_tl_f"))
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    jae .Ltest_cast_cast_float_u64_entry_v1_high\n")
         (=
           (compiler_backend.compiler-backend-string-count
@@ -33501,15 +33195,10 @@ g:
             convert)
           2)
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    btsq $63, ")
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          store)
-        (not
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "%rax"))
+        (compiler_backend.compiler-backend-string-contains? asm store)
+        (not (compiler_backend.compiler-backend-string-contains? asm "%rax"))
         (not (compiler_backend.compiler-backend-string-contains? asm "%xmm0")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
@@ -33675,10 +33364,10 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movslq %r12d, %r8\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq %r8, -16(%rbp)\n")
         (not (compiler_backend.compiler-backend-string-contains? asm "%rax")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
@@ -33778,32 +33467,32 @@ g:
                   (and
                     (compiler_backend.backend-and4
                       (compiler_backend.compiler-backend-string-contains?
-                        (owned_view.compiler-owned-shared-view f32-to-int)
+                        f32-to-int
                         "    movd %xmm2, %r12d\n")
                       (compiler_backend.compiler-backend-string-contains?
-                        (owned_view.compiler-owned-shared-view f64-to-int)
+                        f64-to-int
                         "    movq %xmm2, %r12\n")
                       (compiler_backend.compiler-backend-string-contains?
-                        (owned_view.compiler-owned-shared-view int-to-f32)
+                        int-to-f32
                         "    movd %r12d, %xmm2\n")
                       (compiler_backend.compiler-backend-string-contains?
-                        (owned_view.compiler-owned-shared-view int-to-f64)
+                        int-to-f64
                         "    movq %r12, %xmm2\n"))
                     (not
                       (compiler_backend.compiler-backend-string-contains?
-                        (owned_view.compiler-owned-shared-view f32-to-int)
+                        f32-to-int
                         "%rax"))
                     (not
                       (compiler_backend.compiler-backend-string-contains?
-                        (owned_view.compiler-owned-shared-view f64-to-int)
+                        f64-to-int
                         "%rax"))
                     (not
                       (compiler_backend.compiler-backend-string-contains?
-                        (owned_view.compiler-owned-shared-view int-to-f32)
+                        int-to-f32
                         "%rax"))
                     (not
                       (compiler_backend.compiler-backend-string-contains?
-                        (owned_view.compiler-owned-shared-view int-to-f64)
+                        int-to-f64
                         "%rax"))
                     (not
                       (compiler_backend.compiler-backend-string-contains?
@@ -33860,20 +33549,20 @@ g:
         [(compiler_backend.ResultCompilerBackend.Ok f32-asm)
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view f64-asm)
+              f64-asm
               "    movq %xmm3, %r8\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view f64-asm)
+              f64-asm
               "    movq %r8, -16(%rbp)\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view f32-asm)
+              f32-asm
               "    movd %xmm3, %r8d\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view f32-asm)
+              f32-asm
               "    movq %r8, -16(%rbp)\n")
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view f64-asm)
+                f64-asm
                 "%rax"))
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -33881,7 +33570,7 @@ g:
                 "%xmm0"))
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view f32-asm)
+                f32-asm
                 "%rax"))
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -33924,20 +33613,20 @@ g:
         [(compiler_backend.ResultCompilerBackend.Ok f32-asm)
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view f64-asm)
+              f64-asm
               "    movq %r12, %xmm2\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view f64-asm)
+              f64-asm
               "    movsd %xmm2, -16(%rbp)\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view f32-asm)
+              f32-asm
               "    movd %r12d, %xmm2\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view f32-asm)
+              f32-asm
               "    movss %xmm2, -16(%rbp)\n")
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view f64-asm)
+                f64-asm
                 "%rax"))
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -33945,7 +33634,7 @@ g:
                 "%xmm0"))
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view f32-asm)
+                f32-asm
                 "%rax"))
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -33988,16 +33677,16 @@ g:
         [(compiler_backend.ResultCompilerBackend.Ok f32-asm)
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view f64-asm)
+              f64-asm
               "    movsd %xmm3, %xmm2\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view f64-asm)
+              f64-asm
               "    movsd %xmm2, -16(%rbp)\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view f32-asm)
+              f32-asm
               "    movss %xmm3, %xmm2\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view f32-asm)
+              f32-asm
               "    movss %xmm2, -16(%rbp)\n")
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -34036,10 +33725,10 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq %r12, %r8\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq %r8, -16(%rbp)\n")
         (not (compiler_backend.compiler-backend-string-contains? asm "%rax")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
@@ -34077,44 +33766,42 @@ g:
         (compiler_backend.backend-and8
           (or
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "_tl_use_fixed")
-            (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
-              "_tl_f"))
+            (compiler_backend.compiler-backend-string-contains? asm "_tl_f"))
           ;; The fixed-array bounds check now materialises the index in
           ;; %r10 (scratch reg choice changed); still a 64-bit cmpq against 3.
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    cmpq $3, %r10\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movl $3, %r11d\n"))
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    call tl_oob_abort_at\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq %r9, (%r10,%r8,8)\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq (%r10,%r8,8), %r9\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    leaq (%rax,%r8,8), %rax\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "tl_oob_abort:\n")))
         (not
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            (compiler-backend-todo-marker)))
+          (let
+            [bound-95 (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm bound-95)))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq %rax, (%r10,%r8,8)\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -34133,21 +33820,19 @@ g:
     (compiler-backend-fixed-array-literal-source))
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          "main:\n")
+        (compiler_backend.compiler-backend-string-contains? asm "main:\n")
         (=
           (compiler_backend.compiler-backend-string-count
             (owned_view.compiler-owned-shared-view asm)
             "    call tl_alloc\n")
           0)
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    call tl_oob_abort_at\n")
         (not
-          (compiler_backend.compiler-backend-string-contains?
-            asm
-            (compiler-backend-todo-marker))))]
+          (let
+            [bound-96 (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm bound-96))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-make-array-source) : String
@@ -34169,13 +33854,13 @@ g:
         (and
           (compiler_backend.compiler-backend-string-contains? asm "main:\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view body)
+            body
             "    call tl_alloc\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view body)
+            body
             "call tl_oob_abort")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view body)
+            body
             "make_array_len_ok")
           (>=
             (compiler_backend.compiler-backend-string-count
@@ -34204,47 +33889,47 @@ g:
         [calls : bool
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    call tl_region_mark\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    call tl_region_reset\n"))]
         [runtime : bool
           (compiler_backend.backend-and4
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "tl_region_mark:\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "tl_region_reset:\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               ".L_tl_region_reset_msg:")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "tl_current_arena:\n"))]
         [poison : bool
           (compiler_backend.backend-and8
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               ".L_tl_arena_poison_enabled:\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "tl_arena_poison_enable:\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movq $1, .L_tl_arena_poison_enabled(%rip)\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               ".L_tl_region_reset_drop_newer_retire:\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               ".L_tl_region_reset_restore_set:\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               ".L_tl_region_reset_all_unmap:\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movb $0xA5, %al\n")
             (>=
               (compiler_backend.compiler-backend-string-count
@@ -34255,7 +33940,7 @@ g:
           (and
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 ".extern tl_region_mark\n"))
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -34278,48 +33963,41 @@ g:
     (compiler_backend.backend-and8
       (not
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "tl_process_output:\n"))
       (not
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "tl_process_start:\n"))
       (not
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "tl_process_wait:\n"))
       (not
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           ".L_tl_process_read_all:\n"))
       (not
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           ".L_tl_process_exec_marker:"))
       (not
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          "tmpfile:\n"))
+        (compiler_backend.compiler-backend-string-contains? asm "tmpfile:\n"))
+      (not
+        (compiler_backend.compiler-backend-string-contains? asm "_fileno:\n"))
       (not
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          "_fileno:\n"))
-      (not
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "_get_osfhandle:\n")))
     (compiler_backend.backend-and4
+      (not (compiler_backend.compiler-backend-string-contains? asm "fclose:\n"))
       (not
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          "fclose:\n"))
-      (not
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "__p__environ:\n"))
       (not
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    call _lseeki64\n"))
       (not
         (compiler_backend.compiler-backend-string-contains?
@@ -34331,10 +34009,10 @@ g:
     (compiler-backend-process-fallback-labels-absent?
       (owned_view.compiler-owned-shared-view asm))
     (compiler_backend.compiler-backend-string-contains?
-      (owned_view.compiler-owned-shared-view asm)
+      asm
       ".extern tl_process_output\n")
     (compiler_backend.compiler-backend-string-contains?
-      (owned_view.compiler-owned-shared-view asm)
+      asm
       "    call tl_process_output\n")
     (not
       (compiler_backend.compiler-backend-string-contains?
@@ -34347,20 +34025,20 @@ g:
       (owned_view.compiler-owned-shared-view asm))
     (compiler_backend.backend-and4
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         ".extern tl_process_start\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         ".extern tl_process_wait\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         "    call tl_process_start\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         "    call tl_process_wait\n"))
     (not
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         "_tl_tl_process_start"))
     (not
       (compiler_backend.compiler-backend-string-contains?
@@ -34415,26 +34093,26 @@ g:
       (and
         (compiler_backend.backend-and4
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".extern tl_env_var_exists\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".extern tl_env_var_value\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".extern path_separator\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "\ntl_alloc:\n")))
         (compiler_backend.backend-and4
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "\ntl_env_var_exists:\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "\ntl_env_var_value:\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
@@ -34451,15 +34129,15 @@ g:
       (and
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "\ntl_env_var_exists:\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "\ntl_env_var_value:\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    call getenv\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -34498,22 +34176,22 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           ".extern getenv\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           ".extern strlen\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "\ntl_env_var_exists:\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "\ntl_env_var_value:\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "_tl_env_path_separator:\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -34536,10 +34214,10 @@ g:
       (and
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".L_tl_append_file_status:\n"))
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    call tl_append_file_status\n")
         (compiler_backend.compiler-backend-string-contains?
           asm
@@ -34551,16 +34229,17 @@ g:
   [name : String]) : bool
   (and
     (not
-      (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
-        (str_cat.str-cat
-          ".globl "
-          (owned_view.compiler-owned-shared-view name)
-          "\n")))
+      (let
+        [bound-97
+          (str_cat.str-cat
+            ".globl "
+            (owned_view.compiler-owned-shared-view name)
+            "\n")]
+        (compiler_backend.compiler-backend-string-contains? asm bound-97)))
     (not
-      (compiler_backend.compiler-backend-string-contains?
-        asm
-        (str_cat.str-cat "\n" name ":\n")))))
+      (let
+        [bound-98 (str_cat.str-cat "\n" name ":\n")]
+        (compiler_backend.compiler-backend-string-contains? asm bound-98)))))
 
 (define (compiler-backend-no-public-io-fs-runtime-symbols? [asm : String]) : bool
   (and
@@ -34738,61 +34417,61 @@ g:
       (and
         (compiler_backend.backend-and8
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".extern _u2eL_tl_read_file\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".extern _u2eL_tl_write_file\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".extern _u2eL_tl_file_exists\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".extern _u2eL_tl_file_open_status\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".extern _u2eL_tl_fs_mkdir_status\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".extern _u2eL_tl_fs_process_id\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".extern _u2eL_tl_read_stdin_line\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".extern _u2eL_tl_flush_stdout\n"))
         (compiler_backend.backend-and8
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               ".L_tl_read_file:\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               ".L_tl_write_file:\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               ".L_tl_file_exists:\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               ".L_tl_file_open_status:\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               ".L_tl_fs_mkdir_status:\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               ".L_tl_fs_process_id:\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               ".L_tl_read_stdin_line:\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               ".L_tl_flush_stdout:\n")))
         (compiler-backend-no-public-io-fs-runtime-symbols? asm))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
@@ -34808,16 +34487,16 @@ g:
   (and
     (compiler_backend.backend-and4
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         ".extern tl_fs_process_id\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         ".extern tl_fs_mkdir_status\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         ".extern tl_fs_remove_file_status\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         ".extern tl_fs_remove_dir_status\n"))
     (compiler_backend.compiler-backend-string-contains?
       asm
@@ -34828,56 +34507,56 @@ g:
     (compiler_backend.backend-and8
       (not
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           ".L_tl_fs_mkdir_status:\n"))
       (not
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           ".L_tl_fs_remove_file_status:\n"))
       (not
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           ".L_tl_fs_remove_dir_status:\n"))
       (not
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           ".L_tl_fs_rename_status:\n"))
       (not
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           ".L_tl_fs_process_id:\n"))
       (not
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           ".globl tl_fs_process_id\n"))
       (not
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           ".globl tl_fs_mkdir_status\n"))
       (not
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    call _mkdir\n")))
     (not
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         "    call GetCurrentProcessId\n"))
     (not
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         ".L_tl_fs_read_dir_status:\n"))
     (not
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         ".L_tl_fs_read_dir:\n"))
     (compiler_backend.backend-and4
       (not
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           ".L_tl_fs_file_kind_status:\n"))
       (not
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           ".L_tl_fs_file_size_status:\n"))
       (not
         (compiler_backend.compiler-backend-string-contains?
@@ -34961,13 +34640,13 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           ".extern tl_fs_current_dir_status\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           ".extern tl_fs_current_dir\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    call tl_fs_current_dir_status\n")
         (compiler_backend.backend-and4
           (compiler-backend-no-public-runtime-symbol?
@@ -34977,9 +34656,7 @@ g:
             (owned_view.compiler-owned-shared-view asm)
             "tl_fs_current_dir")
           (not
-            (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
-              "getcwd:\n"))
+            (compiler_backend.compiler-backend-string-contains? asm "getcwd:\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
               asm
@@ -35001,10 +34678,10 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           ".extern tl_fs_current_dir_status\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           ".extern tl_fs_current_dir\n")
         (compiler-backend-no-public-runtime-symbol?
           (owned_view.compiler-owned-shared-view asm)
@@ -35015,11 +34692,11 @@ g:
             "tl_fs_current_dir")
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movq $38, %rax\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    syscall"))
           (not
             (compiler_backend.compiler-backend-string-contains?
@@ -35056,11 +34733,9 @@ g:
       (and
         (or
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "_tl_classify")
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "_tl_f"))
+          (compiler_backend.compiler-backend-string-contains? asm "_tl_f"))
         (compiler_backend.compiler-backend-string-contains? asm "_payload_ok"))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
@@ -35079,35 +34754,36 @@ g:
     (compiler-backend-f64-source))
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          (compiler_backend.compiler-backend-float-bits-directive
-            (compiler_ast_types.AstType.F64)
-            (compiler-backend-test-f64-bits "1.5")))
+        (let
+          [bound-99
+            (compiler_backend.compiler-backend-float-bits-directive
+              (compiler_ast_types.AstType.F64)
+              (compiler-backend-test-f64-bits "1.5"))]
+          (compiler_backend.compiler-backend-string-contains? asm bound-99))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    .double "))
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movsd %xmm0, ")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movsd %xmm1, ")
         ;; T1-6 (a): these three leaves are call-free with a frame inside the
         ;; red zone, so the y param spills BELOW %rsp (-16(%rsp)) and the
         ;; prologue moves no stack pointer at all.
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    addsd -16(%rsp), %xmm2\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    subsd -16(%rsp), %xmm2\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    ucomisd -16(%rsp), %xmm2\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    setb %r8b\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -35133,7 +34809,7 @@ g:
       (and
         (compiler_backend.backend-and8
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    xorpd .L_tl_f64_sign_bit(%rip), %xmm2\n")
           (=
             (compiler_backend.compiler-backend-string-count
@@ -35141,26 +34817,26 @@ g:
               ".L_tl_f64_sign_bit:\n")
             1)
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    .balign 16\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    .quad 0x8000000000000000\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    .quad 0\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movabsq $0x8000000000000000, %rax\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movq %rax, %xmm1\n"))
           true)
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    xorpd %xmm1, %xmm0\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -35266,7 +34942,7 @@ g:
       (and
         (compiler_backend.backend-and8
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    xorpd .L_tl_f32_sign_bit(%rip), %xmm2\n")
           (=
             (compiler_backend.compiler-backend-string-count
@@ -35274,18 +34950,16 @@ g:
               ".L_tl_f32_sign_bit:\n")
             1)
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    .balign 16\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    .quad 0x80000000\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    .quad 0\n")
           (not
-            (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
-              "    negq "))
+            (compiler_backend.compiler-backend-string-contains? asm "    negq "))
           true
           true)
         (not
@@ -35372,10 +35046,10 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movsd %xmm2, %xmm3\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    xorpd .L_tl_f64_sign_bit(%rip), %xmm3\n")
         (not (compiler_backend.compiler-backend-string-contains? asm "%xmm0")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
@@ -35401,13 +35075,13 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movsd %xmm3, %xmm2\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    xorpd .L_tl_f64_sign_bit(%rip), %xmm2\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movsd %xmm2, -16(%rbp)\n")
         (not (compiler_backend.compiler-backend-string-contains? asm "%xmm0")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
@@ -35502,12 +35176,8 @@ g:
     target)
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          "    sqrtsd ")
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          "    sqrtss ")
+        (compiler_backend.compiler-backend-string-contains? asm "    sqrtsd ")
+        (compiler_backend.compiler-backend-string-contains? asm "    sqrtss ")
         (not
           (compiler_backend.compiler-backend-string-contains?
             asm
@@ -35542,19 +35212,15 @@ g:
     target)
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          "    movq ")
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          "    movd ")
+        (compiler_backend.compiler-backend-string-contains? asm "    movq ")
+        (compiler_backend.compiler-backend-string-contains? asm "    movd ")
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "__tl_float_to_bits"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "__tl_float_from_bits"))
         (not
           (compiler_backend.compiler-backend-string-contains? asm "tl_alloc")))]
@@ -35662,7 +35328,7 @@ g:
             (string.eq literal-asm integer-asm)
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view literal-asm)
+                literal-asm
                 ".L_tl_f64_"))
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -35710,38 +35376,37 @@ g:
     (compiler-backend-f32-literal-binop-source))
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          (compiler_backend.compiler-backend-float-bits-directive
-            (compiler_ast_types.AstType.F32)
-            (compiler-backend-test-f32-bits "11.0")))
+        (let
+          [bound-100
+            (compiler_backend.compiler-backend-float-bits-directive
+              (compiler_ast_types.AstType.F32)
+              (compiler-backend-test-f32-bits "11.0"))]
+          (compiler_backend.compiler-backend-string-contains? asm bound-100))
         (not
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "    .float "))
+          (compiler_backend.compiler-backend-string-contains? asm "    .float "))
         ;; FPO red-zone frame slot: lifetime coloring compacts b:f32 from its
         ;; old positive 176(%rsp) identity slot to -64; literal temporaries
         ;; independently reuse -8.
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    ucomiss -64(%rsp), %xmm2\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    addss -64(%rsp), %xmm2\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    setb %r8b\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    ucomiss %xmm1, %xmm0\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    addss %xmm1, %xmm0\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    cvtsd2ss "))
         (not
           (compiler_backend.compiler-backend-string-contains? asm "    ucomisd")))]
@@ -35799,20 +35464,20 @@ g:
           (and
             (compiler_backend.backend-and4
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view f64-asm)
+                f64-asm
                 "    movsd %xmm2, %xmm4\n")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view f64-asm)
+                f64-asm
                 "    addsd %xmm3, %xmm4\n")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view f32-asm)
+                f32-asm
                 "    movss %xmm2, %xmm4\n")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view f32-asm)
+                f32-asm
                 "    addss %xmm3, %xmm4\n"))
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view f64-asm)
+                f64-asm
                 "%xmm0"))
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -35820,7 +35485,7 @@ g:
                 "%xmm1"))
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view f32-asm)
+                f32-asm
                 "%xmm0"))
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -35878,26 +35543,26 @@ g:
           (and
             (compiler_backend.backend-and4
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view f64-asm)
+                f64-asm
                 "    movsd %xmm3, %xmm2\n")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view f64-asm)
+                f64-asm
                 "    addsd %xmm4, %xmm2\n")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view f32-asm)
+                f32-asm
                 "    movss %xmm3, %xmm2\n")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view f32-asm)
+                f32-asm
                 "    addss %xmm4, %xmm2\n"))
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view f64-asm)
+              f64-asm
               "    movsd %xmm2, -16(%rbp)\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view f32-asm)
+              f32-asm
               "    movss %xmm2, -16(%rbp)\n")
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view f64-asm)
+                f64-asm
                 "%xmm0"))
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -35905,7 +35570,7 @@ g:
                 "%xmm1"))
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view f32-asm)
+                f32-asm
                 "%xmm0"))
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -36009,34 +35674,34 @@ g:
           (and
             (compiler_backend.backend-and8
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view f64-asm)
+                f64-asm
                 "    ucomisd %xmm3, %xmm2\n")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view f64-asm)
+                f64-asm
                 "    setb %r12b\n")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view f64-asm)
+                f64-asm
                 "    movl $0, %r12d\n    jp 1f\n    setb %r12b\n1:\n")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view f32-asm)
+                f32-asm
                 "    ucomiss %xmm3, %xmm2\n")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view f32-asm)
+                f32-asm
                 "    setb %r12b\n")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view f32-asm)
+                f32-asm
                 "    movl $0, %r12d\n    jp 1f\n    setb %r12b\n1:\n")
               (not
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view f64-asm)
+                  f64-asm
                   "%rax"))
               (not
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view f32-asm)
+                  f32-asm
                   "%rax")))
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view f64-asm)
+                f64-asm
                 "%xmm0"))
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -36044,7 +35709,7 @@ g:
                 "%xmm1"))
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view f32-asm)
+                f32-asm
                 "%xmm0"))
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -36102,40 +35767,40 @@ g:
           (and
             (compiler_backend.backend-and8
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view f64-asm)
+                f64-asm
                 "    ucomisd %xmm4, %xmm3\n")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view f64-asm)
+                f64-asm
                 "    setb %r8b\n")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view f64-asm)
+                f64-asm
                 "    movl $0, %r8d\n    jp 1f\n    setb %r8b\n1:\n")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view f32-asm)
+                f32-asm
                 "    ucomiss %xmm4, %xmm3\n")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view f32-asm)
+                f32-asm
                 "    setb %r8b\n")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view f32-asm)
+                f32-asm
                 "    movl $0, %r8d\n    jp 1f\n    setb %r8b\n1:\n")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view f64-asm)
+                f64-asm
                 "    movq %r8, -16(%rbp)\n")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view f32-asm)
+                f32-asm
                 "    movq %r8, -16(%rbp)\n"))
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view f64-asm)
+                f64-asm
                 "%rax"))
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view f32-asm)
+                f32-asm
                 "%rax"))
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view f64-asm)
+                f64-asm
                 "%xmm0"))
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -36143,7 +35808,7 @@ g:
                 "%xmm1"))
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view f32-asm)
+                f32-asm
                 "%xmm0"))
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -36233,30 +35898,30 @@ g:
           (and
             (compiler_backend.backend-and8
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view arith-asm)
+                arith-asm
                 "    addsd %xmm4, %xmm2\n")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view arith-asm)
+                arith-asm
                 "    movsd %xmm2, %xmm4\n")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view cmp-asm)
+                cmp-asm
                 "    movsd -24(%rbp), %xmm2\n")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view cmp-asm)
+                cmp-asm
                 "    ucomisd %xmm3, %xmm2\n")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view cmp-asm)
+                cmp-asm
                 "    setb %r12b\n")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view cmp-asm)
+                cmp-asm
                 "    movl $0, %r12d\n    jp 1f\n    setb %r12b\n1:\n")
               (not
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view arith-asm)
+                  arith-asm
                   "%xmm0"))
               (not
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view cmp-asm)
+                  cmp-asm
                   "%xmm0")))
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -36264,7 +35929,7 @@ g:
                 "%xmm1"))
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view cmp-asm)
+                cmp-asm
                 "%xmm1"))
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -36321,19 +35986,19 @@ g:
           (and
             (compiler_backend.backend-and8
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view home-asm)
+                home-asm
                 "    movsd %xmm2, %xmm0\n")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view home-asm)
+                home-asm
                 "    addsd %xmm3, %xmm0\n")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view clobber-asm)
+                clobber-asm
                 "    movsd %xmm0, %xmm2\n")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view clobber-asm)
+                clobber-asm
                 "    movsd %xmm3, %xmm0\n")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view clobber-asm)
+                clobber-asm
                 "    addsd %xmm2, %xmm0\n")
               (not
                 (compiler_backend.compiler-backend-string-contains?
@@ -36341,7 +36006,7 @@ g:
                   "%xmm1"))
               (not
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view clobber-asm)
+                  clobber-asm
                   "%xmm1"))
               true)
             (not
@@ -36430,30 +36095,30 @@ g:
           (and
             (compiler_backend.backend-and8
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view home-asm)
+                home-asm
                 "    ucomisd %xmm3, %xmm2\n")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view home-asm)
+                home-asm
                 "    setb %al\n")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view home-asm)
+                home-asm
                 "    movl $0, %eax\n    jp 1f\n    setb %al\n1:\n")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view spill-asm)
+                spill-asm
                 "    movsd -24(%rbp), %xmm2\n")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view spill-asm)
+                spill-asm
                 "    ucomisd %xmm3, %xmm2\n")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view spill-asm)
+                spill-asm
                 "    setb %al\n")
               (not
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view home-asm)
+                  home-asm
                   "%xmm0"))
               (not
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view spill-asm)
+                  spill-asm
                   "%xmm0")))
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -36568,10 +36233,10 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq -16(%rbp), %r9\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    addq %r9, %rax\n")
         (not (compiler_backend.compiler-backend-string-contains? asm "%r8")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
@@ -36609,10 +36274,10 @@ g:
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    cmpq %rsi, %rax\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    sete %al\n")
           (not (compiler_backend.compiler-backend-string-contains? asm "%r8")))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])))
@@ -36649,10 +36314,10 @@ g:
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    cmpq -16(%rbp), %rax\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    setge %al\n")
           (not (compiler_backend.compiler-backend-string-contains? asm "%r8")))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])))
@@ -36690,10 +36355,10 @@ g:
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    testq %rax, %rax\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    setge %al\n")
           (not (compiler_backend.compiler-backend-string-contains? asm "%r8")))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])))
@@ -36732,10 +36397,10 @@ g:
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "(%rip), %rax\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    sete %al\n")
           (not (compiler_backend.compiler-backend-string-contains? asm "%r8")))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])))
@@ -36803,14 +36468,12 @@ g:
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq %rax, ")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq -8(%rbp), %rax\n")
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "    cmpq ")
+          (compiler_backend.compiler-backend-string-contains? asm "    cmpq ")
           (compiler_backend.compiler-backend-string-contains?
             asm
             "    movq %rax, %r8\n"))]
@@ -36848,13 +36511,13 @@ g:
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq $9218868437227405312, %rax\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    cmpq -8(%rbp), %rax\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    seta %al\n")
           (not (compiler_backend.compiler-backend-string-contains? asm "%r8")))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])))
@@ -36972,27 +36635,21 @@ g:
         [body : String (compiler-backend-asm-function-body asm "_tl_f")]
         (and
           (not (string.eq body ""))
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view body)
-            "    cmpq ")
+          (compiler_backend.compiler-backend-string-contains? body "    cmpq ")
           (or
-            (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view body)
-              "    je ")
-            (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view body)
-              "    jne "))
+            (compiler_backend.compiler-backend-string-contains? body "    je ")
+            (compiler_backend.compiler-backend-string-contains? body "    jne "))
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view body)
+              body
               "    sete "))
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view body)
+              body
               "    setne "))
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view body)
+              body
               "    xorq $1, "))
           (not
             (compiler_backend.compiler-backend-string-contains?
@@ -37010,18 +36667,14 @@ g:
           (not (string.eq body ""))
           (or
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view body)
+              body
               "    cmpq $0, ")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view body)
+              body
               "    testq "))
           (or
-            (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view body)
-              "    je ")
-            (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view body)
-              "    jne "))
+            (compiler_backend.compiler-backend-string-contains? body "    je ")
+            (compiler_backend.compiler-backend-string-contains? body "    jne "))
           (not
             (compiler_backend.compiler-backend-string-contains?
               body
@@ -37039,10 +36692,10 @@ g:
           (not (string.eq body ""))
           (or
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view body)
+              body
               "    cmpq $0, ")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view body)
+              body
               "    testq "))
           (not
             (compiler_backend.compiler-backend-string-contains?
@@ -37082,14 +36735,14 @@ g:
         [(compiler_backend.ResultCompilerBackend.Ok spill-asm)
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view reg-asm)
+              reg-asm
               "    testq %r12, %r12\n")
             (not
               (compiler_backend.compiler-backend-string-contains?
                 reg-asm
                 "    movq %r12, %rax\n"))
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view spill-asm)
+              spill-asm
               "    cmpq $0, -24(%rbp)\n")
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -37149,22 +36802,22 @@ g:
           [(compiler_backend.ResultCompilerBackend.Ok stack-asm)
             (and
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view reg-asm)
+                reg-asm
                 "    cmpq $10, %r12\n")
               (not
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view reg-asm)
+                  reg-asm
                   "    movq %r12, %rax\n"))
               (not
                 (compiler_backend.compiler-backend-string-contains?
                   reg-asm
                   "%rax"))
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view stack-asm)
+                stack-asm
                 "    cmpq %r13, -16(%rbp)\n")
               (not
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view stack-asm)
+                  stack-asm
                   "    movq -16(%rbp), %rax\n"))
               (not
                 (compiler_backend.compiler-backend-string-contains?
@@ -37237,29 +36890,27 @@ g:
       (compiler_backend.backend-and8
         (or
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    xorq %r8, %rax\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    xorq %rcx, %rax\n"))
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    shlq %cl, %rax\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    sarq %cl, %rax\n")
         (not
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "    orq "))
-        (not
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "    addq %r8, %rax\n"))
+          (compiler_backend.compiler-backend-string-contains? asm "    orq "))
         (not
           (compiler_backend.compiler-backend-string-contains?
             asm
-            (compiler-backend-todo-marker)))
+            "    addq %r8, %rax\n"))
+        (not
+          (let
+            [bound-101 (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm bound-101)))
         true
         true)]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
@@ -37398,14 +37049,14 @@ g:
               (and
                 (compiler_backend.backend-and4
                   (compiler_backend.compiler-backend-string-contains?
-                    (owned_view.compiler-owned-shared-view byte-asm)
+                    byte-asm
                     "    movzbq %r12b, %r12\n")
                   (not
                     (compiler_backend.compiler-backend-string-contains?
                       byte-asm
                       "    andq $255, %r12\n"))
                   (compiler_backend.compiler-backend-string-contains?
-                    (owned_view.compiler-owned-shared-view word-asm)
+                    word-asm
                     "    movzwq %r12w, %r12\n")
                   (not
                     (compiler_backend.compiler-backend-string-contains?
@@ -37461,18 +37112,15 @@ g:
   (and
     (compiler_backend.backend-and4
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         "    movq %r15, %r12\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         "    setl %r12b\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         "    movzbq %r12b, %r12\n")
-      (not
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          "%rax")))
+      (not (compiler_backend.compiler-backend-string-contains? asm "%rax")))
     (not (compiler_backend.compiler-backend-string-contains? asm "%r8"))))
 
 (define (compiler-backend-direct-compare-home-ok?) : bool
@@ -37540,24 +37188,24 @@ g:
           (and
             (compiler_backend.backend-and4
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view shl-asm)
+                shl-asm
                 "    movq %r15, %r12\n")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view shl-asm)
+                shl-asm
                 "    shlq $3, %r12\n")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view shr-asm)
+                shr-asm
                 "    movq %r15, %r12\n")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view shr-asm)
+                shr-asm
                 "    sarq $3, %r12\n"))
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view shl-asm)
+                shl-asm
                 "%rax"))
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view shr-asm)
+                shr-asm
                 "%rax"))
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -37619,45 +37267,41 @@ g:
           (and
             (compiler_backend.backend-and8
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view shl-asm)
+                shl-asm
                 "    movq %r15, %r12\n")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view shl-asm)
+                shl-asm
                 "    testq %rcx, %rcx\n")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view shl-asm)
+                shl-asm
                 "    cmpq $64, %rcx\n")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view shl-asm)
+                shl-asm
                 "    shlq %cl, %r12\n")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view shr-asm)
+                shr-asm
                 "    movq %r15, %r12\n")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view shr-asm)
+                shr-asm
                 "    testq %rcx, %rcx\n")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view shr-asm)
+                shr-asm
                 "    cmpq $64, %rcx\n")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view shr-asm)
+                shr-asm
                 "    sarq %cl, %r12\n"))
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view shl-asm)
+                shl-asm
                 "%rax"))
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view shr-asm)
+                shr-asm
                 "%rax"))
             (not
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view shl-asm)
-                "%r8"))
+              (compiler_backend.compiler-backend-string-contains? shl-asm "%r8"))
             (not
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view shr-asm)
-                "%r8"))
+              (compiler_backend.compiler-backend-string-contains? shr-asm "%r8"))
             (not
               (compiler_backend.compiler-backend-string-contains?
                 shl-asm
@@ -37715,23 +37359,23 @@ g:
           (and
             (compiler_backend.backend-and4
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view add-asm)
+                add-asm
                 "    leaq 7(%r12), %r8\n")
               (not
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view add-asm)
+                  add-asm
                   "    addq $7, %r8\n"))
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view cmp-asm)
+                cmp-asm
                 "    cmpq $7, %r8\n")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view cmp-asm)
+                cmp-asm
                 "    setl %r8b\n"))
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view add-asm)
+              add-asm
               "    movq %r8, -16(%rbp)\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view cmp-asm)
+              cmp-asm
               "    movq %r8, -16(%rbp)\n")
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -37786,7 +37430,7 @@ g:
     [push-count : i64
       (compiler_backend.compiler-backend-fill-push-csr-regs!
         assignments
-        (owned_view.compiler-owned-shared-view push-regs)
+        (&mut push-regs)
         backend-state)]
     [vars : compiler_regalloc.CompilerRegVarTypes
       (compiler_regalloc.compiler-reg-var-types-insert
@@ -37853,30 +37497,26 @@ g:
       direct-result.ok
       spilled-result.ok
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view direct)
+        direct
         "    leaq 31(,%rbp,1), %r12\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view spilled)
+        spilled
         "    leaq 31(,%rbp,1), %r8\n")
       (not
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view direct)
-          "31(%rsp)"))
+        (compiler_backend.compiler-backend-string-contains? direct "31(%rsp)"))
+      (not
+        (compiler_backend.compiler-backend-string-contains? spilled "31(%rsp)"))
       (not
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view spilled)
-          "31(%rsp)"))
-      (not
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view direct)
+          direct
           "    addq $31"))
       (not
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view spilled)
+          spilled
           "    addq $31"))
       ;; The spilled destination remains a genuine rebased frame write.
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view spilled)
+        spilled
         "    movq %r8, 48(%rsp)\n")
       (compiler_backend.compiler-backend-string-contains?
         direct
@@ -37935,11 +37575,11 @@ g:
                 [(compiler_backend.ResultCompilerBackend.Ok direct-sub)
                   (and
                     (compiler_backend.compiler-backend-string-contains?
-                      (owned_view.compiler-owned-shared-view spill-add)
+                      spill-add
                       "    movq %r12, %r8\n    movq %r8, -16(%rbp)\n")
                     (string.eq spill-add spill-sub)
                     (compiler_backend.compiler-backend-string-contains?
-                      (owned_view.compiler-owned-shared-view direct-add)
+                      direct-add
                       "    movq %r12, %r13\n")
                     (string.eq direct-add direct-sub)
                     (not
@@ -38006,22 +37646,22 @@ g:
           (and
             (compiler_backend.backend-and4
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view add-asm)
+                add-asm
                 "    movq %r12, %r8\n")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view add-asm)
+                add-asm
                 "    addq %r13, %r8\n")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view cmp-asm)
+                cmp-asm
                 "    cmpq %r13, %r8\n")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view cmp-asm)
+                cmp-asm
                 "    setl %r8b\n"))
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view add-asm)
+              add-asm
               "    movq %r8, -16(%rbp)\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view cmp-asm)
+              cmp-asm
               "    movq %r8, -16(%rbp)\n")
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -38055,13 +37695,13 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq %r12, %r8\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    negq %r8\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq %r8, -16(%rbp)\n")
         (not (compiler_backend.compiler-backend-string-contains? asm "%rax")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
@@ -38106,41 +37746,39 @@ g:
           ;; COLD-1: both abort stubs are out of line; the INT_MIN test
           ;; still skips the -1 test through the kept `1:`.
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    testq %r8, %r8\n    je .L_tl_abort_site_1_div_zero.cold\n1:\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    call tl_div_abort_at\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    cmpq $1, %rax\n    jno 1f\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    cmpq $-1, %r8\n    je .L_tl_abort_site_2_div_overflow.cold\n1:\n    cqto\n")
+          (compiler_backend.compiler-backend-string-contains? asm "    cqto\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "    cqto\n")
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    idivq %r8\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq %rdx, %rax\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    .quad 46\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    call tl_div_abort\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".globl tl_div_abort\n"))
         (not
-          (compiler_backend.compiler-backend-string-contains?
-            asm
-            (compiler-backend-todo-marker))))]
+          (let
+            [bound-102 (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm bound-102))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-constant-divisor-strength-source) : String
@@ -38162,44 +37800,44 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (compiler_backend.backend-and8
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movabsq $6148914691236517206, %r8\n    imulq %r8\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movabsq $-8543223828751151131, %r8\n    imulq %r8\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movabsq $-6148914691236517205, %r8\n    mulq %r8\n")
         ;; M-F folds the power-of-2 modulo mask into an immediate `andq`
         ;; (was `movabsq $7, %r8; andq %r8, %rax`).
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    andq $7, %rax\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    idivq %r8\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    divq %r8\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    call tl_div_abort\n"))
         (and
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               ".extern tl_div_abort\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               ".globl tl_div_abort\n"))
           (not
-            (compiler_backend.compiler-backend-string-contains?
-              asm
-              (compiler-backend-todo-marker)))))]
+            (let
+              [bound-103 (compiler-backend-todo-marker)]
+              (compiler_backend.compiler-backend-string-contains? asm bound-103)))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 ;; Signed i64 magic div/mod must keep the pre-shift quotient sign in %rax and
@@ -38237,9 +37875,7 @@ g:
         frame-asm
         "    movq %r10, %rax\n    imulq -40(%rbp)\n    addq %r10, %rdx\n    movq %rdx, %rax\n    shrq $63, %rax\n    sarq $29, %rdx\n    addq %rax, %rdx\n    imulq $1000000007, %rdx, %rax\n    subq %rax, %r10\n")
       (not
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view reg-asm)
-          "sarq $63"))
+        (compiler_backend.compiler-backend-string-contains? reg-asm "sarq $63"))
       (not
         (compiler_backend.compiler-backend-string-contains?
           reg-asm
@@ -38502,14 +38138,14 @@ g:
                 ;; Positive: producer lands in SRC and the single-use result is
                 ;; stored from SRC after the exact nine-instruction expansion.
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view forwarded)
+                  forwarded
                   "    leaq (%r12,%r13), %r9\n    movq %r9, %rax\n")
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view forwarded)
+                  forwarded
                   "    subq %rax, %r9\n    movq %r9, (%rdi,%rsi,8)\n")
                 (not
                   (compiler_backend.compiler-backend-string-contains?
-                    (owned_view.compiler-owned-shared-view forwarded)
+                    forwarded
                     "    movq %rdx, %r9\n"))
                 (not
                   (compiler_backend.compiler-backend-string-contains?
@@ -38518,10 +38154,10 @@ g:
                 ;; Negative: a multi-use divmod result returns to its canonical
                 ;; %rax home before both consumers read it.
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view multi-result)
+                  multi-result
                   "    leaq (%r12,%r13), %r9\n    movq %r9, %rax\n")
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view multi-result)
+                  multi-result
                   "    subq %rax, %r9\n    movq %r9, %rax\n")
                 (compiler_backend.compiler-backend-string-contains?
                   multi-result
@@ -38529,7 +38165,7 @@ g:
                 ;; Negative: another use of the producer keeps its fixed %rdx
                 ;; home, so the divmod performs the ordinary SRC copy.
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view multi-producer)
+                  multi-producer
                   "    leaq (%r12,%r13), %rdx\n    movq %rdx, %r9\n")
                 (not
                   (compiler_backend.compiler-backend-string-contains?
@@ -38549,7 +38185,7 @@ g:
         [(compiler_backend.ResultCompilerBackend.Ok r12-asm)
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view rbp-asm)
+              rbp-asm
               "    leaq 62(,%rbp,1), %r9\n")
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -38822,13 +38458,13 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq (%rcx,%r8,8), %rdx\n    addq (%rcx,%r12,8), %rdx\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movabsq $-8543223828751151131, %r9\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq -512(%rbp), %rcx\n    movq %rax, (%rcx,%r12,8)\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -38906,14 +38542,14 @@ g:
               ;; Power and magic quotient expansions both honor the requested
               ;; %rax result and spill it without a fixed-register hop.
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view power-spill)
+                power-spill
                 "    sarq $3, %rax\n    movq %rax, -24(%rbp)\n")
               (not
                 (compiler_backend.compiler-backend-string-contains?
                   power-spill
                   "    sarq $3, %rax\n    movq %rax, %rdx\n"))
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view magic-spill)
+                magic-spill
                 "    addq %rdx, %rax\n    movq %rax, -24(%rbp)\n")
               (not
                 (compiler_backend.compiler-backend-string-contains?
@@ -38933,24 +38569,24 @@ g:
       (and
         (if want-guard?
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    call tl_div_abort\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    call tl_div_abort\n")))
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    idivq %r8\n")
         (if want-remainder?
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq %rdx, %rax\n")
           true)
         (not
-          (compiler_backend.compiler-backend-string-contains?
-            asm
-            (compiler-backend-todo-marker))))]
+          (let
+            [bound-104 (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm bound-104))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-divrem-rax-rhs-preserved-ok?) : bool
@@ -38982,19 +38618,19 @@ g:
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq %rax, %r8\n    movq %r12, %rax\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    idivq %r8\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movq %r12, %rax\n    movq %rax, %r8\n"))
           (not
-            (compiler_backend.compiler-backend-string-contains?
-              asm
-              (compiler-backend-todo-marker))))]
+            (let
+              [bound-105 (compiler-backend-todo-marker)]
+              (compiler_backend.compiler-backend-string-contains? asm bound-105))))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])))
 
 (define (compiler-backend-safe-divrem-guard-elision-ok?) : bool
@@ -39123,34 +38759,21 @@ g:
     [one-flag : String (str_cat.str-cat "    movq $1, " flag-reg "\n")]
     (and
       (> (string.string-length body) 0)
-      (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view body)
-        cmp)
-      (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view body)
-        normalized-push)
+      (compiler_backend.compiler-backend-string-contains? body cmp)
+      (compiler_backend.compiler-backend-string-contains? body normalized-push)
       (if signed?
         (and
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view body)
-            test)
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view body)
-            zero-flag)
+          (compiler_backend.compiler-backend-string-contains? body test)
+          (compiler_backend.compiler-backend-string-contains? body zero-flag)
           (not
             (compiler_backend.compiler-backend-string-contains? body one-flag)))
         (and
+          (not (compiler_backend.compiler-backend-string-contains? body test))
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view body)
-              test))
-          (not
-            (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view body)
+              body
               "_shift_negative.cold"))
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view body)
-            one-flag)
+          (compiler_backend.compiler-backend-string-contains? body one-flag)
           (not
             (compiler_backend.compiler-backend-string-contains? body zero-flag)))))))
 
@@ -39206,36 +38829,36 @@ g:
           ;; is independent of compact-name slot assignment.
           (compiler_backend.backend-and8
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               ".globl _tl_shift_u64_lit\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               ".globl _tl_shift_si8\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               ".globl _tl_shift_ui8\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               ".globl _tl_shift_si16\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               ".globl _tl_shift_ui16\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               ".globl _tl_shift_si32\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               ".globl _tl_shift_ui32\n")
             (and
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 ".globl _tl_shift_si64\n")
               (compiler_backend.compiler-backend-string-contains?
                 asm
                 ".globl _tl_shift_ui64\n")))
           ;; A U64 literal/copy must select the logical right-shift mnemonic.
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view literal)
+            literal
             "    shrq %cl, %rax\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
@@ -39313,39 +38936,37 @@ g:
     (compiler-backend-shift-guard-source))
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (compiler_backend.backend-and8
+        (compiler_backend.compiler-backend-string-contains? asm "    movq $-1,")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          "    movq $-1,")
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    testq %r8, %r8\n    jl .L_tl_abort_site_1_shift_negative.cold\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    cmpq $64, %r8\n    jae .L_tl_abort_site_2_shift_large.cold\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    call tl_shift_abort_at\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".globl tl_shift_abort\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".L_tl_shift_msg:"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    shlq $-1, %rax\n"))
         (and
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    call tl_shift_abort\n"))
           (not
-            (compiler_backend.compiler-backend-string-contains?
-              asm
-              (compiler-backend-todo-marker)))))]
+            (let
+              [bound-106 (compiler-backend-todo-marker)]
+              (compiler_backend.compiler-backend-string-contains? asm bound-106)))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-narrow-binop-types
@@ -39380,19 +39001,14 @@ g:
       (ci.intern-compat-state-capture-active)))
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          needle)
+        (compiler_backend.compiler-backend-string-contains? asm needle)
         (if (string.eq bad "")
           true
-          (not
-            (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
-              bad)))
+          (not (compiler_backend.compiler-backend-string-contains? asm bad)))
         (not
-          (compiler_backend.compiler-backend-string-contains?
-            asm
-            (compiler-backend-todo-marker))))]
+          (let
+            [bound-107 (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm bound-107))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 ;; Backend-owned narrow integer instruction selection coverage. These
@@ -39527,9 +39143,7 @@ g:
       (and
         ;; The RHS global is a legal scalar memory source, so the materialized
         ;; compare needs only the result staging register.
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          "(%rip), %r8\n")
+        (compiler_backend.compiler-backend-string-contains? asm "(%rip), %r8\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
             asm
@@ -39594,14 +39208,14 @@ g:
         ;; the compare's memory SOURCE. Pre-M6-I both were staged and the line
         ;; read `cmpq %r8, %r9`.
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq _tl_g_next(%rip), %r9\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    cmpq _tl_g_cap(%rip), %r9\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq _tl_g_cap(%rip)"))
         ;; The load-bearing width check is unchanged: a full-word compare, not
         ;; the byte one the `bool` result type would suggest.
@@ -39634,11 +39248,11 @@ g:
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    cmpq -16(%rbp), %r8\n    setl %r8b\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    cmpb -16(%rbp), %al\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
@@ -39666,17 +39280,17 @@ g:
         ;; f64 param spills from %xmm0 to -8(%rsp), divisor 2.0 at
         ;; -16(%rsp)); every one of these leaves is call-free.
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq %rdi, -8(%rsp)\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movsd %xmm0, -8(%rsp)\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movsd %xmm1, -8(%rsp)\n"))
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    divsd -16(%rsp), %xmm2\n")
         (or
           (compiler-backend-call-or-jmp-ok?
@@ -39689,12 +39303,12 @@ g:
             (owned_view.compiler-owned-shared-view asm)
             "_tl_f"))
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movsd %xmm0, ")
         (not
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            (compiler-backend-todo-marker)))
+          (let
+            [bound-108 (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm bound-108)))
         (not
           (compiler_backend.compiler-backend-string-contains?
             asm
@@ -39729,63 +39343,61 @@ g:
           ;; Win64 FPO rebases local slots and the positive incoming fifth
           ;; argument against the compacted post-prologue %rsp frame.
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movsd %xmm0, 56(%rsp)\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movsd %xmm1, 48(%rsp)\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movsd %xmm2, 40(%rsp)\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movsd %xmm3, 32(%rsp)\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    subq $72, %rsp\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq 64(%rsp), %r10\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq %r10, 32(%rsp)\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movsd 112(%rsp), %xmm2\n"))
         (or
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    call _tl_f")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    call _tl_sum5")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    call _tl_call5"))
         ;; The f64 call result (kept in %xmm0) spills to rsp slot 56(%rsp).
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movsd %xmm0, 56(%rsp)\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "too many call args"))
         (not
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "    syscall"))
-        (not
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "    movsd 48(%rbp), %xmm0\n"))
-        (not
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "    movq %r11, 32(%rsp)\n"))
+          (compiler_backend.compiler-backend-string-contains? asm "    syscall"))
         (not
           (compiler_backend.compiler-backend-string-contains?
             asm
-            (compiler-backend-todo-marker))))]
+            "    movsd 48(%rbp), %xmm0\n"))
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movq %r11, 32(%rsp)\n"))
+        (not
+          (let
+            [bound-109 (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm bound-109))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-register-f64-aggregate-source) : String
@@ -39813,38 +39425,30 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.backend-and8
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "    movsd ")
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "%xmm0")
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "%xmm1")
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "    call ")
+          (compiler_backend.compiler-backend-string-contains? asm "    movsd ")
+          (compiler_backend.compiler-backend-string-contains? asm "%xmm0")
+          (compiler_backend.compiler-backend-string-contains? asm "%xmm1")
+          (compiler_backend.compiler-backend-string-contains? asm "    call ")
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movsd %rax"))
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movsd %rdx"))
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               ", %rax\n    movsd"))
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               ", %rdx\n    movsd")))
         (not
-          (compiler_backend.compiler-backend-string-contains?
-            asm
-            (compiler-backend-todo-marker))))]
+          (let
+            [bound-110 (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm bound-110))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-register-f64-aggregate-ok?) : bool
@@ -39884,46 +39488,40 @@ g:
       (and
         (compiler_backend.backend-and8
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movd %xmm2, %r8d\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movd %r8d, %xmm2\n")
+          (compiler_backend.compiler-backend-string-contains? asm "    movsd ")
+          (compiler_backend.compiler-backend-string-contains? asm "%xmm0")
+          (compiler_backend.compiler-backend-string-contains? asm "    call ")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "    movsd ")
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "%xmm0")
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "    call ")
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movss 4(%r10), %xmm2\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "unsupported bitcast"))
           (not
-            (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
-              (compiler-backend-todo-marker))))
+            (let
+              [bound-111 (compiler-backend-todo-marker)]
+              (compiler_backend.compiler-backend-string-contains? asm bound-111))))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movsd %rax"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movsd %rdx"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movd %xmm0, %eax\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movd %eax, %xmm0\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -39944,16 +39542,12 @@ g:
 ;; stack-store path while `add8` reads them back from 16(%rbp)/24(%rbp).
 (define (compiler-backend-stack-add-call-ok? [asm : String]) : bool
   (or
-    (compiler_backend.compiler-backend-string-contains?
-      (owned_view.compiler-owned-shared-view asm)
-      "    call _tl_add8")
+    (compiler_backend.compiler-backend-string-contains? asm "    call _tl_add8")
     (compiler_backend.compiler-backend-string-contains? asm "    call _tl_f")))
 
 (define (compiler-backend-stack-mix-call-ok? [asm : String]) : bool
   (or
-    (compiler_backend.compiler-backend-string-contains?
-      (owned_view.compiler-owned-shared-view asm)
-      "    call _tl_mix")
+    (compiler_backend.compiler-backend-string-contains? asm "    call _tl_mix")
     (compiler_backend.compiler-backend-string-contains? asm "    call _tl_f")))
 
 (define (compiler-backend-stack-int-args-ok?) : bool
@@ -39976,24 +39570,24 @@ g:
         (and
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "too many call args"))
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq %r10, 0(%rsp)\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq %r10, 8(%rsp)\n")
           (compiler-backend-stack-add-call-ok? asm)
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view callee)
+            callee
             "    movq 8(%rsp), %r8\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view callee)
+            callee
             "    movq 16(%rsp), %r8\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view callee)
+              callee
               "    movq 8(%rsp), %rax\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
@@ -40011,7 +39605,7 @@ g:
       (and
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "too many call args"))
         ;; FPO reserves the outgoing stack-arg area in the prologue (no
         ;; per-call `subq $16`); the two spilled f64 args go to 0/8(%rsp) via GP
@@ -40019,20 +39613,20 @@ g:
         ;; %rsp at the entry value and it reads its incoming f64 stack args at
         ;; 8/16(%rsp) instead of positive 16/24(%rbp).
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq %r10, 0(%rsp)\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq %r10, 8(%rsp)\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movsd 8(%rsp), %xmm2\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movsd 16(%rsp), %xmm2\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movsd 8(%rsp), %xmm0\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -40050,13 +39644,13 @@ g:
       (and
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "too many call args"))
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq %r10, 0(%rsp)\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq %r10, 8(%rsp)\n")
         (compiler-backend-stack-mix-call-ok? asm))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
@@ -40071,19 +39665,19 @@ g:
       (and
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "too many call args"))
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    call _tl_add8\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq %r10, 32(%rsp)\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq %r10, 56(%rsp)\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq 128(%rsp), %r8\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -40151,10 +39745,10 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq $7, 0(%rsp)\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq $8, 8(%rsp)\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -40182,10 +39776,10 @@ g:
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movd %xmm3, %r10d\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movl %r10d, 0(%rsp)\n")
           (not
             (compiler_backend.compiler-backend-string-contains? asm "%xmm15")))]
@@ -40218,16 +39812,16 @@ g:
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq %xmm3, %r10\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq %r10, 0(%rsp)\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq %xmm4, %r10\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq %r10, 8(%rsp)\n")
           (not
             (compiler_backend.compiler-backend-string-contains? asm "%xmm15")))]
@@ -40267,14 +39861,14 @@ g:
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movq 16(%rbp), %r12\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movq 24(%rbp), %r13\n")
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "    movq 16(%rbp), %rax\n"))
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -40296,14 +39890,14 @@ g:
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movq 16(%rbp), %r8\n    movq %r8, -8(%rbp)\n")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movq 24(%rbp), %r8\n    movq %r8, -16(%rbp)\n")
             (not
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "    movq 16(%rbp), %rax\n"))
             (not
               (compiler_backend.compiler-backend-string-contains?
@@ -40366,7 +39960,7 @@ g:
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movq 16(%rbp), %r8\n    movq %r8, -8(%rbp)\n")
             (compiler_backend.compiler-backend-string-contains?
               asm
@@ -40806,7 +40400,7 @@ g:
           bases
           target
           pressure-args
-          (owned_view.compiler-owned-shared-view pressure-types)
+          pressure-types
           false
           0
           0
@@ -40827,115 +40421,115 @@ g:
           index)
         2)
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view pressure-call)
+        pressure-call
         "    movl $11, %edi\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view pressure-call)
+        pressure-call
         "    movl $12, %esi\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view pressure-call)
+        pressure-call
         "    movl $13, %edx\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view pressure-call)
+        pressure-call
         "    movl $14, %ecx\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view pressure-call)
+        pressure-call
         "    movl $15, %r8d\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view pressure-call)
+        pressure-call
         "    movq %r12, %r14\n    movq %r14, 0(%rsp)\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view pressure-call)
+        pressure-call
         "    movq %r13, %r14\n    movq %r14, 8(%rsp)\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view pressure-call)
+        pressure-call
         "    movl $16, %r9d\n")
       (not
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view pressure-call)
+          pressure-call
           "    movq %r12, %r9\n"))
       (not
         (compiler_backend.compiler-backend-string-contains?
           pressure-call
           "    movq %r13, %r9\n"))
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view pressure-param)
+        pressure-param
         "    movq 16(%rbp), %r12\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view pressure-param)
+        pressure-param
         "    movq 24(%rbp), %r13\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view pressure-param)
+        pressure-param
         "    movq %r9, %r15\n")
       (not
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view pressure-param)
+          pressure-param
           "    movq %r9, %r12\n"))
       (not
         (compiler_backend.compiler-backend-string-contains?
           pressure-param
           "    movq %r9, %r13\n"))
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view memory-param)
+        memory-param
         "    movq %r9, %r15\n")
       (<
         (compiler_backend.compiler-backend-string-find-from
-          (owned_view.compiler-owned-shared-view memory-param)
+          memory-param
           "    movq %r9, %r15\n"
           0)
         (compiler_backend.compiler-backend-string-find-from
-          (owned_view.compiler-owned-shared-view memory-param)
+          memory-param
           "    movq 16(%rbp), "
           0))
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view memory-param)
+        memory-param
         "    movq 16(%rbp), %r9\n    movq %r9, -8(%rbp)\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view memory-param)
+        memory-param
         "    movq 24(%rbp), %r9\n    movq %r9, -16(%rbp)\n")
       (not
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view memory-param)
+          memory-param
           "    movq 16(%rbp), %rdi\n"))
       (not
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view memory-param)
+          memory-param
           "    movq 16(%rbp), %rsi\n"))
       (not
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view memory-param)
+          memory-param
           "    movq 16(%rbp), %rdx\n"))
       (not
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view memory-param)
+          memory-param
           "    movq 16(%rbp), %rcx\n"))
       (not
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view memory-param)
+          memory-param
           "    movq 16(%rbp), %r8\n"))
       (not
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view memory-param)
+          memory-param
           "    movq 16(%rbp), %r15\n"))
       (not
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view memory-param)
+          memory-param
           "    movq 24(%rbp), %rdi\n"))
       (not
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view memory-param)
+          memory-param
           "    movq 24(%rbp), %rsi\n"))
       (not
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view memory-param)
+          memory-param
           "    movq 24(%rbp), %rdx\n"))
       (not
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view memory-param)
+          memory-param
           "    movq 24(%rbp), %rcx\n"))
       (not
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view memory-param)
+          memory-param
           "    movq 24(%rbp), %r8\n"))
       (not
         (compiler_backend.compiler-backend-string-contains?
@@ -40956,15 +40550,15 @@ g:
           index)
         0)
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view mixed-call)
+        mixed-call
         "    movq %r12, %rdi\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view mixed-call)
+        mixed-call
         "    movsd %xmm3, %xmm0\n")
       (not
         (compiler_backend.compiler-backend-string-contains? mixed-call "(%rsp)"))
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view mixed-param)
+        mixed-param
         "    movq %rdi, %r12\n")
       (compiler_backend.compiler-backend-string-contains?
         mixed-param
@@ -40974,7 +40568,7 @@ g:
           bases
           target
           exhausted-args
-          (owned_view.compiler-owned-shared-view exhausted-types)
+          exhausted-types
           false
           0
           6
@@ -40995,26 +40589,26 @@ g:
           index)
         2)
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view exhausted-call)
+        exhausted-call
         "    movq %r12, %r14\n    movq %r14, 0(%rsp)\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view exhausted-call)
+        exhausted-call
         "    movq %xmm3, %r14\n    movq %r14, 8(%rsp)\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view exhausted-call)
+        exhausted-call
         "    movsd %xmm4, %xmm0\n")
       (not
         (compiler_backend.compiler-backend-string-contains?
           exhausted-call
           "    movsd %xmm3, %xmm0\n"))
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view exhausted-param)
+        exhausted-param
         "    movq 16(%rbp), %r12\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view exhausted-param)
+        exhausted-param
         "    movsd 24(%rbp), %xmm3\n")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view exhausted-param)
+        exhausted-param
         "    movsd %xmm0, %xmm4\n")
       (not
         (compiler_backend.compiler-backend-string-contains?
@@ -41105,22 +40699,19 @@ g:
   (let
     [label : String (str_cat.str-cat symbol ":\n")]
     [start : i64
-      (compiler_backend.compiler-backend-string-find-from
-        (owned_view.compiler-owned-shared-view asm)
-        (owned_view.compiler-owned-shared-view label)
-        0)]
+      (compiler_backend.compiler-backend-string-find-from asm label 0)]
     (if (< start 0)
       ""
       (let
         [body-start : i64 (+ start (string.string-length label))]
         [plain-next : i64
           (compiler_backend.compiler-backend-string-find-from
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "\n.globl "
             body-start)]
         [indented-next : i64
           (compiler_backend.compiler-backend-string-find-from
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "\n    .globl "
             body-start)]
         [next : i64
@@ -41166,32 +40757,36 @@ g:
     [reg1 : String (compiler-backend-direct-tail-call-reg1 target)]
     (and
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view body)
+        body
         "    jmp _tl_finish\n")
       (not
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view body)
+          body
           "    call _tl_finish\n"))
       (not
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view body)
-          (compiler-backend-direct-tail-call-param-store
-            (owned_view.compiler-owned-shared-view reg0)
-            "-8(%rbp)")))
+        (let
+          [bound-112
+            (compiler-backend-direct-tail-call-param-store
+              (owned_view.compiler-owned-shared-view reg0)
+              "-8(%rbp)")]
+          (compiler_backend.compiler-backend-string-contains? body bound-112)))
       (not
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view body)
-          (compiler-backend-direct-tail-call-param-store
-            (owned_view.compiler-owned-shared-view reg1)
-            "-16(%rbp)")))
+        (let
+          [bound-113
+            (compiler-backend-direct-tail-call-param-store
+              (owned_view.compiler-owned-shared-view reg1)
+              "-16(%rbp)")]
+          (compiler_backend.compiler-backend-string-contains? body bound-113)))
       (not
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view body)
-          (compiler-backend-direct-tail-call-param-load "-8(%rbp)" reg0)))
+        (let
+          [bound-114
+            (compiler-backend-direct-tail-call-param-load "-8(%rbp)" reg0)]
+          (compiler_backend.compiler-backend-string-contains? body bound-114)))
       (not
-        (compiler_backend.compiler-backend-string-contains?
-          body
-          (compiler-backend-direct-tail-call-param-load "-16(%rbp)" reg1))))))
+        (let
+          [bound-115
+            (compiler-backend-direct-tail-call-param-load "-16(%rbp)" reg1)]
+          (compiler_backend.compiler-backend-string-contains? body bound-115))))))
 
 (define (compiler-backend-direct-tail-call-target-ok?
   [target : compiler_backend.CompilerBackendTarget]) : bool
@@ -41201,11 +40796,11 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    jmp _tl_finish\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    call _tl_finish\n"))
         (compiler-backend-direct-tail-call-identity-elided? target asm))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
@@ -41233,16 +40828,20 @@ g:
         [reg1 : String (compiler-backend-direct-tail-call-reg1 target)]
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view body)
+            body
             "    jmp _tl_finish\n")
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view body)
-            (compiler-backend-direct-tail-call-param-store reg0 slot0))
+          (let
+            [bound-116
+              (compiler-backend-direct-tail-call-param-store reg0 slot0)]
+            (compiler_backend.compiler-backend-string-contains? body bound-116))
           (if (string.eq slot1 "")
             true
-            (compiler_backend.compiler-backend-string-contains?
-              body
-              (compiler-backend-direct-tail-call-param-store reg1 slot1)))))]
+            (let
+              [bound-117
+                (compiler-backend-direct-tail-call-param-store reg1 slot1)]
+              (compiler_backend.compiler-backend-string-contains?
+                body
+                bound-117)))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 ;; Under FPO the f64 params spill to rsp-relative slots (offsets differ by
@@ -41259,14 +40858,16 @@ g:
         [body : String (compiler-backend-asm-function-body asm "_tl_stepf")]
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view body)
-            "    jmp _tl_finishf\n")
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view body)
-            (str_cat.str-cat "    movsd %xmm0, " (str_cat.str-cat slot0 "\n")))
-          (compiler_backend.compiler-backend-string-contains?
             body
-            (str_cat.str-cat "    movsd %xmm1, " (str_cat.str-cat slot1 "\n")))))]
+            "    jmp _tl_finishf\n")
+          (let
+            [bound-118
+              (str_cat.str-cat "    movsd %xmm0, " (str_cat.str-cat slot0 "\n"))]
+            (compiler_backend.compiler-backend-string-contains? body bound-118))
+          (let
+            [bound-119
+              (str_cat.str-cat "    movsd %xmm1, " (str_cat.str-cat slot1 "\n"))]
+            (compiler_backend.compiler-backend-string-contains? body bound-119))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-direct-tail-call-stack-slot
@@ -41285,19 +40886,19 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    jmp _tl_finishstack\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    call _tl_finishstack\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    pushq %r11\n"))
-        (compiler_backend.compiler-backend-string-contains?
-          asm
-          (compiler-backend-direct-tail-call-stack-slot target)))]
+        (let
+          [bound-120 (compiler-backend-direct-tail-call-stack-slot target)]
+          (compiler_backend.compiler-backend-string-contains? asm bound-120)))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-direct-tail-immediate-stack-target-ok?
@@ -41315,10 +40916,10 @@ g:
       (if (compiler_backend.compiler-backend-target-windows? target)
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq $5, 48(%rbp)\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq $8, 72(%rbp)\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
@@ -41326,10 +40927,10 @@ g:
               "    pushq %r11\n")))
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq $7, 16(%rbp)\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq $8, 24(%rbp)\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
@@ -41355,19 +40956,19 @@ g:
         [body : String (compiler-backend-asm-function-body asm "_tl_stepmixed")]
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view body)
+            body
             "    jmp _tl_finishmixed\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view body)
+              body
               "    call _tl_finishmixed\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view body)
+              body
               "    subq $8, %rsp\n"))
-          (compiler_backend.compiler-backend-string-contains?
-            body
-            (compiler-backend-direct-tail-call-mixed-slot target))))]
+          (let
+            [bound-121 (compiler-backend-direct-tail-call-mixed-slot target)]
+            (compiler_backend.compiler-backend-string-contains? body bound-121))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-direct-tail-call-ok?) : bool
@@ -41439,15 +41040,15 @@ g:
         [body : String (compiler-backend-asm-function-body asm "_tl_step")]
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view body)
+            body
             "    jmp *(%r10)\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view body)
+              body
               "    jmp *%rax\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view body)
+              body
               "    jmp *(%r11)\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
@@ -41465,19 +41066,19 @@ g:
         [body : String (compiler-backend-asm-function-body asm "_tl_step6")]
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view body)
+            body
             "    call *(%r10)\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view body)
+              body
               "    jmp *(%r10)\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view body)
+              body
               "    call *%rax\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view body)
+              body
               "    call *(%r11)\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
@@ -41610,18 +41211,19 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq %r11, %r10\n")
+        (let
+          [bound-122
+            (str_cat.str-cat
+              "    movq 8(%r10), "
+              (match (compiler_backend.compiler-backend-target-arg-reg target 0)
+                [(compiler_backend.ResultBackendReg.Ok reg) reg]
+                [(compiler_backend.ResultBackendReg.Err _) ""])
+              "\n")]
+          (compiler_backend.compiler-backend-string-contains? asm bound-122))
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          (str_cat.str-cat
-            "    movq 8(%r10), "
-            (match (compiler_backend.compiler-backend-target-arg-reg target 0)
-              [(compiler_backend.ResultBackendReg.Ok reg) reg]
-              [(compiler_backend.ResultBackendReg.Err _) ""])
-            "\n"))
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    jmp *(%r10)\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -41776,11 +41378,11 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (compiler_backend.backend-and4
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    leave\n    jmp tl_tail_target\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    call tl_tail_target\n"))
         (not
           (compiler_backend.compiler-backend-string-contains? asm "    ret\n"))
@@ -41793,10 +41395,10 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (compiler_backend.backend-and4
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    call tl_tail_unit_target\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq $0, %rax\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -41811,11 +41413,11 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (compiler_backend.backend-and4
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    call tl_tail_stack_target\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    leave\n    jmp tl_tail_stack_target\n"))
         (compiler_backend.compiler-backend-string-contains? asm "    ret\n")
         true)]
@@ -41841,11 +41443,11 @@ g:
           target
           (owned_view.compiler-owned-shared-view asm))
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    leave\n    jmp tl_tail_varargs_target\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    call tl_tail_varargs_target\n"))
         (not
           (compiler_backend.compiler-backend-string-contains? asm "    ret\n")))]
@@ -41968,29 +41570,31 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.backend-and4
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            (compiler-backend-known-function-call-env-zero target))
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            (str_cat.str-cat
-              "    call "
-              (compiler_backend.compiler-backend-closure-entry-label
-                "known_target")
-              "\n"))
+          (let
+            [bound-123 (compiler-backend-known-function-call-env-zero target)]
+            (compiler_backend.compiler-backend-string-contains? asm bound-123))
+          (let
+            [bound-124
+              (str_cat.str-cat
+                "    call "
+                (compiler_backend.compiler-backend-closure-entry-label
+                  "known_target")
+                "\n")]
+            (compiler_backend.compiler-backend-string-contains? asm bound-124))
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    call *(%r11)\n"))
           (not
-            (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
-              (compiler_backend.compiler-backend-closure-descriptor-label
-                "known_target"))))
+            (let
+              [bound-125
+                (compiler_backend.compiler-backend-closure-descriptor-label
+                  "known_target")]
+              (compiler_backend.compiler-backend-string-contains? asm bound-125))))
         (not
-          (compiler_backend.compiler-backend-string-contains?
-            asm
-            (compiler-backend-todo-marker))))]
+          (let
+            [bound-126 (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm bound-126))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-dynamic-indirect-call-target-ok?
@@ -41998,16 +41602,17 @@ g:
   (match (compiler-backend-dynamic-indirect-call-emit target)
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
+        (let
+          [bound-127
+            (str_cat.str-cat
+              "    movq 8(%r10), "
+              (match (compiler_backend.compiler-backend-target-arg-reg target 0)
+                [(compiler_backend.ResultBackendReg.Ok reg) reg]
+                [(compiler_backend.ResultBackendReg.Err _) ""])
+              "\n")]
+          (compiler_backend.compiler-backend-string-contains? asm bound-127))
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          (str_cat.str-cat
-            "    movq 8(%r10), "
-            (match (compiler_backend.compiler-backend-target-arg-reg target 0)
-              [(compiler_backend.ResultBackendReg.Ok reg) reg]
-              [(compiler_backend.ResultBackendReg.Err _) ""])
-            "\n"))
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    call *(%r10)\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -42058,33 +41663,44 @@ g:
           [(compiler_backend.ResultCompilerBackend.Ok asm)
             (let
               [callee-load : i64
-                (compiler_backend.compiler-backend-string-find-from
-                  (owned_view.compiler-owned-shared-view asm)
-                  (str_cat.str-cat
-                    "    movq "
-                    (owned_view.compiler-owned-shared-view arg-reg)
-                    ", %r10\n")
-                  0)]
+                (let
+                  [bound-128
+                    (str_cat.str-cat
+                      "    movq "
+                      (owned_view.compiler-owned-shared-view arg-reg)
+                      ", %r10\n")]
+                  (compiler_backend.compiler-backend-string-find-from
+                    asm
+                    bound-128
+                    0))]
               [save : i64
-                (compiler_backend.compiler-backend-string-find-from
-                  (owned_view.compiler-owned-shared-view asm)
-                  (str_cat.str-cat
-                    "    movq %r10, "
-                    (owned_view.compiler-owned-shared-view slot)
-                    "\n")
-                  0)]
+                (let
+                  [bound-129
+                    (str_cat.str-cat
+                      "    movq %r10, "
+                      (owned_view.compiler-owned-shared-view slot)
+                      "\n")]
+                  (compiler_backend.compiler-backend-string-find-from
+                    asm
+                    bound-129
+                    0))]
               [arg-load : i64
-                (compiler_backend.compiler-backend-string-find-from
-                  (owned_view.compiler-owned-shared-view asm)
-                  (compiler_backend.compiler-backend-emit-load-i64-immediate
-                    3
-                    arg-reg)
-                  0)]
+                (let
+                  [bound-130
+                    (compiler_backend.compiler-backend-emit-load-i64-immediate
+                      3
+                      arg-reg)]
+                  (compiler_backend.compiler-backend-string-find-from
+                    asm
+                    bound-130
+                    0))]
               [restore : i64
-                (compiler_backend.compiler-backend-string-find-from
-                  (owned_view.compiler-owned-shared-view asm)
-                  (str_cat.str-cat "    movq " slot ", %r10\n")
-                  0)]
+                (let
+                  [bound-131 (str_cat.str-cat "    movq " slot ", %r10\n")]
+                  (compiler_backend.compiler-backend-string-find-from
+                    asm
+                    bound-131
+                    0))]
               [call : i64
                 (compiler_backend.compiler-backend-string-find-from
                   asm
@@ -42137,15 +41753,18 @@ g:
           [(compiler_backend.ResultCompilerBackend.Ok asm)
             (let
               [arg-load : i64
-                (compiler_backend.compiler-backend-string-find-from
-                  (owned_view.compiler-owned-shared-view asm)
-                  (compiler_backend.compiler-backend-emit-load-i64-immediate
-                    3
-                    arg-reg)
-                  0)]
+                (let
+                  [bound-132
+                    (compiler_backend.compiler-backend-emit-load-i64-immediate
+                      3
+                      arg-reg)]
+                  (compiler_backend.compiler-backend-string-find-from
+                    asm
+                    bound-132
+                    0))]
               [callee-load : i64
                 (compiler_backend.compiler-backend-string-find-from
-                  (owned_view.compiler-owned-shared-view asm)
+                  asm
                   "    movq -16(%rbp), %r10\n"
                   0)]
               [call : i64
@@ -42191,33 +41810,31 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (compiler_backend.backend-and8
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           ".globl tl_exported_value\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "tl_exported_value:\n")
         (compiler-backend-call-or-jmp-ok?
           (owned_view.compiler-owned-shared-view asm)
           "tl_exported_value")
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".extern tl_exported_value\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".globl _tl_exported\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "_tl_exported:\n"))
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          "main:\n")
-        (not
-          (compiler_backend.compiler-backend-string-contains?
             asm
-            (compiler-backend-todo-marker))))]
+            "_tl_exported:\n"))
+        (compiler_backend.compiler-backend-string-contains? asm "main:\n")
+        (not
+          (let
+            [bound-133 (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm bound-133))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-export-symbol-fixed-fault-source) : String
@@ -42232,10 +41849,10 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           ".globl tl_oob_abort\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "tl_oob_abort:\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -42255,10 +41872,10 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           ".globl tl_abort_string\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "tl_abort_string:\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -42397,18 +42014,16 @@ g:
             2)
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               ".globl _tl_write_i64")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               ".globl _tl_read_i64")))
         (or
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "_tl_write_i64")
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "_tl_f"))
+          (compiler_backend.compiler-backend-string-contains? asm "_tl_f"))
         (or
           (>=
             (compiler_backend.compiler-backend-string-count
@@ -42417,28 +42032,24 @@ g:
             2)
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    call _tl_write_i64")
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    call _tl_read_i64")))
+        (compiler_backend.compiler-backend-string-contains? asm "main:\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          "main:\n")
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    call tl_alloc\n")
+        (compiler_backend.compiler-backend-string-contains? asm "tl_alloc:")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          "tl_alloc:")
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq (%r10,%r8,8), %r9\n")
         (and
           (not
-            (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
-              (compiler-backend-todo-marker)))
+            (let
+              [bound-134 (compiler-backend-todo-marker)]
+              (compiler_backend.compiler-backend-string-contains? asm bound-134)))
           (not
             (compiler_backend.compiler-backend-string-contains?
               asm
@@ -42469,19 +42080,19 @@ g:
             8)
           ;; Store the boxed value through allocator-owned pointer/value homes.
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq %r8, (%r10)\n")
           ;; BoxGet b: load the boxed value back through the box pointer.
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq (%r10), %r8\n")
           (not
-            (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
-              (compiler-backend-todo-marker))))
+            (let
+              [bound-135 (compiler-backend-todo-marker)]
+              (compiler_backend.compiler-backend-string-contains? asm bound-135))))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq %rax, (%r10)\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -42495,14 +42106,14 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq 56(%r8), %r9\n    movq 16(%r9), %rax\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    leaq 8(%rax), %rcx\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".L_tl_alloc8:\n    movq %fs:tl_current_arena@tpoff, %r8\n    testq %r8, %r8\n    jz .L_tl_alloc8_slow\n    movq 40(%r8), %r9\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -42525,21 +42136,21 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    testq $1, 48(%r8)\n    jnz .Lf0_allocentry_i9_v3_slow\n    movq 56(%r8), %r9\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq 56(%r8), %r9\n    movq 16(%r9), %rax\n    leaq 16(%rax), %r8\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    cmpq 64(%r9), %r8\n    ja .Lf0_allocentry_i9_v3_slow\n    movq %r8, 16(%r9)\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq 16(%r8), %r10\n    addq $16, %r10\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq %rax, %r10\n    addq $16, %r10\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -42702,13 +42313,13 @@ g:
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (compiler_backend.backend-and4
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".L_tl_test_allocentry_i0_v0_slow:\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".L_tl_test_allocentry_i1_v0_slow:\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".L_tl_test_allocentry_i0_v0_done:\n")
           (compiler_backend.compiler-backend-string-contains?
             asm
@@ -42742,18 +42353,16 @@ g:
           (owned_view.compiler-owned-shared-view asm)
           40)
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "_slow:\n    call .L_tl_alloc24\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "_slow:\n    call .L_tl_alloc40\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    call tl_alloc\n"))
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          "    jb ")
+        (compiler_backend.compiler-backend-string-contains? asm "    jb ")
         (compiler_backend.compiler-backend-string-contains? asm "    ja "))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
@@ -43078,55 +42687,55 @@ g:
       (and
         (compiler_backend.backend-and8
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq %r9, -512(%rbp)\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq -512(%rbp), %r9\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq %rcx, -576(%rbp)\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq -576(%rbp), %rcx\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movq %rdx, -640(%rbp)\n"))
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq %fs:tl_current_arena@tpoff, %r9\n    testq %r9, %r9\n    jz .L_tl_test_allocentry_i0_v20_slow\n    testq $1, 48(%r9)\n    jnz .L_tl_test_allocentry_i0_v20_slow\n    movq 56(%r9), %rcx\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq 16(%rcx), %rax\n    leaq 8(%rax), %r9\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    cmpq 24(%rcx), %r9\n    ja .L_tl_test_allocentry_i0_v20_slow\n    movq %r9, 16(%rcx)\n"))
         (compiler_backend.backend-and8
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    call .L_tl_alloc8\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq tl_profile_alloc_live_bytes(%rip), %r9\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    cmpq tl_profile_alloc_peak_bytes(%rip), %r9\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "tl_profile_alloc_live_bytes(%rip), %rcx"))
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "%rcx, tl_profile_alloc_peak_bytes(%rip)"))
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movq %fs:tl_current_arena@tpoff, %r8\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    leaq 8(%rax), %r8\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
@@ -43155,39 +42764,39 @@ g:
           0)
         (not
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "_allocentry_"))
         (compiler_backend.backend-and8
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "(%rsp), %r8\n    movq %r8, ")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq $1,")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movb %r8b, (%r10)\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq $42,")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq %r8, 8(%r10)\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq 8(%r10), %r8\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movb %al, (%r10)\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movq %rax, 8(%r10)\n")))
         (not
-          (compiler_backend.compiler-backend-string-contains?
-            asm
-            (compiler-backend-todo-marker))))]
+          (let
+            [bound-136 (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm bound-136))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-inline-struct-ok?) : bool
@@ -43200,16 +42809,12 @@ g:
             (owned_view.compiler-owned-shared-view asm)
             "    call tl_alloc\n")
           0)
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          "    leaq -")
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          "main:\n")
+        (compiler_backend.compiler-backend-string-contains? asm "    leaq -")
+        (compiler_backend.compiler-backend-string-contains? asm "main:\n")
         (not
-          (compiler_backend.compiler-backend-string-contains?
-            asm
-            (compiler-backend-todo-marker))))]
+          (let
+            [bound-137 (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm bound-137))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-inline-enum-ok?) : bool
@@ -43222,16 +42827,14 @@ g:
             (owned_view.compiler-owned-shared-view asm)
             "    call tl_alloc\n")
           0)
+        (compiler_backend.compiler-backend-string-contains? asm "    leaq -")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          "    leaq -")
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           ".Lf0_match_arm.")
         (not
-          (compiler_backend.compiler-backend-string-contains?
-            asm
-            (compiler-backend-todo-marker))))]
+          (let
+            [bound-138 (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm bound-138))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-inline-boxed-recursive-ok?) : bool
@@ -43250,13 +42853,11 @@ g:
         (compiler-backend-string-contains-alloc-size?
           (owned_view.compiler-owned-shared-view asm)
           24)
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          "    leaq -")
+        (compiler_backend.compiler-backend-string-contains? asm "    leaq -")
         (not
-          (compiler_backend.compiler-backend-string-contains?
-            asm
-            (compiler-backend-todo-marker))))]
+          (let
+            [bound-139 (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm bound-139))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-inline-hot-loop-struct-ok?) : bool
@@ -43272,14 +42873,12 @@ g:
             (owned_view.compiler-owned-shared-view asm)
             "    call tl_alloc\n")
           0)
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          "main:\n")
+        (compiler_backend.compiler-backend-string-contains? asm "main:\n")
         true
         (not
-          (compiler_backend.compiler-backend-string-contains?
-            asm
-            (compiler-backend-todo-marker))))]
+          (let
+            [bound-140 (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm bound-140))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-inline-aggregate-call-source) : String
@@ -43314,9 +42913,7 @@ g:
     target)
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (compiler_backend.backend-and4
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          "main:\n")
+        (compiler_backend.compiler-backend-string-contains? asm "main:\n")
         (>=
           (compiler_backend.compiler-backend-string-count
             (owned_view.compiler-owned-shared-view asm)
@@ -43329,9 +42926,9 @@ g:
             (owned_view.compiler-owned-shared-view asm))
           0)
         (not
-          (compiler_backend.compiler-backend-string-contains?
-            asm
-            (compiler-backend-todo-marker))))]
+          (let
+            [bound-141 (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm bound-141))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-inline-aggregate-call-ok?) : bool
@@ -43353,21 +42950,19 @@ g:
       ;; the old pointer-load / pointer-store byte-copy ("(%r11), %rax" then
       ;; "%rax, (%r10)") that a memory aggregate required.
       (compiler_backend.backend-and4
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          "id_pair")
-        (not
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "(%r11), %rax"))
-        (not
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "%rax, (%r10)"))
+        (compiler_backend.compiler-backend-string-contains? asm "id_pair")
         (not
           (compiler_backend.compiler-backend-string-contains?
             asm
-            (compiler-backend-todo-marker))))]
+            "(%r11), %rax"))
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "%rax, (%r10)"))
+        (not
+          (let
+            [bound-142 (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm bound-142))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-inline-aggregate-copy-ok?) : bool
@@ -43418,39 +43013,35 @@ g:
       (and
         (compiler_backend.backend-and8
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "__tl_dispatch_cache_dot")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "__tl_dispatch_variant_avx2")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "__tl_dispatch_variant_avx512")
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "    cpuid\n")
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "    xgetbv\n")
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "    call *(%r10)\n")
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "    vzeroupper\n")
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
-            "main:\n"))
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          "    lock cmpxchgq ")
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          "    .comm _tl___tl_dispatch_cache_dot, 8, 8\n")
-        (not
+          (compiler_backend.compiler-backend-string-contains? asm "    cpuid\n")
           (compiler_backend.compiler-backend-string-contains?
             asm
-            (compiler-backend-todo-marker))))]
+            "    xgetbv\n")
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    call *(%r10)\n")
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    vzeroupper\n")
+          (compiler_backend.compiler-backend-string-contains? asm "main:\n"))
+        (compiler_backend.compiler-backend-string-contains?
+          asm
+          "    lock cmpxchgq ")
+        (compiler_backend.compiler-backend-string-contains?
+          asm
+          "    .comm _tl___tl_dispatch_cache_dot, 8, 8\n")
+        (not
+          (let
+            [bound-143 (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm bound-143))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-dispatch-variant-mode-ok?) : bool
@@ -44433,31 +44024,31 @@ g:
       (and
         (compiler_backend.backend-and8
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             ".globl tl_profile_alloc_total\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "tl_profile_alloc_total:\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "tl_profile_alloc_live:\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "tl_profile_alloc_peak:\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "tl_profile_alloc_reset_peak:\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               ".globl tl_profile_now_ms\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "tl_profile_now_ms:\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "QueryPerformanceCounter")))
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -44984,13 +44575,13 @@ g:
             1)
           -576)
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view avx2)
+          avx2
           "    vmovdqu %ymm2, -512(%rbp)\n")
         (compiler_backend.compiler-backend-string-contains?
           avx2
           "    vmovdqu -512(%rbp), %ymm2\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view avx512)
+          avx512
           "    vmovdqu64 %zmm3, -512(%rbp)\n")
         (compiler_backend.compiler-backend-string-contains?
           avx512
@@ -45427,8 +45018,8 @@ g:
         values
         wide
         6
-        (owned_view.compiler-owned-shared-view order)
-        (owned_view.compiler-owned-shared-view tally))]
+        (&mut order)
+        (&mut tally))]
     (and
       ;; three distinct (value, wide?) keys, not six entries
       (= awards 3)
@@ -45468,11 +45059,11 @@ g:
         (set! (array-ref wide 5) false))]
     [awards : i64
       (compiler_backend.compiler-backend-const-hoist-award-order!
-        (owned_view.compiler-owned-shared-view values)
-        (owned_view.compiler-owned-shared-view wide)
+        values
+        wide
         6
-        (owned_view.compiler-owned-shared-view order)
-        (owned_view.compiler-owned-shared-view tally))]
+        (&mut order)
+        (&mut tally))]
     (and
       (= awards 3)
       (= (array-ref order 0) 0)
@@ -45484,11 +45075,11 @@ g:
       ;; An empty region awards nothing and reads no scratch entry.
       (=
         (compiler_backend.compiler-backend-const-hoist-award-order!
-          (owned_view.compiler-owned-shared-view values)
-          (owned_view.compiler-owned-shared-view wide)
+          values
+          wide
           0
-          (owned_view.compiler-owned-shared-view order)
-          (owned_view.compiler-owned-shared-view tally))
+          (&mut order)
+          (&mut tally))
         0)
       ;; A single site is one key of weight one.
       (=
@@ -45496,8 +45087,8 @@ g:
           values
           wide
           1
-          order
-          (owned_view.compiler-owned-shared-view tally))
+          (&mut order)
+          (&mut tally))
         1)
       (= (array-ref tally 0) 1))))
 
@@ -45692,9 +45283,7 @@ g:
           (compiler-backend-asm-function-body asm "_tl_guard_large")]
         (and
           (not (string.eq body ""))
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view body)
-            "4294967296")
+          (compiler_backend.compiler-backend-string-contains? body "4294967296")
           (not
             (compiler_backend.compiler-backend-string-contains?
               body
@@ -45734,7 +45323,7 @@ g:
         (let
           [at : i64
             (compiler_backend.compiler-backend-string-find-from
-              (owned_view.compiler-owned-shared-view body)
+              body
               "    ret\n"
               i)]
           (if (or (< at 0) (>= at limit))
@@ -45753,10 +45342,7 @@ g:
         (owned_view.compiler-owned-shared-view body))]
     (and
       (not (string.eq body ""))
-      (compiler_backend.compiler-backend-string-prefix-at?
-        (owned_view.compiler-owned-shared-view body)
-        ".L"
-        0)
+      (compiler_backend.compiler-backend-string-prefix-at? body ".L" 0)
       (>= prologue 0)
       (> (compiler-backend-swb-count-ret-before body prologue) 0))))
 
@@ -46006,12 +45592,10 @@ g:
         [clone : String
           (string.substring body at (- (string.string-length body) at))]
         (and
-          (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view clone)
-            "    ret\n")
+          (compiler_backend.compiler-backend-string-contains? clone "    ret\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view clone)
+              clone
               ", %rsp\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
@@ -46061,11 +45645,11 @@ g:
         (owned_view.compiler-owned-shared-view body))
       ;; The tail's own computation is reproduced in the clone ...
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view body)
+        body
         "__swb_tail:\n    addq $5, %rax\n    ret\n")
       ;; ... and a framed return still tears the frame down.
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view body)
+        body
         ", %rsp\n    ret\n")
       (compiler-backend-swb-clone-bare? body))))
 
@@ -46082,12 +45666,12 @@ g:
       (unsafe
         (string-data text))]
     (compiler_backend.compiler-backend-swb-dup-tail-body
-      (owned_view.compiler-owned-shared-view text)
+      text
       data
       0
       (string.string-length text)
       return-label
-      ok)))
+      (&mut ok))))
 
 (define (compiler-backend-swb-dup-tail-bound-ok?) : bool
   (let
@@ -46162,8 +45746,9 @@ g:
   "    pushq %r12\n    movq %r8, %r12\n")
 
 (define (compiler-backend-swb-fix-prologue-mask) : i64
-  (compiler_backend.compiler-backend-swb-text-reg-mask
-    (string.copy (& compiler-backend-swb-fix-prologue-source))))
+  (let
+    [bound-144 (string.copy (& compiler-backend-swb-fix-prologue-source))]
+    (compiler_backend.compiler-backend-swb-text-reg-mask bound-144)))
 
 (define (compiler-backend-swb-fix-block-list [labels : (__tl_dyn-array i64)]) : compiler_ir_types.CompilerIrBlockList
   (let
@@ -46372,9 +45957,9 @@ g:
       ;; A tail whose label is a form (a) bare clone is never duplicable ...
       (not
         (compiler_backend.compiler-backend-swb-dup-candidate?
-          (owned_view.compiler-owned-shared-view flags)
-          (owned_view.compiler-owned-shared-view succ-count)
-          (owned_view.compiler-owned-shared-view block-start)
+          flags
+          succ-count
+          block-start
           clone
           1
           0))
@@ -46456,8 +46041,8 @@ g:
       (let
         [masks : (__tl_dyn-array i64)
           (compiler_backend.compiler-backend-scavenge-occupancy-build
-            (owned_view.compiler-owned-shared-view starts)
-            (owned_view.compiler-owned-shared-view ends)
+            starts
+            ends
             assignment-index
             (__tl_make-array compiler_regalloc.CompilerRegIntervalSeq 0)
             5)]
@@ -47458,7 +47043,7 @@ g:
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movzbq 48(%rbp), ")
           (not
             (compiler_backend.compiler-backend-string-contains?
@@ -47952,17 +47537,17 @@ b_keep:
                 (string.eq out-b serial-b)
                 (not
                   (compiler_backend.compiler-backend-string-contains?
-                    (owned_view.compiler-owned-shared-view out-a)
+                    out-a
                     "    movq $1, 40(%rsp)\n"))
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view out-b)
+                  out-b
                   "    movq $1, 40(%rsp)\n")
                 (not
                   (compiler_backend.compiler-backend-string-contains?
-                    (owned_view.compiler-owned-shared-view out-a)
+                    out-a
                     "    movq %r11, 72(%rsp)\n"))
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view out-b)
+                  out-b
                   "    movq %r11, 72(%rsp)\n")
                 (compiler_backend.compiler-backend-string-contains?
                   out-a
@@ -48305,30 +47890,17 @@ b_keep:
           "    call tl_oob_abort\n"))]
     (and
       ;; The dips themselves.
+      (= (compiler_backend.compiler-backend-text-max-rsp-dip abort-only) 0)
+      (= (compiler_backend.compiler-backend-text-max-rsp-dip returning) 16)
+      (= (compiler_backend.compiler-backend-text-max-rsp-dip window) 16)
       (=
-        (compiler_backend.compiler-backend-text-max-rsp-dip
-          (owned_view.compiler-owned-shared-view abort-only))
-        0)
-      (=
-        (compiler_backend.compiler-backend-text-max-rsp-dip
-          (owned_view.compiler-owned-shared-view returning))
-        16)
-      (=
-        (compiler_backend.compiler-backend-text-max-rsp-dip
-          (owned_view.compiler-owned-shared-view window))
-        16)
-      (=
-        (compiler_backend.compiler-backend-text-max-rsp-dip
-          (owned_view.compiler-owned-shared-view window-then-abort))
+        (compiler_backend.compiler-backend-text-max-rsp-dip window-then-abort)
         8)
       (=
         (compiler_backend.compiler-backend-text-max-rsp-dip
           open-window-then-abort)
         8)
-      (=
-        (compiler_backend.compiler-backend-text-max-rsp-dip
-          (owned_view.compiler-owned-shared-view bare-abort))
-        16)
+      (= (compiler_backend.compiler-backend-text-max-rsp-dip bare-abort) 16)
       ;; ...and the decision they feed, at a frame that fits the 128-byte red
       ;; zone on its own and cannot afford a 16-byte guard on top.
       (compiler-backend-abort-tail-dip-red-zone?
@@ -48459,7 +48031,7 @@ b_keep:
         [_ false])
       (not
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view a-entry-before)
+          a-entry-before
           ".seh_proc"))
       (not
         (compiler_backend.compiler-backend-string-contains?
@@ -48481,10 +48053,10 @@ b_keep:
         [(compiler_backend.CompilerBackendMode.Avx2) true]
         [_ false])
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view b-entry-before)
+        b-entry-before
         ".seh_proc _tl_policy_b")
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view b-entry-before)
+        b-entry-before
         "callq __chkstk")
       a-after.windows
       (compiler_backend.compiler-backend-test-get-compiler-backend-current-fn-win64
@@ -48492,7 +48064,7 @@ b_keep:
       b-after.windows
       (string.eq b-entry-before b-entry-after)
       (compiler_backend.compiler-backend-string-contains?
-        (owned_view.compiler-owned-shared-view a-entry-after)
+        a-entry-after
         ".seh_proc _tl_policy_a")
       (compiler_backend.compiler-backend-string-contains?
         a-entry-after
@@ -49019,7 +48591,7 @@ b_keep:
         (not (string.eq scratch-gp-a "%rdx"))
         (not (string.eq scratch-xmm-a ""))
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view scratch-wrap-a)
+          scratch-wrap-a
           "movq")
         (compiler_backend.compiler-backend-string-contains?
           scratch-wrap-a
@@ -49112,7 +48684,7 @@ b_keep:
               (and
                 (string.eq before-asm after-asm)
                 (compiler_backend.compiler-backend-string-contains?
-                  (owned_view.compiler-owned-shared-view after-asm)
+                  after-asm
                   "_allocentry_i0_v0_slow")
                 (compiler_backend.compiler-backend-string-contains?
                   after-asm
@@ -49692,8 +49264,8 @@ b_keep:
           (set!
             next
             (compiler_backend.compiler-backend-string-find-from
-              (compiler_backend.compiler-backend-global-shared-view text)
-              (compiler_backend.compiler-backend-global-shared-view needle)
+              text
+              needle
               scan))
           (if (and (>= next 0) (< next limit))
             (begin
@@ -49716,14 +49288,11 @@ b_keep:
         ;; (a jump operand ends the line, a label definition ends in a colon)
         [label : i64
           (compiler_backend.compiler-backend-string-find-from
-            (compiler_backend.compiler-backend-global-shared-view asm)
+            asm
             "_header:\n"
             0)]
         [operand : i64
-          (compiler_backend.compiler-backend-string-find-from
-            (compiler_backend.compiler-backend-global-shared-view asm)
-            "_header\n"
-            0)]
+          (compiler_backend.compiler-backend-string-find-from asm "_header\n" 0)]
         [prologue : i64
           (compiler-backend-placement-test-last-before
             (compiler_backend.compiler-backend-global-shared-view asm)
@@ -49807,45 +49376,45 @@ b_keep:
         (compiler_backend.backend-and8
           ;; (i) the cell reserves the aggregate itself, not a box pointer.
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    .comm _tl_cell, 16, 8\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    .comm _tl_triple, 24, 8\n")
           ;; (i) `CompilerIrValue.Global` materialises as the symbol's address.
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    leaq _tl_cell(%rip), %rdi\n")
           ;; (ii) a constant-offset field read folds to ONE rip-relative load.
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq _tl_cell+8(%rip), %r8\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq _tl_triple+16(%rip), %r8\n")
           ;; ... and the cell is never read as a pointer any more.
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movq _tl_cell(%rip), %"))
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movq _tl_triple(%rip), %"))
           ;; (iii) the startup initializer copies the aggregate into the cell.
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    call _tl___global_init_cell\n    movups (%rax), %xmm0\n    movups %xmm0, _tl_cell(%rip)\n"))
         (compiler_backend.backend-and4
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    call _tl___global_init_triple\n    movups (%rax), %xmm0\n    movups %xmm0, _tl_triple(%rip)\n    movq 16(%rax), %r10\n    movq %r10, _tl_triple+16(%rip)\n")
           ;; (iii) and `(set! g v)` copies the same bytes at the rebind.
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq (%r10), %r11\n    movq %r11, _tl_cell(%rip)\n    movq 8(%r10), %r11\n    movq %r11, _tl_cell+8(%rip)\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq (%r10), %r11\n    movq %r11, _tl_triple(%rip)\n    movq 8(%r10), %r11\n    movq %r11, _tl_triple+8(%rip)\n    movq 16(%r10), %r11\n    movq %r11, _tl_triple+16(%rip)\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
@@ -49862,25 +49431,25 @@ b_keep:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (compiler_backend.backend-and8
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    .comm _tl_cell, 16, 3\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    .comm _tl_triple, 24, 3\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    leaq _tl_cell(%rip), %rcx\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq _tl_cell+8(%rip), %r8\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq _tl_triple+16(%rip), %r8\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movups %xmm0, _tl_cell(%rip)\n")
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    movq %r11, _tl_triple+16(%rip)\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -49903,40 +49472,40 @@ b_keep:
         (compiler_backend.backend-and4
           ;; The cell is one word and holds a POINTER to the arena box.
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    .comm _tl_cell, 8, 8\n")
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq %rax, _tl_cell(%rip)\n")
           ;; ... which the rebind replaces with a pointer store, never a byte
           ;; copy, so the box identity the program can observe is preserved.
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    movups %xmm0, _tl_cell(%rip)\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    .comm _tl_cell, 16, 8\n")))
         (compiler_backend.backend-and4
           ;; No inline-cell spelling anywhere: no field displacement operand,
           ;; and no address materialisation standing in for a cell read.
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "_tl_cell+8(%rip)"))
           (not
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    leaq _tl_cell(%rip), "))
           ;; ... and every read of the global is still the cell LOAD.
           (compiler_backend.compiler-backend-string-contains?
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq _tl_cell(%rip), ")
           (not
-            (compiler_backend.compiler-backend-string-contains?
-              asm
-              (compiler-backend-todo-marker)))))]
+            (let
+              [bound-145 (compiler-backend-todo-marker)]
+              (compiler_backend.compiler-backend-string-contains? asm bound-145)))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-inline-aggregate-global-safety-ok?) : bool
@@ -49977,14 +49546,14 @@ b_keep:
             (compiler_backend.backend-and4
               ;; The .bss reservation is the aggregate, not a box pointer.
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view text)
+                text
                 "_tl_cell:\n    .zero 16\n")
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view text)
+                text
                 "_tl_triple:\n    .zero 24\n")
               ;; A `Global` read materialises the symbol's ADDRESS.
               (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view text)
+                text
                 "    leaq _tl_cell(%rip), %rax\n")
               (not
                 (compiler_backend.compiler-backend-string-contains?

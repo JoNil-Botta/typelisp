@@ -70,8 +70,8 @@ BUILD_STDOUT="$WORKDIR/build.stdout"
 BUILD_STDERR="$WORKDIR/build.stderr"
 COMPILE_STDOUT="$WORKDIR/compile.stdout"
 COMPILE_STDERR="$WORKDIR/compile.stderr"
-SCRATCH_STDOUT="$WORKDIR/scratch-region-smoke.stdout"
-SCRATCH_STDERR="$WORKDIR/scratch-region-smoke.stderr"
+OPTIMIZER_STDOUT="$WORKDIR/optimizer-tests.stdout"
+OPTIMIZER_STDERR="$WORKDIR/optimizer-tests.stderr"
 
 print_log_pair() {
     label=$1
@@ -100,18 +100,18 @@ print_asm_fingerprint() {
 
 rm -f "$GENERATED"
 
-echo "[opt2-cli-gate] scratch-region optimizer smoke at opt2"
-scratch_status=0
-"$COMPILER" run src/tests/compiler_optimize_smoke.tl \
+echo "[opt2-cli-gate] optimizer inline tests at opt2"
+optimizer_status=0
+"$COMPILER" test src/tests/compiler_optimize_smoke.tl \
     --stdlib-root stdlib \
     --stdlib-root src \
     --opt-level 2 \
-    >"$SCRATCH_STDOUT" 2>"$SCRATCH_STDERR" || scratch_status=$?
-if [ "$scratch_status" -ne 42 ]; then
+    >"$OPTIMIZER_STDOUT" 2>"$OPTIMIZER_STDERR" || optimizer_status=$?
+if [ "$optimizer_status" -ne 0 ]; then
     print_log_pair \
-        "opt2 scratch-region optimizer smoke failed (status $scratch_status)" \
-        "$SCRATCH_STDOUT" \
-        "$SCRATCH_STDERR"
+        "opt2 optimizer inline tests failed (status $optimizer_status)" \
+        "$OPTIMIZER_STDOUT" \
+        "$OPTIMIZER_STDERR"
     exit 1
 fi
 

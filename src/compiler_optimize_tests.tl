@@ -2632,7 +2632,6 @@
 (define (compiler-optimize-runtime-call-identity-self-test) : i64
   (let
     [generated-alloc : i64 (opt-test-symbol "tl_alloc")]
-    [generated-abort : i64 (opt-test-symbol ".L_tl_abort")]
     [generated-arena : i64 (opt-test-symbol "arena-current")]
     [runtime-alloc : ir.CompilerIrInstr
       (ir.CompilerIrInstr.Call
@@ -2641,11 +2640,7 @@
         (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.I64 16))
         (ast.AstType.Struct (ci.intern "RuntimePair")))]
     [hygienic-alloc : ir.CompilerIrInstr
-      (ir.CompilerIrInstr.Call
-        92
-        generated-alloc
-        (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.I64 16))
-        (ast.AstType.Struct (ci.intern "HygienicPair")))]
+      (irt.instr "%92 = call tl_alloc(16) : HygienicPair")]
     [runtime-abort : ir.CompilerIrInstr
       (ir.CompilerIrInstr.Call
         93
@@ -2653,11 +2648,7 @@
         (ir.CompilerIrCallArgs.Nil)
         (ast.AstType.Unit))]
     [hygienic-abort : ir.CompilerIrInstr
-      (ir.CompilerIrInstr.Call
-        94
-        generated-abort
-        (ir.CompilerIrCallArgs.Nil)
-        (ast.AstType.Unit))]
+      (irt.instr "%94 = call .L_tl_abort() : unit")]
     [runtime-facts : opt.OptAliasFacts
       (opt.opt-alias-update-value-facts
         (opt.opt-alias-empty)
@@ -2815,10 +2806,10 @@
     [rewritten : ir.CompilerIrInstr
       (ir.CompilerIrInstr.Mov 2 (ir.CompilerIrValue.I64 42) (ast.AstType.I64))]
     [instrs : ir.CompilerIrInstrSeq
-      (opt-test-instrs
-        (clone folded)
-        (ir.CompilerIrInstr.AddrOf 3 2)
-        (irt.instr "return %3"))]
+      (irt.instrs
+        "%2 = add 20, 22 : i64
+         %3 = addr_of %2
+         return %3")]
     [spans : ir.CompilerSourceSpans
       (ir.compiler-source-spans-insert-instr
         (opt-spans-base)
@@ -2844,11 +2835,11 @@
     [rewritten : ir.CompilerIrInstr
       (ir.CompilerIrInstr.Mov 3 (ir.CompilerIrValue.Var 2) (ast.AstType.I64))]
     [instrs : ir.CompilerIrInstrSeq
-      (opt-test-instrs
-        (clone first)
-        (clone second)
-        (ir.CompilerIrInstr.AddrOf 4 3)
-        (irt.instr "return %4"))]
+      (irt.instrs
+        "%2 = add %0, %1 : i64
+         %3 = add %0, %1 : i64
+         %4 = addr_of %3
+         return %4")]
     [spans : ir.CompilerSourceSpans
       (ir.compiler-source-spans-insert-instr
         (ir.compiler-source-spans-insert-instr
@@ -3052,15 +3043,6 @@
           91
           17)])))
 
-(define (opt-inline-span-branch-phi-inputs) : ir.CompilerIrPhiInputSeq
-  (ir.compiler-ir-phi-input-seq-prepend
-    (ir.CompilerIrValue.Var 1)
-    (ir.compiler-ir-label "inl.entry.0.then")
-    (ir.compiler-ir-phi-input-seq-prepend
-      (ir.CompilerIrValue.I64 42)
-      (ir.compiler-ir-label "inl.entry.0.else")
-      (ir.compiler-ir-phi-input-seq-empty))))
-
 (define (compiler-optimize-spans-inline-multiblock-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
@@ -3075,10 +3057,8 @@
         (opt-inline-branch-caller-call symbols)
         (opt-test-span 151 29))]
     [phi : ir.CompilerIrInstr
-      (ir.CompilerIrInstr.Phi
-        0
-        (opt-inline-span-branch-phi-inputs)
-        (ast.AstType.I64))]
+      (irt.instr
+        "%0 = phi [%1, inl.entry.0.then], [42, inl.entry.0.else] : i64")]
     (match (opt.opt-inline-program-functions-with-spans
       (ast.ast-node-pool-reader-type-segment-bases)
       (opt-inline-branch-functions symbols)
@@ -3262,11 +3242,11 @@
       (ir.CompilerIrInstr.Word 3 (ir.CompilerIrValue.Var 2) 0 (ast.AstType.I64))]
     [tail : ir.CompilerIrInstr (irt.instr "tailcall* fn@tail_target() : i64")]
     [instrs : ir.CompilerIrInstrSeq
-      (opt-test-instrs
-        (clone pack)
-        (clone word)
-        (clone tail)
-        (irt.instr "return %3"))]
+      (irt.instrs
+        "%2 = pack [%0, %1] : Pair
+         %3 = word %2, 0 : i64
+         tailcall* fn@tail_target() : i64
+         return %3")]
     [spans : ir.CompilerSourceSpans
       (ir.compiler-source-spans-insert-instr
         (ir.compiler-source-spans-insert-instr
@@ -5165,22 +5145,12 @@
 
 (define (compiler-optimize-debug-verifier-self-test) : i64
   (let
-    [name : i64 (ir.compiler-ir-test-symbol "debug-invalid")]
-    [blocks : ir.CompilerIrBlockList (irt.blocks "entry:
-           return %0")]
     [program : ir.CompilerIrProgram
-      (ir.CompilerIrProgram.Program
-        (ir.compiler-ir-global-seq-empty)
-        (ir.compiler-ir-function-seq-prepend
-          (ir.CompilerIrFunction.Function
-            name
-            (ir.compiler-ir-param-seq-empty)
-            (ast.AstType.I64)
-            1
-            blocks
-            ir.CompilerIrFunctionAbi.Ordinary)
-          (ir.compiler-ir-function-seq-empty))
-        (ir.compiler-ir-extern-seq-empty))]
+      (irt.program
+        "function @debug-invalid() -> i64 vars 1 {
+         entry:
+           return %0
+         }")]
     (match (opt.opt-verify-program program)
       [(opt.ResultCompilerOptimizeVerify.Err message)
         (if (string.eq
@@ -5257,25 +5227,6 @@
     [(option_i64.Some _) false]
     [(option_i64.None) true]))
 
-(define (opt-indirect-call-def-function
-  [name : i64]
-  [instr : ir.CompilerIrInstr]
-  [dst : i64]) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    name
-    (ir.compiler-ir-param-seq-empty)
-    (ast.AstType.I64)
-    (+ dst 1)
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (opt-test-instrs
-          instr
-          (ir.CompilerIrInstr.Return
-            (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var dst)))))
-      ir.CompilerIrBlockList.Nil)
-    ir.CompilerIrFunctionAbi.Ordinary))
-
 ;; Value-returning indirect calls define their first payload field. Aggregate
 ;; C-ABI store-result calls only write through an existing base, and an indirect
 ;; tail call transfers control, so neither of those forms defines an SSA value.
@@ -5316,18 +5267,22 @@
       [(not
           (opt.opt-verify-ok?
             (opt.opt-verify-function
-              (opt-indirect-call-def-function
-                (opt-test-symbol "indirect_def")
-                indirect
-                7))))
+              (irt.func
+                "function @indirect_def() -> i64 vars 8 {
+                 entry:
+                   %7 = call* fn@callee() : i64
+                   return %7
+                 }"))))
         3]
       [(not
           (opt.opt-verify-ok?
             (opt.opt-verify-function
-              (opt-indirect-call-def-function
-                (opt-test-symbol "indirect_c_def")
-                indirect-c
-                8))))
+              (irt.func
+                "function @indirect_c_def() -> i64 vars 9 {
+                 entry:
+                   %8 = call_c* fn@extern_callee() : i64
+                   return %8
+                 }"))))
         4]
       [(not (opt-indirect-call-nondef? direct-store)) 5]
       [(not (opt-indirect-call-nondef? indirect-store)) 6]
@@ -5381,11 +5336,11 @@
         (ast.ast-node-pool-reader-type-segment-bases)
         8
         (ir.compiler-ir-param-seq-empty)
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "entry")
-            (opt.compiler-opt-global-shared-view instrs))
-          ir.CompilerIrBlockList.Nil))]
+        (irt.blocks
+          "entry:
+             %0 = mov 20 : i64
+             %1 = mov 22 : i64
+             %2 = add %0, %1 : i64"))]
     [fold-noop-result : opt.OptBlockListPassResult
       (opt.optimize-block-list-for-function-pass
         (profile_state.compiler-profile-state-metrics
@@ -11757,9 +11712,7 @@
     (ast.AstType.I64)))
 
 (define (opt-bounds-run-return) : ir.CompilerIrInstrSeq
-  (opt-test-instr-seq-prepend
-    (irt.instr "return %1")
-    (ir.compiler-ir-instr-seq-empty)))
+  (irt.instrs "return %1"))
 
 (define (opt-bounds-run-append
   [head : ir.CompilerIrInstrSeq]
@@ -11769,11 +11722,8 @@
 ;; `gep len, 0` + `store_ptr`: the observable effect variant 1 puts between the
 ;; run's checks.
 (define (opt-bounds-run-store) : ir.CompilerIrInstrSeq
-  (opt-test-instr-seq-prepend
-    (irt.instr "%6 = gep %2, 0 : i64")
-    (opt-test-instr-seq-prepend
-      (irt.instr "store_ptr %6, %1 : i64")
-      (ir.compiler-ir-instr-seq-empty))))
+  (irt.instrs "%6 = gep %2, 0 : i64
+     store_ptr %6, %1 : i64"))
 
 (define (opt-bounds-run-length [variant : i64]) : ir.CompilerIrValue
   (if (= variant 2)
@@ -11838,21 +11788,14 @@
 (define (opt-bounds-run-test-blocks [variant : i64]) : ir.CompilerIrBlockList
   (if (= variant 5)
     (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (opt-test-instr-seq-prepend
-          (irt.instr "%7 = ge %1, 0 : i64")
-          (opt-test-instr-seq-prepend
-            (irt.instr "branch %7, guarded, exit")
-            (ir.compiler-ir-instr-seq-empty))))
+      (irt.block
+        "entry:
+           %7 = ge %1, 0 : i64
+           branch %7, guarded, exit")
       (ir.compiler-ir-block-cons
         (ir.CompilerIrBlock.Block
           (ir.compiler-ir-label "guarded")
-          (opt-bounds-run-instrs
-            variant
-            (opt-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "exit"))
-              (ir.compiler-ir-instr-seq-empty))))
+          (opt-bounds-run-instrs variant (irt.instrs "jump exit")))
         (ir.compiler-ir-block-cons
           (ir.CompilerIrBlock.Block
             (ir.compiler-ir-label "exit")
@@ -12082,9 +12025,7 @@
           (ir.CompilerIrValue.Var 1)
           (ir.CompilerIrValue.I64 scale)
           (ast.AstType.I64))
-        (opt-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "w2"))
-          (ir.compiler-ir-instr-seq-empty))))
+        (irt.instrs "jump w2")))
     (ir.compiler-ir-block-cons
       (opt-bounds-stride-check-block
         "w2"
@@ -14539,35 +14480,18 @@
       (opt-inline-bounds-leaf-callee symbols body)
       (ir.compiler-ir-function-seq-empty))))
 
-(define (opt-inline-bounds-leaf-call-symbol) : i64
-  (opt-test-symbol "bounds_leaf_call_inline"))
-
-(define (opt-inline-bounds-leaf-opaque-symbol) : i64
-  (opt-test-symbol "opaque_sink"))
-
 ;; Small has-bounds callee whose body carries a Call. The bounds-leaf
 ;; whitelist refuses calls, so this shape must keep its call boundary even
 ;; though its body is well inside the admitted size band.
 (define (opt-inline-bounds-leaf-call-callee) : ir.CompilerIrFunction
   (ir.compiler-ir-function-compact-blocks
-    (ir.CompilerIrFunction.Function
-      (opt-inline-bounds-leaf-call-symbol)
-      (irt.params "idx=%0:i64, len=%1:i64")
-      (ast.AstType.Unit)
-      4
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (opt-test-instrs
-            (irt.instr "bounds_check %0, %1 message \"bounds_leaf_call.ok\"")
-            (ir.CompilerIrInstr.Call
-              2
-              (opt-inline-bounds-leaf-opaque-symbol)
-              (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.Var 0))
-              (ast.AstType.I64))
-            (ir.CompilerIrInstr.Return (ir.CompilerIrMaybeValue.No))))
-        ir.CompilerIrBlockList.Nil)
-      ir.CompilerIrFunctionAbi.Ordinary)))
+    (irt.func
+      "function @bounds_leaf_call_inline(idx=%0:i64, len=%1:i64) -> unit vars 4 {
+       entry:
+         bounds_check %0, %1 message \"bounds_leaf_call.ok\"
+         %2 = call opaque_sink(%0) : i64
+         return
+       }")))
 
 (define (opt-inline-call-bounds-leaf-call-twice
   [symbols : OptInlineBoundsTestSymbols]) : ir.CompilerIrFunction
@@ -14576,28 +14500,13 @@
     (ir.compiler-ir-param-seq-empty)
     (ast.AstType.I64)
     4
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (opt-test-instrs
-          (irt.instr "%0 = mov 1 : i64")
-          (irt.instr "%1 = mov 8 : i64")
-          (ir.CompilerIrInstr.Call
-            2
-            (opt-inline-bounds-leaf-call-symbol)
-            (ir.CompilerIrCallArgs.Two
-              (ir.CompilerIrValue.Var 0)
-              (ir.CompilerIrValue.Var 1))
-            (ast.AstType.Unit))
-          (ir.CompilerIrInstr.Call
-            3
-            (opt-inline-bounds-leaf-call-symbol)
-            (ir.CompilerIrCallArgs.Two
-              (ir.CompilerIrValue.Var 1)
-              (ir.CompilerIrValue.Var 0))
-            (ast.AstType.Unit))
-          (irt.instr "return 42")))
-      ir.CompilerIrBlockList.Nil)
+    (irt.blocks
+      "entry:
+         %0 = mov 1 : i64
+         %1 = mov 8 : i64
+         %2 = call bounds_leaf_call_inline(%0, %1) : unit
+         %3 = call bounds_leaf_call_inline(%1, %0) : unit
+         return 42")
     ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (opt-inline-bounds-leaf-call-functions
@@ -14914,7 +14823,6 @@
 
 (define (opt-devirt-local-alias-caller [duplicate? : bool]) : ir.CompilerIrFunction
   (let
-    [target : i64 (opt-test-symbol "local_alias_target")]
     [entry-tail : ir.CompilerIrInstrSeq
       (if duplicate?
         (irt.instrs "%0 = mov fn@local_alias_other : i64
@@ -14930,10 +14838,7 @@
           (ir.compiler-ir-label "entry")
           (opt-test-instrs-with-tail
             entry-tail
-            (ir.CompilerIrInstr.Mov
-              0
-              (ir.CompilerIrValue.Function target)
-              (ast.AstType.I64))))
+            (irt.instr "%0 = mov fn@local_alias_target : i64")))
         (irt.blocks
           "call:
              %1 = call* %0() : i64
@@ -15156,28 +15061,17 @@
       (opt-inline-conv-params)
       (ast.AstType.I64)
       5
-      (ir.compiler-ir-block-cons
-        (irt.block
-          "entry:
-             %2 = eq %0, 0 : i64
-             branch %2, done, body")
-        (ir.compiler-ir-block-cons
-          (irt.block "done:
-               return %1")
-          (ir.compiler-ir-block-cons
-            (ir.CompilerIrBlock.Block
-              (ir.compiler-ir-label "body")
-              (opt-test-instrs
-                (irt.instr "%3 = sub %0, 1 : i64")
-                (irt.instr "%4 = add %1, %3 : i64")
-                (ir.CompilerIrInstr.TailCall
-                  name
-                  (ir.CompilerIrCallArgs.Two
-                    (ir.CompilerIrValue.Var 3)
-                    (ir.CompilerIrValue.Var 4))
-                  (ast.AstType.I64))
-                (irt.instr "return %4")))
-            (ir.CompilerIrBlockList.Nil))))
+      (irt.blocks
+        "entry:
+           %2 = eq %0, 0 : i64
+           branch %2, done, body
+         done:
+           return %1
+         body:
+           %3 = sub %0, 1 : i64
+           %4 = add %1, %3 : i64
+           tailcall conv_leaf(%3, %4) : i64
+           return %4")
       ir.CompilerIrFunctionAbi.Ordinary)))
 
 ;; `conv_walk(i, acc)`: while i < 8, acc = conv_leaf(i, acc); i = i + 1.
@@ -15189,26 +15083,17 @@
       (opt-inline-conv-params)
       (ast.AstType.I64)
       5
-      (ir.compiler-ir-block-cons
-        (irt.block
-          "entry:
-             %2 = lt %0, 8 : i64
-             branch %2, body, exit")
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "body")
-            (opt-test-instrs
-              (irt.instr "%3 = call conv_leaf(%0, %1) : i64")
-              (irt.instr "%4 = add %0, 1 : i64")
-              (ir.CompilerIrInstr.TailCall
-                name
-                (ir.CompilerIrCallArgs.Two
-                  (ir.CompilerIrValue.Var 4)
-                  (ir.CompilerIrValue.Var 3))
-                (ast.AstType.I64))
-              (irt.instr "return %3")))
-          (irt.blocks "exit:
-               return %1")))
+      (irt.blocks
+        "entry:
+           %2 = lt %0, 8 : i64
+           branch %2, body, exit
+         body:
+           %3 = call conv_leaf(%0, %1) : i64
+           %4 = add %0, 1 : i64
+           tailcall conv_walk(%4, %3) : i64
+           return %3
+         exit:
+           return %1")
       ir.CompilerIrFunctionAbi.Ordinary)))
 
 ;; A second, straight-line reference to the leaf.
@@ -17157,49 +17042,6 @@
       (opt-inline-checked-self-loop-instrs label (- remaining 1))
       (ir.CompilerIrInstr.Mov 0 (ir.CompilerIrValue.I64 1) (ast.AstType.I64)))))
 
-;; The versioner's shape: an entry that jumps to `loop`, the original loop
-;; body, and its `loop__bce_fast` clone, each a self-loop of `loop-instrs`
-;; instructions. Either copy can be left out.
-(define (opt-inline-checked-versioned-fixture
-  [name : i64]
-  [loop-instrs : i64]
-  [slow? : bool]
-  [fast? : bool]) : ir.CompilerIrFunction
-  (let
-    [slow-label : i64 (ir.compiler-ir-label "loop")]
-    [fast-label : i64 (ir.compiler-ir-label "loop__bce_fast")]
-    [tail : ir.CompilerIrBlockList
-      (if fast?
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            fast-label
-            (opt-inline-checked-self-loop-instrs fast-label loop-instrs))
-          ir.CompilerIrBlockList.Nil)
-        ir.CompilerIrBlockList.Nil)]
-    [body : ir.CompilerIrBlockList
-      (if slow?
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            slow-label
-            (opt-inline-checked-self-loop-instrs slow-label loop-instrs))
-          tail)
-        tail)]
-    (ir.CompilerIrFunction.Function
-      name
-      (ir.compiler-ir-param-seq-empty)
-      (ast.AstType.I64)
-      1
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (opt-test-instrs
-            (ir.CompilerIrInstr.Jump
-              (if slow?
-                slow-label
-                fast-label))))
-        body)
-      ir.CompilerIrFunctionAbi.Ordinary)))
-
 ;; INL-14: a versioned loop prices as ONE loop. The slow copy is the guard's
 ;; failure path and is priced cold, so the pair costs exactly what either copy
 ;; costs alone; a clone with no original beside it, or an original with no
@@ -17209,27 +17051,47 @@
     [base : i64 (opt.opt-inline-census-depth-base)]
     [pair : i64
       (opt.opt-inline-checked-weighted-instrs-at
-        (opt-inline-checked-versioned-fixture
-          (opt-test-symbol "checked_versioned_pair")
-          4
-          true
-          true)
+        (irt.func
+          "function @checked_versioned_pair() -> i64 vars 1 {
+           entry:
+             jump loop
+           loop:
+             %0 = mov 1 : i64
+             %0 = mov 1 : i64
+             %0 = mov 1 : i64
+             jump loop
+           loop__bce_fast:
+             %0 = mov 1 : i64
+             %0 = mov 1 : i64
+             %0 = mov 1 : i64
+             jump loop__bce_fast
+           }")
         0)]
     [fast-only : i64
       (opt.opt-inline-checked-weighted-instrs-at
-        (opt-inline-checked-versioned-fixture
-          (opt-test-symbol "checked_versioned_fast")
-          4
-          false
-          true)
+        (irt.func
+          "function @checked_versioned_fast() -> i64 vars 1 {
+           entry:
+             jump loop__bce_fast
+           loop__bce_fast:
+             %0 = mov 1 : i64
+             %0 = mov 1 : i64
+             %0 = mov 1 : i64
+             jump loop__bce_fast
+           }")
         0)]
     [slow-only : i64
       (opt.opt-inline-checked-weighted-instrs-at
-        (opt-inline-checked-versioned-fixture
-          (opt-test-symbol "checked_versioned_slow")
-          4
-          true
-          false)
+        (irt.func
+          "function @checked_versioned_slow() -> i64 vars 1 {
+           entry:
+             jump loop
+           loop:
+             %0 = mov 1 : i64
+             %0 = mov 1 : i64
+             %0 = mov 1 : i64
+             jump loop
+           }")
         0)]
     (and
       ;; one entry instruction at depth 0 plus four loop instructions at depth 1
@@ -19257,39 +19119,6 @@
       (opt.opt-inline-checked-depth-relaxed-frequency)
       (opt.opt-inline-checked-min-frequency))))
 
-;; --- the three readings of "runs exactly once per invocation" ----------------
-;;
-;; INL-4 widened the depth floor's ENTRY clause to ENTRY-EQUIVALENT
-;; (opt-inline-checked-position-class): a block that POST-DOMINATES the caller's
-;; entry, or an ARM of the entry branch whose sibling leaves the function, is
-;; run once per invocation just as the entry block is. The true entry site keeps
-;; the admission it had; the two new readings are gated by the caller clause,
-;; which INL-8 split (opt-inline-checked-depth0-caller-ok?): a POST site is
-;; admitted in a LOOP-FREE caller, whose plan cost is the per-invocation number
-;; the boundary is credited against, and an ARM site still needs the caller to
-;; be WRAPPER-SHAPED -- to carry no call the site does not account for -- because
-;; its block runs on only a fraction of the invocations the whole boundary is
-;; credited against.
-;;
-;; Each shape below is asked in BOTH block-list spellings the walk has to
-;; handle, and `opt-inline-pos-site` answers -1 if the two ever disagree.
-(define (opt-inline-pos-callee) : i64
-  (opt-test-symbol "pos_leaf"))
-
-(define (opt-inline-pos-other) : i64
-  (opt-test-symbol "pos_other"))
-
-(define (opt-inline-pos-call [name : i64] [dst : i64]) : ir.CompilerIrInstr
-  (ir.CompilerIrInstr.Call
-    dst
-    name
-    (ir.CompilerIrCallArgs.Nil)
-    (ast.AstType.I64)))
-
-(define (opt-inline-pos-return [var : i64]) : ir.CompilerIrInstr
-  (ir.CompilerIrInstr.Return
-    (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var var))))
-
 (define (opt-inline-pos-return-literal) : ir.CompilerIrInstr
   (irt.instr "return 0"))
 
@@ -19300,42 +19129,6 @@
   (opt-inline-pos-branch-at
     (ir.compiler-ir-label yes)
     (ir.compiler-ir-label no)))
-
-;; SW-SPINE: the same selector as a two-case `switch` with a default.
-(define (opt-inline-pos-switch
-  [zero : String]
-  [one : String]
-  [default : String]) : ir.CompilerIrInstr
-  (ir.CompilerIrInstr.Switch
-    (ir.CompilerIrValue.Var 0)
-    0
-    (ir.compiler-ir-switch-case-seq2
-      (ir.CompilerIrSwitchCase.Case 0 (ir.compiler-ir-label zero))
-      (ir.CompilerIrSwitchCase.Case 1 (ir.compiler-ir-label one)))
-    (ir.compiler-ir-label default)))
-
-;; The two arms and the merge below them. The merge post-dominates the entry:
-;; every path out of the branch runs it, and neither arm leaves the function.
-(define (opt-inline-pos-post-blocks [entry-instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrBlockList
-  (ir.compiler-ir-block-cons
-    (ir.CompilerIrBlock.Block (ir.compiler-ir-label "entry") entry-instrs)
-    (ir.compiler-ir-block-cons
-      (irt.block
-        "pos_hit:
-           %1 = mov 1 : i64
-           jump pos_merge")
-      (ir.compiler-ir-block-cons
-        (irt.block
-          "pos_miss:
-             %2 = mov 2 : i64
-             jump pos_merge")
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "pos_merge")
-            (opt-test-instrs
-              (opt-inline-pos-call (opt-inline-pos-callee) 3)
-              (opt-inline-pos-return 3)))
-          ir.CompilerIrBlockList.Nil)))))
 
 ;; An entry branch, the arm the site sits in, and one sibling block per shape
 ;; the arm reading has to tell apart.
@@ -19379,17 +19172,16 @@
               tail-blocks)))))))
 
 (define (opt-inline-pos-arm-work-instrs) : ir.CompilerIrInstrSeq
-  (opt-test-instrs
-    (opt-inline-pos-call (opt-inline-pos-callee) 1)
-    (opt-inline-pos-return 1)))
+  (irt.instrs "%1 = call pos_leaf() : i64
+     return %1"))
 
 ;; The same arm carrying a second call of its own, which is the call the caller
 ;; clause counts against the site.
 (define (opt-inline-pos-arm-work-two-calls) : ir.CompilerIrInstrSeq
-  (opt-test-instrs
-    (opt-inline-pos-call (opt-inline-pos-callee) 1)
-    (opt-inline-pos-call (opt-inline-pos-other) 2)
-    (opt-inline-pos-return 2)))
+  (irt.instrs
+    "%1 = call pos_leaf() : i64
+     %2 = call pos_other() : i64
+     return %2"))
 
 ;; INL-9's shape: a DISPATCH. `entry` and `d_spine` are the spine -- call-free
 ;; blocks that only compare and branch -- and `d_arm1`, `d_arm2`, `d_arm3` are
@@ -19401,26 +19193,19 @@
     (irt.block "entry:
          branch %0, d_arm1, d_spine")
     (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "d_arm1")
-        (opt-test-instrs
-          (opt-inline-pos-call (opt-inline-pos-callee) 1)
-          (opt-inline-pos-return 1)))
+      (irt.block
+        "d_arm1:
+           %1 = call pos_leaf() : i64
+           return %1")
       (ir.compiler-ir-block-cons
         (ir.CompilerIrBlock.Block (ir.compiler-ir-label "d_spine") spine-instrs)
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "d_arm2")
-            (opt-test-instrs
-              (opt-inline-pos-call (opt-inline-pos-other) 2)
-              (opt-inline-pos-return 2)))
-          (ir.compiler-ir-block-cons
-            (ir.CompilerIrBlock.Block
-              (ir.compiler-ir-label "d_arm3")
-              (opt-test-instrs
-                (opt-inline-pos-call (opt-inline-pos-callee) 3)
-                (opt-inline-pos-return 3)))
-            ir.CompilerIrBlockList.Nil))))))
+        (irt.blocks
+          "d_arm2:
+             %2 = call pos_other() : i64
+             return %2
+           d_arm3:
+             %3 = call pos_leaf() : i64
+             return %3")))))
 
 ;; The spine block as a dispatch has it -- a compare and a branch -- and the
 ;; same block given a call of its own, which is what stops it being a spine at
@@ -19430,51 +19215,42 @@
   (opt-test-instrs (opt-inline-pos-branch "d_arm2" "d_arm3")))
 
 (define (opt-inline-pos-dispatch-working-spine-instrs) : ir.CompilerIrInstrSeq
-  (opt-test-instrs
-    (opt-inline-pos-call (opt-inline-pos-other) 4)
-    (opt-inline-pos-branch "d_arm2" "d_arm3")))
-
-;; SW-SPINE: the three-arm selector spelled as one `switch` in the entry --
-;; `sccp-normalize-const`'s class dispatch -- with the entry's instructions
-;; supplied, so the same shape can be given a call of its own.
-(define (opt-inline-pos-switch-dispatch-blocks
-  [entry-instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrBlockList
-  (ir.compiler-ir-block-cons
-    (ir.CompilerIrBlock.Block (ir.compiler-ir-label "entry") entry-instrs)
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "s_arm1")
-        (opt-test-instrs
-          (opt-inline-pos-call (opt-inline-pos-callee) 1)
-          (opt-inline-pos-return 1)))
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "s_arm2")
-          (opt-test-instrs
-            (opt-inline-pos-call (opt-inline-pos-other) 2)
-            (opt-inline-pos-return 2)))
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "s_arm3")
-            (opt-test-instrs
-              (opt-inline-pos-call (opt-inline-pos-callee) 3)
-              (opt-inline-pos-return 3)))
-          ir.CompilerIrBlockList.Nil)))))
+  (irt.instrs "%4 = call pos_other() : i64
+     branch %0, d_arm2, d_arm3"))
 
 (define (opt-inline-pos-blocks [mode : i64]) : ir.CompilerIrBlockList
   (cond
     ;; 0: the merge block post-dominates the entry, and the site's own call is
     ;; the only call the caller carries
     [(= mode 0)
-      (opt-inline-pos-post-blocks
-        (opt-test-instrs (opt-inline-pos-branch "pos_hit" "pos_miss")))]
+      (irt.blocks
+        "entry:
+           branch %0, pos_hit, pos_miss
+         pos_hit:
+           %1 = mov 1 : i64
+           jump pos_merge
+         pos_miss:
+           %2 = mov 2 : i64
+           jump pos_merge
+         pos_merge:
+           %3 = call pos_leaf() : i64
+           return %3")]
     ;; 1: the same merge block in a caller with two more calls of its own
     [(= mode 1)
-      (opt-inline-pos-post-blocks
-        (opt-test-instrs
-          (opt-inline-pos-call (opt-inline-pos-other) 4)
-          (opt-inline-pos-call (opt-inline-pos-other) 5)
-          (opt-inline-pos-branch "pos_hit" "pos_miss")))]
+      (irt.blocks
+        "entry:
+           %4 = call pos_other() : i64
+           %5 = call pos_other() : i64
+           branch %0, pos_hit, pos_miss
+         pos_hit:
+           %1 = mov 1 : i64
+           jump pos_merge
+         pos_miss:
+           %2 = mov 2 : i64
+           jump pos_merge
+         pos_merge:
+           %3 = call pos_leaf() : i64
+           return %3")]
     ;; 2: the sibling arm returns a literal
     [(= mode 2)
       (opt-inline-pos-arm-blocks
@@ -19488,22 +19264,14 @@
       (opt-inline-pos-arm-blocks
         (opt-inline-pos-arm-work-instrs)
         (ir.compiler-ir-label "arm_tail")
-        (opt-test-instrs
-          (ir.CompilerIrInstr.TailCall
-            (opt-inline-pos-other)
-            (ir.CompilerIrCallArgs.Nil)
-            (ast.AstType.I64)))
+        (irt.instrs "tailcall pos_other() : i64")
         ir.CompilerIrBlockList.Nil)]
     ;; 4: ...and one call past that pair is one too many
     [(= mode 4)
       (opt-inline-pos-arm-blocks
         (opt-inline-pos-arm-work-two-calls)
         (ir.compiler-ir-label "arm_tail")
-        (opt-test-instrs
-          (ir.CompilerIrInstr.TailCall
-            (opt-inline-pos-other)
-            (ir.CompilerIrCallArgs.Nil)
-            (ast.AstType.I64)))
+        (irt.instrs "tailcall pos_other() : i64")
         ir.CompilerIrBlockList.Nil)]
     ;; 5: the sibling arm carries a loop, so the two arms do not run the caller
     ;; out between them and the site is not credited a whole boundary
@@ -19543,30 +19311,22 @@
     ;; caller's plan cost is no longer a per-invocation number, so the reading
     ;; INL-8 added stands down and the count refuses the site as it always did.
     [(= mode 9)
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (opt-test-instrs
-            (opt-inline-pos-call (opt-inline-pos-other) 4)
-            (opt-inline-pos-call (opt-inline-pos-other) 5)
-            (opt-inline-pos-branch "pos_hit" "pos_miss")))
-        (ir.compiler-ir-block-cons
-          (irt.block "pos_hit:
-               jump pos_merge")
-          (ir.compiler-ir-block-cons
-            (irt.block "pos_miss:
-                 jump pos_merge")
-            (ir.compiler-ir-block-cons
-              (ir.CompilerIrBlock.Block
-                (ir.compiler-ir-label "pos_merge")
-                (opt-test-instrs
-                  (opt-inline-pos-call (opt-inline-pos-callee) 3)
-                  (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "pos_loop"))))
-              (irt.blocks
-                "pos_loop:
-                   branch %0, pos_loop, pos_done
-                 pos_done:
-                   return %3")))))]
+      (irt.blocks
+        "entry:
+           %4 = call pos_other() : i64
+           %5 = call pos_other() : i64
+           branch %0, pos_hit, pos_miss
+         pos_hit:
+           jump pos_merge
+         pos_miss:
+           jump pos_merge
+         pos_merge:
+           %3 = call pos_leaf() : i64
+           jump pos_loop
+         pos_loop:
+           branch %0, pos_loop, pos_done
+         pos_done:
+           return %3")]
     ;; 10: a three-arm DISPATCH. The spine is call-free, so every arm is one
     ;; case of a selector that runs exactly one of them per invocation.
     [(= mode 10)
@@ -19618,52 +19378,55 @@
     ;; two-level chain below it. This is `sccp-normalize-const` at the point
     ;; the tier looks: no reading before the widening reaches `j_arm3`.
     [(= mode 16)
-      (ir.compiler-ir-block-cons
-        (irt.block "entry:
-             branch %0, j_a, j_b")
-        (ir.compiler-ir-block-cons
-          (irt.block "j_a:
-               jump j_merge")
-          (ir.compiler-ir-block-cons
-            (irt.block "j_b:
-                 jump j_merge")
-            (ir.compiler-ir-block-cons
-              (irt.block
-                "j_merge:
-                   branch %0, j_arm1, j_spine")
-              (ir.compiler-ir-block-cons
-                (ir.CompilerIrBlock.Block
-                  (ir.compiler-ir-label "j_arm1")
-                  (opt-test-instrs
-                    (opt-inline-pos-call (opt-inline-pos-callee) 1)
-                    (opt-inline-pos-return 1)))
-                (ir.compiler-ir-block-cons
-                  (irt.block
-                    "j_spine:
-                       branch %0, j_arm2, j_arm3")
-                  (ir.compiler-ir-block-cons
-                    (ir.CompilerIrBlock.Block
-                      (ir.compiler-ir-label "j_arm2")
-                      (opt-test-instrs
-                        (opt-inline-pos-call (opt-inline-pos-other) 2)
-                        (opt-inline-pos-return 2)))
-                    (ir.compiler-ir-block-cons
-                      (ir.CompilerIrBlock.Block
-                        (ir.compiler-ir-label "j_arm3")
-                        (opt-test-instrs
-                          (opt-inline-pos-call (opt-inline-pos-callee) 3)
-                          (opt-inline-pos-return 3)))
-                      ir.CompilerIrBlockList.Nil))))))))]
+      (irt.blocks
+        "entry:
+           branch %0, j_a, j_b
+         j_a:
+           jump j_merge
+         j_b:
+           jump j_merge
+         j_merge:
+           branch %0, j_arm1, j_spine
+         j_arm1:
+           %1 = call pos_leaf() : i64
+           return %1
+         j_spine:
+           branch %0, j_arm2, j_arm3
+         j_arm2:
+           %2 = call pos_other() : i64
+           return %2
+         j_arm3:
+           %3 = call pos_leaf() : i64
+           return %3")]
     ;; SW-SPINE 14: the dispatch as one `switch`; 15: the same switch block
     ;; with a call of its own, which is no spine.
     [(= mode 14)
-      (opt-inline-pos-switch-dispatch-blocks
-        (opt-test-instrs (opt-inline-pos-switch "s_arm1" "s_arm2" "s_arm3")))]
+      (irt.blocks
+        "entry:
+           switch %0 base 0 [0:s_arm1, 1:s_arm2] default s_arm3
+         s_arm1:
+           %1 = call pos_leaf() : i64
+           return %1
+         s_arm2:
+           %2 = call pos_other() : i64
+           return %2
+         s_arm3:
+           %3 = call pos_leaf() : i64
+           return %3")]
     [(= mode 15)
-      (opt-inline-pos-switch-dispatch-blocks
-        (opt-test-instrs
-          (opt-inline-pos-call (opt-inline-pos-other) 4)
-          (opt-inline-pos-switch "s_arm1" "s_arm2" "s_arm3")))]
+      (irt.blocks
+        "entry:
+           %4 = call pos_other() : i64
+           switch %0 base 0 [0:s_arm1, 1:s_arm2] default s_arm3
+         s_arm1:
+           %1 = call pos_leaf() : i64
+           return %1
+         s_arm2:
+           %2 = call pos_other() : i64
+           return %2
+         s_arm3:
+           %3 = call pos_leaf() : i64
+           return %3")]
     ;; 8: NEITHER. One arm returns, so the merge below the other does not
     ;; post-dominate the entry, and the merge is no arm of the entry branch.
     [else
@@ -19677,13 +19440,10 @@
             (ir.CompilerIrBlock.Block
               (ir.compiler-ir-label "nb_miss")
               (opt-test-instrs (opt-inline-pos-return-literal)))
-            (ir.compiler-ir-block-cons
-              (ir.CompilerIrBlock.Block
-                (ir.compiler-ir-label "nb_join")
-                (opt-test-instrs
-                  (opt-inline-pos-call (opt-inline-pos-callee) 1)
-                  (opt-inline-pos-return 1)))
-              ir.CompilerIrBlockList.Nil))))]))
+            (irt.blocks
+              "nb_join:
+                 %1 = call pos_leaf() : i64
+                 return %1"))))]))
 
 ;; The shape as a function, so the caller facts the clause reads -- the natural
 ;; loop set and the self-recursion flag -- can be installed for it. INL-8's
@@ -20014,14 +19774,10 @@
       (ast.AstType.I64)
       (+ (opt-inline-checked-builder-latch-var) 1)
       (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (opt-test-instrs
-            (ir.CompilerIrInstr.Mov
-              arity
-              (ir.CompilerIrValue.I64 0)
-              (ast.AstType.I64))
-            (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))))
+        (irt.block
+          "entry:
+             %7 = mov 0 : i64
+             jump header")
         (ir.compiler-ir-block-cons
           (ir.CompilerIrBlock.Block
             (ir.compiler-ir-label "header")
@@ -20046,14 +19802,8 @@
                 (opt-inline-checked-builder-pad)
                 (+ arity 1)
                 (irt.instrs "jump header")))
-            (ir.compiler-ir-block-cons
-              (ir.CompilerIrBlock.Block
-                (ir.compiler-ir-label "done")
-                (opt-test-instrs
-                  (ir.CompilerIrInstr.Return
-                    (ir.CompilerIrMaybeValue.Some
-                      (ir.CompilerIrValue.Var (+ arity 1))))))
-              ir.CompilerIrBlockList.Nil))))
+            (irt.blocks "done:
+                 return %8"))))
       ir.CompilerIrFunctionAbi.Ordinary)))
 
 (define (opt-inline-checked-builder-args!
@@ -20117,14 +19867,10 @@
       (ast.AstType.I64)
       (+ (opt-inline-inl9-leaf-acc) 1)
       (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (opt-test-instrs
-            (ir.CompilerIrInstr.Mov
-              arity
-              (ir.CompilerIrValue.I64 0)
-              (ast.AstType.I64))
-            (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "body"))))
+        (irt.block
+          "entry:
+             %7 = mov 0 : i64
+             jump body")
         (ir.compiler-ir-block-cons
           (ir.CompilerIrBlock.Block
             (ir.compiler-ir-label "body")
@@ -20151,29 +19897,15 @@
       (ast.AstType.I64)
       (+ last 1)
       (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (opt-test-instrs
-            (ir.CompilerIrInstr.Mov
-              arity
-              (ir.CompilerIrValue.I64 0)
-              (ast.AstType.I64))
-            (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))))
+        (irt.block
+          "entry:
+             %7 = mov 0 : i64
+             jump header")
         (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "header")
-            (opt-test-instrs
-              (ir.CompilerIrInstr.Phi
-                (+ arity 1)
-                (ir.compiler-ir-phi-input-seq-prepend
-                  (ir.CompilerIrValue.Var arity)
-                  (ir.compiler-ir-label "entry")
-                  (ir.compiler-ir-phi-input-seq-prepend
-                    (ir.CompilerIrValue.Var last)
-                    (ir.compiler-ir-label "body")
-                    (ir.compiler-ir-phi-input-seq-empty)))
-                (ast.AstType.I64))
-              (irt.instr "branch %0, body, done")))
+          (irt.block
+            "header:
+               %8 = phi [%7, entry], [%138, body] : i64
+               branch %0, body, done")
           (ir.compiler-ir-block-cons
             (ir.CompilerIrBlock.Block
               (ir.compiler-ir-label "body")
@@ -20182,14 +19914,8 @@
                 (opt-inline-inl9-leaf-pad)
                 (+ arity 1)
                 (irt.instrs "jump header")))
-            (ir.compiler-ir-block-cons
-              (ir.CompilerIrBlock.Block
-                (ir.compiler-ir-label "done")
-                (opt-test-instrs
-                  (ir.CompilerIrInstr.Return
-                    (ir.CompilerIrMaybeValue.Some
-                      (ir.CompilerIrValue.Var (+ arity 1))))))
-              ir.CompilerIrBlockList.Nil))))
+            (irt.blocks "done:
+                 return %8"))))
       ir.CompilerIrFunctionAbi.Ordinary)))
 
 ;; The dispatch: `entry` and `d_spine` compare and branch and do nothing else,
@@ -20228,46 +19954,11 @@
               ir.CompilerIrBlockList.Nil)))))
     ir.CompilerIrFunctionAbi.Ordinary))
 
-;; The driver whose loop reaches the dispatch, which is what carries its
-;; depth-0 arms over the composite-frequency floor.
-(define (opt-inline-inl9-driver-function
-  [func-name : i64]
-  [dispatch-name : i64]) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    func-name
-    (opt-inline-switch-params)
-    (ast.AstType.I64)
-    7
-    (ir.compiler-ir-block-cons
-      (irt.block "entry:
-           %3 = mov 0 : i64
-           jump header")
-      (ir.compiler-ir-block-cons
-        (irt.block
-          "header:
-             %4 = phi [%3, entry], [%6, latch] : i64
-             branch %0, body, exit")
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "body")
-            (opt-test-instrs
-              (opt-inline-loop-site-call dispatch-name 6)
-              (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "latch"))))
-          (irt.blocks
-            "latch:
-               jump header
-             exit:
-               return %4"))))
-    ir.CompilerIrFunctionAbi.Ordinary))
-
 (define (opt-inline-inl9-leaf-name) : i64
   (opt-test-symbol "inl9_leaf"))
 
 (define (opt-inline-inl9-dispatch-name) : i64
   (opt-test-symbol "inl9_dispatch"))
-
-(define (opt-inline-inl9-driver-name) : i64
-  (opt-test-symbol "inl9_driver"))
 
 ;; 1000 * verdicts spent + calls to the leaf left in the dispatch, so a change
 ;; in either reads straight off the number.
@@ -20283,9 +19974,22 @@
       (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.compiler-ir-function-seq-prepend
-          (opt-inline-inl9-driver-function
-            (opt-inline-inl9-driver-name)
-            (opt-inline-inl9-dispatch-name))
+          (irt.func
+            "function @inl9_driver(tag=%0:i64, idx=%1:i64, len=%2:i64) -> i64 vars 7 {
+             entry:
+               %3 = mov 0 : i64
+               jump header
+             header:
+               %4 = phi [%3, entry], [%6, latch] : i64
+               branch %0, body, exit
+             body:
+               %6 = call inl9_dispatch(%1, %0, %2) : i64
+               jump latch
+             latch:
+               jump header
+             exit:
+               return %4
+             }")
           (ir.compiler-ir-function-seq-prepend
             (opt-inline-inl9-dispatch-function
               (opt-inline-inl9-dispatch-name)
@@ -20322,37 +20026,6 @@
     (if verified?
       (+ (* 1000 spent) dispatch-calls)
       (- 0 1))))
-
-;; --- INL-8: the same callee at a wrapper and at a caller with calls of its own
-;;
-;; The shape the packet is about, and the one callgraph_scc's hash-map chain
-;; has: a callee taken at a SMALL caller -- a wrapper whose only call is the
-;; site's own -- while ANOTHER caller of it keeps the site out of line. That
-;; second caller is straight-line and carries calls of its own, and the block
-;; the site sits in post-dominates its entry, so the boundary is credited once
-;; per invocation exactly as the wrapper's is. Before INL-8 the caller clause
-;; refused it on the call COUNT and the census reported `site-depth` with `pos`
-;; reading `none`; the site never reached a verdict at all.
-;;
-;; The two modes are the clause, run in one binary. Mode 0 is the caller as it
-;; stands -- straight-line, three calls -- and its site is MEASURED: it spends a
-;; verdict of its own. Mode 1 gives the same caller a loop below the site and
-;; nothing else, which is the reading the clause had before, and its site is
-;; refused before any pricing: one verdict fewer, the call still there.
-(define (opt-inline-inl8-wrapper-function [func-name : i64] [callee-name : i64]) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    func-name
-    (opt-inline-switch-params)
-    (ast.AstType.I64)
-    4
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (opt-test-instrs
-          (opt-inline-loop-site-call callee-name 3)
-          (irt.instr "return %3")))
-      ir.CompilerIrBlockList.Nil)
-    ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (opt-inline-inl8-holder-tail [loop? : bool]) : ir.CompilerIrBlockList
   (if loop?
@@ -20397,40 +20070,6 @@
             (opt-inline-inl8-holder-tail loop?)))))
     ir.CompilerIrFunctionAbi.Ordinary))
 
-;; The driver whose loop reaches both callers, which is what carries their
-;; depth-0 sites over the composite-frequency floor.
-(define (opt-inline-inl8-driver-function
-  [func-name : i64]
-  [wrapper-name : i64]
-  [holder-name : i64]) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    func-name
-    (opt-inline-switch-params)
-    (ast.AstType.I64)
-    7
-    (ir.compiler-ir-block-cons
-      (irt.block "entry:
-           %3 = mov 0 : i64
-           jump header")
-      (ir.compiler-ir-block-cons
-        (irt.block
-          "header:
-             %4 = phi [%3, entry], [%6, latch] : i64
-             branch %0, body, exit")
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "body")
-            (opt-test-instrs
-              (opt-inline-loop-site-call wrapper-name 5)
-              (opt-inline-loop-site-call holder-name 6)
-              (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "latch"))))
-          (irt.blocks
-            "latch:
-               jump header
-             exit:
-               return %4"))))
-    ir.CompilerIrFunctionAbi.Ordinary))
-
 ;; 1000 * verdicts spent + 10 * calls left in the holder + calls left in the
 ;; wrapper, so a change in any of the three reads straight off the number.
 ;; Its own four symbols: the fixture's leaf is a different body from every other
@@ -20439,14 +20078,8 @@
 (define (opt-inline-inl8-leaf-name) : i64
   (opt-test-symbol "inl8_leaf"))
 
-(define (opt-inline-inl8-wrapper-name) : i64
-  (opt-test-symbol "inl8_wrapper"))
-
 (define (opt-inline-inl8-holder-name) : i64
   (opt-test-symbol "inl8_holder"))
-
-(define (opt-inline-inl8-driver-name) : i64
-  (opt-test-symbol "inl8_driver"))
 
 (define (opt-inline-checked-inl8-self-test [mode : i64]) : i64
   (let
@@ -20461,14 +20094,30 @@
       (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.compiler-ir-function-seq-prepend
-          (opt-inline-inl8-driver-function
-            (opt-inline-inl8-driver-name)
-            (opt-inline-inl8-wrapper-name)
-            (opt-inline-inl8-holder-name))
+          (irt.func
+            "function @inl8_driver(tag=%0:i64, idx=%1:i64, len=%2:i64) -> i64 vars 7 {
+             entry:
+               %3 = mov 0 : i64
+               jump header
+             header:
+               %4 = phi [%3, entry], [%6, latch] : i64
+               branch %0, body, exit
+             body:
+               %5 = call inl8_wrapper(%1, %0, %2) : i64
+               %6 = call inl8_holder(%1, %0, %2) : i64
+               jump latch
+             latch:
+               jump header
+             exit:
+               return %4
+             }")
           (ir.compiler-ir-function-seq-prepend
-            (opt-inline-inl8-wrapper-function
-              (opt-inline-inl8-wrapper-name)
-              callee-name)
+            (irt.func
+              "function @inl8_wrapper(tag=%0:i64, idx=%1:i64, len=%2:i64) -> i64 vars 4 {
+               entry:
+                 %3 = call inl8_leaf(%1, %0, %2) : i64
+                 return %3
+               }")
             (ir.compiler-ir-function-seq-prepend
               (opt-inline-inl8-holder-function
                 (opt-inline-inl8-holder-name)
@@ -21107,71 +20756,37 @@
          return %0")
     ir.CompilerIrFunctionAbi.Ordinary))
 
-;; One straight-line block that calls `callee-name` once: a WRAPPER, whose own
-;; call site carries the depth weight of nothing at all.
-(define (opt-inline-synth-wrapper-function
-  [func-name : i64]
-  [callee-name : i64]) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    func-name
-    (opt-inline-switch-params)
-    (ast.AstType.I64)
-    5
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (opt-test-instrs
-          (opt-inline-loop-site-call callee-name 3)
-          (irt.instr "return %3")))
-      ir.CompilerIrBlockList.Nil)
-    ir.CompilerIrFunctionAbi.Ordinary))
-
-;; ...and one that calls two callees and takes the ADDRESS of the second, which
-;; is a reachability root and not a call-graph edge.
-(define (opt-inline-synth-address-function
-  [func-name : i64]
-  [callee-name : i64]
-  [taken-name : i64]) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    func-name
-    (opt-inline-switch-params)
-    (ast.AstType.I64)
-    6
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (opt-test-instrs
-          (opt-inline-loop-site-call callee-name 3)
-          (ir.CompilerIrInstr.Mov
-            4
-            (ir.CompilerIrValue.Function taken-name)
-            (ast.AstType.I64))
-          (irt.instr "return %3")))
-      ir.CompilerIrBlockList.Nil)
-    ir.CompilerIrFunctionAbi.Ordinary))
-
 ;; entry -> loop -> wrapper -> wrapper -> leaf. The loop holder calls `mid` from
 ;; its loop body (depth 1, one census weight); `mid` and `wrap` are
 ;; straight-line, so the census's own count for `wrap` is ONE and the leaf's
 ;; site under it reads as cold on that count alone.
 (define (opt-inline-synth-chain-program) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-inline-synth-wrapper-function
-      (opt-test-symbol "main")
-      (opt-test-symbol "synth_outer"))
+    (irt.func
+      "function @main(tag=%0:i64, idx=%1:i64, len=%2:i64) -> i64 vars 5 {
+       entry:
+         %3 = call synth_outer(%1, %0, %2) : i64
+         return %3
+       }")
     (ir.compiler-ir-function-seq-prepend
       (opt-inline-loop-site-function
         (opt-test-symbol "synth_outer")
         (opt-test-symbol "synth_mid")
         (opt-inline-loop-site-entry-instrs))
       (ir.compiler-ir-function-seq-prepend
-        (opt-inline-synth-wrapper-function
-          (opt-test-symbol "synth_mid")
-          (opt-test-symbol "synth_wrap"))
+        (irt.func
+          "function @synth_mid(tag=%0:i64, idx=%1:i64, len=%2:i64) -> i64 vars 5 {
+           entry:
+             %3 = call synth_wrap(%1, %0, %2) : i64
+             return %3
+           }")
         (ir.compiler-ir-function-seq-prepend
-          (opt-inline-synth-wrapper-function
-            (opt-test-symbol "synth_wrap")
-            (opt-test-symbol "synth_leaf"))
+          (irt.func
+            "function @synth_wrap(tag=%0:i64, idx=%1:i64, len=%2:i64) -> i64 vars 5 {
+             entry:
+               %3 = call synth_leaf(%1, %0, %2) : i64
+               return %3
+             }")
           (ir.compiler-ir-function-seq-prepend
             (opt-inline-synth-leaf-function (opt-test-symbol "synth_leaf"))
             (ir.compiler-ir-function-seq-empty)))))))
@@ -21180,9 +20795,12 @@
 ;; its own, and its count has to carry its own repetition.
 (define (opt-inline-synth-recursive-program) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-inline-synth-wrapper-function
-      (opt-test-symbol "main")
-      (opt-test-symbol "synth_rec"))
+    (irt.func
+      "function @main(tag=%0:i64, idx=%1:i64, len=%2:i64) -> i64 vars 5 {
+       entry:
+         %3 = call synth_rec(%1, %0, %2) : i64
+         return %3
+       }")
     (ir.compiler-ir-function-seq-prepend
       (opt-inline-loop-site-function
         (opt-test-symbol "synth_rec")
@@ -21194,10 +20812,13 @@
 ;; also takes, so the two differ by exactly the unknown-caller base.
 (define (opt-inline-synth-address-program) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-inline-synth-address-function
-      (opt-test-symbol "main")
-      (opt-test-symbol "synth_outer")
-      (opt-test-symbol "synth_taken"))
+    (irt.func
+      "function @main(tag=%0:i64, idx=%1:i64, len=%2:i64) -> i64 vars 6 {
+       entry:
+         %3 = call synth_outer(%1, %0, %2) : i64
+         %4 = mov fn@synth_taken : i64
+         return %3
+       }")
     (ir.compiler-ir-function-seq-prepend
       (opt-inline-loop-site-function
         (opt-test-symbol "synth_outer")
@@ -21828,13 +21449,8 @@
             (irt.instr "bounds_check %1, %2 message \"mid_bounds_ok\"")
             (opt-inline-wide-call leaf-name params params)
             (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "exit"))))
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "exit")
-            (opt-test-instrs
-              (ir.CompilerIrInstr.Return
-                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var params)))))
-          ir.CompilerIrBlockList.Nil))
+        (irt.blocks "exit:
+             return %10"))
       ir.CompilerIrFunctionAbi.Ordinary)))
 
 (define (opt-inline-wide-optimized [functions : ir.CompilerIrFunctionSeq]) : ir.CompilerIrFunctionSeq
@@ -21950,11 +21566,8 @@
   (ir.compiler-ir-label "chain_exit"))
 
 (define (opt-inline-chain-exit-block) : ir.CompilerIrBlockList
-  (ir.compiler-ir-block-cons
-    (ir.CompilerIrBlock.Block
-      (opt-inline-chain-exit-label)
-      (irt.instrs "return 0"))
-    ir.CompilerIrBlockList.Nil))
+  (irt.blocks "chain_exit:
+       return 0"))
 
 ;; A bounds-free, call-free, acyclic single-site callee of exactly `blocks`
 ;; blocks and `params` parameters. Nothing but the band can admit it once it is
@@ -22100,36 +21713,17 @@
           (irt.instr "%3 = mov 0 : i64")
           (opt-test-instr-seq-prepend
             (opt-inline-loop-site-call callee-name 5)
-            (opt-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))
-              (ir.compiler-ir-instr-seq-empty)))))
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "header")
-          (opt-test-instr-seq-prepend
-            (irt.instr "%4 = phi [%3, entry], [%5, latch] : i64")
-            (opt-test-instr-seq-prepend
-              (irt.instr "branch %0, body, exit")
-              (ir.compiler-ir-instr-seq-empty))))
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "body")
-            (opt-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "latch"))
-              (ir.compiler-ir-instr-seq-empty)))
-          (ir.compiler-ir-block-cons
-            (ir.CompilerIrBlock.Block
-              (ir.compiler-ir-label "latch")
-              (opt-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))
-                (ir.compiler-ir-instr-seq-empty)))
-            (ir.compiler-ir-block-cons
-              (ir.CompilerIrBlock.Block
-                (ir.compiler-ir-label "exit")
-                (opt-test-instr-seq-prepend
-                  (irt.instr "return %4")
-                  (ir.compiler-ir-instr-seq-empty)))
-              ir.CompilerIrBlockList.Nil)))))
+            (irt.instrs "jump header"))))
+      (irt.blocks
+        "header:
+           %4 = phi [%3, entry], [%5, latch] : i64
+           branch %0, body, exit
+         body:
+           jump latch
+         latch:
+           jump header
+         exit:
+           return %4"))
     ir.CompilerIrFunctionAbi.Ordinary))
 
 ;; `count` extra Movs ahead of the `zero` case's jump. The leaf keeps its five
@@ -22574,13 +22168,9 @@
         (- blocks 2)
         (ir.compiler-ir-label "chain_latch")
         (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "chain_latch")
-            (opt-test-instrs
-              (ir.CompilerIrInstr.Branch
-                (ir.CompilerIrValue.Var 0)
-                (opt-inline-chain-block-label 0)
-                (opt-inline-chain-exit-label))))
+          (irt.block
+            "chain_latch:
+               branch %0, chain_0, chain_exit")
           (opt-inline-chain-exit-block)))
       ir.CompilerIrFunctionAbi.Ordinary)))
 
@@ -22913,13 +22503,8 @@
           (opt-test-instrs
             (opt-inline-wide-call leaf-name params params)
             (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "exit"))))
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "exit")
-            (opt-test-instrs
-              (ir.CompilerIrInstr.Return
-                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var params)))))
-          ir.CompilerIrBlockList.Nil))
+        (irt.blocks "exit:
+             return %3"))
       ir.CompilerIrFunctionAbi.Ordinary)))
 
 ;; Two-level absorption: `main` calls the middle function, which calls the leaf.
@@ -24969,11 +24554,7 @@
         (opt-inline-nonleaf-caller-call symbols)
         (opt-test-span 62 3))]
     [cloned-call : ir.CompilerIrInstr
-      (ir.CompilerIrInstr.Call
-        1
-        panic-name
-        ir.CompilerIrCallArgs.Nil
-        (ast.AstType.I64))]
+      (irt.instr "%1 = call stdlib/io.tl::stdlib.io/panic() : i64")]
     [previous-debug : bool (ir.compiler-debug-info-enabled?)]
     [ok : bool
       (begin
@@ -27586,12 +27167,7 @@
     (begin
       (ir.compiler-ir-instr-builder-push!
         (&mut builder)
-        (ir.CompilerIrInstr.TailCall
-          name
-          (ir.CompilerIrCallArgs.Two
-            (ir.CompilerIrValue.Var 1)
-            (ir.CompilerIrValue.Var 0))
-          (ast.AstType.I64)))
+        (irt.instr "tailcall tail_swap(%1, %0) : i64"))
       (ir.compiler-ir-instr-builder-push!
         (&mut builder)
         (irt.instr "return %0"))
@@ -30690,41 +30266,6 @@
        %1 = phi [10, entry], [20, header] : i64
        return %1"))
 
-;; --- rule (uniform phi): every incoming value names the same value ----------
-;;
-;; `%1 = phi [c, then], [c, else]` is `%1 = mov c` whatever `c` is (LLVM's
-;; `simplifyPHINode`), a self-reference on a back edge does not count against
-;; the rule, and a phi whose inputs disagree keeps its phi.
-(define (opt-uniform-phi-diamond-blocks
-  [left : ir.CompilerIrValue]
-  [right : ir.CompilerIrValue]
-  [ty : ast.AstType]) : ir.CompilerIrBlockList
-  (ir.compiler-ir-block-cons
-    (irt.block "entry:
-         branch %0, then, else")
-    (ir.compiler-ir-block-cons
-      (irt.block "then:
-           jump join")
-      (ir.compiler-ir-block-cons
-        (irt.block "else:
-             jump join")
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "join")
-            (opt-test-instrs
-              (ir.CompilerIrInstr.Phi
-                1
-                (ir.compiler-ir-phi-input-seq-prepend
-                  left
-                  (ir.compiler-ir-label "then")
-                  (ir.compiler-ir-phi-input-seq-prepend
-                    right
-                    (ir.compiler-ir-label "else")
-                    (ir.compiler-ir-phi-input-seq-empty)))
-                ty)
-              (irt.instr "return %1")))
-          (ir.CompilerIrBlockList.Nil))))))
-
 ;; `%1 = phi [5, entry], [carried, latch]`: with `carried` the phi itself the
 ;; loop only ever passes 5 round, so the phi is 5. With any other value the
 ;; inputs disagree and it stays a phi.
@@ -30928,36 +30469,6 @@
     (opt.opt-verify-ok?
       (opt.opt-verify-function (opt-cfg-test-function blocks)))))
 
-(define (opt-bool-branch-test-blocks
-  [condition : ir.CompilerIrInstr]
-  [reuse-condition? : bool]) : ir.CompilerIrBlockList
-  (ir.compiler-ir-block-cons
-    (irt.block "entry:
-         branch %0, compare, constant")
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "compare")
-        (opt-test-instrs
-          condition
-          (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "merge"))))
-      (ir.compiler-ir-block-cons
-        (irt.block "constant:
-             jump merge")
-        (ir.compiler-ir-block-cons
-          (irt.block
-            "merge:
-               %4 = phi [%1, compare], [false, constant] : bool
-               branch %4, yes, no")
-          (ir.compiler-ir-block-cons
-            (ir.CompilerIrBlock.Block
-              (ir.compiler-ir-label "yes")
-              (if reuse-condition?
-                (irt.instrs "%5 = mov %4 : bool
-                   return 1")
-                (irt.instrs "return 1")))
-            (irt.blocks "no:
-                 return 0")))))))
-
 (define (opt-bool-branch-test-function [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
     (opt-test-symbol "bool-branch")
@@ -31037,9 +30548,8 @@
   (let
     [tail : ir.CompilerIrInstrSeq (irt.instrs "jump branch-site")]
     (if (= mode 1)
-      (opt-test-instrs-with-tail
-        tail
-        (ir.CompilerIrInstr.Mov 7 (ir.CompilerIrValue.I64 7) (ast.AstType.I64)))
+      (irt.instrs "%7 = mov 7 : i64
+         jump branch-site")
       tail)))
 
 (define (opt-bool-branch-merge-chain-tail [mode : i64]) : ir.CompilerIrBlockList
@@ -35428,34 +34938,22 @@
         (opt-test-instr-seq-prepend
           (irt.instr "%4 = phi [%3, entry], [%5, body] : i64")
           body))
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "body")
-          (opt-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "loop"))
-            (ir.compiler-ir-instr-seq-empty)))
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "exit")
-            (opt-test-instr-seq-prepend
-              (irt.instr "return %8")
-              (ir.compiler-ir-instr-seq-empty)))
-          (ir.CompilerIrBlockList.Nil))))))
+      (irt.blocks
+        "body:
+           jump loop
+         exit:
+           return %8"))))
 
 (define (opt-licm-ls-local-object-type) : ast.AstType
   (ast.AstType.Struct (ci.intern "LicmLocalObject")))
 
 ;; `%3 = mov 0 ; %20 = alloc T ; %21 = addr_of %20 ; jump loop`
 (define (opt-licm-ls-alloc-entry) : ir.CompilerIrInstrSeq
-  (opt-test-instr-seq-prepend
-    (ir.CompilerIrInstr.Mov 3 (ir.CompilerIrValue.I64 0) (ast.AstType.I64))
-    (opt-test-instr-seq-prepend
-      (ir.CompilerIrInstr.Alloc 20 (opt-licm-ls-local-object-type))
-      (opt-test-instr-seq-prepend
-        (ir.CompilerIrInstr.AddrOf 21 20)
-        (opt-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "loop"))
-          (ir.compiler-ir-instr-seq-empty))))))
+  (irt.instrs
+    "%3 = mov 0 : i64
+     %20 = alloc LicmLocalObject
+     %21 = addr_of %20
+     jump loop"))
 
 ;; The same, plus the sret-shaped call whose result IS `%21`.
 (define (opt-licm-ls-alloc-call-entry [symbols : OptLicmTestSymbols]) : ir.CompilerIrInstrSeq
@@ -35471,23 +34969,15 @@
             symbols.ret-arg
             (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.Var 21))
             (opt-licm-ls-local-object-type))
-          (opt-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "loop"))
-            (ir.compiler-ir-instr-seq-empty)))))))
+          (irt.instrs "jump loop"))))))
 
 (define (opt-licm-ls-plain-entry) : ir.CompilerIrInstrSeq
-  (opt-test-instr-seq-prepend
-    (ir.CompilerIrInstr.Mov 3 (ir.CompilerIrValue.I64 0) (ast.AstType.I64))
-    (opt-test-instr-seq-prepend
-      (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "loop"))
-      (ir.compiler-ir-instr-seq-empty))))
+  (irt.instrs "%3 = mov 0 : i64
+     jump loop"))
 
 (define (opt-licm-ls-finish-instrs) : ir.CompilerIrInstrSeq
-  (opt-test-instr-seq-prepend
-    (irt.instr "%5 = add %4, 1 : i64")
-    (opt-test-instr-seq-prepend
-      (irt.instr "branch %0, body, exit")
-      (ir.compiler-ir-instr-seq-empty))))
+  (irt.instrs "%5 = add %4, 1 : i64
+     branch %0, body, exit"))
 
 ;; Read a fixed field of `handle`, then write an element of the array
 ;; parameter. `tail` carries whatever else the case puts in the loop.
@@ -35630,13 +35120,10 @@
 ;; Two returning paths, each handing back the parameter named by its argument.
 (define (opt-licm-ls-alias-two-return-blocks [left : i64] [right : i64]) : ir.CompilerIrBlockList
   (ir.compiler-ir-block-cons
-    (ir.CompilerIrBlock.Block
-      (ir.compiler-ir-label "entry")
-      (opt-test-instr-seq-prepend
-        (irt.instr "%5 = eq %0, 0 : bool")
-        (opt-test-instr-seq-prepend
-          (irt.instr "branch %5, left, right")
-          (ir.compiler-ir-instr-seq-empty))))
+    (irt.block
+      "entry:
+         %5 = eq %0, 0 : bool
+         branch %5, left, right")
     (ir.compiler-ir-block-cons
       (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "left")
@@ -35765,20 +35252,18 @@
       [(not
           (=
             (opt-licm-ls-alias-index
-              (opt-licm-ls-alias-single-block
-                (opt-test-instr-seq-prepend
-                  (irt.instr "%5 = add %0, %1 : u64")
-                  (opt-licm-ls-alias-return-instrs 5))))
+              (irt.blocks
+                "entry:
+                   %5 = add %0, %1 : u64
+                   return %5"))
             -1))
         301]
       ;; A unit return describes no value.
       [(not
           (=
             (opt-licm-ls-alias-index
-              (opt-licm-ls-alias-single-block
-                (opt-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Return (ir.CompilerIrMaybeValue.No))
-                  (ir.compiler-ir-instr-seq-empty))))
+              (irt.blocks "entry:
+                   return"))
             -1))
         302]
       ;; A tail call's result belongs to the tail callee, not to this
@@ -39493,21 +38978,12 @@
   [rhs : ir.CompilerIrValue]) : ir.CompilerIrInstr
   (opt-bce-mask-test-binop dst op lhs rhs (ast.AstType.I64)))
 
-(define (opt-bce-mask-test-check [index : i64] [label : String]) : ir.CompilerIrInstr
-  (ir.CompilerIrInstr.BoundsCheck
-    (ir.CompilerIrValue.Var index)
-    (ir.CompilerIrValue.Var 1)
-    (ir.compiler-ir-label label)))
-
 ;; loop: i = phi(0, i + 1); scaled = i * 7; [variant 1: variant-mask = i + 5];
 ;; masked = scaled & mask; check masked; latch test i + 1 < n.
 (define (opt-bce-mask-single-blocks [variant : i64]) : ir.CompilerIrBlockList
   (ir.compiler-ir-block-cons
-    (ir.CompilerIrBlock.Block
-      (ir.compiler-ir-label "entry")
-      (opt-test-instr-seq-prepend
-        (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "loop"))
-        (ir.compiler-ir-instr-seq-empty)))
+    (irt.block "entry:
+         jump loop")
     (ir.compiler-ir-block-cons
       (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "loop")
@@ -39525,36 +39001,23 @@
                   (if (= variant 1)
                     (ir.CompilerIrValue.Var 8)
                     (ir.CompilerIrValue.Var 2)))
-                (opt-test-instr-seq-prepend
-                  (opt-bce-mask-test-check 5 "mask_single_ok")
-                  (opt-test-instr-seq-prepend
-                    (irt.instr "%6 = add %3, 1 : i64")
-                    (opt-test-instr-seq-prepend
-                      (irt.instr "%7 = lt %6, %0 : bool")
-                      (opt-test-instr-seq-prepend
-                        (irt.instr "branch %7, loop, exit")
-                        (ir.compiler-ir-instr-seq-empty))))))))))
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "exit")
-          (opt-test-instr-seq-prepend
-            (irt.instr "%10 = phi [%3, loop] : i64")
-            (opt-test-instr-seq-prepend
-              (irt.instr "return %10")
-              (ir.compiler-ir-instr-seq-empty))))
-        (ir.CompilerIrBlockList.Nil)))))
+                (irt.instrs
+                  "bounds_check %5, %1 message \"mask_single_ok\"
+                   %6 = add %3, 1 : i64
+                   %7 = lt %6, %0 : bool
+                   branch %7, loop, exit"))))))
+      (irt.blocks
+        "exit:
+           %10 = phi [%3, loop] : i64
+           return %10"))))
 
 ;; entry (seed) -> header (cursor phi, check, equality exit test) -> latch
 ;; (cursor + 1 masked, jump header) -> exit.
 (define (opt-bce-mask-probe-blocks [variant : i64]) : ir.CompilerIrBlockList
   (ir.compiler-ir-block-cons
-    (ir.CompilerIrBlock.Block
-      (ir.compiler-ir-label "entry")
-      (opt-test-instr-seq-prepend
-        (irt.instr "%4 = bit_and %0, %2 : i64")
-        (opt-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))
-          (ir.compiler-ir-instr-seq-empty))))
+    (irt.block "entry:
+         %4 = bit_and %0, %2 : i64
+         jump header")
     (ir.compiler-ir-block-cons
       (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "header")
@@ -39573,13 +39036,10 @@
                 (ir.compiler-ir-label "latch")
                 (ir.compiler-ir-phi-input-seq-empty)))
             (ast.AstType.I64))
-          (opt-test-instr-seq-prepend
-            (opt-bce-mask-test-check 5 "mask_probe_ok")
-            (opt-test-instr-seq-prepend
-              (irt.instr "%9 = eq %5, 7 : i64")
-              (opt-test-instr-seq-prepend
-                (irt.instr "branch %9, latch, exit")
-                (ir.compiler-ir-instr-seq-empty))))))
+          (irt.instrs
+            "bounds_check %5, %1 message \"mask_probe_ok\"
+             %9 = eq %5, 7 : i64
+             branch %9, latch, exit")))
       (ir.compiler-ir-block-cons
         (ir.CompilerIrBlock.Block
           (ir.compiler-ir-label "latch")
@@ -39596,18 +39056,11 @@
                   (if (= variant 3)
                     (ir.CompilerIrValue.Var 8)
                     (ir.CompilerIrValue.Var 2)))
-                (opt-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))
-                  (ir.compiler-ir-instr-seq-empty))))))
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "exit")
-            (opt-test-instr-seq-prepend
-              (irt.instr "%10 = phi [%5, header] : i64")
-              (opt-test-instr-seq-prepend
-                (irt.instr "return %10")
-                (ir.compiler-ir-instr-seq-empty))))
-          (ir.CompilerIrBlockList.Nil))))))
+                (irt.instrs "jump header")))))
+        (irt.blocks
+          "exit:
+             %10 = phi [%5, header] : i64
+             return %10")))))
 
 (define (opt-bce-mask-test-function [variant : i64]) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
@@ -42443,59 +41896,34 @@
     (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.Var arg))
     (ast.AstType.I64)))
 
-(define (opt-pcd-test-unit-call [dst : i64] [arg : i64]) : ir.CompilerIrInstr
-  (ir.CompilerIrInstr.Call
-    dst
-    (opt-pcd-test-unit-pure)
-    (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.Var arg))
-    (ast.AstType.Unit)))
-
 (define (opt-pcd-test-blocks) : ir.CompilerIrBlockList
-  (ir.compiler-ir-block-cons
-    (ir.CompilerIrBlock.Block
-      (ir.compiler-ir-label "entry")
-      (opt-test-instrs
-        (opt-pcd-test-call 2 (opt-pcd-test-pure) 0)
-        (ir.CompilerIrInstr.Mov 3 (ir.CompilerIrValue.Var 0) (ast.AstType.I64))
-        (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "b1"))))
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "b1")
-        (opt-test-instrs
-          (opt-pcd-test-call 4 (opt-pcd-test-pure) 3)
-          (opt-pcd-test-call 5 (opt-pcd-test-impure) 0)
-          (opt-pcd-test-call 6 (opt-pcd-test-pure) 0)
-          (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "b2"))))
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "b2")
-          (opt-test-instrs
-            (opt-pcd-test-call 7 (opt-pcd-test-pure) 0)
-            (irt.instr "store_ptr %1, %0 : i64")
-            (opt-pcd-test-call 8 (opt-pcd-test-pure) 0)
-            (irt.instr "%9 = lt %0, %1 : bool")
-            (irt.instr "branch %9, b3, b4")))
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "b3")
-            (opt-test-instrs
-              (opt-pcd-test-call 10 (opt-pcd-test-pure) 0)
-              (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "b5"))))
-          (ir.compiler-ir-block-cons
-            (ir.CompilerIrBlock.Block
-              (ir.compiler-ir-label "b4")
-              (opt-test-instrs
-                (opt-pcd-test-call 11 (opt-pcd-test-pure) 1)
-                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "b5"))))
-            (ir.compiler-ir-block-cons
-              (ir.CompilerIrBlock.Block
-                (ir.compiler-ir-label "b5")
-                (opt-test-instrs
-                  (opt-pcd-test-call 12 (opt-pcd-test-pure) 0)
-                  (opt-pcd-test-unit-call 13 0)
-                  (opt-pcd-test-unit-call 14 0)
-                  (irt.instr "return %12")))
-              ir.CompilerIrBlockList.Nil)))))))
+  (irt.blocks
+    "entry:
+       %2 = call pcd_pure(%0) : i64
+       %3 = mov %0 : i64
+       jump b1
+     b1:
+       %4 = call pcd_pure(%3) : i64
+       %5 = call pcd_impure(%0) : i64
+       %6 = call pcd_pure(%0) : i64
+       jump b2
+     b2:
+       %7 = call pcd_pure(%0) : i64
+       store_ptr %1, %0 : i64
+       %8 = call pcd_pure(%0) : i64
+       %9 = lt %0, %1 : bool
+       branch %9, b3, b4
+     b3:
+       %10 = call pcd_pure(%0) : i64
+       jump b5
+     b4:
+       %11 = call pcd_pure(%1) : i64
+       jump b5
+     b5:
+       %12 = call pcd_pure(%0) : i64
+       %13 = call pcd_unit_pure(%0) : unit
+       %14 = call pcd_unit_pure(%0) : unit
+       return %12"))
 
 (define (opt-pcd-test-params) : ir.CompilerIrParamSeq
   (irt.params "x=%0:i64, y=%1:i64"))
@@ -42752,9 +42180,9 @@
           (if (and (= variant 7) (= label (ir.compiler-ir-label "b4")))
             (ir.CompilerIrBlock.Block
               label
-              (opt-test-instrs
-                (opt-pcd-test-call 11 (opt-pcd-test-pure) 0)
-                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "b5"))))
+              (irt.instrs
+                "%11 = call pcd_pure(%0) : i64
+                 jump b5"))
             (ir.CompilerIrBlock.Block label instrs)))
         (let
           [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
@@ -42969,9 +42397,9 @@
     (let
       [tail : ir.CompilerIrInstrSeq (irt.instrs "jump cjoin")]
       (if (= variant 3)
-        (opt-test-instrs-with-tail
-          tail
-          (irt.instr "bounds_check %2, %1 message \"mb3_gexit_ok\""))
+        (irt.instrs
+          "bounds_check %2, %1 message \"mb3_gexit_ok\"
+           jump cjoin")
         tail))))
 
 (define (opt-bce-mb3-test-gate-block) : ir.CompilerIrBlock
@@ -42998,9 +42426,9 @@
     (let
       [tail : ir.CompilerIrInstrSeq (irt.instrs "jump cont")]
       (if (= variant 2)
-        (opt-test-instrs-with-tail
-          tail
-          (irt.instr "bounds_check %2, %1 message \"mb3_join_ok\""))
+        (irt.instrs
+          "bounds_check %2, %1 message \"mb3_join_ok\"
+           jump cont")
         tail))))
 
 (define (opt-bce-mb3-test-cont-block) : ir.CompilerIrBlock
@@ -43569,9 +42997,8 @@
     (let
       [tail : ir.CompilerIrInstrSeq (irt.instrs "jump merge")]
       (if (opt-bce-fold-test-else-phi-variant? variant)
-        (opt-test-instrs-with-tail
-          tail
-          (irt.instr "%11 = phi [%3, body] : i64"))
+        (irt.instrs "%11 = phi [%3, body] : i64
+           jump merge")
         tail))))
 
 (define (opt-bce-fold-test-merge-block [variant : i64]) : ir.CompilerIrBlock
@@ -45100,13 +44527,10 @@
 ;;   3  the Gep base is LOADED in the outer loop's landing block: a load outside
 ;;      the inner loop is still invariant for it, so this splits
 (define (opt-gep-nested-test-latch-tail) : ir.CompilerIrInstrSeq
-  (opt-test-instr-seq-prepend
-    (irt.instr "%30 = add %20, 1 : i64")
-    (opt-test-instr-seq-prepend
-      (irt.instr "%31 = lt %30, %2 : bool")
-      (opt-test-instr-seq-prepend
-        (irt.instr "branch %31, inner, latch")
-        (ir.compiler-ir-instr-seq-empty)))))
+  (irt.instrs
+    "%30 = add %20, 1 : i64
+     %31 = lt %30, %2 : bool
+     branch %31, inner, latch"))
 
 ;; A non-address in-loop reader of the invariant addend, kept live by a store so
 ;; the dead-use settling cannot retire it: the addend outlives the rewrite, which
@@ -45164,34 +44588,23 @@
 ;; The outer loop's landing block: the row base the inner loop indexes from, and
 ;; the descriptor load that variant 3 uses as the Gep base.
 (define (opt-gep-nested-test-land-instrs) : ir.CompilerIrInstrSeq
-  (opt-test-instr-seq-prepend
-    (irt.instr "%12 = mul %10, %2 : i64")
-    (opt-test-instr-seq-prepend
-      (irt.instr "%13 = add %12, %3 : i64")
-      (opt-test-instr-seq-prepend
-        (irt.instr "%14 = gep %0, 0 : i64")
-        (opt-test-instr-seq-prepend
-          (irt.instr "%15 = load %14 : i64")
-          (opt-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "iguard"))
-            (ir.compiler-ir-instr-seq-empty)))))))
+  (irt.instrs
+    "%12 = mul %10, %2 : i64
+     %13 = add %12, %3 : i64
+     %14 = gep %0, 0 : i64
+     %15 = load %14 : i64
+     jump iguard"))
 
 (define (opt-gep-nested-test-outer-instrs) : ir.CompilerIrInstrSeq
-  (opt-test-instr-seq-prepend
-    (irt.instr "%10 = phi [0, entry], [%40, latch] : i64")
-    (opt-test-instr-seq-prepend
-      (irt.instr "%11 = lt %10, %2 : bool")
-      (opt-test-instr-seq-prepend
-        (irt.instr "branch %11, land, exit")
-        (ir.compiler-ir-instr-seq-empty)))))
+  (irt.instrs
+    "%10 = phi [0, entry], [%40, latch] : i64
+     %11 = lt %10, %2 : bool
+     branch %11, land, exit"))
 
 (define (opt-gep-nested-test-blocks [variant : i64]) : ir.CompilerIrBlockList
   (ir.compiler-ir-block-cons
-    (ir.CompilerIrBlock.Block
-      (ir.compiler-ir-label "entry")
-      (opt-test-instr-seq-prepend
-        (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "outer"))
-        (ir.compiler-ir-instr-seq-empty)))
+    (irt.block "entry:
+         jump outer")
     (ir.compiler-ir-block-cons
       (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "outer")
@@ -45201,30 +44614,18 @@
           (ir.compiler-ir-label "land")
           (opt-gep-nested-test-land-instrs))
         (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "iguard")
-            (opt-test-instr-seq-prepend
-              (irt.instr "branch %11, inner, latch")
-              (ir.compiler-ir-instr-seq-empty)))
+          (irt.block "iguard:
+               branch %11, inner, latch")
           (ir.compiler-ir-block-cons
             (ir.CompilerIrBlock.Block
               (ir.compiler-ir-label "inner")
               (opt-gep-nested-test-inner-instrs variant))
-            (ir.compiler-ir-block-cons
-              (ir.CompilerIrBlock.Block
-                (ir.compiler-ir-label "latch")
-                (opt-test-instr-seq-prepend
-                  (irt.instr "%40 = add %10, 1 : i64")
-                  (opt-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "outer"))
-                    (ir.compiler-ir-instr-seq-empty))))
-              (ir.compiler-ir-block-cons
-                (ir.CompilerIrBlock.Block
-                  (ir.compiler-ir-label "exit")
-                  (opt-test-instr-seq-prepend
-                    (irt.instr "return 0")
-                    (ir.compiler-ir-instr-seq-empty)))
-                (ir.CompilerIrBlockList.Nil)))))))))
+            (irt.blocks
+              "latch:
+                 %40 = add %10, 1 : i64
+                 jump outer
+               exit:
+                 return 0")))))))
 
 (define (opt-gep-nested-test-params) : ir.CompilerIrParamSeq
   (irt.params "descriptor=%0:i64, data=%1:i64, words=%2:i64, word-base=%3:i64"))
@@ -45429,53 +44830,34 @@
 ;; behind it is an ordinary preheaderless candidate. Ending the synthesis round
 ;; at `rem` left `loopb` without a preheader and the pass rewrote nothing.
 (define (opt-gep-starved-test-rem-instrs) : ir.CompilerIrInstrSeq
-  (opt-test-instr-seq-prepend
-    (irt.instr "%10 = phi [0, apre1], [%2, apre2], [%13, rem] : i64")
-    (opt-test-instr-seq-prepend
-      (irt.instr "%11 = add %3, %10 : i64")
-      (opt-test-instr-seq-prepend
-        (irt.instr "%12 = gep %0, %11 : i64")
-        (opt-test-instr-seq-prepend
-          (irt.instr "%14 = load %12 : i64")
-          (opt-test-instr-seq-prepend
-            (irt.instr "%13 = add %10, 1 : i64")
-            (opt-test-instr-seq-prepend
-              (irt.instr "%15 = lt %13, %2 : bool")
-              (opt-test-instr-seq-prepend
-                (irt.instr "branch %15, rem, bguard")
-                (ir.compiler-ir-instr-seq-empty)))))))))
+  (irt.instrs
+    "%10 = phi [0, apre1], [%2, apre2], [%13, rem] : i64
+     %11 = add %3, %10 : i64
+     %12 = gep %0, %11 : i64
+     %14 = load %12 : i64
+     %13 = add %10, 1 : i64
+     %15 = lt %13, %2 : bool
+     branch %15, rem, bguard"))
 
 (define (opt-gep-starved-test-loopb-instrs) : ir.CompilerIrInstrSeq
-  (opt-test-instr-seq-prepend
-    (irt.instr "%20 = phi [0, bguard], [%23, loopb] : i64")
-    (opt-test-instr-seq-prepend
-      (irt.instr "%21 = add %3, %20 : i64")
-      (opt-test-instr-seq-prepend
-        (irt.instr "%22 = gep %1, %21 : i64")
-        (opt-test-instr-seq-prepend
-          (irt.instr "%24 = load %22 : i64")
-          (opt-test-instr-seq-prepend
-            (irt.instr "%23 = add %20, 1 : i64")
-            (opt-test-instr-seq-prepend
-              (irt.instr "%25 = lt %23, %2 : bool")
-              (opt-test-instr-seq-prepend
-                (irt.instr "branch %25, loopb, exit")
-                (ir.compiler-ir-instr-seq-empty)))))))))
+  (irt.instrs
+    "%20 = phi [0, bguard], [%23, loopb] : i64
+     %21 = add %3, %20 : i64
+     %22 = gep %1, %21 : i64
+     %24 = load %22 : i64
+     %23 = add %20, 1 : i64
+     %25 = lt %23, %2 : bool
+     branch %25, loopb, exit"))
 
 (define (opt-gep-starved-test-jump-to-rem) : ir.CompilerIrInstrSeq
-  (opt-test-instr-seq-prepend
-    (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "rem"))
-    (ir.compiler-ir-instr-seq-empty)))
+  (irt.instrs "jump rem"))
 
 (define (opt-gep-starved-test-blocks) : ir.CompilerIrBlockList
   (ir.compiler-ir-block-cons
-    (ir.CompilerIrBlock.Block
-      (ir.compiler-ir-label "entry")
-      (opt-test-instr-seq-prepend
-        (irt.instr "%6 = lt 0, %2 : bool")
-        (opt-test-instr-seq-prepend
-          (irt.instr "branch %6, apre1, apre2")
-          (ir.compiler-ir-instr-seq-empty))))
+    (irt.block
+      "entry:
+         %6 = lt 0, %2 : bool
+         branch %6, apre1, apre2")
     (ir.compiler-ir-block-cons
       (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "apre1")
@@ -45489,22 +44871,14 @@
             (ir.compiler-ir-label "rem")
             (opt-gep-starved-test-rem-instrs))
           (ir.compiler-ir-block-cons
-            (ir.CompilerIrBlock.Block
-              (ir.compiler-ir-label "bguard")
-              (opt-test-instr-seq-prepend
-                (irt.instr "branch %6, loopb, exit")
-                (ir.compiler-ir-instr-seq-empty)))
+            (irt.block "bguard:
+                 branch %6, loopb, exit")
             (ir.compiler-ir-block-cons
               (ir.CompilerIrBlock.Block
                 (ir.compiler-ir-label "loopb")
                 (opt-gep-starved-test-loopb-instrs))
-              (ir.compiler-ir-block-cons
-                (ir.CompilerIrBlock.Block
-                  (ir.compiler-ir-label "exit")
-                  (opt-test-instr-seq-prepend
-                    (irt.instr "return 0")
-                    (ir.compiler-ir-instr-seq-empty)))
-                (ir.CompilerIrBlockList.Nil)))))))))
+              (irt.blocks "exit:
+                   return 0"))))))))
 
 (define (opt-gep-starved-test-run) : ir.CompilerIrFunction
   (opt.opt-gep-offset-function
@@ -46450,10 +45824,8 @@
       (if separate-latch
         latch
         entry)]
-    [tail : ir.CompilerIrBlockList
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block done (irt.instrs "return 42"))
-        (ir.CompilerIrBlockList.Nil))]
+    [tail : ir.CompilerIrBlockList (irt.blocks "done:
+           return 42")]
     [blocks : ir.CompilerIrBlockList
       (ir.compiler-ir-block-cons
         (ir.CompilerIrBlock.Block
@@ -48179,11 +47551,7 @@
             (opt-bce-mbcall-test-callee variant)
             (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.Var 2))
             (ast.AstType.I64))])
-      (ir.CompilerIrInstr.Gep
-        13
-        (ir.CompilerIrValue.Global (opt-bce-mbcall-test-global))
-        (ir.CompilerIrValue.I64 0)
-        (ast.AstType.I64))
+      (irt.instr "%13 = gep @mbcall_workspace, 0 : i64")
       (ir.CompilerIrInstr.Load
         14
         (ir.CompilerIrValue.Var 13)
@@ -48802,19 +48170,6 @@
       (set! (array-ref args 2) (ir.CompilerIrValue.Var 2))
       (ir.CompilerIrCallArgs.Array args))))
 
-(define (opt-merged-loop-test-tail-args [rounds : i64]) : ir.CompilerIrCallArgs
-  (let
-    [args : (__tl_dyn-array ir.CompilerIrValue)
-      (__tl_make-array ir.CompilerIrValue 4)]
-    (begin
-      ;; The first three arguments are unchanged. Identity writes must not
-      ;; survive the tail-recursion conversion plus register-value SSA pipeline.
-      (set! (array-ref args 0) (ir.CompilerIrValue.Var 0))
-      (set! (array-ref args 1) (ir.CompilerIrValue.Var 1))
-      (set! (array-ref args 2) (ir.CompilerIrValue.Var 2))
-      (set! (array-ref args 3) (ir.CompilerIrValue.Var rounds))
-      (ir.CompilerIrCallArgs.Array args))))
-
 (define (opt-merged-loop-test-callee-blocks) : ir.CompilerIrBlockList
   (opt.opt-function-blocks
     (opt.opt-ssa-construct-function
@@ -48871,10 +48226,8 @@
                     return-inputs
                     (ast.AstType.I64))
                   (irt.instr "%101 = sub %3, 1 : i64")
-                  (ir.CompilerIrInstr.TailCall
-                    name
-                    (opt-merged-loop-test-tail-args 101)
-                    (ast.AstType.I64))))
+                  (irt.instr
+                    "tailcall merged_loop_caller(%0, %1, %2, %101) : i64")))
               (irt.blocks "caller_exit:
                    return 0"))]
           (ir.CompilerIrFunction.Function
@@ -51176,43 +50529,6 @@
      exit:
        return 0"))
 
-(define (opt-preheader-two-entry-blocks
-  [left : ir.CompilerIrValue]
-  [right : ir.CompilerIrValue]) : ir.CompilerIrBlockList
-  ;; Two outside predecessors, and a header phi that takes `left` from one and
-  ;; `right` from the other. With the two equal the outside edges collapse onto
-  ;; one preheader edge; with them different they cannot, which is the
-  ;; `header-phi` clause.
-  (ir.compiler-ir-block-cons
-    (irt.block "entry:
-         branch true, pre-one, pre-two")
-    (ir.compiler-ir-block-cons
-      (irt.block "pre-one:
-           jump loop")
-      (ir.compiler-ir-block-cons
-        (irt.block "pre-two:
-             jump loop")
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "loop")
-            (opt-test-instrs
-              (ir.CompilerIrInstr.Phi
-                0
-                (ir.compiler-ir-phi-input-seq-prepend
-                  left
-                  (ir.compiler-ir-label "pre-one")
-                  (ir.compiler-ir-phi-input-seq-prepend
-                    right
-                    (ir.compiler-ir-label "pre-two")
-                    (ir.compiler-ir-phi-input-seq-empty)))
-                (ast.AstType.I64))
-              (irt.instr "branch true, body, exit")))
-          (irt.blocks
-            "body:
-               jump loop
-             exit:
-               return 0"))))))
-
 (define (opt-preheader-safe-blocks) : ir.CompilerIrBlockList
   ;; The loop already owns a safe preheader: `entry`'s only successor is the
   ;; header, so the pass has nothing to do and must leave the CFG alone.
@@ -51266,9 +50582,20 @@
       (opt.opt-loop-preheaders-blocks (opt-preheader-rotated-guard-blocks))]
     ;; (b) Two outside predecessors whose header phi values DIFFER.
     [conflict-input : ir.CompilerIrBlockList
-      (opt-preheader-two-entry-blocks
-        (ir.CompilerIrValue.I64 1)
-        (ir.CompilerIrValue.I64 2))]
+      (irt.blocks
+        "entry:
+           branch true, pre-one, pre-two
+         pre-one:
+           jump loop
+         pre-two:
+           jump loop
+         loop:
+           %0 = phi [1, pre-one], [2, pre-two] : i64
+           branch true, body, exit
+         body:
+           jump loop
+         exit:
+           return 0")]
     [conflict-reason : i64
       (opt.opt-loop-preheaders-header-reason
         (opt.compiler-opt-global-shared-view conflict-input)
@@ -51280,9 +50607,20 @@
     ;; the pass takes it, which is what makes the clause above about the values
     ;; and not about the predecessor count.
     [agree-input : ir.CompilerIrBlockList
-      (opt-preheader-two-entry-blocks
-        (ir.CompilerIrValue.I64 1)
-        (ir.CompilerIrValue.I64 1))]
+      (irt.blocks
+        "entry:
+           branch true, pre-one, pre-two
+         pre-one:
+           jump loop
+         pre-two:
+           jump loop
+         loop:
+           %0 = phi [1, pre-one], [1, pre-two] : i64
+           branch true, body, exit
+         body:
+           jump loop
+         exit:
+           return 0")]
     [agree-reason : i64
       (opt.opt-loop-preheaders-header-reason
         (opt.compiler-opt-global-shared-view agree-input)
@@ -51391,9 +50729,8 @@
             (ir.CompilerIrBlock.Block
               body-label
               (opt-test-instrs (ir.CompilerIrInstr.Jump header-label)))
-            (ir.compiler-ir-block-cons
-              (ir.CompilerIrBlock.Block exit-label (irt.instrs "return 0"))
-              (ir.CompilerIrBlockList.Nil))))))))
+            (irt.blocks "exit:
+                 return 0")))))))
 
 ;; Offer one loop to the multi-block shape scan and hand back the clause it
 ;; recorded, which is the exact value the `bce-version|` line prints.
@@ -53378,28 +52715,52 @@
   (let
     [bool-uniform : ir.CompilerIrBlockList
       (opt.opt-cfg-simplify-blocks
-        (opt-uniform-phi-diamond-blocks
-          (ir.CompilerIrValue.Bool false)
-          (ir.CompilerIrValue.Bool false)
-          (ast.AstType.Bool)))]
+        (irt.blocks
+          "entry:
+             branch %0, then, else
+           then:
+             jump join
+           else:
+             jump join
+           join:
+             %1 = phi [false, then], [false, else] : bool
+             return %1"))]
     [i64-uniform : ir.CompilerIrBlockList
       (opt.opt-cfg-simplify-blocks
-        (opt-uniform-phi-diamond-blocks
-          (ir.CompilerIrValue.I64 7)
-          (ir.CompilerIrValue.I64 7)
-          (ast.AstType.I64)))]
+        (irt.blocks
+          "entry:
+             branch %0, then, else
+           then:
+             jump join
+           else:
+             jump join
+           join:
+             %1 = phi [7, then], [7, else] : i64
+             return %1"))]
     [i64-mixed : ir.CompilerIrBlockList
       (opt.opt-cfg-simplify-blocks
-        (opt-uniform-phi-diamond-blocks
-          (ir.CompilerIrValue.I64 10)
-          (ir.CompilerIrValue.I64 20)
-          (ast.AstType.I64)))]
+        (irt.blocks
+          "entry:
+             branch %0, then, else
+           then:
+             jump join
+           else:
+             jump join
+           join:
+             %1 = phi [10, then], [20, else] : i64
+             return %1"))]
     [bool-mixed : ir.CompilerIrBlockList
       (opt.opt-cfg-simplify-blocks
-        (opt-uniform-phi-diamond-blocks
-          (ir.CompilerIrValue.Bool true)
-          (ir.CompilerIrValue.Bool false)
-          (ast.AstType.Bool)))]
+        (irt.blocks
+          "entry:
+             branch %0, then, else
+           then:
+             jump join
+           else:
+             jump join
+           join:
+             %1 = phi [true, then], [false, else] : bool
+             return %1"))]
     [self-uniform : ir.CompilerIrBlockList
       (opt.opt-cfg-simplify-blocks
         (opt-uniform-phi-loop-blocks (ir.CompilerIrValue.Var 1)))]
@@ -53550,14 +52911,21 @@
     [bool-branch-result : opt.OptBlockListPassResult
       (opt.opt-bool-branch-fuse-blocks
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt-bool-branch-test-blocks
-          (ir.CompilerIrInstr.BinOp
-            1
-            (ir.CompilerIrBinOp.Eq)
-            (ir.CompilerIrValue.I64 1)
-            (ir.CompilerIrValue.I64 2)
-            (ast.AstType.Bool))
-          false)
+        (irt.blocks
+          "entry:
+             branch %0, compare, constant
+           compare:
+             %1 = eq 1, 2 : bool
+             jump merge
+           constant:
+             jump merge
+           merge:
+             %4 = phi [%1, compare], [false, constant] : bool
+             branch %4, yes, no
+           yes:
+             return 1
+           no:
+             return 0")
         16
         16)]
     [bool-branch-blocks : ir.CompilerIrBlockList
@@ -53569,13 +52937,21 @@
     [call-branch-result : opt.OptBlockListPassResult
       (opt.opt-bool-branch-fuse-blocks
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt-bool-branch-test-blocks
-          (ir.CompilerIrInstr.Call
-            1
-            (opt-test-symbol "predicate")
-            (ir.CompilerIrCallArgs.Nil)
-            (ast.AstType.Bool))
-          false)
+        (irt.blocks
+          "entry:
+             branch %0, compare, constant
+           compare:
+             %1 = call predicate() : bool
+             jump merge
+           constant:
+             jump merge
+           merge:
+             %4 = phi [%1, compare], [false, constant] : bool
+             branch %4, yes, no
+           yes:
+             return 1
+           no:
+             return 0")
         16
         16)]
     [call-branch-blocks : ir.CompilerIrBlockList
@@ -53587,14 +52963,22 @@
     [reused-branch-result : opt.OptBlockListPassResult
       (opt.opt-bool-branch-fuse-blocks
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt-bool-branch-test-blocks
-          (ir.CompilerIrInstr.BinOp
-            1
-            (ir.CompilerIrBinOp.Eq)
-            (ir.CompilerIrValue.I64 1)
-            (ir.CompilerIrValue.I64 2)
-            (ast.AstType.Bool))
-          true)
+        (irt.blocks
+          "entry:
+             branch %0, compare, constant
+           compare:
+             %1 = eq 1, 2 : bool
+             jump merge
+           constant:
+             jump merge
+           merge:
+             %4 = phi [%1, compare], [false, constant] : bool
+             branch %4, yes, no
+           yes:
+             %5 = mov %4 : bool
+             return 1
+           no:
+             return 0")
         16
         16)]
     [reused-branch-blocks : ir.CompilerIrBlockList
@@ -56289,31 +55673,6 @@
       (ast.AstType.I64))
     (ir.CompilerIrInstr.Load 4 (ir.CompilerIrValue.Var 3) (ast.AstType.I64))))
 
-;; REGION-STABLE CELL, granular `Store` kill: a write to a DIFFERENT named cell
-;; cannot reach this one, so the chain root re-derivation folds instead of
-;; re-walking. This is the shape the descriptor chain takes between two writes
-;; to unrelated global scalars (a length or a deleted counter).
-(define (opt-load-cse-global-cell-other-store-instrs
-  [global : i64]
-  [other : i64]) : ir.CompilerIrInstrSeq
-  (opt-test-instrs
-    (ir.CompilerIrInstr.Gep
-      1
-      (ir.CompilerIrValue.Global global)
-      (ir.CompilerIrValue.I64 1)
-      (ast.AstType.I64))
-    (ir.CompilerIrInstr.Load 2 (ir.CompilerIrValue.Var 1) (ast.AstType.I64))
-    (ir.CompilerIrInstr.Store
-      other
-      (ir.CompilerIrValue.I64 9)
-      (ast.AstType.I64))
-    (ir.CompilerIrInstr.Gep
-      3
-      (ir.CompilerIrValue.Global global)
-      (ir.CompilerIrValue.I64 1)
-      (ast.AstType.I64))
-    (ir.CompilerIrInstr.Load 4 (ir.CompilerIrValue.Var 3) (ast.AstType.I64))))
-
 ;; A named-cell write leaves DESCRIPTOR HEADER words alone: the cell holds the
 ;; handle, the header lives in the object the handle points at. Var 0 is a
 ;; header-typed param (opt-load-cse-run-with-array-param), so the len re-load
@@ -57736,12 +57095,14 @@
     [global-base-form-mismatch : ir.CompilerIrInstrSeq
       (opt-load-cse-run
         (opt-load-cse-global-base-form-mismatch-instrs global-tokens))]
-    [global-offsets : i64 (opt-test-symbol "gvn_offsets")]
     [global-cell-other-store : ir.CompilerIrInstrSeq
       (opt-load-cse-run
-        (opt-load-cse-global-cell-other-store-instrs
-          global-tokens
-          global-offsets))]
+        (irt.instrs
+          "%1 = gep @gvn_tokens, 1 : i64
+           %2 = load %1 : i64
+           store @gvn_offsets, 9 : i64
+           %3 = gep @gvn_tokens, 1 : i64
+           %4 = load %3 : i64"))]
     [global-cell-header-store : ir.CompilerIrInstrSeq
       (opt-load-cse-run-with-array-param
         (opt-load-cse-global-cell-header-store-instrs global-tokens))]
@@ -60539,9 +59900,7 @@
             target
             (ir.CompilerIrValue.I64 1)
             (ast.AstType.I64))
-          (opt-test-instr-seq-prepend
-            (irt.instr "return 0")
-            (ir.compiler-ir-instr-seq-empty))))
+          (irt.instrs "return 0")))
       ir.CompilerIrBlockList.Nil)
     ir.CompilerIrFunctionAbi.Ordinary))
 
@@ -60563,9 +59922,7 @@
             symbols.writer
             (ir.CompilerIrCallArgs.Nil)
             (ast.AstType.I64))
-          (opt-test-instr-seq-prepend
-            (irt.instr "return 0")
-            (ir.compiler-ir-instr-seq-empty))))
+          (irt.instrs "return 0")))
       ir.CompilerIrBlockList.Nil)
     ir.CompilerIrFunctionAbi.Ordinary))
 
@@ -60636,11 +59993,8 @@
       (ast.AstType.I64)
       (+ 14 live-ins)
       (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (opt-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "body"))
-            (ir.compiler-ir-instr-seq-empty)))
+        (irt.block "entry:
+             jump body")
         (ir.compiler-ir-block-cons
           (ir.CompilerIrBlock.Block
             (ir.compiler-ir-label "body")
@@ -61150,11 +60504,7 @@
   (opt-fc-test-maybe-local-bound
     local-bound?
     (opt-test-instrs
-      (ir.CompilerIrInstr.Gep
-        4
-        (ir.CompilerIrValue.Var 0)
-        (ir.CompilerIrValue.Var 3)
-        (opt-fc-test-i64))
+      (irt.instr "%4 = gep %0, %3 : i64")
       (ir.CompilerIrInstr.StorePtr
         (ir.CompilerIrValue.Var 4)
         value
@@ -61233,11 +60583,7 @@
     [exit : i64 (opt-fc-test-label "fc.exit")]
     (ir.CompilerIrFunction.Function
       (opt-test-symbol "fc_fn")
-      (ir.compiler-ir-param-seq-prepend
-        (ir.CompilerIrParam.Param "base" (ast.AstType.U64) 0)
-        (ir.compiler-ir-param-seq-prepend
-          (ir.CompilerIrParam.Param "bound" (opt-fc-test-i64) 1)
-          (ir.compiler-ir-param-seq-empty)))
+      (irt.params "base=%0:u64, bound=%1:i64")
       (opt-fc-test-i64)
       frame
       (ir.compiler-ir-block-cons
@@ -61254,9 +60600,8 @@
               step
               bound
               local-bound?)
-            (ir.compiler-ir-block-cons
-              (opt-fc-test-exit-block exit)
-              ir.CompilerIrBlockList.Nil))))
+            (irt.blocks "fc.exit:
+                 return 0"))))
       ir.CompilerIrFunctionAbi.Ordinary)))
 
 ;; The real post-`bce_version` clone body, instruction for instruction:
@@ -61305,21 +60650,9 @@
                       (ir.CompilerIrValue.Var 6)
                       loop
                       exit)))
-                (ir.CompilerIrInstr.BinOp
-                  5
-                  (ir.CompilerIrBinOp.Add)
-                  (ir.CompilerIrValue.Var 3)
-                  (ir.CompilerIrValue.I64 1)
-                  (opt-fc-test-i64))))
-            (ir.CompilerIrInstr.Gep
-              4
-              (ir.CompilerIrValue.Var 0)
-              (ir.CompilerIrValue.Var 3)
-              (opt-fc-test-i64))
-            (ir.CompilerIrInstr.StorePtr
-              (ir.CompilerIrValue.Var 4)
-              (ir.CompilerIrValue.I64 0)
-              (opt-fc-test-i64)))))
+                (irt.instr "%5 = add %3, 1 : i64")))
+            (irt.instr "%4 = gep %0, %3 : i64")
+            (irt.instr "store_ptr %4, 0 : i64"))))
       (ir.CompilerIrInstr.Phi
         3
         (ir.compiler-ir-phi-input-seq-prepend
@@ -61710,14 +61043,7 @@
   [offset-add? : bool]
   [rest : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
   (if offset-add?
-    (opt-test-instrs-with-tail
-      rest
-      (ir.CompilerIrInstr.BinOp
-        10
-        (ir.CompilerIrBinOp.Add)
-        (ir.CompilerIrValue.Var 11)
-        (ir.CompilerIrValue.Var 4)
-        (opt-cc-test-i64)))
+    (opt-test-instrs-with-tail rest (irt.instr "%10 = add %11, %4 : i64"))
     rest))
 
 (define (opt-cc-test-second-store
@@ -61854,15 +61180,7 @@
     [exit : i64 (opt-cc-test-label "cc.exit")]
     (ir.CompilerIrFunction.Function
       (opt-test-symbol "cc_fn")
-      (ir.compiler-ir-param-seq-prepend
-        (ir.CompilerIrParam.Param "src" (ast.AstType.U64) 0)
-        (ir.compiler-ir-param-seq-prepend
-          (ir.CompilerIrParam.Param "bound" (opt-cc-test-i64) 1)
-          (ir.compiler-ir-param-seq-prepend
-            (ir.CompilerIrParam.Param "dst" (ast.AstType.U64) 2)
-            (ir.compiler-ir-param-seq-prepend
-              (ir.CompilerIrParam.Param "start" (opt-cc-test-i64) 11)
-              (ir.compiler-ir-param-seq-empty)))))
+      (irt.params "src=%0:u64, bound=%1:i64, dst=%2:u64, start=%11:i64")
       (opt-cc-test-i64)
       13
       (ir.compiler-ir-block-cons
@@ -62746,15 +62064,9 @@
     (ir.compiler-ir-param-seq-empty)
     (ast.AstType.I64)
     8
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (opt-test-instr-seq-prepend
-          (irt.instr "%30 = call* %1() : i64")
-          (opt-test-instr-seq-prepend
-            (irt.instr "return 0")
-            (ir.compiler-ir-instr-seq-empty))))
-      ir.CompilerIrBlockList.Nil)
+    (irt.blocks "entry:
+         %30 = call* %1() : i64
+         return 0")
     ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (opt-lp-test-program-functions [symbols : OptLpTestSymbols]) : ir.CompilerIrFunctionSeq
@@ -63538,9 +62850,7 @@
     ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (opt-mr-return-zero) : ir.CompilerIrInstrSeq
-  (opt-test-instr-seq-prepend
-    (irt.instr "return 0")
-    (ir.compiler-ir-instr-seq-empty)))
+  (irt.instrs "return 0"))
 
 ;; `(set! mr_a 5)` -- the only instruction whose write target is a symbol.
 (define (opt-mr-write-function [name : i64] [cell : i64]) : ir.CompilerIrFunction
@@ -64496,11 +63806,8 @@
 ;; leave the checks for it.
 (define (opt-le-loop-check-blocks [first-cell : i64] [second-cell : i64]) : ir.CompilerIrBlockList
   (ir.compiler-ir-block-cons
-    (ir.CompilerIrBlock.Block
-      (ir.compiler-ir-label "entry")
-      (opt-test-instr-seq-prepend
-        (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "body"))
-        (ir.compiler-ir-instr-seq-empty)))
+    (irt.block "entry:
+         jump body")
     (ir.compiler-ir-block-cons
       (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "body")
@@ -66806,21 +66113,14 @@
 ;; carries as var 2.
 (define (opt-pe-loop-blocks [back : ir.CompilerIrInstr]) : ir.CompilerIrBlockList
   (ir.compiler-ir-block-cons
-    (ir.CompilerIrBlock.Block
-      (ir.compiler-ir-label "header")
-      (opt-test-instr-seq-prepend
-        (irt.instr "%1 = phi [%2, latch], [%9, preheader] : i64")
-        (opt-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "latch"))
-          (ir.compiler-ir-instr-seq-empty))))
+    (irt.block
+      "header:
+         %1 = phi [%2, latch], [%9, preheader] : i64
+         jump latch")
     (ir.compiler-ir-block-cons
       (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "latch")
-        (opt-test-instr-seq-prepend
-          back
-          (opt-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))
-            (ir.compiler-ir-instr-seq-empty))))
+        (opt-test-instr-seq-prepend back (irt.instrs "jump header")))
       ir.CompilerIrBlockList.Nil)))
 
 (define (opt-pe-self-phi-value [back : ir.CompilerIrInstr]) : i64
@@ -71259,52 +70559,6 @@
     rhs
     (ast.AstType.I64)))
 
-(define (opt-jt2-input
-  [value : ir.CompilerIrValue]
-  [label : String]
-  [rest : ir.CompilerIrPhiInputSeq]) : ir.CompilerIrPhiInputSeq
-  (ir.compiler-ir-phi-input-seq-prepend value (ir.compiler-ir-label label) rest))
-
-(define (opt-jt2-phi [dst : i64] [inputs : ir.CompilerIrPhiInputSeq]) : ir.CompilerIrInstr
-  (ir.CompilerIrInstr.Phi dst inputs (ast.AstType.I64)))
-
-;; The five join-arm inputs of the tag phi (%8) and the kind phi (%9).
-(define (opt-jt2-tag-inputs) : ir.CompilerIrPhiInputSeq
-  (opt-jt2-input
-    (opt-jt2-lit 2)
-    "old_unknown"
-    (opt-jt2-input
-      (opt-jt2-lit 1)
-      "ou_const"
-      (opt-jt2-input
-        (opt-jt2-lit 2)
-        "old_rest"
-        (opt-jt2-input
-          (opt-jt2-lit 1)
-          "old_const"
-          (opt-jt2-input
-            (opt-jt2-lit 2)
-            "oc_diff"
-            (ir.compiler-ir-phi-input-seq-empty)))))))
-
-(define (opt-jt2-kind-inputs) : ir.CompilerIrPhiInputSeq
-  (opt-jt2-input
-    (opt-jt2-lit 0)
-    "old_unknown"
-    (opt-jt2-input
-      (opt-jt2-var 3)
-      "ou_const"
-      (opt-jt2-input
-        (opt-jt2-lit 0)
-        "old_rest"
-        (opt-jt2-input
-          (opt-jt2-var 2)
-          "old_const"
-          (opt-jt2-input
-            (opt-jt2-lit 0)
-            "oc_diff"
-            (ir.compiler-ir-phi-input-seq-empty)))))))
-
 ;; With `same-reads?` the `same` exit reads the kind phi too, so the merge's
 ;; definitions are live in two exits and the rail must refuse the site.
 (define (opt-jt2-blocks [same-reads? : bool]) : ir.CompilerIrBlockList
@@ -71333,12 +70587,11 @@
             (ir.compiler-ir-block-cons
               (opt-pcf-block "oc_diff" (opt-test-instrs (opt-pcf-jump "merge")))
               (ir.compiler-ir-block-cons
-                (opt-pcf-block
-                  "merge"
-                  (opt-test-instrs
-                    (opt-jt2-phi 8 (opt-jt2-tag-inputs))
-                    (opt-jt2-phi 9 (opt-jt2-kind-inputs))
-                    (opt-pcf-jump "c1")))
+                (irt.block
+                  "merge:
+                     %8 = phi [2, old_unknown], [1, ou_const], [2, old_rest], [1, old_const], [2, oc_diff] : i64
+                     %9 = phi [0, old_unknown], [%3, ou_const], [0, old_rest], [%2, old_const], [0, oc_diff] : i64
+                     jump c1")
                 (ir.compiler-ir-block-cons
                   (irt.block "c1:
                        branch %4, c2, c3")
@@ -76800,23 +76053,16 @@
   (if (not (= variant 11))
     tail
     (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "inner")
-        (opt-test-instr-seq-prepend
-          (irt.instr "%30 = phi [0, header], [%31, inner_latch] : i64")
-          (opt-test-instr-seq-prepend
-            (irt.instr "%32 = lt %30, %4 : i64")
-            (opt-test-instr-seq-prepend
-              (irt.instr "branch %32, inner_latch, latch")
-              (ir.compiler-ir-instr-seq-empty)))))
+      (irt.block
+        "inner:
+           %30 = phi [0, header], [%31, inner_latch] : i64
+           %32 = lt %30, %4 : i64
+           branch %32, inner_latch, latch")
       (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "inner_latch")
-          (opt-test-instr-seq-prepend
-            (irt.instr "%31 = add %30, 1 : i64")
-            (opt-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "inner"))
-              (ir.compiler-ir-instr-seq-empty))))
+        (irt.block
+          "inner_latch:
+             %31 = add %30, 1 : i64
+             jump inner")
         tail))))
 
 ;; latch: the step and the continuing compare. Variants 1 and 3 ascend against
@@ -76840,19 +76086,14 @@
           (irt.instr "%7 = lt %6, %0 : i64")]
         [(= variant 2) (irt.instr "%7 = ge %6, -1 : i64")]
         [else (irt.instr "%7 = ge %6, 0 : i64")])
-      (opt-test-instr-seq-prepend
-        (irt.instr "branch %7, header, exit")
-        (ir.compiler-ir-instr-seq-empty)))))
+      (irt.instrs "branch %7, header, exit"))))
 
 (define (opt-bce-hoist-test-blocks [variant : i64]) : ir.CompilerIrBlockList
   (ir.compiler-ir-block-cons
-    (ir.CompilerIrBlock.Block
-      (ir.compiler-ir-label "entry")
-      (opt-test-instr-seq-prepend
-        (irt.instr "%20 = ge %0, 0 : i64")
-        (opt-test-instr-seq-prepend
-          (irt.instr "branch %20, pre, exit")
-          (ir.compiler-ir-instr-seq-empty))))
+    (irt.block
+      "entry:
+         %20 = ge %0, 0 : i64
+         branch %20, pre, exit")
     (ir.compiler-ir-block-cons
       (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "pre")
@@ -76873,21 +76114,12 @@
             (ir.CompilerIrBlock.Block
               (ir.compiler-ir-label "latch")
               (opt-bce-hoist-latch-instrs variant))
-            (ir.compiler-ir-block-cons
-              (ir.CompilerIrBlock.Block
-                (ir.compiler-ir-label "bail")
-                (opt-test-instr-seq-prepend
-                  (irt.instr "return 7")
-                  (ir.compiler-ir-instr-seq-empty)))
-              (ir.compiler-ir-block-cons
-                (ir.CompilerIrBlock.Block
-                  (ir.compiler-ir-label "exit")
-                  (opt-test-instr-seq-prepend
-                    (irt.instr "%13 = phi [0, entry], [%12, latch] : i64")
-                    (opt-test-instr-seq-prepend
-                      (irt.instr "return %13")
-                      (ir.compiler-ir-instr-seq-empty))))
-                (ir.CompilerIrBlockList.Nil)))))))))
+            (irt.blocks
+              "bail:
+                 return 7
+               exit:
+                 %13 = phi [0, entry], [%12, latch] : i64
+                 return %13")))))))
 
 (define (opt-bce-hoist-test-function [variant : i64]) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
@@ -78560,7 +77792,6 @@
 
 (define (opt-lcc-test-function [mode : i64]) : ir.CompilerIrFunction
   (let
-    [entry : i64 (ir.compiler-ir-label "entry")]
     [header : i64 (ir.compiler-ir-label "header")]
     [body : i64 (ir.compiler-ir-label "body")]
     [exit : i64 (ir.compiler-ir-label "exit")]
@@ -78569,11 +77800,10 @@
     (begin
       (ir.compiler-ir-block-builder-push!
         (&mut out)
-        (ir.CompilerIrBlock.Block
-          entry
-          (opt-test-instrs
-            (irt.instr "%2 = mov 0 : i64")
-            (ir.CompilerIrInstr.Jump header))))
+        (irt.block
+          "entry:
+             %2 = mov 0 : i64
+             jump header"))
       (let
         [guard : ir.CompilerIrInstrBuilder
           (ir.compiler-ir-instr-builder-with-capacity 3)]
@@ -78671,10 +77901,7 @@
           (ir.compiler-ir-instr-builder-push!
             (&mut b)
             (if (= mode 5)
-              (ir.CompilerIrInstr.Branch
-                (ir.CompilerIrValue.Bool true)
-                header
-                exit)
+              (irt.instr "branch true, header, exit")
               (ir.CompilerIrInstr.Jump header)))
           (ir.compiler-ir-block-builder-push!
             (&mut out)
